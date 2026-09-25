@@ -1,0 +1,414 @@
+{
+  "checked_on": "2026-09-26",
+  "method": "GitHub API commit metadata + immutable raw README/license; selected API/source inspection; no runtime benchmark",
+  "repositories": [
+    {
+      "repo": "HKUDS/LightRAG",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "4a319ecdc14f36446ae98b34952ab6719b2c322b",
+      "commit_date": "2026-09-25T18:20:25Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "0c16924564059e493c86854574660a47ed1dcc2a476ba7b5f949d3f2f73a1984",
+          "url": "https://github.com/HKUDS/LightRAG/blob/4a319ecdc14f36446ae98b34952ab6719b2c322b/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "7b394a331a17be0fe27b14800984c0abba94dba6f08e4f14f89a4e762cd350a5",
+          "url": "https://github.com/HKUDS/LightRAG/blob/4a319ecdc14f36446ae98b34952ab6719b2c322b/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "NevaMind-AI/memU",
+      "branch": "main",
+      "license": "NOASSERTION",
+      "archived": false,
+      "sha": "2c050bc9681a4c0aff1af211a000e73d14f33356",
+      "commit_date": "2026-09-21T11:45:36Z",
+      "verified_license": "Apache-2.0 (LICENSE.txt)",
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "0e2bcb97222f1ba09e333c70ecef4845470e16fdea953a1d0882d5ef2213d25a",
+          "url": "https://github.com/NevaMind-AI/memU/blob/2c050bc9681a4c0aff1af211a000e73d14f33356/LICENSE.txt"
+        },
+        {
+          "path": "README.md",
+          "sha256": "214ae0762a962f4540c1a3ff72e458ef612fd235ff9ede15f8d5cd27a17a6cea",
+          "url": "https://github.com/NevaMind-AI/memU/blob/2c050bc9681a4c0aff1af211a000e73d14f33356/README.md"
+        }
+      ],
+      "license_resolution": "Repository uses LICENSE.txt; Apache-2.0 verified from this file."
+    },
+    {
+      "repo": "Tencent/WeKnora",
+      "branch": "main",
+      "license": "NOASSERTION",
+      "archived": false,
+      "sha": "4364e61afa4bf1e086c34b4220bb21449aa15b25",
+      "commit_date": "2026-09-25T14:33:48Z",
+      "verified_license": "MIT (project core; third-party notices apply)",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "25cfeca2c3eee245313b1106cf1b27244e47b682802a02cc536f8f1beb6a29a6",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "63733f25438fec7493a0ef3f87da9047ddc9f0534e95c332d4db02460fa2eef6",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/README.md"
+        },
+        {
+          "path": "internal/handler/chunk.go",
+          "sha256": "37f6178f1c9b815536a416e012e452d1d730e2b815586a1f07aa5c18c89e4e72",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/handler/chunk.go"
+        },
+        {
+          "path": "internal/handler/knowledge.go",
+          "sha256": "ac1c5ad24fb24f84d3f907fdff0baaa18d234c589645a52624a0519a0ac2af3b",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/handler/knowledge.go"
+        },
+        {
+          "path": "internal/handler/knowledgebase.go",
+          "sha256": "56a8748f878f5978a3507037444d5d20d3504ce9ee3a69ee1a9ace02b515c3d3",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/handler/knowledgebase.go"
+        },
+        {
+          "path": "internal/router/router.go",
+          "sha256": "1dee01fb8814082ff738d43eb04a84b69311003fbee31d41f01d64528320eec2",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/router/router.go"
+        },
+        {
+          "path": "internal/types/chunk.go",
+          "sha256": "0a63239f19f1ce7963793221779af3f41f946f91894a7cb1e677cd75b085491d",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/types/chunk.go"
+        },
+        {
+          "path": "internal/types/knowledge.go",
+          "sha256": "b422fc5751b4504a3439de44f82ae5d7260063f801bf8d2c1ee4fd0070259a3b",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/types/knowledge.go"
+        },
+        {
+          "path": "internal/types/knowledge_span.go",
+          "sha256": "73f11cce06aaa2a7b0401997a11b7add35447e1937ad469c145725d0bf071ce2",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/types/knowledge_span.go"
+        },
+        {
+          "path": "internal/types/search.go",
+          "sha256": "05c764feb21839c12d8aa57d42f02f4faa891bc9340cf103b5be38e5228fa166",
+          "url": "https://github.com/Tencent/WeKnora/blob/4364e61afa4bf1e086c34b4220bb21449aa15b25/internal/types/search.go"
+        }
+      ]
+    },
+    {
+      "repo": "WujiangXu/A-mem",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "0c8039f28fdcc08189a23c07a3437d9d2482f9c2",
+      "commit_date": "2026-03-05T11:33:11Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "025a4a7762131be135bc34c8916d82996844f4dce35c53a464149a672dab5001",
+          "url": "https://github.com/WujiangXu/A-mem/blob/0c8039f28fdcc08189a23c07a3437d9d2482f9c2/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "411288846bc456a3e7dbb00e6f879b46a559f3752835aed4023f580cdafbd36e",
+          "url": "https://github.com/WujiangXu/A-mem/blob/0c8039f28fdcc08189a23c07a3437d9d2482f9c2/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "deepset-ai/haystack",
+      "branch": "main",
+      "license": "Apache-2.0",
+      "archived": false,
+      "sha": "8a5406eea71a0fc19e94c4b9a5cd96df2158a45a",
+      "commit_date": "2026-09-25T17:23:34Z",
+      "verified_license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "3f0a3af7e9b0f3b6358aaa3c7501ab522a67dc5483b870e9a8b3db41ea42e249",
+          "url": "https://github.com/deepset-ai/haystack/blob/8a5406eea71a0fc19e94c4b9a5cd96df2158a45a/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "e016e944fa840265e85e73520522c6152798330720d53d3d64fdffcc448554e6",
+          "url": "https://github.com/deepset-ai/haystack/blob/8a5406eea71a0fc19e94c4b9a5cd96df2158a45a/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "docling-project/docling",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "2d5c590c34b6378fd8a47c65b534b280aa40c93c",
+      "commit_date": "2026-09-25T09:57:28Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "edb765d1e3e60d0c7a7d5fba5f2bb2c3c29f7465cecb5c22cf1185c884954e4c",
+          "url": "https://github.com/docling-project/docling/blob/2d5c590c34b6378fd8a47c65b534b280aa40c93c/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "4f55583e9c57442b635a2bdf0c718a9919752a73a18b710b0b5cb57ef23c0aed",
+          "url": "https://github.com/docling-project/docling/blob/2d5c590c34b6378fd8a47c65b534b280aa40c93c/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "getzep/graphiti",
+      "branch": "main",
+      "license": "Apache-2.0",
+      "archived": false,
+      "sha": "92de3ac15cd40295f69f311b6f3674c5cc634b48",
+      "commit_date": "2026-09-25T19:06:56Z",
+      "verified_license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "2825300b20d7b951209835a4a331f29e24725a39d65168e4b831df53aa372650",
+          "url": "https://github.com/getzep/graphiti/blob/92de3ac15cd40295f69f311b6f3674c5cc634b48/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "ce1628c02b3c6fd5b59e3e48dc61c958f07824033b4d0b989bb8d433932b6b3f",
+          "url": "https://github.com/getzep/graphiti/blob/92de3ac15cd40295f69f311b6f3674c5cc634b48/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "infiniflow/ragflow",
+      "branch": "main",
+      "license": "Apache-2.0",
+      "archived": false,
+      "sha": "313ca90f6abd7682fe8523e16fd67b3653a3fa84",
+      "commit_date": "2026-09-24T11:41:04Z",
+      "verified_license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "url": "https://github.com/infiniflow/ragflow/blob/313ca90f6abd7682fe8523e16fd67b3653a3fa84/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "e321e3b65b92b34121e96d147fe9145e1e428ec1453e3cbbf4426fab09d701ad",
+          "url": "https://github.com/infiniflow/ragflow/blob/313ca90f6abd7682fe8523e16fd67b3653a3fa84/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "langchain-ai/langgraph",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "7daa3ab49d678a5da75edb08baa87db4a2be52c3",
+      "commit_date": "2026-09-23T17:56:01Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "d9bb52f2e3540d60ff50d8f0f5b6ba649b7fd346948c4c3d086c8afb120763c7",
+          "url": "https://github.com/langchain-ai/langgraph/blob/7daa3ab49d678a5da75edb08baa87db4a2be52c3/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "3a13e257af1216962d53d72414a7f44ac1fc5cea34d994bdff60ea2a3b045933",
+          "url": "https://github.com/langchain-ai/langgraph/blob/7daa3ab49d678a5da75edb08baa87db4a2be52c3/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "langchain-ai/langmem",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "9d033b47d9ce53e37e92c92241b0496c0278932e",
+      "commit_date": "2026-09-09T06:44:42Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "98af1351ea856e008c835bc89a312905960a318072f950732bf346c741027c7d",
+          "url": "https://github.com/langchain-ai/langmem/blob/9d033b47d9ce53e37e92c92241b0496c0278932e/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "e1edd000d263bfea842c34273add82421340c2caf2d7b87edd285daf02156ca3",
+          "url": "https://github.com/langchain-ai/langmem/blob/9d033b47d9ce53e37e92c92241b0496c0278932e/README.md"
+        },
+        {
+          "path": "docs/docs/concepts/conceptual_guide.md",
+          "sha256": "49c925c64937d3952ce2b0c4f761c255c485c84cac8d2c695ae0ab4427d81288",
+          "url": "https://github.com/langchain-ai/langmem/blob/9d033b47d9ce53e37e92c92241b0496c0278932e/docs/docs/concepts/conceptual_guide.md"
+        }
+      ]
+    },
+    {
+      "repo": "letta-ai/letta",
+      "branch": "main",
+      "license": "Apache-2.0",
+      "archived": false,
+      "sha": "5bcdd177d70fa2b31a754cfcd801e77b2e1ab16a",
+      "commit_date": "2026-09-10T17:59:06Z",
+      "verified_license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "984c6db99fc6609803108dfc196762118662cd94b82a456dd9217583f18f3612",
+          "url": "https://github.com/letta-ai/letta/blob/5bcdd177d70fa2b31a754cfcd801e77b2e1ab16a/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "1d624e8fd383c1198c8d42da87b055d591a5760e19607692eb46bbbfe2a58f03",
+          "url": "https://github.com/letta-ai/letta/blob/5bcdd177d70fa2b31a754cfcd801e77b2e1ab16a/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "branch": "main",
+      "license": "Apache-2.0",
+      "archived": false,
+      "sha": "94c3fe9f238f3dbf29c9ce98643bd71eb13077cd",
+      "commit_date": "2026-09-25T17:34:12Z",
+      "verified_license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "0bbcbe931c353293a2fafce08326181dfeea0e568c566afd4ce8337a70f5e219",
+          "url": "https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "7509347d34a767a2ef37ceb6cf6c714de9e8d84fe66ad5eea92bbae824a8fbeb",
+          "url": "https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "pgvector/pgvector",
+      "branch": "master",
+      "license": "NOASSERTION",
+      "archived": false,
+      "sha": "7db2345ed99bc77bf33cbdc8b12bd1973210dc81",
+      "commit_date": "2026-09-22T18:39:20Z",
+      "verified_license": "PostgreSQL",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6bba9ebeb73e27477463b05e5ef1bf303bccbddb3db9bbc95905d351604d6a87",
+          "url": "https://github.com/pgvector/pgvector/blob/7db2345ed99bc77bf33cbdc8b12bd1973210dc81/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "54cb3a5f4344308476cb2378469ac77d10fbff415d1b5be66608bb386ce8f527",
+          "url": "https://github.com/pgvector/pgvector/blob/7db2345ed99bc77bf33cbdc8b12bd1973210dc81/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "run-llama/llama_index",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "cf8311c42dfe57bcd6bf106424481c808307ee61",
+      "commit_date": "2026-09-25T14:31:13Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "24f40b5190fdacabc24ddbb5f76364d15e4f030925220ea300d8a2dd4993c8cb",
+          "url": "https://github.com/run-llama/llama_index/blob/cf8311c42dfe57bcd6bf106424481c808307ee61/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "c2738208d11688fc21e087a72b0ac9bafed02a2ac18e3794e01982972a291c29",
+          "url": "https://github.com/run-llama/llama_index/blob/cf8311c42dfe57bcd6bf106424481c808307ee61/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "temporalio/temporal",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "d8f9c6d86b2cd0ea5c27d0694a598da84c6d337d",
+      "commit_date": "2026-09-25T00:29:07Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6aab9afd99ceb1dcaf6a0d91386b46baef9bce17ae4006044e0f231e31430b69",
+          "url": "https://github.com/temporalio/temporal/blob/d8f9c6d86b2cd0ea5c27d0694a598da84c6d337d/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "269838d3de5da90d4c2c0b45bf7fc745b384a5a05c0932582e923638e8994189",
+          "url": "https://github.com/temporalio/temporal/blob/d8f9c6d86b2cd0ea5c27d0694a598da84c6d337d/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "branch": "main",
+      "license": "Apache-2.0",
+      "archived": false,
+      "sha": "eb90d03740755f5252b8b12cce91fd09970f2d81",
+      "commit_date": "2026-09-24T17:49:18Z",
+      "verified_license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "a471e34908f50c3f120e9a56f3c30cb34e133e4ede01a9cbd5ce718fc358ecd4",
+          "url": "https://github.com/topoteretes/cognee/blob/eb90d03740755f5252b8b12cce91fd09970f2d81/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "f89ea9f58197ea8e26a1217815b9849108820e4b5253c24d17198acf96d7ec72",
+          "url": "https://github.com/topoteretes/cognee/blob/eb90d03740755f5252b8b12cce91fd09970f2d81/README.md"
+        }
+      ]
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "branch": "main",
+      "license": "MIT",
+      "archived": false,
+      "sha": "a921929a0e0ea82fb49da1daa0ca3e152e41fcc1",
+      "commit_date": "2026-09-25T20:14:12Z",
+      "verified_license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a",
+          "url": "https://github.com/vectorize-io/hindsight/blob/a921929a0e0ea82fb49da1daa0ca3e152e41fcc1/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "376c6b0b83bd2be65a2d1c843680c56a7cc1bc4d8553dee9f227074e59239a6f",
+          "url": "https://github.com/vectorize-io/hindsight/blob/a921929a0e0ea82fb49da1daa0ca3e152e41fcc1/README.md"
+        },
+        {
+          "path": "hindsight-clients/go/api/openapi.yaml",
+          "sha256": "7313e39c3b53812cb9f3085c58019f05259386170c582b19d58c0a18dff0695e",
+          "url": "https://github.com/vectorize-io/hindsight/blob/a921929a0e0ea82fb49da1daa0ca3e152e41fcc1/hindsight-clients/go/api/openapi.yaml"
+        }
+      ]
+    }
+  ]
+}
