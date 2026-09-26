@@ -1,0 +1,14 @@
+{
+  "agent": {
+    "name": "traex-acp",
+    "title": "TraeCode CLI",
+    "version": "0.207.1"
+  },
+  "configuredModel": "gpt-6-astra",
+  "configuredEffort": "high",
+  "answer": "总共 12 件。",
+  "eventTypes": [
+    "status",
+    "text"
+  ]
+}

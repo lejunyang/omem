@@ -1,0 +1,16 @@
+{
+  "date": "2026-09-26",
+  "browser": "153.0.8010.12",
+  "checks": [
+    "empty real workspace and material capture",
+    "recursive evidence, cycle and return focus",
+    "version update and immutable prior revision",
+    "task creation and persistent change notifications",
+    "page reload and desktop rendering",
+    "390px mobile viewport and full-screen dialog",
+    "100 persisted evidence nodes and bounded current rendering"
+  ],
+  "errors": [],
+  "agent": "deterministic ACP protocol fixture",
+  "backend": "real Fastify + SQLite"
+}

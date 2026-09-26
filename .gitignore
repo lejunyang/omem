@@ -1,0 +1,12 @@
+node_modules/
+dist/
+apps/web/dist/
+.omem/
+.env
+.env.*
+!.env.example
+omem.local.json
+test-results/
+playwright-report/
+.osdk/
+**/.osdk-manifest.json

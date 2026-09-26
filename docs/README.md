@@ -2,7 +2,9 @@
 
 2026-09-26 · 设计提案 v0.1。为 Agent 自治、自学习的长期记忆系统设计；核心是可深入阅读的版本化证据引用。
 
-建议先打开 [交互原型](prototype/index.html)，再读 [design.md](design.md)。原型是单个自包含 HTML，可以复制后离线打开，无需安装依赖，也不发送网络请求。
+已进入实现：先读 [当前实施状态](implementation/status.md) 和 [项目运行指南](../README.md)。设计系统为 [根 design.md](../design.md)。
+
+第一轮设计参考：建议先打开 [交互原型](prototype/index.html)，再读 [design.md](design.md)。原型是单个自包含 HTML，可以复制后离线打开，无需安装依赖，也不发送网络请求。
 
 | 文件 | 内容 |
 | --- | --- |

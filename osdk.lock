@@ -1,0 +1,36 @@
+schema = 4
+
+[platforms.linux-x64.tools.node]
+request = "24.18.1"
+version = "24.18.1"
+
+[platforms.linux-x64.tools.node.options]
+arch = "x64"
+corepack = "false"
+
+[platforms.linux-x64.tools.node.artifact]
+url = "https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz"
+file_name = "node-v24.18.1-linux-x64.tar.gz"
+checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
+
+[deps.npm]
+installer = "npm"
+runtime = "node@24.18.1"
+manifest = "package.json"
+manifest_sha256 = "4b9d60997d8b278d2e4cfcdceefb1e613d5407323c3191ea7ed79cb33de6ec27"
+run = "npm.cmd ci"
+allow_build_from_source = true
+
+[deps.npm.native_lock]
+kind = "package-lock"
+path = "package-lock.json"
+sha256 = "9b817472da2d1a43071779438d2bd1a9341d1aee686e118e6dfc1bd595ead790"
+
+[skills.osdk-guide]
+source = "github:lejunyang/one-sdk"
+content_hash = "b3-v2:25feab3235fe25a48293e03508e2dfc0f447c3f6dc178f36748ebf7ba1a390b4"
+resolved_commit = "02a2f2b3142ded7d73554aaee629a24966a62313"
+agents = [
+    "universal",
+    "claude-code",
+]

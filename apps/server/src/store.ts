@@ -1,0 +1,455 @@
+/** SQLite is the single-user foundation. Immutable revisions, changes and notification
+ * outbox are committed together. Postgres/team enforcement remains a later migration. */
+import { DatabaseSync } from "node:sqlite";
+import { randomUUID, createHash } from "node:crypto";
+import {
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  chmodSync,
+} from "node:fs";
+import { join } from "node:path";
+import type {
+  CaptureInput,
+  StoredPart,
+  Revision,
+  Fragment,
+  Change,
+} from "../../../packages/contracts/src/index.js";
+const id = () => randomUUID();
+const now = () => new Date().toISOString();
+const hash = (s: string | Buffer) =>
+  createHash("sha256").update(s).digest("hex");
+type Row = Record<string, unknown>;
+export class Store {
+  readonly db: DatabaseSync;
+  constructor(readonly dataDir: string) {
+    mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
+    const file = join(dataDir, "omem.sqlite");
+    this.db = new DatabaseSync(file);
+    chmodSync(file, 0o600);
+    this.db.exec(`
+ PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+ CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, namespace TEXT NOT NULL, external_id TEXT NOT NULL, head TEXT, UNIQUE(namespace,external_id));
+ CREATE TABLE IF NOT EXISTS revisions(id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id), version INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, previous_id TEXT, created_at TEXT NOT NULL, UNIQUE(source_id,version));
+ CREATE TABLE IF NOT EXISTS fragments(id TEXT PRIMARY KEY, revision_id TEXT NOT NULL REFERENCES revisions(id), ordinal INTEGER NOT NULL, text TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS edges(id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES fragments(id), to_id TEXT NOT NULL REFERENCES fragments(id), kind TEXT NOT NULL, UNIQUE(from_id,to_id,kind));
+ CREATE TABLE IF NOT EXISTS changes(id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, before_id TEXT, after_id TEXT, details TEXT NOT NULL, created_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY, change_id TEXT REFERENCES changes(id), title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT, dedupe_key TEXT UNIQUE);
+ CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, title TEXT NOT NULL, detail TEXT NOT NULL, due_at TEXT, evidence_id TEXT REFERENCES fragments(id), status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
+ PRAGMA user_version=1;
+ `);
+  }
+  close() {
+    this.db.close();
+  }
+  tx<T>(f: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const v = f();
+      this.db.exec("COMMIT");
+      return v;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+  record(
+    kind: string,
+    title: string,
+    before: string | null,
+    after: string | null,
+    details: string,
+  ) {
+    const changeId = id();
+    const date = now();
+    this.db
+      .prepare("INSERT INTO changes VALUES(?,?,?,?,?,?,?)")
+      .run(changeId, kind, title, before, after, details, date);
+    this.db
+      .prepare("INSERT INTO notifications VALUES(?,?,?,?,?,?,?)")
+      .run(id(), changeId, title, details, date, null, changeId);
+    return changeId;
+  }
+  capture(input: CaptureInput) {
+    const parts: StoredPart[] = input.parts.map((p) => {
+      if (p.type !== "image") return p;
+      const bytes = Buffer.from(p.data, "base64");
+      if (
+        !bytes.length ||
+        bytes.length > 5_000_000 ||
+        bytes.toString("base64").replace(/=+$/, "") !==
+          p.data.replace(/=+$/, "")
+      )
+        throw Error("Invalid or oversized image");
+      const valid =
+        p.mimeType === "image/png"
+          ? bytes
+              .subarray(0, 8)
+              .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+          : p.mimeType === "image/jpeg"
+            ? bytes[0] === 255 && bytes[1] === 216
+            : bytes.toString("ascii", 0, 4) === "RIFF" &&
+              bytes.toString("ascii", 8, 12) === "WEBP";
+      if (!valid) throw Error("Image type does not match bytes");
+      const assetId = hash(bytes);
+      const file = join(this.dataDir, "assets", assetId);
+      if (!existsSync(file))
+        writeFileSync(file, bytes, { mode: 0o600, flag: "wx" });
+      return { type: "image", assetId, mimeType: p.mimeType, label: p.label };
+    });
+    const body = {
+      parts,
+      context: input.context,
+      observedAt: input.observedAt,
+      upstreamVersion: input.upstreamVersion,
+    };
+    const fingerprint = hash(JSON.stringify({ title: input.title, ...body }));
+    return this.tx(() => {
+      let source = this.db
+        .prepare("SELECT * FROM sources WHERE namespace=? AND external_id=?")
+        .get(input.source, input.externalId) as Row | undefined;
+      if (!source) {
+        source = { id: id(), head: null };
+        this.db
+          .prepare("INSERT INTO sources VALUES(?,?,?,?)")
+          .run(String(source.id), input.source, input.externalId, null);
+      }
+      const head = source.head
+        ? (this.db
+            .prepare("SELECT * FROM revisions WHERE id=?")
+            .get(String(source.head)) as Row)
+        : undefined;
+      if (head?.fingerprint === fingerprint)
+        return { revision: this.revision(String(head.id))!, duplicate: true };
+      const revisionId = id();
+      this.db
+        .prepare("INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)")
+        .run(
+          revisionId,
+          String(source.id),
+          Number(head?.version || 0) + 1,
+          input.title,
+          JSON.stringify(body),
+          fingerprint,
+          head ? String(head.id) : null,
+          now(),
+        );
+      const texts = parts.flatMap((p) =>
+        p.type === "text"
+          ? p.text.split(/\n\s*\n/).filter((t) => t.trim())
+          : p.type === "link"
+            ? [`${p.label}\n${p.url}`]
+            : [`[图片] ${p.label}`],
+      );
+      if (texts.length > 2000)
+        throw Error("Fragment budget exceeded (2000 per capture)");
+      texts.forEach((text, i) =>
+        this.db
+          .prepare("INSERT INTO fragments VALUES(?,?,?,?)")
+          .run(id(), revisionId, i, text),
+      );
+      this.db
+        .prepare("UPDATE sources SET head=? WHERE id=?")
+        .run(revisionId, String(source.id));
+      this.record(
+        "capture",
+        input.title,
+        head ? String(head.id) : null,
+        revisionId,
+        `${input.source} 材料${head ? "更新" : "录入"}为第 ${Number(head?.version || 0) + 1} 版；${texts.length} 个固定片段。${
+          head
+            ? "之前：" +
+              this.fragments(String(head.id))
+                .map((f) => f.text)
+                .join(" ")
+                .slice(0, 160) +
+              "。"
+            : ""
+        }当前：${texts.join(" ").slice(0, 200)}`,
+      );
+      return { revision: this.revision(revisionId)!, duplicate: false };
+    });
+  }
+  list() {
+    return (
+      this.db
+        .prepare(
+          "SELECT r.*,s.namespace,s.external_id FROM revisions r JOIN sources s ON s.head=r.id ORDER BY r.created_at DESC",
+        )
+        .all() as Row[]
+    ).map((r) => ({
+      id: r.id,
+      title: r.title,
+      source: r.namespace,
+      externalId: r.external_id,
+      version: r.version,
+      createdAt: r.created_at,
+      sourceId: r.source_id,
+    }));
+  }
+  revision(revisionId: string): Revision | null {
+    const r = this.db
+      .prepare(
+        "SELECT r.*,s.namespace,s.head FROM revisions r JOIN sources s ON r.source_id=s.id WHERE r.id=?",
+      )
+      .get(revisionId) as Row | undefined;
+    if (!r) return null;
+    const body = JSON.parse(String(r.body));
+    return {
+      id: String(r.id),
+      sourceId: String(r.source_id),
+      version: Number(r.version),
+      title: String(r.title),
+      source: String(r.namespace),
+      createdAt: String(r.created_at),
+      parts: body.parts,
+      context: body.context,
+      fragments: this.fragments(revisionId),
+      previousId: r.previous_id ? String(r.previous_id) : null,
+      current: r.head === r.id,
+    };
+  }
+  fragments(revisionId: string) {
+    return (
+      this.db
+        .prepare("SELECT * FROM fragments WHERE revision_id=? ORDER BY ordinal")
+        .all(revisionId) as Row[]
+    ).map((r) => ({
+      id: String(r.id),
+      revisionId: String(r.revision_id),
+      ordinal: Number(r.ordinal),
+      text: String(r.text),
+    }));
+  }
+  evidence(fragmentId: string) {
+    const f = this.db
+      .prepare("SELECT * FROM fragments WHERE id=?")
+      .get(fragmentId) as Row | undefined;
+    if (!f) return null;
+    const revision = this.revision(String(f.revision_id))!;
+    const fragment = revision.fragments.find((x) => x.id === fragmentId)!;
+    const relation = (column: string, target: string) =>
+      this.db
+        .prepare(
+          `SELECT e.id,e.kind,f.id AS targetId,f.text,r.title,r.version FROM edges e JOIN fragments f ON e.${target}=f.id JOIN revisions r ON f.revision_id=r.id WHERE e.${column}=? LIMIT 100`,
+        )
+        .all(fragmentId);
+    return {
+      fragment,
+      revision,
+      outgoing: relation("from_id", "to_id"),
+      backlinks: relation("to_id", "from_id"),
+    };
+  }
+  link(from: string, to: string) {
+    return this.tx(() => {
+      if (!this.evidence(from) || !this.evidence(to))
+        throw Error("Evidence not found");
+      const existing = this.db
+        .prepare("SELECT id FROM edges WHERE from_id=? AND to_id=? AND kind=?")
+        .get(from, to, "references");
+      if (existing) return existing;
+      const edgeId = id();
+      this.db
+        .prepare("INSERT INTO edges VALUES(?,?,?,?)")
+        .run(edgeId, from, to, "references");
+      this.record(
+        "link",
+        "添加片段引用",
+        null,
+        null,
+        `${from} → ${to}；用户建立的引用，不自动判定为事实支持。`,
+      );
+      return { id: edgeId };
+    });
+  }
+  search(query: string) {
+    if (!query.trim()) return [];
+    const escaped = query.replace(/[!%_]/g, "!$&");
+    return this.db
+      .prepare(
+        "SELECT f.id,f.text,r.title,r.version FROM fragments f JOIN revisions r ON f.revision_id=r.id JOIN sources s ON s.head=r.id WHERE f.text LIKE ? ESCAPE '!' OR r.title LIKE ? ESCAPE '!' LIMIT 50",
+      )
+      .all("%" + escaped + "%", "%" + escaped + "%");
+  }
+
+  history(sourceId: string) {
+    return this.db
+      .prepare(
+        "SELECT id,title,version,created_at AS createdAt FROM revisions WHERE source_id=? ORDER BY version DESC",
+      )
+      .all(sourceId);
+  }
+  changes() {
+    return this.db
+      .prepare(
+        "SELECT id,kind,title,before_id AS beforeId,after_id AS afterId,created_at AS createdAt,details FROM changes ORDER BY rowid DESC LIMIT 200",
+      )
+      .all() as unknown as Change[];
+  }
+  restore(changeId: string, expectedHead: string) {
+    return this.tx(() => {
+      const c = this.db
+        .prepare("SELECT * FROM changes WHERE id=?")
+        .get(changeId) as Row | undefined;
+      if (!c?.before_id || !c.after_id)
+        throw Error("Change has no restorable predecessor");
+      const old = this.revision(String(c.before_id));
+      const after = this.revision(String(c.after_id));
+      if (!old || !after) throw Error("Revision not found");
+      const source = this.db
+        .prepare("SELECT head FROM sources WHERE id=?")
+        .get(old.sourceId) as Row;
+      if (source.head !== expectedHead || source.head !== after.id)
+        throw Error("REBASE_REQUIRED");
+      const next = id();
+      const saved = this.db
+        .prepare("SELECT * FROM revisions WHERE id=?")
+        .get(old.id) as Row;
+      this.db
+        .prepare("INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)")
+        .run(
+          next,
+          old.sourceId,
+          after.version + 1,
+          old.title,
+          String(saved.body),
+          String(saved.fingerprint),
+          after.id,
+          now(),
+        );
+      const fragmentMap = new Map<string, string>();
+      old.fragments.forEach((f) => {
+        const newId = id();
+        fragmentMap.set(f.id, newId);
+        this.db
+          .prepare("INSERT INTO fragments VALUES(?,?,?,?)")
+          .run(newId, next, f.ordinal, f.text);
+      });
+      for (const f of old.fragments) {
+        const edges = this.db
+          .prepare("SELECT * FROM edges WHERE from_id=?")
+          .all(f.id) as Row[];
+        for (const e of edges)
+          this.db
+            .prepare("INSERT INTO edges VALUES(?,?,?,?)")
+            .run(
+              id(),
+              fragmentMap.get(f.id)!,
+              fragmentMap.get(String(e.to_id)) || String(e.to_id),
+              String(e.kind),
+            );
+      }
+      this.db
+        .prepare("UPDATE sources SET head=? WHERE id=?")
+        .run(next, old.sourceId);
+      this.record(
+        "restore",
+        "恢复：" + old.title,
+        after.id,
+        next,
+        "恢复为新修订，保留原文与全部历史。",
+      );
+      return this.revision(next);
+    });
+  }
+  asset(assetId: string) {
+    if (!/^[a-f0-9]{64}$/.test(assetId)) return null;
+    const file = join(this.dataDir, "assets", assetId);
+    return existsSync(file) ? readFileSync(file) : null;
+  }
+  notifications() {
+    return this.db
+      .prepare(
+        "SELECT id,title,body,change_id AS changeId,created_at AS createdAt,read_at AS readAt FROM notifications ORDER BY rowid DESC LIMIT 200",
+      )
+      .all();
+  }
+  readNotification(notificationId: string) {
+    this.db
+      .prepare("UPDATE notifications SET read_at=? WHERE id=?")
+      .run(now(), notificationId);
+  }
+  tasks() {
+    return this.db
+      .prepare(
+        "SELECT id,title,detail,due_at AS dueAt,evidence_id AS evidenceId,status,version FROM tasks ORDER BY created_at DESC",
+      )
+      .all();
+  }
+  createTask(input: {
+    title: string;
+    detail: string;
+    dueAt: string | null;
+    evidenceId?: string;
+  }) {
+    return this.tx(() => {
+      const taskId = id();
+      if (input.evidenceId && !this.evidence(input.evidenceId))
+        throw Error("Evidence not found");
+      this.db
+        .prepare(
+          "INSERT INTO tasks(id,title,detail,due_at,evidence_id,created_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          taskId,
+          input.title,
+          input.detail,
+          input.dueAt ? new Date(input.dueAt).toISOString() : null,
+          input.evidenceId || null,
+          now(),
+        );
+      this.record(
+        "task",
+        "新增待办：" + input.title,
+        null,
+        null,
+        input.detail || "用户创建待办",
+      );
+      return { id: taskId };
+    });
+  }
+  setTaskStatus(taskId: string, status: "open" | "done") {
+    return this.tx(() => {
+      const old = this.db
+        .prepare("SELECT * FROM tasks WHERE id=?")
+        .get(taskId) as Row | undefined;
+      if (!old) throw Error("Task not found");
+      if (old.status === status) return;
+      this.db
+        .prepare("UPDATE tasks SET status=?,version=version+1 WHERE id=?")
+        .run(status, taskId);
+      this.record(
+        "task",
+        `${status === "done" ? "完成" : "重新打开"}待办：${old.title}`,
+        null,
+        null,
+        "待办状态已变更。",
+      );
+    });
+  }
+  remind() {
+    return this.tx(() => {
+      const tasks = this.db
+        .prepare(
+          "SELECT * FROM tasks WHERE status='open' AND due_at IS NOT NULL AND due_at<=?",
+        )
+        .all(now()) as Row[];
+      for (const t of tasks)
+        this.db
+          .prepare("INSERT OR IGNORE INTO notifications VALUES(?,?,?,?,?,?,?)")
+          .run(
+            id(),
+            null,
+            "待办到期：" + t.title,
+            String(t.detail),
+            now(),
+            null,
+            `due:${t.id}:${t.version}`,
+          );
+      return tasks.length;
+    });
+  }
+}

@@ -1,0 +1,16 @@
+# Copy to a user systemd directory only after setting the actual paths.
+[Unit]
+Description=omem personal memory service
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABSOLUTE/PATH/omem
+EnvironmentFile=/ABSOLUTE/PATH/omem.env
+ExecStart=/ABSOLUTE/PATH/TO/osdk run start
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

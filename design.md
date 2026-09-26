@@ -1,0 +1,54 @@
+# omem 设计系统
+
+状态：v1 实施规范，2026-09-26。用户已认可的黑白灰证据阅读风格是产品基线。系统架构在 [docs/design.md](docs/design.md)；此文件只定义界面与组件规范。实现入口为 `packages/ui`（Vue 3 + TypeScript），不继续用 React 构建产品界面。
+
+## 视觉 token
+
+| 用途 | token | 值 |
+| --- | --- | --- |
+| 主文字/主动作 | `--om-ink` | `#202020` |
+| 次文字 | `--om-secondary` | `#606060` |
+| 辅助文字 | `--om-muted` | `#737373`（白底小字保持可辨） |
+| 页面/面板 | `--om-paper` / `--om-panel` | `#fafafa` / `#ffffff` |
+| 选中/引用背景 | `--om-soft` | `#eeeeee` |
+| 分隔线 | `--om-line` | `#dedede` |
+| 冲突/错误 | `--om-warning` / `--om-danger` | `#765820` / `#a13232`，同时提供文字 |
+| 主品牌 | 中性近黑 | 不添加彩色渐变品牌背景 |
+
+字体：标题使用本机 Noto Serif CJK SC/Songti/SimSun/Georgia；正文使用 Noto Sans CJK SC/PingFang/Microsoft YaHei/system-ui。无需在线字体。正文默认 16px、行高 1.9；交互文案 14px；辅助元信息至少 12px；不能把关键状态藏进低对比小字。
+
+间距用 4/8/12/16/24/32/48px；普通圆角 6–8px、弹窗 12px；边线 1px；阴影只用于浮层。阅读行宽控制在约 46 个汉字，标题 28–34px、行高 1.6。图标使用统一线性 SVG，不用 emoji 替代操作控件。
+
+## 信息架构与布局
+
+顶栏品牌、搜索和通知；左侧入口/材料目录；中间为当前材料与片段；右侧为基于固定片段的追问。需求、待办和观察记录是个人助理的一等信息，但材料内容不自动变成执行指令。
+
+引用贴近原句。明确显示固定版本、源类型、原文、关系类型。正文渲染为文本或经审查的 AST；绝不把采集来的 HTML 直接 v-html。模型回答与验证后的事实有不同状态。
+
+## 组件合同
+
+从 `@omem/ui` 复用：OmButton、OmIcon、OmBadge、OmEmpty、OmPanel、OmShell、OmDialog、OmCitation。禁止业务页面重新创建不同配色/焦点/圆角的按钮和弹窗。业务数据只通过 props/slots/events 注入；UI 包不得连接 API 或读取密钥。
+
+- Button：primary/secondary/ghost；loading/disabled；显式 type，键盘 focus-visible。
+- Dialog：原生 dialog 顶层、单一焦点陷阱、Esc 发出 back、显式 close，关闭恢复触发焦点。
+- Citation：可键盘聚焦，label、version，点击 emit open；版本 ID 不作为权限凭据。
+- Badge：neutral/warning/danger/success，颜色之外有文本。
+- Empty：说明当前状态，给一项实际可执行动作；不得伪装有数据。
+- Panel：统一标题/元信息/正文/操作插槽。
+- Shell：桌面三栏，窄屏导航/助手可切换，禁止根页面横向滚动。
+
+## 引用弹窗
+
+一条引用对应固定 FragmentRevision。点击下一级 push，Esc/back 退一层，根层退出；循环目标提供跳回，不无限压栈。路径持久保留、正文只呈现当前层；每层记录滚动和局部草稿。当前弹窗可展开追问，答案引用仍可深入。禁止打开弹窗时清掉背景文章状态。
+
+## 移动端与无障碍
+
+断点：>1100px 三栏；701–1100px 右栏改可打开侧栏；≤700px 导航折叠、引用全屏、问答在当前视图内展开。窄屏信息按优先级换行，禁止缩小字号挤入桌面布局。
+
+所有可点击区域至少 44×44px（正文内联引用按文本可达性处理）；输入有 label；聚焦 outline 2px；弹窗 aria-labelledby；异步状态 aria-live；保持 Tab 顺序。触屏不依赖 hover 或圈选，始终提供“就这段追问”。尊重 prefers-reduced-motion。覆盖 390px、768px、1440px 和长中文标题。
+
+## 真实行为与验收
+
+按钮必须执行对应动作或明确禁用；服务未连接显示错误/未配置；不要用模拟回答冒充真实模型。配置的范围和模型需实际传入执行器。每次知识/事项修改形成可读通知，失败不显示成功。时间在界面用本地时区，存储用 UTC。
+
+改 UI 前阅读 `.agents/skills/omem-design/SKILL.md`，复用 token 与组件；之后执行 `osdk run check` 和浏览器检查，验证引用层级、恢复焦点、窄屏、错误态。历史离线原型保留在 docs/prototype 供视觉对照，不作为新产品代码依赖。

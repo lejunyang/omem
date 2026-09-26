@@ -1,0 +1,9 @@
+{
+  "description": "omem opt-in capture; merge after reviewing fields and capture scope",
+  "version": "1",
+  "hooks": {
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"node /ABSOLUTE/PATH/omem/dist/apps/server/src/hook-forward.js","timeout":"5s","async":true}]}],
+    "PostToolUse": [{"hooks":[{"type":"command","command":"node /ABSOLUTE/PATH/omem/dist/apps/server/src/hook-forward.js","timeout":"5s","async":true}]}],
+    "Stop": [{"hooks":[{"type":"command","command":"node /ABSOLUTE/PATH/omem/dist/apps/server/src/hook-forward.js","timeout":"5s","async":true}]}]
+  }
+}
