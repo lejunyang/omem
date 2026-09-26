@@ -22,6 +22,21 @@ export const linkPart = z
     label: z.string().max(300).default("链接"),
   })
   .strict();
+export const captureProvenanceSchema = z
+  .object({
+    collectorId: z.string().min(1).max(300),
+    actorId: z.string().min(1).max(300).nullable(),
+    actorType: z.enum(["owner", "user", "bot", "system", "unknown"]),
+    actorVerifiedBy: z.string().min(1).max(300).nullable(),
+    sourceUri: z.string().max(2000).nullable(),
+    eventId: z.string().min(1).max(500).nullable(),
+    eventAt: z.iso.datetime({ offset: true }).nullable(),
+    timezone: z.string().min(1).max(100).nullable(),
+    quoted: z.boolean(),
+    forwarded: z.boolean(),
+    producerKind: z.enum(["original", "derived"]),
+  })
+  .strict();
 export const captureSchema = z
   .object({
     externalId: z.string().min(1).max(300),
@@ -42,6 +57,7 @@ export const captureSchema = z
       .max(50),
     observedAt: z.iso.datetime({ offset: true }).optional(),
     upstreamVersion: z.string().max(200).optional(),
+    provenance: captureProvenanceSchema.optional(),
     context: z
       .object({
         application: z.string().max(200).optional(),
@@ -75,6 +91,7 @@ export type Revision = {
   createdAt: string;
   parts: StoredPart[];
   context: CaptureInput["context"];
+  provenance?: CaptureInput["provenance"];
   fragments: Fragment[];
   previousId: string | null;
   current: boolean;
@@ -133,3 +150,272 @@ export const questionSchema = z
     selection: z.string().max(20000).optional(),
   })
   .strict();
+
+// Batch 2 contracts use snake_case because they are persisted and exchanged with
+// independent Agent runtimes. They are versioned separately from the HTTP view models.
+export const batchTwoScopeSchema = z
+  .object({
+    workspace_id: z.string().min(1).max(300),
+    project_id: z.string().min(1).max(300).nullable(),
+    subject_id: z.string().min(1).max(300).nullable(),
+  })
+  .strict();
+
+export const unicodeSelectorSchema = z
+  .object({
+    start: z.number().int().min(0),
+    end: z.number().int().min(1),
+    unit: z.literal("unicode_codepoint"),
+  })
+  .strict()
+  .refine((selector) => selector.end > selector.start, {
+    message: "selector end must be greater than start",
+  });
+
+export const textEvidenceSchema = z
+  .object({
+    fragment_revision_id: z.string().min(1).max(500),
+    source_revision_id: z.string().min(1).max(500),
+    exact_quote: z.string().min(1).max(20_000),
+    selector: unicodeSelectorSchema,
+  })
+  .strict();
+
+export const imageRegionSchema = z
+  .object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().positive().max(1),
+    height: z.number().positive().max(1),
+  })
+  .strict()
+  .refine((region) => region.x + region.width <= 1, {
+    message: "image region exceeds horizontal bounds",
+  })
+  .refine((region) => region.y + region.height <= 1, {
+    message: "image region exceeds vertical bounds",
+  });
+
+export const imageEvidenceSchema = z
+  .object({
+    fragment_revision_id: z.string().min(1).max(500),
+    source_revision_id: z.string().min(1).max(500),
+    asset_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    inferred: z.literal(true),
+    region: imageRegionSchema.nullable(),
+    observation: z.string().min(1).max(2000),
+  })
+  .strict();
+
+export const proposalEvidenceSchema = z.union([
+  textEvidenceSchema,
+  imageEvidenceSchema,
+]);
+
+export const proposalOriginSchema = z
+  .object({
+    job_id: z.string().min(1).max(500),
+    role_bundle: z.string().min(1).max(500),
+    producer_kind: z.literal("derived"),
+  })
+  .strict();
+
+export const taskProposalBodySchema = z
+  .object({
+    title: z.string().min(1).max(300),
+    owner_id: z.string().min(1).max(300).nullable(),
+    due_at: z.iso.datetime({ offset: true }).nullable(),
+    due_expression: z.string().min(1).max(500).nullable(),
+    next_step: z.string().max(2000),
+  })
+  .strict();
+
+export const claimProposalBodySchema = z
+  .object({
+    statement: z.string().min(1).max(2000),
+    attribution: z.string().min(1).max(2000),
+    valid_from: z.iso.datetime({ offset: true }).nullable(),
+    valid_to: z.iso.datetime({ offset: true }).nullable(),
+  })
+  .strict();
+
+export const episodeProposalBodySchema = z
+  .object({
+    trigger: z.string().min(1).max(2000),
+    actions: z.array(z.string().min(1).max(2000)).max(50),
+    verification_refs: z.array(z.string().min(1).max(500)).max(100),
+    outcome: z.enum(["unknown", "partial", "success", "failure"]),
+  })
+  .strict();
+
+export const procedureProposalBodySchema = z
+  .object({
+    trigger: z.string().min(1).max(2000),
+    preconditions: z.array(z.string().min(1).max(2000)).max(50),
+    steps: z.array(z.string().min(1).max(2000)).min(1).max(100),
+    verification: z.array(z.string().min(1).max(2000)).max(50),
+    counterexamples: z.array(z.string().min(1).max(2000)).max(50),
+    not_applicable: z.array(z.string().min(1).max(2000)).max(50),
+  })
+  .strict();
+
+const proposalShape = {
+  schema_version: z.literal(1),
+  proposal_id: z.string().min(1).max(500),
+  operation: z.enum(["create", "update", "supersede"]),
+  scope: batchTwoScopeSchema,
+  evidence: z.array(proposalEvidenceSchema).min(1).max(100),
+  uncertainties: z.array(z.string().min(1).max(500)).max(100),
+  reason: z.string().max(1000),
+  expected_versions: z.record(
+    z.string().min(1).max(500),
+    z.number().int().min(1),
+  ),
+  origin: proposalOriginSchema,
+  target_id: z.string().min(1).max(500).nullable().optional(),
+};
+
+export const proposalSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        ...proposalShape,
+        kind: z.literal("task"),
+        body: taskProposalBodySchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...proposalShape,
+        kind: z.literal("claim"),
+        body: claimProposalBodySchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...proposalShape,
+        kind: z.literal("episode"),
+        body: episodeProposalBodySchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...proposalShape,
+        kind: z.literal("procedure"),
+        body: procedureProposalBodySchema,
+      })
+      .strict(),
+  ])
+  .superRefine((proposal, context) => {
+    if (proposal.operation === "create") return;
+    if (!proposal.target_id)
+      context.addIssue({
+        code: "custom",
+        path: ["target_id"],
+        message: "update and supersede require target_id",
+      });
+    if (!Object.keys(proposal.expected_versions).length)
+      context.addIssue({
+        code: "custom",
+        path: ["expected_versions"],
+        message: "update and supersede require an expected version",
+      });
+  });
+
+export const observationSchema = z
+  .object({
+    observation_id: z.string().min(1).max(500),
+    actor_id: z.string().min(1).max(300).nullable(),
+    observed_at: z.iso.datetime({ offset: true }).nullable(),
+    intent: z.string().max(2000).nullable(),
+    scope: batchTwoScopeSchema,
+    outcome: z.enum(["unknown", "partial", "success", "failure"]),
+    evidence: z.array(proposalEvidenceSchema).min(1).max(100),
+    derived_from: z.enum(["original", "quoted", "forwarded", "derived"]),
+  })
+  .strict();
+
+export const abstentionSchema = z
+  .object({
+    reason_code: z.enum([
+      "no_durable_value",
+      "insufficient_evidence",
+      "identity_ambiguous",
+      "scope_ambiguous",
+      "unsafe_instruction",
+      "duplicate",
+    ]),
+    detail: z.string().min(1).max(1000),
+    evidence_ids: z.array(z.string().min(1).max(500)).max(100),
+  })
+  .strict();
+
+export const proposalBatchSchema = z
+  .object({
+    schema_version: z.literal(1),
+    job_id: z.string().min(1).max(500),
+    role_id: z.string().min(1).max(300),
+    observations: z.array(observationSchema).max(100),
+    proposals: z.array(proposalSchema).max(100),
+    abstentions: z.array(abstentionSchema).max(100),
+  })
+  .strict();
+
+export const evidenceAssessmentSchema = z
+  .object({
+    proposal_id: z.string().min(1).max(500),
+    proposal_digest: z.string().regex(/^[a-f0-9]{64}$/),
+    quote_asset_verdict: z.enum(["valid", "invalid", "ambiguous"]),
+    semantic_verdict: z.enum([
+      "supported",
+      "contradicted",
+      "insufficient",
+      "needs_scope",
+    ]),
+    reason_code: z.string().min(1).max(300),
+    reason: z.string().min(1).max(2000),
+    missing_context: z.array(z.string().min(1).max(1000)).max(50),
+  })
+  .strict();
+
+export const assessmentBatchSchema = z
+  .object({
+    schema_version: z.literal(1),
+    job_id: z.string().min(1).max(500),
+    role_id: z.string().min(1).max(300),
+    assessments: z.array(evidenceAssessmentSchema).max(100),
+  })
+  .strict();
+
+export const correctionProposalSchema = z
+  .object({
+    schema_version: z.literal(1),
+    correction_id: z.string().min(1).max(500),
+    target: z
+      .object({
+        type: z.enum(["revision", "task", "proposal"]),
+        id: z.string().min(1).max(500),
+        expected_version: z.number().int().min(1),
+      })
+      .strict(),
+    scope: batchTwoScopeSchema,
+    stop_using: z.string().min(1).max(2000),
+    replacement: z.string().min(1).max(2000),
+    evidence: z.array(proposalEvidenceSchema).min(1).max(100),
+    reason: z.string().min(1).max(1000),
+    origin: proposalOriginSchema,
+  })
+  .strict();
+
+export const taskUpdateSchema = z
+  .object({
+    status: z.enum(["open", "done"]),
+    expectedVersion: z.number().int().min(1),
+  })
+  .strict();
+
+export type Proposal = z.infer<typeof proposalSchema>;
+export type ProposalBatch = z.infer<typeof proposalBatchSchema>;
+export type EvidenceAssessment = z.infer<typeof evidenceAssessmentSchema>;
+export type AssessmentBatch = z.infer<typeof assessmentBatchSchema>;
+export type CorrectionProposal = z.infer<typeof correctionProposalSchema>;

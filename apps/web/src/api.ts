@@ -43,6 +43,7 @@ export type Task = {
   dueAt: string | null;
   evidenceId: string | null;
   status: "open" | "done";
+  version: number;
 };
 export type Profile = {
   id: string;

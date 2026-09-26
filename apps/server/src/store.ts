@@ -17,6 +17,8 @@ import type {
   Fragment,
   Change,
 } from "../../../packages/contracts/src/index.js";
+import { migrateDatabase } from "./storage/migrations.js";
+import { ApplicationRepository } from "./storage/repository.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -24,22 +26,20 @@ const hash = (s: string | Buffer) =>
 type Row = Record<string, unknown>;
 export class Store {
   readonly db: DatabaseSync;
+  readonly applications: ApplicationRepository;
   constructor(readonly dataDir: string) {
-    mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const file = join(dataDir, "omem.sqlite");
     this.db = new DatabaseSync(file);
-    chmodSync(file, 0o600);
-    this.db.exec(`
- PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
- CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, namespace TEXT NOT NULL, external_id TEXT NOT NULL, head TEXT, UNIQUE(namespace,external_id));
- CREATE TABLE IF NOT EXISTS revisions(id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id), version INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, previous_id TEXT, created_at TEXT NOT NULL, UNIQUE(source_id,version));
- CREATE TABLE IF NOT EXISTS fragments(id TEXT PRIMARY KEY, revision_id TEXT NOT NULL REFERENCES revisions(id), ordinal INTEGER NOT NULL, text TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS edges(id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES fragments(id), to_id TEXT NOT NULL REFERENCES fragments(id), kind TEXT NOT NULL, UNIQUE(from_id,to_id,kind));
- CREATE TABLE IF NOT EXISTS changes(id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, before_id TEXT, after_id TEXT, details TEXT NOT NULL, created_at TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY, change_id TEXT REFERENCES changes(id), title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT, dedupe_key TEXT UNIQUE);
- CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, title TEXT NOT NULL, detail TEXT NOT NULL, due_at TEXT, evidence_id TEXT REFERENCES fragments(id), status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
- PRAGMA user_version=1;
- `);
+    try {
+      migrateDatabase(this.db);
+      mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
+      chmodSync(file, 0o600);
+      this.applications = new ApplicationRepository(this.db);
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
   close() {
     this.db.close();
@@ -102,6 +102,7 @@ export class Store {
     const body = {
       parts,
       context: input.context,
+      provenance: input.provenance,
       observedAt: input.observedAt,
       upstreamVersion: input.upstreamVersion,
     };
@@ -153,6 +154,18 @@ export class Store {
       this.db
         .prepare("UPDATE sources SET head=? WHERE id=?")
         .run(revisionId, String(source.id));
+      this.db
+        .prepare(
+          `INSERT INTO source_state(
+             source_id,workspace_id,registered_scope,head_revision_id,
+             validity_epoch,capture_policy,updated_at
+           ) VALUES(?,'personal','{}',?,1,'{}',?)
+           ON CONFLICT(source_id) DO UPDATE SET
+             head_revision_id=excluded.head_revision_id,
+             validity_epoch=source_state.validity_epoch+1,
+             updated_at=excluded.updated_at`,
+        )
+        .run(String(source.id), revisionId, now());
       this.record(
         "capture",
         input.title,
@@ -206,6 +219,7 @@ export class Store {
       createdAt: String(r.created_at),
       parts: body.parts,
       context: body.context,
+      provenance: body.provenance,
       fragments: this.fragments(revisionId),
       previousId: r.previous_id ? String(r.previous_id) : null,
       current: r.head === r.id,
@@ -411,16 +425,25 @@ export class Store {
       return { id: taskId };
     });
   }
-  setTaskStatus(taskId: string, status: "open" | "done") {
+  setTaskStatus(
+    taskId: string,
+    status: "open" | "done",
+    expectedVersion: number,
+  ) {
     return this.tx(() => {
       const old = this.db
         .prepare("SELECT * FROM tasks WHERE id=?")
         .get(taskId) as Row | undefined;
       if (!old) throw Error("Task not found");
-      if (old.status === status) return;
-      this.db
-        .prepare("UPDATE tasks SET status=?,version=version+1 WHERE id=?")
-        .run(status, taskId);
+      if (Number(old.version) !== expectedVersion)
+        throw Error("STALE_TASK_VERSION");
+      if (old.status === status) return { version: expectedVersion };
+      const updated = this.db
+        .prepare(
+          "UPDATE tasks SET status=?,version=version+1 WHERE id=? AND version=?",
+        )
+        .run(status, taskId, expectedVersion);
+      if (Number(updated.changes) !== 1) throw Error("STALE_TASK_VERSION");
       this.record(
         "task",
         `${status === "done" ? "完成" : "重新打开"}待办：${old.title}`,
@@ -428,6 +451,7 @@ export class Store {
         null,
         "待办状态已变更。",
       );
+      return { version: expectedVersion + 1 };
     });
   }
   remind() {

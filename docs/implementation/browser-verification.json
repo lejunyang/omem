@@ -1,6 +1,6 @@
 {
   "date": "2026-09-26",
-  "browser": "153.0.8010.12",
+  "browser": "145.0.7632.6",
   "checks": [
     "empty real workspace and material capture",
     "recursive evidence, cycle and return focus",
