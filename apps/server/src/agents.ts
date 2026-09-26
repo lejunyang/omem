@@ -1,0 +1,344 @@
+/** Client-side ACP transport is reused from the official SDK. Agent output is data;
+ * thought chunks are discarded. Permission callbacks never silently authorize tools. */
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import {
+  ClientSideConnection,
+  ndJsonStream,
+  type SessionConfigOption,
+  type ContentBlock,
+} from "@agentclientprotocol/sdk";
+import type { AgentProfile } from "../../../packages/contracts/src/index.js";
+export type Emit = (
+  type: "status" | "text" | "permission",
+  text: string,
+) => void;
+const env = () =>
+  Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) =>
+        !key.startsWith("BOTMUX_") &&
+        !["OMEM_TOKEN", "CLAUDECODE"].includes(key),
+    ),
+  );
+function stop(child: ChildProcessWithoutNullStreams) {
+  if (child.exitCode !== null) return;
+  try {
+    if (process.platform !== "win32" && child.pid)
+      process.kill(-child.pid, "SIGTERM");
+    else child.kill("SIGTERM");
+  } catch {}
+  const timer = setTimeout(() => {
+    try {
+      if (process.platform !== "win32" && child.pid)
+        process.kill(-child.pid, "SIGKILL");
+      else child.kill("SIGKILL");
+    } catch {}
+  }, 1500);
+  timer.unref();
+}
+function launch(profile: AgentProfile, args: string[], cwd: string) {
+  mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  const child = spawn(profile.command, args, {
+    cwd,
+    env: env(),
+    stdio: "pipe",
+    shell: false,
+    detached: process.platform !== "win32",
+  });
+  // A process exiting before a write can emit EPIPE independently of the write
+  // callback. The lifecycle promise reports failure; never crash the API process.
+  child.stdin.on("error", () => {});
+  return child;
+}
+export function optionValues(option: SessionConfigOption) {
+  if (option.type !== "select") return [];
+  return option.options.flatMap((o) => ("options" in o ? o.options : [o]));
+}
+export async function acp(
+  profile: AgentProfile,
+  cwd: string,
+  blocks: ContentBlock[] | null,
+  emit: Emit,
+  signal: AbortSignal,
+) {
+  const child = launch(profile, profile.args, cwd);
+  let failure = "";
+  child.stderr.on("data", (data) => {
+    failure = (failure + data.toString()).slice(-4000);
+  });
+  let rejectExit: (e: Error) => void = () => {};
+  const exited = new Promise<never>((_, reject) => {
+    rejectExit = reject;
+    child.once("error", reject);
+    child.once("exit", (code) =>
+      reject(
+        new Error(
+          `ACP process exited (${code}); check agent login and profile. ${failure.includes("auth") ? "Authentication required." : ""}`,
+        ),
+      ),
+    );
+  });
+  // Attaching immediately prevents an unhandled rejection on a spawn failure.
+  void exited.catch(() => {});
+  const timeout = setTimeout(() => {
+    rejectExit(new Error("Agent timed out"));
+    stop(child);
+  }, profile.timeoutMs);
+  let connection: ClientSideConnection | undefined;
+  let sessionId: string | undefined;
+  const cancel = () => {
+    void connection?.cancel({ sessionId: sessionId || "" }).catch(() => {});
+    rejectExit(new Error("CANCELLED"));
+    stop(child);
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) throw Error("CANCELLED");
+    const output = new WritableStream<Uint8Array>({
+      write(chunk) {
+        return new Promise<void>((resolve, reject) =>
+          child.stdin.write(chunk, (e) => (e ? reject(e) : resolve())),
+        );
+      },
+    });
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        let total = 0;
+        child.stdout.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > 32_000_000) {
+            rejectExit(new Error("ACP wire output budget exceeded"));
+            stop(child);
+            return;
+          }
+          controller.enqueue(new Uint8Array(chunk));
+        });
+        child.stdout.once("end", () => controller.close());
+        child.stdout.once("error", (e) => controller.error(e));
+      },
+    });
+    const stream = ndJsonStream(output, input);
+    connection = new ClientSideConnection(
+      () => ({
+        requestPermission: async (request) => {
+          emit(
+            "permission",
+            `Agent 请求额外操作权限：${request.toolCall.title || "未命名操作"}。当前只读问答不会自动执行。`,
+          );
+          return { outcome: { outcome: "cancelled" } };
+        },
+        sessionUpdate: async ({ update }) => {
+          if (
+            update.sessionUpdate === "agent_message_chunk" &&
+            update.content.type === "text"
+          )
+            emit("text", update.content.text);
+          else if (update.sessionUpdate === "tool_call")
+            emit("status", `工具状态：${update.title}`);
+        },
+      }),
+      stream,
+    );
+    const initialized = await Promise.race([
+      connection.initialize({
+        protocolVersion: 1,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+        },
+        clientInfo: { name: "omem", version: "0.1.0" },
+      }),
+      exited,
+    ]);
+    if (initialized.protocolVersion !== 1)
+      throw Error("Unsupported ACP protocol version");
+    const session = await Promise.race([
+      connection.newSession({
+        cwd,
+        mcpServers: [],
+        _meta: {
+          trae: { options: { skills: profile.skills, mcpServers: [] } },
+        },
+      }),
+      exited,
+    ]);
+    sessionId = session.sessionId;
+    let configOptions = session.configOptions || [];
+    for (const [key, value] of [
+      ["model", profile.model],
+      ["reasoning_effort", profile.effort],
+    ] as const) {
+      if (!value) continue;
+      const option = configOptions.find(
+        (o) =>
+          o.id === key ||
+          (key === "model"
+            ? o.category === "model"
+            : o.category === "thought_level"),
+      );
+      if (!option || !optionValues(option).some((o) => o.value === value))
+        throw Error(`Unsupported ${key}: ${value}`);
+      const reply = await Promise.race([
+        connection.setSessionConfigOption({
+          sessionId,
+          configId: option.id,
+          value,
+        }),
+        exited,
+      ]);
+      configOptions = reply.configOptions;
+    }
+    if (blocks) {
+      if (
+        blocks.some((b) => b.type === "image") &&
+        !initialized.agentCapabilities?.promptCapabilities?.image
+      )
+        throw Error("This agent does not support images");
+      emit("status", "Agent 已连接，正在基于固定证据回答");
+      const result = await Promise.race([
+        connection.prompt({ sessionId, prompt: blocks }),
+        exited,
+      ]);
+      if (result.stopReason !== "end_turn")
+        throw Error(`Agent stopped: ${result.stopReason}`);
+    }
+    if (initialized.agentCapabilities?.sessionCapabilities?.close)
+      await Promise.race([
+        connection.closeSession({ sessionId }),
+        new Promise((r) => setTimeout(r, 1000)),
+      ]);
+    return {
+      agentInfo: initialized.agentInfo,
+      capabilities: initialized.agentCapabilities,
+      configOptions,
+    };
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", cancel);
+    stop(child);
+  }
+}
+export function cliArgs(profile: AgentProfile) {
+  const { model, effort } = profile;
+  if (profile.transport === "claude-cli")
+    return [
+      ...profile.args,
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--tools",
+      "",
+      "--permission-mode",
+      "dontAsk",
+      "--no-session-persistence",
+      ...(model ? ["--model", model] : []),
+      ...(effort ? ["--effort", effort] : []),
+    ];
+  return [
+    ...profile.args,
+    "exec",
+    "--json",
+    "--sandbox",
+    "read-only",
+    "--skip-git-repo-check",
+    "--ephemeral",
+    ...(model ? ["--model", model] : []),
+    ...(effort
+      ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`]
+      : []),
+    "-",
+  ];
+}
+export async function cli(
+  profile: AgentProfile,
+  cwd: string,
+  text: string,
+  emit: Emit,
+  signal: AbortSignal,
+) {
+  const child = launch(profile, cliArgs(profile), cwd);
+  child.stdout.setEncoding("utf8");
+  let buffer = "";
+  let bytes = 0;
+  let emitted = false;
+  let malformed = false;
+  let providerError = false;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      stop(child);
+      reject(Error("Agent timed out"));
+    }, profile.timeoutMs);
+    const cancel = () => {
+      stop(child);
+      reject(Error("CANCELLED"));
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    const clean = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", cancel);
+    };
+    const line = (raw: string) => {
+      if (!raw.trim()) return;
+      try {
+        const item = JSON.parse(raw);
+        if (
+          item.type === "item.completed" &&
+          item.item?.type === "agent_message"
+        ) {
+          emit("text", item.item.text);
+          emitted = true;
+        } else if (item.type === "assistant") {
+          for (const p of item.message?.content || [])
+            if (p.type === "text") {
+              emit("text", p.text);
+              emitted = true;
+            }
+        } else if (item.type === "result") {
+          if (item.is_error) providerError = true;
+          else if (!emitted && typeof item.result === "string") {
+            emit("text", item.result);
+            emitted = true;
+          }
+        } else if (item.type === "error" || item.type === "turn.failed")
+          providerError = true;
+      } catch {
+        malformed = true;
+      }
+    };
+    child.stdout.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 2_000_000) {
+        stop(child);
+        reject(Error("Agent output limit exceeded"));
+        return;
+      }
+      buffer += chunk.toString();
+      let n;
+      while ((n = buffer.indexOf("\n")) !== -1) {
+        line(buffer.slice(0, n));
+        buffer = buffer.slice(n + 1);
+      }
+    });
+    child.stderr.resume();
+    child.once("error", (e) => {
+      clean();
+      reject(e);
+    });
+    child.once("exit", (code) => {
+      line(buffer);
+      clean();
+      if (signal.aborted) return reject(Error("CANCELLED"));
+      if (code !== 0 || malformed || providerError || !emitted)
+        return reject(
+          Error(
+            `Agent CLI failed (${code}); check login, model and output protocol`,
+          ),
+        );
+      resolve();
+    });
+    if (signal.aborted) cancel();
+    else child.stdin.end(text);
+  }).finally(() => stop(child));
+}

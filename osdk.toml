@@ -1,0 +1,27 @@
+# omem foundation: one TypeScript runtime for Vue, API and CLI/ACP bridges.
+[tools]
+node = "24.18.1"
+
+[deps.npm]
+auto = false
+allow_build_from_source = true
+
+[skills.osdk-guide]
+source = "github:lejunyang/one-sdk"
+skill = "osdk-guide"
+ref = "02a2f2b3142ded7d73554aaee629a24966a62313"
+agents = ["universal", "claude-code"]
+
+[tasks]
+dev = "npm run dev"
+build = "npm run build"
+test = "npm test"
+typecheck = "npm run typecheck"
+start = "npm start"
+[tasks.check]
+run = ["npm run typecheck", "npm test", "npm run build"]
+
+[tasks.browser]
+run = "npm run test:browser"
+[tasks.live-acp]
+run = "npx tsx scripts/live-acp-smoke.ts"

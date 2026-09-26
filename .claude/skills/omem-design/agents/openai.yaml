@@ -1,0 +1,4 @@
+interface:
+  display_name: "omem 界面设计"
+  short_description: "沿用证据阅读设计语言构建可访问的 Vue 组件与移动端页面"
+  default_prompt: "使用 $omem-design 为 omem 构建遵循项目 design.md 的 Vue 界面。"

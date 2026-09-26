@@ -1,5 +1,7 @@
 # 技术实施方案
 
+> 实施更新（2026-09-26）：用户已确认个人助理、服务器/本地运行、Vue 和 CLI/ACP 优先。当前已实现能力见 [实施状态](implementation/status.md)，已确认需求见 [决策记录](decisions.md)，视觉规范见 [根 design.md](../design.md)。下文为第一轮架构/原型设计，不等于当前运行代码。
+
 日期：2026-09-26 · 提案 v0.1。与 [design.md](design.md) 和 [证据契约](contracts/evidence-model.md) 配套。本文给出实现边界与验收，不表示服务端已经建成。
 
 ## 1. 工程形态与复用边界

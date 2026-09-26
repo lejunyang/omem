@@ -1,5 +1,7 @@
 # 调研：如何最大化复用，同时掌握自治记忆的核心
 
+> 实施更新（2026-09-26）：用户已确认个人助理、服务器/本地运行、Vue 和 CLI/ACP 优先。当前已实现能力见 [实施状态](implementation/status.md)，已确认需求见 [决策记录](decisions.md)，视觉规范见 [根 design.md](../design.md)。下文为第一轮架构/原型设计，不等于当前运行代码。
+
 日期：2026-09-26。研究方法：完整读取两份用户提供的文档正文，检查旧库的关键契约和 HTML 原型；通过官方仓库固定 17 个 commit，阅读 README、许可证，并深入检查 WeKnora 的 Go 类型/HTTP handler 与 Hindsight 的 OpenAPI。详见 [核验索引](research/source-index.md) 和 [机器可读来源](research/sources.json)。**本轮是资料和源码核验，没有部署这些引擎，也没有复现其性能基准。**
 
 ## 1. 结论

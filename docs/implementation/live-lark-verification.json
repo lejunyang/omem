@@ -1,0 +1,10 @@
+{
+  "connector": "lark-cli",
+  "title": "ACP 接入与使用指南",
+  "version": "15",
+  "partTypes": [
+    "text",
+    "link"
+  ],
+  "textCharacters": 12245
+}

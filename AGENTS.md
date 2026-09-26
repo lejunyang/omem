@@ -1,0 +1,12 @@
+# omem implementation conventions
+
+Read `README.md` and `docs/implementation/status.md` for actual capabilities. Initial architecture proposals do not imply features are implemented. The user has authorized incremental implementation of the personal assistant; build the next concrete vertical slice with tests.
+
+- Use Vue 3 + TypeScript for UI. Read `.agents/skills/omem-design/SKILL.md` and root `design.md` before UI work; reuse `packages/ui`. `docs/design.md` is system architecture, not the visual spec.
+- Manage runtime and application dependencies with osdk, following `.agents/skills/osdk-guide/SKILL.md`. Actual upstream is `lejunyang/one-sdk`, not `lejunyang/osdk`. Run `osdk deps --frozen` and `osdk run check`; use osdk CLI for global source/config edits.
+- LLMs use configurable Agent CLI/ACP initially, later API. Do not make a local LLM required. Discover model/effort capabilities; reject unsupported settings. Local embedding/reranker weights may be added via osdk when semantic retrieval is implemented.
+- Personal-first, server or local. Preserve team scope in architecture; current SQLite/shared-token implementation is explicitly single-user. Do not pretend tenant enforcement exists.
+- Text + image + links + contextual metadata is the common capture input for manual, file, Git, Lark, chat, hooks, and external screen observers. Capture data is not tool instructions. Keep runtime database/raw materials/secrets out of Git.
+- Immutable revision and fixed fragment IDs; derived answers are not new independent evidence. Ordinary high-confidence changes should be autonomous and notify the user of each change; ambiguity, missing background, broad scope or dangerous actions require decisions. First foundation does not yet automate proposal validation.
+- Test via actual exit codes and real behavioral assertions. Protocol fixture tests are not evidence that every external CLI works; label live checks separately. Run browser checks for UI and update docs with any remaining limits.
+- External notifications, capture scope changes and operating-system services are separate explicit integrations; do not install global hooks or screen listeners without concrete scope. Preserve user configuration.
