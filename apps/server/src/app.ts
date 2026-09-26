@@ -8,6 +8,7 @@ import {
   captureSchema,
   questionSchema,
   taskSchema,
+  taskUpdateSchema,
 } from "../../../packages/contracts/src/index.js";
 import { Store } from "./store.js";
 import { Runs } from "./runs.js";
@@ -48,22 +49,21 @@ export async function buildApp(config: Config) {
   });
   app.setErrorHandler((error, _req, reply) => {
     const e = error as Error;
-    const code = e.message.includes("REBASE_REQUIRED")
-      ? 409
-      : e.message.includes("already active")
-        ? 429
-        : e instanceof z.ZodError
-          ? 400
-          : 400;
-    reply
-      .code(code)
-      .send({
-        error:
-          e instanceof z.ZodError
-            ? "Invalid input: " +
-              e.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")
-            : e.message,
-      });
+    const code =
+      e.message.includes("REBASE_REQUIRED") || e.message.includes("STALE_")
+        ? 409
+        : e.message.includes("already active")
+          ? 429
+          : e instanceof z.ZodError
+            ? 400
+            : 400;
+    reply.code(code).send({
+      error:
+        e instanceof z.ZodError
+          ? "Invalid input: " +
+            e.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")
+          : e.message,
+    });
   });
   app.get("/api/health", async () => ({
     status: "ok",
@@ -158,9 +158,11 @@ export async function buildApp(config: Config) {
     store.createTask(taskSchema.parse(req.body)),
   );
   app.patch<{ Params: { id: string } }>("/api/tasks/:id", async (req) => {
-    const b = z.object({ status: z.enum(["open", "done"]) }).parse(req.body);
-    store.setTaskStatus(req.params.id, b.status);
-    return { ok: true };
+    const b = taskUpdateSchema.parse(req.body);
+    return {
+      ok: true,
+      ...store.setTaskStatus(req.params.id, b.status, b.expectedVersion),
+    };
   });
   app.get("/api/profiles", async () =>
     config.profiles.map(

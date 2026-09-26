@@ -207,7 +207,7 @@ try {
     resolve("docs/implementation/browser-verification.json"),
     JSON.stringify(
       {
-        date: "2026-09-26",
+        date: new Date().toISOString().slice(0, 10),
         browser: browser.version(),
         checks,
         errors,

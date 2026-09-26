@@ -23,6 +23,19 @@ const input = (text = "first") =>
     externalId: "test",
     title: "A",
     parts: [{ type: "text", text }],
+    provenance: {
+      collectorId: "authenticated-test",
+      actorId: "owner",
+      actorType: "owner",
+      actorVerifiedBy: "test-session",
+      sourceUri: null,
+      eventId: "event-1",
+      eventAt: "2026-09-27T00:00:00Z",
+      timezone: "Asia/Shanghai",
+      quoted: false,
+      forwarded: false,
+      producerKind: "original",
+    },
   });
 describe("versioned evidence and transaction outbox", () => {
   it("deduplicates retries but keeps historical evidence fixed", () => {
@@ -35,6 +48,7 @@ describe("versioned evidence and transaction outbox", () => {
       "first",
     );
     expect(s.revision(a.revision.id)?.current).toBe(false);
+    expect(s.revision(a.revision.id)?.provenance?.actorId).toBe("owner");
     expect(s.notifications()).toHaveLength(2);
   });
   it("restores as new revision and rejects stale rollback", () => {
@@ -91,10 +105,13 @@ describe("versioned evidence and transaction outbox", () => {
     s.remind();
     s.remind();
     expect(s.notifications()).toHaveLength(2);
-    s.setTaskStatus(t.id, "done");
+    s.setTaskStatus(t.id, "done", 1);
+    expect(() => s.setTaskStatus(t.id, "open", 1)).toThrow(
+      "STALE_TASK_VERSION",
+    );
     s.remind();
     expect(s.notifications()).toHaveLength(3);
-    s.setTaskStatus(t.id, "open");
+    s.setTaskStatus(t.id, "open", 2);
     s.remind();
     expect(s.notifications()).toHaveLength(5);
   });

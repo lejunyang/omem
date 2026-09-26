@@ -250,7 +250,10 @@ async function changeTask(t: Task) {
   try {
     await api(
       "/tasks/" + t.id,
-      { status: t.status === "open" ? "done" : "open" },
+      {
+        status: t.status === "open" ? "done" : "open",
+        expectedVersion: t.version,
+      },
       "PATCH",
     );
     await refresh();

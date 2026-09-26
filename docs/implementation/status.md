@@ -1,6 +1,6 @@
 # 第一批实现状态
 
-2026-09-26。已从设计进入可运行代码。主链为：输入材料 → 固定版本/片段 → 引用阅读 → Agent CLI/ACP 追问 → 保存回答与依据 → 变更通知；另提供可关联证据的需求待办和到期提醒。
+2026-09-27。已从设计进入可运行代码。主链为：输入材料 → 固定版本/片段 → 引用阅读 → Agent CLI/ACP 追问 → 保存回答与依据 → 变更通知；另提供可关联证据的需求待办和到期提醒。
 
 ## 已实现
 
@@ -18,7 +18,7 @@
 ## 实际验证
 
 - `osdk run check`：TypeScript、Vue 类型检查、服务端测试、生产构建。
-- **19 项服务端测试通过**，覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取。
+- **26 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；新增 4 项 B2-01 SQLite 迁移/事务故障注入和 3 项严格合同测试。
 - 浏览器用真实 Fastify/SQLite 和协议 fixture：材料录入、递归引用/环、问答保存、旧版本读取、事项/通知、桌面与 390px 手机，以及真实 SQLite 中的 100 个固定片段连续下钻（7 组浏览器检查）。fixture 只在测试配置使用，产品没有模拟回答 fallback。
 - **真实 TraeX ACP**：TraeCode CLI 0.207.1，发现 19 个 model 配置选项、4 个当前 effort 选项；用握手返回的 `gpt-6-astra / high` 显式设置后，一次真实问题返回 `12 件。`。不把这些值写成默认限定列表。
 - **真实 lark-cli**：使用用户提供的 ACP Wiki 文档验证读取与 CaptureEnvelope 归一化（revision 15，12,245 字符，text+link），报告不保存正文。
@@ -45,3 +45,11 @@
 6. 团队模式用 PostgreSQL、独立主体与逐证据 ACL；主动推进外部事项的执行器独立授权，不能沿用普通知识写权限。
 
 项目 README 给出了运行方式；历史设计/原型保留用来解释目标，不能当本页的已交付清单。
+
+## Batch 2 当前进度
+
+B2-01 已实现：Proposal/ProposalBatch/AssessmentBatch/CorrectionProposal v1 严格合同、捕获 provenance、任务 CAS 更新合同、SQLite v1→v2 事务迁移、迁移历史校验，以及正式 memory/task application 的原子 receipt/change/notification/delivery intent 仓储边界。
+
+A-M01～A-M04 使用实际 SQLite 文件与 Fastify 旧读取 API 验证：固定 ID/原始 JSON/图片字节/历史引用/任务版本保持不变；迁移中断完整回滚且重启幂等；未来 schema 拒绝且数据库文件字节不变；change/outbox 写失败时 memory/task、通知和 application receipt 全部回滚。合同样例仅用于严格 schema 正反例，不作为 Agent、飞书或外部投递集成完成证据。
+
+B2-02～B2-08 尚未实现。当前新增 jobs、proposal、decision、delivery 等表只是冻结持久化边界；没有 worker、提炼/验证策略、飞书扫码/绑定、真实外部投递或决策 UI，不能据此宣称这些链路已完成。
