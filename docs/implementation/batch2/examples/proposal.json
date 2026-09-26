@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "proposal_id": "fixture-proposal-1",
+  "kind": "task",
+  "operation": "create",
+  "scope": {
+    "workspace_id": "personal",
+    "project_id": "payments",
+    "subject_id": "owner"
+  },
+  "body": {
+    "title": "补齐支付重试方案",
+    "owner_id": "owner",
+    "due_at": "2026-09-25T10:00:00Z",
+    "due_expression": "本周五18:00前",
+    "next_step": "核对现有接口"
+  },
+  "evidence": [
+    {
+      "fragment_revision_id": "fixture-fragment-1",
+      "source_revision_id": "fixture-source-r1",
+      "exact_quote": "我负责在本周五18:00前补齐支付重试方案，先核对现有接口。",
+      "selector": {
+        "start": 0,
+        "end": 30,
+        "unit": "unicode_codepoint"
+      }
+    }
+  ],
+  "uncertainties": [],
+  "reason": "已验证为本人在已知项目中明确承诺，时间可按观察时刻和时区解析。",
+  "expected_versions": {},
+  "origin": {
+    "job_id": "fixture-job-1",
+    "role_bundle": "extractor@1",
+    "producer_kind": "derived"
+  }
+}

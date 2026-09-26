@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "role_id": "extractor",
+  "role_version": "1",
+  "profile_ref": "traex",
+  "prompt_templates": [
+    "prompts/common.md",
+    "prompts/extractor.md"
+  ],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-extract",
+      "version": "1",
+      "load_mode": "inline",
+      "artifact_digest": "RESOLVE_FROM_BUILT_BUNDLE"
+    }
+  ],
+  "output_schema": "ProposalBatch.v1",
+  "tool_policy": {
+    "mode": "none",
+    "allowed_tools": []
+  },
+  "session_policy": {
+    "reuse": "never",
+    "inherit_user_skills": false,
+    "inherit_user_mcp": false
+  },
+  "budget": {
+    "max_context_tokens": 8000,
+    "max_output_tokens": 3000,
+    "max_repair_attempts": 2
+  }
+}

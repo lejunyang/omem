@@ -4,6 +4,8 @@
 
 已进入实现：先读 [当前实施状态](implementation/status.md) 和 [项目运行指南](../README.md)。设计系统为 [根 design.md](../design.md)。
 
+下一批由其他 Agent 接手时，从 [batch2 实施交接包](implementation/batch2/README.md) 开始：包含详细方案、ACP 提示词/Skills、飞书扫码创建绑定、验收合同及 [MemPalace 专项调研](research/mempalace/README.md)。这些为待实现方案，不表示当前运行能力已增加。
+
 第一轮设计参考：建议先打开 [交互原型](prototype/index.html)，再读 [design.md](design.md)。原型是单个自包含 HTML，可以复制后离线打开，无需安装依赖，也不发送网络请求。
 
 | 文件 | 内容 |
@@ -14,7 +16,7 @@
 | [contracts/evidence-model.md](contracts/evidence-model.md) | 片段身份、固定版本、引用边、选区、递归 UI、问答与恢复合同 |
 | [autonomous-learning.md](autonomous-learning.md) | 经历→事实/方法/使用策略的具体学习循环、反馈、遗忘与预算 |
 | [interaction-design.md](interaction-design.md) | 信息架构、风格、逐层弹窗、原位追问、边界状态与体验脚本 |
-| [decisions.md](decisions.md) | 最后统一确认的 5 组问题与当前默认值 |
+| [decisions.md](decisions.md) | 用户已确认的个人助理、CLI/ACP、输入和自治边界 |
 | [research/source-index.md](research/source-index.md) | 17 个上游仓库的固定 commit、许可证与核验文件 |
 | [research/sources.json](research/sources.json) | 文件 URL、commit 和 SHA-256，便于后续复核 |
 | [prototype/index.html](prototype/index.html) | 可直接打开的离线交互原型 |

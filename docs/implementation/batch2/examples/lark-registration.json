@@ -1,0 +1,31 @@
+{
+  "createOnly": true,
+  "source": "omem",
+  "appPreset": {
+    "name": "{user}的 omem 助理",
+    "desc": "记录工作材料、事项与记忆变更，并按需提醒。"
+  },
+  "addons": {
+    "preset": false,
+    "scopes": {
+      "tenant": [
+        "im:message:send_as_bot",
+        "im:message.p2p_msg:readonly",
+        "application:bot.basic_info:read",
+        "im:message:update"
+      ]
+    },
+    "events": {
+      "items": {
+        "tenant": [
+          "im.message.receive_v1"
+        ]
+      }
+    },
+    "callbacks": {
+      "items": [
+        "card.action.trigger"
+      ]
+    }
+  }
+}
