@@ -35,6 +35,8 @@
 
 ## 后续实施顺序
 
+详细任务拆分、协议与验收已移交到 [batch2 文档包](batch2/README.md)。后续实现以该包和已确认需求为准；以下是范围概览，尚未实现。MemPalace 新增为本地检索独立 PoC 候选，见 [专项研究](../research/mempalace/README.md)。
+
 1. 从真实材料/轨迹提炼 Claim、Episode、TaskProposal 的结构化输出；强制证据绑定、歧义/影响分类；高置信小范围自动应用并通知，其他形成可审阅决策。
 2. 外部通知 sender + 投递幂等/回执/重试；用户配置飞书目标后接即时通知与摘要。完善 hook 本地 spool、断线补传和可配置字段脱敏。
 3. ACP 长期会话复用、resume/context packing、结构化人工问题与权限决策 UI；目前问答每次新会话，权限请求只通知并拒绝。

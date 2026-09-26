@@ -1,0 +1,245 @@
+[
+  {
+    "file": "results_mempal_hybrid_v4_held_out_session_20260414_1634.jsonl",
+    "rows": 450,
+    "unique_question_ids": 450,
+    "dev_overlap": 0,
+    "sha256": "5f5849e8facdbdec673967dfbd9dd288323983ae824ca787ffa89110dd1b588d",
+    "metrics": {
+      "session/recall_any@1": {
+        "sum": 401.0,
+        "mean": 0.8911111111111111
+      },
+      "session/ndcg_any@1": {
+        "sum": 401.0,
+        "mean": 0.8911111111111111
+      },
+      "session/recall_any@3": {
+        "sum": 437.0,
+        "mean": 0.9711111111111111
+      },
+      "session/ndcg_any@3": {
+        "sum": 421.8610592262339,
+        "mean": 0.9374690205027421
+      },
+      "session/recall_any@5": {
+        "sum": 443.0,
+        "mean": 0.9844444444444445
+      },
+      "session/ndcg_any@5": {
+        "sum": 422.6491606748959,
+        "mean": 0.9392203570553241
+      },
+      "session/recall_any@10": {
+        "sum": 449.0,
+        "mean": 0.9977777777777778
+      },
+      "session/ndcg_any@10": {
+        "sum": 422.0587718729565,
+        "mean": 0.9379083819399034
+      },
+      "session/recall_any@30": {
+        "sum": 450.0,
+        "mean": 1.0
+      },
+      "session/ndcg_any@30": {
+        "sum": 420.6370080008397,
+        "mean": 0.9347489066685327
+      },
+      "session/recall_any@50": {
+        "sum": 450.0,
+        "mean": 1.0
+      },
+      "session/ndcg_any@50": {
+        "sum": 420.49552337050727,
+        "mean": 0.9344344963789051
+      },
+      "turn/recall_any@1": {
+        "sum": 401.0,
+        "mean": 0.8911111111111111
+      },
+      "turn/recall_any@3": {
+        "sum": 437.0,
+        "mean": 0.9711111111111111
+      },
+      "turn/recall_any@5": {
+        "sum": 443.0,
+        "mean": 0.9844444444444445
+      },
+      "turn/recall_any@10": {
+        "sum": 449.0,
+        "mean": 0.9977777777777778
+      },
+      "turn/recall_any@30": {
+        "sum": 450.0,
+        "mean": 1.0
+      },
+      "turn/recall_any@50": {
+        "sum": 450.0,
+        "mean": 1.0
+      }
+    }
+  },
+  {
+    "file": "results_mempal_hybrid_v4_llmrerank_session_20260414_1659.jsonl",
+    "rows": 500,
+    "unique_question_ids": 500,
+    "dev_overlap": 50,
+    "sha256": "8bc55a31d7cc260564f2607feae49f396d58dea6ba9de5141ce4abbec67ba624",
+    "metrics": {
+      "session/recall_any@1": {
+        "sum": 401.0,
+        "mean": 0.802
+      },
+      "session/ndcg_any@1": {
+        "sum": 401.0,
+        "mean": 0.802
+      },
+      "session/recall_any@3": {
+        "sum": 491.0,
+        "mean": 0.982
+      },
+      "session/ndcg_any@3": {
+        "sum": 457.8330701492673,
+        "mean": 0.9156661402985347
+      },
+      "session/recall_any@5": {
+        "sum": 496.0,
+        "mean": 0.992
+      },
+      "session/ndcg_any@5": {
+        "sum": 459.60821175886764,
+        "mean": 0.9192164235177352
+      },
+      "session/recall_any@10": {
+        "sum": 500.0,
+        "mean": 1.0
+      },
+      "session/ndcg_any@10": {
+        "sum": 459.2084516062024,
+        "mean": 0.9184169032124048
+      },
+      "session/recall_any@30": {
+        "sum": 500.0,
+        "mean": 1.0
+      },
+      "session/ndcg_any@30": {
+        "sum": 457.55632254503706,
+        "mean": 0.9151126450900742
+      },
+      "session/recall_any@50": {
+        "sum": 500.0,
+        "mean": 1.0
+      },
+      "session/ndcg_any@50": {
+        "sum": 457.41972679768696,
+        "mean": 0.9148394535953739
+      },
+      "turn/recall_any@1": {
+        "sum": 401.0,
+        "mean": 0.802
+      },
+      "turn/recall_any@3": {
+        "sum": 491.0,
+        "mean": 0.982
+      },
+      "turn/recall_any@5": {
+        "sum": 496.0,
+        "mean": 0.992
+      },
+      "turn/recall_any@10": {
+        "sum": 500.0,
+        "mean": 1.0
+      },
+      "turn/recall_any@30": {
+        "sum": 500.0,
+        "mean": 1.0
+      },
+      "turn/recall_any@50": {
+        "sum": 500.0,
+        "mean": 1.0
+      }
+    }
+  },
+  {
+    "file": "results_mempal_raw_session_20260414_1629.jsonl",
+    "rows": 500,
+    "unique_question_ids": 500,
+    "dev_overlap": 50,
+    "sha256": "2b71b5e514279c28443736561e2ac453045520b0f8832ff092e8a6143965e5d1",
+    "metrics": {
+      "session/recall_any@1": {
+        "sum": 403.0,
+        "mean": 0.806
+      },
+      "session/ndcg_any@1": {
+        "sum": 403.0,
+        "mean": 0.806
+      },
+      "session/recall_any@3": {
+        "sum": 463.0,
+        "mean": 0.926
+      },
+      "session/ndcg_any@3": {
+        "sum": 437.0583207169828,
+        "mean": 0.8741166414339656
+      },
+      "session/recall_any@5": {
+        "sum": 483.0,
+        "mean": 0.966
+      },
+      "session/ndcg_any@5": {
+        "sum": 443.858887728654,
+        "mean": 0.887717775457308
+      },
+      "session/recall_any@10": {
+        "sum": 491.0,
+        "mean": 0.982
+      },
+      "session/ndcg_any@10": {
+        "sum": 444.38064307530425,
+        "mean": 0.8887612861506085
+      },
+      "session/recall_any@30": {
+        "sum": 498.0,
+        "mean": 0.996
+      },
+      "session/ndcg_any@30": {
+        "sum": 444.52059140962217,
+        "mean": 0.8890411828192444
+      },
+      "session/recall_any@50": {
+        "sum": 500.0,
+        "mean": 1.0
+      },
+      "session/ndcg_any@50": {
+        "sum": 444.9164236105578,
+        "mean": 0.8898328472211156
+      },
+      "turn/recall_any@1": {
+        "sum": 403.0,
+        "mean": 0.806
+      },
+      "turn/recall_any@3": {
+        "sum": 463.0,
+        "mean": 0.926
+      },
+      "turn/recall_any@5": {
+        "sum": 483.0,
+        "mean": 0.966
+      },
+      "turn/recall_any@10": {
+        "sum": 491.0,
+        "mean": 0.982
+      },
+      "turn/recall_any@30": {
+        "sum": 498.0,
+        "mean": 0.996
+      },
+      "turn/recall_any@50": {
+        "sum": 500.0,
+        "mean": 1.0
+      }
+    }
+  }
+]
