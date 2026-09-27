@@ -60,10 +60,9 @@ export type ApplicationReceipt = {
   duplicate: boolean;
 };
 
+const timestamp = () => new Date().toISOString();
 const digest = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
-
-const timestamp = () => new Date().toISOString();
 
 export class ApplicationRepository {
   constructor(private readonly db: DatabaseSync) {}

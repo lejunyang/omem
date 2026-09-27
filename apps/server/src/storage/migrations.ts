@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 2;
+export const SUPPORTED_SCHEMA_VERSION = 3;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -277,6 +277,65 @@ const batchTwoStatements = [
   "CREATE INDEX event_inbox_state_idx ON event_inbox(state, received_at)",
 ] as const;
 
+const durableJobsAndInputsStatements = [
+  "ALTER TABLE jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 5 CHECK(max_attempts >= 1)",
+  "ALTER TABLE jobs ADD COLUMN last_error TEXT",
+  "ALTER TABLE jobs ADD COLUMN error_kind TEXT",
+  "ALTER TABLE jobs ADD COLUMN finished_at TEXT",
+  "ALTER TABLE jobs ADD COLUMN parent_job_id TEXT REFERENCES jobs(id)",
+  "ALTER TABLE jobs ADD COLUMN cause TEXT NOT NULL DEFAULT 'capture'",
+  "ALTER TABLE job_attempts ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE job_attempts ADD COLUMN error_kind TEXT",
+  "ALTER TABLE job_attempts ADD COLUMN outcome TEXT",
+  `CREATE TABLE job_control_requests(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES jobs(id),
+    request_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('cancel','retry')),
+    payload_digest TEXT NOT NULL,
+    response TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(workspace_id, request_id)
+  )`,
+  `CREATE TABLE input_batches(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('chat','screen')),
+    stream_key TEXT NOT NULL,
+    event_ids TEXT NOT NULL,
+    first_observed_at TEXT,
+    last_observed_at TEXT,
+    first_received_at TEXT NOT NULL,
+    last_received_at TEXT NOT NULL,
+    late_for_batch_id TEXT REFERENCES input_batches(id),
+    revision_id TEXT NOT NULL REFERENCES revisions(id),
+    job_id TEXT REFERENCES jobs(id),
+    created_at TEXT NOT NULL,
+    UNIQUE(workspace_id, source, stream_key, id)
+  )`,
+  `CREATE TABLE input_events(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('chat','screen')),
+    producer TEXT NOT NULL,
+    stream_key TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
+    content_digest TEXT NOT NULL,
+    envelope TEXT NOT NULL,
+    observed_at TEXT,
+    received_at TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','batched')),
+    batch_id TEXT REFERENCES input_batches(id),
+    UNIQUE(workspace_id, producer, event_id)
+  )`,
+  "CREATE INDEX jobs_lease_idx ON jobs(state, lease_expires_at)",
+  "CREATE INDEX job_control_job_idx ON job_control_requests(job_id, created_at)",
+  "CREATE INDEX input_events_pending_idx ON input_events(state, source, stream_key, received_at)",
+  "CREATE INDEX input_batches_stream_idx ON input_batches(workspace_id, source, stream_key, created_at)",
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -294,6 +353,12 @@ const migrations: readonly Migration[] = [
     name: "batch-two-contracts",
     statements: batchTwoStatements,
     checksum: checksum(batchTwoStatements),
+  },
+  {
+    version: 3,
+    name: "durable-jobs-and-input-buffers",
+    statements: durableJobsAndInputsStatements,
+    checksum: checksum(durableJobsAndInputsStatements),
   },
 ];
 

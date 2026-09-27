@@ -134,14 +134,45 @@ export async function larkInput(url: string): Promise<CaptureInput> {
     context: {},
   };
 }
-export function hookInput(value: unknown): CaptureInput {
+export type HookCaptureField =
+  | "sessionId"
+  | "turnId"
+  | "toolName"
+  | "prompt"
+  | "toolInput"
+  | "toolResponse"
+  | "error";
+
+export type HookCaptureProfile = {
+  id: string;
+  fields: readonly HookCaptureField[];
+  maxChars: number;
+};
+
+export const defaultHookCaptureProfile: HookCaptureProfile = {
+  id: "traex-default-v1",
+  fields: [
+    "sessionId",
+    "turnId",
+    "toolName",
+    "prompt",
+    "toolInput",
+    "toolResponse",
+    "error",
+  ],
+  maxChars: 200_000,
+};
+
+export function hookInput(
+  value: unknown,
+  profile: HookCaptureProfile = defaultHookCaptureProfile,
+): CaptureInput {
   if (!value || typeof value !== "object")
     throw Error("Hook payload must be an object");
   const v = value as Record<string, unknown>;
   const event = String(v.hook_event_name || v.event_type || "unknown");
   // Explicit field selection excludes hidden thought/transcript dumps, credentials and unknown extensions.
-  const selected = {
-    event,
+  const available: Record<HookCaptureField, unknown> = {
     sessionId: v.session_id,
     turnId: v.turn_id,
     toolName: v.tool_name,
@@ -150,6 +181,8 @@ export function hookInput(value: unknown): CaptureInput {
     toolResponse: v.tool_response,
     error: v.error,
   };
+  const selected: Record<string, unknown> = { event, profile: profile.id };
+  for (const field of profile.fields) selected[field] = available[field];
   const text = JSON.stringify(
     selected,
     (_k, val) =>
@@ -158,12 +191,49 @@ export function hookInput(value: unknown): CaptureInput {
         : val,
     2,
   );
-  if (text.length > 200000) throw Error("Hook payload exceeds capture budget");
+  if (text.length > profile.maxChars)
+    throw Error("Hook payload exceeds capture profile budget");
+  const explicitEventId = v.event_id ?? v.hook_id ?? v.message_id;
+  const fallbackIdentity = [
+    v.session_id,
+    v.turn_id,
+    v.tool_use_id,
+    v.tool_call_id,
+    v.tool_name,
+    event,
+    createHash("sha256").update(text).digest("hex"),
+  ]
+    .filter((part) => part !== undefined && part !== null && String(part))
+    .map(String)
+    .join(":");
+  const eventId = String(
+    explicitEventId ||
+      createHash("sha256").update(fallbackIdentity).digest("hex"),
+  ).slice(0, 500);
+  const rawEventAt = v.event_at ?? v.timestamp;
+  const eventAt =
+    typeof rawEventAt === "string" && !Number.isNaN(Date.parse(rawEventAt))
+      ? new Date(rawEventAt).toISOString()
+      : null;
   return {
     source: "hook",
-    externalId: createHash("sha256").update(text).digest("hex"),
+    externalId: `traex-hook:${eventId}`,
     title: `${event} · ${String(v.tool_name || "Agent 会话")}`,
     parts: [{ type: "text", text }],
     context: { event, runId: String(v.session_id || "unknown") },
+    observedAt: eventAt ?? undefined,
+    provenance: {
+      collectorId: `traex-hook:${profile.id}`,
+      actorId: null,
+      actorType: "unknown",
+      actorVerifiedBy: null,
+      sourceUri: null,
+      eventId,
+      eventAt,
+      timezone: null,
+      quoted: false,
+      forwarded: false,
+      producerKind: "original",
+    },
   };
 }

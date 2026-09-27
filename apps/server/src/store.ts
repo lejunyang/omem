@@ -19,6 +19,9 @@ import type {
 } from "../../../packages/contracts/src/index.js";
 import { migrateDatabase } from "./storage/migrations.js";
 import { ApplicationRepository } from "./storage/repository.js";
+import { stableDigest } from "./storage/digest.js";
+import { JobRepository } from "./jobs/repository.js";
+import { InputAggregator } from "./inputs/aggregator.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -27,6 +30,8 @@ type Row = Record<string, unknown>;
 export class Store {
   readonly db: DatabaseSync;
   readonly applications: ApplicationRepository;
+  readonly jobs: JobRepository;
+  readonly inputs: InputAggregator;
   constructor(readonly dataDir: string) {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const file = join(dataDir, "omem.sqlite");
@@ -36,6 +41,8 @@ export class Store {
       mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
       chmodSync(file, 0o600);
       this.applications = new ApplicationRepository(this.db);
+      this.jobs = new JobRepository(this.db);
+      this.inputs = new InputAggregator(this.db);
     } catch (error) {
       this.db.close();
       throw error;
@@ -73,6 +80,7 @@ export class Store {
     return changeId;
   }
   capture(input: CaptureInput) {
+    const payloadDigest = stableDigest(input);
     const parts: StoredPart[] = input.parts.map((p) => {
       if (p.type !== "image") return p;
       const bytes = Buffer.from(p.data, "base64");
@@ -108,6 +116,29 @@ export class Store {
     };
     const fingerprint = hash(JSON.stringify({ title: input.title, ...body }));
     return this.tx(() => {
+      const producer = input.provenance?.collectorId;
+      const eventId = input.provenance?.eventId;
+      if (producer && eventId) {
+        const receipt = this.db
+          .prepare(
+            `SELECT * FROM capture_receipts
+             WHERE workspace_id='personal' AND producer=? AND event_id=?`,
+          )
+          .get(producer, eventId) as Row | undefined;
+        if (receipt) {
+          if (receipt.payload_digest !== payloadDigest)
+            throw Error("CAPTURE_EVENT_CONFLICT");
+          const revision = this.revision(String(receipt.revision_id));
+          if (!revision) throw Error("Capture receipt revision is missing");
+          const queued = this.queueCaptureJob(input, revision);
+          return {
+            revision,
+            duplicate: true,
+            receipt: this.captureReceipt(receipt),
+            job: queued?.job ?? null,
+          };
+        }
+      }
       let source = this.db
         .prepare("SELECT * FROM sources WHERE namespace=? AND external_id=?")
         .get(input.source, input.externalId) as Row | undefined;
@@ -122,8 +153,21 @@ export class Store {
             .prepare("SELECT * FROM revisions WHERE id=?")
             .get(String(source.head)) as Row)
         : undefined;
-      if (head?.fingerprint === fingerprint)
-        return { revision: this.revision(String(head.id))!, duplicate: true };
+      if (head?.fingerprint === fingerprint) {
+        const revision = this.revision(String(head.id))!;
+        const receipt = this.writeCaptureReceipt(
+          input,
+          payloadDigest,
+          revision.id,
+        );
+        const queued = this.queueCaptureJob(input, revision);
+        return {
+          revision,
+          duplicate: true,
+          receipt,
+          job: queued?.job ?? null,
+        };
+      }
       const revisionId = id();
       this.db
         .prepare("INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)")
@@ -182,7 +226,91 @@ export class Store {
             : ""
         }当前：${texts.join(" ").slice(0, 200)}`,
       );
-      return { revision: this.revision(revisionId)!, duplicate: false };
+      const revision = this.revision(revisionId)!;
+      const receipt = this.writeCaptureReceipt(
+        input,
+        payloadDigest,
+        revision.id,
+      );
+      const queued = this.queueCaptureJob(input, revision);
+      return {
+        revision,
+        duplicate: false,
+        receipt,
+        job: queued?.job ?? null,
+      };
+    });
+  }
+  private captureReceipt(row: Row) {
+    return {
+      id: String(row.id),
+      workspaceId: String(row.workspace_id),
+      producer: String(row.producer),
+      eventId: String(row.event_id),
+      payloadDigest: String(row.payload_digest),
+      revisionId: String(row.revision_id),
+      sourceSequence: row.source_sequence ? String(row.source_sequence) : null,
+      createdAt: String(row.created_at),
+    };
+  }
+  private writeCaptureReceipt(
+    input: CaptureInput,
+    payloadDigest: string,
+    revisionId: string,
+  ) {
+    const producer = input.provenance?.collectorId;
+    const eventId = input.provenance?.eventId;
+    if (!producer || !eventId) return null;
+    const receipt = {
+      id: id(),
+      workspace_id: "personal",
+      producer,
+      event_id: eventId,
+      payload_digest: payloadDigest,
+      revision_id: revisionId,
+      source_sequence: input.upstreamVersion ?? null,
+      created_at: now(),
+    };
+    this.db
+      .prepare(
+        `INSERT INTO capture_receipts(
+           id,workspace_id,producer,event_id,payload_digest,revision_id,
+           source_sequence,created_at
+         ) VALUES(?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        receipt.id,
+        receipt.workspace_id,
+        receipt.producer,
+        receipt.event_id,
+        receipt.payload_digest,
+        receipt.revision_id,
+        receipt.source_sequence,
+        receipt.created_at,
+      );
+    return this.captureReceipt(receipt);
+  }
+  private queueCaptureJob(input: CaptureInput, revision: Revision) {
+    if (
+      input.source === "agent" ||
+      input.provenance?.producerKind === "derived"
+    )
+      return null;
+    const state = this.db
+      .prepare("SELECT validity_epoch FROM source_state WHERE source_id=?")
+      .get(revision.sourceId) as Row | undefined;
+    return this.jobs.enqueueInCurrentTransaction({
+      kind: "extract_claims",
+      inputRefs: [
+        {
+          revisionId: revision.id,
+          sourceId: revision.sourceId,
+          validityEpoch: Number(state?.validity_epoch ?? 1),
+        },
+      ],
+      roleVersion: "extractor@1",
+      policyVersion: "memory-policy@1",
+      cause: "capture",
     });
   }
   list() {
