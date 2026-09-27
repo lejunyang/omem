@@ -290,6 +290,54 @@ export class AssistantRuntime {
     this.inflight.clear();
   }
 
+  /**
+   * G20: recover unfinished (pending/running) turns after a restart or crash.
+   * Turns that already have committed tool receipts are NOT re-executed (we read
+   * their stored result and mark done). Turns with no receipts are re-run via
+   * executeTurn. ModelUnavailableError during recovery leaves the turn pending
+   * so it can be retried later.
+   */
+  async recoverUnfinishedTurns(): Promise<{ recovered: number; retried: number; alreadyCommitted: number }> {
+    const unfinished = this.router.unfinishedTurns();
+    let recovered = 0, retried = 0, alreadyCommitted = 0;
+    for (const turn of unfinished) {
+      const conversation = this.router.get(turn.conversationId);
+      if (!conversation) continue;
+      // Already has committed task receipts → don''t redo tools; just mark done.
+      const actions = (turn.toolActions as Array<{ taskId?: string; rejected?: boolean }>) ?? [];
+      const hasCommittedTool = actions.some((a) => a.taskId);
+      if (hasCommittedTool) {
+        this.router.completeTurn({
+          turnId: turn.id,
+          result: turn.result || "(restored from committed receipt)",
+          selectedEvidence: turn.selectedEvidence,
+          toolActions: turn.toolActions,
+          degraded: false,
+        });
+        alreadyCommitted++;
+        continue;
+      }
+      // Running status from a crash: mark back to pending and re-run.
+      this.router.startTurn(turn.id);
+      const controller = new AbortController();
+      const signal = this.deriveSignal(undefined, controller);
+      try {
+        await this.executeTurn({
+          turnId: turn.id,
+          conversation,
+          userText: turn.inputText,
+          transportEventId: turn.inputMessageRefs.transportEventId ?? null,
+          signal,
+        });
+        retried++;
+      } catch {
+        // Leave pending for retry on next recoverUnfinishedTurns.
+      }
+      recovered++;
+    }
+    return { recovered, retried, alreadyCommitted };
+  }
+
   private cancelInFlightTurn(conversationId: string) {
     const running = this.router
       .turns(conversationId)
@@ -564,6 +612,25 @@ export class AssistantRuntime {
     }
   }
 
+  /**
+   * G08: read the most recent done turn's selected evidence as working context.
+   * A follow-up like "按这个整理下一步" refers to what the previous turn found.
+   */
+  private priorWorkingContext(conversation: Conversation): AssistantEvidence[] {
+    const turns = this.router.turns(conversation.id);
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const t = turns[i]!;
+      if (t.inputMessageRefs.status !== "done") continue;
+      const selected = t.selectedEvidence as Array<{ fragmentId: string }>;
+      if (!selected || !selected.length) continue;
+      return selected
+        .map((s) => this.enrichEvidence(s.fragmentId))
+        .filter((e): e is AssistantEvidence => Boolean(e))
+        .filter((e) => this.isVisible(conversation, e.fragmentId));
+    }
+    return [];
+  }
+
   private enrichEvidence(fragmentId: string): AssistantEvidence | null {
     const record = this.store.evidence(fragmentId);
     if (!record) return null;
@@ -601,6 +668,7 @@ export class AssistantRuntime {
     call: AssistantCreateTaskCall;
     conversation: Conversation;
     evidence: AssistantEvidence[];
+    priorContext?: AssistantEvidence[];
     transportEventId: string | null;
     userText: string;
   }): { action: Record<string, unknown>; taskId?: string } {
@@ -617,6 +685,16 @@ export class AssistantRuntime {
       .map((id) => input.evidence.find((e) => e.fragmentId === id))
       .filter((e): e is AssistantEvidence => Boolean(e));
 
+
+    // G08: if the model did not cite this turn evidence but prior turns have
+    // working context, use that as cited evidence (anaphora resolution).
+    const contextCited = cited.length
+      ? cited
+      : (input.priorContext ?? []).filter((e) =>
+          (input.call.citationIds ?? []).length
+            ? (input.call.citationIds ?? []).includes(e.fragmentId)
+            : true,
+        );
     // B: for a direct owner assignment with no pre-existing cited fragments,
     // capture the owner message itself as a source (real fragment, owner-verified
     // provenance) so the proposal has valid evidence. This is NOT a hardcoded
@@ -657,7 +735,7 @@ export class AssistantRuntime {
         // capture failure is non-fatal; cited fragments still work
       }
     }
-    const allEvidence = [...directEvidence, ...cited];
+    const allEvidence = [...directEvidence, ...contextCited];
     // B: for a direct owner assignment, the userText itself is the trusted
     // original message. We do NOT require pre-existing cited evidence fragments —
     // the owner is directly telling us what to record. But if the model DID cite
