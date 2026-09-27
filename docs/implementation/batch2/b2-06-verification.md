@@ -41,7 +41,7 @@ osdk run check
 osdk run browser
 ```
 
-最终结果：`osdk deps --frozen` exit 0（npm up to date）；`osdk run check` exit 0（13 个测试文件、78 项测试通过，TypeScript/Vue 类型检查和生产构建通过）；`osdk run browser` exit 0（7/7 组浏览器检查通过）。本任务没有调用 ACP，也没有使用或排除任何产品模型；此前用户要求的“验证时不用 Astra”不需要通过写死模型限制来实现。
+最终结果：`osdk deps --frozen` exit 0（npm up to date）；`osdk run check` exit 0（13 个测试文件、79 项测试通过，TypeScript/Vue 类型检查和生产构建通过）；`osdk run browser` exit 0（7/7 组浏览器检查通过）。本任务没有调用 ACP，也没有使用或排除任何产品模型；此前用户要求的“验证时不用 Astra”不需要通过写死模型限制来实现。
 
 ## 剩余限制
 
