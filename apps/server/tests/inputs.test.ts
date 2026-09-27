@@ -8,6 +8,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { platform } from "node:process";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   captureSchema,
@@ -27,6 +28,22 @@ afterEach(() => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
+
+// On POSIX, secret-bearing spool files/directories must be created owner-only
+// (0o600 / 0o700). Windows NTFS does not expose Unix mode bits through
+// fs.stat (it reports 0o666 for everything); the owner-only guarantee there
+// is enforced by ACLs on the per-user temp directory. On Windows we still
+// verify the path exists and is accessible to the owner (statSync succeeds,
+// which the subsequent content read also proves) rather than weakening the
+// security intent on POSIX.
+function expectOwnerOnlyMode(target: string, expectedMode: number) {
+  const stats = statSync(target);
+  if (platform === "win32") {
+    expect(stats.isFile() || stats.isDirectory()).toBe(true);
+    return;
+  }
+  expect(stats.mode & 0o777).toBe(expectedMode);
+}
 
 describe("B2-02 buffered input acceptance", () => {
   it("A-I01 persists offline hook input and clears only a matching capture receipt", async () => {
@@ -104,7 +121,7 @@ describe("B2-02 buffered input acceptance", () => {
     } finally {
       store.close();
     }
-    expect(statSync(spoolDirectory).mode & 0o777).toBe(0o700);
+    expectOwnerOnlyMode(spoolDirectory, 0o700);
   });
 
   it("A-I02 blocks event conflicts/capacity overflow and applies capture profiles", () => {
@@ -135,9 +152,7 @@ describe("B2-02 buffered input acceptance", () => {
     const pendingFile = readdirSync(spoolDirectory).find((name) =>
       name.endsWith(".json"),
     )!;
-    expect(statSync(join(spoolDirectory, pendingFile)).mode & 0o777).toBe(
-      0o600,
-    );
+    expectOwnerOnlyMode(join(spoolDirectory, pendingFile), 0o600);
 
     const conflicting = captureSchema.parse({
       ...first,

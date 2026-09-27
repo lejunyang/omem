@@ -15,6 +15,7 @@ import {
   join,
   relative,
   resolve,
+  sep,
 } from "node:path";
 import {
   roleManifestSchema,
@@ -72,9 +73,17 @@ function files(directory: string, root = directory): string[] {
 export function directoryDigest(directory: string) {
   const hash = createHash("sha256");
   for (const path of files(directory)) {
-    hash.update(relative(directory, path));
+    // Normalize the relative path to forward slashes so the digest does not
+    // depend on the platform path separator (Windows uses "\\", POSIX "/").
+    const normalizedPath = relative(directory, path).split(sep).join("/");
+    hash.update(normalizedPath);
     hash.update("\0");
-    hash.update(readFileSync(path));
+    // Normalize file bytes to LF so a CRLF checkout on Windows produces the
+    // same digest as an LF checkout on Linux/macOS. Skill bundles are text
+    // assets (SKILL.md, *.yaml, *.json); the original manifest digests were
+    // computed against LF-normalized content.
+    const raw = readFileSync(path).toString("binary").replace(/\r\n/g, "\n");
+    hash.update(Buffer.from(raw, "binary"));
     hash.update("\0");
   }
   return hash.digest("hex");
