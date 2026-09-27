@@ -29,9 +29,18 @@ try {
       autoApplyPrecision:
         metrics.autoApply.precision !== null &&
         metrics.autoApply.precision >= 0.95,
-      evidenceSupportPrecision:
-        metrics.evidenceSupport.precision !== null &&
-        metrics.evidenceSupport.precision >= 0.95,
+      // F6: evidence support is no longer a substring check. The gate now
+      // requires semantic entailment (reverse statements score 0), not just
+      // that evidenceQuote appears in the source text.
+      semanticSupport:
+        metrics.semanticSupport.rate !== null &&
+        metrics.semanticSupport.rate >= 0.95,
+      citationLocation:
+        metrics.citationLocation.accuracy !== null &&
+        metrics.citationLocation.accuracy >= 0.95,
+      necessaryEvidenceCoverage:
+        metrics.necessaryEvidenceCoverage.rate !== null &&
+        metrics.necessaryEvidenceCoverage.rate >= 0.8,
       explicitCoverage:
         metrics.explicitCoverage.rate !== null &&
         metrics.explicitCoverage.rate >= 0.8,

@@ -10,7 +10,10 @@ import { BotmuxExistingAppProvider } from "../apps/server/src/integrations/lark/
 import { LarkRuntimeHost } from "../apps/server/src/integrations/lark/runtime.js";
 import { EncryptedSecretStore } from "../apps/server/src/integrations/lark/secret-store.js";
 import { MemoryService } from "../apps/server/src/memory/service.js";
-import { importDocumentDataset } from "../apps/server/src/quality/import.js";
+import {
+  importQualityDatasetEval,
+  QUALITY_EVAL_ONLY,
+} from "../apps/server/src/quality/import.js";
 import { Store } from "../apps/server/src/store.js";
 
 const sourceUri = process.argv[2] || process.env.OMEM_QUALITY_SOURCE;
@@ -47,7 +50,8 @@ const host = new LarkRuntimeHost({
 });
 
 try {
-  const imported = importDocumentDataset({
+  const imported = importQualityDatasetEval({
+    optIn: QUALITY_EVAL_ONLY,
     repository: host.quality.repository,
     document,
     sourceUri,

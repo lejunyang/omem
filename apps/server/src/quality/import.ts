@@ -1,3 +1,18 @@
+/**
+ * EVAL-ONLY: research annotation dataset builder.
+ *
+ * These helpers turn a Lark/HTML document into rule-split draft quality samples
+ * purely for the human annotation harness (`osdk run quality-lark-annotate`,
+ * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the
+ * ordinary capture/import pipeline: HTTP `/api/capture`, CLI `file/git/lark/capture`,
+ * `inputs.ingest`, and the learning pipeline must never call them. Ordinary
+ * material is stored as immutable source revisions + retrievable fragments only.
+ *
+ * The rule-based splitter deliberately labels every candidate `explicit/claim`
+ * with `autoApply=true` and copies the sentence verbatim; that is acceptable for
+ * seeding a research annotation set that a human then judges, and it must never
+ * leak into production knowledge capture.
+ */
 import type { CaptureInput } from "../../../../packages/contracts/src/index.js";
 import { stableDigest } from "../storage/digest.js";
 import {
@@ -8,6 +23,10 @@ import {
   type QualitySampleInput,
 } from "./repository.js";
 
+/** Eval-only opt-in discriminator. Normal import paths never (and must never)
+ *  pass this literal; it exists so an accidental production call fails loudly. */
+export const QUALITY_EVAL_ONLY = "EVAL_ONLY_RESEARCH" as const;
+
 const plainText = (value: string) =>
   value
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
@@ -17,7 +36,9 @@ const plainText = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-export function documentQualitySamples(
+/** Eval-only: split a research document into draft annotation samples.
+ *  Never imported by capture/import/HTTP/CLI/learning code paths. */
+export function documentQualityEvalSamples(
   document: CaptureInput,
   sourceUri: string,
   limit = 40,
@@ -132,7 +153,11 @@ export function documentQualitySamples(
   };
 }
 
-export function importDocumentDataset(input: {
+/** Eval-only: materialize a rule-split draft dataset for human annotation.
+ *  Guarded by {@link QUALITY_EVAL_ONLY}: the ordinary capture/import pipeline
+ *  does not create quality datasets or annotation samples. */
+export function importQualityDatasetEval(input: {
+  optIn: typeof QUALITY_EVAL_ONLY;
   repository: QualityRepository;
   document: CaptureInput;
   sourceUri: string;
@@ -140,7 +165,11 @@ export function importDocumentDataset(input: {
   split: "dev" | "holdout";
   targetCount: number;
 }) {
-  const generated = documentQualitySamples(
+  if (input.optIn !== QUALITY_EVAL_ONLY)
+    throw Error(
+      "QUALITY_IMPORT_IS_EVAL_ONLY: ordinary import must not create quality datasets",
+    );
+  const generated = documentQualityEvalSamples(
     input.document,
     input.sourceUri,
     input.targetCount,
