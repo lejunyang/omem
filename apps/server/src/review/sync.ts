@@ -1,11 +1,17 @@
-/** Incremental scanner that turns the omem repo itself into a code-review
- * knowledge base. Four material categories are imported through the normal
- * store.capture() pipeline; each file is one source whose externalId is the sha256
- * of its content, so unchanged files are captured as duplicates (no new revision)
- * and content changes land as fresh snapshots.
+﻿/** Incremental scanner that turns the omem repo itself into a code-review
+ * knowledge base. Each file is one source whose identity is its repo-relative
+ * path (`omem:<path>`), NOT a content hash: editing the same file appends a new
+ * revision on the same source, while two files that happen to share bytes stay
+ * independent sources. Content hash is recorded per revision only to detect change.
  *
- * Only plain text under a few fixed roots is read. Nothing here touches the
- * network, reads secrets, or starts any worker. */
+ * Snapshot honesty: every captured revision records the real HEAD commit, whether
+ * the working tree was dirty, the content hash and the sync time — never mtime.
+ * Incremental scans cover both committed changes and uncommitted/untracked work.
+ * Git failures degrade to a full rescan instead of silently reporting success.
+ *
+ * Only whitelisted plain text under fixed roots is read; symlink/junction escape,
+ * non-UTF-8 bytes and oversized files are rejected per-file without aborting.
+ * Nothing here touches the network, reads secrets, or starts any worker. */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
@@ -13,18 +19,28 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
-  statSync,
+  realpathSync,
+  lstatSync,
   writeFileSync,
   mkdirSync,
 } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { CaptureInput } from "../../../../packages/contracts/src/index.js";
 import type { Store } from "../store.js";
-import { reviewStateDir } from "./store.js";
+import {
+  reviewStateDir,
+  EXTERNAL_ID_PREFIX,
+  ensureReviewMetaTable,
+  migrateLegacySources,
+  setSourceMeta,
+  sourceIdForExternalId,
+} from "./store.js";
 
-const exec = promisify(execFile);
+const execFileAsync = promisify(execFile);
 
 export type ReviewCategory = "architecture" | "progress" | "decisions" | "research";
+
+export type FailedFile = { path: string; reason: string };
 
 export type SyncStats = {
   totalScanned: number;
@@ -32,11 +48,17 @@ export type SyncStats = {
   updated: number;
   unchanged: number;
   skipped: number;
+  failedCount: number;
 };
 
-export type SyncResult = SyncStats & {
+export type SyncResult = Omit<SyncStats, "failedCount"> & {
   lastSyncCommit: string | null;
   lastSyncAt: string;
+  dirty: boolean;
+  /** Files that could not be read/decoded/imported; the rest of the sync is
+   * unaffected. */
+  failed: FailedFile[];
+  warnings: string[];
 };
 
 export type SyncOptions = {
@@ -62,7 +84,16 @@ export function categoryName(category: string): string {
 
 /** Top-level directories the scanner is allowed to descend into. Keeping this
  * list fixed means node_modules / .git / build output are never walked. */
-const SCAN_ROOTS = ["apps/server/src", "packages", "apps/web/src", "docs"];
+const SCAN_ROOTS = ["apps", "packages", "docs", "scripts"];
+
+/** Root-level files explicitly admitted to the read whitelist. */
+const ROOT_FILES = [
+  "design.md",
+  "AGENTS.md",
+  "README.md",
+  "osdk.toml",
+  "package.json",
+];
 
 const EXCLUDED_DIR_SEGMENTS = new Set([
   "node_modules",
@@ -70,6 +101,9 @@ const EXCLUDED_DIR_SEGMENTS = new Set([
   ".git",
   ".repo-review",
 ]);
+
+/** Reject any single source file larger than this (binary/lockfile guard). */
+const MAX_FILE_BYTES = 500_000;
 
 function isExcluded(rel: string): boolean {
   const segments = rel.split("/");
@@ -82,11 +116,10 @@ function isExcluded(rel: string): boolean {
 
 function classify(rel: string): ReviewCategory | null {
   if (isExcluded(rel)) return null;
-  if (rel.startsWith("apps/server/src/") && rel.endsWith(".ts"))
-    return "architecture";
+  if (rel.startsWith("apps/") && rel.endsWith(".ts")) return "architecture";
   if (rel.startsWith("packages/") && rel.endsWith(".ts")) return "architecture";
   if (
-    rel.startsWith("apps/web/src/") &&
+    rel.startsWith("apps/web/") &&
     (rel.endsWith(".ts") || rel.endsWith(".vue"))
   )
     return "architecture";
@@ -106,6 +139,25 @@ function classify(rel: string): ReviewCategory | null {
   return null;
 }
 
+/** True when `abs` is a symlink/junction or resolves outside repoRoot. */
+function isUnsafeLink(abs: string, repoRoot: string): boolean {
+  let st;
+  try {
+    st = lstatSync(abs);
+  } catch {
+    return true;
+  }
+  if (st.isSymbolicLink()) return true;
+  let real: string;
+  try {
+    real = realpathSync(abs);
+  } catch {
+    return true;
+  }
+  const rel = relative(repoRoot, real).split(sep).join("/");
+  return rel.startsWith("..");
+}
+
 function walk(dir: string, repoRoot: string, out: string[]): void {
   let entries: import("node:fs").Dirent[];
   try {
@@ -116,6 +168,7 @@ function walk(dir: string, repoRoot: string, out: string[]): void {
   for (const entry of entries) {
     const abs = join(dir, entry.name);
     const rel = relative(repoRoot, abs).split(sep).join("/");
+    if (entry.isSymbolicLink()) continue; // never follow links
     if (entry.isDirectory()) {
       if (EXCLUDED_DIR_SEGMENTS.has(entry.name)) continue;
       walk(abs, repoRoot, out);
@@ -128,9 +181,12 @@ function walk(dir: string, repoRoot: string, out: string[]): void {
 /** Every candidate (file, category) the scanner knows about right now. */
 function collectCandidates(repoRoot: string): { rel: string; category: ReviewCategory }[] {
   const files: string[] = [];
-  for (const root of SCAN_ROOTS) walk(join(repoRoot, root), repoRoot, files);
-  // Root-level files the walker never reaches.
-  for (const rel of ["AGENTS.md", "README.md"])
+  for (const root of SCAN_ROOTS) {
+    const rootAbs = join(repoRoot, root);
+    if (existsSync(rootAbs) && !isUnsafeLink(rootAbs, repoRoot))
+      walk(rootAbs, repoRoot, files);
+  }
+  for (const rel of ROOT_FILES)
     if (existsSync(join(repoRoot, rel))) files.push(rel);
   const out: { rel: string; category: ReviewCategory }[] = [];
   for (const rel of files) {
@@ -183,43 +239,51 @@ function extractSymbols(text: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Git helpers. Best-effort: any failure (not a git repo, git missing) degrades
-// to a full scan and a null revision rather than crashing.
+// Git helpers. Every call returns a tagged result so callers can distinguish
+// "git ran, empty output" from "git failed" — the latter must degrade to a full
+// rescan, never to a silent empty-set + baseline advance.
 // ---------------------------------------------------------------------------
 
-async function git(args: string[], repoRoot: string): Promise<string | null> {
+type GitOutcome = { ok: true; stdout: string } | { ok: false; error: string };
+
+async function git(args: string[], repoRoot: string): Promise<GitOutcome> {
   try {
-    const { stdout } = await exec("git", args, {
+    const { stdout } = await execFileAsync("git", args, {
       cwd: repoRoot,
       timeout: 15_000,
-      maxBuffer: 2_000_000,
+      maxBuffer: 4_000_000,
     });
-    return stdout;
-  } catch {
-    return null;
+    return { ok: true, stdout };
+  } catch (error) {
+    return { ok: false, error: String((error as Error)?.message ?? error) };
   }
 }
 
-async function currentCommit(repoRoot: string): Promise<string | null> {
-  const out = await git(["rev-parse", "HEAD"], repoRoot);
-  return out ? out.trim() : null;
+type GitChange = { path: string; code: string; oldPath?: string };
+
+function parsePorcelain(stdout: string): GitChange[] {
+  const out: GitChange[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line) continue;
+    const xy = line.slice(0, 2);
+    const rest = line.slice(3);
+    if (!rest.trim()) continue;
+    if (rest.includes("->")) {
+      const arrow = rest.indexOf("->");
+      const oldPath = rest.slice(0, arrow).trim().replace(/^"|"$/g, "");
+      const newPath = rest.slice(arrow + 2).trim().replace(/^"|"$/g, "");
+      out.push({ path: newPath, code: "R", oldPath });
+    } else {
+      out.push({
+        path: rest.trim().replace(/^"|"$/g, "").split("\\").join("/"),
+        code: xy.trim(),
+      });
+    }
+  }
+  return out;
 }
 
-async function changedFilesBetween(
-  repoRoot: string,
-  from: string,
-  to: string,
-): Promise<Set<string>> {
-  const out = await git(["diff", "--name-only", from, to], repoRoot);
-  if (!out) return new Set();
-  return new Set(
-    out
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((p) => p.split("\\").join("/")),
-  );
-}
+const normPath = (p: string) => p.split("\\").join("/");
 
 // ---------------------------------------------------------------------------
 // State persistence.
@@ -239,13 +303,10 @@ function readLastCommit(stateDir: string): string | null {
   return value.length ? value : null;
 }
 
-function persistState(
-  stateDir: string,
-  result: SyncResult,
-): void {
+function persistState(stateDir: string, result: SyncResult, advance: boolean): void {
   mkdirSync(stateDir, { recursive: true });
   const { commit, meta } = statePaths(stateDir);
-  if (result.lastSyncCommit)
+  if (advance && result.lastSyncCommit)
     writeFileSync(commit, result.lastSyncCommit + "\n", "utf8");
   writeFileSync(meta, JSON.stringify(result, null, 2), "utf8");
 }
@@ -253,13 +314,20 @@ function persistState(
 export function readSyncStatus(
   repoRoot: string,
   stateDir: string = reviewStateDir(repoRoot),
-): { lastSyncCommit: string | null; lastSyncAt: string | null; stats: SyncStats | null } {
+): {
+  lastSyncCommit: string | null;
+  lastSyncAt: string | null;
+  stats: SyncStats | null;
+  dirty: boolean;
+  failed: FailedFile[];
+  warnings: string[];
+} {
   const { commit, meta } = statePaths(stateDir);
   const lastSyncCommit = existsSync(commit)
     ? readFileSync(commit, "utf8").trim() || null
     : null;
   if (!existsSync(meta))
-    return { lastSyncCommit, lastSyncAt: null, stats: null };
+    return { lastSyncCommit, lastSyncAt: null, stats: null, dirty: false, failed: [], warnings: [] };
   try {
     const parsed = JSON.parse(readFileSync(meta, "utf8")) as SyncResult;
     return {
@@ -271,10 +339,14 @@ export function readSyncStatus(
         updated: parsed.updated,
         unchanged: parsed.unchanged,
         skipped: parsed.skipped,
+        failedCount: Array.isArray(parsed.failed) ? parsed.failed.length : 0,
       },
+      dirty: parsed.dirty ?? false,
+      failed: parsed.failed ?? [],
+      warnings: parsed.warnings ?? [],
     };
   } catch {
-    return { lastSyncCommit, lastSyncAt: null, stats: null };
+    return { lastSyncCommit, lastSyncAt: null, stats: null, dirty: false, failed: [], warnings: [] };
   }
 }
 
@@ -282,53 +354,94 @@ export function readSyncStatus(
 // Core: import one file through store.capture().
 // ---------------------------------------------------------------------------
 
+type Snapshot = { commit: string | null; dirty: boolean };
+type CaptureOutcome = "imported" | "updated" | "unchanged" | "skipped" | "failed";
+
+function headContentHash(store: Store, externalId: string): string | null {
+  const row = store.db
+    .prepare(
+      `SELECT r.body AS body FROM sources s JOIN revisions r ON s.head=r.id
+       WHERE s.namespace='file' AND s.external_id=?`,
+    )
+    .get(externalId) as { body: string } | undefined;
+  if (!row) return null;
+  try {
+    const parsed = JSON.parse(row.body) as {
+      context?: { contentHash?: string };
+    };
+    return parsed.context?.contentHash ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function captureOne(
   store: Store,
   repoRoot: string,
   rel: string,
   category: ReviewCategory,
-  gitRevision: string | null,
-): "imported" | "updated" | "unchanged" | "skipped" {
+  snapshot: Snapshot,
+  recordFailed: (path: string, reason: string) => void,
+): CaptureOutcome {
   const abs = join(repoRoot, rel);
+  if (isUnsafeLink(abs, repoRoot)) {
+    recordFailed(rel, "symlink/junction escapes whitelist");
+    return "failed";
+  }
   let bytes: Buffer;
   try {
     bytes = readFileSync(abs);
   } catch {
-    return "skipped";
+    recordFailed(rel, "unreadable");
+    return "failed";
   }
-  // Reject binaries (images, fonts, compiled output, ...).
-  if (bytes.includes(0)) return "skipped";
-  const text = new TextDecoder("utf-8").decode(bytes);
+  if (bytes.length > MAX_FILE_BYTES) {
+    recordFailed(rel, `exceeds ${MAX_FILE_BYTES} bytes`);
+    return "failed";
+  }
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    recordFailed(rel, "not valid UTF-8");
+    return "failed";
+  }
   if (!text.trim()) return "skipped";
 
   const digest = createHash("sha256").update(text).digest("hex");
+  const externalId = EXTERNAL_ID_PREFIX + rel;
+
+  // Idempotency: if the head revision already captured this exact content, do NOT
+  // call capture (which would otherwise fingerprint the changing syncedAt and
+  // mint a duplicate revision). This keeps repeat syncs revision-for-revision stable.
+  if (headContentHash(store, externalId) === digest) return "unchanged";
+
   const sections =
     category === "architecture"
       ? splitCodeFragments(text)
       : splitMarkdownFragments(text);
-  // store.capture enforces a 2000-fragment budget; huge files fall back to a
-  // single whole-text part rather than throwing.
   let parts: CaptureInput["parts"];
   if (sections.length > 0 && sections.length <= 1500)
     parts = sections.map((section) => ({ type: "text" as const, text: section }));
   else parts = [{ type: "text" as const, text }];
 
-  const context: Record<string, unknown> = { category, filePath: rel };
-  if (category === "architecture") {
-    if (gitRevision) context.gitRevision = gitRevision;
-    context.symbols = extractSymbols(text);
-  }
+  const context: Record<string, unknown> = {
+    category,
+    filePath: rel,
+    gitCommit: snapshot.commit,
+    dirty: snapshot.dirty,
+    contentHash: digest,
+    syncedAt: new Date().toISOString(),
+  };
+  if (category === "architecture") context.symbols = extractSymbols(text);
   if (category === "decisions") {
-    try {
-      context.reviewDate = new Date(statSync(abs).mtime).toISOString().slice(0, 10);
-    } catch {
-      /* leave reviewDate absent */
-    }
+    // Review decision date = when it was synced, not file mtime.
+    context.reviewDate = new Date().toISOString().slice(0, 10);
   }
 
   const result = store.capture({
     source: "file",
-    externalId: digest,
+    externalId,
     title: rel,
     parts,
     context: context as unknown as CaptureInput["context"],
@@ -337,52 +450,147 @@ function captureOne(
   return result.revision.version > 1 ? "updated" : "imported";
 }
 
-/** Run the incremental review sync. First run (or when no git baseline exists)
- * imports every candidate file; later runs only re-examine files that changed
- * between the recorded commit and HEAD. */
+/** Reconcile removed/moved state: any path-identified source whose file is gone
+ * is marked removed; a reappearing file is un-removed. Renames get a moved_to
+ * pointer on the old source. */
+function reconcileSources(
+  store: Store,
+  repoRoot: string,
+  renames: Map<string, string>,
+): void {
+  const rows = store.db
+    .prepare(
+      `SELECT s.id AS id, s.external_id AS ext FROM sources s
+       WHERE s.namespace='file' AND s.external_id LIKE ?`,
+    )
+    .all(EXTERNAL_ID_PREFIX + "%") as { id: string; ext: string }[];
+  for (const row of rows) {
+    const p = String(row.ext).slice(EXTERNAL_ID_PREFIX.length);
+    const exists = existsSync(join(repoRoot, p));
+    const sid = String(row.id);
+    if (!exists) {
+      setSourceMeta(store, sid, { removed: true });
+    } else {
+      setSourceMeta(store, sid, { removed: false });
+    }
+  }
+  for (const [oldPath, newPath] of renames) {
+    const sid = sourceIdForExternalId(store, EXTERNAL_ID_PREFIX + oldPath);
+    if (sid) setSourceMeta(store, sid, { movedTo: newPath });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Core: run the incremental review sync.
+// ---------------------------------------------------------------------------
+
 export async function runReviewSync(
   store: Store,
   repoRoot: string,
   options: SyncOptions = {},
 ): Promise<SyncResult> {
+  ensureReviewMetaTable(store);
   const stateDir = options.stateDir ?? reviewStateDir(repoRoot);
+  mkdirSync(stateDir, { recursive: true });
+  migrateLegacySources(store, stateDir);
+
   const stats: SyncStats = {
     totalScanned: 0,
     imported: 0,
     updated: 0,
     unchanged: 0,
     skipped: 0,
+    failedCount: 0,
+  };
+  const failed: FailedFile[] = [];
+  const warnings: string[] = [];
+  const recordFailed = (path: string, reason: string) => {
+    failed.push({ path, reason });
+    stats.failedCount++;
   };
 
   let targets: { rel: string; category: ReviewCategory }[];
+  const snapshot: Snapshot = { commit: null, dirty: false };
+  let advanceBaseline = true;
+
   if (options.only?.length) {
     targets = options.only
       .map((rel) => {
-        const normalized = rel.split("\\").join("/");
+        const normalized = normPath(rel);
         return { rel: normalized, category: classify(normalized) };
       })
       .filter(
-        (t): t is { rel: string; category: ReviewCategory } => t.category !== null,
+        (t): t is { rel: string; category: ReviewCategory } =>
+          t.category !== null,
       );
   } else {
-    const current = await currentCommit(repoRoot);
+    const head = await git(["rev-parse", "HEAD"], repoRoot);
+    const current = head.ok ? head.stdout.trim() : null;
+    snapshot.commit = current || null;
     const baseline = readLastCommit(stateDir);
-    const all = collectCandidates(repoRoot);
-    if (baseline && current && baseline !== current) {
-      const changed = await changedFilesBetween(repoRoot, baseline, current);
-      targets = all.filter((t) => changed.has(t.rel));
-    } else {
-      targets = all;
-    }
-  }
 
-  const gitRevision = options.only
-    ? null
-    : await currentCommit(repoRoot);
+    const changed = new Map<string, GitChange>();
+    const renames = new Map<string, string>();
+    let fullRescan = false;
+
+    const status = await git(["status", "--porcelain"], repoRoot);
+    if (!status.ok) {
+      warnings.push(`git status failed: ${status.error}`);
+      fullRescan = true;
+      advanceBaseline = false;
+    } else {
+      snapshot.dirty = status.stdout.trim().length > 0;
+      for (const c of parsePorcelain(status.stdout)) {
+        changed.set(c.path, c);
+        if (c.code.startsWith("R") && c.oldPath)
+          renames.set(c.oldPath, c.path);
+      }
+    }
+
+    let baselineValid = false;
+    if (baseline && current) {
+      const cat = await git(["cat-file", "-t", baseline], repoRoot);
+      baselineValid = cat.ok;
+      if (baseline && !baselineValid)
+        warnings.push(`baseline commit ${baseline} missing; full rescan`);
+    }
+
+    if (!fullRescan && baseline && current && baselineValid && baseline !== current) {
+      const diff = await git(["diff", "--name-only", baseline, current], repoRoot);
+      if (!diff.ok) {
+        warnings.push(`git diff failed: ${diff.error}`);
+        fullRescan = true;
+        advanceBaseline = false;
+      } else {
+        for (const p of diff.stdout
+          .split(/\r?\n/)
+          .map((s) => normPath(s.trim()))
+          .filter(Boolean)) {
+          if (!changed.has(p)) changed.set(p, { path: p, code: "M" });
+        }
+      }
+    }
+
+    const all = collectCandidates(repoRoot);
+
+    if (fullRescan) {
+      targets = all;
+    } else if (!baseline || !current || !baselineValid) {
+      targets = all; // first run or lost baseline: full
+    } else if (changed.size === 0) {
+      targets = []; // baseline==HEAD and clean: nothing to do
+    } else {
+      targets = all.filter((t) => changed.has(t.rel));
+    }
+
+    reconcileSources(store, repoRoot, renames);
+  }
 
   for (const target of targets) {
     stats.totalScanned++;
-    switch (captureOne(store, repoRoot, target.rel, target.category, gitRevision)) {
+    switch (
+      captureOne(store, repoRoot, target.rel, target.category, snapshot, recordFailed)
+    ) {
       case "imported":
         stats.imported++;
         break;
@@ -395,14 +603,20 @@ export async function runReviewSync(
       case "skipped":
         stats.skipped++;
         break;
+      case "failed":
+        // counted inside recordFailed
+        break;
     }
   }
 
   const result: SyncResult = {
     ...stats,
-    lastSyncCommit: options.only ? null : await currentCommit(repoRoot),
+    lastSyncCommit: options.only ? null : snapshot.commit,
     lastSyncAt: new Date().toISOString(),
+    dirty: snapshot.dirty,
+    failed,
+    warnings,
   };
-  if (!options.only) persistState(stateDir, result);
+  if (!options.only) persistState(stateDir, result, advanceBaseline);
   return result;
 }
