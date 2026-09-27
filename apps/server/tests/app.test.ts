@@ -366,3 +366,46 @@ it("evaluates and atomically applies a supported owner task through HTTP", async
     await x.close();
   }
 });
+
+it("HTTP cancel e2e: POST /api/assistant/conversations/:id/turns/:turnId/cancel wires to runtime", async () => {
+  const a = await setup();
+  try {
+    // 1. Create a web conversation.
+    const convRes = await a.app.inject({
+      method: "POST",
+      url: "/api/assistant/conversations",
+      payload: { chatId: "test-cancel-e2e" },
+    });
+    expect(convRes.statusCode).toBe(200);
+    const conv = convRes.json();
+    expect(conv.id).toBeTruthy();
+
+    // 2. Send a turn (fixture ACP agent responds quickly).
+    const turnRes = await a.app.inject({
+      method: "POST",
+      url: `/api/assistant/conversations/${conv.id}/turns`,
+      payload: { text: "hello" },
+    });
+    expect(turnRes.statusCode).toBe(200);
+    const turnBody = turnRes.json();
+    const turnId = turnBody.turn?.id ?? turnBody.id;
+    expect(turnId).toBeTruthy();
+
+    // 3. Cancel the turn via HTTP.
+    const cancelRes = await a.app.inject({
+      method: "POST",
+      url: `/api/assistant/conversations/${conv.id}/turns/${turnId}/cancel`,
+    });
+    expect(cancelRes.statusCode).toBe(200);
+    expect(cancelRes.json()).toEqual({ ok: true });
+
+    // 4. Cancel a nonexistent turn → 404.
+    const badCancel = await a.app.inject({
+      method: "POST",
+      url: `/api/assistant/conversations/${conv.id}/turns/nonexistent/cancel`,
+    });
+    expect(badCancel.statusCode).toBe(404);
+  } finally {
+    await a.close();
+  }
+});

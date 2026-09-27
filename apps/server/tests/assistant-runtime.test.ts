@@ -642,6 +642,39 @@ describe("AssistantRuntime (async, governed)", () => {
     // Task NOT duplicated.
     expect(store.tasks().length).toBe(1);
   });
+
+  it("G20 combo: model unavailable leaves pending, retrieval still works, recovery retries", async () => {
+    const { store } = setup();
+    captureSource(store, "docs", "接口在 GET /v1/items。");
+    const retrieval = new KeywordRetrieval(store.db);
+    const memory = new MemoryService(store, { ownerId: "owner" });
+    // Phase 1: model throws ModelUnavailableError.
+    let mode: "unavailable" | "ok" = "unavailable";
+    const model: AssistantModelPort = {
+      generate: async () => {
+        if (mode === "unavailable") throw new ModelUnavailableError("no model");
+        return { answer: "done", citationIds: [], toolCalls: [{ tool: "create_task", title: "买牛奶", detail: "明天" }] };
+      },
+    };
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval });
+    const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
+    // Turn 1: model unavailable → turn failed (per current H-G20 behavior).
+    const r1 = await runtime.turn({ conversationId: conv.id, userText: "帮我记一下：买牛奶" });
+    expect(r1.turn.inputMessageRefs.status).toBe("failed");
+    expect(r1.turn.inputMessageRefs.error).toContain("model_unavailable");
+    // RetrievalPort still works even when model is down.
+    const hits = retrieval.searchSources({ text: "接口", limit: 5 });
+    expect(hits.length).toBeGreaterThan(0);
+    // Phase 2: mark the failed turn back to pending, switch model to ok, recover.
+    const turnId = r1.turn.id;
+    store.db.prepare(`UPDATE conversation_turns SET input_message_refs=? WHERE id=?`).run(JSON.stringify({status:"pending"}), turnId);
+    mode = "ok";
+    const runtime2 = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval });
+    const result = await runtime2.recoverUnfinishedTurns();
+    expect(result.recovered).toBe(1);
+    // Turn completed with a real task, no duplicate.
+    expect(store.tasks().length).toBe(1);
+  });
 });
 
 
