@@ -1,7 +1,7 @@
 import type { AgentProfile } from "../packages/contracts/src/index.js";
 import { acp, optionValues } from "../apps/server/src/agents.js";
 
-export async function selectNonAstraProfile(base: AgentProfile, cwd: string) {
+export async function selectLiveProfile(base: AgentProfile, cwd: string) {
   const probe = await acp(
     base,
     cwd,
@@ -18,17 +18,14 @@ export async function selectNonAstraProfile(base: AgentProfile, cwd: string) {
     (option) => option.value,
   );
   const requestedModel = process.env.OMEM_LIVE_MODEL;
-  if (requestedModel && /astra/i.test(requestedModel))
-    throw Error("Astra models are forbidden for ACP verification");
   const model = requestedModel
     ? availableModels.find((candidate) => candidate === requestedModel)
-    : ["gpt-5.4", "gpt-5.2", ...availableModels].find(
-        (candidate, index, values) =>
-          !/astra/i.test(candidate) &&
-          availableModels.includes(candidate) &&
-          values.indexOf(candidate) === index,
-      );
-  if (!model) throw Error("No non-Astra ACP model is available");
+    : base.model && availableModels.includes(base.model)
+      ? base.model
+      : modelOption.currentValue || availableModels[0];
+  if (!model) throw Error("No ACP model is available");
+  if (requestedModel && model !== requestedModel)
+    throw Error(`Requested ACP model is unavailable: ${requestedModel}`);
   return {
     probe,
     profile: {
@@ -37,9 +34,4 @@ export async function selectNonAstraProfile(base: AgentProfile, cwd: string) {
       effort: process.env.OMEM_LIVE_EFFORT,
     } satisfies AgentProfile,
   };
-}
-
-export function assertNonAstra(model: unknown) {
-  if (/astra/i.test(String(model)))
-    throw Error("ACP verification unexpectedly used an Astra model");
 }
