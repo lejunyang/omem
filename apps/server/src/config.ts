@@ -17,12 +17,22 @@ const schema = z
       })
       .strict()
       .default({ enabled: false, profileId: "traex", pollMs: 1000 }),
+    lark: z
+      .object({
+        enabled: z.boolean().default(false),
+        pollMs: z.number().int().min(100).max(60_000).default(1000),
+        botmuxConfig: z.string().min(1).optional(),
+      })
+      .strict()
+      .default({ enabled: false, pollMs: 1000 }),
   })
   .strict();
 type ParsedConfig = z.infer<typeof schema>;
 type LearningConfig = ParsedConfig["learning"];
-export type Config = Omit<ParsedConfig, "learning"> & {
+type LarkConfig = ParsedConfig["lark"];
+export type Config = Omit<ParsedConfig, "learning" | "lark"> & {
   learning?: LearningConfig;
+  lark?: LarkConfig;
   dataDir: string;
   agentCwd: string;
   token?: string;

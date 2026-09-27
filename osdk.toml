@@ -31,3 +31,5 @@ run = "npm run test:live-role"
 run = "npm run test:live-learning"
 [tasks.live-pipeline]
 run = "npm run test:live-pipeline"
+[tasks.live-lark-host]
+run = "npm run test:live-lark-host"

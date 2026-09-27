@@ -109,10 +109,118 @@ export type LarkCapabilityResult = {
     events: string[];
     callbacks: string[];
     botOpenId?: string;
+    eventVerification?: "runtime";
   };
   missing: string[];
   repairHint?: string;
 };
+
+type FetchLike = typeof fetch;
+
+const stringList = (value: unknown, field?: string) =>
+  Array.isArray(value)
+    ? value.flatMap((item) => {
+        if (typeof item === "string") return [item];
+        if (
+          field &&
+          item &&
+          typeof item === "object" &&
+          typeof (item as Record<string, unknown>)[field] === "string"
+        )
+          return [String((item as Record<string, unknown>)[field])];
+        return [];
+      })
+    : [];
+
+/** Public OpenAPI capability probe. Event subscriptions are confirmed by the
+ * first matching WebSocket delivery (pairing requires im.message.receive_v1),
+ * because the public application endpoint does not expose the event list. */
+export class OfficialLarkCapabilityProbe implements LarkCapabilityProbe {
+  constructor(private readonly request: FetchLike = fetch) {}
+
+  async probe(
+    credentials: { appId: string; clientSecret: string },
+    requested: LarkRequestedConfig,
+  ): Promise<LarkCapabilityResult> {
+    const base = "https://open.feishu.cn";
+    const tokenResponse = await this.request(
+      `${base}/open-apis/auth/v3/tenant_access_token/internal`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          app_id: credentials.appId,
+          app_secret: credentials.clientSecret,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    const tokenBody = (await tokenResponse.json()) as {
+      code?: number;
+      tenant_access_token?: string;
+    };
+    if (
+      !tokenResponse.ok ||
+      tokenBody.code !== 0 ||
+      !tokenBody.tenant_access_token
+    )
+      throw Error(`LARK_CAPABILITY_TOKEN_FAILED:${tokenBody.code ?? "http"}`);
+    const headers = {
+      Authorization: `Bearer ${tokenBody.tenant_access_token}`,
+    };
+    const [botResponse, appResponse] = await Promise.all([
+      this.request(`${base}/open-apis/bot/v3/info/`, {
+        headers,
+        signal: AbortSignal.timeout(15_000),
+      }),
+      this.request(
+        `${base}/open-apis/application/v6/applications/${credentials.appId}?lang=zh_cn`,
+        { headers, signal: AbortSignal.timeout(15_000) },
+      ),
+    ]);
+    const botBody = (await botResponse.json()) as any;
+    const appBody = (await appResponse.json()) as any;
+    if (!botResponse.ok || botBody?.code !== 0)
+      throw Error(`LARK_CAPABILITY_BOT_FAILED:${botBody?.code ?? "http"}`);
+    if (!appResponse.ok || appBody?.code !== 0)
+      throw Error(`LARK_CAPABILITY_APP_FAILED:${appBody?.code ?? "http"}`);
+    const app = appBody?.data?.app ?? appBody?.data?.application ?? {};
+    const scopes = [...new Set(stringList(app?.scopes, "scope"))].sort();
+    const callbacks = [
+      ...new Set(
+        stringList(app?.callback_info?.subscribed_callbacks).concat(
+          stringList(app?.callbacks),
+        ),
+      ),
+    ].sort();
+    const requiredScopes = [
+      ...new Set([
+        ...requested.addons.scopes.tenant,
+        ...requested.addons.scopes.user,
+      ]),
+    ];
+    const missing = [
+      ...requiredScopes.filter((scope) => !scopes.includes(scope)),
+      ...requested.addons.callbacks.items.filter(
+        (callback) => !callbacks.includes(callback),
+      ),
+    ].sort();
+    return {
+      actual: {
+        scopes,
+        events: [],
+        callbacks,
+        botOpenId:
+          botBody?.bot?.open_id ?? botBody?.data?.bot?.open_id ?? undefined,
+        eventVerification: "runtime",
+      },
+      missing,
+      repairHint: missing.length
+        ? "Grant the missing app scopes/callbacks and retry capability checking. Event subscriptions are verified by WebSocket delivery during pairing."
+        : "Scopes and callbacks verified by OpenAPI; event subscriptions are verified by WebSocket delivery during pairing.",
+    };
+  }
+}
 
 export interface LarkCapabilityProbe {
   probe(

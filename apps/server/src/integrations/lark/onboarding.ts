@@ -462,6 +462,12 @@ export class LarkOnboardingService {
     return this.status(onboardingId);
   }
 
+  async stop() {
+    const active = [...this.active.values()];
+    for (const run of active) run.controller.abort();
+    await Promise.allSettled(active.map((run) => run.completion));
+  }
+
   cancel(onboardingId: string) {
     const active = this.active.get(onboardingId);
     this.transaction(() => {

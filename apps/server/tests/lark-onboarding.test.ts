@@ -19,6 +19,7 @@ import {
 } from "../src/integrations/lark/existing-apps.js";
 import {
   installLarkRegistrationRetry,
+  OfficialLarkCapabilityProbe,
   OfficialLarkRegistrationAdapter,
   type LarkCapabilityProbe,
   type LarkCapabilityResult,
@@ -139,6 +140,72 @@ async function ready(
 }
 
 describe("B2-05 Lark onboarding acceptance", () => {
+  it("probes public app scopes, callbacks and bot identity without exposing credentials", async () => {
+    const requests: { url: string; init?: RequestInit }[] = [];
+    const responses = [
+      { code: 0, tenant_access_token: "fixture-tenant-token" },
+      { code: 0, bot: { open_id: "ou_probe_bot" } },
+      {
+        code: 0,
+        data: {
+          app: {
+            scopes: [{ scope: "scope:granted" }],
+            callback_info: {
+              callback_type: "websocket",
+              subscribed_callbacks: ["card.action.trigger"],
+            },
+          },
+        },
+      },
+    ];
+    const probe = new OfficialLarkCapabilityProbe((async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch);
+    const result = await probe.probe(
+      { appId: "cli_probe1", clientSecret: "fixture-probe-secret" },
+      {
+        source: "omem",
+        appPreset: { name: "Probe", desc: "Probe app" },
+        addons: {
+          preset: false,
+          scopes: {
+            tenant: ["scope:granted", "scope:missing"],
+            user: [],
+          },
+          events: { items: { tenant: ["im.message.receive_v1"], user: [] } },
+          callbacks: { items: ["card.action.trigger"] },
+        },
+      },
+    );
+    expect(result).toEqual({
+      actual: {
+        scopes: ["scope:granted"],
+        events: [],
+        callbacks: ["card.action.trigger"],
+        botOpenId: "ou_probe_bot",
+        eventVerification: "runtime",
+      },
+      missing: ["scope:missing"],
+      repairHint:
+        "Grant the missing app scopes/callbacks and retry capability checking. Event subscriptions are verified by WebSocket delivery during pairing.",
+    });
+    expect(requests.map((request) => request.url)).toEqual([
+      "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+      "https://open.feishu.cn/open-apis/bot/v3/info/",
+      "https://open.feishu.cn/open-apis/application/v6/applications/cli_probe1?lang=zh_cn",
+    ]);
+    expect(requests[2]?.init?.headers).toEqual({
+      Authorization: "Bearer fixture-tenant-token",
+    });
+  });
+
   it("A-L01 maps createOnly/preset/addons to the official SDK and exposes QR metadata", async () => {
     let sdkOptions: Record<string, unknown> | undefined;
     const adapter = new OfficialLarkRegistrationAdapter((async (options) => {
