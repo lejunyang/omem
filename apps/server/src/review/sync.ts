@@ -503,7 +503,13 @@ function captureOne(
 
 /** Reconcile removed/moved state: any path-identified source whose file is gone
  * is marked removed; a reappearing file is un-removed. Renames get a moved_to
- * pointer on the old source. */
+ * pointer on the old source.
+ *
+ * Virtual derived sources (externalId `omem:repo-review/...`, e.g. the generated
+ * intent index) have NO backing file on disk. They must never be treated as
+ * deleted; any earlier mis-flag is healed here on every sync. */
+const VIRTUAL_SOURCE_PREFIX = "repo-review/";
+
 function reconcileSources(
   store: Store,
   repoRoot: string,
@@ -517,8 +523,13 @@ function reconcileSources(
     .all(EXTERNAL_ID_PREFIX + "%") as { id: string; ext: string }[];
   for (const row of rows) {
     const p = String(row.ext).slice(EXTERNAL_ID_PREFIX.length);
-    const exists = existsSync(join(repoRoot, p));
     const sid = String(row.id);
+    if (p.startsWith(VIRTUAL_SOURCE_PREFIX)) {
+      // Derived, generated at sync time: never removed; heal any prior flag.
+      setSourceMeta(store, sid, { removed: false });
+      continue;
+    }
+    const exists = existsSync(join(repoRoot, p));
     if (!exists) {
       setSourceMeta(store, sid, { removed: true });
     } else {
