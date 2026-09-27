@@ -1,5 +1,7 @@
 # omem：会积累证据、会修正自己、会解释来路的 Agent 记忆库
 
+最新入口/治理设计：用户已明确飞书主Agent为第一入口，Web为后台和第二入口。参见 [assistant-v3](implementation/assistant-v3/README.md)；输入先保真与可检索化，深度巩固按任务/使用/更新触发，worker不再直接把所有不确定项交给用户。
+
 > 实施更新（2026-09-26）：用户已确认个人助理、服务器/本地运行、Vue 和 CLI/ACP 优先。当前已实现能力见 [实施状态](implementation/status.md)，已确认需求见 [决策记录](decisions.md)，视觉规范见 [根 design.md](../design.md)。下文为第一轮架构/原型设计，不等于当前运行代码。
 
 版本：设计提案 v0.1 · 2026-09-26。状态：可评审设计，含交互原型；尚未实现服务端或实测开源引擎。本文件是产品与架构决策入口，细节见 [技术实施方案](implementation.md)、[引用契约](contracts/evidence-model.md)、[调研](research.md)。
