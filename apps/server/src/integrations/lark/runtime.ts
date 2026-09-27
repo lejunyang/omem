@@ -18,6 +18,7 @@ import {
   type LarkRealtimeAdapter,
 } from "./realtime.js";
 import type { EncryptedSecretStore } from "./secret-store.js";
+import { QualityLarkAnnotationService } from "../../quality/lark-annotations.js";
 
 type Row = Record<string, unknown>;
 
@@ -33,6 +34,7 @@ export class LarkRuntimeHost {
   private readonly delivery: LarkDeliveryWorker;
   private readonly batcher: LarkNotificationBatcher;
   private readonly cards: LarkCardActionService;
+  readonly quality: QualityLarkAnnotationService;
   private loopPromise: Promise<void> | null = null;
   private processedDeliveries = 0;
   private processedCards = 0;
@@ -67,6 +69,7 @@ export class LarkRuntimeHost {
       messages,
       `${workerId}-cards`,
     );
+    this.quality = new QualityLarkAnnotationService(input.store, input.secrets);
   }
 
   private activeConnections() {
@@ -97,7 +100,16 @@ export class LarkRuntimeHost {
           this.input.realtimeAdapter ?? new OfficialLarkRealtimeAdapter(),
           new LarkEventInbox(this.input.store),
           `connection-${process.pid}-${randomUUID().slice(0, 8)}`,
-          this.cards,
+          {
+            enqueue: (event) => {
+              const protocol = (
+                event.payload as { action?: { value?: { protocol?: unknown } } }
+              )?.action?.value?.protocol;
+              return protocol === "omem.quality.v1"
+                ? this.quality.handle(event)
+                : this.cards.enqueue(event);
+            },
+          },
           this.input.onboarding,
         );
         this.connections.set(id, manager);

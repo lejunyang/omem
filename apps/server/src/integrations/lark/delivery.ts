@@ -349,6 +349,12 @@ export class LarkDeliveryRepository {
            WHERE id=(SELECT card_action_id FROM delivery_intents WHERE id=?)`,
         )
         .run(messageId, lease.id);
+      this.db
+        .prepare(
+          `UPDATE quality_annotation_sessions SET message_id=?,updated_at=?
+           WHERE id=(SELECT annotation_session_id FROM delivery_intents WHERE id=?)`,
+        )
+        .run(messageId, now.toISOString(), lease.id);
     });
   }
 

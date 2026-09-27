@@ -35,6 +35,7 @@ import {
 import { EncryptedSecretStore } from "./integrations/lark/secret-store.js";
 import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js";
 import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
+import { QualityRepository, qualityLabelSchema } from "./quality/repository.js";
 const str = z.string().min(1).max(2000);
 export async function buildApp(
   config: Config,
@@ -93,6 +94,8 @@ export async function buildApp(
       throw error;
     }
   }
+  const quality =
+    larkRuntime?.quality.repository ?? new QualityRepository(store.db);
   const requireLark = () => {
     if (!lark) throw Error("LARK_ONBOARDING_NOT_CONFIGURED");
     return lark;
@@ -354,6 +357,54 @@ export async function buildApp(
         subject_id: req.query.subjectId || null,
       }),
   );
+  app.get("/api/quality/datasets", async () => quality.datasets());
+  app.get<{ Params: { id: string } }>(
+    "/api/quality/datasets/:id/samples",
+    async (req) => quality.samples(req.params.id),
+  );
+  app.post<{ Params: { id: string } }>(
+    "/api/quality/samples/:id/revise",
+    async (req) => {
+      const body = z
+        .object({
+          expectedLabelDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          label: qualityLabelSchema,
+        })
+        .strict()
+        .parse(req.body);
+      return quality.revise({ sampleId: req.params.id, ...body });
+    },
+  );
+  app.post<{ Params: { id: string } }>(
+    "/api/quality/datasets/:id/freeze",
+    async (req) => quality.freeze(req.params.id),
+  );
+  app.post<{ Params: { id: string } }>(
+    "/api/quality/datasets/:id/annotation-session",
+    async (req) => {
+      if (!larkRuntime) throw Error("LARK_RUNTIME_NOT_CONFIGURED");
+      const body = z
+        .object({
+          appId: z
+            .string()
+            .regex(/^cli_[a-zA-Z0-9]+$/)
+            .optional(),
+          resend: z.boolean().default(false),
+        })
+        .strict()
+        .parse(req.body ?? {});
+      return larkRuntime.quality.start(req.params.id, body.appId, {
+        resend: body.resend,
+      });
+    },
+  );
+  app.post<{ Params: { id: string } }>(
+    "/api/quality/annotation-sessions/:id/cancel",
+    async (req) => {
+      if (!larkRuntime) throw Error("LARK_RUNTIME_NOT_CONFIGURED");
+      return larkRuntime.quality.cancel(req.params.id);
+    },
+  );
   app.post("/api/integrations/lark/onboarding", async (req) =>
     requireLark().start(larkOnboardingStartSchema.parse(req.body)),
   );
@@ -470,6 +521,7 @@ export async function buildApp(
     runs,
     memory,
     feedback,
+    quality,
     learning,
     lark,
     larkRuntime,
