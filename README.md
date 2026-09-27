@@ -1,6 +1,6 @@
 # omem
 
-个人工作记忆与助理基础系统。Vue 阅读台 + 固定版本的多模态证据 + Agent CLI/ACP 问答 + 需求待办与通知。当前交付包含第一批可运行基础链路，以及 Batch 2 的版本化合同/SQLite 迁移、持久任务和输入缓冲基础；自动知识提炼、屏幕采集器、飞书群机器人和外部通知仍按后续里程碑推进。
+个人工作记忆与助理基础系统。Vue 阅读台 + 固定版本的多模态证据 + Agent CLI/ACP 问答 + 需求待办与通知。当前交付包含第一批可运行基础链路，以及 Batch 2 的版本化合同/SQLite 迁移、持久任务、输入缓冲、受治理记忆应用和飞书连接/可靠投递核心；自动 worker 编排、屏幕采集器、飞书产品页面和真实测试应用联调仍按后续里程碑推进。
 
 ## 启动
 
@@ -61,9 +61,9 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 `POST /api/proposals/evaluate` 接受严格 Proposal 与可信 verifier assessment，服务端再执行固定引文/图片、source head/epoch、owner/转发、冲突、影响范围和 CAS 门；安全的小范围 task/claim/episode 可原子写入 change、通知、delivery intent 和 receipt，其余进入可审计 decision 或拒绝。`POST /api/decisions/:id` 会在批准时重新检查来源版本。反馈通过 `POST /api/feedback` 去重，只有已验证、原始、同 scope 且有现存证据的纠正进入后续召回；ACL/预算/自动审批建议只记 shadow。当前自动 worker 编排尚未启动，HTTP evaluate 应只接内部 verifier 结果。
 
-通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。飞书消息投递通道还未接入。
+通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。配置 active 飞书 owner target 后，正式应用事务会同时生成绑定版本固定的飞书 delivery intent；sender 使用官方 SDK、同 UUID 有界重试和 `unknown` 状态。当前只实现逐条即时外发，短窗合并和定时摘要仍未实现。
 
-飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、实际 capability probe 接口和一次性 pairing/binding 仓储。创建应用属于用户资产变更，当前主进程不会在缺少 secret key 与真实 capability probe 时自动启用 onboarding；本仓库也没有替用户创建测试应用。B2-06 才接 WebSocket 收件、卡片回调和外部投递。
+飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、实际 capability probe 接口、一次性 pairing/binding、官方 WebSocket adapter、单消费者 lease、事件 inbox、群监控显式授权、通知 sender 和耐竞态的 Card 2.0 决策队列。可手工导入现有应用，也可从本机 botmux 配置按 app_id 选择后加密转存，不修改 botmux 配置。创建应用、开通权限和实际发送都属于用户资产变更；当前主进程不会在缺少 secret key、真实 capability probe 与显式 host 装配时自动启用，也没有替用户创建或连接测试应用。
 
 详细运行环境、Docker/osdk 实测结果与后续引擎依赖见 [环境说明](docs/implementation/environment.md)。
 

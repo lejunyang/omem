@@ -161,7 +161,7 @@ describe("B2-01 migration acceptance", () => {
 
     const store = new Store(directory);
     try {
-      expect(scalar(store.db, "PRAGMA user_version")).toBe(6);
+      expect(scalar(store.db, "PRAGMA user_version")).toBe(7);
       const revision = store.revision(legacyFixture.oldRevisionId);
       expect(revision).toMatchObject({
         id: legacyFixture.oldRevisionId,
@@ -278,8 +278,8 @@ describe("B2-01 migration acceptance", () => {
     interrupted.close();
 
     const first = new Store(directory);
-    expect(scalar(first.db, "PRAGMA user_version")).toBe(6);
-    expect(scalar(first.db, "SELECT count(*) FROM migrations")).toBe(6);
+    expect(scalar(first.db, "PRAGMA user_version")).toBe(7);
+    expect(scalar(first.db, "SELECT count(*) FROM migrations")).toBe(7);
     const schemaCount = scalar(
       first.db,
       "SELECT count(*) FROM sqlite_master WHERE type IN ('table','index')",
@@ -288,8 +288,8 @@ describe("B2-01 migration acceptance", () => {
 
     const second = new Store(directory);
     try {
-      expect(scalar(second.db, "PRAGMA user_version")).toBe(6);
-      expect(scalar(second.db, "SELECT count(*) FROM migrations")).toBe(6);
+      expect(scalar(second.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(second.db, "SELECT count(*) FROM migrations")).toBe(7);
       expect(
         scalar(
           second.db,
@@ -316,9 +316,9 @@ describe("B2-01 migration acceptance", () => {
     v2Interrupted.close();
     const upgradedFromV2 = new Store(v2Directory);
     try {
-      expect(scalar(upgradedFromV2.db, "PRAGMA user_version")).toBe(6);
+      expect(scalar(upgradedFromV2.db, "PRAGMA user_version")).toBe(7);
       expect(scalar(upgradedFromV2.db, "SELECT count(*) FROM migrations")).toBe(
-        6,
+        7,
       );
       expect(
         upgradedFromV2.db
@@ -346,9 +346,9 @@ describe("B2-01 migration acceptance", () => {
     v3Interrupted.close();
     const upgradedFromV3 = new Store(v3Directory);
     try {
-      expect(scalar(upgradedFromV3.db, "PRAGMA user_version")).toBe(6);
+      expect(scalar(upgradedFromV3.db, "PRAGMA user_version")).toBe(7);
       expect(scalar(upgradedFromV3.db, "SELECT count(*) FROM migrations")).toBe(
-        6,
+        7,
       );
       expect(
         upgradedFromV3.db
@@ -377,9 +377,9 @@ describe("B2-01 migration acceptance", () => {
     v4Interrupted.close();
     const upgradedFromV4 = new Store(v4Directory);
     try {
-      expect(scalar(upgradedFromV4.db, "PRAGMA user_version")).toBe(6);
+      expect(scalar(upgradedFromV4.db, "PRAGMA user_version")).toBe(7);
       expect(scalar(upgradedFromV4.db, "SELECT count(*) FROM migrations")).toBe(
-        6,
+        7,
       );
       expect(
         upgradedFromV4.db
@@ -408,9 +408,9 @@ describe("B2-01 migration acceptance", () => {
     v5Interrupted.close();
     const upgradedFromV5 = new Store(v5Directory);
     try {
-      expect(scalar(upgradedFromV5.db, "PRAGMA user_version")).toBe(6);
+      expect(scalar(upgradedFromV5.db, "PRAGMA user_version")).toBe(7);
       expect(scalar(upgradedFromV5.db, "SELECT count(*) FROM migrations")).toBe(
-        6,
+        7,
       );
       expect(
         upgradedFromV5.db
@@ -421,6 +421,44 @@ describe("B2-01 migration acceptance", () => {
       ).toBeDefined();
     } finally {
       upgradedFromV5.close();
+    }
+
+    const v6Directory = makeDirectory();
+    createLegacyDatabase(v6Directory);
+    const v6File = join(v6Directory, "omem.sqlite");
+    const v6Interrupted = new DatabaseSync(v6File);
+    expect(() =>
+      migrateDatabase(v6Interrupted, {
+        beforeCommit(version) {
+          if (version === 7) throw Error("stop at deployable v6");
+        },
+      }),
+    ).toThrow("stop at deployable v6");
+    expect(scalar(v6Interrupted, "PRAGMA user_version")).toBe(6);
+    expect(scalar(v6Interrupted, "SELECT count(*) FROM migrations")).toBe(6);
+    expect(
+      v6Interrupted
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lark_card_actions'",
+        )
+        .get(),
+    ).toBeUndefined();
+    v6Interrupted.close();
+    const upgradedFromV6 = new Store(v6Directory);
+    try {
+      expect(scalar(upgradedFromV6.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(upgradedFromV6.db, "SELECT count(*) FROM migrations")).toBe(
+        7,
+      );
+      expect(
+        upgradedFromV6.db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lark_card_actions'",
+          )
+          .get(),
+      ).toBeDefined();
+    } finally {
+      upgradedFromV6.close();
     }
   });
 

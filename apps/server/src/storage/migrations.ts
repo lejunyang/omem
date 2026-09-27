@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 6;
+export const SUPPORTED_SCHEMA_VERSION = 7;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -540,6 +540,95 @@ const larkOnboardingStatements = [
   "CREATE INDEX lark_onboarding_events_idx ON lark_onboarding_events(onboarding_id, created_at)",
 ] as const;
 
+const larkDeliveryStatements = [
+  "ALTER TABLE event_inbox ADD COLUMN connection_id TEXT",
+  "ALTER TABLE event_inbox ADD COLUMN event_kind TEXT",
+  "ALTER TABLE event_inbox ADD COLUMN event_time TEXT",
+  "ALTER TABLE event_inbox ADD COLUMN sender_open_id TEXT",
+  "ALTER TABLE event_inbox ADD COLUMN chat_id TEXT",
+  "ALTER TABLE event_inbox ADD COLUMN message_id TEXT",
+  "ALTER TABLE event_inbox ADD COLUMN payload TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN binding_id TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'",
+  "ALTER TABLE delivery_intents ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE delivery_intents ADD COLUMN next_attempt_at TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN first_sent_at TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN last_sent_at TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN message_id TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN error_kind TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN last_error TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN lease_owner TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN lease_token TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN lease_expires_at TEXT",
+  "ALTER TABLE deliveries ADD COLUMN provider_uuid TEXT",
+  `CREATE TABLE lark_targets(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    connection_id TEXT NOT NULL REFERENCES lark_connections(id),
+    binding_version INTEGER NOT NULL,
+    chat_id TEXT NOT NULL,
+    target_type TEXT NOT NULL CHECK(target_type IN ('p2p','group')),
+    purpose TEXT NOT NULL CHECK(purpose IN ('owner_notification','decision','group_monitoring')),
+    capture_enabled INTEGER NOT NULL DEFAULT 0 CHECK(capture_enabled IN (0,1)),
+    state TEXT NOT NULL CHECK(state IN ('active','disabled','pending_approval')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(connection_id,binding_version,chat_id,purpose)
+  )`,
+  `CREATE TABLE lark_connection_leases(
+    connection_id TEXT PRIMARY KEY REFERENCES lark_connections(id),
+    owner TEXT NOT NULL,
+    token TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE lark_connection_events(
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL REFERENCES lark_connections(id),
+    state TEXT NOT NULL CHECK(state IN ('connecting','connected','reconnecting','disconnected','failed')),
+    error TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE lark_card_actions(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    proposal_digest TEXT NOT NULL,
+    binding_id TEXT NOT NULL REFERENCES lark_bindings(id),
+    chat_id TEXT NOT NULL,
+    operator_open_id TEXT NOT NULL,
+    message_id TEXT,
+    nonce_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','consumed','expired','cancelled')),
+    result_json TEXT,
+    created_at TEXT NOT NULL,
+    consumed_at TEXT
+  )`,
+  "ALTER TABLE delivery_intents ADD COLUMN card_action_id TEXT REFERENCES lark_card_actions(id)",
+  `CREATE TABLE lark_card_commands(
+    id TEXT PRIMARY KEY,
+    inbox_id TEXT NOT NULL REFERENCES event_inbox(id),
+    card_action_id TEXT NOT NULL REFERENCES lark_card_actions(id),
+    action TEXT NOT NULL CHECK(action IN ('approve','reject','request_context')),
+    state TEXT NOT NULL CHECK(state IN ('queued','processing','retry_wait','processed','failed')),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
+    lease_owner TEXT,
+    lease_token TEXT,
+    lease_expires_at TEXT,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    processed_at TEXT,
+    UNIQUE(inbox_id)
+  )`,
+  "CREATE INDEX lark_targets_active_idx ON lark_targets(connection_id,state,purpose)",
+  "CREATE INDEX lark_connection_events_idx ON lark_connection_events(connection_id,created_at)",
+  "CREATE INDEX lark_delivery_ready_idx ON delivery_intents(channel,state,next_attempt_at)",
+  "CREATE INDEX lark_card_commands_state_idx ON lark_card_commands(state,created_at)",
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -581,6 +670,12 @@ const migrations: readonly Migration[] = [
     name: "lark-onboarding-and-binding",
     statements: larkOnboardingStatements,
     checksum: checksum(larkOnboardingStatements),
+  },
+  {
+    version: 7,
+    name: "lark-realtime-delivery-and-callbacks",
+    statements: larkDeliveryStatements,
+    checksum: checksum(larkDeliveryStatements),
   },
 ];
 

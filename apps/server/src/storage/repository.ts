@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { stableDigest } from "./digest.js";
 
 type Row = Record<string, unknown>;
 
@@ -179,6 +180,65 @@ export class ApplicationRepository {
           createdAt,
           createdAt,
         );
+      const larkTargets = this.db
+        .prepare(
+          `SELECT t.chat_id,t.binding_version,b.id AS binding_id
+           FROM lark_targets t JOIN lark_bindings b
+             ON b.connection_id=t.connection_id
+            AND b.binding_version=t.binding_version
+           JOIN lark_connections c ON c.id=t.connection_id
+           WHERE t.workspace_id=? AND t.purpose='owner_notification'
+             AND t.state='active' AND b.state='active' AND c.state='active'`,
+        )
+        .all(metadata.workspaceId) as Row[];
+      for (const target of larkTargets) {
+        const payload = {
+          schema: "2.0",
+          config: { width_mode: "default" },
+          header: {
+            title: { tag: "plain_text", content: metadata.title.slice(0, 100) },
+            template: "green",
+          },
+          body: {
+            elements: [
+              {
+                tag: "markdown",
+                content: (metadata.notificationBody ?? metadata.details).slice(
+                  0,
+                  8000,
+                ),
+              },
+            ],
+          },
+        };
+        const payloadJson = JSON.stringify(payload);
+        if (Buffer.byteLength(payloadJson) > 30_000)
+          throw Error("LARK_CARD_PAYLOAD_TOO_LARGE");
+        this.db
+          .prepare(
+            `INSERT INTO delivery_intents(
+               id,workspace_id,change_id,channel_binding_version,channel,target,
+               payload_digest,provider_uuid,state,created_at,updated_at,
+               binding_id,payload_json,next_attempt_at
+             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          )
+          .run(
+            randomUUID(),
+            metadata.workspaceId,
+            changeId,
+            Number(target.binding_version),
+            "lark",
+            String(target.chat_id),
+            stableDigest(payload),
+            digest({ changeId, target: target.chat_id }).slice(0, 50),
+            "pending",
+            createdAt,
+            createdAt,
+            String(target.binding_id),
+            payloadJson,
+            createdAt,
+          );
+      }
       const receiptId = randomUUID();
       this.db
         .prepare(
