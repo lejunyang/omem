@@ -13,14 +13,49 @@ import { stableDigest } from "../storage/digest.js";
 type Row = Record<string, unknown>;
 type AssessmentInput = ReturnType<typeof proposalAssessmentInputSchema.parse>;
 
+export type PolicyOutcome =
+  | "auto_apply"
+  | "awaiting_decision"
+  | "reject"
+  | "defer_until_use"
+  | "retain_as_source"
+  | "ignore_noise";
+
+export type KnowledgeMatch = {
+  kind: "duplicate_linked" | "equivalent_linked" | "conflict_recorded";
+  memoryId: string | null;
+  detail: string;
+  /** Problem 5: the concrete existing revision the new claim conflicts with. Never
+   *  the first row in the table. Populated for conflict_recorded. */
+  conflictingRevisionId?: string;
+  /** Why the matcher believes this memory is the real conflict (entity overlap +
+   *  opposite predicate polarity), so the association is auditable. */
+  matchReason?: string;
+  /** Both sides' evidence references, so the dispute can be traced back. */
+  evidenceChain?: {
+    existingStatement: string;
+    existingEvidenceRefs: string[];
+    proposedEvidenceRefs: string[];
+    sharedTerms: string[];
+  };
+};
+
 export type EvaluationResult = {
   proposalId: string;
   proposalDigest: string;
   evidenceVerdict: "valid" | "invalid" | "ambiguous";
-  policy: "auto_apply" | "awaiting_decision" | "reject";
+  policy: PolicyOutcome;
   reasons: string[];
-  receipt?: ReturnType<Store["applications"]["applyTask"]>;
+  receipt?: ReturnType<Store["applications"]["applyMemory"]>;
   decisionId?: string;
+  /** F5: the create proposal was matched against existing knowledge instead of
+   * blindly inserting a new active memory. */
+  match?: KnowledgeMatch;
+  /** F: this proposal would have auto-applied, but the whole ChangeSet's deduped
+   * union impact exceeded the auto budget. It is persisted as awaiting_decision
+   * WITHOUT applying; evaluateBatch raises a single batch AttentionCase for all
+   * such proposals instead of N separate cards. */
+  batchDeferred?: boolean;
 };
 
 const now = () => new Date().toISOString();
@@ -252,10 +287,14 @@ export class MemoryService {
     if (proposal.body.owner_id !== ownerId) return false;
     return proposal.evidence.every((evidence) => {
       const revision = this.store.revision(evidence.source_revision_id);
+      const provenance = revision?.provenance;
+      if (!provenance) return false;
+      // Canonical principal wins; older inputs without it fall back to actorId.
+      const principal = provenance.actorPrincipalId ?? provenance.actorId;
       return Boolean(
-        revision?.provenance?.actorId === ownerId &&
-          revision.provenance.actorVerifiedBy &&
-          !revision.provenance.forwarded,
+        principal === ownerId &&
+          provenance.actorVerifiedBy &&
+          !provenance.forwarded,
       );
     });
   }
@@ -288,21 +327,399 @@ export class MemoryService {
     return [...nextSources].some((source) => !priorSources.has(source));
   }
 
+  private proposalSourceIds(proposalId: string) {
+    return new Set(
+      this.sourceReads(proposalId).map((row) => String(row.source_id)),
+    );
+  }
+
+  private memorySourceIds(headRevisionId: string) {
+    return new Set(
+      (
+        this.db
+          .prepare(
+            "SELECT source_id FROM memory_dependencies WHERE memory_revision_id=?",
+          )
+          .all(headRevisionId) as Row[]
+      ).map((row) => String(row.source_id)),
+    );
+  }
+
+  private normalizeStatement(statement: string) {
+    return statement.replace(/\s+/g, " ").trim();
+  }
+
+  /**
+   * Deterministic entity-term extraction for conflict / equivalence matching.
+   * Latin tokens are kept whole; CJK is reduced to content bigrams after dropping
+   * grammatical/stopword characters. Negation markers are deliberately kept out of
+   * the term set but detected separately as predicate polarity.
+   */
+  private contentTokens(statement: string): Set<string> {
+    const text = this.normalizeStatement(statement).toLowerCase();
+    const tokens = new Set<string>();
+    for (const match of text.matchAll(/[a-z0-9]+/g)) tokens.add(match[0]);
+    const cjk = text.replace(/[^一-鿿]/g, "");
+    const stop = new Set(
+      "的了在是我你他它们和与或也都就还已将被把让这那个之于对从不未否没是否有".split(""),
+    );
+    const chars = [...cjk].filter((char) => !stop.has(char));
+    for (let i = 0; i + 1 < chars.length; i++)
+      tokens.add(chars[i]! + chars[i + 1]!);
+    return tokens;
+  }
+
+  /** Predicate polarity: a claim negating the state is the opposite polarity of an
+   *  affirmative claim about the same entity. */
+  private isNegativePolarity(statement: string): boolean {
+    return /[未不没无]|禁用|关闭|下线|失败|停止|取消|不启用/.test(statement);
+  }
+
+  /** Fragment ids supporting a memory head revision (its source revisions' fragments). */
+  private memoryEvidenceRefs(headRevisionId: string): string[] {
+    const rows = this.db
+      .prepare(
+        "SELECT source_revision_id FROM memory_dependencies WHERE memory_revision_id=?",
+      )
+      .all(headRevisionId) as Row[];
+    const refs = new Set<string>();
+    for (const row of rows)
+      for (const fragment of this.store.fragments(String(row.source_revision_id)))
+        refs.add(fragment.id);
+    return [...refs];
+  }
+
+  private sameProject(
+    memoryScope: { project_id?: string | null },
+    proposal: Proposal,
+  ) {
+    const a = memoryScope.project_id ?? null;
+    const b = proposal.scope.project_id ?? null;
+    return a === b;
+  }
+
+  /** Two claims only conflict when their stated validity windows can both be true at
+   *  once. If the existing memory is already expired before the proposal becomes
+   *  valid, they are about different times and must not be associated. */
+  private timesOverlap(
+    existing: { valid_from: string | null; valid_to: string | null },
+    proposal: Extract<Proposal, { kind: "claim" }>,
+  ): boolean {
+    const proposedFrom = proposal.body.valid_from;
+    const proposedTo = proposal.body.valid_to;
+    if (existing.valid_to && proposedFrom && existing.valid_to < proposedFrom)
+      return false;
+    if (existing.valid_from && proposedTo && existing.valid_from > proposedTo)
+      return false;
+    return true;
+  }
+
+  /**
+   * F5 / Problem 5: before creating a new claim, recall active knowledge IN SCOPE
+   * (same workspace, same project) and decide duplicate / equivalent / conflict.
+   * Conflict association is by entity-term overlap plus opposite predicate polarity —
+   * never by taking the first row in the table — and returns a verifiable chain.
+   */
+  private detectCreateMatch(
+    proposal: Extract<Proposal, { kind: "claim" }>,
+    assessment: AssessmentInput,
+  ): KnowledgeMatch | null {
+    const statement = this.normalizeStatement(proposal.body.statement);
+    const proposedSources = this.proposalSourceIds(proposal.proposal_id);
+    // Hard scope filter: a memory in another workspace can never be the match.
+    const rows = this.db
+      .prepare(
+        `SELECT m.id, m.scope, mr.id AS revision_id, mr.body, mr.valid_from, mr.valid_to
+         FROM memories m JOIN memory_revisions mr ON mr.id = m.head_revision_id
+         WHERE m.status='active' AND m.kind='claim' AND m.workspace_id=?`,
+      )
+      .all(proposal.scope.workspace_id) as Row[];
+
+    type Candidate = {
+      memoryId: string;
+      revisionId: string;
+      statement: string;
+      overlap: boolean;
+      validFrom: string | null;
+      validTo: string | null;
+    };
+    const candidates: Candidate[] = [];
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as { statement?: unknown };
+      if (typeof body.statement !== "string") continue;
+      const scope = JSON.parse(String(row.scope)) as {
+        project_id?: string | null;
+      };
+      // Cross-project text is not auto-associated as duplicate/equivalent/conflict
+      // unless an explicit cross-scope marker exists; the deterministic gate has none.
+      if (!this.sameProject(scope, proposal)) continue;
+      const existingSources = this.memorySourceIds(String(row.revision_id));
+      candidates.push({
+        memoryId: String(row.id),
+        revisionId: String(row.revision_id),
+        statement: body.statement,
+        overlap: [...proposedSources].some((source) =>
+          existingSources.has(source),
+        ),
+        validFrom: row.valid_from ? String(row.valid_from) : null,
+        validTo: row.valid_to ? String(row.valid_to) : null,
+      });
+    }
+
+    // Exact duplicate / equivalence: identical normalized statement, same project.
+    const exact = candidates.filter(
+      (candidate) => this.normalizeStatement(candidate.statement) === statement,
+    );
+    if (exact.length) {
+      const duplicate = exact.find((candidate) => candidate.overlap);
+      if (duplicate)
+        return {
+          kind: "duplicate_linked",
+          memoryId: duplicate.memoryId,
+          detail: "same statement already applied from an overlapping source",
+        };
+      return {
+        kind: "equivalent_linked",
+        memoryId: exact[0]!.memoryId,
+        detail:
+          "same conclusion from an independent source; equivalence and evidence retained",
+      };
+    }
+
+    // The verifier flagged a contradiction. Pick the memory that actually shares the
+    // entity and asserts the opposite polarity — not rows[0].
+    if (assessment.reason_code === "contradicts_existing") {
+      const proposedTokens = this.contentTokens(statement);
+      const proposedNegative = this.isNegativePolarity(statement);
+      let best: (Candidate & { score: number }) | null = null;
+      for (const candidate of candidates) {
+        if (
+          !this.timesOverlap(
+            { valid_from: candidate.validFrom, valid_to: candidate.validTo },
+            proposal,
+          )
+        )
+          continue;
+        const existingTokens = this.contentTokens(candidate.statement);
+        const shared = [...proposedTokens].filter((token) =>
+          existingTokens.has(token),
+        );
+        if (shared.length === 0) continue; // unrelated memory: never associated
+        if (this.isNegativePolarity(candidate.statement) === proposedNegative)
+          continue; // same polarity = restatement, not a contradiction
+        if (!best || shared.length > best.score)
+          best = { ...candidate, score: shared.length };
+      }
+      if (best) {
+        const sharedTerms = [...proposedTokens].filter((token) =>
+          this.contentTokens(best!.statement).has(token),
+        );
+        return {
+          kind: "conflict_recorded",
+          memoryId: best.memoryId,
+          conflictingRevisionId: best.revisionId,
+          matchReason: `shared entity terms [${sharedTerms.join(", ")}] with opposite predicate polarity`,
+          detail: `contradicts active claim "${best.statement}"`,
+          evidenceChain: {
+            existingStatement: best.statement,
+            existingEvidenceRefs: this.memoryEvidenceRefs(best.revisionId),
+            proposedEvidenceRefs: proposal.evidence.map(
+              (evidence) => evidence.fragment_revision_id,
+            ),
+            sharedTerms,
+          },
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * G17: the set of active memory ids a proposal actually touches — the target plus
+   * every other active memory in the same workspace that depends on the target's
+   * sources. Returned as a SET so a whole ChangeSet can be unioned and de-duplicated
+   * instead of being counted as N independent impact=1 operations.
+   */
+  private affectedMemoryIds(proposal: Proposal): Set<string> {
+    const touched = new Set<string>();
+    if (proposal.operation === "create" || !proposal.target_id) return touched;
+    const target = this.db
+      .prepare(
+        "SELECT head_revision_id FROM memories WHERE id=? AND workspace_id=?",
+      )
+      .get(proposal.target_id, proposal.scope.workspace_id) as Row | undefined;
+    if (!target) return touched;
+    touched.add(proposal.target_id);
+    const targetSources = this.memorySourceIds(String(target.head_revision_id));
+    if (!targetSources.size) return touched;
+    const placeholders = [...targetSources].map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT m.id FROM memories m
+         JOIN memory_revisions mr ON mr.id = m.head_revision_id
+         JOIN memory_dependencies md ON md.memory_revision_id = mr.id
+         WHERE m.status='active' AND m.workspace_id=? AND m.id <> ?
+           AND md.source_id IN (${placeholders})`,
+      )
+      .all(
+        proposal.scope.workspace_id,
+        proposal.target_id,
+        ...[...targetSources],
+      ) as Row[];
+    for (const row of rows) touched.add(String(row.id));
+    return touched;
+  }
+
+  private computeInternalImpact(proposal: Proposal): number {
+    return this.affectedMemoryIds(proposal).size;
+  }
+
+  /**
+   * F: a create proposal does not target an existing memory, so affectedMemoryIds
+   * is empty — which let N independent creates each smuggle past the budget as
+   * impact=0/1. Instead, every create introduces a NEW entity; two creates about
+   * the same entity (same scoped statement, or same scoped task) collapse to one
+   * entity key so the batch counts them once. Updates/supersedes return null:
+   * their impact is the existing-memory ripple from affectedMemoryIds.
+   */
+  private newEntityKey(proposal: Proposal): string | null {
+    if (proposal.operation !== "create") return null;
+    const scope = `${proposal.scope.workspace_id}:${proposal.scope.project_id ?? "-"}`;
+    if (proposal.kind === "claim")
+      return `claim:${scope}:${this.normalizeStatement(proposal.body.statement)}`;
+    if (proposal.kind === "task")
+      return `task:${scope}:${proposal.body.title}:${proposal.body.owner_id ?? "-"}`;
+    if (proposal.kind === "episode")
+      return `episode:${scope}:${proposal.body.trigger}`;
+    return `procedure:${scope}:${proposal.body.trigger}`;
+  }
+
+  private recordDispute(
+    proposal: Proposal,
+    proposalDigest: string,
+    match: KnowledgeMatch,
+  ) {
+    if (match.kind !== "conflict_recorded" || !match.memoryId) return;
+    const existing = this.db
+      .prepare(
+        `SELECT mr.body, mr.id AS revision_id FROM memories m
+         JOIN memory_revisions mr ON mr.id=m.head_revision_id WHERE m.id=?`,
+      )
+      .get(match.memoryId) as Row | undefined;
+    if (!existing) return;
+    const existingBody = JSON.parse(String(existing.body)) as {
+      statement?: unknown;
+    };
+    const proposedSources = this.proposalSourceIds(proposal.proposal_id);
+    const existingSources = this.memorySourceIds(String(existing.revision_id));
+    this.db
+      .prepare(
+        `INSERT INTO knowledge_disputes(
+           id,workspace_id,topic_key,existing_memory_id,proposed_proposal_digest,
+           existing_statement,proposed_statement,existing_source_ids,
+           proposed_source_ids,status,created_at
+         ) VALUES(?,?,?,?,?,?,?,?,?,'recorded',?)`,
+      )
+      .run(
+        randomUUID(),
+        proposal.scope.workspace_id,
+        this.normalizeStatement(
+          typeof (proposal.body as { statement?: string }).statement === "string"
+            ? (proposal.body as { statement: string }).statement
+            : "",
+        ),
+        match.memoryId,
+        proposalDigest,
+        String(existingBody.statement ?? ""),
+        String((proposal.body as { statement?: string }).statement ?? ""),
+        JSON.stringify([...existingSources]),
+        JSON.stringify([...proposedSources]),
+        now(),
+      );
+  }
+
+  /**
+   * Problem 5: persist a queryable equivalence between the already-applied memory
+   * and the newly-applied equivalent memory, with the combined evidence set. Given
+   * either memory id, the relation can be looked up and traced back to fragments.
+   */
+  private recordEquivalence(
+    proposal: Proposal,
+    existingMemoryId: string,
+    newMemoryId: string,
+  ) {
+    const [a, b] =
+      existingMemoryId < newMemoryId
+        ? [existingMemoryId, newMemoryId]
+        : [newMemoryId, existingMemoryId];
+    const existingHead = this.db
+      .prepare(
+        "SELECT head_revision_id FROM memories WHERE id=?",
+      )
+      .get(existingMemoryId) as Row | undefined;
+    const evidenceRefs = [
+      ...proposal.evidence.map((evidence) => evidence.fragment_revision_id),
+      ...(existingHead
+        ? this.memoryEvidenceRefs(String(existingHead.head_revision_id))
+        : []),
+    ];
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO memory_equivalences(
+           id,workspace_id,memory_id_a,memory_id_b,equivalence_type,
+           evidence_refs,created_at
+         ) VALUES(?,?,?,?,?,?,?)`,
+      )
+      .run(
+        randomUUID(),
+        proposal.scope.workspace_id,
+        a,
+        b,
+        "equivalent",
+        JSON.stringify(evidenceRefs),
+        now(),
+      );
+  }
+
+  /** Look up every equivalence relation (and its evidence set) touching a memory. */
+  equivalencesOf(memoryId: string) {
+    return (
+      this.db
+        .prepare(
+          `SELECT id,memory_id_a,memory_id_b,equivalence_type,evidence_refs,created_at
+           FROM memory_equivalences
+           WHERE memory_id_a=? OR memory_id_b=?`,
+        )
+        .all(memoryId, memoryId) as Row[]
+    ).map((row) => ({
+      id: String(row.id),
+      memoryIdA: String(row.memory_id_a),
+      memoryIdB: String(row.memory_id_b),
+      equivalenceType: String(row.equivalence_type),
+      evidenceRefs: JSON.parse(String(row.evidence_refs)) as string[],
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  /**
+   * AttentionGate (processing-policy.md §5): deterministic validation failure is
+   * the machine's own job and never becomes an owner question. Only conditions
+   * that genuinely require an owner choice/authorization AND touch current work
+   * or existing important knowledge become `awaiting_decision`. Everything else
+   * is kept internally — deferred until used, retained as a searchable source,
+   * or ignored as noise — without creating a user-visible decision card.
+   */
   private policy(
     proposal: Proposal,
     assessment: AssessmentInput,
     evidenceVerdict: "valid" | "invalid" | "ambiguous",
     impactCount: number,
-  ) {
+    gate: { blocksCurrentTask: boolean; targetActive: boolean },
+  ): { outcome: PolicyOutcome; reasons: string[] } {
     const reasons: string[] = [];
-    if (evidenceVerdict !== "valid") reasons.push("evidence_not_valid");
     if (assessment.semantic_verdict !== "supported")
       reasons.push(`semantic_${assessment.semantic_verdict}`);
     if (proposal.uncertainties.length) reasons.push("uncertainties_present");
-    if (impactCount > (this.options.maxAutoApply ?? 10))
-      reasons.push("impact_limit_exceeded");
-    if (proposal.kind === "procedure")
-      reasons.push("procedure_requires_review");
     if (proposal.evidence.some((evidence) => "asset_hash" in evidence))
       reasons.push("inferred_image_requires_review");
     if (
@@ -311,27 +728,85 @@ export class MemoryService {
       proposal.body.verification_refs.length === 0
     )
       reasons.push("unverified_success");
-    if (!this.actorIsVerifiedOwner(proposal))
-      reasons.push("owner_not_verified");
+    if (!this.actorIsVerifiedOwner(proposal)) reasons.push("owner_not_verified");
     if (
       proposal.kind === "task" &&
       proposal.body.due_expression &&
       !proposal.body.due_at
     )
       reasons.push("due_time_ambiguous");
+    if (proposal.kind === "procedure")
+      reasons.push("procedure_requires_review");
     if (this.hasCrossSourceUpdate(proposal))
       reasons.push("cross_source_conflict");
-    const reject =
+    if (impactCount > (this.options.maxAutoApply ?? 10))
+      reasons.push("impact_limit_exceeded");
+
+    // Deterministic evidence failure / the proposal contradicts its own quoted
+    // evidence: reject. This is validation work, not an owner decision.
+    if (
       evidenceVerdict === "invalid" ||
-      assessment.semantic_verdict === "contradicted";
-    return {
-      outcome: reject
-        ? ("reject" as const)
-        : reasons.length
-          ? ("awaiting_decision" as const)
-          : ("auto_apply" as const),
-      reasons,
-    };
+      assessment.semantic_verdict === "contradicted"
+    )
+      return { outcome: "reject", reasons };
+
+    // Explicit no-durable-value signal from the extractor/verifier: record but
+    // never promote and never disturb the owner.
+    if (
+      assessment.reason_code === "no_durable_value" ||
+      assessment.reason_code === "noise"
+    )
+      return { outcome: "ignore_noise", reasons };
+
+    // AttentionGate (processing-policy.md §5): an owner question is created ONLY
+    // when all four conditions hold:
+    //   (a) it touches current work / known commitments / important knowledge,
+    //   (b) it is a genuine owner choice (not the machine's own parse/evidence gap),
+    //   (c) the allowed deterministic resolution has already been attempted,
+    //   (d) we can state why now, the options and the effect of choosing.
+    // impact_limit_exceeded is always (a): a change rippling past the auto budget
+    // touches many existing objects. A cross-source update is a genuine choice (b),
+    // but it only escalates after the deterministic补证 finds no resolution AND it
+    // either overwrites active important knowledge (targetActive) or blocks the
+    // owner's current task (blocksCurrentTask). Otherwise it stays internal.
+    const impactEscalates = reasons.includes("impact_limit_exceeded");
+    const crossSourceEscalates =
+      reasons.includes("cross_source_conflict") &&
+      (gate.targetActive || gate.blocksCurrentTask);
+    if (impactEscalates || crossSourceEscalates)
+      return { outcome: "awaiting_decision", reasons };
+
+    // A cross-source disagreement that does NOT touch active important knowledge and
+    // does not block the current task is kept internally (processing-policy.md table:
+    // "跨源冲突，但当前无任务依赖"): recorded, searchable, never a user card.
+    if (reasons.includes("cross_source_conflict"))
+      return { outcome: "defer_until_use", reasons };
+
+    // Someone else's commitment (forwarded / unverified actor) is a source lead,
+    // never an owner task and never a "do you want to claim this?" question.
+    if (proposal.kind === "task" && reasons.includes("owner_not_verified"))
+      return { outcome: "retain_as_source", reasons };
+
+    // Image-based inference and methods that are valuable but not promoted to
+    // verified knowledge on their own: keep the material, stay searchable.
+    if (
+      reasons.includes("inferred_image_requires_review") ||
+      reasons.includes("procedure_requires_review")
+    )
+      return { outcome: "retain_as_source", reasons };
+
+    // Low-value uncertainty (insufficient evidence, unknown scope, ambiguous time
+    // on non-blocking material): defer until the material is actually used, when
+    // the missing context can be clarified against a concrete question (G10).
+    const softUncertainty =
+      assessment.semantic_verdict === "insufficient" ||
+      assessment.semantic_verdict === "needs_scope" ||
+      reasons.includes("uncertainties_present") ||
+      reasons.includes("due_time_ambiguous") ||
+      reasons.includes("unverified_success");
+    if (softUncertainty) return { outcome: "defer_until_use", reasons };
+
+    return { outcome: "auto_apply", reasons };
   }
 
   private persistAssessment(
@@ -390,23 +865,35 @@ export class MemoryService {
         impactCount,
         now(),
       );
+    const stateFor = (outcome: PolicyOutcome): string =>
+      outcome === "reject"
+        ? "rejected"
+        : outcome === "awaiting_decision"
+          ? "awaiting_decision"
+          : outcome === "defer_until_use"
+            ? "deferred"
+            : outcome === "retain_as_source"
+              ? "retained"
+              : outcome === "ignore_noise"
+                ? "ignored"
+                : "approved";
     this.db
       .prepare(
         "UPDATE proposals SET state=?,policy_result=?,updated_at=? WHERE id=?",
       )
       .run(
-        outcome === "reject"
-          ? "rejected"
-          : outcome === "awaiting_decision"
-            ? "awaiting_decision"
-            : "approved",
+        stateFor(outcome),
         JSON.stringify({ outcome, reasons, policyVersion }),
         now(),
         proposal.proposal_id,
       );
   }
 
-  private createDecision(proposal: Proposal, proposalDigest: string) {
+  private createDecision(
+    proposal: Proposal,
+    proposalDigest: string,
+    reasons: string[],
+  ) {
     return this.transaction(() => {
       const existing = this.db
         .prepare(
@@ -429,12 +916,44 @@ export class MemoryService {
       const expectedVersionsDigest = stableDigest(expectedVersions);
       const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
       const createdAt = now();
+      // v3 AttentionCase: a user-visible question must state the topic/entity, why it
+      // is asked now, what was already tried, the concrete options and their effects,
+      // and the expected versions — not a generic JSON blob.
+      const crossSource = reasons.includes("cross_source_conflict");
+      const attentionCase = {
+        topic:
+          proposal.kind === "claim"
+            ? String((proposal.body as { statement?: string }).statement ?? "")
+            : proposal.kind,
+        linkedTask: proposal.target_id ?? null,
+        reasonNow: crossSource
+          ? "不同来源对同一既有知识给出不同结论，且已尝试对比双方来源版本仍无法自动裁决。"
+          : `本次变更去重后影响 ${reasons.includes("impact_limit_exceeded") ? "多个" : "一个"}现行对象，超出自动应用范围。`,
+        evidenceRefs: proposal.evidence.map(
+          (evidence) => evidence.fragment_revision_id,
+        ),
+        attemptedResolution:
+          "已核对双方来源的当前 head 与 validity epoch；均为现行版本，无一方已被淘汰，故无法自动合并。",
+        question: crossSource
+          ? "两条来源对同一事实给出相反结论。这次按哪个来源更新既有知识？"
+          : "这次变更影响范围较大，是否按提案应用？",
+        options: [
+          { label: "按提案更新", effect: "采纳新来源/新结论，生成新记忆修订并保留旧版本。" },
+          { label: "保留既有结论", effect: "不更新，把新结论作为竞争来源保留在争议记录中。" },
+          { label: "先补充背景", effect: "暂不决定，等待更多来源或上下文后再裁决。" },
+        ],
+        risk: "错误选择会覆盖或保留错误的现行事实，影响后续基于该知识的回答。",
+        expectedVersions,
+        defaultAction: "保留既有结论",
+        dedupeKey: `attention:${proposal.scope.workspace_id}:${proposal.target_id ?? proposal.proposal_id}`,
+      };
       this.db
         .prepare(
           `INSERT INTO decisions(
              id,workspace_id,proposal_digest,expected_versions,owner_binding,
-             expires_at,state,request_id,decided_at,action,resolved_at,created_at
-           ) VALUES(?,?,?,?,?,?,'pending',NULL,NULL,NULL,NULL,?)`,
+             expires_at,state,request_id,decided_at,action,resolved_at,created_at,
+             attention_case,dedupe_key
+           ) VALUES(?,?,?,?,?,?,'pending',NULL,NULL,NULL,NULL,?,?,?)`,
         )
         .run(
           id,
@@ -444,6 +963,8 @@ export class MemoryService {
           JSON.stringify({ actorId: this.options.ownerId ?? "owner" }),
           expiresAt,
           createdAt,
+          JSON.stringify(attentionCase),
+          attentionCase.dedupeKey,
         );
 
       const targets = this.db
@@ -724,11 +1245,39 @@ export class MemoryService {
   evaluate(
     proposalInput: unknown,
     assessmentInput: unknown,
-    options: { impactCount?: number } = {},
+    options: {
+      impactCount?: number;
+      relatedTask?: { blocksNow: boolean } | null;
+    } = {},
   ): EvaluationResult {
     const proposal = proposalSchema.parse(proposalInput);
     const assessment = proposalAssessmentInputSchema.parse(assessmentInput);
-    const impactCount = options.impactCount ?? 1;
+    return this.evaluateCore(proposal, assessment, options, undefined);
+  }
+
+  /**
+   * Single-proposal evaluation shared by the public evaluate() API (runtime agent
+   * governCreateTask) and by evaluateBatch(). When `batch` is supplied, the whole
+   * ChangeSet has already been de-duplicated; if the batch is over its impact budget,
+   * any proposal that would otherwise auto-apply is instead parked as
+   * awaiting_decision (batchDeferred=true) WITHOUT applying and WITHOUT creating its
+   * own card — evaluateBatch raises one consolidated AttentionCase for the batch.
+   */
+  private evaluateCore(
+    proposal: Proposal,
+    assessment: AssessmentInput,
+    options: {
+      impactCount?: number;
+      relatedTask?: { blocksNow: boolean } | null;
+    },
+    batch: { gated: boolean; totalImpact: number } | undefined,
+  ): EvaluationResult {
+    // G17: never trust a bare impactCount=1 when the change really ripples to
+    // other active memories sharing its sources.
+    const impactCount = Math.max(
+      options.impactCount ?? 1,
+      this.computeInternalImpact(proposal),
+    );
     const persisted = this.persistProposal(proposal, impactCount);
     const existingReceipt = this.db
       .prepare(
@@ -761,12 +1310,51 @@ export class MemoryService {
       deterministic.verdict,
       deterministic.errors,
     );
-    const policy = this.policy(
+    // F5: before creating a new claim, recall active knowledge. Duplicates link
+    // to the existing memory; contradictions are recorded as competing source
+    // claims instead of being silently applied or hidden.
+    if (
+      proposal.operation === "create" &&
+      proposal.kind === "claim" &&
+      deterministic.verdict === "valid"
+    ) {
+      const match = this.detectCreateMatch(proposal, assessment);
+      if (match)
+        return this.handleCreateMatch(
+          proposal,
+          persisted.digest,
+          deterministic.verdict,
+          impactCount,
+          match,
+          batch?.gated ?? false,
+        );
+    }
+    const gate = {
+      blocksCurrentTask: options.relatedTask?.blocksNow === true,
+      targetActive: this.targetIsActiveKnowledge(proposal),
+    };
+    let policy = this.policy(
       proposal,
       assessment,
       deterministic.verdict,
       impactCount,
+      gate,
     );
+    // F: batch gate. The whole ChangeSet's de-duplicated union impact exceeded the
+    // auto budget. A proposal that would have auto-applied is parked here; it is
+    // NOT applied and gets NO per-proposal decision card (evaluateBatch creates one
+    // consolidated AttentionCase). Reject / ignore / defer / retain outcomes are
+    // left alone — they never materialize new active state anyway.
+    let batchDeferred = false;
+    if (batch?.gated && policy.outcome === "auto_apply") {
+      policy = {
+        outcome: "awaiting_decision",
+        reasons: policy.reasons.includes("impact_limit_exceeded")
+          ? policy.reasons
+          : [...policy.reasons, "impact_limit_exceeded"],
+      };
+      batchDeferred = true;
+    }
     this.persistPolicy(
       proposal,
       persisted.digest,
@@ -781,13 +1369,292 @@ export class MemoryService {
       policy: policy.outcome,
       reasons: policy.reasons,
     };
+    if (batchDeferred) result.batchDeferred = true;
     if (policy.outcome === "reject") return result;
     if (policy.outcome === "awaiting_decision") {
-      result.decisionId = this.createDecision(proposal, persisted.digest);
+      // Batch-parked proposals wait for the single consolidated card; do not create
+      // N per-proposal decisions here.
+      if (!batchDeferred)
+        result.decisionId = this.createDecision(
+          proposal,
+          persisted.digest,
+          policy.reasons,
+        );
       return result;
     }
+    // defer_until_use / retain_as_source / ignore_noise are internal governance:
+    // the material stays searchable as a source, but nothing is applied and no
+    // user-facing decision card is created.
+    if (policy.outcome !== "auto_apply") return result;
     result.receipt = this.apply(proposal, persisted.digest);
     return result;
+  }
+
+  /** Whether the proposal targets an active memory in this workspace — i.e. it
+   *  would overwrite existing important knowledge (AttentionGate condition (a)). */
+  private targetIsActiveKnowledge(proposal: Proposal): boolean {
+    if (!proposal.target_id) return false;
+    const target = this.db
+      .prepare(
+        "SELECT status FROM memories WHERE id=? AND workspace_id=?",
+      )
+      .get(proposal.target_id, proposal.scope.workspace_id) as Row | undefined;
+    return Boolean(target && target.status === "active");
+  }
+
+  /**
+   * G17 / KnowledgePlan: evaluate a whole ChangeSet in one production pass.
+   *
+   * The total impact is the de-duplicated UNION of:
+   *   - affectedMemoryIds: every active memory an update/supersede touches (target
+   *     plus siblings sharing its sources), and
+   *   - affectedEntities: the new entity each create would materialize (same scoped
+   *     statement/task collapses to one key).
+   * 12 creates about the same entity count as impact=1; 12 creates on 12 distinct
+   * entities count as impact=12. The gate is decided ONCE over this union before
+   * anything is applied, so a batch cannot be smuggled past the budget as N
+   * independent impact=0/1 operations.
+   *
+   * Atomicity: the gate decision is computed first (pure reads + deterministic
+   * keys). If the batch is over budget, EVERY would-be-auto-apply proposal is parked
+   * as awaiting_decision and NONE is applied; a single consolidated AttentionCase
+   * is raised. If under budget, each proposal runs the normal single-entry pipeline
+   * (which itself is atomic per proposal) — duplicates within the batch are caught
+   * by detectCreateMatch once the first one is applied.
+   */
+  evaluateBatch(entries: {
+    proposal: unknown;
+    assessment: unknown;
+    options?: {
+      impactCount?: number;
+      relatedTask?: { blocksNow: boolean } | null;
+    };
+  }[]): {
+    totalImpact: number;
+    affectedMemoryIds: string[];
+    affectedEntities: string[];
+    outcome: PolicyOutcome;
+    results: EvaluationResult[];
+    decisionId?: string;
+  } {
+    const parsed = entries.map((entry) => ({
+      proposal: proposalSchema.parse(entry.proposal),
+      assessment: proposalAssessmentInputSchema.parse(entry.assessment),
+      options: entry.options ?? {},
+    }));
+    // Read-only pass: de-duplicated union impact over the whole ChangeSet.
+    const memoryIds = new Set<string>();
+    const entityKeys = new Set<string>();
+    for (const { proposal } of parsed) {
+      for (const id of this.affectedMemoryIds(proposal)) memoryIds.add(id);
+      const key = this.newEntityKey(proposal);
+      if (key) entityKeys.add(key);
+    }
+    const totalImpact = memoryIds.size + entityKeys.size;
+    const gated = totalImpact > (this.options.maxAutoApply ?? 10);
+    const batch = { gated, totalImpact };
+
+    // Decision + (possibly) application pass. Under budget this applies per proposal;
+    // over budget it parks every would-be-auto-apply proposal and applies nothing.
+    const results: EvaluationResult[] = [];
+    const parked: Proposal[] = [];
+    for (const { proposal, assessment, options } of parsed) {
+      const result = this.evaluateCore(proposal, assessment, options, batch);
+      results.push(result);
+      if (result.batchDeferred) parked.push(proposal);
+    }
+
+    let decisionId: string | undefined;
+    if (parked.length)
+      decisionId = this.createBatchDecision(parked, totalImpact);
+    const outcome: PolicyOutcome = gated
+      ? parked.length
+        ? "awaiting_decision"
+        : "auto_apply"
+      : "auto_apply";
+    return {
+      totalImpact,
+      affectedMemoryIds: [...memoryIds].sort(),
+      affectedEntities: [...entityKeys].sort(),
+      outcome,
+      results,
+      decisionId,
+    };
+  }
+
+  /**
+   * F: raise ONE consolidated AttentionCase for every proposal parked by the batch
+   * impact gate. It carries the full v3 AttentionCase fields — topic, why now, what
+   * was already tried (deterministic补证), the concrete options and their effects,
+   * evidence refs and a batch-scoped dedupe key — instead of N near-duplicate cards.
+   */
+  private createBatchDecision(parked: Proposal[], totalImpact: number): string | undefined {
+    if (!parked.length) return undefined;
+    const representative = parked[0]!;
+    const workspaceId = representative.scope.workspace_id;
+    const proposalDigests = new Set<string>();
+    const evidenceRefs = new Set<string>();
+    const topics: string[] = [];
+    for (const proposal of parked) {
+      const digest = stableDigest(proposal);
+      proposalDigests.add(digest);
+      for (const evidence of proposal.evidence)
+        evidenceRefs.add(evidence.fragment_revision_id);
+      topics.push(
+        proposal.kind === "claim"
+          ? String((proposal.body as { statement?: string }).statement ?? "")
+          : proposal.kind,
+      );
+    }
+    // The decision row must JOIN to a real proposal (decisions() reads p.digest),
+    // so anchor it to the representative proposal's digest; the batch summary lives
+    // inside attention_case.
+    const anchorDigest = stableDigest(representative);
+    const existing = this.db
+      .prepare("SELECT id FROM decisions WHERE workspace_id=? AND proposal_digest=?")
+      .get(workspaceId, anchorDigest) as Row | undefined;
+    if (existing) return String(existing.id);
+    const id = randomUUID();
+    const createdAt = now();
+    const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const dedupeKey = `attention-batch:${workspaceId}:${stableDigest([...proposalDigests].sort()).slice(0, 40)}`;
+    const attentionCase = {
+      topic: `批量变更（${parked.length} 条提案）：${topics.slice(0, 3).join("；")}${topics.length > 3 ? " 等" : ""}`,
+      linkedTask: representative.target_id ?? null,
+      reasonNow: `整份变更去重后共影响 ${totalImpact} 个现行/新对象，超过自动应用上限 ${this.options.maxAutoApply ?? 10}；若逐条自动应用将绕过该预算。`,
+      evidenceRefs: [...evidenceRefs],
+      attemptedResolution:
+        "已对整份 ChangeSet 做去重累计影响合并（受影响记忆并集 + 新实体并集），并逐条核对证据引用与现行来源 head/epoch；无法在不超预算的前提下自动裁决，故升级为一次批量确认。",
+      question: `本次一次性带来 ${parked.length} 条变更，去重后影响范围超出自动应用预算。是否整体按提案应用？`,
+      options: [
+        { label: "整体按提案应用", effect: "一次性应用全部 ${n} 条提案，保留各自证据与来源归属。".replace("${n}", String(parked.length)) },
+        { label: "逐条审阅", effect: "暂不整体应用，进入后逐条核对再决定。" },
+        { label: "先补充背景", effect: "暂不决定，等待更多来源或上下文后再裁决。" },
+      ],
+      risk: "错误整体放行会一次性引入大量未经逐条确认的记忆/任务，放大错误知识的影响面。",
+      expectedVersions: { sources: {}, target: representative.expected_versions },
+      defaultAction: "逐条审阅",
+      dedupeKey,
+      batchProposalDigests: [...proposalDigests],
+    };
+    this.db
+      .prepare(
+        `INSERT INTO decisions(
+           id,workspace_id,proposal_digest,expected_versions,owner_binding,
+           expires_at,state,request_id,decided_at,action,resolved_at,created_at,
+           attention_case,dedupe_key
+         ) VALUES(?,?,?,?,?,?,'pending',NULL,NULL,NULL,NULL,?,?,?)`,
+      )
+      .run(
+        id,
+        workspaceId,
+        anchorDigest,
+        JSON.stringify(attentionCase.expectedVersions),
+        JSON.stringify({ actorId: this.options.ownerId ?? "owner" }),
+        expiresAt,
+        createdAt,
+        JSON.stringify(attentionCase),
+        dedupeKey,
+      );
+    return id;
+  }
+
+  private handleCreateMatch(
+    proposal: Proposal,
+    proposalDigest: string,
+    evidenceVerdict: "valid" | "invalid" | "ambiguous",
+    impactCount: number,
+    match: KnowledgeMatch,
+    gated = false,
+  ): EvaluationResult {
+    const reasons = [`knowledge_${match.kind}`];
+    if (match.kind === "conflict_recorded") {
+      this.recordDispute(proposal, proposalDigest, match);
+      // Both sides keep their source attribution; neither is auto-applied and no
+      // decision card is raised unless the conflict blocks a current task.
+      this.persistPolicy(
+        proposal,
+        proposalDigest,
+        "defer_until_use",
+        reasons,
+        impactCount,
+      );
+      this.db
+        .prepare("UPDATE proposals SET state='disputed',updated_at=? WHERE id=?")
+        .run(now(), proposal.proposal_id);
+      return {
+        proposalId: proposal.proposal_id,
+        proposalDigest,
+        evidenceVerdict,
+        policy: "defer_until_use",
+        reasons,
+        match,
+      };
+    }
+    if (match.kind === "equivalent_linked" && match.memoryId) {
+      // F: when the whole batch is over its impact budget, do not promote a new
+      // equivalent memory here either — park it with the batch and let the single
+      // consolidated AttentionCase carry the decision.
+      if (gated) {
+        this.persistPolicy(
+          proposal,
+          proposalDigest,
+          "awaiting_decision",
+          [...reasons, "impact_limit_exceeded"],
+          impactCount,
+        );
+        return {
+          proposalId: proposal.proposal_id,
+          proposalDigest,
+          evidenceVerdict,
+          policy: "awaiting_decision",
+          reasons: [...reasons, "impact_limit_exceeded"],
+          match,
+          batchDeferred: true,
+        };
+      }
+      // Independent source reaching the same conclusion is corroborating evidence:
+      // promote it as its own active memory and persist a queryable equivalence edge
+      // so the support set can be recalled for either memory.
+      this.persistPolicy(
+        proposal,
+        proposalDigest,
+        "auto_apply",
+        reasons,
+        impactCount,
+      );
+      const receipt = this.apply(proposal, proposalDigest);
+      this.recordEquivalence(proposal, match.memoryId, receipt.entityId);
+      return {
+        proposalId: proposal.proposal_id,
+        proposalDigest,
+        evidenceVerdict,
+        policy: "auto_apply",
+        reasons,
+        receipt,
+        match,
+      };
+    }
+    // duplicate restatement (same statement, overlapping source): already known
+    // knowledge; do not insert a second active memory and do not ask the owner.
+    this.persistPolicy(
+      proposal,
+      proposalDigest,
+      "auto_apply",
+      reasons,
+      impactCount,
+    );
+    this.db
+      .prepare("UPDATE proposals SET state='retained',updated_at=? WHERE id=?")
+      .run(now(), proposal.proposal_id);
+    return {
+      proposalId: proposal.proposal_id,
+      proposalDigest,
+      evidenceVerdict,
+      policy: "auto_apply",
+      reasons,
+      match,
+    };
   }
 
   decide(decisionId: string, input: unknown) {
@@ -984,6 +1851,10 @@ export class MemoryService {
       decidedAt: row.decided_at ? String(row.decided_at) : null,
       resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
       createdAt: String(row.created_at),
+      attentionCase: row.attention_case
+        ? JSON.parse(String(row.attention_case))
+        : null,
+      dedupeKey: row.dedupe_key ? String(row.dedupe_key) : null,
       proposal: this.proposal(String(row.proposal_id))!,
     }));
   }
