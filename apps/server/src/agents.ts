@@ -79,6 +79,14 @@ export async function acp(
   options: AcpOptions = {},
 ) {
   const child = launch(profile, profile.args, cwd);
+  // Track the 'close' event from spawn time so we never miss it after stop().
+  // On Windows, 'close' fires only after the process exits AND its stdio
+  // streams are destroyed — that is when the OS releases the cwd handle.
+  // Awaiting it in finally prevents the caller's rmSync from racing teardown.
+  const closed = new Promise<void>((resolve) => {
+    child.once("close", () => resolve());
+    child.once("error", () => resolve());
+  });
   let failure = "";
   let terminalFailure: Error | undefined;
   child.stderr.on("data", (data) => {
@@ -337,6 +345,15 @@ export async function acp(
     clearTimeout(timeout);
     signal.removeEventListener("abort", cancel);
     stop(child);
+    // Wait for the child to fully exit and release its cwd handle before
+    // returning. stop() sends SIGTERM then escalates to SIGKILL after 1.5s,
+    // so 5s is ample. The timeout resolves (never rejects): if it fires the
+    // SIGKILL has already run, and the caller's rmSync surfaces any residual
+    // lock as a real EPERM rather than being retried.
+    await Promise.race([
+      closed,
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ]);
   }
 }
 export function cliArgs(profile: AgentProfile) {
