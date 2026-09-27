@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import type { Store } from "../../store.js";
 import { MemoryService } from "../../memory/service.js";
 import { LarkCardActionService } from "./card-actions.js";
@@ -15,9 +15,12 @@ import {
   LarkConnectionManager,
   LarkEventInbox,
   OfficialLarkRealtimeAdapter,
+  type LarkMediaPort,
   type LarkRealtimeAdapter,
 } from "./realtime.js";
 import type { EncryptedSecretStore } from "./secret-store.js";
+import { AssistantRuntime, type AssistantModelPort } from "../../assistant/runtime.js";
+import type { VisibilityPolicy } from "../../assistant/runtime.js";
 import { QualityLarkAnnotationService } from "../../quality/lark-annotations.js";
 
 type Row = Record<string, unknown>;
@@ -35,6 +38,7 @@ export class LarkRuntimeHost {
   private readonly batcher: LarkNotificationBatcher;
   private readonly cards: LarkCardActionService;
   readonly quality: QualityLarkAnnotationService;
+  private readonly assistant: AssistantRuntime | null;
   private loopPromise: Promise<void> | null = null;
   private processedDeliveries = 0;
   private processedCards = 0;
@@ -50,6 +54,12 @@ export class LarkRuntimeHost {
       workerId?: string;
       realtimeAdapter?: LarkRealtimeAdapter;
       messageAdapter?: LarkMessageAdapter;
+      assistantModel?: AssistantModelPort;
+      media?: LarkMediaPort;
+      /** Test seam: invoked after the reply outbox row is committed but before the
+       *  inbox event is acked. Throwing here simulates a crash and must leave the
+       *  outbox row durable. */
+      afterReplyEnqueued?: (info: { turnId: string; outboxId: string }) => void;
     },
   ) {
     const workerId =
@@ -70,6 +80,24 @@ export class LarkRuntimeHost {
       `${workerId}-cards`,
     );
     this.quality = new QualityLarkAnnotationService(input.store, input.secrets);
+    // Real server-owned visibility: a group conversation may see only evidence
+    // actually collected in that group chat. The owner's private/p2p imports and
+    // anything not sourced from this chat are invisible here.
+    const visibilityPolicy: VisibilityPolicy = ({ conversation, fragmentId }) => {
+      if (conversation.visibility === "private") return true;
+      const record = input.store.evidence(fragmentId);
+      if (!record) return false;
+      const chatId = record.revision.context?.conversationId;
+      return Boolean(chatId && chatId === conversation.chatId);
+    };
+    this.assistant = input.assistantModel
+      ? new AssistantRuntime(input.store, input.assistantModel, {
+          ownerId: "owner",
+          memory: input.memory,
+          visibilityPolicy,
+          turnTimeoutMs: 60_000,
+        })
+      : null;
   }
 
   private activeConnections() {
@@ -98,7 +126,46 @@ export class LarkRuntimeHost {
           new LarkConnectionLeaseRepository(this.input.store.db),
           this.input.secrets,
           this.input.realtimeAdapter ?? new OfficialLarkRealtimeAdapter(),
-          new LarkEventInbox(this.input.store),
+          new LarkEventInbox(this.input.store, {
+            media: this.input.media,
+            afterReplyEnqueued: this.input.afterReplyEnqueued,
+            assistant: this.assistant
+              ? async (routed) => {
+                  // C: namespaced conversation key. The thread_id encodes the
+                  // transport binding (appId + bindingVersion), so a web/forged row
+                  // (channel=web, thread_id='') and rows from a different Lark app or
+                  // a superseded binding can never be reused here. Web cannot create
+                  // lark_* conversations at all (app.ts forces channel=web).
+                  const transportThread = `lark:${routed.appId}:v${routed.bindingVersion}`;
+                  const expectedVisibility =
+                    routed.chatType === "group" ? "group" : "private";
+                  const conversation = this.assistant!.conversations.open({
+                    principalId: routed.principalId,
+                    channel:
+                      routed.chatType === "group" ? "lark_group" : "lark_p2p",
+                    chatId: routed.chatId,
+                    threadId: transportThread,
+                    visibility: expectedVisibility,
+                  });
+                  // Fail-closed: never adopt a row whose visibility disagrees with the
+                  // current Lark binding (a tampered/forged private group row).
+                  if (conversation.visibility !== expectedVisibility)
+                    throw Error("LARK_CONVERSATION_VISIBILITY_MISMATCH");
+                  const result = await this.assistant!.turn({
+                    conversationId: conversation.id,
+                    userText: routed.text,
+                    transportEventId: routed.eventId,
+                  });
+                  return {
+                    replyText: result.turn.result,
+                    turnId: result.turn.id,
+                    status: result.turn.inputMessageRefs.status,
+                    duplicate: result.duplicate,
+                    replyOutboxId: result.turn.replyOutboxId,
+                  };
+                }
+              : undefined,
+          }),
           `connection-${process.pid}-${randomUUID().slice(0, 8)}`,
           {
             enqueue: (event) => {
@@ -137,8 +204,40 @@ export class LarkRuntimeHost {
     };
   }
 
+  /**
+   * E: recovery worker. At start no model is in flight, so every pending/running
+   * turn left by a previous process is stale. A turn that crashed mid-model (no
+   * result) is removed so a redelivery of the same transport event starts a fresh
+   * turn instead of returning the stale pending record forever. A turn that already
+   * produced a result but never reached a terminal state is marked done; the reply
+   * outbox (if any) is owned by the delivery worker.
+   */
+  recoverUnfinishedTurns(): { reset: number; completed: number } {
+    if (!this.assistant) return { reset: 0, completed: 0 };
+    let reset = 0;
+    let completed = 0;
+    for (const turn of this.assistant.conversations.unfinishedTurns()) {
+      if (turn.result) {
+        this.assistant.conversations.completeTurn({
+          turnId: turn.id,
+          result: turn.result,
+          selectedEvidence: turn.selectedEvidence,
+          toolActions: turn.toolActions,
+        });
+        completed++;
+      } else {
+        this.input.store.db
+          .prepare("DELETE FROM conversation_turns WHERE id=?")
+          .run(turn.id);
+        reset++;
+      }
+    }
+    return { reset, completed };
+  }
+
   start() {
     if (this.loopPromise) return;
+    this.recoverUnfinishedTurns();
     this.loopPromise = this.loop();
   }
 

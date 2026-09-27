@@ -7,6 +7,7 @@ import {
   WSClient,
 } from "@larksuiteoapi/node-sdk";
 import type { Store } from "../../store.js";
+import type { CaptureInput } from "../../../../../packages/contracts/src/index.js";
 import { stableDigest } from "../../storage/digest.js";
 import { EncryptedSecretStore } from "./secret-store.js";
 
@@ -26,9 +27,26 @@ export type LarkInboundEvent = {
   chatId: string | null;
   chatType: "p2p" | "group" | null;
   messageId: string | null;
+  /** Lark message_type: text | post | image | ... Drives rich-part parsing. */
+  messageType: string | null;
+  /** Parent/root message id when this event replies to / quotes another message. */
+  parentMessageId: string | null;
   text?: string;
   payload: unknown;
 };
+
+/**
+ * Inbound media download port. The production implementation calls Lark's
+ * message-resource API; tests inject a fake that returns fixture bytes without
+ * touching the network.
+ */
+export interface LarkMediaPort {
+  downloadImage(input: {
+    appId: string;
+    messageId: string;
+    imageKey: string;
+  }): Promise<{ dataBase64: string; mimeType: "image/png" | "image/jpeg" | "image/webp" }>;
+}
 
 export interface LarkRealtimeAdapter {
   connect(input: {
@@ -119,6 +137,15 @@ export const normalizeLarkEvent = (
     data?.message?.message_id ||
       data?.context?.open_message_id ||
       data?.open_message_id,
+  ),
+  messageType: safeString(
+    data?.message?.message_type || data?.messageType || data?.msg_type,
+  ),
+  parentMessageId: safeString(
+    data?.message?.parent_id ||
+      data?.message?.root_id ||
+      data?.parent_id ||
+      data?.root_id,
   ),
   text: messageText(data?.message?.content),
   payload: data,
@@ -251,8 +278,61 @@ export class LarkConnectionLeaseRepository {
   }
 }
 
+export type LarkAssistantInput = {
+  appId: string;
+  connectionId: string;
+  bindingVersion: number;
+  chatId: string;
+  chatType: "p2p" | "group";
+  /** Canonical principal the message acts on (the bound owner after mapping). */
+  principalId: string;
+  messageId: string | null;
+  /** External transport event id; makes the assistant turn idempotent. */
+  eventId: string;
+  text: string;
+};
+
+export type LarkAssistantHookResult = {
+  replyText: string;
+  turnId: string;
+  status?: string;
+  /** True when this result came from an already-enqueued transport event
+   *  (idempotent redelivery) rather than a fresh turn we just executed. */
+  duplicate?: boolean;
+  /** The outbox row already attached to the turn, when one exists (recovery /
+   *  redelivery must not create a second delivery). */
+  replyOutboxId?: string | null;
+};
+
+export type LarkAssistantHook = (
+  input: LarkAssistantInput,
+) => Promise<LarkAssistantHookResult | null>;
+
 export class LarkEventInbox {
-  constructor(private readonly store: Store) {}
+  private readonly ownerId: string;
+  private readonly assistant?: LarkAssistantHook;
+  private readonly media?: LarkMediaPort;
+  /** Test seam: invoked after the reply outbox row is committed but before the
+   *  inbox event is marked processed. Throwing here simulates a crash and must
+   *  leave the outbox row in place so a restart / redelivery still delivers. */
+  private readonly afterReplyEnqueued?: (info: {
+    turnId: string;
+    outboxId: string;
+  }) => void;
+  constructor(
+    private readonly store: Store,
+    options: {
+      ownerId?: string;
+      assistant?: LarkAssistantHook;
+      media?: LarkMediaPort;
+      afterReplyEnqueued?: (info: { turnId: string; outboxId: string }) => void;
+    } = {},
+  ) {
+    this.ownerId = options.ownerId ?? "owner";
+    this.assistant = options.assistant;
+    this.media = options.media;
+    this.afterReplyEnqueued = options.afterReplyEnqueued;
+  }
 
   persist(event: LarkInboundEvent) {
     const connection = this.store.db
@@ -336,7 +416,7 @@ export class LarkEventInbox {
     });
   }
 
-  processMessage(event: LarkInboundEvent) {
+  async processMessage(event: LarkInboundEvent) {
     const receipt = this.persist(event);
     if (receipt.duplicate && receipt.state !== "received") return receipt;
     if (event.kind === "im.chat.member.bot.deleted_v1" && event.chatId) {
@@ -422,7 +502,7 @@ export class LarkEventInbox {
     }
     const connection = this.store.db
       .prepare(
-        `SELECT c.id,v.capability_profile,b.binding_version
+        `SELECT c.id,v.capability_profile,b.id AS binding_id,b.binding_version,b.owner_open_id AS binding_owner_open_id
          FROM lark_connections c
          JOIN lark_connection_versions v ON v.connection_id=c.id
            AND v.version=c.active_version
@@ -440,6 +520,84 @@ export class LarkEventInbox {
     if (event.senderOpenId && event.senderOpenId === capability.botOpenId) {
       this.finish(receipt.id, "processed");
       return { ...receipt, outcome: "ignored_self" };
+    }
+    const bindingOwnerOpenId = safeString(connection.binding_owner_open_id);
+    const isBoundOwner = Boolean(
+      event.senderOpenId &&
+        bindingOwnerOpenId &&
+        event.senderOpenId === bindingOwnerOpenId,
+    );
+    if (
+      this.assistant &&
+      isBoundOwner &&
+      (event.chatType !== "group" || this.botMentioned(event, capability.botOpenId))
+    ) {
+      const routed = await this.assistant({
+        appId: event.appId,
+        connectionId: String(connection.id),
+        bindingVersion: Number(connection.binding_version),
+        chatId: event.chatId,
+        chatType: event.chatType === "group" ? "group" : "p2p",
+        principalId: this.ownerId,
+        messageId: event.messageId,
+        eventId: event.eventId,
+        text: event.text || "",
+      });
+      if (!routed) {
+        this.finish(receipt.id, "processed");
+        return { ...receipt, outcome: "ignored_not_allowed" };
+      }
+      // A superseded/cancelled turn has no reply body and must not be delivered.
+      if (routed.status === "cancelled") {
+        this.finish(receipt.id, "processed");
+        return { ...receipt, outcome: "interrupted", turnId: routed.turnId };
+      }
+      const status = routed.status ?? "done";
+      const inFlight = status === "pending" || status === "running";
+      if (routed.duplicate) {
+        if (inFlight) {
+          // Concurrent redelivery while the primary turn is still executing. The
+          // primary owns both inbox finish and delivery; do not finish or enqueue a
+          // second reply, or we'd double-deliver. Leave the inbox for the primary.
+          return {
+            ...receipt,
+            outcome: "assistant_reply",
+            reply: routed.replyText,
+            turnId: routed.turnId,
+          };
+        }
+        if (routed.replyOutboxId) {
+          // Turn already completed and already has an outbox row; the delivery
+          // worker owns retries. Ack this redelivery without a second enqueue.
+          this.finish(receipt.id, "processed");
+          return {
+            ...receipt,
+            outcome: "assistant_reply",
+            reply: routed.replyText,
+            turnId: routed.turnId,
+          };
+        }
+        // Recovery path: turn completed but the process crashed before the outbox
+        // was written. Fall through and enqueue now; provider_uuid is deterministic
+        // per turn so Lark dedupes any ambiguous prior send.
+      }
+      // E: persist the reply outbox (and atomically link it to the turn) BEFORE
+      // marking the inbox processed. If enqueue throws, the inbox stays "received"
+      // and Lark redelivers; the outbox row is never lost.
+      const outboxId = this.enqueueAssistantReply(
+        connection,
+        event.chatId,
+        routed.replyText,
+        routed.turnId,
+      );
+      this.afterReplyEnqueued?.({ turnId: routed.turnId, outboxId });
+      this.finish(receipt.id, "processed");
+      return {
+        ...receipt,
+        outcome: "assistant_reply",
+        reply: routed.replyText,
+        turnId: routed.turnId,
+      };
     }
     if (event.chatType === "group")
       this.store.db
@@ -468,25 +626,31 @@ export class LarkEventInbox {
       this.finish(receipt.id, "processed");
       return { ...receipt, outcome: "ignored_not_allowed" };
     }
+    const parts = await this.buildCaptureParts(event);
     const capture = this.store.inputs.ingest({
       source: "chat",
       externalId: `${event.appId}:${event.messageId}`,
       title: `飞书群消息 ${event.chatId}`,
       observedAt: event.eventTime,
-      parts: [{ type: "text", text: event.text || "[非文本消息]" }],
+      parts,
       context: { conversationId: event.chatId, event: event.kind },
       provenance: {
         collectorId: `lark:${event.appId}`,
-        actorId: event.senderOpenId,
-        actorType: event.senderType,
-        actorVerifiedBy: "lark-websocket",
+        actorId: isBoundOwner ? this.ownerId : (event.senderOpenId ?? null),
+        actorType: isBoundOwner ? "owner" : event.senderType,
+        actorVerifiedBy: isBoundOwner
+          ? `lark-binding:${connection.binding_version}`
+          : null,
         sourceUri: null,
         eventId: event.eventId,
         eventAt: event.eventTime,
         timezone: null,
-        quoted: false,
+        quoted: Boolean(event.parentMessageId),
         forwarded: false,
         producerKind: "original",
+        actorExternalId: event.senderOpenId ?? null,
+        actorPrincipalId: isBoundOwner ? this.ownerId : null,
+        actorBindingVersion: Number(connection.binding_version),
       },
     });
     this.finish(receipt.id, "processed");
@@ -540,6 +704,184 @@ export class LarkEventInbox {
             : "pairing rejected",
       };
     }
+  }
+
+  private botMentioned(event: LarkInboundEvent, botOpenId?: string) {
+    if (!botOpenId) return false;
+    const mentions = (
+      event.payload as { message?: { mentions?: Array<{ id?: { open_id?: string } }> } }
+    )?.message?.mentions;
+    if (Array.isArray(mentions) && mentions.some((m) => m?.id?.open_id === botOpenId))
+      return true;
+    return typeof event.text === "string" && event.text.includes(botOpenId);
+  }
+
+  /**
+   * H-G15: adapt a raw Lark message into unified capture parts. Text messages stay a
+   * single text part; post (rich text) splits title + paragraphs into separate text
+   * parts; image messages are downloaded through the media port and stored as an
+   * asset-backed image part; a reply/quote carries replyTo provenance on every part.
+   */
+  private async buildCaptureParts(
+    event: LarkInboundEvent,
+  ): Promise<CaptureInput["parts"]> {
+    const message = (
+      event.payload as { message?: { content?: unknown } } | undefined
+    )?.message;
+    const rawContent =
+      typeof message?.content === "string" ? message.content : null;
+    let content: Record<string, unknown> | null = null;
+    if (rawContent) {
+      try {
+        content = JSON.parse(rawContent) as Record<string, unknown>;
+      } catch {
+        content = null;
+      }
+    }
+    const replyTo = event.parentMessageId ?? null;
+    const withProvenance = <T extends CaptureInput["parts"][number]>(part: T) => ({
+      ...part,
+      provenance: {
+        actorExternalId: event.senderOpenId ?? null,
+        actorPrincipalId: null,
+        observedAt: event.eventTime,
+        eventId: event.eventId,
+        replyTo,
+        quoted: Boolean(replyTo),
+        forwarded: false,
+        producerKind: "original" as const,
+      },
+    });
+
+    if (event.messageType === "image") {
+      const imageKey =
+        content && typeof content.image_key === "string"
+          ? content.image_key
+          : null;
+      if (imageKey && this.media && event.messageId) {
+        const media = await this.media.downloadImage({
+          appId: event.appId,
+          messageId: event.messageId,
+          imageKey,
+        });
+        return [
+          withProvenance({
+            type: "image",
+            mimeType: media.mimeType,
+            data: media.dataBase64,
+            label: "飞书图片",
+          }),
+        ];
+      }
+      return [withProvenance({ type: "text", text: "[图片消息]" })];
+    }
+
+    if (event.messageType === "post" && content) {
+      const parts: CaptureInput["parts"] = [];
+      if (typeof content.title === "string" && content.title.trim())
+        parts.push(
+          withProvenance({ type: "text", text: `【标题】${content.title}` }),
+        );
+      const rows = Array.isArray(content.content) ? content.content : [];
+      for (const row of rows) {
+        const segments: string[] = [];
+        for (const node of Array.isArray(row) ? row : []) {
+          if (!node || typeof node !== "object") continue;
+          const tag = (node as Record<string, unknown>).tag;
+          const text = (node as Record<string, unknown>).text;
+          if (tag === "text" && typeof text === "string") segments.push(text);
+          else if (tag === "a" && typeof text === "string") {
+            const href = (node as Record<string, unknown>).href;
+            segments.push(
+              typeof href === "string" ? `${text}(${href})` : text,
+            );
+          } else if (tag === "at") {
+            const name = (node as Record<string, unknown>).user_name;
+            if (typeof name === "string") segments.push(`@${name}`);
+          } else if (tag === "img") segments.push("[图片]");
+        }
+        const line = segments.join("").trim();
+        if (line) parts.push(withProvenance({ type: "text", text: line }));
+      }
+      if (parts.length) return parts;
+    }
+
+    return [
+      withProvenance({ type: "text", text: event.text || "[非文本消息]" }),
+    ];
+  }
+
+  private enqueueAssistantReply(
+    connection: Row,
+    chatId: string,
+    replyText: string,
+    turnId?: string,
+  ): string {
+    const at = new Date().toISOString();
+    const changeId = randomUUID();
+    const card = {
+      schema: "2.0",
+      config: { width_mode: "default" },
+      body: { elements: [{ tag: "markdown", content: replyText.slice(0, 8000) }] },
+    };
+    const payloadJson = JSON.stringify(card);
+    const intentId = randomUUID();
+    // E: provider_uuid is deterministic per TURN (transport event id), not per
+    // (chatId, replyText). Two different turns with the same reply text must each
+    // send their own Lark message; a redelivery of the same turn reuses the uuid so
+    // Lark dedupes any ambiguous prior send.
+    const providerUuid = turnId
+      ? stableDigest({ channel: "lark", chatId, turnId }).slice(0, 50)
+      : stableDigest({ chatId, replyText }).slice(0, 50);
+    this.store.tx(() => {
+      this.store.db
+        .prepare("INSERT INTO changes VALUES(?,?,?,?,?,?,?)")
+        .run(
+          changeId,
+          "assistant_reply",
+          "主助手回复",
+          null,
+          null,
+          replyText.slice(0, 500),
+          at,
+        );
+      this.store.db
+        .prepare(
+          `INSERT INTO delivery_intents(
+             id,workspace_id,change_id,channel_binding_version,channel,target,
+             payload_digest,provider_uuid,state,created_at,updated_at,
+             binding_id,payload_json,next_attempt_at,card_action_id,
+             aggregation_mode,aggregate_after
+           ) VALUES(?,'personal',?,?, 'lark',?,?,?, 'pending',?,?,?,?,?,NULL,'instant',NULL)`,
+        )
+        .run(
+          intentId,
+          changeId,
+          Number(connection.binding_version),
+          chatId,
+          stableDigest(card),
+          providerUuid,
+          at,
+          at,
+          String(connection.binding_id),
+          payloadJson,
+          at,
+        );
+      this.store.db
+        .prepare(
+          "INSERT INTO delivery_intent_changes(intent_id,change_id,ordinal) VALUES(?,?,0)",
+        )
+        .run(intentId, changeId);
+      // E: link the turn to the outbox row in the SAME transaction, so a turn never
+      // has a dangling outbox reference or an orphaned pending delivery.
+      if (turnId)
+        this.store.db
+          .prepare(
+            "UPDATE conversation_turns SET reply_outbox_id=? WHERE id=?",
+          )
+          .run(intentId, turnId);
+    });
+    return intentId;
   }
 
   private finish(inboxId: string, state: "processed" | "failed") {
