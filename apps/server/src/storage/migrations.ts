@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 9;
+export const SUPPORTED_SCHEMA_VERSION = 10;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -670,6 +670,67 @@ const notificationAggregationStatements = [
   "CREATE INDEX delivery_intents_aggregate_idx ON delivery_intents(channel,state,aggregation_mode,aggregate_after)",
 ] as const;
 
+const qualityAnnotationStatements = [
+  `CREATE TABLE quality_datasets(
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     split TEXT NOT NULL CHECK(split IN ('dev','holdout')),
+     state TEXT NOT NULL CHECK(state IN ('draft','labeling','frozen','evaluated')),
+     source_uri TEXT NOT NULL,
+     source_revision_id TEXT,
+     source_digest TEXT NOT NULL,
+     target_count INTEGER NOT NULL CHECK(target_count > 0),
+     created_at TEXT NOT NULL,
+     frozen_at TEXT,
+     manifest_digest TEXT,
+     UNIQUE(name,split,source_digest)
+   )`,
+  `CREATE TABLE quality_samples(
+     id TEXT PRIMARY KEY,
+     dataset_id TEXT NOT NULL REFERENCES quality_datasets(id),
+     ordinal INTEGER NOT NULL CHECK(ordinal >= 1),
+     input_digest TEXT NOT NULL,
+     input_json TEXT NOT NULL,
+     draft_label_json TEXT NOT NULL,
+     confirmed_label_json TEXT,
+     label_digest TEXT NOT NULL,
+     state TEXT NOT NULL CHECK(state IN ('pending','confirmed','needs_edit','skipped')),
+     reviewer_open_id TEXT,
+     reviewed_at TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     UNIQUE(dataset_id,ordinal),
+     UNIQUE(dataset_id,input_digest)
+   )`,
+  `CREATE TABLE quality_annotation_sessions(
+     id TEXT PRIMARY KEY,
+     dataset_id TEXT NOT NULL REFERENCES quality_datasets(id),
+     binding_id TEXT NOT NULL REFERENCES lark_bindings(id),
+     chat_id TEXT NOT NULL,
+     owner_open_id TEXT NOT NULL,
+     message_id TEXT,
+     current_sample_id TEXT REFERENCES quality_samples(id),
+     nonce_hash TEXT NOT NULL,
+     expires_at TEXT NOT NULL,
+     state TEXT NOT NULL CHECK(state IN ('active','completed','cancelled','expired')),
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE TABLE quality_annotation_events(
+     id TEXT PRIMARY KEY,
+     session_id TEXT NOT NULL REFERENCES quality_annotation_sessions(id),
+     sample_id TEXT NOT NULL REFERENCES quality_samples(id),
+     event_id TEXT NOT NULL UNIQUE,
+     action TEXT NOT NULL CHECK(action IN ('confirm','abstain','needs_edit','skip')),
+     actor_open_id TEXT NOT NULL,
+     label_digest TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
+  "ALTER TABLE delivery_intents ADD COLUMN annotation_session_id TEXT REFERENCES quality_annotation_sessions(id)",
+  "CREATE INDEX quality_samples_state_idx ON quality_samples(dataset_id,state,ordinal)",
+  "CREATE INDEX quality_sessions_state_idx ON quality_annotation_sessions(state,updated_at)",
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -729,6 +790,12 @@ const migrations: readonly Migration[] = [
     name: "notification-aggregation",
     statements: notificationAggregationStatements,
     checksum: checksum(notificationAggregationStatements),
+  },
+  {
+    version: 10,
+    name: "quality-annotation-workflow",
+    statements: qualityAnnotationStatements,
+    checksum: checksum(qualityAnnotationStatements),
   },
 ];
 

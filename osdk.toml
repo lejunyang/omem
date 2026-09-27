@@ -33,3 +33,9 @@ run = "npm run test:live-learning"
 run = "npm run test:live-pipeline"
 [tasks.live-lark-host]
 run = "npm run test:live-lark-host"
+[tasks.quality-lark-annotate]
+run = "npm run quality:lark-annotate"
+[tasks.quality-evaluate]
+run = "npm run quality:evaluate"
+[tasks.quality-run]
+run = "npm run quality:run"

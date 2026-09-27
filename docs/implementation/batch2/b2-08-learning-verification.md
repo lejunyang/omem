@@ -14,6 +14,7 @@
 - `lark.enabled=true` 时生产服务装配官方 registration、公开 OpenAPI capability probe、botmux existing-app provider、WebSocket connection supervisor、delivery worker 与 card worker；外部连接默认关闭且要求 `OMEM_SECRET_KEY`。
 - capability probe 实际回读 app scope、callback 与 bot identity；公开 API 不提供事件清单，因此事件只在 WebSocket 真实收到后追加为 runtime-verified，requested config 不冒充 actual。
 - schema v9 为 delivery intent 增加 `aggregation_mode`、`aggregate_after`、`superseded_by` 与 `delivery_intent_changes`；普通通知支持即时、短窗、定时三种策略，decision 卡保持即时。
+- schema v10 增加本地 quality dataset/sample/annotation session/event；飞书标注卡完全走项目自己的 outbox 与 WebSocket callback，不使用 botmux ask。
 
 ## 确定性验证
 
@@ -24,6 +25,7 @@
 3. source head 更新后旧 job 明确 `STALE_JOB_INPUT`，新 revision 继续完成；运行中 Agent 被服务停机中断后 job 为 `retry_wait/transient`。
 4. production Lark host 为 active connection 启动连接，消费正式 outbox，收到群消息后自动启用 monitoring target，并把该事件追加到 capability profile。
 5. A-N04：即时模式 5 个 change 各有独立 intent；短窗模式合成一次 Card 发送且五条 change 映射都保留；定时模式在 `Asia/Shanghai` 正确计算当日/次日 09:00 边界。
+6. 质量数据测试验证文档块去重、人工确认前禁止冻结、冻结 manifest 防篡改、指标计算，以及错误 app/owner/chat/message/nonce/digest 拒绝和 callback 重放幂等。
 
 这些 fixture 结果证明编排与持久语义，不证明任意外部 Agent 都可用。
 
@@ -35,8 +37,8 @@
 - `apps/server/src/integrations/lark/runtime.ts`: `150cee5f5ab6c175be05ea1781fae66107fd6250635cb516e341702bc91b7979`
 - `apps/server/tests/lark-runtime.test.ts`: `4bf8b0bf6cbe2d529e9a85d4664685d6565980b9120c1b0cd7a38caff55790f7`
 - `scripts/live-lark-host-smoke.ts`: `a8d2f0f2ed219ffc64659fb49598c3a164e7929841b5b449f2b9362babcb1674`
-- `apps/server/src/storage/migrations.ts`: `84971e85231842ae615bbe46a9497630cdfa2a32689d18a3bcdbd1f3249f3b1f`
-- `apps/server/src/integrations/lark/delivery.ts`: `28216ffd9d0f04d3b1752a92a64e7b1c1578080f00b0637689d0b4f03b06f0ea`
+- `apps/server/src/storage/migrations.ts`: `6ff4c8219e97218360d9a6d3adea97229cc77c5319f93ea293eeea49a0f64d19`
+- `apps/server/src/integrations/lark/delivery.ts`: `b3896dfe3d0e7f834bf80a0ee6f0c2b02ad5eb134bed4fe81b2a9f1717796f8b`
 - `apps/server/tests/lark-delivery.test.ts`: `489d5520b7b45c352c34a56f666f1d23a64dacfd18ffca60cc5c6c52e853f6b1`
 
 ## 真实 ACP 验证
@@ -72,15 +74,17 @@ osdk lock
 osdk deps --frozen
 osdk exec --tool node@24.18.1 -- npx vitest run apps/server/tests/learning-pipeline.test.ts apps/server/tests/role-runtime.test.ts apps/server/tests/agents.test.ts
 osdk exec --tool node@24.18.1 -- npx vitest run apps/server/tests/lark-onboarding.test.ts apps/server/tests/lark-runtime.test.ts apps/server/tests/lark-delivery.test.ts apps/server/tests/lark-realtime.test.ts
+osdk exec --tool node@24.18.1 -- npx vitest run apps/server/tests/quality-annotation.test.ts apps/server/tests/quality-evaluation.test.ts
 osdk run check
 osdk run browser
 ```
 
-- `osdk run check`: exit 0；15 个测试文件、87 项测试通过，TypeScript/Vue 类型检查与生产构建通过。
+- `osdk run check`: exit 0；17 个测试文件、90 项测试通过，TypeScript/Vue 类型检查与生产构建通过。
 - `osdk run browser`: exit 0；12/12 组真实 Chromium + Fastify + SQLite 页面检查通过。
 
 ## 剩余 B2-08 范围
 
-- 尚未建立 40 个开发样本与 120 个冻结 holdout，也未达到可声明的质量发布门。
+- 40 条 dev 草稿尚未全部人工确认，120 条冻结 holdout 尚未建立，因此还未达到可声明的质量发布门。
+- 已从用户授权的单篇文档生成 40 条 dev 草稿并发出首张项目内标注卡；人工确认尚在进行，120 条跨来源 holdout 尚未建立。
 - 短窗/定时摘要尚未执行一次真实“等待窗口后发送”测试；当前 pass 来自确定性时钟、SQLite 映射和 adapter 发送断言。
 - 当前是单进程单学习 worker；SQLite lease 支持崩溃恢复，但还没有团队/分布式 worker 部署。

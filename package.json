@@ -23,6 +23,9 @@
     "test:live-learning": "tsx scripts/live-learning-smoke.ts",
     "test:live-pipeline": "tsx scripts/live-pipeline-smoke.ts",
     "test:live-lark-host": "tsx scripts/live-lark-host-smoke.ts",
+    "quality:lark-annotate": "tsx scripts/quality-lark-annotate.ts",
+    "quality:evaluate": "tsx scripts/quality-evaluate.ts",
+    "quality:run": "tsx scripts/quality-run.ts",
     "cli": "tsx apps/server/src/cli.ts",
     "format": "prettier --write \"apps/**/*.{ts,vue,css,mjs}\" \"packages/**/*.{ts,vue,css}\" \"scripts/*.ts\""
   },

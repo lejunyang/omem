@@ -94,6 +94,19 @@ osdk run live-learning
 # 真实持久 worker：extractor → 独立 verifier → policy/apply
 # 必须显式选本次验证模型；示例不改变产品支持范围
 OMEM_LIVE_MODEL=gpt-5.4 OMEM_LIVE_EFFORT=medium osdk run live-pipeline
+# 从授权文档建立本地 dev 集，并通过已绑定的 omem 应用逐条确认
+OMEM_DATA_DIR=.omem/live-lark \
+OMEM_LARK_KEY_FILE=/path/to/owner-only-key \
+OMEM_LARK_APP_ID=cli_xxx \
+OMEM_QUALITY_SOURCE='https://tenant.larkoffice.com/wiki/token' \
+osdk run quality-lark-annotate
+# 冻结数据集后运行模型预测与离线指标计算
+OMEM_QUALITY_DATASET_ID=your-dataset-id \
+OMEM_LIVE_MODEL=gpt-5.4 osdk run quality-run
+OMEM_QUALITY_DATASET_ID=your-dataset-id \
+OMEM_QUALITY_PREDICTIONS=.omem/quality/predictions.json osdk run quality-evaluate
 ```
+
+质量数据集、原文、人工标签、预测和逐项失败明细只保存在 `OMEM_DATA_DIR` 对应的 SQLite 与 `.omem/quality/`，不提交 Git。飞书标注由项目自己的应用发送一张可持续更新的 Card：owner 每次点击“标注正确 / 应不提炼 / 需要修改 / 稍后处理”后，服务校验 app、owner、chat、message、nonce、label digest 与有效期，再原子记录结果并在同一张卡展示下一条。只有全部人工确认后才能冻结；runner 在冻结 manifest 上计算自动应用精度、证据支持精度、明确样本覆盖率、歧义/转述误建数和 p50/p95。
 
 本仓库不提交真实会话、原件、token、模型权重和运行数据库。`docs/prototype` 保留此前经确认的离线视觉原型，它的演示数据和 React 构建不参与新 Vue 产品运行。
