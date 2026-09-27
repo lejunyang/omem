@@ -674,7 +674,8 @@ export class LarkOnboardingService {
       }
       this.db
         .prepare(
-          "UPDATE lark_targets SET state='disabled',updated_at=? WHERE connection_id=? AND state='active'",
+          `UPDATE lark_targets SET state='disabled',capture_enabled=0,updated_at=?
+           WHERE connection_id=? AND state IN ('active','pending_approval')`,
         )
         .run(iso(this.clock()), String(pairing.connection_id));
       this.db
@@ -737,7 +738,7 @@ export class LarkOnboardingService {
             `INSERT INTO lark_targets(
                id,workspace_id,connection_id,binding_version,chat_id,
                target_type,purpose,capture_enabled,state,created_at,updated_at
-             ) VALUES(?,?,?,?,?,'group','group_monitoring',0,'pending_approval',?,?)`,
+             ) VALUES(?,?,?,?,?,'group','group_monitoring',1,'active',?,?)`,
           )
           .run(
             randomUUID(),

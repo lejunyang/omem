@@ -161,7 +161,7 @@ describe("B2-01 migration acceptance", () => {
 
     const store = new Store(directory);
     try {
-      expect(scalar(store.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(store.db, "PRAGMA user_version")).toBe(8);
       const revision = store.revision(legacyFixture.oldRevisionId);
       expect(revision).toMatchObject({
         id: legacyFixture.oldRevisionId,
@@ -278,8 +278,8 @@ describe("B2-01 migration acceptance", () => {
     interrupted.close();
 
     const first = new Store(directory);
-    expect(scalar(first.db, "PRAGMA user_version")).toBe(7);
-    expect(scalar(first.db, "SELECT count(*) FROM migrations")).toBe(7);
+    expect(scalar(first.db, "PRAGMA user_version")).toBe(8);
+    expect(scalar(first.db, "SELECT count(*) FROM migrations")).toBe(8);
     const schemaCount = scalar(
       first.db,
       "SELECT count(*) FROM sqlite_master WHERE type IN ('table','index')",
@@ -288,8 +288,8 @@ describe("B2-01 migration acceptance", () => {
 
     const second = new Store(directory);
     try {
-      expect(scalar(second.db, "PRAGMA user_version")).toBe(7);
-      expect(scalar(second.db, "SELECT count(*) FROM migrations")).toBe(7);
+      expect(scalar(second.db, "PRAGMA user_version")).toBe(8);
+      expect(scalar(second.db, "SELECT count(*) FROM migrations")).toBe(8);
       expect(
         scalar(
           second.db,
@@ -316,9 +316,9 @@ describe("B2-01 migration acceptance", () => {
     v2Interrupted.close();
     const upgradedFromV2 = new Store(v2Directory);
     try {
-      expect(scalar(upgradedFromV2.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(upgradedFromV2.db, "PRAGMA user_version")).toBe(8);
       expect(scalar(upgradedFromV2.db, "SELECT count(*) FROM migrations")).toBe(
-        7,
+        8,
       );
       expect(
         upgradedFromV2.db
@@ -346,9 +346,9 @@ describe("B2-01 migration acceptance", () => {
     v3Interrupted.close();
     const upgradedFromV3 = new Store(v3Directory);
     try {
-      expect(scalar(upgradedFromV3.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(upgradedFromV3.db, "PRAGMA user_version")).toBe(8);
       expect(scalar(upgradedFromV3.db, "SELECT count(*) FROM migrations")).toBe(
-        7,
+        8,
       );
       expect(
         upgradedFromV3.db
@@ -377,9 +377,9 @@ describe("B2-01 migration acceptance", () => {
     v4Interrupted.close();
     const upgradedFromV4 = new Store(v4Directory);
     try {
-      expect(scalar(upgradedFromV4.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(upgradedFromV4.db, "PRAGMA user_version")).toBe(8);
       expect(scalar(upgradedFromV4.db, "SELECT count(*) FROM migrations")).toBe(
-        7,
+        8,
       );
       expect(
         upgradedFromV4.db
@@ -408,9 +408,9 @@ describe("B2-01 migration acceptance", () => {
     v5Interrupted.close();
     const upgradedFromV5 = new Store(v5Directory);
     try {
-      expect(scalar(upgradedFromV5.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(upgradedFromV5.db, "PRAGMA user_version")).toBe(8);
       expect(scalar(upgradedFromV5.db, "SELECT count(*) FROM migrations")).toBe(
-        7,
+        8,
       );
       expect(
         upgradedFromV5.db
@@ -446,9 +446,9 @@ describe("B2-01 migration acceptance", () => {
     v6Interrupted.close();
     const upgradedFromV6 = new Store(v6Directory);
     try {
-      expect(scalar(upgradedFromV6.db, "PRAGMA user_version")).toBe(7);
+      expect(scalar(upgradedFromV6.db, "PRAGMA user_version")).toBe(8);
       expect(scalar(upgradedFromV6.db, "SELECT count(*) FROM migrations")).toBe(
-        7,
+        8,
       );
       expect(
         upgradedFromV6.db
@@ -459,6 +459,85 @@ describe("B2-01 migration acceptance", () => {
       ).toBeDefined();
     } finally {
       upgradedFromV6.close();
+    }
+
+    const v7Directory = makeDirectory();
+    createLegacyDatabase(v7Directory);
+    const v7File = join(v7Directory, "omem.sqlite");
+    const v7Interrupted = new DatabaseSync(v7File);
+    expect(() =>
+      migrateDatabase(v7Interrupted, {
+        beforeCommit(version) {
+          if (version === 8) throw Error("stop at deployable v7");
+        },
+      }),
+    ).toThrow("stop at deployable v7");
+    expect(scalar(v7Interrupted, "PRAGMA user_version")).toBe(7);
+    expect(scalar(v7Interrupted, "SELECT count(*) FROM migrations")).toBe(7);
+    const at = "2026-09-27T00:00:00.000Z";
+    v7Interrupted
+      .prepare(
+        `INSERT INTO lark_connections(
+           id,workspace_id,app_id,tenant_brand,tenant_key,state,active_version,
+           owner_open_id,created_at,updated_at
+         ) VALUES('c-v7','personal','cli_v7','feishu','t-v7','active',1,
+           'ou-owner',?,?)`,
+      )
+      .run(at, at);
+    v7Interrupted
+      .prepare(
+        `INSERT INTO lark_connection_versions(
+           id,connection_id,version,secret_ref,requested_config,
+           capability_profile,missing_capabilities,state,created_at,updated_at
+         ) VALUES('cv-v7','c-v7',1,'lark:00000000-0000-0000-0000-000000000000',
+           '{}','{}','[]','active',?,?)`,
+      )
+      .run(at, at);
+    for (const binding of [
+      { id: "b-v7-active", version: 1, state: "active", chat: "oc-active" },
+      {
+        id: "b-v7-old",
+        version: 2,
+        state: "superseded",
+        chat: "oc-stale",
+      },
+    ]) {
+      v7Interrupted
+        .prepare(
+          `INSERT INTO lark_bindings(
+             id,workspace_id,connection_id,connection_version,binding_version,
+             owner_open_id,target_chat_id,target_type,state,
+             supersedes_binding_id,created_at
+           ) VALUES(?,'personal','c-v7',1,?,'ou-owner',?,'group',?,NULL,?)`,
+        )
+        .run(binding.id, binding.version, binding.chat, binding.state, at);
+      v7Interrupted
+        .prepare(
+          `INSERT INTO lark_targets(
+             id,workspace_id,connection_id,binding_version,chat_id,target_type,
+             purpose,capture_enabled,state,created_at,updated_at
+           ) VALUES(?,'personal','c-v7',?,?,'group','group_monitoring',0,
+             'pending_approval',?,?)`,
+        )
+        .run(`target-${binding.id}`, binding.version, binding.chat, at, at);
+    }
+    v7Interrupted.close();
+    const upgradedFromV7 = new Store(v7Directory);
+    try {
+      expect(scalar(upgradedFromV7.db, "PRAGMA user_version")).toBe(8);
+      expect(
+        upgradedFromV7.db
+          .prepare(
+            `SELECT chat_id,state,capture_enabled FROM lark_targets
+             ORDER BY chat_id`,
+          )
+          .all(),
+      ).toEqual([
+        { chat_id: "oc-active", state: "active", capture_enabled: 1 },
+        { chat_id: "oc-stale", state: "disabled", capture_enabled: 0 },
+      ]);
+    } finally {
+      upgradedFromV7.close();
     }
   });
 

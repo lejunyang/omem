@@ -309,6 +309,14 @@ export class LarkEventInbox {
     if (receipt.duplicate && receipt.state !== "received") return receipt;
     if (event.kind === "im.chat.member.bot.deleted_v1" && event.chatId) {
       this.store.tx(() => {
+        const binding = this.store.db
+          .prepare(
+            `SELECT c.id AS connection_id,b.binding_version
+             FROM lark_connections c JOIN lark_bindings b
+               ON b.connection_id=c.id AND b.state='active'
+             WHERE c.app_id=? AND c.state='active'`,
+          )
+          .get(event.appId) as Row | undefined;
         this.store.db
           .prepare(
             `UPDATE lark_targets SET state='disabled',capture_enabled=0,updated_at=?
@@ -316,6 +324,25 @@ export class LarkEventInbox {
                AND chat_id=?`,
           )
           .run(new Date().toISOString(), event.appId, event.chatId);
+        if (binding)
+          this.store.db
+            .prepare(
+              `INSERT INTO lark_targets(
+                 id,workspace_id,connection_id,binding_version,chat_id,target_type,
+                 purpose,capture_enabled,state,created_at,updated_at
+               ) VALUES(?,'personal',?,?,?,'group','group_monitoring',0,
+                 'disabled',?,?)
+               ON CONFLICT(connection_id,binding_version,chat_id,purpose) DO UPDATE SET
+                 capture_enabled=0,state='disabled',updated_at=excluded.updated_at`,
+            )
+            .run(
+              randomUUID(),
+              String(binding.connection_id),
+              Number(binding.binding_version),
+              event.chatId,
+              new Date().toISOString(),
+              new Date().toISOString(),
+            );
         this.finish(receipt.id, "processed");
       });
       return { ...receipt, outcome: "target_disabled" };
@@ -339,10 +366,10 @@ export class LarkEventInbox {
             `INSERT INTO lark_targets(
                id,workspace_id,connection_id,binding_version,chat_id,target_type,
                purpose,capture_enabled,state,created_at,updated_at
-             ) VALUES(?,'personal',?,?,?,'group','group_monitoring',0,
-               'pending_approval',?,?)
+             ) VALUES(?,'personal',?,?,?,'group','group_monitoring',1,
+               'active',?,?)
              ON CONFLICT(connection_id,binding_version,chat_id,purpose) DO UPDATE SET
-               capture_enabled=0,state='pending_approval',updated_at=excluded.updated_at`,
+               capture_enabled=1,state='active',updated_at=excluded.updated_at`,
           )
           .run(
             randomUUID(),
@@ -353,7 +380,7 @@ export class LarkEventInbox {
             new Date().toISOString(),
           );
         this.finish(receipt.id, "processed");
-        return "monitoring_approval_required";
+        return "monitoring_enabled";
       });
       return { ...receipt, outcome };
     }
@@ -363,9 +390,12 @@ export class LarkEventInbox {
     }
     const connection = this.store.db
       .prepare(
-        `SELECT c.id,v.capability_profile FROM lark_connections c
+        `SELECT c.id,v.capability_profile,b.binding_version
+         FROM lark_connections c
          JOIN lark_connection_versions v ON v.connection_id=c.id
-           AND v.version=c.active_version WHERE c.app_id=?`,
+           AND v.version=c.active_version
+         JOIN lark_bindings b ON b.connection_id=c.id AND b.state='active'
+         WHERE c.app_id=?`,
       )
       .get(event.appId) as Row | undefined;
     if (!connection) {
@@ -379,6 +409,22 @@ export class LarkEventInbox {
       this.finish(receipt.id, "processed");
       return { ...receipt, outcome: "ignored_self" };
     }
+    if (event.chatType === "group")
+      this.store.db
+        .prepare(
+          `INSERT OR IGNORE INTO lark_targets(
+             id,workspace_id,connection_id,binding_version,chat_id,target_type,
+             purpose,capture_enabled,state,created_at,updated_at
+           ) VALUES(?,'personal',?,?,?,'group','group_monitoring',1,'active',?,?)`,
+        )
+        .run(
+          randomUUID(),
+          String(connection.id),
+          Number(connection.binding_version),
+          event.chatId,
+          new Date().toISOString(),
+          new Date().toISOString(),
+        );
     const target = this.store.db
       .prepare(
         `SELECT * FROM lark_targets WHERE connection_id=? AND chat_id=?
@@ -462,29 +508,6 @@ export class LarkEventInbox {
             : "pairing rejected",
       };
     }
-  }
-
-  enableGroupMonitoring(input: {
-    connectionId: string;
-    chatId: string;
-    ownerOpenId: string;
-  }) {
-    const changed = this.store.db
-      .prepare(
-        `UPDATE lark_targets SET state='active',capture_enabled=1,updated_at=?
-         WHERE connection_id=? AND chat_id=? AND purpose='group_monitoring'
-           AND state='pending_approval' AND
-           ?=(SELECT owner_open_id FROM lark_connections WHERE id=?)`,
-      )
-      .run(
-        new Date().toISOString(),
-        input.connectionId,
-        input.chatId,
-        input.ownerOpenId,
-        input.connectionId,
-      );
-    if (Number(changed.changes) !== 1)
-      throw Error("LARK_MONITORING_APPROVAL_REJECTED");
   }
 
   private finish(inboxId: string, state: "processed" | "failed") {

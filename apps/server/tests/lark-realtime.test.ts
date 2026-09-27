@@ -363,9 +363,14 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
     awaitingManager.stop("connection-1");
   });
 
-  it("A-L09 deduplicates events, preserves ordering/identity, ignores self, and requires group approval", () => {
+  it("A-L09 auto-monitors joined groups, deduplicates events, preserves identity/order, and ignores self", () => {
     const resource = setup("group");
     const inbox = new LarkEventInbox(resource.store);
+    expect(
+      inbox.processMessage(
+        event({ eventId: "evt-existing-group", messageId: "om-existing" }),
+      ),
+    ).toMatchObject({ outcome: "captured" });
     const added = event({
       eventId: "evt-added",
       kind: "im.chat.member.bot.added_v1",
@@ -374,26 +379,22 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
       text: undefined,
     });
     expect(inbox.processMessage(added)).toMatchObject({
-      outcome: "monitoring_approval_required",
+      outcome: "monitoring_enabled",
     });
-    const beforeApproval = event({
-      eventId: "evt-before",
-      messageId: "om-shared",
+    expect(
+      resource.store.db
+        .prepare(
+          `SELECT state,capture_enabled FROM lark_targets
+           WHERE purpose='group_monitoring' AND chat_id='oc_group'`,
+        )
+        .get(),
+    ).toEqual({ state: "active", capture_enabled: 1 });
+    const immediatelyAfterJoin = event({
+      eventId: "evt-after-join",
+      messageId: "om-after-join",
     });
-    expect(inbox.processMessage(beforeApproval)).toMatchObject({
-      outcome: "ignored_not_allowed",
-    });
-    expect(() =>
-      inbox.enableGroupMonitoring({
-        connectionId: "connection-1",
-        chatId: "oc_group",
-        ownerOpenId: "ou_attacker",
-      }),
-    ).toThrow("LARK_MONITORING_APPROVAL_REJECTED");
-    inbox.enableGroupMonitoring({
-      connectionId: "connection-1",
-      chatId: "oc_group",
-      ownerOpenId: "ou_owner",
+    expect(inbox.processMessage(immediatelyAfterJoin)).toMatchObject({
+      outcome: "captured",
     });
 
     const self = event({
