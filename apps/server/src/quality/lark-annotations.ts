@@ -149,14 +149,31 @@ export class QualityLarkAnnotationService {
   }
 
   cancel(sessionId: string) {
-    const changed = this.store.db
-      .prepare(
-        `UPDATE quality_annotation_sessions SET state='cancelled',updated_at=?
-         WHERE id=? AND state='active'`,
-      )
-      .run(new Date().toISOString(), sessionId);
-    if (Number(changed.changes) !== 1)
-      throw Error("QUALITY_ANNOTATION_SESSION_NOT_ACTIVE");
+    const at = new Date().toISOString();
+    this.store.tx(() => {
+      const changed = this.store.db
+        .prepare(
+          `UPDATE quality_annotation_sessions SET state='cancelled',updated_at=?
+           WHERE id=? AND state='active'`,
+        )
+        .run(at, sessionId);
+      if (Number(changed.changes) !== 1)
+        throw Error("QUALITY_ANNOTATION_SESSION_NOT_ACTIVE");
+      // F9: revoke cards that have not been sent yet in the SAME transaction as
+      // the session cancellation. Intents already in flight ('sending') are not
+      // recalled: the network request cannot be withdrawn, so their outcome
+      // (delivered / unknown-after-dedupe-window) is recorded honestly.
+      // Already-'delivered' history is left untouched so we never pretend a card
+      // the user already saw was retracted.
+      this.store.db
+        .prepare(
+          `UPDATE delivery_intents SET state='cancelled',
+             last_error='annotation session cancelled before send',
+             next_attempt_at=NULL,updated_at=?
+           WHERE annotation_session_id=? AND state IN ('pending','retry_wait')`,
+        )
+        .run(at, sessionId);
+    });
     return { id: sessionId, state: "cancelled" };
   }
 

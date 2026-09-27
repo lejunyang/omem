@@ -17,7 +17,7 @@ import {
   FeedbackService,
 } from "../../../apps/server/src/memory/service.js";
 import { LearningPipeline } from "../../../apps/server/src/learning/pipeline.js";
-import { documentQualitySamples } from "../../../apps/server/src/quality/import.js";
+import { documentQualityEvalSamples } from "../../../apps/server/src/quality/import.js";
 import { evaluateQuality } from "../../../apps/server/src/quality/evaluator.js";
 import { QualityRepository } from "../../../apps/server/src/quality/repository.js";
 import {
@@ -137,7 +137,7 @@ try {
     parts: [{ type: "text", text }],
     context: {},
   });
-  const draft = documentQualitySamples(input, "https://example.test/source", 1)
+  const draft = documentQualityEvalSamples(input, "https://example.test/source", 1)
     .samples[0]!;
   assert.equal(draft.draftLabel.objects[0]!.statement, text);
   assert.equal(draft.draftLabel.autoApply, true);

@@ -198,12 +198,14 @@ export class LarkDeliveryRepository {
         const row = this.db
           .prepare(
             `SELECT i.*,b.connection_id,b.state AS binding_state,
-               c.app_id,c.tenant_brand,c.state AS connection_state,v.secret_ref
+               c.app_id,c.tenant_brand,c.state AS connection_state,v.secret_ref,
+               s.state AS annotation_session_state
              FROM delivery_intents i
              JOIN lark_bindings b ON b.id=i.binding_id
              JOIN lark_connections c ON c.id=b.connection_id
              JOIN lark_connection_versions v ON v.connection_id=c.id
                AND v.version=b.connection_version
+             LEFT JOIN quality_annotation_sessions s ON s.id=i.annotation_session_id
              WHERE i.channel='lark' AND
                ((i.state IN ('pending','retry_wait') AND
                  COALESCE(i.next_attempt_at,i.created_at)<=?) OR
@@ -257,6 +259,32 @@ export class LarkDeliveryRepository {
           this.db
             .prepare(
               "UPDATE delivery_intents SET state='cancelled',updated_at=?,last_error=? WHERE id=?",
+            )
+            .run(at, message, String(row.id));
+          this.db
+            .prepare(
+              `UPDATE deliveries SET state='failed',error=?,ended_at=?
+               WHERE intent_id=? AND state='sending'`,
+            )
+            .run(message, at, String(row.id));
+          continue;
+        }
+        // F9: never send a card for an annotation session that is no longer
+        // active (cancelled / completed / expired). The cancel transaction
+        // already sweeps pending/retry_wait intents; this guard also covers the
+        // race window and intents that reached retry_wait after an ambiguous
+        // failure. Delivered history and genuinely in-flight leases are untouched.
+        if (
+          row.annotation_session_id != null &&
+          row.annotation_session_state !== "active"
+        ) {
+          const message = `annotation session ${String(row.annotation_session_state)}; card suppressed before send`;
+          this.db
+            .prepare(
+              `UPDATE delivery_intents SET state='cancelled',updated_at=?,
+                 last_error=?,next_attempt_at=NULL,
+                 lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL
+               WHERE id=?`,
             )
             .run(at, message, String(row.id));
           this.db
