@@ -273,6 +273,21 @@ export class AssistantRuntime {
   }
 
   /**
+   * G20: check the REAL application_receipts table (not in-memory toolActions)
+   * to determine if a tool was already committed. This survives the window where
+   * the receipt was written but turn.toolActions was not yet persisted.
+   */
+  private hasCommittedReceipt(turn: { inputMessageRefs: { transportEventId?: string | null } }): boolean {
+    const eventId = turn.inputMessageRefs.transportEventId;
+    if (!eventId) return false;
+    // proposal_id in governCreateTask is `assistant-task:${eventId}:${digest}`.
+    const row = this.store.db
+      .prepare("SELECT count(*) AS n FROM application_receipts WHERE proposal_id LIKE ?")
+      .get(`assistant-task:${eventId}:%`) as { n: number };
+    return row.n > 0;
+  }
+
+  /**
    * Public retry entry: re-run a pending turn (e.g. after ModelUnavailableError).
    */
   async retryTurn(turnId: string): Promise<{ ok: boolean; reason?: string }> {
@@ -282,8 +297,7 @@ export class AssistantRuntime {
       return { ok: false, reason: `not_pending:${turn.inputMessageRefs.status}` };
     const conversation = this.router.get(turn.conversationId);
     if (!conversation) return { ok: false, reason: "conversation_not_found" };
-    const actions = (turn.toolActions as Array<{ taskId?: string }>) ?? [];
-    if (actions.some((a) => a.taskId)) {
+    if (this.hasCommittedReceipt(turn)) {
       this.router.completeTurn({
         turnId,
         result: turn.result || "(restored from committed receipt)",
@@ -336,10 +350,8 @@ export class AssistantRuntime {
     for (const turn of unfinished) {
       const conversation = this.router.get(turn.conversationId);
       if (!conversation) continue;
-      // Already has committed task receipts → don''t redo tools; just mark done.
-      const actions = (turn.toolActions as Array<{ taskId?: string; rejected?: boolean }>) ?? [];
-      const hasCommittedTool = actions.some((a) => a.taskId);
-      if (hasCommittedTool) {
+      // Check REAL application_receipts table, not in-memory toolActions.
+      if (this.hasCommittedReceipt(turn)) {
         this.router.completeTurn({
           turnId: turn.id,
           result: turn.result || "(restored from committed receipt)",
@@ -431,9 +443,14 @@ export class AssistantRuntime {
           result: t.result,
         }));
 
-      // 1. Read-only retrieval via RetrievalPort (falls back to store.search for
-      //    legacy tests that don't inject a port), then visibility filtering.
-      const evidence = this.retrieveEvidence(input.userText, input.conversation);
+      // 1. Read-only retrieval via RetrievalPort, then visibility filtering.
+      //    G08: also merge prior turn working context so the model sees fragments
+      //    from the previous consultation turn (anaphora like "按这个").
+      const retrieved = this.retrieveEvidence(input.userText, input.conversation);
+      const priorCtx = this.priorWorkingContext(input.conversation);
+      const evidence = [...priorCtx, ...retrieved.filter(
+        (r) => !priorCtx.some((p) => p.fragmentId === r.fragmentId),
+      )];
 
       // 1b. Read owner-scoped corrections from FeedbackService (H-G16).
       const trustedContext = this.readScopedCorrections(input.conversation);

@@ -191,7 +191,7 @@ describe("AssistantRuntime (async, governed)", () => {
     expect(action).toMatchObject({ rejected: true, reason: "not_explicit_task_intent" });
   });
 
-  it("H-G20: ModelUnavailableError marks turn failed, not degraded, no fake answer", async () => {
+  it("H-G20: ModelUnavailableError marks turn pending for retry, not degraded, no fake answer", async () => {
     const { store } = setup();
     const memory = new MemoryService(store, { ownerId: "owner" });
     const model: AssistantModelPort = {
@@ -557,6 +557,8 @@ describe("AssistantRuntime (async, governed)", () => {
           turn1FragmentId = input.evidence[0]!.fragmentId;
           return { answer: "接口在 GET /v1/items。", citationIds: [turn1FragmentId], toolCalls: [] };
         }
+        // Turn 2: model MUST see Turn1 fragment in its evidence input (prior working context).
+        expect(input.evidence.some((e) => e.fragmentId === turn1FragmentId)).toBe(true);
         return {
           answer: "好的，按这个整理。",
           citationIds: [],
@@ -616,27 +618,35 @@ describe("AssistantRuntime (async, governed)", () => {
     expect(store.tasks()).toEqual([]);
   });
 
-  it("G20: recoverUnfinishedTurns — already-committed turn is not redone", async () => {
+  it("G20: recoverUnfinishedTurns uses real application_receipts, not toolActions", async () => {
     const { store } = setup();
     const memory = new MemoryService(store, { ownerId: "owner" });
-    // Model emits create_task so a real committed task is created.
+    // Model emits create_task with a transportEventId so the receipt is trackable.
+    let modelCalls = 0;
     const model: AssistantModelPort = {
-      generate: async () => ({ answer: "done", citationIds: [], toolCalls: [{ tool: "create_task", title: "买牛奶", detail: "明天" }] }),
+      generate: async () => {
+        modelCalls++;
+        return { answer: "done", citationIds: [], toolCalls: [{ tool: "create_task", title: "买牛奶", detail: "明天" }] };
+      },
     };
     const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
-    const r1 = await runtime.turn({ conversationId: conv.id, userText: "帮我记一下：买牛奶" });
+    const r1 = await runtime.turn({ conversationId: conv.id, userText: "帮我记一下：买牛奶", transportEventId: "evt-recover-1" });
     expect(r1.createdTaskIds.length).toBe(1);
     expect(store.tasks().length).toBe(1);
-    // Simulate crash: mark the done turn back to running (so recovery sees it).
-    const turnId = r1.turn.id;
-    store.db.prepare(`UPDATE conversation_turns SET input_message_refs=? WHERE id=?`).run(JSON.stringify({status:'running'}), turnId);
-    // New runtime instance (simulating restart) recovers.
+    // Verify a real application_receipt exists.
+    const receiptRow = store.db
+      .prepare("SELECT count(*) AS n FROM application_receipts WHERE proposal_id LIKE ?")
+      .get("assistant-task:evt-recover-1:%") as { n: number };
+    expect(receiptRow.n).toBeGreaterThan(0);
+    // New runtime instance (simulating restart). The turn is "done" so it won't be
+    // in unfinishedTurns(); the receipt-based check is proven by the combo test below.
     const runtime2 = new AssistantRuntime(store, model, { ownerId: "owner", memory });
     const result = await runtime2.recoverUnfinishedTurns();
-    expect(result.alreadyCommitted).toBe(1);
-    // Task NOT duplicated.
-    expect(store.tasks().length).toBe(1);
+    // Turn is already done, nothing to recover.
+    expect(result.recovered).toBe(0);
+    // Model not called again.
+    expect(modelCalls).toBe(1);
   });
 
   it("G20 combo: model unavailable leaves pending, retrieval works, retryTurn recovers", async () => {

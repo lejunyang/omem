@@ -587,6 +587,8 @@ export async function buildApp(
   const web = resolve("apps/web/dist");
   if (existsSync(web))
     await app.register(staticFiles, { root: web, prefix: "/" });
+  // G20: recover any pending/running turns from a previous process.
+  await assistant.recoverUnfinishedTurns();
   const tick = setInterval(() => store.remind(), 30000);
   tick.unref();
   let lastInputError = "";
