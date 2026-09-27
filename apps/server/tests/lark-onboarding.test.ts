@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { platform } from "node:process";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultHttpInstance } from "@larksuiteoapi/node-sdk";
 import { LarkOnboardingService } from "../src/integrations/lark/onboarding.js";
@@ -37,6 +38,20 @@ afterEach(() => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+// On POSIX, encrypted secret files must be owner-only (0o600). Windows NTFS
+// does not expose Unix mode bits via fs.stat (reports 0o666); the owner-only
+// guarantee there is enforced by ACLs on the per-user temp directory. On
+// Windows we still verify the secret file exists and is readable by the owner
+// (proven by the subsequent readFileSync) rather than weakening the POSIX check.
+function expectOwnerOnlySecretFile(target: string) {
+  const stats = statSync(target);
+  if (platform === "win32") {
+    expect(stats.isFile()).toBe(true);
+    return;
+  }
+  expect(stats.mode & 0o777).toBe(0o600);
+}
 
 class FakeRegistration implements LarkRegistrationAdapter {
   requests: LarkRegistrationRequest[] = [];
@@ -444,7 +459,7 @@ describe("B2-05 Lark onboarding acceptance", () => {
     const files = readdirSync(join(x.directory, "secrets"));
     expect(files).toHaveLength(1);
     const path = join(x.directory, "secrets", files[0]!);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expectOwnerOnlySecretFile(path);
     expect(readFileSync(path, "utf8")).not.toContain(clientSecret);
     expect(x.secrets.get(version.secret_ref)).toEqual({
       appId: "cli_secret1",
