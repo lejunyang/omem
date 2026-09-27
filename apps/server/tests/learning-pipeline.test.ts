@@ -281,3 +281,125 @@ describe("B2-08 controlled learning pipeline", () => {
     }
   });
 });
+
+describe("F: G17 evaluateBatch wired into the real verify path", () => {
+  const captureBatch = (store: Store, text: string, externalId: string) =>
+    store.capture({
+      source: "manual",
+      externalId,
+      title: "Batch source",
+      parts: [{ type: "text", text }],
+      context: { application: "batch-test" },
+      provenance: {
+        collectorId: "batch-test",
+        actorId: "owner",
+        actorType: "owner",
+        actorVerifiedBy: "authenticated-test",
+        sourceUri: null,
+        eventId: `${externalId}-event`,
+        eventAt: "2026-09-27T10:00:00+08:00",
+        timezone: "Asia/Shanghai",
+        quoted: false,
+        forwarded: false,
+        producerKind: "original",
+      },
+    });
+
+  it("gates 12 distinct creates as one ChangeSet: parked, one AttentionCase, nothing applied", async () => {
+    const directory = temporary("omem-batch-distinct-");
+    const store = new Store(directory);
+    try {
+      captureBatch(store, "BATCH_CREATE_DISTINCT", "batch-distinct");
+      const p = pipeline(store, join(directory, "agent-distinct"));
+      expect(await p.drain()).toBe(2);
+      await p.stop();
+      // The whole ChangeSet reached evaluateBatch as 12 proposals.
+      const proposals = store.db
+        .prepare("SELECT state FROM proposals ORDER BY id")
+        .all() as { state: string }[];
+      expect(proposals).toHaveLength(12);
+      // None auto-applied: every would-be-auto-apply create is parked.
+      expect(
+        proposals.every((row) => row.state === "awaiting_decision"),
+      ).toBe(true);
+      // Exactly ONE consolidated AttentionCase, not 12 cards.
+      const decisionRows = store.db
+        .prepare("SELECT attention_case FROM decisions ORDER BY created_at")
+        .all() as { attention_case: string }[];
+      expect(decisionRows).toHaveLength(1);
+      const attentionCase = JSON.parse(decisionRows[0]!.attention_case);
+      expect(attentionCase.topic).toContain("批量变更");
+      expect(String(attentionCase.question).length).toBeGreaterThan(0);
+      expect(Array.isArray(attentionCase.options)).toBe(true);
+      expect(attentionCase.options.length).toBeGreaterThan(0);
+      expect(String(attentionCase.attemptedResolution).length).toBeGreaterThan(0);
+      expect(Array.isArray(attentionCase.evidenceRefs)).toBe(true);
+      expect(attentionCase.evidenceRefs.length).toBeGreaterThan(0);
+      expect(String(attentionCase.dedupeKey)).toContain("attention-batch");
+      // Nothing materialized: the gate blocked the whole over-budget batch.
+      expect(
+        Number(
+          (
+            store.db
+              .prepare("SELECT count(*) AS c FROM application_receipts")
+              .get() as { c: number }
+          ).c,
+        ),
+      ).toBe(0);
+      expect(
+        Number(
+          (
+            store.db
+              .prepare(
+                "SELECT count(*) AS c FROM memories WHERE status='active'",
+              )
+              .get() as { c: number }
+          ).c,
+        ),
+      ).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("dedupes 12 same-entity creates to impact=1: auto-applied, no AttentionCase", async () => {
+    const directory = temporary("omem-batch-same-");
+    const store = new Store(directory);
+    try {
+      captureBatch(store, "BATCH_CREATE_SAME", "batch-same");
+      const p = pipeline(store, join(directory, "agent-same"));
+      expect(await p.drain()).toBe(2);
+      await p.stop();
+      const states = store.db
+        .prepare("SELECT state FROM proposals ORDER BY id")
+        .all() as { state: string }[];
+      expect(states).toHaveLength(12);
+      // One new memory applied; the other 11 same-statement creates are retained as
+      // duplicates (de-duplicated impact=1, under budget, no card).
+      expect(states.filter((row) => row.state === "applied")).toHaveLength(1);
+      expect(states.filter((row) => row.state === "retained")).toHaveLength(11);
+      expect(
+        Number(
+          (
+            store.db
+              .prepare("SELECT count(*) AS c FROM decisions")
+              .get() as { c: number }
+          ).c,
+        ),
+      ).toBe(0);
+      expect(
+        Number(
+          (
+            store.db
+              .prepare(
+                "SELECT count(*) AS c FROM memories WHERE status='active' AND kind='claim'",
+              )
+              .get() as { c: number }
+          ).c,
+        ),
+      ).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+});

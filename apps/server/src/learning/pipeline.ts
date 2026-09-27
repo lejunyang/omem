@@ -8,6 +8,8 @@ import {
   type ContextManifest,
   type Proposal,
   type ProposalBatch,
+  type Revision,
+  type StoredPart,
 } from "../../../../packages/contracts/src/index.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
 import {
@@ -17,8 +19,11 @@ import {
 import { DurableJobWorker, JobExecutionError } from "../jobs/worker.js";
 import type { JobLease } from "../jobs/repository.js";
 import { FeedbackService, MemoryService } from "../memory/service.js";
+import { recordSourceRefresh } from "./refresh.js";
 import { stableDigest } from "../storage/digest.js";
 import type { Store } from "../store.js";
+import { KeywordRetrieval } from "../retrieval/keyword.js";
+import type { RetrievalPort } from "../retrieval/port.js";
 
 type Row = Record<string, unknown>;
 
@@ -75,6 +80,7 @@ export class LearningPipeline {
       pollMs?: number;
       ownerId?: string;
       workerId?: string;
+      retrieval?: RetrievalPort;
     },
   ) {
     const registry = new RoleBundleRegistry();
@@ -102,11 +108,7 @@ export class LearningPipeline {
       {
         extract_claims: (job, signal) => this.extract(job, signal),
         verify_proposals: (job, signal) => this.verify(job, signal),
-        refresh_dependents: async (job) => ({
-          resultRef:
-            (job.inputRefs[0] as { revisionId?: string } | undefined)
-              ?.revisionId ?? null,
-        }),
+        refresh_dependents: async (job) => this.refreshDependents(job),
       },
       {
         fingerprint: () => ({
@@ -117,6 +119,28 @@ export class LearningPipeline {
           toolHash: stableDigest({ ...fingerprintSeed, stage: "tools" }),
         }),
       },
+    );
+  }
+
+  private async refreshDependents(job: JobLease): Promise<never> {
+    const result = recordSourceRefresh(
+      this.input.store.db,
+      job.workspaceId,
+      job.inputRefs as {
+        sourceId?: string;
+        previousRevisionId?: string;
+        revisionId?: string;
+      }[],
+    );
+    // Re-verification of the invalidated memories is NOT implemented yet. We must
+    // not report reviewed/succeeded: the refresh_records row already records the
+    // blast radius as needs_review, and the job is failed with a NOT_IMPLEMENTED
+    // reason code so it never masquerades as a completed re-review.
+    throw new JobExecutionError(
+      `NOT_IMPLEMENTED: refresh_dependents re-verification not implemented; ` +
+        `${result.affectedCount} memory(ies) flagged needs_review: ` +
+        result.affectedMemoryIds.join(","),
+      "config",
     );
   }
 
@@ -171,45 +195,53 @@ export class LearningPipeline {
       return { revision, epoch: Number(state.validity_epoch) };
     });
     const first = revisions[0]!;
-    const projectId =
-      first.revision.context.conversationId ??
-      first.revision.context.runId ??
-      first.revision.context.application ??
-      null;
+    // Context carriers (application/conversationId/runId) describe WHERE a capture
+    // happened, NOT a trusted project. A real project link is a separate confirmed
+    // ContextLink, which does not exist yet here. So project_id is unknown until
+    // confirmed, and the model is told project_trusted=false rather than being fed a
+    // conversationId as if it were a project.
+    const projectId: string | null = null;
+    const projectTrusted = false;
     const subjectId = first.revision.provenance?.actorId ?? null;
     const scope = {
       workspace_id: job.workspaceId,
       project_id: projectId,
       subject_id: subjectId,
     };
-    const materials = revisions.flatMap(({ revision }) =>
-      revision.fragments.map((fragment) => {
-        const image = revision.parts.find(
-          (part) =>
-            part.type === "image" && fragment.text === `[图片] ${part.label}`,
-        );
-        if (image?.type === "image") {
-          const bytes = this.input.store.asset(image.assetId);
-          if (!bytes) throw Error("LEARNING_IMAGE_NOT_FOUND");
-          return {
-            fragment_revision_id: fragment.id,
-            source_revision_id: revision.id,
-            text: fragment.text,
-            image: {
-              asset_hash: image.assetId,
-              mime_type: image.mimeType,
-              data_base64: bytes.toString("base64"),
-              label: image.label,
-            },
-          };
-        }
-        return {
+    const materials = revisions.flatMap(({ revision }) => {
+      // Align each fixed fragment (by ordinal) back to the stored part it was split
+      // from, so per-part provenance (actor/reply/observedAt/quoted/forwarded/
+      // producerKind) reaches the model instead of being flattened away.
+      const pairs = this.fragmentPairs(revision);
+      return revision.fragments.map((fragment) => {
+        const part = pairs[fragment.ordinal]?.part;
+        const prov = part?.provenance;
+        const material: Record<string, unknown> = {
           fragment_revision_id: fragment.id,
           source_revision_id: revision.id,
           text: fragment.text,
+          actor_external_id: prov?.actorExternalId ?? null,
+          actor_principal_id: prov?.actorPrincipalId ?? null,
+          observed_at: prov?.observedAt ?? null,
+          reply_to: prov?.replyTo ?? null,
+          quoted: prov?.quoted ?? false,
+          forwarded: prov?.forwarded ?? false,
+          producer_kind: prov?.producerKind ?? "original",
         };
-      }),
-    );
+        if (part?.type === "image") {
+          const bytes = this.input.store.asset(part.assetId);
+          if (!bytes) throw Error("LEARNING_IMAGE_NOT_FOUND");
+          material.image = {
+            asset_hash: part.assetId,
+            mime_type: part.mimeType,
+            data_base64: bytes.toString("base64"),
+            label: part.label,
+          };
+          material.asset_ref = part.assetId;
+        }
+        return material;
+      });
+    });
     return contextManifestSchema.parse({
       schema_version: 1,
       job_id: job.id,
@@ -229,12 +261,60 @@ export class LearningPipeline {
         is_forwarded: first.revision.provenance?.forwarded ?? false,
         producer_kind: first.revision.provenance?.producerKind ?? "original",
         source_epoch: first.epoch,
+        project_trusted: projectTrusted,
       },
       materials,
-      related_memories: [],
+      related_memories: this.relatedMemories(first.revision, scope),
       confirmed_corrections: this.input.feedback.recall(scope),
       ...(candidates ? { candidates } : {}),
     });
+  }
+
+  private retrieval(): RetrievalPort {
+    return this.input.retrieval ?? new KeywordRetrieval(this.input.store.db);
+  }
+
+  private relatedMemories(
+    revision: { title: string; fragments: { text: string }[]; context: { application?: string; conversationId?: string; runId?: string } },
+    scope: { project_id: string | null },
+  ) {
+    const query =
+      revision.title + " " + revision.fragments.map((f) => f.text).join(" ");
+    const recalled = this.retrieval().searchMemories({
+      text: query,
+      scope: "workspace",
+      project_id: scope.project_id,
+      project_trusted: false,
+      limit: 10,
+    });
+    return recalled.map((memory) => ({
+      memory_id: memory.id,
+      kind: memory.kind,
+      status: memory.status,
+      score: memory.score,
+      snippet: memory.snippet,
+    }));
+  }
+
+  /**
+   * Reconstruct the part→fragment mapping in the exact order store.capture splits
+   * parts into fragments (paragraph text parts, then one fragment per link/image),
+   * so a fragment ordinal resolves back to its source part and its per-part
+   * provenance. This MUST mirror the flatMap in store.capture.
+   */
+  private fragmentPairs(revision: Revision): { part: StoredPart; text: string }[] {
+    const pairs: { part: StoredPart; text: string }[] = [];
+    for (const part of revision.parts) {
+      if (part.type === "text") {
+        for (const t of part.text.split(/\n\s*\n/).filter((x) => x.trim()))
+          pairs.push({ part, text: t });
+      } else if (part.type === "link") {
+        pairs.push({ part, text: `${part.label}\n${part.url}` });
+      } else {
+        pairs.push({ part, text: `[图片] ${part.label}` });
+      }
+    }
+    return pairs;
   }
 
   private saveRun(
@@ -427,17 +507,28 @@ export class LearningPipeline {
           throw Error("LEARNING_ASSESSMENT_DIGEST_MISMATCH");
       }
       const output = this.saveRun(job, run);
-      const evaluations = proposals.map((proposal) => {
-        const assessment = byProposal.get(proposal.proposal_id)!;
-        return this.input.memory.evaluate(proposal, {
-          quote_asset_verdict: assessment.quote_asset_verdict,
-          semantic_verdict: assessment.semantic_verdict,
-          reviewer_version: run.trace.bundleHash,
-          role_version: `${run.trace.roleId}@${run.trace.roleVersion}`,
-          reason_code: assessment.reason_code,
-          details: assessment.reason,
-        });
-      });
+      // F: evaluate the WHOLE ChangeSet in one batch call, not N independent
+      // per-proposal evaluate() calls. evaluateBatch de-duplicates the union impact
+      // across all proposals before applying anything, so a batch cannot be smuggled
+      // past the auto budget as N independent impact=0/1 operations; over-budget
+      // proposals are parked and a single consolidated AttentionCase is raised.
+      const batchResult = this.input.memory.evaluateBatch(
+        proposals.map((proposal) => {
+          const assessment = byProposal.get(proposal.proposal_id)!;
+          return {
+            proposal,
+            assessment: {
+              quote_asset_verdict: assessment.quote_asset_verdict,
+              semantic_verdict: assessment.semantic_verdict,
+              reviewer_version: run.trace.bundleHash,
+              role_version: `${run.trace.roleId}@${run.trace.roleVersion}`,
+              reason_code: assessment.reason_code,
+              details: assessment.reason,
+            },
+          };
+        }),
+      );
+      const evaluations = batchResult.results;
       return {
         resultRef: output.id,
         usage: {
