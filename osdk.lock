@@ -17,14 +17,14 @@ checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be
 installer = "npm"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "1965e699aff48845a6f49aef0ca5608b5402b650c84191d18f6a1c1929ab91ea"
+manifest_sha256 = "17e1ccce7b97f0554c68927572c7de112a5d4048a83025ed0bb1ac4894d65731"
 run = "npm.cmd ci"
 allow_build_from_source = true
 
 [deps.npm.native_lock]
 kind = "package-lock"
 path = "package-lock.json"
-sha256 = "9b817472da2d1a43071779438d2bd1a9341d1aee686e118e6dfc1bd595ead790"
+sha256 = "798d16727888ff296358d38cf54856c4a8d53a9be2912381a6d881f261df914e"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

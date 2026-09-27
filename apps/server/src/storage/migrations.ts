@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 5;
+export const SUPPORTED_SCHEMA_VERSION = 6;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -451,6 +451,95 @@ const governedMemoryStatements = [
   "CREATE INDEX feedback_constraints_scope_idx ON feedback_constraints(workspace_id, project_id, subject_id, active)",
 ] as const;
 
+const larkOnboardingStatements = [
+  `CREATE TABLE lark_onboardings(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK(mode IN ('new','existing')),
+    requested_app_id TEXT,
+    requested_config TEXT NOT NULL,
+    registration_generation INTEGER NOT NULL CHECK(registration_generation >= 1),
+    status TEXT NOT NULL CHECK(status IN ('draft','awaiting_scan','credentials_received','checking','awaiting_pair','active','expired','denied','cancelled','failed')),
+    qr_url TEXT,
+    qr_expires_at TEXT,
+    external_app_id TEXT,
+    user_info TEXT,
+    connection_version INTEGER,
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    cancelled_at TEXT
+  )`,
+  `CREATE TABLE lark_connections(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    app_id TEXT NOT NULL,
+    tenant_brand TEXT,
+    tenant_key TEXT,
+    state TEXT NOT NULL CHECK(state IN ('checking','awaiting_pair','active','disabled','failed')),
+    active_version INTEGER,
+    owner_open_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(workspace_id, app_id)
+  )`,
+  `CREATE TABLE lark_connection_versions(
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL REFERENCES lark_connections(id),
+    version INTEGER NOT NULL CHECK(version >= 1),
+    secret_ref TEXT NOT NULL,
+    requested_config TEXT NOT NULL,
+    capability_profile TEXT NOT NULL,
+    missing_capabilities TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('checking','awaiting_pair','active','failed','superseded')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(connection_id, version)
+  )`,
+  `CREATE TABLE lark_pairing_codes(
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL REFERENCES lark_connections(id),
+    connection_version INTEGER NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    candidate_open_id TEXT,
+    candidate_chat_id TEXT,
+    candidate_chat_type TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    created_at TEXT NOT NULL,
+    UNIQUE(connection_id, connection_version, code_hash)
+  )`,
+  `CREATE TABLE lark_bindings(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    connection_id TEXT NOT NULL REFERENCES lark_connections(id),
+    connection_version INTEGER NOT NULL,
+    binding_version INTEGER NOT NULL CHECK(binding_version >= 1),
+    owner_open_id TEXT NOT NULL,
+    target_chat_id TEXT NOT NULL,
+    target_type TEXT NOT NULL CHECK(target_type IN ('p2p','group')),
+    state TEXT NOT NULL CHECK(state IN ('active','superseded','disabled')),
+    supersedes_binding_id TEXT REFERENCES lark_bindings(id),
+    created_at TEXT NOT NULL,
+    UNIQUE(connection_id, binding_version)
+  )`,
+  `CREATE TABLE lark_onboarding_events(
+    id TEXT PRIMARY KEY,
+    onboarding_id TEXT NOT NULL REFERENCES lark_onboardings(id),
+    status TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  "CREATE INDEX lark_onboarding_state_idx ON lark_onboardings(workspace_id, status, updated_at)",
+  "CREATE INDEX lark_connection_versions_state_idx ON lark_connection_versions(connection_id, state, version)",
+  "CREATE INDEX lark_pairing_expiry_idx ON lark_pairing_codes(connection_id, expires_at, consumed_at)",
+  "CREATE INDEX lark_bindings_active_idx ON lark_bindings(connection_id, state, binding_version)",
+  "CREATE INDEX lark_onboarding_events_idx ON lark_onboarding_events(onboarding_id, created_at)",
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -486,6 +575,12 @@ const migrations: readonly Migration[] = [
     name: "governed-memory-policy",
     statements: governedMemoryStatements,
     checksum: checksum(governedMemoryStatements),
+  },
+  {
+    version: 6,
+    name: "lark-onboarding-and-binding",
+    statements: larkOnboardingStatements,
+    checksum: checksum(larkOnboardingStatements),
   },
 ];
 

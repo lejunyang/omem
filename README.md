@@ -63,6 +63,8 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。飞书消息投递通道还未接入。
 
+飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、实际 capability probe 接口和一次性 pairing/binding 仓储。创建应用属于用户资产变更，当前主进程不会在缺少 secret key 与真实 capability probe 时自动启用 onboarding；本仓库也没有替用户创建测试应用。B2-06 才接 WebSocket 收件、卡片回调和外部投递。
+
 详细运行环境、Docker/osdk 实测结果与后续引擎依赖见 [环境说明](docs/implementation/environment.md)。
 
 ## 设计与验证

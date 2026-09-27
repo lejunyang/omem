@@ -1,6 +1,6 @@
 # 飞书：独立机器人、扫码创建与绑定、可靠通知
 
-状态：待实现；本轮没有调用创建/授权/发送测试消息的业务 API。方案依据官方文档与 SDK 源码，不假设必须手工创建，也不假设能无需用户授权静默创建。
+状态：B2-05 注册/密钥/配对/绑定基础已实现；B2-06 消息连接、投递和回调待实现。本轮没有调用创建/授权/发送测试消息的业务 API。实现使用官方 SDK `registerApp()`，但不假设能无需用户授权静默创建。
 
 ## 1. 是否需要新的机器人，是否照 botmux 做
 
@@ -110,4 +110,4 @@ SDK 官方长连接要求回调在约3秒内处理，回调处理器只做身份
 
 建议 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`、`POST .../test`、`POST .../disconnect`。请求必须是 owner 操作；响应只有 app_id/状态/QR链接，永不返回 secret。registry/pairing 和 notification transport 分模块，界面复用 Vue 设计系统。
 
-验收 A-L01～14/A-N01～05：使用独立测试应用真实扫码、绑定、一次通知/回调；拒绝、过期、错误扫码人、缺权限、断线、重复事件、迟到凭据、超时 unknown、binding变更等有 fixture 故障测试。本轮只核验 API/源码；新建应用、扫码、群绑定实际执行留给实现阶段用户参与。
+A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。A-L08～14/A-N01～05 由 B2-06 使用独立测试应用实测；新建应用、扫码、群绑定必须由用户参与。

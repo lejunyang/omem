@@ -15,6 +15,8 @@ import {
   proposalAssessmentInputSchema,
   decisionActionSchema,
   feedbackInputSchema,
+  larkOnboardingStartSchema,
+  larkPairingConfirmSchema,
 } from "../../../packages/contracts/src/index.js";
 import { Store } from "./store.js";
 import { Runs } from "./runs.js";
@@ -22,8 +24,12 @@ import { acp } from "./agents.js";
 import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
 import type { Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
+import type { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 const str = z.string().min(1).max(2000);
-export async function buildApp(config: Config) {
+export async function buildApp(
+  config: Config,
+  dependencies: { lark?: LarkOnboardingService } = {},
+) {
   if (!["127.0.0.1", "localhost", "::1"].includes(config.host) && !config.token)
     throw Error("OMEM_TOKEN is required for a non-loopback bind");
   const app = Fastify({ bodyLimit: 12_000_000, logger: false });
@@ -31,6 +37,11 @@ export async function buildApp(config: Config) {
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
   const feedback = new FeedbackService(store);
+  const lark = dependencies.lark;
+  const requireLark = () => {
+    if (!lark) throw Error("LARK_ONBOARDING_NOT_CONFIGURED");
+    return lark;
+  };
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/api/")) return;
     if (config.token) {
@@ -269,6 +280,27 @@ export async function buildApp(config: Config) {
         project_id: req.query.projectId || null,
         subject_id: req.query.subjectId || null,
       }),
+  );
+  app.post("/api/integrations/lark/onboarding", async (req) =>
+    requireLark().start(larkOnboardingStartSchema.parse(req.body)),
+  );
+  app.get<{ Params: { id: string } }>(
+    "/api/integrations/lark/onboarding/:id",
+    async (req) => requireLark().status(req.params.id),
+  );
+  app.post<{ Params: { id: string } }>(
+    "/api/integrations/lark/onboarding/:id/cancel",
+    async (req) => requireLark().cancel(req.params.id),
+  );
+  app.post<{ Params: { id: string } }>(
+    "/api/integrations/lark/onboarding/:id/pairing-code",
+    async (req) => requireLark().issuePairingCode(req.params.id),
+  );
+  app.post("/api/integrations/lark/bindings/confirm", async (req) =>
+    requireLark().confirmPairing(larkPairingConfirmSchema.parse(req.body)),
+  );
+  app.get("/api/integrations/lark/status", async () =>
+    requireLark().connections(),
   );
   app.get("/api/profiles", async () =>
     config.profiles.map(
