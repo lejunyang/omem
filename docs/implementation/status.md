@@ -6,15 +6,15 @@
 
 - **代码基线**：`16d3aa6` 之后叠加 assistant-v3（V3-01～V3-06）六组修复，并新增 v14 治理增量（memory_equivalences 关系表、decisions.attention_case/dedupe_key、AcpAssistantModel 生产接线）。
 - **Schema 版本**：SQLite `SUPPORTED_SCHEMA_VERSION = 14`（`apps/server/src/storage/migrations.ts`；v14 新增 `memory_equivalences` 表 + `decisions.attention_case`/`dedupe_key` 列与去重索引）。
-- **测试**：实测 2026-09-27（`osdk run check`，exit 0，含 typecheck + 全量 vitest + build）— **165 通过 / 0 失败**（29 个测试文件）。原 19 项 Windows CRLF/反斜杠 digest 与 Unix 权限位失败已全部修复。ACP 子进程清理：根因是 `acp()` 的 `finally` 里 `stop(child)` 只发信号不等待进程退出，Windows cwd 句柄释放延迟导致 `rmSync` 竞争。已在 `agents.ts` 中 spawn 后注册 `child.once("close")`，finally 里 `stop` 后 `await Promise.race([closed, 5s timeout])`，测试 cleanup 改为单次 `rmSync` 不吞错不重试。连续 3 次 agents/role-runtime 全过。
-- **主助手模型接线**：生产装配 `apps/server/src/app.ts` 已 `new AssistantRuntime({ store, model: new AcpAssistantModel({ profile, workspaceRoot }), retrieval: new KeywordRetrieval(store), feedback, ... })` —— **主助手对话生产路径接真实 ACP adapter + RetrievalPort**。`DeterministicAssistantModel`（`assistant/default-model.ts`）**仅用于测试注入**。生产不存在"无模型配置时的假回答降级"：`AcpAssistantModel` 在无 profile / CLI transport / 未授权 / 超时 / 输出非 JSON 时一律抛 `ModelUnavailableError`，runtime 记 `failed` turn + `error=model_unavailable:*`，零 citation、零任务，绝不产出编造回答。任务创建经 `detectTaskIntent()`（21 祈使模式 + 11 咨询模式）确定性门控：咨询类即使模型发出 create_task 也被拒绝零写入；直接交办时 capture owner 消息为真实 source 证据后经 `MemoryService.evaluate()` 治理。取消经 `TurnCancelledError` fence 在 govern/complete 前检查，`withTimeout` Promise.race 主动 abort。
+- **测试**：实测 2026-09-27（`osdk run check`，exit 0，含 typecheck + 全量 vitest + build）— **176 通过 / 0 失败**（30 个测试文件）。原 19 项 Windows CRLF/反斜杠 digest 与 Unix 权限位失败已全部修复。ACP 子进程清理：根因是 `acp()` 的 `finally` 里 `stop(child)` 只发信号不等待进程退出，Windows cwd 句柄释放延迟导致 `rmSync` 竞争。已在 `agents.ts` 中 spawn 后注册 `child.once("close")`，finally 里 `stop` 后 `await Promise.race([closed, 5s timeout])`，测试 cleanup 改为单次 `rmSync` 不吞错不重试。连续 3 次 agents/role-runtime 全过。
+- **主助手模型接线**：生产装配 `apps/server/src/app.ts`（Web 路径）和 `apps/server/src/integrations/lark/runtime.ts`（飞书路径）均已 `new AssistantRuntime({ store, model: new AcpAssistantModel({ profile, workspaceRoot }), retrieval: new KeywordRetrieval(store.db), feedback: new FeedbackService(store), ... })` —— **Web 和飞书主助手生产路径均接真实 ACP adapter + RetrievalPort + scoped 纠正**。`DeterministicAssistantModel`（`assistant/default-model.ts`）**仅用于测试注入**。生产不存在"无模型配置时的假回答降级"：`AcpAssistantModel` 在无 profile / CLI transport / 未授权 / 超时 / 输出非 JSON 时一律抛 `ModelUnavailableError`，runtime 记 `failed` turn + `error=model_unavailable:*`，零 citation、零任务，绝不产出编造回答。任务创建经 `detectTaskIntent()`（21 祈使模式 + 11 咨询模式）确定性门控：咨询类即使模型发出 create_task 也被拒绝零写入；直接交办时 capture owner 消息为真实 source 证据后经 `MemoryService.evaluate()` 治理。取消经 `TurnCancelledError` fence 在 govern/complete 前检查，`withTimeout` Promise.race 主动 abort。
 - **外部验证状态**：`AcpAssistantModel` 已复用真实 `acp()` 传输（`agents.ts`），并有 fixture agent（`tests/fixtures/acp-agent.mjs`）解析/超时/取消测试覆盖；但本机无 traecli/Codex 等真实 CLI，**真实 ACP 主助手端到端与真实飞书 WebSocket 收发仍未跑过 live**（均为注入/fixture adapter 测试）；语义检索（embedding）未接入，当前为 SQLite 关键词召回。
 
 ## 能力矩阵
 
 | 能力域 | 代码已实现 | 本地测试通过 | 真实 ACP 验证 | 真实飞书验证 | 剩余缺口 |
 | --- | --- | --- | --- | --- | --- |
-| 主助手对话 | 会话路由/turn 持久化与幂等排队（同 transport_event_id 不重复建 turn/task）、RetrievalPort 注入（KeywordRetrieval 中文 2-gram 召回）、create_task 经 MemoryService + detectTaskIntent 意图门控（咨询类零写入）、群可见性 deny-by-default + 注入 policy、模型异常诚实失败（ModelUnavailableError→failed turn，不造假）、取消 TurnCancelledError fence + withTimeout、scoped 纠正注入、AcpAssistantModel 接真实 acp() 传输 + transport 路由 | 是（assistant-runtime 18、conversation-router 3、conversation-security 2、lark-delivery-recovery 5） | 否（已接真实 acp() 传输 + fixture 解析测试；本机无 traecli，未 live） | 否（WebSocket 收发为注入 adapter） | 真实 ACP 端到端；HTTP cancel e2e；重启 pending turn 完整重放；ACP fixture 成功输出独立测试 |
+| 主助手对话 | 会话路由/turn 持久化与幂等排队（同 transport_event_id 不重复建 turn/task）、RetrievalPort 注入（Web+飞书均接 KeywordRetrieval 中文 2-gram 召回）、create_task 经 MemoryService + detectTaskIntent 意图门控（咨询类零写入）、群可见性 deny-by-default + 注入 policy、模型异常诚实失败（ModelUnavailableError→failed turn，不造假）、取消 TurnCancelledError fence + withTimeout（hung model 不挂死）、scoped 纠正注入（Web+飞书）、AcpAssistantModel 接真实 acp() 传输 + transport 路由 | 是（assistant-runtime 19、acp-model 9、conversation-router 3、conversation-security 3、lark-delivery-recovery 5） | 否（已接真实 acp() 传输 + fixture 解析测试；本机无 traecli，未 live） | 否（WebSocket 收发为注入 adapter） | 真实 ACP 端到端；HTTP cancel e2e；重启 pending turn 完整重放 |
 | 检索 | RetrievalPort 接口 + KeywordRetrieval（SQLite LIKE + CJK 2-gram 分词 + 停用词 + 长度加权打分）；source-profile 确定性规则分析；project_trusted 软过滤（未确认不过滤） | 是（retrieval-source-profile 6、retrieval-keyword 3） | 不适用 | 不适用 | embedding/语义检索；MemPalace sidecar；跨版本 Fragment 身份续接 |
 | 知识治理 | AttentionGate 六态 + 四条件门控、memory_equivalences 等价关系表、decisions.attention_case/dedupe_key 去重、**evaluateBatch 生产化接入 pipeline verify()**（整 ChangeSet 去重累计 impact，超限全部 park 不 apply）、冲突记录、refresh_records、proposal/policy/receipt 原子应用 | 是（attention-gate、proposal-policy、learning-pipeline G17 批量） | 部分（历史一次 live smoke，`.omem/verification/`） | 否 | 完整重核验（extractor+verifier 重跑）consolidation job；真实模型语义冲突判断 |
 | 输入保真 | per-part provenance、canonical principal 映射、owner/非owner 区分、agent/derived 入队区分、**飞书富文本/图片/reply 解析为统一 parts**（post→标题+段落，image→asset download，reply→replyTo/quoted） | 是（batch2-fixes G04–G07/G14、lark-rich-parts 3） | 否 | 否（open_id 绑定全链路；图片为 fake transport 验证） | 飞书真实网络图片下载；reply_to 真实引用关系解析 |
@@ -53,14 +53,13 @@
 
 ## 已知限制与环境问题（2026-09-27 实测）
 
-- **osdk 验证全绿**：`osdk deps --frozen` exit 0；`osdk run check` exit 0（含 typecheck + 全量 vitest 165/165 + tsc/vite build）。信任门已由用户执行 `osdk --yes trust` 解决。
+- **osdk 验证全绿**：`osdk deps --frozen` exit 0；`osdk run check` exit 0（含 typecheck + 全量 vitest 176/176 + tsc/vite build）。信任门已由用户执行 `osdk --yes trust` 解决。
 - **ACP 子进程清理已根治**：`agents.ts` 的 `acp()` 在 finally 中 `stop(child)` 后 `await Promise.race([child close, 5s timeout])`，Windows cwd 句柄释放后再返回；测试 cleanup 为单次 `rmSync`，不吞错不重试。连续 3 次 agents(6/6) + role-runtime(8/8) 全过。
 - **refresh_dependents 重核验未实现（按设计 blocked）**：`learning/pipeline.ts` 该 job 只调 `recordSourceRefresh` 记录受影响记忆为 `needs_review`，随后**主动抛 `JobExecutionError("NOT_IMPLEMENTED")`** 失败——不谎报已完成重核验。完整 extractor+verifier 重跑 consolidation job 仍待实现。
 - **Docker 未安装**：实测 `docker --version` 报「无法识别」，`osdk container doctor --json` 报 docker/containerd 均 `not-installed`。WeKnora/Hindsight 的 Docker 路径本机不可用。
 - **无 traecli → 真实 ACP/飞书未端到端**：代码已接 AcpAssistantModel 真实 ACP adapter（含 fixture 解析/超时/取消测试），但本机无 traecli，真实 ACP 主助手对话与真实飞书 WebSocket 收发均未跑 live，仍为注入/fixture adapter 测试。
 - **G20 端到端组合未实现**：模型不可用降级、取消中断、投递持久恢复各自已测；"无语义检索后端仍可查 + queue 续 + 模型恢复后续跑 + 重启 pending turn 完整重放"的跨维度组合无单一断言。
-- **ACP fixture 成功输出解析无独立测试文件**：`parseAssistantReply` 已导出，但独立 fixture 成功路径测试未单独创建（依赖真实 ACP SDK 类型，本机无 traecli）。
-- **HTTP cancel 端点无独立 e2e 测试**：路由已在 app.ts 注册，`cancelTurn`/`shutdown` 已实现并经单元测试覆盖，但 HTTP 层端到端取消未单独断言。
+- **HTTP cancel 端点无独立 e2e 测试**：路由已在 app.ts 注册，`cancelTurn`/`shutdown` 已实现并经单元测试覆盖（含 hung model 不挂死故障注入），但 HTTP 层端到端取消未单独断言。
 - **配置变通已全部撤销**：package-lock 的 npmmirror 改写、`package-lock.json.bak-batch2` 备份、osdk.toml 的 default_agents/npm.auto=true 临时改动均已还原；`git diff HEAD` 对这三个文件为零。
 
 ---
