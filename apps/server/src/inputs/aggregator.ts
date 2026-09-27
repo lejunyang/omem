@@ -156,18 +156,22 @@ export class InputAggregator {
         Math.max(1, Math.min(maxEvents, 500)),
       ) as Row[];
     const selected: Row[] = [];
-    const contentDigests = new Set<string>();
+    const seenKeys = new Set<string>();
     let partCount = 0;
     for (const event of candidates) {
       const envelope = captureSchema.parse(JSON.parse(String(event.envelope)));
-      const duplicateContent = contentDigests.has(String(event.content_digest));
+      // Dedupe repeated turns by the SAME speaker; two different actors saying the
+      // same thing are independent evidence and must both survive (G05).
+      const actorId = envelope.provenance?.actorId ?? "unknown";
+      const dedupKey = `${String(event.content_digest)}::${actorId}`;
+      const duplicateContent = seenKeys.has(dedupKey);
       const extraParts = duplicateContent ? 0 : envelope.parts.length;
       if (selected.length && partCount + extraParts > 50) break;
       if (!selected.length && extraParts > 50)
         throw Error("AGGREGATION_PART_BUDGET_EXCEEDED");
       selected.push(event);
       if (!duplicateContent) {
-        contentDigests.add(String(event.content_digest));
+        seenKeys.add(dedupKey);
         partCount += extraParts;
       }
     }
@@ -181,10 +185,34 @@ export class InputAggregator {
     const unique = new Set<string>();
     const parts: CaptureInput["parts"] = [];
     for (let index = 0; index < parsed.length; index++) {
-      const digest = String(events[index]!.content_digest);
-      if (unique.has(digest)) continue;
-      unique.add(digest);
-      parts.push(...parsed[index]!.parts);
+      const source = parsed[index]!;
+      // Same per-speaker dedup key as selectBatchEvents: identical text from two
+      // different actors stays as two attributed parts (G05).
+      const actorId = source.provenance?.actorId ?? "unknown";
+      const dedupKey = `${String(events[index]!.content_digest)}::${actorId}`;
+      if (unique.has(dedupKey)) continue;
+      unique.add(dedupKey);
+      const observedAt = String(
+        events[index]!.observed_at || events[index]!.received_at,
+      );
+      for (const part of source.parts) {
+        parts.push({
+          ...part,
+          provenance: {
+            actorExternalId:
+              source.provenance?.actorExternalId ??
+              source.provenance?.actorId ??
+              null,
+            actorPrincipalId: source.provenance?.actorPrincipalId ?? null,
+            observedAt,
+            eventId: source.provenance?.eventId ?? null,
+            replyTo: null,
+            quoted: source.provenance?.quoted ?? false,
+            forwarded: source.provenance?.forwarded ?? false,
+            producerKind: source.provenance?.producerKind ?? "original",
+          },
+        });
+      }
     }
     const eventIds = events.map(
       (event) => `${String(event.producer)}:${String(event.event_id)}`,
@@ -266,6 +294,16 @@ export class InputAggregator {
         quoted: parsed.some((event) => event.provenance?.quoted),
         forwarded: parsed.some((event) => event.provenance?.forwarded),
         producerKind: "original",
+        actorExternalId: actorStable
+          ? (latest.provenance?.actorExternalId ?? null)
+          : null,
+        actorPrincipalId: actorStable
+          ? (latest.provenance?.actorPrincipalId ?? null)
+          : null,
+        actorBindingVersion:
+          actorStable && latest.provenance?.actorBindingVersion != null
+            ? Number(latest.provenance.actorBindingVersion)
+            : null,
       },
     });
     return {

@@ -1,6 +1,26 @@
 import { z } from "zod";
+// Per-part provenance lets an aggregated batch keep which speaker / event / time a
+// fragment came from, instead of flattening multi-speaker turns into actor=null.
+// Every field is optional/nullable so historical parts without metadata still parse.
+export const partProvenanceSchema = z
+  .object({
+    actorExternalId: z.string().min(1).max(300).nullable(),
+    actorPrincipalId: z.string().min(1).max(300).nullable(),
+    observedAt: z.iso.datetime({ offset: true }).nullable(),
+    eventId: z.string().min(1).max(500).nullable(),
+    replyTo: z.string().min(1).max(500).nullable(),
+    quoted: z.boolean().default(false),
+    forwarded: z.boolean().default(false),
+    producerKind: z.enum(["original", "derived"]).default("original"),
+  })
+  .strict();
+export type PartProvenance = z.infer<typeof partProvenanceSchema>;
 export const textPart = z
-  .object({ type: z.literal("text"), text: z.string().min(1).max(200000) })
+  .object({
+    type: z.literal("text"),
+    text: z.string().min(1).max(200000),
+    provenance: partProvenanceSchema.optional(),
+  })
   .strict();
 export const imagePart = z
   .object({
@@ -8,6 +28,7 @@ export const imagePart = z
     mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
     data: z.string().min(1).max(8_000_000),
     label: z.string().max(200).default("图片"),
+    provenance: partProvenanceSchema.optional(),
   })
   .strict();
 export const linkPart = z
@@ -20,6 +41,7 @@ export const linkPart = z
         "Only HTTP(S) links",
       ),
     label: z.string().max(300).default("链接"),
+    provenance: partProvenanceSchema.optional(),
   })
   .strict();
 export const captureProvenanceSchema = z
@@ -35,6 +57,12 @@ export const captureProvenanceSchema = z
     quoted: z.boolean(),
     forwarded: z.boolean(),
     producerKind: z.enum(["original", "derived"]),
+    // External identity (e.g. lark ou_*) is always preserved; the resolved canonical
+    // principal is only set when the actor maps to the bound owner. When binding
+    // info is absent, principal stays null rather than being faked to "owner".
+    actorExternalId: z.string().min(1).max(300).nullable().optional(),
+    actorPrincipalId: z.string().min(1).max(300).nullable().optional(),
+    actorBindingVersion: z.number().int().positive().nullable().optional(),
   })
   .strict();
 export const captureSchema = z
@@ -82,9 +110,20 @@ export const captureSchema = z
   .strict();
 export type CaptureInput = z.infer<typeof captureSchema>;
 export type StoredPart =
-  | { type: "text"; text: string }
-  | { type: "link"; url: string; label: string }
-  | { type: "image"; assetId: string; mimeType: string; label: string };
+  | { type: "text"; text: string; provenance?: PartProvenance }
+  | {
+      type: "link";
+      url: string;
+      label: string;
+      provenance?: PartProvenance;
+    }
+  | {
+      type: "image";
+      assetId: string;
+      mimeType: string;
+      label: string;
+      provenance?: PartProvenance;
+    };
 export type Fragment = {
   id: string;
   revisionId: string;
@@ -721,6 +760,21 @@ export const contextMaterialSchema = z
       })
       .strict()
       .optional(),
+    // Per-fragment provenance preserved from the revision's parts[].provenance so a
+    // multi-speaker batch keeps which actor / reply / event a fragment came from,
+    // instead of flattening turns into the envelope-level actor. All optional so
+    // historical parts without metadata still parse.
+    actor_external_id: z.string().min(1).max(300).nullable().optional(),
+    actor_principal_id: z.string().min(1).max(300).nullable().optional(),
+    observed_at: z.iso.datetime({ offset: true }).nullable().optional(),
+    reply_to: z.string().min(1).max(500).nullable().optional(),
+    quoted: z.boolean().optional(),
+    forwarded: z.boolean().optional(),
+    producer_kind: z.enum(["original", "derived"]).optional(),
+    // Image fragment evidence anchor (asset hash). Mirrors image.asset_hash but is
+    // surfaced at the material level so callers can reference the asset without
+    // unwrapping the inline image payload.
+    asset_ref: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })
   .strict()
   .refine((material) => material.text !== undefined || material.image, {
@@ -758,6 +812,10 @@ export const contextManifestSchema = z
         is_forwarded: z.boolean(),
         producer_kind: z.enum(["original", "derived"]),
         source_epoch: z.number().int().min(1).default(1),
+        // Distinguishes "project_id is a confirmed project link" from "we simply do
+        // not know the project yet". context carriers (application/conversationId)
+        // are NOT promoted to a trusted project.
+        project_trusted: z.boolean().default(false),
       })
       .strict(),
     materials: z.array(contextMaterialSchema).min(1).max(200),
