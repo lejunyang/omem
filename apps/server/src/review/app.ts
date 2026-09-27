@@ -14,7 +14,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Store } from "../store.js";
 import { MemoryService } from "../memory/service.js";
-import { KeywordRetrieval } from "../retrieval/keyword.js";
+import { KeywordRetrieval, tokenize } from "../retrieval/keyword.js";
 import {
   categoryName,
   readSyncStatus,
@@ -24,7 +24,6 @@ import {
 import {
   REVIEW_DIR,
   ensureReviewMetaTable,
-  removedSourceIds,
   ensureReviewRelationsTable,
   relationsForFragment,
   listReviewRelations,
@@ -257,43 +256,103 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     return { seedCount, ...relationsSummary(store) };
   });
 
+  // ---------------------------------------------------------------------
+  // Search: category / current / removed are filtered in SQL (JOINed onto the
+  // same query that matches fragments), never after a fixed top-N pull. This
+  // guarantees a low-ranked hit inside a requested category is still returned
+  // even when hundreds of higher-ranked hits live in other categories — the
+  // KeywordRetrieval per-term LIMIT 200 / caller top-N cannot starve it.
+  // ---------------------------------------------------------------------
+  const snippetFor = (text: string, query: string, radius = 80): string => {
+    const flat = text.replace(/\s+/g, " ").trim();
+    const terms = tokenize(query);
+    const hit = terms
+      .map((t) => flat.toLowerCase().indexOf(t.toLowerCase()))
+      .find((i) => i >= 0);
+    if (hit === undefined) return flat.slice(0, radius * 2);
+    const start = Math.max(0, hit - radius);
+    return (start > 0 ? "…" : "") + flat.slice(start, start + radius * 2);
+  };
+
+  type SearchHit = {
+    id: string;
+    score: number;
+    snippet: string;
+    text: string;
+    title: string;
+    version: number;
+    category: string | null;
+    filePath: string | null;
+  };
+
+  const reviewSearch = (
+    q: string,
+    opts: { category?: string; includeRemoved?: boolean },
+  ): SearchHit[] => {
+    const terms = tokenize(q);
+    if (!terms.length) return [];
+    const best = new Map<
+      string,
+      { row: Row; score: number; matched: Set<string> }
+    >();
+    for (const term of terms) {
+      const escaped = "%" + term.replace(/[!%_]/g, "!$&") + "%";
+      const where: string[] = ["f.text LIKE ? ESCAPE '!'"];
+      const params: string[] = [escaped];
+      if (!opts.includeRemoved)
+        where.push("(m.removed IS NULL OR m.removed = 0)");
+      if (opts.category) {
+        where.push("json_extract(r.body,'$.context.category') = ?");
+        params.push(opts.category);
+      }
+      // s.head = r.id pins us to the current/head revision, so old revisions
+      // are excluded without an extra predicate.
+      const sql = `SELECT f.id AS fragment_id, f.revision_id, f.text AS fragment_text,
+                      r.title AS title, r.version AS version,
+                      json_extract(r.body,'$.context.category') AS category,
+                      json_extract(r.body,'$.context.filePath') AS filePath
+                   FROM fragments f
+                   JOIN revisions r ON r.id = f.revision_id
+                   JOIN sources s ON s.head = r.id
+                   LEFT JOIN review_source_meta m ON m.source_id = s.id
+                   WHERE ${where.join(" AND ")}`;
+      const rows = store.db.prepare(sql).all(...params) as Row[];
+      for (const row of rows) {
+        const id = String(row.fragment_id);
+        const cur =
+          best.get(id) ?? { row, score: 0, matched: new Set<string>() };
+        if (!cur.matched.has(term)) {
+          cur.matched.add(term);
+          cur.score +=
+            term.length >= 4 ? 4 : term.length >= 3 ? 3 : term.length >= 2 ? 2 : 1;
+        }
+        best.set(id, cur);
+      }
+    }
+    return [...best.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20)
+      .map(({ row, score }) => ({
+        id: String(row.fragment_id),
+        score,
+        snippet: snippetFor(String(row.fragment_text), q),
+        text: String(row.fragment_text),
+        title: String(row.title),
+        version: Number(row.version),
+        category: row.category != null ? String(row.category) : null,
+        filePath: row.filePath != null ? String(row.filePath) : null,
+      }));
+  };
+
   app.get<{
     Querystring: { q?: string; category?: string; includeRemoved?: string };
   }>(P + "/search", async (req) => {
     const q = (req.query.q ?? "").trim();
     if (!q) return [];
-    const includeRemoved = req.query.includeRemoved === "true";
-    // Pull a broad pool first, then filter by category and removed status, then
-    // take the top 20. Filtering after only top20 used to starve a category that
-    // had lower-ranked-but-relevant hits once another category dominated.
-    const candidates = retrieval.searchSources({ text: q, limit: 100 });
-    const removed = includeRemoved ? new Set<string>() : removedSourceIds(store);
-    const out: Record<string, unknown>[] = [];
-    for (const c of candidates) {
-      const revision = store.revision(c.sourceRevisionId);
-      if (!revision) continue;
-      if (!revision.current) continue; // only head/current revisions
-      if (removed.has(revision.sourceId)) continue;
-      const ctx = revision.context as unknown as {
-        category?: string;
-        filePath?: string;
-      };
-      if (req.query.category && ctx.category !== req.query.category) continue;
-      const fragment = revision.fragments.find((f) => f.id === c.fragmentId);
-      if (!fragment) continue;
-      out.push({
-        id: c.fragmentId,
-        score: c.score,
-        snippet: c.snippet,
-        text: fragment.text,
-        title: revision.title,
-        version: revision.version,
-        category: ctx.category ?? null,
-        filePath: ctx.filePath ?? null,
-      });
-      if (out.length >= 20) break;
-    }
-    return out;
+    return reviewSearch(q, {
+      category: req.query.category,
+      includeRemoved: req.query.includeRemoved === "true",
+    });
   });
 
   app.get(P + "/sync/status", async () => ({
