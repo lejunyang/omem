@@ -27,7 +27,7 @@
 | A-N01 | pass | application 与 intent 已提交后重开 SQLite，sender 继续发送且 task 不重复 | partial：真实 owner notification 及批准后的变更通知均 delivered；真实进程崩溃仍仅故障注入 |
 | A-N02 | pass | 响应丢失在一小时内沿用同 provider UUID；超窗不再发送并记 `unknown` | skipped：未验证平台去重窗口 |
 | A-N03 | pass | 429 使用 Retry-After、有界 attempt；401/auth 停用 connection/targets；落库错误脱敏 | skipped |
-| A-N04 | partial | 当前支持的即时模式下 5 个 change 各有独立 intent/digest/UUID 映射 | 未通过：短窗合并与定时外发摘要未实现 |
+| A-N04 | pass（B2-08 补齐） | 即时模式保留 5 个独立 intent；短窗模式把 5 个 change 合为一次发送并保留 5 条映射；定时模式按 IANA 时区计算下一发送边界 | 本轮为确定性时间/SQLite/adapter 测试，未等待一次真实定时摘要 |
 | A-N05 | pass | superseded binding 的 pending intent 全部取消；恢复变更只投新 target；卡片不生成 localhost URL | skipped：未做真实目标切换 |
 
 ## 真实应用验证
@@ -62,4 +62,4 @@ osdk exec --tool node -- npx tsx .omem/verification/live-group-monitor.ts
 
 - `LarkConnectionManager`、delivery worker 和 card worker 是显式装配组件；默认 `main.ts` 在缺少 master key、真实 capability probe 与 host 配置时不启动外部连接。
 - 当前没有 B2-07 的连接设置、群监控状态、投递状态和 decision UI，也没有 `POST .../test` / disconnect API。
-- 当前只实现逐条即时外发；短窗合并与定时外发摘要不计为通过。
+- 短窗合并与定时外发摘要已在 B2-08 补齐并通过确定性验收；尚未等待一次真实定时摘要。

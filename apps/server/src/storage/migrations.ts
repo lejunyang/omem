@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 8;
+export const SUPPORTED_SCHEMA_VERSION = 9;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -652,6 +652,24 @@ const autoMonitorJoinedGroupsStatements = [
      )`,
 ] as const;
 
+const notificationAggregationStatements = [
+  `ALTER TABLE delivery_intents ADD COLUMN aggregation_mode TEXT NOT NULL
+     DEFAULT 'instant' CHECK(aggregation_mode IN ('instant','window','scheduled'))`,
+  "ALTER TABLE delivery_intents ADD COLUMN aggregate_after TEXT",
+  "ALTER TABLE delivery_intents ADD COLUMN superseded_by TEXT REFERENCES delivery_intents(id)",
+  `CREATE TABLE delivery_intent_changes(
+     intent_id TEXT NOT NULL REFERENCES delivery_intents(id),
+     change_id TEXT NOT NULL REFERENCES changes(id),
+     ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+     PRIMARY KEY(intent_id,change_id),
+     UNIQUE(intent_id,ordinal)
+   )`,
+  `INSERT INTO delivery_intent_changes(intent_id,change_id,ordinal)
+   SELECT id,change_id,0 FROM delivery_intents`,
+  "CREATE INDEX delivery_intent_changes_change_idx ON delivery_intent_changes(change_id,intent_id)",
+  "CREATE INDEX delivery_intents_aggregate_idx ON delivery_intents(channel,state,aggregation_mode,aggregate_after)",
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -705,6 +723,12 @@ const migrations: readonly Migration[] = [
     name: "auto-monitor-joined-lark-groups",
     statements: autoMonitorJoinedGroupsStatements,
     checksum: checksum(autoMonitorJoinedGroupsStatements),
+  },
+  {
+    version: 9,
+    name: "notification-aggregation",
+    statements: notificationAggregationStatements,
+    checksum: checksum(notificationAggregationStatements),
   },
 ];
 

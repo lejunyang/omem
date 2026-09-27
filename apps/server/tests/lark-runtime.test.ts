@@ -195,6 +195,8 @@ describe("B2-08 production Lark host", () => {
       expect(await host.processOnce()).toEqual({
         cards: 0,
         deliveries: 1,
+        batches: 0,
+        changes: 0,
         connections: 1,
       });
       expect(realtime.connections).toHaveLength(1);

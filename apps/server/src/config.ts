@@ -2,12 +2,56 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { z } from "zod";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
+const timezoneSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .refine((timezone) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: timezone });
+      return true;
+    } catch {
+      return false;
+    }
+  }, "invalid IANA timezone");
 const schema = z
   .object({
     profiles: z.array(profileSchema).min(1),
     notifications: z
-      .object({ mode: z.enum(["instant", "digest"]).default("instant") })
-      .default({ mode: "instant" }),
+      .object({
+        mode: z.enum(["instant", "digest"]).default("instant"),
+        external: z
+          .object({
+            mode: z.enum(["instant", "window", "scheduled"]).default("instant"),
+            windowMs: z
+              .number()
+              .int()
+              .min(1000)
+              .max(86_400_000)
+              .default(300_000),
+            scheduleLocalTime: z
+              .string()
+              .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)
+              .default("09:00"),
+            timezone: timezoneSchema.default("Asia/Shanghai"),
+          })
+          .strict()
+          .default({
+            mode: "instant",
+            windowMs: 300_000,
+            scheduleLocalTime: "09:00",
+            timezone: "Asia/Shanghai",
+          }),
+      })
+      .default({
+        mode: "instant",
+        external: {
+          mode: "instant",
+          windowMs: 300_000,
+          scheduleLocalTime: "09:00",
+          timezone: "Asia/Shanghai",
+        },
+      }),
     captureRoots: z.array(z.string()).default([]),
     learning: z
       .object({
@@ -30,9 +74,16 @@ const schema = z
 type ParsedConfig = z.infer<typeof schema>;
 type LearningConfig = ParsedConfig["learning"];
 type LarkConfig = ParsedConfig["lark"];
-export type Config = Omit<ParsedConfig, "learning" | "lark"> & {
+type NotificationConfig = ParsedConfig["notifications"];
+export type Config = Omit<
+  ParsedConfig,
+  "learning" | "lark" | "notifications"
+> & {
   learning?: LearningConfig;
   lark?: LarkConfig;
+  notifications: Omit<NotificationConfig, "external"> & {
+    external?: NotificationConfig["external"];
+  };
   dataDir: string;
   agentCwd: string;
   token?: string;

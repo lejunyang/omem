@@ -424,6 +424,143 @@ export class LarkDeliveryRepository {
   }
 }
 
+export class LarkNotificationBatcher {
+  constructor(private readonly db: DatabaseSync) {}
+
+  prepareDue(now = new Date()) {
+    const at = now.toISOString();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const seeds = this.db
+        .prepare(
+          `SELECT * FROM delivery_intents
+           WHERE channel='lark' AND state='pending'
+             AND aggregation_mode IN ('window','scheduled')
+             AND aggregate_after<=? AND superseded_by IS NULL
+           ORDER BY aggregate_after,created_at`,
+        )
+        .all(at) as Row[];
+      let batches = 0;
+      let changes = 0;
+      const consumed = new Set<string>();
+      for (const seed of seeds) {
+        if (consumed.has(String(seed.id))) continue;
+        const members = this.db
+          .prepare(
+            `SELECT * FROM delivery_intents
+             WHERE channel='lark' AND state='pending'
+               AND workspace_id=? AND binding_id=? AND target=?
+               AND aggregation_mode=? AND created_at<=?
+               AND superseded_by IS NULL
+             ORDER BY created_at,id`,
+          )
+          .all(
+            String(seed.workspace_id),
+            String(seed.binding_id),
+            String(seed.target),
+            String(seed.aggregation_mode),
+            String(seed.aggregate_after),
+          ) as Row[];
+        if (!members.length) continue;
+        const primary = members[0]!;
+        const memberIds = members.map((member) => String(member.id));
+        memberIds.forEach((id) => consumed.add(id));
+        const placeholders = memberIds.map(() => "?").join(",");
+        const mapped = this.db
+          .prepare(
+            `SELECT DISTINCT m.change_id,c.title,c.details,c.created_at
+             FROM delivery_intent_changes m
+             JOIN changes c ON c.id=m.change_id
+             WHERE m.intent_id IN (${placeholders})
+             ORDER BY c.created_at,m.change_id`,
+          )
+          .all(...memberIds) as Row[];
+        if (!mapped.length)
+          throw Error("LARK_AGGREGATION_CHANGE_MAPPING_MISSING");
+        if (members.length === 1 && mapped.length === 1) {
+          this.db
+            .prepare(
+              `UPDATE delivery_intents SET aggregation_mode='instant',
+                 aggregate_after=NULL,next_attempt_at=?,updated_at=? WHERE id=?`,
+            )
+            .run(at, at, String(primary.id));
+          batches++;
+          changes++;
+          continue;
+        }
+        const title = `omem 变更摘要（${mapped.length} 项）`;
+        const summary = mapped
+          .map(
+            (change, index) =>
+              `${index + 1}. **${String(change.title).slice(0, 200)}**\n${String(
+                change.details,
+              ).slice(0, 1000)}`,
+          )
+          .join("\n\n")
+          .slice(0, 8000);
+        const payload = {
+          schema: "2.0",
+          config: { width_mode: "default" },
+          header: {
+            title: { tag: "plain_text", content: title },
+            template: "green",
+          },
+          body: { elements: [{ tag: "markdown", content: summary }] },
+        };
+        const payloadJson = JSON.stringify(payload);
+        if (Buffer.byteLength(payloadJson) > 30_000)
+          throw Error("LARK_CARD_PAYLOAD_TOO_LARGE");
+        const changeIds = mapped.map((change) => String(change.change_id));
+        this.db
+          .prepare(
+            `UPDATE delivery_intents SET payload_json=?,payload_digest=?,
+               provider_uuid=?,aggregation_mode='instant',aggregate_after=NULL,
+               next_attempt_at=?,updated_at=? WHERE id=?`,
+          )
+          .run(
+            payloadJson,
+            stableDigest(payload),
+            stableDigest({
+              mode: seed.aggregation_mode,
+              bindingId: seed.binding_id,
+              target: seed.target,
+              changeIds,
+            }).slice(0, 50),
+            at,
+            at,
+            String(primary.id),
+          );
+        this.db
+          .prepare("DELETE FROM delivery_intent_changes WHERE intent_id=?")
+          .run(String(primary.id));
+        changeIds.forEach((changeId, ordinal) =>
+          this.db
+            .prepare(
+              `INSERT INTO delivery_intent_changes(intent_id,change_id,ordinal)
+               VALUES(?,?,?)`,
+            )
+            .run(String(primary.id), changeId, ordinal),
+        );
+        for (const member of members.slice(1))
+          this.db
+            .prepare(
+              `UPDATE delivery_intents SET state='cancelled',superseded_by=?,
+                 last_error='aggregated into another intent',next_attempt_at=NULL,
+                 updated_at=? WHERE id=?`,
+            )
+            .run(String(primary.id), at, String(member.id));
+        batches++;
+        changes += mapped.length;
+      }
+      this.db.exec("COMMIT");
+      return { batches, changes };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
 export class LarkDeliveryWorker {
   constructor(
     private readonly repository: LarkDeliveryRepository,

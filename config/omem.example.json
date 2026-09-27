@@ -5,12 +5,7 @@
       "name": "TraeX · ACP",
       "transport": "acp",
       "command": "traecli",
-      "args": [
-        "-c",
-        "sandbox_mode=\"read-only\"",
-        "acp",
-        "serve"
-      ],
+      "args": ["-c", "sandbox_mode=\"read-only\"", "acp", "serve"],
       "skills": [],
       "maxContextChars": 20000,
       "timeoutMs": 120000,
@@ -30,7 +25,13 @@
     }
   ],
   "notifications": {
-    "mode": "instant"
+    "mode": "instant",
+    "external": {
+      "mode": "window",
+      "windowMs": 300000,
+      "scheduleLocalTime": "09:00",
+      "timezone": "Asia/Shanghai"
+    }
   },
   "learning": {
     "enabled": true,

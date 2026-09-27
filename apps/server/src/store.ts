@@ -18,7 +18,10 @@ import type {
   Change,
 } from "../../../packages/contracts/src/index.js";
 import { migrateDatabase } from "./storage/migrations.js";
-import { ApplicationRepository } from "./storage/repository.js";
+import {
+  ApplicationRepository,
+  type ExternalNotificationPolicy,
+} from "./storage/repository.js";
 import { stableDigest } from "./storage/digest.js";
 import { JobRepository } from "./jobs/repository.js";
 import { InputAggregator } from "./inputs/aggregator.js";
@@ -34,7 +37,12 @@ export class Store {
   readonly jobs: JobRepository;
   readonly inputs: InputAggregator;
   readonly runtimeRequests: RuntimeRequestRepository;
-  constructor(readonly dataDir: string) {
+  constructor(
+    readonly dataDir: string,
+    options: {
+      externalNotifications?: Partial<ExternalNotificationPolicy>;
+    } = {},
+  ) {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const file = join(dataDir, "omem.sqlite");
     this.db = new DatabaseSync(file);
@@ -42,7 +50,10 @@ export class Store {
       migrateDatabase(this.db);
       mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
       chmodSync(file, 0o600);
-      this.applications = new ApplicationRepository(this.db);
+      this.applications = new ApplicationRepository(
+        this.db,
+        options.externalNotifications,
+      );
       this.jobs = new JobRepository(this.db);
       this.inputs = new InputAggregator(this.db);
       this.runtimeRequests = new RuntimeRequestRepository(this.db);
@@ -559,12 +570,18 @@ export class Store {
     const deliveries = changeId
       ? (this.db
           .prepare(
-            `SELECT id,channel,state,attempt_count AS attemptCount,
-               error_kind AS errorKind,last_error AS lastError,
-               created_at AS createdAt,updated_at AS updatedAt
-             FROM delivery_intents WHERE change_id=? ORDER BY created_at`,
+            `SELECT DISTINCT i.id,i.channel,i.state,
+               i.attempt_count AS attemptCount,i.error_kind AS errorKind,
+               i.last_error AS lastError,i.created_at AS createdAt,
+               i.updated_at AS updatedAt,i.aggregation_mode AS aggregationMode,
+               i.superseded_by AS supersededBy,
+               (SELECT count(*) FROM delivery_intent_changes count_map
+                WHERE count_map.intent_id=i.id) AS changeCount
+             FROM delivery_intents i
+             LEFT JOIN delivery_intent_changes m ON m.intent_id=i.id
+             WHERE i.change_id=? OR m.change_id=? ORDER BY i.created_at`,
           )
-          .all(changeId) as Row[])
+          .all(changeId, changeId) as Row[])
       : [];
     const receipt = changeId
       ? (this.db

@@ -61,13 +61,15 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 `POST /api/proposals/evaluate` 接受严格 Proposal 与可信 verifier assessment，服务端再执行固定引文/图片、source head/epoch、owner/转发、冲突、影响范围和 CAS 门；安全的小范围 task/claim/episode 可原子写入 change、通知、delivery intent 和 receipt，其余进入可审计 decision 或拒绝。`POST /api/decisions/:id` 会在批准时重新检查来源版本。反馈通过 `POST /api/feedback` 去重，只有已验证、原始、同 scope 且有现存证据的纠正进入后续召回；ACL/预算/自动审批建议只记 shadow。自动 worker 和 HTTP evaluate 最终都进入同一个 MemoryService 边界，不存在模型直接写库的旁路。
 
-通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。配置 active 飞书 owner target 后，正式应用事务会同时生成绑定版本固定的飞书 delivery intent；sender 使用官方 SDK、同 UUID 有界重试和 `unknown` 状态。当前只实现逐条即时外发，短窗合并和定时摘要仍未实现。
+通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 只关闭逐条浮动提示，仍保留所有记录。外部飞书通知由 `notifications.external.mode` 独立选择 `instant`、`window` 或 `scheduled`：短窗与定时模式会在发送前合并同一 binding/target 的普通变更，并通过 `delivery_intent_changes` 保留每条 change 映射；交互 decision 卡始终即时发送。`windowMs` 控制短窗，`scheduleLocalTime` 与 IANA `timezone` 控制定时摘要。待办每 30 秒检查到期，重启后补查且去重。sender 使用官方 SDK、同 UUID 有界重试和 `unknown` 状态。
 
 Vue 新增“学习流程”“待判断”“通知详情”和“飞书机器人”：任务状态、attempt、提案策略、具体 diff、判断 receipt、应用 receipt、证据和投递错误都来自持久 API；服务/模型/通知失败时继续显示已保存原件与已生效事实，不把排队或失败显示成成功。飞书设置支持创建新应用、为指定 App ID 打开增量授权、从 botmux 或手工凭据导入；授权页同时给出本地生成的二维码与可直接打开的完整链接，后续严格经过 checking 和同应用 owner pairing。App Secret 只进入后端 secret store，不返回页面。
 
 飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、公开 OpenAPI capability probe、一次性 pairing/binding、官方 WebSocket adapter、单消费者 lease、事件 inbox、入群自动监控/移群停用、通知 sender 和耐竞态的 Card 2.0 决策队列。可手工导入现有应用，也可从本机 botmux 配置按 app_id 选择后加密转存，不修改 botmux 配置。默认注册 profile 还参考 botmux 权限清单为未来文档/云盘/知识库、表格/幻灯片、日历、任务、会议和 CardKit 能力预留 app/user scopes，但明确排除批量/系统消息、群成员与群主操作、文档权限转移和日历 ACL 管理。`lark.enabled=true` 且提供 `OMEM_SECRET_KEY` 后，主服务会装配 onboarding、WebSocket connection supervisor、delivery worker 和 card worker；默认仍关闭，避免无意连接外部系统。scope 与 callback 由公开 OpenAPI 回读，事件订阅由实际 WebSocket 事件到达后写入 capability profile。用户授权的 live 结果见 Batch 2 验证记录。
 
-`OMEM_SECRET_KEY` 必须是独立保存的 32 字节 hex/base64 key，不能写入 `omem.local.json` 或 Git。`lark.botmuxConfig` 可选；未配置时只读 `~/.botmux/bots.json` 来列出可复用 App。启用后仍需在“飞书机器人”页选择/授权应用并完成同应用私聊 pairing，不会因为配置开关而自动读取任意群。
+`OMEM_SECRET_KEY` 不是飞书 App Secret，而是 omem 用来加密飞书 App Secret 的本地主密钥。它必须是独立保存的 32 字节 hex/base64 值，不能写入 `omem.local.json` 或 Git。可用 `openssl rand -base64 32` 生成一次，再放入密码管理器或部署平台 secret；服务重启必须继续使用同一个值。丢失或轮换后，已有 `.omem/secrets/*.json` 将无法解密，需要重新授权或导入对应应用。[`.env.example`](.env.example) 只保留空变量和说明，不包含真实 key。
+
+`lark.botmuxConfig` 可选；未配置时只读 `~/.botmux/bots.json` 来列出可复用 App。启用后仍需在“飞书机器人”页选择/授权应用并完成同应用私聊 pairing，不会因为配置开关而自动读取任意群。App ID + 链接授权可以让官方流程把 App Secret 返回给后端，但 App ID 本身不能用于换取 tenant token 或建立 WebSocket；收到的 App Secret 仍需由 `OMEM_SECRET_KEY` 加密落盘。
 
 详细运行环境、Docker/osdk 实测结果与后续引擎依赖见 [环境说明](docs/implementation/environment.md)。
 

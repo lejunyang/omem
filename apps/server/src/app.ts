@@ -46,7 +46,9 @@ export async function buildApp(
   if (!["127.0.0.1", "localhost", "::1"].includes(config.host) && !config.token)
     throw Error("OMEM_TOKEN is required for a non-loopback bind");
   const app = Fastify({ bodyLimit: 12_000_000, logger: false });
-  const store = new Store(config.dataDir);
+  const store = new Store(config.dataDir, {
+    externalNotifications: config.notifications.external,
+  });
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
   const feedback = new FeedbackService(store);

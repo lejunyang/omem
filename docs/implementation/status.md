@@ -18,7 +18,7 @@
 ## 实际验证
 
 - `osdk run check`：TypeScript、Vue 类型检查、服务端测试、生产构建。
-- **85 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 有 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收和 1 项 HTTP job 控制回归；B2-03 有 A-R01～08 共 8 项角色运行验收；B2-04 有 A-K01～10、A-F01～03 共 13 项策略/反馈验收和 1 项 HTTP 应用回归；B2-05 有 A-L01～07 共 7 项注册/绑定/密钥验收、1 项同 device request 暂态重试和 1 项公开 capability probe 测试；B2-06 有 12 项实时事件、决策卡片和通知故障验收；B2-08 新增 3 项两阶段 worker、重启/幂等/stale/停机集成测试及 2 项生产 Lark host 装配/生命周期测试。
+- **87 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 有 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收和 1 项 HTTP job 控制回归；B2-03 有 A-R01～08 共 8 项角色运行验收；B2-04 有 A-K01～10、A-F01～03 共 13 项策略/反馈验收和 1 项 HTTP 应用回归；B2-05 有 A-L01～07 共 7 项注册/绑定/密钥验收、1 项同 device request 暂态重试和 1 项公开 capability probe 测试；B2-06 有 14 项实时事件、决策卡片和通知故障验收（A-N04 已补齐短窗与定时策略）；B2-08 新增 3 项两阶段 worker、重启/幂等/stale/停机集成测试及 2 项生产 Lark host 装配/生命周期测试。
 - 浏览器用真实 Fastify/SQLite 和协议 fixture：材料录入、递归引用/环、问答保存、旧版本读取、事项/通知、job→提案→应用→证据、判断三动作与 stale、飞书 QR/完整链接/复用/pairing、桌面/768px/390px、服务重启与离线/模型/通知失败，以及真实 SQLite 中的 100 个固定片段连续下钻（12 组浏览器检查）。fixture 只在测试配置使用，产品没有模拟回答 fallback；飞书平台 live 结果仍单列在 B2-06，不用浏览器 fake adapter 冒充。
 - **真实 TraeX ACP**：首批曾用当时默认模型完成一次问答；当前验证通过 `OMEM_LIVE_MODEL=gpt-5.4` 显式选用 `gpt-5.4 / medium`。模型能力仍来自实时探测，产品与脚本不禁用 Astra，也不把任一模型写成产品默认限定列表。
 - **真实 lark-cli**：使用用户提供的 ACP Wiki 文档验证读取与 CaptureEnvelope 归一化（revision 15，12,245 字符，text+link），报告不保存正文。
@@ -74,4 +74,6 @@ B2-08 已开始集成：`learning.enabled=true` 时服务生命周期会启动�
 
 B2-08 生产 Lark host 也已接入：显式配置 `lark.enabled=true` 并提供 `OMEM_SECRET_KEY` 后，主服务会装配官方 registration、公开 OpenAPI capability probe、botmux existing-app provider、WebSocket connection supervisor、delivery worker 和 card worker；关闭服务会停止连接与未完成注册。公开 API 实际回读 scope/callback，事件则在真实 WebSocket 收到后追加到 capability profile，不能用 requested config 冒充已生效。host 测试验证 active connection 自动启动、真实 outbox 被 worker 消费、群消息开启监控并记录 observed event；使用的是注入 transport，不新增 live 结论。
 
-B2-08 仍未全部完成：40 个开发样本与 120 个冻结 holdout 尚未建立和人工标注，A-N04 的短窗合并/定时外发摘要仍未实现。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入。
+B2-08 同时补齐 A-N04：schema v9 为 delivery intent 增加聚合计划和 intent↔change 多对多映射；普通飞书通知可即时发送、按短窗合并或按本地时区定时汇总，合并后每条 change 仍能从通知详情追到同一摘要 intent。交互 decision 卡不参与合并，保持即时可操作。
+
+B2-08 仍未全部完成：40 个开发样本与 120 个冻结 holdout 尚未建立和人工标注，因此不能宣称达到质量发布门。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入。
