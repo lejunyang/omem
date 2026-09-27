@@ -26,6 +26,7 @@ import { stableDigest } from "./storage/digest.js";
 import { JobRepository } from "./jobs/repository.js";
 import { InputAggregator } from "./inputs/aggregator.js";
 import { RuntimeRequestRepository } from "./agent-runtime/requests.js";
+import { SourceProfileService } from "./source-profile/service.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -37,6 +38,7 @@ export class Store {
   readonly jobs: JobRepository;
   readonly inputs: InputAggregator;
   readonly runtimeRequests: RuntimeRequestRepository;
+  readonly profiles: SourceProfileService;
   constructor(
     readonly dataDir: string,
     options: {
@@ -57,6 +59,7 @@ export class Store {
       this.jobs = new JobRepository(this.db);
       this.inputs = new InputAggregator(this.db);
       this.runtimeRequests = new RuntimeRequestRepository(this.db);
+      this.profiles = new SourceProfileService(this.db);
     } catch (error) {
       this.db.close();
       throw error;
@@ -119,7 +122,13 @@ export class Store {
       const file = join(this.dataDir, "assets", assetId);
       if (!existsSync(file))
         writeFileSync(file, bytes, { mode: 0o600, flag: "wx" });
-      return { type: "image", assetId, mimeType: p.mimeType, label: p.label };
+      return {
+        type: "image",
+        assetId,
+        mimeType: p.mimeType,
+        label: p.label,
+        ...(p.provenance ? { provenance: p.provenance } : {}),
+      };
     });
     const body = {
       parts,
@@ -209,6 +218,13 @@ export class Store {
           .prepare("INSERT INTO fragments VALUES(?,?,?,?)")
           .run(id(), revisionId, i, text),
       );
+      // V3-03: lightweight deterministic navigation profile. Best-effort: a
+      // profiling failure records a failed row but never blocks the source.
+      try {
+        this.profiles.persistForRevision(revisionId);
+      } catch (profileError) {
+        this.profiles.recordFailure(revisionId, profileError);
+      }
       this.db
         .prepare("UPDATE sources SET head=? WHERE id=?")
         .run(revisionId, String(source.id));
@@ -335,11 +351,10 @@ export class Store {
     return this.captureReceipt(receipt);
   }
   private queueCaptureJob(input: CaptureInput, revision: Revision) {
-    if (
-      input.source === "agent" ||
-      input.provenance?.producerKind === "derived"
-    )
-      return null;
+    // Only derived material (model summaries/reflections) is withheld from the
+    // learning queue: it must not self-loop as independent evidence. Original Agent
+    // sessions are real experience and DO enter extract_claims (G14).
+    if (input.provenance?.producerKind === "derived") return null;
     const state = this.db
       .prepare("SELECT validity_epoch FROM source_state WHERE source_id=?")
       .get(revision.sourceId) as Row | undefined;
