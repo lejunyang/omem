@@ -37,6 +37,7 @@ import {
   ensureReviewRelationsTable,
   upsertReviewRelation,
   type RelationType,
+  type RelationStatus,
 } from "./store.js";
 import { loadAssociations, parseRef, type AssociationSeed } from "./associations.js";
 
@@ -277,23 +278,32 @@ async function git(args: string[], repoRoot: string): Promise<GitOutcome> {
 
 type GitChange = { path: string; code: string; oldPath?: string };
 
+/** Parse `git status --porcelain -z` output. With `-z` entries are NUL-separated
+ * and paths are emitted verbatim (no C-quoting/escaping), so Chinese / spaces /
+ * backslashes survive untouched. Renames consume two NUL fields: "XY old" then
+ * the bare new path. */
 function parsePorcelain(stdout: string): GitChange[] {
   const out: GitChange[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line) continue;
-    const xy = line.slice(0, 2);
-    const rest = line.slice(3);
-    if (!rest.trim()) continue;
-    if (rest.includes("->")) {
-      const arrow = rest.indexOf("->");
-      const oldPath = rest.slice(0, arrow).trim().replace(/^"|"$/g, "");
-      const newPath = rest.slice(arrow + 2).trim().replace(/^"|"$/g, "");
-      out.push({ path: newPath, code: "R", oldPath });
-    } else {
+  const parts = stdout.split("\0");
+  let i = 0;
+  while (i < parts.length) {
+    const head = parts[i] ?? "";
+    i++;
+    if (!head) continue;
+    const xy = head.slice(0, 2);
+    const rest = head.slice(3);
+    if (!rest) continue;
+    if (xy.trim().startsWith("R")) {
+      // Rename/copy: next field is the destination path.
+      const newPath = (parts[i] ?? "").trim();
+      if (newPath) i++;
       out.push({
-        path: rest.trim().replace(/^"|"$/g, "").split("\\").join("/"),
+        path: normPath(newPath || rest),
         code: xy.trim(),
+        oldPath: normPath(rest),
       });
+    } else {
+      out.push({ path: normPath(rest), code: xy.trim() });
     }
   }
   return out;
@@ -317,6 +327,20 @@ function readLastCommit(stateDir: string): string | null {
   if (!existsSync(file)) return null;
   const value = readFileSync(file, "utf8").trim();
   return value.length ? value : null;
+}
+
+/** Whether the most recent recorded sync ran against a dirty working tree. A
+ * dirty sync deliberately does not advance the baseline, so the next run must
+ * re-scan to converge the captured revisions back to the real tree. */
+function readPrevDirty(stateDir: string): boolean {
+  const file = statePaths(stateDir).meta;
+  if (!existsSync(file)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { dirty?: boolean };
+    return parsed.dirty === true;
+  } catch {
+    return false;
+  }
 }
 
 function persistState(stateDir: string, result: SyncResult, advance: boolean): void {
@@ -372,6 +396,13 @@ export function readSyncStatus(
 
 type Snapshot = { commit: string | null; dirty: boolean };
 type CaptureOutcome = "imported" | "updated" | "unchanged" | "skipped" | "failed";
+
+/** First explicit ISO date (YYYY-MM-DD) written in the decision document, or
+ * null when the doc does not state one. Never infers a date from mtime/sync. */
+function extractDecisionDate(text: string): string | null {
+  const m = text.match(/\b(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/);
+  return m ? m[0] : null;
+}
 
 function headContentHash(store: Store, externalId: string): string | null {
   const row = store.db
@@ -453,8 +484,9 @@ function captureOne(
   };
   if (category === "architecture") context.symbols = extractSymbols(text);
   if (category === "decisions") {
-    // Review decision date = when it was synced, not file mtime.
-    context.reviewDate = new Date().toISOString().slice(0, 10);
+    // The decision date is the explicit date written in the source document,
+    // NOT the sync day. syncedAt (set above) records when we ingested it.
+    context.decisionDate = extractDecisionDate(text) ?? "unknown";
   }
 
   const result = store.capture({
@@ -575,8 +607,37 @@ function resolveRef(
     : null;
 }
 
-/** The requirement/intent fragment backing an implements relation: search the
- * two acceptance/requirements docs for a fragment mentioning the requirement id. */
+/** True when a fragment names `id` as its own heading/list subject (e.g.
+ * `## G08 ...`, `- G08 ...`, `**G08** ...`) rather than merely mentioning it
+ * inside a shared summary table. This is the precise anchor: without it a
+ * G01-G20 table fragment would be bound to every requirement, collapsing the
+ * per-requirement relations onto one row. */
+/** Requirement-style ids like G08, F3, A12 used to detect a shared overview
+ * table that lists many requirements at once. */
+const REQUIREMENT_ID = /\b[A-Z]\d{1,3}\b/g;
+
+function fragmentAnchoredTo(text: string, id: string): boolean {
+  const esc = escapeRegExp(id);
+  // (a) The fragment heading/list actually names this requirement as its subject.
+  const headingRe = new RegExp(
+    "^\\s*(?:#{1,6}\\s+|[-*]\\s+|\\d+\\.\\s*)?\\*{0,2}" + esc +
+      "(?=\\b|\\s|\\*\\*|[：:])",
+    "m",
+  );
+  if (headingRe.test(text)) return true;
+  // (b) No heading, but the fragment is dedicated to this single requirement
+  // (it is the only requirement id mentioned). A shared G01-G20 overview table
+  // lists several ids and is deliberately rejected, so we never bind the whole
+  // table to one requirement.
+  const ids = text.match(REQUIREMENT_ID);
+  const unique = new Set(ids ?? []);
+  return unique.size === 1 && unique.has(id);
+}
+
+/** The requirement/intent fragment backing an implements relation. Picks the
+ * fragment whose heading actually names the requirement id; if the id only
+ * appears inside a shared table/overview (no heading anchor), returns null so
+ * the relation is recorded as `missing` instead of binding the whole doc. */
 function resolveRequirementFragment(
   store: Store,
   reqId: string,
@@ -588,9 +649,11 @@ function resolveRequirementFragment(
   for (const path of docs) {
     const head = headFragments(store, path);
     if (!head) continue;
-    const hit = head.fragments.find((f) => f.text.includes(reqId));
-    if (hit)
-      return { fragmentId: hit.id, revisionId: head.revisionId, text: hit.text };
+    const anchored = head.fragments.find(
+      (f) => f.text.includes(reqId) && fragmentAnchoredTo(f.text, reqId),
+    );
+    if (anchored)
+      return { fragmentId: anchored.id, revisionId: head.revisionId, text: anchored.text };
   }
   return null;
 }
@@ -609,6 +672,18 @@ export function buildReviewRelations(
   repoRoot: string,
 ): RelationBuildStats {
   ensureReviewRelationsTable(store);
+  // Best-effort: if the parallel store migration exposes relation invalidation,
+  // drop stale edges before rebuilding. Absence of the method is normal and
+  // must never break the sync.
+  try {
+    const s = store as unknown as {
+      invalidateStaleRelations?: (externalId?: string) => void;
+    };
+    if (typeof s.invalidateStaleRelations === "function")
+      s.invalidateStaleRelations();
+  } catch {
+    /* owned by the store migration; ignore */
+  }
   const seeds = loadAssociations(repoRoot);
   const stats: RelationBuildStats = {
     associations: seeds.length,
@@ -619,14 +694,15 @@ export function buildReviewRelations(
   const tally = (status: string) => {
     if (status === "confirmed") stats.confirmed++;
     else if (status === "candidate") stats.candidate++;
-    else stats.missing++;
+    else if (status === "missing") stats.missing++;
+    // "stale" rows are surfaced by the store migration; not bucketed here.
   };
 
   const link = (
     source: LocatedFragment,
     target: LocatedFragment | null,
     type: RelationType,
-    status: "confirmed" | "candidate" | "missing",
+    status: RelationStatus,
     evidence: string,
   ) => {
     // An unresolvable target is always recorded as missing, regardless of the
@@ -747,19 +823,43 @@ export async function runReviewSync(
     const current = head.ok ? head.stdout.trim() : null;
     snapshot.commit = current || null;
     const baseline = readLastCommit(stateDir);
+    // If the previous sync ran against a dirty tree we did NOT advance the
+    // baseline. Re-running a full scan converges the captured revisions back to
+    // whatever the working tree now holds (dirty edits restored, or new commits),
+    // instead of pinning the DB to the stale dirty snapshot forever.
+    const prevDirty = readPrevDirty(stateDir);
 
     const changed = new Map<string, GitChange>();
     const renames = new Map<string, string>();
     let fullRescan = false;
 
-    const status = await git(["status", "--porcelain"], repoRoot);
+    const status = await git(["status", "--porcelain", "-z"], repoRoot);
     if (!status.ok) {
       warnings.push(`git status failed: ${status.error}`);
       fullRescan = true;
       advanceBaseline = false;
     } else {
-      snapshot.dirty = status.stdout.trim().length > 0;
-      for (const c of parsePorcelain(status.stdout)) {
+      const parsed = parsePorcelain(status.stdout);
+      // The .repo-review state dir (sqlite + sync state) is created by this very
+      // run and must never count as a working-tree change, otherwise every sync
+      // looks dirty and the baseline can never advance.
+      const isInternal = (rel: string) =>
+        rel === ".repo-review" || rel.startsWith(".repo-review/");
+      const realChanges = parsed.filter((c) => !isInternal(c.path));
+      snapshot.dirty = realChanges.length > 0;
+      for (const c of realChanges) {
+        // An untracked *directory* (`?? newdir/`) is reported collapsed; expand
+        // it to the files inside so new directories are actually captured.
+        if (c.code === "??" && c.path.endsWith("/")) {
+          const dirAbs = join(repoRoot, c.path.replace(/\/$/, ""));
+          if (!isUnsafeLink(dirAbs, repoRoot)) {
+            const inside: string[] = [];
+            walk(dirAbs, repoRoot, inside);
+            for (const f of inside)
+              if (!isInternal(f)) changed.set(f, { path: f, code: "??" });
+          }
+          continue;
+        }
         changed.set(c.path, c);
         if (c.code.startsWith("R") && c.oldPath)
           renames.set(c.oldPath, c.path);
@@ -794,6 +894,8 @@ export async function runReviewSync(
 
     if (fullRescan) {
       targets = all;
+    } else if (prevDirty) {
+      targets = all; // last capture was dirty: re-converge to current tree
     } else if (!baseline || !current || !baselineValid) {
       targets = all; // first run or lost baseline: full
     } else if (changed.size === 0) {
@@ -838,6 +940,13 @@ export async function runReviewSync(
       warnings.push(`relation build failed: ${String(e)}`);
     }
   }
+
+  // Do NOT advance the baseline when the tree was dirty (captured content is
+  // the uncommitted working tree, not HEAD) or when any file failed to
+  // read/import — otherwise the next sync would skip exactly the files that
+  // still need re-capture and permanently pin the DB to a stale/failed state.
+  if (!options.only && (snapshot.dirty || failed.length > 0))
+    advanceBaseline = false;
 
   const result: SyncResult = {
     ...stats,

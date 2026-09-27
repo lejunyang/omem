@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   mkdtempSync,
   rmSync,
@@ -11,7 +11,7 @@ import { join, dirname, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Store } from "../src/store.js";
-import { runReviewSync } from "../src/review/sync.js";
+import { runReviewSync, readSyncStatus } from "../src/review/sync.js";
 import { removedSourceIds } from "../src/review/store.js";
 import { buildReviewApp } from "../src/review/app.js";
 import { KeywordRetrieval } from "../src/retrieval/keyword.js";
@@ -454,6 +454,232 @@ describe("group 4: retrieval and API safety", () => {
     expect(body.find((v) => v.version === 2)!.current).toBe(true);
     expect(body.find((v) => v.version === 1)!.current).toBe(false);
     await app.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group 5: retrieval pre-filtering + sync reliability (Group A fixes).
+// ---------------------------------------------------------------------------
+
+describe("group 5: pre-filtering and sync reliability", () => {
+  it("category filter returns the lone decision hit even when >200 architecture hits dominate", async () => {
+    const root = makeFixtureRepo();
+    for (let i = 0; i < 250; i++) archFile(root, `arch${i}`, "SHARED_Q");
+    decisionsFile(root, "the-decision", "decided SHARED_Q approach");
+    commitAll(root, "init");
+    const store = setup();
+    await runReviewSync(store, root);
+
+    // The raw keyword pool is capped (per-term LIMIT 200 / top-N), so the lone
+    // decision row is buried beneath the 250 architecture rows.
+    const raw = search(store, "SHARED_Q", 200);
+    expect(raw.length).toBeLessThanOrEqual(200);
+
+    const { app } = await buildReviewApp({ store, repoRoot: root });
+    await app.ready();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/review/search?q=SHARED_Q&category=decisions",
+      headers: { host: "127.0.0.1:5180", origin: "http://127.0.0.1:5180" },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { category: string; filePath: string }[];
+    expect(body.length).toBe(1);
+    expect(body[0]!.category).toBe("decisions");
+    expect(body[0]!.filePath).toBe("docs/reviews/the-decision.md");
+    await app.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("untracked files with non-ASCII paths are not escaped/mangled by git status", async () => {
+    const root = makeFixtureRepo();
+    archFile(root, "seed", "SEED_TOKEN");
+    commitAll(root, "init");
+    const store = setup();
+    await runReviewSync(store, root);
+
+    writeFile(root, "apps/server/src/中文组件.ts", "export const zh = ZH_UNIQUE_TOKEN;\n");
+    const res = await runReviewSync(store, root);
+    expect(res.dirty).toBe(true);
+    expect(search(store, "ZH_UNIQUE_TOKEN", 10).length).toBeGreaterThan(0);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("an untracked directory is expanded to the files inside", async () => {
+    const root = makeFixtureRepo();
+    archFile(root, "seed", "SEED_TOKEN");
+    commitAll(root, "init");
+    const store = setup();
+    await runReviewSync(store, root);
+
+    mkdirSync(join(root, "apps/server/src/newdir"), { recursive: true });
+    writeFileSync(
+      join(root, "apps/server/src/newdir/extra.ts"),
+      "export const extra = NEWDIR_TOKEN;\n",
+      "utf8",
+    );
+    await runReviewSync(store, root);
+    expect(search(store, "NEWDIR_TOKEN", 10).length).toBeGreaterThan(0);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("a dirty sync does not advance the baseline; restoring to HEAD re-scans", async () => {
+    const root = makeFixtureRepo();
+    archFile(root, "a", "V1_TOKEN");
+    commitAll(root, "c1");
+    const store = setup();
+    await runReviewSync(store, root);
+    expect(readSyncStatus(root).lastSyncCommit).toBe(headCommit(root));
+
+    archFile(root, "a", "V2_DIRTY_TOKEN"); // uncommitted
+    const dirty = await runReviewSync(store, root);
+    expect(dirty.dirty).toBe(true);
+    // baseline NOT advanced: still points at c1
+    expect(readSyncStatus(root).lastSyncCommit).toBe(headCommit(root));
+    expect(search(store, "V2_DIRTY_TOKEN", 10).length).toBeGreaterThan(0);
+
+    git(["restore", "."], root); // clean tree back to V1
+    await runReviewSync(store, root);
+    expect(search(store, "V1_TOKEN", 10).length).toBeGreaterThan(0);
+    expect(search(store, "V2_DIRTY_TOKEN", 10).length).toBe(0);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("a failed file does not advance the baseline until it is fixed", async () => {
+    const root = makeFixtureRepo();
+    archFile(root, "ok", "OK_TOKEN");
+    mkdirSync(join(root, "apps/server/src"), { recursive: true });
+    writeFileSync(
+      join(root, "apps/server/src/bad.ts"),
+      Buffer.from([0xff, 0xfe, 0x00, 0x01]),
+    );
+    commitAll(root, "init");
+    const store = setup();
+    const res = await runReviewSync(store, root);
+    expect(res.failed.some((f) => f.path.includes("bad.ts"))).toBe(true);
+    expect(search(store, "OK_TOKEN", 10).length).toBeGreaterThan(0);
+    // baseline held back because a file failed
+    expect(readSyncStatus(root).lastSyncCommit).toBeNull();
+
+    archFile(root, "bad", "NOW_VALID_TOKEN");
+    commitAll(root, "fix");
+    const res2 = await runReviewSync(store, root);
+    expect(res2.failed.length).toBe(0);
+    expect(readSyncStatus(root).lastSyncCommit).toBe(headCommit(root));
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("requirement refs anchor to their own heading fragment, not a shared G01-G20 table", async () => {
+    const root = makeFixtureRepo();
+    writeFile(
+      root,
+      "docs/implementation/status.md",
+      [
+        "# Status",
+        "",
+        "## Acceptance overview",
+        "| ID | Intent |",
+        "|----|--------|",
+        "| G01 | overview one |",
+        "| G08 | overview eight |",
+        "| G09 | overview nine |",
+        "",
+        "## G08",
+        "G08 specific intent: alpha-marker.",
+        "",
+        "## G09",
+        "G09 specific intent: beta-marker.",
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      root,
+      "apps/server/src/demo.ts",
+      "export const alphaThing = 1;\nexport const betaThing = 2;\n",
+    );
+    writeFile(
+      root,
+      "docs/repo-review/associations.json",
+      JSON.stringify({
+        version: 1,
+        associations: [
+          {
+            codePath: "apps/server/src/demo.ts",
+            symbol: "alphaThing",
+            intent: "a",
+            requirementRefs: ["G08"],
+            decisionRefs: [],
+            researchRefs: [],
+            testRefs: [],
+            status: "confirmed",
+            evidence: "e",
+          },
+          {
+            codePath: "apps/server/src/demo.ts",
+            symbol: "betaThing",
+            intent: "b",
+            requirementRefs: ["G09"],
+            decisionRefs: [],
+            researchRefs: [],
+            testRefs: [],
+            status: "confirmed",
+            evidence: "e",
+          },
+        ],
+      }),
+    );
+    commitAll(root, "init");
+    const store = setup();
+    await runReviewSync(store, root);
+
+    const texts = (
+      store.db
+        .prepare(
+          `SELECT f.text AS t FROM review_relations r
+           JOIN fragments f ON f.id = r.target_fragment_id
+           WHERE r.relation_type='implements'`,
+        )
+        .all() as { t: string }[]
+    ).map((r) => r.t);
+    const g08 = texts.find((t) => t.includes("alpha-marker"));
+    const g09 = texts.find((t) => t.includes("beta-marker"));
+    expect(g08).toBeDefined();
+    expect(g09).toBeDefined();
+    expect(g08).toContain("G08 specific");
+    expect(g08).not.toContain("overview");
+    expect(g08).not.toContain("beta-marker");
+    expect(g09).toContain("G09 specific");
+    expect(g09).not.toContain("overview");
+    expect(g09).not.toContain("alpha-marker");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("decisionDate comes from the document, syncedAt stays independent", async () => {
+    const root = makeFixtureRepo();
+    decisionsFile(root, "dated", "Decided on 2026-09-27 to adopt the plan.");
+    decisionsFile(root, "undated", "No explicit date written here.");
+    commitAll(root, "init");
+    const store = setup();
+    await runReviewSync(store, root);
+
+    const ctxOf = async (ext: string) => {
+      const row = store.db
+        .prepare(
+          `SELECT r.body AS body FROM sources s JOIN revisions r ON s.head=r.id
+           WHERE s.external_id=?`,
+        )
+        .get(ext) as { body: string };
+      return JSON.parse(row.body).context as Record<string, unknown>;
+    };
+    const dated = await ctxOf("omem:docs/reviews/dated.md");
+    expect(dated.decisionDate).toBe("2026-09-27");
+    expect(typeof dated.syncedAt).toBe("string");
+    expect(dated.syncedAt).toBeTruthy();
+    expect(dated.reviewDate).toBeUndefined();
+
+    const undated = await ctxOf("omem:docs/reviews/undated.md");
+    expect(undated.decisionDate).toBe("unknown");
     rmSync(root, { recursive: true, force: true });
   });
 });
