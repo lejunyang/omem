@@ -263,6 +263,11 @@ export class ConversationRouter {
     this.patchRefs(turnId, { status: "failed", error: error.slice(0, 500) });
   }
 
+  /** H-G20: leave a turn pending (e.g. model unavailable) so it can be retried. */
+  markPending(turnId: string, error: string) {
+    this.patchRefs(turnId, { status: "pending", error: error.slice(0, 500) });
+  }
+
   /**
    * Mark a turn interrupted (a newer message superseded it, or the caller
    * cancelled). No reply body is written and no outbox is attached, so a

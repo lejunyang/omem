@@ -207,7 +207,7 @@ describe("AssistantRuntime (async, governed)", () => {
       visibility: "private",
     });
     const result = await runtime.turn({ conversationId: conversation.id, userText: "你好" });
-    expect(result.turn.inputMessageRefs.status).toBe("failed");
+    expect(result.turn.inputMessageRefs.status).toBe("pending");
     expect(String(result.turn.inputMessageRefs.error)).toContain("model_unavailable");
     expect(result.createdTaskIds).toEqual([]);
     expect(store.tasks()).toEqual([]);
@@ -544,57 +544,53 @@ describe("AssistantRuntime (async, governed)", () => {
   });
 
 
-  it("G08: two-turn anaphora — Turn1 consults, Turn2 '按这个' creates task from prior evidence", async () => {
+  it("G08: two-turn anaphora — Turn1 consults, Turn2 reuses Turn1 evidence for task", async () => {
     const { store } = setup();
-    captureSource(store, "接口文档", "REST API: GET /v1/items returns paginated list.");
+    captureSource(store, "接口文档", "接口说明：GET /v1/items 返回分页列表。");
     const retrieval = new KeywordRetrieval(store.db);
     const memory = new MemoryService(store, { ownerId: "owner" });
-    // Turn 1: consultation — model returns citations to imported fragments.
-    let turn1Citations: string[] = [];
+    let turn1FragmentId = "";
     const model: AssistantModelPort = {
       generate: async (input) => {
         if (input.priorTurns.length === 0) {
-          turn1Citations = input.evidence.map((e) => e.fragmentId);
-          return { answer: "接口在 GET /v1/items。", citationIds: turn1Citations, toolCalls: [] };
+          expect(input.evidence.length).toBeGreaterThan(0);
+          turn1FragmentId = input.evidence[0]!.fragmentId;
+          return { answer: "接口在 GET /v1/items。", citationIds: [turn1FragmentId], toolCalls: [] };
         }
-        // Turn 2: model emits create_task citing prior evidence.
         return {
           answer: "好的，按这个整理。",
           citationIds: [],
-          toolCalls: [{ tool: "create_task", title: "补接口文档", detail: "加分页示例", citationIds: turn1Citations }],
+          toolCalls: [{ tool: "create_task", title: "补接口文档", detail: "加分页示例", citationIds: [turn1FragmentId] }],
         };
       },
     };
     const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
-    // Turn 1: consultation, no task.
     const r1 = await runtime.turn({ conversationId: conv.id, userText: "找下接口说明" });
     expect(r1.createdTaskIds).toEqual([]);
-    // Turn 2: "按这个" — explicit intent, evidence from Turn 1 working context.
+    expect(turn1FragmentId).toBeTruthy();
+    const turn1Rec = runtime.conversations.turns(conv.id)[0]!;
+    expect((turn1Rec.selectedEvidence as unknown[]).length).toBeGreaterThan(0);
     const r2 = await runtime.turn({ conversationId: conv.id, userText: "帮我按这个记一下下一步" });
     expect(r2.createdTaskIds.length).toBe(1);
     expect(store.tasks().length).toBe(1);
   });
 
-  it("G08 negative: Turn1 has no evidence, Turn2 '按这个' rejects (no_prior_evidence)", async () => {
+  it("G08 negative: Turn1 has no fragments, Turn2 cites nonexistent fragment -> rejected, zero writes", async () => {
     const { store } = setup();
     const memory = new MemoryService(store, { ownerId: "owner" });
-    // Turn 1: empty retrieval — no fragments selected.
     const model: AssistantModelPort = {
       generate: async (input) => {
         if (input.priorTurns.length === 0) return { answer: "没找到", citationIds: [], toolCalls: [] };
-        return { answer: "好的", citationIds: [], toolCalls: [{ tool: "create_task", title: "空任务", detail: "x", citationIds: [] }] };
+        return { answer: "好的", citationIds: [], toolCalls: [{ tool: "create_task", title: "空任务", detail: "x", citationIds: ["nonexistent-frag"] }] };
       },
     };
     const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
     await runtime.turn({ conversationId: conv.id, userText: "找下不存在的东西" });
     const r2 = await runtime.turn({ conversationId: conv.id, userText: "帮我按这个记一下下一步" });
-    // No prior evidence to anchor — but direct owner message is still captured as
-    // evidence. The task SHOULD still create because direct assignment is allowed.
-    // The point is: zero tasks only if governance rejects. Here it should create
-    // from direct message evidence.
-    expect(store.tasks().length).toBeGreaterThanOrEqual(0);
+    expect(store.tasks().length).toBe(0);
+    expect(r2.createdTaskIds).toEqual([]);
   });
 
   it("G20: cancel fence — model resolves late with create_task after cancel, zero writes", async () => {
@@ -643,12 +639,11 @@ describe("AssistantRuntime (async, governed)", () => {
     expect(store.tasks().length).toBe(1);
   });
 
-  it("G20 combo: model unavailable leaves pending, retrieval still works, recovery retries", async () => {
+  it("G20 combo: model unavailable leaves pending, retrieval works, retryTurn recovers", async () => {
     const { store } = setup();
     captureSource(store, "docs", "接口在 GET /v1/items。");
     const retrieval = new KeywordRetrieval(store.db);
     const memory = new MemoryService(store, { ownerId: "owner" });
-    // Phase 1: model throws ModelUnavailableError.
     let mode: "unavailable" | "ok" = "unavailable";
     const model: AssistantModelPort = {
       generate: async () => {
@@ -658,22 +653,19 @@ describe("AssistantRuntime (async, governed)", () => {
     };
     const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
-    // Turn 1: model unavailable → turn failed (per current H-G20 behavior).
     const r1 = await runtime.turn({ conversationId: conv.id, userText: "帮我记一下：买牛奶" });
-    expect(r1.turn.inputMessageRefs.status).toBe("failed");
+    expect(r1.turn.inputMessageRefs.status).toBe("pending");
     expect(r1.turn.inputMessageRefs.error).toContain("model_unavailable");
-    // RetrievalPort still works even when model is down.
+    expect(store.tasks().length).toBe(0);
     const hits = retrieval.searchSources({ text: "接口", limit: 5 });
     expect(hits.length).toBeGreaterThan(0);
-    // Phase 2: mark the failed turn back to pending, switch model to ok, recover.
     const turnId = r1.turn.id;
-    store.db.prepare(`UPDATE conversation_turns SET input_message_refs=? WHERE id=?`).run(JSON.stringify({status:"pending"}), turnId);
     mode = "ok";
-    const runtime2 = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval });
-    const result = await runtime2.recoverUnfinishedTurns();
-    expect(result.recovered).toBe(1);
-    // Turn completed with a real task, no duplicate.
+    const retryResult = await runtime.retryTurn(turnId);
+    expect(retryResult.ok).toBe(true);
     expect(store.tasks().length).toBe(1);
+    const after = runtime.conversations.turn(turnId)!;
+    expect(after.inputMessageRefs.status).toBe("done");
   });
 });
 

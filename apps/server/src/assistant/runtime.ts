@@ -272,6 +272,39 @@ export class AssistantRuntime {
     return true;
   }
 
+  /**
+   * Public retry entry: re-run a pending turn (e.g. after ModelUnavailableError).
+   */
+  async retryTurn(turnId: string): Promise<{ ok: boolean; reason?: string }> {
+    const turn = this.router.turn(turnId);
+    if (!turn) return { ok: false, reason: "not_found" };
+    if (turn.inputMessageRefs.status !== "pending")
+      return { ok: false, reason: `not_pending:${turn.inputMessageRefs.status}` };
+    const conversation = this.router.get(turn.conversationId);
+    if (!conversation) return { ok: false, reason: "conversation_not_found" };
+    const actions = (turn.toolActions as Array<{ taskId?: string }>) ?? [];
+    if (actions.some((a) => a.taskId)) {
+      this.router.completeTurn({
+        turnId,
+        result: turn.result || "(restored from committed receipt)",
+        selectedEvidence: turn.selectedEvidence,
+        toolActions: turn.toolActions,
+        degraded: false,
+      });
+      return { ok: true };
+    }
+    const controller = new AbortController();
+    const signal = this.deriveSignal(undefined, controller);
+    await this.executeTurn({
+      turnId,
+      conversation,
+      userText: turn.inputText,
+      transportEventId: turn.inputMessageRefs.transportEventId ?? null,
+      signal,
+    });
+    return { ok: true };
+  }
+
   /** Abort every in-flight turn and mark them cancelled. Called on shutdown. */
   shutdown() {
     for (const [conversationId, entry] of this.inflight) {
@@ -430,11 +463,8 @@ export class AssistantRuntime {
         }
         const unavailable = error instanceof ModelUnavailableError;
         if (unavailable) {
-          // H-G20: model unavailable is a real failure, not a degraded fake answer.
-          this.router.failTurn(
-            input.turnId,
-            `model_unavailable: ${error.message}`,
-          );
+          // H-G20: model unavailable leaves the turn PENDING so it can be retried.
+          this.router.markPending(input.turnId, `model_unavailable: ${error.message}`);
           return;
         }
         degraded = true;
@@ -475,6 +505,7 @@ export class AssistantRuntime {
             call,
             conversation: input.conversation,
             evidence,
+            priorContext: this.priorWorkingContext(input.conversation),
             transportEventId: input.transportEventId,
             userText: input.userText,
           });
@@ -695,6 +726,13 @@ export class AssistantRuntime {
             ? (input.call.citationIds ?? []).includes(e.fragmentId)
             : true,
         );
+    // G08 negative: model cited fragments but none resolve and no prior context.
+    const modelAskedFor = (input.call.citationIds ?? []).length > 0;
+    if (modelAskedFor && !cited.length && !contextCited.length) {
+      return reject("no_prior_evidence", {
+        detail: "model cited fragments not found in current evidence or prior working context",
+      });
+    }
     // B: for a direct owner assignment with no pre-existing cited fragments,
     // capture the owner message itself as a source (real fragment, owner-verified
     // provenance) so the proposal has valid evidence. This is NOT a hardcoded

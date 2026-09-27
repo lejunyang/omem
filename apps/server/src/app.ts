@@ -575,6 +575,15 @@ export async function buildApp(
       return ok ? { ok: true } : reply.code(404).send({ error: "Turn not found" });
     },
   );
+  app.post<{ Params: { id: string; turnId: string } }>(
+    "/api/assistant/conversations/:id/turns/:turnId/retry",
+    async (req, reply) => {
+      const conversation = assistant.conversations.get(req.params.id);
+      if (!conversation) return reply.code(404).send({ error: "Conversation not found" });
+      const result = await assistant.retryTurn(req.params.turnId);
+      return result.ok ? result : reply.code(409).send(result);
+    },
+  );
   const web = resolve("apps/web/dist");
   if (existsSync(web))
     await app.register(staticFiles, { root: web, prefix: "/" });
