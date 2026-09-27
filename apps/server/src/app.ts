@@ -26,6 +26,7 @@ import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
 import type { Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
 import type { LarkOnboardingService } from "./integrations/lark/onboarding.js";
+import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
 const str = z.string().min(1).max(2000);
 export async function buildApp(
   config: Config,
@@ -174,6 +175,12 @@ export async function buildApp(
       return store.restore(req.params.id, b.expectedHead);
     },
   );
+  app.get<{ Params: { id: string } }>(
+    "/api/notifications/:id",
+    async (req, reply) =>
+      store.notification(req.params.id) ??
+      reply.code(404).send({ error: "Notification not found" }),
+  );
   app.get("/api/notifications", async () => {
     store.remind();
     return store.notifications();
@@ -224,9 +231,7 @@ export async function buildApp(
   app.get<{ Params: { id: string } }>(
     "/api/proposals/:id",
     async (req, reply) =>
-      store.db
-        .prepare("SELECT * FROM proposals WHERE id=?")
-        .get(req.params.id) ??
+      memory.proposal(req.params.id) ??
       reply.code(404).send({ error: "Proposal not found" }),
   );
   app.post("/api/proposals/evaluate", async (req) => {
@@ -302,6 +307,10 @@ export async function buildApp(
   );
   app.get("/api/integrations/lark/status", async () =>
     requireLark().connections(),
+  );
+  app.get(
+    "/api/integrations/lark/default-config",
+    async () => OMEM_LARK_DEFAULT_CONFIG,
   );
   app.get("/api/integrations/lark/reusable-apps", async () =>
     requireLark().listReusableApps(),

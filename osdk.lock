@@ -24,7 +24,7 @@ allow_build_from_source = true
 [deps.npm.native_lock]
 kind = "package-lock"
 path = "package-lock.json"
-sha256 = "798d16727888ff296358d38cf54856c4a8d53a9be2912381a6d881f261df914e"
+sha256 = "c10147f99123feb8c0451152a6b80999aa888660e3cdd47b5f9e6e77c5c5bc5f"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

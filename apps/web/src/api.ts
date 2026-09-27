@@ -59,6 +59,181 @@ export type Run = {
   events: RunEvent[];
   answerId?: string;
 };
+export type JobAttempt = {
+  id: string;
+  attempt: number;
+  generation: number;
+  model: string | null;
+  effort: string | null;
+  outcome: string | null;
+  error: string | null;
+  errorKind: string | null;
+  startedAt: string;
+  endedAt: string | null;
+};
+export type Job = {
+  id: string;
+  kind: string;
+  inputRefs: Record<string, unknown>[];
+  roleVersion: string;
+  policyVersion: string;
+  state:
+    | "queued"
+    | "leased"
+    | "running"
+    | "succeeded"
+    | "skipped"
+    | "awaiting_decision"
+    | "retry_wait"
+    | "failed"
+    | "cancelled";
+  attempt: number;
+  generation: number;
+  resultRef: string | null;
+  lastError: string | null;
+  errorKind: string | null;
+  finishedAt: string | null;
+  cause: string;
+  createdAt: string;
+  updatedAt: string;
+  attempts?: JobAttempt[];
+};
+export type ProposalEvidence = {
+  fragment_revision_id: string;
+  source_revision_id: string;
+  exact_quote?: string;
+  asset_hash?: string;
+};
+export type Proposal = {
+  id: string;
+  kind: "task" | "claim" | "episode" | "procedure";
+  operation: "create" | "update" | "supersede";
+  targetId: string | null;
+  body: Record<string, unknown>;
+  scope: Record<string, unknown>;
+  evidence: ProposalEvidence[];
+  uncertainties: string[];
+  reason: string;
+  origin: { job_id?: string; role_bundle?: string };
+  digest: string;
+  state: string;
+  policyResult: {
+    outcome: "auto_apply" | "awaiting_decision" | "reject";
+    reasons: string[];
+    policyVersion: string;
+  } | null;
+  impactCount: number;
+  assessments: {
+    quoteAssetVerdict: string;
+    semanticVerdict: string;
+    reviewerVersion: string;
+    roleVersion: string;
+    reasonCode: string;
+    details: string;
+    createdAt: string;
+  }[];
+  createdAt: string;
+  updatedAt: string;
+};
+export type Decision = {
+  id: string;
+  proposalDigest: string;
+  expectedVersions: Record<string, unknown>;
+  actorId: string;
+  expiresAt: string;
+  state:
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "context_requested"
+    | "expired"
+    | "stale";
+  requestId: string | null;
+  action: string | null;
+  decidedAt: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  proposal: Proposal;
+};
+export type NotificationDetail = Notification & {
+  changeKind: string | null;
+  changeTitle: string | null;
+  beforeId: string | null;
+  afterId: string | null;
+  details: string | null;
+  deliveries: {
+    id: string;
+    channel: string;
+    state: string;
+    attemptCount: number;
+    errorKind: string | null;
+    lastError: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }[];
+  receipt: {
+    id: string;
+    proposalId: string | null;
+    entityType: string;
+    entityId: string;
+    entityVersion: number;
+    createdAt: string;
+  } | null;
+  evidenceIds: string[];
+};
+export type LarkRequestedConfig = {
+  source: string;
+  appPreset: { name: string; desc: string; avatar?: string | string[] };
+  addons: {
+    preset: boolean;
+    scopes: { tenant: string[]; user: string[] };
+    events: { items: { tenant: string[]; user: string[] } };
+    callbacks: { items: string[] };
+  };
+};
+export type LarkConnection = {
+  id: string;
+  appId: string;
+  tenantBrand: string | null;
+  state: string;
+  activeVersion: number | null;
+  ownerOpenId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type LarkOnboarding = {
+  id: string;
+  mode: "new" | "existing";
+  requestedAppId: string | null;
+  status: string;
+  qrUrl: string | null;
+  verificationUrl: string | null;
+  qrExpiresAt: string | null;
+  appId: string | null;
+  connectionId: string | null;
+  connectionVersion: number | null;
+  activeVersion: number | null;
+  ownerOpenId: string | null;
+  missingCapabilities: string[];
+  pairing: {
+    id: string;
+    expiresAt: string;
+    candidateOpenId: string | null;
+    candidateChatId: string | null;
+    candidateChatType: string | null;
+    consumed: boolean;
+  } | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type ReusableLarkApp = {
+  appId: string;
+  name: string;
+  tenantBrand: "feishu" | "lark";
+  source: "botmux";
+};
 export function headers(): Record<string, string> {
   const token = sessionStorage.getItem("omem-token");
   return token ? { Authorization: "Bearer " + token } : {};

@@ -18,10 +18,18 @@ import {
   type Notification,
   type Task,
   type Change,
+  type Job,
+  type Proposal,
+  type Decision,
+  type NotificationDetail as NotificationDetailType,
 } from "./api";
 import EvidenceReader from "./EvidenceReader.vue";
 import ChatPane from "./ChatPane.vue";
 import AssetImage from "./AssetImage.vue";
+import LearningView from "./LearningView.vue";
+import DecisionsView from "./DecisionsView.vue";
+import NotificationDetail from "./NotificationDetail.vue";
+import LarkSetup from "./LarkSetup.vue";
 const view = ref("read");
 const sources = ref<Source[]>([]);
 const revision = ref<Revision | null>(null);
@@ -33,6 +41,12 @@ const effort = ref("");
 const notifications = ref<Notification[]>([]);
 const tasks = ref<Task[]>([]);
 const changes = ref<Change[]>([]);
+const jobs = ref<Job[]>([]);
+const proposals = ref<Proposal[]>([]);
+const decisions = ref<Decision[]>([]);
+const notificationDetail = ref<NotificationDetailType | null>(null);
+const notificationOpen = ref(false);
+const notificationLoading = ref(false);
 const error = ref("");
 const busy = ref(false);
 const toast = ref("");
@@ -86,13 +100,23 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-    [sources.value, notifications.value, tasks.value, changes.value] =
-      await Promise.all([
-        api<Source[]>("/sources"),
-        api<Notification[]>("/notifications"),
-        api<Task[]>("/tasks"),
-        api<Change[]>("/changes"),
-      ]);
+    [
+      sources.value,
+      notifications.value,
+      tasks.value,
+      changes.value,
+      jobs.value,
+      proposals.value,
+      decisions.value,
+    ] = await Promise.all([
+      api<Source[]>("/sources"),
+      api<Notification[]>("/notifications"),
+      api<Task[]>("/tasks"),
+      api<Change[]>("/changes"),
+      api<Job[]>("/jobs"),
+      api<Proposal[]>("/proposals"),
+      api<Decision[]>("/decisions"),
+    ]);
     if (revision.value) {
       const head = sources.value.find(
         (s) => s.sourceId === revision.value!.sourceId,
@@ -212,6 +236,22 @@ async function capture() {
         title: input.value.title,
         parts,
         context: {},
+        provenance: {
+          collectorId: "omem-web",
+          actorId: input.value.source === "manual" ? "owner" : null,
+          actorType: input.value.source === "manual" ? "owner" : "unknown",
+          actorVerifiedBy:
+            input.value.source === "manual"
+              ? "authenticated-web-session"
+              : null,
+          sourceUri: input.value.url || null,
+          eventId: crypto.randomUUID(),
+          eventAt: new Date().toISOString(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          quoted: false,
+          forwarded: false,
+          producerKind: "original",
+        },
       });
     }
     await refresh();
@@ -267,6 +307,21 @@ async function readNotification(n: Notification) {
     await refresh();
   } catch (e) {
     error.value = String(e);
+  }
+}
+async function openNotification(n: Notification) {
+  notificationOpen.value = true;
+  notificationLoading.value = true;
+  notificationDetail.value = null;
+  try {
+    notificationDetail.value = await api<NotificationDetailType>(
+      "/notifications/" + n.id,
+    );
+    if (!n.readAt) await readNotification(n);
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    notificationLoading.value = false;
   }
 }
 async function restore(c: Change) {
@@ -358,9 +413,12 @@ onBeforeUnmount(() => {
           v-for="[id, icon, label] in [
             ['read', 'book', '知识阅读'],
             ['capture', 'plus', '输入材料'],
+            ['learning', 'spark', '学习流程'],
+            ['decisions', 'check', '待判断'],
             ['tasks', 'check', '需求与待办'],
             ['changes', 'clock', '变更历史'],
             ['notifications', 'spark', '通知中心'],
+            ['lark', 'layers', '飞书机器人'],
             ['settings', 'layers', '能力与连接'],
             ['design', 'book', '设计系统'],
           ]"
@@ -402,15 +460,21 @@ onBeforeUnmount(() => {
             ? "知识阅读"
             : view === "capture"
               ? "输入材料"
-              : view === "tasks"
-                ? "需求与待办"
-                : view === "changes"
-                  ? "变更历史"
-                  : view === "notifications"
-                    ? "通知中心"
-                    : view === "settings"
-                      ? "能力与连接"
-                      : "设计系统"
+              : view === "learning"
+                ? "学习流程"
+                : view === "decisions"
+                  ? "待判断"
+                  : view === "tasks"
+                    ? "需求与待办"
+                    : view === "changes"
+                      ? "变更历史"
+                      : view === "notifications"
+                        ? "通知中心"
+                        : view === "lark"
+                          ? "飞书机器人"
+                          : view === "settings"
+                            ? "能力与连接"
+                            : "设计系统"
         }}</span
       ><OmBadge>个人版 · 基础链路</OmBadge>
     </div>
@@ -585,6 +649,20 @@ onBeforeUnmount(() => {
         >
       </form>
     </section>
+    <LearningView
+      v-else-if="view === 'learning'"
+      :jobs="jobs"
+      :proposals="proposals"
+      @refresh="refresh"
+      @open="(id) => evidence?.open(id)"
+      @error="(text) => (error = text)" />
+    <DecisionsView
+      v-else-if="view === 'decisions'"
+      :decisions="decisions"
+      @refresh="refresh"
+      @open="(id) => evidence?.open(id)"
+      @error="(text) => (error = text)"
+      @notice="say" />
     <section v-else-if="view === 'tasks'" class="page">
       <span class="eyebrow">从工作中记下要推进的事</span>
       <h1>需求与待办</h1>
@@ -652,7 +730,7 @@ onBeforeUnmount(() => {
             ? "每次变更即时提示，完整记录保留在这里。"
             : "变更保留在通知中心，当前关闭逐条浮动提示。"
         }}
-        外部飞书推送尚未配置。
+        打开详情可核对应用回执、原始证据和各渠道的真实投递状态。
       </p>
       <OmPanel
         v-for="n in notifications"
@@ -665,10 +743,14 @@ onBeforeUnmount(() => {
         ><template #actions
           ><OmButton v-if="!n.readAt" @click="readNotification(n)"
             >标为已读</OmButton
-          ></template
+          ><OmButton @click="openNotification(n)">查看详情</OmButton></template
         ></OmPanel
       ><OmEmpty v-if="!notifications.length" title="暂无通知" />
     </section>
+    <LarkSetup
+      v-else-if="view === 'lark'"
+      @error="(text) => (error = text)"
+      @notice="say" />
     <section v-else-if="view === 'settings'" class="page">
       <h1>能力与连接</h1>
       <p class="muted">
@@ -779,6 +861,18 @@ onBeforeUnmount(() => {
       :model="model"
       :effort="effort"
       @saved="refresh" />
+    <NotificationDetail
+      :open="notificationOpen"
+      :detail="notificationDetail"
+      :loading="notificationLoading"
+      @close="notificationOpen = false"
+      @open-evidence="(id) => evidence?.open(id)"
+      @open-revision="
+        (id) => {
+          notificationOpen = false;
+          openRevision(id);
+        }
+      " />
     <div v-if="toast" class="toast" role="status">{{ toast }}</div>
     <template #assistant
       ><ChatPane

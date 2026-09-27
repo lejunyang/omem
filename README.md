@@ -1,6 +1,6 @@
 # omem
 
-个人工作记忆与助理基础系统。Vue 阅读台 + 固定版本的多模态证据 + Agent CLI/ACP 问答 + 需求待办与通知。当前交付包含第一批可运行基础链路，以及 Batch 2 的版本化合同/SQLite 迁移、持久任务、输入缓冲、受治理记忆应用和飞书连接/可靠投递核心；自动 worker 编排、屏幕采集器、飞书产品页面和真实测试应用联调仍按后续里程碑推进。
+个人工作记忆与助理基础系统。Vue 阅读台 + 固定版本的多模态证据 + Agent CLI/ACP 问答 + 需求待办与通知。当前交付包含第一批可运行基础链路，以及 Batch 2 的版本化合同/SQLite 迁移、持久任务、输入缓冲、受治理记忆应用、飞书连接/可靠投递核心与 Vue 产品流程；自动 worker 编排和屏幕采集器仍按后续里程碑推进。
 
 ## 启动
 
@@ -63,7 +63,9 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。配置 active 飞书 owner target 后，正式应用事务会同时生成绑定版本固定的飞书 delivery intent；sender 使用官方 SDK、同 UUID 有界重试和 `unknown` 状态。当前只实现逐条即时外发，短窗合并和定时摘要仍未实现。
 
-飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、实际 capability probe 接口、一次性 pairing/binding、官方 WebSocket adapter、单消费者 lease、事件 inbox、入群自动监控/移群停用、通知 sender 和耐竞态的 Card 2.0 决策队列。可手工导入现有应用，也可从本机 botmux 配置按 app_id 选择后加密转存，不修改 botmux 配置。默认注册 profile 还参考 botmux 权限清单为未来文档/云盘/知识库、表格/幻灯片、日历、任务、会议和 CardKit 能力预留 app/user scopes，但明确排除批量/系统消息、群成员与群主操作、文档权限转移和日历 ACL 管理。创建应用、开通权限和实际发送都属于用户资产变更，默认主进程不会在缺少 secret key、真实 capability probe 与显式 host 装配时自动启用；用户授权的 live 结果见 Batch 2 验证记录。
+Vue 新增“学习流程”“待判断”“通知详情”和“飞书机器人”：任务状态、attempt、提案策略、具体 diff、判断 receipt、应用 receipt、证据和投递错误都来自持久 API；服务/模型/通知失败时继续显示已保存原件与已生效事实，不把排队或失败显示成成功。飞书设置支持创建新应用、为指定 App ID 打开增量授权、从 botmux 或手工凭据导入；授权页同时给出本地生成的二维码与可直接打开的完整链接，后续严格经过 checking 和同应用 owner pairing。App Secret 只进入后端 secret store，不返回页面。
+
+飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、实际 capability probe 接口、一次性 pairing/binding、官方 WebSocket adapter、单消费者 lease、事件 inbox、入群自动监控/移群停用、通知 sender 和耐竞态的 Card 2.0 决策队列。可手工导入现有应用，也可从本机 botmux 配置按 app_id 选择后加密转存，不修改 botmux 配置。默认注册 profile 还参考 botmux 权限清单为未来文档/云盘/知识库、表格/幻灯片、日历、任务、会议和 CardKit 能力预留 app/user scopes，但明确排除批量/系统消息、群成员与群主操作、文档权限转移和日历 ACL 管理。创建应用、开通权限和实际发送都属于用户资产变更，默认主进程不会在缺少 secret key、真实 capability probe 与显式 host 装配时自动启用；页面会明确显示未配置/核验失败，不会绕过 checking。用户授权的 live 结果见 Batch 2 验证记录。
 
 详细运行环境、Docker/osdk 实测结果与后续引擎依赖见 [环境说明](docs/implementation/environment.md)。
 
