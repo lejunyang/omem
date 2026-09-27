@@ -477,22 +477,25 @@ export class AssistantRuntime {
     }
   }
 
-  /** Hard timeout: race the model against a timer that actively aborts the signal. */
+  /** Hard timeout: race the model against an independent timer.
+   * The timer reject is NOT cleared by external abort — if the model ignores the
+   * abort signal, the timeout still fires so Promise.race never hangs.
+   * External abort rejects the timeout promise immediately for fast cancel. */
   private async withTimeout<T>(
     promise: Promise<T>,
     signal: AbortSignal,
     ms: number,
   ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let rejectTimeout: ((e: Error) => void) | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new TurnCancelledError("turn_timeout"));
-      }, ms);
+      rejectTimeout = reject;
+      timer = setTimeout(() => reject(new TurnCancelledError("turn_timeout")), ms);
     });
-    // If the external signal aborts, reject immediately.
-    const onAbort = () => {
-      if (timer) clearTimeout(timer);
-    };
+    // External abort (user cancel, superseded turn, or deriveSignal timer):
+    // reject immediately. Do NOT clear our timer — finally does that. If the
+    // model already settled, race resolves and this is a no-op.
+    const onAbort = () => rejectTimeout?.(new TurnCancelledError("aborted"));
     signal.addEventListener("abort", onAbort, { once: true });
     try {
       return await Promise.race([promise, timeout]);

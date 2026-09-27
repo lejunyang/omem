@@ -438,7 +438,32 @@ describe("AssistantRuntime (async, governed)", () => {
     expect(store.tasks()).toEqual([]);
   });
 
-  it("A: RetrievalPort Chinese follow-up recall — '按这个' recalls the imported fragment", async () => {
+  it("D: withTimeout rejects a hung model that ignores abort — no hang", async () => {
+    const { store } = setup();
+    const memory = new MemoryService(store, { ownerId: "owner" });
+    // Model NEVER resolves and NEVER listens to signal — worst case.
+    const hungModel: AssistantModelPort = {
+      generate: async () => new Promise<AssistantModelReply>(() => { /* never resolves */ }),
+    };
+    const runtime = new AssistantRuntime(store, hungModel, {
+      ownerId: "owner",
+      memory,
+      turnTimeoutMs: 200, // short timeout
+    });
+    const conversation = runtime.conversations.open({
+      principalId: "owner", channel: "web", chatId: "w", visibility: "private",
+    });
+    const start = Date.now();
+    const result = await runtime.turn({ conversationId: conversation.id, userText: "hang test" });
+    const elapsed = Date.now() - start;
+    // Should settle within ~2s even though model never resolves.
+    expect(elapsed).toBeLessThan(5000);
+    // Turn is marked cancelled (timeout rejects with TurnCancelledError).
+    expect(result.turn.inputMessageRefs.status).toBe("cancelled");
+    expect(store.tasks()).toEqual([]);
+  });
+
+  it("A: RetrievalPort Chinese follow-up recall — short phrase via 2-grams recalls the imported fragment", async () => {
     const { store } = setup();
     captureSource(store, "会议纪要", "周五下午3点和张三开会讨论接口设计。");
     const retrieval = new KeywordRetrieval(store.db);
