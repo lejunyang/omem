@@ -8,14 +8,14 @@
 
 体验可以像 botmux：点“连接飞书”→创建/已有应用→扫码授权→验证并绑定→立即可收通知/发指令。但实现优先使用飞书当前官方 `registerApp()`，不复制整个 botmux daemon、会话调度和后台网页登录自动化。
 
-当前 botmux v3.28.0 help 显示 setup 使用内置 Web QR 尝试导入权限/redirect/发布，并有 clone；这是产品能力证据，**本轮未审计其创建流程源码**。omem 不调用当前 `botmux setup/clone` 冒充自己的新建流程，不读取 bots.json 导出 secret。可另做 opt-in BotmuxTransport 复用既有已绑定会话，但需版本化投递合同，不让业务依赖当前 CLI turn 环境。
+已核对 botmux 源码 revision `597ffb10172ea9ac2b50b75507d52a8cf5fb0cd7`：其 setup 支持 Web 登录态创建、选择已有应用、手工凭据和 SDK `registerApp()` 兼容路径，并对消息/群/资源权限、事件与 callback 做回读。omem 不调用 `botmux setup/clone`，但提供只读 `BotmuxExistingAppProvider`：从显式 `OMEM_BOTMUX_CONFIG` / `BOTS_CONFIG` 或默认 `~/.botmux/bots.json` 列出可复用 app（公开响应不含 secret），按用户选定 app_id 把凭据转存到自己的加密 secret store，之后仍执行 capability probe 和同 app pairing。它不修改 botmux 配置，也不复用 botmux 的隐式当前会话。
 
-| 路径 | 适用 | 限制 |
-| --- | --- | --- |
-| 独立自建应用 + 官方扫码创建 | 默认，长期个人助理、单聊/群聊/卡片交互 | 用户扫码确认，租户策略可能要求管理员 |
-| 已有专用自建应用 | 用户已有 bot，避免重建 | 明确选择 app_id，检查已有连接/配置，不能无提示覆盖 |
-| 群自定义 webhook bot | 临时单向群通知 | 无完整单聊/消息接收/绑定身份能力，不足以满足长期助理 |
-| botmux 适配 | 用户已使用 botmux，快速桥接 | 绑定/授权/发送目标由 transport 合同管理；不能直接依赖 `botmux send` 的隐式当前会话 |
+| 路径                        | 适用                                   | 限制                                                                                          |
+| --------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 独立自建应用 + 官方扫码创建 | 默认，长期个人助理、单聊/群聊/卡片交互 | 用户扫码确认，租户策略可能要求管理员                                                          |
+| 已有专用自建应用            | 用户已有 bot，避免重建                 | 支持扫码更新、手工凭据或从本机 botmux 注册表按 app_id 复用；检查现有连接/配置，不能无提示覆盖 |
+| 群自定义 webhook bot        | 临时单向群通知                         | 无完整单聊/消息接收/绑定身份能力，不足以满足长期助理                                          |
+| botmux 适配                 | 用户已使用 botmux，快速桥接            | 绑定/授权/发送目标由 transport 合同管理；不能直接依赖 `botmux send` 的隐式当前会话            |
 
 ## 2. 已核验的官方能力
 
@@ -68,15 +68,17 @@ sequenceDiagram
 
 按能力分阶段申请，示例范围在 [examples/lark-registration.json](examples/lark-registration.json)：
 
-| 能力 | 初始权限/订阅（核对实际目录） |
-| --- | --- |
-| 主动发消息 | `im:message:send_as_bot` |
-| 收取本人私聊/绑定 | `im:message.p2p_msg:readonly` + `im.message.receive_v1` |
-| 查机器人身份 | `application:bot.basic_info:read`，按所用核验API确认 |
-| 待判断卡片回调 | `card.action.trigger`；更新消息按 `im:message:update` |
-| 加群后响应 @ | `im:message.group_at_msg:readonly` + receive event；可选 im:chat:read/机器人进出群事件 |
-| 图片/文件输入 | `im:resource`，按实际 endpoint 与 app 范围检查 |
-| 全群内容采集 | 另行申请平台允许的群消息范围；不混入默认单聊通知权限 |
+| 能力                | 初始权限/订阅（核对实际目录）                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 主动发消息          | `im:message` + `im:message:send_as_bot`                                                                                               |
+| 收取本人私聊/绑定   | `im:message.p2p_msg:readonly` + `im.message.receive_v1`                                                                               |
+| 加群后响应 @        | `im:message.group_at_msg:readonly`、`im:message.group_at_msg.include_bot:readonly`                                                    |
+| 授权群内持续观察    | `im:message.group_msg`；要包含其他机器人消息再加 `im:message.group_msg.include_bot:read`。是否采集仍由 omem target allowlist 单独控制 |
+| 群与成员核验        | `im:chat:read`、`im:chat.members:read`；不申请建群/加人权限                                                                           |
+| 查 owner/机器人身份 | `contact:user.base:readonly`、`application:bot.basic_info:read`，按所用核验 API 确认                                                  |
+| 待判断卡片回调      | `card.action.trigger`；更新消息按 `im:message:update`                                                                                 |
+| 图片/文件输入       | `im:resource`，按实际 endpoint 与 app 范围检查                                                                                        |
+| 状态变化            | `im.message.updated_v1`、`im.chat.member.bot.added_v1`、`im.chat.member.bot.deleted_v1`                                               |
 
 不为通知默认申请文档写入/删除、批量发用户、通讯录全量读取。文档采集继续使用用户已授权的 lark-cli；机器人应用权限与 lark-cli user token 是两条授权链，不能互相替代。
 
@@ -108,6 +110,6 @@ SDK 官方长连接要求回调在约3秒内处理，回调处理器只做身份
 
 ## 7. 新 API 与验收
 
-建议 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`、`POST .../test`、`POST .../disconnect`。请求必须是 owner 操作；响应只有 app_id/状态/QR链接，永不返回 secret。registry/pairing 和 notification transport 分模块，界面复用 Vue 设计系统。
+已实现 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST .../:id/pairing-code`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`；另有 `GET .../reusable-apps` 与 `POST .../existing` 支持手工或 botmux app_id 复用。请求必须是 owner 操作；响应只有 app_id/状态/QR链接，永不返回 secret。`POST .../test`、disconnect、WebSocket 事件和 notification transport 由 B2-06 接入。
 
 A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。A-L08～14/A-N01～05 由 B2-06 使用独立测试应用实测；新建应用、扫码、群绑定必须由用户参与。

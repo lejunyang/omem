@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   larkOnboardingStartSchema,
+  larkExistingImportSchema,
   larkPairingConfirmSchema,
   larkPairingEventSchema,
 } from "../../../../../packages/contracts/src/index.js";
@@ -13,6 +14,7 @@ import {
   type LarkRegistrationCredentials,
   OfficialLarkRegistrationAdapter,
 } from "./registration.js";
+import type { ExistingLarkAppProvider } from "./existing-apps.js";
 
 type Row = Record<string, unknown>;
 type StartInput = z.infer<typeof larkOnboardingStartSchema>;
@@ -31,6 +33,7 @@ export class LarkOnboardingService {
     private readonly registration: LarkRegistrationAdapter,
     private readonly capabilities: LarkCapabilityProbe,
     private readonly clock: () => Date = () => new Date(),
+    private readonly existingApps?: ExistingLarkAppProvider,
   ) {}
 
   private transaction<T>(work: () => T): T {
@@ -111,6 +114,53 @@ export class LarkOnboardingService {
     this.active.set(id, { controller, completion });
     void completion.finally(() => this.active.delete(id)).catch(() => {});
     await Promise.race([qr, completion]);
+    return this.status(id);
+  }
+
+  listReusableApps() {
+    return this.existingApps?.list() ?? [];
+  }
+
+  async importExisting(value: unknown) {
+    const input = larkExistingImportSchema.parse(value);
+    const id = randomUUID();
+    const at = iso(this.clock());
+    this.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO lark_onboardings(
+             id,workspace_id,mode,requested_app_id,requested_config,
+             registration_generation,status,created_at,updated_at
+           ) VALUES(?,'personal','existing',?,?,1,'draft',?,?)`,
+        )
+        .run(id, input.appId, JSON.stringify(input.config), at, at);
+      this.db
+        .prepare(
+          "INSERT INTO lark_onboarding_events(id,onboarding_id,status,detail,created_at) VALUES(?,?,?,?,?)",
+        )
+        .run(
+          randomUUID(),
+          id,
+          "draft",
+          JSON.stringify({ credentialSource: input.source }),
+          at,
+        );
+    });
+    let credentials: LarkRegistrationCredentials;
+    if (input.source === "botmux") {
+      if (!this.existingApps) throw Error("BOTMUX_APP_PROVIDER_NOT_CONFIGURED");
+      credentials = this.existingApps.credentials(input.appId);
+    } else {
+      credentials = {
+        clientId: input.appId,
+        clientSecret: input.clientSecret!,
+      };
+    }
+    await this.acceptCredentials(
+      id,
+      { mode: "existing", appId: input.appId, config: input.config },
+      credentials,
+    );
     return this.status(id);
   }
 
@@ -222,12 +272,15 @@ export class LarkOnboardingService {
           randomUUID(),
           onboardingId,
           "cancelled",
-          JSON.stringify({ lateCredentials: true, appId: credentials.clientId }),
+          JSON.stringify({
+            lateCredentials: true,
+            appId: credentials.clientId,
+          }),
           iso(this.clock()),
         );
       return;
     }
-    if (row.status !== "awaiting_scan") return;
+    if (row.status !== "awaiting_scan" && row.status !== "draft") return;
     this.transition(
       onboardingId,
       "credentials_received",
@@ -693,6 +746,7 @@ export function createOfficialLarkOnboarding(input: {
   dataDir: string;
   capabilityProbe: LarkCapabilityProbe;
   clock?: () => Date;
+  existingApps?: ExistingLarkAppProvider;
 }) {
   return new LarkOnboardingService(
     input.db,
@@ -700,5 +754,6 @@ export function createOfficialLarkOnboarding(input: {
     new OfficialLarkRegistrationAdapter(),
     input.capabilityProbe,
     input.clock,
+    input.existingApps,
   );
 }

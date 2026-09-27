@@ -17,6 +17,7 @@ import {
   feedbackInputSchema,
   larkOnboardingStartSchema,
   larkPairingConfirmSchema,
+  larkExistingImportSchema,
 } from "../../../packages/contracts/src/index.js";
 import { Store } from "./store.js";
 import { Runs } from "./runs.js";
@@ -301,6 +302,12 @@ export async function buildApp(
   );
   app.get("/api/integrations/lark/status", async () =>
     requireLark().connections(),
+  );
+  app.get("/api/integrations/lark/reusable-apps", async () =>
+    requireLark().listReusableApps(),
+  );
+  app.post("/api/integrations/lark/existing", async (req) =>
+    requireLark().importExisting(larkExistingImportSchema.parse(req.body)),
   );
   app.get("/api/profiles", async () =>
     config.profiles.map(
