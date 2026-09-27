@@ -5,10 +5,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   LarkDeliveryError,
+  LarkNotificationBatcher,
   LarkDeliveryRepository,
   LarkDeliveryWorker,
   type LarkMessageAdapter,
 } from "../src/integrations/lark/delivery.js";
+import {
+  externalDeliveryTiming,
+  type ExternalNotificationPolicy,
+} from "../src/storage/repository.js";
 import { EncryptedSecretStore } from "../src/integrations/lark/secret-store.js";
 import { MemoryService } from "../src/memory/service.js";
 import { Store } from "../src/store.js";
@@ -54,10 +59,13 @@ class FakeMessages implements LarkMessageAdapter {
   }
 }
 
-const setup = (target = "oc_owner_1") => {
+const setup = (
+  target = "oc_owner_1",
+  externalNotifications?: Partial<ExternalNotificationPolicy>,
+) => {
   const directory = mkdtempSync(join(tmpdir(), "omem-lark-delivery-"));
   const key = randomBytes(32);
-  const store = new Store(directory);
+  const store = new Store(directory, { externalNotifications });
   const secrets = new EncryptedSecretStore(join(directory, "secrets"), key);
   const resource = { directory, store, secrets, key };
   resources.push(resource);
@@ -308,6 +316,154 @@ describe("B2-06 Lark delivery acceptance", () => {
     expect(rows.every((row) => String(row.payload_digest).length === 64)).toBe(
       true,
     );
+    expect(
+      resource.store.db
+        .prepare(
+          `SELECT count(*) AS count FROM delivery_intent_changes m
+           JOIN delivery_intents i ON i.id=m.intent_id
+           WHERE i.channel='lark'`,
+        )
+        .get(),
+    ).toEqual({ count: 5 });
+  });
+
+  it("A-N04 merges a short window while preserving every change mapping", async () => {
+    const resource = setup("oc_window", {
+      mode: "window",
+      windowMs: 60_000,
+      scheduleLocalTime: "09:00",
+      timezone: "Asia/Shanghai",
+    });
+    const receipts = Array.from({ length: 5 }, (_, index) =>
+      applyTask(resource.store, `window-${index}`),
+    );
+    const pending = resource.store.db
+      .prepare(
+        `SELECT * FROM delivery_intents WHERE channel='lark'
+         ORDER BY created_at`,
+      )
+      .all() as Record<string, unknown>[];
+    expect(pending).toHaveLength(5);
+    expect(pending.every((row) => row.aggregation_mode === "window")).toBe(
+      true,
+    );
+    const due = new Date(
+      Math.max(
+        ...pending.map((row) => Date.parse(String(row.aggregate_after))),
+      ) + 1,
+    );
+    const batcher = new LarkNotificationBatcher(resource.store.db);
+    expect(batcher.prepareDue(due)).toEqual({ batches: 1, changes: 5 });
+    const active = resource.store.db
+      .prepare(
+        `SELECT * FROM delivery_intents
+         WHERE channel='lark' AND state='pending'`,
+      )
+      .all() as Record<string, unknown>[];
+    expect(active).toHaveLength(1);
+    expect(String(active[0]!.payload_json)).toContain("omem 变更摘要（5 项）");
+    expect(
+      resource.store.db
+        .prepare(
+          "SELECT change_id FROM delivery_intent_changes WHERE intent_id=? ORDER BY ordinal",
+        )
+        .all(String(active[0]!.id))
+        .map((row) => String((row as { change_id: string }).change_id)),
+    ).toEqual(receipts.map((receipt) => receipt.changeId));
+    expect(
+      resource.store.db
+        .prepare(
+          `SELECT count(*) AS count FROM delivery_intents
+           WHERE channel='lark' AND state='cancelled' AND superseded_by=?`,
+        )
+        .get(String(active[0]!.id)),
+    ).toEqual({ count: 4 });
+    const lastNotification = resource.store.db
+      .prepare("SELECT id FROM notifications WHERE change_id=?")
+      .get(receipts[4]!.changeId) as { id: string };
+    expect(
+      resource.store.notification(lastNotification.id)?.deliveries,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: active[0]!.id,
+          changeCount: 5,
+          aggregationMode: "instant",
+        }),
+        expect.objectContaining({
+          state: "cancelled",
+          supersededBy: active[0]!.id,
+        }),
+      ]),
+    );
+    const messages = new FakeMessages();
+    const worker = new LarkDeliveryWorker(
+      new LarkDeliveryRepository(resource.store.db),
+      resource.secrets,
+      messages,
+      "window-sender",
+    );
+    expect(await worker.processOne(due)).toMatchObject({
+      processed: true,
+      state: "delivered",
+    });
+    expect(messages.sends).toHaveLength(1);
+  });
+
+  it("A-N04 schedules the next local digest boundary", () => {
+    const policy: ExternalNotificationPolicy = {
+      mode: "scheduled",
+      windowMs: 300_000,
+      scheduleLocalTime: "09:00",
+      timezone: "Asia/Shanghai",
+    };
+    expect(
+      externalDeliveryTiming("2026-09-27T00:30:00.000Z", policy).after,
+    ).toBe("2026-09-27T01:00:00.000Z");
+    expect(
+      externalDeliveryTiming("2026-09-27T02:00:00.000Z", policy).after,
+    ).toBe("2026-09-28T01:00:00.000Z");
+    const resource = setup("oc_scheduled", policy);
+    const receipts = Array.from({ length: 5 }, (_, index) =>
+      applyTask(resource.store, `scheduled-${index}`),
+    );
+    const intents = resource.store.db
+      .prepare(
+        "SELECT * FROM delivery_intents WHERE channel='lark' ORDER BY created_at",
+      )
+      .all() as Record<string, unknown>[];
+    expect(intents).toHaveLength(5);
+    expect(
+      intents.every(
+        (intent) =>
+          intent.aggregation_mode === "scheduled" &&
+          intent.next_attempt_at === intent.aggregate_after,
+      ),
+    ).toBe(true);
+    const due = new Date(
+      Math.max(
+        ...intents.map((intent) => Date.parse(String(intent.aggregate_after))),
+      ) + 1,
+    );
+    expect(
+      new LarkNotificationBatcher(resource.store.db).prepareDue(due),
+    ).toEqual({ batches: 1, changes: 5 });
+    const summary = resource.store.db
+      .prepare(
+        "SELECT * FROM delivery_intents WHERE channel='lark' AND state='pending'",
+      )
+      .get() as Record<string, unknown>;
+    expect(summary).toMatchObject({
+      state: "pending",
+      aggregation_mode: "instant",
+    });
+    expect(
+      resource.store.db
+        .prepare(
+          "SELECT count(*) AS count FROM delivery_intent_changes WHERE intent_id=?",
+        )
+        .get(String(summary.id)),
+    ).toEqual({ count: receipts.length });
   });
 
   it("A-N05 never forwards an old intent to a replacement binding and restoration cards contain no localhost URL", async () => {

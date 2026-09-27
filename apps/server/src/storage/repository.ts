@@ -66,12 +66,112 @@ export type ApplicationHooks = {
   after?: (receipt: ApplicationReceipt) => void;
 };
 
+export type ExternalNotificationPolicy = {
+  mode: "instant" | "window" | "scheduled";
+  windowMs: number;
+  scheduleLocalTime: string;
+  timezone: string;
+};
+
+const defaultNotificationPolicy: ExternalNotificationPolicy = {
+  mode: "instant",
+  windowMs: 300_000,
+  scheduleLocalTime: "09:00",
+  timezone: "Asia/Shanghai",
+};
+
 const timestamp = () => new Date().toISOString();
 const digest = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+const zonedParts = (date: Date, timezone: string) =>
+  Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  ) as Record<string, number>;
+
+const zonedTime = (
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timezone: string,
+) => {
+  const guess = new Date(Date.UTC(year, month - 1, day, hour, minute));
+  const parts = zonedParts(guess, timezone);
+  const represented = Date.UTC(
+    parts.year!,
+    parts.month! - 1,
+    parts.day!,
+    parts.hour!,
+    parts.minute!,
+    parts.second!,
+  );
+  return new Date(guess.getTime() - (represented - guess.getTime()));
+};
+
+export function externalDeliveryTiming(
+  createdAt: string,
+  policy: ExternalNotificationPolicy = defaultNotificationPolicy,
+) {
+  const created = new Date(createdAt);
+  if (policy.mode === "instant")
+    return { mode: policy.mode, after: created.toISOString() };
+  if (policy.mode === "window")
+    return {
+      mode: policy.mode,
+      after: new Date(created.getTime() + policy.windowMs).toISOString(),
+    };
+  const [hour, minute] = policy.scheduleLocalTime.split(":").map(Number);
+  const local = zonedParts(created, policy.timezone);
+  let target = zonedTime(
+    local.year!,
+    local.month!,
+    local.day!,
+    hour!,
+    minute!,
+    policy.timezone,
+  );
+  if (target <= created)
+    target = zonedTime(
+      local.year!,
+      local.month!,
+      local.day! + 1,
+      hour!,
+      minute!,
+      policy.timezone,
+    );
+  return { mode: policy.mode, after: target.toISOString() };
+}
+
 export class ApplicationRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  private readonly notificationPolicy: ExternalNotificationPolicy;
+
+  constructor(
+    private readonly db: DatabaseSync,
+    notificationPolicy: Partial<ExternalNotificationPolicy> = {},
+  ) {
+    this.notificationPolicy = {
+      ...defaultNotificationPolicy,
+      ...notificationPolicy,
+    };
+  }
+
+  externalDeliveryTiming(createdAt: string) {
+    return externalDeliveryTiming(createdAt, this.notificationPolicy);
+  }
 
   private transaction<T>(work: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -156,15 +256,17 @@ export class ApplicationRepository {
           null,
           `application:${metadata.workspaceId}:${metadata.applicationId}`,
         );
+      const inAppIntentId = randomUUID();
       this.db
         .prepare(
           `INSERT INTO delivery_intents(
              id,workspace_id,change_id,channel_binding_version,channel,target,
-             payload_digest,provider_uuid,state,created_at,updated_at
-           ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+             payload_digest,provider_uuid,state,created_at,updated_at,
+             aggregation_mode,aggregate_after,next_attempt_at
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
-          randomUUID(),
+          inAppIntentId,
           metadata.workspaceId,
           changeId,
           metadata.delivery.channelBindingVersion,
@@ -179,7 +281,16 @@ export class ApplicationRepository {
           "pending",
           createdAt,
           createdAt,
+          "instant",
+          createdAt,
+          createdAt,
         );
+      this.db
+        .prepare(
+          `INSERT INTO delivery_intent_changes(intent_id,change_id,ordinal)
+           VALUES(?,?,0)`,
+        )
+        .run(inAppIntentId, changeId);
       const larkTargets = this.db
         .prepare(
           `SELECT t.chat_id,t.binding_version,b.id AS binding_id
@@ -192,6 +303,7 @@ export class ApplicationRepository {
         )
         .all(metadata.workspaceId) as Row[];
       for (const target of larkTargets) {
+        const timing = this.externalDeliveryTiming(createdAt);
         const payload = {
           schema: "2.0",
           config: { width_mode: "default" },
@@ -214,16 +326,18 @@ export class ApplicationRepository {
         const payloadJson = JSON.stringify(payload);
         if (Buffer.byteLength(payloadJson) > 30_000)
           throw Error("LARK_CARD_PAYLOAD_TOO_LARGE");
+        const intentId = randomUUID();
         this.db
           .prepare(
             `INSERT INTO delivery_intents(
                id,workspace_id,change_id,channel_binding_version,channel,target,
                payload_digest,provider_uuid,state,created_at,updated_at,
-               binding_id,payload_json,next_attempt_at
-             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+               binding_id,payload_json,next_attempt_at,aggregation_mode,
+               aggregate_after
+             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           )
           .run(
-            randomUUID(),
+            intentId,
             metadata.workspaceId,
             changeId,
             Number(target.binding_version),
@@ -236,8 +350,16 @@ export class ApplicationRepository {
             createdAt,
             String(target.binding_id),
             payloadJson,
-            createdAt,
+            timing.after,
+            timing.mode,
+            timing.after,
           );
+        this.db
+          .prepare(
+            `INSERT INTO delivery_intent_changes(intent_id,change_id,ordinal)
+             VALUES(?,?,0)`,
+          )
+          .run(intentId, changeId);
       }
       const receiptId = randomUUID();
       this.db

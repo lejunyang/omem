@@ -12,14 +12,16 @@ const emit = defineEmits<{
   openEvidence: [id: string];
   openRevision: [id: string];
 }>();
-const tone = (state: string) =>
-  ["failed", "unknown", "cancelled"].includes(state)
-    ? "danger"
-    : ["pending", "sending", "retry_wait"].includes(state)
-      ? "warning"
-      : state === "delivered"
-        ? "success"
-        : "neutral";
+const tone = (state: string, supersededBy?: string | null) =>
+  state === "cancelled" && supersededBy
+    ? "neutral"
+    : ["failed", "unknown", "cancelled"].includes(state)
+      ? "danger"
+      : ["pending", "sending", "retry_wait"].includes(state)
+        ? "warning"
+        : state === "delivered"
+          ? "success"
+          : "neutral";
 </script>
 
 <template>
@@ -87,8 +89,13 @@ const tone = (state: string) =>
             <b>{{ delivery.channel }}</b>
             <small>尝试 {{ delivery.attemptCount }} 次</small>
           </div>
-          <OmBadge :tone="tone(delivery.state)">{{ delivery.state }}</OmBadge>
-          <p v-if="delivery.lastError" role="alert">
+          <OmBadge :tone="tone(delivery.state, delivery.supersededBy)">{{
+            delivery.supersededBy ? "已合并" : delivery.state
+          }}</OmBadge>
+          <p v-if="delivery.changeCount > 1" class="batch-count">
+            该次摘要包含 {{ delivery.changeCount }} 条变化
+          </p>
+          <p v-if="delivery.lastError && !delivery.supersededBy" role="alert">
             {{ delivery.errorKind }}：{{ delivery.lastError }}
           </p>
         </div>
@@ -127,5 +134,8 @@ const tone = (state: string) =>
   margin: 0;
   color: var(--om-danger);
   overflow-wrap: anywhere;
+}
+.delivery-row .batch-count {
+  color: var(--om-muted);
 }
 </style>

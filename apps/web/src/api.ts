@@ -168,6 +168,9 @@ export type NotificationDetail = Notification & {
     attemptCount: number;
     errorKind: string | null;
     lastError: string | null;
+    aggregationMode: "instant" | "window" | "scheduled";
+    supersededBy: string | null;
+    changeCount: number;
     createdAt: string;
     updatedAt: string;
   }[];

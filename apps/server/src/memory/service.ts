@@ -569,8 +569,9 @@ export class MemoryService {
             `INSERT INTO delivery_intents(
                id,workspace_id,change_id,channel_binding_version,channel,target,
                payload_digest,provider_uuid,state,created_at,updated_at,
-               binding_id,payload_json,next_attempt_at,card_action_id
-             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+               binding_id,payload_json,next_attempt_at,card_action_id,
+               aggregation_mode,aggregate_after
+             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           )
           .run(
             randomUUID(),
@@ -591,7 +592,26 @@ export class MemoryService {
             payloadJson,
             createdAt,
             cardActionId,
+            "instant",
+            createdAt,
           );
+        const intent = this.db
+          .prepare(
+            `SELECT id FROM delivery_intents
+             WHERE workspace_id=? AND change_id=? AND channel='lark'
+               AND target=?`,
+          )
+          .get(
+            proposal.scope.workspace_id,
+            changeId,
+            String(target.chat_id),
+          ) as Row;
+        this.db
+          .prepare(
+            `INSERT INTO delivery_intent_changes(intent_id,change_id,ordinal)
+             VALUES(?,?,0)`,
+          )
+          .run(String(intent.id), changeId);
       }
       return id;
     });

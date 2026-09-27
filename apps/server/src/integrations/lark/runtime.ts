@@ -5,6 +5,7 @@ import { LarkCardActionService } from "./card-actions.js";
 import {
   LarkDeliveryRepository,
   LarkDeliveryWorker,
+  LarkNotificationBatcher,
   OfficialLarkMessageAdapter,
   type LarkMessageAdapter,
 } from "./delivery.js";
@@ -30,6 +31,7 @@ export class LarkRuntimeHost {
   private readonly controller = new AbortController();
   private readonly connections = new Map<string, LarkConnectionManager>();
   private readonly delivery: LarkDeliveryWorker;
+  private readonly batcher: LarkNotificationBatcher;
   private readonly cards: LarkCardActionService;
   private loopPromise: Promise<void> | null = null;
   private processedDeliveries = 0;
@@ -57,6 +59,7 @@ export class LarkRuntimeHost {
       messages,
       `${workerId}-delivery`,
     );
+    this.batcher = new LarkNotificationBatcher(input.store.db);
     this.cards = new LarkCardActionService(
       input.store,
       input.memory,
@@ -105,6 +108,7 @@ export class LarkRuntimeHost {
 
   async processOnce(limit = 100) {
     this.syncConnections();
+    const aggregation = this.batcher.prepareDue();
     let cards = 0;
     let deliveries = 0;
     while (cards < limit && (await this.cards.processOne()).processed) cards++;
@@ -112,7 +116,13 @@ export class LarkRuntimeHost {
       deliveries++;
     this.processedCards += cards;
     this.processedDeliveries += deliveries;
-    return { cards, deliveries, connections: this.connections.size };
+    return {
+      cards,
+      deliveries,
+      batches: aggregation.batches,
+      changes: aggregation.changes,
+      connections: this.connections.size,
+    };
   }
 
   start() {
