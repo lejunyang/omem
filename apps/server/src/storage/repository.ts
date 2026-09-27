@@ -60,6 +60,11 @@ export type ApplicationReceipt = {
   duplicate: boolean;
 };
 
+export type ApplicationHooks = {
+  before?: () => void;
+  after?: (receipt: ApplicationReceipt) => void;
+};
+
 const timestamp = () => new Date().toISOString();
 const digest = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -118,11 +123,13 @@ export class ApplicationRepository {
       beforeId: string | null;
       afterId: string | null;
     },
+    hooks: ApplicationHooks,
   ): ApplicationReceipt {
     return this.transaction(() => {
       const existing = this.existingReceipt(metadata, requestDigest);
       if (existing) return existing;
 
+      hooks.before?.();
       const entity = createEntity();
       const changeId = randomUUID();
       const createdAt = timestamp();
@@ -195,7 +202,7 @@ export class ApplicationRepository {
           changeId,
           createdAt,
         );
-      return {
+      const receipt: ApplicationReceipt = {
         id: receiptId,
         entityType,
         entityId: entity.id,
@@ -203,10 +210,15 @@ export class ApplicationRepository {
         changeId,
         duplicate: false,
       };
+      hooks.after?.(receipt);
+      return receipt;
     });
   }
 
-  applyMemory(input: MemoryApplication): ApplicationReceipt {
+  applyMemory(
+    input: MemoryApplication,
+    hooks: ApplicationHooks = {},
+  ): ApplicationReceipt {
     const requestDigest = digest(input);
     return this.commitApplication(
       input.metadata,
@@ -300,6 +312,28 @@ export class ApplicationRepository {
             .prepare("UPDATE memories SET head_revision_id=? WHERE id=?")
             .run(revisionId, memoryId);
         }
+        for (const evidence of input.memory.evidenceSet) {
+          if (!evidence || typeof evidence !== "object") continue;
+          const item = evidence as Record<string, unknown>;
+          if (
+            typeof item.sourceId !== "string" ||
+            typeof item.sourceRevisionId !== "string" ||
+            !Number.isInteger(item.validityEpoch)
+          )
+            continue;
+          this.db
+            .prepare(
+              `INSERT INTO memory_dependencies(
+                 memory_revision_id,source_id,source_revision_id,validity_epoch,state
+               ) VALUES(?,?,?,?,'current')`,
+            )
+            .run(
+              revisionId,
+              item.sourceId,
+              item.sourceRevisionId,
+              Number(item.validityEpoch),
+            );
+        }
         return {
           id: memoryId,
           version: nextVersion,
@@ -307,83 +341,122 @@ export class ApplicationRepository {
           afterId: revisionId,
         };
       },
+      hooks,
     );
   }
 
-  applyTask(input: TaskApplication): ApplicationReceipt {
+  applyTask(
+    input: TaskApplication,
+    hooks: ApplicationHooks = {},
+  ): ApplicationReceipt {
     const requestDigest = digest(input);
-    return this.commitApplication(input.metadata, requestDigest, "task", () => {
-      const date = timestamp();
-      const existing = input.task.id
-        ? (this.db
-            .prepare("SELECT * FROM tasks WHERE id=? AND workspace_id=?")
-            .get(input.task.id, input.metadata.workspaceId) as Row | undefined)
-        : undefined;
-      if (input.task.id && !existing && input.task.expectedVersion)
-        throw Error("TASK_NOT_FOUND");
-      const taskId = existing
-        ? String(existing.id)
-        : (input.task.id ?? randomUUID());
-      const previousVersion = existing ? Number(existing.version) : 0;
-      const nextVersion = previousVersion + 1;
-      if (
-        existing &&
-        (input.task.expectedVersion === undefined ||
-          input.task.expectedVersion !== previousVersion)
-      )
-        throw Error("STALE_TASK_VERSION");
-      if (existing) {
-        const updated = this.db
-          .prepare(
-            `UPDATE tasks SET title=?,detail=?,due_at=?,evidence_id=?,status=?,
+    return this.commitApplication(
+      input.metadata,
+      requestDigest,
+      "task",
+      () => {
+        const date = timestamp();
+        const dueAt = input.task.dueAt
+          ? new Date(input.task.dueAt).toISOString()
+          : null;
+        const existing = input.task.id
+          ? (this.db
+              .prepare("SELECT * FROM tasks WHERE id=? AND workspace_id=?")
+              .get(input.task.id, input.metadata.workspaceId) as
+              | Row
+              | undefined)
+          : undefined;
+        if (input.task.id && !existing && input.task.expectedVersion)
+          throw Error("TASK_NOT_FOUND");
+        const taskId = existing
+          ? String(existing.id)
+          : (input.task.id ?? randomUUID());
+        const previousVersion = existing ? Number(existing.version) : 0;
+        const nextVersion = previousVersion + 1;
+        if (
+          existing &&
+          (input.task.expectedVersion === undefined ||
+            input.task.expectedVersion !== previousVersion)
+        )
+          throw Error("STALE_TASK_VERSION");
+        if (existing) {
+          const updated = this.db
+            .prepare(
+              `UPDATE tasks SET title=?,detail=?,due_at=?,evidence_id=?,status=?,
                  version=?,workspace_id=?,owner_id=?,due_expression=?,next_step=?
                WHERE id=? AND workspace_id=? AND version=?`,
-          )
-          .run(
-            input.task.title,
-            input.task.detail,
-            input.task.dueAt ?? null,
-            input.task.evidenceId ?? null,
-            input.task.status ?? String(existing.status),
-            nextVersion,
-            input.metadata.workspaceId,
-            input.task.ownerId ?? null,
-            input.task.dueExpression ?? null,
-            input.task.nextStep,
-            taskId,
-            input.metadata.workspaceId,
-            previousVersion,
-          );
-        if (Number(updated.changes) !== 1) throw Error("STALE_TASK_VERSION");
-      } else {
-        this.db
-          .prepare(
-            `INSERT INTO tasks(
+            )
+            .run(
+              input.task.title,
+              input.task.detail,
+              dueAt,
+              input.task.evidenceId ?? null,
+              input.task.status ?? String(existing.status),
+              nextVersion,
+              input.metadata.workspaceId,
+              input.task.ownerId ?? null,
+              input.task.dueExpression ?? null,
+              input.task.nextStep,
+              taskId,
+              input.metadata.workspaceId,
+              previousVersion,
+            );
+          if (Number(updated.changes) !== 1) throw Error("STALE_TASK_VERSION");
+        } else {
+          this.db
+            .prepare(
+              `INSERT INTO tasks(
                  id,title,detail,due_at,evidence_id,status,created_at,version,
                  workspace_id,owner_id,due_expression,next_step
                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+            )
+            .run(
+              taskId,
+              input.task.title,
+              input.task.detail,
+              dueAt,
+              input.task.evidenceId ?? null,
+              input.task.status ?? "open",
+              date,
+              nextVersion,
+              input.metadata.workspaceId,
+              input.task.ownerId ?? null,
+              input.task.dueExpression ?? null,
+              input.task.nextStep,
+            );
+        }
+        this.db
+          .prepare(
+            `INSERT INTO task_revisions(
+             id,workspace_id,task_id,version,title,detail,due_at,due_expression,
+             owner_id,next_step,status,evidence_set,correction_feedback_id,created_at
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)`,
           )
           .run(
+            randomUUID(),
+            input.metadata.workspaceId,
             taskId,
+            nextVersion,
             input.task.title,
             input.task.detail,
-            input.task.dueAt ?? null,
-            input.task.evidenceId ?? null,
-            input.task.status ?? "open",
-            date,
-            nextVersion,
-            input.metadata.workspaceId,
-            input.task.ownerId ?? null,
+            dueAt,
             input.task.dueExpression ?? null,
+            input.task.ownerId ?? null,
             input.task.nextStep,
+            input.task.status ?? (existing ? String(existing.status) : "open"),
+            JSON.stringify(
+              input.task.evidenceId ? [input.task.evidenceId] : [],
+            ),
+            date,
           );
-      }
-      return {
-        id: taskId,
-        version: nextVersion,
-        beforeId: existing ? taskId : null,
-        afterId: taskId,
-      };
-    });
+        return {
+          id: taskId,
+          version: nextVersion,
+          beforeId: existing ? taskId : null,
+          afterId: taskId,
+        };
+      },
+      hooks,
+    );
   }
 }

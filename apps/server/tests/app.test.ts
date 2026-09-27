@@ -243,3 +243,97 @@ it("exposes durable capture jobs with idempotent generation-checked controls", a
     await x.close();
   }
 });
+
+it("evaluates and atomically applies a supported owner task through HTTP", async () => {
+  const x = await setup();
+  try {
+    const text = "我负责在周五前提交验证报告。";
+    const captured = (
+      await x.app.inject({
+        method: "POST",
+        url: "/api/captures",
+        payload: {
+          source: "manual",
+          externalId: "policy-api",
+          title: "Owner commitment",
+          parts: [{ type: "text", text }],
+          provenance: {
+            collectorId: "owner-ui",
+            actorId: "owner",
+            actorType: "owner",
+            actorVerifiedBy: "authenticated-test",
+            sourceUri: null,
+            eventId: null,
+            eventAt: "2026-09-22T08:00:00Z",
+            timezone: "Asia/Shanghai",
+            quoted: false,
+            forwarded: false,
+            producerKind: "original",
+          },
+        },
+      })
+    ).json();
+    const revision = captured.revision;
+    const evaluated = await x.app.inject({
+      method: "POST",
+      url: "/api/proposals/evaluate",
+      payload: {
+        proposal: {
+          schema_version: 1,
+          proposal_id: "api-proposal-1",
+          kind: "task",
+          operation: "create",
+          scope: {
+            workspace_id: "personal",
+            project_id: "api-test",
+            subject_id: "owner",
+          },
+          body: {
+            title: "提交验证报告",
+            owner_id: "owner",
+            due_at: null,
+            due_expression: null,
+            next_step: "整理结果",
+          },
+          evidence: [
+            {
+              fragment_revision_id: revision.fragments[0].id,
+              source_revision_id: revision.id,
+              exact_quote: text,
+              selector: {
+                start: 0,
+                end: Array.from(text).length,
+                unit: "unicode_codepoint",
+              },
+            },
+          ],
+          uncertainties: [],
+          reason: "explicit owner task",
+          expected_versions: {},
+          origin: {
+            job_id: "api-policy-job",
+            role_bundle: "extractor@1",
+            producer_kind: "derived",
+          },
+        },
+        assessment: {
+          semantic_verdict: "supported",
+          reviewer_version: "reviewer@1",
+          role_version: "verifier@1",
+          reason_code: "direct_support",
+          details: "Direct owner commitment.",
+        },
+      },
+    });
+    expect(evaluated.statusCode).toBe(200);
+    expect(evaluated.json()).toMatchObject({
+      policy: "auto_apply",
+      receipt: { entityType: "task", entityVersion: 1 },
+    });
+    expect((await x.app.inject("/api/tasks")).json()).toMatchObject([
+      { title: "提交验证报告", ownerId: "owner", version: 1 },
+    ]);
+  } finally {
+    await x.close();
+  }
+});

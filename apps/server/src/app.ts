@@ -11,12 +11,17 @@ import {
   taskUpdateSchema,
   jobControlSchema,
   runtimeRequestDecisionSchema,
+  proposalSchema,
+  proposalAssessmentInputSchema,
+  decisionActionSchema,
+  feedbackInputSchema,
 } from "../../../packages/contracts/src/index.js";
 import { Store } from "./store.js";
 import { Runs } from "./runs.js";
 import { acp } from "./agents.js";
 import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
 import type { Config } from "./config.js";
+import { FeedbackService, MemoryService } from "./memory/service.js";
 const str = z.string().min(1).max(2000);
 export async function buildApp(config: Config) {
   if (!["127.0.0.1", "localhost", "::1"].includes(config.host) && !config.token)
@@ -24,6 +29,8 @@ export async function buildApp(config: Config) {
   const app = Fastify({ bodyLimit: 12_000_000, logger: false });
   const store = new Store(config.dataDir);
   const runs = new Runs(store, config);
+  const memory = new MemoryService(store);
+  const feedback = new FeedbackService(store);
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/api/")) return;
     if (config.token) {
@@ -201,6 +208,68 @@ export async function buildApp(config: Config) {
       return store.runtimeRequests.resolve({ id: req.params.id, ...body });
     },
   );
+  app.get("/api/proposals", async () => memory.proposals());
+  app.get<{ Params: { id: string } }>(
+    "/api/proposals/:id",
+    async (req, reply) =>
+      store.db
+        .prepare("SELECT * FROM proposals WHERE id=?")
+        .get(req.params.id) ??
+      reply.code(404).send({ error: "Proposal not found" }),
+  );
+  app.post("/api/proposals/evaluate", async (req) => {
+    const body = z
+      .object({
+        proposal: proposalSchema,
+        assessment: proposalAssessmentInputSchema,
+        impactCount: z.number().int().min(0).max(10_000).default(1),
+      })
+      .strict()
+      .parse(req.body);
+    return memory.evaluate(body.proposal, body.assessment, {
+      impactCount: body.impactCount,
+    });
+  });
+  app.get("/api/decisions", async () => memory.decisions());
+  app.post<{ Params: { id: string } }>("/api/decisions/:id", async (req) =>
+    memory.decide(req.params.id, decisionActionSchema.parse(req.body)),
+  );
+  app.get("/api/memories", async () => memory.memories());
+  app.get<{ Params: { id: string } }>(
+    "/api/memories/:id/revisions",
+    async (req) =>
+      store.db
+        .prepare(
+          "SELECT * FROM memory_revisions WHERE memory_id=? ORDER BY version DESC",
+        )
+        .all(req.params.id),
+  );
+  app.post<{ Params: { id: string } }>(
+    "/api/memories/:id/restore",
+    async (req) => {
+      const body = z
+        .object({
+          expectedVersion: z.number().int().min(1),
+          targetVersion: z.number().int().min(1),
+          requestId: z.string().min(1).max(500),
+        })
+        .strict()
+        .parse(req.body);
+      return memory.restoreMemory({ memoryId: req.params.id, ...body });
+    },
+  );
+  app.post("/api/feedback", async (req) =>
+    feedback.record(feedbackInputSchema.parse(req.body)),
+  );
+  app.get<{ Querystring: { projectId?: string; subjectId?: string } }>(
+    "/api/feedback/constraints",
+    async (req) =>
+      feedback.recall({
+        workspace_id: "personal",
+        project_id: req.query.projectId || null,
+        subject_id: req.query.subjectId || null,
+      }),
+  );
   app.get("/api/profiles", async () =>
     config.profiles.map(
       ({ id, name, transport, model, effort, maxContextChars }) => ({
@@ -276,5 +345,5 @@ export async function buildApp(config: Config) {
     await runs.close();
     store.close();
   });
-  return { app, store, runs };
+  return { app, store, runs, memory, feedback };
 }
