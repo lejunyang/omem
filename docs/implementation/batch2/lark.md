@@ -1,6 +1,6 @@
 # 飞书：独立机器人、扫码创建与绑定、可靠通知
 
-状态：B2-05 注册/密钥/配对/绑定基础已实现；B2-06 消息连接、投递和回调待实现。本轮没有调用创建/授权/发送测试消息的业务 API。实现使用官方 SDK `registerApp()`，但不假设能无需用户授权静默创建。
+状态：B2-05 注册/密钥/配对/绑定和 B2-06 消息连接、投递、回调核心已实现。本轮没有调用创建/授权/发送测试消息的业务 API；确定性测试不能替代独立测试应用 live 验收。实现使用官方 SDK `registerApp()`、`WSClient` 和 `Client`，但不假设能无需用户授权静默创建。
 
 ## 1. 是否需要新的机器人，是否照 botmux 做
 
@@ -88,6 +88,8 @@ sequenceDiagram
 
 使用官方 Node SDK 的 Client + WSClient。企业自建应用支持 WebSocket 接收消息与新版 card.action.trigger，不需要给事件接收配置公网回调 URL；HTTP API 负责发送/更新。不能由此推断 Web 详情页也能被用户手机访问：详情链接仍需可访问且鉴权的 HTTPS 地址，或先在卡片里展示必要信息。禁止把 `127.0.0.1` 详情链接发给远程用户当可用入口。
 
+当前 B2-06 组件以显式依赖装配：`LarkConnectionManager` 负责 connection lease、pairing 消息路由、WS 状态和失效连接关闭；`LarkEventInbox` 负责事件持久化、冲突检测、自消息过滤和群监控 allowlist；`LarkDeliveryWorker` 负责 outbox；`LarkCardActionService` 负责快速入队和异步业务决策。默认 `main.ts` 不会在没有 master key、真实 capability probe 与用户连接动作时自动启动外部连接。
+
 一个 active connection 由持久 lease 选出唯一消费者；多机滚动升级避免两个不共享 inbox 的消费者争抢事件。断线由 SDK 重连，omem 记录健康状态、最后事件/错误；未知断线缺口不能承诺完全补齐历史，需要按已允许范围补拉。
 
 DeliveryIntent 在业务提交同事务创建，sender 从队列取；通知内容包含修改前后摘要、原因、影响、固定 evidence refs、change/decision ID。模板确定性渲染，无需让 LLM 生成收件人或控制卡片动作。即时/短窗合并/定时摘要可配置；每个 change 都有可追溯 delivery 映射，不能只展示批次最后一条。
@@ -110,6 +112,8 @@ SDK 官方长连接要求回调在约3秒内处理，回调处理器只做身份
 
 ## 7. 新 API 与验收
 
-已实现 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST .../:id/pairing-code`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`；另有 `GET .../reusable-apps` 与 `POST .../existing` 支持手工或 botmux app_id 复用。请求必须是 owner 操作；响应只有 app_id/状态/QR链接，永不返回 secret。`POST .../test`、disconnect、WebSocket 事件和 notification transport 由 B2-06 接入。
+已实现 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST .../:id/pairing-code`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`；另有 `GET .../reusable-apps` 与 `POST .../existing` 支持手工或 botmux app_id 复用。请求必须是 owner 操作；响应只有 app_id/状态/QR链接，永不返回 secret。WebSocket/event、notification sender 和 callback worker 已提供可装配组件；`POST .../test`、disconnect 和 B2-07 设置界面尚未提供。
 
-A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。A-L08～14/A-N01～05 由 B2-06 使用独立测试应用实测；新建应用、扫码、群绑定必须由用户参与。
+A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。
+
+A-L08～14/A-N01～05 的本地故障测试已覆盖 lease、重连状态、事件去重/身份、Card 2.0 callback 校验、DB 写失败重投、stale/竞态、移群停用、SQLite 重启、同 UUID 重试、`unknown`、限流/认证和旧绑定取消。A-N04 当前只通过逐条即时投递部分，短窗合并/定时外发摘要待后续实现。由于没有得到本轮创建/授权独立测试应用的明确动作，真实 WS/发送/卡片闭环全部标记 live skipped；新建应用、扫码、群绑定必须由用户参与。

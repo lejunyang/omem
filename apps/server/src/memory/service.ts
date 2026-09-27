@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   decisionActionSchema,
@@ -370,39 +370,194 @@ export class MemoryService {
   }
 
   private createDecision(proposal: Proposal, proposalDigest: string) {
-    const existing = this.db
-      .prepare(
-        "SELECT id FROM decisions WHERE workspace_id=? AND proposal_digest=?",
-      )
-      .get(proposal.scope.workspace_id, proposalDigest) as Row | undefined;
-    if (existing) return String(existing.id);
-    const id = randomUUID();
-    const sources = Object.fromEntries(
-      this.sourceReads(proposal.proposal_id).map((read) => [
-        String(read.source_id),
-        {
-          revisionId: String(read.source_revision_id),
-          validityEpoch: Number(read.validity_epoch),
-        },
-      ]),
-    );
-    this.db
-      .prepare(
-        `INSERT INTO decisions(
-           id,workspace_id,proposal_digest,expected_versions,owner_binding,
-           expires_at,state,request_id,decided_at,action,resolved_at,created_at
-         ) VALUES(?,?,?,?,?,?,'pending',NULL,NULL,NULL,NULL,?)`,
-      )
-      .run(
-        id,
-        proposal.scope.workspace_id,
-        proposalDigest,
-        JSON.stringify({ sources, target: proposal.expected_versions }),
-        JSON.stringify({ actorId: this.options.ownerId ?? "owner" }),
-        new Date(Date.now() + 7 * 86_400_000).toISOString(),
-        now(),
+    return this.transaction(() => {
+      const existing = this.db
+        .prepare(
+          "SELECT id FROM decisions WHERE workspace_id=? AND proposal_digest=?",
+        )
+        .get(proposal.scope.workspace_id, proposalDigest) as Row | undefined;
+      if (existing) return String(existing.id);
+      const id = randomUUID();
+      const sources = Object.fromEntries(
+        this.sourceReads(proposal.proposal_id).map((read) => [
+          String(read.source_id),
+          {
+            revisionId: String(read.source_revision_id),
+            validityEpoch: Number(read.validity_epoch),
+          },
+        ]),
       );
-    return id;
+      const expectedVersions = { sources, target: proposal.expected_versions };
+      const expectedVersionsJson = JSON.stringify(expectedVersions);
+      const expectedVersionsDigest = stableDigest(expectedVersions);
+      const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+      const createdAt = now();
+      this.db
+        .prepare(
+          `INSERT INTO decisions(
+             id,workspace_id,proposal_digest,expected_versions,owner_binding,
+             expires_at,state,request_id,decided_at,action,resolved_at,created_at
+           ) VALUES(?,?,?,?,?,?,'pending',NULL,NULL,NULL,NULL,?)`,
+        )
+        .run(
+          id,
+          proposal.scope.workspace_id,
+          proposalDigest,
+          expectedVersionsJson,
+          JSON.stringify({ actorId: this.options.ownerId ?? "owner" }),
+          expiresAt,
+          createdAt,
+        );
+
+      const targets = this.db
+        .prepare(
+          `SELECT t.chat_id,t.binding_version,b.id AS binding_id,b.owner_open_id
+           FROM lark_targets t JOIN lark_bindings b
+             ON b.connection_id=t.connection_id
+            AND b.binding_version=t.binding_version
+           JOIN lark_connections c ON c.id=t.connection_id
+           WHERE t.workspace_id=? AND t.purpose='decision'
+             AND t.state='active' AND b.state='active' AND c.state='active'`,
+        )
+        .all(proposal.scope.workspace_id) as Row[];
+      if (!targets.length) return id;
+
+      const changeId = randomUUID();
+      const title = `需要确认：${
+        proposal.kind === "task" ? proposal.body.title : proposal.kind
+      }`.slice(0, 200);
+      this.db
+        .prepare("INSERT INTO changes VALUES(?,?,?,?,?,?,?)")
+        .run(changeId, "decision", title, null, id, proposal.reason, createdAt);
+      this.db
+        .prepare("INSERT INTO notifications VALUES(?,?,?,?,?,?,?)")
+        .run(
+          randomUUID(),
+          changeId,
+          title,
+          proposal.reason,
+          createdAt,
+          null,
+          `decision:${id}`,
+        );
+      for (const target of targets) {
+        const cardActionId = randomUUID();
+        const nonce = randomBytes(32).toString("base64url");
+        const nonceHash = stableDigest(nonce);
+        const commonValue = {
+          protocol: "omem.decision.v1",
+          cardActionId,
+          nonce,
+          proposalDigest,
+          expiresAt,
+          expectedVersionsDigest,
+        };
+        const button = (
+          action: "approve" | "reject" | "request_context",
+          content: string,
+          type: "primary" | "danger" | "default",
+        ) => ({
+          tag: "button",
+          type,
+          text: { tag: "plain_text", content },
+          behaviors: [{ type: "callback", value: { ...commonValue, action } }],
+        });
+        const card = {
+          schema: "2.0",
+          config: { width_mode: "default", update_multi: true },
+          header: {
+            title: { tag: "plain_text", content: title },
+            template: "orange",
+          },
+          body: {
+            elements: [
+              {
+                tag: "markdown",
+                content: `${proposal.reason.slice(0, 4000)}\n\n**提案摘要**\n\`${JSON.stringify(
+                  proposal.body,
+                ).slice(0, 2000)}\``,
+              },
+              {
+                tag: "column_set",
+                flex_mode: "flow",
+                horizontal_spacing: "8px",
+                columns: [
+                  {
+                    tag: "column",
+                    width: "auto",
+                    elements: [button("approve", "批准", "primary")],
+                  },
+                  {
+                    tag: "column",
+                    width: "auto",
+                    elements: [button("reject", "拒绝", "danger")],
+                  },
+                  {
+                    tag: "column",
+                    width: "auto",
+                    elements: [
+                      button("request_context", "补充背景", "default"),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        };
+        const payloadJson = JSON.stringify(card);
+        if (Buffer.byteLength(payloadJson) > 30_000)
+          throw Error("LARK_CARD_PAYLOAD_TOO_LARGE");
+        this.db
+          .prepare(
+            `INSERT INTO lark_card_actions(
+               id,workspace_id,decision_id,proposal_digest,binding_id,chat_id,
+               operator_open_id,message_id,nonce_hash,expires_at,state,
+               result_json,created_at,consumed_at
+             ) VALUES(?,?,?,?,?,?,?,NULL,?,?,'pending',NULL,?,NULL)`,
+          )
+          .run(
+            cardActionId,
+            proposal.scope.workspace_id,
+            id,
+            proposalDigest,
+            String(target.binding_id),
+            String(target.chat_id),
+            String(target.owner_open_id),
+            nonceHash,
+            expiresAt,
+            createdAt,
+          );
+        this.db
+          .prepare(
+            `INSERT INTO delivery_intents(
+               id,workspace_id,change_id,channel_binding_version,channel,target,
+               payload_digest,provider_uuid,state,created_at,updated_at,
+               binding_id,payload_json,next_attempt_at,card_action_id
+             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          )
+          .run(
+            randomUUID(),
+            proposal.scope.workspace_id,
+            changeId,
+            Number(target.binding_version),
+            "lark",
+            String(target.chat_id),
+            stableDigest(card),
+            stableDigest({
+              decisionId: id,
+              bindingId: target.binding_id,
+            }).slice(0, 50),
+            "pending",
+            createdAt,
+            createdAt,
+            String(target.binding_id),
+            payloadJson,
+            createdAt,
+            cardActionId,
+          );
+      }
+      return id;
+    });
   }
 
   private apply(

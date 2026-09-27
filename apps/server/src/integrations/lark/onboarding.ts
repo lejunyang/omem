@@ -655,10 +655,28 @@ export class LarkOnboardingService {
         )
         .get(String(pairing.connection_id)) as Row | undefined;
       const bindingVersion = Number(previous?.binding_version ?? 0) + 1;
-      if (previous)
+      if (previous) {
         this.db
           .prepare("UPDATE lark_bindings SET state='superseded' WHERE id=?")
           .run(String(previous.id));
+        this.db
+          .prepare(
+            "UPDATE lark_card_actions SET state='cancelled' WHERE binding_id=? AND state='pending'",
+          )
+          .run(String(previous.id));
+        this.db
+          .prepare(
+            `UPDATE delivery_intents SET state='cancelled',updated_at=?,
+               last_error='binding superseded'
+             WHERE binding_id=? AND state IN ('pending','retry_wait')`,
+          )
+          .run(iso(this.clock()), String(previous.id));
+      }
+      this.db
+        .prepare(
+          "UPDATE lark_targets SET state='disabled',updated_at=? WHERE connection_id=? AND state='active'",
+        )
+        .run(iso(this.clock()), String(pairing.connection_id));
       this.db
         .prepare(
           "UPDATE lark_connection_versions SET state='superseded',updated_at=? WHERE connection_id=? AND state='active'",
@@ -694,6 +712,42 @@ export class LarkOnboardingService {
           previous?.id ? String(previous.id) : null,
           iso(this.clock()),
         );
+      for (const purpose of ["owner_notification", "decision"] as const)
+        this.db
+          .prepare(
+            `INSERT INTO lark_targets(
+               id,workspace_id,connection_id,binding_version,chat_id,
+               target_type,purpose,capture_enabled,state,created_at,updated_at
+             ) VALUES(?,?,?,?,?,?,?,0,'active',?,?)`,
+          )
+          .run(
+            randomUUID(),
+            String(pairing.workspace_id),
+            String(pairing.connection_id),
+            bindingVersion,
+            String(pairing.candidate_chat_id),
+            String(pairing.candidate_chat_type),
+            purpose,
+            iso(this.clock()),
+            iso(this.clock()),
+          );
+      if (pairing.candidate_chat_type === "group")
+        this.db
+          .prepare(
+            `INSERT INTO lark_targets(
+               id,workspace_id,connection_id,binding_version,chat_id,
+               target_type,purpose,capture_enabled,state,created_at,updated_at
+             ) VALUES(?,?,?,?,?,'group','group_monitoring',0,'pending_approval',?,?)`,
+          )
+          .run(
+            randomUUID(),
+            String(pairing.workspace_id),
+            String(pairing.connection_id),
+            bindingVersion,
+            String(pairing.candidate_chat_id),
+            iso(this.clock()),
+            iso(this.clock()),
+          );
       this.db
         .prepare(
           `UPDATE lark_connections SET state='active',active_version=?,
