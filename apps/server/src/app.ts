@@ -35,6 +35,9 @@ import {
 import { EncryptedSecretStore } from "./integrations/lark/secret-store.js";
 import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js";
 import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
+import { AssistantRuntime } from "./assistant/runtime.js";
+import { AcpAssistantModel } from "./assistant/acp-model.js";
+import { KeywordRetrieval } from "./retrieval/keyword.js";
 import { QualityRepository, qualityLabelSchema } from "./quality/repository.js";
 const str = z.string().min(1).max(2000);
 export async function buildApp(
@@ -53,6 +56,23 @@ export async function buildApp(
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
   const feedback = new FeedbackService(store);
+  // Production assistant uses the real ACP adapter against a configured profile.
+  // When no ACP profile can actually run (missing CLI / auth / wrong transport)
+  // the adapter raises ModelUnavailableError and the runtime degrades honestly.
+  const assistantProfile =
+    config.profiles.find((p) => p.transport === "acp") ?? null;
+  const assistantModel = new AcpAssistantModel({
+    profile: assistantProfile,
+    workspaceRoot: config.agentCwd,
+  });
+  const assistantRetrieval = new KeywordRetrieval(store.db);
+  const assistant = new AssistantRuntime(store, assistantModel, {
+    ownerId: "owner",
+    memory,
+    feedback,
+    retrieval: assistantRetrieval,
+    turnTimeoutMs: 60_000,
+  });
   const learningConfig = config.learning;
   const learningProfile = learningConfig?.enabled
     ? config.profiles.find((profile) => profile.id === learningConfig.profileId)
@@ -87,6 +107,7 @@ export async function buildApp(
         memory,
         onboarding: lark,
         secrets,
+        assistantModel,
         pollMs: config.lark.pollMs,
       });
     } catch (error) {
@@ -199,6 +220,18 @@ export async function buildApp(
     );
     return { event, batches };
   });
+  app.get<{ Params: { revision: string } }>(
+    "/api/source-profiles/:revision",
+    async (req, reply) => {
+      const profile = store.profiles.latest(req.params.revision);
+      if (!profile)
+        return reply.code(404).send({
+          error: "Source readable, smart profile pending",
+          sourceReadable: true,
+        });
+      return profile;
+    },
+  );
   app.get<{ Params: { id: string } }>(
     "/api/revisions/:id",
     async (req, reply) =>
@@ -487,6 +520,61 @@ export async function buildApp(
     runs.cancel(req.params.id);
     return { ok: true };
   });
+  app.post("/api/assistant/conversations", async (req) => {
+    const body = z
+      .object({
+        chatId: z.string().min(1).max(200),
+        threadId: z.string().max(200).nullish(),
+        // C: web callers cannot assert a Lark channel, group visibility, or choose
+        // the principal. The server owns these; a forged lark_*/group request is a
+        // 400. Lark conversations are opened only by the trusted LarkRuntimeHost.
+        principalId: z.string().max(200).optional(),
+        channel: z.enum(["web", "lark_p2p", "lark_group"]).optional(),
+        visibility: z.enum(["private", "group"]).optional(),
+      })
+      .strict()
+      .parse(req.body);
+    if (body.channel === "lark_p2p" || body.channel === "lark_group")
+      throw Error("WEB_CANNOT_FORGE_LARK_CHANNEL");
+    if (body.visibility === "group")
+      throw Error("WEB_CANNOT_FORGE_GROUP_VISIBILITY");
+    return assistant.conversations.open({
+      principalId: "owner",
+      channel: "web",
+      chatId: body.chatId,
+      threadId: body.threadId ?? null,
+      visibility: "private",
+    });
+  });
+  app.post<{ Params: { id: string } }>(
+    "/api/assistant/conversations/:id/turns",
+    async (req, reply) => {
+      const body = z.object({ text: str }).strict().parse(req.body);
+      const result = await assistant.turn({
+        conversationId: req.params.id,
+        userText: body.text,
+      });
+      if (!result.conversation)
+        return reply.code(404).send({ error: "Conversation not found" });
+      return result;
+    },
+  );
+  app.get<{ Params: { id: string } }>(
+    "/api/assistant/conversations/:id/turns",
+    async (req, reply) =>
+      assistant.conversations.get(req.params.id)
+        ? assistant.conversations.turns(req.params.id)
+        : reply.code(404).send({ error: "Conversation not found" }),
+  );
+  app.post<{ Params: { id: string; turnId: string } }>(
+    "/api/assistant/conversations/:id/turns/:turnId/cancel",
+    async (req, reply) => {
+      const conversation = assistant.conversations.get(req.params.id);
+      if (!conversation) return reply.code(404).send({ error: "Conversation not found" });
+      const ok = assistant.cancelTurn(req.params.turnId);
+      return ok ? { ok: true } : reply.code(404).send({ error: "Turn not found" });
+    },
+  );
   const web = resolve("apps/web/dist");
   if (existsSync(web))
     await app.register(staticFiles, { root: web, prefix: "/" });
@@ -510,6 +598,7 @@ export async function buildApp(
   app.addHook("onClose", async () => {
     clearInterval(tick);
     clearInterval(inputTick);
+    assistant.shutdown();
     await learning?.stop();
     await larkRuntime?.stop();
     await runs.close();
