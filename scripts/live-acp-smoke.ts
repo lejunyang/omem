@@ -1,5 +1,5 @@
 import { loadConfig } from "../apps/server/src/config.js";
-import { acp } from "../apps/server/src/agents.js";
+import { acp, optionValues } from "../apps/server/src/agents.js";
 const config = loadConfig();
 const base = config.profiles.find((p) => p.id === "traex")!;
 const probe = await acp(
@@ -10,18 +10,28 @@ const probe = await acp(
   new AbortController().signal,
 );
 const currentModel = probe.configOptions.find((o) => o.id === "model");
-const currentEffort = probe.configOptions.find(
-  (o) => o.id === "reasoning_effort",
-);
+if (!currentModel || currentModel.type !== "select")
+  throw Error("ACP did not expose selectable models");
+const availableModels = optionValues(currentModel).map((option) => option.value);
+const requestedModel = process.env.OMEM_LIVE_MODEL;
+if (requestedModel && /astra/i.test(requestedModel))
+  throw Error("Astra models are forbidden for ACP verification");
+const model = requestedModel
+  ? availableModels.find((candidate) => candidate === requestedModel)
+  : ["gpt-5.4", "gpt-5.2", ...availableModels].find(
+      (candidate, index, values) =>
+        !/astra/i.test(candidate) &&
+        availableModels.includes(candidate) &&
+        values.indexOf(candidate) === index,
+    );
+if (!model) throw Error("No non-Astra ACP model is available");
 let answer = "";
 const events: string[] = [];
-await acp(
+const live = await acp(
   {
     ...base,
-    model:
-      currentModel?.type === "select" ? currentModel.currentValue : undefined,
-    effort:
-      currentEffort?.type === "select" ? currentEffort.currentValue : undefined,
+    model,
+    effort: process.env.OMEM_LIVE_EFFORT,
   },
   config.agentCwd,
   [
@@ -37,12 +47,17 @@ await acp(
   new AbortController().signal,
 );
 if (!answer.includes("12")) throw Error("Unexpected live ACP answer");
+if (/astra/i.test(String(live.configOptions.find((o) => o.id === "model")?.currentValue)))
+  throw Error("ACP verification unexpectedly used an Astra model");
 console.log(
   JSON.stringify(
     {
       agent: probe.agentInfo,
-      configuredModel: currentModel?.currentValue,
-      configuredEffort: currentEffort?.currentValue,
+      configuredModel: live.configOptions.find((o) => o.id === "model")
+        ?.currentValue,
+      configuredEffort: live.configOptions.find(
+        (o) => o.id === "reasoning_effort",
+      )?.currentValue,
       answer,
       eventTypes: [...new Set(events)],
     },
