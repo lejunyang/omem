@@ -20,10 +20,12 @@ import {
   reviewCode,
   reviewFragmentRelations,
   reviewCodeRelations,
+  getSourceVersions,
   type ReviewHealth,
   type ReviewCategory,
   type ReviewSource,
   type ReviewRevision,
+  type ReviewSourceVersion,
   type ReviewFragmentDetail,
   type ReviewSearchHit,
   type ReviewRelation,
@@ -62,6 +64,14 @@ const error = ref("");
 const toast = ref("");
 let toastTimer: ReturnType<typeof setTimeout>;
 
+/** C2: when false, removed sources are hidden from the browse list. */
+const showRemoved = ref(false);
+/** C1: historical revisions of the revision currently open in the read view. */
+const sourceVersions = ref<ReviewSourceVersion[]>([]);
+/** C1: which version row the dropdown currently points at (equals the loaded
+ * revision id; used to highlight the <option>). */
+const selectedVersionId = ref<string>("");
+
 const CATEGORY_LABELS: Record<string, string> = {
   architecture: "架构与实现",
   progress: "进度追踪",
@@ -98,12 +108,30 @@ function relationLabel(t: string): string {
   return RELATION_LABELS[t] ?? t;
 }
 
-function statusTone(s: string): "success" | "warning" | "neutral" {
-  return s === "confirmed" ? "success" : s === "candidate" ? "warning" : "neutral";
+/** A relation is "stale" when it is confirmed but the other side no longer
+ * points at a current, non-removed head revision. Older backends that do not
+ * project `current`/`removed` onto `other` are treated as current. */
+function isRelationStale(r: ReviewRelation): boolean {
+  if (r.status !== "confirmed") return false;
+  if (!r.other) return false;
+  if (r.other.removed === true) return true;
+  if (r.other.current === false) return true;
+  return false;
 }
 
-function statusLabel(s: string): string {
-  return s === "confirmed" ? "已关联" : s === "candidate" ? "候选" : "缺失";
+function statusTone(r: ReviewRelation): "success" | "warning" | "neutral" | "danger" {
+  if (r.status === "candidate") return "warning";
+  if (r.status === "missing") return "neutral";
+  // confirmed
+  if (isRelationStale(r)) return "neutral";
+  return "success";
+}
+
+function statusLabel(r: ReviewRelation): string {
+  if (r.status === "candidate") return "候选";
+  if (r.status === "missing") return "缺失";
+  // confirmed
+  return isRelationStale(r) ? "已过期" : "已关联";
 }
 
 /** Group a relation list by relation type, in a stable display order. */
@@ -144,14 +172,26 @@ const pageTitle = computed(() => {
   }
 });
 
+/** C2: hide removed sources unless the user explicitly opted in. */
+const visibleSources = computed(() =>
+  showRemoved.value
+    ? sources.value
+    : sources.value.filter((s) => !s.removed),
+);
+
 function say(text: string) {
   clearTimeout(toastTimer);
   toast.value = text;
   toastTimer = setTimeout(() => (toast.value = ""), 5000);
 }
 
-function shortCommit(c: string | null): string {
+function shortCommit(c: string | null | undefined): string {
   return c ? c.slice(0, 8) : "—";
+}
+
+/** Shorten a content hash for the snapshot line. */
+function shortHash(h: string | null | undefined): string {
+  return h ? h.slice(0, 10) : "—";
 }
 
 /** Basename stem + first symbols are the distinctive keywords a decisions/research
@@ -178,7 +218,7 @@ async function loadCategories() {
 async function loadSources(category: string) {
   view.value = "browse";
   activeCategory.value = category;
-  sources.value = await reviewSources(category);
+  sources.value = await reviewSources(category, showRemoved.value);
 }
 
 async function openRevision(revisionId: string, selectFragmentId?: string) {
@@ -188,10 +228,31 @@ async function openRevision(revisionId: string, selectFragmentId?: string) {
     view.value = "read";
     selectedFragmentId.value = selectFragmentId ?? null;
     fragmentDetail.value = null;
+    sourceVersions.value = [];
+    selectedVersionId.value = revisionId;
+    // C1: load the version history for this source so the dropdown can switch
+    // to older snapshots. Failure here must not block reading the current one.
+    if (revision.value?.sourceId) {
+      sourceVersions.value = await getSourceVersions(revision.value.sourceId).catch(
+        () => [],
+      );
+    }
     if (selectFragmentId) await showFragment(selectFragmentId);
   } catch (e) {
     error.value = String(e);
   }
+}
+
+/** C1: switch the read view to a historical revision and reload its fragments. */
+async function switchVersion(revisionId: string) {
+  if (!revisionId || revisionId === selectedVersionId.value) return;
+  await openRevision(revisionId);
+}
+
+/** C2: re-query the source list when the "show removed" checkbox flips. */
+async function onToggleRemoved() {
+  if (view.value !== "browse") return;
+  await loadSources(activeCategory.value);
 }
 
 async function showFragment(fragmentId: string) {
@@ -403,19 +464,24 @@ onMounted(() => void boot());
       <span class="eyebrow">{{ activeCategory || "全部分类" }}</span>
       <h1>{{ CATEGORY_LABELS[activeCategory] || "材料" }}</h1>
       <p class="muted">按分类浏览已导入的代码与文档材料；点击任意条目查看固定版本片段。</p>
+      <label class="removed-toggle">
+        <input type="checkbox" v-model="showRemoved" @change="onToggleRemoved" />
+        显示已删除的源
+      </label>
       <OmEmpty
-        v-if="!sources.length"
+        v-if="!visibleSources.length"
         title="该分类暂无材料"
         description="先到“同步状态”页执行一次同步。"
       />
       <OmPanel
-        v-for="s in sources"
+        v-for="s in visibleSources"
         :key="s.revisionId"
         class="stack source-row"
         @click="openRevision(s.revisionId)"
       >
         <div class="row" style="margin-top: 0">
           <span class="cat-badge" :class="s.category || 'neutral'">{{ s.category ? CATEGORY_LABELS[s.category] : s.category }}</span>
+          <OmBadge v-if="s.removed" tone="danger">已删除</OmBadge>
           <small>v{{ s.version }} · {{ new Date(s.createdAt).toLocaleString("zh-CN") }}</small>
         </div>
         <p class="source-title">{{ s.title }}</p>
@@ -428,16 +494,41 @@ onMounted(() => void boot());
       <template v-if="revision">
         <div class="row">
           <span class="cat-badge" :class="revision.context.category || 'neutral'">{{ revision.context.category ? CATEGORY_LABELS[revision.context.category] : "材料" }}</span>
-          <OmBadge :tone="revision.current ? 'success' : 'warning'"
+          <OmBadge :tone="revision.current ? 'success' : 'neutral'"
             >v{{ revision.version }} · {{ revision.current ? "当前版本" : "历史版本" }}</OmBadge
           >
-          <OmBadge v-if="revision.context.gitRevision">{{ String(revision.context.gitRevision).slice(0, 8) }}</OmBadge>
+          <OmBadge v-if="revision.context.dirty" tone="warning">工作树未提交</OmBadge>
         </div>
         <h1>{{ revision.title }}</h1>
         <p class="muted">
           保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
           {{ revision.fragments.length }} 个固定片段
         </p>
+
+        <!-- C1: real snapshot info from sync (gitCommit / dirty / contentHash / syncedAt) -->
+        <div class="snapshot-row">
+          <small class="path">快照：</small>
+          <small class="path" v-if="revision.context.gitCommit">commit {{ shortCommit(revision.context.gitCommit) }}</small>
+          <small class="path" v-if="revision.context.contentHash">hash {{ shortHash(revision.context.contentHash) }}</small>
+          <small class="path" v-if="revision.context.syncedAt">同步于 {{ new Date(revision.context.syncedAt).toLocaleString("zh-CN") }}</small>
+        </div>
+
+        <!-- C1: historical version switcher -->
+        <div v-if="sourceVersions.length" class="version-row">
+          <label class="version-label">历史版本：</label>
+          <select
+            class="version-select"
+            :value="selectedVersionId"
+            @change="switchVersion(($event.target as HTMLSelectElement).value)"
+          >
+            <option
+              v-for="v in sourceVersions"
+              :key="v.id"
+              :value="v.id"
+            >v{{ v.version }}{{ v.current ? "（当前）" : "" }}</option>
+          </select>
+        </div>
+
         <p v-if="(revision.context.symbols as string[])?.length" class="muted">
           符号：{{ ((revision.context.symbols as string[]) || []).join("、") }}
         </p>
@@ -448,6 +539,9 @@ onMounted(() => void boot());
           class="fragment"
           :class="{ focused: selectedFragmentId === f.id }"
         >
+          <div class="row" style="margin-bottom: 6px">
+            <OmBadge v-if="!revision.current" tone="neutral">历史版本</OmBadge>
+          </div>
           <pre class="frag-text">{{ f.text }}</pre>
           <div class="row">
             <small>片段 {{ f.ordinal + 1 }}</small>
@@ -481,7 +575,7 @@ onMounted(() => void boot());
                 @click="void openRelation(r.other)"
               >
                 <div class="row" style="margin-top: 0">
-                  <OmBadge :tone="statusTone(r.status)">{{ statusLabel(r.status) }}</OmBadge>
+                  <OmBadge :tone="statusTone(r)">{{ statusLabel(r) }}</OmBadge>
                   <small v-if="r.other?.version">v{{ r.other.version }}</small>
                 </div>
                 <template v-if="r.other">
@@ -511,6 +605,7 @@ onMounted(() => void boot());
       >
         <div class="row" style="margin-top: 0">
           <span class="cat-badge" :class="h.category || 'neutral'">{{ h.category ? CATEGORY_LABELS[h.category] : "材料" }}</span>
+          <OmBadge tone="warning">候选</OmBadge>
           <small>{{ h.title }} · v{{ h.version }}</small>
         </div>
         <p class="excerpt">{{ h.snippet || h.text }}</p>
@@ -520,7 +615,7 @@ onMounted(() => void boot());
 
     <!-- trace -->
     <section v-else-if="view === 'trace'" class="page">
-      <span class="eyebrow">代码 → 意图 → 决策 → 依据</span>
+      <span class="eyebrow">代码 → 意图 → 决策 → 调研</span>
       <h1>代码追溯</h1>
       <p class="muted">输入仓库内文件路径，查看该文件的导入材料，并按文件名/符号名匹配相关的设计决策与调研文档。</p>
       <form class="form" @submit.prevent="runTrace">
@@ -555,7 +650,7 @@ onMounted(() => void boot());
                 @click="void openRelation(r.other)"
               >
                 <div class="row" style="margin-top: 0">
-                  <OmBadge :tone="statusTone(r.status)">{{ statusLabel(r.status) }}</OmBadge>
+                  <OmBadge :tone="statusTone(r)">{{ statusLabel(r) }}</OmBadge>
                 </div>
                 <template v-if="r.other">
                   <p class="excerpt">{{ r.other.text || r.other.title }}</p>
@@ -572,7 +667,10 @@ onMounted(() => void boot());
           <p class="muted">关键词：{{ traceKeywords || "—" }}</p>
           <template v-if="traceDecisions.length">
             <OmPanel v-for="h in traceDecisions.slice(0, 5)" :key="h.id" class="stack" @click="openHit(h)">
-              <span class="cat-badge decisions">历史决策 · 依据</span>
+              <div class="row" style="margin-top: 0">
+                <span class="cat-badge decisions">历史决策</span>
+                <OmBadge tone="warning">候选</OmBadge>
+              </div>
               <p class="excerpt">{{ h.snippet || h.text }}</p>
               <small>{{ h.title }}</small>
             </OmPanel>
@@ -580,10 +678,13 @@ onMounted(() => void boot());
           <OmEmpty v-else title="无相关决策记录" description="该文件的设计理由尚未沉淀为决策文档（待补充/推测）。" />
         </OmPanel>
 
-        <OmPanel title="④ 调研依据（关键词候选）" class="stack">
+        <OmPanel title="④ 调研材料（关键词候选）" class="stack">
           <template v-if="traceResearch.length">
             <OmPanel v-for="h in traceResearch.slice(0, 5)" :key="h.id" class="stack" @click="openHit(h)">
-              <span class="cat-badge research">背景调研 · 依据</span>
+              <div class="row" style="margin-top: 0">
+                <span class="cat-badge research">背景调研</span>
+                <OmBadge tone="warning">候选</OmBadge>
+              </div>
               <p class="excerpt">{{ h.snippet || h.text }}</p>
               <small>{{ h.title }}</small>
             </OmPanel>
@@ -721,5 +822,40 @@ h4 {
   margin-top: 6px;
   color: var(--om-muted);
   font-size: 12px;
+}
+.removed-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 16px;
+  font-size: 13px;
+  color: var(--om-secondary);
+  cursor: pointer;
+}
+.snapshot-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0 12px;
+}
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.version-label {
+  font-size: 13px;
+  color: var(--om-secondary);
+  white-space: nowrap;
+}
+.version-select {
+  padding: 4px 8px;
+  border: 1px solid var(--om-line);
+  border-radius: 5px;
+  background: #fff;
+  font-size: 13px;
+  max-width: 320px;
 }
 </style>

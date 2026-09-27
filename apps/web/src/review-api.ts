@@ -29,17 +29,42 @@ export type ReviewSource = {
   createdAt: string;
   category: string | null;
   filePath: string | null;
+  /** True when the source's backing file has been deleted on disk. Older
+   * backends may omit it; the frontend treats absence as not-removed. */
+  removed?: boolean;
+};
+
+/** One row of GET /sources/:id/versions — a historical revision of a source. */
+export type ReviewSourceVersion = {
+  id: string;
+  version: number;
+  current: boolean;
+  createdAt: string;
+  contentHash: string | null;
+  /** Head commit captured when this revision was synced. May be absent on
+   * backends that do not project it onto the versions list. */
+  gitCommit?: string | null;
+  dirty?: boolean;
 };
 
 /** Free-form context carried per revision (category, filePath, gitRevision,
  * symbols, reviewDate ...). The strict personal-workspace context schema does not
- * apply here, so keep it open. */
+ * apply here, so keep it open. Snapshot fields written by the review sync are
+ * typed explicitly so the read view can show them without casts. */
 export type ReviewContext = {
   category?: string;
   filePath?: string;
   gitRevision?: string;
   symbols?: string[];
   reviewDate?: string;
+  /** Real HEAD commit captured at sync time (not mtime). */
+  gitCommit?: string | null;
+  /** True when the working tree had uncommitted/untracked changes at sync time. */
+  dirty?: boolean;
+  /** SHA-256 of the captured file content. */
+  contentHash?: string | null;
+  /** ISO timestamp of the sync that minted this revision. */
+  syncedAt?: string;
   [key: string]: unknown;
 };
 
@@ -102,6 +127,11 @@ export type ReviewRelation = {
     filePath: string | null;
     category: string | null;
     externalId: string | null;
+    /** True when the other side's revision is still its source's head. Absent on
+     * older backends; treated as current when undefined. */
+    current?: boolean;
+    /** True when the other side's source has been deleted on disk. */
+    removed?: boolean;
   } | null;
 };
 
@@ -160,8 +190,22 @@ export async function reviewHealth(): Promise<ReviewHealth> {
 export async function reviewCategories(): Promise<ReviewCategory[]> {
   return get("/categories");
 }
-export async function reviewSources(category?: string): Promise<ReviewSource[]> {
-  return get("/sources" + (category ? "?category=" + encodeURIComponent(category) : ""));
+export async function reviewSources(
+  category?: string,
+  includeRemoved = false,
+): Promise<ReviewSource[]> {
+  let path = "/sources";
+  const params: string[] = [];
+  if (category) params.push("category=" + encodeURIComponent(category));
+  if (includeRemoved) params.push("includeRemoved=true");
+  if (params.length) path += "?" + params.join("&");
+  return get(path);
+}
+/** All historical revisions of one source, newest version first. */
+export async function getSourceVersions(
+  sourceId: string,
+): Promise<ReviewSourceVersion[]> {
+  return get("/sources/" + encodeURIComponent(sourceId) + "/versions");
 }
 export async function reviewRevision(id: string): Promise<ReviewRevision> {
   return get("/revisions/" + encodeURIComponent(id));
