@@ -1,38 +1,14 @@
 import { loadConfig } from "../apps/server/src/config.js";
-import { acp, optionValues } from "../apps/server/src/agents.js";
+import { acp } from "../apps/server/src/agents.js";
+import { assertNonAstra, selectNonAstraProfile } from "./live-model.js";
+
 const config = loadConfig();
-const base = config.profiles.find((p) => p.id === "traex")!;
-const probe = await acp(
-  base,
-  config.agentCwd,
-  null,
-  () => {},
-  new AbortController().signal,
-);
-const currentModel = probe.configOptions.find((o) => o.id === "model");
-if (!currentModel || currentModel.type !== "select")
-  throw Error("ACP did not expose selectable models");
-const availableModels = optionValues(currentModel).map((option) => option.value);
-const requestedModel = process.env.OMEM_LIVE_MODEL;
-if (requestedModel && /astra/i.test(requestedModel))
-  throw Error("Astra models are forbidden for ACP verification");
-const model = requestedModel
-  ? availableModels.find((candidate) => candidate === requestedModel)
-  : ["gpt-5.4", "gpt-5.2", ...availableModels].find(
-      (candidate, index, values) =>
-        !/astra/i.test(candidate) &&
-        availableModels.includes(candidate) &&
-        values.indexOf(candidate) === index,
-    );
-if (!model) throw Error("No non-Astra ACP model is available");
+const base = config.profiles.find((profile) => profile.id === "traex")!;
+const { probe, profile } = await selectNonAstraProfile(base, config.agentCwd);
 let answer = "";
 const events: string[] = [];
 const live = await acp(
-  {
-    ...base,
-    model,
-    effort: process.env.OMEM_LIVE_EFFORT,
-  },
+  profile,
   config.agentCwd,
   [
     {
@@ -47,16 +23,17 @@ const live = await acp(
   new AbortController().signal,
 );
 if (!answer.includes("12")) throw Error("Unexpected live ACP answer");
-if (/astra/i.test(String(live.configOptions.find((o) => o.id === "model")?.currentValue)))
-  throw Error("ACP verification unexpectedly used an Astra model");
+const effectiveModel = live.configOptions.find(
+  (option) => option.id === "model",
+)?.currentValue;
+assertNonAstra(effectiveModel);
 console.log(
   JSON.stringify(
     {
       agent: probe.agentInfo,
-      configuredModel: live.configOptions.find((o) => o.id === "model")
-        ?.currentValue,
+      configuredModel: effectiveModel,
       configuredEffort: live.configOptions.find(
-        (o) => o.id === "reasoning_effort",
+        (option) => option.id === "reasoning_effort",
       )?.currentValue,
       answer,
       eventTypes: [...new Set(events)],

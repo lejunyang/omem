@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 4;
+export const SUPPORTED_SCHEMA_VERSION = 5;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -375,6 +375,82 @@ const roleRuntimeStatements = [
   "CREATE INDEX role_outputs_job_idx ON role_outputs(job_id, attempt)",
 ] as const;
 
+const governedMemoryStatements = [
+  "ALTER TABLE proposals ADD COLUMN policy_result TEXT",
+  "ALTER TABLE proposals ADD COLUMN impact_count INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE decisions ADD COLUMN action TEXT",
+  "ALTER TABLE decisions ADD COLUMN resolved_at TEXT",
+  "ALTER TABLE feedback ADD COLUMN payload_digest TEXT",
+  `CREATE TABLE policy_evaluations(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    proposal_digest TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('auto_apply','awaiting_decision','reject')),
+    reasons TEXT NOT NULL,
+    impact_count INTEGER NOT NULL CHECK(impact_count >= 0),
+    created_at TEXT NOT NULL,
+    UNIQUE(workspace_id, proposal_digest, policy_version)
+  )`,
+  `CREATE TABLE proposal_source_reads(
+    proposal_id TEXT NOT NULL REFERENCES proposals(id),
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    source_revision_id TEXT NOT NULL REFERENCES revisions(id),
+    validity_epoch INTEGER NOT NULL CHECK(validity_epoch >= 1),
+    PRIMARY KEY(proposal_id, source_id, source_revision_id)
+  )`,
+  `CREATE TABLE memory_dependencies(
+    memory_revision_id TEXT NOT NULL REFERENCES memory_revisions(id),
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    source_revision_id TEXT NOT NULL REFERENCES revisions(id),
+    validity_epoch INTEGER NOT NULL CHECK(validity_epoch >= 1),
+    state TEXT NOT NULL CHECK(state IN ('current','stale')),
+    PRIMARY KEY(memory_revision_id, source_revision_id)
+  )`,
+  `CREATE TABLE task_revisions(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    version INTEGER NOT NULL CHECK(version >= 1),
+    title TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    due_at TEXT,
+    due_expression TEXT,
+    owner_id TEXT,
+    next_step TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('open','done')),
+    evidence_set TEXT NOT NULL,
+    correction_feedback_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(task_id, version)
+  )`,
+  `INSERT INTO task_revisions(
+     id,workspace_id,task_id,version,title,detail,due_at,due_expression,
+     owner_id,next_step,status,evidence_set,correction_feedback_id,created_at
+   ) SELECT id || ':v' || version,workspace_id,id,version,title,detail,due_at,
+     due_expression,owner_id,next_step,status,
+     CASE WHEN evidence_id IS NULL THEN '[]' ELSE json_array(evidence_id) END,
+     NULL,created_at FROM tasks`,
+  `CREATE TABLE feedback_constraints(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    project_id TEXT,
+    subject_id TEXT,
+    feedback_id TEXT NOT NULL REFERENCES feedback(id),
+    kind TEXT NOT NULL CHECK(kind IN ('fact_correction','task_assignment','method_scope','weak_signal','policy_suggestion')),
+    match_key TEXT NOT NULL,
+    replacement TEXT,
+    strength TEXT NOT NULL CHECK(strength IN ('confirmed','weak','shadow')),
+    active INTEGER NOT NULL CHECK(active IN (0,1)),
+    created_at TEXT NOT NULL,
+    UNIQUE(workspace_id, feedback_id, match_key)
+  )`,
+  "CREATE INDEX policy_evaluations_outcome_idx ON policy_evaluations(workspace_id, outcome, created_at)",
+  "CREATE INDEX proposal_source_reads_source_idx ON proposal_source_reads(source_id, validity_epoch)",
+  "CREATE INDEX memory_dependencies_source_idx ON memory_dependencies(source_id, state)",
+  "CREATE INDEX feedback_constraints_scope_idx ON feedback_constraints(workspace_id, project_id, subject_id, active)",
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -404,6 +480,12 @@ const migrations: readonly Migration[] = [
     name: "versioned-role-runtime",
     statements: roleRuntimeStatements,
     checksum: checksum(roleRuntimeStatements),
+  },
+  {
+    version: 5,
+    name: "governed-memory-policy",
+    statements: governedMemoryStatements,
+    checksum: checksum(governedMemoryStatements),
   },
 ];
 

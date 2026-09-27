@@ -4,40 +4,16 @@ import { loadConfig } from "../apps/server/src/config.js";
 import { RoleBundleRegistry } from "../apps/server/src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../apps/server/src/agent-runtime/gateway.js";
 import { stableDigest } from "../apps/server/src/storage/digest.js";
-import { acp, optionValues } from "../apps/server/src/agents.js";
 import { contextManifestSchema } from "../packages/contracts/src/index.js";
+import { assertNonAstra, selectNonAstraProfile } from "./live-model.js";
 
 const config = loadConfig();
 const profile = config.profiles.find((candidate) => candidate.id === "traex");
 if (!profile) throw Error("TraeX profile is not configured");
-const probe = await acp(
+const { profile: liveProfile } = await selectNonAstraProfile(
   profile,
   config.agentCwd,
-  null,
-  () => {},
-  new AbortController().signal,
 );
-const modelOption = probe.configOptions.find((option) => option.id === "model");
-if (!modelOption || modelOption.type !== "select")
-  throw Error("ACP did not expose selectable models");
-const availableModels = optionValues(modelOption).map((option) => option.value);
-const requestedModel = process.env.OMEM_LIVE_MODEL;
-if (requestedModel && /astra/i.test(requestedModel))
-  throw Error("Astra models are forbidden for ACP verification");
-const model = requestedModel
-  ? availableModels.find((candidate) => candidate === requestedModel)
-  : ["gpt-5.4", "gpt-5.2", ...availableModels].find(
-      (candidate, index, values) =>
-        !/astra/i.test(candidate) &&
-        availableModels.includes(candidate) &&
-        values.indexOf(candidate) === index,
-    );
-if (!model) throw Error("No non-Astra ACP model is available");
-const liveProfile = {
-  ...profile,
-  model,
-  effort: process.env.OMEM_LIVE_EFFORT,
-};
 const context = contextManifestSchema.parse(
   JSON.parse(
     readFileSync("docs/implementation/batch2/examples/context.json", "utf8"),
@@ -78,11 +54,8 @@ const report = {
     trace: verification.trace,
   },
 };
-if (
-  /astra/i.test(String(extraction.trace.effectiveModel)) ||
-  /astra/i.test(String(verification.trace.effectiveModel))
-)
-  throw Error("Role verification unexpectedly used an Astra model");
+assertNonAstra(extraction.trace.effectiveModel);
+assertNonAstra(verification.trace.effectiveModel);
 const reportPath = resolve(
   process.env.OMEM_LIVE_ROLE_REPORT ||
     ".omem/verification/live-role-smoke.json",

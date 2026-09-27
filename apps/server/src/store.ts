@@ -213,6 +213,36 @@ export class Store {
              updated_at=excluded.updated_at`,
         )
         .run(String(source.id), revisionId, now());
+      if (head) {
+        this.db
+          .prepare(
+            `UPDATE memory_dependencies SET state='stale'
+             WHERE source_id=? AND source_revision_id<>?`,
+          )
+          .run(String(source.id), revisionId);
+        this.db
+          .prepare(
+            `UPDATE memories SET status='invalidated',updated_at=?
+             WHERE head_revision_id IN (
+               SELECT memory_revision_id FROM memory_dependencies
+               WHERE source_id=? AND state='stale'
+             )`,
+          )
+          .run(now(), String(source.id));
+        this.jobs.enqueueInCurrentTransaction({
+          kind: "refresh_dependents",
+          inputRefs: [
+            {
+              sourceId: String(source.id),
+              previousRevisionId: String(head.id),
+              revisionId,
+            },
+          ],
+          roleVersion: "deterministic@1",
+          policyVersion: "memory-policy@1",
+          cause: "source_update",
+        });
+      }
       this.record(
         "capture",
         input.title,
@@ -520,7 +550,10 @@ export class Store {
   tasks() {
     return this.db
       .prepare(
-        "SELECT id,title,detail,due_at AS dueAt,evidence_id AS evidenceId,status,version FROM tasks ORDER BY created_at DESC",
+        `SELECT id,title,detail,due_at AS dueAt,evidence_id AS evidenceId,
+           status,version,workspace_id AS workspaceId,owner_id AS ownerId,
+           due_expression AS dueExpression,next_step AS nextStep
+         FROM tasks ORDER BY created_at DESC`,
       )
       .all();
   }
@@ -544,6 +577,22 @@ export class Store {
           input.detail,
           input.dueAt ? new Date(input.dueAt).toISOString() : null,
           input.evidenceId || null,
+          now(),
+        );
+      this.db
+        .prepare(
+          `INSERT INTO task_revisions(
+             id,workspace_id,task_id,version,title,detail,due_at,due_expression,
+             owner_id,next_step,status,evidence_set,correction_feedback_id,created_at
+           ) VALUES(?,'personal',?,1,?,?,?,NULL,NULL,'','open',?,NULL,?)`,
+        )
+        .run(
+          id(),
+          taskId,
+          input.title,
+          input.detail,
+          input.dueAt ? new Date(input.dueAt).toISOString() : null,
+          JSON.stringify(input.evidenceId ? [input.evidenceId] : []),
           now(),
         );
       this.record(
@@ -575,6 +624,28 @@ export class Store {
         )
         .run(status, taskId, expectedVersion);
       if (Number(updated.changes) !== 1) throw Error("STALE_TASK_VERSION");
+      this.db
+        .prepare(
+          `INSERT INTO task_revisions(
+             id,workspace_id,task_id,version,title,detail,due_at,due_expression,
+             owner_id,next_step,status,evidence_set,correction_feedback_id,created_at
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)`,
+        )
+        .run(
+          id(),
+          String(old.workspace_id),
+          taskId,
+          expectedVersion + 1,
+          String(old.title),
+          String(old.detail),
+          old.due_at ? String(old.due_at) : null,
+          old.due_expression ? String(old.due_expression) : null,
+          old.owner_id ? String(old.owner_id) : null,
+          String(old.next_step),
+          status,
+          JSON.stringify(old.evidence_id ? [String(old.evidence_id)] : []),
+          now(),
+        );
       this.record(
         "task",
         `${status === "done" ? "完成" : "重新打开"}待办：${old.title}`,

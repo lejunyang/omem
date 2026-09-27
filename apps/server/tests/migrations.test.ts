@@ -161,7 +161,7 @@ describe("B2-01 migration acceptance", () => {
 
     const store = new Store(directory);
     try {
-      expect(scalar(store.db, "PRAGMA user_version")).toBe(4);
+      expect(scalar(store.db, "PRAGMA user_version")).toBe(5);
       const revision = store.revision(legacyFixture.oldRevisionId);
       expect(revision).toMatchObject({
         id: legacyFixture.oldRevisionId,
@@ -278,8 +278,8 @@ describe("B2-01 migration acceptance", () => {
     interrupted.close();
 
     const first = new Store(directory);
-    expect(scalar(first.db, "PRAGMA user_version")).toBe(4);
-    expect(scalar(first.db, "SELECT count(*) FROM migrations")).toBe(4);
+    expect(scalar(first.db, "PRAGMA user_version")).toBe(5);
+    expect(scalar(first.db, "SELECT count(*) FROM migrations")).toBe(5);
     const schemaCount = scalar(
       first.db,
       "SELECT count(*) FROM sqlite_master WHERE type IN ('table','index')",
@@ -288,8 +288,8 @@ describe("B2-01 migration acceptance", () => {
 
     const second = new Store(directory);
     try {
-      expect(scalar(second.db, "PRAGMA user_version")).toBe(4);
-      expect(scalar(second.db, "SELECT count(*) FROM migrations")).toBe(4);
+      expect(scalar(second.db, "PRAGMA user_version")).toBe(5);
+      expect(scalar(second.db, "SELECT count(*) FROM migrations")).toBe(5);
       expect(
         scalar(
           second.db,
@@ -316,9 +316,9 @@ describe("B2-01 migration acceptance", () => {
     v2Interrupted.close();
     const upgradedFromV2 = new Store(v2Directory);
     try {
-      expect(scalar(upgradedFromV2.db, "PRAGMA user_version")).toBe(4);
+      expect(scalar(upgradedFromV2.db, "PRAGMA user_version")).toBe(5);
       expect(scalar(upgradedFromV2.db, "SELECT count(*) FROM migrations")).toBe(
-        4,
+        5,
       );
       expect(
         upgradedFromV2.db
@@ -346,9 +346,9 @@ describe("B2-01 migration acceptance", () => {
     v3Interrupted.close();
     const upgradedFromV3 = new Store(v3Directory);
     try {
-      expect(scalar(upgradedFromV3.db, "PRAGMA user_version")).toBe(4);
+      expect(scalar(upgradedFromV3.db, "PRAGMA user_version")).toBe(5);
       expect(scalar(upgradedFromV3.db, "SELECT count(*) FROM migrations")).toBe(
-        4,
+        5,
       );
       expect(
         upgradedFromV3.db
@@ -359,6 +359,37 @@ describe("B2-01 migration acceptance", () => {
       ).toBeDefined();
     } finally {
       upgradedFromV3.close();
+    }
+
+    const v4Directory = makeDirectory();
+    createLegacyDatabase(v4Directory);
+    const v4File = join(v4Directory, "omem.sqlite");
+    const v4Interrupted = new DatabaseSync(v4File);
+    expect(() =>
+      migrateDatabase(v4Interrupted, {
+        beforeCommit(version) {
+          if (version === 5) throw Error("stop at deployable v4");
+        },
+      }),
+    ).toThrow("stop at deployable v4");
+    expect(scalar(v4Interrupted, "PRAGMA user_version")).toBe(4);
+    expect(scalar(v4Interrupted, "SELECT count(*) FROM migrations")).toBe(4);
+    v4Interrupted.close();
+    const upgradedFromV4 = new Store(v4Directory);
+    try {
+      expect(scalar(upgradedFromV4.db, "PRAGMA user_version")).toBe(5);
+      expect(scalar(upgradedFromV4.db, "SELECT count(*) FROM migrations")).toBe(
+        5,
+      );
+      expect(
+        upgradedFromV4.db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='policy_evaluations'",
+          )
+          .get(),
+      ).toBeDefined();
+    } finally {
+      upgradedFromV4.close();
     }
   });
 
@@ -452,6 +483,7 @@ describe("B2-01 migration acceptance", () => {
         "injected outbox failure",
       );
       expect(scalar(store.db, "SELECT count(*) FROM tasks")).toBe(0);
+      expect(scalar(store.db, "SELECT count(*) FROM task_revisions")).toBe(0);
       expect(
         scalar(store.db, "SELECT count(*) FROM application_receipts"),
       ).toBe(0);
@@ -474,6 +506,7 @@ describe("B2-01 migration acceptance", () => {
         duplicate: true,
       });
       expect(scalar(store.db, "SELECT count(*) FROM tasks")).toBe(1);
+      expect(scalar(store.db, "SELECT count(*) FROM task_revisions")).toBe(1);
       expect(
         scalar(store.db, "SELECT count(*) FROM application_receipts"),
       ).toBe(1);

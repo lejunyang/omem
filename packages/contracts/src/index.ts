@@ -456,6 +456,72 @@ export const runtimeRequestDecisionSchema = z
   .object({ action: z.enum(["approve", "reject"]) })
   .strict();
 
+export const proposalAssessmentInputSchema = z
+  .object({
+    quote_asset_verdict: z.enum(["valid", "invalid", "ambiguous"]).optional(),
+    semantic_verdict: z.enum([
+      "supported",
+      "contradicted",
+      "insufficient",
+      "needs_scope",
+    ]),
+    reviewer_version: z.string().min(1).max(300),
+    role_version: z.string().min(1).max(300),
+    reason_code: z.string().min(1).max(300),
+    details: z.string().min(1).max(4000),
+  })
+  .strict();
+
+export const decisionActionSchema = z
+  .object({
+    action: z.enum(["approve", "reject", "request_context"]),
+    proposalDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    requestId: z.string().min(1).max(500),
+    actorId: z.string().min(1).max(300),
+  })
+  .strict();
+
+export const feedbackInputSchema = z
+  .object({
+    producer: z.string().min(1).max(300),
+    eventId: z.string().min(1).max(500),
+    subjectType: z.enum(["revision", "query", "job", "proposal"]),
+    subjectId: z.string().min(1).max(500),
+    actor: z
+      .object({
+        id: z.string().min(1).max(300),
+        verifiedBy: z.string().min(1).max(300).nullable(),
+      })
+      .strict(),
+    scope: batchTwoScopeSchema,
+    kind: z.enum([
+      "fact_correction",
+      "task_assignment",
+      "method_scope",
+      "useful",
+      "outcome",
+      "policy_suggestion",
+    ]),
+    matchKey: z.string().min(1).max(500),
+    replacement: z.string().max(2000).nullable(),
+    evidence: z.array(z.string().min(1).max(500)).max(100),
+    producerKind: z.enum(["original", "derived"]),
+  })
+  .strict()
+  .superRefine((feedback, context) => {
+    if (
+      ["fact_correction", "task_assignment", "method_scope"].includes(
+        feedback.kind,
+      ) &&
+      !feedback.replacement?.trim()
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["replacement"],
+        message: "a correction requires a replacement",
+      });
+  });
+
 export type JobState = z.infer<typeof jobStateSchema>;
 export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 

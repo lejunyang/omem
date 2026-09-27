@@ -59,6 +59,8 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 `GET /api/jobs` 与 `GET /api/jobs/:id` 可查看公开状态和 attempt 指纹；取消、重试分别使用 `POST /api/jobs/:id/cancel|retry`，请求必须带 `expectedGeneration` 和幂等 `requestId`。已成功应用的 job 不能靠取消抹掉效果，只返回需要补偿恢复。角色 job handler 已能持久化验证后的结构化输出和完整公开 trace；B2-04 的提炼/验证/策略编排尚未自动启动这些 handler。
 
+`POST /api/proposals/evaluate` 接受严格 Proposal 与可信 verifier assessment，服务端再执行固定引文/图片、source head/epoch、owner/转发、冲突、影响范围和 CAS 门；安全的小范围 task/claim/episode 可原子写入 change、通知、delivery intent 和 receipt，其余进入可审计 decision 或拒绝。`POST /api/decisions/:id` 会在批准时重新检查来源版本。反馈通过 `POST /api/feedback` 去重，只有已验证、原始、同 scope 且有现存证据的纠正进入后续召回；ACL/预算/自动审批建议只记 shadow。当前自动 worker 编排尚未启动，HTTP evaluate 应只接内部 verifier 结果。
+
 通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。飞书消息投递通道还未接入。
 
 详细运行环境、Docker/osdk 实测结果与后续引擎依赖见 [环境说明](docs/implementation/environment.md)。
@@ -79,6 +81,8 @@ osdk run browser
 osdk run live-acp
 # 真实 extractor + verifier（会额外使用两次模型调用）
 osdk run live-role
+# 真实 extractor → verifier → 本地策略/原子应用（隔离临时库）
+osdk run live-learning
 ```
 
 本仓库不提交真实会话、原件、token、模型权重和运行数据库。`docs/prototype` 保留此前经确认的离线视觉原型，它的演示数据和 React 构建不参与新 Vue 产品运行。
