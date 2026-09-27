@@ -7,12 +7,27 @@ import {
   ndJsonStream,
   type SessionConfigOption,
   type ContentBlock,
+  type McpServer,
 } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../../../packages/contracts/src/index.js";
 export type Emit = (
   type: "status" | "text" | "permission",
   text: string,
 ) => void;
+export type RuntimeRequestEvent = {
+  kind: "permission" | "elicitation";
+  sessionId: string;
+  turnId: string | null;
+  providerRequestId: string;
+  options: unknown;
+};
+export type AcpOptions = {
+  mcpServers?: McpServer[];
+  expectedSkills?: string[];
+  skillDiscoveryTimeoutMs?: number;
+  maxOutputChars?: number;
+  onRuntimeRequest?: (request: RuntimeRequestEvent) => void | Promise<void>;
+};
 const env = () =>
   Object.fromEntries(
     Object.entries(process.env).filter(
@@ -61,9 +76,11 @@ export async function acp(
   blocks: ContentBlock[] | null,
   emit: Emit,
   signal: AbortSignal,
+  options: AcpOptions = {},
 ) {
   const child = launch(profile, profile.args, cwd);
   let failure = "";
+  let terminalFailure: Error | undefined;
   child.stderr.on("data", (data) => {
     failure = (failure + data.toString()).slice(-4000);
   });
@@ -82,14 +99,23 @@ export async function acp(
   // Attaching immediately prevents an unhandled rejection on a spawn failure.
   void exited.catch(() => {});
   const timeout = setTimeout(() => {
-    rejectExit(new Error("Agent timed out"));
+    terminalFailure = new Error("Agent timed out");
+    rejectExit(terminalFailure);
     stop(child);
   }, profile.timeoutMs);
   let connection: ClientSideConnection | undefined;
   let sessionId: string | undefined;
+  let availableCommands: string[] = [];
+  let usage: Record<string, unknown> = {};
+  let outputChars = 0;
+  let resolveDiscovery = () => {};
+  const discovery = new Promise<void>((resolve) => {
+    resolveDiscovery = resolve;
+  });
   const cancel = () => {
     void connection?.cancel({ sessionId: sessionId || "" }).catch(() => {});
-    rejectExit(new Error("CANCELLED"));
+    terminalFailure = new Error("CANCELLED");
+    rejectExit(terminalFailure);
     stop(child);
   };
   signal.addEventListener("abort", cancel, { once: true });
@@ -122,20 +148,77 @@ export async function acp(
     connection = new ClientSideConnection(
       () => ({
         requestPermission: async (request) => {
+          await options.onRuntimeRequest?.({
+            kind: "permission",
+            sessionId: sessionId || request.sessionId,
+            turnId: request.toolCall.toolCallId,
+            providerRequestId: request.toolCall.toolCallId,
+            options: request.options,
+          });
           emit(
             "permission",
             `Agent 请求额外操作权限：${request.toolCall.title || "未命名操作"}。当前只读问答不会自动执行。`,
           );
           return { outcome: { outcome: "cancelled" } };
         },
+        createElicitation: async (request) => {
+          const scope = request as unknown as {
+            sessionId?: unknown;
+            requestId?: unknown;
+            toolCallId?: unknown;
+          };
+          const providerRequestId = String(
+            scope.toolCallId ?? scope.requestId ?? "elicitation",
+          );
+          await options.onRuntimeRequest?.({
+            kind: "elicitation",
+            sessionId: String(scope.sessionId ?? sessionId ?? ""),
+            turnId: scope.toolCallId ? String(scope.toolCallId) : null,
+            providerRequestId,
+            options: request,
+          });
+          emit(
+            "permission",
+            "Agent 请求补充输入；当前后台任务不会等待并已拒绝。",
+          );
+          return { action: "decline" };
+        },
         sessionUpdate: async ({ update }) => {
           if (
             update.sessionUpdate === "agent_message_chunk" &&
             update.content.type === "text"
-          )
+          ) {
+            outputChars += update.content.text.length;
+            if (outputChars > (options.maxOutputChars ?? 250_000)) {
+                terminalFailure = new Error("Agent output limit exceeded");
+                rejectExit(terminalFailure);
+              stop(child);
+              return;
+            }
             emit("text", update.content.text);
-          else if (update.sessionUpdate === "tool_call")
+          } else if (update.sessionUpdate === "tool_call")
             emit("status", `工具状态：${update.title}`);
+          else if (update.sessionUpdate === "available_commands_update") {
+            availableCommands = update.availableCommands.map(
+              (command) => command.name,
+            );
+            const normalized = new Set(
+              availableCommands.map((name) =>
+                name.replace(/^\//, "").replace(/^skill:/, ""),
+              ),
+            );
+            if (
+              (options.expectedSkills ?? []).every((name) =>
+                normalized.has(name),
+              )
+            )
+              resolveDiscovery();
+          } else if (update.sessionUpdate === "usage_update")
+            usage = {
+              used: update.used,
+              size: update.size,
+              cost: update.cost ?? null,
+            };
         },
       }),
       stream,
@@ -156,7 +239,7 @@ export async function acp(
     const session = await Promise.race([
       connection.newSession({
         cwd,
-        mcpServers: [],
+        mcpServers: options.mcpServers ?? [],
         _meta: {
           trae: { options: { skills: profile.skills, mcpServers: [] } },
         },
@@ -164,6 +247,24 @@ export async function acp(
       exited,
     ]);
     sessionId = session.sessionId;
+    if (options.expectedSkills?.length) {
+      const normalized = new Set(
+        availableCommands.map((name) =>
+          name.replace(/^\//, "").replace(/^skill:/, ""),
+        ),
+      );
+      if (!options.expectedSkills.every((name) => normalized.has(name)))
+        await Promise.race([
+          discovery,
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(Error("NATIVE_SKILL_DISCOVERY_FAILED")),
+              options.skillDiscoveryTimeoutMs ?? 1000,
+            ),
+          ),
+          exited,
+        ]);
+    }
     let configOptions = session.configOptions || [];
     for (const [key, value] of [
       ["model", profile.model],
@@ -212,7 +313,13 @@ export async function acp(
       agentInfo: initialized.agentInfo,
       capabilities: initialized.agentCapabilities,
       configOptions,
+      sessionId,
+      availableCommands,
+      usage,
     };
+  } catch (error) {
+    if (terminalFailure) throw terminalFailure;
+    throw error;
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener("abort", cancel);

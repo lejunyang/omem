@@ -22,6 +22,7 @@ import { ApplicationRepository } from "./storage/repository.js";
 import { stableDigest } from "./storage/digest.js";
 import { JobRepository } from "./jobs/repository.js";
 import { InputAggregator } from "./inputs/aggregator.js";
+import { RuntimeRequestRepository } from "./agent-runtime/requests.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -32,6 +33,7 @@ export class Store {
   readonly applications: ApplicationRepository;
   readonly jobs: JobRepository;
   readonly inputs: InputAggregator;
+  readonly runtimeRequests: RuntimeRequestRepository;
   constructor(readonly dataDir: string) {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const file = join(dataDir, "omem.sqlite");
@@ -43,6 +45,7 @@ export class Store {
       this.applications = new ApplicationRepository(this.db);
       this.jobs = new JobRepository(this.db);
       this.inputs = new InputAggregator(this.db);
+      this.runtimeRequests = new RuntimeRequestRepository(this.db);
     } catch (error) {
       this.db.close();
       throw error;

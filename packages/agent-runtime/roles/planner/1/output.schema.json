@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omem.invalid/contracts/PlanProposal.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "task_id",
+    "expected_version",
+    "steps",
+    "uncertainties",
+    "origin"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "proposal_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "expected_version": { "type": "integer", "minimum": 1 },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "evidence_refs",
+          "expected_output",
+          "verification",
+          "needs_owner_decision",
+          "stop_condition"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "gather_context",
+              "draft_document",
+              "break_down_task",
+              "suggest_reminder",
+              "request_decision"
+            ]
+          },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "expected_output": { "type": "string" },
+          "verification": { "type": "string" },
+          "needs_owner_decision": { "type": "boolean" },
+          "stop_condition": { "type": "string" }
+        }
+      }
+    },
+    "uncertainties": { "type": "array", "items": { "type": "string" } },
+    "origin": { "type": "object" }
+  }
+}

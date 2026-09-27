@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omem.invalid/contracts/CorrectionProposal.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "correction_id",
+    "target",
+    "scope",
+    "stop_using",
+    "replacement",
+    "evidence",
+    "reason",
+    "origin"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "correction_id": { "type": "string" },
+    "target": { "type": "object" },
+    "scope": { "type": "object" },
+    "stop_using": { "type": "string" },
+    "replacement": { "type": "string" },
+    "evidence": { "type": "array", "minItems": 1 },
+    "reason": { "type": "string" },
+    "origin": { "type": "object" }
+  }
+}

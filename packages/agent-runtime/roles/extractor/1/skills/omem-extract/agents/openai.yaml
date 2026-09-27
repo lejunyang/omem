@@ -1,0 +1,4 @@
+interface:
+  display_name: "omem Extract"
+  short_description: "Extract scoped memory candidates from fixed evidence"
+  default_prompt: "Use $omem-extract to extract evidence-bound memory proposals."

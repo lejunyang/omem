@@ -52,6 +52,12 @@ export type JobAttempt = {
   outcome: string | null;
   startedAt: string;
   endedAt: string | null;
+  roleBundleHash: string | null;
+  contextHash: string | null;
+  outputSchema: string | null;
+  sessionId: string | null;
+  loadedSkills: unknown[];
+  allowedTools: string[];
 };
 
 export type JobLease = JobRecord & {
@@ -139,6 +145,16 @@ function attemptFromRow(row: Row): JobAttempt {
     outcome: row.outcome ? String(row.outcome) : null,
     startedAt: String(row.started_at),
     endedAt: row.ended_at ? String(row.ended_at) : null,
+    roleBundleHash: row.role_bundle_hash ? String(row.role_bundle_hash) : null,
+    contextHash: row.context_hash ? String(row.context_hash) : null,
+    outputSchema: row.output_schema ? String(row.output_schema) : null,
+    sessionId: row.session_id ? String(row.session_id) : null,
+    loadedSkills: row.loaded_skills
+      ? (JSON.parse(String(row.loaded_skills)) as unknown[])
+      : [],
+    allowedTools: row.allowed_tools
+      ? (JSON.parse(String(row.allowed_tools)) as string[])
+      : [],
   };
 }
 
@@ -370,6 +386,119 @@ export class JobRepository {
       .run(expires, iso(now), jobId, leaseToken);
     if (Number(changed.changes) !== 1) throw Error("STALE_JOB_LEASE");
     return expires;
+  }
+
+  recordRuntimeTrace(input: {
+    jobId: string;
+    leaseToken: string;
+    model: string | null;
+    effort: string | null;
+    promptHash: string;
+    skillHash: string;
+    toolHash: string;
+    fingerprint: string;
+    roleBundleHash: string;
+    contextHash: string;
+    outputSchema: string;
+    sessionId: string;
+    loadedSkills: unknown[];
+    allowedTools: string[];
+    usage?: Record<string, unknown>;
+  }) {
+    const row = this.db
+      .prepare("SELECT attempt FROM jobs WHERE id=? AND lease_token=?")
+      .get(input.jobId, input.leaseToken) as { attempt: number } | undefined;
+    if (!row) throw Error("STALE_JOB_LEASE");
+    const changed = this.db
+      .prepare(
+        `UPDATE job_attempts SET model=?,effort=?,prompt_hash=?,skill_hash=?,
+           tool_hash=?,fingerprint=?,role_bundle_hash=?,context_hash=?,
+           output_schema=?,session_id=?,loaded_skills=?,allowed_tools=?,usage=?
+         WHERE job_id=? AND attempt=? AND ended_at IS NULL`,
+      )
+      .run(
+        input.model,
+        input.effort,
+        input.promptHash,
+        input.skillHash,
+        input.toolHash,
+        input.fingerprint,
+        input.roleBundleHash,
+        input.contextHash,
+        input.outputSchema,
+        input.sessionId,
+        JSON.stringify(input.loadedSkills),
+        JSON.stringify(input.allowedTools),
+        JSON.stringify(input.usage ?? {}),
+        input.jobId,
+        row.attempt,
+      );
+    if (Number(changed.changes) !== 1) throw Error("JOB_ATTEMPT_NOT_ACTIVE");
+  }
+
+  saveRoleOutput(input: {
+    jobId: string;
+    leaseToken: string;
+    model: string | null;
+    effort: string | null;
+    promptHash: string;
+    skillHash: string;
+    toolHash: string;
+    fingerprint: string;
+    roleBundleHash: string;
+    contextHash: string;
+    outputSchema: string;
+    sessionId: string;
+    loadedSkills: unknown[];
+    allowedTools: string[];
+    usage?: Record<string, unknown>;
+    output: unknown;
+    trace: unknown;
+    now?: Date;
+  }) {
+    return this.transaction(() => {
+      const job = this.db
+        .prepare(
+          "SELECT workspace_id,attempt FROM jobs WHERE id=? AND lease_token=? AND state='running'",
+        )
+        .get(input.jobId, input.leaseToken) as
+        | { workspace_id: string; attempt: number }
+        | undefined;
+      if (!job) throw Error("STALE_JOB_LEASE");
+      this.recordRuntimeTrace(input);
+      const outputDigest = stableDigest(input.output);
+      const id = randomUUID();
+      this.db
+        .prepare(
+          `INSERT INTO role_outputs(
+             id,workspace_id,job_id,attempt,output_schema,output_digest,
+             output_json,trace_json,created_at
+           ) VALUES(?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          id,
+          job.workspace_id,
+          input.jobId,
+          job.attempt,
+          input.outputSchema,
+          outputDigest,
+          JSON.stringify(input.output),
+          JSON.stringify(input.trace),
+          iso(input.now ?? new Date()),
+        );
+      return { id, outputDigest, attempt: job.attempt };
+    });
+  }
+
+  roleOutputs(jobId: string) {
+    return this.db
+      .prepare(
+        `SELECT id,job_id AS jobId,attempt,output_schema AS outputSchema,
+           output_digest AS outputDigest,output_json AS outputJson,
+           trace_json AS traceJson,created_at AS createdAt
+         FROM role_outputs WHERE job_id=? ORDER BY attempt`,
+      )
+      .all(jobId);
   }
 
   succeed(input: {
