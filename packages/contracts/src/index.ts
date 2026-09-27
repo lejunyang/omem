@@ -522,6 +522,88 @@ export const feedbackInputSchema = z
       });
   });
 
+export const larkRequestedConfigSchema = z
+  .object({
+    source: z.string().min(1).max(100).default("omem"),
+    appPreset: z
+      .object({
+        name: z.string().min(1).max(100),
+        desc: z.string().min(1).max(500),
+        avatar: z.union([z.url(), z.array(z.url()).min(1).max(6)]).optional(),
+      })
+      .strict(),
+    addons: z
+      .object({
+        preset: z.boolean(),
+        scopes: z
+          .object({
+            tenant: z.array(z.string().min(1).max(200)).max(100).default([]),
+            user: z.array(z.string().min(1).max(200)).max(100).default([]),
+          })
+          .strict(),
+        events: z
+          .object({
+            items: z
+              .object({
+                tenant: z
+                  .array(z.string().min(1).max(200))
+                  .max(100)
+                  .default([]),
+                user: z.array(z.string().min(1).max(200)).max(100).default([]),
+              })
+              .strict(),
+          })
+          .strict(),
+        callbacks: z
+          .object({ items: z.array(z.string().min(1).max(200)).max(100) })
+          .strict(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const larkOnboardingStartSchema = z
+  .object({
+    mode: z.enum(["new", "existing"]),
+    appId: z
+      .string()
+      .regex(/^cli_[a-zA-Z0-9]+$/)
+      .optional(),
+    config: larkRequestedConfigSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.mode === "new" && input.appId)
+      context.addIssue({
+        code: "custom",
+        path: ["appId"],
+        message: "new app onboarding cannot provide appId",
+      });
+    if (input.mode === "existing" && !input.appId)
+      context.addIssue({
+        code: "custom",
+        path: ["appId"],
+        message: "existing app onboarding requires appId",
+      });
+  });
+
+export const larkPairingEventSchema = z
+  .object({
+    appId: z.string().regex(/^cli_[a-zA-Z0-9]+$/),
+    code: z.string().min(20).max(200),
+    senderOpenId: z.string().regex(/^ou_[a-zA-Z0-9]+$/),
+    chatId: z.string().min(1).max(300),
+    chatType: z.enum(["p2p", "group"]),
+  })
+  .strict();
+
+export const larkPairingConfirmSchema = z
+  .object({
+    pairingId: z.string().uuid(),
+    expectedOpenId: z.string().regex(/^ou_[a-zA-Z0-9]+$/),
+  })
+  .strict();
+
 export type JobState = z.infer<typeof jobStateSchema>;
 export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 

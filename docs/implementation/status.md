@@ -18,7 +18,7 @@
 ## 实际验证
 
 - `osdk run check`：TypeScript、Vue 类型检查、服务端测试、生产构建。
-- **59 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 有 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收和 1 项 HTTP job 控制回归；B2-03 有 A-R01～08 共 8 项角色运行验收；B2-04 有 A-K01～10、A-F01～03 共 13 项策略/反馈验收和 1 项 HTTP 应用回归。
+- **66 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 有 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收和 1 项 HTTP job 控制回归；B2-03 有 A-R01～08 共 8 项角色运行验收；B2-04 有 A-K01～10、A-F01～03 共 13 项策略/反馈验收和 1 项 HTTP 应用回归；B2-05 有 A-L01～07 共 7 项注册/绑定/密钥验收。
 - 浏览器用真实 Fastify/SQLite 和协议 fixture：材料录入、递归引用/环、问答保存、旧版本读取、事项/通知、桌面与 390px 手机，以及真实 SQLite 中的 100 个固定片段连续下钻（7 组浏览器检查）。fixture 只在测试配置使用，产品没有模拟回答 fallback。
 - **真实 TraeX ACP**：首批曾用当时默认模型完成一次问答；当前验证通过 `OMEM_LIVE_MODEL=gpt-5.4` 显式选用 `gpt-5.4 / medium`。模型能力仍来自实时探测，产品与脚本不禁用 Astra，也不把任一模型写成产品默认限定列表。
 - **真实 lark-cli**：使用用户提供的 ACP Wiki 文档验证读取与 CaptureEnvelope 归一化（revision 15，12,245 字符，text+link），报告不保存正文。
@@ -58,4 +58,6 @@ B2-03 已实现：extractor/verifier/planner/feedback-curator v1 role bundles、
 
 B2-04 已实现：Proposal/assessment 持久化、Unicode exact quote 与图片对象核验、source head/epoch 读取集、owner/转发/歧义/冲突/影响范围策略、自动 task/claim/episode 原子应用、decision 再校验、不可变 task/memory revision、来源更新依赖失效、CAS 恢复，以及同 scope 反馈约束。A-K01～10 与 A-F01～03 均使用真实 SQLite 状态和故障/竞态条件断言；语义 verdict 为确定性测试输入，不冒充真实模型评测。另通过 `OMEM_LIVE_MODEL=gpt-5.4` 在隔离临时库完成一次真实 capture → extractor → fresh verifier → deterministic policy → task/change/notification/delivery intent/receipt 闭环，报告保存在 `.omem/verification/live-learning-smoke.json`。40/120 质量集尚未运行。
 
-B2-05～B2-08 尚未实现。当前服务没有自动启动 capture→extractor→verifier worker 编排，也没有飞书扫码/绑定、真实外部投递或决策 UI。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入，现有 Batch 2 角色全部强制 fresh session、默认无工具。
+B2-05 已实现：官方 Node SDK `registerApp()` adapter、新建/已有应用状态机、二维码和取消/拒绝/过期处理、AES-256-GCM owner-only secret store、真实 capability probe 接口、128-bit 以上一次性 pairing、同 app/actor 绑定、connection/binding 版本切换。A-L01～07 使用注入的 SDK transport 与 capability probe 做确定性测试；没有执行真实扫码或创建飞书应用，不能标为 live pass。主进程在没有 secret key 和真实 probe 时不启用该入口。
+
+B2-06～B2-08 尚未实现。当前服务没有自动启动 capture→extractor→verifier worker 编排，也没有 WebSocket 收件、真实外部投递/卡片回调或新 Vue 决策 UI。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入，现有 Batch 2 角色全部强制 fresh session、默认无工具。
