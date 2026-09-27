@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 10;
+export const SUPPORTED_SCHEMA_VERSION = 14;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -731,6 +731,187 @@ const qualityAnnotationStatements = [
   "CREATE INDEX quality_sessions_state_idx ON quality_annotation_sessions(state,updated_at)",
 ] as const;
 
+const assistantConversationStatements = [
+  `CREATE TABLE conversations(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    channel TEXT NOT NULL CHECK(channel IN ('lark_p2p','lark_group','web')),
+    chat_id TEXT NOT NULL,
+    thread_id TEXT,
+    visibility TEXT NOT NULL CHECK(visibility IN ('private','group')),
+    current_goal TEXT,
+    pending_case_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(workspace_id, principal_id, channel, chat_id, thread_id)
+  )`,
+  `CREATE TABLE conversation_turns(
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 1),
+    input_text TEXT NOT NULL,
+    input_message_refs TEXT NOT NULL,
+    selected_evidence TEXT NOT NULL,
+    tool_actions TEXT NOT NULL,
+    result TEXT NOT NULL,
+    reply_outbox_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(conversation_id, ordinal)
+  )`,
+  "CREATE INDEX conversations_principal_idx ON conversations(workspace_id, principal_id, updated_at)",
+  "CREATE INDEX conversation_turns_conv_idx ON conversation_turns(conversation_id, ordinal)",
+] as const;
+
+// V3-03: deterministic, derived navigation profile per source revision. This is NOT a
+// verified fact: it may be re-derived, carries unknowns, and must never block the
+// original evidence from being read when profiling fails.
+const sourceProfileStatements = [
+  `CREATE TABLE source_profiles(
+     source_revision_id TEXT NOT NULL REFERENCES revisions(id),
+     profile_generation INTEGER NOT NULL CHECK(profile_generation >= 1),
+     profiler_version TEXT NOT NULL,
+     carrier_type TEXT NOT NULL,
+     languages TEXT NOT NULL,
+     title_path TEXT NOT NULL,
+     coverage_gaps TEXT NOT NULL,
+     domain_candidates TEXT NOT NULL,
+     topic_candidates TEXT NOT NULL,
+     project_candidates TEXT NOT NULL,
+     discourse_segments TEXT NOT NULL,
+     answerable_topics TEXT NOT NULL,
+     temporal_notes TEXT NOT NULL,
+     explicit_links TEXT NOT NULL,
+     derived INTEGER NOT NULL CHECK(derived IN (0,1)),
+     evidence_refs TEXT NOT NULL,
+     status TEXT NOT NULL CHECK(status IN ('ok','partial','failed')),
+     error TEXT,
+     created_at TEXT NOT NULL,
+     PRIMARY KEY(source_revision_id, profile_generation)
+   )`,
+  "CREATE INDEX source_profiles_revision_idx ON source_profiles(source_revision_id, profile_generation DESC)",
+] as const;
+
+// V3-05: AttentionGate dispositions + knowledge consolidation records.
+// The deterministic worker must be able to defer / retain / ignore low-value
+// uncertainty instead of turning every unknown into a user-facing decision card,
+// and refresh_dependents must record which memories a source update invalidated
+// instead of returning an empty success.
+const attentionGateStatements = [
+  // policy_evaluations gains the internal governance outcomes (F2). No child FKs
+  // reference this table, so it can be rebuilt in place.
+  `CREATE TABLE policy_evaluations_new(
+     id TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     proposal_digest TEXT NOT NULL,
+     policy_version TEXT NOT NULL,
+     outcome TEXT NOT NULL CHECK(outcome IN ('auto_apply','awaiting_decision','reject','defer_until_use','retain_as_source','ignore_noise')),
+     reasons TEXT NOT NULL,
+     impact_count INTEGER NOT NULL CHECK(impact_count >= 0),
+     created_at TEXT NOT NULL,
+     UNIQUE(workspace_id, proposal_digest, policy_version)
+   )`,
+  `INSERT INTO policy_evaluations_new(id,workspace_id,proposal_digest,policy_version,outcome,reasons,impact_count,created_at)
+   SELECT id,workspace_id,proposal_digest,policy_version,outcome,reasons,impact_count,created_at FROM policy_evaluations`,
+  `DROP TABLE policy_evaluations`,
+  `ALTER TABLE policy_evaluations_new RENAME TO policy_evaluations`,
+  `CREATE INDEX policy_evaluations_outcome_idx ON policy_evaluations(workspace_id, outcome, created_at)`,
+  // proposals gains the internal disposition states. Its only child FK is
+  // proposal_source_reads(proposal_id); rebuild both together in one tx.
+  `CREATE TABLE proposals_new(
+     id TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     schema_version INTEGER NOT NULL,
+     kind TEXT NOT NULL CHECK(kind IN ('task','claim','episode','procedure')),
+     operation TEXT NOT NULL CHECK(operation IN ('create','update','supersede')),
+     target_id TEXT,
+     expected_versions TEXT NOT NULL,
+     body TEXT NOT NULL,
+     scope TEXT NOT NULL,
+     evidence TEXT NOT NULL,
+     uncertainties TEXT NOT NULL,
+     reason TEXT NOT NULL,
+     origin TEXT NOT NULL,
+     digest TEXT NOT NULL,
+     state TEXT NOT NULL CHECK(state IN ('proposed','validating','rejected','awaiting_decision','approved','applied','stale','failed','deferred','retained','ignored','disputed')),
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     policy_result TEXT,
+     impact_count INTEGER NOT NULL DEFAULT 1,
+     UNIQUE(workspace_id, digest)
+   )`,
+  `INSERT INTO proposals_new(id,workspace_id,schema_version,kind,operation,target_id,expected_versions,body,scope,evidence,uncertainties,reason,origin,digest,state,created_at,updated_at,policy_result,impact_count)
+   SELECT id,workspace_id,schema_version,kind,operation,target_id,expected_versions,body,scope,evidence,uncertainties,reason,origin,digest,state,created_at,updated_at,policy_result,impact_count FROM proposals`,
+  `CREATE TABLE proposal_source_reads_new(
+     proposal_id TEXT NOT NULL REFERENCES proposals(id),
+     source_id TEXT NOT NULL REFERENCES sources(id),
+     source_revision_id TEXT NOT NULL REFERENCES revisions(id),
+     validity_epoch INTEGER NOT NULL CHECK(validity_epoch >= 1),
+     PRIMARY KEY(proposal_id, source_id, source_revision_id)
+   )`,
+  `INSERT INTO proposal_source_reads_new(proposal_id,source_id,source_revision_id,validity_epoch)
+   SELECT proposal_id,source_id,source_revision_id,validity_epoch FROM proposal_source_reads`,
+  `DROP TABLE proposal_source_reads`,
+  `DROP TABLE proposals`,
+  `ALTER TABLE proposals_new RENAME TO proposals`,
+  `ALTER TABLE proposal_source_reads_new RENAME TO proposal_source_reads`,
+  `CREATE INDEX proposals_state_idx ON proposals(workspace_id, state, created_at)`,
+  `CREATE INDEX proposal_source_reads_source_idx ON proposal_source_reads(source_id, validity_epoch)`,
+  // F5: two supported claims that contradict each other are kept as competing
+  // source attributions; neither side is auto-applied and neither is hidden.
+  `CREATE TABLE knowledge_disputes(
+     id TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     topic_key TEXT NOT NULL,
+     existing_memory_id TEXT REFERENCES memories(id),
+     proposed_proposal_digest TEXT NOT NULL,
+     existing_statement TEXT NOT NULL,
+     proposed_statement TEXT NOT NULL,
+     existing_source_ids TEXT NOT NULL,
+     proposed_source_ids TEXT NOT NULL,
+     status TEXT NOT NULL CHECK(status IN ('recorded','resolved')),
+     created_at TEXT NOT NULL
+   )`,
+  `CREATE INDEX knowledge_disputes_topic_idx ON knowledge_disputes(workspace_id, topic_key, status)`,
+  // F8: refresh_dependents records the memories a source update invalidated so
+  // the job outcome reflects real work instead of an empty success.
+  `CREATE TABLE refresh_records(
+     id TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     source_id TEXT NOT NULL,
+     previous_revision_id TEXT,
+     new_revision_id TEXT NOT NULL,
+     affected_count INTEGER NOT NULL CHECK(affected_count >= 0),
+     affected_memory_ids TEXT NOT NULL,
+     status TEXT NOT NULL CHECK(status IN ('needs_review','no_effect','not_implemented')),
+     created_at TEXT NOT NULL
+   )`,
+  `CREATE INDEX refresh_records_source_idx ON refresh_records(source_id, created_at)`,
+] as const;
+
+// V3-06 P0 fixes: (1) equivalent/restated claims from independent sources are
+// persisted as a queryable equivalence graph with a shared evidence set, instead
+// of returning a bare string and keeping no relation; (2) decisions gain a real
+// v3 AttentionCase payload (why now, options/effects, attempted resolution, dedupe)
+// instead of a generic JSON card.
+const memoryRelationAttentionStatements = [
+  `CREATE TABLE memory_equivalences(
+     id TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     memory_id_a TEXT NOT NULL REFERENCES memories(id),
+     memory_id_b TEXT NOT NULL REFERENCES memories(id),
+     equivalence_type TEXT NOT NULL CHECK(equivalence_type IN ('duplicate','equivalent')),
+     evidence_refs TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     UNIQUE(workspace_id, memory_id_a, memory_id_b)
+   )`,
+  `CREATE INDEX memory_equivalences_a_idx ON memory_equivalences(workspace_id, memory_id_a)`,
+  `CREATE INDEX memory_equivalences_b_idx ON memory_equivalences(workspace_id, memory_id_b)`,
+  `ALTER TABLE decisions ADD COLUMN attention_case TEXT`,
+  `ALTER TABLE decisions ADD COLUMN dedupe_key TEXT`,
+  `CREATE INDEX decisions_dedupe_idx ON decisions(workspace_id, dedupe_key)`,
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -796,6 +977,30 @@ const migrations: readonly Migration[] = [
     name: "quality-annotation-workflow",
     statements: qualityAnnotationStatements,
     checksum: checksum(qualityAnnotationStatements),
+  },
+  {
+    version: 11,
+    name: "assistant-conversations",
+    statements: assistantConversationStatements,
+    checksum: checksum(assistantConversationStatements),
+  },
+  {
+    version: 12,
+    name: "source-profiles",
+    statements: sourceProfileStatements,
+    checksum: checksum(sourceProfileStatements),
+  },
+  {
+    version: 13,
+    name: "attention-gate-dispositions",
+    statements: attentionGateStatements,
+    checksum: checksum(attentionGateStatements),
+  },
+  {
+    version: 14,
+    name: "memory-equivalences-and-attention-case",
+    statements: memoryRelationAttentionStatements,
+    checksum: checksum(memoryRelationAttentionStatements),
   },
 ];
 
