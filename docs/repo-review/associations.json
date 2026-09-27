@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "notes": "Hand-maintained code↔intent/decision/research/test seed for repo-review. Every entry cites a real requirement id, decision/research doc and test case. Do not add a confirmed entry without a concrete test + doc anchor. Auto word-similarity never promotes to confirmed.",
+  "associations": [
+    {
+      "codePath": "apps/server/src/assistant/runtime.ts",
+      "symbol": "AssistantRuntime",
+      "intent": "主助手运行时：会话路由、检索端口注入、create_task 治理、多轮回指、取消/超时 fence",
+      "requirementRefs": ["G08", "G09", "G16", "G20"],
+      "decisionRefs": [
+        "docs/implementation/assistant-v3/README.md",
+        "docs/implementation/assistant-v3/processing-policy.md"
+      ],
+      "researchRefs": ["docs/research/integration-readiness.md"],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::H-G20: ModelUnavailableError marks turn pending for retry",
+        "apps/server/tests/assistant-runtime.test.ts::G09: group conversations deny evidence by default"
+      ],
+      "status": "confirmed",
+      "evidence": "AssistantRuntime.turn 串起 retrieval→model→governCreateTask，按 visibility policy 注入证据；测试 assistant-runtime 覆盖 G08/G09/G16/G20。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/runtime.ts",
+      "symbol": "governCreateTask",
+      "intent": "G08 任务治理：直接交办经 MemoryService.evaluate 建任务，咨询类/群成员材料零写入",
+      "requirementRefs": ["G08", "G07"],
+      "decisionRefs": ["docs/implementation/assistant-v3/processing-policy.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::G08: two-turn anaphora",
+        "apps/server/tests/assistant-runtime.test.ts::G08 negative: Turn1 has no fragments"
+      ],
+      "status": "confirmed",
+      "evidence": "governCreateTask 先 capture owner 消息为 source 证据再走 MemoryService.evaluate；detectTaskIntent 拒绝咨询类 create_task。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/runtime.ts",
+      "symbol": "priorWorkingContext",
+      "intent": "G08 多轮回指：取最近 done turn 的 selectedEvidence 作为下一轮模型输入",
+      "requirementRefs": ["G08"],
+      "decisionRefs": ["docs/implementation/assistant-v3/migration-and-acceptance.md::G08"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::G08: two-turn anaphora"
+      ],
+      "status": "confirmed",
+      "evidence": "governCreateTask 调 priorWorkingContext 合并前轮 selectedEvidence；Turn1 空证据时 Turn2 拒绝 (no_prior_evidence)。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/runtime.ts",
+      "symbol": "recoverUnfinishedTurns",
+      "intent": "G20 持久恢复：启动时重跑 pending turn，已 committed 的 turn 不重做",
+      "requirementRefs": ["G20"],
+      "decisionRefs": ["docs/implementation/assistant-v3/README.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::G20: recoverUnfinishedTurns uses real application_receipts",
+        "apps/server/tests/assistant-runtime.test.ts::G20 combo: model unavailable leaves pending"
+      ],
+      "status": "confirmed",
+      "evidence": "hasCommittedReceipt 查真实 application_receipts 表；已 commit 标 complete，未 commit 重新执行。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/runtime.ts",
+      "symbol": "retryTurn",
+      "intent": "G20 公开重试入口：pending turn 可手动/HTTP 重试",
+      "requirementRefs": ["G20"],
+      "decisionRefs": ["docs/implementation/assistant-v3/README.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::G20 combo: model unavailable leaves pending, retrieval works, retryTurn recovers",
+        "apps/server/tests/assistant-runtime.test.ts::G20 combo: model unavailable leaves pending"
+      ],
+      "status": "confirmed",
+      "evidence": "retryTurn(turnId) 经 HTTP POST /:turnId/retry 暴露，fastify inject 测试覆盖。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/runtime.ts",
+      "symbol": "withTimeout",
+      "intent": "hung model 不挂死：Promise.race 主动 abort",
+      "requirementRefs": ["G20"],
+      "decisionRefs": ["docs/implementation/assistant-v3/processing-policy.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::cancellation: a newer message interrupts the in-flight turn"
+      ],
+      "status": "confirmed",
+      "evidence": "withTimeout 包模型调用，超时后 AbortController.abort，turn 记 failed/pending。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/runtime.ts",
+      "symbol": "detectTaskIntent",
+      "intent": "任务意图门控：21 祈使模式 + 11 咨询模式，咨询类即使模型发 create_task 也拒绝",
+      "requirementRefs": ["G08"],
+      "decisionRefs": ["docs/implementation/assistant-v3/processing-policy.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::pure consultation (no explicit intent) creates ZERO tasks"
+      ],
+      "status": "confirmed",
+      "evidence": "确定性正则门控，咨询类零写入；群成员材料 retain_as_source 不建 owner task。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/acp-model.ts",
+      "symbol": "AcpAssistantModel",
+      "intent": "ACP 主模型适配器：复用真实 acp() 传输，无 profile/CLI/超时/非 JSON 一律 ModelUnavailableError",
+      "requirementRefs": ["G20"],
+      "decisionRefs": ["docs/implementation/assistant-v3/README.md"],
+      "researchRefs": ["docs/research/integration-readiness.md"],
+      "testRefs": [
+        "apps/server/tests/acp-model.test.ts::parses a well-formed JSON reply with citations and create_task",
+        "apps/server/tests/acp-model.test.ts::parses a reply without create_task (null)"
+      ],
+      "status": "confirmed",
+      "evidence": "AcpAssistantModel 接真实 acp()，零 citation 零任务不造假；fixture agent 覆盖解析/超时/取消。"
+    },
+    {
+      "codePath": "apps/server/src/assistant/acp-model.ts",
+      "symbol": "parseAssistantReply",
+      "intent": "模型回复解析：严格解析 JSON、提取 citations/create_task，非法输出抛错",
+      "requirementRefs": ["G20"],
+      "decisionRefs": [],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/acp-model.test.ts::parses a well-formed JSON reply with citations"
+      ],
+      "status": "confirmed",
+      "evidence": "parseAssistantReply 把流式 JSON 文本解析为 AssistantModelReply，thought chunks 已在传输层过滤。"
+    },
+    {
+      "codePath": "apps/server/src/memory/service.ts",
+      "symbol": "evaluateBatch",
+      "intent": "G17 批量治理：去重累计 impact 并集，超 maxAutoApply 整批 park 为 awaiting_decision",
+      "requirementRefs": ["G17", "G11", "G12"],
+      "decisionRefs": ["docs/implementation/assistant-v3/processing-policy.md::Attention Gate"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/attention-gate.test.ts::P0 G17: evaluateBatch unions deduped impact",
+        "apps/server/tests/learning-pipeline.test.ts::gates 12 distinct creates as one ChangeSet"
+      ],
+      "status": "confirmed",
+      "evidence": "evaluateBatch 整 ChangeSet 去重 impact，超限全部门禁，建一张合并 AttentionCase。"
+    },
+    {
+      "codePath": "apps/server/src/memory/service.ts",
+      "symbol": "AttentionGate",
+      "intent": "G10-G13 知识治理六态门控：off-task defer、冲突转 decision、重复链接、刷新记录",
+      "requirementRefs": ["G10", "G11", "G12", "G13"],
+      "decisionRefs": ["docs/implementation/assistant-v3/processing-policy.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/attention-gate.test.ts::G10: off-task material with missing time/scope is deferred",
+        "apps/server/tests/attention-gate.test.ts::G11: a conflict that overwrites existing knowledge"
+      ],
+      "status": "confirmed",
+      "evidence": "AttentionGate 四条件六态决定 apply/defer/awaiting_decision；冲突不静默覆盖。"
+    },
+    {
+      "codePath": "apps/server/src/learning/pipeline.ts",
+      "symbol": "verify",
+      "intent": "学习流水线：extract_claims 后 verify_proposals 用独立 verifier 复核，整批交 evaluateBatch",
+      "requirementRefs": ["G17", "G16"],
+      "decisionRefs": ["docs/implementation/batch2/agent-runtime.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/learning-pipeline.test.ts::dedupes 12 same-entity creates to impact=1"
+      ],
+      "status": "confirmed",
+      "evidence": "pipeline verify() 改调 evaluateBatch(整份 entries)；confirmed_corrections 注入保持 A-F01/A-F03。"
+    },
+    {
+      "codePath": "apps/server/src/learning/pipeline.ts",
+      "symbol": "refreshDependents",
+      "intent": "G13 来源刷新失效：记录受影响记忆 needs_review；完整重核验按设计 blocked 不谎报完成",
+      "requirementRefs": ["G13"],
+      "decisionRefs": ["docs/implementation/batch2/b2-08-learning-verification.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/learning-refresh.test.ts"
+      ],
+      "status": "candidate",
+      "evidence": "refresh_dependents 当前只 recordSourceRefresh 后抛 NOT_IMPLEMENTED；consolidation 重跑待实现。"
+    },
+    {
+      "codePath": "apps/server/src/retrieval/keyword.ts",
+      "symbol": "KeywordRetrieval",
+      "intent": "检索端口：SQLite LIKE + CJK 2-gram 中文召回 + 长度加权打分",
+      "requirementRefs": ["A", "G02"],
+      "decisionRefs": ["docs/design.md"],
+      "researchRefs": ["docs/research/integration-readiness.md"],
+      "testRefs": [
+        "apps/server/tests/retrieval-keyword.test.ts",
+        "apps/server/tests/assistant-runtime.test.ts::A: RetrievalPort Chinese follow-up recall"
+      ],
+      "status": "confirmed",
+      "evidence": "CJK 2-gram 让短中文短语也能召回；project_trusted 软过滤未确认不过滤。"
+    },
+    {
+      "codePath": "apps/server/src/retrieval/keyword.ts",
+      "symbol": "tokenize",
+      "intent": "中文 2-gram 分词 + 英文整词 + 停用词，支撑关键词召回",
+      "requirementRefs": ["A"],
+      "decisionRefs": [],
+      "researchRefs": [],
+      "testRefs": ["apps/server/tests/retrieval-keyword.test.ts"],
+      "status": "confirmed",
+      "evidence": "tokenize 把查询切成可命中 fragment 的 term，是 KeywordRetrieval 打分基础。"
+    },
+    {
+      "codePath": "apps/server/src/integrations/lark/realtime.ts",
+      "symbol": "buildCaptureParts",
+      "intent": "G15 飞书富文本/图片/reply 解析为统一 parts（fake transport 验证）",
+      "requirementRefs": ["G15", "G04", "G05"],
+      "decisionRefs": ["docs/implementation/batch2/lark.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/lark-rich-parts.test.ts::parses a post (rich text) into title + paragraph text parts",
+        "apps/server/tests/lark-rich-parts.test.ts::carries reply_to / quoted provenance on parts"
+      ],
+      "status": "confirmed",
+      "evidence": "post→标题+段落，image→asset download，reply→replyTo/quoted；均 fake transport 确定性验证。"
+    },
+    {
+      "codePath": "apps/server/src/integrations/lark/realtime.ts",
+      "symbol": "enqueueAssistantReply",
+      "intent": "飞书回复入队：enqueue-before-finish、幂等、per-turn outbox",
+      "requirementRefs": ["G18", "G20"],
+      "decisionRefs": ["docs/implementation/batch2/b2-06-verification.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/lark-delivery-recovery.test.ts::keeps the outbox row after a crash between enqueue and inbox-ack"
+      ],
+      "status": "confirmed",
+      "evidence": "投递持久化 outbox 单消费者 lease；cancel 事务撤销未发 intent。"
+    },
+    {
+      "codePath": "apps/server/src/integrations/lark/runtime.ts",
+      "symbol": "LarkRuntimeHost",
+      "intent": "飞书路径主助手装配：接真实 AcpAssistantModel + KeywordRetrieval + scoped 纠正",
+      "requirementRefs": ["G08", "G09", "G16"],
+      "decisionRefs": ["docs/implementation/batch2/lark.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/lark-runtime.test.ts",
+        "apps/server/tests/assistant-runtime.test.ts::routes bound-owner p2p to the assistant"
+      ],
+      "status": "confirmed",
+      "evidence": "飞书生产装配与 Web 路径共用 AssistantRuntime；WebSocket 收发为注入 adapter 测试。"
+    },
+    {
+      "codePath": "apps/server/src/integrations/lark/runtime.ts",
+      "symbol": "visibilityPolicy",
+      "intent": "G09 群可见性 deny-by-default：无 policy 不向群泄漏私密证据",
+      "requirementRefs": ["G09"],
+      "decisionRefs": ["docs/implementation/assistant-v3/processing-policy.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/conversation-security.test.ts::web API rejects a forged Lark channel"
+      ],
+      "status": "confirmed",
+      "evidence": "群会话默认 deny，注入 policy 才放行；p2p 历史不向群泄漏。"
+    },
+    {
+      "codePath": "apps/server/src/conversation/router.ts",
+      "symbol": "ConversationRouter",
+      "intent": "会话路由：turn 持久化、同 transport_event_id 幂等排队",
+      "requirementRefs": ["G20", "G14"],
+      "decisionRefs": ["docs/design.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/conversation-router.test.ts"
+      ],
+      "status": "confirmed",
+      "evidence": "同 eventId 不重复建 turn/task；original agent session 入 extract_claims，derived 不入队。"
+    },
+    {
+      "codePath": "apps/server/src/conversation/router.ts",
+      "symbol": "markPending",
+      "intent": "G20 模型异常时 turn 置 pending 等待重试，而非 failed 丢数据",
+      "requirementRefs": ["G20"],
+      "decisionRefs": ["docs/implementation/assistant-v3/README.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/assistant-runtime.test.ts::H-G20: ModelUnavailableError marks turn pending"
+      ],
+      "status": "confirmed",
+      "evidence": "ModelUnavailableError → router.markPending + 诚实错误零假 citation。"
+    },
+    {
+      "codePath": "apps/server/src/review/sync.ts",
+      "symbol": "runReviewSync",
+      "intent": "repo-review 增量同步：路径身份 externalId、revision 追加、removed/dirty 标记、Git fixture 测试",
+      "requirementRefs": ["repo-review"],
+      "decisionRefs": ["docs/repo-review/associations.json"],
+      "researchRefs": ["docs/research/source-index.md"],
+      "testRefs": [
+        "apps/server/tests/review-sync.test.ts::keeps two files with identical content as independent sources",
+        "apps/server/tests/review-relations.test.ts"
+      ],
+      "status": "confirmed",
+      "evidence": "source identity = omem:<path>；内容哈希只用于变基检测；关系在扫描后由人工关联清单构建。"
+    },
+    {
+      "codePath": "apps/server/src/storage/migrations.ts",
+      "symbol": "migrateDatabase",
+      "intent": "v11-v14 schema 迁移：job 控制/质量数据集/飞书投递/v14 memory_equivalences 治理增量",
+      "requirementRefs": ["B2"],
+      "decisionRefs": ["docs/implementation/batch2/plan.md"],
+      "researchRefs": [],
+      "testRefs": [
+        "apps/server/tests/migrations.test.ts::A-M02 rolls back an interrupted migration"
+      ],
+      "status": "confirmed",
+      "evidence": "SUPPORTED_SCHEMA_VERSION=14；拒绝写入高于当前程序支持版本的库；事务迁移+回滚校验。"
+    }
+  ]
+}

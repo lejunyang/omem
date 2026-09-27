@@ -9,6 +9,7 @@
  * `omem:<repo-relative-path>` identities. The side table lives in the review's own
  * SQLite so the shared business Store is never altered. */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Store } from "../store.js";
 
@@ -172,4 +173,310 @@ export function migrateLegacySources(
   }
   writeFileSync(marker, new Date().toISOString() + "\n", "utf8");
   return moved;
+}
+
+// ---------------------------------------------------------------------------
+// Review relations: hand-maintained, bidirectional code↔intent↔decision↔
+// research↔test links. Forward relation types are stored; the inverse direction
+// is derived at query time (e.g. implements → implemented_by). Rows are
+// upserted from docs/repo-review/associations.json during sync and are idempotent.
+// ---------------------------------------------------------------------------
+
+export type RelationType =
+  | "implements"
+  | "requires"
+  | "decided_by"
+  | "researched_by"
+  | "tested_by"
+  | "candidate_for";
+
+export type RelationStatus = "confirmed" | "candidate" | "missing";
+
+export type ReviewRelationRow = {
+  id: string;
+  sourceFragmentId: string;
+  targetFragmentId: string;
+  relationType: RelationType;
+  status: RelationStatus;
+  evidence: string | null;
+  sourceRevisionId: string | null;
+  targetRevisionId: string | null;
+  createdAt: string;
+};
+
+/** Inverse display name for a forward relation type, used when the "other" side
+ * is queried (a decision fragment sees "implemented_by", not "implements"). */
+export const RELATION_INVERSES: Record<RelationType, string> = {
+  implements: "implemented_by",
+  requires: "required_by",
+  decided_by: "decided_for",
+  researched_by: "researched_for",
+  tested_by: "tested_for",
+  candidate_for: "candidate_of",
+};
+
+export function ensureReviewRelationsTable(store: Store): void {
+  store.db.exec(`CREATE TABLE IF NOT EXISTS review_relations(
+    id TEXT PRIMARY KEY,
+    source_fragment_id TEXT NOT NULL,
+    target_fragment_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    evidence TEXT,
+    source_revision_id TEXT,
+    target_revision_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_fragment_id, target_fragment_id, relation_type)
+  )`);
+}
+
+/** Deterministic relation id so repeated syncs never mint a duplicate row and
+ * ids stay stable across restarts. */
+export function relationId(
+  sourceFragmentId: string,
+  targetFragmentId: string,
+  relationType: string,
+): string {
+  return (
+    "rel_" +
+    createHash("sha1")
+      .update([sourceFragmentId, targetFragmentId, relationType].join("|"))
+      .digest("hex")
+      .slice(0, 24)
+  );
+}
+
+export function upsertReviewRelation(
+  store: Store,
+  row: {
+    sourceFragmentId: string;
+    targetFragmentId: string;
+    relationType: RelationType;
+    status: RelationStatus;
+    evidence?: string | null;
+    sourceRevisionId?: string | null;
+    targetRevisionId?: string | null;
+  },
+): string {
+  ensureReviewRelationsTable(store);
+  const id = relationId(
+    row.sourceFragmentId,
+    row.targetFragmentId,
+    row.relationType,
+  );
+  store.db
+    .prepare(
+      `INSERT INTO review_relations(
+         id, source_fragment_id, target_fragment_id, relation_type, status,
+         evidence, source_revision_id, target_revision_id, created_at
+       ) VALUES(?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(source_fragment_id, target_fragment_id, relation_type) DO UPDATE SET
+         status=excluded.status,
+         evidence=excluded.evidence,
+         source_revision_id=excluded.source_revision_id,
+         target_revision_id=excluded.target_revision_id`,
+    )
+    .run(
+      id,
+      row.sourceFragmentId,
+      row.targetFragmentId,
+      row.relationType,
+      row.status,
+      row.evidence ?? null,
+      row.sourceRevisionId ?? null,
+      row.targetRevisionId ?? null,
+      new Date().toISOString(),
+    );
+  return id;
+}
+
+/** One relation as returned to the API. `direction` is "outgoing" when the
+ * queried fragment is the source, "incoming" when it is the target (and
+ * relationType is then the inverse display name). For unresolved (missing)
+ * links the other-side fields are null. */
+export type RelationView = {
+  id: string;
+  direction: "outgoing" | "incoming";
+  relationType: string;
+  status: RelationStatus;
+  evidence: string | null;
+  other: {
+    fragmentId: string;
+    revisionId: string | null;
+    text: string | null;
+    title: string | null;
+    version: number | null;
+    filePath: string | null;
+    category: string | null;
+    externalId: string | null;
+  } | null;
+};
+
+function rowToView(
+  row: Record<string, unknown>,
+  direction: "outgoing" | "incoming",
+): RelationView {
+  const stored = String(row.relation_type);
+  const relationType =
+    direction === "outgoing"
+      ? stored
+      : (RELATION_INVERSES as Record<string, string>)[stored] ?? stored;
+  const hasOther = row.other_fragment_id != null;
+  return {
+    id: String(row.id),
+    direction,
+    relationType,
+    status: row.status as RelationStatus,
+    evidence: row.evidence != null ? String(row.evidence) : null,
+    other: hasOther
+      ? {
+          fragmentId: String(row.other_fragment_id),
+          revisionId: row.other_revision_id ? String(row.other_revision_id) : null,
+          text: row.other_text != null ? String(row.other_text) : null,
+          title: row.other_title != null ? String(row.other_title) : null,
+          version: row.other_version != null ? Number(row.other_version) : null,
+          filePath: row.other_filepath != null ? String(row.other_filepath) : null,
+          category:
+            row.other_category != null ? String(row.other_category) : null,
+          externalId:
+            row.other_external_id != null ? String(row.other_external_id) : null,
+        }
+      : null,
+  };
+}
+
+/** All relations touching a fragment, both directions. LEFT JOIN keeps missing
+ * links (empty target/source) visible as `other: null`. */
+export function relationsForFragment(
+  store: Store,
+  fragmentId: string,
+): RelationView[] {
+  ensureReviewRelationsTable(store);
+  const outgoing = store.db
+    .prepare(
+      `SELECT r.id AS id, r.relation_type AS relation_type, r.status AS status,
+              r.evidence AS evidence,
+              f.id AS other_fragment_id, f.text AS other_text,
+              rev.id AS other_revision_id, rev.title AS other_title, rev.version AS other_version,
+              s.external_id AS other_external_id,
+              json_extract(rev.body,'$.context.filePath') AS other_filepath,
+              json_extract(rev.body,'$.context.category') AS other_category
+       FROM review_relations r
+       LEFT JOIN fragments f ON f.id = r.target_fragment_id
+       LEFT JOIN revisions rev ON rev.id = f.revision_id
+       LEFT JOIN sources s ON s.id = rev.source_id
+       WHERE r.source_fragment_id = ?`,
+    )
+    .all(fragmentId) as Record<string, unknown>[];
+  const incoming = store.db
+    .prepare(
+      `SELECT r.id AS id, r.relation_type AS relation_type, r.status AS status,
+              r.evidence AS evidence,
+              f.id AS other_fragment_id, f.text AS other_text,
+              rev.id AS other_revision_id, rev.title AS other_title, rev.version AS other_version,
+              s.external_id AS other_external_id,
+              json_extract(rev.body,'$.context.filePath') AS other_filepath,
+              json_extract(rev.body,'$.context.category') AS other_category
+       FROM review_relations r
+       LEFT JOIN fragments f ON f.id = r.source_fragment_id
+       LEFT JOIN revisions rev ON rev.id = f.revision_id
+       LEFT JOIN sources s ON s.id = rev.source_id
+       WHERE r.target_fragment_id = ?`,
+    )
+    .all(fragmentId) as Record<string, unknown>[];
+  return [
+    ...outgoing.map((r) => rowToView(r, "outgoing")),
+    ...incoming.map((r) => rowToView(r, "incoming")),
+  ];
+}
+
+export function listReviewRelations(
+  store: Store,
+  filter: { status?: string; type?: string },
+): RelationView[] {
+  ensureReviewRelationsTable(store);
+  const where: string[] = [];
+  const params: string[] = [];
+  if (filter.status) {
+    where.push("r.status = ?");
+    params.push(filter.status);
+  }
+  if (filter.type) {
+    where.push("r.relation_type = ?");
+    params.push(filter.type);
+  }
+  const sql = `
+    SELECT r.id AS id, r.relation_type AS relation_type, r.status AS status,
+           r.evidence AS evidence,
+           sf.id AS other_fragment_id, sf.text AS other_text,
+           srev.id AS other_revision_id, srev.title AS other_title, srev.version AS other_version,
+           ss.external_id AS other_external_id,
+           json_extract(srev.body,'$.context.filePath') AS other_filepath,
+           json_extract(srev.body,'$.context.category') AS other_category
+    FROM review_relations r
+    LEFT JOIN fragments sf ON sf.id = r.target_fragment_id
+    LEFT JOIN revisions srev ON srev.id = sf.revision_id
+    LEFT JOIN sources ss ON ss.id = srev.source_id
+    ${where.length ? "WHERE " + where.join(" AND ") : ""}
+    ORDER BY r.created_at DESC LIMIT 500`;
+  const rows = store.db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return rows.map((r) => rowToView(r, "outgoing"));
+}
+
+/** All outgoing relations whose source fragment lives in the head revision of
+ * the given code file. Powers the trace chain view (intent→decision→research→
+ * test for one file). */
+export function relationsForCodePath(
+  store: Store,
+  filePath: string,
+): RelationView[] {
+  ensureReviewRelationsTable(store);
+  const rows = store.db
+    .prepare(
+      `SELECT r.id AS id, r.relation_type AS relation_type, r.status AS status,
+              r.evidence AS evidence,
+              tf.id AS other_fragment_id, tf.text AS other_text,
+              trev.id AS other_revision_id, trev.title AS other_title, trev.version AS other_version,
+              ts.external_id AS other_external_id,
+              json_extract(trev.body,'$.context.filePath') AS other_filepath,
+              json_extract(trev.body,'$.context.category') AS other_category
+       FROM review_relations r
+       JOIN fragments sf ON sf.id = r.source_fragment_id
+       JOIN revisions srev ON srev.id = sf.revision_id
+       LEFT JOIN fragments tf ON tf.id = r.target_fragment_id
+       LEFT JOIN revisions trev ON trev.id = tf.revision_id
+       LEFT JOIN sources ts ON ts.id = trev.source_id
+       WHERE json_extract(srev.body,'$.context.filePath') = ?
+       ORDER BY r.relation_type, r.created_at`,
+    )
+    .all(filePath) as Record<string, unknown>[];
+  return rows.map((r) => rowToView(r, "outgoing"));
+}
+
+/** Counts for GET /associations: total relation rows plus per-status buckets. */
+export function relationsSummary(store: Store): {
+  total: number;
+  confirmed: number;
+  candidate: number;
+  missing: number;
+  byType: Record<string, number>;
+} {
+  ensureReviewRelationsTable(store);
+  const rows = store.db
+    .prepare("SELECT status, relation_type FROM review_relations")
+    .all() as { status: string; relation_type: string }[];
+  const out = {
+    total: rows.length,
+    confirmed: 0,
+    candidate: 0,
+    missing: 0,
+    byType: {} as Record<string, number>,
+  };
+  for (const r of rows) {
+    if (r.status === "confirmed") out.confirmed++;
+    else if (r.status === "candidate") out.candidate++;
+    else out.missing++;
+    out.byType[r.relation_type] = (out.byType[r.relation_type] ?? 0) + 1;
+  }
+  return out;
 }

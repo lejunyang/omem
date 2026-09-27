@@ -25,7 +25,13 @@ import {
   REVIEW_DIR,
   ensureReviewMetaTable,
   removedSourceIds,
+  ensureReviewRelationsTable,
+  relationsForFragment,
+  listReviewRelations,
+  relationsSummary,
+  relationsForCodePath,
 } from "./store.js";
+import { loadAssociations } from "./associations.js";
 
 type Row = Record<string, unknown>;
 
@@ -53,6 +59,7 @@ export type ReviewAppDeps = {
 export async function buildReviewApp(deps: ReviewAppDeps) {
   const { store, repoRoot } = deps;
   ensureReviewMetaTable(store);
+  ensureReviewRelationsTable(store);
   const memory = new MemoryService(store);
   const retrieval = new KeywordRetrieval(store.db);
   const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
@@ -216,6 +223,39 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       };
     },
   );
+
+  app.get<{
+    Params: { id: string };
+  }>(P + "/fragments/:id/relations", async (req, reply) => {
+    const evidence = store.evidence(req.params.id);
+    if (!evidence) return reply.code(404).send({ error: "Fragment not found" });
+    return { fragmentId: req.params.id, relations: relationsForFragment(store, req.params.id) };
+  });
+
+  app.get<{
+    Querystring: { status?: string; type?: string };
+  }>(P + "/relations", async (req) =>
+    listReviewRelations(store, {
+      status: req.query.status,
+      type: req.query.type,
+    }),
+  );
+
+  app.get<{ Querystring: { path?: string } }>(P + "/code-relations", async (req, reply) => {
+    const path = (req.query.path ?? "").trim();
+    if (!path) return reply.code(400).send({ error: "path query required" });
+    return relationsForCodePath(store, path);
+  });
+
+  app.get(P + "/associations", async () => {
+    let seedCount = 0;
+    try {
+      seedCount = loadAssociations(repoRoot).length;
+    } catch {
+      seedCount = 0;
+    }
+    return { seedCount, ...relationsSummary(store) };
+  });
 
   app.get<{
     Querystring: { q?: string; category?: string; includeRemoved?: string };

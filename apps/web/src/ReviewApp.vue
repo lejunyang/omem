@@ -18,12 +18,15 @@ import {
   reviewSyncStatus,
   reviewRunSync,
   reviewCode,
+  reviewFragmentRelations,
+  reviewCodeRelations,
   type ReviewHealth,
   type ReviewCategory,
   type ReviewSource,
   type ReviewRevision,
   type ReviewFragmentDetail,
   type ReviewSearchHit,
+  type ReviewRelation,
   type SyncStatus,
   type SyncResult,
 } from "./review-api";
@@ -40,6 +43,8 @@ const selectedFragmentId = ref<string | null>(null);
 const fragmentDetail = ref<ReviewFragmentDetail | null>(null);
 const relatedDecisions = ref<ReviewSearchHit[]>([]);
 const relatedResearch = ref<ReviewSearchHit[]>([]);
+const fragmentRelations = ref<ReviewRelation[]>([]);
+const traceRelations = ref<ReviewRelation[]>([]);
 const searchInput = ref("");
 const searchQuery = ref("");
 const searchResults = ref<ReviewSearchHit[]>([]);
@@ -63,6 +68,59 @@ const CATEGORY_LABELS: Record<string, string> = {
   decisions: "历史决策",
   research: "背景调研",
 };
+
+const RELATION_LABELS: Record<string, string> = {
+  implements: "实现意图",
+  implemented_by: "实现代码",
+  decided_by: "决策依据",
+  decided_for: "决策用于",
+  researched_by: "调研依据",
+  researched_for: "调研用于",
+  tested_by: "测试证据",
+  tested_for: "测试覆盖",
+  requires: "依赖",
+  required_by: "被依赖",
+  candidate_for: "候选关联",
+};
+
+const RELATION_ORDER = [
+  "implements",
+  "implemented_by",
+  "decided_by",
+  "decided_for",
+  "researched_by",
+  "researched_for",
+  "tested_by",
+  "tested_for",
+];
+
+function relationLabel(t: string): string {
+  return RELATION_LABELS[t] ?? t;
+}
+
+function statusTone(s: string): "success" | "warning" | "neutral" {
+  return s === "confirmed" ? "success" : s === "candidate" ? "warning" : "neutral";
+}
+
+function statusLabel(s: string): string {
+  return s === "confirmed" ? "已关联" : s === "candidate" ? "候选" : "缺失";
+}
+
+/** Group a relation list by relation type, in a stable display order. */
+function groupRelations(list: ReviewRelation[]): { type: string; items: ReviewRelation[] }[] {
+  const byType = new Map<string, ReviewRelation[]>();
+  for (const r of list) {
+    const arr = byType.get(r.relationType) ?? [];
+    arr.push(r);
+    byType.set(r.relationType, arr);
+  }
+  const ordered = [...byType.entries()].sort((a, b) => {
+    const ai = RELATION_ORDER.indexOf(a[0]);
+    const bi = RELATION_ORDER.indexOf(b[0]);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  });
+  return ordered.map(([type, items]) => ({ type, items }));
+}
 
 const navItems: { id: View; label: string; icon: string }[] = [
   { id: "browse", label: "浏览材料", icon: "book" },
@@ -140,9 +198,14 @@ async function showFragment(fragmentId: string) {
   error.value = "";
   selectedFragmentId.value = fragmentId;
   try {
-    fragmentDetail.value = await reviewFragment(fragmentId);
+    const [detail, rels] = await Promise.all([
+      reviewFragment(fragmentId),
+      reviewFragmentRelations(fragmentId).catch(() => ({ fragmentId, relations: [] as ReviewRelation[] })),
+    ]);
+    fragmentDetail.value = detail;
+    fragmentRelations.value = rels.relations;
     const kw = keywordsFor(
-      fragmentDetail.value.revision.context.filePath ?? null,
+      detail.revision.context.filePath ?? null,
       revision.value,
     );
     if (kw) {
@@ -157,6 +220,15 @@ async function showFragment(fragmentId: string) {
   } catch (e) {
     error.value = String(e);
   }
+}
+
+/** Jump to the other side of a relation (bidirectional navigation). */
+async function openRelation(other: ReviewRelation["other"]) {
+  if (!other || !other.revisionId) {
+    say("该关联指向缺失的材料，无法跳转");
+    return;
+  }
+  await openRevision(other.revisionId, other.fragmentId);
 }
 
 async function runSearch() {
@@ -197,10 +269,13 @@ async function runTrace() {
   traceDecisions.value = [];
   traceResearch.value = [];
   traceKeywords.value = "";
+  traceRelations.value = [];
   try {
     const source = await reviewCode(path);
     traceSource.value = source;
     if (source) {
+      // Confirmed, hand-curated chain for this file: intent→decision→research→test.
+      traceRelations.value = await reviewCodeRelations(path).catch(() => []);
       // Pull the head revision so we can use its extracted symbols as association
       // keywords; path tokens alone (e.g. "runtime assistant") are too sparse for the
       // case-sensitive substring matcher to hit decision/research docs.
@@ -392,26 +467,33 @@ onMounted(() => void boot());
               · <a href="#" @click.prevent="tracePath = String(fragmentDetail.revision.context.filePath); view = 'trace'; void runTrace()">{{ fragmentDetail.revision.context.filePath }}</a>
             </template>
           </p>
-          <h3>追溯链路</h3>
-          <p class="muted">关键词：{{ keywordsFor(revision.context.filePath ?? null, revision) || "—" }}（按文件名与符号名匹配）</p>
-          <template v-if="relatedDecisions.length">
-            <h4>设计决策（依据）</h4>
-            <OmPanel v-for="h in relatedDecisions.slice(0, 5)" :key="h.id" class="stack" @click="openHit(h)">
-              <span class="cat-badge decisions">历史决策</span>
-              <p class="excerpt">{{ h.snippet || h.text }}</p>
-              <small>{{ h.title }}</small>
-            </OmPanel>
+          <h3>实现意图与关联</h3>
+          <p class="muted">
+            双向关系来自人工维护的关联清单（confirmed）；词相似但未登记的只作候选。
+          </p>
+          <template v-if="groupRelations(fragmentRelations).length">
+            <div v-for="g in groupRelations(fragmentRelations)" :key="g.type" class="relation-group">
+              <h4>{{ relationLabel(g.type) }} <small>{{ g.items.length }}</small></h4>
+              <OmPanel
+                v-for="r in g.items"
+                :key="r.id"
+                class="stack relation-row"
+                @click="void openRelation(r.other)"
+              >
+                <div class="row" style="margin-top: 0">
+                  <OmBadge :tone="statusTone(r.status)">{{ statusLabel(r.status) }}</OmBadge>
+                  <small v-if="r.other?.version">v{{ r.other.version }}</small>
+                </div>
+                <template v-if="r.other">
+                  <p class="excerpt">{{ r.other.text || r.other.title }}</p>
+                  <small class="path">{{ r.other.title }}<template v-if="r.other.filePath"> · {{ r.other.filePath }}</template></small>
+                </template>
+                <small v-else class="muted">缺失：{{ r.evidence || "关联的材料未收录" }}</small>
+                <small v-if="r.evidence" class="relation-evidence">{{ r.evidence }}</small>
+              </OmPanel>
+            </div>
           </template>
-          <p v-else class="muted">历史决策：未检索到相关材料 —— 待补充。</p>
-          <template v-if="relatedResearch.length">
-            <h4>调研依据</h4>
-            <OmPanel v-for="h in relatedResearch.slice(0, 5)" :key="h.id" class="stack" @click="openHit(h)">
-              <span class="cat-badge research">背景调研</span>
-              <p class="excerpt">{{ h.snippet || h.text }}</p>
-              <small>{{ h.title }}</small>
-            </OmPanel>
-          </template>
-          <p v-else class="muted">背景调研：未检索到相关材料 —— 推测，待补充。</p>
+          <p v-else class="muted">尚无登记的双向关联 —— 可在 docs/repo-review/associations.json 补充。</p>
         </OmPanel>
       </template>
     </section>
@@ -462,7 +544,31 @@ onMounted(() => void boot());
           </template>
         </OmPanel>
 
-        <OmPanel title="② 设计决策" class="stack">
+        <OmPanel title="② 登记链路（意图 → 决策 → 调研 → 测试）" class="stack">
+          <template v-if="groupRelations(traceRelations).length">
+            <div v-for="g in groupRelations(traceRelations)" :key="g.type">
+              <h4>{{ relationLabel(g.type) }}</h4>
+              <OmPanel
+                v-for="r in g.items"
+                :key="r.id"
+                class="stack relation-row"
+                @click="void openRelation(r.other)"
+              >
+                <div class="row" style="margin-top: 0">
+                  <OmBadge :tone="statusTone(r.status)">{{ statusLabel(r.status) }}</OmBadge>
+                </div>
+                <template v-if="r.other">
+                  <p class="excerpt">{{ r.other.text || r.other.title }}</p>
+                  <small class="path">{{ r.other.title }}</small>
+                </template>
+                <small v-else class="muted">缺失：{{ r.evidence }}</small>
+              </OmPanel>
+            </div>
+          </template>
+          <OmEmpty v-else title="该文件暂无登记关系" description="在 docs/repo-review/associations.json 中人工登记 code→意图/决策/测试。" />
+        </OmPanel>
+
+        <OmPanel title="③ 设计决策（关键词候选）" class="stack">
           <p class="muted">关键词：{{ traceKeywords || "—" }}</p>
           <template v-if="traceDecisions.length">
             <OmPanel v-for="h in traceDecisions.slice(0, 5)" :key="h.id" class="stack" @click="openHit(h)">
@@ -474,7 +580,7 @@ onMounted(() => void boot());
           <OmEmpty v-else title="无相关决策记录" description="该文件的设计理由尚未沉淀为决策文档（待补充/推测）。" />
         </OmPanel>
 
-        <OmPanel title="③ 调研依据" class="stack">
+        <OmPanel title="④ 调研依据（关键词候选）" class="stack">
           <template v-if="traceResearch.length">
             <OmPanel v-for="h in traceResearch.slice(0, 5)" :key="h.id" class="stack" @click="openHit(h)">
               <span class="cat-badge research">背景调研 · 依据</span>
@@ -603,5 +709,17 @@ onMounted(() => void boot());
 }
 h4 {
   margin: 18px 0 4px;
+}
+.relation-row {
+  cursor: pointer;
+}
+.relation-row:hover {
+  border-color: #999;
+}
+.relation-evidence {
+  display: block;
+  margin-top: 6px;
+  color: var(--om-muted);
+  font-size: 12px;
 }
 </style>
