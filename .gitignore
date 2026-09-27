@@ -8,5 +8,6 @@ apps/web/dist/
 omem.local.json
 test-results/
 playwright-report/
+docs/implementation/screenshots/*.png
 .osdk/
 **/.osdk-manifest.json
