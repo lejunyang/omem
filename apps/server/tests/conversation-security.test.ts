@@ -292,4 +292,121 @@ describe("C conversation channel/visibility hardening", () => {
       store.close();
     }
   });
+
+  it("lark group conversation recalls CJK fragments via KeywordRetrieval (not whole-sentence LIKE)", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "omem-larkret-"));
+    directories.push(directory);
+    const store = new Store(directory);
+    const secrets = new EncryptedSecretStore(
+      join(directory, "secrets"),
+      randomBytes(32),
+    );
+    const secretRef = secrets.put({
+      appId: "cli_ret1",
+      clientSecret: "fixture-sec",
+    });
+    const at = "2026-09-27T00:00:00.000Z";
+    store.db
+      .prepare(
+        `INSERT INTO lark_connections(
+           id,workspace_id,app_id,tenant_brand,tenant_key,state,active_version,
+           owner_open_id,created_at,updated_at
+         ) VALUES('conn-ret','personal','cli_ret1','feishu',NULL,
+           'active',1,'ou_owner',?,?)`,
+      )
+      .run(at, at);
+    store.db
+      .prepare(
+        `INSERT INTO lark_connection_versions(
+           id,connection_id,version,secret_ref,requested_config,capability_profile,
+           missing_capabilities,state,created_at,updated_at
+         ) VALUES('ver-ret','conn-ret',1,?,'{}',?,'[]','active',?,?)`,
+      )
+      .run(secretRef, JSON.stringify({ botOpenId: "ou_bot_ret" }), at, at);
+    store.db
+      .prepare(
+        `INSERT INTO lark_bindings(
+           id,workspace_id,connection_id,connection_version,binding_version,
+           owner_open_id,target_chat_id,target_type,state,supersedes_binding_id,
+           created_at
+         ) VALUES('bind-ret','personal','conn-ret',1,1,'ou_owner','oc_group','group',
+           'active',NULL,?)`,
+      )
+      .run(at);
+
+    // Group-sourced Chinese fragment. Note the literal query "复盘 周三" does NOT
+    // appear verbatim in the text (no space between the two concepts), so the legacy
+    // whole-sentence LIKE fallback could never recall it; only the CJK tokenizing
+    // KeywordRetrieval can.
+    const rev = store.capture({
+      source: "chat",
+      externalId: "cjk-evidence",
+      title: "复盘记录",
+      parts: [
+        { type: "text", text: "我们的季度复盘安排在周三下午三点同步给产品团队" },
+      ],
+      context: { conversationId: "oc_group" },
+      provenance: {
+        collectorId: "lark",
+        actorId: "ou_owner",
+        actorType: "owner",
+        actorVerifiedBy: "fixture",
+        sourceUri: null,
+        eventId: null,
+        eventAt: at,
+        timezone: "Asia/Shanghai",
+        quoted: false,
+        forwarded: false,
+        producerKind: "original",
+      },
+    }).revision;
+    const fragId = rev.fragments[0]!.id;
+    // Control: whole-sentence LIKE (the pre-fix fallback) cannot recall it.
+    expect(store.search("复盘 周三").map((row) => row.id)).not.toContain(fragId);
+
+    const memory = new MemoryService(store, { ownerId: "owner" });
+    const realtime = new FakeRealtime();
+    const messages = new FakeMessages();
+    const model = new SpyModel();
+    const host = new LarkRuntimeHost({
+      store,
+      memory,
+      onboarding: noopOnboarding,
+      secrets,
+      realtimeAdapter: realtime,
+      messageAdapter: messages,
+      assistantModel: model,
+      pollMs: 1000,
+    });
+    try {
+      await host.processOnce();
+      const event: LarkInboundEvent = {
+        appId: "cli_ret1",
+        eventId: "evt-ret-1",
+        kind: "im.message.receive_v1",
+        eventTime: at,
+        senderOpenId: "ou_owner",
+        senderType: "user",
+        chatId: "oc_group",
+        chatType: "group",
+        messageId: "om_ret_1",
+        messageType: "text",
+        parentMessageId: null,
+        text: "复盘 周三",
+        payload: {
+          message: {
+            content: JSON.stringify({ text: "复盘 周三" }),
+            mentions: [{ id: { open_id: "ou_bot_ret" } }],
+          },
+        },
+      };
+      await realtime.connections[0]!.onEvent(event);
+      expect(model.calls).toHaveLength(1);
+      const citedIds = model.calls[0]!.evidence.map((e) => e.fragmentId);
+      expect(citedIds).toContain(fragId);
+    } finally {
+      await host.stop();
+      store.close();
+    }
+  });
 });

@@ -1,6 +1,7 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { Store } from "../../store.js";
-import { MemoryService } from "../../memory/service.js";
+import { MemoryService, FeedbackService } from "../../memory/service.js";
+import { KeywordRetrieval } from "../../retrieval/keyword.js";
 import { LarkCardActionService } from "./card-actions.js";
 import {
   LarkDeliveryRepository,
@@ -90,10 +91,14 @@ export class LarkRuntimeHost {
       const chatId = record.revision.context?.conversationId;
       return Boolean(chatId && chatId === conversation.chatId);
     };
+    const assistantRetrieval = new KeywordRetrieval(input.store.db);
+    const assistantFeedback = new FeedbackService(input.store);
     this.assistant = input.assistantModel
       ? new AssistantRuntime(input.store, input.assistantModel, {
           ownerId: "owner",
           memory: input.memory,
+          feedback: assistantFeedback,
+          retrieval: assistantRetrieval,
           visibilityPolicy,
           turnTimeoutMs: 60_000,
         })
