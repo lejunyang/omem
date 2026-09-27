@@ -503,6 +503,16 @@ export class LarkOnboardingService {
       )
       .get(onboardingId) as Row | undefined;
     if (!row) throw Error("LARK_ONBOARDING_NOT_FOUND");
+    const pairing = row.connection_id
+      ? (this.db
+          .prepare(
+            `SELECT id,expires_at,candidate_open_id,candidate_chat_id,
+               candidate_chat_type,consumed_at
+             FROM lark_pairing_codes WHERE connection_id=?
+             ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(String(row.connection_id)) as Row | undefined)
+      : undefined;
     return {
       id: String(row.id),
       mode: String(row.mode),
@@ -527,6 +537,22 @@ export class LarkOnboardingService {
       missingCapabilities: row.missing_capabilities
         ? JSON.parse(String(row.missing_capabilities))
         : [],
+      pairing: pairing
+        ? {
+            id: String(pairing.id),
+            expiresAt: String(pairing.expires_at),
+            candidateOpenId: pairing.candidate_open_id
+              ? String(pairing.candidate_open_id)
+              : null,
+            candidateChatId: pairing.candidate_chat_id
+              ? String(pairing.candidate_chat_id)
+              : null,
+            candidateChatType: pairing.candidate_chat_type
+              ? String(pairing.candidate_chat_type)
+              : null,
+            consumed: Boolean(pairing.consumed_at),
+          }
+        : null,
       errorCode: row.error_code ? String(row.error_code) : null,
       errorMessage: row.error_message ? String(row.error_message) : null,
       createdAt: String(row.created_at),

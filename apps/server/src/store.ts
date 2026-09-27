@@ -542,6 +542,64 @@ export class Store {
       )
       .all();
   }
+  notification(notificationId: string) {
+    const row = this.db
+      .prepare(
+        `SELECT n.id,n.title,n.body,n.change_id AS changeId,
+           n.created_at AS createdAt,n.read_at AS readAt,
+           c.kind AS changeKind,c.title AS changeTitle,
+           c.before_id AS beforeId,c.after_id AS afterId,c.details
+         FROM notifications n
+         LEFT JOIN changes c ON c.id=n.change_id
+         WHERE n.id=?`,
+      )
+      .get(notificationId) as Row | undefined;
+    if (!row) return null;
+    const changeId = row.changeId ? String(row.changeId) : null;
+    const deliveries = changeId
+      ? (this.db
+          .prepare(
+            `SELECT id,channel,state,attempt_count AS attemptCount,
+               error_kind AS errorKind,last_error AS lastError,
+               created_at AS createdAt,updated_at AS updatedAt
+             FROM delivery_intents WHERE change_id=? ORDER BY created_at`,
+          )
+          .all(changeId) as Row[])
+      : [];
+    const receipt = changeId
+      ? (this.db
+          .prepare(
+            `SELECT id,proposal_id AS proposalId,entity_type AS entityType,
+               entity_id AS entityId,entity_version AS entityVersion,
+               created_at AS createdAt
+             FROM application_receipts WHERE change_id=?`,
+          )
+          .get(changeId) as Row | undefined)
+      : undefined;
+    let proposal: Row | undefined;
+    if (receipt?.proposalId)
+      proposal = this.db
+        .prepare("SELECT evidence FROM proposals WHERE id=?")
+        .get(String(receipt.proposalId)) as Row | undefined;
+    else if (row.changeKind === "decision" && row.afterId)
+      proposal = this.db
+        .prepare(
+          `SELECT p.evidence FROM decisions d
+           JOIN proposals p ON p.digest=d.proposal_digest WHERE d.id=?`,
+        )
+        .get(String(row.afterId)) as Row | undefined;
+    const evidence = proposal?.evidence
+      ? (JSON.parse(String(proposal.evidence)) as Record<string, unknown>[])
+      : [];
+    return {
+      ...row,
+      deliveries,
+      receipt: receipt ?? null,
+      evidenceIds: evidence
+        .map((item) => item.fragment_revision_id)
+        .filter((id): id is string => typeof id === "string"),
+    };
+  }
   readNotification(notificationId: string) {
     this.db
       .prepare("UPDATE notifications SET read_at=? WHERE id=?")

@@ -3,12 +3,17 @@
   "browser": "145.0.7632.6",
   "checks": [
     "empty real workspace and material capture",
+    "A-U01 real job, applied proposal, notification and evidence flow",
     "recursive evidence, cycle and return focus",
     "version update and immutable prior revision",
     "task creation and persistent change notifications",
+    "A-U02 decision diff, evidence, receipts and stale state",
+    "A-U03 QR, direct authorization link, reusable app and pairing",
     "page reload and desktop rendering",
+    "A-U04 768px layout and keyboard focus",
     "390px mobile viewport and full-screen dialog",
-    "100 persisted evidence nodes and bounded current rendering"
+    "100 persisted evidence nodes and bounded current rendering",
+    "A-U05 offline, model, delivery failure and restart truthfulness"
   ],
   "errors": [],
   "agent": "deterministic ACP protocol fixture",

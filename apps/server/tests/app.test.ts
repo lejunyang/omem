@@ -333,6 +333,35 @@ it("evaluates and atomically applies a supported owner task through HTTP", async
     expect((await x.app.inject("/api/tasks")).json()).toMatchObject([
       { title: "提交验证报告", ownerId: "owner", version: 1 },
     ]);
+    const proposals = (await x.app.inject("/api/proposals")).json();
+    expect(proposals).toMatchObject([
+      {
+        id: "api-proposal-1",
+        state: "applied",
+        body: { title: "提交验证报告" },
+        policyResult: { outcome: "auto_apply", reasons: [] },
+        assessments: [
+          {
+            semanticVerdict: "supported",
+            reviewerVersion: "reviewer@1",
+          },
+        ],
+      },
+    ]);
+    const notifications = (await x.app.inject("/api/notifications")).json();
+    const detail = await x.app.inject(
+      `/api/notifications/${notifications[0].id}`,
+    );
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      receipt: {
+        proposalId: "api-proposal-1",
+        entityType: "task",
+        entityVersion: 1,
+      },
+      evidenceIds: [revision.fragments[0].id],
+      deliveries: [{ channel: "in_app", state: "pending" }],
+    });
   } finally {
     await x.close();
   }

@@ -60,6 +60,43 @@ export class MemoryService {
       .get(proposalId) as Row | undefined;
   }
 
+  private proposalView(row: Row) {
+    const assessments = this.db
+      .prepare(
+        `SELECT quote_asset_verdict AS quoteAssetVerdict,
+           semantic_verdict AS semanticVerdict,
+           reviewer_version AS reviewerVersion,role_version AS roleVersion,
+           reason_code AS reasonCode,details,created_at AS createdAt
+         FROM evidence_assessments WHERE workspace_id=? AND proposal_digest=?
+         ORDER BY created_at DESC`,
+      )
+      .all(String(row.workspace_id), String(row.digest)) as Row[];
+    return {
+      id: String(row.id),
+      workspaceId: String(row.workspace_id),
+      schemaVersion: Number(row.schema_version),
+      kind: String(row.kind),
+      operation: String(row.operation),
+      targetId: row.target_id ? String(row.target_id) : null,
+      expectedVersions: JSON.parse(String(row.expected_versions)),
+      body: JSON.parse(String(row.body)),
+      scope: JSON.parse(String(row.scope)),
+      evidence: JSON.parse(String(row.evidence)),
+      uncertainties: JSON.parse(String(row.uncertainties)),
+      reason: String(row.reason),
+      origin: JSON.parse(String(row.origin)),
+      digest: String(row.digest),
+      state: String(row.state),
+      policyResult: row.policy_result
+        ? JSON.parse(String(row.policy_result))
+        : null,
+      impactCount: Number(row.impact_count),
+      assessments,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
   private persistProposal(proposal: Proposal, impactCount: number) {
     const digest = stableDigest(proposal);
     return this.transaction(() => {
@@ -892,15 +929,43 @@ export class MemoryService {
   }
 
   proposals() {
-    return this.db
-      .prepare("SELECT * FROM proposals ORDER BY created_at DESC")
-      .all();
+    return (
+      this.db
+        .prepare("SELECT * FROM proposals ORDER BY created_at DESC")
+        .all() as Row[]
+    ).map((row) => this.proposalView(row));
+  }
+
+  proposal(proposalId: string) {
+    const row = this.proposalRow(proposalId);
+    return row ? this.proposalView(row) : null;
   }
 
   decisions() {
-    return this.db
-      .prepare("SELECT * FROM decisions ORDER BY created_at DESC")
-      .all();
+    const rows = this.db
+      .prepare(
+        `SELECT d.*,p.id AS proposal_id
+         FROM decisions d JOIN proposals p ON p.digest=d.proposal_digest
+         ORDER BY d.created_at DESC`,
+      )
+      .all() as Row[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      workspaceId: String(row.workspace_id),
+      proposalDigest: String(row.proposal_digest),
+      expectedVersions: JSON.parse(String(row.expected_versions)),
+      actorId: String(
+        (JSON.parse(String(row.owner_binding)) as { actorId: string }).actorId,
+      ),
+      expiresAt: String(row.expires_at),
+      state: String(row.state),
+      requestId: row.request_id ? String(row.request_id) : null,
+      action: row.action ? String(row.action) : null,
+      decidedAt: row.decided_at ? String(row.decided_at) : null,
+      resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
+      createdAt: String(row.created_at),
+      proposal: this.proposal(String(row.proposal_id))!,
+    }));
   }
 
   memories() {
