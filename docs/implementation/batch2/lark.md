@@ -121,4 +121,4 @@ SDK 官方长连接要求回调在约3秒内处理，回调处理器只做身份
 
 A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。
 
-A-L08～14/A-N01～05 的本地故障测试已覆盖 lease、重连状态、事件去重/身份、Card 2.0 callback 校验、DB 写失败重投、stale/竞态、移群停用、SQLite 重启、同 UUID 重试、`unknown`、限流/认证和旧绑定取消。A-N04 当前只通过逐条即时投递部分，短窗合并/定时外发摘要待后续实现。由于没有得到本轮创建/授权独立测试应用的明确动作，真实 WS/发送/卡片闭环全部标记 live skipped；新建应用、扫码、群绑定必须由用户参与。
+A-L08～14/A-N01～05 的本地故障测试已覆盖 lease、重连状态、事件去重/身份、Card 2.0 callback 校验、DB 写失败重投、stale/竞态、移群停用、SQLite 重启、同 UUID 重试、`unknown`、限流/认证和旧绑定取消。A-N04 当前只通过逐条即时投递部分，短窗合并/定时外发摘要待后续实现。用户授权的独立测试应用已真实通过权限回读、WS 握手、私聊 pairing、主动通知、Card callback 与入群消息采集；断网恢复、移群、secret 轮换和发送故障仍只做确定性故障注入。

@@ -62,6 +62,6 @@ B2-05 已实现：官方 Node SDK `registerApp()` adapter、新建/已有应用�
 
 B2-06 已实现 schema v8 的飞书 target/连接 lease/事件 inbox/投递尝试/卡片命令持久化；官方 SDK WebSocket adapter 记录连接与重连状态并在终止失败后重新启动，同一 connection 只允许一个 lease owner。绑定目标会自动建立 owner notification 与 decision target；把机器人加入群或直接绑定群时会立即启用消息监控，移群立即停用，不再增加第二次 owner 批准。自己的 bot 消息被过滤，重复/冲突/乱序事件保留身份与事件时间。正式应用事务为 active target 创建确定性 Card 2.0 intent，sender 固定 binding/version 与 provider UUID，处理租约恢复、429 退避、认证停用、响应丢失重试和一小时后 `unknown`。决策卡 callback 严格核验 app/operator/chat/message/nonce/proposal/expected-version/expiry，先持久入队再 ACK，异步 CAS 到 `MemoryService.decide()`，竞态/stale 后更新卡片为实际状态。
 
-A-L08～14、A-N01～05 已用官方 SDK adapter 边界、真实 SQLite 重启、lease/故障注入和 Card 2.0 payload 做 12 项确定性测试；其中 A-N04 只覆盖当前支持的逐条即时模式，短窗合并/定时外发摘要尚未实现。没有创建、授权或连接独立飞书测试应用，因此真实 WebSocket、消息发送、Card 回调、断网重连及平台一小时去重窗口仍是 **live skipped**，不能把本地 adapter 测试写成真实集成通过。运行时组件也保持显式装配，不在默认主进程里凭空启用外部连接。
+A-L08～14、A-N01～05 已用官方 SDK adapter 边界、真实 SQLite 重启、lease/故障注入和 Card 2.0 payload 做 12 项确定性测试；其中 A-N04 只覆盖当前支持的逐条即时模式，短窗合并/定时外发摘要尚未实现。用户授权的独立应用已真实通过凭据/权限回读、WebSocket 握手、私聊 pairing、主动通知、Card 2.0 callback 和入群消息自动采集；真实断网恢复、移群、secret 轮换、429/响应丢失与平台去重窗口仍只做故障注入，不能报 live pass。运行时组件保持显式装配，不在默认主进程里凭空启用外部连接。
 
 B2-07～B2-08 尚未实现。当前服务没有自动启动 capture→extractor→verifier worker 编排，也没有新的 Vue 决策/机器人设置流程。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入，现有 Batch 2 角色全部强制 fresh session、默认无工具。
