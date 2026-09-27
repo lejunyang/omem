@@ -1,0 +1,4 @@
+interface:
+  display_name: "omem Task Planning"
+  short_description: "Propose bounded next steps without executing actions"
+  default_prompt: "Use $omem-task-planning to propose evidence-bound next steps."

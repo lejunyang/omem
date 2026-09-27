@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.server.json && vue-tsc --noEmit -p apps/web/tsconfig.json",
     "test": "vitest run",
     "test:browser": "tsx scripts/browser-smoke.ts",
+    "test:live-role": "tsx scripts/live-role-smoke.ts",
     "cli": "tsx apps/server/src/cli.ts",
     "format": "prettier --write \"apps/**/*.{ts,vue,css,mjs}\" \"packages/**/*.{ts,vue,css}\" \"scripts/*.ts\""
   },

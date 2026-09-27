@@ -452,8 +452,195 @@ export const jobControlSchema = z
   })
   .strict();
 
+export const runtimeRequestDecisionSchema = z
+  .object({ action: z.enum(["approve", "reject"]) })
+  .strict();
+
 export type JobState = z.infer<typeof jobStateSchema>;
 export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
+
+export const roleIdSchema = z.enum([
+  "extractor",
+  "verifier",
+  "planner",
+  "feedback-curator",
+  "answerer",
+]);
+
+export const roleManifestSchema = z
+  .object({
+    schema_version: z.literal(1),
+    role_id: roleIdSchema,
+    role_version: z
+      .string()
+      .regex(/^[a-zA-Z0-9._-]+$/)
+      .max(100),
+    profile_ref: z.string().min(1).max(300),
+    prompt_templates: z.array(z.string().min(1).max(500)).min(1).max(10),
+    skill_bundles: z
+      .array(
+        z
+          .object({
+            canonical_name: z
+              .string()
+              .regex(/^[a-z0-9-]+$/)
+              .max(64),
+            version: z
+              .string()
+              .regex(/^[a-zA-Z0-9._-]+$/)
+              .max(100),
+            load_mode: z.enum(["inline", "native"]),
+            artifact_digest: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .max(10),
+    output_schema: z.enum([
+      "ProposalBatch.v1",
+      "AssessmentBatch.v1",
+      "PlanProposal.v1",
+      "CorrectionProposal.v1",
+      "AnswerWithCitations.v1",
+    ]),
+    tool_policy: z
+      .object({
+        mode: z.enum(["none", "read_only"]),
+        allowed_tools: z.array(z.string().min(1).max(200)).max(20),
+      })
+      .strict(),
+    session_policy: z
+      .object({
+        reuse: z.enum(["never", "topic"]),
+        inherit_user_skills: z.literal(false),
+        inherit_user_mcp: z.literal(false),
+      })
+      .strict(),
+    budget: z
+      .object({
+        max_context_tokens: z.number().int().min(256).max(200_000),
+        max_output_tokens: z.number().int().min(128).max(100_000),
+        max_repair_attempts: z.number().int().min(0).max(2),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (
+      manifest.tool_policy.mode === "none" &&
+      manifest.tool_policy.allowed_tools.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["tool_policy", "allowed_tools"],
+        message: "no-tools roles cannot declare allowed tools",
+      });
+  });
+
+export const contextMaterialSchema = z
+  .object({
+    fragment_revision_id: z.string().min(1).max(500),
+    source_revision_id: z.string().min(1).max(500),
+    text: z.string().max(200_000).optional(),
+    image: z
+      .object({
+        asset_hash: z.string().regex(/^[a-f0-9]{64}$/),
+        mime_type: z.enum(["image/png", "image/jpeg", "image/webp"]),
+        data_base64: z.string().min(1).max(8_000_000),
+        label: z.string().max(200),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine((material) => material.text !== undefined || material.image, {
+    message: "material requires text or image",
+  });
+
+export const contextManifestSchema = z
+  .object({
+    schema_version: z.literal(1),
+    job_id: z.string().min(1).max(500),
+    role_id: roleIdSchema,
+    trusted_context: z
+      .object({
+        workspace_id: z.string().min(1).max(300),
+        project_id: z.string().min(1).max(300).nullable(),
+        owner_id: z.string().min(1).max(300),
+        observed_at: z.iso.datetime({ offset: true }),
+        timezone: z.string().min(1).max(100),
+        actor_binding: z
+          .object({
+            id: z.string().min(1).max(300).nullable(),
+            verified_by: z.string().min(1).max(300).nullable(),
+          })
+          .strict(),
+        source_kind: z.enum([
+          "manual",
+          "file",
+          "git",
+          "lark",
+          "agent",
+          "hook",
+          "chat",
+          "screen",
+        ]),
+        is_forwarded: z.boolean(),
+        producer_kind: z.enum(["original", "derived"]),
+        source_epoch: z.number().int().min(1).default(1),
+      })
+      .strict(),
+    materials: z.array(contextMaterialSchema).min(1).max(200),
+    related_memories: z.array(z.record(z.string(), z.unknown())).max(100),
+    confirmed_corrections: z.array(z.record(z.string(), z.unknown())).max(100),
+    candidates: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
+    task: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const planProposalSchema = z
+  .object({
+    schema_version: z.literal(1),
+    proposal_id: z.string().min(1).max(500),
+    task_id: z.string().min(1).max(500),
+    expected_version: z.number().int().min(1),
+    steps: z
+      .array(
+        z
+          .object({
+            action: z.enum([
+              "gather_context",
+              "draft_document",
+              "break_down_task",
+              "suggest_reminder",
+              "request_decision",
+            ]),
+            evidence_refs: z.array(z.string().min(1).max(500)).max(100),
+            expected_output: z.string().min(1).max(2000),
+            verification: z.string().min(1).max(2000),
+            needs_owner_decision: z.boolean(),
+            stop_condition: z.string().min(1).max(2000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(20),
+    uncertainties: z.array(z.string().min(1).max(1000)).max(50),
+    origin: proposalOriginSchema,
+  })
+  .strict();
+
+export const answerWithCitationsSchema = z
+  .object({
+    schema_version: z.literal(1),
+    answer: z.string().min(1).max(100_000),
+    citation_refs: z.array(z.string().min(1).max(500)).max(100),
+    uncertainties: z.array(z.string().min(1).max(1000)).max(50),
+  })
+  .strict();
+
+export type RoleManifest = z.infer<typeof roleManifestSchema>;
+export type ContextManifest = z.infer<typeof contextManifestSchema>;
+export type PlanProposal = z.infer<typeof planProposalSchema>;
 
 export type Proposal = z.infer<typeof proposalSchema>;
 export type ProposalBatch = z.infer<typeof proposalBatchSchema>;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 3;
+export const SUPPORTED_SCHEMA_VERSION = 4;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -336,6 +336,45 @@ const durableJobsAndInputsStatements = [
   "CREATE INDEX input_batches_stream_idx ON input_batches(workspace_id, source, stream_key, created_at)",
 ] as const;
 
+const roleRuntimeStatements = [
+  "ALTER TABLE job_attempts ADD COLUMN role_bundle_hash TEXT",
+  "ALTER TABLE job_attempts ADD COLUMN context_hash TEXT",
+  "ALTER TABLE job_attempts ADD COLUMN output_schema TEXT",
+  "ALTER TABLE job_attempts ADD COLUMN session_id TEXT",
+  "ALTER TABLE job_attempts ADD COLUMN loaded_skills TEXT",
+  "ALTER TABLE job_attempts ADD COLUMN allowed_tools TEXT",
+  `CREATE TABLE runtime_requests(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    job_id TEXT,
+    session_id TEXT NOT NULL,
+    turn_id TEXT,
+    provider_request_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('permission','elicitation')),
+    payload_digest TEXT NOT NULL,
+    options TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','denied','expired','resolved')),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    UNIQUE(session_id, provider_request_id)
+  )`,
+  `CREATE TABLE role_outputs(
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES jobs(id),
+    attempt INTEGER NOT NULL,
+    output_schema TEXT NOT NULL,
+    output_digest TEXT NOT NULL,
+    output_json TEXT NOT NULL,
+    trace_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(job_id, attempt)
+  )`,
+  "CREATE INDEX runtime_requests_state_idx ON runtime_requests(state, expires_at)",
+  "CREATE INDEX role_outputs_job_idx ON role_outputs(job_id, attempt)",
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -359,6 +398,12 @@ const migrations: readonly Migration[] = [
     name: "durable-jobs-and-input-buffers",
     statements: durableJobsAndInputsStatements,
     checksum: checksum(durableJobsAndInputsStatements),
+  },
+  {
+    version: 4,
+    name: "versioned-role-runtime",
+    statements: roleRuntimeStatements,
+    checksum: checksum(roleRuntimeStatements),
   },
 ];
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "omem Feedback Curation"
+  short_description: "Turn scoped owner corrections into reusable constraints"
+  default_prompt: "Use $omem-feedback-curation to curate a scoped correction."

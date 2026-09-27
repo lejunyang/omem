@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "role_id": "feedback-curator",
+  "role_version": "1",
+  "profile_ref": "traex",
+  "prompt_templates": ["prompt.md"],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-feedback-curation",
+      "version": "feedback-1",
+      "load_mode": "inline",
+      "artifact_digest": "33a62f0c37b8cce2355990f52fd18c6f2f7804053425fb341cc776876d86cf8f"
+    }
+  ],
+  "output_schema": "CorrectionProposal.v1",
+  "tool_policy": { "mode": "none", "allowed_tools": [] },
+  "session_policy": {
+    "reuse": "never",
+    "inherit_user_skills": false,
+    "inherit_user_mcp": false
+  },
+  "budget": {
+    "max_context_tokens": 6000,
+    "max_output_tokens": 2000,
+    "max_repair_attempts": 2
+  }
+}

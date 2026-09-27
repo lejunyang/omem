@@ -32,6 +32,8 @@ osdk run start
 
 CLI-only 模式暂不支持附图，附图问题需选择支持 image 的 ACP；不会静默丢图。每次问答使用新会话与明确传入的固定证据，尚未做跨轮 ACP session resume。问题、答案保存为材料，引用记录标明“提供给模型的依据”，不冒充已经通过事实支持度验证。
 
+Batch 2 角色运行包位于 `packages/agent-runtime/roles`。extractor、verifier、planner、feedback-curator 都有固定 manifest、prompt、输出 schema 和最小 Skill；当前使用 inline skill 模式，运行时校验全部资产 digest、上下文/输出预算和结构化结果。`osdk run live-role` 会用已登录 TraeX 对虚构小样本执行一次真实提炼和独立复核，并把带模型、effort、bundle/prompt/context/skill hash 的报告写到忽略提交的 `.omem/verification/live-role-smoke.json`。这条命令会真实消耗模型调用。
+
 Agent 进程在 `.omem/agent-workspace` 工作。内置配置采用只读/无工具策略，ACP 权限请求转成通知且拒绝自动执行；这不等于给任意第三方 Agent 提供 OS 安全沙箱。自定义运行器需保留自己的隔离/权限约束。
 
 ## 材料与接入
@@ -55,7 +57,7 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 单用户部署默认仅监听 loopback。公网/局域网监听需设置 `OMEM_HOST` 和强 `OMEM_TOKEN`，所有 `/api/*` 都校验 Bearer；浏览器令牌仅放 sessionStorage。部署到服务器建议用 TLS 反向代理/SSH 隧道。当前不是多租户服务，不把一个 shared token 当团队权限系统。
 
-`GET /api/jobs` 与 `GET /api/jobs/:id` 可查看公开状态和 attempt 指纹；取消、重试分别使用 `POST /api/jobs/:id/cancel|retry`，请求必须带 `expectedGeneration` 和幂等 `requestId`。已成功应用的 job 不能靠取消抹掉效果，只返回需要补偿恢复。当前 worker 基础可注入 handler，但服务尚未接入 B2-03 的真实提炼 handler。
+`GET /api/jobs` 与 `GET /api/jobs/:id` 可查看公开状态和 attempt 指纹；取消、重试分别使用 `POST /api/jobs/:id/cancel|retry`，请求必须带 `expectedGeneration` 和幂等 `requestId`。已成功应用的 job 不能靠取消抹掉效果，只返回需要补偿恢复。角色 job handler 已能持久化验证后的结构化输出和完整公开 trace；B2-04 的提炼/验证/策略编排尚未自动启动这些 handler。
 
 通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。飞书消息投递通道还未接入。
 
@@ -75,6 +77,8 @@ osdk run check
 osdk run browser
 # 真实 Agent 测试（会使用已登录账号调用一次大模型）
 osdk run live-acp
+# 真实 extractor + verifier（会额外使用两次模型调用）
+osdk run live-role
 ```
 
 本仓库不提交真实会话、原件、token、模型权重和运行数据库。`docs/prototype` 保留此前经确认的离线视觉原型，它的演示数据和 React 构建不参与新 Vue 产品运行。

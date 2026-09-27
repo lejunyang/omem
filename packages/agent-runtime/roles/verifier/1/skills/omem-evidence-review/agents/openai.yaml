@@ -1,0 +1,4 @@
+interface:
+  display_name: "omem Evidence Review"
+  short_description: "Verify proposal support against fixed source evidence"
+  default_prompt: "Use $omem-evidence-review to assess a proposal against its evidence."

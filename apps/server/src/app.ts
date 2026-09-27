@@ -10,6 +10,7 @@ import {
   taskSchema,
   taskUpdateSchema,
   jobControlSchema,
+  runtimeRequestDecisionSchema,
 } from "../../../packages/contracts/src/index.js";
 import { Store } from "./store.js";
 import { Runs } from "./runs.js";
@@ -192,6 +193,14 @@ export async function buildApp(config: Config) {
     return store.jobs.retry({ jobId: req.params.id, ...body });
   });
   app.get("/api/input-batches", async () => store.inputs.batches());
+  app.get("/api/runtime-requests", async () => store.runtimeRequests.list());
+  app.post<{ Params: { id: string } }>(
+    "/api/runtime-requests/:id/respond",
+    async (req) => {
+      const body = runtimeRequestDecisionSchema.parse(req.body);
+      return store.runtimeRequests.resolve({ id: req.params.id, ...body });
+    },
+  );
   app.get("/api/profiles", async () =>
     config.profiles.map(
       ({ id, name, transport, model, effort, maxContextChars }) => ({
