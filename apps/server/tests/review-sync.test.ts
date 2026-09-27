@@ -638,7 +638,7 @@ describe("group 5: pre-filtering and sync reliability", () => {
         .prepare(
           `SELECT f.text AS t FROM review_relations r
            JOIN fragments f ON f.id = r.target_fragment_id
-           WHERE r.relation_type='implements'`,
+           WHERE r.relation_type='requires'`,
         )
         .all() as { t: string }[]
     ).map((r) => r.t);

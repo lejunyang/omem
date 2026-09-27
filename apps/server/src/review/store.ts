@@ -333,8 +333,16 @@ export const RELATION_INVERSES: Record<RelationType, string> = {
 };
 
 export function ensureReviewRelationsTable(store: Store): void {
+  // Older derived tables (pre seed_identity) are disposable: relations are rebuilt
+  // from the seed on every sync, so dropping a stale-shaped table loses nothing.
+  const cols = store.db
+    .prepare("PRAGMA table_info(review_relations)")
+    .all() as { name: string }[];
+  if (cols.length && !cols.some((c) => c.name === "seed_identity"))
+    store.db.exec("DROP TABLE review_relations");
   store.db.exec(`CREATE TABLE IF NOT EXISTS review_relations(
     id TEXT PRIMARY KEY,
+    seed_identity TEXT,
     source_fragment_id TEXT NOT NULL,
     target_fragment_id TEXT NOT NULL,
     relation_type TEXT NOT NULL,
@@ -343,29 +351,24 @@ export function ensureReviewRelationsTable(store: Store): void {
     source_revision_id TEXT,
     target_revision_id TEXT,
     created_at TEXT NOT NULL,
-    UNIQUE(source_fragment_id, target_fragment_id, relation_type)
+    UNIQUE(seed_identity)
   )`);
 }
 
 /** Deterministic relation id so repeated syncs never mint a duplicate row and
- * ids stay stable across restarts. */
-export function relationId(
-  sourceFragmentId: string,
-  targetFragmentId: string,
-  relationType: string,
-): string {
+ * ids stay stable across restarts. seedIdentity makes each seed-derived edge
+ * unique even when both fragment endpoints are unresolved (missing links). */
+export function relationId(seedIdentity: string): string {
   return (
     "rel_" +
-    createHash("sha1")
-      .update([sourceFragmentId, targetFragmentId, relationType].join("|"))
-      .digest("hex")
-      .slice(0, 24)
+    createHash("sha1").update(seedIdentity).digest("hex").slice(0, 24)
   );
 }
 
 export function upsertReviewRelation(
   store: Store,
   row: {
+    seedIdentity: string;
     sourceFragmentId: string;
     targetFragmentId: string;
     relationType: RelationType;
@@ -376,18 +379,17 @@ export function upsertReviewRelation(
   },
 ): string {
   ensureReviewRelationsTable(store);
-  const id = relationId(
-    row.sourceFragmentId,
-    row.targetFragmentId,
-    row.relationType,
-  );
+  const id = relationId(row.seedIdentity);
   store.db
     .prepare(
       `INSERT INTO review_relations(
-         id, source_fragment_id, target_fragment_id, relation_type, status,
-         evidence, source_revision_id, target_revision_id, created_at
-       ) VALUES(?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(source_fragment_id, target_fragment_id, relation_type) DO UPDATE SET
+         id, seed_identity, source_fragment_id, target_fragment_id, relation_type,
+         status, evidence, source_revision_id, target_revision_id, created_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET
+         source_fragment_id=excluded.source_fragment_id,
+         target_fragment_id=excluded.target_fragment_id,
+         relation_type=excluded.relation_type,
          status=excluded.status,
          evidence=excluded.evidence,
          source_revision_id=excluded.source_revision_id,
@@ -395,6 +397,7 @@ export function upsertReviewRelation(
     )
     .run(
       id,
+      row.seedIdentity,
       row.sourceFragmentId,
       row.targetFragmentId,
       row.relationType,
@@ -405,6 +408,27 @@ export function upsertReviewRelation(
       new Date().toISOString(),
     );
   return id;
+}
+
+/** After a sync, any seed-derived edge whose assoc id is no longer in the seed
+ * list is flipped to stale (never silently kept green). */
+export function invalidateRemovedSeeds(
+  store: Store,
+  validAssocIds: Set<string>,
+): number {
+  ensureReviewRelationsTable(store);
+  if (validAssocIds.size === 0) return 0;
+  const marks: string[] = [];
+  for (const id of validAssocIds) marks.push(id);
+  const placeholders = marks.map(() => "?").join(",");
+  const res = store.db
+    .prepare(
+      `UPDATE review_relations SET status='stale'
+       WHERE status <> 'stale' AND seed_identity IS NOT NULL
+       AND substr(seed_identity, 1, instr(seed_identity, '#') - 1) NOT IN (${placeholders})`,
+    )
+    .run(...marks);
+  return Number(res.changes ?? 0);
 }
 
 /** One relation as returned to the API. `direction` is "outgoing" when the
@@ -590,9 +614,11 @@ export type CodePathRelationOptions = {
   includeStale?: boolean;
 };
 
-/** All outgoing relations whose source fragment lives in the head revision of
- * the given code file. Powers the trace chain view (intent→decision→research→
- * test for one file). */
+/** All relations on the trace chain for one code file: the code fragment's own
+ * outgoing edges (implements → its intent fragment) PLUS every outgoing edge of
+ * the reachable intent fragments (requires/decided_by/researched_by/tested_by →
+ * the raw docs/tests). That yields the full intent→decision→research→test chain
+ * without a second round-trip. */
 export function relationsForCodePath(
   store: Store,
   filePath: string,
@@ -604,8 +630,6 @@ export function relationsForCodePath(
   const includeStale = options.includeStale === true;
   const where: string[] = ["json_extract(srev.body,'$.context.filePath') = ?"];
   if (!includeHistorical)
-    // Only relations anchored to the current head of this file; fragments from
-    // superseded revisions of the same path must not leak into the trace.
     where.push("ss.head = srev.id");
   if (!includeStale)
     where.push(
@@ -615,7 +639,20 @@ export function relationsForCodePath(
     );
   const rows = store.db
     .prepare(
-      `SELECT r.id AS id, r.relation_type AS relation_type, r.status AS status,
+      `WITH code_frags AS (
+         SELECT sf.id AS fid FROM fragments sf
+         JOIN revisions srev ON srev.id = sf.revision_id
+         JOIN sources ss ON ss.id = srev.source_id
+         WHERE json_extract(srev.body,'$.context.filePath') = ?
+           ${includeHistorical ? "" : "AND ss.head = srev.id"}
+       ),
+       intent_frags AS (
+         SELECT r.target_fragment_id AS iid FROM review_relations r
+         WHERE r.relation_type='implements'
+           AND r.source_fragment_id IN (SELECT fid FROM code_frags)
+           AND r.target_fragment_id <> ''
+       )
+       SELECT r.id AS id, r.relation_type AS relation_type, r.status AS status,
               r.evidence AS evidence,
               tf.id AS other_fragment_id, tf.text AS other_text,
               trev.id AS other_revision_id, trev.title AS other_title, trev.version AS other_version,
@@ -632,7 +669,9 @@ export function relationsForCodePath(
        LEFT JOIN revisions trev ON trev.id = tf.revision_id
        LEFT JOIN sources ts ON ts.id = trev.source_id
        LEFT JOIN review_source_meta tsm ON tsm.source_id = ts.id
-       WHERE ${where.join(" AND ")}
+       WHERE (r.source_fragment_id IN (SELECT fid FROM code_frags)
+              OR r.source_fragment_id IN (SELECT iid FROM intent_frags))
+         ${includeStale ? "" : "AND r.status <> 'stale'"}
        ORDER BY r.relation_type, r.created_at`,
     )
     .all(filePath) as Record<string, unknown>[];

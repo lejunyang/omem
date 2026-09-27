@@ -108,30 +108,21 @@ function relationLabel(t: string): string {
   return RELATION_LABELS[t] ?? t;
 }
 
-/** A relation is "stale" when it is confirmed but the other side no longer
- * points at a current, non-removed head revision. Older backends that do not
- * project `current`/`removed` onto `other` are treated as current. */
-function isRelationStale(r: ReviewRelation): boolean {
-  if (r.status !== "confirmed") return false;
-  if (!r.other) return false;
-  if (r.other.removed === true) return true;
-  if (r.other.current === false) return true;
-  return false;
-}
-
+/** Badge tone from the EFFECTIVE relation status (the server already collapses
+ * stored status + otherCurrent/otherRemoved into relationStatus, so the UI never
+ * has to second-guess it). */
 function statusTone(r: ReviewRelation): "success" | "warning" | "neutral" | "danger" {
-  if (r.status === "candidate") return "warning";
-  if (r.status === "missing") return "neutral";
-  // confirmed
-  if (isRelationStale(r)) return "neutral";
-  return "success";
+  if (r.relationStatus === "confirmed") return "success";
+  if (r.relationStatus === "candidate") return "warning";
+  if (r.relationStatus === "missing") return "neutral";
+  return "neutral"; // stale
 }
 
 function statusLabel(r: ReviewRelation): string {
-  if (r.status === "candidate") return "候选";
-  if (r.status === "missing") return "缺失";
-  // confirmed
-  return isRelationStale(r) ? "已过期" : "已关联";
+  if (r.relationStatus === "confirmed") return "已关联";
+  if (r.relationStatus === "candidate") return "候选";
+  if (r.relationStatus === "missing") return "缺失";
+  return "已过期"; // stale
 }
 
 /** Group a relation list by relation type, in a stable display order. */

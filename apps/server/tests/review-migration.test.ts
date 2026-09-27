@@ -331,6 +331,7 @@ describe("relation lifecycle: invalidateStaleRelations", () => {
     const decFrag = dec.revision.fragments[0]!;
 
     upsertReviewRelation(store, {
+      seedIdentity: "test-oldcode#implements",
       sourceFragmentId: oldCodeFrag.id,
       targetFragmentId: decFrag.id,
       relationType: "implements",
