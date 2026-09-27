@@ -25,7 +25,7 @@ osdk run start
 osdk run dev:review
 ```
 
-启动后 API 运行在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`。首次启动自动全量同步仓库材料（约 70 sources / 2800+ fragments），后续可在 web "同步"页点击"立即同步"做增量更新（幂等，重复运行不重复入库）。
+启动后 API 运行在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`（Vite strictPort，端口被占时明确报错退出，不静默换端口）。首次启动自动全量同步仓库材料（实测 fresh rebuild 约 120+ sources / 4000+ fragments），后续可在 web "同步"页点击"立即同步"做增量更新（幂等，重复运行不重复入库）。dev 脚本用直接 node 子进程管理 API 与 Vite，退出时 `taskkill /T /F` 清理整棵进程树，API 非 0 退出会透传为 dev-review 退出码。
 
 **隔离约束**：
 - 数据目录 `.repo-review/`（gitignored），与业务库 `.omem/` 完全分离
@@ -34,6 +34,12 @@ osdk run dev:review
 - 无 traecli/模型时仍可浏览、搜索、追溯代码→意图→决策链路；生成式问答不可用（诚实标注）
 
 代码条目可从 web 回查具体文件、符号、片段、确定 commit，再跳到实现意图、设计决策、调研依据；关系双向追踪，无依据的关联标注"待补充/推测"。
+
+**当前边界（不是完整交付）**：
+- 关系是人工维护的：`docs/repo-review/associations.json` 每条 seed 必须点名 codePath/symbol + 需求 id + 决策/调研/测试文档锚点；词相似但未登记的片段**不会**自动升级为 confirmed。未解析的锚点记为 `missing` 而非静默丢弃。
+- 关系锚定在 head 版本的 fragment 上；代码改动产生新 revision 后，旧 revision 上的 fragment 仍可看但标"历史版本"，**跨版本 fragment 身份续接未实现**（v2 fragment 是新 id，旧关系不会自动跟随到 v2 对应片段——需重新同步后由 symbol/anchor 重新定位）。
+- 检索是 SQLite 关键词召回（CJK 2-gram），无 embedding/语义检索；搜索默认只返回 current revision，已删除/陈旧 source 需 `includeRemoved=true` 才可见。
+- `refreshDependents` 等"来源变更后自动重核验下游证据"按设计 blocked（见 status.md），repo-review 不自动做语义冲突判断。
 
 工具版本由 [osdk.toml](osdk.toml)、[osdk.lock](osdk.lock) 固定，应用包由 package-lock.json 固定。`osdk deps` 负责调用 npm 安装应用依赖；本项目声明的安装脚本用于 esbuild 等构建依赖。首次构建如遇包安装脚本门禁，请依本机 npm 提示检查并批准对应包，不关闭全局门禁。
 
