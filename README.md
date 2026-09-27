@@ -63,7 +63,7 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。配置 active 飞书 owner target 后，正式应用事务会同时生成绑定版本固定的飞书 delivery intent；sender 使用官方 SDK、同 UUID 有界重试和 `unknown` 状态。当前只实现逐条即时外发，短窗合并和定时摘要仍未实现。
 
-飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、实际 capability probe 接口、一次性 pairing/binding、官方 WebSocket adapter、单消费者 lease、事件 inbox、入群自动监控/移群停用、通知 sender 和耐竞态的 Card 2.0 决策队列。可手工导入现有应用，也可从本机 botmux 配置按 app_id 选择后加密转存，不修改 botmux 配置。创建应用、开通权限和实际发送都属于用户资产变更；当前主进程不会在缺少 secret key、真实 capability probe 与显式 host 装配时自动启用，也没有替用户创建或连接测试应用。
+飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、实际 capability probe 接口、一次性 pairing/binding、官方 WebSocket adapter、单消费者 lease、事件 inbox、入群自动监控/移群停用、通知 sender 和耐竞态的 Card 2.0 决策队列。可手工导入现有应用，也可从本机 botmux 配置按 app_id 选择后加密转存，不修改 botmux 配置。默认注册 profile 还参考 botmux 权限清单为未来文档/云盘/知识库、表格/幻灯片、日历、任务、会议和 CardKit 能力预留 app/user scopes，但明确排除批量/系统消息、群成员与群主操作、文档权限转移和日历 ACL 管理。创建应用、开通权限和实际发送都属于用户资产变更；当前主进程不会在缺少 secret key、真实 capability probe 与显式 host 装配时自动启用，也没有替用户创建或连接测试应用。
 
 详细运行环境、Docker/osdk 实测结果与后续引擎依赖见 [环境说明](docs/implementation/environment.md)。
 

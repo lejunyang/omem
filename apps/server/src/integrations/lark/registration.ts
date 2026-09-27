@@ -1,4 +1,4 @@
-import { registerApp } from "@larksuiteoapi/node-sdk";
+import { defaultHttpInstance, registerApp } from "@larksuiteoapi/node-sdk";
 import type { z } from "zod";
 import type { larkRequestedConfigSchema } from "../../../../../packages/contracts/src/index.js";
 
@@ -26,10 +26,56 @@ export interface LarkRegistrationAdapter {
   ): Promise<LarkRegistrationCredentials>;
 }
 
+const registrationPath = "/oauth/v1/app/registration";
+const retryMarker = "__omemRegistrationRetry";
+let registrationRetryInstalled = false;
+
+/** Keep the same RFC 8628 device_code alive across transient poll failures.
+ * The upstream SDK treats one network error as terminal; retrying its Axios
+ * request here preserves the exact poll request instead of issuing a new QR. */
+export function installLarkRegistrationRetry(maxRetries = 5) {
+  if (registrationRetryInstalled) return;
+  registrationRetryInstalled = true;
+  defaultHttpInstance.interceptors.response.use(undefined, async (error) => {
+    const candidate = error as {
+      code?: string;
+      config?: Record<string, unknown> & {
+        url?: string;
+        signal?: AbortSignal;
+      };
+      response?: { status?: number };
+    };
+    const config = candidate.config;
+    const retryableStatus =
+      typeof candidate.response?.status === "number" &&
+      candidate.response.status >= 500;
+    const retryableTransport =
+      !candidate.response &&
+      /^(?:ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|ENOTFOUND|ECONNABORTED)$/.test(
+        candidate.code ?? "",
+      );
+    const attempt = Number(config?.[retryMarker] ?? 0);
+    if (
+      !config?.url?.includes(registrationPath) ||
+      config.signal?.aborted ||
+      attempt >= maxRetries ||
+      (!retryableStatus && !retryableTransport)
+    )
+      return Promise.reject(error);
+    config[retryMarker] = attempt + 1;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(4_000, 500 * 2 ** attempt)),
+    );
+    return defaultHttpInstance.request(config);
+  });
+}
+
 export class OfficialLarkRegistrationAdapter
   implements LarkRegistrationAdapter
 {
-  constructor(private readonly sdkRegister: typeof registerApp = registerApp) {}
+  constructor(private readonly sdkRegister: typeof registerApp = registerApp) {
+    installLarkRegistrationRetry();
+  }
 
   async register(request: LarkRegistrationRequest) {
     const result = await this.sdkRegister({

@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { defaultHttpInstance } from "@larksuiteoapi/node-sdk";
 import { LarkOnboardingService } from "../src/integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "../src/integrations/lark/defaults.js";
 import {
@@ -17,6 +18,7 @@ import {
   type ExistingLarkAppProvider,
 } from "../src/integrations/lark/existing-apps.js";
 import {
+  installLarkRegistrationRetry,
   OfficialLarkRegistrationAdapter,
   type LarkCapabilityProbe,
   type LarkCapabilityResult,
@@ -174,6 +176,26 @@ describe("B2-05 Lark onboarding acceptance", () => {
         "im:chat:read",
         "im:chat.members:read",
         "contact:user.base:readonly",
+        "docs:document.content:read",
+        "docx:document:write_only",
+        "drive:file:download",
+        "wiki:node:read",
+        "sheets:spreadsheet:write_only",
+        "slides:presentation:write_only",
+        "calendar:calendar.event:update",
+        "calendar:calendar.free_busy:read",
+        "task:task:write",
+        "vc:meeting.bot.join:write",
+        "vc:meeting.bot.realtime:write",
+      ]),
+    );
+    expect(requestedConfig.addons.scopes.user).toEqual(
+      expect.arrayContaining([
+        "offline_access",
+        "docs:document.content:read",
+        "calendar:calendar.event:read",
+        "search:docs:read",
+        "vc:meeting.meetingevent:read",
       ]),
     );
     expect(requestedConfig.addons.events.items.tenant).toEqual(
@@ -182,11 +204,28 @@ describe("B2-05 Lark onboarding acceptance", () => {
         "im.message.updated_v1",
         "im.chat.member.bot.added_v1",
         "im.chat.member.bot.deleted_v1",
+        "drive.notice.comment_add_v1",
+        "vc.bot.meeting_invited_v1",
       ]),
     );
-    expect(requestedConfig.addons.scopes.tenant).not.toContain(
-      "im:chat.members:write_only",
+    expect(new Set(requestedConfig.addons.scopes.tenant).size).toBe(
+      requestedConfig.addons.scopes.tenant.length,
     );
+    expect(new Set(requestedConfig.addons.scopes.user).size).toBe(
+      requestedConfig.addons.scopes.user.length,
+    );
+    expect(
+      requestedConfig.addons.scopes.tenant.filter((scope) =>
+        [
+          "im:chat.members:write_only",
+          "im:chat:create",
+          "im:chat:delete",
+          "im:message:send_multi_users",
+          "docs:permission.member:transfer",
+          "calendar:calendar.acl:delete",
+        ].includes(scope),
+      ),
+    ).toEqual([]);
 
     const x = setup();
     const started = await x.service.start({
@@ -204,6 +243,47 @@ describe("B2-05 Lark onboarding acceptance", () => {
       appId: undefined,
       config: requestedConfig,
     });
+  });
+
+  it("retries the same SDK registration request after a transient timeout", async () => {
+    installLarkRegistrationRetry();
+    const originalAdapter = defaultHttpInstance.defaults.adapter;
+    let attempts = 0;
+    const requestBodies: unknown[] = [];
+    defaultHttpInstance.defaults.adapter = (async (config: any) => {
+      attempts++;
+      requestBodies.push(config.data);
+      if (attempts === 1) {
+        const error = new Error("connect ETIMEDOUT") as Error & {
+          code: string;
+          config: unknown;
+        };
+        error.code = "ETIMEDOUT";
+        error.config = config;
+        throw error;
+      }
+      return {
+        data: { ok: true },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      };
+    }) as any;
+    try {
+      const response = await defaultHttpInstance.post(
+        "https://accounts.feishu.cn/oauth/v1/app/registration",
+        "action=poll&device_code=same-device-code",
+      );
+      expect(response).toEqual({ ok: true });
+      expect(attempts).toBe(2);
+      expect(requestBodies).toEqual([
+        "action=poll&device_code=same-device-code",
+        "action=poll&device_code=same-device-code",
+      ]);
+    } finally {
+      defaultHttpInstance.defaults.adapter = originalAdapter;
+    }
   });
 
   it("A-L02 keeps cancellation/denial/expiry terminal and ignores late credentials", async () => {

@@ -66,7 +66,7 @@ sequenceDiagram
 
 `LarkConnection` 保存 app_id、secret_ref、domain、状态、实际核验过的 capability profile、binding_version 和 owner/targets。secret store 独立加密，master key 来自环境/系统密钥存储且不与密文同库备份；恢复/轮换要验证旧连接停用。App Secret 不进入模型上下文，模型不负责决定发送目标。
 
-按能力分阶段申请，示例范围在 [examples/lark-registration.json](examples/lark-registration.json)：
+为避免这个长期复用的 App 日后反复改权限，默认 profile 参考 botmux `src/setup/lark-scopes.json`（revision `597ffb1`，文件 SHA-256 `0b610a53ccd126979825196e8ffc357ca041647438cd87f0f505b5bbaf19dadc`）预留群聊、文档/云盘/知识库、表格/多维表格/幻灯片、日历、任务、会议与 CardKit 能力。当前 profile 为 114 个 tenant scopes、81 个 user scopes、12 个 tenant events、1 个 user event 和 1 个 callback；示例完整范围在 [examples/lark-registration.json](examples/lark-registration.json)：
 
 | 能力                | 初始权限/订阅（核对实际目录）                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -75,12 +75,17 @@ sequenceDiagram
 | 加群后响应 @        | `im:message.group_at_msg:readonly`、`im:message.group_at_msg.include_bot:readonly`                                                    |
 | 入群后持续观察      | `im:message.group_msg`；要包含其他机器人消息再加 `im:message.group_msg.include_bot:read`。入群事件会直接激活 omem capture target          |
 | 群与成员核验        | `im:chat:read`、`im:chat.members:read`；不申请建群/加人权限                                                                           |
-| 查 owner/机器人身份 | `contact:user.base:readonly`、`application:bot.basic_info:read`，按所用核验 API 确认                                                  |
+| 查 owner/机器人身份 | `contact:user.base:readonly`、`application:bot.basic_info:read`；`application:application:self_manage` 用于回读本应用实际授权范围       |
 | 待判断卡片回调      | `card.action.trigger`；更新消息按 `im:message:update`                                                                                 |
 | 图片/文件输入       | `im:resource`，按实际 endpoint 与 app 范围检查                                                                                        |
 | 状态变化            | `im.message.updated_v1`、`im.chat.member.bot.added_v1`、`im.chat.member.bot.deleted_v1`                                               |
+| 文档与知识库        | docs/docx/drive/space/wiki 的内容、评论、订阅、导入导出、媒体和节点读写；不申请权限转移与成员管理                                      |
+| 表格与画板          | Base、Sheets、Slides、Whiteboard 的创建、读取和内容写入                                                                                |
+| 日历与任务          | 日历/日程读取、创建、更新、回复、删除、忙闲与订阅；Task/TaskList 读写                                                                  |
+| 会议与语音          | 会议事件、会议机器人加入/消息/实时语音、会议辅助和语音转文字                                                                           |
+| 用户身份预留        | 对应 docs/drive/wiki/sheets/slides/calendar 的 user scopes + `offline_access`，真正调用前仍需用户 OAuth                                |
 
-不为通知默认申请文档写入/删除、批量发用户、通讯录全量读取。文档采集继续使用用户已授权的 lark-cli；机器人应用权限与 lark-cli user token 是两条授权链，不能互相替代。
+默认 profile 仍明确排除高扩散或组织管理能力：批量/系统消息、建群删群、成员增删、群主代操作、文档权限转移/成员授权写、日历 ACL 写/删、知识库成员管理和空间设置写。预留 scope 只让平台声明能力；具体工具调用仍需 omem 后续功能、用户身份 OAuth、目标级授权和业务确认。机器人应用权限与现有 lark-cli user token 是两条授权链，不能互相替代。
 
 用户确认页的实际权限可受平台灰度/企业策略影响。后台展示申请配置与核验状态，缺项给出官方后台入口或再次扫码增量授权；不能自动绕过管理员发布/审批。已有 app 更新使用明确 appId；新建使用 createOnly，避免误改已有应用。
 

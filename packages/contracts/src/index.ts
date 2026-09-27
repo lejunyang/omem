@@ -537,8 +537,8 @@ export const larkRequestedConfigSchema = z
         preset: z.boolean(),
         scopes: z
           .object({
-            tenant: z.array(z.string().min(1).max(200)).max(100).default([]),
-            user: z.array(z.string().min(1).max(200)).max(100).default([]),
+            tenant: z.array(z.string().min(1).max(200)).max(250).default([]),
+            user: z.array(z.string().min(1).max(200)).max(250).default([]),
           })
           .strict(),
         events: z
