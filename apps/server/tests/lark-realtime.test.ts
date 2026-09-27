@@ -363,11 +363,11 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
     awaitingManager.stop("connection-1");
   });
 
-  it("A-L09 auto-monitors joined groups, deduplicates events, preserves identity/order, and ignores self", () => {
+  it("A-L09 auto-monitors joined groups, deduplicates events, preserves identity/order, and ignores self", async () => {
     const resource = setup("group");
     const inbox = new LarkEventInbox(resource.store);
     expect(
-      inbox.processMessage(
+      await inbox.processMessage(
         event({ eventId: "evt-existing-group", messageId: "om-existing" }),
       ),
     ).toMatchObject({ outcome: "captured" });
@@ -378,7 +378,7 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
       messageId: null,
       text: undefined,
     });
-    expect(inbox.processMessage(added)).toMatchObject({
+    expect(await inbox.processMessage(added)).toMatchObject({
       outcome: "monitoring_enabled",
     });
     expect(
@@ -393,7 +393,7 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
       eventId: "evt-after-join",
       messageId: "om-after-join",
     });
-    expect(inbox.processMessage(immediatelyAfterJoin)).toMatchObject({
+    expect(await inbox.processMessage(immediatelyAfterJoin)).toMatchObject({
       outcome: "captured",
     });
 
@@ -402,7 +402,7 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
       senderOpenId: "ou_bot",
       senderType: "bot",
     });
-    expect(inbox.processMessage(self)).toMatchObject({
+    expect(await inbox.processMessage(self)).toMatchObject({
       outcome: "ignored_self",
     });
     const later = event({
@@ -424,15 +424,15 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
       text: "older edit",
       payload: { body: "older edit" },
     });
-    expect(inbox.processMessage(later)).toMatchObject({ outcome: "captured" });
-    expect(inbox.processMessage(later)).toMatchObject({ duplicate: true });
-    expect(() =>
+    expect(await inbox.processMessage(later)).toMatchObject({ outcome: "captured" });
+    expect(await inbox.processMessage(later)).toMatchObject({ duplicate: true });
+    await expect(
       inbox.processMessage({
         ...later,
         payload: { body: "conflicting replay" },
       }),
-    ).toThrow("LARK_EVENT_CONFLICT");
-    expect(inbox.processMessage(olderUpdate)).toMatchObject({
+    ).rejects.toThrow("LARK_EVENT_CONFLICT");
+    expect(await inbox.processMessage(olderUpdate)).toMatchObject({
       outcome: "captured",
     });
     const captured = resource.store.db
@@ -629,7 +629,7 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
     ).toEqual({ n: 0 });
   });
 
-  it("A-L14 disables capture immediately when the bot is removed from an approved group", () => {
+  it("A-L14 disables capture immediately when the bot is removed from an approved group", async () => {
     const resource = setup("group");
     resource.store.db
       .prepare(
@@ -642,7 +642,7 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
       .run("2026-09-27T00:00:00.000Z", "2026-09-27T00:00:00.000Z");
     const inbox = new LarkEventInbox(resource.store);
     expect(
-      inbox.processMessage(
+      await inbox.processMessage(
         event({
           eventId: "evt-removed",
           kind: "im.chat.member.bot.deleted_v1",
@@ -663,7 +663,7 @@ describe("B2-06 Lark realtime and callback acceptance", () => {
       { state: "disabled", capture_enabled: 0 },
     ]);
     expect(
-      inbox.processMessage(event({ eventId: "evt-after-remove" })),
+      await inbox.processMessage(event({ eventId: "evt-after-remove" })),
     ).toMatchObject({ outcome: "ignored_not_allowed" });
   });
 });

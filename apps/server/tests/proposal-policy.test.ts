@@ -186,7 +186,7 @@ describe("B2-04 extraction policy and application acceptance", () => {
     expect(store.tasks()).toHaveLength(1);
   });
 
-  it("A-K02 does not turn forwarded or unknown speech into the owner's task", () => {
+  it("A-K02 keeps forwarded/unknown speech as a source lead, never an owner task", () => {
     const { store, memory } = setup();
     const revision = capture(store, "我周五交方案", {
       actorId: null,
@@ -194,33 +194,15 @@ describe("B2-04 extraction policy and application acceptance", () => {
       forwarded: true,
     });
     const result = memory.evaluate(taskProposal(revision), supported);
-    expect(result.policy).toBe("awaiting_decision");
+    expect(result.policy).toBe("retain_as_source");
     expect(result.reasons).toContain("owner_not_verified");
     expect(store.tasks()).toEqual([]);
-    expect(memory.decisions()).toHaveLength(1);
-    const approved = memory.decide(result.decisionId!, {
-      action: "approve",
-      proposalDigest: result.proposalDigest,
-      requestId: "approve-forwarded-task",
-      actorId: "owner",
-    });
-    expect(approved).toMatchObject({
-      state: "approved",
-      duplicate: false,
-      receipt: { entityType: "task" },
-    });
-    expect(store.tasks()).toHaveLength(1);
-    expect(
-      memory.decide(result.decisionId!, {
-        action: "approve",
-        proposalDigest: result.proposalDigest,
-        requestId: "approve-forwarded-task",
-        actorId: "owner",
-      }),
-    ).toEqual({ state: "approved", duplicate: true });
+    // F2 AttentionGate: do not ask the owner whether to claim a group lead.
+    expect(memory.decisions()).toEqual([]);
+    expect(result.decisionId).toBeUndefined();
   });
 
-  it("A-K03 preserves ambiguous time text without inventing a due timestamp", () => {
+  it("A-K03 defers ambiguous-time owner material until it is actually used", () => {
     const { store, memory } = setup();
     const revision = capture(store, "也许周五能做，下周再看看");
     const proposal = taskProposal(revision, {
@@ -234,11 +216,12 @@ describe("B2-04 extraction policy and application acceptance", () => {
       uncertainties: ["time_ambiguous"],
     });
     const result = memory.evaluate(proposal, supported);
-    expect(result.policy).toBe("awaiting_decision");
+    expect(result.policy).toBe("defer_until_use");
     expect(result.reasons).toEqual(
       expect.arrayContaining(["uncertainties_present", "due_time_ambiguous"]),
     );
     expect(store.tasks()).toEqual([]);
+    expect(memory.decisions()).toEqual([]);
   });
 
   it("A-K04 rejects missing, mismatched or tampered evidence with zero active effects", () => {
@@ -326,7 +309,7 @@ describe("B2-04 extraction policy and application acceptance", () => {
       },
     };
     expect(memory.evaluate(procedure, supported)).toMatchObject({
-      policy: "awaiting_decision",
+      policy: "retain_as_source",
       reasons: expect.arrayContaining(["procedure_requires_review"]),
     });
     expect(store.tasks()).toHaveLength(1);
@@ -334,16 +317,28 @@ describe("B2-04 extraction policy and application acceptance", () => {
 
   it("A-K08 rejects approval when a source head changes after review", () => {
     const { store, memory } = setup();
-    const revision = capture(store, "他建议我周五完成", {
-      externalId: "changing-source",
-      actorId: null,
-      verifiedBy: null,
-      forwarded: true,
+    const firstSource = capture(store, "服务 A 已启用重试", {
+      externalId: "stale-authority",
     });
-    const evaluated = memory.evaluate(taskProposal(revision), supported);
+    const first = memory.evaluate(
+      claimProposal(firstSource, "服务 A 已启用重试"),
+      supported,
+    );
+    const memoryId = first.receipt!.entityId;
+    const otherSource = capture(store, "服务 A 未启用重试", {
+      externalId: "stale-authority-two",
+    });
+    const conflict = claimProposal(otherSource, "服务 A 未启用重试", {
+      operation: "supersede",
+      target_id: memoryId,
+      expected_versions: { [memoryId]: 1 },
+    });
+    const evaluated = memory.evaluate(conflict, supported);
+    expect(evaluated.policy).toBe("awaiting_decision");
+    // The second source advances after the decision card was recorded.
     store.capture({
       source: "manual",
-      externalId: "changing-source",
+      externalId: "stale-authority-two",
       title: "Policy evidence",
       parts: [{ type: "text", text: "来源已经更新" }],
       context: {},
@@ -356,11 +351,13 @@ describe("B2-04 extraction policy and application acceptance", () => {
         actorId: "owner",
       }),
     ).toThrow("STALE_DECISION");
-    expect(store.tasks()).toEqual([]);
+    expect(memory.memories()).toMatchObject([
+      { id: memoryId, version: 1, status: "active" },
+    ]);
     expect(memory.decisions()).toMatchObject([{ state: "stale" }]);
   });
 
-  it("A-K09 keeps inferred image outcomes behind a decision", () => {
+  it("A-K09 keeps inferred image outcomes as a retained source, no decision card", () => {
     const { store, memory } = setup();
     const png =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6vO8AAAAASUVORK5CYII=";
@@ -417,7 +414,7 @@ describe("B2-04 extraction policy and application acceptance", () => {
     };
     const result = memory.evaluate(proposal, supported);
     expect(result).toMatchObject({
-      policy: "awaiting_decision",
+      policy: "retain_as_source",
       reasons: expect.arrayContaining([
         "inferred_image_requires_review",
         "unverified_success",
@@ -654,5 +651,83 @@ describe("B2-04 scoped feedback acceptance", () => {
         .prepare("SELECT active FROM feedback_constraints WHERE match_key=?")
         .get("acl:auto-approve-all"),
     ).toMatchObject({ active: 0 });
+  });
+});
+
+describe("P0 conflict association and equivalence persistence", () => {
+  it("P5: a contradictory create is associated with the real conflicting memory, not the first unrelated row", () => {
+    const { store, memory } = setup();
+    const unrelatedSrc = capture(store, "订单系统已于周二上线", {
+      externalId: "p5-unrelated",
+    });
+    memory.evaluate(claimProposal(unrelatedSrc, "订单系统已上线"), supported);
+    const existingSrc = capture(store, "服务 A 已启用重试", {
+      externalId: "p5-existing",
+    });
+    const existing = memory.evaluate(
+      claimProposal(existingSrc, "服务 A 已启用重试"),
+      supported,
+    );
+    const existingId = existing.receipt!.entityId;
+    const newSrc = capture(store, "服务 A 未启用重试", { externalId: "p5-new" });
+    const result = memory.evaluate(
+      claimProposal(newSrc, "服务 A 未启用重试"),
+      { ...supported, reason_code: "contradicts_existing" },
+    );
+    expect(result.match?.kind).toBe("conflict_recorded");
+    expect(result.match?.memoryId).toBe(existingId);
+    expect(result.match?.conflictingRevisionId).toBeTruthy();
+    expect(result.match?.matchReason).toContain("shared entity terms");
+    expect(result.match?.evidenceChain?.existingStatement).toContain("已启用");
+    expect((result.match?.evidenceChain?.sharedTerms ?? []).length).toBeGreaterThan(0);
+    expect((result.match?.evidenceChain?.proposedEvidenceRefs ?? []).length).toBeGreaterThan(0);
+    expect(memory.memories()).toHaveLength(2);
+  });
+
+  it("P5: identical text in a different project is not linked as duplicate/equivalent across scope", () => {
+    const { store, memory } = setup();
+    const srcOne = capture(store, "服务 A 已启用重试", { externalId: "p5-scope-one" });
+    memory.evaluate(claimProposal(srcOne, "服务 A 已启用重试"), supported);
+    const srcTwo = capture(store, "服务 A 已启用重试", { externalId: "p5-scope-two" });
+    const second = memory.evaluate(
+      claimProposal(srcTwo, "服务 A 已启用重试", {
+        scope: {
+          workspace_id: "personal",
+          project_id: "billing",
+          subject_id: "service-a",
+        },
+      }),
+      supported,
+    );
+    expect(second.policy).toBe("auto_apply");
+    expect(second.match).toBeUndefined();
+    expect(memory.memories()).toHaveLength(2);
+    expect(count(store, "memory_equivalences")).toBe(0);
+  });
+
+  it("P5: equivalent_linked persists a queryable relation with the combined evidence set", () => {
+    const { store, memory } = setup();
+    const srcOne = capture(store, "服务 A 已启用重试", { externalId: "p5-eq-one" });
+    const first = memory.evaluate(
+      claimProposal(srcOne, "服务 A 已启用重试"),
+      supported,
+    );
+    const idA = first.receipt!.entityId;
+    const srcTwo = capture(store, "服务 A 已启用重试", { externalId: "p5-eq-two" });
+    const second = memory.evaluate(
+      claimProposal(srcTwo, "服务 A 已启用重试"),
+      supported,
+    );
+    expect(second.match?.kind).toBe("equivalent_linked");
+    expect(second.match?.memoryId).toBe(idA);
+    const idB = second.receipt!.entityId;
+    expect(idB).toBeTruthy();
+    const fromA = memory.equivalencesOf(idA);
+    expect(fromA).toHaveLength(1);
+    expect(fromA[0]).toMatchObject({ equivalenceType: "equivalent" });
+    expect([fromA[0]!.memoryIdA, fromA[0]!.memoryIdB]).toContain(idB);
+    expect(fromA[0]!.evidenceRefs.length).toBeGreaterThan(0);
+    expect(memory.equivalencesOf(idB)).toHaveLength(1);
+    expect(count(store, "memory_equivalences")).toBe(1);
   });
 });
