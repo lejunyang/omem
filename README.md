@@ -17,6 +17,24 @@ osdk run start
 
 浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 4317 和 Vue 5173。
 
+## 代码 Review 知识库（repo-review）
+
+用本仓库自身的 capture/固定版本与片段/检索/关系架构，在仓库内建一个**仅用于代码 review** 的知识库，覆盖四类资料：当前架构与实现、进度追踪、历史决策、背景调研。与业务库严格隔离，独立数据目录、独立端口、不启动真实 Lark/业务 worker。
+
+```bash
+osdk run dev:review
+```
+
+启动后 API 运行在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`。首次启动自动全量同步仓库材料（约 70 sources / 2800+ fragments），后续可在 web "同步"页点击"立即同步"做增量更新（幂等，重复运行不重复入库）。
+
+**隔离约束**：
+- 数据目录 `.repo-review/`（gitignored），与业务库 `.omem/` 完全分离
+- 仅扫描本仓库文本文件（源码、docs、AGENTS.md），不读取 `omem.local.json`、`.env*`、node_modules、dist、二进制文件
+- 不启动 Lark WebSocket、业务 worker、外部通知；不访问网络
+- 无 traecli/模型时仍可浏览、搜索、追溯代码→意图→决策链路；生成式问答不可用（诚实标注）
+
+代码条目可从 web 回查具体文件、符号、片段、确定 commit，再跳到实现意图、设计决策、调研依据；关系双向追踪，无依据的关联标注"待补充/推测"。
+
 工具版本由 [osdk.toml](osdk.toml)、[osdk.lock](osdk.lock) 固定，应用包由 package-lock.json 固定。`osdk deps` 负责调用 npm 安装应用依赖；本项目声明的安装脚本用于 esbuild 等构建依赖。首次构建如遇包安装脚本门禁，请依本机 npm 提示检查并批准对应包，不关闭全局门禁。
 
 ## Agent 配置
