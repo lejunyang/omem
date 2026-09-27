@@ -10,7 +10,16 @@
     "scopes": {
       "tenant": [
         "im:message:send_as_bot",
+        "im:message",
         "im:message.p2p_msg:readonly",
+        "im:message.group_at_msg:readonly",
+        "im:message.group_at_msg.include_bot:readonly",
+        "im:message.group_msg",
+        "im:message.group_msg.include_bot:read",
+        "im:resource",
+        "im:chat:read",
+        "im:chat.members:read",
+        "contact:user.base:readonly",
         "application:bot.basic_info:read",
         "im:message:update"
       ]
@@ -18,14 +27,15 @@
     "events": {
       "items": {
         "tenant": [
-          "im.message.receive_v1"
+          "im.message.receive_v1",
+          "im.message.updated_v1",
+          "im.chat.member.bot.added_v1",
+          "im.chat.member.bot.deleted_v1"
         ]
       }
     },
     "callbacks": {
-      "items": [
-        "card.action.trigger"
-      ]
+      "items": ["card.action.trigger"]
     }
   }
 }

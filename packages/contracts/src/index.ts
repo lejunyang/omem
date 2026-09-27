@@ -604,6 +604,29 @@ export const larkPairingConfirmSchema = z
   })
   .strict();
 
+export const larkExistingImportSchema = z
+  .object({
+    appId: z.string().regex(/^cli_[a-zA-Z0-9]+$/),
+    source: z.enum(["manual", "botmux"]),
+    clientSecret: z.string().min(1).max(1000).optional(),
+    config: larkRequestedConfigSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.source === "manual" && !input.clientSecret)
+      context.addIssue({
+        code: "custom",
+        path: ["clientSecret"],
+        message: "manual import requires clientSecret",
+      });
+    if (input.source === "botmux" && input.clientSecret)
+      context.addIssue({
+        code: "custom",
+        path: ["clientSecret"],
+        message: "botmux import resolves the secret internally",
+      });
+  });
+
 export type JobState = z.infer<typeof jobStateSchema>;
 export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 

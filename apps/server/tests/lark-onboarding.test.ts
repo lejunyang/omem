@@ -5,12 +5,17 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { larkRequestedConfigSchema } from "../../../packages/contracts/src/index.js";
 import { LarkOnboardingService } from "../src/integrations/lark/onboarding.js";
+import { OMEM_LARK_DEFAULT_CONFIG } from "../src/integrations/lark/defaults.js";
+import {
+  BotmuxExistingAppProvider,
+  type ExistingLarkAppProvider,
+} from "../src/integrations/lark/existing-apps.js";
 import {
   OfficialLarkRegistrationAdapter,
   type LarkCapabilityProbe,
@@ -83,31 +88,13 @@ class FakeProbe implements LarkCapabilityProbe {
   }
 }
 
-const requestedConfig = larkRequestedConfigSchema.parse({
-  source: "omem",
-  appPreset: {
-    name: "{user}的 omem 助理",
-    desc: "记录工作材料、事项与记忆变更，并按需提醒。",
-  },
-  addons: {
-    preset: false,
-    scopes: {
-      tenant: [
-        "im:message:send_as_bot",
-        "im:message.p2p_msg:readonly",
-        "application:bot.basic_info:read",
-        "im:message:update",
-      ],
-    },
-    events: { items: { tenant: ["im.message.receive_v1"] } },
-    callbacks: { items: ["card.action.trigger"] },
-  },
-});
+const requestedConfig = OMEM_LARK_DEFAULT_CONFIG;
 
 function setup(
   registration = new FakeRegistration(),
   probe: LarkCapabilityProbe = new FakeProbe(),
   clock: () => Date = () => new Date("2026-09-27T00:00:00.000Z"),
+  existingApps?: ExistingLarkAppProvider,
 ) {
   const directory = mkdtempSync(join(tmpdir(), "omem-lark-"));
   const store = new Store(directory);
@@ -127,6 +114,7 @@ function setup(
       registration,
       probe,
       clock,
+      existingApps,
     ),
   };
 }
@@ -177,6 +165,28 @@ describe("B2-05 Lark onboarding acceptance", () => {
       appPreset: requestedConfig.appPreset,
       addons: requestedConfig.addons,
     });
+    expect(requestedConfig.addons.scopes.tenant).toEqual(
+      expect.arrayContaining([
+        "im:message.group_at_msg:readonly",
+        "im:message.group_msg",
+        "im:message.group_msg.include_bot:read",
+        "im:resource",
+        "im:chat:read",
+        "im:chat.members:read",
+        "contact:user.base:readonly",
+      ]),
+    );
+    expect(requestedConfig.addons.events.items.tenant).toEqual(
+      expect.arrayContaining([
+        "im.message.receive_v1",
+        "im.message.updated_v1",
+        "im.chat.member.bot.added_v1",
+        "im.chat.member.bot.deleted_v1",
+      ]),
+    );
+    expect(requestedConfig.addons.scopes.tenant).not.toContain(
+      "im:chat.members:write_only",
+    );
 
     const x = setup();
     const started = await x.service.start({
@@ -475,5 +485,63 @@ describe("B2-05 Lark onboarding acceptance", () => {
       { version: 1, state: "superseded" },
       { version: 2, state: "active" },
     ]);
+
+    const botmuxPath = join(x.directory, "botmux-bots.json");
+    writeFileSync(
+      botmuxPath,
+      JSON.stringify([
+        {
+          name: "Existing Botmux Bot",
+          larkAppId: "cli_botmux1",
+          larkAppSecret: "botmux-secret-never-return",
+          ownerOpenId: "ou_owner1",
+          brand: "feishu",
+        },
+      ]),
+      { mode: 0o600 },
+    );
+    const provider = new BotmuxExistingAppProvider(botmuxPath);
+    expect(JSON.stringify(provider.list())).not.toContain(
+      "botmux-secret-never-return",
+    );
+    const importedSetup = setup(
+      new FakeRegistration(),
+      new FakeProbe(),
+      () => new Date("2026-09-27T02:00:00.000Z"),
+      provider,
+    );
+    const imported = await importedSetup.service.importExisting({
+      appId: "cli_botmux1",
+      source: "botmux",
+      config: requestedConfig,
+    });
+    expect(imported).toMatchObject({
+      mode: "existing",
+      appId: "cli_botmux1",
+      status: "awaiting_pair",
+      ownerOpenId: null,
+    });
+    expect(importedSetup.registration.requests).toEqual([]);
+    expect(JSON.stringify(imported)).not.toContain(
+      "botmux-secret-never-return",
+    );
+    const importedCode = importedSetup.service.issuePairingCode(imported.id);
+    const importedPair = importedSetup.service.receivePairing({
+      appId: "cli_botmux1",
+      code: importedCode.code,
+      senderOpenId: "ou_owner1",
+      chatId: "oc_reused",
+      chatType: "p2p",
+    });
+    expect(
+      importedSetup.service.confirmPairing({
+        pairingId: importedPair.pairingId,
+        expectedOpenId: "ou_owner1",
+      }),
+    ).toMatchObject({
+      appId: "cli_botmux1",
+      bindingVersion: 1,
+      targetChatId: "oc_reused",
+    });
   });
 });
