@@ -14,6 +14,7 @@ agents = ["universal", "claude-code"]
 
 [tasks]
 dev = "npm run dev"
+dev:review = "npm run dev:review"
 build = "npm run build"
 test = "npm test"
 typecheck = "npm run typecheck"
