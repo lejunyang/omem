@@ -36,6 +36,7 @@ import {
   sourceIdForExternalId,
   ensureReviewRelationsTable,
   upsertReviewRelation,
+  invalidateRemovedSeeds,
   type RelationType,
   type RelationStatus,
 } from "./store.js";
@@ -665,25 +666,38 @@ export type RelationBuildStats = {
   missing: number;
 };
 
+/** Virtual source holding one curated intent fragment per association. It is a
+ * DERIVED index (curated=true, derived=true), never independent raw evidence:
+ * each fragment contains only that seed's intent line + requirement ids, so a
+ * code fragment's "implements" target is never the whole G01-G20 status table. */
+const INTENT_INDEX_EXTERNAL_ID = "omem:repo-review/intent-index";
+const INTENT_INDEX_PATH = "repo-review/intent-index";
+
+/** Stable per-association identity, derived from codePath+symbol. Used both as
+ * the anchor text inside the intent fragment and as the seed_identity of every
+ * edge this seed produces (so missing rows never collide on empty endpoints). */
+function assocSeedId(codePath: string, symbol: string): string {
+  return (
+    "assoc_" +
+    createHash("sha1").update(`${codePath}:${symbol}`).digest("hex").slice(0, 16)
+  );
+}
+
 /** Build review_relations from the human-maintained seed. Idempotent: repeat
- * syncs reuse the deterministic relation ids (ON CONFLICT). */
+ * syncs reuse deterministic seed_identity ids.
+ *
+ * Edge shape (code → intent → raw material):
+ *   code fragment  ──implements──▶  intent fragment (this seed's own index row)
+ *   intent fragment ──requires──▶    requirement doc fragment (one per reqId)
+ *   intent fragment ──decided_by──▶ decision doc fragment
+ *   intent fragment ──researched_by──▶ research doc fragment
+ *   intent fragment ──tested_by──▶  test fragment
+ * A seed removed from the JSON is flipped to stale (never silently kept green). */
 export function buildReviewRelations(
   store: Store,
   repoRoot: string,
 ): RelationBuildStats {
   ensureReviewRelationsTable(store);
-  // Best-effort: if the parallel store migration exposes relation invalidation,
-  // drop stale edges before rebuilding. Absence of the method is normal and
-  // must never break the sync.
-  try {
-    const s = store as unknown as {
-      invalidateStaleRelations?: (externalId?: string) => void;
-    };
-    if (typeof s.invalidateStaleRelations === "function")
-      s.invalidateStaleRelations();
-  } catch {
-    /* owned by the store migration; ignore */
-  }
   const seeds = loadAssociations(repoRoot);
   const stats: RelationBuildStats = {
     associations: seeds.length,
@@ -695,83 +709,112 @@ export function buildReviewRelations(
     if (status === "confirmed") stats.confirmed++;
     else if (status === "candidate") stats.candidate++;
     else if (status === "missing") stats.missing++;
-    // "stale" rows are surfaced by the store migration; not bucketed here.
+    // "stale" rows are surfaced at read time; not bucketed here.
   };
 
-  const link = (
-    source: LocatedFragment,
-    target: LocatedFragment | null,
-    type: RelationType,
-    status: RelationStatus,
-    evidence: string,
-  ) => {
-    // An unresolvable target is always recorded as missing, regardless of the
-    // seed's own status: we must not pretend a confirmed edge exists when the
-    // referenced material was never synced.
-    const effective = target ? status : "missing";
-    upsertReviewRelation(store, {
-      sourceFragmentId: source.fragmentId,
-      targetFragmentId: target ? target.fragmentId : "",
-      relationType: type,
-      status: effective,
-      evidence,
-      sourceRevisionId: source.revisionId,
-      targetRevisionId: target ? target.revisionId : null,
-    });
-    tally(effective);
+  // 1) Capture the virtual intent-index source. One part per seed; each part is a
+  //    single block (no blank lines inside) so it becomes exactly one fragment.
+  const parts: CaptureInput["parts"] = seeds.map((seed) => {
+    const aid = assocSeedId(seed.codePath, seed.symbol);
+    return {
+      type: "text" as const,
+      text: [
+        `## ${seed.symbol} — ${seed.intent}`,
+        `需求: ${seed.requirementRefs.join(", ")}`,
+        `代码: ${seed.codePath}`,
+        `关联ID: ${aid}`,
+      ].join("\n"),
+    };
+  });
+  store.capture({
+    source: "file",
+    externalId: INTENT_INDEX_EXTERNAL_ID,
+    title: "repo-review 实现意图索引",
+    parts,
+    context: {
+      category: "decisions",
+      filePath: "docs/repo-review/associations.json",
+      curated: true,
+      derived: true,
+      syncedAt: new Date().toISOString(),
+    } as unknown as CaptureInput["context"],
+  });
+
+  // 2) Resolve each seed's own intent fragment by its stable 关联ID anchor.
+  const intentHead = headFragments(store, INTENT_INDEX_PATH);
+  const intentFor = (aid: string): LocatedFragment | null => {
+    if (!intentHead) return null;
+    const f = intentHead.fragments.find((x) => x.text.includes(`关联ID: ${aid}`));
+    return f
+      ? { fragmentId: f.id, revisionId: intentHead.revisionId, text: f.text }
+      : null;
   };
 
+  const validAssocIds = new Set<string>();
   for (const seed of seeds) {
+    const aid = assocSeedId(seed.codePath, seed.symbol);
+    validAssocIds.add(aid);
+    const intent = intentFor(aid);
+
     const codeHead = headFragments(store, seed.codePath);
-    if (!codeHead) {
-      // Code itself never synced: record an unreachable missing row so the seed
-      // is not silently dropped; surfaced in /associations, not from a fragment.
-      upsertReviewRelation(store, {
-        sourceFragmentId: "",
-        targetFragmentId: "",
-        relationType: "implements",
-        status: "missing",
-        evidence: `代码未入库：${seed.codePath}::${seed.symbol} — ${seed.intent}`,
-      });
-      tally("missing");
-      continue;
-    }
-    const codeFrag = matchSymbolFragment(codeHead.fragments, seed.symbol);
-    if (!codeFrag) {
-      upsertReviewRelation(store, {
-        sourceFragmentId: "",
-        targetFragmentId: "",
-        relationType: "implements",
-        status: "missing",
-        evidence: `符号未定位：${seed.codePath} 中找不到 ${seed.symbol} 的定义行`,
-      });
-      tally("missing");
-      continue;
-    }
-    const code: LocatedFragment = {
-      fragmentId: codeFrag.id,
-      revisionId: codeHead.revisionId,
-      text: codeFrag.text,
+    const codeFrag = codeHead ? matchSymbolFragment(codeHead.fragments, seed.symbol) : null;
+    const code: LocatedFragment | null =
+      codeHead && codeFrag
+        ? { fragmentId: codeFrag.id, revisionId: codeHead.revisionId, text: codeFrag.text }
+        : null;
+
+    // code → intent (implements). Missing code OR missing intent is missing.
+    upsertReviewRelation(store, {
+      seedIdentity: `${aid}#implements`,
+      sourceFragmentId: code ? code.fragmentId : "",
+      targetFragmentId: intent ? intent.fragmentId : "",
+      relationType: "implements",
+      status: code && intent ? seed.status : "missing",
+      evidence: code
+        ? `${seed.intent}｜依据：${seed.evidence}｜需求：${seed.requirementRefs.join(", ")}`
+        : `代码未入库或符号未定位：${seed.codePath}::${seed.symbol}`,
+      sourceRevisionId: code ? code.revisionId : null,
+      targetRevisionId: intent ? intent.revisionId : null,
+    });
+    tally(code && intent ? seed.status : "missing");
+
+    // Downstream edges originate at the intent fragment.
+    if (!intent) continue;
+    const edge = (
+      refs: string[],
+      type: RelationType,
+      label: string,
+      resolve: (ref: string) => LocatedFragment | null,
+      seedKind: string,
+    ) => {
+      for (const ref of refs) {
+        const target = resolve(ref);
+        const effective: RelationStatus = target ? seed.status : "missing";
+        upsertReviewRelation(store, {
+          seedIdentity: `${aid}#${seedKind}#${ref}`,
+          sourceFragmentId: intent.fragmentId,
+          targetFragmentId: target ? target.fragmentId : "",
+          relationType: type,
+          status: effective,
+          evidence: `${label}：${ref}`,
+          sourceRevisionId: intent.revisionId,
+          targetRevisionId: target ? target.revisionId : null,
+        });
+        tally(effective);
+      }
     };
 
-    // code → intent/requirement fragment (implements).
-    const reqId = seed.requirementRefs[0];
-    const reqFrag = reqId ? resolveRequirementFragment(store, reqId) : null;
-    link(
-      code,
-      reqFrag,
-      "implements",
-      seed.status,
-      `${seed.intent}｜依据：${seed.evidence}｜需求：${seed.requirementRefs.join(", ")}`,
+    edge(seed.requirementRefs, "requires", "需求", (req) =>
+      resolveRequirementFragment(store, req),
+      "requires",
     );
-
-    for (const ref of seed.decisionRefs)
-      link(code, resolveRef(store, ref), "decided_by", seed.status, `决策：${ref}`);
-    for (const ref of seed.researchRefs)
-      link(code, resolveRef(store, ref), "researched_by", seed.status, `调研：${ref}`);
-    for (const ref of seed.testRefs)
-      link(code, resolveRef(store, ref), "tested_by", seed.status, `测试：${ref}`);
+    edge(seed.decisionRefs, "decided_by", "决策", (r) => resolveRef(store, r), "decided_by");
+    edge(seed.researchRefs, "researched_by", "调研", (r) => resolveRef(store, r), "researched_by");
+    edge(seed.testRefs, "tested_by", "测试", (r) => resolveRef(store, r), "tested_by");
   }
+
+  // 3) Seeds removed from the JSON must not keep rendering green.
+  invalidateRemovedSeeds(store, validAssocIds);
   return stats;
 }
 

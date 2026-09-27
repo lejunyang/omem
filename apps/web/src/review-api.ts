@@ -111,12 +111,18 @@ export type ReviewSearchHit = {
 
 /** One bidirectional relation touching a fragment. `relationType` is already
  * inverted when the queried fragment is the target (e.g. a decision fragment
- * sees "implemented_by"). `other` is null for unresolved (missing) links. */
+ * sees "implemented_by"). `other` is null for unresolved (missing) links.
+ *
+ * `relationStatus` is the EFFECTIVE status shown in the UI: the stored status,
+ * forced to "stale" when the other side no longer points at a current,
+ * non-removed head. `otherCurrent`/`otherRemoved` explain why. */
 export type ReviewRelation = {
   id: string;
   direction: "outgoing" | "incoming";
   relationType: string;
-  status: "confirmed" | "candidate" | "missing";
+  relationStatus: "confirmed" | "candidate" | "missing" | "stale";
+  otherCurrent: boolean;
+  otherRemoved: boolean;
   evidence: string | null;
   other: {
     fragmentId: string;
@@ -127,11 +133,6 @@ export type ReviewRelation = {
     filePath: string | null;
     category: string | null;
     externalId: string | null;
-    /** True when the other side's revision is still its source's head. Absent on
-     * older backends; treated as current when undefined. */
-    current?: boolean;
-    /** True when the other side's source has been deleted on disk. */
-    removed?: boolean;
   } | null;
 };
 
