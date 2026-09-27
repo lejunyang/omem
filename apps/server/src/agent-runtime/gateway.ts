@@ -117,6 +117,17 @@ export function renderRolePrompt(
     fragment_revision_id: material.fragment_revision_id,
     source_revision_id: material.source_revision_id,
     has_text: material.text !== undefined,
+    // Per-fragment provenance (which actor / reply / event a fragment came from) is
+    // trusted fragment metadata, so it lives in the trusted material index instead of
+    // being dropped. This is what lets a multi-speaker batch keep its speakers.
+    actor_external_id: material.actor_external_id ?? null,
+    actor_principal_id: material.actor_principal_id ?? null,
+    observed_at: material.observed_at ?? null,
+    reply_to: material.reply_to ?? null,
+    quoted: material.quoted ?? false,
+    forwarded: material.forwarded ?? false,
+    producer_kind: material.producer_kind ?? "original",
+    asset_ref: material.asset_ref ?? null,
     image: material.image
       ? {
           asset_hash: material.image.asset_hash,

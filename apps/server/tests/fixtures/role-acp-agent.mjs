@@ -49,6 +49,29 @@ function output(text) {
   if (text.includes("OUTPUT_FLOOD")) return "x".repeat(20_000);
   if (text.includes("MALFORMED_OUTPUT")) return "not-json";
   if (roleId === "verifier") {
+    // Batch acceptance: the verifier context carries a `candidates` array with one
+    // entry per proposal (each with proposal_id + proposal_digest). Return one
+    // supported assessment per candidate so the whole ChangeSet reaches evaluateBatch.
+    if (text.includes("BATCH_CREATE")) {
+      const ids = [...text.matchAll(/"proposal_id":"([^"]+)"/g)].map((m) => m[1]);
+      const digests = [
+        ...text.matchAll(/"proposal_digest":"([a-f0-9]{64})"/g),
+      ].map((m) => m[1]);
+      return JSON.stringify({
+        schema_version: 1,
+        job_id: jobId,
+        role_id: "verifier",
+        assessments: ids.map((id, i) => ({
+          proposal_id: id,
+          proposal_digest: digests[i] ?? "0".repeat(64),
+          quote_asset_verdict: "valid",
+          semantic_verdict: "supported",
+          reason_code: "fixture_batch_support",
+          reason: "Batch fixture supports each proposal in the ChangeSet.",
+          missing_context: [],
+        })),
+      });
+    }
     if (text.includes("PIPELINE_TASK"))
       return JSON.stringify({
         schema_version: 1,
@@ -123,6 +146,53 @@ function output(text) {
         producer_kind: "derived",
       },
     });
+  if (text.includes("BATCH_CREATE_DISTINCT") || text.includes("BATCH_CREATE_SAME")) {
+    const distinct = text.includes("BATCH_CREATE_DISTINCT");
+    const quote = distinct ? "BATCH_CREATE_DISTINCT" : "BATCH_CREATE_SAME";
+    const fragmentRef = field(text, "fragment_revision_id", "missing-fragment");
+    const sourceRef = field(text, "source_revision_id", "missing-revision");
+    const proposals = Array.from({ length: 12 }, (_, i) => ({
+      schema_version: 1,
+      proposal_id: `batch-proposal-${i}`,
+      kind: "claim",
+      operation: "create",
+      scope: {
+        workspace_id: "personal",
+        project_id: projectId === "none" ? null : projectId,
+        subject_id: "owner",
+      },
+      body: {
+        statement: distinct ? `批量事实 ${i}` : "批量同一事实",
+        attribution: "source states",
+        valid_from: null,
+        valid_to: null,
+      },
+      evidence: [
+        {
+          fragment_revision_id: fragmentRef,
+          source_revision_id: sourceRef,
+          exact_quote: quote,
+          selector: { start: 0, end: quote.length, unit: "unicode_codepoint" },
+        },
+      ],
+      uncertainties: [],
+      reason: `batch claim ${i}`,
+      expected_versions: {},
+      origin: {
+        job_id: jobId,
+        role_bundle: "extractor@1",
+        producer_kind: "derived",
+      },
+    }));
+    return JSON.stringify({
+      schema_version: 1,
+      job_id: jobId,
+      role_id: "extractor",
+      observations: [],
+      proposals,
+      abstentions: [],
+    });
+  }
   if (text.includes("PIPELINE_TASK"))
     return JSON.stringify({
       schema_version: 1,
@@ -190,7 +260,7 @@ function output(text) {
         reason_code: text.includes("CALL_TOOL")
           ? "unsafe_instruction"
           : "no_durable_value",
-        detail: `extractor project=${projectId} images=${imageCount} forwarded=${text.includes('"is_forwarded":true')}`,
+        detail: `extractor project=${projectId} images=${imageCount} forwarded=${text.includes('"is_forwarded":true')} projectTrusted=${text.includes('"project_trusted":true')} actors=${[...pendingText.matchAll(/"actor_external_id":"([^"]+)"/g)].map((m) => m[1]).join("|")} assetRefs=${[...pendingText.matchAll(/"asset_ref":"([a-f0-9]{64})"/g)].length}`,
         evidence_ids: ["fragment-1"],
       },
     ],
