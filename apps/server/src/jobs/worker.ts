@@ -27,6 +27,7 @@ export type JobHandler = (
 
 export class DurableJobWorker {
   private readonly active = new Map<string, AbortController>();
+  private stopping = false;
 
   constructor(
     readonly repository: JobRepository,
@@ -98,11 +99,19 @@ export class DurableJobWorker {
               controller.signal.aborted ? "cancelled" : "permanent",
             );
       try {
+        const interruptedByShutdown =
+          controller.signal.aborted && this.stopping;
         const job = this.repository.fail({
           jobId: lease.id,
           leaseToken: lease.leaseToken,
-          kind: controller.signal.aborted ? "cancelled" : failure.kind,
-          message: failure.message,
+          kind: interruptedByShutdown
+            ? "transient"
+            : controller.signal.aborted
+              ? "cancelled"
+              : failure.kind,
+          message: interruptedByShutdown
+            ? "Worker stopped before completion"
+            : failure.message,
           now: now(),
           retryBaseMs: this.options.retryBaseMs,
         });
@@ -133,6 +142,7 @@ export class DurableJobWorker {
   }
 
   stop() {
+    this.stopping = true;
     for (const controller of this.active.values()) controller.abort();
   }
 }

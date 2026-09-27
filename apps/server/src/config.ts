@@ -9,8 +9,26 @@ const schema = z
       .object({ mode: z.enum(["instant", "digest"]).default("instant") })
       .default({ mode: "instant" }),
     captureRoots: z.array(z.string()).default([]),
+    learning: z
+      .object({
+        enabled: z.boolean().default(false),
+        profileId: z.string().min(1).default("traex"),
+        pollMs: z.number().int().min(50).max(60_000).default(1000),
+      })
+      .strict()
+      .default({ enabled: false, profileId: "traex", pollMs: 1000 }),
   })
   .strict();
+type ParsedConfig = z.infer<typeof schema>;
+type LearningConfig = ParsedConfig["learning"];
+export type Config = Omit<ParsedConfig, "learning"> & {
+  learning?: LearningConfig;
+  dataDir: string;
+  agentCwd: string;
+  token?: string;
+  host: string;
+  port: number;
+};
 export function loadConfig() {
   const file = resolve(process.env.OMEM_CONFIG || "omem.local.json");
   const config = schema.parse(
@@ -32,6 +50,5 @@ export function loadConfig() {
     token: process.env.OMEM_TOKEN,
     host: process.env.OMEM_HOST || "127.0.0.1",
     port: Number(process.env.OMEM_PORT || 4317),
-  };
+  } satisfies Config;
 }
-export type Config = ReturnType<typeof loadConfig>;

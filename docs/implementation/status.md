@@ -18,7 +18,7 @@
 ## 实际验证
 
 - `osdk run check`：TypeScript、Vue 类型检查、服务端测试、生产构建。
-- **79 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 有 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收和 1 项 HTTP job 控制回归；B2-03 有 A-R01～08 共 8 项角色运行验收；B2-04 有 A-K01～10、A-F01～03 共 13 项策略/反馈验收和 1 项 HTTP 应用回归；B2-05 有 A-L01～07 共 7 项注册/绑定/密钥验收及 1 项同 device request 暂态重试测试；B2-06 有 12 项实时事件、决策卡片和通知故障验收。
+- **82 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 有 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收和 1 项 HTTP job 控制回归；B2-03 有 A-R01～08 共 8 项角色运行验收；B2-04 有 A-K01～10、A-F01～03 共 13 项策略/反馈验收和 1 项 HTTP 应用回归；B2-05 有 A-L01～07 共 7 项注册/绑定/密钥验收及 1 项同 device request 暂态重试测试；B2-06 有 12 项实时事件、决策卡片和通知故障验收；B2-08 新增 3 项两阶段 worker、重启/幂等/stale/停机集成测试。
 - 浏览器用真实 Fastify/SQLite 和协议 fixture：材料录入、递归引用/环、问答保存、旧版本读取、事项/通知、job→提案→应用→证据、判断三动作与 stale、飞书 QR/完整链接/复用/pairing、桌面/768px/390px、服务重启与离线/模型/通知失败，以及真实 SQLite 中的 100 个固定片段连续下钻（12 组浏览器检查）。fixture 只在测试配置使用，产品没有模拟回答 fallback；飞书平台 live 结果仍单列在 B2-06，不用浏览器 fake adapter 冒充。
 - **真实 TraeX ACP**：首批曾用当时默认模型完成一次问答；当前验证通过 `OMEM_LIVE_MODEL=gpt-5.4` 显式选用 `gpt-5.4 / medium`。模型能力仍来自实时探测，产品与脚本不禁用 Astra，也不把任一模型写成产品默认限定列表。
 - **真实 lark-cli**：使用用户提供的 ACP Wiki 文档验证读取与 CaptureEnvelope 归一化（revision 15，12,245 字符，text+link），报告不保存正文。
@@ -68,4 +68,8 @@ B2-07 已实现：Vue 学习流程读取真实 job/attempt/proposal 状态；待
 
 A-U01～A-U05 由 12 组真实 Chromium + Fastify + SQLite 检查覆盖，详情见 [B2-07 验证记录](batch2/b2-07-verification.md)。提炼/复核结果仍是确定性 assessment 输入，飞书扫码/平台回调仍是注入 adapter；它们只验产品流程，不冒充新的真实模型或飞书联调。B2-06 已完成的真实应用结果继续有效。本轮没有调用 ACP，也没有使用 Astra。
 
-B2-08 尚未实现。当前服务没有自动启动 capture→extractor→verifier worker 编排；默认 `main.ts` 仍不会在缺少 Lark master key、真实 capability probe 与 host 装配时启用外部连接。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入，现有 Batch 2 角色全部强制 fresh session、默认无工具。
+B2-08 已开始集成：`learning.enabled=true` 时服务生命周期会启动受 lease/fencing 保护的持久 worker，把 `extract_claims` 与 `verify_proposals` 拆成两个可恢复 job。extractor 与 verifier 使用独立 Agent session，结构化结果及公开 trace 分别持久化；服务在 verifier 覆盖全部 proposal 且 digest 一致后才进入 MemoryService，模型本身无写库权限。confirmed feedback 会进入提炼上下文并在复核前再次强制应用；stale input 在模型调用前拒绝。优雅停机中断的 attempt 进入 transient retry，而不是误记成用户取消；同时修复了 ACP stdout 在 cancel/end 竞态下重复关闭流的问题。
+
+新增 3 项集成测试验证：HTTP capture 自动完成两阶段 Agent 流程并原子应用；extractor 后重启继续 verifier，重复复核不重复 task/receipt；旧 source job 拒绝而新版本继续完成，停机中的 Agent job 可重试。另以 `OMEM_LIVE_MODEL=gpt-5.4 OMEM_LIVE_EFFORT=medium` 完成一次真实持久 worker 链路：两个 job 均 succeeded、proposal applied、task=1、notification=2，报告位于忽略提交且 mode 0600 的 `.omem/verification/live-pipeline-smoke.json`。
+
+B2-08 仍未全部完成：默认 `main.ts` 还没有生产 Lark host（master key、真实 capability probe、WebSocket/delivery/card worker）的统一装配；40 个开发样本与 120 个冻结 holdout 尚未建立和人工标注，A-N04 的短窗合并/定时外发摘要仍未实现。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入。

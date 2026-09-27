@@ -57,9 +57,9 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 单用户部署默认仅监听 loopback。公网/局域网监听需设置 `OMEM_HOST` 和强 `OMEM_TOKEN`，所有 `/api/*` 都校验 Bearer；浏览器令牌仅放 sessionStorage。部署到服务器建议用 TLS 反向代理/SSH 隧道。当前不是多租户服务，不把一个 shared token 当团队权限系统。
 
-`GET /api/jobs` 与 `GET /api/jobs/:id` 可查看公开状态和 attempt 指纹；取消、重试分别使用 `POST /api/jobs/:id/cancel|retry`，请求必须带 `expectedGeneration` 和幂等 `requestId`。已成功应用的 job 不能靠取消抹掉效果，只返回需要补偿恢复。角色 job handler 已能持久化验证后的结构化输出和完整公开 trace；B2-04 的提炼/验证/策略编排尚未自动启动这些 handler。
+`GET /api/jobs` 与 `GET /api/jobs/:id` 可查看公开状态和 attempt 指纹；取消、重试分别使用 `POST /api/jobs/:id/cancel|retry`，请求必须带 `expectedGeneration` 和幂等 `requestId`。已成功应用的 job 不能靠取消抹掉效果，只返回需要补偿恢复。配置 `learning.enabled=true` 后，服务启动一个受 lease/fencing 保护的单消费者：`extract_claims` 使用 extractor Agent，随后持久化 `verify_proposals` 子任务并用全新 verifier 会话复核，最终由确定性策略决定应用、待判断或拒绝。Agent 没有领域写权限；只有 MemoryService 能提交事实、receipt、change、notification 和 outbox。优雅停机会把被中断 attempt 留为可重试，而不是误记为用户取消。
 
-`POST /api/proposals/evaluate` 接受严格 Proposal 与可信 verifier assessment，服务端再执行固定引文/图片、source head/epoch、owner/转发、冲突、影响范围和 CAS 门；安全的小范围 task/claim/episode 可原子写入 change、通知、delivery intent 和 receipt，其余进入可审计 decision 或拒绝。`POST /api/decisions/:id` 会在批准时重新检查来源版本。反馈通过 `POST /api/feedback` 去重，只有已验证、原始、同 scope 且有现存证据的纠正进入后续召回；ACL/预算/自动审批建议只记 shadow。当前自动 worker 编排尚未启动，HTTP evaluate 应只接内部 verifier 结果。
+`POST /api/proposals/evaluate` 接受严格 Proposal 与可信 verifier assessment，服务端再执行固定引文/图片、source head/epoch、owner/转发、冲突、影响范围和 CAS 门；安全的小范围 task/claim/episode 可原子写入 change、通知、delivery intent 和 receipt，其余进入可审计 decision 或拒绝。`POST /api/decisions/:id` 会在批准时重新检查来源版本。反馈通过 `POST /api/feedback` 去重，只有已验证、原始、同 scope 且有现存证据的纠正进入后续召回；ACL/预算/自动审批建议只记 shadow。自动 worker 和 HTTP evaluate 最终都进入同一个 MemoryService 边界，不存在模型直接写库的旁路。
 
 通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。配置 active 飞书 owner target 后，正式应用事务会同时生成绑定版本固定的飞书 delivery intent；sender 使用官方 SDK、同 UUID 有界重试和 `unknown` 状态。当前只实现逐条即时外发，短窗合并和定时摘要仍未实现。
 
@@ -87,6 +87,9 @@ osdk run live-acp
 osdk run live-role
 # 真实 extractor → verifier → 本地策略/原子应用（隔离临时库）
 osdk run live-learning
+# 真实持久 worker：extractor → 独立 verifier → policy/apply
+# 必须显式选本次验证模型；示例不改变产品支持范围
+OMEM_LIVE_MODEL=gpt-5.4 OMEM_LIVE_EFFORT=medium osdk run live-pipeline
 ```
 
 本仓库不提交真实会话、原件、token、模型权重和运行数据库。`docs/prototype` 保留此前经确认的离线视觉原型，它的演示数据和 React 构建不参与新 Vue 产品运行。

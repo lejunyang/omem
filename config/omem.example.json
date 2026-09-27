@@ -32,5 +32,10 @@
   "notifications": {
     "mode": "instant"
   },
+  "learning": {
+    "enabled": true,
+    "profileId": "traex",
+    "pollMs": 1000
+  },
   "captureRoots": []
 }
