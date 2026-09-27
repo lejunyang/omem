@@ -13,6 +13,7 @@ const profile = () =>
     args: [resolve("apps/server/tests/fixtures/acp-agent.mjs")],
     timeoutMs: 3000,
   });
+
 async function run(
   text: string,
   patch: Record<string, unknown> = {},
@@ -30,6 +31,10 @@ async function run(
     );
     return { result, events };
   } finally {
+    // acp() awaits the child's close event before returning, so the child has
+    // fully exited and released its cwd handle. A single rmSync is sufficient;
+    // no retry loop (which would mask real cleanup failures). If rmSync still
+    // throws, that is a genuine cleanup error, not a swallowed race.
     rmSync(cwd, { recursive: true, force: true });
   }
 }

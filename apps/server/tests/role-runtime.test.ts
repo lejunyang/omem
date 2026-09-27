@@ -27,6 +27,11 @@ const temporary = (prefix: string) => {
   return directory;
 };
 afterEach(() => {
+  // acp() now awaits each child's close event before returning, so by the time
+  // a test resolves all spawned role-agent children have fully exited and
+  // released their cwd handles. A single rmSync per directory is sufficient;
+  // no retry loop (which would mask real cleanup failures). If rmSync throws,
+  // that is a genuine EPERM/EBUSY and must surface, not be swallowed.
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
