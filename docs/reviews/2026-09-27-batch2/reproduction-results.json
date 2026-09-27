@@ -1,0 +1,71 @@
+{
+  "baseline": "16d3aa6",
+  "isolation": "Temporary SQLite; no external services or live data writes",
+  "results": [
+    {
+      "id": "R1",
+      "observed": "Rule-based sample copies mixed present/future sentence as claim, labels explicit + autoApply=true",
+      "usesAI": false
+    },
+    {
+      "id": "R2",
+      "wrongStatementEvidenceSupport": 1,
+      "emptyAnswerEvidenceSupport": 1,
+      "note": "Other metrics fail; this demonstrates the support metric is quote containment, not entailment."
+    },
+    {
+      "id": "R3",
+      "conflictingCreatePolicies": [
+        "auto_apply",
+        "auto_apply"
+      ],
+      "duplicateCreatePolicy": "auto_apply",
+      "activeMemories": {
+        "n": 3
+      },
+      "note": "All source quotes are valid; fake supported verdicts expose the missing existing-memory lookup/dedupe, not model quality."
+    },
+    {
+      "id": "R4",
+      "lowValueUnknownOutcome": "awaiting_decision",
+      "decisions": 1
+    },
+    {
+      "id": "R5",
+      "realLarkIdAgainstCanonicalOwner": "awaiting_decision",
+      "reason": [
+        "owner_not_verified"
+      ],
+      "note": "Lark capture code retains ou_*; no canonical mapping is applied before this policy."
+    },
+    {
+      "id": "R6",
+      "originalAgentSessionJob": null
+    },
+    {
+      "id": "R7",
+      "aggregatedActor": null,
+      "fragmentTexts": [
+        "我负责开发。",
+        "我只负责评审。"
+      ],
+      "fragmentActorMappingPresent": false
+    },
+    {
+      "id": "R8",
+      "ordinaryOwnerDM": "ignored_not_allowed",
+      "imageCapturePartType": "text",
+      "note": "No SDK connection, pairing or outbound delivery was invoked."
+    },
+    {
+      "id": "R10",
+      "cancelledAnnotationStillSentToFakeAdapter": 1,
+      "realNetworkCalls": 0
+    },
+    {
+      "id": "R9",
+      "refreshJobState": "succeeded",
+      "memoryStateAfterRefresh": "invalidated"
+    }
+  ]
+}

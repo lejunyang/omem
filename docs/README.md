@@ -1,5 +1,7 @@
 # omem 系统设计交付
 
+最新产品方向（2026-09-27）：[Batch 2 实现审查](reviews/2026-09-27-batch2/README.md)与[飞书主助手 / 渐进记忆 v3](implementation/assistant-v3/README.md)。当前90项测试通过不代表语义与助手体验达标；新设计以飞书主Agent为第一入口，Web为后台和第二入口。
+
 2026-09-26 · 设计提案 v0.1。为 Agent 自治、自学习的长期记忆系统设计；核心是可深入阅读的版本化证据引用。
 
 已进入实现：先读 [当前实施状态](implementation/status.md) 和 [项目运行指南](../README.md)。设计系统为 [根 design.md](../design.md)。
