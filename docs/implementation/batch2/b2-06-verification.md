@@ -9,7 +9,7 @@
 固定测试源文件 SHA-256：
 
 - `lark-delivery.test.ts`: `957b4a8068b0ce22750bf38a356f53ed6bf271f9971d2400ffad6ec25de92d10`
-- `lark-realtime.test.ts`: `234d6bf6c257b918ce9081c74c6c959ae43319c480e32f81bb3ba55d76d99aa9`
+- `lark-realtime.test.ts`: `bb2719abbe80c09c22f7706a9684bbdd03fcbb4c0f9bb940be145ada4a8623d3`
 
 测试动态生成 app/chat/message/event ID、加密 key、nonce 和临时 SQLite，不把任何真实凭据或消息写入仓库。
 
@@ -18,7 +18,7 @@
 | ID | 确定性结果 | 观察值 | Live |
 | --- | --- | --- | --- |
 | A-L08 | pass | 两 worker 只有一个取得 connection lease；连接/reconnecting/connected 事件入库；SDK callback context 归一化；pairing 消息路由 | skipped：无真实 WS/断网恢复 |
-| A-L09 | pass | event_id 去重、同 ID 冲突拒绝；自消息忽略；其他 bot 身份、事件时间和乱序更新保留；群监控需 owner allowlist | skipped：无真实群消息 |
+| A-L09 | pass | bot-added 后监控 target 立即 active；复用应用已有群由首条消息补建 active target；event_id 去重、同 ID 冲突拒绝；自消息忽略；其他 bot 身份、事件时间和乱序更新保留 | skipped：无真实群消息 |
 | A-L10 | pass | 同 callback 重放复用一条 command；不同按钮竞态被拒；与 Web 决策竞态只有一个业务结果，卡片按实际状态更新 | skipped：无真实卡片点击 |
 | A-L11 | pass | 错 operator/chat/message/nonce/proposal digest/expiry/expected-version digest 全部拒绝，零 command/业务效果 | skipped |
 | A-L12 | pass | callback 先写 event inbox + command 再返回 ACK；注入 DB INSERT 失败时不返回成功，原事件可重投 | skipped：未测平台 3 秒时限 |
@@ -45,7 +45,7 @@ osdk run browser
 
 ## 剩余限制
 
-- 必须由用户进入显式创建/复用应用流程，完成扫码、权限发布、同应用 pairing 和群监控授权后，才能执行 live 验收。
+- 必须由用户进入显式创建/复用应用流程，完成扫码、权限发布、同应用 pairing，并把机器人加入测试群后，才能执行 live 验收；入群后不再增加第二次监控批准。
 - `LarkConnectionManager`、delivery worker 和 card worker 是显式装配组件；默认 `main.ts` 在缺少 master key、真实 capability probe 与 host 配置时不启动外部连接。
-- 当前没有 B2-07 的连接设置、监控 allowlist、投递状态和 decision UI，也没有 `POST .../test` / disconnect API。
+- 当前没有 B2-07 的连接设置、群监控状态、投递状态和 decision UI，也没有 `POST .../test` / disconnect API。
 - 当前只实现逐条即时外发；短窗合并与定时外发摘要不计为通过。

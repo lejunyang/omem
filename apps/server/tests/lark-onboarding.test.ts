@@ -485,6 +485,18 @@ describe("B2-05 Lark onboarding acceptance", () => {
       { version: 1, state: "superseded" },
       { version: 2, state: "active" },
     ]);
+    expect(
+      x.store.db
+        .prepare(
+          `SELECT purpose,state,capture_enabled FROM lark_targets
+           WHERE binding_version=2 ORDER BY purpose`,
+        )
+        .all(),
+    ).toEqual([
+      { purpose: "decision", state: "active", capture_enabled: 0 },
+      { purpose: "group_monitoring", state: "active", capture_enabled: 1 },
+      { purpose: "owner_notification", state: "active", capture_enabled: 0 },
+    ]);
 
     const botmuxPath = join(x.directory, "botmux-bots.json");
     writeFileSync(

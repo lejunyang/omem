@@ -60,7 +60,7 @@ sequenceDiagram
 - 即使注册返回 user_info，也需对该新应用做实际联系验证；字段可能缺失，不能推测 owner。推荐始终使用一次性 pairing code + Web 回读确认，统一新建/已有应用路径。
 - pairing code 使用至少128-bit随机量、5分钟有效期、存 hash、一次消费、失败限流；不能用6位验证码当唯一远程凭据。私聊验证事件证明对方控制相应飞书账号；最终 Web 确认把它绑定到当前 omem owner，抵御转发 QR/绑定码抢占。
 - 绑定码只可用于绑定，不能授权任意危险操作；过期/重放/其他 app 来的相同字符串均拒绝。
-- 绑定群为通知目标时，通过绑定 owner 发出的明确选择和 bot 在群的 membership 核验；加入群不等于授权采集整群。群采集需额外 allowlist、权限和可见告知。
+- 对本产品而言，把机器人加入群即表示该群启用消息监控：收到 `im.chat.member.bot.added_v1` 后立即建立 active capture target，收到移群事件立即停用。绑定流程直接选定群作为目标时同样立即启用，不再要求 owner 做第二次 allowlist 确认；部署方仍应在群内明确告知机器人会读取消息。
 
 ## 4. 凭据和权限配置
 
@@ -73,7 +73,7 @@ sequenceDiagram
 | 主动发消息          | `im:message` + `im:message:send_as_bot`                                                                                               |
 | 收取本人私聊/绑定   | `im:message.p2p_msg:readonly` + `im.message.receive_v1`                                                                               |
 | 加群后响应 @        | `im:message.group_at_msg:readonly`、`im:message.group_at_msg.include_bot:readonly`                                                    |
-| 授权群内持续观察    | `im:message.group_msg`；要包含其他机器人消息再加 `im:message.group_msg.include_bot:read`。是否采集仍由 omem target allowlist 单独控制 |
+| 入群后持续观察      | `im:message.group_msg`；要包含其他机器人消息再加 `im:message.group_msg.include_bot:read`。入群事件会直接激活 omem capture target          |
 | 群与成员核验        | `im:chat:read`、`im:chat.members:read`；不申请建群/加人权限                                                                           |
 | 查 owner/机器人身份 | `contact:user.base:readonly`、`application:bot.basic_info:read`，按所用核验 API 确认                                                  |
 | 待判断卡片回调      | `card.action.trigger`；更新消息按 `im:message:update`                                                                                 |
@@ -88,7 +88,7 @@ sequenceDiagram
 
 使用官方 Node SDK 的 Client + WSClient。企业自建应用支持 WebSocket 接收消息与新版 card.action.trigger，不需要给事件接收配置公网回调 URL；HTTP API 负责发送/更新。不能由此推断 Web 详情页也能被用户手机访问：详情链接仍需可访问且鉴权的 HTTPS 地址，或先在卡片里展示必要信息。禁止把 `127.0.0.1` 详情链接发给远程用户当可用入口。
 
-当前 B2-06 组件以显式依赖装配：`LarkConnectionManager` 负责 connection lease、pairing 消息路由、WS 状态和失效连接关闭；`LarkEventInbox` 负责事件持久化、冲突检测、自消息过滤和群监控 allowlist；`LarkDeliveryWorker` 负责 outbox；`LarkCardActionService` 负责快速入队和异步业务决策。默认 `main.ts` 不会在没有 master key、真实 capability probe 与用户连接动作时自动启动外部连接。
+当前 B2-06 组件以显式依赖装配：`LarkConnectionManager` 负责 connection lease、pairing 消息路由、WS 状态和失效连接关闭；`LarkEventInbox` 负责事件持久化、冲突检测、自消息过滤以及入群自动启用/移群停用监控；`LarkDeliveryWorker` 负责 outbox；`LarkCardActionService` 负责快速入队和异步业务决策。默认 `main.ts` 不会在没有 master key、真实 capability probe 与用户连接动作时自动启动外部连接。
 
 一个 active connection 由持久 lease 选出唯一消费者；多机滚动升级避免两个不共享 inbox 的消费者争抢事件。断线由 SDK 重连，omem 记录健康状态、最后事件/错误；未知断线缺口不能承诺完全补齐历史，需要按已允许范围补拉。
 

@@ -41,7 +41,7 @@
 
 source 枚举 manual/file/git/lark/agent/hook/chat/screen。文本每项 ≤200k 字符；最多 50 个 part。相同 source/externalId 与相同规范内容重试复用当前版本；有变化创建下一版本。屏幕事件通常每个事件独立 ID，某份文档则可用稳定文档 ID 持续版本化。observedAt 是观察时间，保存时间由服务生成，两者不同。
 
-群聊连接器可传 `conversationId`，并在 provenance 中提供稳定 eventId；hook/会话可传 `runId`、`event`。chat/screen 缓冲按来源与会话/窗口分流，默认静默 15 秒或最长 5 分钟强制封包，相同事件去重、相同 ID 不同内容拒绝，迟到事件形成带 `lateForBatchId` 的补充批次。聚合修订保留 eventIds 和观察时间范围。机器人入群、历史读取/图片下载与观察工具仍由外部负责；当前不包含机器人安装、全群监听或屏幕采集器。UI 节点结构当前以 uiText 表达，复杂树可由外部规范化成文字，不声称已经解析任何操作系统 accessibility tree。
+群聊连接器可传 `conversationId`，并在 provenance 中提供稳定 eventId；hook/会话可传 `runId`、`event`。chat/screen 缓冲按来源与会话/窗口分流，默认静默 15 秒或最长 5 分钟强制封包，相同事件去重、相同 ID 不同内容拒绝，迟到事件形成带 `lateForBatchId` 的补充批次。聚合修订保留 eventIds 和观察时间范围。B2-06 已提供飞书机器人 WebSocket 接收：bot 加群事件会自动启用该群监控，移群停用；首次收到已有成员群的消息也会补建 active target。真实应用创建/授权仍需显式进行，本仓库没有替用户执行 live 接入；历史消息补拉和图片下载尚未实现。屏幕观察器仍由外部负责，UI 节点结构当前以 uiText 表达，复杂树可由外部规范化成文字，不声称已经解析任何操作系统 accessibility tree。
 
 ## 飞书、Git 与文本
 

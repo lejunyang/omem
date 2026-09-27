@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 7;
+export const SUPPORTED_SCHEMA_VERSION = 8;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -629,6 +629,29 @@ const larkDeliveryStatements = [
   "CREATE INDEX lark_card_commands_state_idx ON lark_card_commands(state,created_at)",
 ] as const;
 
+const autoMonitorJoinedGroupsStatements = [
+  `UPDATE lark_targets SET state='disabled',capture_enabled=0,
+     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   WHERE purpose='group_monitoring' AND state='pending_approval'
+     AND NOT EXISTS(
+       SELECT 1 FROM lark_bindings b JOIN lark_connections c
+         ON c.id=b.connection_id
+       WHERE b.connection_id=lark_targets.connection_id
+         AND b.binding_version=lark_targets.binding_version
+         AND b.state='active' AND c.state='active'
+     )`,
+  `UPDATE lark_targets SET state='active',capture_enabled=1,
+     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   WHERE purpose='group_monitoring' AND state='pending_approval'
+     AND EXISTS(
+       SELECT 1 FROM lark_bindings b JOIN lark_connections c
+         ON c.id=b.connection_id
+       WHERE b.connection_id=lark_targets.connection_id
+         AND b.binding_version=lark_targets.binding_version
+         AND b.state='active' AND c.state='active'
+     )`,
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -676,6 +699,12 @@ const migrations: readonly Migration[] = [
     name: "lark-realtime-delivery-and-callbacks",
     statements: larkDeliveryStatements,
     checksum: checksum(larkDeliveryStatements),
+  },
+  {
+    version: 8,
+    name: "auto-monitor-joined-lark-groups",
+    statements: autoMonitorJoinedGroupsStatements,
+    checksum: checksum(autoMonitorJoinedGroupsStatements),
   },
 ];
 
