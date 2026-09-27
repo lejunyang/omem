@@ -19,7 +19,14 @@ Read `README.md` and `docs/implementation/status.md` for actual capabilities. In
 
 - 后端：`apps/server/src/review/`（store.ts 独立 `.repo-review/data` SQLite、sync.ts 四类材料增量同步、app.ts `/api/review/*` 路由、main.ts 入口）
 - 前端：`apps/web/src/ReviewApp.vue` + `review-api.ts`，App.vue boot 探测 `/api/review/health` 自动切换 review 模式
-- 同步脚本：`scripts/dev-review.ts`（tsx watch + vite），同步逻辑在 `review/sync.ts`
+- 启动脚本：`scripts/dev-review.ts` 编排器 + `scripts/dev-review-vite.ts`（Vite 子进程，configFile:false 不复用共享 vite.config.ts）；两个 child 都是直接 `node tsx`，退出时 `taskkill /PID <pid> /T /F` 杀整棵树；API 非 0 退出透传为 dev-review 退出码；Vite `strictPort`，5180/5181 被占时 preflight 明确报错退出
 - 数据目录 `.repo-review/` 已 gitignore；仅扫描本仓库文本（源码/docs/AGENTS.md），排除 omem.local.json/.env*/node_modules/dist/二进制
 - 不启动 Lark/业务 worker/外部通知，不访问网络；无模型时浏览/搜索/追溯仍可用
-- 修改 review 代码后跑 `osdk run check`；浏览器验证用 `osdk run dev:review` + 访问 5181
+- 修改 review 代码后跑 `osdk run check`；浏览器验证用 `osdk run dev:review` + 访问 5181；dev 生命周期由 `apps/server/tests/review-dev.test.ts` 覆盖（端口占用检测 + taskkill /T 后两端口释放）
+
+### 关系模型与关联清单维护
+
+- 关系表 `review_relations`（`store.ts`）：前向类型 `implements / requires / decided_by / researched_by / tested_by / candidate_for`，反方向在查询时派生（如 implements → implemented_by）。状态 `confirmed / candidate / missing`；unresolvable target 一律记 `missing`，不假装 confirmed。
+- **唯一来源**是手维护的 `docs/repo-review/associations.json`：每条 seed 必须点名 `codePath` + `symbol`（定位代码 fragment）+ `requirementRefs`（需求 id 标签）+ `decisionRefs/researchRefs/testRefs`（`path` 或 `path::anchor`）。同步时 `buildReviewRelations` 把每条 seed upsert 成 `implements` + 各 ref 边，deterministic id 幂等。
+- **不要**用语义相似度自动加边：未登记的代码↔文档关系永远不会变成 confirmed；想加一条关系，先在 associations.json 登记，再 POST `/api/review/sync`。
+- 关系锚定在 head revision 的 fragment 上；跨 revision fragment 身份续接未实现——代码改完产生新 revision 后，需重新 sync 让 symbol/anchor 在新 head 上重新定位（旧关系仍指向旧 fragment id，标"历史版本"）。

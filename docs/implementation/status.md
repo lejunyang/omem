@@ -59,6 +59,7 @@
 - **Docker 未安装**：实测 `docker --version` 报「无法识别」，`osdk container doctor --json` 报 docker/containerd 均 `not-installed`。WeKnora/Hindsight 的 Docker 路径本机不可用。
 - **无 traecli → 真实 ACP/飞书未端到端**：代码已接 AcpAssistantModel 真实 ACP adapter（含 fixture 解析/超时/取消测试），但本机无 traecli，真实 ACP 主助手对话与真实飞书 WebSocket 收发均未跑 live，仍为注入/fixture adapter 测试。
 - **G20 进程级真实重启未测**：pending turn 持久恢复用同 DB 新 runtime 实例模拟（recoverUnfinishedTurns + committed receipt fence），未做真实进程 kill+restart；HTTP cancel e2e 已用 fastify inject 覆盖。
+- **repo-review 代码 review 库（独立 vertical slice）**：`osdk run dev:review` 启动隔离 API(5180)+Vite(5181)，fresh rebuild 约 127 sources / 4053 fragments，四类分类（架构/进度/历史决策/背景调研），双向关系由手维护的 `docs/repo-review/associations.json` seed 构建（实测 23 seeds → 77 confirmed / 3 candidate / 2 missing）。**不是完整交付**：关系锚定 head fragment，跨 revision fragment 身份续接未实现；词相似未登记片段不自动 confirmed；检索为关键词召回无 embedding；`refreshDependents` 重核验仍按设计 blocked。dev 生命周期（端口占用检测、taskkill /T /F 进程树清理、API 失败透传、strictPort）由 `apps/server/tests/review-dev.test.ts` 2 个集成用例 + 浏览器 10 步验收覆盖。
 - **配置变通已全部撤销**：package-lock 的 npmmirror 改写、`package-lock.json.bak-batch2` 备份、osdk.toml 的 default_agents/npm.auto=true 临时改动均已还原；`git diff HEAD` 对这三个文件为零。
 
 ---
