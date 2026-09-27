@@ -84,6 +84,41 @@ export type ReviewSearchHit = {
   filePath: string | null;
 };
 
+/** One bidirectional relation touching a fragment. `relationType` is already
+ * inverted when the queried fragment is the target (e.g. a decision fragment
+ * sees "implemented_by"). `other` is null for unresolved (missing) links. */
+export type ReviewRelation = {
+  id: string;
+  direction: "outgoing" | "incoming";
+  relationType: string;
+  status: "confirmed" | "candidate" | "missing";
+  evidence: string | null;
+  other: {
+    fragmentId: string;
+    revisionId: string | null;
+    text: string | null;
+    title: string | null;
+    version: number | null;
+    filePath: string | null;
+    category: string | null;
+    externalId: string | null;
+  } | null;
+};
+
+export type FragmentRelations = {
+  fragmentId: string;
+  relations: ReviewRelation[];
+};
+
+export type AssociationsSummary = {
+  seedCount: number;
+  total: number;
+  confirmed: number;
+  candidate: number;
+  missing: number;
+  byType: Record<string, number>;
+};
+
 export type SyncStats = {
   totalScanned: number;
   imported: number;
@@ -157,4 +192,19 @@ export async function reviewCode(path: string): Promise<ReviewSource | null> {
   if (!r.ok)
     throw Error((value && (value as { error?: string }).error) || "请求失败");
   return value as ReviewSource;
+}
+
+export async function reviewFragmentRelations(
+  fragmentId: string,
+): Promise<FragmentRelations> {
+  return get("/fragments/" + encodeURIComponent(fragmentId) + "/relations");
+}
+
+/** All outgoing relations for a code file's head fragments (trace chain view). */
+export async function reviewCodeRelations(path: string): Promise<ReviewRelation[]> {
+  return get("/code-relations?path=" + encodeURIComponent(path));
+}
+
+export async function reviewAssociations(): Promise<AssociationsSummary> {
+  return get("/associations");
 }

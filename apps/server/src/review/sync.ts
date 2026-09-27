@@ -1,4 +1,4 @@
-﻿/** Incremental scanner that turns the omem repo itself into a code-review
+/** Incremental scanner that turns the omem repo itself into a code-review
  * knowledge base. Each file is one source whose identity is its repo-relative
  * path (`omem:<path>`), NOT a content hash: editing the same file appends a new
  * revision on the same source, while two files that happen to share bytes stay
@@ -34,7 +34,11 @@ import {
   migrateLegacySources,
   setSourceMeta,
   sourceIdForExternalId,
+  ensureReviewRelationsTable,
+  upsertReviewRelation,
+  type RelationType,
 } from "./store.js";
+import { loadAssociations, parseRef, type AssociationSeed } from "./associations.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,6 +63,9 @@ export type SyncResult = Omit<SyncStats, "failedCount"> & {
    * unaffected. */
   failed: FailedFile[];
   warnings: string[];
+  /** Relation build stats from the human-maintained associations seed, when a
+   * full (non-`only`) sync ran. */
+  relations?: RelationBuildStats;
 };
 
 export type SyncOptions = {
@@ -116,6 +123,7 @@ function isExcluded(rel: string): boolean {
 
 function classify(rel: string): ReviewCategory | null {
   if (isExcluded(rel)) return null;
+  // Tests are implementation evidence: split per test case under "architecture".
   if (rel.startsWith("apps/") && rel.endsWith(".ts")) return "architecture";
   if (rel.startsWith("packages/") && rel.endsWith(".ts")) return "architecture";
   if (
@@ -123,18 +131,18 @@ function classify(rel: string): ReviewCategory | null {
     (rel.endsWith(".ts") || rel.endsWith(".vue"))
   )
     return "architecture";
+  // High-level architecture: root design system doc and the system design doc.
+  if (rel === "design.md" || rel === "docs/design.md") return "architecture";
   if (
     rel === "docs/implementation/status.md" ||
     rel === "AGENTS.md" ||
     rel === "README.md"
   )
     return "progress";
-  if (rel.startsWith("docs/reviews/") && rel.endsWith(".md")) return "decisions";
-  if (
-    rel.startsWith("docs/implementation/assistant-v3/") &&
-    rel.endsWith(".md")
-  )
+  // All implementation docs are decision records (status.md above stays progress).
+  if (rel.startsWith("docs/implementation/") && rel.endsWith(".md"))
     return "decisions";
+  if (rel.startsWith("docs/reviews/") && rel.endsWith(".md")) return "decisions";
   if (rel.startsWith("docs/research/") && rel.endsWith(".md")) return "research";
   return null;
 }
@@ -203,6 +211,14 @@ function collectCandidates(repoRoot: string): { rel: string; category: ReviewCat
 
 const CODE_BOUNDARY =
   /^\s*(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:function|class|const|let|var|enum|interface|type)\s+[A-Za-z_$]/;
+
+/** Test files split per test case: each `it(`/`test(`/`describe(` opens a new
+ * fragment so a failing case can be cited directly. */
+const TEST_BOUNDARY = /^\s*(?:it|test|describe)\s*\(\s*["'`]/;
+
+function isTestFile(rel: string): boolean {
+  return rel.startsWith("apps/server/tests/") && rel.endsWith(".test.ts");
+}
 
 function splitCodeFragments(text: string): string[] {
   return splitByBoundary(text, CODE_BOUNDARY);
@@ -418,7 +434,9 @@ function captureOne(
 
   const sections =
     category === "architecture"
-      ? splitCodeFragments(text)
+      ? isTestFile(rel)
+        ? splitByBoundary(text, TEST_BOUNDARY)
+        : splitCodeFragments(text)
       : splitMarkdownFragments(text);
   let parts: CaptureInput["parts"];
   if (sections.length > 0 && sections.length <= 1500)
@@ -478,6 +496,207 @@ function reconcileSources(
     const sid = sourceIdForExternalId(store, EXTERNAL_ID_PREFIX + oldPath);
     if (sid) setSourceMeta(store, sid, { movedTo: newPath });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Relation building: turn the hand-maintained associations seed into
+// bidirectional review_relations rows. Word similarity never promotes to
+// confirmed; only listed associations create edges, and unresolvable refs are
+// recorded as status=missing instead of being silently skipped.
+// ---------------------------------------------------------------------------
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+type LocatedFragment = {
+  fragmentId: string;
+  revisionId: string;
+  text: string;
+};
+
+/** Head revision fragments for a path-identified source, or null if never
+ * synced. */
+function headFragments(
+  store: Store,
+  path: string,
+): { revisionId: string; fragments: { id: string; ordinal: number; text: string }[] } | null {
+  const sourceId = sourceIdForExternalId(store, EXTERNAL_ID_PREFIX + path);
+  if (!sourceId) return null;
+  const revisionId = String(
+    (store.db.prepare("SELECT head FROM sources WHERE id=?").get(sourceId) as {
+      head: string;
+    } | undefined)?.head ?? "",
+  );
+  if (!revisionId) return null;
+  return { revisionId, fragments: store.fragments(revisionId) };
+}
+
+/** Earliest head fragment whose text defines `symbol`. Prefers real
+ * declaration/method lines over bare token occurrences. */
+function matchSymbolFragment(
+  fragments: { id: string; ordinal: number; text: string }[],
+  symbol: string,
+): { id: string; text: string } | null {
+  const esc = escapeRegExp(symbol);
+  const declRe = new RegExp(
+    `^\\s*(?:export\\s+)?(?:declare\\s+)?(?:abstract\\s+)?(?:async\\s+)?` +
+      `(?:private\\s+|public\\s+|protected\\s+|readonly\\s+|static\\s+|override\\s+)?` +
+      `(?:function|class|const|let|var|enum|interface|type)\\s+${esc}\\b`,
+    "m",
+  );
+  const methodRe = new RegExp(
+    `^\\s*(?:private|public|protected|async|readonly|static|override)\\s+${esc}\\s*\\(`,
+    "m",
+  );
+  const tokenRe = new RegExp(`\\b${esc}\\b`);
+  const def = fragments.find((f) => declRe.test(f.text) || methodRe.test(f.text));
+  if (def) return { id: def.id, text: def.text };
+  const any = fragments.find((f) => tokenRe.test(f.text));
+  return any ? { id: any.id, text: any.text } : null;
+}
+
+/** Resolve a `path` or `path::anchor` ref to a head fragment. No anchor →
+ * first fragment. Anchor missing → null (caller records missing). */
+function resolveRef(
+  store: Store,
+  ref: string,
+): LocatedFragment | null {
+  const { path, anchor } = parseRef(ref);
+  const head = headFragments(store, path);
+  if (!head) return null;
+  if (!anchor) {
+    const first = head.fragments[0];
+    return first ? { fragmentId: first.id, revisionId: head.revisionId, text: first.text } : null;
+  }
+  const hit = head.fragments.find((f) => f.text.includes(anchor));
+  return hit
+    ? { fragmentId: hit.id, revisionId: head.revisionId, text: hit.text }
+    : null;
+}
+
+/** The requirement/intent fragment backing an implements relation: search the
+ * two acceptance/requirements docs for a fragment mentioning the requirement id. */
+function resolveRequirementFragment(
+  store: Store,
+  reqId: string,
+): LocatedFragment | null {
+  const docs = [
+    "docs/implementation/status.md",
+    "docs/implementation/assistant-v3/migration-and-acceptance.md",
+  ];
+  for (const path of docs) {
+    const head = headFragments(store, path);
+    if (!head) continue;
+    const hit = head.fragments.find((f) => f.text.includes(reqId));
+    if (hit)
+      return { fragmentId: hit.id, revisionId: head.revisionId, text: hit.text };
+  }
+  return null;
+}
+
+export type RelationBuildStats = {
+  associations: number;
+  confirmed: number;
+  candidate: number;
+  missing: number;
+};
+
+/** Build review_relations from the human-maintained seed. Idempotent: repeat
+ * syncs reuse the deterministic relation ids (ON CONFLICT). */
+export function buildReviewRelations(
+  store: Store,
+  repoRoot: string,
+): RelationBuildStats {
+  ensureReviewRelationsTable(store);
+  const seeds = loadAssociations(repoRoot);
+  const stats: RelationBuildStats = {
+    associations: seeds.length,
+    confirmed: 0,
+    candidate: 0,
+    missing: 0,
+  };
+  const tally = (status: string) => {
+    if (status === "confirmed") stats.confirmed++;
+    else if (status === "candidate") stats.candidate++;
+    else stats.missing++;
+  };
+
+  const link = (
+    source: LocatedFragment,
+    target: LocatedFragment | null,
+    type: RelationType,
+    status: "confirmed" | "candidate" | "missing",
+    evidence: string,
+  ) => {
+    // An unresolvable target is always recorded as missing, regardless of the
+    // seed's own status: we must not pretend a confirmed edge exists when the
+    // referenced material was never synced.
+    const effective = target ? status : "missing";
+    upsertReviewRelation(store, {
+      sourceFragmentId: source.fragmentId,
+      targetFragmentId: target ? target.fragmentId : "",
+      relationType: type,
+      status: effective,
+      evidence,
+      sourceRevisionId: source.revisionId,
+      targetRevisionId: target ? target.revisionId : null,
+    });
+    tally(effective);
+  };
+
+  for (const seed of seeds) {
+    const codeHead = headFragments(store, seed.codePath);
+    if (!codeHead) {
+      // Code itself never synced: record an unreachable missing row so the seed
+      // is not silently dropped; surfaced in /associations, not from a fragment.
+      upsertReviewRelation(store, {
+        sourceFragmentId: "",
+        targetFragmentId: "",
+        relationType: "implements",
+        status: "missing",
+        evidence: `代码未入库：${seed.codePath}::${seed.symbol} — ${seed.intent}`,
+      });
+      tally("missing");
+      continue;
+    }
+    const codeFrag = matchSymbolFragment(codeHead.fragments, seed.symbol);
+    if (!codeFrag) {
+      upsertReviewRelation(store, {
+        sourceFragmentId: "",
+        targetFragmentId: "",
+        relationType: "implements",
+        status: "missing",
+        evidence: `符号未定位：${seed.codePath} 中找不到 ${seed.symbol} 的定义行`,
+      });
+      tally("missing");
+      continue;
+    }
+    const code: LocatedFragment = {
+      fragmentId: codeFrag.id,
+      revisionId: codeHead.revisionId,
+      text: codeFrag.text,
+    };
+
+    // code → intent/requirement fragment (implements).
+    const reqId = seed.requirementRefs[0];
+    const reqFrag = reqId ? resolveRequirementFragment(store, reqId) : null;
+    link(
+      code,
+      reqFrag,
+      "implements",
+      seed.status,
+      `${seed.intent}｜依据：${seed.evidence}｜需求：${seed.requirementRefs.join(", ")}`,
+    );
+
+    for (const ref of seed.decisionRefs)
+      link(code, resolveRef(store, ref), "decided_by", seed.status, `决策：${ref}`);
+    for (const ref of seed.researchRefs)
+      link(code, resolveRef(store, ref), "researched_by", seed.status, `调研：${ref}`);
+    for (const ref of seed.testRefs)
+      link(code, resolveRef(store, ref), "tested_by", seed.status, `测试：${ref}`);
+  }
+  return stats;
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +828,17 @@ export async function runReviewSync(
     }
   }
 
+  // Rebuild relations from the hand-maintained seed after scanning. Skipped for
+  // ad-hoc `only` captures (those are partial, fixture-style imports).
+  let relations: RelationBuildStats | undefined;
+  if (!options.only) {
+    try {
+      relations = buildReviewRelations(store, repoRoot);
+    } catch (e) {
+      warnings.push(`relation build failed: ${String(e)}`);
+    }
+  }
+
   const result: SyncResult = {
     ...stats,
     lastSyncCommit: options.only ? null : snapshot.commit,
@@ -616,6 +846,7 @@ export async function runReviewSync(
     dirty: snapshot.dirty,
     failed,
     warnings,
+    relations,
   };
   if (!options.only) persistState(stateDir, result, advanceBaseline);
   return result;
