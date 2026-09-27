@@ -60,6 +60,17 @@ export type JobAttempt = {
   allowedTools: string[];
 };
 
+export type RoleOutputRecord = {
+  id: string;
+  jobId: string;
+  attempt: number;
+  outputSchema: string;
+  outputDigest: string;
+  output: unknown;
+  trace: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type JobLease = JobRecord & {
   leaseOwner: string;
   leaseToken: string;
@@ -499,6 +510,27 @@ export class JobRepository {
          FROM role_outputs WHERE job_id=? ORDER BY attempt`,
       )
       .all(jobId);
+  }
+
+  roleOutput(outputId: string): RoleOutputRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT id,job_id,attempt,output_schema,output_digest,
+           output_json,trace_json,created_at FROM role_outputs WHERE id=?`,
+      )
+      .get(outputId) as Row | undefined;
+    return row
+      ? {
+          id: String(row.id),
+          jobId: String(row.job_id),
+          attempt: Number(row.attempt),
+          outputSchema: String(row.output_schema),
+          outputDigest: String(row.output_digest),
+          output: JSON.parse(String(row.output_json)),
+          trace: JSON.parse(String(row.trace_json)) as Record<string, unknown>,
+          createdAt: String(row.created_at),
+        }
+      : null;
   }
 
   succeed(input: {

@@ -27,6 +27,7 @@ import type { Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
 import type { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
+import { LearningPipeline } from "./learning/pipeline.js";
 const str = z.string().min(1).max(2000);
 export async function buildApp(
   config: Config,
@@ -39,6 +40,22 @@ export async function buildApp(
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
   const feedback = new FeedbackService(store);
+  const learningConfig = config.learning;
+  const learningProfile = learningConfig?.enabled
+    ? config.profiles.find((profile) => profile.id === learningConfig.profileId)
+    : undefined;
+  if (learningConfig?.enabled && !learningProfile)
+    throw Error(`Learning profile not found: ${learningConfig.profileId}`);
+  const learning = learningProfile
+    ? new LearningPipeline({
+        store,
+        memory,
+        feedback,
+        profile: learningProfile,
+        workspaceRoot: config.agentCwd,
+        pollMs: learningConfig?.pollMs,
+      })
+    : null;
   const lark = dependencies.lark;
   const requireLark = () => {
     if (!lark) throw Error("LARK_ONBOARDING_NOT_CONFIGURED");
@@ -94,6 +111,11 @@ export async function buildApp(
     storage: "sqlite",
     mode: "personal",
     notificationMode: config.notifications.mode,
+    learning: learning?.status() ?? {
+      running: false,
+      processed: 0,
+      lastError: null,
+    },
   }));
   app.get("/api/sources", async () => store.list());
   app.post("/api/captures", async (req) =>
@@ -212,7 +234,9 @@ export async function buildApp(
   });
   app.post<{ Params: { id: string } }>("/api/jobs/:id/cancel", async (req) => {
     const body = jobControlSchema.parse(req.body);
-    return store.jobs.cancel({ jobId: req.params.id, ...body });
+    return learning
+      ? learning.cancel({ jobId: req.params.id, ...body })
+      : store.jobs.cancel({ jobId: req.params.id, ...body });
   });
   app.post<{ Params: { id: string } }>("/api/jobs/:id/retry", async (req) => {
     const body = jobControlSchema.parse(req.body);
@@ -387,11 +411,13 @@ export async function buildApp(
     }
   }, 1000);
   inputTick.unref();
+  learning?.start();
   app.addHook("onClose", async () => {
     clearInterval(tick);
     clearInterval(inputTick);
+    await learning?.stop();
     await runs.close();
     store.close();
   });
-  return { app, store, runs, memory, feedback };
+  return { app, store, runs, memory, feedback, learning };
 }

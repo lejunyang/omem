@@ -17,7 +17,7 @@ checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be
 installer = "npm"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "17e1ccce7b97f0554c68927572c7de112a5d4048a83025ed0bb1ac4894d65731"
+manifest_sha256 = "0d0294b02a71a054b4d9610d507d22067995770dd9fe999e4bcdcb12b44c500c"
 run = "npm.cmd ci"
 allow_build_from_source = true
 

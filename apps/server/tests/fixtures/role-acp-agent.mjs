@@ -38,20 +38,41 @@ const update = (value) =>
   });
 const field = (text, name, fallback) =>
   text.match(new RegExp(`"${name}":"([^"]+)"`))?.[1] || fallback;
+const lastField = (text, name, fallback) =>
+  [...text.matchAll(new RegExp(`"${name}":"([^"]+)"`, "g"))].at(-1)?.[1] ||
+  fallback;
 function output(text) {
-  const jobId = field(text, "job_id", "fixture-job");
+  const jobId = lastField(text, "job_id", "fixture-job");
   const roleId = field(text, "role_id", "extractor");
   const projectId = field(text, "project_id", "none");
   const imageCount = (pendingText.match(/"asset_hash"/g) || []).length;
   if (text.includes("OUTPUT_FLOOD")) return "x".repeat(20_000);
   if (text.includes("MALFORMED_OUTPUT")) return "not-json";
-  if (roleId === "verifier")
+  if (roleId === "verifier") {
+    if (text.includes("PIPELINE_TASK"))
+      return JSON.stringify({
+        schema_version: 1,
+        job_id: jobId,
+        role_id: "verifier",
+        assessments: [
+          {
+            proposal_id: field(text, "proposal_id", "missing-proposal"),
+            proposal_digest: field(text, "proposal_digest", "0".repeat(64)),
+            quote_asset_verdict: "valid",
+            semantic_verdict: "supported",
+            reason_code: "fixture_direct_support",
+            reason: "The exact fixed evidence supports the test proposal.",
+            missing_context: [],
+          },
+        ],
+      });
     return JSON.stringify({
       schema_version: 1,
       job_id: jobId,
       role_id: "verifier",
       assessments: [],
     });
+  }
   if (roleId === "planner")
     return JSON.stringify({
       schema_version: 1,
@@ -101,6 +122,62 @@ function output(text) {
         role_bundle: "feedback-curator@1",
         producer_kind: "derived",
       },
+    });
+  if (text.includes("PIPELINE_TASK"))
+    return JSON.stringify({
+      schema_version: 1,
+      job_id: jobId,
+      role_id: "extractor",
+      observations: [],
+      proposals: [
+        {
+          schema_version: 1,
+          proposal_id: "fixture-pipeline-proposal",
+          kind: "task",
+          operation: "create",
+          scope: {
+            workspace_id: "personal",
+            project_id: projectId === "none" ? null : projectId,
+            subject_id: "owner",
+          },
+          body: {
+            title: "完成受控 worker 集成",
+            owner_id: "owner",
+            due_at: null,
+            due_expression: null,
+            next_step: "核对持久回执",
+          },
+          evidence: [
+            {
+              fragment_revision_id: field(
+                text,
+                "fragment_revision_id",
+                "missing-fragment",
+              ),
+              source_revision_id: field(
+                text,
+                "source_revision_id",
+                "missing-revision",
+              ),
+              exact_quote: "PIPELINE_TASK",
+              selector: {
+                start: 0,
+                end: 13,
+                unit: "unicode_codepoint",
+              },
+            },
+          ],
+          uncertainties: [],
+          reason: "Verified owner supplied an explicit task.",
+          expected_versions: {},
+          origin: {
+            job_id: jobId,
+            role_bundle: "extractor@1",
+            producer_kind: "derived",
+          },
+        },
+      ],
+      abstentions: [],
     });
   return JSON.stringify({
     schema_version: 1,

@@ -128,10 +128,12 @@ export async function acp(
         );
       },
     });
+    let inputClosed = false;
     const input = new ReadableStream<Uint8Array>({
       start(controller) {
         let total = 0;
         child.stdout.on("data", (chunk: Buffer) => {
+          if (inputClosed) return;
           total += chunk.length;
           if (total > 32_000_000) {
             rejectExit(new Error("ACP wire output budget exceeded"));
@@ -140,8 +142,19 @@ export async function acp(
           }
           controller.enqueue(new Uint8Array(chunk));
         });
-        child.stdout.once("end", () => controller.close());
-        child.stdout.once("error", (e) => controller.error(e));
+        child.stdout.once("end", () => {
+          if (inputClosed) return;
+          inputClosed = true;
+          controller.close();
+        });
+        child.stdout.once("error", (error) => {
+          if (inputClosed) return;
+          inputClosed = true;
+          controller.error(error);
+        });
+      },
+      cancel() {
+        inputClosed = true;
       },
     });
     const stream = ndJsonStream(output, input);
@@ -190,8 +203,8 @@ export async function acp(
           ) {
             outputChars += update.content.text.length;
             if (outputChars > (options.maxOutputChars ?? 250_000)) {
-                terminalFailure = new Error("Agent output limit exceeded");
-                rejectExit(terminalFailure);
+              terminalFailure = new Error("Agent output limit exceeded");
+              rejectExit(terminalFailure);
               stop(child);
               return;
             }

@@ -29,3 +29,5 @@ run = "npx tsx scripts/live-acp-smoke.ts"
 run = "npm run test:live-role"
 [tasks.live-learning]
 run = "npm run test:live-learning"
+[tasks.live-pipeline]
+run = "npm run test:live-pipeline"
