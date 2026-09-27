@@ -1,6 +1,6 @@
 # omem
 
-个人工作记忆与助理基础系统。Vue 阅读台 + 固定版本的多模态证据 + Agent CLI/ACP 问答 + 需求待办与通知。当前交付包含第一批可运行基础链路，以及 Batch 2 的版本化合同/SQLite 迁移基础；自动知识提炼、屏幕采集器、飞书群机器人和外部通知仍按后续里程碑推进。
+个人工作记忆与助理基础系统。Vue 阅读台 + 固定版本的多模态证据 + Agent CLI/ACP 问答 + 需求待办与通知。当前交付包含第一批可运行基础链路，以及 Batch 2 的版本化合同/SQLite 迁移、持久任务和输入缓冲基础；自动知识提炼、屏幕采集器、飞书群机器人和外部通知仍按后续里程碑推进。
 
 ## 启动
 
@@ -47,13 +47,15 @@ osdk exec --tool node -- npm run cli -- capture ./capture.json
 
 飞书读取使用 `lark-cli docs +fetch --as user`，需要运行服务所在用户已经授权。仅调用用户提供的文档，不自动全空间抓取。HTTP 的文件/Git 导入受 `captureRoots` 限制；CLI 的显式文件参数由发起 CLI 的本地用户提供，范围限于当前目录（文件）或给定仓库（Git）。
 
-[输入协议与 hooks](docs/implementation/inputs.md) 包含多模态 JSON、屏幕/群聊上下文和 opt-in TraeX hook 模板。当前不会自动安装全局 hook 或启动屏幕监控。
+[输入协议与 hooks](docs/implementation/inputs.md) 包含多模态 JSON、屏幕/群聊上下文和 opt-in TraeX hook 模板。当前不会自动安装全局 hook 或启动屏幕监控。选择启用 `hook-forward` 后，事件会先写入 owner-only 本地 spool，服务离线时保留，拿到匹配 capture receipt 后才删除；`OMEM_HOOK_SPOOL` 可覆盖缓冲目录。
 
 ## 数据与服务部署
 
-数据位于 `.omem/`，可用 `OMEM_DATA_DIR` 指定。SQLite 保存版本、片段、引用、待办、变更、通知；图片为 hash 对象文件。数据库按递增 migration 升级，拒绝写入高于当前程序支持版本的库。相同来源标识+相同内容重试不重复录入；不同内容追加版本，旧引用仍可访问。恢复会生成新版本；有后续变更时返回 REBASE_REQUIRED。
+数据位于 `.omem/`，可用 `OMEM_DATA_DIR` 指定。SQLite 保存版本、片段、引用、待办、变更、通知和持久 job；图片为 hash 对象文件。数据库按递增 migration 升级，拒绝写入高于当前程序支持版本的库。相同来源标识+相同内容重试不重复录入；不同内容追加版本，旧引用仍可访问。原始材料与首个提炼 job 同事务提交，job 支持租约、fencing token、分类重试、取消和 attempt 指纹；B2-03 的真实提炼 handler 尚未接入，因此服务当前不会假装处理这些排队任务。恢复会生成新版本；有后续变更时返回 REBASE_REQUIRED。
 
 单用户部署默认仅监听 loopback。公网/局域网监听需设置 `OMEM_HOST` 和强 `OMEM_TOKEN`，所有 `/api/*` 都校验 Bearer；浏览器令牌仅放 sessionStorage。部署到服务器建议用 TLS 反向代理/SSH 隧道。当前不是多租户服务，不把一个 shared token 当团队权限系统。
+
+`GET /api/jobs` 与 `GET /api/jobs/:id` 可查看公开状态和 attempt 指纹；取消、重试分别使用 `POST /api/jobs/:id/cancel|retry`，请求必须带 `expectedGeneration` 和幂等 `requestId`。已成功应用的 job 不能靠取消抹掉效果，只返回需要补偿恢复。当前 worker 基础可注入 handler，但服务尚未接入 B2-03 的真实提炼 handler。
 
 通知默认每次变更即时显示在应用内并写入通知中心；`notifications.mode=digest` 关闭逐条浮动提示，保留所有记录（尚无定时摘要外发）。待办每 30 秒检查到期，重启后补查且去重。服务关闭时不会产生实时提醒；重开后处理逾期事项。飞书消息投递通道还未接入。
 

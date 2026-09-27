@@ -18,7 +18,7 @@
 ## 实际验证
 
 - `osdk run check`：TypeScript、Vue 类型检查、服务端测试、生产构建。
-- **26 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；新增 4 项 B2-01 SQLite 迁移/事务故障注入和 3 项严格合同测试。
+- **37 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 新增 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收，并增加 1 项 HTTP job 控制回归。
 - 浏览器用真实 Fastify/SQLite 和协议 fixture：材料录入、递归引用/环、问答保存、旧版本读取、事项/通知、桌面与 390px 手机，以及真实 SQLite 中的 100 个固定片段连续下钻（7 组浏览器检查）。fixture 只在测试配置使用，产品没有模拟回答 fallback。
 - **真实 TraeX ACP**：TraeCode CLI 0.207.1，发现 19 个 model 配置选项、4 个当前 effort 选项；用握手返回的 `gpt-6-astra / high` 显式设置后，一次真实问题返回 `12 件。`。不把这些值写成默认限定列表。
 - **真实 lark-cli**：使用用户提供的 ACP Wiki 文档验证读取与 CaptureEnvelope 归一化（revision 15，12,245 字符，text+link），报告不保存正文。
@@ -52,4 +52,6 @@ B2-01 已实现：Proposal/ProposalBatch/AssessmentBatch/CorrectionProposal v1 �
 
 A-M01～A-M04 使用实际 SQLite 文件与 Fastify 旧读取 API 验证：固定 ID/原始 JSON/图片字节/历史引用/任务版本保持不变；迁移中断完整回滚且重启幂等；未来 schema 拒绝且数据库文件字节不变；change/outbox 写失败时 memory/task、通知和 application receipt 全部回滚。合同样例仅用于严格 schema 正反例，不作为 Agent、飞书或外部投递集成完成证据。
 
-B2-02～B2-08 尚未实现。当前新增 jobs、proposal、decision、delivery 等表只是冻结持久化边界；没有 worker、提炼/验证策略、飞书扫码/绑定、真实外部投递或决策 UI，不能据此宣称这些链路已完成。
+B2-02 已实现：SQLite schema v3 的 job attempt/control/input batch；capture 与首个 job 同事务；租约、心跳、fencing token、分类有界重试、取消/补偿边界、显式 retry generation 和 attempt fingerprint；owner-only hook spool、receipt 后清理、冲突/容量告警；chat/screen 静默窗、最长窗口、内容去重和迟到补充批次。HTTP 已提供 job 查询/取消/重试和 input-event 入口。
+
+B2-03～B2-08 尚未实现。当前 worker 是可注入 handler 的持久执行基础，验收 handler 为确定性故障注入，不是真实模型；服务没有自动启动提炼 handler。尚无提炼/验证策略、飞书扫码/绑定、真实外部投递或决策 UI，不能据此宣称这些链路已完成。

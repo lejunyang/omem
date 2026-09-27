@@ -9,6 +9,7 @@ import {
   questionSchema,
   taskSchema,
   taskUpdateSchema,
+  jobControlSchema,
 } from "../../../packages/contracts/src/index.js";
 import { Store } from "./store.js";
 import { Runs } from "./runs.js";
@@ -50,7 +51,9 @@ export async function buildApp(config: Config) {
   app.setErrorHandler((error, _req, reply) => {
     const e = error as Error;
     const code =
-      e.message.includes("REBASE_REQUIRED") || e.message.includes("STALE_")
+      e.message.includes("REBASE_REQUIRED") ||
+      e.message.includes("STALE_") ||
+      e.message.includes("_CONFLICT")
         ? 409
         : e.message.includes("already active")
           ? 429
@@ -98,6 +101,15 @@ export async function buildApp(config: Config) {
   app.post("/api/hooks/traex", async (req) =>
     store.capture(captureSchema.parse(hookInput(req.body))),
   );
+  app.post("/api/input-events", async (req) => {
+    const input = captureSchema.parse(req.body);
+    const event = store.inputs.ingest(input);
+    const batches = store.inputs.flushReady(
+      (envelope) => store.capture(envelope),
+      { now: new Date() },
+    );
+    return { event, batches };
+  });
   app.get<{ Params: { id: string } }>(
     "/api/revisions/:id",
     async (req, reply) =>
@@ -164,6 +176,22 @@ export async function buildApp(config: Config) {
       ...store.setTaskStatus(req.params.id, b.status, b.expectedVersion),
     };
   });
+  app.get("/api/jobs", async () => store.jobs.list());
+  app.get<{ Params: { id: string } }>("/api/jobs/:id", async (req, reply) => {
+    const job = store.jobs.get(req.params.id);
+    return job
+      ? { ...job, attempts: store.jobs.attempts(job.id) }
+      : reply.code(404).send({ error: "Job not found" });
+  });
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/cancel", async (req) => {
+    const body = jobControlSchema.parse(req.body);
+    return store.jobs.cancel({ jobId: req.params.id, ...body });
+  });
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/retry", async (req) => {
+    const body = jobControlSchema.parse(req.body);
+    return store.jobs.retry({ jobId: req.params.id, ...body });
+  });
+  app.get("/api/input-batches", async () => store.inputs.batches());
   app.get("/api/profiles", async () =>
     config.profiles.map(
       ({ id, name, transport, model, effort, maxContextChars }) => ({
@@ -220,8 +248,22 @@ export async function buildApp(config: Config) {
     await app.register(staticFiles, { root: web, prefix: "/" });
   const tick = setInterval(() => store.remind(), 30000);
   tick.unref();
+  let lastInputError = "";
+  const inputTick = setInterval(() => {
+    try {
+      store.inputs.flushReady((input) => store.capture(input));
+      lastInputError = "";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      if (message !== lastInputError)
+        console.error(`omem input aggregation failed: ${message}`);
+      lastInputError = message;
+    }
+  }, 1000);
+  inputTick.unref();
   app.addHook("onClose", async () => {
     clearInterval(tick);
+    clearInterval(inputTick);
     await runs.close();
     store.close();
   });

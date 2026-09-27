@@ -29,7 +29,7 @@ const input = (text = "first") =>
       actorType: "owner",
       actorVerifiedBy: "test-session",
       sourceUri: null,
-      eventId: "event-1",
+      eventId: null,
       eventAt: "2026-09-27T00:00:00Z",
       timezone: "Asia/Shanghai",
       quoted: false,

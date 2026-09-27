@@ -66,6 +66,15 @@ export const captureSchema = z
         runId: z.string().max(200).optional(),
         event: z.string().max(100).optional(),
         uiText: z.string().max(30000).optional(),
+        aggregation: z
+          .object({
+            eventIds: z.array(z.string().min(1).max(500)).min(1).max(500),
+            windowStartedAt: z.iso.datetime({ offset: true }),
+            windowEndedAt: z.iso.datetime({ offset: true }),
+            lateForBatchId: z.string().min(1).max(500).nullable(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .default({}),
@@ -413,6 +422,38 @@ export const taskUpdateSchema = z
     expectedVersion: z.number().int().min(1),
   })
   .strict();
+
+export const jobStateSchema = z.enum([
+  "queued",
+  "leased",
+  "running",
+  "succeeded",
+  "skipped",
+  "awaiting_decision",
+  "retry_wait",
+  "failed",
+  "cancelled",
+]);
+
+export const jobAttemptFingerprintSchema = z
+  .object({
+    model: z.string().min(1).max(300).nullable(),
+    effort: z.string().min(1).max(100).nullable(),
+    promptHash: z.string().regex(/^[a-f0-9]{64}$/),
+    skillHash: z.string().regex(/^[a-f0-9]{64}$/),
+    toolHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const jobControlSchema = z
+  .object({
+    expectedGeneration: z.number().int().min(1),
+    requestId: z.string().min(1).max(500),
+  })
+  .strict();
+
+export type JobState = z.infer<typeof jobStateSchema>;
+export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 
 export type Proposal = z.infer<typeof proposalSchema>;
 export type ProposalBatch = z.infer<typeof proposalBatchSchema>;

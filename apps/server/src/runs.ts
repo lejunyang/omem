@@ -162,6 +162,19 @@ export class Runs {
           title: input.question.slice(0, 100),
           parts: [{ type: "text", text: answer }],
           context: { runId: run.id, event: "answer" },
+          provenance: {
+            collectorId: "omem-agent-answer",
+            actorId: profile.id,
+            actorType: "bot",
+            actorVerifiedBy: "omem-runner",
+            sourceUri: null,
+            eventId: run.id,
+            eventAt: new Date().toISOString(),
+            timezone: null,
+            quoted: false,
+            forwarded: false,
+            producerKind: "derived",
+          },
         });
         run.answerId = saved.revision.id;
         for (const f of saved.revision.fragments)

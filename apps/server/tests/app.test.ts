@@ -190,3 +190,56 @@ it("normalizes hook events without persisting unknown hidden payloads", () => {
   expect(JSON.stringify(v)).not.toContain("private");
   expect(JSON.stringify(v)).not.toContain("never");
 });
+
+it("exposes durable capture jobs with idempotent generation-checked controls", async () => {
+  const x = await setup();
+  try {
+    const captured = await x.app.inject({
+      method: "POST",
+      url: "/api/captures",
+      payload: {
+        source: "manual",
+        externalId: "job-api",
+        title: "Queued input",
+        parts: [{ type: "text", text: "queue this durably" }],
+      },
+    });
+    expect(captured.statusCode).toBe(200);
+    const jobId = captured.json().job.id as string;
+    const detail = await x.app.inject(`/api/jobs/${jobId}`);
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      id: jobId,
+      state: "queued",
+      generation: 1,
+      attempts: [],
+    });
+    const cancelPayload = {
+      expectedGeneration: 1,
+      requestId: "api-cancel-1",
+    };
+    const cancelled = await x.app.inject({
+      method: "POST",
+      url: `/api/jobs/${jobId}/cancel`,
+      payload: cancelPayload,
+    });
+    expect(cancelled.json()).toEqual({ mode: "cancelled", state: "cancelled" });
+    expect(
+      (
+        await x.app.inject({
+          method: "POST",
+          url: `/api/jobs/${jobId}/cancel`,
+          payload: cancelPayload,
+        })
+      ).json(),
+    ).toEqual(cancelled.json());
+    const retried = await x.app.inject({
+      method: "POST",
+      url: `/api/jobs/${jobId}/retry`,
+      payload: { expectedGeneration: 1, requestId: "api-retry-1" },
+    });
+    expect(retried.json()).toEqual({ state: "queued", generation: 2 });
+  } finally {
+    await x.close();
+  }
+});

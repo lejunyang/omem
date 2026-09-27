@@ -1,6 +1,6 @@
 # 主动输入、群聊与屏幕观测
 
-当前统一入口 `POST /api/captures`，运行时 Zod 合同在 packages/contracts/src/index.ts。私有/远程服务器请求带 Bearer token。
+立即保存的统一入口是 `POST /api/captures`；需要静默窗/最大窗口聚合的 chat/screen 事件使用 `POST /api/input-events`。运行时 Zod 合同在 packages/contracts/src/index.ts。私有/远程服务器请求带 Bearer token。
 
 ```json
 {
@@ -8,14 +8,31 @@
   "externalId": "desktop-observer/event-001",
   "title": "正在阅读产品需求",
   "observedAt": "2026-09-26T16:00:00+08:00",
+  "provenance": {
+    "collectorId": "desktop-observer-v1",
+    "actorId": null,
+    "actorType": "system",
+    "actorVerifiedBy": null,
+    "sourceUri": null,
+    "eventId": "event-001",
+    "eventAt": "2026-09-26T16:00:00+08:00",
+    "timezone": "Asia/Shanghai",
+    "quoted": false,
+    "forwarded": false,
+    "producerKind": "original"
+  },
   "parts": [
-    {"type":"text","text":"观察工具提取的屏幕文字…"},
-    {"type":"link","url":"https://example.com/spec","label":"当前窗口链接"}
+    { "type": "text", "text": "观察工具提取的屏幕文字…" },
+    {
+      "type": "link",
+      "url": "https://example.com/spec",
+      "label": "当前窗口链接"
+    }
   ],
   "context": {
-    "application":"Browser",
-    "windowTitle":"产品需求",
-    "uiText":"观察工具提取的 UI 节点文字"
+    "application": "Browser",
+    "windowTitle": "产品需求",
+    "uiText": "观察工具提取的 UI 节点文字"
   }
 }
 ```
@@ -24,7 +41,7 @@
 
 source 枚举 manual/file/git/lark/agent/hook/chat/screen。文本每项 ≤200k 字符；最多 50 个 part。相同 source/externalId 与相同规范内容重试复用当前版本；有变化创建下一版本。屏幕事件通常每个事件独立 ID，某份文档则可用稳定文档 ID 持续版本化。observedAt 是观察时间，保存时间由服务生成，两者不同。
 
-群聊连接器可传 `conversationId` 和 message ID 作为 externalId；hook/会话可传 `runId`、`event`。机器人入群、历史读取/图片下载与观察工具由外部负责；本轮已实现接收合同，不包含机器人安装、全群监听或屏幕采集器。UI 节点结构当前以 uiText 表达，复杂树可由外部规范化成文字，不声称已经解析任何操作系统 accessibility tree。
+群聊连接器可传 `conversationId`，并在 provenance 中提供稳定 eventId；hook/会话可传 `runId`、`event`。chat/screen 缓冲按来源与会话/窗口分流，默认静默 15 秒或最长 5 分钟强制封包，相同事件去重、相同 ID 不同内容拒绝，迟到事件形成带 `lateForBatchId` 的补充批次。聚合修订保留 eventIds 和观察时间范围。机器人入群、历史读取/图片下载与观察工具仍由外部负责；当前不包含机器人安装、全群监听或屏幕采集器。UI 节点结构当前以 uiText 表达，复杂树可由外部规范化成文字，不声称已经解析任何操作系统 accessibility tree。
 
 ## 飞书、Git 与文本
 
@@ -36,9 +53,9 @@ source 枚举 manual/file/git/lark/agent/hook/chat/screen。文本每项 ≤200k
 
 模板：integrations/traex/hooks.example.json。采用 `事件→matcher group→hooks handler` 结构，async command 5 秒超时。填写绝对 hook-forward.js 路径，按需合并到目标项目的 .trae/hooks.json，执行该项目的 host trust 流程；本轮没有改动用户现有 hook 配置。
 
-hook-forward 接收 stdin JSON，选择事件、会话、回合、工具名称、prompt、tool_input、tool_response/error；不自动打开 transcript 文件、不保留未知 thought 字段，不调用模型，stdout 为空，服务不可用只在 stderr 给出简短故障。传输 3 秒超时，失败放行宿主。
+hook-forward 接收 stdin JSON，按 capture profile 选择事件、会话、回合、工具名称、prompt、tool_input、tool_response/error；不自动打开 transcript 文件、不保留未知 thought 字段，不调用模型，stdout 为空。事件先以 0600 文件、fsync + 原子 rename 写入 0700 spool；每次启动有界补传，只有服务返回 producer/eventId/payloadDigest 全部匹配的 receipt 后才删除。传输超时或服务离线时保留原 eventId，失败放行宿主。
 
-**采集范围**：这些选中的工具字段仍可能含业务数据；当前只有基础 token 模式脱敏，不是完整 DLP。只在确定的项目/会话选择启用；复杂敏感信息过滤、持久本地 spool 与断线补传尚待实现。没有安装全局 hook，避免把所有日常工作未经区分地上传。
+**采集范围**：这些选中的工具字段仍可能含业务数据；当前只有字段白名单和基础 token 模式脱敏，不是完整 DLP。只在确定的项目/会话选择启用。`OMEM_HOOK_FIELDS` 可从 `sessionId,turnId,toolName,prompt,toolInput,toolResponse,error` 中选择，`OMEM_HOOK_PROFILE_ID` 标记配置版本，`OMEM_HOOK_MAX_CHARS` 设置 1,000～200,000 字符预算。spool 默认最多 1000 项/50 MB，超限拒绝新事件并写不含正文的 warning；默认保留期 7 天，超期只告警、不静默删除未送数据。可用 `OMEM_HOOK_SPOOL` 指定目录。没有安装全局 hook，避免把所有日常工作未经区分地上传。
 
 ## 任务与提醒
 
