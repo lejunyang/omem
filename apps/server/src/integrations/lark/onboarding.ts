@@ -511,6 +511,7 @@ export class LarkOnboardingService {
         : null,
       status: String(row.status),
       qrUrl: row.qr_url ? String(row.qr_url) : null,
+      verificationUrl: row.qr_url ? String(row.qr_url) : null,
       qrExpiresAt: row.qr_expires_at ? String(row.qr_expires_at) : null,
       appId: row.external_app_id ? String(row.external_app_id) : null,
       userInfo: row.user_info ? JSON.parse(String(row.user_info)) : null,

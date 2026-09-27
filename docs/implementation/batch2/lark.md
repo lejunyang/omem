@@ -1,6 +1,6 @@
 # 飞书：独立机器人、扫码创建与绑定、可靠通知
 
-状态：B2-05 注册/密钥/配对/绑定和 B2-06 消息连接、投递、回调核心已实现。本轮没有调用创建/授权/发送测试消息的业务 API；确定性测试不能替代独立测试应用 live 验收。实现使用官方 SDK `registerApp()`、`WSClient` 和 `Client`，但不假设能无需用户授权静默创建。
+状态：B2-05 注册/密钥/配对/绑定和 B2-06 消息连接、投递、回调核心已实现。2026-09-27 在用户明确授权下用独立测试应用完成扫码更新、权限回读、WebSocket、私聊 pairing、主动通知、Card 2.0 callback 和入群消息 live 验证；仍未逐项触发文档/日历/会议事件。实现使用官方 SDK `registerApp()`、`WSClient` 和 `Client`，不假设能无需用户授权静默创建。
 
 ## 1. 是否需要新的机器人，是否照 botmux 做
 
@@ -66,7 +66,7 @@ sequenceDiagram
 
 `LarkConnection` 保存 app_id、secret_ref、domain、状态、实际核验过的 capability profile、binding_version 和 owner/targets。secret store 独立加密，master key 来自环境/系统密钥存储且不与密文同库备份；恢复/轮换要验证旧连接停用。App Secret 不进入模型上下文，模型不负责决定发送目标。
 
-为避免这个长期复用的 App 日后反复改权限，默认 profile 参考 botmux `src/setup/lark-scopes.json`（revision `597ffb1`，文件 SHA-256 `0b610a53ccd126979825196e8ffc357ca041647438cd87f0f505b5bbaf19dadc`）预留群聊、文档/云盘/知识库、表格/多维表格/幻灯片、日历、任务、会议与 CardKit 能力。当前 profile 为 114 个 tenant scopes、81 个 user scopes、12 个 tenant events、1 个 user event 和 1 个 callback；示例完整范围在 [examples/lark-registration.json](examples/lark-registration.json)：
+为避免这个长期复用的 App 日后反复改权限，默认 profile 参考 botmux `src/setup/lark-scopes.json`（revision `597ffb1`，文件 SHA-256 `0b610a53ccd126979825196e8ffc357ca041647438cd87f0f505b5bbaf19dadc`）预留群聊、文档/云盘/知识库、表格/多维表格/幻灯片、日历、任务、会议与 CardKit 能力。当前 profile 为 113 个 tenant scopes、80 个 user scopes、12 个 tenant events、1 个 user event 和 1 个 callback；`bitable:app` 虽在 botmux manifest 中，但本次真实增量授权被平台忽略，因此从请求 profile 移除，保留已实际授予的 `base:app:create` 等细分能力。示例完整范围在 [examples/lark-registration.json](examples/lark-registration.json)：
 
 | 能力                | 初始权限/订阅（核对实际目录）                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -117,7 +117,7 @@ SDK 官方长连接要求回调在约3秒内处理，回调处理器只做身份
 
 ## 7. 新 API 与验收
 
-已实现 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST .../:id/pairing-code`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`；另有 `GET .../reusable-apps` 与 `POST .../existing` 支持手工或 botmux app_id 复用。请求必须是 owner 操作；响应只有 app_id/状态/QR链接，永不返回 secret。WebSocket/event、notification sender 和 callback worker 已提供可装配组件；`POST .../test`、disconnect 和 B2-07 设置界面尚未提供。
+已实现 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST .../:id/pairing-code`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`；另有 `GET .../reusable-apps` 与 `POST .../existing` 支持手工或 botmux app_id 复用。请求必须是 owner 操作；注册状态同时返回可直接打开的 `verificationUrl` 与兼容字段 `qrUrl`，二者指向同一完整授权 URL，永不返回 secret。WebSocket/event、notification sender 和 callback worker 已提供可装配组件；`POST .../test`、disconnect 和 B2-07 设置界面尚未提供。
 
 A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。
 

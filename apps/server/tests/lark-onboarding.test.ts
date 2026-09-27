@@ -236,6 +236,7 @@ describe("B2-05 Lark onboarding acceptance", () => {
       mode: "new",
       status: "awaiting_scan",
       qrUrl: "https://accounts.feishu.cn/qr/fixture",
+      verificationUrl: "https://accounts.feishu.cn/qr/fixture",
       appId: null,
     });
     expect(x.registration.requests[0]).toMatchObject({
