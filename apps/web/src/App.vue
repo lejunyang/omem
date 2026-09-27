@@ -30,6 +30,7 @@ import LearningView from "./LearningView.vue";
 import DecisionsView from "./DecisionsView.vue";
 import NotificationDetail from "./NotificationDetail.vue";
 import LarkSetup from "./LarkSetup.vue";
+import ReviewApp from "./ReviewApp.vue";
 const view = ref("read");
 const sources = ref<Source[]>([]);
 const revision = ref<Revision | null>(null);
@@ -48,6 +49,7 @@ const notificationDetail = ref<NotificationDetailType | null>(null);
 const notificationOpen = ref(false);
 const notificationLoading = ref(false);
 const error = ref("");
+const reviewMode = ref(false);
 const busy = ref(false);
 const toast = ref("");
 const token = ref("");
@@ -151,6 +153,20 @@ async function refresh() {
 }
 async function boot() {
   error.value = "";
+  // Review mode: the dev/prod server behind /api is the repo-review knowledge base,
+  // not the personal workspace. Detect it before touching business APIs.
+  try {
+    const r = await fetch("/api/review/health");
+    if (r.ok) {
+      const h = (await r.json()) as { mode?: string };
+      if (h && h.mode === "review") {
+        reviewMode.value = true;
+        return;
+      }
+    }
+  } catch {
+    /* network error falls through to the normal workspace boot below */
+  }
   try {
     const health = await api<{ notificationMode: string }>("/health");
     notificationMode.value = health.notificationMode;
@@ -379,9 +395,10 @@ function saveToken() {
   token.value = "";
   void boot();
 }
-onMounted(() => {
-  void boot();
-  pollTimer = setInterval(() => void refresh(), 2500);
+onMounted(async () => {
+  await boot();
+  if (!reviewMode.value)
+    pollTimer = setInterval(() => void refresh(), 2500);
 });
 onBeforeUnmount(() => {
   clearInterval(pollTimer);
@@ -389,7 +406,8 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <OmShell
+  <ReviewApp v-if="reviewMode" />
+  <OmShell v-else
     ><template #top
       ><div class="top-controls">
         <input
