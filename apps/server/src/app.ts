@@ -25,13 +25,23 @@ import { acp } from "./agents.js";
 import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
 import type { Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
-import type { LarkOnboardingService } from "./integrations/lark/onboarding.js";
+import { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
 import { LearningPipeline } from "./learning/pipeline.js";
+import {
+  OfficialLarkCapabilityProbe,
+  OfficialLarkRegistrationAdapter,
+} from "./integrations/lark/registration.js";
+import { EncryptedSecretStore } from "./integrations/lark/secret-store.js";
+import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js";
+import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
 const str = z.string().min(1).max(2000);
 export async function buildApp(
   config: Config,
-  dependencies: { lark?: LarkOnboardingService } = {},
+  dependencies: {
+    lark?: LarkOnboardingService;
+    larkRuntime?: LarkRuntimeHost;
+  } = {},
 ) {
   if (!["127.0.0.1", "localhost", "::1"].includes(config.host) && !config.token)
     throw Error("OMEM_TOKEN is required for a non-loopback bind");
@@ -56,7 +66,31 @@ export async function buildApp(
         pollMs: learningConfig?.pollMs,
       })
     : null;
-  const lark = dependencies.lark;
+  let lark = dependencies.lark;
+  let larkRuntime = dependencies.larkRuntime ?? null;
+  if (config.lark?.enabled && !lark) {
+    try {
+      const secrets = EncryptedSecretStore.fromEnvironment(config.dataDir);
+      lark = new LarkOnboardingService(
+        store.db,
+        secrets,
+        new OfficialLarkRegistrationAdapter(),
+        new OfficialLarkCapabilityProbe(),
+        () => new Date(),
+        new BotmuxExistingAppProvider(config.lark.botmuxConfig),
+      );
+      larkRuntime = new LarkRuntimeHost({
+        store,
+        memory,
+        onboarding: lark,
+        secrets,
+        pollMs: config.lark.pollMs,
+      });
+    } catch (error) {
+      store.close();
+      throw error;
+    }
+  }
   const requireLark = () => {
     if (!lark) throw Error("LARK_ONBOARDING_NOT_CONFIGURED");
     return lark;
@@ -114,6 +148,13 @@ export async function buildApp(
     learning: learning?.status() ?? {
       running: false,
       processed: 0,
+      lastError: null,
+    },
+    lark: larkRuntime?.status() ?? {
+      running: false,
+      connections: 0,
+      processedDeliveries: 0,
+      processedCards: 0,
       lastError: null,
     },
   }));
@@ -412,12 +453,23 @@ export async function buildApp(
   }, 1000);
   inputTick.unref();
   learning?.start();
+  larkRuntime?.start();
   app.addHook("onClose", async () => {
     clearInterval(tick);
     clearInterval(inputTick);
     await learning?.stop();
+    await larkRuntime?.stop();
     await runs.close();
     store.close();
   });
-  return { app, store, runs, memory, feedback, learning };
+  return {
+    app,
+    store,
+    runs,
+    memory,
+    feedback,
+    learning,
+    lark,
+    larkRuntime,
+  };
 }

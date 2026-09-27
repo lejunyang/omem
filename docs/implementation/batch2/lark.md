@@ -93,7 +93,7 @@ sequenceDiagram
 
 使用官方 Node SDK 的 Client + WSClient。企业自建应用支持 WebSocket 接收消息与新版 card.action.trigger，不需要给事件接收配置公网回调 URL；HTTP API 负责发送/更新。不能由此推断 Web 详情页也能被用户手机访问：详情链接仍需可访问且鉴权的 HTTPS 地址，或先在卡片里展示必要信息。禁止把 `127.0.0.1` 详情链接发给远程用户当可用入口。
 
-当前 B2-06 组件以显式依赖装配：`LarkConnectionManager` 负责 connection lease、pairing 消息路由、WS 状态和失效连接关闭；`LarkEventInbox` 负责事件持久化、冲突检测、自消息过滤以及入群自动启用/移群停用监控；`LarkDeliveryWorker` 负责 outbox；`LarkCardActionService` 负责快速入队和异步业务决策。默认 `main.ts` 不会在没有 master key、真实 capability probe 与用户连接动作时自动启动外部连接。
+`LarkConnectionManager` 负责 connection lease、pairing 消息路由、WS 状态和失效连接关闭；`LarkEventInbox` 负责事件持久化、冲突检测、自消息过滤以及入群自动启用/移群停用监控；`LarkDeliveryWorker` 负责 outbox；`LarkCardActionService` 负责快速入队和异步业务决策。B2-08 的 `LarkRuntimeHost` 已把这些组件接入服务生命周期，但外部集成默认关闭；只有显式设置 `lark.enabled=true` 并提供 `OMEM_SECRET_KEY` 才启动。公开 OpenAPI probe 回读实际 scope、callback 和 bot identity；事件清单不由 requested config 冒充，只有 WebSocket 收到对应事件后才追加为 runtime-verified。
 
 一个 active connection 由持久 lease 选出唯一消费者；多机滚动升级避免两个不共享 inbox 的消费者争抢事件。断线由 SDK 重连，omem 记录健康状态、最后事件/错误；未知断线缺口不能承诺完全补齐历史，需要按已允许范围补拉。
 

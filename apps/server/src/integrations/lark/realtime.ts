@@ -257,7 +257,12 @@ export class LarkEventInbox {
   persist(event: LarkInboundEvent) {
     const connection = this.store.db
       .prepare(
-        "SELECT id FROM lark_connections WHERE app_id=? AND state IN ('active','awaiting_pair')",
+        `SELECT id,COALESCE(active_version,(
+           SELECT MAX(version) FROM lark_connection_versions
+           WHERE connection_id=lark_connections.id AND state='awaiting_pair'
+         )) AS connection_version
+         FROM lark_connections WHERE app_id=?
+           AND state IN ('active','awaiting_pair')`,
       )
       .get(event.appId) as Row | undefined;
     if (!connection) throw Error("LARK_EVENT_APP_NOT_ACTIVE");
@@ -300,6 +305,33 @@ export class LarkEventInbox {
           event.messageId,
           JSON.stringify(event.payload),
         );
+      if (connection.connection_version) {
+        const version = this.store.db
+          .prepare(
+            `SELECT capability_profile FROM lark_connection_versions
+             WHERE connection_id=? AND version=?`,
+          )
+          .get(String(connection.id), Number(connection.connection_version)) as
+          | Row
+          | undefined;
+        const capability = version?.capability_profile
+          ? (JSON.parse(String(version.capability_profile)) as {
+              events?: string[];
+            })
+          : {};
+        const events = [...new Set([...(capability.events ?? []), event.kind])];
+        this.store.db
+          .prepare(
+            `UPDATE lark_connection_versions SET capability_profile=?,updated_at=?
+             WHERE connection_id=? AND version=?`,
+          )
+          .run(
+            JSON.stringify({ ...capability, events }),
+            new Date().toISOString(),
+            String(connection.id),
+            Number(connection.connection_version),
+          );
+      }
       return { id, duplicate: false, state: "received" };
     });
   }
@@ -542,6 +574,10 @@ export class LarkConnectionManager {
       }) => unknown;
     },
   ) {}
+
+  isRunning() {
+    return Boolean(this.handle && this.token);
+  }
 
   start(connectionId: string, now = new Date(), leaseMs = 60_000) {
     const token = this.leases.claim(connectionId, this.workerId, now, leaseMs);
