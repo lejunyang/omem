@@ -8,12 +8,12 @@ import { MemoryService } from "../apps/server/src/memory/service.js";
 import { stableDigest } from "../apps/server/src/storage/digest.js";
 import { Store } from "../apps/server/src/store.js";
 import { contextManifestSchema } from "../packages/contracts/src/index.js";
-import { assertNonAstra, selectNonAstraProfile } from "./live-model.js";
+import { selectLiveProfile } from "./live-model.js";
 
 const config = loadConfig();
 const base = config.profiles.find((profile) => profile.id === "traex");
 if (!base) throw Error("TraeX profile is not configured");
-const { profile } = await selectNonAstraProfile(base, config.agentCwd);
+const { profile } = await selectLiveProfile(base, config.agentCwd);
 const directory = mkdtempSync(join(tmpdir(), "omem-live-learning-"));
 const store = new Store(directory);
 try {
@@ -75,7 +75,6 @@ try {
     profile,
     context,
   });
-  assertNonAstra(extraction.trace.effectiveModel);
   const proposals = (
     extraction.result as { proposals: Record<string, unknown>[] }
   ).proposals;
@@ -92,7 +91,6 @@ try {
       candidates: [{ ...proposal, proposal_digest: proposalDigest }],
     }),
   });
-  assertNonAstra(verification.trace.effectiveModel);
   const assessment = (
     verification.result as {
       assessments: {

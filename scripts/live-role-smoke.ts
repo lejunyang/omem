@@ -5,12 +5,12 @@ import { RoleBundleRegistry } from "../apps/server/src/agent-runtime/bundles.js"
 import { RoleRuntimeGateway } from "../apps/server/src/agent-runtime/gateway.js";
 import { stableDigest } from "../apps/server/src/storage/digest.js";
 import { contextManifestSchema } from "../packages/contracts/src/index.js";
-import { assertNonAstra, selectNonAstraProfile } from "./live-model.js";
+import { selectLiveProfile } from "./live-model.js";
 
 const config = loadConfig();
 const profile = config.profiles.find((candidate) => candidate.id === "traex");
 if (!profile) throw Error("TraeX profile is not configured");
-const { profile: liveProfile } = await selectNonAstraProfile(
+const { profile: liveProfile } = await selectLiveProfile(
   profile,
   config.agentCwd,
 );
@@ -54,8 +54,6 @@ const report = {
     trace: verification.trace,
   },
 };
-assertNonAstra(extraction.trace.effectiveModel);
-assertNonAstra(verification.trace.effectiveModel);
 const reportPath = resolve(
   process.env.OMEM_LIVE_ROLE_REPORT ||
     ".omem/verification/live-role-smoke.json",

@@ -20,7 +20,7 @@
 - `osdk run check`：TypeScript、Vue 类型检查、服务端测试、生产构建。
 - **59 项服务端测试通过**：原有 19 项继续覆盖版本幂等、历史证据、恢复冲突、循环引用、图片拒绝、到期去重、搜索转义、访问令牌/来源检查、完整问答持久化、hook字段筛选、模型/effort协商、权限拒绝、超时/取消，以及真实文件/Git读取；B2-01 有 4 项 SQLite 迁移/事务故障注入和 3 项严格合同测试；B2-02 有 A-J01～07、A-I01～03 共 10 项持久 job/输入缓冲验收和 1 项 HTTP job 控制回归；B2-03 有 A-R01～08 共 8 项角色运行验收；B2-04 有 A-K01～10、A-F01～03 共 13 项策略/反馈验收和 1 项 HTTP 应用回归。
 - 浏览器用真实 Fastify/SQLite 和协议 fixture：材料录入、递归引用/环、问答保存、旧版本读取、事项/通知、桌面与 390px 手机，以及真实 SQLite 中的 100 个固定片段连续下钻（7 组浏览器检查）。fixture 只在测试配置使用，产品没有模拟回答 fallback。
-- **历史 TraeX ACP 基线**：首批曾用当时握手返回的 Astra 配置完成一次 `12 件。` 问答。自 B2-04 起，live 验证脚本显式拒绝 Astra，当前结果使用 `gpt-5.4 / medium`；模型名仍来自实时能力探测，不写成产品默认限定列表。
+- **真实 TraeX ACP**：首批曾用当时默认模型完成一次问答；当前验证通过 `OMEM_LIVE_MODEL=gpt-5.4` 显式选用 `gpt-5.4 / medium`。模型能力仍来自实时探测，产品与脚本不禁用 Astra，也不把任一模型写成产品默认限定列表。
 - **真实 lark-cli**：使用用户提供的 ACP Wiki 文档验证读取与 CaptureEnvelope 归一化（revision 15，12,245 字符，text+link），报告不保存正文。
 - Docker/containerd：仅 doctor 实测；当前宿主不可用，未执行容器 pull/build。
 - Codex/Claude CLI：核对本机 help 与 argv/协议实现；本轮未实测其登录后的真实生成，不将其宣称与 TraeX 同等验证。
@@ -54,8 +54,8 @@ A-M01～A-M04 使用实际 SQLite 文件与 Fastify 旧读取 API 验证：固�
 
 B2-02 已实现：SQLite schema v3 的 job attempt/control/input batch；capture 与首个 job 同事务；租约、心跳、fencing token、分类有界重试、取消/补偿边界、显式 retry generation 和 attempt fingerprint；owner-only hook spool、receipt 后清理、冲突/容量告警；chat/screen 静默窗、最长窗口、内容去重和迟到补充批次。HTTP 已提供 job 查询/取消/重试和 input-event 入口。
 
-B2-03 已实现：extractor/verifier/planner/feedback-curator v1 role bundles、经校验的 inline/native Skill 模式、ContextManifest、隔离 workspace、新会话运行、严格结构化输出/修复上限、受管理工具 allowlist、图片能力门、runtime permission/elicitation 拒绝记录，以及 role output/trace 持久化。真实 TraeX ACP 显式排除 Astra，使用 `gpt-5.4 / medium` 对虚构材料完成一次 extractor + 独立 verifier，二者均通过运行时 schema，报告保存在忽略提交的 `.omem/verification/live-role-smoke.json`；这不表示候选已经应用。
+B2-03 已实现：extractor/verifier/planner/feedback-curator v1 role bundles、经校验的 inline/native Skill 模式、ContextManifest、隔离 workspace、新会话运行、严格结构化输出/修复上限、受管理工具 allowlist、图片能力门、runtime permission/elicitation 拒绝记录，以及 role output/trace 持久化。真实 TraeX ACP 本轮通过 `OMEM_LIVE_MODEL=gpt-5.4` 使用 `gpt-5.4 / medium` 对虚构材料完成一次 extractor + 独立 verifier，二者均通过运行时 schema，报告保存在忽略提交的 `.omem/verification/live-role-smoke.json`；这不表示候选已经应用。
 
-B2-04 已实现：Proposal/assessment 持久化、Unicode exact quote 与图片对象核验、source head/epoch 读取集、owner/转发/歧义/冲突/影响范围策略、自动 task/claim/episode 原子应用、decision 再校验、不可变 task/memory revision、来源更新依赖失效、CAS 恢复，以及同 scope 反馈约束。A-K01～10 与 A-F01～03 均使用真实 SQLite 状态和故障/竞态条件断言；语义 verdict 为确定性测试输入，不冒充真实模型评测。另用 `gpt-5.4 / medium`（显式排除 Astra）在隔离临时库完成一次真实 capture → extractor → fresh verifier → deterministic policy → task/change/notification/delivery intent/receipt 闭环，报告保存在 `.omem/verification/live-learning-smoke.json`。40/120 质量集尚未运行。
+B2-04 已实现：Proposal/assessment 持久化、Unicode exact quote 与图片对象核验、source head/epoch 读取集、owner/转发/歧义/冲突/影响范围策略、自动 task/claim/episode 原子应用、decision 再校验、不可变 task/memory revision、来源更新依赖失效、CAS 恢复，以及同 scope 反馈约束。A-K01～10 与 A-F01～03 均使用真实 SQLite 状态和故障/竞态条件断言；语义 verdict 为确定性测试输入，不冒充真实模型评测。另通过 `OMEM_LIVE_MODEL=gpt-5.4` 在隔离临时库完成一次真实 capture → extractor → fresh verifier → deterministic policy → task/change/notification/delivery intent/receipt 闭环，报告保存在 `.omem/verification/live-learning-smoke.json`。40/120 质量集尚未运行。
 
 B2-05～B2-08 尚未实现。当前服务没有自动启动 capture→extractor→verifier worker 编排，也没有飞书扫码/绑定、真实外部投递或决策 UI。answerer 仍走第一批证据问答路径；topic session resume 和只读 MCP provider 尚未接入，现有 Batch 2 角色全部强制 fresh session、默认无工具。
