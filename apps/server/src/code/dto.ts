@@ -1,8 +1,8 @@
-﻿/** User-facing DTO projection. The code_* tables are a rebuildable typed view over
- * the authoritative Capture → Source/Revision/Fragment chain (review store). These
- * mappers turn raw rows into labels humans can read: no ID is ever shown as a
- * label; missing/stale nodes are flagged actionable=false with a reason; every
- * deepLink resolves to an existing /api/review route. */
+/** User-facing DTO projection. The code_* tables are a rebuildable typed view over
+ * the authoritative Capture->Source/Revision/Fragment chain. We SPREAD the original
+ * row so every internal action key (fileId/name/kind/range/endpoints/...) stays for
+ * the UI, and ADD human display* fields on top. IDs are never rendered as labels;
+ * missing/stale nodes are actionable=false with a reason. */
 import type {
   CodeEdge,
   CodeFile,
@@ -17,26 +17,25 @@ export function shortCommit(commit: string | null, dirty = false): string {
 
 export function snapshotMeta(s: CodeSnapshot) {
   return {
-    snapshotId: s.snapshotId,
+    ...s,
     type: "snapshot",
     displayTitle: `@${shortCommit(s.commit, s.dirty)}`,
+    displayPath: null,
+    symbolName: null,
+    summary: `${s.parserVersion} · ${s.fileCount} files`,
     shortCommit: shortCommit(s.commit, s.dirty),
-    version: s.commit ?? "dirty",
-    dirty: s.dirty,
-    capturedAt: s.capturedAt,
     citationLabel: `code@${shortCommit(s.commit, s.dirty)}`,
     actionable: true,
     reason: null,
     deepLink: `/api/review/code/current-snapshot`,
+    trailLink: `#/code/snapshot/${s.snapshotId}`,
   };
 }
 
 export function fileDTO(f: CodeFile, snap?: CodeSnapshot | null) {
   const base = f.path.split("/").pop() ?? f.path;
-  const actionable = !f.removed;
   return {
-    fileId: f.fileId,
-    path: f.path,
+    ...f,
     type: "file",
     symbolName: null,
     displayTitle: base,
@@ -45,27 +44,26 @@ export function fileDTO(f: CodeFile, snap?: CodeSnapshot | null) {
     version: snap ? shortCommit(snap.commit, snap.dirty) : null,
     shortCommit: snap ? shortCommit(snap.commit, snap.dirty) : null,
     citationLabel: f.path,
-    actionable,
+    actionable: !f.removed,
     reason: f.removed ? "file removed from repository" : null,
     deepLink: `/api/review/code/files/${f.fileId}`,
+    trailLink: `#/code/file/${f.fileId}`,
   };
 }
 
 export function symbolDTO(sym: CodeSymbol, file?: CodeFile | null) {
-  const label = sym.kind === "route" || sym.kind === "test"
-    ? sym.name
-    : sym.qualifiedName;
+  const label =
+    sym.kind === "route" || sym.kind === "test" ? sym.name : sym.qualifiedName;
   const range = sym.rangeStart
     ? `:${sym.rangeStart.line}${sym.rangeStart.col ? ":" + sym.rangeStart.col : ""}`
     : "";
   return {
-    symbolId: sym.symbolId,
+    ...sym,
     type: `symbol:${sym.kind}`,
     symbolName: sym.name,
     displayTitle: label,
     displayPath: file?.path ?? null,
     summary: sym.signature ?? sym.qualifiedName,
-    version: null,
     shortCommit: null,
     citationLabel: `${file?.path ?? "?"}${range}`,
     actionable: true,
@@ -73,15 +71,19 @@ export function symbolDTO(sym: CodeSymbol, file?: CodeFile | null) {
     deepLink: file
       ? `/api/review/code/files/${file.fileId}/source?startLine=${sym.rangeStart?.line ?? 1}&endLine=${sym.rangeEnd?.line ?? sym.rangeStart?.line ?? 1}`
       : `/api/review/code/symbols/${sym.symbolId}`,
+    trailLink: `#/code/symbol/${sym.symbolId}`,
   };
 }
 
 const EDGE_LABEL: Record<string, string> = {
   defines: "defines",
   imports: "imports",
+  exports: "exports",
+  module_of: "in module",
   calls: "calls",
   route: "exposes route",
   test_of: "tests",
+  vue_component: "is component",
   uses_component: "uses component",
 };
 
@@ -93,17 +95,21 @@ export function edgeReason(status: string): string | null {
   }
 }
 
-export function edgeDTO(e: CodeEdge, endpoints: { fromLabel?: string | null; toLabel?: string | null }) {
+export function edgeDTO(
+  e: CodeEdge,
+  endpoints: { fromLabel?: string | null; toLabel?: string | null },
+) {
   const action = e.status === "confirmed" || e.status === "candidate";
+  const kind = e.edgeKind;
   return {
-    edgeId: e.edgeId,
-    type: `edge:${e.edgeKind}`,
-    displayTitle: `${endpoints.fromLabel ?? "?"} ${EDGE_LABEL[e.edgeKind] ?? e.edgeKind} ${endpoints.toLabel ?? "?"}`,
+    ...e,
+    type: `edge:${kind}`,
+    displayTitle: `${endpoints.fromLabel ?? "?"} ${EDGE_LABEL[kind] ?? kind} ${endpoints.toLabel ?? "?"}`,
     displayPath: null,
-    summary: e.evidence ?? e.edgeKind,
-    status: e.status,
+    summary: e.evidence ?? kind,
     actionable: action,
     reason: edgeReason(e.status),
     deepLink: e.fromFileId ? `/api/review/code/files/${e.fromFileId}` : "/api/review/code/graph",
+    trailLink: `#/code/edge/${e.edgeId}`,
   };
 }
