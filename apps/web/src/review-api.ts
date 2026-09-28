@@ -253,3 +253,142 @@ export async function reviewCodeRelations(path: string): Promise<ReviewRelation[
 export async function reviewAssociations(): Promise<AssociationsSummary> {
   return get("/associations");
 }
+
+// ---------------------------------------------------------------------------
+// Code Knowledge read surface (/api/review/code/*). Shapes mirror
+// packages/contracts/src/index.ts (Code* types) and apps/server/src/code/*.
+// ---------------------------------------------------------------------------
+
+export type CodeSnapshot = {
+  snapshotId: string;
+  repoId: string;
+  commit: string | null;
+  dirty: boolean;
+  capturedAt: string;
+  parserVersion: string;
+  fileCount: number;
+  changedCount: number;
+  partial: boolean;
+};
+
+export type CodeFile = {
+  fileId: string;
+  repoId: string;
+  path: string;
+  language: string;
+  sizeBytes: number;
+  contentHash: string | null;
+  headSnapshotId: string | null;
+  removed: boolean;
+};
+
+export type CodeRange = { line: number; col: number };
+
+export type CodeSymbol = {
+  symbolId: string;
+  fileId: string;
+  snapshotId: string;
+  name: string;
+  qualifiedName: string;
+  kind: string;
+  rangeStart: CodeRange | null;
+  rangeEnd: CodeRange | null;
+  fragmentId: string | null;
+  exported: boolean;
+  signature: string | null;
+};
+
+export type CodeEdge = {
+  edgeId: string;
+  snapshotId: string;
+  edgeKind: string;
+  fromSymbolId: string | null;
+  fromFileId: string | null;
+  toSymbolId: string | null;
+  toFileId: string | null;
+  status: "confirmed" | "candidate" | "stale" | "missing";
+  origin: string;
+  evidence: string | null;
+};
+
+export type CodeGraph = { files: CodeFile[]; symbols: CodeSymbol[]; edges: CodeEdge[] };
+
+export type CodeUnderstanding = {
+  understandingId: string;
+  targetType: string;
+  targetId: string;
+  roleId: string;
+  status: string;
+  model: string | null;
+  effort: string | null;
+  confidence: number | null;
+  unknowns: string[];
+  evidenceRefs: string[];
+  outputJson: string;
+  generatedAt: string;
+};
+
+export type SourceSlice = {
+  path: string;
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+  text: string;
+};
+
+export type CodeSyncResult = {
+  snapshotId: string;
+  fileCount: number;
+  symbolCount: number;
+  edgeCount: number;
+  staleEdgeCount: number;
+  reused: boolean;
+};
+
+async function codeGet<T>(path: string): Promise<T> {
+  return get("/code" + path);
+}
+
+export async function codeCurrentSnapshot(): Promise<CodeSnapshot | null> {
+  return codeGet("/current-snapshot");
+}
+export async function codeGraph(): Promise<CodeGraph> {
+  return codeGet("/graph");
+}
+export async function codeFileById(id: string): Promise<CodeFile> {
+  return codeGet("/files/" + encodeURIComponent(id));
+}
+export async function codeSymbolsOfFile(id: string): Promise<CodeSymbol[]> {
+  return codeGet("/files/" + encodeURIComponent(id) + "/symbols");
+}
+export async function codeEdgesForFile(fileId: string): Promise<CodeEdge[]> {
+  return codeGet("/edges?fileId=" + encodeURIComponent(fileId));
+}
+export async function codeUnderstandingFile(id: string): Promise<{ understanding: CodeUnderstanding | null }> {
+  return codeGet("/understanding?type=file&id=" + encodeURIComponent(id));
+}
+export async function codeSourceSlice(
+  id: string,
+  startLine: number,
+  endLine: number,
+): Promise<SourceSlice> {
+  return codeGet(
+    "/files/" + encodeURIComponent(id) + "/source?startLine=" + startLine + "&endLine=" + endLine,
+  );
+}
+/** Fetch the whole file: probe totalLines with a 1-line request, then fetch all. */
+export async function codeSourceFull(id: string): Promise<SourceSlice> {
+  const probe = await codeSourceSlice(id, 1, 1);
+  if (probe.totalLines <= 1) return probe;
+  return codeSourceSlice(id, 1, probe.totalLines);
+}
+export async function codeRunSync(): Promise<CodeSyncResult> {
+  const r = await fetch("/api/review/code/sync", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  const value = await r.json().catch(() => ({}));
+  if (!r.ok) throw Error((value && (value as { error?: string }).error) || "code sync failed");
+  return value as CodeSyncResult;
+}

@@ -8,6 +8,7 @@ import {
   OmPanel,
   OmEmpty,
 } from "@omem/ui";
+import CodeWiki from "./codewiki/CodeWiki.vue";
 import {
   reviewHealth,
   reviewCategories,
@@ -33,11 +34,11 @@ import {
   type SyncResult,
 } from "./review-api";
 
-type View = "browse" | "read" | "search" | "trace" | "sync";
+type View = "wiki" | "browse" | "read" | "search" | "trace" | "sync";
 
 const health = ref<ReviewHealth | null>(null);
 const categories = ref<ReviewCategory[]>([]);
-const view = ref<View>("browse");
+const view = ref<View>("wiki");
 const activeCategory = ref<string>("architecture");
 const sources = ref<ReviewSource[]>([]);
 const revision = ref<ReviewRevision | null>(null);
@@ -142,6 +143,7 @@ function groupRelations(list: ReviewRelation[]): { type: string; items: ReviewRe
 }
 
 const navItems: { id: View; label: string; icon: string }[] = [
+  { id: "wiki", label: "代码 Wiki", icon: "layers" },
   { id: "browse", label: "浏览材料", icon: "book" },
   { id: "search", label: "全文搜索", icon: "spark" },
   { id: "trace", label: "代码追溯", icon: "link" },
@@ -150,6 +152,8 @@ const navItems: { id: View; label: string; icon: string }[] = [
 
 const pageTitle = computed(() => {
   switch (view.value) {
+    case "wiki":
+      return "代码 Wiki";
     case "browse":
       return "浏览材料";
     case "read":
@@ -390,7 +394,9 @@ async function boot() {
       reviewHealth(),
       reviewCategories(),
     ]);
-    await loadSources(activeCategory.value || categories.value[0]?.id || "");
+    // Code Wiki is the landing; only preload the browse list if the user opens it.
+    if (view.value !== "wiki")
+      await loadSources(activeCategory.value || categories.value[0]?.id || "");
     await loadSync();
   } catch (e) {
     error.value = String(e);
@@ -450,8 +456,13 @@ onMounted(() => void boot());
       }}<OmButton variant="ghost" @click="error = ''">关闭提示</OmButton>
     </div>
 
+    <!-- code wiki -->
+    <section v-if="view === 'wiki'" class="page wiki-page">
+      <CodeWiki />
+    </section>
+
     <!-- browse -->
-    <section v-if="view === 'browse'" class="page">
+    <section v-else-if="view === 'browse'" class="page">
       <span class="eyebrow">{{ activeCategory || "全部分类" }}</span>
       <h1>{{ CATEGORY_LABELS[activeCategory] || "材料" }}</h1>
       <p class="muted">按分类浏览已导入的代码与文档材料；点击任意条目查看固定版本片段。</p>
