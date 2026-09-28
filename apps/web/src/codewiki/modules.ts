@@ -131,3 +131,28 @@ export function outlineSymbols(symbols: CodeSymbol[]): CodeSymbol[] {
     .filter((s) => ["function", "class", "method", "component", "route", "test", "interface", "type"].includes(s.kind))
     .sort((a, b) => (a.rangeStart?.line ?? 0) - (b.rangeStart?.line ?? 0));
 }
+
+export interface ResolvedTarget {
+  fileId?: string;
+  line?: number;
+  symbolName?: string;
+  resolvable: boolean;
+}
+
+export function resolveEdgeTarget(
+  edge: CodeEdge,
+  fileMap: Map<string, CodeFile>,
+  symbolMap: Map<string, CodeSymbol>,
+  selfFileId: string,
+): ResolvedTarget {
+  if (edge.toFileId && fileMap.has(edge.toFileId)) {
+    const f = fileMap.get(edge.toFileId)!;
+    return { fileId: f.fileId, resolvable: f.fileId !== selfFileId };
+  }
+  if (edge.toSymbolId && symbolMap.has(edge.toSymbolId)) {
+    const s = symbolMap.get(edge.toSymbolId)!;
+    const f = fileMap.get(s.fileId);
+    return { fileId: f?.fileId, line: s.rangeStart?.line ?? undefined, symbolName: s.name, resolvable: !!f && f.fileId !== selfFileId };
+  }
+  return { resolvable: false };
+}

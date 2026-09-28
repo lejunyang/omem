@@ -36,4 +36,20 @@ describe("hash route round-trip", () => {
   it("falls back on corrupt hash", () => {
     expect(parseHash("#/totally/bogus").view.name).toBe("overview");
   });
+  it("round-trips a 5-level drill trail", () => {
+    const route = {
+      view: { name: "graph" as const },
+      trail: [
+        { kind: "module" as const, id: "assistant", title: "assistant" },
+        { kind: "file" as const, id: "fApp", title: "app.ts" },
+        { kind: "fragment" as const, id: "frRule", title: "rule" },
+        { kind: "file" as const, id: "fMem", title: "memory.ts" },
+        { kind: "fragment" as const, id: "frImpl", title: "impl" },
+      ],
+    };
+    const out = writeHash(route);
+    expect(out).toContain("/trail/module/assistant/file/fApp/fragment/frRule/file/fMem/fragment/frImpl");
+    const back = parseHash(out);
+    expect(back.trail.map((f) => f.kind + ":" + f.id)).toEqual(["module:assistant","file:fApp","fragment:frRule","file:fMem","fragment:frImpl"]);
+  });
 });
