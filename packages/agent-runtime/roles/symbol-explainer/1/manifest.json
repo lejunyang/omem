@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "role_id": "symbol-explainer",
+  "role_version": "1",
+  "output_schema": "CodeUnderstanding.v1",
+  "prompt_templates": ["prompt.md"],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-code-symbol-explainer",
+      "version": "code-1",
+      "artifact_digest": "de287062f716dcd0ad0a550f8ebbdb0551213c8e26024883dbcf33c849bdecf3"
+    }
+  ],
+  "budget": {
+    "max_context_tokens": 8000,
+    "max_output_tokens": 2000
+  },
+  "max_referenced_nodes": 100
+}
