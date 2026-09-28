@@ -17,10 +17,14 @@ Read `README.md` and `docs/implementation/status.md` for actual capabilities. In
 
 独立的代码 review 知识库，与业务库严格隔离。`osdk run dev:review` 启动 API(5180)+Vue(5181)。
 
-- 后端：`apps/server/src/review/`（store.ts 独立 `.repo-review/data` SQLite、sync.ts 四类材料增量同步、app.ts `/api/review/*` 路由、main.ts 入口）
+- 后端：`apps/server/src/review/`（store.ts 独立 SQLite、sync.ts 四类材料增量同步、app.ts `/api/review/*` 路由、main.ts 入口）
 - 前端：`apps/web/src/ReviewApp.vue` + `review-api.ts`，App.vue boot 探测 `/api/review/health` 自动切换 review 模式
 - 启动脚本：`scripts/dev-review.ts` 编排器 + `scripts/dev-review-vite.ts`（Vite 子进程，configFile:false 不复用共享 vite.config.ts）；两个 child 都是直接 `node tsx`，退出时 `taskkill /PID <pid> /T /F` 杀整棵树；API 非 0 退出透传为 dev-review 退出码；Vite `strictPort`，5180/5181 被占时 preflight 明确报错退出
-- 数据目录 `.repo-review/`：当前基线（`data/omem.sqlite` 及 `-shm`/`-wal`、`browser.*.log`、`last-sync.json/txt`、`migrated-v2.flag`）已由用户纳入 Git 作为可复现快照，**不要**删除或 untrack；未来规划的 curated 知识放在 `.repo-review/knowledge/**` + manifest/seed 并纳入版本管理。`.gitignore` 仅忽略未来运行缓存/临时/模型大输出（`cache/`、`tmp/`、`model-outputs/`、`embeddings/`），已跟踪文件不会因此消失。这份被提交的 SQLite/WAL/日志是已知 tracked runtime 债务（体积随同步增长、跨机重建需谨慎），后续如需迁移到 gitignored 运行库再单独提案，不在本次配置收敛中清理。仅扫描本仓库文本（源码/docs/AGENTS.md），排除 omem.local.json/.env*/node_modules/dist/二进制
+- 数据目录三层：
+  - **运行库 `.repo-review/runtime/`（gitignored，唯一写入处）**：`reviewDataDir`=`runtime/data`、`reviewStateDir`=`runtime`，含 `omem.sqlite` WAL、`last-sync.*`、`migrated-v2.flag`、`assets/`。
+  - **冻结种子 `.repo-review/data/` + 根级 `last-sync.*`/`browser.*.log`/`migrated-v2.flag`（tracked）**：历史快照，首启后运行服务不再写这里；**不要** restore/reset/untrack/delete。
+  - **curated `.repo-review/knowledge/**`（tracked）**：understandings seed/manifest，纳入版本管理。
+- **首启 seed（`ensureReviewRuntimeSeeded`，store.ts）**：若 `runtime/data/omem.sqlite` 不存在但 tracked 种子 `data/omem.sqlite` 存在，用 readOnly 连接 `VACUUM INTO` 做一致备份（含 WAL 帧），并投影 `last-sync.*`/`migrated-v2.flag`/`assets/`。幂等（runtime 已存在则直接跳过）；失败删半成品 runtime 并重试，**绝不动旧库**。
 - 不启动 Lark/业务 worker/外部通知，不访问网络；无模型时浏览/搜索/追溯仍可用
 - 修改 review 代码后跑 `osdk run check`；浏览器验证用 `osdk run dev:review` + 访问 5181；dev 生命周期由 `apps/server/tests/review-dev.test.ts` 覆盖（端口占用检测 + taskkill /T 后两端口释放）
 

@@ -14,9 +14,10 @@ docs/implementation/screenshots/*.png
 
 # repo-review: the runtime baseline (.repo-review/data sqlite/WAL, browser.*.log,
 # last-sync.*, migrated-v2.flag) is intentionally tracked as a reproducible snapshot.
-# Only future runtime cache / temp / large model outputs are ignored below;
+# The live runtime moves to .repo-review/runtime/ on first boot and is ignored;
 # already-tracked files are unaffected by these patterns. Curated knowledge
 # (.repo-review/knowledge/**, manifests, seeds) stays version-controlled.
+.repo-review/runtime/
 .repo-review/cache/
 .repo-review/tmp/
 .repo-review/temp/
