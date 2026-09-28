@@ -16,6 +16,8 @@ const props = defineProps<{
   frames: TrailFrame[];
   current: number;
   loopAt?: number | null;
+  /** Element that triggered the trail; focus returns here on full close. */
+  returnFocusTo?: HTMLElement | null;
 }>();
 
 const emit = defineEmits<{
@@ -41,7 +43,9 @@ watch(
       titleEl.value?.focus({ preventScroll: true });
     } else if (!open && dialog.value?.open) {
       dialog.value.close();
-      if (previousFocus?.isConnected) previousFocus.focus();
+      await nextTick();
+      const target = props.returnFocusTo?.isConnected ? props.returnFocusTo : previousFocus;
+      if (target?.isConnected) target.focus({ preventScroll: true });
     }
   },
 );
