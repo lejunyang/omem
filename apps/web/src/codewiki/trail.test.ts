@@ -24,4 +24,21 @@ describe("trail loop detection", () => {
     expect(stack).toHaveLength(MAX_TRAIL);
     expect(stack[0].id).toBe("f5"); // oldest dropped
   });
+
+  it("supports a 5-level drill and detects return-to-level loop", () => {
+    // 1 module -> 2 file -> 3 fragment -> 4 file -> 5 fragment
+    let stack: TrailFrame[] = [];
+    stack = pushFrame(stack, fr("module", "assistant"));
+    stack = pushFrame(stack, fr("file", "fApp"));
+    stack = pushFrame(stack, fr("fragment", "frRule"));
+    stack = pushFrame(stack, fr("file", "fMem"));
+    stack = pushFrame(stack, fr("fragment", "frImpl"));
+    expect(stack).toHaveLength(5);
+    // user navigates back to level 2 (the first file) -> loop detected
+    expect(findLoop(stack, { kind: "file", id: "fApp" })).toBe(1);
+    // back twice pops to level 3
+    stack = stack.slice(0, 4);
+    expect(stack).toHaveLength(4);
+    expect(stack[3].id).toBe("fMem");
+  });
 });

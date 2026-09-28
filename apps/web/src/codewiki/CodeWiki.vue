@@ -56,6 +56,9 @@ const graphNodes = computed<GraphModule[]>(() =>
   modules.value.map((m) => ({ id: m.id, label: moduleLabel(m.id), fileCount: m.fileCount, symbolCount: m.symbolCount })),
 );
 
+const fileMap = computed(() => new Map((graph.value?.files ?? []).map((f) => [f.fileId, f])));
+const symbolMap = computed(() => new Map((graph.value?.symbols ?? []).map((s) => [s.symbolId, s])));
+
 // ---- trail stack ----
 const trail = ref<TrailFrame[]>([]);
 const trailCurrent = ref(0);
@@ -284,7 +287,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
       <div class="row">
         <OmButton variant="ghost" @click="view = 'module'; syncHash()">< 返回模块</OmButton>
       </div>
-      <FileFrame :file="selectedFile" :anchor-line="anchorLine" @drill="onDrill" />
+      <FileFrame :file="selectedFile" :anchor-line="anchorLine" :file-map="fileMap" :symbol-map="symbolMap" @drill="onDrill" />
     </section>
 
     <!-- trail drawer -->
@@ -309,7 +312,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
         <FileFrame
           v-if="graph?.files.find((f) => f.fileId === ((currentFrame as TrailFrame).fileId ?? currentFrame.id))"
           :file="graph!.files.find((f) => f.fileId === ((currentFrame as TrailFrame).fileId ?? currentFrame.id))!"
-          :anchor-line="(currentFrame as TrailFrame).line"
+          :anchor-line="(currentFrame as TrailFrame).line" :file-map="fileMap" :symbol-map="symbolMap"
           @drill="onDrill"
         />
       </template>
