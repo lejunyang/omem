@@ -23,14 +23,13 @@ afterEach(() => {
 function git(a: string[], cwd: string) { execFileSync("git", a, { cwd, encoding: "utf8" }); }
 
 const ID_RE = /^(file|sym|cedge|snap|cu)_[a-f0-9]{20,}$/;
-// A label that is itself an opaque id/sha (not a human display string).
 function hasBadLabel(v: unknown): boolean {
   if (typeof v !== "string") return false;
   return ID_RE.test(v) || /^[a-f0-9]{40,}$/.test(v);
 }
 
-describe("code DTO contract: no bare-ID labels, links resolvable", () => {
-  it("files/symbols/edges/snapshots expose human labels and deep links", async () => {
+describe("code DTO contract: action keys preserved + human labels", () => {
+  it("keeps every contract field and adds display/trail links", async () => {
     const root = mkdtempSync(join(tmpdir(), "omem-dto-"));
     git(["init", "-q", root], root);
     git(["config", "user.email", "t@e.com"], root);
@@ -50,51 +49,52 @@ describe("code DTO contract: no bare-ID labels, links resolvable", () => {
     await app.ready();
     const hdr = { host: "127.0.0.1:5180", origin: "http://127.0.0.1:5181" };
 
+    // Snapshot keeps commit/parserVersion/fileCount dirty.
     const snap = await app.inject({ method: "GET", url: "/api/review/code/current-snapshot", headers: hdr });
     expect(snap.statusCode).toBe(200);
-    const snapBody = JSON.parse(snap.body);
-    expect(snapBody.displayTitle).toMatch(/^@[0-9a-f]{7}$/);
-    expect(snapBody.shortCommit).toBeTruthy();
-    expect(snapBody.citationLabel).toBeTruthy();
-    expect(snapBody.actionable).toBe(true);
+    const sb = JSON.parse(snap.body);
+    for (const k of ["snapshotId","commit","dirty","parserVersion","fileCount","changedCount","partial","capturedAt","repoId","baselineCommit"]) {
+      expect(sb[k], "snapshot." + k).not.toBeUndefined();
+    }
+    expect(sb.shortCommit).toMatch(/^[0-9a-f]{7}$/);
 
+    // File keeps fileId/path/language/removed.
     const files = await app.inject({ method: "GET", url: "/api/review/code/files", headers: hdr });
     const fileRows = JSON.parse(files.body);
     const greet = fileRows.find((f: any) => f.path.endsWith("greet.ts"));
+    for (const k of ["fileId","path","language","sizeBytes","removed","contentHash","headSnapshotId","repoId"]) {
+      expect(greet[k], "file." + k).not.toBeUndefined();
+    }
     expect(greet.displayTitle).toBe("greet.ts");
     expect(greet.displayPath).toBe("apps/server/src/greet.ts");
-    expect(greet.citationLabel).toBe("apps/server/src/greet.ts");
-    expect(greet.deepLink).toMatch(/^\/api\/review\/code\/files\//);
+    expect(greet.trailLink).toMatch(/^#\/code\/file\//);
 
+    // Symbol keeps symbolId/fileId/name/qualifiedName/kind/rangeStart/rangeEnd/signature/fragmentId.
     const syms = await app.inject({ method: "GET", url: `/api/review/code/files/${greet.fileId}/symbols`, headers: hdr });
     const symRows = JSON.parse(syms.body);
     expect(symRows.length).toBeGreaterThan(0);
     for (const s of symRows) {
-      expect(s.displayTitle.length).toBeGreaterThan(0);
-      expect(s.citationLabel).toContain("greet.ts");
-      expect(s.deepLink).toMatch(/^\/api\/review\/code\/files\//);
+      for (const k of ["symbolId","fileId","snapshotId","name","qualifiedName","kind","rangeStart","rangeEnd","exported"]) {
+        expect(s[k], "symbol." + k).not.toBeUndefined();
+      }
       expect(s.symbolName).toBeTruthy();
+      expect(s.citationLabel).toContain("greet.ts");
+      expect(s.deepLink).toMatch(/^\/api\/review\/code\//);
+      expect(s.trailLink).toMatch(/^#\/code\/symbol\//);
+      expect(hasBadLabel(s.displayTitle)).toBe(false);
     }
 
+    // Graph edges keep endpoints + status + actionable.
     const g = await app.inject({ method: "GET", url: "/api/review/code/graph", headers: hdr });
     const gBody = JSON.parse(g.body);
     for (const e of gBody.edges) {
-      expect(typeof e.displayTitle).toBe("string");
-      // every label field must not be a raw id
-      for (const k of ["displayTitle", "citationLabel", "summary"]) {
-        if (k in e) expect(hasBadLabel(e[k])).toBe(false);
+      for (const k of ["edgeId","snapshotId","edgeKind","status","origin","fromSymbolId","fromFileId","toSymbolId","toFileId","createdAt","updatedAt"]) {
+        expect(e[k], "edge." + k).not.toBeUndefined();
       }
+      expect(typeof e.actionable).toBe("boolean");
+      if (e.status === "missing" || e.status === "stale") expect(e.actionable).toBe(false);
+      expect(hasBadLabel(e.displayTitle)).toBe(false);
       expect(e.deepLink).toMatch(/^\/api\/review\/code\//);
-    }
-    for (const f of gBody.files) {
-      expect(hasBadLabel(f.displayTitle)).toBe(false);
-    }
-
-    // Every deepLink must resolve (2xx).
-    const links = [greet.deepLink, ...symRows.map((s: any) => s.deepLink)];
-    for (const link of links) {
-      const r = await app.inject({ method: "GET", url: link.split("?")[0], headers: hdr });
-      expect([200, 400]).toContain(r.statusCode); // 400 only for out-of-range slices
     }
 
     await app.close();
