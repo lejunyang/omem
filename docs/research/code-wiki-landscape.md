@@ -1,6 +1,6 @@
 # Code Wiki / Code Knowledge 开源技术 landscape 与 omem 适配判断
 
-调研日期：2026-09-28。方法：只读公开官方文档 / GitHub README / 规范文件的网页检索，**未安装任何外部服务、未下载模型权重、未克隆被测仓库、未向外部发送 omem 数据**。本文所有 URL 访问日期均为 2026-09-28；凡标注「未实测」的结论都没有在本机跑过，不写成既有保证。
+调研日期：2026-09-28。方法：第 1–5 节为只读公开官方文档 / GitHub README / 规范文件的网页检索；第 6 节为用户提供的字节内部飞书文档，经 lark-cli 以用户身份读取（非浏览器）。**未安装任何外部服务、未下载模型权重、未克隆被测仓库、未向外部发送 omem 数据**。本文所有 URL 访问日期均为 2026-09-28；凡标注「未实测」的结论都没有在本机跑过，不写成既有保证。
 
 评估对象对齐 omem 当前约束（见 [implementation/status.md](../implementation/status.md) 与仓库 AGENTS.md）：
 
@@ -204,7 +204,69 @@
 
 ---
 
-## 6. 横向对比总表
+## 6. 用户提供的内部架构材料：Aime DeepWiki（内部文档，非公开开源事实）
+
+> 本节来自用户提供的字节内部飞书文档，通过 `lark-cli docs +fetch --as user` 以用户身份读取（2026-09-28，revision 817）。**这是内部产品自述/设计稿，不是开源实现，未经公开代码核验；本节事实与第 1–5 节公开开源事实严格分开，不得互为佐证，也不进入第 7 节横向对比总表。**
+>
+> - 标题：《Aime | DeepWiki：基于智能体深度理解的代码知识库》
+> - URL：https://bytedance.larkoffice.com/wiki/CP8Vw3c5dimnZPkJz7EcUai5nke （解析后 docx：https://bytedance.larkoffice.com/docx/YNOQdM6P6oCrA4xmGgRcIBmAngd ，revision_id=817）
+> - 读取方式：lark-cli，未用浏览器，未下载正文图片；文中「系统架构图」是内嵌第三方块（`<readonly-block type="isv">`），正文未给出图内文字，本节不对该图做任何解读。
+
+### 6.1 问题与目标（原文）
+
+- 「企业内部代码文档缺失/脱节极大影响了信息传递」；目标是「借助智能体技术，通过分析代码仓库的结构和功能，自动生成结构化的Wiki文档」，同时服务研发与非研发同学。
+- 产品定位：「让读者更快了解一个代码库、模块，提供高维抽象后的知识总结；而对于代码细节的深究，则可以借助 Ask Aime 继续深入了解」。
+- 设计理念三条：突出重点由表及里（先整体概览再按关键主题分析，**明确不走传统静态代码分析生成文档的路线**）；千仓千面（应用框架→API/核心概念，应用服务→架构/模块/部署，插件→集成/安装/使用）；代码原生 & 有生命的 Wiki（以 Markdown 撰写，未来开放下载与开发者直接参与）。
+
+### 6.2 Agent 分工与管线（原文组件名）
+
+- 顶层代理 **RepoWikiAgent**：核心控制器，协调整个生成流程、管理阶段执行顺序与状态、对接 Git 仓库与 Wiki 平台。
+- 专用代理：**ClassifierAgent**（分析仓库结构、代码分类、选 Wiki 模板）、**OverviewAgent**（生成概览与章节介绍、识别核心抽象概念）、**ChapterWriterAgent**（为每个抽象概念生成详细章节）。
+- 工具层：ReadFileAction / ListDirectoryAction / GlobSearchAction / GrepSearchRangeAction / ExecuteCommandAction / CodebaseSearchAction（可选）/ Mermaid 图表工具（直接生成 mermaid 语法的 markdown 文本）。
+- 知识库层：条目含 ID、名称、解释、匹配模式；支持精确匹配与正则匹配两种查找方式。
+- 设计模式：串行阶段、Chapter 嵌套组合、按仓库类型（前端项目/Monorepo 等）策略、工厂创建代理与工具、Publisher 观察者报进度。
+- 串行流程：准备项目环境 → 探索仓库 → 分类仓库 → 生成章节概述 → 生成章节详细内容 → 上传 Wiki 内容。
+
+### 6.3 代码索引 / 知识生成 / 更新机制：文档说了什么、没说什么
+
+**文档明确说了的**：仓库探索自动识别核心文件和目录；代码分类组织；概览含高级概述与组件关系图；逐核心组件章节写作；内容优化重写；Mermaid 可视化；前端/Monorepo 特殊处理（框架识别 React/Vue、构建工具 Webpack/Vite、包管理器 npm/yarn、Monorepo 子包关系）；可选 `getRelevantCode` / `NewCodebaseSearchAction` 补充相关代码片段。
+
+**文档没说、必须标为未核验的缺口**：
+
+- 未说明代码索引技术栈（AST？embedding？SCIP？）——可见的探索手段就是 ReadFile/Glob/Grep/可选 CodebaseSearch 这一类 agent 工具调用。
+- 未说明 commit/snapshot 身份模型；只提「阶段性维持 Wiki 内容与代码一致」，无增量/重生成机制。
+- 未说明符号/调用/引用图；「核心文件和目录怎么定义」在评论区被提问，正文未答。
+- 知识库层内部实现被评论区追问，正文未答。
+- 评测数据、资源占用、更新触发时机均未给出。
+- 评论区作者（韩欣）补充：Wiki 存储「正在升级到 git」，之后开放下载/编辑，用户可改 `.wiki` 下配置引入扩展知识或直接改生成的 markdown；UI 已有 wiki clone 链接；字节云有 MCP 但「问答的能力尚未在 mcp 中提供，后续会开放」。
+
+### 6.4 产品交互
+
+高维 Wiki 阅读（文件树/章节/Mermaid 关系图）+ 「Ask Aime」对仓库内问题下钻（原文示例：「xx 能力是如何实现的？」「xx 函数都在哪里被调用？」「如何使用 xx 功能/配置？」）。
+
+### 6.5 omem 概念映射
+
+| Aime DeepWiki 自述 | omem 对应 | 判断 |
+| --- | --- | --- |
+| Git 仓库 → 仓库探索 | CodeRepository + 现有 file/Git connector | 概念一致 |
+| （未说明） | Snapshot / 固定 revision / 不可变 fragment | **缺口**：它无 per-commit 锚定；omem 的固定 fragment 身份是它没有的硬约束 |
+| 核心文件、抽象概念、组件关系图（Mermaid） | Symbol / Edge（repo-review 的 implements/requires/decided_by/researched_by/tested_by/candidate_for） | 它的关系是 LLM 生成的展示图，无 confirmed/candidate/missing 状态；omem 手维护 associations.json 的治理更严 |
+| Wiki 章节（Markdown 散文） | Understanding / 候选文章 | **方向一致**：LLM 生成内容只能是候选，回绑 fragment 证据后才允许提交——与第 1.2 节对 deepwiki-open 的判断互相印证 |
+| ClassifierAgent → OverviewAgent → ChapterWriterAgent | omem extractor/planner/writer role bundles | 分工流水线可借鉴：先分类选模板 → 再概览 → 再逐章写 |
+| 知识库层（ID/名称/解释/匹配模式，精确+正则） | source-profile 确定性规则 / project_trusted 软过滤 | 可借鉴为注入领域术语表；但 omem 规则不冒充语义证据 |
+| 千仓千面模板策略 | source-profile 规则分析 | 思路一致 |
+| Ask Aime 下钻 | Web 阅读台引用弹窗 + 原位追问 | 产品方向一致 |
+| Wiki 迁 git、可 clone、可改 markdown | omem 导出带固定引用 ID 的 Markdown | 方向一致；omem 已把 Git 当导出目标而非在线写入协调器 |
+
+### 6.6 对本调研结论的影响
+
+- 不改变第 1–5 节任何开源事实；该文档是内部产品自述，不进入横向总表。
+- 两点反向印证：①「LLM 生成 Wiki 散文 + agent 工具探索式索引」是行业主流，但都未解决 omem 的「fragment 级证据回链 + 跨 revision 续接」——这仍是 omem 差异化内核；②「分类 → 概览 → 逐章写作」串行分工可作为 omem 未来 Agent 生成层的流水线参考。
+- 风险提示：文档自述「发展初期」「Wiki 内容与问答能力仍有较大进步空间」，评论区暴露核心文件定义、知识库实现、问答 MCP 均未完成——**不得把文中能力当作已上线生产实现引用**。
+
+---
+
+## 7. 横向对比总表
 
 | 维度 | DeepWiki/SaaS | deepwiki-open | OpenDeepWiki | SCIP | Tree-sitter | CodeQL | Joern | Cody | Continue | Aider repo-map | Docusaurus/VitePress/MkDocs | GraphRAG |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -220,7 +282,7 @@
 
 ---
 
-## 7. PoC 门与风险（按执行顺序）
+## 8. PoC 门与风险（按执行顺序）
 
 所有 PoC 都在本机 node/python 进程内跑，不起 Docker、不连外部 LLM 做证据写入。
 
@@ -241,7 +303,7 @@
 
 ---
 
-## 8. 来源清单（访问日期均为 2026-09-28）
+## 9. 来源清单（访问日期均为 2026-09-28）
 
 - DeepWiki SaaS：https://deepwiki.com/
 - deepwiki-open 概述：https://deepwiki.com/AsyncFuncAI/deepwiki-open/1-deepwiki-open-overview ；Quick Start：https://deepwiki.com/AsyncFuncAI/deepwiki-open/1.3-quick-start-guide
@@ -258,3 +320,4 @@
 - Docusaurus：https://docusaurus.io/ ；VitePress/MkDocs 对比：https://docsio.co/blog/vitepress 、https://okidoki.dev/documentation-generator-comparison
 - GraphRAG 仓库：https://github.com/microsoft/graphrag ；论文：https://arxiv.org/pdf/2404.16130 ；配置：https://github.com/microsoft/graphrag/blob/main/docs/config/yaml.md
 - BGE-M3：https://arxiv.org/html/2402.03216v3/ ；官网 https://bge.baai.ac.cn/ ；nomic-embed-text：https://www.nomic.ai/news/nomic-embed-text-v1
+- 内部材料（非公开源事实，见第 6 节）：《Aime | DeepWiki：基于智能体深度理解的代码知识库》https://bytedance.larkoffice.com/wiki/CP8Vw3c5dimnZPkJz7EcUai5nke （lark-cli 读取，revision 817，2026-09-28）
