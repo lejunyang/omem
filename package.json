@@ -37,6 +37,7 @@
     "@playwright/test": "1.58.2",
     "@types/node": "24.10.1",
     "@vitejs/plugin-vue": "6.0.9",
+    "@vue/compiler-sfc": "3.5.43",
     "prettier": "3.6.2",
     "tsx": "4.20.6",
     "typescript": "5.9.3",

@@ -876,3 +876,167 @@ export type ProposalBatch = z.infer<typeof proposalBatchSchema>;
 export type EvidenceAssessment = z.infer<typeof evidenceAssessmentSchema>;
 export type AssessmentBatch = z.infer<typeof assessmentBatchSchema>;
 export type CorrectionProposal = z.infer<typeof correctionProposalSchema>;
+
+// ---------------------------------------------------------------------------
+// Code Knowledge domain model (repo-review side projection). See
+// docs/implementation/code-knowledge-design.md. These are plain read/view types;
+// the tables live in the isolated review SQLite side tables and are additive --
+// they never replace sources/revisions/fragments/review_relations.
+// ---------------------------------------------------------------------------
+
+/** 1-based line, 0-based column. Per-snapshot: valid only on the head revision
+ * that produced it; not part of any stable identity. */
+export type CodeRange = { line: number; col: number };
+
+export type CodeRepository = {
+  repoId: string;
+  rootPath: string;
+  remote: string | null;
+  defaultBranch: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CodeSnapshot = {
+  snapshotId: string;
+  repoId: string;
+  commit: string | null;
+  dirty: boolean;
+  baselineCommit: string | null;
+  capturedAt: string;
+  parserVersion: string;
+  fileCount: number;
+  changedCount: number;
+  /** git failed / full rescan / partial `only` capture. */
+  partial: boolean;
+};
+
+export type CodeFile = {
+  fileId: string;
+  repoId: string;
+  path: string;
+  language: string;
+  sizeBytes: number;
+  contentHash: string | null;
+  headSnapshotId: string | null;
+  removed: boolean;
+  movedTo: string | null;
+};
+
+export type CodeSymbolKind =
+  | "function"
+  | "class"
+  | "method"
+  | "interface"
+  | "type"
+  | "enum"
+  | "const"
+  | "component"
+  | "route"
+  | "test"
+  | "module";
+
+export type CodeSymbol = {
+  symbolId: string;
+  fileId: string;
+  snapshotId: string;
+  name: string;
+  qualifiedName: string;
+  kind: CodeSymbolKind;
+  rangeStart: CodeRange | null;
+  rangeEnd: CodeRange | null;
+  /** Anchors the symbol to an immutable review fragment. Null when the file has
+   * no captured head fragment. */
+  fragmentId: string | null;
+  exported: boolean;
+  signature: string | null;
+};
+
+export type CodeEdgeKind =
+  | "module_of"
+  | "imports"
+  | "exports"
+  | "defines"
+  | "calls"
+  | "route"
+  | "test_of"
+  | "vue_component"
+  | "uses_component";
+
+export type CodeEdgeStatus = "confirmed" | "candidate" | "stale" | "missing";
+export type CodeEdgeOrigin = "parser" | "seed" | "llm";
+
+export type CodeEdge = {
+  edgeId: string;
+  snapshotId: string;
+  edgeKind: CodeEdgeKind;
+  fromSymbolId: string | null;
+  fromFileId: string | null;
+  toSymbolId: string | null;
+  toFileId: string | null;
+  status: CodeEdgeStatus;
+  origin: CodeEdgeOrigin;
+  evidence: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CodeUnderstandingStatus =
+  | "ok"
+  | "partial"
+  | "failed"
+  | "model_unavailable"
+  | "stale";
+
+export type CodeUnderstanding = {
+  understandingId: string;
+  targetType: "repository" | "file" | "symbol";
+  targetId: string;
+  snapshotId: string;
+  roleId: string;
+  roleVersion: string;
+  promptHash: string | null;
+  inputHash: string;
+  outputSchema: string;
+  outputJson: string;
+  /** Null when the model is unavailable or the result is unknown -- never faked. */
+  confidence: number | null;
+  unknowns: string[];
+  evidenceRefs: string[];
+  status: CodeUnderstandingStatus;
+  model: string | null;
+  effort: string | null;
+  generatedAt: string;
+  supersedesId: string | null;
+};
+
+export type CodeKnowledgeSyncResult = {
+  snapshotId: string;
+  fileCount: number;
+  symbolCount: number;
+  edgeCount: number;
+  staleEdgeCount: number;
+  reused: boolean;
+};
+
+/** Read surface exposed to the review HTTP layer. */
+export interface CodeKnowledgePort {
+  currentSnapshot(): CodeSnapshot | null;
+  listRepositories(): CodeRepository[];
+  listSnapshots(repoId?: string): CodeSnapshot[];
+  listFiles(filter?: { language?: string; includeRemoved?: boolean }): CodeFile[];
+  fileById(fileId: string): CodeFile | null;
+  symbolsOfFile(fileId: string): CodeSymbol[];
+  symbolsOfSnapshot(snapshotId: string): CodeSymbol[];
+  edgesOf(
+    ref: { symbolId?: string; fileId?: string },
+    opts?: { includeStale?: boolean },
+  ): CodeEdge[];
+  graph(opts?: { snapshotId?: string; includeStale?: boolean }): {
+    files: CodeFile[];
+    symbols: CodeSymbol[];
+    edges: CodeEdge[];
+  };
+  understandingOf(target: { type: "file" | "symbol"; id: string }): CodeUnderstanding | null;
+  sync(opts?: { only?: string[] }): Promise<CodeKnowledgeSyncResult>;
+}

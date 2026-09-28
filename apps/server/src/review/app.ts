@@ -23,6 +23,7 @@ import {
 } from "./sync.js";
 import {
   REVIEW_DIR,
+  EXTERNAL_ID_PREFIX,
   ensureReviewMetaTable,
   ensureReviewRelationsTable,
   relationsForFragment,
@@ -31,6 +32,7 @@ import {
   relationsForCodePath,
 } from "./store.js";
 import { loadAssociations } from "./associations.js";
+import { CodeKnowledgeService } from "../code/sync.js";
 
 type Row = Record<string, unknown>;
 
@@ -61,6 +63,9 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   ensureReviewRelationsTable(store);
   const memory = new MemoryService(store);
   const retrieval = new KeywordRetrieval(store.db);
+  const code = new CodeKnowledgeService(store, repoRoot);
+  let codeSyncing = false;
+  let lastCodeSync: Awaited<ReturnType<typeof code.sync>> | null = null;
   const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
   const P = REVIEW_API_PREFIX;
 
@@ -378,6 +383,161 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     const rows = sourceList();
     const match = rows.find((r) => r.filePath === path);
     return match ?? reply.code(404).send({ error: "Source not found" });
+  });
+
+  // ---------------------------------------------------------------------
+  // Code Knowledge read surface (deterministic graph; no model required).
+  // ---------------------------------------------------------------------
+  const CP = P + "/code";
+
+  app.get(CP + "/repositories", async () => code.listRepositories());
+
+  app.get(CP + "/snapshots", async () => code.listSnapshots());
+
+  app.get<{ Params: { id: string } }>(CP + "/snapshots/:id", async (req, reply) => {
+    const snap = code.listSnapshots().find((s) => s.snapshotId === req.params.id);
+    return snap ?? reply.code(404).send({ error: "Snapshot not found" });
+  });
+
+  app.get(CP + "/current-snapshot", async () => code.currentSnapshot());
+
+  app.get(CP + "/modules", async () => {
+    // Group files by their first two path segments (e.g. apps/server, packages/contracts).
+    const files = code.listFiles({});
+    const groups = new Map<string, number>();
+    for (const f of files) {
+      const segs = f.path.split("/");
+      const mod = segs.length >= 2 ? segs.slice(0, 2).join("/") : (segs[0] ?? f.path);
+      groups.set(mod, (groups.get(mod) ?? 0) + 1);
+    }
+    return [...groups.entries()]
+      .map(([module, fileCount]) => ({ module, fileCount }))
+      .sort((a, b) => b.fileCount - a.fileCount);
+  });
+
+  app.get<{ Querystring: { language?: string; includeRemoved?: string } }>(
+    CP + "/files",
+    async (req) =>
+      code.listFiles({
+        language: req.query.language,
+        includeRemoved: req.query.includeRemoved === "true",
+      }),
+  );
+
+  app.get<{ Params: { id: string } }>(CP + "/files/:id", async (req, reply) => {
+    const f = code.fileById(req.params.id);
+    return f ?? reply.code(404).send({ error: "File not found" });
+  });
+
+  app.get<{ Params: { id: string } }>(CP + "/files/:id/symbols", async (req) =>
+    code.symbolsOfFile(req.params.id),
+  );
+
+  // Source range: return the head-revision text slice for a line range. Used to
+  // show the exact source behind a symbol/edge. Out-of-range → 400.
+  app.get<{
+    Params: { id: string };
+    Querystring: { startLine?: string; endLine?: string };
+  }>(CP + "/files/:id/source", async (req, reply) => {
+    const file = code.fileById(req.params.id);
+    if (!file) return reply.code(404).send({ error: "File not found" });
+    const start = Number(req.query.startLine ?? 1);
+    const end = Number(req.query.endLine ?? 1);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start)
+      return reply.code(400).send({ error: "invalid line range" });
+    // Reconstruct head revision text from captured parts.
+    const srcRow = store.db
+      .prepare("SELECT id FROM sources WHERE namespace='file' AND external_id=?")
+      .get(EXTERNAL_ID_PREFIX + file.path) as { id: string } | undefined;
+    if (!srcRow) return reply.code(404).send({ error: "File not captured" });
+    const headRev = store.db
+      .prepare("SELECT head FROM sources WHERE id=?")
+      .get(String(srcRow.id)) as { head: string | null } | undefined;
+    if (!headRev?.head) return reply.code(404).send({ error: "No head revision" });
+    const rev = store.revision(String(headRev.head));
+    if (!rev) return reply.code(404).send({ error: "Revision not found" });
+    const text = rev.parts
+      .map((p) => (p.type === "text" ? p.text : ""))
+      .join("\n");
+    const lines = text.split("\n");
+    if (end > lines.length)
+      return reply
+        .code(400)
+        .send({ error: `endLine ${end} beyond file (${lines.length} lines)` });
+    return {
+      path: file.path,
+      startLine: start,
+      endLine: end,
+      totalLines: lines.length,
+      text: lines.slice(start - 1, end).join("\n"),
+    };
+  });
+
+  app.get<{ Params: { id: string } }>(CP + "/symbols/:id", async (req, reply) => {
+    const row = store.db
+      .prepare("SELECT * FROM code_symbols WHERE symbol_id=?")
+      .get(req.params.id) as Row | undefined;
+    if (!row) return reply.code(404).send({ error: "Symbol not found" });
+    return {
+      symbolId: String(row.symbol_id),
+      fileId: String(row.file_id),
+      snapshotId: String(row.snapshot_id),
+      name: String(row.name),
+      qualifiedName: String(row.qualified_name),
+      kind: String(row.kind),
+      rangeStart: row.range_start ? JSON.parse(String(row.range_start)) : null,
+      rangeEnd: row.range_end ? JSON.parse(String(row.range_end)) : null,
+      fragmentId: row.fragment_id ? String(row.fragment_id) : null,
+      exported: Number(row.exported) === 1,
+      signature: row.signature ? String(row.signature) : null,
+    };
+  });
+
+  app.get<{ Params: { id: string } }>(CP + "/symbols/:id/edges", async (req) =>
+    code.edgesOf({ symbolId: req.params.id }, { includeStale: false }),
+  );
+
+  app.get<{ Querystring: { symbolId?: string; fileId?: string; includeStale?: string } }>(
+    CP + "/edges",
+    async (req) => {
+      if (!req.query.symbolId && !req.query.fileId)
+        return { edges: [] };
+      return code.edgesOf(
+        { symbolId: req.query.symbolId, fileId: req.query.fileId },
+        { includeStale: req.query.includeStale === "true" },
+      );
+    },
+  );
+
+  app.get<{ Querystring: { snapshotId?: string; includeStale?: string } }>(
+    CP + "/graph",
+    async (req) =>
+      code.graph({
+        snapshotId: req.query.snapshotId,
+        includeStale: req.query.includeStale === "true",
+      }),
+  );
+
+  app.get<{ Querystring: { type?: string; id?: string } }>(
+    CP + "/understanding",
+    async (req) => {
+      const type = req.query.type;
+      const id = req.query.id;
+      if (type !== "file" && type !== "symbol" || !id)
+        return { understanding: null };
+      return { understanding: code.understandingOf({ type, id }) };
+    },
+  );
+
+  app.post(CP + "/sync", async (_req, reply) => {
+    if (codeSyncing) return reply.code(409).send({ error: "Code sync already running" });
+    codeSyncing = true;
+    try {
+      lastCodeSync = await code.sync();
+      return lastCodeSync;
+    } finally {
+      codeSyncing = false;
+    }
   });
 
   const web = deps.webDistDir ?? resolve(repoRoot, "apps/web/dist");
