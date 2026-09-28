@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "code-understanding-seed-manifest",
+  "output_schema": "CodeUnderstanding.v1",
+  "role": "module-architect",
+  "role_version": "1",
+  "notes": [
+    "Curated, human-reviewed module seeds. They cite graph by stable locators (path+qualifiedName+kind);",
+    "projection resolves them against the head snapshot and seals prompt/schema/input digests.",
+    "seed=true, model=null, verified_by_agent=false: no production model ran. The curator identity",
+    "is recorded per-file under curated.*. After editing code, POST /api/review/code/sync to re-project.",
+    "If a cited locator no longer resolves, the seed persists as status=rejected and never shadows a good row."
+  ],
+  "seeds": [
+    "assistant-runtime.seed.json",
+    "memory-service.seed.json",
+    "keyword-retrieval.seed.json",
+    "lark-runtime.seed.json",
+    "lark-realtime.seed.json",
+    "web-review-app.seed.json"
+  ]
+}

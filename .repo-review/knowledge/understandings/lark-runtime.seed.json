@@ -1,0 +1,68 @@
+{
+  "result_id": "seed:module-architect:lark-runtime",
+  "target": {
+    "type": "module",
+    "id": "apps/server/src/integrations/lark",
+    "title": "Lark runtime host"
+  },
+  "curated": {
+    "by": "doubao-agent",
+    "at": "2026-09-28T14:00:00+08:00",
+    "against_commit": "e031523",
+    "note": "Hand-curated against commit e031523. Not model-produced; verified_by_agent stays false. Covers LarkRuntimeHost wiring; realtime event ingestion is a separate seed."
+  },
+  "output": {
+    "module_responsibilities": [
+      "Owns the long-running Lark host loop: syncs connection state, processes due turns, and recovers unfinished assistant turns.",
+      "Binds chat visibility policy and hands inbound conversations to the AssistantRuntime."
+    ],
+    "boundaries": [
+      "Does not itself parse webhook events (that is realtime.ts) or deliver cards (delivery.ts).",
+      "Read in review mode only: it is not started by the review app and needs credentials."
+    ],
+    "key_flows": [
+      {
+        "name": "host-loop",
+        "description": "start() launches loop(); processOnce() runs syncConnections and then processes due turns.",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/runtime.ts", "qualified": "LarkRuntimeHost", "kind": "class" },
+          { "path": "apps/server/src/integrations/lark/runtime.ts", "qualified": "LarkRuntimeHost.syncConnections", "kind": "method" },
+          { "path": "apps/server/src/integrations/lark/runtime.ts", "qualified": "LarkRuntimeHost.processOnce", "kind": "method" }
+        ]
+      }
+    ],
+    "entry_points": ["LarkRuntimeHost.start", "LarkRuntimeHost.processOnce"],
+    "exit_points": ["LarkRuntimeHost.stop", "LarkRuntimeHost.wait"],
+    "risks_and_limits": [
+      "Requires Lark app credentials and network; review mode never starts this host.",
+      "Connection sync state is persisted externally and not modeled as raw graph here."
+    ],
+    "unknowns": [
+      "Real webhook traffic, token refresh and retry behavior are not exercised offline."
+    ],
+    "claims": [
+      {
+        "text": "class LarkRuntimeHost is declared in apps/server/src/integrations/lark/runtime.ts",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/runtime.ts", "qualified": "LarkRuntimeHost", "kind": "class" }
+        ],
+        "evidence": ["no-external-integrations"]
+      },
+      {
+        "text": "syncConnections reconciles active Lark connections against stored leases",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/runtime.ts", "qualified": "LarkRuntimeHost.syncConnections", "kind": "method" }
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "id_hint": "no-external-integrations",
+        "kind": "rule",
+        "ref": "AGENTS.md::external-integrations-separate",
+        "text": "External notifications and OS services are separate explicit integrations; no global hooks/listeners without concrete scope.",
+        "selector": { "path": "apps/server/src/integrations/lark/runtime.ts", "start_line": 35, "end_line": 106 }
+      }
+    ]
+  }
+}
