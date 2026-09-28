@@ -121,10 +121,33 @@ export function ensureCodeTables(store: Store): void {
     removed INTEGER NOT NULL DEFAULT 0,
     moved_to TEXT
   )`);
+  // Migration: symbols/edges must be immutable PER SNAPSHOT. The earlier PoC
+  // keyed them by id alone and ON CONFLICT overwrote snapshot_id/range/fragment,
+  // so revisiting an old state (A->B->A) erased that snapshot's rows. We do NOT
+  // drop history: rename the old table, create the composite-schema table, copy
+  // every old row (id/snapshot/body), verify counts, then remove the temp table.
+  // This preserves rows for snapshots the parser can no longer re-derive.
+  const symCols = db.prepare("PRAGMA table_info(code_symbols)").all() as {
+    name: string; pk: number;
+  }[];
+  const edgesCols = db.prepare("PRAGMA table_info(code_edges)").all() as {
+    name: string; pk: number;
+  }[];
+  const symNeedsRebuild =
+    symCols.length > 0 && !symCols.some((c) => c.name === "snapshot_id" && c.pk > 0);
+  const edgesNeedsRebuild =
+    edgesCols.length > 0 && !edgesCols.some((c) => c.name === "snapshot_id" && c.pk > 0);
+  if (symNeedsRebuild) {
+    db.exec("ALTER TABLE code_symbols RENAME TO code_symbols_legacy");
+  }
+  if (edgesNeedsRebuild) {
+    db.exec("ALTER TABLE code_edges RENAME TO code_edges_legacy");
+  }
+
   db.exec(`CREATE TABLE IF NOT EXISTS code_symbols(
-    symbol_id TEXT PRIMARY KEY,
-    file_id TEXT NOT NULL REFERENCES code_files(file_id),
+    symbol_id TEXT NOT NULL,
     snapshot_id TEXT NOT NULL REFERENCES code_snapshots(snapshot_id),
+    file_id TEXT NOT NULL REFERENCES code_files(file_id),
     name TEXT NOT NULL,
     qualified_name TEXT NOT NULL,
     kind TEXT NOT NULL,
@@ -132,16 +155,23 @@ export function ensureCodeTables(store: Store): void {
     range_end TEXT,
     fragment_id TEXT,
     exported INTEGER NOT NULL DEFAULT 0,
-    signature TEXT
+    signature TEXT,
+    PRIMARY KEY (symbol_id, snapshot_id)
   )`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS code_symbols_file_idx ON code_symbols(file_id, snapshot_id)`,
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS code_symbols_frag_idx ON code_symbols(fragment_id)`,
-  );
+  if (symNeedsRebuild) {
+    db.exec(`INSERT INTO code_symbols
+      (symbol_id,snapshot_id,file_id,name,qualified_name,kind,range_start,range_end,fragment_id,exported,signature)
+      SELECT symbol_id,snapshot_id,file_id,name,qualified_name,kind,range_start,range_end,fragment_id,exported,signature
+      FROM code_symbols_legacy`);
+    const copied = Number((db.prepare("SELECT COUNT(*) AS n FROM code_symbols").get() as { n: number }).n);
+    const oldN = Number((db.prepare("SELECT COUNT(*) AS n FROM code_symbols_legacy").get() as { n: number }).n);
+    if (copied !== oldN) throw new Error(`code_symbols migration copied ${copied} of ${oldN}`);
+    db.exec("DROP TABLE code_symbols_legacy");
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS code_symbols_file_idx ON code_symbols(file_id, snapshot_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS code_symbols_frag_idx ON code_symbols(fragment_id)`);
   db.exec(`CREATE TABLE IF NOT EXISTS code_edges(
-    edge_id TEXT PRIMARY KEY,
+    edge_id TEXT NOT NULL,
     snapshot_id TEXT NOT NULL REFERENCES code_snapshots(snapshot_id),
     edge_kind TEXT NOT NULL,
     from_symbol_id TEXT,
@@ -153,17 +183,38 @@ export function ensureCodeTables(store: Store): void {
     evidence TEXT,
     seed TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (edge_id, snapshot_id)
   )`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS code_edges_from_idx ON code_edges(from_symbol_id, from_file_id)`,
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS code_edges_to_idx ON code_edges(to_symbol_id, to_file_id)`,
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS code_edges_status_idx ON code_edges(status, edge_kind)`,
-  );
+  db.exec(`CREATE TABLE IF NOT EXISTS code_snapshot_files(
+    snapshot_id TEXT NOT NULL REFERENCES code_snapshots(snapshot_id),
+    file_id TEXT NOT NULL REFERENCES code_files(file_id),
+    path TEXT NOT NULL,
+    review_revision_id TEXT,
+    content_hash TEXT,
+    content_text TEXT,
+    PRIMARY KEY (snapshot_id, file_id)
+  )`);
+  // Edge table rename/copy (same history-preserving migration as symbols).
+  if (edgesNeedsRebuild) {
+    db.exec(`INSERT INTO code_edges
+      (edge_id,snapshot_id,edge_kind,from_symbol_id,from_file_id,to_symbol_id,to_file_id,
+       status,origin,evidence,seed,created_at,updated_at)
+      SELECT edge_id,snapshot_id,edge_kind,from_symbol_id,from_file_id,to_symbol_id,to_file_id,
+       status,origin,evidence,seed,created_at,updated_at
+      FROM code_edges_legacy`);
+    const copied = Number((db.prepare("SELECT COUNT(*) AS n FROM code_edges").get() as { n: number }).n);
+    const oldN = Number((db.prepare("SELECT COUNT(*) AS n FROM code_edges_legacy").get() as { n: number }).n);
+    if (copied !== oldN) throw new Error(`code_edges migration copied ${copied} of ${oldN}`);
+    db.exec("DROP TABLE code_edges_legacy");
+  }
+  // Additive column: immutable per-snapshot source text blob.
+  const sfCols = (db.prepare("PRAGMA table_info(code_snapshot_files)").all() as { name: string }[]).map((c) => c.name);
+  if (!sfCols.includes("content_text"))
+    db.exec("ALTER TABLE code_snapshot_files ADD COLUMN content_text TEXT");
+  db.exec(`CREATE INDEX IF NOT EXISTS code_edges_from_idx ON code_edges(from_symbol_id, from_file_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS code_edges_to_idx ON code_edges(to_symbol_id, to_file_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS code_edges_status_idx ON code_edges(status, edge_kind)`);
   db.exec(`CREATE TABLE IF NOT EXISTS code_understandings(
     understanding_id TEXT PRIMARY KEY,
     target_type TEXT NOT NULL,
@@ -209,6 +260,19 @@ export function ensureCodeTables(store: Store): void {
   addCu("curated_by", "curated_by TEXT");
   addCu("curated_at", "curated_at TEXT");
   addCu("curated_note", "curated_note TEXT");
+
+  // Additive migration: explicit head pointer on the repository. We must NOT
+  // infer "latest" from captured_at: when the tree returns to a previously
+  // seen state the same snapshot row is reused, but a later snapshot row still
+  // has a more recent captured_at and would wrongly win. The head pointer is
+  // flipped explicitly by every sync (both reused and new branches); old
+  // snapshots stay readable via their own ids.
+  const repoCols = (
+    db.prepare("PRAGMA table_info(code_repositories)").all() as { name: string }[]
+  ).map((c) => c.name);
+  if (!repoCols.includes("current_snapshot_id")) {
+    db.exec(`ALTER TABLE code_repositories ADD COLUMN current_snapshot_id TEXT`);
+  }
 
   // Normalized reference side table. output_json stays the derived, sealed
   // CodeUnderstanding.v1 payload (never raw graph); this table is the indexed
@@ -338,12 +402,93 @@ export function listSnapshots(
   return rows.map(snapshotFromRow);
 }
 
+export function currentSnapshotId(store: Store): string | null {
+  ensureCodeTables(store);
+  const row = store.db
+    .prepare("SELECT current_snapshot_id FROM code_repositories ORDER BY repo_id LIMIT 1")
+    .get() as { current_snapshot_id: string | null } | undefined;
+  return row?.current_snapshot_id ?? null;
+}
+
+export function setCurrentSnapshot(store: Store, repoId: string, snapshotId: string): void {
+  ensureCodeTables(store);
+  store.db
+    .prepare(
+      "UPDATE code_repositories SET current_snapshot_id=?, updated_at=? WHERE repo_id=?",
+    )
+    .run(snapshotId, new Date().toISOString(), repoId);
+}
+
 export function latestSnapshot(store: Store): CodeSnapshot | null {
   ensureCodeTables(store);
+  const cur = currentSnapshotId(store);
+  if (cur) {
+    const row = store.db
+      .prepare("SELECT * FROM code_snapshots WHERE snapshot_id=?")
+      .get(cur) as Row | undefined;
+    if (row) return snapshotFromRow(row);
+  }
   const row = store.db
     .prepare("SELECT * FROM code_snapshots ORDER BY captured_at DESC, rowid DESC LIMIT 1")
     .get() as Row | undefined;
   return row ? snapshotFromRow(row) : null;
+}
+
+/** Immutable per-snapshot file pin: the review revision that supplied this
+ * file's bytes when the snapshot was built. Used to serve fixed historical
+ * source text instead of the live working tree. */
+export function upsertSnapshotFile(
+  store: Store,
+  row: {
+    snapshotId: string;
+    fileId: string;
+    path: string;
+    reviewRevisionId: string | null;
+    contentHash: string | null;
+    contentText: string;
+  },
+): void {
+  ensureCodeTables(store);
+  store.db
+    .prepare(
+      `INSERT INTO code_snapshot_files(snapshot_id,file_id,path,review_revision_id,content_hash,content_text)
+       VALUES(?,?,?,?,?,?)
+       ON CONFLICT(snapshot_id,file_id) DO UPDATE SET
+         review_revision_id=excluded.review_revision_id, content_hash=excluded.content_hash,
+         content_text=excluded.content_text`,
+    )
+    .run(row.snapshotId, row.fileId, row.path, row.reviewRevisionId, row.contentHash, row.contentText);
+}
+
+export type SnapshotFileBinding = {
+  reviewRevisionId: string | null;
+  contentHash: string | null;
+  /** Immutable bytes captured when the snapshot was built. null when this file
+   * was never part of the snapshot (no binding -> source unavailable). */
+  contentText: string | null;
+};
+
+export function snapshotFileBinding(
+  store: Store,
+  snapshotId: string,
+  fileId: string,
+): SnapshotFileBinding | null {
+  ensureCodeTables(store);
+  const row = store.db
+    .prepare(
+      "SELECT review_revision_id, content_hash, content_text FROM code_snapshot_files WHERE snapshot_id=? AND file_id=?",
+    )
+    .get(snapshotId, fileId) as {
+      review_revision_id: string | null;
+      content_hash: string | null;
+      content_text: string | null;
+    } | undefined;
+  if (!row) return null;
+  return {
+    reviewRevisionId: row.review_revision_id ?? null,
+    contentHash: row.content_hash ?? null,
+    contentText: row.content_text ?? null,
+  };
 }
 
 export function getSnapshot(store: Store, snapshotId: string): CodeSnapshot | null {
@@ -395,11 +540,7 @@ export function symbolsOfFile(
   snapshotId?: string,
 ): CodeSymbol[] {
   ensureCodeTables(store);
-  const head = snapshotId
-    ? snapshotId
-    : (store.db.prepare("SELECT head_snapshot_id FROM code_files WHERE file_id=?").get(fileId) as {
-        head_snapshot_id: string | null;
-      } | undefined)?.head_snapshot_id ?? null;
+  const head = snapshotId ?? currentSnapshotId(store);
   if (!head) return [];
   return (store.db
     .prepare(
@@ -426,11 +567,15 @@ export function symbolById(store: Store, symbolId: string): CodeSymbol | null {
 export function edgesTouching(
   store: Store,
   ref: { symbolId?: string; fileId?: string },
-  opts: { includeStale?: boolean } = {},
+  opts: { includeStale?: boolean; snapshotId?: string } = {},
 ): CodeEdge[] {
   ensureCodeTables(store);
   const where: string[] = [];
   const params: unknown[] = [];
+  const snap = opts.snapshotId ?? currentSnapshotId(store);
+  if (!snap) return [];
+  where.push("snapshot_id=?");
+  params.push(snap);
   if (ref.symbolId) {
     where.push("(from_symbol_id=? OR to_symbol_id=?)");
     params.push(ref.symbolId, ref.symbolId);
@@ -439,7 +584,6 @@ export function edgesTouching(
     where.push("(from_file_id=? OR to_file_id=?)");
     params.push(ref.fileId, ref.fileId);
   }
-  if (!where.length) return [];
   if (!opts.includeStale) where.push("status <> 'stale'");
   const sql = `SELECT * FROM code_edges WHERE ${where.join(" AND ")} ORDER BY edge_kind, edge_id`;
   return (store.db.prepare(sql).all(...(params as never[])) as Row[]).map(edgeFromRow);
@@ -450,13 +594,16 @@ export function graphView(
   opts: { snapshotId?: string; includeStale?: boolean } = {},
 ): { files: CodeFile[]; symbols: CodeSymbol[]; edges: CodeEdge[] } {
   ensureCodeTables(store);
-  const snap = opts.snapshotId ?? latestSnapshot(store)?.snapshotId ?? null;
+  const current = currentSnapshotId(store);
+  const snap = opts.snapshotId ?? current;
   if (!snap) return { files: [], symbols: [], edges: [] };
-  const files = (store.db
-    .prepare(
-      "SELECT * FROM code_files WHERE head_snapshot_id=? OR file_id IN (SELECT DISTINCT file_id FROM code_symbols WHERE snapshot_id=?)",
-    )
-    .all(snap, snap) as Row[]).map(fileFromRow);
+  // Historical snapshots keep their deleted files; the live head view hides them.
+  const isCurrent = snap === current;
+  let filesSql = `SELECT cf.* FROM code_files cf
+    JOIN code_snapshot_files csf ON csf.file_id = cf.file_id
+    WHERE csf.snapshot_id=?`;
+  if (isCurrent) filesSql += " AND COALESCE(cf.removed,0)=0";
+  const files = (store.db.prepare(filesSql).all(snap) as Row[]).map(fileFromRow);
   const symbols = (store.db
     .prepare("SELECT * FROM code_symbols WHERE snapshot_id=?")
     .all(snap) as Row[]).map(symbolFromRow);
@@ -639,8 +786,8 @@ export function upsertSymbol(store: Store, s: UpsertSymbolInput): void {
       `INSERT INTO code_symbols(symbol_id,file_id,snapshot_id,name,qualified_name,kind,
          range_start,range_end,fragment_id,exported,signature)
        VALUES(?,?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(symbol_id) DO UPDATE SET
-         file_id=excluded.file_id, snapshot_id=excluded.snapshot_id,
+       ON CONFLICT(symbol_id, snapshot_id) DO UPDATE SET
+         file_id=excluded.file_id,
          range_start=excluded.range_start, range_end=excluded.range_end,
          fragment_id=excluded.fragment_id, exported=excluded.exported,
          signature=excluded.signature`,
@@ -682,8 +829,8 @@ export function upsertEdge(store: Store, e: UpsertEdgeInput): string {
       `INSERT INTO code_edges(edge_id,snapshot_id,edge_kind,from_symbol_id,from_file_id,
          to_symbol_id,to_file_id,status,origin,evidence,seed,created_at,updated_at)
        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(edge_id) DO UPDATE SET
-         snapshot_id=excluded.snapshot_id, edge_kind=excluded.edge_kind,
+       ON CONFLICT(edge_id, snapshot_id) DO UPDATE SET
+         edge_kind=excluded.edge_kind,
          from_symbol_id=excluded.from_symbol_id, from_file_id=excluded.from_file_id,
          to_symbol_id=excluded.to_symbol_id, to_file_id=excluded.to_file_id,
          status=excluded.status, evidence=excluded.evidence, updated_at=excluded.updated_at`,
@@ -712,29 +859,31 @@ export function upsertEdge(store: Store, e: UpsertEdgeInput): string {
 export function invalidateStaleEdges(
   store: Store,
   liveSeeds: Set<string>,
+  snapshotId: string,
 ): number {
   ensureCodeTables(store);
   let flipped = 0;
   store.tx(() => {
-    // 1) Seeds not re-emitted this run are stale.
+    // 1) Seeds not re-emitted this run, within THIS snapshot, are stale.
+    // Other snapshots keep their own edge rows untouched.
     const rows = store.db
-      .prepare("SELECT edge_id, seed FROM code_edges WHERE status <> 'stale'")
-      .all() as { edge_id: string; seed: string }[];
+      .prepare("SELECT edge_id, seed FROM code_edges WHERE snapshot_id=? AND status <> 'stale'")
+      .all(snapshotId) as { edge_id: string; seed: string }[];
     const staleIds: string[] = [];
     for (const r of rows) if (!liveSeeds.has(str(r.seed))) staleIds.push(str(r.edge_id));
     for (const id of staleIds)
-      store.db.prepare("UPDATE code_edges SET status='stale', updated_at=? WHERE edge_id=?").run(new Date().toISOString(), id);
+      store.db.prepare("UPDATE code_edges SET status='stale', updated_at=? WHERE edge_id=? AND snapshot_id=?").run(new Date().toISOString(), id, snapshotId);
     flipped += staleIds.length;
 
-    // 2) Edges touching a removed code file are stale regardless of seed.
+    // 2) Edges of THIS snapshot touching a removed file are stale.
     const res = store.db
       .prepare(
         `UPDATE code_edges SET status='stale', updated_at=?
-         WHERE status <> 'stale'
+         WHERE snapshot_id=? AND status <> 'stale'
            AND (from_file_id IN (SELECT file_id FROM code_files WHERE removed=1)
              OR to_file_id IN (SELECT file_id FROM code_files WHERE removed=1))`,
       )
-      .run(new Date().toISOString());
+      .run(new Date().toISOString(), snapshotId);
     flipped += Number(res.changes ?? 0);
   });
   return flipped;

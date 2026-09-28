@@ -424,7 +424,7 @@ describe("group 4: retrieval and API safety", () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { dataDir: string };
-    expect(body.dataDir).toBe(".repo-review/data");
+    expect(body.dataDir).toBe(".repo-review/runtime/data");
     expect(body.dataDir).not.toContain(":");
     await app.close();
     rmSync(root, { recursive: true, force: true });

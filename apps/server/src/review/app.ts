@@ -33,11 +33,17 @@ import {
 } from "./store.js";
 import { loadAssociations } from "./associations.js";
 import { CodeKnowledgeService } from "../code/sync.js";
+import { currentSnapshotId, snapshotFileBinding } from "../code/store.js";
 import {
   listUnderstandings,
   understandingDetail,
   modelAvailability,
+  generateCodeUnderstanding,
 } from "../code/understanding-store.js";
+import {
+  buildUnderstandingModelPort,
+  type UnderstandingTransportConfig,
+} from "../code/understanding-model.js";
 
 type Row = Record<string, unknown>;
 
@@ -60,6 +66,9 @@ export type ReviewAppDeps = {
    * `<repoRoot>/apps/web/dist`. */
   webDistDir?: string;
   port?: number;
+  /** Explicit, opt-in model for Code Understanding generation. Defaults to no
+   *  model: the review app never reads secrets or calls a live LLM by default. */
+  codeUnderstandingModel?: UnderstandingTransportConfig;
 };
 
 export async function buildReviewApp(deps: ReviewAppDeps) {
@@ -69,6 +78,9 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   const memory = new MemoryService(store);
   const retrieval = new KeywordRetrieval(store.db);
   const code = new CodeKnowledgeService(store, repoRoot);
+  // Opt-in model port. Null by default: review mode serves the raw graph and
+  // curated seeds honestly and never calls a live LLM.
+  const understandingPort = buildUnderstandingModelPort(deps.codeUnderstandingModel ?? null);
   let codeSyncing = false;
   let lastCodeSync: Awaited<ReturnType<typeof code.sync>> | null = null;
   const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
@@ -142,7 +154,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     const status = readSyncStatus(repoRoot);
     return {
       mode: "review",
-      dataDir: `${REVIEW_DIR}/data`,
+      dataDir: `${REVIEW_DIR}/runtime/data`,
       port: deps.port ?? Number(process.env.REVIEW_PORT ?? 5180),
       lastSyncCommit: status.lastSyncCommit,
       sourceCount,
@@ -438,11 +450,13 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     code.symbolsOfFile(req.params.id),
   );
 
-  // Source range: return the head-revision text slice for a line range. Used to
-  // show the exact source behind a symbol/edge. Out-of-range → 400.
+  // Source range: return the FIXED text the given snapshot pinned for this file
+  // (default: the current head snapshot). We read the review revision bound when
+  // the snapshot was built, never the live working tree, so /source for an old
+  // snapshot returns its historical bytes. Out-of-range → 400.
   app.get<{
     Params: { id: string };
-    Querystring: { startLine?: string; endLine?: string };
+    Querystring: { startLine?: string; endLine?: string; snapshotId?: string };
   }>(CP + "/files/:id/source", async (req, reply) => {
     const file = code.fileById(req.params.id);
     if (!file) return reply.code(404).send({ error: "File not found" });
@@ -450,20 +464,16 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     const end = Number(req.query.endLine ?? 1);
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start)
       return reply.code(400).send({ error: "invalid line range" });
-    // Reconstruct head revision text from captured parts.
-    const srcRow = store.db
-      .prepare("SELECT id FROM sources WHERE namespace='file' AND external_id=?")
-      .get(EXTERNAL_ID_PREFIX + file.path) as { id: string } | undefined;
-    if (!srcRow) return reply.code(404).send({ error: "File not captured" });
-    const headRev = store.db
-      .prepare("SELECT head FROM sources WHERE id=?")
-      .get(String(srcRow.id)) as { head: string | null } | undefined;
-    if (!headRev?.head) return reply.code(404).send({ error: "No head revision" });
-    const rev = store.revision(String(headRev.head));
-    if (!rev) return reply.code(404).send({ error: "Revision not found" });
-    const text = rev.parts
-      .map((p) => (p.type === "text" ? p.text : ""))
-      .join("\n");
+    const snapId = req.query.snapshotId ?? currentSnapshotId(store);
+    if (!snapId) return reply.code(404).send({ error: "No snapshot" });
+    // Strictly the immutable text this snapshot pinned for this file. Never the
+    // live working tree: an unbound/uncaptured file is unavailable, not guessed.
+    const binding = snapshotFileBinding(store, snapId, file.fileId);
+    if (!binding || binding.contentText == null)
+      return reply
+        .code(404)
+        .send({ error: "Source not captured for this snapshot (unavailable)" });
+    const text = binding.contentText;
     const lines = text.split("\n");
     if (end > lines.length)
       return reply
@@ -535,7 +545,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   );
 
   app.get(CP + "/model-status", async () => ({
-    ...modelAvailability(),
+    ...modelAvailability(understandingPort),
     graphEndpoints: ["/api/review/code/graph", "/api/review/code/files", "/api/review/code/symbols"],
   }));
 
@@ -544,7 +554,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   app.get<{ Querystring: { all?: string } }>(CP + "/understandings", async (req) => {
     const rows = listUnderstandings(store, { all: req.query.all === "true" });
     return {
-      model: modelAvailability(),
+      model: modelAvailability(understandingPort),
       count: rows.length,
       items: rows.map((r) => ({
         understandingId: String(r.understanding_id),
@@ -603,6 +613,31 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       })),
     };
   });
+
+  // Explicit, opt-in generation entry point. Without a configured port this is
+  // a 503; the raw graph and curated seeds remain usable. Any transport/validation
+  // failure records a failed/rejected row and never promotes it to current.
+  app.post<{ Body: { targetId?: string; timeoutMs?: number } }>(
+    CP + "/understandings/generate",
+    async (req, reply) => {
+      if (!understandingPort)
+        return reply.code(503).send({
+          error: "model_unavailable",
+          ...modelAvailability(understandingPort),
+        });
+      const targetId = String(req.body?.targetId ?? "");
+      if (!targetId) return reply.code(400).send({ error: "targetId is required" });
+      const result = await generateCodeUnderstanding(store, repoRoot, understandingPort, {
+        targetId,
+        timeoutMs: req.body?.timeoutMs,
+      });
+      if (!result.ok)
+        return reply
+          .code(result.status === "rejected" ? 422 : 502)
+          .send({ error: result.status, errors: result.errors, understandingId: result.understandingId || null });
+      return { ...result, detail: understandingDetail(store, result.understandingId) };
+    },
+  );
 
   app.post(CP + "/sync", async (_req, reply) => {
     if (codeSyncing) return reply.code(409).send({ error: "Code sync already running" });

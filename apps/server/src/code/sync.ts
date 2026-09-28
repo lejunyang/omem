@@ -44,7 +44,9 @@ import {
   symbolsOfSnapshot,
   edgesTouching,
   understandingOf,
+  setCurrentSnapshot,
   upsertFile,
+  upsertSnapshotFile,
   upsertRepository,
   upsertSymbol,
   upsertEdge,
@@ -132,28 +134,53 @@ function resolveImport(fromPath: string, specifier: string): string | null {
 // set by runCodeSync before resolution (avoids threading repoRoot everywhere)
 let repoRootGuard = "";
 
-/** Locate the head review fragment for `path` whose text contains the line
- * starting with `declText` (trimmed prefix). Falls back to the first head
- * fragment. Returns null when the file was never captured by review sync. */
+/** Resolve the review revision that supplied `path`'s bytes at this snapshot,
+ * plus the fragment whose text contains `declText` (fallback: first fragment).
+ * Both are pinned to the snapshot so historical source/ranges survive later
+ * review head moves. Returns revisionId=null when never captured. */
 function bindFragment(
   store: Store,
   path: string,
   declText: string | null,
-): string | null {
+): { fragmentId: string | null; revisionId: string | null } {
   const sid = sourceIdForExternalId(store, EXTERNAL_ID_PREFIX + path);
-  if (!sid) return null;
+  if (!sid) return { fragmentId: null, revisionId: null };
   const head = (store.db
     .prepare("SELECT head FROM sources WHERE id=?")
     .get(sid) as { head: string | null } | undefined)?.head;
-  if (!head) return null;
-  const frags = store.fragments(String(head));
-  if (!frags.length) return null;
+  if (!head) return { fragmentId: null, revisionId: null };
+  const revId = String(head);
+  const frags = store.fragments(revId);
+  if (!frags.length) return { fragmentId: null, revisionId: revId };
   if (declText) {
     const needle = declText.trim().slice(0, 60);
     const hit = frags.find((f) => f.text.includes(needle));
+    if (hit) return { fragmentId: hit.id, revisionId: revId };
+  }
+  return { fragmentId: frags[0]!.id, revisionId: revId };
+}
+
+
+type BoundFile = { revisionId: string | null; frags: { id: string; text: string }[] };
+
+function bindFile(store: Store, path: string): BoundFile {
+  const sid = sourceIdForExternalId(store, EXTERNAL_ID_PREFIX + path);
+  if (!sid) return { revisionId: null, frags: [] };
+  const head = (store.db
+    .prepare("SELECT head FROM sources WHERE id=?")
+    .get(sid) as { head: string | null } | undefined)?.head;
+  if (!head) return { revisionId: null, frags: [] };
+  return { revisionId: String(head), frags: store.fragments(String(head)) };
+}
+
+function pickFragment(bf: BoundFile, declText: string | null): string | null {
+  if (!bf.frags.length) return null;
+  if (declText) {
+    const needle = declText.trim().slice(0, 60);
+    const hit = bf.frags.find((f) => f.text.includes(needle));
     if (hit) return hit.id;
   }
-  return frags[0]!.id;
+  return bf.frags[0]!.id;
 }
 
 export class CodeKnowledgeService implements CodeKnowledgePort {
@@ -285,36 +312,19 @@ export async function runCodeSync(
     partial: false,
   });
 
-  if (existing) {
-    // Identical input: rows already reflect this head. Re-project curated
-    // seeds idempotently (same input_digest -> same understanding_id) and
-    // return; no graph rebuild needed.
-    projectCuratedSeeds(store, repoRoot, snapId);
-    return {
-      snapshotId: snapId,
-      fileCount: files.length,
-      symbolCount: Number(
-        (store.db.prepare("SELECT COUNT(*) AS n FROM code_symbols WHERE snapshot_id=?").get(snapId) as { n: number }).n,
-      ),
-      edgeCount: Number(
-        (store.db.prepare("SELECT COUNT(*) AS n FROM code_edges WHERE snapshot_id=?").get(snapId) as { n: number }).n,
-      ),
-      staleEdgeCount: 0,
-      reused: true,
-    };
-  }
-
-  // Map path 鈫?fileId, and path 鈫?symbols (qualifiedName 鈫?symbolId) for call resolution.
+  // Both a brand-new snapshot AND a reused one (tree returned to an earlier
+  // state) must reconcile head/files/edges/understandings. Rows are upserted
+  // idempotently; the snapshot row and its capturedAt stay immutable.
+  const reused = !!existing;
   const pathToFileId = new Map<string, string>();
   for (const f of files) pathToFileId.set(f.path, fileIdFor(repoId, f.path));
 
   const liveSeeds = new Set<string>();
-  let symbolCount = 0;
-  let edgeCount = 0;
 
   store.tx(() => {
     for (const f of files) {
       const fileId = fileIdFor(repoId, f.path);
+      const bf = bindFile(store, f.path);
       upsertFile(store, {
         fileId,
         repoId,
@@ -326,13 +336,20 @@ export async function runCodeSync(
         removed: false,
         movedTo: null,
       });
+      upsertSnapshotFile(store, {
+        snapshotId: snapId,
+        fileId,
+        path: f.path,
+        reviewRevisionId: bf.revisionId,
+        contentHash: f.hash,
+        contentText: f.text,
+      });
 
       // 1) Symbols.
-      const localQNames = new Map<string, string>(); // qualifiedName -> symbolId
+      const localQNames = new Map<string, string>();
       for (const sym of f.parsed.symbols) {
         const sid = symbolIdFor(repoId, f.path, sym.qualifiedName, sym.kind);
         const declLine = f.text.split("\n")[sym.rangeStart.line - 1] ?? null;
-        const fragId = bindFragment(store, f.path, declLine);
         upsertSymbol(store, {
           symbolId: sid,
           fileId,
@@ -342,16 +359,15 @@ export async function runCodeSync(
           kind: sym.kind,
           rangeStart: sym.rangeStart,
           rangeEnd: sym.rangeEnd,
-          fragmentId: fragId,
+          fragmentId: pickFragment(bf, declLine),
           exported: sym.exported,
           signature: sym.signature,
         });
         localQNames.set(sym.qualifiedName, sid);
         localQNames.set(sym.name, sid);
-        symbolCount++;
       }
 
-      // defines edges: file -> each symbol.
+      // defines edges.
       for (const sym of f.parsed.symbols) {
         const toSym = symbolIdFor(repoId, f.path, sym.qualifiedName, sym.kind);
         const seed = `defines|${f.path}|${sym.qualifiedName}|${sym.kind}`;
@@ -368,10 +384,9 @@ export async function runCodeSync(
           origin: "parser",
           evidence: sym.signature,
         });
-        edgeCount++;
       }
 
-      // 2) Imports: file -> resolved file.
+      // 2) Imports.
       for (const imp of f.parsed.imports) {
         const target = resolveImport(f.path, imp.specifier);
         const toFile = target ? pathToFileId.get(target) ?? fileIdFor(repoId, target) : null;
@@ -389,10 +404,9 @@ export async function runCodeSync(
           origin: "parser",
           evidence: imp.specifier,
         });
-        edgeCount++;
       }
 
-      // 3) Calls (name-level, same-file candidate).
+      // 3) Calls.
       for (const call of f.parsed.calls) {
         const fromSym = localQNames.get(call.callerQName);
         const toSym = localQNames.get(call.callee);
@@ -411,10 +425,9 @@ export async function runCodeSync(
           origin: "parser",
           evidence: `${call.callerQName || "<top>"} -> ${call.callee}`,
         });
-        edgeCount++;
       }
 
-      // 4) Routes: register a route symbol + a route edge.
+      // 4) Routes.
       for (const route of f.parsed.routes) {
         const qname = `${route.method} ${route.path}`;
         const rid = symbolIdFor(repoId, f.path, qname, "route");
@@ -427,11 +440,10 @@ export async function runCodeSync(
           kind: "route",
           rangeStart: route.rangeStart,
           rangeEnd: route.rangeStart,
-          fragmentId: bindFragment(store, f.path, route.path),
+          fragmentId: pickFragment(bf, route.path),
           exported: false,
           signature: qname,
         });
-        symbolCount++;
         const seed = `route|${f.path}|${qname}`;
         liveSeeds.add(seed);
         upsertEdge(store, {
@@ -446,10 +458,9 @@ export async function runCodeSync(
           origin: "parser",
           evidence: qname,
         });
-        edgeCount++;
       }
 
-      // 5) Tests: register a test symbol + test_of edge to its own file.
+      // 5) Tests.
       for (const t of f.parsed.tests) {
         const qname = `test:${t.name}`;
         const tid = symbolIdFor(repoId, f.path, qname, "test");
@@ -462,11 +473,10 @@ export async function runCodeSync(
           kind: "test",
           rangeStart: t.rangeStart,
           rangeEnd: t.rangeStart,
-          fragmentId: bindFragment(store, f.path, t.name),
+          fragmentId: pickFragment(bf, t.name),
           exported: false,
           signature: `it('${t.name}')`,
         });
-        symbolCount++;
         const seed = `test_of|${f.path}|${qname}`;
         liveSeeds.add(seed);
         upsertEdge(store, {
@@ -481,14 +491,12 @@ export async function runCodeSync(
           origin: "parser",
           evidence: t.name,
         });
-        edgeCount++;
       }
 
-      // 6) Vue: component symbol + uses_component template edges.
+      // 6) Vue components.
       if (f.parsed.componentName) {
         const compSym = symbolIdFor(repoId, f.path, f.parsed.componentName, "component");
         for (const used of f.parsed.templateComponents) {
-          // candidate: we do not cross-resolve component files in PoC.
           const seed = `uses_component|${f.path}|${used}`;
           liveSeeds.add(seed);
           upsertEdge(store, {
@@ -503,11 +511,10 @@ export async function runCodeSync(
             origin: "parser",
             evidence: `<${used} />`,
           });
-          edgeCount++;
         }
       }
 
-      // Deterministic understanding (no model): record what was parsed.
+      // Deterministic understanding.
       writeDeterministicUnderstanding(store, {
         targetType: "file",
         targetId: fileId,
@@ -523,7 +530,7 @@ export async function runCodeSync(
       });
     }
 
-    // Mark code_files rows for files that disappeared as removed.
+    // Mark files that disappeared as removed.
     const known = new Set(files.map((f) => f.path));
     const existingRows = store.db
       .prepare("SELECT file_id, path FROM code_files")
@@ -545,17 +552,31 @@ export async function runCodeSync(
     }
   });
 
-  const stale = invalidateStaleEdges(store, liveSeeds);
+  const stale = invalidateStaleEdges(store, liveSeeds, snapId);
 
-  // Project committed curated module seeds onto the fresh head snapshot.
+  // Invalidate understandings for files that are no longer on disk.
+  store.db
+    .prepare(
+      `UPDATE code_understandings SET stale=1
+       WHERE target_type='file' AND target_id IN (SELECT file_id FROM code_files WHERE removed=1)`,
+    )
+    .run();
+
+  // Explicit head pointer: do NOT trust captured_at ordering.
+  setCurrentSnapshot(store, repoId, snapId);
+
   projectCuratedSeeds(store, repoRoot, snapId);
 
   return {
     snapshotId: snapId,
     fileCount: files.length,
-    symbolCount,
-    edgeCount,
+    symbolCount: Number(
+      (store.db.prepare("SELECT COUNT(*) AS n FROM code_symbols WHERE snapshot_id=?").get(snapId) as { n: number }).n,
+    ),
+    edgeCount: Number(
+      (store.db.prepare("SELECT COUNT(*) AS n FROM code_edges WHERE snapshot_id=? AND status<>'stale'").get(snapId) as { n: number }).n,
+    ),
     staleEdgeCount: stale,
-    reused: false,
+    reused,
   };
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+﻿import { describe, it, expect, afterEach } from "vitest";
 import {
   mkdtempSync,
   rmSync,
@@ -202,12 +202,15 @@ describe("code sync lifecycle", () => {
     const afterEdges = Number(
       (store.db.prepare("SELECT COUNT(*) AS n FROM code_edges").get() as { n: number }).n,
     );
-    // rows never deleted
-    expect(afterEdges).toBe(beforeEdges);
-    const staleEdges = Number(
-      (store.db.prepare("SELECT COUNT(*) AS n FROM code_edges WHERE status='stale'").get() as { n: number }).n,
+    // rows never deleted (a later snapshot may add its own rows).
+    expect(afterEdges).toBeGreaterThanOrEqual(beforeEdges);
+    // In the per-snapshot model the doomed file's edges live on in the old
+    // snapshot (history preserved); the current head graph simply has none.
+    const doomedEdges = Number(
+      (store.db.prepare("SELECT COUNT(*) AS n FROM code_edges WHERE from_file_id=(SELECT file_id FROM code_files WHERE path='apps/server/src/doomed.ts')").get() as { n: number }).n,
     );
-    expect(staleEdges).toBeGreaterThan(0);
+    expect(doomedEdges).toBeGreaterThan(0);
+    expect(graphView(store, {}).edges.some((e) => e.fromFileId === doomed?.fileId)).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });
 
