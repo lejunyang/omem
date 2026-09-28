@@ -174,20 +174,19 @@ export function matchModuleUnderstanding(
       (it.status === "seed" || it.status === "generated" || it.status === "verified"),
   );
   if (!candidates.length) return null;
-  // Representative path = shortest file path in the module (the "root" file).
-  const rep = mod.files
-    .map((f) => f.path)
-    .sort((a, b) => a.split("/").length - b.split("/").length)[0];
-  if (!rep) return null;
+  // Match by ANY file in the module, not just a "representative" shortest path:
+  // for e.g. the `web` module, apps/web/package.json (depth 3) used to shadow
+  // the curated targetId `apps/web/src` (depth 4). We check every file and pick
+  // the longest curated prefix that covers at least one file.
+  const paths = mod.files.map((f) => f.path);
   let best: CodeUnderstandingListItem | null = null;
   let bestLen = -1;
   for (const it of candidates) {
     const prefix = it.targetId.replace(/\/$/, "");
-    if (rep === prefix || rep.startsWith(prefix + "/")) {
-      if (prefix.length > bestLen) {
-        best = it;
-        bestLen = prefix.length;
-      }
+    const covers = paths.some((p) => p === prefix || p.startsWith(prefix + "/"));
+    if (covers && prefix.length > bestLen) {
+      best = it;
+      bestLen = prefix.length;
     }
   }
   return best;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { moduleForPath, aggregateGraph } from "./modules";
+import { moduleForPath, aggregateGraph, matchModuleUnderstanding } from "./modules";
 import type { CodeFile, CodeSymbol, CodeEdge } from "../review-api";
+import type { CodeUnderstandingListItem } from "../review-api";
 
 describe("moduleForPath", () => {
   it("buckets required modules", () => {
@@ -61,3 +62,29 @@ function mkSym(id: string, fileId: string): CodeSymbol {
     fragmentId: "fr", exported: false, signature: null,
   };
 }
+
+describe("matchModuleUnderstanding", () => {
+  const webMod = {
+    files: [
+      mkFile("w1", "apps/web/package.json"), // short path, should NOT shadow src
+      mkFile("w2", "apps/web/src/codewiki/CodeWiki.vue"),
+      mkFile("w3", "apps/web/src/main.ts"),
+    ],
+  };
+  const curated = (targetId: string, id: string): CodeUnderstandingListItem => ({
+    understandingId: id, targetType: "module", targetId, snapshotId: "sn",
+    role: "architect", status: "seed", confidence: null, seed: true,
+    verifiedByAgent: false, verifiedBy: null, stale: false, source: "curated-seed",
+    curatedBy: "human", curatedAt: null, generatedAt: "", supersedesId: null,
+  });
+
+  it("picks the deepest curated prefix covering ANY file, not the shortest representative", () => {
+    const items = [curated("apps/web", "u1"), curated("apps/web/src", "u2")];
+    expect(matchModuleUnderstanding(webMod, items)?.understandingId).toBe("u2");
+  });
+
+  it("drops stale / non-curated rows", () => {
+    const stale = { ...curated("apps/web/src", "u9"), stale: true };
+    expect(matchModuleUnderstanding(webMod, [stale])).toBeNull();
+  });
+});
