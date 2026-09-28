@@ -21,7 +21,7 @@ Code Wiki 不是独立产品：`code_*` 表是权威 Capture→Source/Revision/F
 - **trail 交互与个人 EvidenceReader 共用同一合同**：帧栈（push/pop/jump/loop、滚动记忆、Esc 退层、close-all 归还焦点）放在 `packages/ui` 的 trail composable/OmDialog 系组件里，Code Wiki 直接复用，不在 codewiki 侧另造第二套 drawer。URL hash 深链可序列化整栈；`MAX_TRAIL` 只是深链 URL 长度预算（200），渲染栈不静默截断。
 - **seed 引用必须可校验**：评审边唯一来源是手维护的 `docs/repo-review/associations.json`（每条点名 codePath+symbol + requirement/decision/research/test 锚点）；模块理解 seed（`.repo-review/knowledge/understandings/*.seed.json`）用 path+qualifiedName+kind 定位。同步时把这些 locator 重新解析到 head 图并盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验；解析不到的 locator 保留为 rejected 行，永不覆盖好行。**不要**用语义相似度自动加边。
 - **模型默认关闭**：review 只读可选 `REVIEW_CODE_MODEL_CONFIG` 指向的 JSON，从不读个人 Agent profile；未配置时图与 curated seed 照常服务，生成端点 503。curated seed 行恒 `seed=true / verified_by_agent=false`，不要在 narrative 里宣称跑过模型。
-- **数据目录三层**：运行库 `.repo-review/runtime/`（gitignored，唯一写入处）；tracked 的 `.repo-review/data/` 种子快照与 `last-sync.*`/`browser.*.log`/`migrated-v2.flag` 首启后只读，不要 restore/delete；`.repo-review/knowledge/**` curated 资产入库。
+- **写边界（三层目录）**：所有实时写入只落 `.repo-review/runtime/`（gitignored，唯一写入处）。tracked 的 `.repo-review/data/` 种子快照与 `last-sync.*`/`browser.*.log`/`migrated-v2.flag` 是用户冻结资产——**不得删除、不得 untrack**；`.repo-review/knowledge/**` curated 资产入库。任务若意外改动了 tracked 文件，先 `git status`/`git diff` 确认归属，把本任务自己造成的 tracked 变更恢复到任务开始基线，再只提交本任务明确的切片。
 - **改完必跑**：`osdk deps --frozen` 与 `osdk run check`（typecheck + 全量 vitest + build）；UI 改动在 `osdk run dev:review` 起来后跑 `scripts/code-wiki-viewport.ts`（Playwright，首次先 `pnpm exec playwright install chromium`；按稳定名称点穿真实 UI，不用硬编码 DB id）。
 - **边界**：跨文件 calls 不解析（单文件名称级 calls 标 candidate）；跨 revision 符号/fragment 身份续接未实现，代码改完要重新 sync 让 locator 在新 head 重定位。
 
