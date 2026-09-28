@@ -8,13 +8,22 @@
  * one-time migration that rewrites legacy content-hash external ids into stable
  * `omem:<repo-relative-path>` identities. The side table lives in the review's own
  * SQLite so the shared business Store is never altered. */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, cpSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, sep as pathSep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Store } from "../store.js";
 
-/** Relative (POSIX) directory, inside the repo, that holds both the SQLite/assets
- * and the sync state files. It is gitignored end-to-end. */
+/** Relative (POSIX) directory, inside the repo, that holds review runtime data.
+ *
+ * Layout:
+ *   .repo-review/runtime/   gitignored live runtime: omem.sqlite WAL, sync state,
+ *                           assets. Created on demand and seeded once from the
+ *                           tracked legacy snapshot below.
+ *   .repo-review/data/      tracked frozen seed snapshot (omem.sqlite). Kept in
+ *                           Git as a reproducible baseline; after migration the
+ *                           running server never writes here again.
+ *   .repo-review/knowledge/ tracked curated seeds (understandings, manifests). */
 export const REVIEW_DIR = ".repo-review";
 
 /** Stable external-id prefix. A source identity is `omem:<repo-relative-path>` so
@@ -23,16 +32,72 @@ export const REVIEW_DIR = ".repo-review";
 export const EXTERNAL_ID_PREFIX = "omem:";
 
 export function reviewDataDir(repoRoot: string): string {
-  return join(repoRoot, REVIEW_DIR, "data");
+  return join(repoRoot, REVIEW_DIR, "runtime", "data");
 }
 
 export function reviewStateDir(repoRoot: string): string {
+  return join(repoRoot, REVIEW_DIR, "runtime");
+}
+
+/** Pre-runtime tracked snapshot locations. Read-only seed source; the running
+ * server never writes to these after the one-time seed. */
+function legacyReviewDataDir(repoRoot: string): string {
+  return join(repoRoot, REVIEW_DIR, "data");
+}
+function legacyReviewStateDir(repoRoot: string): string {
   return join(repoRoot, REVIEW_DIR);
 }
 
-/** Build a Store bound to `.repo-review/data`: its own omem.sqlite and assets dir,
- * fully separate from the personal workspace under `.omem/`. */
+/** One-time, idempotent seed: if the ignored runtime DB does not exist yet but the
+ * tracked legacy snapshot does, take a consistent read-only SQLite backup
+ * (`VACUUM INTO`, which captures WAL frames without writing the source) and
+ * project the sync-state files. The legacy files are never modified, deleted, or
+ * untracked. On failure any partial destination is removed so the next boot can
+ * retry; the legacy snapshot stays intact. */
+export function ensureReviewRuntimeSeeded(repoRoot: string): void {
+  const runtimeData = reviewDataDir(repoRoot);
+  const runtimeDb = join(runtimeData, "omem.sqlite");
+  if (existsSync(runtimeDb)) return; // already seeded: runtime is authoritative
+  const legacyDb = join(legacyReviewDataDir(repoRoot), "omem.sqlite");
+  if (!existsSync(legacyDb)) return; // no legacy snapshot: start empty
+
+  mkdirSync(runtimeData, { recursive: true });
+  mkdirSync(reviewStateDir(repoRoot), { recursive: true });
+
+  let src: DatabaseSync | null = null;
+  try {
+    src = new DatabaseSync(legacyDb, { readOnly: true });
+    // VACUUM INTO reads a consistent snapshot; the destination must not exist.
+    // SQLite SQL literals use forward slashes on all platforms.
+    src.exec(`VACUUM INTO '${runtimeDb.split(pathSep).join("/")}'`);
+  } catch (err) {
+    try { rmSync(runtimeDb, { force: true }); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    try { src?.close(); } catch { /* ignore */ }
+  }
+
+  // Project sync state + migration marker so incremental sync resumes from the
+  // recorded commit and the v2 migration does not re-run.
+  const stateFiles = ["last-sync.txt", "last-sync.json", MIGRATION_MARKER] as const;
+  for (const name of stateFiles) {
+    const from = join(legacyReviewStateDir(repoRoot), name);
+    if (existsSync(from))
+      copyFileSync(from, join(reviewStateDir(repoRoot), name));
+  }
+  // Project any already-captured asset blobs (review is text-only today, but keep
+  // the projection lossless).
+  const legacyAssets = join(legacyReviewDataDir(repoRoot), "assets");
+  if (existsSync(legacyAssets))
+    cpSync(legacyAssets, join(runtimeData, "assets"), { recursive: true });
+}
+
+/** Build a Store bound to `.repo-review/runtime/data`: its own omem.sqlite and
+ * assets dir, fully separate from the personal workspace under `.omem/`. On first
+ * boot the runtime is seeded from the tracked legacy snapshot (see
+ * {@link ensureReviewRuntimeSeeded}). */
 export function createReviewStore(repoRoot: string): Store {
+  ensureReviewRuntimeSeeded(repoRoot);
   return new Store(reviewDataDir(repoRoot));
 }
 

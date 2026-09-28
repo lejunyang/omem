@@ -28,7 +28,7 @@ osdk run dev:review
 启动后 API 运行在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`（Vite strictPort，端口被占时明确报错退出，不静默换端口）。首次启动自动全量同步仓库材料（实测 fresh rebuild 约 120+ sources / 4000+ fragments），后续可在 web "同步"页点击"立即同步"做增量更新（幂等，重复运行不重复入库）。dev 脚本用直接 node 子进程管理 API 与 Vite，退出时 `taskkill /T /F` 清理整棵进程树，API 非 0 退出会透传为 dev-review 退出码。
 
 **隔离约束**：
-- 运行时目录 `.repo-review/`，与业务库 `.omem/` 完全分离。当前基线（SQLite/WAL、浏览器日志、last-sync 状态、migration flag）作为可复现快照已纳入 Git；未来的缓存/临时/模型大输出在 `.gitignore` 中单独忽略，已跟踪文件不受影响。详见 [AGENTS.md](AGENTS.md) 的 repo-review 小节。
+- 运行时库在 `.repo-review/runtime/`（gitignored），与业务库 `.omem/` 完全分离。tracked 的 `.repo-review/data/`、`last-sync.*`、`browser.*.log`、`migrated-v2.flag` 是冻结种子快照；首次启动若 runtime 库不存在，会用 readOnly 连接对种子做一次一致 SQLite 备份（含 WAL）投影到 runtime，之后运行服务只写 runtime，不再改种子。curated 知识 `.repo-review/knowledge/**` 纳入 Git。详见 [AGENTS.md](AGENTS.md) 的 repo-review 小节。
 - 仅扫描本仓库文本文件（源码、docs、AGENTS.md），不读取 `omem.local.json`、`.env*`、node_modules、dist、二进制文件
 - 不启动 Lark WebSocket、业务 worker、外部通知；不访问网络
 - 无 traecli/模型时仍可浏览、搜索、追溯代码→意图→决策链路；生成式问答不可用（诚实标注）
