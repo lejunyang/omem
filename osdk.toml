@@ -14,30 +14,30 @@ ref = "02a2f2b3142ded7d73554aaee629a24966a62313"
 agents = ["universal", "claude-code"]
 
 [tasks]
-dev = "npm run dev"
-"dev:review" = "npm run dev:review"
-build = "npm run build"
-test = "npm test"
-typecheck = "npm run typecheck"
-start = "npm start"
+dev = "pnpm run dev"
+"dev:review" = "pnpm run dev:review"
+build = "pnpm run build"
+test = "pnpm run test"
+typecheck = "pnpm run typecheck"
+start = "pnpm run start"
 [tasks.check]
-run = ["npm run typecheck", "npm test", "npm run build"]
+run = ["pnpm run typecheck", "pnpm run test", "pnpm run build"]
 
 [tasks.browser]
-run = "npm run test:browser"
+run = "pnpm run test:browser"
 [tasks.live-acp]
-run = "npx tsx scripts/live-acp-smoke.ts"
+run = "pnpm exec tsx scripts/live-acp-smoke.ts"
 [tasks.live-role]
-run = "npm run test:live-role"
+run = "pnpm run test:live-role"
 [tasks.live-learning]
-run = "npm run test:live-learning"
+run = "pnpm run test:live-learning"
 [tasks.live-pipeline]
-run = "npm run test:live-pipeline"
+run = "pnpm run test:live-pipeline"
 [tasks.live-lark-host]
-run = "npm run test:live-lark-host"
+run = "pnpm run test:live-lark-host"
 [tasks.quality-lark-annotate]
-run = "npm run quality:lark-annotate"
+run = "pnpm run quality:lark-annotate"
 [tasks.quality-evaluate]
-run = "npm run quality:evaluate"
+run = "pnpm run quality:evaluate"
 [tasks.quality-run]
-run = "npm run quality:run"
+run = "pnpm run quality:run"
