@@ -52,7 +52,7 @@
         "nodes": [
           { "path": "apps/server/src/memory/service.ts", "qualified": "MemoryService", "kind": "class" }
         ],
-        "evidence": ["immutable-revision"]
+        "evidence": ["memory-service-class"]
       },
       {
         "text": "evaluateCore is the deterministic scoring/policy method",
@@ -69,11 +69,18 @@
     ],
     "evidence": [
       {
+        "id_hint": "memory-service-class",
+        "kind": "doc",
+        "ref": "apps/server/src/memory/service.ts::MemoryService",
+        "text": "export class MemoryService { constructor(private readonly store: Store, private readonly options: { policyVersion?: string; maxAutoApply?: number; ownerId?: string; } = {}) {}",
+        "selector": { "path": "apps/server/src/memory/service.ts", "start_line": 74, "end_line": 82 }
+      },
+      {
         "id_hint": "immutable-revision",
         "kind": "rule",
         "ref": "AGENTS.md::immutable-revision",
-        "text": "Immutable revision and fixed fragment IDs; derived answers are not new independent evidence.",
-        "selector": { "path": "apps/server/src/memory/service.ts", "start_line": 74, "end_line": 90 }
+        "text": "Immutable revision and fixed fragment IDs; derived answers are not new independent evidence. Ordinary high-confidence changes should be autonomous and notify the user of each change; ambiguity, missing background, broad scope or dangerous actions require decisions.",
+        "selector": { "path": "AGENTS.md", "start_line": 10, "end_line": 10 }
       }
     ]
   }

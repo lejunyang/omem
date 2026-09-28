@@ -52,7 +52,7 @@
         "nodes": [
           { "path": "apps/server/src/retrieval/keyword.ts", "qualified": "tokenize", "kind": "function" }
         ],
-        "evidence": ["offline-no-embeddings"]
+        "evidence": ["tokenize-ascii-cjk"]
       },
       {
         "text": "searchFragmentsForTerm runs one escaped LIKE per term",
@@ -63,11 +63,18 @@
     ],
     "evidence": [
       {
+        "id_hint": "tokenize-ascii-cjk",
+        "kind": "doc",
+        "ref": "apps/server/src/retrieval/keyword.ts::tokenize",
+        "text": "export function tokenize(text: string): string[] splits on whitespace/punctuation; collects ASCII words /[A-Za-z0-9_.\\-]+/g lowercased, and CJK runs /[一-鿿][一-鿿0-9A-Za-z_.\\-]*/g, emitting each full run plus filtered 2-grams, returning non-empty trimmed terms.",
+        "selector": { "path": "apps/server/src/retrieval/keyword.ts", "start_line": 184, "end_line": 209 }
+      },
+      {
         "id_hint": "offline-no-embeddings",
         "kind": "rule",
         "ref": "AGENTS.md::local-embeddings-optional",
-        "text": "Local embedding/reranker weights may be added later; review mode currently uses keyword retrieval only.",
-        "selector": { "path": "apps/server/src/retrieval/keyword.ts", "start_line": 184, "end_line": 209 }
+        "text": "Local embedding/reranker weights may be added via osdk when semantic retrieval is implemented.",
+        "selector": { "path": "AGENTS.md", "start_line": 7, "end_line": 7 }
       }
     ]
   }

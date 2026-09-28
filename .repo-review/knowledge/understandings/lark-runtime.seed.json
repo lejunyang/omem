@@ -46,7 +46,7 @@
         "nodes": [
           { "path": "apps/server/src/integrations/lark/runtime.ts", "qualified": "LarkRuntimeHost", "kind": "class" }
         ],
-        "evidence": ["no-external-integrations"]
+        "evidence": ["lark-host-class"]
       },
       {
         "text": "syncConnections reconciles active Lark connections against stored leases",
@@ -57,11 +57,18 @@
     ],
     "evidence": [
       {
+        "id_hint": "lark-host-class",
+        "kind": "doc",
+        "ref": "apps/server/src/integrations/lark/runtime.ts::LarkRuntimeHost",
+        "text": "export class LarkRuntimeHost { ... start() launches the loop; processOnce() reconciles connections and processes due turns; stop()/wait() bound the loop lifecycle. }",
+        "selector": { "path": "apps/server/src/integrations/lark/runtime.ts", "start_line": 35, "end_line": 43 }
+      },
+      {
         "id_hint": "no-external-integrations",
         "kind": "rule",
         "ref": "AGENTS.md::external-integrations-separate",
-        "text": "External notifications and OS services are separate explicit integrations; no global hooks/listeners without concrete scope.",
-        "selector": { "path": "apps/server/src/integrations/lark/runtime.ts", "start_line": 35, "end_line": 106 }
+        "text": "External notifications, capture scope changes and operating-system services are separate explicit integrations; do not install global hooks or screen listeners without concrete scope. Preserve user configuration.",
+        "selector": { "path": "AGENTS.md", "start_line": 14, "end_line": 14 }
       }
     ]
   }
