@@ -33,6 +33,11 @@ import {
 } from "./store.js";
 import { loadAssociations } from "./associations.js";
 import { CodeKnowledgeService } from "../code/sync.js";
+import {
+  listUnderstandings,
+  understandingDetail,
+  modelAvailability,
+} from "../code/understanding-store.js";
 
 type Row = Record<string, unknown>;
 
@@ -528,6 +533,76 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       return { understanding: code.understandingOf({ type, id }) };
     },
   );
+
+  app.get(CP + "/model-status", async () => ({
+    ...modelAvailability(),
+    graphEndpoints: ["/api/review/code/graph", "/api/review/code/files", "/api/review/code/symbols"],
+  }));
+
+  // Read-only Code Understanding surface. Curated seeds are projected onto the
+  // head graph; there is no generation endpoint here (no production model).
+  app.get<{ Querystring: { all?: string } }>(CP + "/understandings", async (req) => {
+    const rows = listUnderstandings(store, { all: req.query.all === "true" });
+    return {
+      model: modelAvailability(),
+      count: rows.length,
+      items: rows.map((r) => ({
+        understandingId: String(r.understanding_id),
+        targetType: String(r.target_type),
+        targetId: String(r.target_id),
+        snapshotId: String(r.snapshot_id),
+        role: String(r.role_id),
+        status: String(r.status),
+        confidence: r.confidence == null ? null : Number(r.confidence),
+        seed: Number(r.seed) === 1,
+        verifiedByAgent: Number(r.verified_by_agent) === 1,
+        verifiedBy: r.verified_by ? String(r.verified_by) : null,
+        stale: Number(r.stale) === 1,
+        source: String(r.source),
+        curatedBy: r.curated_by ? String(r.curated_by) : null,
+        curatedAt: r.curated_at ? String(r.curated_at) : null,
+        generatedAt: String(r.generated_at),
+        supersedesId: r.supersedes_id ? String(r.supersedes_id) : null,
+      })),
+    };
+  });
+
+  app.get<{ Params: { id: string } }>(CP + "/understandings/:id", async (req, reply) => {
+    const row = understandingDetail(store, req.params.id);
+    if (!row) return reply.code(404).send({ error: "Understanding not found" });
+    return {
+      understandingId: String(row.understanding_id),
+      targetType: String(row.target_type),
+      targetId: String(row.target_id),
+      snapshotId: String(row.snapshot_id),
+      role: String(row.role_id),
+      status: String(row.status),
+      confidence: row.confidence == null ? null : Number(row.confidence),
+      seed: Number(row.seed) === 1,
+      verifiedByAgent: Number(row.verified_by_agent) === 1,
+      verifiedBy: row.verified_by ? String(row.verified_by) : null,
+      stale: Number(row.stale) === 1,
+      source: String(row.source),
+      curatedBy: row.curated_by ? String(row.curated_by) : null,
+      curatedAt: row.curated_at ? String(row.curated_at) : null,
+      curatedNote: row.curated_note ? String(row.curated_note) : null,
+      generatedAt: String(row.generated_at),
+      supersedesId: row.supersedes_id ? String(row.supersedes_id) : null,
+      inputHash: String(row.input_hash),
+      promptHash: row.prompt_hash ? String(row.prompt_hash) : null,
+      schemaDigest: row.schema_digest ? String(row.schema_digest) : null,
+      unknowns: (() => {
+        try { return JSON.parse(String(row.unknowns || "[]")); } catch { return []; }
+      })(),
+      output: row.output,
+      refs: (row.refs as Row[]).map((r) => ({
+        kind: String(r.ref_kind),
+        id: String(r.ref_id),
+        selector: r.selector ? JSON.parse(String(r.selector)) : null,
+        note: r.note ? String(r.note) : "",
+      })),
+    };
+  });
 
   app.post(CP + "/sync", async (_req, reply) => {
     if (codeSyncing) return reply.code(409).send({ error: "Code sync already running" });

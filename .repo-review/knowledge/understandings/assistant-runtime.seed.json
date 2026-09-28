@@ -1,0 +1,89 @@
+{
+  "result_id": "seed:module-architect:assistant-runtime",
+  "target": {
+    "type": "module",
+    "id": "apps/server/src/assistant",
+    "title": "Assistant runtime"
+  },
+  "curated": {
+    "by": "doubao-agent",
+    "at": "2026-09-28T14:00:00+08:00",
+    "against_commit": "e031523",
+    "note": "Hand-curated against commit e031523. Not model-produced; verified_by_agent stays false because no independent verifier ran. Re-run /api/review/code/sync to re-project after edits."
+  },
+  "output": {
+    "module_responsibilities": [
+      "Owns one-turn execution for the personal assistant: accepts a user turn, scopes prior evidence, calls the model port, and governs create-task side effects.",
+      "Surfaces ModelUnavailableError / TurnCancelledError explicitly instead of fabricating a model reply, and recovers in-flight turns on restart."
+    ],
+    "boundaries": [
+      "Does not persist memory or decisions itself; it reads evidence and hands governed results to MemoryService.",
+      "Does not call a local LLM directly: the model is a pluggable AssistantModelPort (Agent CLI/ACP first)."
+    ],
+    "key_flows": [
+      {
+        "name": "turn",
+        "description": "turn() enqueues the turn, wires cancellation, runs executeTurn, and reduces to a turn result.",
+        "nodes": [
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "AssistantRuntime", "kind": "class" },
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "AssistantRuntime.turn", "kind": "method" },
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "AssistantRuntime.executeTurn", "kind": "method" }
+        ]
+      },
+      {
+        "name": "intent",
+        "description": "detectTaskIntent classifies whether the user request asks for a task or is a consultation before governance.",
+        "nodes": [
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "detectTaskIntent", "kind": "function" }
+        ]
+      }
+    ],
+    "entry_points": ["AssistantRuntime.turn", "AssistantRuntime.retryTurn"],
+    "exit_points": ["AssistantRuntime.toResult", "AssistantRuntime.shutdown"],
+    "risks_and_limits": [
+      "No production model is wired in review mode; narrative here is curated, not model-generated.",
+      "Call edges are name-level within one file; cross-file calls are not resolved."
+    ],
+    "unknowns": [
+      "Actual model output quality, prompt coverage, and production task-governance decisions are undetermined without a live model run."
+    ],
+    "claims": [
+      {
+        "text": "class AssistantRuntime is declared in apps/server/src/assistant/runtime.ts L168-895",
+        "nodes": [
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "AssistantRuntime", "kind": "class" }
+        ],
+        "evidence": ["runtime-class"]
+      },
+      {
+        "text": "method AssistantRuntime.turn implements the enqueue/cancel/execute/reduce loop",
+        "nodes": [
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "AssistantRuntime.turn", "kind": "method" }
+        ]
+      },
+      {
+        "text": "ModelUnavailableError is a declared error class for the no-model path",
+        "nodes": [
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "ModelUnavailableError", "kind": "class" }
+        ],
+        "evidence": ["llms-not-required"]
+      }
+    ],
+    "evidence": [
+      {
+        "id_hint": "runtime-class",
+        "kind": "doc",
+        "ref": "apps/server/src/assistant/runtime.ts::AssistantRuntime",
+        "text": "AssistantRuntime is the top-level class driving one assistant turn.",
+        "selector": { "path": "apps/server/src/assistant/runtime.ts", "start_line": 168, "end_line": 192 }
+      },
+      {
+        "id_hint": "llms-not-required",
+        "kind": "rule",
+        "ref": "AGENTS.md::llms-not-required",
+        "text": "LLMs use a configurable Agent CLI/CP port initially; a local LLM must not be required.",
+        "selector": { "path": "apps/server/src/assistant/runtime.ts", "start_line": 45, "end_line": 58 }
+      }
+    ]
+  }
+}

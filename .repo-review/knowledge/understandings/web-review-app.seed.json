@@ -1,0 +1,81 @@
+{
+  "result_id": "seed:module-architect:web-review-app",
+  "target": {
+    "type": "module",
+    "id": "apps/web/src",
+    "title": "Web ReviewApp"
+  },
+  "curated": {
+    "by": "doubao-agent",
+    "at": "2026-09-28T14:00:00+08:00",
+    "against_commit": "e031523",
+    "note": "Hand-curated against commit e031523. Not model-produced; verified_by_agent stays false."
+  },
+  "output": {
+    "module_responsibilities": [
+      "Single-file Vue SFC front-end for the review knowledge base: loads categories/sources, opens revisions and fragments, runs search and relation tracing.",
+      "Boot detects /api/review/health and switches the app into review mode; it owns no business state."
+    ],
+    "boundaries": [
+      "Pure presentation: every read goes through review-api.ts to the loopback review API.",
+      "Never talks to Lark, the personal-assistant runtime or external services."
+    ],
+    "key_flows": [
+      {
+        "name": "boot",
+        "description": "boot() refreshes health, loads categories and sources on mount.",
+        "nodes": [
+          { "path": "apps/web/src/ReviewApp.vue", "qualified": "boot", "kind": "function" },
+          { "path": "apps/web/src/ReviewApp.vue", "qualified": "openRevision", "kind": "function" }
+        ]
+      },
+      {
+        "name": "search-trace",
+        "description": "runSearch queries the API; runTrace follows a fragment's relation graph.",
+        "nodes": [
+          { "path": "apps/web/src/ReviewApp.vue", "qualified": "runSearch", "kind": "function" },
+          { "path": "apps/web/src/ReviewApp.vue", "qualified": "runTrace", "kind": "function" }
+        ]
+      }
+    ],
+    "entry_points": ["boot", "runSearch"],
+    "exit_points": ["showFragment", "openRelation"],
+    "risks_and_limits": [
+      "The component symbol itself is not modeled by the code-understanding snapshot (component kind); only <script setup> functions are cited.",
+      "No automated browser check in this slice; UI rendering is not asserted."
+    ],
+    "unknowns": [
+      "Real layout, empty states and relation-trace UX are not verified here."
+    ],
+    "claims": [
+      {
+        "text": "boot() initializes health, categories and sources on mount",
+        "nodes": [
+          { "path": "apps/web/src/ReviewApp.vue", "qualified": "boot", "kind": "function" }
+        ],
+        "evidence": ["review-mode-no-state"]
+      },
+      {
+        "text": "runSearch forwards the query to /api/review/search",
+        "nodes": [
+          { "path": "apps/web/src/ReviewApp.vue", "qualified": "runSearch", "kind": "function" }
+        ]
+      },
+      {
+        "text": "openRevision loads a revision's parts and selected fragment detail",
+        "nodes": [
+          { "path": "apps/web/src/ReviewApp.vue", "qualified": "openRevision", "kind": "function" }
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "id_hint": "review-mode-no-state",
+        "kind": "rule",
+        "ref": "apps/server/src/review/app.ts::review-app",
+        "text": "Review app binds loopback only, starts no Lark/worker/notifications and owns no business state.",
+        "selector": { "path": "apps/web/src/ReviewApp.vue", "start_line": 386, "end_line": 398 }
+      }
+    ]
+  }
+}

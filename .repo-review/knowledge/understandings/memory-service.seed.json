@@ -1,0 +1,80 @@
+{
+  "result_id": "seed:module-architect:memory-service",
+  "target": {
+    "type": "module",
+    "id": "apps/server/src/memory",
+    "title": "MemoryService"
+  },
+  "curated": {
+    "by": "doubao-agent",
+    "at": "2026-09-28T14:00:00+08:00",
+    "against_commit": "e031523",
+    "note": "Hand-curated against commit e031523. Not model-produced; verified_by_agent stays false."
+  },
+  "output": {
+    "module_responsibilities": [
+      "Validates evidence and assesses proposed statements against existing knowledge, then applies or gates decisions deterministically.",
+      "Owns proposals, assessments, decisions, disputes and equivalences as immutable revisions keyed by content digest."
+    ],
+    "boundaries": [
+      "Does not call a model; all policy decisions (create/update/dispute/escalate) are code.",
+      "Does not capture raw sources itself; it consumes fragments/evidence refs supplied by callers."
+    ],
+    "key_flows": [
+      {
+        "name": "evaluate",
+        "description": "evaluateCore scores a proposal against active knowledge and applies the deterministic policy.",
+        "nodes": [
+          { "path": "apps/server/src/memory/service.ts", "qualified": "MemoryService", "kind": "class" },
+          { "path": "apps/server/src/memory/service.ts", "qualified": "MemoryService.evaluateCore", "kind": "method" }
+        ]
+      },
+      {
+        "name": "persist-decision",
+        "description": "createDecision writes an immutable decision row and its receipts.",
+        "nodes": [
+          { "path": "apps/server/src/memory/service.ts", "qualified": "MemoryService.createDecision", "kind": "method" }
+        ]
+      }
+    ],
+    "entry_points": ["MemoryService.evaluate", "MemoryService.createDecision"],
+    "exit_points": ["MemoryService.decisions", "MemoryService.memories"],
+    "risks_and_limits": [
+      "Proposal matching is token/overlap based, not semantic; ambiguous matches are escalated, not auto-applied.",
+      "Curated narrative only; confidence is intentionally <=0.1."
+    ],
+    "unknowns": [
+      "Real decision distribution and edge-case policy outcomes are not exercised here."
+    ],
+    "claims": [
+      {
+        "text": "class MemoryService is declared in apps/server/src/memory/service.ts",
+        "nodes": [
+          { "path": "apps/server/src/memory/service.ts", "qualified": "MemoryService", "kind": "class" }
+        ],
+        "evidence": ["immutable-revision"]
+      },
+      {
+        "text": "evaluateCore is the deterministic scoring/policy method",
+        "nodes": [
+          { "path": "apps/server/src/memory/service.ts", "qualified": "MemoryService.evaluateCore", "kind": "method" }
+        ]
+      },
+      {
+        "text": "validateEvidence rejects proposals whose evidence ranges do not resolve",
+        "nodes": [
+          { "path": "apps/server/src/memory/service.ts", "qualified": "MemoryService.validateEvidence", "kind": "method" }
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "id_hint": "immutable-revision",
+        "kind": "rule",
+        "ref": "AGENTS.md::immutable-revision",
+        "text": "Immutable revision and fixed fragment IDs; derived answers are not new independent evidence.",
+        "selector": { "path": "apps/server/src/memory/service.ts", "start_line": 74, "end_line": 90 }
+      }
+    ]
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "result_id": "seed:module-architect:keyword-retrieval",
+  "target": {
+    "type": "module",
+    "id": "apps/server/src/retrieval",
+    "title": "KeywordRetrieval"
+  },
+  "curated": {
+    "by": "doubao-agent",
+    "at": "2026-09-28T14:00:00+08:00",
+    "against_commit": "e031523",
+    "note": "Hand-curated against commit e031523. Not model-produced; verified_by_agent stays false."
+  },
+  "output": {
+    "module_responsibilities": [
+      "Performs offline keyword/bi-gram retrieval over captured fragments and memories with per-term scoring and snippets.",
+      "Tokenizes both ASCII words and CJK, and is the only retrieval backend used in review mode (no embeddings)."
+    ],
+    "boundaries": [
+      "No embeddings / vector search; matching is literal LIKE after tokenization.",
+      "Read-only over the review DB; it never writes memory rows."
+    ],
+    "key_flows": [
+      {
+        "name": "search",
+        "description": "searchSources tokenizes the query, ORs per-term fragment matches, and ranks by term weight.",
+        "nodes": [
+          { "path": "apps/server/src/retrieval/keyword.ts", "qualified": "KeywordRetrieval", "kind": "class" },
+          { "path": "apps/server/src/retrieval/keyword.ts", "qualified": "KeywordRetrieval.searchSources", "kind": "method" },
+          { "path": "apps/server/src/retrieval/keyword.ts", "qualified": "tokenize", "kind": "function" }
+        ]
+      }
+    ],
+    "entry_points": ["KeywordRetrieval.searchSources", "KeywordRetrieval.searchMemories"],
+    "exit_points": ["KeywordRetrieval.readEvidence"],
+    "risks_and_limits": [
+      "Per-term LIMIT and top-N are callers' responsibility; this module cannot rank across categories.",
+      "Literal tokenization misses synonyms and semantic similarity."
+    ],
+    "unknowns": [
+      "Recall/precision on the real corpus is not measured here."
+    ],
+    "claims": [
+      {
+        "text": "class KeywordRetrieval is declared in apps/server/src/retrieval/keyword.ts",
+        "nodes": [
+          { "path": "apps/server/src/retrieval/keyword.ts", "qualified": "KeywordRetrieval", "kind": "class" }
+        ]
+      },
+      {
+        "text": "tokenize splits ASCII and CJK text into query terms",
+        "nodes": [
+          { "path": "apps/server/src/retrieval/keyword.ts", "qualified": "tokenize", "kind": "function" }
+        ],
+        "evidence": ["offline-no-embeddings"]
+      },
+      {
+        "text": "searchFragmentsForTerm runs one escaped LIKE per term",
+        "nodes": [
+          { "path": "apps/server/src/retrieval/keyword.ts", "qualified": "KeywordRetrieval.searchFragmentsForTerm", "kind": "method" }
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "id_hint": "offline-no-embeddings",
+        "kind": "rule",
+        "ref": "AGENTS.md::local-embeddings-optional",
+        "text": "Local embedding/reranker weights may be added later; review mode currently uses keyword retrieval only.",
+        "selector": { "path": "apps/server/src/retrieval/keyword.ts", "start_line": 184, "end_line": 209 }
+      }
+    ]
+  }
+}

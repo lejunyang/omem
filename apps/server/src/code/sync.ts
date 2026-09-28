@@ -50,6 +50,7 @@ import {
   upsertEdge,
   writeDeterministicUnderstanding,
 } from "./store.js";
+import { projectCuratedSeeds } from "./understanding-store.js";
 import { parseFile, type ParsedFile } from "./parse.js";
 import {
   EXTERNAL_ID_PREFIX,
@@ -285,7 +286,10 @@ export async function runCodeSync(
   });
 
   if (existing) {
-    // Identical input: rows already reflect this head. Nothing to rebuild.
+    // Identical input: rows already reflect this head. Re-project curated
+    // seeds idempotently (same input_digest -> same understanding_id) and
+    // return; no graph rebuild needed.
+    projectCuratedSeeds(store, repoRoot, snapId);
     return {
       snapshotId: snapId,
       fileCount: files.length,
@@ -542,6 +546,9 @@ export async function runCodeSync(
   });
 
   const stale = invalidateStaleEdges(store, liveSeeds);
+
+  // Project committed curated module seeds onto the fresh head snapshot.
+  projectCuratedSeeds(store, repoRoot, snapId);
 
   return {
     snapshotId: snapId,

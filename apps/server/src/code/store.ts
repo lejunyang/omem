@@ -187,6 +187,45 @@ export function ensureCodeTables(store: Store): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS code_understandings_target_idx ON code_understandings(target_type, target_id, snapshot_id)`,
   );
+
+  // Additive migration: databases created before the CodeUnderstanding.v1
+  // provenance/honesty fields existed get the columns back-filled with safe
+  // defaults. Old deterministic rows keep role_id='deterministic', seed=0 and
+  // are never reinterpreted as curated/model output.
+  const cuCols = (
+    db.prepare("PRAGMA table_info(code_understandings)").all() as {
+      name: string;
+    }[]
+  ).map((c) => c.name);
+  const addCu = (col: string, ddl: string) => {
+    if (!cuCols.includes(col)) db.exec(`ALTER TABLE code_understandings ADD COLUMN ${ddl}`);
+  };
+  addCu("schema_digest", "schema_digest TEXT");
+  addCu("seed", "seed INTEGER NOT NULL DEFAULT 0");
+  addCu("verified_by_agent", "verified_by_agent INTEGER NOT NULL DEFAULT 0");
+  addCu("verified_by", "verified_by TEXT");
+  addCu("stale", "stale INTEGER NOT NULL DEFAULT 0");
+  addCu("source", "source TEXT NOT NULL DEFAULT 'parser'");
+  addCu("curated_by", "curated_by TEXT");
+  addCu("curated_at", "curated_at TEXT");
+  addCu("curated_note", "curated_note TEXT");
+
+  // Normalized reference side table. output_json stays the derived, sealed
+  // CodeUnderstanding.v1 payload (never raw graph); this table is the indexed
+  // projection of every node/edge/evidence id it cites, so the API can expand
+  // references without re-parsing JSON and so the references themselves survive
+  // even when output_json is replaced.
+  db.exec(`CREATE TABLE IF NOT EXISTS code_understanding_refs(
+    understanding_id TEXT NOT NULL REFERENCES code_understandings(understanding_id),
+    ref_kind TEXT NOT NULL,
+    ref_id TEXT NOT NULL,
+    selector TEXT,
+    note TEXT,
+    PRIMARY KEY (understanding_id, ref_kind, ref_id)
+  )`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS code_understandings_status_idx ON code_understandings(stale, status)`,
+  );
 }
 
 // ---------------------------------------------------------------------------

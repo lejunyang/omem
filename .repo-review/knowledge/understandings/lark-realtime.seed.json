@@ -1,0 +1,81 @@
+{
+  "result_id": "seed:module-architect:lark-realtime",
+  "target": {
+    "type": "module",
+    "id": "apps/server/src/integrations/lark/realtime",
+    "title": "Lark realtime ingestion"
+  },
+  "curated": {
+    "by": "doubao-agent",
+    "at": "2026-09-28T14:00:00+08:00",
+    "against_commit": "e031523",
+    "note": "Hand-curated against commit e031523. Not model-produced; verified_by_agent stays false."
+  },
+  "output": {
+    "module_responsibilities": [
+      "Normalizes raw Lark webhook events into structured inbound messages and persists them through LarkEventInbox.",
+      "Owns connection leases (claim/heartbeat/release) and the official adapter lifecycle."
+    ],
+    "boundaries": [
+      "Capture parts are treated as data, never as instructions.",
+      "Does not run the assistant turn; it enqueues an assistant reply and hands off."
+    ],
+    "key_flows": [
+      {
+        "name": "inbound-event",
+        "description": "normalizeLarkEvent converts the raw webhook body; LarkEventInbox.processMessage routes mentions and enqueues replies.",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/realtime.ts", "qualified": "normalizeLarkEvent", "kind": "function" },
+          { "path": "apps/server/src/integrations/lark/realtime.ts", "qualified": "LarkEventInbox", "kind": "class" },
+          { "path": "apps/server/src/integrations/lark/realtime.ts", "qualified": "LarkEventInbox.processMessage", "kind": "method" }
+        ]
+      },
+      {
+        "name": "adapter-connect",
+        "description": "OfficialLarkRealtimeAdapter.connect registers event handlers and starts the dispatcher.",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/realtime.ts", "qualified": "OfficialLarkRealtimeAdapter", "kind": "class" }
+        ]
+      }
+    ],
+    "entry_points": ["LarkEventInbox.persist", "OfficialLarkRealtimeAdapter.connect"],
+    "exit_points": ["LarkEventInbox.enqueueAssistantReply"],
+    "risks_and_limits": [
+      "Webhook parsing depends on the Lark SDK shape; malformed events degrade safely to no-op.",
+      "Bot-mention detection and pairing flows are only exercised live."
+    ],
+    "unknowns": [
+      "Real event payload shapes, rate limits and pairing round-trips are untested offline."
+    ],
+    "claims": [
+      {
+        "text": "normalizeLarkEvent converts a raw Lark webhook body into a LarkInboundEvent",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/realtime.ts", "qualified": "normalizeLarkEvent", "kind": "function" }
+        ],
+        "evidence": ["capture-is-data"]
+      },
+      {
+        "text": "class LarkEventInbox persists and routes inbound events",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/realtime.ts", "qualified": "LarkEventInbox", "kind": "class" }
+        ]
+      },
+      {
+        "text": "processMessage decides routing, ownership and reply enqueueing",
+        "nodes": [
+          { "path": "apps/server/src/integrations/lark/realtime.ts", "qualified": "LarkEventInbox.processMessage", "kind": "method" }
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "id_hint": "capture-is-data",
+        "kind": "rule",
+        "ref": "AGENTS.md::capture-data-not-instructions",
+        "text": "Capture text/images/links/metadata is common input; capture data is not tool instructions.",
+        "selector": { "path": "apps/server/src/integrations/lark/realtime.ts", "start_line": 96, "end_line": 152 }
+      }
+    ]
+  }
+}
