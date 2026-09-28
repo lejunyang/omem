@@ -28,7 +28,7 @@ osdk run dev:review
 启动后 API 运行在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`（Vite strictPort，端口被占时明确报错退出，不静默换端口）。首次启动自动全量同步仓库材料（实测 fresh rebuild 约 120+ sources / 4000+ fragments），后续可在 web "同步"页点击"立即同步"做增量更新（幂等，重复运行不重复入库）。dev 脚本用直接 node 子进程管理 API 与 Vite，退出时 `taskkill /T /F` 清理整棵进程树，API 非 0 退出会透传为 dev-review 退出码。
 
 **隔离约束**：
-- 数据目录 `.repo-review/`（gitignored），与业务库 `.omem/` 完全分离
+- 运行时目录 `.repo-review/`，与业务库 `.omem/` 完全分离。当前基线（SQLite/WAL、浏览器日志、last-sync 状态、migration flag）作为可复现快照已纳入 Git；未来的缓存/临时/模型大输出在 `.gitignore` 中单独忽略，已跟踪文件不受影响。详见 [AGENTS.md](AGENTS.md) 的 repo-review 小节。
 - 仅扫描本仓库文本文件（源码、docs、AGENTS.md），不读取 `omem.local.json`、`.env*`、node_modules、dist、二进制文件
 - 不启动 Lark WebSocket、业务 worker、外部通知；不访问网络
 - 无 traecli/模型时仍可浏览、搜索、追溯代码→意图→决策链路；生成式问答不可用（诚实标注）
@@ -41,7 +41,7 @@ osdk run dev:review
 - 检索是 SQLite 关键词召回（CJK 2-gram），无 embedding/语义检索；搜索默认只返回 current revision，已删除/陈旧 source 需 `includeRemoved=true` 才可见。
 - `refreshDependents` 等"来源变更后自动重核验下游证据"按设计 blocked（见 status.md），repo-review 不自动做语义冲突判断。
 
-工具版本由 [osdk.toml](osdk.toml)、[osdk.lock](osdk.lock) 固定，应用包由 package-lock.json 固定。`osdk deps` 负责调用 npm 安装应用依赖；本项目声明的安装脚本用于 esbuild 等构建依赖。首次构建如遇包安装脚本门禁，请依本机 npm 提示检查并批准对应包，不关闭全局门禁。
+工具版本由 [osdk.toml](osdk.toml)、[osdk.lock](osdk.lock) 固定；应用包由 pnpm 工作区管理，锁文件为 [pnpm-lock.yaml](pnpm-lock.yaml)（`pnpm-workspace.yaml` 声明 `apps/*`、`packages/*` 成员）。`osdk deps --frozen` 负责调用 pnpm 以 `--frozen-lockfile` 安装应用依赖；本项目声明的构建脚本（esbuild、protobufjs）由 pnpm 按需从源码构建。首次安装如遇包构建脚本门禁，请依本机提示检查并批准对应包，不关闭全局门禁。
 
 ## Agent 配置
 
@@ -52,7 +52,7 @@ osdk run dev:review
 - Claude Code：`claude --print --output-format stream-json`，禁用工具，模型/effort 用参数传递。
 - 其他 ACP agent：配置 `transport=acp` 和进程命令；按其声明的能力使用。
 
-`osdk exec --tool node -- npm run cli -- probe traex` 只握手和创建会话，不执行模型问题。界面“能力与连接”也能探测。默认不硬编码模型名称；更改模型后服务端使用新的 configOptions 再校验 effort。不支持的选项明确报错。
+`osdk exec --tool node,pnpm -- pnpm run cli -- probe traex` 只握手和创建会话，不执行模型问题。界面“能力与连接”也能探测。默认不硬编码模型名称；更改模型后服务端使用新的 configOptions 再校验 effort。不支持的选项明确报错。
 
 CLI-only 模式暂不支持附图，附图问题需选择支持 image 的 ACP；不会静默丢图。每次问答使用新会话与明确传入的固定证据，尚未做跨轮 ACP session resume。问题、答案保存为材料，引用记录标明“提供给模型的依据”，不冒充已经通过事实支持度验证。
 
@@ -64,11 +64,11 @@ Agent 进程在 `.omem/agent-workspace` 工作。内置配置采用只读/无工
 
 ```bash
 # 显式本地文件 / 固定 commit 文件 / 飞书文档
-osdk exec --tool node -- npm run cli -- file ./notes.txt
-osdk exec --tool node -- npm run cli -- git /path/to/repo README.md HEAD
-osdk exec --tool node -- npm run cli -- lark 'https://tenant.larkoffice.com/docx/token'
+osdk exec --tool node,pnpm -- pnpm run cli -- file ./notes.txt
+osdk exec --tool node,pnpm -- pnpm run cli -- git /path/to/repo README.md HEAD
+osdk exec --tool node,pnpm -- pnpm run cli -- lark 'https://tenant.larkoffice.com/docx/token'
 # 主动输入统一 CaptureEnvelope JSON；也可从 stdin 读
-osdk exec --tool node -- npm run cli -- capture ./capture.json
+osdk exec --tool node,pnpm -- pnpm run cli -- capture ./capture.json
 ```
 
 飞书读取使用 `lark-cli docs +fetch --as user`，需要运行服务所在用户已经授权。仅调用用户提供的文档，不自动全空间抓取。HTTP 的文件/Git 导入受 `captureRoots` 限制；CLI 的显式文件参数由发起 CLI 的本地用户提供，范围限于当前目录（文件）或给定仓库（Git）。
@@ -107,7 +107,7 @@ Vue 新增“学习流程”“待判断”“通知详情”和“飞书机器�
 
 ```bash
 osdk run check
-# 首次没有浏览器时：osdk exec --tool node -- npx playwright install chromium
+# 首次没有浏览器时：osdk exec --tool node,pnpm -- pnpm exec playwright install chromium
 osdk run browser
 # 真实 Agent 测试（会使用已登录账号调用一次大模型）
 osdk run live-acp

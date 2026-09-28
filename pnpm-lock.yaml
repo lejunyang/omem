@@ -52,6 +52,24 @@ importers:
         specifier: 3.1.4
         version: 3.1.4(typescript@5.9.3)
 
+  apps/web:
+    dependencies:
+      '@omem/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      qrcode.vue:
+        specifier: 3.8.0
+        version: 3.8.0(vue@3.5.43(typescript@5.9.3))
+      vue:
+        specifier: 3.5.43
+        version: 3.5.43(typescript@5.9.3)
+
+  packages/ui:
+    dependencies:
+      vue:
+        specifier: ^3.5.0
+        version: 3.5.43(typescript@5.9.3)
+
 packages:
 
   '@agentclientprotocol/sdk@1.5.0':
@@ -951,6 +969,7 @@ packages:
   glob@11.1.0:
     resolution: {integrity: sha512-vuNwKSaKiqm7g0THUBu2x7ckSs3XJLXE+2ssL7/MfTGPLLcrJQ/4Uq1CjPTtO5cCIiRxqvN6Twy1qOwhL0Xjcw==}
     engines: {node: 20 || >=22}
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
     hasBin: true
 
   gopd@1.2.0:
@@ -1139,6 +1158,11 @@ packages:
   proxy-from-env@2.1.0:
     resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
     engines: {node: '>=10'}
+
+  qrcode.vue@3.8.0:
+    resolution: {integrity: sha512-+XKbSKvQu158zlHsJm+HObGUQM3Q+9Oq6yb2op/6lMM2gwOiiG9uIhujvrSV5UoTjrzR0BcNxCdW2kk7KE4NEg==}
+    peerDependencies:
+      vue: ^3.0.0
 
   qs@6.16.0:
     resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
@@ -2379,6 +2403,10 @@ snapshots:
       long: 5.3.2
 
   proxy-from-env@2.1.0: {}
+
+  qrcode.vue@3.8.0(vue@3.5.43(typescript@5.9.3)):
+    dependencies:
+      vue: 3.5.43(typescript@5.9.3)
 
   qs@6.16.0:
     dependencies:

@@ -13,18 +13,19 @@ url = "https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz"
 file_name = "node-v24.18.1-linux-x64.tar.gz"
 checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
 
-[deps.npm]
-installer = "npm"
+[deps.pnpm]
+installer = "pnpm"
+installer_version = "11.28.1"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "95012ca4115140515cc0c4730a1bed814318082afb1e0722c9a2a7780d2eb4b3"
-run = "npm.cmd ci"
+manifest_sha256 = "9f9b4aa249298d95977f651a497056ad0e5b8159a955c873b18c84078b1ae27e"
+run = "pnpm.cmd install --frozen-lockfile"
 allow_build_from_source = true
 
-[deps.npm.native_lock]
-kind = "package-lock"
-path = "package-lock.json"
-sha256 = "c10147f99123feb8c0451152a6b80999aa888660e3cdd47b5f9e6e77c5c5bc5f"
+[deps.pnpm.native_lock]
+kind = "pnpm-lock"
+path = "pnpm-lock.yaml"
+sha256 = "f9f8d9a2b790eccf016f9ce35633f9d68c673aeb835965fc27b822b012e5be03"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"
