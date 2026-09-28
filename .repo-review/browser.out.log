@@ -1,0 +1,19 @@
+repo-review: starting incremental sync...
+repo-review: vite listening on http://127.0.0.1:5181/
+repo-review: sync done {
+  totalScanned: 1,
+  imported: 0,
+  updated: 0,
+  unchanged: 1,
+  skipped: 0,
+  failedCount: 0,
+  lastSyncCommit: '5fc94d32e90004c904ac55e7b7f808f76c845dd8',
+  lastSyncAt: '2026-09-27T18:02:53.063Z',
+  dirty: true,
+  failed: [],
+  warnings: [],
+  relations: { associations: 23, confirmed: 78, candidate: 3, missing: 2 }
+}
+repo-review: API at http://127.0.0.1:5180
+repo-review: API ready at http://127.0.0.1:5180
+repo-review: web  ready at http://127.0.0.1:5181 (strictPort, /api -> 5180)

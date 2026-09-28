@@ -1,0 +1,19 @@
+{
+  "totalScanned": 0,
+  "imported": 0,
+  "updated": 0,
+  "unchanged": 0,
+  "skipped": 0,
+  "failedCount": 0,
+  "lastSyncCommit": "663cf34482790d75869dc13657f4c26be8dc3de3",
+  "lastSyncAt": "2026-09-28T02:07:24.600Z",
+  "dirty": false,
+  "failed": [],
+  "warnings": [],
+  "relations": {
+    "associations": 23,
+    "confirmed": 90,
+    "candidate": 3,
+    "missing": 30
+  }
+}
