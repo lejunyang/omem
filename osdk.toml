@@ -1,9 +1,10 @@
 # omem foundation: one TypeScript runtime for Vue, API and CLI/ACP bridges.
 [tools]
 node = "24.18.1"
+pnpm = "11"
 
-[deps.npm]
-auto = false
+[deps.pnpm]
+auto = true
 allow_build_from_source = true
 
 [skills.osdk-guide]

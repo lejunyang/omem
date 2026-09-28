@@ -2,7 +2,6 @@ node_modules/
 dist/
 apps/web/dist/
 .omem/
-.repo-review/
 .env
 .env.*
 !.env.example
