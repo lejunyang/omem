@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "role_id": "repo-profiler",
+  "role_version": "1",
+  "output_schema": "CodeUnderstanding.v1",
+  "prompt_templates": ["prompt.md"],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-code-repo-profiler",
+      "version": "code-1",
+      "artifact_digest": "381e23c728715b985b15194ff5fee83fb14dbcdb41b52ebb0bbedf1f5195d929"
+    }
+  ],
+  "budget": {
+    "max_context_tokens": 16000,
+    "max_output_tokens": 4000
+  },
+  "max_referenced_nodes": 300
+}

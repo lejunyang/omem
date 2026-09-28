@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omem.invalid/contracts/CodeUnderstanding.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "result_id",
+    "role",
+    "status",
+    "module_responsibilities",
+    "boundaries",
+    "key_flows",
+    "entry_points",
+    "exit_points",
+    "risks_and_limits",
+    "claims",
+    "referenced_node_ids",
+    "referenced_edge_ids",
+    "evidence_refs",
+    "unknowns",
+    "confidence",
+    "model",
+    "prompt_digest",
+    "schema_digest",
+    "input_digest",
+    "generated_at",
+    "seed",
+    "verified_by_agent",
+    "verified_by"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "result_id": { "type": "string", "minLength": 1 },
+    "role": {
+      "enum": [
+        "repo-profiler",
+        "module-architect",
+        "symbol-explainer",
+        "relation-verifier"
+      ]
+    },
+    "status": {
+      "enum": ["seed", "generated", "verified", "failed", "rejected"]
+    },
+    "module_responsibilities": { "type": "array", "items": { "type": "string" } },
+    "boundaries": { "type": "array", "items": { "type": "string" } },
+    "key_flows": { "type": "array" },
+    "entry_points": { "type": "array", "items": { "type": "string" } },
+    "exit_points": { "type": "array", "items": { "type": "string" } },
+    "risks_and_limits": { "type": "array", "items": { "type": "string" } },
+    "claims": { "type": "array" },
+    "referenced_node_ids": { "type": "array", "items": { "type": "string" } },
+    "referenced_edge_ids": { "type": "array", "items": { "type": "string" } },
+    "evidence_refs": { "type": "array" },
+    "unknowns": { "type": "array", "items": { "type": "string" } },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "model": { "type": ["string", "null"] },
+    "prompt_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "schema_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "input_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "generated_at": { "type": "string" },
+    "seed": { "type": "boolean" },
+    "verified_by_agent": { "type": "boolean" },
+    "verified_by": { "type": ["string", "null"] }
+  }
+}

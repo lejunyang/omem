@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "role_id": "module-architect",
+  "role_version": "1",
+  "output_schema": "CodeUnderstanding.v1",
+  "prompt_templates": ["prompt.md"],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-code-module-architect",
+      "version": "code-1",
+      "artifact_digest": "34bd73a31559dcdc6815bfdeb168445eb8009756681aa57959b96591764559cf"
+    }
+  ],
+  "budget": {
+    "max_context_tokens": 12000,
+    "max_output_tokens": 3000
+  },
+  "max_referenced_nodes": 200
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "role_id": "relation-verifier",
+  "role_version": "1",
+  "output_schema": "CodeUnderstanding.v1",
+  "prompt_templates": ["prompt.md"],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-code-relation-verifier",
+      "version": "code-1",
+      "artifact_digest": "a7aa451069946e45ecf6d5353aa29ef534c0f45fda1a93a95edce1ca150fff9e"
+    }
+  ],
+  "budget": {
+    "max_context_tokens": 8000,
+    "max_output_tokens": 2000
+  },
+  "max_referenced_nodes": 150
+}
