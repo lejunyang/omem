@@ -66,23 +66,30 @@
         "nodes": [
           { "path": "apps/server/src/assistant/runtime.ts", "qualified": "ModelUnavailableError", "kind": "class" }
         ],
-        "evidence": ["llms-not-required"]
+        "evidence": ["model-unavailable-error"]
       }
     ],
     "evidence": [
       {
         "id_hint": "runtime-class",
-        "kind": "doc",
+        "kind": "comment",
         "ref": "apps/server/src/assistant/runtime.ts::AssistantRuntime",
-        "text": "AssistantRuntime is the top-level class driving one assistant turn.",
-        "selector": { "path": "apps/server/src/assistant/runtime.ts", "start_line": 168, "end_line": 192 }
+        "text": "The single main-assistant runtime. Both Lark and Web go through this class so there is one product surface. It owns context assembly, evidence retrieval (read-only, visibility-filtered via RetrievalPort), low-risk governance tool execution via MemoryService (server-enforced), turn persistence and degradation. It never calls a model directly: the AssistantModelPort is injected (the real ACP adapter in production, a fixed fake in tests only).",
+        "selector": { "path": "apps/server/src/assistant/runtime.ts", "start_line": 160, "end_line": 168 }
+      },
+      {
+        "id_hint": "model-unavailable-error",
+        "kind": "comment",
+        "ref": "apps/server/src/assistant/runtime.ts::ModelUnavailableError",
+        "text": "Raised when no assistant model is configured or the real transport cannot run (missing CLI, auth failure, timeout). The runtime degrades honestly instead of falling back to a canned fake answer.",
+        "selector": { "path": "apps/server/src/assistant/runtime.ts", "start_line": 40, "end_line": 50 }
       },
       {
         "id_hint": "llms-not-required",
         "kind": "rule",
         "ref": "AGENTS.md::llms-not-required",
-        "text": "LLMs use a configurable Agent CLI/CP port initially; a local LLM must not be required.",
-        "selector": { "path": "apps/server/src/assistant/runtime.ts", "start_line": 45, "end_line": 58 }
+        "text": "LLMs use configurable Agent CLI/ACP initially, later API. Do not make a local LLM required. Discover model/effort capabilities; reject unsupported settings.",
+        "selector": { "path": "AGENTS.md", "start_line": 7, "end_line": 7 }
       }
     ]
   }

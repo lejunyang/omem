@@ -1,0 +1,174 @@
+{
+  "kind": "agent-verification-record",
+  "schema_version": 1,
+  "verified_by": "doubao-agent",
+  "verified_at": "2026-09-29T11:00:00+08:00",
+  "against_head": "bae9c6d8c26a464b4e90903f562a88dda7ed175c",
+  "symbol_snapshot_read_at": "f0c8269",
+  "scope_note": "This record independently re-checks citation locators (path + qualified name + line range) and whether evidence selectors point at the cited raw text. It covers citation/code conformance ONLY. It is NOT a semantic review, NOT a product/behavior acceptance, and NOT a model run. No production model was invoked; /api/review/code/sync and the validator were not executed here; tests were not run. Seed rows remain seed=true, verified_by_agent=false. This file is intentionally not imported by the understanding narrative loader; it lives apart from *.seed.json.",
+  "method": "Read each *.seed.json, then opened the cited source file at the on-disk tree and located the declared symbol by grep/Read. Verified (a) the symbol exists at the claimed file and kind, (b) the claimed line range brackets the declaration, (c) each rule-type evidence selector actually points at the file named by its `ref` and quotes that raw text.",
+  "findings": [
+    {
+      "result_id": "seed:module-architect:assistant-runtime",
+      "target": "apps/server/src/assistant",
+      "symbol_locators_verified": [
+        "AssistantRuntime class @ runtime.ts L168 (closes L895)",
+        "AssistantRuntime.turn @ L198",
+        "AssistantRuntime.executeTurn @ L421 (private)",
+        "AssistantRuntime.retryTurn @ L293",
+        "AssistantRuntime.toResult @ L876",
+        "AssistantRuntime.shutdown @ L323",
+        "detectTaskIntent fn @ L144",
+        "ModelUnavailableError class @ L45",
+        "governCreateTask @ L715 (private; call intent confirmed by JSDoc L701-713)"
+      ],
+      "per_seed_verified_citation_count": 9,
+      "evidence_findings": [
+        {
+          "id_hint": "llms-not-required",
+          "issue": "ref=AGENTS.md::llms-not-required but selector.path was assistant/runtime.ts L45-58, which actually brackets ModelUnavailableError (L45-50) + TurnCancelledError (L53-58), not the AGENTS.md rule. text was a paraphrase and contained a typo 'Agent CLI/CP' (should be ACP). Derived rule explanation was attached to the wrong raw evidence.",
+          "status": "mismatch",
+          "correction_applied": "selector -> AGENTS.md L7; text -> raw quote 'LLMs use configurable Agent CLI/ACP initially, later API. Do not make a local LLM required.'; ModelUnavailableError claim re-pointed to a new code evidence quoting its JSDoc at runtime.ts L40-50."
+        },
+        {
+          "id_hint": "runtime-class",
+          "issue": "selector L168-192 brackets class header + constructor; text 'top-level class driving one assistant turn' is a paraphrase of the JSDoc at L160-166.",
+          "status": "ok_with_paraphrase",
+          "correction_applied": "selector widened to L160-168 and text set to the raw class JSDoc."
+        }
+      ],
+      "govern_create_task": {
+        "fact": "governCreateTask (runtime.ts L715) routes a model create_task through MemoryService; JSDoc L701-713 states the model cannot self-authorize, only the canonical owner's verified evidence backs an owner task, proposal id is derived from transport event id (idempotent on re-delivery, MemoryService also dedups by digest), and it is reached only after detectTaskIntent returned explicit=true. Limit: returns reject('no_memory_governance') when options.memory is unset.",
+        "test_coverage_seen": "assistant-runtime.test.ts exists; governCreateTask/detectTaskIntent/ModelUnavailableError names appear in the test grep set, but tests were NOT executed in this verification.",
+        "status": "verified_by_citation_only"
+      },
+      "failures": ["rule-evidence selector/ref file mismatch", "paraphrase/typo in evidence text"],
+      "unknowns": ["actual model output quality", "live ACP transport behavior", "whether governCreateTask policy verdicts hold on edge inputs"]
+    },
+    {
+      "result_id": "seed:module-architect:memory-service",
+      "target": "apps/server/src/memory",
+      "symbol_locators_verified": [
+        "MemoryService class @ service.ts L74",
+        "MemoryService.validateEvidence @ L201",
+        "MemoryService.createDecision @ L892 (private)",
+        "MemoryService.evaluate @ L1245",
+        "MemoryService.evaluateCore @ L1266 (private)",
+        "MemoryService.decisions() @ L1831",
+        "MemoryService.memories() @ L1862"
+      ],
+      "per_seed_verified_citation_count": 7,
+      "evidence_findings": [
+        {
+          "id_hint": "immutable-revision",
+          "issue": "ref=AGENTS.md::immutable-revision but selector.path was memory/service.ts L74-90, which brackets the class declaration + constructor + db/transaction plumbing, not the rule.",
+          "status": "mismatch",
+          "correction_applied": "selector -> AGENTS.md L10; text -> raw quote 'Immutable revision and fixed fragment IDs; derived answers are not new independent evidence.'; the class-declaration claim re-pointed to a new code evidence at service.ts L74-82."
+        }
+      ],
+      "failures": ["rule-evidence selector/ref file mismatch"],
+      "unknowns": ["real decision distribution / edge-case policy outcomes not exercised here"]
+    },
+    {
+      "result_id": "seed:module-architect:keyword-retrieval",
+      "target": "apps/server/src/retrieval",
+      "symbol_locators_verified": [
+        "KeywordRetrieval class @ keyword.ts L20",
+        "KeywordRetrieval.readEvidence @ L27",
+        "KeywordRetrieval.searchSources @ L51",
+        "KeywordRetrieval.searchFragmentsForTerm @ L97 (private)",
+        "KeywordRetrieval.searchMemories @ L114",
+        "tokenize fn @ L184 (ASCII word regex + CJK run + 2-grams, stopword bigrams)"
+      ],
+      "per_seed_verified_citation_count": 6,
+      "evidence_findings": [
+        {
+          "id_hint": "offline-no-embeddings",
+          "issue": "ref=AGENTS.md::local-embeddings-optional but selector.path was keyword.ts L184-209, which is the tokenize() implementation. The tokenize claim was attached to an AGENTS.md rule evidence. 'review mode currently uses keyword retrieval only' is a derived statement not literally in AGENTS.md.",
+          "status": "mismatch",
+          "correction_applied": "rule selector -> AGENTS.md L7 (raw sentence 'Local embedding/reranker weights may be added via osdk when semantic retrieval is implemented.'); tokenize claim re-pointed to a new code evidence at keyword.ts L184-209 quoting the real tokenizer."
+        }
+      ],
+      "failures": ["rule-evidence selector/ref file mismatch", "code claim attached to a rule evidence"],
+      "unknowns": ["recall/precision on the real corpus not measured"]
+    },
+    {
+      "result_id": "seed:module-architect:lark-runtime",
+      "target": "apps/server/src/integrations/lark",
+      "symbol_locators_verified": [
+        "LarkRuntimeHost class @ runtime.ts L35",
+        "LarkRuntimeHost.syncConnections @ L117 (private)",
+        "LarkRuntimeHost.processOnce @ L193",
+        "LarkRuntimeHost.start @ L243",
+        "LarkRuntimeHost.wait @ L249 (private)",
+        "LarkRuntimeHost.loop @ L262 (private)",
+        "LarkRuntimeHost.stop @ L286"
+      ],
+      "per_seed_verified_citation_count": 7,
+      "evidence_findings": [
+        {
+          "id_hint": "no-external-integrations",
+          "issue": "ref=AGENTS.md::external-integrations-separate but selector.path was integrations/lark/runtime.ts L35-106 (the host class body).",
+          "status": "mismatch",
+          "correction_applied": "selector -> AGENTS.md L14; text -> raw quote 'External notifications, capture scope changes and operating-system services are separate explicit integrations; do not install global hooks or screen listeners without concrete scope.'; class claim re-pointed to a new code evidence at runtime.ts L35."
+        }
+      ],
+      "failures": ["rule-evidence selector/ref file mismatch"],
+      "unknowns": ["real webhook traffic, token refresh, retry behavior not exercised offline"]
+    },
+    {
+      "result_id": "seed:module-architect:lark-realtime",
+      "target": "apps/server/src/integrations/lark/realtime",
+      "symbol_locators_verified": [
+        "normalizeLarkEvent @ realtime.ts L96 (export const arrow; kind 'function' accepted as a value function)",
+        "OfficialLarkRealtimeAdapter class @ L154",
+        "OfficialLarkRealtimeAdapter.connect @ L155",
+        "LarkEventInbox class @ L311",
+        "LarkEventInbox.persist @ L337",
+        "LarkEventInbox.processMessage @ L419",
+        "LarkEventInbox.enqueueAssistantReply @ L814 (private)"
+      ],
+      "per_seed_verified_citation_count": 7,
+      "evidence_findings": [
+        {
+          "id_hint": "capture-is-data",
+          "issue": "ref=AGENTS.md::capture-data-not-instructions but selector.path was integrations/lark/realtime.ts L96-152 (normalizeLarkEvent + lease region).",
+          "status": "mismatch",
+          "correction_applied": "selector -> AGENTS.md L9; text -> raw quote 'Text + image + links + contextual metadata is the common capture input... Capture data is not tool instructions.'; normalizeLarkEvent claim re-pointed to a new code evidence at realtime.ts L96-110."
+        }
+      ],
+      "failures": ["rule-evidence selector/ref file mismatch"],
+      "unknowns": ["real event payload shapes, rate limits, pairing round-trips untested offline"]
+    },
+    {
+      "result_id": "seed:module-architect:web-review-app",
+      "target": "apps/web/src",
+      "symbol_locators_verified": [
+        "openRevision fn @ ReviewApp.vue L219",
+        "showFragment fn @ L253",
+        "openRelation fn @ L282",
+        "runSearch fn @ L290",
+        "runTrace fn @ L319",
+        "boot fn @ L390"
+      ],
+      "per_seed_verified_citation_count": 6,
+      "evidence_findings": [
+        {
+          "id_hint": "review-mode-no-state",
+          "issue": "ref=apps/server/src/review/app.ts::review-app but selector.path was apps/web/src/ReviewApp.vue L386-398 (the boot() function). The loopback/no-worker statement is made in app.ts, not in the Vue file.",
+          "status": "mismatch",
+          "correction_applied": "selector -> apps/server/src/review/app.ts L4-7; text -> raw quote 'Lark host, learning pipeline, notification workers or business token gating: the app binds loopback only and owns no business state.'; boot claim re-pointed to a new code evidence at ReviewApp.vue L390-400."
+        }
+      ],
+      "failures": ["rule-evidence selector/ref file mismatch (ref file vs selector file)"],
+      "unknowns": ["real layout, empty states, relation-trace UX not browser-verified here"]
+    }
+  ],
+  "summary": {
+    "seeds_checked": 6,
+    "symbol_locators_resolving_at_head": 42,
+    "evidence_mismatches": 6,
+    "evidence_mismatch_pattern": "every rule-type evidence named an AGENTS.md (or app.ts) ref but anchored its selector in the code file and carried a paraphrase. Corrected by pointing selectors at the cited raw file/lines and quoting the original text; code claims re-attached to code evidence.",
+    "things_not_claimed_here": "No model name, no product acceptance, no semantic correctness guarantee. Stale-range risk: seeds were curated against e031523; locators still resolve at head bae9c6d, but ranges should be re-projected by /api/review/code/sync after code edits."
+  }
+}

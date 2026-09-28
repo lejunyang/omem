@@ -53,7 +53,7 @@
         "nodes": [
           { "path": "apps/web/src/ReviewApp.vue", "qualified": "boot", "kind": "function" }
         ],
-        "evidence": ["review-mode-no-state"]
+        "evidence": ["boot-health"]
       },
       {
         "text": "runSearch forwards the query to /api/review/search",
@@ -70,11 +70,18 @@
     ],
     "evidence": [
       {
+        "id_hint": "boot-health",
+        "kind": "doc",
+        "ref": "apps/web/src/ReviewApp.vue::boot",
+        "text": "async function boot() { [health.value, categories.value] = await Promise.all([reviewHealth(), reviewCategories()]); if (view.value !== 'wiki') await loadSources(...); await loadSync(); }",
+        "selector": { "path": "apps/web/src/ReviewApp.vue", "start_line": 390, "end_line": 401 }
+      },
+      {
         "id_hint": "review-mode-no-state",
         "kind": "rule",
         "ref": "apps/server/src/review/app.ts::review-app",
-        "text": "Review app binds loopback only, starts no Lark/worker/notifications and owns no business state.",
-        "selector": { "path": "apps/web/src/ReviewApp.vue", "start_line": 386, "end_line": 398 }
+        "text": "Lark host, learning pipeline, notification workers or business token gating: the app binds loopback only and owns no business state.",
+        "selector": { "path": "apps/server/src/review/app.ts", "start_line": 4, "end_line": 7 }
       }
     ]
   }
