@@ -31,8 +31,12 @@ export function frameToSegment(f: TrailFrame): string {
   return encodeURIComponent(f.kind) + "/" + encodeURIComponent(f.id);
 }
 
-/** Max trail depth we persist into the URL. */
-export const MAX_TRAIL = 8;
+/** Max trail depth we persist into the URL. The renderer itself is unbounded
+ * (matches the prototype's 100-level chain); this budget only bounds the
+ * serialized deep-link so a path cannot grow an infinitely long URL. A generous
+ * ceiling means real chains never hit it; if they do, the caller surfaces an
+ * explicit notice instead of silently dropping the oldest frame. */
+export const MAX_TRAIL = 200;
 
 /** Return the existing index of a frame with the same kind+id, or -1. Pure:
  * used by the container to decide whether pushing would loop. */

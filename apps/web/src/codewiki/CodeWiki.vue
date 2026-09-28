@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 /** Code Wiki vertical slice container. Owns: repo/snapshot overview, the
  * deterministic SVG module graph, module/file detail, the single controlled
  * trail drawer (>=5 levels, loop detection, breadcrumb, focus/scroll restore),
@@ -22,14 +22,19 @@ import {
   codeCurrentSnapshot,
   codeGraph,
   codeRunSync,
+  codeUnderstandingsList,
+  codeUnderstandingDetail,
   type CodeSnapshot,
   type CodeGraph,
   type CodeFile,
+  type CodeUnderstandingListItem,
+  type CodeUnderstandingDetail,
 } from "../review-api";
-import { aggregateGraph, moduleLabel, type AggModule } from "./modules";
+import { aggregateGraph, moduleLabel, matchModuleUnderstanding, fileLabel, symbolLabel, type AggModule } from "./modules";
 import ModuleFrame from "./ModuleFrame.vue";
 import FileFrame from "./FileFrame.vue";
 import FragmentFrame from "./FragmentFrame.vue";
+import SymbolFrame from "./SymbolFrame.vue";
 
 type WikiView = "overview" | "graph" | "module" | "file";
 
@@ -59,6 +64,50 @@ const graphNodes = computed<GraphModule[]>(() =>
 const fileMap = computed(() => new Map((graph.value?.files ?? []).map((f) => [f.fileId, f])));
 const symbolMap = computed(() => new Map((graph.value?.symbols ?? []).map((s) => [s.symbolId, s])));
 
+// ---- curated module understandings ----
+const underItems = ref<CodeUnderstandingListItem[]>([]);
+const underDetailCache = ref<Map<string, CodeUnderstandingDetail>>(new Map());
+const underLoading = ref(false);
+
+function moduleUnderstandingItem(modId: string): CodeUnderstandingListItem | null {
+  const mod = modules.value.find((m) => m.id === modId);
+  if (!mod) return null;
+  return matchModuleUnderstanding(mod, underItems.value);
+}
+
+async function ensureModuleDetail(modId: string): Promise<CodeUnderstandingDetail | null> {
+  const item = moduleUnderstandingItem(modId);
+  if (!item) return null;
+  const cached = underDetailCache.value.get(item.understandingId);
+  if (cached) return cached;
+  underLoading.value = true;
+  try {
+    const d = await codeUnderstandingDetail(item.understandingId);
+    underDetailCache.value = new Map(underDetailCache.value).set(item.understandingId, d);
+    return d;
+  } catch {
+    return null;
+  } finally {
+    underLoading.value = false;
+  }
+}
+
+// The detail for the currently selected module (main view).
+const selectedModuleDetail = ref<CodeUnderstandingDetail | null>(null);
+async function loadSelectedModuleDetail(modId: string) {
+  selectedModuleDetail.value = await ensureModuleDetail(modId);
+}
+
+/** Cached detail for a module id (used by drawer module frames). Triggers a
+ * background fetch on first miss so the frame shows loading then content. */
+function detailForModule(modId: string): CodeUnderstandingDetail | null {
+  const item = moduleUnderstandingItem(modId);
+  if (!item) return null;
+  const d = underDetailCache.value.get(item.understandingId) ?? null;
+  if (!d) void ensureModuleDetail(modId);
+  return d;
+}
+
 // ---- trail stack ----
 const trail = ref<TrailFrame[]>([]);
 const trailCurrent = ref(0);
@@ -70,9 +119,10 @@ async function loadAll() {
   loading.value = true;
   loadError.value = "";
   try {
-    const [snap, g] = await Promise.all([codeCurrentSnapshot(), codeGraph()]);
+    const [snap, g, ul] = await Promise.all([codeCurrentSnapshot(), codeGraph(), codeUnderstandingsList().catch(() => ({ model: { available: false }, count: 0, items: [] }))]);
     snapshot.value = snap;
     graph.value = g;
+    underItems.value = ul.items;
   } catch (e) {
     loadError.value = String(e);
   } finally {
@@ -96,6 +146,7 @@ function openModule(id: string) {
   selectedModule.value = id;
   view.value = "module";
   syncHash();
+  void loadSelectedModuleDetail(id);
 }
 function openFile(f: CodeFile, line?: number) {
   selectedFile.value = f;
@@ -111,7 +162,7 @@ function pushTrail(frame: Omit<TrailFrame, "id"> & { id: string }) {
     loopAt.value = idx;
     return;
   }
-  trail.value = [...trail.value, frame as TrailFrame].slice(-8);
+  trail.value = [...trail.value, frame as TrailFrame];
   trailCurrent.value = trail.value.length - 1;
   trailOpen.value = true;
   syncHash();
@@ -136,15 +187,53 @@ function dismissLoop() {
   loopAt.value = null;
 }
 
+/** Human label for a restored frame (hash round-trips only kind+id). Never
+ * renders a raw id; falls back to a kind label. */
+function resolveFrameTitle(f: TrailFrame): string {
+  if (f.kind === "file") {
+    const fl = fileMap.value.get(f.fileId || f.id);
+    return fl ? fl.path.split("/").pop() || f.id : "文件";
+  }
+  if (f.kind === "symbol") {
+    const s = symbolMap.value.get(f.symbolId || f.id);
+    return s ? s.name : "符号";
+  }
+  if (f.kind === "fragment") return f.title && !/^[0-9a-f-]{36}$/.test(f.title) ? f.title : "决策片段";
+  if (f.kind === "module") return moduleLabel(f.module || f.id);
+  return f.title || "证据";
+}
+function retitleTrail() {
+  trail.value = trail.value.map((f) => ({ ...f, title: resolveFrameTitle(f) }));
+}
+
 function onDrill(target: {
   type: "file";
   fileId: string;
+  line?: number;
+} | {
+  type: "symbol";
+  fileId: string;
+  symbolId: string;
   line?: number;
 } | { type: "fragment"; fragmentId: string; title?: string }) {
   if (target.type === "file") {
     const f = graph.value?.files.find((x) => x.fileId === target.fileId);
     if (!f) return;
-    pushTrail({ kind: "file", id: f.fileId, title: f.path.split("/").pop() || f.fileId, fileId: f.fileId, line: target.line });
+    pushTrail({ kind: "file", id: f.fileId, title: fileLabel(f), fileId: f.fileId, line: target.line });
+  } else if (target.type === "symbol") {
+    // Module refs may pass an empty fileId; resolve it from the symbol map.
+    const sym = symbolMap.value.get(target.symbolId);
+    const fileId = target.fileId || sym?.fileId;
+    if (!sym || !fileId) return;
+    const f = graph.value?.files.find((x) => x.fileId === fileId);
+    pushTrail({
+      kind: "symbol",
+      id: sym.symbolId,
+      title: symbolLabel(sym),
+      fileId,
+      symbolId: sym.symbolId,
+      line: target.line ?? sym.rangeStart?.line,
+    });
   } else {
     pushTrail({ kind: "fragment", id: target.fragmentId, title: target.title || "片段", fragmentId: target.fragmentId });
   }
@@ -179,7 +268,8 @@ function restoreFromHash() {
   }
   if (route.trail.length) {
     trail.value = route.trail;
-    trailCurrent.value = route.trail.length - 1;
+    retitleTrail();
+    trailCurrent.value = Math.min(route.trail.length - 1, trail.value.length - 1);
     trailOpen.value = true;
   }
   setTimeout(() => (restoring = false), 50);
@@ -278,6 +368,8 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
       <ModuleFrame
         v-if="modules.find((m) => m.id === selectedModule)"
         :mod="modules.find((m) => m.id === selectedModule)!"
+        :detail="selectedModuleDetail"
+        :loading="underLoading" :symbol-map="symbolMap"
         @drill="onDrill"
       />
     </section>
@@ -305,6 +397,8 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
         <ModuleFrame
           v-if="modules.find((m) => m.id === ((currentFrame as TrailFrame).module ?? currentFrame.id))"
           :mod="modules.find((m) => m.id === ((currentFrame as TrailFrame).module ?? currentFrame.id))!"
+          :detail="detailForModule((currentFrame as TrailFrame).module ?? currentFrame.id)"
+          :loading="underLoading" :symbol-map="symbolMap"
           @drill="onDrill"
         />
       </template>
@@ -316,9 +410,18 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
           @drill="onDrill"
         />
       </template>
+      <template v-else-if="currentFrame?.kind === 'symbol'">
+        <SymbolFrame
+          v-if="symbolMap.has((currentFrame as TrailFrame).symbolId ?? currentFrame.id)"
+          :symbol-id="(currentFrame as TrailFrame).symbolId ?? currentFrame.id"
+          :file-map="fileMap" :symbol-map="symbolMap"
+          @drill="onDrill"
+        />
+      </template>
       <template v-else-if="currentFrame?.kind === 'fragment'">
         <FragmentFrame
           :fragment-id="(currentFrame as TrailFrame).fragmentId ?? currentFrame.id"
+          :file-map="fileMap"
           @drill="onDrill"
         />
       </template>

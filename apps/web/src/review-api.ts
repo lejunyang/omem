@@ -269,6 +269,10 @@ export type CodeSnapshot = {
   fileCount: number;
   changedCount: number;
   partial: boolean;
+  // DTO projection (forward-compat)
+  displayTitle?: string;
+  shortCommit?: string;
+  citationLabel?: string;
 };
 
 export type CodeFile = {
@@ -280,6 +284,15 @@ export type CodeFile = {
   contentHash: string | null;
   headSnapshotId: string | null;
   removed: boolean;
+  // --- DTO projection ---
+  displayTitle?: string;
+  displayPath?: string;
+  symbolName?: string | null;
+  summary?: string;
+  citationLabel?: string;
+  actionable?: boolean;
+  reason?: string | null;
+  deepLink?: string;
 };
 
 export type CodeRange = { line: number; col: number };
@@ -296,6 +309,14 @@ export type CodeSymbol = {
   fragmentId: string | null;
   exported: boolean;
   signature: string | null;
+  // --- DTO projection ---
+  displayTitle?: string;
+  displayPath?: string | null;
+  summary?: string;
+  citationLabel?: string;
+  actionable?: boolean;
+  reason?: string | null;
+  deepLink?: string;
 };
 
 export type CodeEdge = {
@@ -309,6 +330,12 @@ export type CodeEdge = {
   status: "confirmed" | "candidate" | "stale" | "missing";
   origin: string;
   evidence: string | null;
+  // --- DTO projection ---
+  displayTitle?: string;
+  summary?: string;
+  actionable?: boolean;
+  reason?: string | null;
+  deepLink?: string;
 };
 
 export type CodeGraph = { files: CodeFile[]; symbols: CodeSymbol[]; edges: CodeEdge[] };
@@ -366,6 +393,106 @@ export async function codeEdgesForFile(fileId: string): Promise<CodeEdge[]> {
 }
 export async function codeUnderstandingFile(id: string): Promise<{ understanding: CodeUnderstanding | null }> {
   return codeGet("/understanding?type=file&id=" + encodeURIComponent(id));
+}
+
+// --- Curated / seeded module understandings (/code/understandings) ---------
+// These are hand-curated module notes projected onto the head graph. They are
+// the ONLY narrative surface when no production model is configured. The list
+// endpoint returns summaries; :id returns the full CodeUnderstanding.v1 output.
+
+/** One item of GET /code/understandings. */
+export type CodeUnderstandingListItem = {
+  understandingId: string;
+  targetType: string;
+  targetId: string;
+  snapshotId: string;
+  role: string;
+  status: string;
+  confidence: number | null;
+  seed: boolean;
+  verifiedByAgent: boolean;
+  verifiedBy: string | null;
+  stale: boolean;
+  source: string;
+  curatedBy: string | null;
+  curatedAt: string | null;
+  generatedAt: string;
+  supersedesId: string | null;
+};
+
+/** The structured CodeUnderstanding.v1 output carried by a curated module. */
+export type CodeUnderstandingOutputV1 = {
+  schema_version: 1;
+  result_id: string;
+  role: string;
+  status: string;
+  module_responsibilities: string[];
+  boundaries: string[];
+  key_flows: { name: string; description: string; node_ids: string[] }[];
+  entry_points: string[];
+  exit_points: string[];
+  risks_and_limits: string[];
+  claims: {
+    text: string;
+    kind: "raw_fact" | "interpretation";
+    node_ids: string[];
+    edge_ids: string[];
+    evidence_ids: string[];
+  }[];
+  referenced_node_ids: string[];
+  referenced_edge_ids: string[];
+  evidence_refs: { evidence_id: string; selector: unknown; note: string }[];
+  unknowns: string[];
+  confidence: number;
+  model: string | null;
+  seed: boolean;
+  verified_by_agent: boolean;
+  verified_by: string | null;
+};
+
+/** A resolved reference on an understanding detail. */
+export type CodeUnderstandingRef = {
+  kind: string;
+  id: string;
+  selector: unknown;
+  note: string;
+};
+
+/** Full detail of GET /code/understandings/:id. */
+export type CodeUnderstandingDetail = {
+  understandingId: string;
+  targetType: string;
+  targetId: string;
+  snapshotId: string;
+  role: string;
+  status: string;
+  confidence: number | null;
+  seed: boolean;
+  verifiedByAgent: boolean;
+  verifiedBy: string | null;
+  stale: boolean;
+  source: string;
+  curatedBy: string | null;
+  curatedAt: string | null;
+  curatedNote: string | null;
+  generatedAt: string;
+  supersedesId: string | null;
+  unknowns: string[];
+  output: CodeUnderstandingOutputV1;
+  refs: CodeUnderstandingRef[];
+};
+
+export type CodeUnderstandingsList = {
+  model: { available: boolean; reason?: string };
+  count: number;
+  items: CodeUnderstandingListItem[];
+};
+
+export async function codeUnderstandingsList(all = false): Promise<CodeUnderstandingsList> {
+  return codeGet("/understandings" + (all ? "?all=true" : ""));
+}
+export async function codeUnderstandingDetail(id: string): Promise<CodeUnderstandingDetail> {
+  return codeGet("/understandings/" + encodeURIComponent(id));
 }
 export async function codeSourceSlice(
   id: string,

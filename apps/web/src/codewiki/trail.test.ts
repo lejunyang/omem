@@ -18,11 +18,11 @@ describe("trail loop detection", () => {
     const stack = [fr("file", "f1")];
     expect(findLoop(stack, { kind: "fragment", id: "f1" })).toBe(-1);
   });
-  it("pushFrame is bounded to MAX_TRAIL", () => {
+  it("pushFrame keeps long chains (no silent truncation at 8)", () => {
     let stack: TrailFrame[] = [];
-    for (let i = 0; i < MAX_TRAIL + 5; i++) stack = pushFrame(stack, fr("file", "f" + i));
-    expect(stack).toHaveLength(MAX_TRAIL);
-    expect(stack[0].id).toBe("f5"); // oldest dropped
+    for (let i = 0; i < 12; i++) stack = pushFrame(stack, fr("file", "f" + i));
+    expect(stack).toHaveLength(12);
+    expect(stack[0].id).toBe("f0"); // oldest kept, not dropped at depth 8
   });
 
   it("supports a 5-level drill and detects return-to-level loop", () => {

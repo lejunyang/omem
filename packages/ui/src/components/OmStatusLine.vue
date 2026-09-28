@@ -3,7 +3,7 @@
  * content (raw evidence vs derived explanation vs candidate guess vs stale vs
  * load error). This is intentionally NOT a relation-status badge: edge status
  * stays on OmBadge. See docs/implementation/code-wiki-ui-design.md §9. */
-type Kind = "raw" | "derived" | "candidate" | "stale" | "error";
+type Kind = "raw" | "derived" | "candidate" | "stale" | "error" | "seed";
 const props = defineProps<{ kind: Kind; sourceNote?: string }>();
 
 const LABEL: Record<Kind, string> = {
@@ -12,6 +12,7 @@ const LABEL: Record<Kind, string> = {
   candidate: "候选 · 未登记",
   stale: "已过期",
   error: "加载失败",
+  seed: "人工 curated",
 };
 </script>
 
@@ -43,6 +44,11 @@ const LABEL: Record<Kind, string> = {
   color: var(--om-ink);
   background: var(--om-panel);
   border-left: 3px solid var(--om-ink);
+}
+.seed .tag {
+  color: var(--om-ink);
+  background: var(--om-panel);
+  border-left: 3px solid #6b8dd6;
 }
 .candidate .tag {
   color: var(--om-warning);
