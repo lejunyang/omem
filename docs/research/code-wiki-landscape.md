@@ -15,9 +15,9 @@
 | 结论 | 内容 |
 | --- | --- |
 | 可直接复用的**组件/协议**（不引入平台） | ① **SCIP protobuf 数据模型**（per-snapshot 的 def/reference/moniker）作为 omem 代码索引的落盘格式参考；② **Tree-sitter**（Node 绑定）做 TS/Vue 结构化 outline 与语法感知切片；③ **Aider repo-map 算法**（tree-sitter tags + def/ref 二部图 + PageRank + token 预算）作为 RetrievalPort 的候选上下文组装器；④ 本地 embedding（BGE-M3 优先，osdk 锁权重）做语义召回投影。 |
-| 为何不直接引入平台 | DeepWiki-open / OpenDeepWiki 是自带 DB+UI+LLM 编排的完整应用，生成的 wiki 散文不绑定 omem fragment；Sourcegraph Cody 客户端 Apache-2.0 但服务端私有、仓库已归档；Continue 已被 Cursor 收购且仓库转只读；CodeQL 对私有仓库需 GitHub Code Security 商业授权；Joern 是 JVM 安全分析平台、无 Vue；Docusaurus/VitePress/MkDocs 是静态发布层，没有交互引用弹窗与 revision 图；GraphRAG 的 LLM 抽边若直接 confirmed 会违反 omem「未登记边不得 confirmed」规则。 |
+| 为何不直接引入平台 | DeepWiki-open / OpenDeepWiki 是自带 DB+UI+LLM 编排的完整应用，生成的 wiki 散文不绑定 omem fragment；Sourcegraph Cody 客户端 Apache-2.0 但服务端私有；Continue 官网确认已并入 Cursor（GitHub 仓库未归档、仍 Apache-2.0 活跃推送）；CodeQL 对私有仓库需 GitHub Code Security 商业授权；Joern 是 JVM 安全分析平台、无 Vue；Docusaurus/VitePress/MkDocs 是静态发布层，没有交互引用弹窗与 revision 图；GraphRAG 的 LLM 抽边若直接 confirmed 会违反 omem「未登记边不得 confirmed」规则。 |
 | PoC 门（按顺序，全部本地进程内、不起 Docker） | P1：Tree-sitter 在本仓库 TS+Vue 上抽符号，对照 `associations.json` 种子测准确率；P2：在 HEAD snapshot 上建一份 SCIP 风格 occurrence 表，验证 fragment↔符号 range 双向回链；P3：相邻 commit 间用「同名符号 + range 重叠率」做跨 revision fragment 身份启发式，在真实历史上测续接率；P4：BGE-M3 经 osdk 拉权重，在 RetrievalPort 后做 holdout 召回对照关键词基线，断网可跑；P5：repo-map PageRank 上下文注入 ACP，测「被引符号真实存在于上下文」的精度。 |
-| 主要风险 | scip-typescript 近一年未发新版、不支持 Vue SFC；CodeQL 私有仓库授权；LLM 生成 wiki 散文会被误当证据；GraphRAG 社区摘要随 revision 过时；embedding 权重许可与体积需在 osdk `[models]` 中显式锁。 |
+| 主要风险 | scip-typescript 近一年未发新版、对 `.vue` SFC 支持未确认；CodeQL 私有仓库授权；LLM 生成 wiki 散文会被误当证据；GraphRAG 社区摘要随 revision 过时；embedding 权重许可与体积需在 osdk `[models]` 中显式锁。 |
 
 ---
 
@@ -73,7 +73,7 @@
 - 模型要点：一个 `Index` 对应**一个 workspace snapshot**（仓库某次 checkout），里面是 `Document` → `Occurrence`（range + symbol 唯一字符串 + roles: definition/reference/…）→ `SymbolInformation`（含 documentation、relationships: is_implementation/is_reference 等）。这种「一个 snapshot 一份索引」与 omem **固定 revision** 模型天然对齐。
 - TypeScript 支持：`@sourcegraph/scip-typescript`，基于官方 TypeScript typechecker，编译器级精确，npm 包 Apache-2.0，当前 0.4.0（https://www.npmjs.com/package/@sourcegraph/scip-typescript ，2026-09-28 访问）；发布说明 https://about.sourcegraph.com/blog/announcing-scip-typescript 。
 - 限制（未实测，仅文档事实）：
-  - scip-typescript **不解析 .vue SFC**（它是 TS/JS indexer）；Vue 文件需要另走 Tree-sitter。
+  - scip-typescript 定位为 TypeScript/JavaScript indexer；官方文档未确认对 `.vue` SFC 的支持，PoC 时需实测，**不假设其支持或不支持**；Vue 文件无论如何都要走 Tree-sitter 那条路径。
   - npm 显示该包近一年未发新版（「Last publish a year ago」），长期维护性需在 PoC 时确认是否需要 fork。
   - SCIP occurrence 主要覆盖定义/引用/实现关系；**调用边（call graph）不是它的强项**，tsc 层面也不完整。
 - 许可证：scip 仓库本身 MIT（scip-code.org 与 pkg.go.dev 页面未单独标注相反许可证；scip-typescript 为 Apache-2.0）。PoC 时以届时 pinned commit 的 LICENSE 为准。
@@ -85,9 +85,9 @@
 
 ### 2.3 Tree-sitter
 
-- 事实：parser generator + 增量解析库，能在编辑时只重解析变化的子树，即使有语法错误也给出可用 CST。官方：https://tree-sitter.github.io/tree-sitter/ 。官方 parser 列表含 TypeScript、TSX、Vue（https://tree-sitter.github.io/tree-sitter/ 首页 parser 列表）；`tree-sitter-typescript` npm 包 MIT。
-- 许可证：runtime 与主流 grammar 均 MIT。
-- 与 SCIP 对比：Tree-sitter 是**语法级**（CST，无类型解析），但胜在轻量、增量、原生多语言（含 Vue）、有 Node 绑定；SCIP 是**编译器级**（TS 精确类型），但重、快照式、不支持 Vue。
+- 事实：parser generator + 增量解析库，能在编辑时只重解析变化的子树，即使有语法错误也给出可用 CST。官方：https://tree-sitter.github.io/tree-sitter/ 。官方 upstream parser 列表含 TypeScript、TSX；**不含 Vue**（`https://api.github.com/repos/tree-sitter/tree-sitter-vue` 返回 404，2026-09-28 核验）。Vue grammar 实际由社区维护：https://github.com/tree-sitter-grammars/tree-sitter-vue —— 是 ikatyang/tree-sitter-vue 的 fork，MIT，`archived=false`，2026-09-13 仍有 push，**不是 tree-sitter 官方 grammar**。`tree-sitter-typescript` npm 包 MIT。
+- 许可证：runtime 与官方 grammar 均 MIT；Vue grammar 为社区 MIT fork。
+- 与 SCIP 对比：Tree-sitter 是**语法级**（CST，无类型解析），但胜在轻量、增量、多语言（Vue 走社区 grammar）、有 Node 绑定；SCIP 是**编译器级**（TS 精确类型），但重、快照式，且 `.vue` SFC 支持未确认。
 - omem 适配点：
   - 在每个 revision 上对变化文件重跑 Tree-sitter，产出「类/函数/方法/import」outline 作为 fragment 分组依据（语法感知切片，不把一个函数切成两半）。
   - 本机无 Docker、osdk 管 node，Tree-sitter 原生 node 绑定可直接进依赖，符合「本地隐私优先」。
@@ -108,9 +108,9 @@
 
 | 工具 | 许可证 | TS | Vue | 增量 | commit 快照身份 | 图类型 | omem 判断 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| SCIP | 规范 MIT / scip-typescript Apache-2.0 | 编译器级 | 否 | 每 snapshot 全量重建（快） | **原生就是 per-snapshot** | def/ref/实现/moniker；调用边弱 | 数据模型可借；TS indexer 可 PoC |
+| SCIP | 规范 MIT / scip-typescript Apache-2.0 | 编译器级 | 未确认（TS/JS indexer，未实测 SFC） | 每 snapshot 全量重建（快） | **原生就是 per-snapshot** | def/ref/实现/moniker；调用边弱 | 数据模型可借；TS indexer 可 PoC |
 | LSIF | 社区规范 | — | — | — | — | — | 已归档，不采用 |
-| Tree-sitter | MIT | 官方 grammar | 官方 grammar 生态 | **编辑级增量子树复用**（omem 用不到那么细） | 文件级重解析即可 | CST outline、可写自定义 query 抽 def/import | 首选轻量结构化层 |
+| Tree-sitter | MIT | 官方 grammar | **社区 grammar**（tree-sitter-grammars/tree-sitter-vue，MIT fork，非官方） | **编辑级增量子树复用**（omem 用不到那么细） | 文件级重解析即可 | CST outline、可写自定义 query 抽 def/import | 首选轻量结构化层 |
 | CodeQL | CLI 公开仓库免费；**私有仓库需商业授权** | 有（类型类在收缩） | 否 | per-commit 数据库 | per-commit 数据库 | 丰富查询图（安全导向） | 授权+栈错配，不引入 |
 | Joern | Apache-2.0 | JS 前端 | 否 | CPG 全量 | per-project | AST+CFG+PDG 融合图 | 安全研究导向，不引入 |
 
@@ -127,8 +127,8 @@
 ### 3.2 Continue
 
 - 事实：VS Code / JetBrains 开源 AI 编程助手，Apache-2.0，模型无关（可接 Ollama 本地模型，代码不出本机），本地维护代码库 embedding 索引。来源：https://continue.dev/ 、https://aiwiki.ai/wiki/continue_dev 。
-- 关键现状：**2026-06 被 Cursor 收购，开源仓库转只读**，付费 Hub 停售。来源：https://continue.dev 首页公告、https://usetoolai.com/tools/continue-dev （2026-09-28 访问）。
-- 判断：参考实现价值仍在（local embedding index + context provider 架构），但不能作为长期依赖上游的库；不 fork。
+- 关键现状：官网首页明确「Continue has joined Cursor」（https://continue.dev ，2026-09-28 访问）；GitHub 仓库 continuedev/continue **未归档**（`archived=false`）、Apache-2.0，截至 2026-09-28 仍有 push（https://github.com/continuedev/continue ，API 核验 https://api.github.com/repos/continuedev/continue ）。无官方页面锚定具体收购月份，本文不断言收购发生在某月，也不断言开源仓库只读或商业 Hub 停售。
+- 判断：参考实现价值仍在（local embedding index + context provider 架构）；被 Cursor 收购后的上游治理走向待观察，不作为长期依赖上游的库；不 fork。
 
 ### 3.3 Aider repo-map（最值得借的算法）
 
@@ -148,7 +148,7 @@
 | 工具 | 许可证 | 代码上下文策略 | omem 判断 |
 | --- | --- | --- | --- |
 | Cody | Apache-2.0 客户端 / 服务端私有 | code graph 精确符号检索 | 借鉴原则，不引入 |
-| Continue | Apache-2.0（已转只读） | 本地 embedding index | 参考架构，不引入 |
+| Continue | Apache-2.0（官网确认并入 Cursor；仓库未归档、仍活跃） | 本地 embedding index | 参考架构，不引入 |
 | Aider repo-map | Apache-2.0 | Tree-sitter tags + PageRank + token 预算 | **移植算法到 RetrievalPort** |
 
 ---
@@ -270,9 +270,9 @@
 
 | 维度 | DeepWiki/SaaS | deepwiki-open | OpenDeepWiki | SCIP | Tree-sitter | CodeQL | Joern | Cody | Continue | Aider repo-map | Docusaurus/VitePress/MkDocs | GraphRAG |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 许可证 | 私有 SaaS | MIT | MIT | 规范 MIT / indexer Apache-2.0 | MIT | 公开仓库免费；**私有需商业授权** | Apache-2.0 | Apache-2.0 客户端 | Apache-2.0（只读） | Apache-2.0 | MIT / MIT / BSD-2 | MIT |
+| 许可证 | 私有 SaaS | MIT | MIT | 规范 MIT / indexer Apache-2.0 | MIT | 公开仓库免费；**私有需商业授权** | Apache-2.0 | Apache-2.0 客户端 | Apache-2.0（仓库未归档） | Apache-2.0 | MIT / MIT / BSD-2 | MIT |
 | TS 精确 | n/a | LLM 泛读 | LLM 泛读 | **编译器级** | 语法级 | 编译器级 | JS 前端 | 编译器级 | embedding | 语法级 | n/a | 文本抽取 |
-| Vue 支持 | n/a | 是（文件级） | 是 | **否** | **官方 grammar** | 否 | 否 | 否 | 是（文件级） | 是（grammar 生态） | n/a | 文本 |
+| Vue 支持 | n/a | 是（文件级） | 是 | 未确认（TS/JS indexer，未实测 SFC） | 社区 grammar（tree-sitter-grammars，MIT，非官方） | 否 | 否 | 否 | 是（文件级） | 是（grammar 生态） | n/a | 文本 |
 | per-commit 锚定 | 否 | 否 | 多分支 | **原生** | 可按文件快照 | per-commit DB | per-project | 依赖后端 | 文件 mtime | mtime 缓存 | build 时 | 全量重抽 |
 | 调用/引用图 | 无 | 无 | 无 | def/ref 强、调用弱 | 可自定义 query | 强（安全查询） | CPG 强 | 强 | 无 | def/ref 二部图 | 无 | LLM 实体关系 |
 | Agent 生成层 | 产品本身 | **产品本身** | 产品本身 | 无 | 无 | 查询 DSL | Scala DSL | IDE 插件 | IDE 插件 | 上下文组装 | 无 | **LLM 抽图** |
@@ -292,10 +292,12 @@
 4. **P4 本地 embedding RetrievalPort**：osdk `[models]` 锁 BGE-M3 快照，实现第二个 RetrievalPort 后端；在 repo-review 现有语料上与 KeywordRetrieval 做 holdout 对照；验证断网运行零外网请求。门：召回质量不低于关键词基线（否则不切），且缓存预热后离线可跑。
 5. **P5 repo-map PageRank 上下文**：把 P1 的 tags 邻接表跑 PageRank，top-K 符号注入 ACP 上下文；测「模型实际引用的符号是否在注入集合内」。门：引用精确率达标，token 预算可控。
 
+> 说明：P1–P3（Tree-sitter outline、SCIP 风格 occurrence、跨 revision fragment 续接）是当前代码索引主线，**不依赖 embedding，可独立完成**；P4 语义召回是平行的独立项，不是 P1–P3 的前置门，按语料需要再排期。
+
 风险：
 
 - scip-typescript 维护节奏不明（近一年未发新版）；若 P2 需要 TS 精确语义，要预留 fork/pin 时间。
-- Vue SFC 里 `<script setup>`/`<template>` 的符号解析质量依赖 tree-sitter-vue grammar 成熟度，P1 必须实测，不能假设。
+- Vue SFC 里 `<script setup>`/`<template>` 的符号解析依赖社区维护的 tree-sitter-grammars/tree-sitter-vue（非 tree-sitter 官方 grammar，fork 自 ikatyang/tree-sitter-vue），其成熟度与 `<script setup>` 覆盖度 P1 必须实测，不能假设。
 - LLM 生成的 wiki 散文（deepwiki-open 那类）若被误存为 evidence，会污染引用链——治理上必须落在 Proposal/candidate 层。
 - GraphRAG/社区摘要随 revision 过时，且 LLM 调用成本在个人机器上不可忽略；只在 candidate 边需求被验证后再上。
 - embedding 权重许可与体积必须在 osdk `[models]` 里显式 pin，不允许运行时隐式下载。
@@ -311,11 +313,11 @@
 - SCIP 官网：https://scip-code.org/ ；proto：https://github.com/sourcegraph/scip/blob/main/scip.proto ；发布博客：https://about.sourcegraph.com/blog/announcing-scip
 - scip-typescript npm：https://www.npmjs.com/package/@sourcegraph/scip-typescript ；发布博客：https://about.sourcegraph.com/blog/announcing-scip-typescript
 - LSIF 归档说明：https://lsif.dev/
-- Tree-sitter 官网与 parser 列表：https://tree-sitter.github.io/tree-sitter/
+- Tree-sitter 官网与 parser 列表：https://tree-sitter.github.io/tree-sitter/ ；Vue grammar 为社区 fork（非官方）：https://github.com/tree-sitter-grammars/tree-sitter-vue ；官方路径 404 核验：https://api.github.com/repos/tree-sitter/tree-sitter-vue
 - CodeQL 支持语言：https://codeql.github.com/docs/codeql-overview/supported-languages-and-frameworks/ ；CLI 授权：https://docs.github.com/en/code-security/codeql-cli/using-the-codeql-cli/about-the-codeql-cli ；TS extractor 变更：https://codeql.github.com/docs/codeql-overview/codeql-changelog/codeql-cli-2.22.2/
 - Joern 官网：https://joern.io/ ；CPG 文档：https://docs.joern.io/code-property-graph/
 - Cody 开源公告：https://about.sourcegraph.com/blog/open-sourcing-cody ；仓库快照：https://github.com/sourcegraph/cody-public-snapshot
-- Continue 官网与收购公告：https://continue.dev/
+- Continue 官网与收购公告：https://continue.dev/ ；仓库状态核验：https://github.com/continuedev/continue （API https://api.github.com/repos/continuedev/continue ：archived=false、Apache-2.0、2026-09-28 仍有 push）
 - Aider repo-map 博客：https://aider.chat/2023/10/22/repomap.html ；文档：https://aider.chat/docs/repomap.html ；实现剖析：https://deepwiki.com/Aider-AI/aider/4.1-repository-mapping
 - Docusaurus：https://docusaurus.io/ ；VitePress/MkDocs 对比：https://docsio.co/blog/vitepress 、https://okidoki.dev/documentation-generator-comparison
 - GraphRAG 仓库：https://github.com/microsoft/graphrag ；论文：https://arxiv.org/pdf/2404.16130 ；配置：https://github.com/microsoft/graphrag/blob/main/docs/config/yaml.md
