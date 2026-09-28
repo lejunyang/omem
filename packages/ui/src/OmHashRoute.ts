@@ -2,6 +2,7 @@
  * is a small discriminated view plus an optional trail stack encoded as hash
  * segments. Parsing is defensive — a corrupt hash falls back to overview. */
 import type { TrailFrame, TrailFrameKind } from "./trail";
+import { MAX_TRAIL } from "./trail";
 
 export type WikiView =
   | { name: "overview" }
@@ -40,7 +41,7 @@ export function parseHash(hash: string): WikiRoute {
       if (!kind || !id) continue;
       trail.push({ kind, id, title: id });
     }
-    trail = trail.slice(0, 8);
+    trail = trail.slice(0, MAX_TRAIL);
     raw = raw.slice(0, trailIdx);
   }
   raw = raw.split("?")[0];
@@ -73,7 +74,7 @@ export function writeHash(route: WikiRoute): string {
       (v.line ? "?line=" + v.line : "");
   if (route.trail.length) {
     const segs = route.trail
-      .slice(0, 8)
+      .slice(0, MAX_TRAIL)
       .map((f) => encodeURIComponent(f.kind) + "/" + encodeURIComponent(f.id))
       .join("/");
     return base + "/trail/" + segs;

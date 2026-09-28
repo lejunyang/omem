@@ -27,7 +27,7 @@ import {
   type CodeEdge,
   type CodeUnderstanding,
 } from "../review-api";
-import { outlineSymbols, resolveEdgeTarget } from "./modules";
+import { outlineSymbols, edgeDrillTarget, fileLabel, filePathLabel, symbolLabel, edgeReason, edgeDisabled } from "./modules";
 
 const props = defineProps<{
   file: CodeFile;
@@ -40,6 +40,7 @@ const emit = defineEmits<{
   drill: [
     target:
       | { type: "file"; fileId: string; line?: number }
+      | { type: "symbol"; fileId: string; symbolId: string; line?: number }
       | { type: "fragment"; fragmentId: string; title?: string },
   ];
 }>();
@@ -102,57 +103,54 @@ watch(symbols, (syms) => {
 function onCodeNavigate(t: { filePath?: string; symbol?: string; line?: number }) {
   if (!t.line) return;
   const sym = symbols.value.find((s) => (s.rangeStart?.line ?? -1) === t.line);
-  if (sym?.fragmentId)
-    emit("drill", { type: "fragment", fragmentId: sym.fragmentId, title: sym.name });
+  if (sym) openSymbol(sym);
 }
 
-function jumpToSymbol(s: CodeSymbol) {
+/** Always opens a symbol/range frame (fixed range), even when the symbol has no
+ * fragment — never silently no-ops on a same-file self target. */
+function openSymbol(s: CodeSymbol) {
   anchor.value = s.rangeStart?.line;
-  if (s.fragmentId)
-    emit("drill", { type: "fragment", fragmentId: s.fragmentId, title: s.name });
+  emit("drill", { type: "symbol", fileId: props.file.fileId, symbolId: s.symbolId, line: s.rangeStart?.line });
 }
 
 // ---- edge resolution ----
 interface ResolvedEdge {
   edge: CodeEdge;
+  drill: ReturnType<typeof edgeDrillTarget>;
   targetFile?: CodeFile;
-  targetLine?: number;
   targetSymbolName?: string;
   resolvable: boolean;
   direction: "out" | "in";
 }
 
-function resolveTarget(e: CodeEdge): { file?: CodeFile; line?: number; symName?: string } {
-  const t = resolveEdgeTarget(e, props.fileMap ?? new Map(), props.symbolMap ?? new Map(), props.file.fileId);
-  return { file: t.fileId ? props.fileMap?.get(t.fileId) : undefined, line: t.line, symName: t.symbolName };
-}
-
 const resolvedEdges = computed<ResolvedEdge[]>(() =>
   edges.value.map((e) => {
-    const t = resolveTarget(e);
-    const direction = e.fromFileId === props.file.fileId ? "out" : "in";
-    return {
-      edge: e,
-      targetFile: t.file,
-      targetLine: t.line,
-      targetSymbolName: t.symName,
-      resolvable: !!t.file && t.file.fileId !== props.file.fileId,
-      direction,
-    };
+    const drill = edgeDrillTarget(e, props.fileMap ?? new Map(), props.symbolMap ?? new Map(), props.file.fileId);
+    const direction = e.fromFileId === props.file.fileId || e.fromSymbolId == null ? "out" : "in";
+    let targetFile: CodeFile | undefined;
+    let targetSymbolName: string | undefined;
+    if (drill.kind === "file") targetFile = props.fileMap?.get(drill.fileId);
+    else if (drill.kind === "symbol") {
+      targetFile = props.fileMap?.get(drill.fileId);
+      targetSymbolName = props.symbolMap?.get(drill.symbolId)?.name;
+    }
+    return { edge: e, drill, targetFile, targetSymbolName, resolvable: drill.kind !== "none", direction };
   }),
 );
 
 function openEdge(re: ResolvedEdge) {
-  if (!re.resolvable || !re.targetFile) return;
-  emit("drill", { type: "file", fileId: re.targetFile.fileId, line: re.targetLine });
+  if (re.drill.kind === "file") emit("drill", { type: "file", fileId: re.drill.fileId, line: re.drill.line });
+  else if (re.drill.kind === "symbol") emit("drill", { type: "symbol", fileId: re.drill.fileId, symbolId: re.drill.symbolId, line: re.drill.line });
 }
 
 function targetLabel(re: ResolvedEdge): string {
-  if (re.targetFile) {
-    const name = re.targetSymbolName ?? re.targetFile.path.split("/").pop();
-    return re.targetLine ? `${name}:${re.targetLine}` : name!;
+  if (re.edge.displayTitle) return re.edge.displayTitle;
+  if (re.targetSymbolName) {
+    const line = re.drill.kind === "symbol" ? re.drill.line : re.drill.kind === "file" ? re.drill.line : undefined;
+    return line ? `${re.targetSymbolName}:${line}` : re.targetSymbolName;
   }
-  return re.edge.evidence || "外部包 / 未解析";
+  if (re.targetFile) return fileLabel(re.targetFile);
+  return re.edge.summary || re.edge.evidence || "未解析";
 }
 
 function statusTone(s: CodeEdge["status"]) {
@@ -165,7 +163,19 @@ function statusLabel(s: CodeEdge["status"]) {
   if (s === "confirmed") return "已解析";
   if (s === "candidate") return "候选";
   if (s === "stale") return "已过期";
+  if (s === "missing") return "仓库内未解析";
   return "外部包";
+}
+
+/** Human label for an edge kind; never exposes the raw enum to the user. */
+const EDGE_WORD: Record<string, string> = {
+  imports: "导入", calls: "调用", called_by: "被调用", route: "路由",
+  test_of: "测试", tested_by: "测试覆盖", uses_component: "组件",
+  implements: "实现", requires: "依赖", decided_by: "决策依据",
+  researched_by: "调研依据", defines: "定义",
+};
+function edgeWord(kind: string) {
+  return EDGE_WORD[kind] || "关联";
 }
 
 const NAV_KINDS = new Set(["imports", "calls", "route", "test_of", "uses_component", "implements", "requires", "decided_by", "researched_by", "tested_by"]);
@@ -189,7 +199,7 @@ function parsedUnderstanding(): ParsedUnderstanding {
 <template>
   <div class="file-frame">
     <div class="head">
-      <small class="path">{{ file.path }}</small>
+      <small class="path">{{ filePathLabel(file) }}</small>
       <div class="row">
         <OmBadge>{{ file.language }}</OmBadge>
         <OmBadge>{{ totalLines }} 行</OmBadge>
@@ -235,10 +245,10 @@ function parsedUnderstanding(): ParsedUnderstanding {
           v-for="s in outlineSymbols(symbols)"
           :key="s.symbolId"
           class="sym-row"
-          @click="jumpToSymbol(s)"
+          @click="openSymbol(s)"
         >
           <span class="sym-kind">{{ s.kind }}</span>
-          <span class="sym-name">{{ s.name }}</span>
+          <span class="sym-name">{{ symbolLabel(s) }}</span>
           <small>:{{ s.rangeStart?.line }}</small>
         </button>
       </div>
@@ -251,14 +261,16 @@ function parsedUnderstanding(): ParsedUnderstanding {
         v-for="re in navEdges.slice(0, 60)"
         :key="re.edge.edgeId"
         class="edge-row"
-        :class="{ disabled: !re.resolvable }"
-        :disabled="!re.resolvable"
+        :class="{ disabled: !re.resolvable || edgeDisabled(re.edge) }"
+        :disabled="!re.resolvable || edgeDisabled(re.edge)"
+        :title="edgeReason(re.edge) ?? undefined"
         @click="openEdge(re)"
       >
-        <OmBadge :tone="statusTone(re.edge.status)">{{ re.edge.edgeKind }}</OmBadge>
+        <OmBadge :tone="statusTone(re.edge.status)">{{ edgeWord(re.edge.edgeKind) }}</OmBadge>
         <span class="dir">{{ re.direction === "out" ? "→" : "←" }}</span>
         <span class="edge-evidence">{{ targetLabel(re) }}</span>
-        <OmBadge v-if="re.edge.status !== 'confirmed'" tone="neutral">{{ statusLabel(re.edge.status) }}</OmBadge>
+        <small v-if="!re.resolvable || edgeDisabled(re.edge)" class="why">{{ edgeReason(re.edge) ?? "不可下探" }}</small>
+        <OmBadge v-else-if="re.edge.status !== 'confirmed'" tone="neutral">{{ statusLabel(re.edge.status) }}</OmBadge>
       </button>
       <div v-if="!navEdges.length" class="muted">无可下探边。</div>
 
@@ -292,4 +304,5 @@ h4 { margin: 12px 0 4px; }
 .edge-row.static { cursor: default; }
 .dir { color: var(--om-muted); font-size: 12px; }
 .edge-evidence { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; flex: 1; }
+.why { color: var(--om-muted); font-size: 11px; font-family: inherit; }
 </style>

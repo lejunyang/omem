@@ -1,7 +1,8 @@
-﻿/** Pure helpers for grouping code files into architecture modules and
+/** Pure helpers for grouping code files into architecture modules and
  * aggregating parser edges into a deterministic module dependency graph.
  * Kept free of Vue / DOM so it is unit-testable. */
 import type { CodeEdge, CodeFile, CodeSymbol } from "../review-api";
+import type { CodeUnderstandingListItem } from "../review-api";
 
 /** Map a repo-relative path to a stable module bucket id. The required modules
  * (assistant / memory / retrieval / lark / web) all resolve here. */
@@ -155,4 +156,108 @@ export function resolveEdgeTarget(
     return { fileId: f?.fileId, line: s.rangeStart?.line ?? undefined, symbolName: s.name, resolvable: !!f && f.fileId !== selfFileId };
   }
   return { resolvable: false };
+}
+
+/** Pick the curated module-architect understanding that best describes a module
+ * bucket. The curated `targetId` is a repo directory (e.g.
+ * `apps/server/src/memory`); we match it by longest prefix against the module's
+ * files, preferring the current (non-stale, non-rejected) row. Pure. */
+export function matchModuleUnderstanding(
+  mod: { files: CodeFile[] },
+  items: CodeUnderstandingListItem[],
+): CodeUnderstandingListItem | null {
+  const candidates = items.filter(
+    (it) =>
+      it.targetType === "module" &&
+      it.source === "curated-seed" &&
+      !it.stale &&
+      (it.status === "seed" || it.status === "generated" || it.status === "verified"),
+  );
+  if (!candidates.length) return null;
+  // Representative path = shortest file path in the module (the "root" file).
+  const rep = mod.files
+    .map((f) => f.path)
+    .sort((a, b) => a.split("/").length - b.split("/").length)[0];
+  if (!rep) return null;
+  let best: CodeUnderstandingListItem | null = null;
+  let bestLen = -1;
+  for (const it of candidates) {
+    const prefix = it.targetId.replace(/\/$/, "");
+    if (rep === prefix || rep.startsWith(prefix + "/")) {
+      if (prefix.length > bestLen) {
+        best = it;
+        bestLen = prefix.length;
+      }
+    }
+  }
+  return best;
+}
+
+/** Resolve an edge to a drill target. Same-file symbol edges DO drill (to a
+ * symbol/range frame) rather than being swallowed; only truly external /
+ * unresolved targets are non-navigable. */
+export type EdgeDrill =
+  | { kind: "file"; fileId: string; line?: number }
+  | { kind: "symbol"; fileId: string; symbolId: string; line: number }
+  | { kind: "none" };
+
+export function edgeDrillTarget(
+  edge: CodeEdge,
+  fileMap: Map<string, CodeFile>,
+  symbolMap: Map<string, CodeSymbol>,
+  selfFileId: string,
+): EdgeDrill {
+  if (edge.toSymbolId && symbolMap.has(edge.toSymbolId)) {
+    const s = symbolMap.get(edge.toSymbolId)!;
+    const f = fileMap.get(s.fileId);
+    const line = s.rangeStart?.line ?? 1;
+    if (!f) return { kind: "none" };
+    return f.fileId === selfFileId
+      ? { kind: "symbol", fileId: f.fileId, symbolId: s.symbolId, line }
+      : { kind: "file", fileId: f.fileId, line };
+  }
+  if (edge.toFileId && fileMap.has(edge.toFileId)) {
+    const f = fileMap.get(edge.toFileId)!;
+    if (f.fileId === selfFileId) return { kind: "none" };
+    return { kind: "file", fileId: f.fileId };
+  }
+  return { kind: "none" };
+}
+
+/** Find a code file by its repo-relative path (used to turn a fragment
+ * relation's filePath back into a code-file trail frame). */
+export function fileByPath(fileMap: Map<string, CodeFile>, path: string): CodeFile | undefined {
+  for (const f of fileMap.values()) if (f.path === path) return f;
+  return undefined;
+}
+
+// ---- Human label resolution (DTO-first; never leaks an internal id) --------
+// Prefer the server DTO display fields; fall back to a readable raw field
+// (basename / name / path). If nothing readable exists, say "未命名{type}" —
+// the internal id must NEVER appear as a DOM label.
+
+export function fileLabel(f: Partial<Pick<CodeFile, "displayTitle" | "path">>): string {
+  return f.displayTitle || (f.path && f.path.split("/").pop()) || "未命名文件";
+}
+
+export function filePathLabel(f: Partial<Pick<CodeFile, "displayPath" | "path">>): string {
+  return f.displayPath || f.path || "";
+}
+
+export function symbolLabel(s: Partial<Pick<CodeSymbol, "displayTitle" | "name">>): string {
+  return s.displayTitle || s.name || "未命名符号";
+}
+
+export function edgeReason(e: Partial<Pick<CodeEdge, "actionable" | "reason" | "status">>): string | null {
+  if (e.actionable === false) return e.reason || "不可解析";
+  if (e.actionable == null) {
+    if (e.status === "missing") return "仓库内未解析";
+    if (e.status === "stale") return "已过期";
+  }
+  return null;
+}
+
+export function edgeDisabled(e: Partial<Pick<CodeEdge, "actionable" | "status">>): boolean {
+  if (e.actionable != null) return !e.actionable;
+  return e.status === "missing";
 }

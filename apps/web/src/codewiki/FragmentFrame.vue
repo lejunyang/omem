@@ -10,11 +10,17 @@ import {
   reviewFragmentRelations,
   type ReviewFragmentDetail,
   type ReviewRelation,
+  type CodeFile,
 } from "../review-api";
+import { fileByPath } from "./modules";
 
-const props = defineProps<{ fragmentId: string }>();
+const props = defineProps<{ fragmentId: string; fileMap?: Map<string, CodeFile> }>();
 const emit = defineEmits<{
-  drill: [target: { type: "file"; fileId: string; line?: number } | { type: "fragment"; fragmentId: string }];
+  drill: [
+    target:
+      | { type: "file"; fileId: string; line?: number }
+      | { type: "fragment"; fragmentId: string; title?: string },
+  ];
 }>();
 
 const detail = ref<ReviewFragmentDetail | null>(null);
@@ -60,9 +66,27 @@ function tone(r: ReviewRelation) {
   return "neutral" as const;
 }
 
+/** Human label for a relation type; never shows the raw enum. */
+const REL_WORD: Record<string, string> = {
+  implements: "实现", implemented_by: "被实现", requires: "依赖", required_by: "被依赖",
+  decided_by: "决策依据", decides: "决策", researched_by: "调研依据", researches: "调研",
+  tested_by: "测试覆盖", tested_for: "覆盖测试", candidate_for: "候选",
+};
+function relWord(t: string) {
+  return REL_WORD[t] || "关联";
+}
+
 function openRelation(r: ReviewRelation) {
-  if (!r.other?.fragmentId) return;
-  emit("drill", { type: "fragment", fragmentId: r.other.fragmentId });
+  // If the other side is a code file (implemented_by points at a runtime/test
+  // file), drill into the code file frame — not just another doc fragment.
+  if (r.other?.filePath && props.fileMap) {
+    const cf = fileByPath(props.fileMap, r.other.filePath);
+    if (cf) {
+      emit("drill", { type: "file", fileId: cf.fileId });
+      return;
+    }
+  }
+  if (r.other?.fragmentId) emit("drill", { type: "fragment", fragmentId: r.other.fragmentId });
 }
 </script>
 
@@ -78,8 +102,8 @@ function openRelation(r: ReviewRelation) {
       <OmStatusLine kind="raw" sourceNote="仓库文档原文 · 不可变" />
       <OmMarkdown :source="detail.text" />
 
-      <h4>反向到代码 <small>{{ reverseRelations().length }}</small></h4>
-      <p class="muted small">这条决策/规则影响了哪些代码实现（implemented_by 等反演边）。</p>
+      <h4>这条决策影响了哪些代码 <small>{{ reverseRelations().length }}</small></h4>
+      <p class="muted small">反向追踪：哪些实现/测试由这条规则驱动。</p>
       <OmEmpty v-if="!reverseRelations().length" title="尚未登记到任何代码"
         description="可在 docs/repo-review/associations.json 补充实现边。" />
       <OmPanel
@@ -89,14 +113,14 @@ function openRelation(r: ReviewRelation) {
         @click="openRelation(r)"
       >
         <div class="row" style="margin-top:0">
-          <OmBadge :tone="tone(r)">{{ r.relationType }}</OmBadge>
+          <OmBadge :tone="tone(r)">{{ relWord(r.relationType) }}</OmBadge>
           <small v-if="r.other?.filePath" class="path">{{ r.other.filePath }}</small>
         </div>
         <p v-if="r.other?.text" class="excerpt">{{ r.other.text.slice(0, 200) }}</p>
         <small v-if="r.evidence" class="muted">{{ r.evidence }}</small>
       </OmPanel>
 
-      <h4>正向关联 <small>{{ forwardRelations().length }}</small></h4>
+      <h4>继续指向 <small>{{ forwardRelations().length }}</small></h4>
       <OmPanel
         v-for="r in forwardRelations()"
         :key="r.id"
@@ -104,7 +128,7 @@ function openRelation(r: ReviewRelation) {
         @click="openRelation(r)"
       >
         <div class="row" style="margin-top:0">
-          <OmBadge :tone="tone(r)">{{ r.relationType }}</OmBadge>
+          <OmBadge :tone="tone(r)">{{ relWord(r.relationType) }}</OmBadge>
         </div>
         <p v-if="r.other?.text" class="excerpt">{{ r.other.text.slice(0, 160) }}</p>
         <small v-if="r.evidence" class="muted">{{ r.evidence }}</small>
