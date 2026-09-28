@@ -501,3 +501,20 @@ are not evidence…label live checks separately"）。
 - 不清空/迁移/重写既有 `.repo-review` 数据；
 - 不接 Lark/assistant 生产通路（Stage 5 后续）；
 - 不把代码数据进个人工作区 `.omem/`。
+
+## P0: typed projection, not a second source of truth
+
+Code side tables (`code_*`) are a **rebuildable typed projection** over the
+authoritative review Capture -> Source/Revision/Fragment -> Relation/Retrieval
+chain. repo-review remains the isolation config/view; code rows own no file
+bodies except the immutable per-snapshot `content_text` pin used by `/source`.
+
+- User-visible DTOs (`apps/server/src/code/dto.ts`) always carry
+  displayTitle/displayPath/symbolName/summary/type/version/shortCommit/
+  citationLabel/actionable/deepLink. Internal ids may stay in `*Id` key fields
+  but are never rendered as labels.
+- `missing`/`stale` nodes are `actionable=false` with a human `reason`.
+- Every `deepLink` resolves to an existing `/api/review/...` route.
+- `/source` reads only the snapshot-pinned `content_text`; an unbound file is
+  404 unavailable, never the live working tree.
+- No new permission/version semantics; side tables are additive and rebuildable.

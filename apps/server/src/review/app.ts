@@ -34,6 +34,7 @@ import {
 import { loadAssociations } from "./associations.js";
 import { CodeKnowledgeService } from "../code/sync.js";
 import { currentSnapshotId, snapshotFileBinding } from "../code/store.js";
+import { fileDTO, symbolDTO, edgeDTO, snapshotMeta } from "../code/dto.js";
 import {
   listUnderstandings,
   understandingDetail,
@@ -409,14 +410,17 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
 
   app.get(CP + "/repositories", async () => code.listRepositories());
 
-  app.get(CP + "/snapshots", async () => code.listSnapshots());
+  app.get(CP + "/snapshots", async () => code.listSnapshots().map(snapshotMeta));
 
   app.get<{ Params: { id: string } }>(CP + "/snapshots/:id", async (req, reply) => {
     const snap = code.listSnapshots().find((s) => s.snapshotId === req.params.id);
     return snap ?? reply.code(404).send({ error: "Snapshot not found" });
   });
 
-  app.get(CP + "/current-snapshot", async () => code.currentSnapshot());
+  app.get(CP + "/current-snapshot", async () => {
+    const c = code.currentSnapshot();
+    return c ? snapshotMeta(c) : null;
+  });
 
   app.get(CP + "/modules", async () => {
     // Group files by their first two path segments (e.g. apps/server, packages/contracts).
@@ -435,10 +439,12 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   app.get<{ Querystring: { language?: string; includeRemoved?: string } }>(
     CP + "/files",
     async (req) =>
-      code.listFiles({
-        language: req.query.language,
-        includeRemoved: req.query.includeRemoved === "true",
-      }),
+      code
+        .listFiles({
+          language: req.query.language,
+          includeRemoved: req.query.includeRemoved === "true",
+        })
+        .map((f) => fileDTO(f, code.currentSnapshot())),
   );
 
   app.get<{ Params: { id: string } }>(CP + "/files/:id", async (req, reply) => {
@@ -446,9 +452,10 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     return f ?? reply.code(404).send({ error: "File not found" });
   });
 
-  app.get<{ Params: { id: string } }>(CP + "/files/:id/symbols", async (req) =>
-    code.symbolsOfFile(req.params.id),
-  );
+  app.get<{ Params: { id: string } }>(CP + "/files/:id/symbols", async (req) => {
+    const file = code.fileById(req.params.id);
+    return code.symbolsOfFile(req.params.id).map((sym) => symbolDTO(sym, file));
+  });
 
   // Source range: return the FIXED text the given snapshot pinned for this file
   // (default: the current head snapshot). We read the review revision bound when
@@ -526,11 +533,25 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
 
   app.get<{ Querystring: { snapshotId?: string; includeStale?: string } }>(
     CP + "/graph",
-    async (req) =>
-      code.graph({
+    async (req) => {
+      const g = code.graph({
         snapshotId: req.query.snapshotId,
         includeStale: req.query.includeStale === "true",
-      }),
+      });
+      const files = new Map(g.files.map((f) => [f.fileId, f]));
+      const labelForSym = (sid?: string | null) =>
+        sid ? g.symbols.find((x) => x.symbolId === sid)?.name ?? null : null;
+      return {
+        files: g.files.map((f) => fileDTO(f, code.currentSnapshot())),
+        symbols: g.symbols.map((sym) => symbolDTO(sym, files.get(sym.fileId))),
+        edges: g.edges.map((e) =>
+          edgeDTO(e, {
+            fromLabel: labelForSym(e.fromSymbolId) ?? files.get(e.fromFileId ?? "")?.path?.split("/").pop() ?? null,
+            toLabel: labelForSym(e.toSymbolId) ?? files.get(e.toFileId ?? "")?.path?.split("/").pop() ?? null,
+          }),
+        ),
+      };
+    },
   );
 
   app.get<{ Querystring: { type?: string; id?: string } }>(
