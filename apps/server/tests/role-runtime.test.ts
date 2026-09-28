@@ -37,6 +37,10 @@ afterEach(() => {
 });
 
 const fixtureAgent = resolve("apps/server/tests/fixtures/role-acp-agent.mjs");
+// 10s bounded budget for local fixture tests under parallel CPU contention.
+// The fixture itself responds in <100ms; the headroom absorbs Windows process
+// spawn + IPC scheduling when vitest runs many workers at once. A-R05 overrides
+// to 1000ms to verify the timeout path still fires on a hung agent.
 const profile = (patch: Record<string, unknown> = {}) =>
   profileSchema.parse({
     id: "traex",
@@ -44,7 +48,7 @@ const profile = (patch: Record<string, unknown> = {}) =>
     transport: "acp",
     command: process.execPath,
     args: [fixtureAgent],
-    timeoutMs: 3000,
+    timeoutMs: 10000,
     ...patch,
   });
 

@@ -324,6 +324,11 @@ export async function acp(
       ]);
       if (result.stopReason !== "end_turn")
         throw Error(`Agent stopped: ${result.stopReason}`);
+      // The agent's prompt has completed. Clear the global timeout now so
+      // session teardown (closeSession) doesn't race it under parallel load —
+      // otherwise a slow prompt leaves no budget for the 1s closeSession race,
+      // turning a clean success into a spurious "Agent timed out".
+      clearTimeout(timeout);
     }
     if (initialized.agentCapabilities?.sessionCapabilities?.close)
       await Promise.race([
