@@ -156,11 +156,16 @@ function openFile(f: CodeFile, line?: number) {
 }
 
 // ---- trail ----
+const trailTrigger = ref<HTMLElement | null>(null);
 function pushTrail(frame: Omit<TrailFrame, "id"> & { id: string }) {
   const idx = trail.value.findIndex((f) => f.kind === frame.kind && f.id === frame.id);
   if (idx >= 0) {
     loopAt.value = idx;
     return;
+  }
+  // Capture the real trigger on the FIRST open; never overwrite on deeper pushes.
+  if (!trailOpen.value && document.activeElement instanceof HTMLElement) {
+    trailTrigger.value = document.activeElement;
   }
   trail.value = [...trail.value, frame as TrailFrame];
   trailCurrent.value = trail.value.length - 1;
@@ -400,6 +405,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
       :frames="trail"
       :current="trailCurrent"
       :loop-at="loopAt"
+      :return-focus-to="trailTrigger"
       @close="closeTrail"
       @back="backTrail"
       @jump="jumpTrail"

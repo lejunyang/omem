@@ -220,6 +220,27 @@ try {
     expect(found).toBeNull();
   });
 
+  // --- Focus return: close-all restores focus to the trigger button ----------
+  await check("focus: close-all returns focus to the module card trigger", async () => {
+    await page.goto(BASE + "/#/overview");
+    await sleep(2500);
+    await page.keyboard.press("Escape"); await sleep(300); await page.keyboard.press("Escape"); await sleep(300);
+    const card = page.locator("button.mod-card").filter({ hasText: "assistant" }).first();
+    await card.evaluate((el:any)=>el.focus());
+    await card.click();
+    await sleep(2500);
+    // Card switches to module page; open a file row to open the trail drawer.
+    await page.locator("button.file-row").filter({ hasText: "runtime.ts" }).first().click();
+    await sleep(2000);
+    await expect(page.locator(".om-trail")).toBeVisible({ timeout: 8000 });
+    await sleep(1500);
+    expect(await page.locator(".om-trail .crumb").count()).toBeGreaterThanOrEqual(1);
+    await page.locator(".om-trail button[aria-label='关闭全部']").click();
+    await sleep(800);
+    const active = await page.evaluate(() => (document.activeElement as HTMLElement)?.textContent?.trim() || "");
+    expect(active).toContain("assistant");
+  });
+
   // --- model-unavailable: honest degraded note, graph still browsable -------
   await check("model-unavailable: degraded state, raw graph still browsable", async () => {
     await page.goto(BASE + "/#/overview");
