@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /** Controlled centered modal that hosts an unbounded drill-down stack (trail).
- * Single stacked container, matching the prototype EvidenceReader contract:
- * backdrop, "证据路径 · 第 N 层" top bar, horizontal breadcrumb, parent peek,
- * footer back/close, focus and scroll restoration. Business content is slotted.
+ * Uses a native <dialog showModal> so the browser provides a real focus trap
+ * (Tab cannot escape to the background) and Esc/cancel semantics, matching the
+ * OmDialog / EvidenceReader contract. Backdrop styling is via ::backdrop.
  *
  * Loop detection: the parent calls `noticeLoop(existingIndex)` when it tries
  * to push a frame already in the stack; we show a warning with jump/stay. */
@@ -25,7 +25,7 @@ const emit = defineEmits<{
   dismissLoop: [];
 }>();
 
-const panel = ref<HTMLElement>();
+const dialog = ref<HTMLDialogElement>();
 const scrollEl = ref<HTMLElement>();
 const titleEl = ref<HTMLElement>();
 let previousFocus: HTMLElement | null = null;
@@ -34,12 +34,14 @@ watch(
   () => props.open,
   async (open) => {
     await nextTick();
-    if (open) {
+    if (open && !dialog.value?.open) {
       previousFocus = document.activeElement as HTMLElement;
+      dialog.value?.showModal();
       await nextTick();
       titleEl.value?.focus({ preventScroll: true });
-    } else if (previousFocus?.isConnected) {
-      previousFocus.focus();
+    } else if (!open && dialog.value?.open) {
+      dialog.value.close();
+      if (previousFocus?.isConnected) previousFocus.focus();
     }
   },
 );
@@ -56,12 +58,11 @@ watch(
   { immediate: true },
 );
 
-function onKeydown(ev: KeyboardEvent) {
-  if (ev.key === "Escape") {
-    ev.stopPropagation();
-    if (props.frames.length > 1) emit("back");
-    else emit("close");
-  }
+function onCancel(ev: Event) {
+  // Native Esc fires cancel. Pop a layer if we can, else close.
+  ev.preventDefault();
+  if (props.frames.length > 1) emit("back");
+  else emit("close");
 }
 
 function onScroll() {
@@ -69,11 +70,8 @@ function onScroll() {
   if (f && scrollEl.value) f.scroll = scrollEl.value.scrollTop;
 }
 
-function backdropClose(ev: MouseEvent) {
-  if (ev.target === ev.currentTarget) emit("close");
-}
-
 onBeforeUnmount(() => {
+  if (dialog.value?.open) dialog.value.close();
   if (previousFocus?.isConnected) previousFocus.focus();
 });
 
@@ -82,92 +80,95 @@ const parentTitle = () =>
 </script>
 
 <template>
-  <div v-if="open" class="om-trail-backdrop" @mousedown="backdropClose" @keydown="onKeydown">
-    <div class="om-trail" role="dialog" aria-modal="true" aria-label="证据路径">
-      <div ref="panel" class="om-trail-panel">
-        <header class="trail-top">
-          <div class="trail-top-left">
-            <OmIcon name="layers" />
-            <b>证据路径</b>
-            <span class="layer-chip">第 {{ frames.length }} 层</span>
-          </div>
-          <OmButton variant="ghost" aria-label="关闭全部" @click="emit('close')">
-            <OmIcon name="close" />
-          </OmButton>
-        </header>
-
-        <nav class="trail-breadcrumb" aria-label="证据路径">
-          <template v-for="(f, i) in frames" :key="i">
-            <button
-              class="crumb"
-              :class="{ active: i === current }"
-              :aria-current="i === current ? 'step' : undefined"
-              :disabled="i > current"
-              :title="f.title"
-              @click="i < current && emit('jump', i)"
-            >{{ i + 1 }} {{ f.title }}</button>
-            <span v-if="i < frames.length - 1" class="sep">›</span>
-          </template>
-        </nav>
-
-        <button
-          v-if="current > 0"
-          class="parent-peek"
-          @click="emit('back')"
-        >
-          <OmIcon name="back" /> 来自第 {{ current }} 层 {{ parentTitle() }}
-        </button>
-
-        <div v-if="loopAt !== null && loopAt !== undefined" class="loop-notice" role="alert">
-          <p>这份材料已在路径第 {{ loopAt + 1 }} 层。</p>
-          <div class="row">
-            <OmButton variant="primary" @click="emit('jump', loopAt); emit('dismissLoop')">返回已打开的那一层</OmButton>
-            <OmButton variant="ghost" @click="emit('dismissLoop')">留在当前层</OmButton>
-          </div>
+  <dialog
+    ref="dialog"
+    class="om-trail"
+    aria-label="证据路径"
+    @cancel="onCancel"
+    @click="(e) => { if (e.target === dialog) emit('close'); }"
+  >
+    <div class="om-trail-panel">
+      <header class="trail-top">
+        <div class="trail-top-left">
+          <OmIcon name="layers" />
+          <b>证据路径</b>
+          <span class="layer-chip">第 {{ frames.length }} 层</span>
         </div>
+        <OmButton variant="ghost" aria-label="关闭全部" @click="emit('close')">
+          <OmIcon name="close" />
+        </OmButton>
+      </header>
 
-        <h2 ref="titleEl" class="frame-title" tabindex="-1">{{ frames[current]?.title }}</h2>
+      <nav class="trail-breadcrumb" aria-label="证据路径">
+        <template v-for="(f, i) in frames" :key="i">
+          <button
+            class="crumb"
+            :class="{ active: i === current }"
+            :aria-current="i === current ? 'step' : undefined"
+            :disabled="i > current"
+            :title="f.title"
+            @click="i < current && emit('jump', i)"
+          >{{ i + 1 }} {{ f.title }}</button>
+          <span v-if="i < frames.length - 1" class="sep">›</span>
+        </template>
+      </nav>
 
-        <div ref="scrollEl" class="trail-scroll" @scroll="onScroll">
-          <slot />
+      <button
+        v-if="current > 0"
+        class="parent-peek"
+        @click="emit('back')"
+      >
+        <OmIcon name="back" /> 来自第 {{ current }} 层 {{ parentTitle() }}
+      </button>
+
+      <div v-if="loopAt !== null && loopAt !== undefined" class="loop-notice" role="alert">
+        <p>这份材料已在路径第 {{ loopAt + 1 }} 层。</p>
+        <div class="row">
+          <OmButton variant="primary" @click="emit('jump', loopAt); emit('dismissLoop')">返回已打开的那一层</OmButton>
+          <OmButton variant="ghost" @click="emit('dismissLoop')">留在当前层</OmButton>
         </div>
-
-        <footer class="trail-foot">
-          <OmButton v-if="frames.length > 1" variant="ghost" @click="emit('back')">
-            <OmIcon name="back" /> 返回上一层
-          </OmButton>
-          <OmButton v-else variant="ghost" @click="emit('close')">
-            返回阅读
-          </OmButton>
-        </footer>
       </div>
+
+      <h2 ref="titleEl" class="frame-title" tabindex="-1">{{ frames[current]?.title }}</h2>
+
+      <div ref="scrollEl" class="trail-scroll" @scroll="onScroll">
+        <slot />
+      </div>
+
+      <footer class="trail-foot">
+        <OmButton v-if="frames.length > 1" variant="ghost" @click="emit('back')">
+          <OmIcon name="back" /> 返回上一层
+        </OmButton>
+        <OmButton v-else variant="ghost" @click="emit('close')">
+          返回阅读
+        </OmButton>
+      </footer>
     </div>
-  </div>
+  </dialog>
 </template>
 
 <style scoped>
-.om-trail-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  background: rgba(23, 23, 23, 0.42);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 40px;
-}
-.om-trail-panel {
-  width: min(860px, 100%);
-  height: min(840px, 100%);
-  background: var(--om-panel, #fff);
+.om-trail {
+  padding: 0;
   border: 1px solid var(--om-line, #e6e6e6);
   border-radius: 12px;
+  width: min(860px, 100%);
+  height: min(840px, calc(100dvh - 80px));
+  max-width: none;
+  max-height: none;
+  background: var(--om-panel, #fff);
+  color: var(--om-ink, #202020);
   box-shadow: 0 24px 80px #0005;
+}
+.om-trail::backdrop {
+  background: rgba(23, 23, 23, 0.42);
+  backdrop-filter: blur(2px);
+}
+.om-trail-panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
   overflow: hidden;
-  outline: none;
 }
 .trail-top {
   display: flex;
@@ -194,6 +195,7 @@ const parentTitle = () =>
   border-bottom: 1px solid var(--om-line, #e6e6e6);
   font-size: 12px;
   white-space: nowrap;
+  margin: 0;
 }
 .crumb {
   border: 0;
@@ -251,7 +253,6 @@ const parentTitle = () =>
   align-items: center;
 }
 @media (max-width: 700px) {
-  .om-trail-backdrop { padding: 0; }
-  .om-trail-panel { width: 100vw; height: 100dvh; border-radius: 0; border: 0; }
+  .om-trail { width: 100vw; height: 100dvh; border-radius: 0; border: 0; }
 }
 </style>

@@ -168,9 +168,16 @@ function pushTrail(frame: Omit<TrailFrame, "id"> & { id: string }) {
   syncHash();
 }
 function backTrail() {
-  if (trailCurrent.value > 0) trailCurrent.value--;
-  else if (trail.value.length) trail.value = [];
-  if (!trail.value.length) trailOpen.value = false;
+  // Actually pop the current frame so breadcrumb/chip count shrinks; not just
+  // move the pointer. Last frame closes the trail.
+  if (trail.value.length > 1) {
+    trail.value = trail.value.slice(0, -1);
+    trailCurrent.value = trail.value.length - 1;
+  } else {
+    trail.value = [];
+    trailCurrent.value = 0;
+    trailOpen.value = false;
+  }
   syncHash();
 }
 function jumpTrail(i: number) {
@@ -308,7 +315,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
       </OmEmpty>
       <template v-else>
         <div class="snap-row">
-          <OmBadge>commit {{ snapshot.commit?.slice(0, 8) ?? "—" }}</OmBadge>
+          <OmBadge>{{ snapshot.displayTitle ?? ("@" + (snapshot.shortCommit ?? snapshot.commit?.slice(0, 7) ?? "no-commit")) }}</OmBadge>
           <OmBadge v-if="snapshot.dirty" tone="warning">工作树未提交</OmBadge>
           <OmBadge v-else tone="success">干净</OmBadge>
           <OmBadge>{{ snapshot.parserVersion }}</OmBadge>
@@ -320,10 +327,15 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
         <h2>模块</h2>
         <p class="muted">点击模块查看文件与符号；「依赖图」展示模块间 import 关系。</p>
         <div class="module-grid">
-          <OmPanel v-for="m in modules" :key="m.id" class="mod-card" @click="openModule(m.id)">
+          <button
+            v-for="m in modules"
+            :key="m.id"
+            class="mod-card"
+            @click="openModule(m.id)"
+          >
             <b>{{ moduleLabel(m.id) }}</b>
             <small>{{ m.fileCount }} 文件 · {{ m.symbolCount }} 符号</small>
-          </OmPanel>
+          </button>
         </div>
         <div class="row">
           <OmButton variant="primary" @click="view = 'graph'; syncHash()">打开模块依赖图</OmButton>
@@ -435,7 +447,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
 .eyebrow { font-size: 12px; color: var(--om-muted); letter-spacing: .08em; }
 .snap-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin: 12px 0; }
 .module-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin: 16px 0; }
-.mod-card { cursor:pointer; display:flex; flex-direction:column; gap:4px; }
+.mod-card { cursor:pointer; display:flex; flex-direction:column; gap:4px; border:1px solid var(--om-line); border-radius:8px; background:var(--om-panel); padding:10px 12px; text-align:left; font:inherit; color:inherit; }
 .mod-card:hover { border-color: var(--om-ink); }
 .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin: 10px 0; }
 .muted { color: var(--om-secondary); }

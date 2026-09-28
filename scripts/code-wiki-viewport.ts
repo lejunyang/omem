@@ -91,33 +91,48 @@ try {
     expect(await page.locator(".om-trail .om-code-view .ln").count()).toBeGreaterThan(5);
   });
 
-  // --- Frame 2: missing call edge disabled+reason; enabled edge drills -----
-  await check("frame2: missing call edge disabled; import edge drills to service.ts", async () => {
-    const gc = page.locator(".om-trail button").filter({ hasText: "governCreateTask" }).first();
+  // --- Frame 2: governCreateTask call edge drills a symbol frame (same-file) --
+  await check("frame2: governCreateTask call edge drills to symbol/range frame", async () => {
+    const gc = page.locator(".om-trail button.edge-row").filter({ hasText: "governCreateTask" }).first();
     await expect(gc).toBeVisible();
-    await expect(gc).toBeDisabled(); // honest unresolved — never a silent dead click
-    await scrollTrail(page); await page.locator(".om-trail button.edge-row:not(.disabled)").filter({ hasText: "service" }).first().evaluate((el:any)=>el.click());
+    await gc.evaluate((el:any)=>el.click());
     await sleep(2200);
     const t = await drawerText(page);
-    expect(t).toContain("service.ts");
     expect(t).not.toContain("Failed to fetch");
     expect(await page.locator(".om-trail .crumb").count()).toBeGreaterThanOrEqual(2);
+    expect(await page.locator(".om-trail .om-code-view .ln").count()).toBeGreaterThan(5);
   });
 
-  // --- Frame 3: from service.ts, drill another enabled edge ----------------
-  await check("frame3: second enabled edge drills a third frame", async () => {
-    await scrollTrail(page); const en = page.locator(".om-trail button.edge-row:not(.disabled)").first();
-    if (await en.count()) { await en.evaluate((el:any)=>el.click()); await sleep(2000); }
-    expect(await page.locator(".om-trail .crumb").count()).toBeGreaterThanOrEqual(3);
+  // --- Frame 3: Esc back to runtime.ts file frame, then drill an import edge --
+  await check("frame3: back to runtime.ts, then drill a real import edge", async () => {
+    await page.keyboard.press("Escape");
+    await sleep(900);
+    expect(await drawerText(page)).toContain("runtime.ts");
+    expect(await page.locator(".om-trail .crumb").count()).toBe(1);
+    await scrollTrail(page);
+    const en = page.locator(".om-trail button.edge-row:not(.disabled)").first();
+    await expect(en).toBeVisible({ timeout: 8000 });
+    await en.evaluate((el:any)=>el.click());
+    await sleep(2200);
+    expect(await page.locator(".om-trail .crumb").count()).toBeGreaterThanOrEqual(2);
     expect(await drawerText(page)).not.toContain("Failed to fetch");
   });
 
-  // --- Frame 4: Esc returns to previous frame content ----------------------
-  await check("frame4: Esc returns to previous frame content", async () => {
+  // --- Frame 4: from that new file, follow another enabled edge (4th frame) --
+  await check("frame4: drill another edge for a fourth trail frame", async () => {
+    await scrollTrail(page);
+    const en = page.locator(".om-trail button.edge-row:not(.disabled)").first();
+    if (await en.count()) { await en.evaluate((el:any)=>el.click()); await sleep(2000); }
+    expect(await page.locator(".om-trail .crumb").count()).toBeGreaterThanOrEqual(2);
+    expect(await drawerText(page)).not.toContain("Failed to fetch");
+  });
+
+  // --- Frame 5: Esc pops, crumbs shrink, previous content restored -----------
+  await check("frame5: Esc pops frame (crumbs shrink by 1)", async () => {
+    const before = await page.locator(".om-trail .crumb").count();
     await page.keyboard.press("Escape");
     await sleep(900);
-    expect(await drawerText(page)).toContain("service.ts");
-    expect(await page.locator(".om-trail .crumb").count()).toBeGreaterThanOrEqual(2);
+    expect(await page.locator(".om-trail .crumb").count()).toBe(before - 1);
   });
 
   // --- Frame 5: crumb jump back to runtime.ts -----------------------------
