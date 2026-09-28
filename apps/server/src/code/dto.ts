@@ -1,5 +1,5 @@
-/** User-facing DTO projection. The code_* tables are a rebuildable typed view over
- * the authoritative Capture→Source/Revision/Fragment chain (review store). These
+﻿/** User-facing DTO projection. The code_* tables are a rebuildable typed view over
+ * the authoritative Capture → Source/Revision/Fragment chain (review store). These
  * mappers turn raw rows into labels humans can read: no ID is ever shown as a
  * label; missing/stale nodes are flagged actionable=false with a reason; every
  * deepLink resolves to an existing /api/review route. */
@@ -97,10 +97,10 @@ export function edgeDTO(e: CodeEdge, endpoints: { fromLabel?: string | null; toL
   const action = e.status === "confirmed" || e.status === "candidate";
   return {
     edgeId: e.edgeId,
-    type: `edge:${e.edge_kind}`,
-    displayTitle: `${endpoints.fromLabel ?? "?"} ${EDGE_LABEL[e.edge_kind] ?? e.edge_kind} ${endpoints.toLabel ?? "?"}`,
+    type: `edge:${e.edgeKind}`,
+    displayTitle: `${endpoints.fromLabel ?? "?"} ${EDGE_LABEL[e.edgeKind] ?? e.edgeKind} ${endpoints.toLabel ?? "?"}`,
     displayPath: null,
-    summary: e.evidence ?? e.edge_kind,
+    summary: e.evidence ?? e.edgeKind,
     status: e.status,
     actionable: action,
     reason: edgeReason(e.status),
