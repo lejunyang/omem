@@ -1,14 +1,28 @@
 # 实现状态
 
-> 本页为唯一当前状态来源。文档最后更新：2026-09-27（第三轮代码修复全部完成并提交后）。代码基线：`16d3aa6` + assistant-v3 修复 + v14 治理增量 + 第三轮 P0 修复；**具体能力以仓库代码为准**。
+> 本页为唯一当前状态来源。文档最后更新：2026-09-29（通用 Code Knowledge / Code Wiki 纵向切片完成后）。代码基线：HEAD `5e94f8c`（本地 22 个提交未 push）；**具体能力以仓库代码为准**。
 
 ## 当前状态
 
-- **代码基线**：`16d3aa6` 之后叠加 assistant-v3（V3-01～V3-06）六组修复，并新增 v14 治理增量（memory_equivalences 关系表、decisions.attention_case/dedupe_key、AcpAssistantModel 生产接线）。
-- **Schema 版本**：SQLite `SUPPORTED_SCHEMA_VERSION = 14`（`apps/server/src/storage/migrations.ts`；v14 新增 `memory_equivalences` 表 + `decisions.attention_case`/`dedupe_key` 列与去重索引）。
-- **测试**：实测 2026-09-28（`osdk run check`，exit 0，含 typecheck + 全量 vitest + build）— **182 通过 / 0 失败**（30 个测试文件）。原 19 项 Windows CRLF/反斜杠 digest 与 Unix 权限位失败已全部修复。ACP 子进程清理：根因是 `acp()` 的 `finally` 里 `stop(child)` 只发信号不等待进程退出，Windows cwd 句柄释放延迟导致 `rmSync` 竞争。已在 `agents.ts` 中 spawn 后注册 `child.once("close")`，finally 里 `stop` 后 `await Promise.race([closed, 5s timeout])`，测试 cleanup 改为单次 `rmSync` 不吞错不重试。连续 3 次 agents/role-runtime 全过。
+- **代码基线**：`16d3aa6` 之后叠加 assistant-v3（V3-01～V3-06）六组修复、v14 治理增量（memory_equivalences 关系表、decisions.attention_case/dedupe_key、AcpAssistantModel 生产接线），以及通用 Code Knowledge 纵向切片（确定性 TS/Vue 代码图、curated seed 投影、Code Wiki web 与 trail 对齐）。
+- **Schema 版本**：SQLite `SUPPORTED_SCHEMA_VERSION = 14`（`apps/server/src/storage/migrations.ts`；v14 新增 `memory_equivalences` 表 + `decisions.attention_case`/`dedupe_key` 列与去重索引）。Code Knowledge 的 `code_*` 表不进业务 schema 版本号，运行时 `ensure*` 建在隔离的 `.repo-review/runtime/` SQLite 里。
+- **测试**：实测 2026-09-29（`osdk run check`，exit 0，含 typecheck [tsc + vue-tsc] + 全量 vitest + vite build）— **47 个测试文件 / 306 个用例全部通过**。早期记录的 182/30 等数字已随切片推进过期；ACP 子进程清理修复（finally 中 `stop(child)` 后等 close、测试 cleanup 单次 `rmSync`）仍有效。
+- **包管理**：pnpm workspace（`pnpm-workspace.yaml` 声明 `apps/*`、`packages/*`），锁文件 `pnpm-lock.yaml`；`osdk deps --frozen` 即 `pnpm install --frozen-lockfile`。历史 npm/package-lock npmmirror 临时改动已清理（见本节末尾旧记录）。
 - **主助手模型接线**：生产装配 `apps/server/src/app.ts`（Web 路径）和 `apps/server/src/integrations/lark/runtime.ts`（飞书路径）均已 `new AssistantRuntime({ store, model: new AcpAssistantModel({ profile, workspaceRoot }), retrieval: new KeywordRetrieval(store.db), feedback: new FeedbackService(store), ... })` —— **Web 和飞书主助手生产路径均接真实 ACP adapter + RetrievalPort + scoped 纠正**。`DeterministicAssistantModel`（`assistant/default-model.ts`）**仅用于测试注入**。生产不存在"无模型配置时的假回答降级"：`AcpAssistantModel` 在无 profile / CLI transport / 未授权 / 超时 / 输出非 JSON 时一律抛 `ModelUnavailableError`，runtime 记 `failed` turn + `error=model_unavailable:*`，零 citation、零任务，绝不产出编造回答。任务创建经 `detectTaskIntent()`（21 祈使模式 + 11 咨询模式）确定性门控：咨询类即使模型发出 create_task 也被拒绝零写入；直接交办时 capture owner 消息为真实 source 证据后经 `MemoryService.evaluate()` 治理。取消经 `TurnCancelledError` fence 在 govern/complete 前检查，`withTimeout` Promise.race 主动 abort。
 - **外部验证状态**：`AcpAssistantModel` 已复用真实 `acp()` 传输（`agents.ts`），并有 fixture agent（`tests/fixtures/acp-agent.mjs`）解析/超时/取消测试覆盖；但本机无 traecli/Codex 等真实 CLI，**真实 ACP 主助手端到端与真实飞书 WebSocket 收发仍未跑过 live**（均为注入/fixture adapter 测试）；语义检索（embedding）未接入，当前为 SQLite 关键词召回。
+
+## Code Wiki（通用代码知识纵向切片）实测
+
+> 定位：Code Wiki 不是独立产品，是同一 Capture→Source/Revision/Fragment→Relation/Retrieval 证据链在代码域上的确定性 typed projection；repo-review 只是隔离 dev 配置/视图（5180 API + 5181 web、独立 SQLite、不起业务 worker）。以下数字为 2026-09-29 对运行中 `osdk run dev:review` 实例的实测（`/api/review/*` 直接查询），非设计目标。
+
+- **确定性代码图（无模型）**：TS Compiler AST（单文件、不建 Program）+ `@vue/compiler-sfc` + 保守正则（Fastify 路由 / `it/test`），零新依赖。当前 snapshot `snap_50bbb6d…` 解析自 commit `159a92c`（dirty），parser `ts-ast@1+vue-sfc@1+regex@1`，**190 个文件**；四类材料库 **163 sources / 11940 fragments**。
+- **评审关系**：23 条手维护 seed（`docs/repo-review/associations.json`）→ 123 条边：**90 confirmed / 3 candidate / 30 missing**（byType：implements 23、requires 40、decided_by 22、researched_by 4、tested_by 34）。词相似未登记的片段不自动 confirmed；解析不到的锚点保留为 missing 可见。
+- **curated 模块理解**：6 个 committed seed（`.repo-review/knowledge/understandings/*.seed.json`，module-architect@1）同步时把 path+qualifiedName locator 解析到 head 图、盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验后投影为 current；共 12 行理解（含历史行），全部 `seed=true / source=curated-seed / verified_by_agent=false`。另有一份 agent 引用核验记录（`knowledge/verification/code-seeds-verification.json`）：人工/agent 逐条核对 42 个 locator 与证据原文引用，发现并修正 6 处 selector/ref 错配——**那是引用一致性审核，不是模型运行、不是语义评审、不是产品验收**。
+- **模型 opt-in 与降级**：review 只读可选 env `REVIEW_CODE_MODEL_CONFIG`（JSON 文件），不读个人 Agent profile；未配置时 `GET /api/review/code/model-status` 返回 `available=false`，图与 curated seed 照常浏览，`POST .../understandings/generate` 503 `model_unavailable`，UI 诚实标注。**真实模型生成理解在本机从未 live 跑过**（只有 fixture model 与 schema 校验测试）。
+- **真实 P0 UI 浏览器验收**：`scripts/code-wiki-viewport.ts`（Playwright 对运行中 5181，按稳定名称点穿真实 UI、不硬编码 DB id；首次需 `pnpm exec playwright install chromium`）已通过，证据截图 `docs/implementation/screenshots/wiki-*.png`（gitignored）：视口 1440/768/390 均无横向溢出；module→file→symbol→file→fragment **5 层下钻** + Esc 逐层退栈 + 面包屑跳回；UI 生成的 `/trail/` URL 刷新后整栈恢复；关闭全部后焦点归还到触发按钮；可见文本不含任何 `sym_/file_/fragment_` 裸 id 或 UUID；Markdown 经挂载态 `<OmMarkdown>`（DOMPurify）验证剥离 `<script>`/`onerror`/`javascript:`/`<svg>`/`<iframe>` 载荷。本机本次复核时 Playwright chromium 未安装，未重跑，以上为 2026-09-29 早前对同一脚本的执行记录。
+- **runtime 隔离**：运行库在 `.repo-review/runtime/`（gitignored，唯一写入处）；tracked 的 `.repo-review/data/*.sqlite*`、`last-sync.*`、`browser.*.log`、`migrated-v2.flag` 是首启投影用的冻结种子；curated `.repo-review/knowledge/**` 入库。首启 readOnly `VACUUM INTO` 投影，绝不动种子。
+- **调研**：公开 landscape（SCIP/Tree-sitter/deepwiki-open/OpenDeepWiki/CodeQL/Joern/Cody/Continue/Aider repo-map/GraphRAG/BGE-M3）与**字节内部 Aime DeepWiki** 材料（经 lark-cli 以用户身份读取的内部飞书文档）分节严格分开，内部自述不进入横向对比总表，结论见 `docs/research/code-wiki-landscape.md`。
+- **本切片未做/边界**：跨文件 calls 不解析（单文件名称级 calls 标 candidate）；跨 revision 符号/fragment 身份续接未实现（代码改完需重新 sync 让 locator 在新 head 重定位，旧边标历史版本）；无 embedding 语义检索；`refreshDependents` 下游重核验仍按设计 blocked。
 
 ## 能力矩阵
 
@@ -51,15 +65,15 @@
 
 **统计：20 项 pass，0 项 partial。** G15 为 fake transport 验证（未跑真实飞书网络）；G20 的进程级真实重启为同 DB 新 runtime 实例模拟，非真实 kill+restart。
 
-## 已知限制与环境问题（2026-09-27 实测）
+## 已知限制与环境问题（2026-09-29 复测）
 
-- **osdk 验证全绿**：`osdk deps --frozen` exit 0；`osdk run check` exit 0（含 typecheck + 全量 vitest 182/182 + tsc/vite build）。信任门已由 MainAgent 执行 `osdk --yes trust` 解决。
+- **osdk 验证全绿**：`osdk deps --frozen` exit 0；`osdk run check` exit 0（typecheck [tsc + vue-tsc] + 全量 vitest **47 文件 / 306 用例** + tsc/vite build，2026-09-29 复测）。信任门已由 MainAgent 执行 `osdk --yes trust` 解决。
 - **ACP 子进程清理已根治**：`agents.ts` 的 `acp()` 在 finally 中 `stop(child)` 后 `await Promise.race([child close, 5s timeout])`，Windows cwd 句柄释放后再返回；测试 cleanup 为单次 `rmSync`，不吞错不重试。连续 3 次 agents(6/6) + role-runtime(8/8) 全过。
 - **refresh_dependents 重核验未实现（按设计 blocked）**：`learning/pipeline.ts` 该 job 只调 `recordSourceRefresh` 记录受影响记忆为 `needs_review`，随后**主动抛 `JobExecutionError("NOT_IMPLEMENTED")`** 失败——不谎报已完成重核验。完整 extractor+verifier 重跑 consolidation job 仍待实现。
 - **Docker 未安装**：实测 `docker --version` 报「无法识别」，`osdk container doctor --json` 报 docker/containerd 均 `not-installed`。WeKnora/Hindsight 的 Docker 路径本机不可用。
 - **无 traecli → 真实 ACP/飞书未端到端**：代码已接 AcpAssistantModel 真实 ACP adapter（含 fixture 解析/超时/取消测试），但本机无 traecli，真实 ACP 主助手对话与真实飞书 WebSocket 收发均未跑 live，仍为注入/fixture adapter 测试。
 - **G20 进程级真实重启未测**：pending turn 持久恢复用同 DB 新 runtime 实例模拟（recoverUnfinishedTurns + committed receipt fence），未做真实进程 kill+restart；HTTP cancel e2e 已用 fastify inject 覆盖。
-- **repo-review 代码 review 库（独立 vertical slice）**：`osdk run dev:review` 启动隔离 API(5180)+Vite(5181)，fresh rebuild 约 127 sources / 4053 fragments，四类分类（架构/进度/历史决策/背景调研），双向关系由手维护的 `docs/repo-review/associations.json` seed 构建（实测 23 seeds → 77 confirmed / 3 candidate / 2 missing）。**不是完整交付**：关系锚定 head fragment，跨 revision fragment 身份续接未实现；词相似未登记片段不自动 confirmed；检索为关键词召回无 embedding；`refreshDependents` 重核验仍按设计 blocked。dev 生命周期（端口占用检测、taskkill /T /F 进程树清理、API 失败透传、strictPort）由 `apps/server/tests/review-dev.test.ts` 2 个集成用例 + 浏览器 10 步验收覆盖。
+- **repo-review / Code Wiki（隔离纵向切片）**：`osdk run dev:review` 启动隔离 API(5180)+Vite(5181)；当前库 163 sources / 11940 fragments，代码图投影 190 文件（ts-ast+vue-sfc+regex），23 条 curated seed → 90 confirmed / 3 candidate / 30 missing 边。**不是完整交付**：跨文件 calls 不解析（单文件名称级 calls 标 candidate）；跨 revision fragment 身份续接未实现；词相似未登记片段不自动 confirmed；检索为关键词召回无 embedding；`refreshDependents` 重核验仍按设计 blocked。dev 生命周期由 `apps/server/tests/review-dev.test.ts` **5 个集成用例**（双端端口占用检测、taskkill /T /F 进程树清理、API 失败透传、Windows 强杀契约、3 轮 boot/kill 稳定性）+ `scripts/code-wiki-viewport.ts` 浏览器验收（5 层 trail / 390 视口 / 焦点归还 / 无裸 id / OmMarkdown XSS 过滤）覆盖。证据分级：curated seed 经 agent 引用审核但**非模型 live**；协议/fixture 测试不等于外部 CLI 可用；真实模型生成与真实 ACP/飞书端到端未测。
 - **依赖管理已切换到 pnpm**：历史上为 Batch 2 临时改写的 package-lock npmmirror、`package-lock.json.bak-batch2` 备份、osdk.toml 的 default_agents/npm.auto=true 改动均已随切换清理；根 `package.json` 不再含 npm 风格 `workspaces` 字段，工作区成员由 `pnpm-workspace.yaml`（`apps/*`、`packages/*`）声明，`apps/web` 经 `workspace:*` 链接 `@omem/ui`，锁文件为 `pnpm-lock.yaml`。`osdk deps --frozen` 走 `pnpm install --frozen-lockfile`。
 
 ---

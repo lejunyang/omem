@@ -13,24 +13,19 @@ Read `README.md` and `docs/implementation/status.md` for actual capabilities. In
 - In a shared worktree, coordinate one committer and explicit file/hunk ownership across agents. Stage only the intended slice, never unrelated or still-in-progress changes; avoid blanket `git add .`. Run the full project checks after integration. Commit locally; push only when explicitly requested.
 - External notifications, capture scope changes and operating-system services are separate explicit integrations; do not install global hooks or screen listeners without concrete scope. Preserve user configuration.
 
-## repo-review 知识库
+## Code Wiki / repo-review 维护规则
 
-独立的代码 review 知识库，与业务库严格隔离。`osdk run dev:review` 启动 API(5180)+Vue(5181)。
+Code Wiki 不是独立产品：`code_*` 表是权威 Capture→Source/Revision/Fragment→Relation/Retrieval 链上可重建的 typed projection；repo-review 只是隔离 dev 配置/视图（独立 SQLite、5180 API + 5181 web、不起业务 worker）。启动用 `osdk run dev:review`。
 
-- 后端：`apps/server/src/review/`（store.ts 独立 SQLite、sync.ts 四类材料增量同步、app.ts `/api/review/*` 路由、main.ts 入口）
-- 前端：`apps/web/src/ReviewApp.vue` + `review-api.ts`，App.vue boot 探测 `/api/review/health` 自动切换 review 模式
-- 启动脚本：`scripts/dev-review.ts` 编排器 + `scripts/dev-review-vite.ts`（Vite 子进程，configFile:false 不复用共享 vite.config.ts）；两个 child 都是直接 `node tsx`，退出时 `taskkill /PID <pid> /T /F` 杀整棵树；API 非 0 退出透传为 dev-review 退出码；Vite `strictPort`，5180/5181 被占时 preflight 明确报错退出
-- 数据目录三层：
-  - **运行库 `.repo-review/runtime/`（gitignored，唯一写入处）**：`reviewDataDir`=`runtime/data`、`reviewStateDir`=`runtime`，含 `omem.sqlite` WAL、`last-sync.*`、`migrated-v2.flag`、`assets/`。
-  - **冻结种子 `.repo-review/data/` + 根级 `last-sync.*`/`browser.*.log`/`migrated-v2.flag`（tracked）**：历史快照，首启后运行服务不再写这里；**不要** restore/reset/untrack/delete。
-  - **curated `.repo-review/knowledge/**`（tracked）**：understandings seed/manifest，纳入版本管理。
-- **首启 seed（`ensureReviewRuntimeSeeded`，store.ts）**：若 `runtime/data/omem.sqlite` 不存在但 tracked 种子 `data/omem.sqlite` 存在，用 readOnly 连接 `VACUUM INTO` 做一致备份（含 WAL 帧），并投影 `last-sync.*`/`migrated-v2.flag`/`assets/`。幂等（runtime 已存在则直接跳过）；失败删半成品 runtime 并重试，**绝不动旧库**。
-- 不启动 Lark/业务 worker/外部通知，不访问网络；无模型时浏览/搜索/追溯仍可用
-- 修改 review 代码后跑 `osdk run check`；浏览器验证用 `osdk run dev:review` + 访问 5181；dev 生命周期由 `apps/server/tests/review-dev.test.ts` 覆盖（端口占用检测 + taskkill /T 后两端口释放）
+- **DTO 人类 label / internal id 分离**：返回给前端时铺开内部 `*Id` 键（fileId/symbolId/edgeId/fragmentId…）供路由与深链，但展示字段必须用 `displayTitle/displayPath/symbolName/citationLabel/actionable/reason`；任何内部 id（`file_…/sym_…/frag_…`、裸 UUID）不得作为可见文本渲染。missing/stale 节点 `actionable=false` 并带人读 reason，不静默跳转目标。
+- **trail 交互与个人 EvidenceReader 共用同一合同**：帧栈（push/pop/jump/loop、滚动记忆、Esc 退层、close-all 归还焦点）放在 `packages/ui` 的 trail composable/OmDialog 系组件里，Code Wiki 直接复用，不在 codewiki 侧另造第二套 drawer。URL hash 深链可序列化整栈；`MAX_TRAIL` 只是深链 URL 长度预算（200），渲染栈不静默截断。
+- **seed 引用必须可校验**：评审边唯一来源是手维护的 `docs/repo-review/associations.json`（每条点名 codePath+symbol + requirement/decision/research/test 锚点）；模块理解 seed（`.repo-review/knowledge/understandings/*.seed.json`）用 path+qualifiedName+kind 定位。同步时把这些 locator 重新解析到 head 图并盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验；解析不到的 locator 保留为 rejected 行，永不覆盖好行。**不要**用语义相似度自动加边。
+- **模型默认关闭**：review 只读可选 `REVIEW_CODE_MODEL_CONFIG` 指向的 JSON，从不读个人 Agent profile；未配置时图与 curated seed 照常服务，生成端点 503。curated seed 行恒 `seed=true / verified_by_agent=false`，不要在 narrative 里宣称跑过模型。
+- **数据目录三层**：运行库 `.repo-review/runtime/`（gitignored，唯一写入处）；tracked 的 `.repo-review/data/` 种子快照与 `last-sync.*`/`browser.*.log`/`migrated-v2.flag` 首启后只读，不要 restore/delete；`.repo-review/knowledge/**` curated 资产入库。
+- **改完必跑**：`osdk deps --frozen` 与 `osdk run check`（typecheck + 全量 vitest + build）；UI 改动在 `osdk run dev:review` 起来后跑 `scripts/code-wiki-viewport.ts`（Playwright，首次先 `pnpm exec playwright install chromium`；按稳定名称点穿真实 UI，不用硬编码 DB id）。
+- **边界**：跨文件 calls 不解析（单文件名称级 calls 标 candidate）；跨 revision 符号/fragment 身份续接未实现，代码改完要重新 sync 让 locator 在新 head 重定位。
 
-### 关系模型与关联清单维护
+### 关系模型
 
-- 关系表 `review_relations`（`store.ts`）：前向类型 `implements / requires / decided_by / researched_by / tested_by / candidate_for`，反方向在查询时派生（如 implements → implemented_by）。状态 `confirmed / candidate / missing`；unresolvable target 一律记 `missing`，不假装 confirmed。
-- **唯一来源**是手维护的 `docs/repo-review/associations.json`：每条 seed 必须点名 `codePath` + `symbol`（定位代码 fragment）+ `requirementRefs`（需求 id 标签）+ `decisionRefs/researchRefs/testRefs`（`path` 或 `path::anchor`）。同步时 `buildReviewRelations` 把每条 seed upsert 成 `implements` + 各 ref 边，deterministic id 幂等。
-- **不要**用语义相似度自动加边：未登记的代码↔文档关系永远不会变成 confirmed；想加一条关系，先在 associations.json 登记，再 POST `/api/review/sync`。
-- 关系锚定在 head revision 的 fragment 上；跨 revision fragment 身份续接未实现——代码改完产生新 revision 后，需重新 sync 让 symbol/anchor 在新 head 上重新定位（旧关系仍指向旧 fragment id，标"历史版本"）。
+- 关系表 `review_relations`：前向类型 `implements / requires / decided_by / researched_by / tested_by / candidate_for`，反方向查询时派生。状态 `confirmed / candidate / missing`；unresolvable target 一律记 `missing`，不假装 confirmed。
+- 同步时 `buildReviewRelations` 把每条 association seed upsert 成 `implements` + 各 ref 边，deterministic id 幂等。想加一条关系，先在 associations.json 登记，再 POST `/api/review/sync`。

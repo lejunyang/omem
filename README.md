@@ -17,29 +17,32 @@ osdk run start
 
 浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 4317 和 Vue 5173。
 
-## 代码 Review 知识库（repo-review）
+## Code Wiki（通用代码知识纵向切片）
 
-用本仓库自身的 capture/固定版本与片段/检索/关系架构，在仓库内建一个**仅用于代码 review** 的知识库，覆盖四类资料：当前架构与实现、进度追踪、历史决策、背景调研。与业务库严格隔离，独立数据目录、独立端口、不启动真实 Lark/业务 worker。
+Code Wiki **不是独立产品**，也不是第二套知识库。它是同一套 omem 证据模型在代码域上的**确定性 typed projection**：底层仍是 Capture → Source/Revision/Fragment → Relation/Retrieval 链，代码侧的 `CodeSnapshot / CodeFile / CodeSymbol / CodeEdge / CodeUnderstanding` 只是叠加在不可变 fragment 之上、可随时重建的投影视图（代码正文只在快照绑定处留一份不可变 `content_text`，不另存一份真相）。所谓 repo-review 只是这套投影在本机的**隔离 dev 配置与视图**：独立 SQLite、四类材料同步、独立端口、不启动业务 worker。
 
 ```bash
 osdk run dev:review
 ```
 
-启动后 API 运行在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`（Vite strictPort，端口被占时明确报错退出，不静默换端口）。首次启动自动全量同步仓库材料（实测 fresh rebuild 约 120+ sources / 4000+ fragments），后续可在 web "同步"页点击"立即同步"做增量更新（幂等，重复运行不重复入库）。dev 脚本用直接 node 子进程管理 API 与 Vite，退出时 `taskkill /T /F` 清理整棵进程树，API 非 0 退出会透传为 dev-review 退出码。
+启动后 API 在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`（在浏览器打开这个 URL，Vite strictPort，5180/5181 被占时 preflight 明确报错退出，不静默换端口）。首次启动自动全量同步仓库材料；之后在 web「同步」页点「立即同步」做增量更新（幂等，重复运行不重复入库）。dev 脚本用直接 node 子进程管理 API 与 Vite，退出时 `taskkill /T /F` 清理整棵进程树，API 非 0 退出透传为 dev-review 退出码。实测当前同步库约 160 个 source / 1.2 万个 fragment，代码图投影 190 个文件（`ts-ast@1+vue-sfc@1+regex@1` 解析器）。
 
-**隔离约束**：
-- 运行时库在 `.repo-review/runtime/`（gitignored），与业务库 `.omem/` 完全分离。tracked 的 `.repo-review/data/`、`last-sync.*`、`browser.*.log`、`migrated-v2.flag` 是冻结种子快照；首次启动若 runtime 库不存在，会用 readOnly 连接对种子做一次一致 SQLite 备份（含 WAL）投影到 runtime，之后运行服务只写 runtime，不再改种子。curated 知识 `.repo-review/knowledge/**` 纳入 Git。详见 [AGENTS.md](AGENTS.md) 的 repo-review 小节。
-- 仅扫描本仓库文本文件（源码、docs、AGENTS.md），不读取 `omem.local.json`、`.env*`、node_modules、dist、二进制文件
-- 不启动 Lark WebSocket、业务 worker、外部通知；不访问网络
-- 无 traecli/模型时仍可浏览、搜索、追溯代码→意图→决策链路；生成式问答不可用（诚实标注）
+**结构图是确定性的，不需要模型**：TypeScript Compiler AST（单文件、不建 Program）+ `@vue/compiler-sfc` 解析 `.vue` + 保守正则补 Fastify 路由与 `it/test` 用例，产出 imports/exports/defines/routes/tests/组件/range 边；零新 pnpm 依赖、离线、可重跑。评审意图边（`implements/requires/decided_by/researched_by/tested_by/candidate_for`）仍只来自手维护的 `docs/repo-review/associations.json`。派生模块说明是 committed 的 curated seed（`.repo-review/knowledge/understandings/*.seed.json`），同步时把 seed 里的 path+qualifiedName 定位到 head 图、盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验后投影为 current 行——**没有任何生产模型被调用**，seed 行恒为 `seed=true / verified_by_agent=false`。
 
-代码条目可从 web 回查具体文件、符号、片段、确定 commit，再跳到实现意图、设计决策、调研依据；关系双向追踪，无依据的关联标注"待补充/推测"。
+**模型是可选、显式 opt-in 的**：review 模式只读一个可选环境变量 `REVIEW_CODE_MODEL_CONFIG`（指向一个 JSON 配置文件），从不读取个人 omem 的 Agent profile、keychain 或宿主配置。变量未设时 `model-status.available=false`，只读图 + curated seed 照常浏览，`POST /api/review/code/understandings/generate` 返回 503 `model_unavailable`，UI 诚实标注「结构边可用、AI 理解暂缺」，绝不生成假摘要。真实模型端到端生成在本机**尚未 live 验证**（见 status.md 的证据分级）。
+
+**数据目录布局**：
+- **运行库 `.repo-review/runtime/`（gitignored，唯一写入处）**：含 `omem.sqlite` WAL、`last-sync.*`、`migrated-v2.flag`、`assets/`。首启若 runtime 库不存在，用 readOnly 连接对 tracked 种子做一次一致 SQLite 备份（含 WAL）投影到 runtime，之后只写 runtime。
+- **冻结种子 `.repo-review/data/omem.sqlite*` + 根级 `last-sync.*` / `browser.*.log` / `migrated-v2.flag`（tracked）**：历史快照，首启后运行服务不再写这里；不要 restore/reset/delete。
+- **curated 知识 `.repo-review/knowledge/**`（tracked）**：6 个模块 seed + manifest + 一份 agent 引用核验记录（只核对 locator/原文引用，不是模型运行、不是产品验收）。
+- 仅扫描本仓库文本文件（源码、docs、AGENTS.md），不读 `omem.local.json`、`.env*`、node_modules、dist、二进制；不启动 Lark WebSocket、业务 worker、外部通知，不访问网络。
 
 **当前边界（不是完整交付）**：
-- 关系是人工维护的：`docs/repo-review/associations.json` 每条 seed 必须点名 codePath/symbol + 需求 id + 决策/调研/测试文档锚点；词相似但未登记的片段**不会**自动升级为 confirmed。未解析的锚点记为 `missing` 而非静默丢弃。
-- 关系锚定在 head 版本的 fragment 上；代码改动产生新 revision 后，旧 revision 上的 fragment 仍可看但标"历史版本"，**跨版本 fragment 身份续接未实现**（v2 fragment 是新 id，旧关系不会自动跟随到 v2 对应片段——需重新同步后由 symbol/anchor 重新定位）。
-- 检索是 SQLite 关键词召回（CJK 2-gram），无 embedding/语义检索；搜索默认只返回 current revision，已删除/陈旧 source 需 `includeRemoved=true` 才可见。
-- `refreshDependents` 等"来源变更后自动重核验下游证据"按设计 blocked（见 status.md），repo-review 不自动做语义冲突判断。
+- **跨文件 calls 未解析**：calls 边是单文件 AST 内、名称级匹配，标 `candidate`；跨文件调用边不产生，跨文件类型感知（SCIP/tree-sitter）按设计后续 PoC。
+- **跨 revision 符号/fragment 身份续接未实现**：关系锚在 head snapshot 的 fragment 上；代码改动产生新 snapshot 后，旧关系仍指向旧 fragment id（标「历史版本」），需重新 `POST /api/review/code/sync` 让 symbol/anchor 在新 head 上重新定位。
+- 词相似但未在 `associations.json` 登记的片段**永远不会**自动变成 confirmed；未解析锚点记 `missing` 并可见，不静默丢弃。
+- 检索是 SQLite 关键词召回（CJK 2-gram），无 embedding/语义检索；`refreshDependents` 下游重核验按设计 blocked。
+- Web 下钻交互与个人助理 EvidenceReader 共用同一套帧栈合同（`packages/ui` 的 trail/OmDialog 系组件），人读 label，内部 id 不渲染；键盘 Esc 退层、关闭归还焦点、390px 无横向溢出、Markdown 经 DOMPurify 过滤（脚本验收见 status.md）。
 
 工具版本由 [osdk.toml](osdk.toml)、[osdk.lock](osdk.lock) 固定；应用包由 pnpm 工作区管理，锁文件为 [pnpm-lock.yaml](pnpm-lock.yaml)（`pnpm-workspace.yaml` 声明 `apps/*`、`packages/*` 成员）。`osdk deps --frozen` 负责调用 pnpm 以 `--frozen-lockfile` 安装应用依赖；本项目声明的构建脚本（esbuild、protobufjs）由 pnpm 按需从源码构建。首次安装如遇包构建脚本门禁，请依本机提示检查并批准对应包，不关闭全局门禁。
 
@@ -52,7 +55,7 @@ osdk run dev:review
 - Claude Code：`claude --print --output-format stream-json`，禁用工具，模型/effort 用参数传递。
 - 其他 ACP agent：配置 `transport=acp` 和进程命令；按其声明的能力使用。
 
-`osdk exec --tool node,pnpm -- pnpm run cli -- probe traex` 只握手和创建会话，不执行模型问题。界面“能力与连接”也能探测。默认不硬编码模型名称；更改模型后服务端使用新的 configOptions 再校验 effort。不支持的选项明确报错。
+`osdk exec --tool node --tool pnpm -- pnpm run cli -- probe traex` 只握手和创建会话，不执行模型问题。界面“能力与连接”也能探测。默认不硬编码模型名称；更改模型后服务端使用新的 configOptions 再校验 effort。不支持的选项明确报错。
 
 CLI-only 模式暂不支持附图，附图问题需选择支持 image 的 ACP；不会静默丢图。每次问答使用新会话与明确传入的固定证据，尚未做跨轮 ACP session resume。问题、答案保存为材料，引用记录标明“提供给模型的依据”，不冒充已经通过事实支持度验证。
 
@@ -64,11 +67,11 @@ Agent 进程在 `.omem/agent-workspace` 工作。内置配置采用只读/无工
 
 ```bash
 # 显式本地文件 / 固定 commit 文件 / 飞书文档
-osdk exec --tool node,pnpm -- pnpm run cli -- file ./notes.txt
-osdk exec --tool node,pnpm -- pnpm run cli -- git /path/to/repo README.md HEAD
-osdk exec --tool node,pnpm -- pnpm run cli -- lark 'https://tenant.larkoffice.com/docx/token'
+osdk exec --tool node --tool pnpm -- pnpm run cli -- file ./notes.txt
+osdk exec --tool node --tool pnpm -- pnpm run cli -- git /path/to/repo README.md HEAD
+osdk exec --tool node --tool pnpm -- pnpm run cli -- lark 'https://tenant.larkoffice.com/docx/token'
 # 主动输入统一 CaptureEnvelope JSON；也可从 stdin 读
-osdk exec --tool node,pnpm -- pnpm run cli -- capture ./capture.json
+osdk exec --tool node --tool pnpm -- pnpm run cli -- capture ./capture.json
 ```
 
 飞书读取使用 `lark-cli docs +fetch --as user`，需要运行服务所在用户已经授权。仅调用用户提供的文档，不自动全空间抓取。HTTP 的文件/Git 导入受 `captureRoots` 限制；CLI 的显式文件参数由发起 CLI 的本地用户提供，范围限于当前目录（文件）或给定仓库（Git）。
@@ -107,7 +110,7 @@ Vue 新增“学习流程”“待判断”“通知详情”和“飞书机器�
 
 ```bash
 osdk run check
-# 首次没有浏览器时：osdk exec --tool node,pnpm -- pnpm exec playwright install chromium
+# 首次没有浏览器时：osdk exec --tool node --tool pnpm -- pnpm exec playwright install chromium
 osdk run browser
 # 真实 Agent 测试（会使用已登录账号调用一次大模型）
 osdk run live-acp
