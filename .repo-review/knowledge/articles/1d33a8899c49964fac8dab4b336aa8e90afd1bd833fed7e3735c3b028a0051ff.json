@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+    "title": "确定性的代码理解合同、角色资产与校验器",
+    "summary": "该模块固定代码理解输入，定义版本化输出与来源封印，加载受限角色资产，并校验部分显式快照引用；无模型时只生成低置信度结构 seed。当前验证不覆盖关键流程中的节点引用，也未证明独立复核真实发生。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "固定快照与输出边界",
+        "body": "模块把文件、符号、关系边和证据固定为一次理解运行的快照，并检查重复标识、符号所属文件及边端点。[[c1]] 输出合同区分机械事实与解释，携带职责、边界、流程、未知项、置信度以及模型和摘要封印；其中 `key_flows` 的步骤也可保存节点标识。[[c2]] 因此，当前能明确保证的是顶层引用字段、证据引用和 claim 内引用会在后续验证中与快照核对，而不是所有输出中的对象引用都已受检。"
+      },
+      {
+        "key": "assets",
+        "title": "角色资产加载与安全范围",
+        "body": "`CodeRoleRegistry` 仅允许四类代码理解角色，并校验角色、版本、输出 schema、技能名称及内容摘要，最后组合稳定的 bundle 摘要。[[c3]] `safeFile` 会拒绝越出根目录、候选文件自身为符号链接或解析后落到根外的文件；目录遍历也拒绝遇到的符号链接子项。[[c4]] 但角色版本目录和技能根目录本身没有先以 `lstat` 明确拒绝，若目录链接仍解析在允许根内，现有代码可能继续跟随，故不能概括为拒绝所有目录符号链接。"
+      },
+      {
+        "key": "validation",
+        "title": "验证、降级与剩余限制",
+        "body": "验证先解析结构并核对角色、提示词、schema、输入摘要和模型可用性，再检查 `referenced_node_ids`、`referenced_edge_ids`、`evidence_refs` 及 claim 内引用、选择器行范围和节点预算；结构错误为 `failed`，其余问题汇总为 `rejected`。`key_flows[].node_ids` 当前未进入交叉引用检查。[[c5]] 无模型构造器只生成符号声明等机械事实，叙事字段为空、置信度为零并记录未知项。[[c6]] 模块不调用模型，也不验证自由文本语义；复核字段只保证声明之间一致，真实独立复核仍依赖外部编排与运行证据。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "固定代码快照及结构校验",
+        "reason": "支持快照包含的对象、重复标识检查以及符号和关系边引用约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 49,
+          "endLine": 168
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Input snapshot: the fixed, trusted reference set for one understanding run.\n// Every id the model may cite must exist here, or the validator rejects it.\n// ---------------------------------------------------------------------------\n\nexpor"
+      },
+      {
+        "key": "c2",
+        "label": "流程步骤与代码理解输出合同",
+        "reason": "支持流程步骤可携带节点标识，以及输出合同中的领域内容、显式引用和来源封印字段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 208,
+          "endLine": 264
+        },
+        "quote": "export const flowStepSchema = z\n  .object({\n    name: z.string().min(1).max(300),\n    description: z.string().max(2000).default(\"\"),\n    node_ids: z.array(z.string().min(1).max(300)).max(50).default([]),\n  })\n  .strict();\n\n// Each claim is explicitly tagged so raw facts (mechanically present in the\n// snapshot) are nev"
+      },
+      {
+        "key": "c3",
+        "label": "角色清单与加载流程",
+        "reason": "支持角色白名单、版本和清单一致性、schema、技能摘要及 bundle 摘要的加载校验。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 412,
+          "endLine": 486
+        },
+        "quote": "export class CodeRoleRegistry {\n  constructor(readonly root: string = resolve(\"packages/agent-runtime/roles\")) {}\n\n  load(roleId: string, version = \"1\"): LoadedCodeRole {\n    if (!CODE_UNDERSTANDING_ROLES.includes(roleId as CodeUnderstandingRole))\n      throw Error(`CODE_ROLE_NOT_ALLOWLISTED: ${roleId}`);\n    if (!/^[a"
+      },
+      {
+        "key": "c4",
+        "label": "文件与目录遍历的路径检查",
+        "reason": "准确界定候选文件及遍历子项的越界和符号链接检查范围，并揭示根目录未显式 lstat 的限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 370,
+          "endLine": 394
+        },
+        "quote": "const inside = (root: string, candidate: string) => {\n  const rel = relative(root, candidate);\n  return rel === \"\" || (!rel.startsWith(\"..\") && !isAbsolute(rel));\n};\n\nfunction safeFile(root: string, path: string) {\n  const candidate = resolve(root, path);\n  if (!inside(resolve(root), candidate) || !existsSync(candidate"
+      },
+      {
+        "key": "c5",
+        "label": "确定性交叉引用校验",
+        "reason": "支持实际受检字段、选择器范围、预算、失败分类，并证明关键流程节点标识未在该段被遍历。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 489,
+          "endLine": 618
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Deterministic validator. Returns a discriminated result instead of throwing\n// on cross-reference problems, so callers can record status=failed/rejected and\n// never promote a hallucinated id into the knowledge graph.\n// -----------------"
+      },
+      {
+        "key": "c6",
+        "label": "无模型 seed 构造",
+        "reason": "支持无模型时仅输出机械事实、空叙事、明确未知项和零置信度。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 620,
+          "endLine": 669
+        },
+        "quote": "/**\n * Build a deterministic seed output when no model is available. It lists only\n * mechanically-derived facts (counts, declared files/symbols/edges) and cites\n * nothing the validator cannot check. It never fabricates module narrative.\n */\nexport function buildSeedOutput(args: {\n  bundle: LoadedCodeRole;\n  snapshot:"
+      }
+    ],
+    "questions": [
+      {
+        "question": "谁负责证明 `verified_by_agent` 对应一次真实且独立的复核运行？",
+        "why": "本模块只校验复核声明字段的一致性；材料没有展示复核身份、运行隔离或运行证据如何产生并绑定。",
+        "nextStep": "检查调用 `validateCodeUnderstanding` 的编排与持久化代码，确认复核身份和运行证据的来源。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c5"
+        ]
+      },
+      {
+        "question": "是否应把 `key_flows[].node_ids` 纳入确定性交叉引用校验？",
+        "why": "流程步骤允许携带节点标识，但现有验证只遍历顶层引用与 claim 引用，未知节点可能留在流程叙述中。",
+        "nextStep": "明确该字段是否具有证据指针语义；若是，补充未知节点检查及对应拒绝测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmBadge.vue",
+      "digest": "21bbd9ccfbf48a0add0d4cf96e9a8e345c6b7c634b0585a692cb5cc1a01f2909"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:38.605Z",
+    "trace": {
+      "runId": "8f775037-2343-4840-8586-a8d753fbbe36",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "86d7c50dcd116572075ce6f25e7a1d2a2af771465de3d9948c11b4b212714a2f",
+      "contextHash": "8d4020c8ae65750230ab3c98c820d7d76faeb980615083be5d49a5d0e4916e07",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1f6b7fe9f162f8b7053a4c1087fc6a3397d816e0c2d17822a1347413bce1b890",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-07ab-7630-bf68-a92b525c2a5f"
+      ],
+      "usage": {
+        "used": 48971,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 100207,
+          "utf8Bytes": 106603,
+          "estimatedTokens": 35535,
+          "budgetedTokens": 44419,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:07:03.432Z",
+    "trace": {
+      "runId": "2f8a3e0b-8cac-4dcd-9d9e-b4c0d1db53b9",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "82db61fb03d765d6c9509e7a5ab84b4e39f30b0f826f4ac629644bde2a169bdb",
+      "contextHash": "b675445ba277c957fa6f36e08a2a79c823eefc68c1c4c130e8a59e845aaf6f77",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a909d0c1343308633be720a6fe8b6a7e3bd757bb472dc8a7b642b7dc9f2ca0cc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-c658-7591-b804-15d65b90c621"
+      ],
+      "usage": {
+        "used": 48602,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107260,
+          "utf8Bytes": 116860,
+          "estimatedTokens": 38954,
+          "budgetedTokens": 48693,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/contracts/src/knowledge.ts",
+    "title": "知识生成、复核与制品合同",
+    "summary": "该模块定义知识文档、内联引用、待确认问题、批量生成、独立复核与计划的严格 Zod 合同，并补充运行时材料和已验收制品的类型结构。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "document",
+        "title": "正文、引用与问题",
+        "body": "知识文档包含稳定 key、标题、摘要、分类和章节；章节正文可承载 Markdown。引用具有短 key、人读标签、理由、关系及材料或文章目标，材料目标可带行号，文章目标可带 section，quote 默认为空并由宿主按固定范围提取。[[c1]] questions 明确记录问题、原因、下一步、是否阻塞及关联引用，避免把证据不足伪装成结论。[[c2]]"
+      },
+      {
+        "key": "batch-review-plan",
+        "title": "批量输出、复核与组织计划",
+        "body": "批量合同一次容纳有限数量的知识文档；复核合同逐文档返回 accepted 或 needs_revision，并可附具体问题与待确认项。知识计划则把材料分配给至少四个章节，每章说明目的。[[c3]] 这些 schema 约束交换格式和数量边界，但不执行引用语义核验，也不负责修订合并。"
+      },
+      {
+        "key": "artifact",
+        "title": "材料与已验收制品",
+        "body": "`KnowledgeMaterial` 保留来源、修订、摘要、正文行数、Fragment 与图片等信息。`KnowledgeArtifact` 则把文档、依赖摘要、生成模型与 trace，以及结论为 accepted 的复核模型和 trace 组合成版本化制品。[[c4]] 该类型表达制品应携带生成和复核来源，但这里只是 TypeScript 类型，并未展示摘要核验、落盘或防篡改实现。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "知识引用与正文合同",
+        "reason": "支持引用键、标签、理由、关系、材料行号或文章章节，以及宿主提取 quote 的设计。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 3,
+          "endLine": 15
+        },
+        "quote": "const key = z.string().min(1).max(500);\nexport const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \""
+      },
+      {
+        "key": "c2",
+        "label": "问题与知识文档结构",
+        "reason": "支持待确认问题的完整字段，以及知识文档章节、引用和问题集合的边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 17,
+          "endLine": 35
+        },
+        "quote": "export const knowledgeQuestionSchema = z.object({\n  question: z.string().min(1).max(1000),\n  why: z.string().min(1).max(1200),\n  nextStep: z.string().min(1).max(1000),\n  blocking: z.boolean(),\n  citationKeys: z.array(z.string()).max(20),\n}).strict();\n\nexport const knowledgeDocumentSchema = z.object({\n  key, title: z.st"
+      },
+      {
+        "key": "c3",
+        "label": "批量、复核与知识计划合同",
+        "reason": "支持批量文档、逐文档复核结论及按章节组织材料的交换格式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 37,
+          "endLine": 57
+        },
+        "quote": "export const knowledgeBatchSchema = z.object({\n  schema_version: z.literal(1), documents: z.array(knowledgeDocumentSchema).min(1).max(16),\n}).strict();\n\nexport const knowledgeReviewSchema = z.object({\n  schema_version: z.literal(1),\n  verdicts: z.array(z.object({\n    documentKey: key, verdict: z.enum([\"accepted\", \"need"
+      },
+      {
+        "key": "c4",
+        "label": "知识材料与制品类型",
+        "reason": "支持材料来源信息、Fragment、图片，以及制品依赖、生成 trace 和已验收复核 trace 的结构。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 59,
+          "endLine": 78
+        },
+        "quote": "export type KnowledgeDocument = z.infer<typeof knowledgeDocumentSchema>;\nexport type KnowledgeCitation = z.infer<typeof knowledgeCitationSchema>;\nexport type KnowledgeQuestion = z.infer<typeof knowledgeQuestionSchema>;\nexport type KnowledgeBatch = z.infer<typeof knowledgeBatchSchema>;\nexport type KnowledgeReview = z.in"
+      }
+    ],
+    "questions": [
+      {
+        "question": "宿主如何验证材料行号对应的精确引文，并对文章 section 引用做语义支持性复核？",
+        "why": "合同允许行号和 section 目标，也要求保留复核 trace，但本文件没有实现位置提取或语义核验流程。",
+        "nextStep": "检查知识制品生成与 verifier 编排代码及测试，确认越界行号、缺失章节和语义不支持时如何拒绝结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmBadge.vue",
+      "digest": "21bbd9ccfbf48a0add0d4cf96e9a8e345c6b7c634b0585a692cb5cc1a01f2909"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:38.605Z",
+    "trace": {
+      "runId": "8f775037-2343-4840-8586-a8d753fbbe36",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "86d7c50dcd116572075ce6f25e7a1d2a2af771465de3d9948c11b4b212714a2f",
+      "contextHash": "8d4020c8ae65750230ab3c98c820d7d76faeb980615083be5d49a5d0e4916e07",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1f6b7fe9f162f8b7053a4c1087fc6a3397d816e0c2d17822a1347413bce1b890",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-07ab-7630-bf68-a92b525c2a5f"
+      ],
+      "usage": {
+        "used": 48971,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 100207,
+          "utf8Bytes": 106603,
+          "estimatedTokens": 35535,
+          "budgetedTokens": 44419,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:07:03.432Z",
+    "trace": {
+      "runId": "2f8a3e0b-8cac-4dcd-9d9e-b4c0d1db53b9",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "82db61fb03d765d6c9509e7a5ab84b4e39f30b0f826f4ac629644bde2a169bdb",
+      "contextHash": "b675445ba277c957fa6f36e08a2a79c823eefc68c1c4c130e8a59e845aaf6f77",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a909d0c1343308633be720a6fe8b6a7e3bd757bb472dc8a7b642b7dc9f2ca0cc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-c658-7591-b804-15d65b90c621"
+      ],
+      "usage": {
+        "used": 48602,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107260,
+          "utf8Bytes": 116860,
+          "estimatedTokens": 38954,
+          "budgetedTokens": 48693,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
