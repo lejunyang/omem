@@ -3,43 +3,48 @@
   "document": {
     "key": "topic:quality_validation",
     "title": "验证体系、质量评测与证据强度",
-    "summary": "以分层证据解释类型检查、全量测试、构建、真实浏览器、协议夹具和实时外部检查各自能证明什么，并说明隔离质量数据集、人工标注、冻结与确定性指标组成的评测闭环及其当前限制。",
+    "summary": "验证证据分为代码基线、受控浏览器纵向流程、真实外部调用快照和隔离质量评测。各层只能证明其实际执行与断言覆盖的范围；fixture、历史快照或单次冒烟不能替代完整生产验收。",
     "category": "tests",
     "sections": [
       {
         "key": "evidence-layers",
-        "title": "验证证据应分层解读",
-        "body": "类型检查证明静态合同可成立，Vitest 证明已编码断言在测试环境通过，构建证明服务端与 Web 产物可生成。现有记录并未为三者分别登记退出码，而是记录包含 TypeScript/Vue 类型检查、全量 Vitest 和服务端/Web 构建的完整检查命令退出码为 0；这仍不等于真实浏览器、模型或外部连接器已经可用。记录也明确限定其不是所有外部集成的验收。[[c1]]\n\n真实浏览器检查进一步覆盖 Vue、API、SQLite、层栈导航、响应式布局与故障展示，但 Agent 使用确定性 ACP 协议夹具；因此它能证明夹具路径上的产品接线和交互回归，不能证明真实模型执行。[[c2]] 开发与浏览器验收子知识进一步解释了真实装配、直接驱动的测试步骤及其证明边界。[[c3]]"
+        "title": "不同验证分别证明什么",
+        "body": "类型检查、全量 Vitest 与构建用于发现类型、合同、回归和打包问题。现有记录显示依赖冻结及完整检查退出码为 0，覆盖 TypeScript/Vue、55 个测试文件、330 个用例和服务端、Web 构建；这只证明对应提交在记录环境中通过代码基线。[[c1]]\n\n浏览器验收以真实 Fastify、SQLite 和 Chromium 运转，但 Agent 是确定性 ACP fixture。[[c2]] 具体脚本分别断言递归 Evidence Trail、循环返回与追问，[[c3]] 以及桌面、768px、390px 布局和键盘焦点；[[c4]] 另通过关闭并重建服务检查材料与待办仍可见。[[c5]] 因而此前把这些结果概括为“完整真实端到端验收”的结论已被替代：它们证明受控输入下的页面、存储和导航装配，不证明真实模型或飞书网络。测试装配与未覆盖行为可继续下钻。[[c6]]"
+      },
+      {
+        "key": "live-evidence",
+        "title": "实机检查的强度与边界",
+        "body": "实时 ACP 检查会先探测模型候选，显式请求不可用模型时失败；但选择函数只是把环境中的 effort 写入 profile，没有在此校验该强度是否受支持。[[c7]] 算术冒烟随后发起一次文本调用，硬断言仅为回答包含“12”，实际模型、推理强度和事件类型主要作为诊断输出。[[c8]] 现存快照又缺少输入、时间、退出码和完整会话状态，因此只能作为窄范围现场观察。[[c9]]\n\n飞书快照仅记录 `lark-cli`、文档版本、`text`/`link` part 和字符数，没有固定 Source/Revision、授权主体、退出码或关键内容断言。[[c10]] 它不能替代机器人 WebSocket、卡片回调、图片下载及幂等导入验收；实时 ACP、Lark 标注、隔离预测和 fixture 浏览器检查的职责边界可从脚本模块继续下钻。[[c11]]"
       },
       {
         "key": "quality-loop",
-        "title": "隔离数据集与确定性质量闭环",
-        "body": "质量评测不直接生产知识：研究文档必须通过显式评测入口生成候选，再由人工确认；只有样本数达到目标且全部确认的数据集才能冻结，并可依据摘要复验、防止标签被静默篡改。[[c4]] 质量模块子知识串联了候选生成、Lark 标注、冻结和评分的完整生命周期及其限制。[[c5]]\n\n评分把“引文能在原文找到”与“结论受引文支持”分开，并另算数字事实槽、必要证据覆盖、任务完成、自动应用精度、打扰和延迟。反向结论即使引用可定位也不会获得语义支持，空答案则形成覆盖缺失而非免费满分。[[c6]] 门禁脚本先复验冻结数据，再对语义支持、引用定位、证据覆盖等阈值逐项判断；任一门禁失败都会设置非零退出状态，使结果可进入持续回归，而不只是保存报告。[[c7]]"
+        "title": "隔离数据集与人工评测闭环",
+        "body": "质量评测与普通捕获隔离：研究导入器要求显式评测标识，规则切分结果只是待人工判断的草稿，不得进入生产知识。[[c12]] 数据集只有在达到目标数量且全部确认后才能冻结，manifest 摘要绑定顺序、输入摘要和确认标签，并可重算发现篡改。[[c13]] 候选生成、人工修订和冻结的完整生命周期可继续下钻质量模块。[[c14]]\n\n预测 runner 先验证冻结数据集，再为每个样本建立独立临时 Store、运行学习流水线并清理目录。[[c15]] 若执行抛错，它仍保存带错误信息的 `needs_context` 预测，随后清理临时 Store；这可能把基础设施故障与业务上的背景不足混入同一分布。[[c16]] 评估器只纳入 confirmed 标签，逐对象区分引文定位、语义支持、数字事实槽和必要证据覆盖，并计算完成度与不必要打扰。[[c17]] 评估命令复验冻结摘要，并以多项阈值及缺失预测决定退出码。[[c18]]"
       },
       {
-        "key": "live-scope",
-        "title": "实时检查、进展与限制",
-        "body": "实时 ACP 的模型选择会先读取 ACP 暴露的可选模型；若显式请求的模型不在候选中则报错，而不是静默降级。该选择函数只是把环境中的 effort 写入 profile，所示范围没有验证推理强度是否受支持。[[c8]] 随后的基础冒烟以回答包含“12”为硬断言，有效模型、推理强度和事件类型主要进入诊断输出。[[c9]] 已保存的 ACP 快照也只记录 Agent、模型、effort、回答和事件类型，缺少固定输入关联、执行时间与退出码，因而只是窄范围实机证据。[[c10]]\n\nLark 实机快照确认 `lark-cli` 返回指定文档版本、text/link 两类内容和字符规模，但没有绑定固定 Source/Revision、退出码或关键内容断言，不能推广为 WebSocket、图片下载、幂等导入和引用定位均已验收。[[c11]] 当前可确认的是：包含类型检查、全量测试和构建的完整检查、真实浏览器夹具路径以及确定性质量闭环已有证据；真实外部系统仍需按授权主体、固定输入、时间、退出状态和行为断言分别验收，配置、测试夹具、历史快照或单次冒烟都不能替代完整生产验收。"
+        "key": "progress-limits",
+        "title": "已有覆盖与解释限制",
+        "body": "当前代码路径已经形成“候选生成—人工标注—冻结—隔离预测—确定性评分—退出门禁”，但现有自动化材料不能证明整条路径均被执行。质量测试直接覆盖评测专用导入、重复导入、人工确认、冻结摘要及篡改检测；[[c19]] 还覆盖引文可定位但结论相反、空答案、同义改写、限定遗漏、时间错配、否定翻转和数值变化等规则样例。[[c20]] 所给测试没有直接执行 Lark 回调服务或逐样本 runner，因此先前“自动化测试已完整覆盖质量闭环”的结论被替代。\n\n确定性规则的少量中文样例不能代表跨句限定、双重否定、单位换算或多时间区间的泛化质量；研究导入也会跳过图片、表格和白板。完整检查、浏览器 fixture、单次 ACP 冒烟、飞书摘要快照和质量门禁必须分别陈述，不能相互替代或合并包装为生产验收。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识功能实现验证记录",
-        "reason": "支持完整检查命令退出码为 0、检查包含类型检查、全量 Vitest 和构建，并限定记录不覆盖所有外部集成。",
+        "label": "知识功能基线检查记录",
+        "reason": "支持依赖冻结、完整检查的退出码、测试规模及类型检查、全量测试和构建范围。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/knowledge-verification.json",
-          "startLine": 5,
+          "startLine": 7,
           "endLine": 23
         },
-        "quote": "  \"scope\": \"Implementation verification. Knowledge corpus generation and coverage are recorded separately; this is not a claim that every external integration was tested.\",\n  \"workingTree\": \"Pre-existing apps/web/package.json formatting, osdk.lock receipt changes and frozen SQLite shm changes were preserved; generated "
+        "quote": "  \"checks\": [\n    {\n      \"command\": \"osdk deps --frozen\",\n      \"exitCode\": 0,\n      \"scope\": \"Application dependencies; no application dependencies were changed during this work.\"\n    },\n    {\n      \"command\": \"osdk run --no-deps check\",\n      \"exitCode\": 0,\n      \"testFiles\": 55,\n      \"tests\": 330,\n      \"includes\""
       },
       {
         "key": "c2",
-        "label": "浏览器验证环境",
-        "reason": "支持浏览器检查使用真实 Fastify 与 SQLite，同时明确 Agent 是确定性 ACP 协议夹具。",
+        "label": "浏览器验证环境与清单",
+        "reason": "支持浏览器检查采用真实 Fastify、SQLite，同时使用确定性 ACP fixture，并列出覆盖的产品行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -51,71 +56,59 @@
       },
       {
         "key": "c3",
-        "label": "开发与浏览器验收流程",
-        "reason": "提供相邻子知识入口，解释真实浏览器装配、确定性驱动方式及 fixture 对证据范围的限制。",
-        "relation": "explains",
+        "label": "递归证据阅读流程",
+        "reason": "支持 Evidence Trail 的递归引用、环路返回、层级跳转、追问保存和关闭行为。",
+        "relation": "supports",
         "target": {
-          "kind": "article",
-          "key": "module:scripts",
-          "section": "development_and_acceptance"
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 283,
+          "endLine": 309
         },
-        "quote": ""
+        "quote": "  const [a, b] = revision.fragments;\n  store.link(a!.id, b!.id);\n  store.link(b!.id, a!.id);\n  await check(\"recursive evidence, cycle and return focus\", async () => {\n    await page\n      .locator(\".source-link\")\n      .filter({ hasText: \"发布前的回滚验证\" })\n      .click();\n    await page.getByRole(\"button\", { name: \"查看引用\" })"
       },
       {
         "key": "c4",
-        "label": "质量数据集生命周期测试",
-        "reason": "支持评测专用入口、重复导入、人工确认前拒绝冻结、冻结摘要复验与篡改检测。",
+        "label": "多视口与键盘交互检查",
+        "reason": "支持桌面、768px、390px 无横向溢出、焦点约束、Esc 关闭和移动端全屏对话框断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-          "startLine": 50,
-          "endLine": 143
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 512,
+          "endLine": 571
         },
-        "quote": "describe(\"B2-08 quality dataset and evaluation\", () => {\n  it(\"imports deduplicated source samples, requires human labels and freezes a digest\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-quality-eval-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const"
+        "quote": "  await check(\"page reload and desktop rendering\", async () => {\n    await page.reload();\n    await expect(\n      page.locator(\".source-link\").filter({ hasText: \"发布前的回滚验证\" }),\n    ).toBeVisible();\n    await page\n      .locator(\".source-link\")\n      .filter({ hasText: \"发布前的回滚验证\" })\n      .click();\n    await page.screens"
       },
       {
         "key": "c5",
-        "label": "质量模块的评测流程",
-        "reason": "提供相邻子知识入口，串联隔离候选、人工标注、数据集冻结、指标计算和已知限制。",
+        "label": "失败展示与服务重启检查",
+        "reason": "支持脚本展示模型及投递失败、模拟接口离线，并在重建服务后检查材料与待办持久化。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 610,
+          "endLine": 687
+        },
+        "quote": "  await check(\n    \"A-U05 offline, model, delivery failure and restart truthfulness\",\n    async () => {\n      const failedJob = store.jobs.enqueue({\n        kind: \"browser_model_unavailable\",\n        inputRefs: [{ revisionId: revision.id }],\n        roleVersion: \"extractor@1\",\n        policyVersion: \"memory-policy@1\",\n"
+      },
+      {
+        "key": "c6",
+        "label": "个人助手浏览器验收说明",
+        "reason": "链接相关子知识，供读者下钻真实服务装配、受控驱动方式和未覆盖外部行为。",
         "relation": "explains",
         "target": {
           "kind": "article",
-          "key": "module:quality",
-          "section": "evaluation-progress-limits"
+          "key": "omem:scripts/browser-smoke.ts",
+          "section": "purpose_setup"
         },
         "quote": ""
       },
       {
-        "key": "c6",
-        "label": "分维度质量指标测试",
-        "reason": "支持引用定位与语义支持分离，并覆盖反向结论、空答案、限定条件、时间和数字事实槽等确定性行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-          "startLine": 201,
-          "endLine": 359
-        },
-        "quote": "describe(\"G19 split evidence metrics\", () => {\n  it(\"judges a reverse statement as contradicted even when the quote is a substring\", () => {\n    const text =\n      \"当前甲系统与乙主体是单一关联关系，未来可能允许多对多绑定。\";\n    const sample = makeSample(\n      makeInput(text),\n      makeLabel([claim(text, text)], { autoApply: true }),\n    );\n   "
-      },
-      {
         "key": "c7",
-        "label": "质量评估门禁",
-        "reason": "支持冻结数据复验、各项质量阈值以及任一门禁失败时设置非零退出码。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/quality-evaluate.ts",
-          "startLine": 14,
-          "endLine": 62
-        },
-        "quote": "  const repository = new QualityRepository(store.db);\n  const frozen = repository.verifyFrozen(datasetId);\n  const predictions = JSON.parse(\n    readFileSync(resolve(predictionPath), \"utf8\"),\n  ) as unknown[];\n  if (!Array.isArray(predictions)) throw Error(\"QUALITY_PREDICTIONS_NOT_ARRAY\");\n  const metrics = evaluateQua"
-      },
-      {
-        "key": "c8",
-        "label": "实时 ACP 模型选择",
-        "reason": "支持从 ACP 配置选项探测可用模型、拒绝不可用的显式模型，并显示 effort 在此处仅被写入 profile。",
+        "label": "ACP 模型候选选择",
+        "reason": "支持模型候选探测、显式不可用模型报错，并显示 effort 仅从环境写入 profile。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -126,9 +119,9 @@
         "quote": "export async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  );\n  const modelOption = probe.configOptions.find(\n    (option) => option.id === \"model\",\n  );\n  if (!modelOption || modelOption.type !== \""
       },
       {
-        "key": "c9",
-        "label": "实时 ACP 冒烟判定",
-        "reason": "支持基础实机冒烟以答案包含 12 为硬断言，而有效配置和事件类型主要进入诊断输出。",
+        "key": "c8",
+        "label": "ACP 实时算术冒烟",
+        "reason": "支持算术输入、回答包含“12”的硬断言，以及实际配置和事件类型仅进入输出记录。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -139,22 +132,21 @@
         "quote": "const config = loadConfig();\nconst base = config.profiles.find((profile) => profile.id === \"traex\")!;\nconst { probe, profile } = await selectLiveProfile(base, config.agentCwd);\nlet answer = \"\";\nconst events: string[] = [];\nconst live = await acp(\n  profile,\n  config.agentCwd,\n  [\n    {\n      type: \"text\",\n      text: \""
       },
       {
-        "key": "c10",
-        "label": "ACP 实机结果快照",
-        "reason": "支持快照字段仅包含 Agent、模型、effort、回答与事件类型，从而限定其证据强度。",
-        "relation": "tracks",
+        "key": "c9",
+        "label": "ACP 实机快照的证据边界",
+        "reason": "链接子知识，解释当前快照为何不足以证明完整会话成功或回答正确。",
+        "relation": "explains",
         "target": {
-          "kind": "material",
+          "kind": "article",
           "key": "omem:docs/implementation/live-acp-verification.json",
-          "startLine": 1,
-          "endLine": 14
+          "section": "evidence-boundary"
         },
-        "quote": "{\n  \"agent\": {\n    \"name\": \"traex-acp\",\n    \"title\": \"TraeCode CLI\",\n    \"version\": \"0.207.1\"\n  },\n  \"configuredModel\": \"gpt-6-astra\",\n  \"configuredEffort\": \"high\",\n  \"answer\": \"总共 12 件。\",\n  \"eventTypes\": [\n    \"status\",\n    \"text\"\n  ]\n}"
+        "quote": ""
       },
       {
-        "key": "c11",
+        "key": "c10",
         "label": "飞书文档导入实机快照",
-        "reason": "支持快照记录连接器、文档版本、part 类型和字符规模，同时显示未记录运行状态与固定版本映射。",
+        "reason": "支持快照仅包含连接器、文档版本、part 类型和字符数，缺少完整验收上下文。",
         "relation": "tracks",
         "target": {
           "kind": "material",
@@ -163,15 +155,155 @@
           "endLine": 10
         },
         "quote": "{\n  \"connector\": \"lark-cli\",\n  \"title\": \"ACP 接入与使用指南\",\n  \"version\": \"15\",\n  \"partTypes\": [\n    \"text\",\n    \"link\"\n  ],\n  \"textCharacters\": 12245\n}"
+      },
+      {
+        "key": "c11",
+        "label": "脚本模块的实时与质量流程",
+        "reason": "链接相关子知识，解释实时 ACP、Lark 标注、隔离预测和质量门禁之间的职责分工。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:scripts",
+          "section": "live_and_quality"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "评测专用导入边界",
+        "reason": "支持质量草稿生成与普通捕获、导入和学习链路隔离，且草稿不得成为生产知识。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 28
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c13",
+        "label": "数据集冻结与完整性复核",
+        "reason": "支持目标数量和全部确认是冻结前置条件，以及 manifest 摘要生成与重算验证。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 358,
+          "endLine": 401
+        },
+        "quote": "  freeze(datasetId: string) {\n    const dataset = this.db\n      .prepare(\"SELECT * FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    const samples = this.samples(datasetId);\n    if (\n      samples.length !== Number(dataset.target"
+      },
+      {
+        "key": "c14",
+        "label": "质量数据集生命周期",
+        "reason": "链接相关子知识，供读者下钻候选样本、人工修订和冻结流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:quality",
+          "section": "dataset-lifecycle"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c15",
+        "label": "逐样本隔离预测运行",
+        "reason": "支持每个样本创建独立临时 Store、执行学习流水线并提取预测的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 63,
+          "endLine": 108
+        },
+        "quote": "try {\n  let processed = 0;\n  for (const sample of frozen.samples) {\n    if (completed.has(sample.id) || processed >= limit) continue;\n    const directory = join(\n      tmpdir(),\n      `omem-quality-run-${datasetId}-${sample.ordinal}-${randomUUID()}`,\n    );\n    const store = new Store(directory);\n    const started = Da"
+      },
+      {
+        "key": "c16",
+        "label": "预测异常转换与清理",
+        "reason": "直接支持运行异常被保存为带 error 的 needs_context 预测，并在 finally 中关闭 Store、删除临时目录。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 157,
+          "endLine": 177
+        },
+        "quote": "    } catch (error) {\n      predictions.push(\n        qualityPredictionSchema.parse({\n          sampleId: sample.id,\n          prediction: {\n            disposition: \"needs_context\",\n            objects: [],\n            autoApply: false,\n            forbiddenEffects: [],\n            notes: \"Runner failed before a valid"
+      },
+      {
+        "key": "c17",
+        "label": "确认样本与逐对象评估",
+        "reason": "支持只评估已确认样本，并计算定位、语义、事实槽、覆盖率、完成度和打扰。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 234,
+          "endLine": 317
+        },
+        "quote": "export function evaluateQuality(\n  samples: QualitySample[],\n  predictionsInput: unknown[],\n) {\n  const predictions = predictionsInput.map((prediction) =>\n    qualityPredictionSchema.parse(prediction),\n  );\n  const bySample = new Map(\n    predictions.map((prediction) => [prediction.sampleId, prediction]),\n  );\n  if (by"
+      },
+      {
+        "key": "c18",
+        "label": "质量评估退出门禁",
+        "reason": "支持评分前复验冻结数据集、各质量阈值以及任一门禁失败时设置非零退出码。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-evaluate.ts",
+          "startLine": 14,
+          "endLine": 62
+        },
+        "quote": "  const repository = new QualityRepository(store.db);\n  const frozen = repository.verifyFrozen(datasetId);\n  const predictions = JSON.parse(\n    readFileSync(resolve(predictionPath), \"utf8\"),\n  ) as unknown[];\n  if (!Array.isArray(predictions)) throw Error(\"QUALITY_PREDICTIONS_NOT_ARRAY\");\n  const metrics = evaluateQua"
+      },
+      {
+        "key": "c19",
+        "label": "数据集生命周期自动化测试",
+        "reason": "支持自动化测试覆盖评测导入、去重、人工确认、摘要冻结、复验和篡改检测。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+          "startLine": 50,
+          "endLine": 143
+        },
+        "quote": "describe(\"B2-08 quality dataset and evaluation\", () => {\n  it(\"imports deduplicated source samples, requires human labels and freezes a digest\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-quality-eval-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const"
+      },
+      {
+        "key": "c20",
+        "label": "分维度质量规则测试",
+        "reason": "支持引文定位与语义支持分离，并覆盖反向结论、空答案、同义改写、限定、时间、否定和数值样例。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+          "startLine": 201,
+          "endLine": 359
+        },
+        "quote": "describe(\"G19 split evidence metrics\", () => {\n  it(\"judges a reverse statement as contradicted even when the quote is a substring\", () => {\n    const text =\n      \"当前甲系统与乙主体是单一关联关系，未来可能允许多对多绑定。\";\n    const sample = makeSample(\n      makeInput(text),\n      makeLabel([claim(text, text)], { autoApply: true }),\n    );\n   "
       }
     ],
     "questions": [
       {
-        "question": "ACP 与 Lark 的后续 live 验收是否会统一记录固定输入、执行时间、退出码、能力协商结果和关键内容断言？",
-        "why": "现有两个实机快照字段不足以复核回答正确性、调用完整结束、固定版本映射及导入内容完整性。",
-        "nextStep": "为每次 live 运行保存不可变 trace，关联输入摘要或 Source/Revision，并将配置一致性、退出状态和场景断言设为硬门禁。",
+        "question": "是否要把质量运行中的基础设施或模型传输错误从 `needs_context` 业务预测中独立出来？",
+        "why": "runner 明确把运行异常保存为带 error 的 `needs_context`，会把系统失败与材料确实缺少背景混入同一质量分布。",
+        "nextStep": "增加独立运行状态或错误分母，分别报告基础设施成功率与业务预测质量。",
         "blocking": false,
         "citationKeys": [
+          "c16",
+          "c17",
+          "c18"
+        ]
+      },
+      {
+        "question": "下一轮生产验收需要覆盖哪些真实外部链路：ACP 完整会话、飞书文档导入、机器人 WebSocket，还是 Lark 卡片标注？",
+        "why": "现有证据分别是最小 ACP 算术冒烟、字段有限的飞书快照和 fixture 浏览器流程，尚不能证明这些外部链路的完整现场行为。",
+        "nextStep": "确定集成与数据范围后，为每项记录授权主体、固定输入或 revision、执行时间、退出码、实际配置和内容断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
           "c8",
           "c9",
           "c10",
@@ -179,23 +311,36 @@
         ]
       },
       {
-        "question": "质量运行中的基础设施或模型传输错误是否应继续编码为业务处置 needs_context？",
-        "why": "若运行错误与材料确实缺少背景共用同一预测类别，质量指标会混合系统可靠性和模型判断能力，影响门禁解释。",
-        "nextStep": "增加独立运行失败状态或在业务质量指标外单独统计基础设施失败率，并补充相应回归样本。",
+        "question": "Lark 标注回调和逐样本隔离 runner 是否有未包含在当前材料中的自动化或真实集成测试？",
+        "why": "所给质量测试只直接覆盖数据集生命周期与确定性评分，不能证明卡片去重、nonce、过期校验、会话推进、临时 Store 隔离和失败清理已经执行。",
+        "nextStep": "将 Lark 回调安全条件与 runner 的隔离、清理、错误写入分别映射到行为测试和实机记录。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c7"
+          "c15",
+          "c16",
+          "c19",
+          "c20"
         ]
       },
       {
-        "question": "确定性语义规则在跨句限定、双重否定、单位换算和多时间区间上的误判率是多少？",
-        "why": "现有测试证明少量中文样例的确定性结果，但不能推断复杂表达上的泛化质量。",
-        "nextStep": "扩充人工冻结的 holdout 数据集，分别报告 supported、partial、contradicted、unsupported 和事实槽的混淆矩阵。",
+        "question": "图片、表格和白板材料应如何进入冻结质量数据集？",
+        "why": "质量导入当前服务于文本研究样本，现有评测闭环不能衡量常见结构化或视觉材料的提炼质量。",
+        "nextStep": "设计保留原始资产与固定定位的多模态人工标注流程，并将文本和多模态覆盖率分开报告。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c6"
+          "c12",
+          "c14"
+        ]
+      },
+      {
+        "question": "任务完成指标是否应拒绝含 partial 或 unsupported 对象的提炼结果？",
+        "why": "当前逐对象语义指标区分 supported、partial、contradicted 和 unsupported，但完成条件与语义支持率并非同一严格口径。",
+        "nextStep": "由质量口径负责人确认 completion 定义，并补充 partial、unsupported 对照样本和门禁回归测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c17",
+          "c18",
+          "c20"
         ]
       }
     ]
@@ -314,7 +459,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "3daf657af4eb9db8b2365d6c97deae0b6232b561aa6cd2f681fa8d3049fee7ff"
+      "digest": "3918eac125957b90822f9c407a819dd78144e4306668852f6d754380f129a6bc"
     },
     {
       "kind": "material",
@@ -359,7 +504,7 @@
     {
       "kind": "article",
       "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "4e1afbbaa485509ab474ff0e10239bcad6414c58945ae3652ee0159ac40c6809"
+      "digest": "de5bf20eefbd382a006e3261dd93b1258b72672b8d6db4f097d34fca0468e3ff"
     },
     {
       "kind": "article",
@@ -390,17 +535,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:06:39.830Z",
+    "at": "2026-09-29T21:20:15.656Z",
     "trace": {
-      "runId": "9e3ca369-3017-4b67-948e-37ed4de24bc1",
+      "runId": "313a01e0-c3a3-410f-89df-9616584a0454",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "11583ed3bfa8aa18ab0ac6e5a23bce2be80d74e94b5d2d6ecb35d07b5ae54066",
-      "contextHash": "d4c98e33522800549253ee3e399fb8c10540e4b8a677e16c88c470d8fc1746b9",
+      "promptHash": "adc6f8faef774fc1b14672a118253cc517cd7727c8d23b391369a3881a2b0ba5",
+      "contextHash": "94fed444ab6fe922897ccec7c59c619325ca759cb0e8f4ad952bab92fd9e97a6",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "23e1c00a0b792c1f009e7a7a2fab665aa6aa546a3b71c88f580878eca8a027ea",
+      "fingerprint": "06efbd341258d642fea47e4b0b556a6fa6c1c07de45abe5c2dc83fd3b60eabcf",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -413,10 +558,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eefd-67f2-7df0-aa03-04ea3d80441e"
+        "01a0ef09-a694-77b2-b3b3-da130fc5f8ab"
       ],
       "usage": {
-        "used": 118262,
+        "used": 122606,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -425,10 +570,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 335624,
-          "utf8Bytes": 368141,
-          "estimatedTokens": 122714,
-          "budgetedTokens": 153393,
+          "chars": 344005,
+          "utf8Bytes": 379054,
+          "estimatedTokens": 126352,
+          "budgetedTokens": 157940,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -437,17 +582,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:06:55.315Z",
+    "at": "2026-09-29T21:20:31.189Z",
     "trace": {
-      "runId": "fcefb22b-0572-41ec-95d2-10f7136237ce",
+      "runId": "f05bff47-9518-4115-9d98-5a83e5f3fd6f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "20315ac131f4f44fabb79d949baf7cd32fa09393b3125fdd3cb4eb9e23def146",
-      "contextHash": "62a95f1c875e5fac7398bc8c1e08bfb208aef97c52870ce9f2495df9b5b49ebd",
+      "promptHash": "de57bb79b0dbd647d1ddf8ee405b6e8af33ffbb722608c89315f6a2469b61c52",
+      "contextHash": "447605d7283247412eacbf533b3fca2d3aabe0ff12da0f8b0914d85a438abf95",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e6bd086e604bd785aca840726694a7258a2eaa33aa2d81c799f231400566c679",
+      "fingerprint": "71150b03fd8e3ac354b74438cb2754fd77a4002050a686d647c02c8bf98b6537",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -460,10 +605,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eefd-b810-7491-8109-b94d242ff583"
+        "01a0ef0a-2b3c-7463-8376-8f18f7938527"
       ],
       "usage": {
-        "used": 116155,
+        "used": 118989,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -472,10 +617,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 333535,
-          "utf8Bytes": 365020,
-          "estimatedTokens": 121674,
-          "budgetedTokens": 152093,
+          "chars": 341272,
+          "utf8Bytes": 374423,
+          "estimatedTokens": 124808,
+          "budgetedTokens": 156010,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
