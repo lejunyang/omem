@@ -1,0 +1,413 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:docs-research",
+    "title": "研究背景与技术选型",
+    "summary": "研究以固定版本证据、本地隐私和可替换检索为边界，对代码知识组件及外部记忆工具进行可追溯选型；当前成果限于环境与源码核验、许可证消歧、方案取舍和 PoC 设计，不代表已经完成集成或形成生产能力。",
+    "category": "research",
+    "sections": [
+      {
+        "key": "research-basis",
+        "title": "研究边界与核验方法",
+        "body": "代码知识研究受现有实现约束：材料按不可变 revision 切片并以固定 fragment 锚定引用，检索仍是 SQLite 关键词方案，跨 revision 身份续接和语义检索尚未实现；代码与文档关系只有人工登记后才能成为 confirmed。[[c1]] 上游调查采用固定提交下的 README、许可证和部分接口源码，且明确没有运行 benchmark。[[c2]] 具体仓库条目另存检查文件的 SHA-256 与固定 URL，从而支持输入复核和内容漂移检查。[[c3]] 对平台标为 `NOASSERTION` 的项目另读许可证正文完成消歧，不能据此断言项目闭源。[[c4]]"
+      },
+      {
+        "key": "selection-and-shape",
+        "title": "组件取舍与检索投影",
+        "body": "代码知识方向倾向借鉴 SCIP 快照模型、Tree-sitter 结构解析、repo-map 图排序及本地 embedding，而不整体引入自带数据库、UI 和模型编排的平台。[[c5]] 外部工具边界也不同：MemPalace 的检索路径不要求生成式 LLM，Hindsight 的事实提取需要 LLM 端点，WeKnora 则是部署较重的完整平台。[[c6]] MemPalace 高层接口缺少任意外部身份字段，同文不同源可能误合并；建议用 sidecar 保存可重建投影，搜索后仍由 omem 回查固定原件、有效性与范围。[[c7]][[c8]]"
+      },
+      {
+        "key": "verified-progress",
+        "title": "现有成果与被替代结论",
+        "body": "目前完成的是只读环境核验、固定源码快照、许可证消歧和上游已保存指标的重新聚合。环境核验确认 Docker 是“未安装”，替代旧报告的“permission-denied”结论；同时未安装软件、未下载权重或修改项目配置。[[c9]] 指标审计只复算既有 metrics，不会重跑检索或验证金标准。[[c10]] 其哈希不符会显式失败，但划分、重复问题 ID 和 held-out 集合一致性依赖 Python `assert`，关闭断言后不能视为稳定保证。[[c11]]"
+      },
+      {
+        "key": "poc-gates",
+        "title": "后续验证门与未实现项",
+        "body": "代码索引仍须依次验证 TS/Vue 符号抽取、SCIP 风格双向回链、跨版本续接、本地 embedding 和 PageRank 上下文；其中 P1–P3 不依赖 embedding，可独立推进。[[c12]] MemPalace PoC 则须保证候选可回查固定片段、同文不同源不误合并、预热后离线无外部请求、索引可重建，并在冻结中文语料上与关键词基线同口径比较。[[c13]] 启动该 PoC 还需用户授权修改项目配置、安装 Python 依赖和下载权重，并决定 embedding 取向。[[c14]] 在这些验证门通过前，上游指标不能写成 omem 服务指标，研究建议也不能表述为已实现能力。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "代码知识处理的当前约束",
+        "reason": "支持固定版本与片段引用、关键词检索现状、跨版本身份缺口及人工关系治理边界。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 5,
+          "endLine": 11
+        },
+        "quote": "评估对象对齐 omem 当前约束（见 [implementation/status.md](../implementation/status.md) 与仓库 AGENTS.md）：\n\n- TypeScript + Vue 3 UI、Fastify API、SQLite 单用户；依赖由 osdk 管理（node 24，python 3.12 可选，本机未装 Docker）。\n- **固定 revision + 固定 fragment ID**：材料按不可变版本切片，引用锚在具体 fragment 上；repo-review 当前关系锚在 head revision 的 fragment 上，**跨 revision fragment "
+      },
+      {
+        "key": "c2",
+        "label": "上游源码核验方法",
+        "reason": "支持调查使用提交元数据、不可变 README 与许可证及部分接口源码，并明确未执行运行时 benchmark。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/sources.json",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "{\n  \"checked_on\": \"2026-09-26\",\n  \"method\": \"GitHub API commit metadata + immutable raw README/license; selected API/source inspection; no runtime benchmark\",\n  \"repositories\": ["
+      },
+      {
+        "key": "c3",
+        "label": "固定源码文件与内容摘要记录",
+        "reason": "以 WeKnora 条目证明具体检查文件绑定固定提交 URL 和 SHA-256，并包含处理器、路由及类型源码。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/sources.json",
+          "startLine": 49,
+          "endLine": 108
+        },
+        "quote": "      \"repo\": \"Tencent/WeKnora\",\n      \"branch\": \"main\",\n      \"license\": \"NOASSERTION\",\n      \"archived\": false,\n      \"sha\": \"4364e61afa4bf1e086c34b4220bb21449aa15b25\",\n      \"commit_date\": \"2026-09-25T14:33:48Z\",\n      \"verified_license\": \"MIT (project core; third-party notices apply)\",\n      \"files\": [\n        {\n  "
+      },
+      {
+        "key": "c4",
+        "label": "许可证消歧原则",
+        "reason": "支持对 NOASSERTION 项目补读许可证正文，以及不依据 star 数或供应商 benchmark 选型。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/source-index.md",
+          "startLine": 25,
+          "endLine": 25
+        },
+        "quote": "GitHub SPDX 对 WeKnora、memU、pgvector 返回 NOASSERTION；已分别读取 LICENSE、LICENSE.txt、LICENSE 正文。NOASSERTION 不代表闭源。没有依据 star 数或供应商宣称的 benchmark 做选型。"
+      },
+      {
+        "key": "c5",
+        "label": "代码知识组件与平台取舍",
+        "reason": "支持借鉴 SCIP、Tree-sitter、repo-map 和本地 embedding，同时避免整体引入完整平台的研究结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 13,
+          "endLine": 20
+        },
+        "quote": "## 0. 一页结论\n\n| 结论 | 内容 |\n| --- | --- |\n| 可直接复用的**组件/协议**（不引入平台） | ① **SCIP protobuf 数据模型**（per-snapshot 的 def/reference/moniker）作为 omem 代码索引的落盘格式参考；② **Tree-sitter**（Node 绑定）做 TS/Vue 结构化 outline 与语法感知切片；③ **Aider repo-map 算法**（tree-sitter tags + def/ref 二部图 + PageRank + token 预算）作为 RetrievalPort 的候选上下文组装器；④ 本地 embedding"
+      },
+      {
+        "key": "c6",
+        "label": "三类外部工具的能力边界",
+        "reason": "支持 WeKnora、Hindsight 与 MemPalace 在模型需求、固定片段适配和部署形态上的差异。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/integration-readiness.md",
+          "startLine": 18,
+          "endLine": 29
+        },
+        "quote": "## 1. 三工具对比（事实）\n\n| 维度 | WeKnora | Hindsight | MemPalace |\n| --- | --- | --- | --- |\n| 定位 | 腾讯开源企业级 RAG/知识库框架（问答、Agent、Wiki/GraphRAG） | Vectorize 开源 Agent 记忆系统（retain 抽事实/建图，recall 四路召回+rerank） | 本地记忆检索研究（原文保留 + vector/BM25 hybrid 召回，检索路径无生成式 LLM） |\n| 仓库 | https://github.com/Tencent/WeKnora | https://github.com/vectoriz"
+      },
+      {
+        "key": "c7",
+        "label": "MemPalace 固定证据身份障碍",
+        "reason": "解释高层接口缺少外部身份字段、正文去重可能误合并不同来源，以及需要专门身份验收的原因。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 67,
+          "endLine": 75
+        },
+        "quote": "## 5. 直接接入的关键障碍：身份不是只加个 ID 字段\n\nMCP 的 `tool_add_drawer(wing, room, content, source_file, added_by)` **没有任意 metadata/external_id 参数**。其 `make_drawer_id_from_content(wing,room,content)` 会让同 wing/room 的相同正文得到相同 drawer ID；`source_file` 不在这个 ID 配方里。因此两个来源/版本有相同正文时，不能只按返回 ID 一对一绑定 omem 证据。\n\n推荐 PoC 用 Python sidecar + 公共后端 API："
+      },
+      {
+        "key": "c8",
+        "label": "薄适配器投影与原件回查",
+        "reason": "支持将 MemPalace 作为可重建 sidecar、返回候选后由 omem 回查原件，并保留关键词降级与 generation 回退。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 77,
+          "endLine": 90
+        },
+        "quote": "## 6. 薄适配器方案\n\n```text\nomem SourceRevision / FragmentRevision（权威）\n  → 投影 outbox（幂等键、generation）\n  → 独立 Python worker（MemPalace/可替换后端）\n  → search 返回 candidate_id / rank / evidence mapping / truncation\n  → omem 回查固定原件、有效性和 scope\n  → Context Packet → TraeX/Codex/Claude ACP/CLI\n```\n\nomem 定义 `index(batch)`、`search(query,scop"
+      },
+      {
+        "key": "c9",
+        "label": "只读环境核验与 Docker 更正",
+        "reason": "支持只读核验范围、未发生安装或配置变更，并以“未安装”替代旧的 Docker permission-denied 结论。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/integration-readiness.md",
+          "startLine": 1,
+          "endLine": 16
+        },
+        "quote": "# 外部工具集成可行性与环境准备评估（WeKnora / Hindsight / MemPalace）\n\n核验日期：2026-09-27。范围：只读调研，未安装软件、未下载权重、未修改 `osdk.toml`、未发送任何 omem 数据到外部服务。本地源码快照见 [sources.json](sources.json) / [source-index.md](source-index.md)。运行环境判断见 [../implementation/environment.md](../implementation/environment.md)。\n\n本报告按 **事实（附具体来源链接）/ 未测或不确定 / 建议** 三栏组织每个工具；"
+      },
+      {
+        "key": "c10",
+        "label": "指标重聚合的可信边界",
+        "reason": "说明脚本只重新聚合上游保存指标，不重跑检索或验证金标准。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/audit_artifacts.py",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "\"\"\"Reaggregate upstream saved metrics; does NOT rerun retrieval or validate gold labels.\n\npython audit_artifacts.py --data-dir /tmp/mempalace-audit --download\nNetwork is optional; without --download only already-downloaded files are read.\nAll downloads use immutable GitHub commit URLs and a bounded file size."
+      },
+      {
+        "key": "c11",
+        "label": "审计约束与失败机制",
+        "reason": "支持哈希采用显式异常，而划分、重复 ID 和 held-out 一致性依赖 assert 的限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/audit_artifacts.py",
+          "startLine": 40,
+          "endLine": 59
+        },
+        "quote": "    split = json.loads((root / \"lme_split_50_450.json\").read_text())\n    assert len(set(split[\"dev\"])) == 50 and len(set(split[\"held_out\"])) == 450\n    assert not (set(split[\"dev\"]) & set(split[\"held_out\"]))\n    out = []\n    for name, expected in sorted(FILES.items()):\n        data = (root / name).read_bytes()\n        "
+      },
+      {
+        "key": "c12",
+        "label": "代码索引分阶段验证门",
+        "reason": "支持五项 PoC 的执行顺序、验收要求以及 P1–P3 不依赖 embedding 的关系。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 281,
+          "endLine": 291
+        },
+        "quote": "## 8. PoC 门与风险（按执行顺序）\n\n所有 PoC 都在本机 node/python 进程内跑，不起 Docker、不连外部 LLM 做证据写入。\n\n1. **P1 Tree-sitter outline（TS+Vue）**：osdk 加 node 依赖，对本仓库 `.ts/.vue` 抽函数/类/import；以 `docs/repo-review/associations.json` 的 23 个 seed 里点名的 codePath+symbol 为金标准，测抽出的 symbol 命中率与误报。门：命中 seed symbol ≥ 阈值且无崩溃。\n2. **P2 SCIP 风格 occurrence 表**：参考 sc"
+      },
+      {
+        "key": "c13",
+        "label": "本地检索 PoC 的采用条件",
+        "reason": "支持证据回查、更新过滤、离线运行、可重建运维及同口径基线比较等采用门。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 92,
+          "endLine": 108
+        },
+        "quote": "## 7. PoC 与明确的决策门\n\n同一份本地脱敏中文语料和冻结问题集测试三条路线：A 当前关键词 baseline；B MemPalace 默认 vector/hybrid，再单列 union；C 同样 embedding+BM25 的薄组合。不要混用模型、切片、top-k/上下文预算后只比较最终最好分数。\n\n先用 30 材料/20 轨迹/60 问题查正确性，再扩到 10k/100k 片段查资源。问题覆盖专名、错误码、时间变更、跨片段全证据、无答案和同名不同来源；中文英文混排单列。参数开发集与 holdout 按项目/时间隔开。\n\n| 硬门 | 验收 |\n| --- | --- |\n| 证据映射 | 展示的每条候选100%能回查"
+      },
+      {
+        "key": "c14",
+        "label": "MemPalace PoC 授权与模型决策",
+        "reason": "直接支持启动 PoC 前需要授权修改配置、安装依赖、下载权重，并选择 embedding 方向。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/integration-readiness.md",
+          "startLine": 111,
+          "endLine": 127
+        },
+        "quote": "## 6. 推荐集成路线（修正后）\n\n1. **P0 — MemPalace 本地检索 PoC**：与 v3 主线不阻塞；需用户授权改 `osdk.toml`、装 Python 依赖、下载 embedding 权重（体积二选一后实测）。\n2. **P1 — 本地 LLM endpoint 就绪后再评估 Hindsight**：Hindsight 的 retain 需要一个 LLM endpoint，但该 endpoint 可为本地 Ollama（不是必须外部供应商，也不是必须先建 gateway）。前提是用户接受 retain 的事实抽取在本机 LLM 跑通、metadata 透传 fragment ID 实测通过。\n3. **P2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "代码索引 P1 的符号命中率、误报率门槛以及 Vue 特殊语法样本应如何冻结？",
+        "why": "材料只要求命中种子符号达到未定义阈值且无崩溃，尚未确定样本组成和具体验收值；该问题只影响未来 P1 实施，不阻塞当前研究正文。",
+        "nextStep": "从人工关联种子中固定 TypeScript、普通 Vue、script setup、重导出和同名符号样本，划分开发集与留出集，再确定阈值。",
+        "blocking": false,
+        "citationKeys": [
+          "c12"
+        ]
+      },
+      {
+        "question": "MemPalace PoC 应选择哪一版多语言 embedding，并是否授权修改项目配置、安装依赖和下载锁定权重？",
+        "why": "材料明确把模型方向及环境、网络和磁盘变更授权列为待决事项；中文收益、模型体积和离线行为尚未实测。",
+        "nextStep": "确定模型候选、版本摘要、缓存位置、网络窗口和授权范围，再用脱敏冻结语料建立可重建 generation。",
+        "blocking": false,
+        "citationKeys": [
+          "c13",
+          "c14"
+        ]
+      },
+      {
+        "question": "是否要把审计脚本的划分、重复 ID 和 held-out 一致性检查改成不受 `python -O` 影响的稳定错误合同？",
+        "why": "这些约束目前使用 Python `assert`，优化运行时会跳过；是否需要稳定错误合同取决于脚本是否进入自动化流程。",
+        "nextStep": "确认是否存在自动化消费者；若存在，改用显式异常并补充重复 ID、集合不符、空文件和缺键测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c11"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/integration-readiness.md",
+      "digest": "de753c07b88e5b5cc8b6fcb8f32f99cb980cc1238d2e6ceb2f85eee4af8a6d61"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/README.md",
+      "digest": "652c0c4315e44d157069a326d0d413dbedb9a6b4e276eebe57b6a8fd5d501c40"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/artifact-audit.json",
+      "digest": "896b5780cd29eb4d58e98430b3bc99dc7ca6b39ab95be8a0d9de26d8ae9cb098"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/audit_artifacts.py",
+      "digest": "a4c1a184fbdbd222ed6392041032d7cc0ce5501bc38dd317f9c6d8e6f24812fb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/source-index.md",
+      "digest": "ba5bfc1066f3738d6ac7289284824efcd395ffa1e3001e4d0bd040b13ae28ab3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/sources.json",
+      "digest": "90144f1679a62dc92950551b3bcc64b73030a8c02a5df52eb0c8b9e02e68aa6d"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "ed543377bb837354d6dd18f8b05736b5892c29d6f45699589c5542e03060a8d9"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/integration-readiness.md",
+      "digest": "e1bbcfc0c9548c78c44ceab755b487d0aff7640298c88148828a11942fef2696"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/mempalace/README.md",
+      "digest": "fc03985ae5385e7f445cdb3de817cf2d83236effbb391b4d6d07ca0135859a36"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/mempalace/artifact-audit.json",
+      "digest": "4410e0eb46c98eff3660fa99135f5395157df0ebb5bc669cad0f9fd5894a84c0"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/mempalace/audit_artifacts.py",
+      "digest": "469e058c42ac51b7e9fc9934e578d4a0215ab3c94207406c183c10d0d93866c0"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/source-index.md",
+      "digest": "f4c3361f2e73be446daafc961cc9f4cc4d2047684686d5a5b2e2fe9e7a5e2e33"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/sources.json",
+      "digest": "7773f089ecd4c5a47f3669d6c87a33dd9ba5e6476eefd40a611493ac2b5573fa"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:10:11.161Z",
+    "trace": {
+      "runId": "2e87df33-18f8-4f0c-8817-e78fd65082bc",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "9ddc4b30b41dcd748f34ee9194183168afdc495a5e6bee1d45671e0fe5c5aaee",
+      "contextHash": "ee658430d24cee8456042c21af86cf8c7bf217f0fc55b5bb9dcac9d1e495088c",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f727d60b2a6b46690519a8ac856f40ac287acd9f5ee1e4c738550be16ae15cb6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec9-b043-7d31-9ac6-c34640417d1d"
+      ],
+      "usage": {
+        "used": 60559,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 115712,
+          "utf8Bytes": 150262,
+          "estimatedTokens": 50088,
+          "budgetedTokens": 62610,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:10:20.015Z",
+    "trace": {
+      "runId": "255ca8f5-bcb8-42c2-a2f4-bb232ac92de8",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "8264665df6d4773dd2af0939d43114f94351133ca4ad85bedd8ddd865fa34472",
+      "contextHash": "7cf9e703ddcce154f5be84276674afbfdac5c6dd5c12de999f21c8dfb0c07d27",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "da987830286fbc8396a56fd8a33d656edcc54d1b2ac87fb0d35063e8fff041e2",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeca-0374-7782-af56-c32b2a2c0f43"
+      ],
+      "usage": {
+        "used": 57119,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 112807,
+          "utf8Bytes": 145749,
+          "estimatedTokens": 48583,
+          "budgetedTokens": 60729,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
