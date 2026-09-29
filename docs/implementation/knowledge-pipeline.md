@@ -35,3 +35,9 @@
 `review:generate -- --target=<path>` 是同一流程的局部入口；`review:build` 只重建当前知识索引，不重新调用模型。启动与手动同步均接入材料和知识恢复。review 中用户明确保存的回答写为原始 user-notes 材料，可在新机器恢复后继续被引用；旧 data 仍不是启动依赖。
 
 验证：仓库材料、知识恢复与 dev 生命周期 10 个用例通过，覆盖普通文件、部署配置、图片、私有配置排除、幂等捕获和无旧数据库的用户回答恢复。全仓模型处理的完成数以 coverage.json 为准，失败条目不冒充已生成。
+
+## 已修正：仍在使用旧预算的历史角色
+
+extractor/verifier/planner/feedback-curator 与早期四个代码角色的实际 manifest 预算也已统一到 96000 输入 / 24000 输出，避免只有新角色或 example 文件生效。review 的正式配置仍可覆盖到 192000 输入。更严格的 token 估算曾使旧批量提案 fixture 触到旧输出预算，已通过实际角色预算修正；输出洪泛测试仍验证硬性拒绝。
+
+验证：learning-pipeline、role-runtime、code-understanding 共 31 用例通过。
