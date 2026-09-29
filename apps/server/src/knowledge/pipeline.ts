@@ -23,7 +23,7 @@ export class KnowledgePipeline {
   private readonly running = new Set<DurableJobWorker>();
   private stopping = false;
   constructor(readonly repository: KnowledgeRepository, readonly gateway: RoleRuntimeGateway, readonly profile: AgentProfile,
-    readonly options: { budget?: Partial<GenerationBudget>; concurrency?: number; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
+    readonly options: { budget?: Partial<GenerationBudget>; concurrency?: number; retryTag?: string; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
 
   async stop() { this.stopping = true; await Promise.all([...this.running].map(w => w.stop())); }
 
@@ -60,7 +60,7 @@ export class KnowledgePipeline {
   private async runRole(role: string, offers: Offer[], articles: KnowledgeArticle[], task: Record<string, unknown>, validate?: (out: unknown) => unknown): Promise<RunResult> {
     if (this.stopping) throw Error("Knowledge pipeline stopped");
     const bundle = this.registry.load(role);
-    const refs = [{ role, task, materials: offers.map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })),
+    const refs = [{ role, task, retryTag: this.options.retryTag, materials: offers.map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })),
       articles: articles.map(a => ({ key: a.document.key, revision: a.revision })), model: this.profile.model, effort: this.profile.effort, budget: this.options.budget, bundleHash: bundle.bundleHash }];
     const { job } = this.repository.store.jobs.enqueue({ kind: `knowledge:${role}`, inputRefs: refs, roleVersion: bundle.bundleHash, policyVersion: "knowledge@1", maxAttempts: 3, cause: "knowledge-generation" });
     const result = () => {
@@ -110,12 +110,12 @@ export class KnowledgePipeline {
     return batch;
   }
 
-  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[]) {
-    let repair: unknown = undefined;
+  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown) {
+    let repair: unknown = priorFeedback;
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
     for (let attempt = 0; attempt < 4; attempt++) {
-      const write = await this.runRole(attempt ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
+      const write = await this.runRole(repair ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
       const batch = knowledgeBatchSchema.parse(write.result);
       const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents }, out => {
         const r = knowledgeReviewSchema.parse(out);
@@ -142,6 +142,22 @@ export class KnowledgePipeline {
     throw Error(`Semantic review still requests changes: ${remaining.map(t => t.key).join(", ")}`);
   }
 
+  private previousFeedback(targets: KnowledgeMaterial[]) {
+    const drafts: KnowledgeDocument[] = [], issues: unknown[] = [];
+    for (const target of targets) {
+      const rows = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
+        WHERE o.output_schema='KnowledgeReview.v1' AND EXISTS(SELECT 1 FROM json_each(o.output_json,'$.verdicts') v WHERE json_extract(v.value,'$.documentKey')=? AND json_extract(v.value,'$.verdict')='needs_revision') ORDER BY o.created_at DESC LIMIT 1`).all(target.key) as { output_json: string; input_refs: string }[];
+      for (const row of rows) {
+        const input = JSON.parse(row.input_refs)[0];
+        if (!input.materials?.some((m: {key:string;digest:string}) => m.key === target.key && m.digest === target.digest)) continue;
+        const draft = input.task?.drafts?.find((d: KnowledgeDocument) => d.key === target.key);
+        const verdict = JSON.parse(row.output_json).verdicts.find((v: {documentKey:string}) => v.documentKey === target.key);
+        if (draft && verdict) { drafts.push(draft); issues.push(verdict); }
+      }
+    }
+    return drafts.length ? { previousDrafts: drafts, issues, instruction: "Apply these precise corrections to the supplied prior drafts. Preserve unaffected claims; generate any new targets from their originals. Recheck modal strength such as required versus recommended and every cited range." } : undefined;
+  }
+
   async analyze(materials: KnowledgeMaterial[], supplements: (targets: KnowledgeMaterial[]) => Offer[] = () => []) {
     const current = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));
     const pending = materials.filter(m => { const a = current.get(m.key); return !a; });
@@ -162,7 +178,7 @@ export class KnowledgePipeline {
           if (answer) offers.push({ material: answer, ranges: [{ start: 1, end: answer.lineCount }] });
         }
         for (const s of supplements(targets)) if (!offers.some(o => o.material.key === s.material.key)) offers.push(s);
-        try { await this.writeAndVerify(analystFor(targets[0]!), targets.map(m => ({ key: m.key, title: m.title })), offers, []); }
+        try { await this.writeAndVerify(analystFor(targets[0]!), targets.map(m => ({ key: m.key, title: m.title })), offers, [], this.previousFeedback(targets)); }
         catch (error) { const failure = { keys: targets.map(m => m.key), error: String(error) }; failures.push(failure); this.options.log?.(`FAILED ${failure.keys.join(", ")}: ${failure.error}`); }
       }
     }));
@@ -171,7 +187,7 @@ export class KnowledgePipeline {
 
   async plan(): Promise<KnowledgePlan> {
     const materials = this.repository.materials();
-    const articles = this.repository.list().filter(a => a.current);
+    const articles = this.repository.list().filter(a => a.current && !a.document.key.startsWith("topic:"));
     const base = materials.find(m => m.path === "README.md") ?? materials[0]!;
     const result = await this.runRole("knowledge-planner", [{ material: base, ranges: [{ start: 1, end: Math.min(base.lineCount, 100) }] }], [],
       { title: "知识树规划", catalog: articles.map(a => ({ key: a.document.key, title: a.document.title, category: a.document.category, summary: a.document.summary.slice(0, 220) })) }, out => {

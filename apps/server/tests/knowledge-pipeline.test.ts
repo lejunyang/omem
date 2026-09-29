@@ -23,7 +23,7 @@ function setup(reject = false, changeDuringRun = false) {
     if (changeDuringRun && count === 1) capture("The release has changed.");
     const key = String((input.context.task!.targetKeys as string[])[0]);
     let result: unknown = input.roleId === "knowledge-verifier" ? { schema_version: 1, verdicts: [{ documentKey: key, verdict: reject ? "needs_revision" : "accepted", issues: reject ? ["The interpretation is unsupported"] : [], questions: [] }] } : {
-      schema_version: 1, documents: [{ key, title: "Evidence behavior", summary: "A derived explanation", category: "background", sections: [{ key: "behavior", title: "Behavior", body: "The release preserves evidence.[[c1]]" }], citations: [{ key: "c1", label: "Original statement", reason: "The original states this constraint.", relation: "supports", target: { kind: "material", key, startLine: 1, endLine: 1 }, quote: "" }], questions: [] }],
+      schema_version: 1, documents: [{ key, title: "Evidence behavior", summary: "A derived explanation", category: "background", sections: [{ key: "behavior", title: "Behavior", body: reject ? "An unsupported extrapolation.[[c1]]" : "The release preserves evidence.[[c1]]" }], citations: [{ key: "c1", label: "Original statement", reason: "The original states this constraint.", relation: "supports", target: { kind: "material", key, startLine: 1, endLine: 1 }, quote: "" }], questions: [] }],
     };
     const normalized = input.validateOutput?.(result); if (normalized !== undefined) result = normalized;
     const bundle = registry.load(input.roleId);
@@ -31,7 +31,7 @@ function setup(reject = false, changeDuringRun = false) {
   });
   const profile = profileSchema.parse({ id: "traex", name: "Fixture", command: "unused", transport: "acp" });
   const pipeline = new KnowledgePipeline(repository, gateway, profile, { concurrency: 1 });
-  return { store, repository, pipeline, run, captured };
+  return { store, repository, pipeline, run, captured, accept: () => { reject = false; } };
 }
 
 it("publishes only after independent review and reuses durable outputs after projection loss", async () => {
@@ -55,4 +55,15 @@ it("does not promote rejected knowledge or a result whose source changed during 
   const stale = setup(false, true);
   expect((await stale.pipeline.analyze(stale.repository.materials())).failures[0]!.error).toContain("KNOWLEDGE_INPUT_CHANGED");
   expect(stale.repository.list()).toEqual([]);
+});
+
+it("resumes a semantic rejection with its exact prior draft and reviewer feedback", async () => {
+  const { repository, pipeline, run, accept } = setup(true);
+  expect((await pipeline.analyze(repository.materials())).failures).toHaveLength(1);
+  const before = run.mock.calls.length;
+  accept();
+  expect((await pipeline.analyze(repository.materials())).failures).toEqual([]);
+  expect(run.mock.calls[before]![0].roleId).toBe("knowledge-refresher");
+  expect(run.mock.calls[before]![0].context.task).toHaveProperty("revisionRequest.previousDrafts");
+  expect(repository.list()).toHaveLength(1);
 });
