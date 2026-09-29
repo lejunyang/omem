@@ -1,0 +1,467 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:code",
+    "title": "code · 模块理解",
+    "summary": "code 模块把 Capture 中的固定源码修订转换为可重建、可追溯的代码快照与结构图，并在其上投影人工或模型生成的模块理解；其核心约束是保留历史、区分确定事实与候选关系、让派生知识始终回指原始材料。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "职责与设计背景",
+        "body": "该模块不是另一套事实库，而是 Capture→Source/Revision/Fragment 权威链上的代码视图：同步从固定 head 修订读取源码，生成文件、符号、关系和快照，再供 DTO、理解结果与知识产物使用。[[c1]][[c2]] 文件、符号、边和快照采用确定性身份；符号范围归属于具体快照，复合主键与显式 head 使旧状态可读，也避免工作树回到旧内容时误把捕获时间当作当前状态。[[c3]][[c4]]"
+      },
+      {
+        "key": "pipeline",
+        "title": "从源码到可浏览代码图",
+        "body": "解析层以 TypeScript AST 提取声明、导入和名称级调用，并专门处理 Vue SFC；路由与测试只由保守正则识别。[[c5]] 同步层把解析结果绑定到固定修订和声明 fragment：导入仅在捕获文件集合内解析，未解析目标记为 missing；调用只做同文件名称匹配且标为 candidate，不能视作跨文件调用证明。[[c6]][[c7]] 面向界面时，DTO 保留路由所需内部键，但增加人类标题、路径、引用标签及不可操作原因，避免直接展示内部标识。[[c8]]"
+      },
+      {
+        "key": "understanding",
+        "title": "派生理解、校验与恢复",
+        "body": "代码理解层把当前图、固定源码证据和人工 seed 投影为严格合同；locator、证据文件或引用提示无法解析时会保存 rejected 结果，而不是静默丢失引用或覆盖已有好结果。[[c9]][[c10]] 可选模型生成会先限定目标范围并检查输入、输出、超时和取消预算；服务端封装 provenance，校验引用确实曾展示给模型，并在提交前确认 head 未移动。[[c11]] 成功模型结果还可导出为带依赖哈希和稳定 locator 的版本化产物；恢复时依赖变化标 stale，定位或合同失败标 rejected，且派生产物不会被重新当作独立原始证据。[[c12]][[c13]]"
+      },
+      {
+        "key": "progress_limits",
+        "title": "当前进展与限制",
+        "body": "现有实现已覆盖固定修订同步、历史快照、结构图、人类可读 DTO、人工 seed、显式模型生成及产物恢复；失败或过期结果均不会晋升为当前理解。主要边界仍是单仓 PoC，仓库标识固定为 `omem`；理解快照也诚实地使用空调用边集，因为当前调用信息不足以形成已确认的符号关系。[[c14]][[c15]] 此外，模型端口虽默认关闭并要求宿主显式选择 transport，但缺少真实模型名时会回退为 `acp`、`cli` 或 `http`，与文件头所声明的模型身份 provenance 规则存在冲突。[[c16]][[c17]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "代码同步流程",
+        "reason": "支持 code 模块从 Capture 固定修订读取源码并形成代码知识快照的总体职责。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "section": "input_snapshot"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "固定 Capture 修订输入",
+        "reason": "直接证明同步读取 sources.head 指向的修订正文，并限定纳入分析的文件范围。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 152,
+          "endLine": 185
+        },
+        "quote": "export async function runCodeSync(\n  store: Store,\n  repoRoot: string,\n): Promise<CodeKnowledgeSyncResult> {\n  ensureCodeTables(store);\n  ensureReviewMetaTable(store);\n\n  const repoId = codeRepositoryId();\n  const commit = await git([\"rev-parse\", \"HEAD\"], repoRoot);\n  const remote = await git([\"remote\", \"get-url\", \"ori"
+      },
+      {
+        "key": "c3",
+        "label": "代码知识存储模型",
+        "reason": "解释确定性身份、快照历史、显式 head 与图读取之间的关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/store.ts",
+          "section": "model"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c4",
+        "label": "显式当前快照指针",
+        "reason": "支持不能按 captured_at 推断当前状态，以及同步必须显式切换 head 的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 273,
+          "endLine": 284
+        },
+        "quote": "  // Additive migration: explicit head pointer on the repository. We must NOT\n  // infer \"latest\" from captured_at: when the tree returns to a previously\n  // seen state the same snapshot row is reused, but a later snapshot row still\n  // has a more recent captured_at and would wrongly win. The head pointer is\n  // fli"
+      },
+      {
+        "key": "c5",
+        "label": "离线结构解析器",
+        "reason": "概括 TypeScript AST、Vue SFC 和保守正则各自承担的解析职责与边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "section": "pipeline"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c6",
+        "label": "关系投影规则",
+        "reason": "直接支持导入、同文件候选调用、路由、测试和 Vue 组件关系的状态判定。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 291,
+          "endLine": 415
+        },
+        "quote": "      // 2) Imports.\n      for (const imp of f.parsed.imports) {\n        const target = resolveImport(f.path, imp.specifier, knownPaths);\n        const toFile = target ? pathToFileId.get(target) ?? null : null;\n        const seed = `imports|${f.path}|${imp.specifier}`;\n        liveSeeds.add(seed);\n        upsertEdge(st"
+      },
+      {
+        "key": "c7",
+        "label": "名称级调用收集",
+        "reason": "说明调用仅保留简单被调用名称和有限调用者上下文，不能证明跨文件真实调用。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 167,
+          "endLine": 195
+        },
+        "quote": "      case ts.SyntaxKind.CallExpression: {\n        const ce = node as ts.CallExpression;\n        let callee = \"\";\n        if (ts.isIdentifier(ce.expression)) callee = ce.expression.text;\n        else if (ts.isPropertyAccessExpression(ce.expression)) callee = ce.expression.name.text;\n        if (callee && /^[A-Za-z_$][A"
+      },
+      {
+        "key": "c8",
+        "label": "人类可读 DTO 投影",
+        "reason": "支持保留内部动作键、增加展示字段，并为 missing 或 stale 对象提供不可操作原因。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "section": "projection"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c9",
+        "label": "理解结果投影与校验",
+        "reason": "解释人工 seed、固定证据、严格合同以及派生结果不改写原始代码图的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "section": "projection"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "定位失败的拒绝持久化",
+        "reason": "直接支持 locator、证据或提示解析失败会形成 rejected 记录而非静默丢弃。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 304,
+          "endLine": 417
+        },
+        "quote": "    // Resolve node locators to concrete symbol ids present in this snapshot.\n    // An unresolvable locator is a hard projection failure (not a silent\n    // drop): the curated seed named a node that no longer exists, so the\n    // result persists as rejected rather than silently citing nothing.\n    const resolutionEr"
+      },
+      {
+        "key": "c11",
+        "label": "可选模型生成防线",
+        "reason": "支持目标裁剪、预算、中止、引用范围校验与 head 移动防线的完整生成流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "section": "generation"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "代码理解产物恢复",
+        "reason": "解释生成结果如何通过依赖摘要、稳定 locator 和严格合同在新快照中恢复。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "section": "restore"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c13",
+        "label": "产物重绑定与事务恢复",
+        "reason": "直接支持仅重绑定已校验引用、保留原生成信息并写入规范化引用表的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 87,
+          "endLine": 118
+        },
+        "quote": "      // Rebind only checked references/digest. Original model output and original\n      // generation digest remain in the committed artifact, never overwritten.\n      const output: CodeUnderstandingOutput = {\n        ...artifact.output, input_digest: inputDigest,\n        referenced_node_ids: mapped(artifact.output.re"
+      },
+      {
+        "key": "c14",
+        "label": "固定单仓标识",
+        "reason": "直接证明当前仓库标识固定为 omem，属于单仓 PoC 边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 40,
+          "endLine": 42
+        },
+        "quote": "export function codeRepositoryId(): string {\n  // PoC: single repo. Stable slug.\n  return \"omem\";"
+      },
+      {
+        "key": "c15",
+        "label": "空调用边的明确依据",
+        "reason": "直接说明当前名称级调用不足以形成确认的符号间关系，因此理解快照使用空边集。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 262,
+          "endLine": 264
+        },
+        "quote": "      // The parser's calls edges are name-level with a null caller, so there are\n      // no confirmed symbol->symbol edges to model; an empty edge set is honest.\n      edges: [],"
+      },
+      {
+        "key": "c16",
+        "label": "显式配置的模型端口",
+        "reason": "解释模型默认关闭、由宿主选择 transport，以及当前模型身份回退存在的 provenance 缺陷。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "section": "http_boundary"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c17",
+        "label": "模型身份声明",
+        "reason": "直接给出模型 ID 应来自 transport 响应或显式配置的声明，用于对照当前 transport 标签回退行为。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 11,
+          "endLine": 14
+        },
+        "quote": " * Provenance discipline: the model id returned to the strict schema comes from\n * the transport response (HTTP body) or the explicit config `model` string. We\n * never invent a model id, never claim seed output was model-produced, and never\n * mark a generated row as agent-verified."
+      }
+    ],
+    "questions": [
+      {
+        "question": "模型响应和显式配置都没有模型 ID 时，应拒绝结果，还是允许把 transport 名称作为单独字段保存？",
+        "why": "当前 ACP、CLI 和 HTTP 会把 transport 名称回退到 model 字段，但源码声明要求模型身份只能来自响应或显式配置，二者存在直接冲突。",
+        "nextStep": "明确 provenance 合同；若 model 必须是真实身份则在缺失时抛错，否则新增独立 transport 字段并修正声明与测试。",
+        "blocking": true,
+        "citationKeys": [
+          "c16",
+          "c17"
+        ]
+      },
+      {
+        "question": "跨快照查询单个符号时，接口应返回当前 head 行还是要求显式 snapshotId？",
+        "why": "符号表允许同一稳定符号在多个快照中存在，而现有按标识查询没有快照条件，可能返回语义不明确的历史行。",
+        "nextStep": "核对所有调用点并确定当前态或历史态合同，随后为 A→B→A 场景增加回归测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "是否计划把名称级候选调用升级为可确认的跨文件符号调用？",
+        "why": "当前解析和理解合同都明确不能把名称匹配当作已确认调用；这限制了流程图和模块依赖分析的精度。",
+        "nextStep": "若需要升级，先设计基于 TypeScript Program 的解析与别名、重载处理，并用源码级测试验证 caller、callee 和跨文件绑定。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c15"
+        ]
+      },
+      {
+        "question": "跨快照按稳定符号 ID 查询时，应返回当前 head 行还是要求调用方显式提供 snapshotId？",
+        "why": "符号表以 `(symbol_id, snapshot_id)` 为复合主键，而 `symbolById` 只按 `symbol_id` 查询且没有排序，当前返回语义不确定。",
+        "nextStep": "核对调用点并确定当前态或历史态合同，再为 A→B→A 场景增加回归测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/dto.ts",
+      "digest": "0213903ededa1ffee899a545cac340492ca4230ca75a5b8ef4ed02eef69949e7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "881dbb51d6512f56e3844218fac10925b3b5d75c10aba4f2818ec75ebb6ac623"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "237134bc22d96fab78687dc9ccec790f35f2813136ad26d14224628dca67b7db"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/dto.ts",
+      "digest": "8ed42e20478a02d3ee381867051c755ce8b61d06aad4653e768339b4c8b4b67f"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3e4027bd1620d744f5db99a219d50dbb43bad6bbdf80fc045f289c4af3040a25"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "8f1a973404e98d5ca6cd9c560bdf2bd7d94ca0c0a4c94c411ef9594d83ec600a"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "ca8b9998a95f2f4a624787d73d977bd8a8f8dc88401cb84ae3066e421a334419"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "feeb3a6d5c11a83ff9ed5a6165943b0f00124ddfe922553003873c70b0577721"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "5c17af3734de95256497c2f1a414e9df08510c9919cbb5ae03994f8da5665aff"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:14:34.688Z",
+    "trace": {
+      "runId": "57e07828-a379-4b13-bcbe-8e0d87d71a4e",
+      "roleId": "knowledge-writer",
+      "roleVersion": "1",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "f2902a23547d8c8438e347dfbe54e73dc02f732c6cf14a76fa71087eb201b8c1",
+      "contextHash": "16fa6e4473a37fb0107d1616009b68f547fd87ea1c506a528f3216e79185bedb",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d3842c708fa5b2f2fc0b9b5f34f6876e4f3a5ac66daa6e610311c23178522bbe",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-writer",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eecd-1f0e-7221-b157-1f4e1a6f695e",
+        "01a0eecd-977b-7213-848a-65cce81f4d0e"
+      ],
+      "usage": {
+        "used": 65504,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 164297,
+          "utf8Bytes": 179202,
+          "estimatedTokens": 59734,
+          "budgetedTokens": 74668,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 1
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:14:46.788Z",
+    "trace": {
+      "runId": "35adbd10-48da-4d2a-b2f4-8e30b9c4c82c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "cee4c51625d1b277851b28f543fecffb5c6c1c034285daf1649b61da7b4f2fc9",
+      "contextHash": "c63891b5cb98c177cb32dd09bfce822053659fc67ec2dbb2a620e9fd6cd8f265",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5599611cc17bf3b77f11dc643c125c1565fc943f78394542d2e417fb49a8b40e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eece-09f6-7de3-9023-2ba089d7c07f"
+      ],
+      "usage": {
+        "used": 65772,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 170326,
+          "utf8Bytes": 187963,
+          "estimatedTokens": 62655,
+          "budgetedTokens": 78319,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
