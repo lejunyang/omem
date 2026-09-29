@@ -3,43 +3,43 @@
   "document": {
     "key": "omem:apps/server/src/knowledge/repository.ts",
     "title": "知识材料、修订与失效管理仓库",
-    "summary": "从非派生 Revision 构造固定知识材料，验证正文内联引用，按内容生成不可变文章修订并维护 current head；依赖变化和用户回答会使相关知识失效，供后续分析纳入回答并重新核对。",
+    "summary": "从非派生 Revision 构造固定材料，验证正文内联引用，按内容保存不可变文章修订并维护 current head；依赖变化和用户回答会使相关知识失效，供后续分析重新核对。",
     "category": "implementation",
     "sections": [
       {
         "key": "materials-validation",
         "title": "固定材料与引用合同",
-        "body": "仓库从 Revision 的文本、链接和图片部件构造材料，并把正文、图片、作者及转发属性纳入摘要；明确标记为 derived 的 Revision 不会成为原始材料。[[c1]] 文档校验要求章节键和引用键唯一、每节至少包含一处内联引用、每项引用都实际出现在正文中，并核验材料行范围或文章章节目标。宿主再按模型选定的范围复制精确短引文，避免要求模型复写长代码。[[c2]]"
+        "body": "仓库从 Revision 的文本、链接和图片部件构造材料，并把正文、图片、作者及转发属性纳入摘要；明确标记为 derived 的 Revision 不会成为原始材料。[[c1]] 文档校验要求章节键和引用键唯一、每节至少一处内联引用、每个引用都在正文出现，并验证材料行范围或文章章节目标。宿主根据模型选择的范围复制短引文，独立复核仍可看到精确引文及原材料。[[c2]]"
       },
       {
         "key": "publication",
         "title": "不可变发布与问题演进",
-        "body": "发布前会重新核对材料摘要和依赖文章修订，输入变化时拒绝发布；文章内容与生成、复核记录共同决定修订哈希，相同修订直接复用，否则插入不可变 revision 并原子切换 current head。[[c3]] 新正文中的问题会新增或更新；此前处于 `superseded` 且再次出现的问题会重开。只有仍为 `open`、但已从新正文移除的问题才会被标记为 `superseded`；已经是 `answered` 或 `task` 的问题不受这段淘汰逻辑影响。[[c4]]"
+        "body": "发布前会重新核对材料摘要和文章修订，输入变化时拒绝发布；文章内容与生成、复核记录共同决定修订哈希，相同修订直接复用，否则写入不可变 revision 并原子切换 head。[[c3]] 新正文中的问题会新增或更新；只有此前仍为 `open` 且已从新正文移除的问题会变成 `superseded`，已 answered 或 task 等状态不会由这段发布逻辑改为 superseded。再次出现的 superseded 问题则会重新打开。[[c3]]"
       },
       {
         "key": "invalidation-answer",
         "title": "依赖失效与用户回答",
-        "body": "刷新会比较 current 材料摘要及派生文章修订，并沿文章依赖递归传播失效；历史修订仍被保留，但失效文章的 head 不再标为 current。[[c5]] 用户回答疑问时，答案先作为带来源元数据的手工捕获保存，问题改为 `answered`，对应文章登记失效原因并触发刷新。[[c6]] 该操作本身不创建复核任务；后续分析运行时才会把关联的回答 Revision 作为原始材料加入输入并重新核对。[[c7]] 用户也可另行把问题转换为现有任务系统中的待办，此时问题状态变为 `task`。[[c6]]"
+        "body": "刷新会比较 current 材料摘要与派生文章修订，并沿文章依赖传播失效；历史修订仍保留，但受影响 head 不再 current。[[c4]] 用户回答先保存为带来源元数据的手工捕获，再把问题标为 answered、登记文章失效原因并刷新依赖。[[c5]] 该方法本身不创建复核任务；后续分析运行时才把关联回答作为原始材料加入输入。[[c6]] 用户也可另行把问题转换成现有任务系统的待办。[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "Revision 转固定材料",
-        "reason": "说明派生 Revision 的排除条件，以及文本、链接、图片和来源属性如何组成固定材料及摘要。",
+        "reason": "说明派生 Revision 排除、文本与图片组合以及材料摘要计算。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
           "startLine": 11,
-          "endLine": 33
+          "endLine": 38
         },
         "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
       },
       {
         "key": "c2",
         "label": "正文引用验证与引文绑定",
-        "reason": "支持内联引用、引用目标和行范围的验证规则，以及由宿主从固定材料复制精确引文的机制。",
+        "reason": "支持内联引用、目标范围与章节验证，并说明宿主复制精确短引文。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -51,34 +51,21 @@
       },
       {
         "key": "c3",
-        "label": "发布前依赖核对与不可变修订",
-        "reason": "支持发布前检查输入身份、计算修订哈希、复用相同修订以及事务性切换文章 head。",
+        "label": "文章发布事务",
+        "reason": "支持依赖复核、不可变修订、head 切换，以及仅处理 open 旧问题的状态演进。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
           "startLine": 118,
-          "endLine": 129
+          "endLine": 141
         },
         "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
       },
       {
         "key": "c4",
-        "label": "开放问题的替代与重开",
-        "reason": "精确说明只有已移除的 open 问题会变为 superseded，并说明 superseded 问题再次出现时会重开。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 130,
-          "endLine": 136
-        },
-        "quote": "      const liveQuestions = new Set(artifact.document.questions.map(q => digest(artifact.document.key + \":\" + q.question)));\n      for (const row of this.store.db.prepare(\"SELECT id FROM knowledge_questions WHERE document_key=? AND state='open'\").all(artifact.document.key) as Row[]) {\n        if (!liveQuestions.has(Str"
-      },
-      {
-        "key": "c5",
         "label": "依赖失效传播",
-        "reason": "说明材料或子文章身份变化如何使文章失效，并沿派生文章依赖继续传播。",
+        "reason": "说明材料或子文章变化如何递归使相关知识不再 current。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -89,9 +76,9 @@
         "quote": "  /** Refresh checks content identity, including dependencies on derived pages. */\n  refresh() {\n    const materials = new Map(this.materials().map(m => [m.key, m.digest]));\n    const articles = this.list();\n    const articleMap = new Map(articles.map(a => [a.document.key, a]));\n    const bad = new Set((this.store.db.p"
       },
       {
-        "key": "c6",
+        "key": "c5",
         "label": "回答保存与待办创建",
-        "reason": "说明用户回答被保存为原始捕获、问题转为 answered 并使文章失效，以及显式创建待办时状态转为 task。",
+        "reason": "说明回答保存、问题失效处理以及可选的待办创建操作。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -102,9 +89,9 @@
         "quote": "  questions() { return (this.store.db.prepare(\"SELECT * FROM knowledge_questions ORDER BY updated_at DESC\").all() as Row[]).map(r => ({ id: String(r.id), documentKey: String(r.document_key), ...JSON.parse(String(r.body)), state: String(r.state), taskId: r.task_id, answerRevision: r.answer_revision })); }\n\n  answer(id: "
       },
       {
-        "key": "c7",
+        "key": "c6",
         "label": "后续分析纳入用户回答",
-        "reason": "说明知识分析仅在后续运行时读取问题关联的回答 Revision，并把它作为固定材料加入复核输入。",
+        "reason": "说明后续分析如何读取问题关联的回答 Revision 并加入固定材料输入。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -121,7 +108,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
+      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
     },
     {
       "kind": "material",
@@ -152,17 +139,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:43:35.071Z",
+    "at": "2026-09-29T21:12:40.550Z",
     "trace": {
-      "runId": "b4e72dba-2316-496f-87ef-bd3c68a0bfbf",
+      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "eb5903274f89a0a9fce5469481d820f4982dbabeb8855b00fab15385fdbf0790",
-      "contextHash": "350426a0a10c3775fa585ea945804e773e3499983fccda470be55be9d877c505",
+      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
+      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "da4500d714ee7556cbbbc7a80afc8650b0657f3fde822bc76379898b8bea0d88",
+      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -175,10 +162,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee8-6559-7cc3-9ce7-d9dce624b230"
+        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
       ],
       "usage": {
-        "used": 41345,
+        "used": 52878,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -187,10 +174,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 99475,
-          "utf8Bytes": 102979,
-          "estimatedTokens": 34327,
-          "budgetedTokens": 42909,
+          "chars": 117772,
+          "utf8Bytes": 129037,
+          "estimatedTokens": 43013,
+          "budgetedTokens": 53767,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -199,17 +186,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:43:46.653Z",
+    "at": "2026-09-29T21:13:15.335Z",
     "trace": {
-      "runId": "e0a22c6b-fb01-4e2f-8165-e565b4767f8b",
+      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9c1497291eb33e32abf4054f99142d485f29afe31045b5893c623eb7e9d07041",
-      "contextHash": "955b95737ce87f813f591c53b5a1159af8d5fd363ec9305e9435b2fe4a5cc8aa",
+      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
+      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5e95d31ef2ee23c1686902b334a65daf0c8f4aaaf7dbf1069032c12244defad0",
+      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -222,10 +209,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee8-96e1-7062-9154-d14a3928e70a"
+        "01a0ef03-398c-79f2-a656-9c230614f1a0"
       ],
       "usage": {
-        "used": 40003,
+        "used": 49586,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -234,10 +221,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 97598,
-          "utf8Bytes": 100504,
-          "estimatedTokens": 33502,
-          "budgetedTokens": 41878,
+          "chars": 118346,
+          "utf8Bytes": 128851,
+          "estimatedTokens": 42951,
+          "budgetedTokens": 53689,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
