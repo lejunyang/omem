@@ -1,0 +1,286 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/inputs.test.ts",
+    "title": "缓冲输入、脱机队列与聚合窗口验收测试",
+    "summary": "覆盖 hook 脱机落盘、回执校验、去重与容量限制、敏感字段过滤，以及聊天和屏幕事件的有界聚合与迟到追踪。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "offline-spool",
+        "title": "脱机暂存与可靠清除",
+        "body": "测试把 hook 转发器指向不可达地址，要求进程正常退出、标准输出为空并提示已排队。重启 `HookSpool` 后，同一事件仍被识别为重复；发送失败或返回空回执都不能删除待处理项，只有 `Store.capture` 返回匹配回执后才清除。[[c1]] 重复重放最终只产生一份采集回执、材料和作业，说明暂存层与 Store 的幂等边界协同。"
+      },
+      {
+        "key": "security-limits",
+        "title": "隐私、冲突和容量约束",
+        "body": "采集 profile 只保留允许的 prompt 字段，并把令牌样式内容替换为 `[REDACTED]`；工具响应、私有思考和未知秘密不得进入序列化结果。[[c2]] 同一事件标识配不同载荷时，spool 与 Store 分别明确报冲突；容量溢出抛出专用错误，警告只记录容量类别而不复制敏感正文。事件文件在 POSIX 下断言为 0600，[[c3]] 暂存目录则在前一用例末尾断言为 0700。[[c4]]"
+      },
+      {
+        "key": "aggregation",
+        "title": "聊天与屏幕聚合流程",
+        "body": "聊天事件进入五分钟窗口：重复噪声事件仍保留追踪标识，但聚合修订只保留去重后的三个正文 part；到 300 秒才强制落库，并记录窗口起止时间。[[c5]] 已落库窗口中的迟到事件形成新修订，并通过 `lateForBatchId` 指回原批次。屏幕输入在达到 `maxEvents` 时立即刷新，两条相同画面压缩成一个正文 part。[[c6]]"
+      },
+      {
+        "key": "coverage",
+        "title": "边界与未覆盖行为",
+        "body": "测试确认所有聚合输入最终清空，并形成三个批次和三个作业。[[c7]] Windows 分支只验证路径存在且可读取，因为 Unix mode 位不能表达 NTFS ACL；材料没有检查实际 Windows ACL。[[c8]] 其余未覆盖项包括写文件中途崩溃、磁盘写满、多进程同时操作同一 spool、超大单事件，以及不同会话或窗口之间的聚合隔离。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "脱机 hook 暂存与回执匹配",
+        "reason": "支持脱机排队、重启恢复、回执不匹配时保留以及成功后幂等清除的流程。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 48,
+          "endLine": 123
+        },
+        "quote": "describe(\"B2-02 buffered input acceptance\", () => {\n  it(\"A-I01 persists offline hook input and clears only a matching capture receipt\", async () => {\n    const spoolDirectory = temporary(\"omem-spool-\");\n    const rawEvent = {\n      event_id: \"hook-event-1\",\n      hook_event_name: \"PostToolUse\",\n      session_id: \"sess"
+      },
+      {
+        "key": "c2",
+        "label": "采集 profile 与敏感信息过滤",
+        "reason": "支持仅保留允许字段、脱敏令牌并排除响应和私有思考的安全断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 127,
+          "endLine": 150
+        },
+        "quote": "  it(\"A-I02 blocks event conflicts/capacity overflow and applies capture profiles\", () => {\n    const spoolDirectory = temporary(\"omem-spool-limits-\");\n    const spool = new HookSpool(spoolDirectory, {\n      maxEntries: 1,\n      maxBytes: 100_000,\n    });\n    const first = captureSchema.parse(\n      hookInput(\n        "
+      },
+      {
+        "key": "c3",
+        "label": "冲突、容量与事件文件权限",
+        "reason": "支持事件文件 0600 权限、冲突拒绝及容量警告不泄漏正文。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 151,
+          "endLine": 190
+        },
+        "quote": "    spool.enqueue(first);\n    const pendingFile = readdirSync(spoolDirectory).find((name) =>\n      name.endsWith(\".json\"),\n    )!;\n    expectOwnerOnlyMode(join(spoolDirectory, pendingFile), 0o600);\n\n    const conflicting = captureSchema.parse({\n      ...first,\n      parts: [{ type: \"text\", text: \"different payload\" }],"
+      },
+      {
+        "key": "c4",
+        "label": "暂存目录权限断言",
+        "reason": "支持 POSIX 下暂存目录被单独断言为 0700 的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 119,
+          "endLine": 125
+        },
+        "quote": "      expect(store.list()).toHaveLength(1);\n      expect(store.jobs.list()).toHaveLength(1);\n    } finally {\n      store.close();\n    }\n    expectOwnerOnlyMode(spoolDirectory, 0o700);\n  });"
+      },
+      {
+        "key": "c5",
+        "label": "聊天窗口强制刷新与去噪",
+        "reason": "支持五分钟边界、事件标识保留、正文去重和窗口时间记录。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 227,
+          "endLine": 279
+        },
+        "quote": "      store.inputs.ingest(event(\"chat\", \"c1\", \"same noise\", start), start);\n      store.inputs.ingest(\n        event(\"chat\", \"c2\", \"same noise\", new Date(start.getTime() + 100_000)),\n        new Date(start.getTime() + 100_000),\n      );\n      store.inputs.ingest(\n        event(\n          \"chat\",\n          \"c3\",\n       "
+      },
+      {
+        "key": "c6",
+        "label": "迟到事件与屏幕事件聚合",
+        "reason": "支持迟到补充形成新修订并关联旧批次，以及屏幕事件按数量刷新和正文去重。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 281,
+          "endLine": 323
+        },
+        "quote": "      const lateObserved = new Date(start.getTime() + 150_000);\n      store.inputs.ingest(\n        event(\"chat\", \"c-late\", \"late supplement\", lateObserved),\n        new Date(start.getTime() + 310_000),\n      );\n      const supplement = store.inputs.flushReady(\n        (input) => store.capture(input),\n        {\n        "
+      },
+      {
+        "key": "c7",
+        "label": "聚合完成状态断言",
+        "reason": "支持输入清空并产生三个批次和三个作业的最终状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 323,
+          "endLine": 326
+        },
+        "quote": "      expect(store.revision(screen[0]!.revisionId)?.parts).toHaveLength(1);\n      expect(store.inputs.pendingCount()).toBe(0);\n      expect(store.inputs.batches()).toHaveLength(3);\n      expect(store.jobs.list()).toHaveLength(3);"
+      },
+      {
+        "key": "c8",
+        "label": "跨平台权限断言策略",
+        "reason": "解释 POSIX 检查 mode，而 Windows 分支只检查文件或目录可访问的测试边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 32,
+          "endLine": 46
+        },
+        "quote": "// On POSIX, secret-bearing spool files/directories must be created owner-only\n// (0o600 / 0o700). Windows NTFS does not expose Unix mode bits through\n// fs.stat (it reports 0o666 for everything); the owner-only guarantee there\n// is enforced by ACLs on the per-user temp directory. On Windows we still\n// verify the pat"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/dev-ports.test.ts",
+      "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+      "digest": "313ea67e92b023f8a3ca1a3a9e12d60362719e018b559c88f3da0fae95646c18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+      "digest": "5c03480e00216e0a3bf25e65281ef68fd3bdc0293273cb9c843452046505d381"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/inputs.test.ts",
+      "digest": "724912caf7ff6c35aff905bbad784c410d9874e72d8223c57c063d2d716ecbec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/jobs.test.ts",
+      "digest": "78c38d182c888dfb374df4597a667f368867b28528fa2e31bb78d34271f1077d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:40:25.675Z",
+    "trace": {
+      "runId": "010b26d5-6330-4353-ab48-4bc2784969dc",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "bd3a35128fa5d3b8a0705a37db86081d31587fc2caeb432376b0cd357b606ae9",
+      "contextHash": "0f4341a8a6a91abf63fed2ee2e1f771a93f759bbf7e7b04373f8dc454c43f08c",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ca2f46806fe8dea6137ef430aca0264171eb649bad8179c9530d62b7c09db63a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-3160-7a70-ab21-6404d8e8aece"
+      ],
+      "usage": {
+        "used": 48295,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99608,
+          "utf8Bytes": 108908,
+          "estimatedTokens": 36303,
+          "budgetedTokens": 45379,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:40:51.731Z",
+    "trace": {
+      "runId": "fd668d3c-c98b-4755-b2f1-d5fa1b75f2bf",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "240bf6fa4c00c74578289d6ee720c86639bb172e22097ae07e62d851b58ef8be",
+      "contextHash": "e9c0439c6e073213be35750ddfb37c9158f4fdd253672d6d9904448501e116be",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9e92df9358ba11d8349b9340d54ef8b8277efe983f46f030cb411def46eb4892",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-c508-71b2-9859-dfdec1554f28"
+      ],
+      "usage": {
+        "used": 44755,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 98862,
+          "utf8Bytes": 107150,
+          "estimatedTokens": 35717,
+          "budgetedTokens": 44647,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

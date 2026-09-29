@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/code-knowledge.test.ts",
+    "title": "代码图谱同步与 HTTP 合同测试",
+    "summary": "通过临时 Git 仓库和真实仓库验证 TypeScript/Vue 投影、快照生命周期、历史保留、表隔离及代码读取接口；其重点是确定性结构图，而非跨文件语义调用证明。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "parser-lifecycle",
+        "title": "解析能力与快照生命周期",
+        "body": "测试先构造临时 Git 仓库，执行 review capture 后再执行 code sync。小型夹具断言 TypeScript 函数、类方法限定名、源码行范围、导出标记和 fragment 锚点，并确认 Vue SFC 会产生 component symbol。虽然用例名称提到 imports 与同文件 calls，实际断言没有直接检查对应 edge 的类型或端点，因此不能据此证明跨文件调用解析正确。[[c1]]\n\n生命周期用例覆盖重复同步复用 snapshot、不重复增加 symbol；相同字节但不同路径生成独立 file/symbol ID；删除文件后标 removed，同时保留旧 snapshot 的 edge 行而从当前图隐藏；源码改变形成新 snapshot，旧 snapshot 仍可读取。未先 capture 的脏工作树修改不会成为新证据，补做 review sync 后才产生新快照。[[c2]]"
+      },
+      {
+        "key": "integration-http",
+        "title": "共享表隔离、真实仓库与接口",
+        "body": "附加性测试记录 sources、revisions、fragments、review_relations 的行数，确认 code sync 不改动通用捕获与评审关系表，说明代码图是既有证据链上的派生投影。[[c3]]\n\n真实仓库用例要求文件数超过 50，并覆盖 assistant、memory、retrieval、Lark 和 Vue 区域，同时只断言图中存在文件、符号和非空边；它是广度烟雾测试，并未核对每条边的源码语义。HTTP 用例验证文件、符号、图接口和合法单行源码切片返回成功，越界范围返回 400，但没有覆盖鉴权、分页、removed/historical 过滤或错误 DTO 的完整内容。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "TypeScript 与 Vue 解析夹具",
+        "reason": "支持符号、范围、限定名、fragment 锚点和 Vue component 的实际断言，并揭示 edge 缺少直接断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge.test.ts",
+          "startLine": 70,
+          "endLine": 137
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Unit: deterministic parser on a tiny fixture.\n// ---------------------------------------------------------------------------\n\ndescribe(\"code parser: deterministic TS/Vue extraction\", () => {\n  it(\"extracts function/class/range, imports an"
+      },
+      {
+        "key": "c2",
+        "label": "代码同步生命周期用例",
+        "reason": "支持幂等、路径身份、删除历史、快照更新和脏工作树捕获边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge.test.ts",
+          "startLine": 139,
+          "endLine": 259
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Lifecycle: idempotency, dirty, same-text-different-path, delete/rename, stale.\n// ---------------------------------------------------------------------------\n\ndescribe(\"code sync lifecycle\", () => {\n  it(\"is idempotent: second identical s"
+      },
+      {
+        "key": "c3",
+        "label": "代码表附加性断言",
+        "reason": "证明 code sync 前后通用捕获表与评审关系表行数保持一致。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge.test.ts",
+          "startLine": 261,
+          "endLine": 284
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Existing review tables are untouched by the additive code tables.\n// ---------------------------------------------------------------------------\n\ndescribe(\"code tables are additive\", () => {\n  it(\"does not change sources/revisions/fragmen"
+      },
+      {
+        "key": "c4",
+        "label": "真实仓库与 HTTP 路由测试",
+        "reason": "支持真实区域覆盖、图非空及源码范围校验，同时界定这些断言的粒度。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge.test.ts",
+          "startLine": 286,
+          "endLine": 377
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Real omem repo coverage: assistant / memory / retrieval / lark / web.\n// ---------------------------------------------------------------------------\n\ndescribe(\"real omem repo coverage\", () => {\n  it(\"parses assistant/memory/retrieval/lark"
+      }
+    ],
+    "questions": [
+      {
+        "question": "imports、同文件 calls 和 candidate 边的端点及状态是否有其他精确测试？",
+        "why": "当前解析用例标题声称覆盖这些信息，但可见断言只检查 symbol 属性和 fragmentId；真实仓库测试也只要求 edges 非空。",
+        "nextStep": "补充按稳定 path、qualifiedName 和 relation kind 查找边的断言，并加入同名函数、别名 import、动态调用及跨文件不确定调用的反例。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c4"
+        ]
+      },
+      {
+        "question": "代码 HTTP 接口的 removed、historical、stale 过滤合同是否经过验证？",
+        "why": "现有路由测试仅覆盖默认文件/符号/图读取以及源码范围成功与失败，没有检查生命周期状态参数和人类可读错误字段。",
+        "nextStep": "为删除文件和两代 snapshot 构造接口测试，断言默认视图、显式历史视图及错误响应 DTO。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/model-config.ts",
+      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge.test.ts",
+      "digest": "29a65a8f1bd576d834805a51472730d78f9e377ad25be6f238ccd713d714f82c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+      "digest": "080b9a8cf254faa5200964aae5ac6570ad259da40f76b728aaaeb76d1ad271fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:38:45.477Z",
+    "trace": {
+      "runId": "8a09d7fd-94fe-4de5-9607-0ac8104db458",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "9a507744af57a73b0881cdbd89dbc36965b4650ae9495204509d99ec4cf44827",
+      "contextHash": "23d6ac5973fe0aae1bed0c08e81f75a7cb18c5dab1c991bae41f41bd2db1f04d",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "60b0242fb140955b4432e3e82b1fd5f6436cb6fbd08bae5de7218abaabe6f589",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeac-554d-7a32-a033-eddd00d45664"
+      ],
+      "usage": {
+        "used": 54901,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 127485,
+          "utf8Bytes": 129589,
+          "estimatedTokens": 43197,
+          "budgetedTokens": 53997,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:39:21.776Z",
+    "trace": {
+      "runId": "db6762eb-9b82-4fd9-a4d7-74bf7483fb6f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "9ab7e24b843b4322e0be86d33199775afa3df3110b6c883122f40f4c970c826a",
+      "contextHash": "5f66afbb890745a78763f79f441d17ef1b64bfb6da55221fbb5e0a66fc2c7dc4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f18348371f0f0d0b682f940c86ef62ab64c744cf5444933d44694f274b78c898",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-3d43-7da2-b739-0918004810e5"
+      ],
+      "usage": {
+        "used": 59067,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 146517,
+          "utf8Bytes": 156633,
+          "estimatedTokens": 52211,
+          "budgetedTokens": 65264,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

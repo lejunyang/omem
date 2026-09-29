@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/code-understanding.test.ts",
+    "title": "CodeUnderstanding 严格合同与引用校验测试",
+    "summary": "验证代码理解角色资产、密封输出、确定性引用检查、无模型 seed 降级及独立核验语义，防止幻觉引用或人工 seed 冒充模型成果。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "contract-validation",
+        "title": "角色合同与确定性校验",
+        "body": "测试以包含文件、符号、调用/导入边和决策证据的自洽快照作为固定事实集，再构造带 prompt、schema、input 三类摘要的完整输出。[[c1]] 角色注册表只允许四个代码理解角色，检查输出合同、上下文与输出预算、技能内容和摘要格式，并拒绝白名单外角色。[[c2]] 校验器既执行严格结构解析，也逐层检查节点、边、证据、文件和行范围；顶层引用或 claim 内嵌引用只要不存在即被拒绝，三类密封摘要不一致也会失败，从而把模型叙述绑定到特定角色资产与代码快照。[[c3]]"
+      },
+      {
+        "key": "seed-verification-boundaries",
+        "title": "Seed 降级、核验语义与覆盖边界",
+        "body": "无模型时允许生成仅含骨架的 seed，但它必须声明无模型、未经代理核验且状态为 seed；普通 generated 输出不能借无模型路径通过。[[c4]] 测试进一步禁止 seed 携带解释性主张或自称已核验，并要求真正的 verified 输出填写核验代理身份；符合条件的独立核验结果才被接受。[[c5]] 临时角色目录还证明超出清单预算的 manifest 会被加载器拒绝。[[c6]] 尚未覆盖实际模型调用、数据库持久化、HTTP 状态映射、跨 revision 身份续接，以及多个代理之间如何调度独立复核；本文件验证的是运行时合同和纯校验行为，而非外部 CLI 或模型质量。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "自洽代码快照与密封输出",
+        "reason": "支持测试以固定文件、符号、关系、证据和摘要构造有效基线的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding.test.ts",
+          "startLine": 25,
+          "endLine": 91
+        },
+        "quote": "// A tiny, self-consistent snapshot: two files, three symbol nodes, two edges,\n// one decision evidence note. Every id the validator will be asked to accept or\n// reject is derived from here.\nconst snapshot: CodeSnapshot = codeSnapshotSchema.parse({\n  schema_version: 1,\n  snapshot_id: \"repo@deadbeef\",\n  commit: \"deadbe"
+      },
+      {
+        "key": "c2",
+        "label": "代码角色白名单与资产摘要",
+        "reason": "支持四类允许角色、预算和摘要检查以及白名单拒绝行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding.test.ts",
+          "startLine": 94,
+          "endLine": 124
+        },
+        "quote": "describe(\"Code Understanding role assets\", () => {\n  it(\"loads all four allowlisted roles with matching digests/budgets\", () => {\n    for (const roleId of [\n      \"repo-profiler\",\n      \"module-architect\",\n      \"symbol-explainer\",\n      \"relation-verifier\",\n    ] as const) {\n      const bundle = roles.load(roleId, \"1\""
+      },
+      {
+        "key": "c3",
+        "label": "引用与密封摘要校验",
+        "reason": "证明未知节点、边、证据、越界选择器和摘要不匹配会被确定性拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding.test.ts",
+          "startLine": 151,
+          "endLine": 226
+        },
+        "quote": "describe(\"deterministic reference validation\", () => {\n  it(\"rejects hallucinated node/edge/evidence ids\", () => {\n    const bundle = roles.load(\"repo-profiler\");\n    const out = validOutput(bundle, {\n      referenced_node_ids: [\"s1\", \"ghost-node\"],\n      referenced_edge_ids: [\"e1\", \"ghost-edge\"],\n      evidence_refs: "
+      },
+      {
+        "key": "c4",
+        "label": "无模型 Seed 降级",
+        "reason": "支持无模型只接受受限 seed、拒绝普通生成结果的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding.test.ts",
+          "startLine": 229,
+          "endLine": 252
+        },
+        "quote": "describe(\"seed / model-unavailable degradation\", () => {\n  it(\"builds a seed skeleton that validates with no model\", () => {\n    const bundle = roles.load(\"relation-verifier\");\n    const seed = buildSeedOutput({ bundle, snapshot, resultId: \"seed-1\", generatedAt });\n    expect(seed.seed).toBe(true);\n    expect(seed.mode"
+      },
+      {
+        "key": "c5",
+        "label": "Seed 与独立核验边界",
+        "reason": "支持 seed 不得携带解释或自我核验，以及 verified 结果必须声明核验者。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding.test.ts",
+          "startLine": 254,
+          "endLine": 304
+        },
+        "quote": "  it(\"refuses a seed that carries interpretation claims or names a model\", () => {\n    const bundle = roles.load(\"repo-profiler\");\n    const seed = buildSeedOutput({ bundle, snapshot, resultId: \"seed-2\", generatedAt });\n    // Inject an interpretation claim — a seed must not contain agent narrative.\n    seed.claims.pus"
+      },
+      {
+        "key": "c6",
+        "label": "角色预算保护",
+        "reason": "支持角色 manifest 超出节点预算时加载失败的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding.test.ts",
+          "startLine": 307,
+          "endLine": 344
+        },
+        "quote": "// Budget guard: a manifest declaring an oversized node budget must be rejected by\n// the loader's zod schema. We drop a temp role directory with a bad manifest.\ndescribe(\"manifest budget / allowlist guards\", () => {\n  const tmpRoot = join(process.cwd(), \".tmp-code-roles\");\n  afterEach(() => {\n    rmSync(tmpRoot, { rec"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-model.test.ts",
+      "digest": "ac88b469c5dccac99e5b7535cce1a6ec584abd604338938bfdb07c09340e632a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding.test.ts",
+      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/connectors.test.ts",
+      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:38:35.369Z",
+    "trace": {
+      "runId": "c35b15c3-b40c-4db9-bf7f-5f96f87be5e2",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "6ad29a3453fe7f592d5651ee3be81c44c0953504d1e6ece46a14bdd39c89c0ee",
+      "contextHash": "b6fc42c31c8a77a2df34f5f1833aafdbbb8bec6e579f658b50a66d3b6c21c3ff",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "85ac312a6523bab7c464e1288bbd6b3f3f84a6f261b85e61338b0001b25fdfcc",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeac-604c-7df1-838e-b713f23605b6"
+      ],
+      "usage": {
+        "used": 40749,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80664,
+          "utf8Bytes": 82612,
+          "estimatedTokens": 27538,
+          "budgetedTokens": 34423,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:38:59.115Z",
+    "trace": {
+      "runId": "69a05df4-9615-4f2a-833f-1d05fa3e4f37",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "35c47a7f8ae34f5df46df1bb1f12106ea0e5f730fa84e893d977f32d7d2834a5",
+      "contextHash": "218d2ec317bf3d0a81eab354261b7fc38bf1b695c877280c8757b349ced72762",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b3d32ca2e151d674caa545662f7b50becf93d7b3da4f6f14fb5a4615639e23c1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-15e6-7a91-9f22-9d545519e995"
+      ],
+      "usage": {
+        "used": 43191,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 96153,
+          "utf8Bytes": 104651,
+          "estimatedTokens": 34884,
+          "budgetedTokens": 43605,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

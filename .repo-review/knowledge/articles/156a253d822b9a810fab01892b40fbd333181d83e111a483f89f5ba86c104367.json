@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/contracts.test.ts",
+    "title": "Batch 2 提议、评估与纠正合同测试",
+    "summary": "验证提议处理链的严格数据边界：提议不等于已应用状态，更新必须携带并发版本，提议、核验和纠正分别使用受约束的批次信封。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "proposal-boundary",
+        "title": "提议不是已应用事实",
+        "body": "该测试把文档中的 Proposal v1 示例作为跨文档与代码合同夹具，确认它能被严格 schema 接受，同时明确提议对象本身不含 `state`，因此“模型提出任务”不能被解释为任务已经落地。[[c1]] 对对象添加未知的 `applied` 字段会失败，修改 kind 而不匹配对应 body 也会失败；update 操作若没有目标的预期版本同样被拒绝。[[c2]] 这些断言共同约束了结构一致性与 CAS 并发保护，避免松散模型输出绕过应用层决策。"
+      },
+      {
+        "key": "batch-envelopes",
+        "title": "分工信封与未覆盖行为",
+        "body": "后续流程通过三个独立信封表达职责：ProposalBatch 记录提取角色的观察、提议和弃权；AssessmentBatch 由核验角色按提议摘要给出引文资产与语义结论；CorrectionProposal 则绑定待纠正对象、预期版本、作用域、替换内容、证据和来源。[[c3]] 测试证明这些示例可以解析并保留关键字段，但没有执行提议应用、CAS 冲突、权限校验或纠正覆盖后的状态迁移；也未系统枚举每种 proposal kind、verdict、reason code 和非法嵌套字段。因此它验证合同形状，不证明完整业务工作流或独立核验质量。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Proposal 示例与未应用语义",
+        "reason": "支持文档夹具可解析且 Proposal 不携带应用状态的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/contracts.test.ts",
+          "startLine": 10,
+          "endLine": 20
+        },
+        "quote": "const proposalFixture = JSON.parse(\n  readFileSync(\"docs/implementation/batch2/examples/proposal.json\", \"utf8\"),\n);\n\ndescribe(\"Batch 2 strict contracts\", () => {\n  it(\"accepts the documented Proposal v1 fixture without treating it as applied\", () => {\n    const proposal = proposalSchema.parse(proposalFixture);\n    expe"
+      },
+      {
+        "key": "c2",
+        "label": "严格字段、Body 与 CAS 约束",
+        "reason": "支持未知字段、种类与正文不匹配、更新缺失预期版本均被拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/contracts.test.ts",
+          "startLine": 22,
+          "endLine": 40
+        },
+        "quote": "  it(\"rejects unknown fields, mismatched bodies and updates without CAS versions\", () => {\n    expect(() =>\n      proposalSchema.parse({ ...proposalFixture, applied: true }),\n    ).toThrow();\n    expect(() =>\n      proposalSchema.parse({\n        ...proposalFixture,\n        kind: \"claim\",\n      }),\n    ).toThrow();\n    "
+      },
+      {
+        "key": "c3",
+        "label": "批次评估与纠正信封",
+        "reason": "支持 ProposalBatch、AssessmentBatch 和 CorrectionProposal 的职责与关键字段说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/contracts.test.ts",
+          "startLine": 42,
+          "endLine": 89
+        },
+        "quote": "  it(\"defines strict ProposalBatch, AssessmentBatch and CorrectionProposal envelopes\", () => {\n    const batch = proposalBatchSchema.parse({\n      schema_version: 1,\n      job_id: \"job-1\",\n      role_id: \"extractor@1\",\n      observations: [],\n      proposals: [proposalFixture],\n      abstentions: [],\n    });\n    expect"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-model.test.ts",
+      "digest": "ac88b469c5dccac99e5b7535cce1a6ec584abd604338938bfdb07c09340e632a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding.test.ts",
+      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/connectors.test.ts",
+      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:38:35.369Z",
+    "trace": {
+      "runId": "c35b15c3-b40c-4db9-bf7f-5f96f87be5e2",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "6ad29a3453fe7f592d5651ee3be81c44c0953504d1e6ece46a14bdd39c89c0ee",
+      "contextHash": "b6fc42c31c8a77a2df34f5f1833aafdbbb8bec6e579f658b50a66d3b6c21c3ff",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "85ac312a6523bab7c464e1288bbd6b3f3f84a6f261b85e61338b0001b25fdfcc",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeac-604c-7df1-838e-b713f23605b6"
+      ],
+      "usage": {
+        "used": 40749,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80664,
+          "utf8Bytes": 82612,
+          "estimatedTokens": 27538,
+          "budgetedTokens": 34423,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:38:59.115Z",
+    "trace": {
+      "runId": "69a05df4-9615-4f2a-833f-1d05fa3e4f37",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "35c47a7f8ae34f5df46df1bb1f12106ea0e5f730fa84e893d977f32d7d2834a5",
+      "contextHash": "218d2ec317bf3d0a81eab354261b7fc38bf1b695c877280c8757b349ced72762",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b3d32ca2e151d674caa545662f7b50becf93d7b3da4f6f14fb5a4615639e23c1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-15e6-7a91-9f22-9d545519e995"
+      ],
+      "usage": {
+        "used": 43191,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 96153,
+          "utf8Bytes": 104651,
+          "estimatedTokens": 34884,
+          "budgetedTokens": 43605,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

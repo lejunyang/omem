@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+    "title": "代码知识 DTO 展示与导航合同测试",
+    "summary": "该集成测试确保 review API 在保留内部操作键的同时提供人类可读标签、深链和 trail 链接，并禁止失效图边被标记为可操作。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "setup-and-snapshot",
+        "title": "真实 Git 快照下的接口合同",
+        "body": "测试创建并提交一个包含 `greet` 函数的临时 Git 仓库，执行 review/code 同步后直接注入 HTTP 请求。当前快照响应必须保留 snapshotId、commit、dirty、解析器版本、文件统计、repoId 与 baselineCommit 等合同字段，并额外提供七位 shortCommit。[[c1]]\n\n这种搭建验证了同步结果到 API DTO 的集成，而不只是独立格式化函数；但只覆盖单文件、单次提交和成功响应，没有测试脏工作树、部分快照或不存在资源的错误 DTO。"
+      },
+      {
+        "key": "labels-and-actions",
+        "title": "内部标识与可见文本分离",
+        "body": "文件 DTO 必须同时保留 fileId、路径、语言、哈希等操作字段，并提供文件名、展示路径和 trail 链接。符号 DTO 保留定位与范围字段，同时提供 symbolName、citationLabel、API 深链和 trail 链接；测试用正则防止内部 ID 或长哈希成为 displayTitle。[[c2]]\n\n图边同样保留端点、状态、来源和时间字段，并提供布尔 `actionable`；当状态为 missing 或 stale 时必须不可操作，展示标题也不能泄露内部标识。[[c3]] 测试未断言 reason 的具体人读内容，也未覆盖前端是否错误渲染原始 ID。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "快照 API 字段合同",
+        "reason": "支持测试使用真实同步后的 HTTP 接口，并校验快照原始字段及短提交展示值的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+          "startLine": 31,
+          "endLine": 59
+        },
+        "quote": "describe(\"code DTO contract: action keys preserved + human labels\", () => {\n  it(\"keeps every contract field and adds display/trail links\", async () => {\n    const root = mkdtempSync(join(tmpdir(), \"omem-dto-\"));\n    git([\"init\", \"-q\", root], root);\n    git([\"config\", \"user.email\", \"t@e.com\"], root);\n    git([\"config\","
+      },
+      {
+        "key": "c2",
+        "label": "文件与符号展示字段",
+        "reason": "支持内部动作键被保留、同时补充人类标签和导航链接的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+          "startLine": 61,
+          "endLine": 85
+        },
+        "quote": "    // File keeps fileId/path/language/removed.\n    const files = await app.inject({ method: \"GET\", url: \"/api/review/code/files\", headers: hdr });\n    const fileRows = JSON.parse(files.body);\n    const greet = fileRows.find((f: any) => f.path.endsWith(\"greet.ts\"));\n    for (const k of [\"fileId\",\"path\",\"language\",\"size"
+      },
+      {
+        "key": "c3",
+        "label": "图边可操作性合同",
+        "reason": "支持图边端点字段完整、失效或过期边不可操作且展示文本不能使用内部 ID 的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+          "startLine": 87,
+          "endLine": 98
+        },
+        "quote": "    // Graph edges keep endpoints + status + actionable.\n    const g = await app.inject({ method: \"GET\", url: \"/api/review/code/graph\", headers: hdr });\n    const gBody = JSON.parse(g.body);\n    for (const e of gBody.edges) {\n      for (const k of [\"edgeId\",\"snapshotId\",\"edgeKind\",\"status\",\"origin\",\"fromSymbolId\",\"from"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+      "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-artifacts.test.ts",
+      "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-budget.test.ts",
+      "digest": "2d0812ca8592b2a3702ce8ee0f6cf4568af9356037cb64be6e731d0a949c9fb3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+      "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
+      "digest": "87f1cf57fca10d4cb0a5db8b64e0713611d0a304054c4ffc973bad34c7eb7132"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+      "digest": "d04e8dca741772db0fd43565fb9fd906fb69a09070a5581161a3dcbf0da24140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:09:13.991Z",
+    "trace": {
+      "runId": "161767d8-9f1a-4014-b3e2-a5519e4a6349",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "726468f442488bf98c0d322ffcd85662d4e11aa2707394fbf5ab54cb8e9929dd",
+      "contextHash": "9af6b2612942385a3550bdc42cd7a278c001615d5f3518e0d49ca169147f2ffd",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2792dfab74511e4d9c3d1fad66847b610b0dcf2771d06ced662a74a03afc7db3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-89ed-7981-a74d-c976fa675121"
+      ],
+      "usage": {
+        "used": 35138,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 63078,
+          "utf8Bytes": 64970,
+          "estimatedTokens": 21657,
+          "budgetedTokens": 27072,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:09:19.214Z",
+    "trace": {
+      "runId": "53bcd91e-3bbc-4771-8b13-e0f49b12862d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "bfffdc00a294a0fc9ba2841d7550ed3b91d3edeb17283ca616a10e25557ebdb6",
+      "contextHash": "c592a9202f07dece3bb2c820a5af776e3e76addbe2b695d9b7bdbef8d25776e9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "98ae544d15bad2554e652df2c80081b4bd50a13819b2456c0275d0c0b3489b96",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee92-354d-7ca0-ba75-018248807a3a"
+      ],
+      "usage": {
+        "used": 35630,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 74182,
+          "utf8Bytes": 81700,
+          "estimatedTokens": 27234,
+          "budgetedTokens": 34043,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

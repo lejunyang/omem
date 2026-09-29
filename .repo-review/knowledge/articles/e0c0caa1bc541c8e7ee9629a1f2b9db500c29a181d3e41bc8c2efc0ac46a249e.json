@@ -1,0 +1,253 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/agents.test.ts",
+    "title": "Agent 进程与 ACP 传输测试",
+    "summary": "通过真实子进程夹具验证 ACP 协商、推理强度校验、思考内容过滤、权限拒绝、超时与取消，并检查 CLI 参数使用显式 argv 且保持只读。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "fixture-flow",
+        "title": "真实进程夹具流程",
+        "body": "辅助函数为每次调用创建临时工作目录，以已解析的 AgentProfile 启动 ACP 夹具，将文本块送入并收集 status/text/permission 事件；`acp()` 返回前等待子进程关闭，随后一次性删除目录，避免重试掩盖清理竞态。[[c1]]"
+      },
+      {
+        "key": "negotiation-safety",
+        "title": "能力协商与安全边界",
+        "body": "测试证明模型切换后才验证新模型的 effort，支持的 `beta/high` 出现在文本输出中，而私有 thought 被丢弃；不支持的 effort 必须拒绝而非回退。权限请求会被观察到但默认拒绝，空闲提示受超时约束，AbortSignal 能取消活动请求。[[c2]] [[c3]]"
+      },
+      {
+        "key": "cli-argv",
+        "title": "CLI 参数构造",
+        "body": "CLI 分支仅检查 argv：包含 `read-only`，模型字符串 `literal$(pwd)` 原样作为参数存在，并且不含绕过审批与沙箱的危险开关。结合实现使用 `spawn(..., shell:false)`，这支持“不经 shell 插值”的边界；但测试未真正运行 CLI，也未覆盖不同 CLI transport 的完整参数差异。[[c4]] [[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "ACP 子进程测试夹具",
+        "reason": "说明临时目录、事件收集、调用和进程退出后清理的测试流程。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/agents.test.ts",
+          "startLine": 7,
+          "endLine": 40
+        },
+        "quote": "const profile = () =>\n  profileSchema.parse({\n    id: \"fixture\",\n    name: \"Fixture\",\n    transport: \"acp\",\n    command: process.execPath,\n    args: [resolve(\"apps/server/tests/fixtures/acp-agent.mjs\")],\n    timeoutMs: 3000,\n  });\n\nasync function run(\n  text: string,\n  patch: Record<string, unknown> = {},\n  signal = ne"
+      },
+      {
+        "key": "c2",
+        "label": "模型协商与思考过滤",
+        "reason": "支持模型和 effort 协商顺序，以及私有思考不进入输出事件。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/agents.test.ts",
+          "startLine": 41,
+          "endLine": 55
+        },
+        "quote": "it(\"negotiates model before validating new effort options; drops thoughts\", async () => {\n  const { events } = await run(\"hello\", { model: \"beta\", effort: \"high\" });\n  expect(\n    events\n      .filter((e) => e.type === \"text\")\n      .map((e) => e.text)\n      .join(\"\"),\n  ).toContain(\"beta/high\");\n  expect(JSON.stringif"
+      },
+      {
+        "key": "c3",
+        "label": "权限、超时与取消测试",
+        "reason": "支持权限默认拒绝、空闲超时和主动取消行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/agents.test.ts",
+          "startLine": 56,
+          "endLine": 71
+        },
+        "quote": "it(\"does not grant permission requests\", async () => {\n  const { events } = await run(\"ASK_PERMISSION\");\n  expect(events.some((e) => e.type === \"permission\")).toBe(true);\n  expect(events.some((e) => e.text === \"Permission declined\")).toBe(true);\n});\nit(\"bounds idle prompt duration\", async () => {\n  await expect(run(\"TI"
+      },
+      {
+        "key": "c4",
+        "label": "安全 CLI argv 断言",
+        "reason": "支持只读模式、字面模型参数和禁用危险绕过参数的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/agents.test.ts",
+          "startLine": 72,
+          "endLine": 84
+        },
+        "quote": "it(\"builds explicit safe CLI argv without shell interpolation\", () => {\n  const p = profileSchema.parse({\n    ...profile(),\n    transport: \"codex-cli\",\n    args: [],\n    model: \"literal$(pwd)\",\n    effort: \"high\",\n  });\n  const a = cliArgs(p);\n  expect(a).toContain(\"read-only\");\n  expect(a).toContain(\"literal$(pwd)\");\n"
+      },
+      {
+        "key": "c5",
+        "label": "无 shell 子进程启动",
+        "reason": "实现证据表明命令通过 spawn 且 shell=false 启动，解释字面参数不被 shell 展开。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 56,
+          "endLine": 68
+        },
+        "quote": "function launch(profile: AgentProfile, args: string[], cwd: string) {\n  mkdirSync(cwd, { recursive: true, mode: 0o700 });\n  const child = spawn(profile.command, args, {\n    cwd,\n    env: env(),\n    stdio: \"pipe\",\n    shell: false,\n    detached: process.platform !== \"win32\",\n  });\n  // A process exiting before a write c"
+      }
+    ],
+    "questions": [
+      {
+        "question": "各 CLI transport 的完整 argv 与真实失败语义是否需要单独集成测试？",
+        "why": "当前只测试 `cliArgs` 的静态数组，不证明外部 CLI 启动、退出码、认证失败和超时在各 transport 上一致。",
+        "nextStep": "为支持的 CLI 增加可执行夹具或明确标注 live check，逐项断言命令、参数、退出错误与取消行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/acp-model.test.ts",
+      "digest": "942f2dbe8220d012e8d1ab1427eec8313367c90470848697afc3a98c7f952a10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/agents.test.ts",
+      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/app.test.ts",
+      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/attention-gate.test.ts",
+      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:07:43.257Z",
+    "trace": {
+      "runId": "4b2a8a37-0158-4003-a5a4-3a0ebe8fba81",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "b1f1374e7b6968399eb47b28debf8c6b17b873bf5c388a3a0093751f75bdb9fc",
+      "contextHash": "04fe68b9358817fcca90322193ccba061045811fa165d9984436c6148a2bf5f2",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "11da38c571926337ee4964e4409eaea05ef12f003589ce9a138a3664d5b86136",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8f-e9a8-7d72-9220-f8f249d8db74"
+      ],
+      "usage": {
+        "used": 54122,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 120469,
+          "utf8Bytes": 123995,
+          "estimatedTokens": 41332,
+          "budgetedTokens": 51665,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:08:12.218Z",
+    "trace": {
+      "runId": "084c0ef4-b7c9-496c-8920-b6097711335a",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "246a5dc714a2e42c51b72aaca805a600c234a2906f67bd96ad1ee7a3ba01414e",
+      "contextHash": "72cb39db7187d029b83877793cbca0af0be83ac9ed08e72c574819f12d443cf9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d81643d6f67a55ed66e8a06044baff14c8d69ba311ebae7713e48ff8995009ff",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee90-d30d-7562-bf28-e19a35731ec2"
+      ],
+      "usage": {
+        "used": 59454,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 146894,
+          "utf8Bytes": 158886,
+          "estimatedTokens": 52962,
+          "budgetedTokens": 66203,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

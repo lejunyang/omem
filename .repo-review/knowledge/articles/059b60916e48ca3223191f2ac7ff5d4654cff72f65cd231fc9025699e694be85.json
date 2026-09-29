@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+    "title": "Lark 富消息统一分片测试",
+    "summary": "验证富文本、图片与回复消息被转换为通用 Capture parts，并在转换、批处理和资产落盘过程中保留来源信息。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "rich-text",
+        "title": "富文本到统一文本分片",
+        "body": "该测试解决 Lark `post` 消息不能直接进入通用采集合同的问题。它构造包含标题、段落、链接和 @ 提及的富文本，经过 `LarkEventInbox` 后读取持久化输入信封，断言标题成为独立文本分片，链接保留可读文字与 URL，提及和相邻正文按原段落组合。每个分片同时携带外部发送者、事件号和观测时间，避免聚合后丢失发言人及事件上下文。[[c1]]"
+      },
+      {
+        "key": "image-and-reply",
+        "title": "图片资产与回复关系",
+        "body": "图片消息通过注入的媒体端口下载，先进入信封成为带 MIME 类型和数据的 image part；批次刷新调用通用 `store.capture` 后，原始字节按 SHA-256 寻址并可从资产仓库取回。这证明 Lark 只负责输入适配，最终仍复用统一采集和资产存储路径。[[c2]]\n\n回复消息则把父消息号写入分片的 `replyTo`，并同时设置分片与信封级 quoted 标志，为后续会话聚合保留引用语义。[[c3]] 边界上，测试只覆盖一种 post 结构、PNG 图片和直接父消息；没有断言 malformed JSON、下载失败、超限媒体、其他富文本标签、多语言 post 变体或嵌套回复的降级行为。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "富文本解析与逐分片来源断言",
+        "reason": "支持标题、段落、链接、提及转换及来源保留的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 112,
+          "endLine": 159
+        },
+        "quote": "describe(\"H-G15 Lark rich messages adapt to unified parts\", () => {\n  it(\"parses a post (rich text) into title + paragraph text parts\", async () => {\n    const { store } = setup();\n    const inbox = new LarkEventInbox(store);\n    const ev = groupEvent({\n      eventId: \"evt-post\",\n      messageId: \"om_post\",\n      messa"
+      },
+      {
+        "key": "c2",
+        "label": "图片下载与资产寻址断言",
+        "reason": "支持图片通过媒体端口进入统一分片并在 capture 阶段落为内容寻址资产的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 161,
+          "endLine": 200
+        },
+        "quote": "  it(\"downloads an image message and stores an asset-backed image part\", async () => {\n    const { store } = setup();\n    const media = new FakeMedia();\n    const inbox = new LarkEventInbox(store, { media });\n    const ev = groupEvent({\n      eventId: \"evt-image\",\n      messageId: \"om_image\",\n      messageType: \"image\""
+      },
+      {
+        "key": "c3",
+        "label": "回复与引用来源断言",
+        "reason": "支持 replyTo 和 quoted 在分片及信封层保存的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 202,
+          "endLine": 227
+        },
+        "quote": "  it(\"carries reply_to / quoted provenance on parts for a quoted message\", async () => {\n    const { store } = setup();\n    const inbox = new LarkEventInbox(store);\n    const ev = groupEvent({\n      eventId: \"evt-reply\",\n      messageId: \"om_reply\",\n      parentMessageId: \"om_parent_123\",\n      text: \"回复内容\",\n      payl"
+      }
+    ],
+    "questions": [
+      {
+        "question": "不支持的富文本标签、损坏的消息 JSON 或媒体下载失败时应拒绝整条消息，还是保留可解析部分？",
+        "why": "现有断言均使用格式正确的固定消息，没有定义错误降级及部分采集语义。",
+        "nextStep": "为异常 JSON、未知标签、媒体超限和下载超时补充合同测试，并明确重试与可见错误策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-realtime.test.ts",
+      "digest": "8c9f2eeca9a0ad0586572c2ac64d5b5f35a631f2f6199f10ba0db0474c680508"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+      "digest": "c527d049388fa485c086e91af83054f6983c0dd9bdc338f6cc60643f46042600"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-runtime.test.ts",
+      "digest": "d012868f2a7037e3d0e8b4be9a1af3dd29beb77235639fbeb21de9201329edf6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+      "digest": "ccc264f5b3eb1f8c6062722ced2d70a544efb31e3fc38d81fdc823d41afa252e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-refresh.test.ts",
+      "digest": "fe2dad4b8162d09a09f981b6307cfca63749a5b369e315629ab44c31b6be3d20"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/migrations.test.ts",
+      "digest": "bc5b4990d965d39d896c285d9548ca5b428a32b4149cf58e4713876379c78430"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:40:22.254Z",
+    "trace": {
+      "runId": "eaebd732-a1ac-4034-b2bc-1b8eba0572e0",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "c8f9085796437df3ab4a565a65478742bb80a823091cbc83fb35f08cf2d300f0",
+      "contextHash": "0ec837b12092e347896ed060436604d7acd05e16c7bbbbeff57f92d6f1d55121",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "22abee4705dbcfd0e444ed3cb0c111e1c5a17b0e565320d8c6518f9fbc5759ac",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-df85-73e3-bdea-83161d4d69bf"
+      ],
+      "usage": {
+        "used": 55385,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 127611,
+          "utf8Bytes": 129643,
+          "estimatedTokens": 43215,
+          "budgetedTokens": 54019,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:40:52.428Z",
+    "trace": {
+      "runId": "1aa255aa-e174-46a6-acf2-28e540a6eed7",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "4cc953cc7e5d87f3fa50cafbcf45ebe70937227f0c4f1da9555cd66fcc35f7cc",
+      "contextHash": "60dbc092dd42837b9d86b21a8de9a813870eee4e2f6857cef6f0e9d157c1932c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2f71b46b3cf968717d81fdd1b4e9367bace3d60453508b5037873b06f5043a18",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-b73c-7f42-97a2-e31c5ce0cabb"
+      ],
+      "usage": {
+        "used": 59014,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143978,
+          "utf8Bytes": 154158,
+          "estimatedTokens": 51386,
+          "budgetedTokens": 64233,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

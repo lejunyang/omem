@@ -1,0 +1,258 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+    "title": "人工代码理解投影集成测试",
+    "summary": "验证 curated seed 经代码图定位、复合无效输入拒绝、快照失效和只读 HTTP 展示的生命周期，并明确人工 seed 不是模型生成或 Agent 复核成果。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "seed-projection",
+        "title": "Seed 定位、投影与拒绝",
+        "body": "测试夹具定义模块级 understanding seed：流程和 claim 通过 `path + qualified + kind` 定位 `Alpha` 类与方法，并以源码行 selector 提供证据。成功投影后只有一条 current 记录，状态为 seed、来源为 curated-seed、低置信度，且未经过 Agent 验证、没有模型标识；相同快照重复同步仍保持单条记录，详情包含解析后的 node 引用。[[c1]]\n\n拒绝用例同时把 claim locator 改为不存在的符号，并清空必需的流程节点。结果是该复合无效 seed 不进入默认 current 列表，但会以 rejected 状态保留在全量视图中，证明坏 seed 不会污染当前好结果。由于两个错误同时出现且未断言拒绝原因，该用例不能单独证明究竟是哪一个校验触发拒绝。[[c2]]"
+      },
+      {
+        "key": "staleness-http",
+        "title": "快照更新与无模型读取",
+        "body": "文件内容变化并形成新快照后，测试要求生成新的 understanding ID；旧记录继续保留但标记 stale，新记录通过 `supersedes_id` 指向旧记录。这表明理解结果绑定输入 snapshot 与 digest，而不是假设符号身份跨 revision 自动续接。[[c3]]\n\n未配置模型时，HTTP model-status 返回 unavailable，但 understanding 列表、详情和原始 graph 仍可读取；详情继续标明结果来自 seed 且未由 Agent 验证。重复投影也不会改变既有 sources 与 fragments。[[c4]]"
+      },
+      {
+        "key": "coverage-limits",
+        "title": "覆盖范围与待补验证",
+        "body": "真实仓库用例只确认五个目标模块存在 current curated-seed 记录，并检查 seed、未验证和无模型等 provenance 字段。[[c5]] 因而整组测试覆盖人工 seed 的投影、复合无效输入隔离、版本失效及只读接口，但不证明真实 ACP、CLI 或 HTTP 生成可运行，也未验证预算 trace、能力发现、超时、输出语义复核，或各种 schema 错误各自对应的拒绝原因。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "有效人工理解 seed 投影",
+        "reason": "支持 locator 与证据结构、成功投影字段、幂等性及已解析 node 引用的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+          "startLine": 55,
+          "endLine": 145
+        },
+        "quote": "const ALPHA_TS = [\n  \"export class Alpha {\",\n  \"  greet(): string { return 'hi'; }\",\n  \"}\",\n  \"export function helper(x: number): number { return x; }\",\n].join(\"\\n\") + \"\\n\";\n\nfunction writeSeed(root: string, name: string, body: object) {\n  writeFile(\n    root,\n    `.repo-review/knowledge/understandings/${name}`,\n    JS"
+      },
+      {
+        "key": "c2",
+        "label": "复合无效 seed 拒绝用例",
+        "reason": "证明同时含幽灵符号和空流程节点的 seed 被保留为 rejected 且不污染 current；也界定该测试无法隔离具体失败原因。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+          "startLine": 147,
+          "endLine": 176
+        },
+        "quote": "  it(\"rejects a seed that cites a ghost symbol without polluting current\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(root, \"apps/server/src/alpha.ts\", ALPHA_TS);\n    writeSeed(root, \"alpha.seed.json\", goodSeed);\n    const ghost = structuredClone(goodSeed) as typeof goodSeed;\n    ghost.result_id = "
+      },
+      {
+        "key": "c3",
+        "label": "理解结果失效与继任",
+        "reason": "支持代码快照变化后旧理解变 stale、新理解通过 supersedes_id 继任的生命周期。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+          "startLine": 178,
+          "endLine": 213
+        },
+        "quote": "  it(\"marks the prior understanding stale when the input snapshot changes\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(root, \"apps/server/src/alpha.ts\", ALPHA_TS);\n    writeSeed(root, \"alpha.seed.json\", goodSeed);\n    commitAll(root, \"init\");\n\n    const store = setup();\n    await runReviewSync(stor"
+      },
+      {
+        "key": "c4",
+        "label": "无模型 HTTP 与投影隔离",
+        "reason": "支持模型不可用时 seed 和原始图仍可读，并证明重复投影不改动基础 source 与 fragment 行。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+          "startLine": 215,
+          "endLine": 270
+        },
+        "quote": "  it(\"serves the read-only HTTP surface and states model unavailability; raw graph still works\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(root, \"apps/server/src/alpha.ts\", ALPHA_TS);\n    writeSeed(root, \"alpha.seed.json\", goodSeed);\n    commitAll(root, \"init\");\n\n    const store = setup();\n    awa"
+      },
+      {
+        "key": "c5",
+        "label": "真实仓库 seed 覆盖",
+        "reason": "说明真实仓库用例只检查目标模块集合及 seed provenance 字段，界定其验证粒度。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+          "startLine": 272,
+          "endLine": 292
+        },
+        "quote": "  it(\"projects the committed curated seeds against the real omem repo\", { timeout: 60_000 }, async () => {\n    const store = setup();\n    await runReviewSync(store, realRepoRoot);\n    const res = await runCodeSync(store, realRepoRoot);\n    expect(res.fileCount).toBeGreaterThan(10);\n\n    const rows = listUnderstandings("
+      }
+    ],
+    "questions": [
+      {
+        "question": "证据 selector 越界、symbol kind 不匹配、claim 引用未知 evidence id，以及必需流程节点为空时，是否都会产生各自可辨识的 rejected 原因？",
+        "why": "当前反例同时引入不存在符号和空流程节点，只断言最终状态为 rejected，没有隔离每类错误或检查拒绝原因。",
+        "nextStep": "增加表驱动反例，每次只改变一个字段，并断言 rejected 原因及既有 current 好行未被替换。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "真实模型结果是否必须经过独立角色复核后才能成为 current understanding？",
+        "why": "现有测试证明人工 seed 未经 Agent 验证，且无模型时接口仍工作；材料没有覆盖模型生成、独立复核、候选提升或失败结果不得覆盖有效知识的路径。",
+        "nextStep": "使用可控 transport fixture 验证生成预算与 provenance、候选状态、复核通过后的提升，以及超时或 schema 错误不覆盖 current 行。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/model-config.ts",
+      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge.test.ts",
+      "digest": "29a65a8f1bd576d834805a51472730d78f9e377ad25be6f238ccd713d714f82c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+      "digest": "080b9a8cf254faa5200964aae5ac6570ad259da40f76b728aaaeb76d1ad271fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:39:58.791Z",
+    "trace": {
+      "runId": "837aeac7-56f2-4329-bb2b-5ae0b32a9834",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5937ccc32ca4c15aa20f58f39abc219daede6d1c71479c86610c6fdbe91e377f",
+      "contextHash": "86ff11ddea420035a76d21675aa3252ad41c1d931bd16bb1818e8263ee063e74",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d2154fe453fca29ae8777e13b723a810a4e253b717fcc7ec3b428522fe04af68",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-cc05-7821-91c4-69791e3b0b88"
+      ],
+      "usage": {
+        "used": 58626,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143240,
+          "utf8Bytes": 152492,
+          "estimatedTokens": 50831,
+          "budgetedTokens": 63539,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:40:18.436Z",
+    "trace": {
+      "runId": "a6c353ee-5836-458f-affe-eafb06d6c593",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "dcf9cabc904ebdab9213cf910d085321fcd657fc946e6817d845f698639d04fa",
+      "contextHash": "042f3b461e4d344378ac79addb8172f8e45231bf837f8ef7820d21e1b4a2741c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "dd8ecc1e6e58fa107056910508403bf6ca45ec863e8b0acd3a74693d686a1a16",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-5b8b-7993-824a-f02534a719d5"
+      ],
+      "usage": {
+        "used": 54831,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 139398,
+          "utf8Bytes": 146288,
+          "estimatedTokens": 48763,
+          "budgetedTokens": 60954,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

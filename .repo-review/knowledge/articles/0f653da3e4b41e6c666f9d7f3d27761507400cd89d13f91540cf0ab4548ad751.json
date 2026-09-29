@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+    "title": "批次二修复：来源保真、身份解析与派生隔离测试",
+    "summary": "该测试集验证聚合输入不会丢失逐段说话人信息，Lark 外部身份只有经绑定后才映射为规范 owner，并确保派生 Agent 内容不会再次触发事实提取。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "part-provenance",
+        "title": "聚合后的逐段来源保真",
+        "body": "测试先构造带说话人、事件时间和事件编号的聊天输入，再通过 `InputAggregator` 聚合并交给 `Store.capture`。当两名说话人进入同一修订时，顶层 actor 被置空，但每个 part 仍保存各自的外部身份、时间与事件编号；即使两人文本都为“同意”，也不得按文本去重而损失一份证据。[[c1]]\n\n这覆盖了多说话人聚合的关键回归，但没有验证图片、链接、引用或转发 part，也未覆盖历史数据缺少逐段 provenance 时的兼容表现。"
+      },
+      {
+        "key": "lark-owner-resolution",
+        "title": "Lark 身份与自动应用策略",
+        "body": "测试直接写入连接、版本、绑定和目标记录，然后让 `LarkEventInbox.processMessage` 处理群消息。绑定 owner 的 `ou_*` 身份会同时保留外部标识并解析为规范主体，随后任务提案可进入 `auto_apply`；普通群成员只保留外部用户身份，主体为空，策略必须包含 `owner_not_verified` 且不能自动应用。[[c2]]\n\n这证明收件箱、捕获聚合与 `MemoryService.evaluate` 之间的身份链路，但数据库夹具绕过了真实建连流程，也未验证 Lark SDK 网络事件、绑定轮换、伪造签名或失效连接。"
+      },
+      {
+        "key": "derived-loop",
+        "title": "原始与派生 Agent 会话隔离",
+        "body": "同样内容分别以 `producerKind=original` 和 `derived` 捕获：原始会话产生处理 job，派生会话不产生 job，最终仅存在一个 `extract_claims` 作业。该断言用于阻断模型生成内容被重新当作独立原始证据而形成递归提取。[[c3]]\n\n测试只检查作业数量及是否为空，没有断言作业载荷、幂等键、重试行为，也没有覆盖其他来源类型的 derived 输入。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "逐段说话人与重复文本断言",
+        "reason": "支持多说话人聚合时顶层身份置空、逐段 provenance 保留以及相同文本不去重的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+          "startLine": 60,
+          "endLine": 139
+        },
+        "quote": "describe(\"Batch2 F4: per-part provenance survives aggregation\", () => {\n  it(\"G04 keeps each speaker's actor/time on its own part (top-level actorId null)\", () => {\n    const store = new Store(temporary(\"omem-f4-g04-\"));\n    const start = new Date(\"2026-09-27T00:00:00.000Z\");\n    try {\n      store.inputs.ingest(\n      "
+      },
+      {
+        "key": "c2",
+        "label": "Lark owner 与群成员策略对照",
+        "reason": "支持绑定 owner 可规范化并自动应用、普通成员必须保持未验证状态的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+          "startLine": 253,
+          "endLine": 346
+        },
+        "quote": "describe(\"Batch2 F7: lark real identity resolves to canonical owner\", () => {\n  it(\"G06 bound owner's ou_* message maps to canonical owner and auto-applies\", async () => {\n    const store = new Store(temporary(\"omem-f7-g06-\"));\n    try {\n      seedLarkBinding(store);\n      const inbox = new LarkEventInbox(store, { owne"
+      },
+      {
+        "key": "c3",
+        "label": "原始与派生会话作业断言",
+        "reason": "支持只有 original Agent 会话进入 extract_claims、derived 会话被隔离的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+          "startLine": 349,
+          "endLine": 387
+        },
+        "quote": "describe(\"Batch2 F8: original vs derived agent sessions\", () => {\n  it(\"G14 original agent session enters extract_claims; derived does not\", () => {\n    const store = new Store(temporary(\"omem-f8-g14-\"));\n    try {\n      const base = (\n        producerKind: \"original\" | \"derived\",\n        externalId: string,\n      ): C"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+      "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-artifacts.test.ts",
+      "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-budget.test.ts",
+      "digest": "2d0812ca8592b2a3702ce8ee0f6cf4568af9356037cb64be6e731d0a949c9fb3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+      "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
+      "digest": "87f1cf57fca10d4cb0a5db8b64e0713611d0a304054c4ffc973bad34c7eb7132"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+      "digest": "d04e8dca741772db0fd43565fb9fd906fb69a09070a5581161a3dcbf0da24140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:09:13.991Z",
+    "trace": {
+      "runId": "161767d8-9f1a-4014-b3e2-a5519e4a6349",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "726468f442488bf98c0d322ffcd85662d4e11aa2707394fbf5ab54cb8e9929dd",
+      "contextHash": "9af6b2612942385a3550bdc42cd7a278c001615d5f3518e0d49ca169147f2ffd",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2792dfab74511e4d9c3d1fad66847b610b0dcf2771d06ced662a74a03afc7db3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-89ed-7981-a74d-c976fa675121"
+      ],
+      "usage": {
+        "used": 35138,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 63078,
+          "utf8Bytes": 64970,
+          "estimatedTokens": 21657,
+          "budgetedTokens": 27072,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:09:19.214Z",
+    "trace": {
+      "runId": "53bcd91e-3bbc-4771-8b13-e0f49b12862d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "bfffdc00a294a0fc9ba2841d7550ed3b91d3edeb17283ca616a10e25557ebdb6",
+      "contextHash": "c592a9202f07dece3bb2c820a5af776e3e76addbe2b695d9b7bdbef8d25776e9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "98ae544d15bad2554e652df2c80081b4bd50a13819b2456c0275d0c0b3489b96",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee92-354d-7ca0-ba75-018248807a3a"
+      ],
+      "usage": {
+        "used": 35630,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 74182,
+          "utf8Bytes": 81700,
+          "estimatedTokens": 27234,
+          "budgetedTokens": 34043,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

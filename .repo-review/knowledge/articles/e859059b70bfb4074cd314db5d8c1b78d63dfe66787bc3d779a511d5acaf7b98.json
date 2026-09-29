@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/proposal-policy.test.ts",
+    "title": "提案策略、反馈约束与知识冲突验收测试",
+    "summary": "该测试以临时 SQLite Store 驱动 MemoryService 和 FeedbackService，验证固定证据构造、提案风险分流、自动应用、冲突决策、来源失效、反馈作用域及知识关联。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "policy-flow",
+        "title": "提案证据与策略分流",
+        "body": "测试捕获带身份、时间和转发状态的材料，并用固定 fragment、revision、精确原文及 Unicode 码点范围构造提案证据。[[c1]] 明确且已验证的 owner 承诺会自动生成任务、应用回执、通知意图和任务修订；重复评估只返回重复回执，不重复创建实体。[[c2]]\n\n策略会把转发或身份未知的“我”保留为来源，把模糊期限延后处理，并拒绝证据标识篡改或语义范围泛化。[[c3]] 单提案影响数超过预算时进入人工决策，procedure 则保留为来源。[[c4]] 仅由图片推断且未经验证的成功结果也被保留为来源，并且不创建记忆；旧稿所称“不创建决策卡”缺少对应断言，现已撤回。[[c5]]"
+      },
+      {
+        "key": "consistency-feedback",
+        "title": "一致性、反馈与知识关联",
+        "body": "不同来源提出相反主张时，当前有效主张仍保持 active，新提案进入 `awaiting_decision`，不会直接覆盖原结论。[[c6]] 决策形成后若相关来源 head 已变化，批准会报 `STALE_DECISION`；来源继续刷新还会使依赖记忆失效、阻止过期恢复并安排依赖刷新任务。[[c7]]\n\n只有认证 owner、同作用域且具权威性的修正才会成为可召回约束；有用性反馈和派生摘要保持弱权重，ACL 或审批建议只处于 shadow 状态。[[c8]] 同作用域的等价主张会持久化关系和证据集合，矛盾主张会关联真正冲突的记忆；不同项目中的相同文本不会被跨域合并。[[c9]]"
+      },
+      {
+        "key": "coverage-limits",
+        "title": "断言范围与未覆盖行为",
+        "body": "这些用例检查数据库表计数、实体版本、状态和异常，不只是协议对象形状。不过批量边界仅以单个提案的 `impactCount: 11` 验证超限分流，没有直接覆盖多个提案经 `evaluateBatch` 合并、去重计算总影响、只创建一个批量决策卡以及原子性不落库。[[c4]] 图片用例也只断言策略、原因和记忆为空，不能据此断言决策表必然为空。[[c5]] 外部通知仅验证 delivery intent 入库，并未证明真实渠道已经投递。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "固定文本证据与提案构造",
+        "reason": "支持捕获来源身份和时间信息，并以固定 fragment、revision、精确原文及 Unicode 码点选择器构造提案证据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 29,
+          "endLine": 108
+        },
+        "quote": "const capture = (\n  store: Store,\n  text: string,\n  options: {\n    externalId?: string;\n    actorId?: string | null;\n    verifiedBy?: string | null;\n    forwarded?: boolean;\n  } = {},\n) =>\n  store.capture({\n    source: \"manual\",\n    externalId: options.externalId ?? `source-${++sequence}`,\n    title: \"Policy evidence\","
+      },
+      {
+        "key": "c2",
+        "label": "明确负责人任务自动应用",
+        "reason": "支持已验证负责人承诺自动生成任务、应用回执、通知意图和修订，并验证重复评估幂等。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 160,
+          "endLine": 187
+        },
+        "quote": "describe(\"B2-04 extraction policy and application acceptance\", () => {\n  it(\"A-K01 auto-applies one explicit owner task with evidence, change and notification\", () => {\n    const { store, memory } = setup();\n    const revision = capture(\n      store,\n      \"我负责在本周五18:00前补齐支付重试方案，先核对现有接口。\",\n    );\n    const proposal = t"
+      },
+      {
+        "key": "c3",
+        "label": "身份、时间、证据与语义分流",
+        "reason": "支持未知身份或转发材料保留为来源、模糊时间延后，以及证据篡改和语义泛化被拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 189,
+          "endLine": 256
+        },
+        "quote": "  it(\"A-K02 keeps forwarded/unknown speech as a source lead, never an owner task\", () => {\n    const { store, memory } = setup();\n    const revision = capture(store, \"我周五交方案\", {\n      actorId: null,\n      verifiedBy: null,\n      forwarded: true,\n    });\n    const result = memory.evaluate(taskProposal(revision), support"
+      },
+      {
+        "key": "c4",
+        "label": "影响预算与流程型知识分流",
+        "reason": "支持单提案影响数超限进入人工决策、procedure 保留为来源，同时界定本文件未直接验证批量合并评估。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 285,
+          "endLine": 315
+        },
+        "quote": "  it(\"A-K07 auto-applies a small safe change but gates large batches and procedures\", () => {\n    const { store, memory } = setup();\n    const revision = capture(store, \"我负责整理清单\");\n    expect(memory.evaluate(taskProposal(revision), supported).policy).toBe(\n      \"auto_apply\",\n    );\n    const large = taskProposal(revis"
+      },
+      {
+        "key": "c5",
+        "label": "图片推断结果保留为来源",
+        "reason": "支持图片推断且未经验证的成功结果采用 retain_as_source，并仅明确断言记忆为空。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 360,
+          "endLine": 423
+        },
+        "quote": "  it(\"A-K09 keeps inferred image outcomes as a retained source, no decision card\", () => {\n    const { store, memory } = setup();\n    const png =\n      \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6vO8AAAAASUVORK5CYII=\";\n    const revision = store.capture({\n      source: \"screen\",\n      exter"
+      },
+      {
+        "key": "c6",
+        "label": "跨来源冲突保留当前主张",
+        "reason": "直接支持跨来源冲突进入待决策状态，同时保持原有记忆为 active 且版本不变。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 259,
+          "endLine": 283
+        },
+        "quote": "  it(\"A-K06 preserves an active claim when a different source proposes a conflict\", () => {\n    const { store, memory } = setup();\n    const firstSource = capture(store, \"服务 A 已启用重试\", {\n      externalId: \"authority-one\",\n    });\n    const first = memory.evaluate(\n      claimProposal(firstSource, \"服务 A 已启用重试\"),\n      su"
+      },
+      {
+        "key": "c7",
+        "label": "过期决策与来源依赖失效",
+        "reason": "支持来源 head 变化阻止批准，以及后续来源刷新使派生记忆失效、阻止恢复并安排刷新任务。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 318,
+          "endLine": 469
+        },
+        "quote": "  it(\"A-K08 rejects approval when a source head changes after review\", () => {\n    const { store, memory } = setup();\n    const firstSource = capture(store, \"服务 A 已启用重试\", {\n      externalId: \"stale-authority\",\n    });\n    const first = memory.evaluate(\n      claimProposal(firstSource, \"服务 A 已启用重试\"),\n      supported,\n  "
+      },
+      {
+        "key": "c8",
+        "label": "作用域反馈与权威强度",
+        "reason": "支持认证修正可应用、弱反馈不具权威、跨作用域隔离以及政策建议保持 shadow。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 473,
+          "endLine": 654
+        },
+        "quote": "describe(\"B2-04 scoped feedback acceptance\", () => {\n  it(\"A-F01 recalls an authenticated same-scope owner correction for the next candidate\", () => {\n    const { store, feedback } = setup();\n    const evidence = capture(store, \"负责人应从 A 改为 B\");\n    const recorded = feedback.record({\n      producer: \"owner-ui\",\n      ev"
+      },
+      {
+        "key": "c9",
+        "label": "冲突与等价关系持久化",
+        "reason": "支持冲突定位、跨项目隔离以及等价关系和证据集合的持久化断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/proposal-policy.test.ts",
+          "startLine": 657,
+          "endLine": 731
+        },
+        "quote": "describe(\"P0 conflict association and equivalence persistence\", () => {\n  it(\"P5: a contradictory create is associated with the real conflicting memory, not the first unrelated row\", () => {\n    const { store, memory } = setup();\n    const unrelatedSrc = capture(store, \"订单系统已于周二上线\", {\n      externalId: \"p5-unrelated\",\n"
+      }
+    ],
+    "questions": [
+      {
+        "question": "多个提案组成的 ChangeSet 超过总自动应用预算时，是否另有测试验证只创建一个批量 AttentionCase，且所有候选均未提前落库？",
+        "why": "现有材料只展示单个提案以 `impactCount: 11` 进入 `awaiting_decision`，没有覆盖 `evaluateBatch` 的合并、去重影响计算或原子性。",
+        "nextStep": "补充批量评估测试，断言决策卡数量、相关实体表和 application receipts，并覆盖部分候选重复的情形。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/proposal-policy.test.ts",
+      "digest": "19c9fe2b49e81db587a4f3b3e6e956c9e99151c9decd8c4943a5fef2b9bc7d57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-annotation.test.ts",
+      "digest": "bfaabb4a2ba8357da6dc8280e3617fcb16aefbfc81487305b88b4c7291cfd086"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+      "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
+      "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+      "digest": "7785c4def39404faf04f4ecf85bca9fecef6413e7b247cbfb011f4b8aefe9e9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-dev.test.ts",
+      "digest": "6ac6cc2db82deff33eb27a466db8dab2f3099421e7135506eee453e154604383"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:44:41.481Z",
+    "trace": {
+      "runId": "90bbe4fa-d623-49d4-ba9e-21cf6c0a4cd0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "c2f50d42bf06f2640a9f6715775f215dfae78f558a132fd87b6bded88391a675",
+      "contextHash": "f63207bbcf7c11e654e4aea8ff35f7f290f1439eda2390d3326bf847709813e8",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a4c7487f6115e53e54f39c88ff08a4b8677539b9f0e08b97cb3474207fb5762b",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-de95-7442-a005-2aedc2b8a17a",
+        "01a0eeb2-474c-74e0-893e-bb4600a0dc1d"
+      ],
+      "usage": {
+        "used": 52723,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121885,
+          "utf8Bytes": 131327,
+          "estimatedTokens": 43776,
+          "budgetedTokens": 54720,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 1
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:44:55.584Z",
+    "trace": {
+      "runId": "3775c27e-59c6-4a5c-8903-ceb7e9aa1b0f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "03ccc99a2a3f5343017d0e0eaebad77aef2d2b8c2c675604b83533002214a440",
+      "contextHash": "cf6f62b693c39c500efce999204c4a28ac12a9f480446ff42791671a742936af",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "34eea18bd735bf26bd070842b3f92af2c6ff5f270ec23c642ac0eefe5e8088bc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb2-abfa-7c83-a169-02bb6c13a41d"
+      ],
+      "usage": {
+        "used": 49342,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 119395,
+          "utf8Bytes": 127341,
+          "estimatedTokens": 42447,
+          "budgetedTokens": 53059,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

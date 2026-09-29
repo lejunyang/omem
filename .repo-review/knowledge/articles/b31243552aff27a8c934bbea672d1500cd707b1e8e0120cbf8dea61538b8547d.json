@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/review-relations.test.ts",
+    "title": "仓库评审关系构建与查询测试",
+    "summary": "通过临时 Git 仓库验证 associations seed 驱动的关系投影：独立意图片段、多引用建边、缺失边保留、幂等同步、seed 移除后的失效和 API 双向查询；现有断言不证明精确符号级来源定位。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "fixture-model",
+        "title": "显式关系 seed 与夹具边界",
+        "body": "夹具建立两个指向同一代码文件但不同 symbol 的 association seed，二者共享 G08，其中一个还引用 G09；仓库同时含未列出的同名诱饵文件、需求表、决策和测试文档。seed 显式携带 `codePath`、`symbol`、intent 及引用。[[c1]] 当前断言证明关系由 seed 驱动、未列出的异路径诱饵不会产生关系，且不同 seed 不会互相覆盖；但没有逐一核对 `implements` 来源 fragment 是否落在各自函数符号上，因此不能据此宣称精确符号定位。[[c3]]"
+      },
+      {
+        "key": "sync-invariants",
+        "title": "同步生成的不变量",
+        "body": "每条 seed 生成独立短意图片段，`implements` 指向该意图而非整张需求表；两个 seed 的 intent fragment 不同。[[c2]] 每个 requirementRef 都产生一条从意图出发的 `requires`，重复同步复用关系 ID。[[c3]] 无法解析的决策或测试引用仍分别保存为 missing，借助不同 seed identity 避免空端点记录互相覆盖。[[c4]]"
+      },
+      {
+        "key": "lifecycle-api",
+        "title": "生命周期与 API 投影",
+        "body": "从 associations 清单移除 seed 并重新同步后，相关旧边转为 stale。[[c5]] fragment API 在代码端返回正向 `implements`，在意图端派生 `implemented_by`，并暴露 `requires`；列表支持按状态和类型过滤，摘要返回 seed 数量。[[c6]] 这些用例未验证鉴权、多用户隔离、跨文件 calls、跨 revision 身份续接、恶意 seed 或并发同步；夹具测试文档中的 `expect(true)` 也只是定位文本，不能证明对应业务行为。[[c1]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "关系夹具与显式 seed",
+        "reason": "说明 seed 字段、共享需求、不同 symbol、异路径诱饵及文档材料的夹具结构，并界定占位测试文本。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 57,
+          "endLine": 171
+        },
+        "quote": "type Seed = {\n  codePath: string;\n  symbol: string;\n  intent: string;\n  requirementRefs: string[];\n  decisionRefs: string[];\n  researchRefs?: string[];\n  testRefs: string[];\n  status: string;\n  evidence: string;\n};\n\n/** Build a fixture repo: two seeds on the SAME requirement G08 but different\n * symbols (must not overw"
+      },
+      {
+        "key": "c2",
+        "label": "每条 seed 的独立意图片段",
+        "reason": "支持每条 seed 生成独立短意图，implements 指向意图且不会绑定整张需求表。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 207,
+          "endLine": 243
+        },
+        "quote": "describe(\"repo-review relations\", () => {\n  it(\"generates a per-seed intent index; implements points at it, not the G01-G20 table\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    const res = await runReviewSync(store, root);\n    expect(res.relations).to"
+      },
+      {
+        "key": "c3",
+        "label": "多引用、幂等与诱饵排除",
+        "reason": "支持每个 requirementRef 独立建边、重复同步复用关系 ID，以及未列出的异路径同名文件不产生关系。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 245,
+          "endLine": 292
+        },
+        "quote": "  it(\"builds a requires edge per requirementRef (multi-ref not just [0])\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n\n    const requires = relRows(store).filter((r) => r.type === \"requires\");\n    // seed1 -> G08 (1"
+      },
+      {
+        "key": "c4",
+        "label": "缺失关系独立保存",
+        "reason": "支持多个无法解析的引用分别保留为 missing 行，而不会因空端点互相覆盖。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 294,
+          "endLine": 311
+        },
+        "quote": "  it(\"keeps every missing edge independently visible (no empty-endpoint collision)\", async () => {\n    const root = makeRepo();\n    const seeds = defaultSeeds();\n    // Point both seeds at a decision/test that does NOT exist, so both produce\n    // missing edges; they must not collapse into one row on source='' target="
+      },
+      {
+        "key": "c5",
+        "label": "移除 seed 后关系失效",
+        "reason": "支持 associations 清单移除条目并重新同步后相关旧边转为 stale。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 313,
+          "endLine": 336
+        },
+        "quote": "  it(\"stales edges for seeds removed from the list\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n    const before = relRows(store).filter((r) => r.status !== \"stale\").length;\n    expect(before).toBeGreaterThan(0);\n\n "
+      },
+      {
+        "key": "c6",
+        "label": "关系 API 查询与过滤",
+        "reason": "支持正向 implements、反向 implemented_by、requires、状态与类型过滤及 seed 数量摘要。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 338,
+          "endLine": 410
+        },
+        "quote": "  it(\"GET /fragments/:id/relations returns code→intent outgoing and implemented_by incoming\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n\n    const impl = relRows(store).find((r) => r.type === \"implements\")!;\n    co"
+      }
+    ],
+    "questions": [
+      {
+        "question": "两个带不同 symbol 的 seed，其 `implements` 来源 fragment 是否分别落在对应函数，而不是同一个文件级或代码 fragment？",
+        "why": "现有测试验证两个 intent 和两条 implements 存在，也排除了异路径诱饵，但没有把每条关系的 source fragment 文本或符号身份与 seed symbol 一一比对。",
+        "nextStep": "为两条 seed 分别查询 `implements` 来源 fragment，断言其符号名、范围或稳定 locator 与 `priorWorkingContext`、`recoverUnfinishedTurns` 精确对应。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery.test.ts",
+      "digest": "77aa882e9476a521c31857548c2d3cb7631b859867d375aa56c4c08157938ca9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-onboarding.test.ts",
+      "digest": "53ebb0531146d960d3e29d618eaaafff15e624746100a1cbc168f3bd5fef1488"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-materials.test.ts",
+      "digest": "c7aac5333878fa569148d29e0eda92d9830006444c5e89e96351205f2a88d348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-migration.test.ts",
+      "digest": "aac9e5aded456d6287dfceaf8b674320541bf0aa19f1636e28c5135649096fee"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-relations.test.ts",
+      "digest": "712eb29abc8429b4ff8597d6054b37333d4d91d701542465465e2fa5cf449602"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:04:01.660Z",
+    "trace": {
+      "runId": "4edb4b1d-549e-48f2-b368-3aa2fb5d5785",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "50b624a98a57465c86ff848698749228f32932dda3164b56c7e3f1fa6bb8c30f",
+      "contextHash": "f5f31135c7009fa2d9758abda35806103f7ab7c7c891ee33489042cfb78aa5b0",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "50abb2bab698468840298d5deac334d4b5bb5314738352a544e05fbc1da8671f",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-858d-7b23-9303-33ce0a06772f"
+      ],
+      "usage": {
+        "used": 63513,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143080,
+          "utf8Bytes": 153964,
+          "estimatedTokens": 51322,
+          "budgetedTokens": 64153,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:22.995Z",
+    "trace": {
+      "runId": "74612ce0-414a-4476-b67e-476132ac74ea",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "53aeefe6a4e64c6a12c42035d4eb24afb823ac106bbfc39171380460184dbf67",
+      "contextHash": "b2e6a82c3dac4e20cd2e445f66a8f5600f26782f8cf0bb5174099e2e1a3c2503",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5c74cceb6518bf17bc47b6f8fedc63b0944291a246ebb0b577e5785d52d27e5a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-5fc4-7793-9ad9-f96c290d8107"
+      ],
+      "usage": {
+        "used": 59759,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 146050,
+          "utf8Bytes": 157432,
+          "estimatedTokens": 52478,
+          "budgetedTokens": 65598,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

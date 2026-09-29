@@ -1,0 +1,288 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/lark-delivery.test.ts",
+    "title": "Lark 外部通知投递、重试与聚合验收测试",
+    "summary": "验证通知 outbox 跨进程恢复、模糊失败和认证失败处理、即时与聚合投递的可追踪性、定时边界，以及 binding 换代时不把旧通知误发至新目标。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "durability-retry",
+        "title": "持久 outbox 与失败状态",
+        "body": "任务应用与 Lark delivery intent 持久化后，测试关闭并重开 Store，再由新 worker 投递；任务没有被重新应用，原 intent 转为 delivered 并记录消息 ID，说明恢复依赖持久 outbox。[[c1]] 模糊失败在一小时窗口内复用同一 UUID 重试，超窗的 sending 租约转为 unknown；限流错误遵守指定等待时间，随后出现认证失败时，intent 失败、连接失效、目标被禁用，错误文本也会脱敏。[[c2]]"
+      },
+      {
+        "key": "aggregation",
+        "title": "即时、窗口与定时聚合",
+        "body": "即时模式为每个变更保存独立 intent、change 映射、摘要和 provider UUID。[[c3]] 窗口模式到期后把五项变更合成一个 active pending 摘要，按原顺序保留全部 change 映射；其余四条原 intent 标记为 cancelled，并以 `superseded_by` 指向合并后的 active intent，最终只发送一次。[[c4]] 这取代了“五条原 intent 全部取消”的旧结论，因为其中一条会成为合并后的活动行。定时模式则按 Asia/Shanghai 的下一次本地 09:00 计算触发点，到期后同样聚合成一条可投递摘要。[[c5]]"
+      },
+      {
+        "key": "binding-boundary",
+        "title": "换绑边界与限制",
+        "body": "旧 binding 被 supersede、旧目标禁用后，历史 intent 会取消，而不会被转发到替代聊天；此后新产生的恢复通知才绑定新版本，且卡片负载不含 localhost 或回环地址。[[c6]] 这些用例证明本地数据库中的路由、聚合和状态机行为，但 FakeMessages 不模拟供应商按 UUID 去重，也未覆盖真实限流头、真实认证撤销、采用夏令时的时区边界或批处理并发竞争。"
+      },
+      {
+        "key": "scope",
+        "title": "测试结论的适用范围",
+        "body": "该文件把持久化恢复、失败分类、聚合策略和换绑隔离串成一组验收场景：恢复测试保证既有业务记录不被重复应用，聚合测试保证多个 change 仍可追踪，换绑测试则阻止旧通知越过目标边界。[[c1]] 不过，相同 UUID 的两次发送只是在替身调用参数层面相等，不能据此断言真实飞书或 Lark 服务端必然只创建一条消息。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "进程重启后的 outbox 恢复",
+        "reason": "支持不重放业务应用、从持久 intent 恢复投递并记录 delivered 状态的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 172,
+          "endLine": 210
+        },
+        "quote": "describe(\"B2-06 Lark delivery acceptance\", () => {\n  it(\"A-N01 persists the outbox across a process restart without replaying the application\", async () => {\n    const resource = setup();\n    const receipt = applyTask(resource.store, \"1\");\n    const intentBefore = larkIntent(resource.store, receipt.changeId);\n    expec"
+      },
+      {
+        "key": "c2",
+        "label": "模糊失败、限流与认证失败",
+        "reason": "支持相同 UUID 重试、一小时后转 unknown、限流退避、认证失败禁用连接及错误脱敏，同时界定替身测试不能证明供应商幂等。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 212,
+          "endLine": 298
+        },
+        "quote": "  it(\"A-N02 retries ambiguous sends with one uuid inside one hour and becomes unknown after it\", async () => {\n    const resource = setup();\n    applyTask(resource.store, \"2\");\n    const messages = new FakeMessages();\n    messages.sendResults.push(\n      new LarkDeliveryError(\"response lost\", \"ambiguous\"),\n      { mess"
+      },
+      {
+        "key": "c3",
+        "label": "即时通知逐项映射",
+        "reason": "支持每个即时变更拥有独立 change 映射、摘要和 provider UUID。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 300,
+          "endLine": 328
+        },
+        "quote": "  it(\"A-N04 keeps a distinct traceable delivery mapping for every immediate change\", () => {\n    const resource = setup();\n    const receipts = Array.from({ length: 5 }, (_, index) =>\n      applyTask(resource.store, `batch-${index}`),\n    );\n    const rows = resource.store.db\n      .prepare(\n        `SELECT change_id,p"
+      },
+      {
+        "key": "c4",
+        "label": "短窗口通知聚合",
+        "reason": "支持五项变更合并为一个 active pending intent、顺序保留全部映射，并明确只有其余四条原 intent 被取消且指向活动行。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 330,
+          "endLine": 411
+        },
+        "quote": "  it(\"A-N04 merges a short window while preserving every change mapping\", async () => {\n    const resource = setup(\"oc_window\", {\n      mode: \"window\",\n      windowMs: 60_000,\n      scheduleLocalTime: \"09:00\",\n      timezone: \"Asia/Shanghai\",\n    });\n    const receipts = Array.from({ length: 5 }, (_, index) =>\n      ap"
+      },
+      {
+        "key": "c5",
+        "label": "本地时间定时摘要",
+        "reason": "支持 Asia/Shanghai 下一个 09:00 边界的计算以及到期后的五项聚合。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 413,
+          "endLine": 467
+        },
+        "quote": "  it(\"A-N04 schedules the next local digest boundary\", () => {\n    const policy: ExternalNotificationPolicy = {\n      mode: \"scheduled\",\n      windowMs: 300_000,\n      scheduleLocalTime: \"09:00\",\n      timezone: \"Asia/Shanghai\",\n    };\n    expect(\n      externalDeliveryTiming(\"2026-09-27T00:30:00.000Z\", policy).after,\n"
+      },
+      {
+        "key": "c6",
+        "label": "旧绑定取消与新通知换绑",
+        "reason": "支持旧 intent 不转发至替代聊天、新恢复通知绑定新版本，以及负载排除本机地址。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 469,
+          "endLine": 562
+        },
+        "quote": "  it(\"A-N05 never forwards an old intent to a replacement binding and restoration cards contain no localhost URL\", async () => {\n    const resource = setup(\"oc_old\");\n    const first = resource.store.applications.applyMemory({\n      metadata: {\n        workspaceId: \"personal\",\n        applicationId: \"memory-v1\",\n      "
+      }
+    ],
+    "questions": [
+      {
+        "question": "同一 UUID 在真实飞书或 Lark 接口中重试时，供应商是否保证只创建一条消息？",
+        "why": "测试只断言 FakeMessages 两次调用收到相同 UUID；替身每次成功调用都会返回消息 ID，没有模拟或证明供应商侧幂等语义。",
+        "nextStep": "在隔离测试租户中制造响应丢失并以同一 UUID 重试，记录供应商实际创建的消息数量和接口文档依据。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "定时摘要在采用夏令时的时区跨越切换日时如何选择下一次本地边界？",
+        "why": "材料只覆盖 Asia/Shanghai 的普通日期，没有覆盖不存在或重复出现的本地时间。",
+        "nextStep": "增加含夏令时开始与结束日期的 IANA 时区用例，明确重复时间和跳过时间的产品规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "定时摘要在采用夏令时的时区跨越切换日时如何确定下一次本地边界？",
+        "why": "现有材料只覆盖 Asia/Shanghai 的普通日期，未覆盖不存在或重复出现的本地时间；草稿已将此项明确保留为未决限制。",
+        "nextStep": "为具有夏令时的 IANA 时区增加切换日前后用例，并明确跳时和重复时间对应的产品规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery.test.ts",
+      "digest": "77aa882e9476a521c31857548c2d3cb7631b859867d375aa56c4c08157938ca9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-onboarding.test.ts",
+      "digest": "53ebb0531146d960d3e29d618eaaafff15e624746100a1cbc168f3bd5fef1488"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-materials.test.ts",
+      "digest": "c7aac5333878fa569148d29e0eda92d9830006444c5e89e96351205f2a88d348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-migration.test.ts",
+      "digest": "aac9e5aded456d6287dfceaf8b674320541bf0aa19f1636e28c5135649096fee"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-relations.test.ts",
+      "digest": "712eb29abc8429b4ff8597d6054b37333d4d91d701542465465e2fa5cf449602"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:04:38.827Z",
+    "trace": {
+      "runId": "0cb66ccf-3498-4e8d-9e1d-5ec01c2b938c",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "458b1372cf4aaf794e1ea461321d92120f1d0643f59845a6b3b0e65dd3412ece",
+      "contextHash": "f6358f8c63021d252d56073f4dc4b3502389a2beb2616997bc5009dbbfbc4731",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2d3c1360a6445692399d1fcca6a425c6244fb95be92ffc0c390b52ef90cd3fd7",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-b61c-70a3-bd01-0535eb5babd5"
+      ],
+      "usage": {
+        "used": 52138,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 127088,
+          "utf8Bytes": 131248,
+          "estimatedTokens": 43750,
+          "budgetedTokens": 54688,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:46.950Z",
+    "trace": {
+      "runId": "1e4dd24a-8c3d-44fa-8045-eacdf4fcc8c2",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "ab97d3a84ae0002b062b0a761311c5804676af0eba40c66d3f44e25afabeaa94",
+      "contextHash": "830f83388dfba87f27c36dd8b53ff5be78bfe06412ff7ebc8ad11061b4db1b42",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "0df3bf9941db8d8800c3d2f737af4123a1853d9c821aa42b8c7b6b96652b3536",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-f10f-76c1-b078-70035fa69fe7"
+      ],
+      "usage": {
+        "used": 50172,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 124403,
+          "utf8Bytes": 127767,
+          "estimatedTokens": 42589,
+          "budgetedTokens": 53237,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

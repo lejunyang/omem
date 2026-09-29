@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/connectors.test.ts",
+    "title": "文件与 Git 输入连接器边界测试",
+    "summary": "验证本地文件连接器的根目录约束、符号链接逃逸和二进制拒绝，以及 Git 连接器按固定 revision 读取内容而不混入工作区改动。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "file-boundary",
+        "title": "文件输入的安全边界",
+        "body": "文件连接器解决的是把受控本地材料转换为统一文本输入，同时防止调用方借路径访问配置根之外的数据。测试在临时根目录内创建普通中文文本、根外文件及指向根外的符号链接：合法文本被转换成 text part，逃逸链接因解析后的真实位置不在允许根内而失败；含空字节的文件则按二进制拒绝。[[c1]] 这说明边界判断不能只检查表面路径，也表明当前合同聚焦纯文本。测试未覆盖最大文件尺寸、无权限文件、非 UTF-8 文本、多个允许根及链接仍落在根内的情况。"
+      },
+      {
+        "key": "git-snapshot",
+        "title": "Git 快照读取与限制",
+        "body": "Git 输入用于从明确仓库和 revision 获取可复现材料。测试先提交 `note.txt`，随后把工作区内容改为另一值，再以 `HEAD` 读取；返回内容仍是已提交版本，并附带 40 位提交标识，证明采集绑定固定 Git 对象而不是当前工作树。[[c2]] `../outside` 被判为非法仓库内路径，覆盖了直接的相对路径逃逸。该测试没有证明分支移动时的并发一致性，也未覆盖不存在的 revision、子模块、符号链接 blob、大文件、Git 命令失败或仓库自身位于允许根之外时的行为。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "文件输入根目录与类型检查",
+        "reason": "支持普通文本成功、符号链接逃逸和二进制内容被拒绝的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/connectors.test.ts",
+          "startLine": 9,
+          "endLine": 31
+        },
+        "quote": "it(\"allows bounded plain text but denies escaped symlinks and binary files\", async () => {\n  const dir = await mkdtemp(join(tmpdir(), \"omem-input-\"));\n  try {\n    const root = join(dir, \"root\");\n    await mkdir(root);\n    await writeFile(join(root, \"note.txt\"), \"工作记录\");\n    await writeFile(join(dir, \"outside.txt\"), \"ou"
+      },
+      {
+        "key": "c2",
+        "label": "固定 Git Revision 读取",
+        "reason": "支持连接器忽略未提交修改、返回提交哈希并拒绝仓库外相对路径的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/connectors.test.ts",
+          "startLine": 32,
+          "endLine": 58
+        },
+        "quote": "it(\"reads a fixed Git revision, not uncommitted workspace changes\", async () => {\n  const dir = await mkdtemp(join(tmpdir(), \"omem-git-\"));\n  try {\n    const run = (args: string[]) => exec(\"git\", args, { cwd: dir });\n    await run([\"init\", \"-q\"]);\n    await writeFile(join(dir, \"note.txt\"), \"committed\");\n    await run(["
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-model.test.ts",
+      "digest": "ac88b469c5dccac99e5b7535cce1a6ec584abd604338938bfdb07c09340e632a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding.test.ts",
+      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/connectors.test.ts",
+      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:38:35.369Z",
+    "trace": {
+      "runId": "c35b15c3-b40c-4db9-bf7f-5f96f87be5e2",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "6ad29a3453fe7f592d5651ee3be81c44c0953504d1e6ece46a14bdd39c89c0ee",
+      "contextHash": "b6fc42c31c8a77a2df34f5f1833aafdbbb8bec6e579f658b50a66d3b6c21c3ff",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "85ac312a6523bab7c464e1288bbd6b3f3f84a6f261b85e61338b0001b25fdfcc",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeac-604c-7df1-838e-b713f23605b6"
+      ],
+      "usage": {
+        "used": 40749,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80664,
+          "utf8Bytes": 82612,
+          "estimatedTokens": 27538,
+          "budgetedTokens": 34423,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:38:59.115Z",
+    "trace": {
+      "runId": "69a05df4-9615-4f2a-833f-1d05fa3e4f37",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "35c47a7f8ae34f5df46df1bb1f12106ea0e5f730fa84e893d977f32d7d2834a5",
+      "contextHash": "218d2ec317bf3d0a81eab354261b7fc38bf1b695c877280c8757b349ced72762",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b3d32ca2e151d674caa545662f7b50becf93d7b3da4f6f14fb5a4615639e23c1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-15e6-7a91-9f22-9d545519e995"
+      ],
+      "usage": {
+        "used": 43191,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 96153,
+          "utf8Bytes": 104651,
+          "estimatedTokens": 34884,
+          "budgetedTokens": 43605,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

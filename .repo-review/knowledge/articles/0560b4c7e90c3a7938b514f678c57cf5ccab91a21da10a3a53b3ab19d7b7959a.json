@@ -1,0 +1,312 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/jobs.test.ts",
+    "title": "持久作业租约、重试与幂等应用验收测试",
+    "summary": "系统性验证作业与采集的事务一致性、重启恢复、竞争租约和 fencing、分类重试、取消补偿、崩溃重放、代际指纹及 worker 范围隔离。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "durability",
+        "title": "事务持久性与重启恢复",
+        "body": "用例通过 SQLite 触发器注入入队失败，断言采集材料和通知也全部回滚；移除故障后，采集与 `extract_claims` 作业一起提交。关闭并重开同一数据目录后，worker 能领取旧作业、写入成功结果，原始片段仍可读取。[[c1]] 这验证“先持久化、后启动 worker”的恢复路径，也与 Store 将数据库、作业、应用和输入组件装配在同一基础设施中的关系一致。[[c2]]"
+      },
+      {
+        "key": "concurrency",
+        "title": "并发租约与过期结果隔离",
+        "body": "两个 Store 实例竞争同一作业时，只有一个 worker 获得租约并执行业务应用，另一个返回未处理；最终尝试、应用回执和任务都只有一条。[[c3]] 另一用例让旧租约过期并由新 worker 取得不同 fencing token；旧 token 提交结果必须报 `STALE_JOB_LEASE`，只有替代租约可完成作业，尝试历史依次记录租约过期与成功。[[c4]]"
+      },
+      {
+        "key": "failure-control",
+        "title": "失败分类、取消与幂等重放",
+        "body": "暂时错误最多执行三次、坏输出两次、认证错误一次后停止，且持久化错误会移除示例令牌。[[c5]] 排队作业可直接取消，运行中作业通过 AbortSignal 进入取消状态；已经产生业务效果的成功作业则返回“需要补偿”，不会假装撤销任务。[[c6]] 若业务应用后、作业回执前崩溃，重试会命中重复应用回执，最终仍只有一个任务、通知与投递意图。[[c7]]"
+      },
+      {
+        "key": "history-scope",
+        "title": "代际历史与 worker 范围",
+        "body": "人工重试把 generation 从 1 提升到 2；第二代尝试记录新的模型、推理强度和整体执行指纹，旧尝试保持原样，同一重试请求重复提交也保持幂等。[[c8]] 测试辅助函数表明该整体指纹由模型、强度以及提示、技能、工具摘要字段共同构造。[[c9]] 最后的范围测试限定 worker 只处理指定 kind 和 job id；目标知识作业成功后，普通提取作业仍处于排队状态。[[c10]] 未覆盖长期 heartbeat 续租、真实进程被强杀、数据库损坏、多主机时钟偏差和跨数据库分布式竞争。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "采集事务与重启恢复",
+        "reason": "支持入队失败整体回滚、正常入队持久化以及重启后继续处理的核心保证。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 52,
+          "endLine": 105
+        },
+        "quote": "describe(\"B2-02 durable job acceptance\", () => {\n  it(\"A-J01 commits capture and queued work before a worker exists, then resumes after restart\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-jobs-restart-\"));\n    const first = setup(directory);\n    const input = {\n      source: \"manual\",\n      e"
+      },
+      {
+        "key": "c2",
+        "label": "Store 组件装配",
+        "reason": "解释作业、应用、输入与 SQLite 数据库在同一 Store 中的模块关系。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 35,
+          "endLine": 62
+        },
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+      },
+      {
+        "key": "c3",
+        "label": "双 worker 租约竞争",
+        "reason": "支持并发 worker 仅执行一次并只产生一份业务效果的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 107,
+          "endLine": 160
+        },
+        "quote": "  it(\"A-J02 grants one lease to two competing workers and applies once\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-jobs-race-\"));\n    const first = setup(directory);\n    const second = setup(directory);\n    const job = enqueue(first, \"race\");\n    let release!: () => void;\n    let started!: ()"
+      },
+      {
+        "key": "c4",
+        "label": "租约过期与 fencing token",
+        "reason": "支持旧租约结果被拒绝、新租约完成并保留两次尝试结果的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 162,
+          "endLine": 205
+        },
+        "quote": "  it(\"A-J03 rejects a late result after lease expiry and fencing-token replacement\", () => {\n    const store = setup();\n    const job = enqueue(store, \"fencing\");\n    const start = new Date(job.notBefore);\n    const oldLease = store.jobs.claimNext({\n      workerId: \"old-worker\",\n      fingerprint: fingerprint(\"v1\"),\n  "
+      },
+      {
+        "key": "c5",
+        "label": "分类重试与错误脱敏",
+        "reason": "支持暂时错误、坏输出和认证错误采用不同重试上限，且秘密不落库。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 207,
+          "endLine": 250
+        },
+        "quote": "  it(\"A-J04 bounds transient and bad-output retries while stopping auth retries\", async () => {\n    const store = setup();\n    const transient = enqueue(store, \"transient\");\n    const badOutput = enqueue(store, \"bad-output\");\n    const auth = enqueue(store, \"auth\");\n    const calls = { transient: 0, bad: 0, auth: 0 };\n"
+      },
+      {
+        "key": "c6",
+        "label": "取消与补偿语义",
+        "reason": "支持排队、运行中和已应用作业分别采用取消、正在取消和需要补偿的状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 253,
+          "endLine": 323
+        },
+        "quote": "  it(\"A-J05 cancels queued/running jobs and requires compensation after apply\", async () => {\n    const store = setup();\n    const queued = enqueue(store, \"queued-cancel\");\n    expect(\n      store.jobs.cancel({\n        jobId: queued.id,\n        expectedGeneration: 1,\n        requestId: \"cancel-queued\",\n      }),\n    )."
+      },
+      {
+        "key": "c7",
+        "label": "应用后崩溃的幂等重放",
+        "reason": "支持处理执行两次但任务、回执、通知及投递意图各只有一份。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 325,
+          "endLine": 375
+        },
+        "quote": "  it(\"A-J06 replays a post-application crash without duplicate business effects\", async () => {\n    const store = setup();\n    const job = enqueue(store, \"crash-after-application\");\n    let executions = 0;\n    const worker = new DurableJobWorker(\n      store.jobs,\n      \"crash-worker\",\n      {\n        \"crash-after-appl"
+      },
+      {
+        "key": "c8",
+        "label": "重试代际与执行指纹",
+        "reason": "支持新代际记录新模型、强度和不同整体指纹，同时不改写旧尝试历史。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 377,
+          "endLine": 428
+        },
+        "quote": "  it(\"A-J07 creates a new generation and fingerprint without rewriting old attempts\", async () => {\n    const store = setup();\n    const job = enqueue(store, \"profile-change\");\n    const firstWorker = new DurableJobWorker(\n      store.jobs,\n      \"profile-worker-v1\",\n      {\n        \"profile-change\": async () => {\n    "
+      },
+      {
+        "key": "c9",
+        "label": "执行指纹字段构造",
+        "reason": "说明测试中的执行指纹包含模型、推理强度以及提示、技能和工具摘要哈希。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 27,
+          "endLine": 35
+        },
+        "quote": "const hash = (value: string) =>\n  createHash(\"sha256\").update(value).digest(\"hex\");\nconst fingerprint = (version: string): JobAttemptFingerprint => ({\n  model: `model-${version}`,\n  effort: version === \"v1\" ? \"low\" : \"high\",\n  promptHash: hash(`prompt-${version}`),\n  skillHash: hash(`skill-${version}`),\n  toolHash: has"
+      },
+      {
+        "key": "c10",
+        "label": "限定范围的知识 worker",
+        "reason": "支持 worker 只领取指定知识作业并保留无关提取作业的隔离行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 431,
+          "endLine": 439
+        },
+        "quote": "it(\"scoped workers leave unrelated queued jobs untouched\", async () => {\n  const store = setup();\n  const other = enqueue(store, \"extract_claims\"), wanted = enqueue(store, \"knowledge:code-analyst\");\n  const worker = new DurableJobWorker(store.jobs, \"knowledge-only\", { \"knowledge:code-analyst\": async () => ({ resultRef:"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/dev-ports.test.ts",
+      "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+      "digest": "313ea67e92b023f8a3ca1a3a9e12d60362719e018b559c88f3da0fae95646c18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+      "digest": "5c03480e00216e0a3bf25e65281ef68fd3bdc0293273cb9c843452046505d381"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/inputs.test.ts",
+      "digest": "724912caf7ff6c35aff905bbad784c410d9874e72d8223c57c063d2d716ecbec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/jobs.test.ts",
+      "digest": "78c38d182c888dfb374df4597a667f368867b28528fa2e31bb78d34271f1077d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:40:25.675Z",
+    "trace": {
+      "runId": "010b26d5-6330-4353-ab48-4bc2784969dc",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "bd3a35128fa5d3b8a0705a37db86081d31587fc2caeb432376b0cd357b606ae9",
+      "contextHash": "0f4341a8a6a91abf63fed2ee2e1f771a93f759bbf7e7b04373f8dc454c43f08c",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ca2f46806fe8dea6137ef430aca0264171eb649bad8179c9530d62b7c09db63a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-3160-7a70-ab21-6404d8e8aece"
+      ],
+      "usage": {
+        "used": 48295,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99608,
+          "utf8Bytes": 108908,
+          "estimatedTokens": 36303,
+          "budgetedTokens": 45379,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:40:51.731Z",
+    "trace": {
+      "runId": "fd668d3c-c98b-4755-b2f1-d5fa1b75f2bf",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "240bf6fa4c00c74578289d6ee720c86639bb172e22097ae07e62d851b58ef8be",
+      "contextHash": "e9c0439c6e073213be35750ddfb37c9158f4fdd253672d6d9904448501e116be",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9e92df9358ba11d8349b9340d54ef8b8277efe983f46f030cb411def46eb4892",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-c508-71b2-9859-dfdec1554f28"
+      ],
+      "usage": {
+        "used": 44755,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 98862,
+          "utf8Bytes": 107150,
+          "estimatedTokens": 35717,
+          "budgetedTokens": 44647,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

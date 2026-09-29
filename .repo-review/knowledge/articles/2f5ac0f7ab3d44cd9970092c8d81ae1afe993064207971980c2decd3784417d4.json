@@ -1,0 +1,301 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/attention-gate.test.ts",
+    "title": "注意力门禁与按需知识整合测试",
+    "summary": "验证知识提案按证据充分性、冲突、来源更新、任务阻塞性和影响规模在自动应用、延后与请求决策之间分流，并覆盖批量超限时的零物化边界。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "defer-conflict",
+        "title": "延后、冲突与去重",
+        "body": "当夹具同时给出 `scope_unknown` 和 `semantic_verdict: insufficient` 时，策略为 `defer_until_use`：不生成决策卡、不提升活跃知识，但原始来源仍可检索；该用例没有单独验证“仅缺少时间”会得到相同结果。同源重复陈述链接既有 memory，不新增活跃行；相反且均受支持的陈述记录 dispute 而不覆盖。跨来源 supersede 若改写活跃知识，则等待用户决策。[[c1]] [[c2]] [[c3]]"
+      },
+      {
+        "key": "refresh-impact",
+        "title": "来源更新与影响计算",
+        "body": "来源 revision 前进后，`recordSourceRefresh` 记录受影响 memory 和 `needs_review`，并明确返回 `blocked/not_implemented`，因此不能声称已完成复核；失效 memory 随即退出活跃检索。单项 supersede 即使未传 impactCount，也会按同一来源的真实依赖数量计算波及面，超过阈值便进入决策门禁。[[c4]] [[c5]]"
+      },
+      {
+        "key": "attention-policy",
+        "title": "只在必要时打扰",
+        "body": "跨来源冲突若目标知识已非活跃且不阻塞当前任务，会延后而不生成卡片；若冲突正在阻塞，则生成包含问题、选项、尝试解决过程和关联目标的 AttentionCase。测试体现的核心策略是：冲突本身不必然打扰用户，是否阻塞当前工作会改变分流结果。[[c6]]"
+      },
+      {
+        "key": "batch-gate",
+        "title": "批量超限与零物化",
+        "body": "`evaluateBatch` 汇总 12 个独立新实体的去重影响，超过自动应用上限后将整批标为 `awaiting_decision`，所有结果均为 batch deferred，并只生成一张汇总 AttentionCase。测试通过 SQL 明确断言活跃 memory 数量为零，但没有查询 `application_receipts`，所以只能确认零活跃知识物化，不能把零 receipt 写成已验证事实。随后单个低影响创建可直接 auto-apply，且不会新增决策卡。[[c7]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "不确定作用域材料延后",
+        "reason": "支持 `scope_unknown` 加证据不足时延后、保持可检索且不生成决策卡；不支持单独推断时间缺失行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 117,
+          "endLine": 133
+        },
+        "quote": "describe(\"Batch-2 AttentionGate and on-demand knowledge consolidation\", () => {\n  it(\"G10: off-task material with missing time/scope is deferred, retrievable, never a decision card\", () => {\n    const { store, memory, retrieval } = setup();\n    const revision = capture(store, \"内部文档提到一个待确认的接口\");\n    const result = memor"
+      },
+      {
+        "key": "c2",
+        "label": "跨来源覆盖需决策",
+        "reason": "支持活跃知识不会被跨来源 supersede 静默覆盖，并产生上下文化决策记录。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 135,
+          "endLine": 163
+        },
+        "quote": "  it(\"G11: a conflict that overwrites existing knowledge becomes one contextual decision, not a JSON blob\", () => {\n    const { store, memory } = setup();\n    const first = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-authority-one\" });\n    const applied = memory.evaluate(claim(first, \"服务 A 已启用重试\"), supported());\n   "
+      },
+      {
+        "key": "c3",
+        "label": "重复与争议处理",
+        "reason": "支持同源重复链接既有知识，以及相反主张记录 dispute 而不自动提升。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 165,
+          "endLine": 207
+        },
+        "quote": "  it(\"G12a: the same statement from an overlapping source links to the existing memory, no second active row\", () => {\n    const { store, memory } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-dup\" });\n    const first = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n    expect"
+      },
+      {
+        "key": "c4",
+        "label": "来源刷新失效链",
+        "reason": "支持记录受影响知识、明确标记重验证未实现，并将失效 memory 移出活跃检索。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 209,
+          "endLine": 264
+        },
+        "quote": "  it(\"G13: a source revision update records the affected memories and they stop being active evidence\", () => {\n    const { store, memory, retrieval } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-refresh\" });\n    const applied = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n"
+      },
+      {
+        "key": "c5",
+        "label": "真实波及面门禁",
+        "reason": "支持调用方未提供 impactCount 时由服务计算依赖数量，并对超限变更设置门禁。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 266,
+          "endLine": 289
+        },
+        "quote": "  it(\"G17: a change rippling to many dependent memories is gated even when no batch impact is supplied\", () => {\n    const { store, memory } = setup();\n    const shared = capture(store, \"共享来源事实\", { externalId: \"ag-shared\" });\n    const target = memory.evaluate(claim(shared, \"目标事实\"), supported());\n    const targetId = t"
+      },
+      {
+        "key": "c6",
+        "label": "阻塞感知的注意力策略",
+        "reason": "支持非阻塞冲突延后，以及阻塞冲突生成完整 AttentionCase 的分流。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 291,
+          "endLine": 340
+        },
+        "quote": "  it(\"P0: a cross-source update on non-active knowledge that does not block the current task is deferred, never asked\", () => {\n    const { store, memory } = setup();\n    const sourceOne = capture(store, \"服务 A 已启用重试\", { externalId: \"p0-defer-one\" });\n    const applied = memory.evaluate(claim(sourceOne, \"服务 A 已启用重试\"), s"
+      },
+      {
+        "key": "c7",
+        "label": "批量影响与零活跃知识",
+        "reason": "支持整批超限时统一等待决策、零活跃 memory 和单张汇总卡；材料未实际查询 application receipts。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 342,
+          "endLine": 396
+        },
+        "quote": "  it(\"P0 G17: evaluateBatch unions deduped impact, gates over-budget batches atomically, raises one AttentionCase\", () => {\n    const { store, memory } = setup();\n    // 12 independent creates, each its own statement backed by its OWN source.\n    const entries = Array.from({ length: 12 }, (_, i) => {\n      const src = "
+      }
+    ],
+    "questions": [
+      {
+        "question": "来源刷新后的自动重验证与重新激活流程何时实现？",
+        "why": "当前测试明确要求返回 `blocked/not_implemented`，只完成影响记录和失效，尚无复核、迁移引用或恢复 active 的闭环。",
+        "nextStep": "定义 refresh worker 的输入、验证结果与版本并发规则，增加从 needs_review 到重新验证、替换或持续失效的端到端测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "批量超限时是否要求明确断言没有 application receipt 落库？",
+        "why": "当前用例只以 SQL 断言零活跃 memory；注释提到 no receipts，但没有对应数据库查询。",
+        "nextStep": "若零 receipt 是原子门禁合同的一部分，增加 `application_receipts` 计数断言，并限定到本批提案标识。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
+        ]
+      },
+      {
+        "question": "缺少时间信息是否应独立触发 `defer_until_use`？",
+        "why": "当前夹具同时包含未知作用域与语义证据不足，无法隔离时间缺失这一条件的策略效果。",
+        "nextStep": "增加仅设置时间不确定、其余作用域与证据充分的用例，明确预期 policy 和决策卡行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/acp-model.test.ts",
+      "digest": "942f2dbe8220d012e8d1ab1427eec8313367c90470848697afc3a98c7f952a10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/agents.test.ts",
+      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/app.test.ts",
+      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/attention-gate.test.ts",
+      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:08:58.104Z",
+    "trace": {
+      "runId": "ce89aea8-00ae-4b7f-8bb0-e96fcc21bf87",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "bf6677f6740f05519c730680c31b3ce4b87ff58b65ef3d9b1e48854a10c69fb7",
+      "contextHash": "8de262284abc31d113cce776abc01270bd72c2d7b1929609ff39c5bfe9feb04b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3baccbfb4c459ec7d3a3926540ac6c9177d3e0f54d6b64846747b9d2f303fa34",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-4666-7411-85e7-8abcb842bd5c"
+      ],
+      "usage": {
+        "used": 61903,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 144579,
+          "utf8Bytes": 156807,
+          "estimatedTokens": 52269,
+          "budgetedTokens": 65337,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:09:09.429Z",
+    "trace": {
+      "runId": "f9c1b448-7451-47e3-9383-cb672e94f364",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "400acf43032375ca4d2e60a9ed5737396e51fa2048e9fbb2f07ffb3e80a9d4eb",
+      "contextHash": "e3d0b84b64d5a840cf56a76ad4aa5302065ad1ace05772ffdfd8b8720523dfbd",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "83b4d5e16e54bb86a86dac8dbf877092b8ff4c4346a65091dcd19abfd5a21cb3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-f732-76b2-a67e-d039692178d2"
+      ],
+      "usage": {
+        "used": 55822,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 141376,
+          "utf8Bytes": 152758,
+          "estimatedTokens": 50920,
+          "budgetedTokens": 63650,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
