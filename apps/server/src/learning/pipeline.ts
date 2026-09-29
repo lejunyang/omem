@@ -111,6 +111,7 @@ export class LearningPipeline {
         refresh_dependents: async (job) => this.refreshDependents(job),
       },
       {
+        kinds: ["extract_claims", "verify_proposals", "refresh_dependents"],
         fingerprint: () => ({
           model: input.profile.model ?? null,
           effort: input.profile.effort ?? null,
