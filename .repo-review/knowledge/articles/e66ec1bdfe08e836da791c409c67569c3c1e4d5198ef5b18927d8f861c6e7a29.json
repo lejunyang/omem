@@ -1,0 +1,324 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:project:part-3",
+    "title": "project · 模块理解 · 专题 3",
+    "summary": "本专题说明仓库级工程基线：pnpm 工作区组织并锁定根服务、Web 与共享 UI 的依赖，TypeScript 配置统一服务端和脚本的严格检查，Vitest 聚合服务端、Web 与 UI 测试。现有材料主要证明配置与依赖关系，不能证明功能已实现、构建成功或测试通过。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "workspace_foundation",
+        "title": "工作区职责与依赖组织",
+        "body": "这一层承担仓库的工程组织职责：pnpm 只发现 `apps/*` 与 `packages/*` 下的直接子包，形成应用与共享包并存的工作区边界。[[c1]] 锁文件进一步显示根项目、Web 应用和共享 UI 分别作为 importer，Web 通过工作区链接直接复用 UI 包。[[c2]] 因而它连接了服务端依赖、前端应用和可复用展示能力，但这些配置只能证明依赖图存在，不能证明对应功能已经可运行。"
+      },
+      {
+        "key": "toolchain_flow",
+        "title": "检查、构建与测试流程",
+        "body": "根 TypeScript 配置继承服务端基线并设置 `noEmit`，典型作用是复用统一规则做静态检查而不生成产物。[[c3]] 服务端基线采用 ES2023、NodeNext 和严格类型检查，覆盖服务端、共享契约以及开发、评审、Wiki、知识处理脚本；它声明 `dist`，但从现有材料无法确认真正的产物生成入口。[[c4]]\n\n测试侧由单一 Vitest 配置发现服务端、Web 与共享 UI 的 `*.test.ts`，把三个区域纳入共同检查流程。[[c5]] 每例超时为 15 秒且默认运行在 Node 环境，这对服务端自然，但涉及 DOM 的前端测试可能需要额外环境或浏览器检查。[[c6]]"
+      },
+      {
+        "key": "constraints_progress",
+        "title": "当前基础、约束与事实边界",
+        "body": "依赖已经锁定到具体版本，根工具链包含 TypeScript、Vite、Vitest、Playwright 等；Web 与共享 UI 共同使用 Vue、Markdown 渲染、代码高亮和 HTML 净化组件，体现出富文本展示的共享技术基础。[[c7]] 安装期脚本只明确许可 esbuild 与 protobufjs，约束了依赖构建行为。[[c8]]\n\n运行环境仍有硬边界：锁定的 Vite 要求 Node `^20.19.0 || >=22.12.0`。[[c9]] 此外，配置或测试依赖“存在”不等于命令执行成功；材料没有提供实际退出码、覆盖率、浏览器结果、CI 环境或生产构建证据，因此进展应理解为工程基线已配置，而非完整验收。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "pnpm 工作区目录范围",
+        "reason": "支持仓库只从 apps 与 packages 的直接子目录发现工作区包这一组织边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-workspace.yaml",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "packages:\n  - apps/*\n  - packages/*"
+      },
+      {
+        "key": "c2",
+        "label": "Web 与共享 UI 的工作区链接",
+        "reason": "支持根、Web、共享 UI 作为锁文件 importer，以及 Web 直接复用共享 UI 的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-lock.yaml",
+          "startLine": 1,
+          "endLine": 62
+        },
+        "quote": "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .:\n    dependencies:\n      '@agentclientprotocol/sdk':\n        specifier: 1.5.0\n        version: 1.5.0(zod@4.1.12)\n      '@fastify/static':\n        specifier: 8.3.0\n        version: 8.3.0\n      '@larksuiteoapi/no"
+      },
+      {
+        "key": "c3",
+        "label": "根 TypeScript 无输出检查入口",
+        "reason": "支持根配置继承服务端规则并通过 noEmit 禁止生成编译产物。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:tsconfig.json",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "{\n  \"extends\": \"./tsconfig.server.json\",\n  \"compilerOptions\": { \"noEmit\": true }\n}"
+      },
+      {
+        "key": "c4",
+        "label": "服务端 TypeScript 基线与源码范围",
+        "reason": "支持 ES2023、NodeNext、严格检查、输出目录声明，以及服务端、契约和评审脚本的纳入范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:tsconfig.server.json",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "{\"compilerOptions\":{\"target\":\"ES2023\",\"module\":\"NodeNext\",\"moduleResolution\":\"NodeNext\",\"strict\":true,\"esModuleInterop\":true,\"skipLibCheck\":true,\"outDir\":\"dist\",\"rootDir\":\".\",\"types\":[\"node\"],\"noUncheckedIndexedAccess\":true},\"include\":[\"apps/server/src/**/*.ts\",\"packages/contracts/src/**/*.ts\",\"scripts/dev.ts\",\"scripts"
+      },
+      {
+        "key": "c5",
+        "label": "统一测试发现范围",
+        "reason": "支持 Vitest 同时发现服务端、Web 和共享 UI 三处 TypeScript 测试的流程描述。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:vitest.config.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "import {defineConfig} from 'vitest/config';\nexport default defineConfig({\n  test: {\n    include: ['apps/server/tests/**/*.test.ts', 'apps/web/src/**/*.test.ts', 'packages/ui/src/**/*.test.ts'],"
+      },
+      {
+        "key": "c6",
+        "label": "测试超时与 Node 环境",
+        "reason": "支持单例 15 秒超时和统一 Node 执行环境，并据此说明前端 DOM 测试的潜在限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:vitest.config.ts",
+          "startLine": 5,
+          "endLine": 7
+        },
+        "quote": "    testTimeout: 15000,\n    environment: 'node',\n  },"
+      },
+      {
+        "key": "c7",
+        "label": "Web 与共享 UI 展示依赖",
+        "reason": "支持 Web 和共享 UI 共同采用 Vue、Markdown、高亮及净化依赖这一跨模块技术关系。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-lock.yaml",
+          "startLine": 58,
+          "endLine": 92
+        },
+        "quote": "  apps/web:\n    dependencies:\n      '@omem/ui':\n        specifier: workspace:*\n        version: link:../../packages/ui\n      dompurify:\n        specifier: ^3.4.16\n        version: 3.4.16\n      highlight.js:\n        specifier: ^11.12.0\n        version: 11.12.0\n      marked:\n        specifier: ^18.0.14\n        version: 1"
+      },
+      {
+        "key": "c8",
+        "label": "安装期构建许可",
+        "reason": "支持仅明确允许 esbuild 与 protobufjs 执行依赖构建脚本的安全边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-workspace.yaml",
+          "startLine": 5,
+          "endLine": 7
+        },
+        "quote": "allowBuilds:\n  esbuild: true\n  protobufjs: true"
+      },
+      {
+        "key": "c9",
+        "label": "Vite 的 Node 版本要求",
+        "reason": "支持工具链对 Node 运行时存在明确最低版本限制。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-lock.yaml",
+          "startLine": 1372,
+          "endLine": 1375
+        },
+        "quote": "  vite@7.3.1:\n    resolution: {integrity: sha512-w+N7Hifpc3gRjZ63vYBXA56dvvRlNWRczTdmCBBa+CotUzAPf5b7YMdMR/8CQoeYE5LX3W4wj6RYTgonm1b9DA==}\n    engines: {node: ^20.19.0 || >=22.12.0}\n    hasBin: true"
+      }
+    ],
+    "questions": [
+      {
+        "question": "生产构建由哪个配置或打包入口生成服务端可运行产物？",
+        "why": "服务端配置声明 `dist`，但根配置设置 `noEmit`；现有材料没有展示构建脚本，无法判断实际生成流程。",
+        "nextStep": "核对项目脚本、其他 TypeScript 配置和打包器配置，记录生产构建所用入口、输出目录与验证命令。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "Web 与共享 UI 测试是否需要 DOM 或真实浏览器环境？",
+        "why": "它们被统一纳入 Vitest，但默认环境是 Node；若测试涉及布局、DOM 或浏览器 API，当前配置本身不足。",
+        "nextStep": "检查前端测试断言及浏览器测试脚本，确认是否需要 jsdom、Vitest 分项目配置或 Playwright。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "开发、CI 与部署环境是否都满足锁定 Vite 的 Node 版本要求？",
+        "why": "锁文件明确给出 Node 版本范围，但材料没有运行时版本、CI 配置或实际执行结果。",
+        "nextStep": "对照版本管理文件、CI 和部署配置，并用真实安装、检查与构建退出码验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c9"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:pnpm-lock.yaml",
+      "digest": "02d0a9725d31c52b4031dcd17d719325808e618bb159d1f1c16fd08238cd2b76"
+    },
+    {
+      "kind": "material",
+      "key": "omem:pnpm-workspace.yaml",
+      "digest": "25c83f134f6a94d376b9fd0cca3dd1b36fa6fdca6e54142d8ed47780f6265c61"
+    },
+    {
+      "kind": "material",
+      "key": "omem:tsconfig.json",
+      "digest": "c6f05606dc410d012a28d3b2e268b938a42ff2febe61946dd7af5b1dcbb9d21d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:tsconfig.server.json",
+      "digest": "827309efa9dbffa1436169620674803dc8b3bf804534edcc2eeefff47c6b53eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:vitest.config.ts",
+      "digest": "981237301d86a64a71b6a7c208f2ba55104945581418b012933e37de596fa3bf"
+    },
+    {
+      "kind": "article",
+      "key": "omem:pnpm-lock.yaml",
+      "digest": "8b08cd71f1fe8ef949972d7096d8136b402bce4efd6cd5aa0354113390fbd3f8"
+    },
+    {
+      "kind": "article",
+      "key": "omem:pnpm-workspace.yaml",
+      "digest": "999ab367d5dc18327731b9950410dd1409bc3175468e1eeeff23b0b8254123ac"
+    },
+    {
+      "kind": "article",
+      "key": "omem:tsconfig.json",
+      "digest": "29a75f89ef463600e734c1eb00686268928280cf26208dd8a4b0dda1e0d1535a"
+    },
+    {
+      "kind": "article",
+      "key": "omem:tsconfig.server.json",
+      "digest": "82eb6689ffee941c6a7165e6cf4aa59d5cfab8e902c93b1d2e3aa844ca51332f"
+    },
+    {
+      "kind": "article",
+      "key": "omem:vitest.config.ts",
+      "digest": "32c06a666198dbaca4c3ebbd8867bb01e01fe46018a373ce7aad36b89a9f2204"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:11:18.648Z",
+    "trace": {
+      "runId": "919f360e-b166-47cd-b995-433b47657301",
+      "roleId": "knowledge-writer",
+      "roleVersion": "1",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "c2b79cba227030765cc270993455a4432bf9ac73e758c82375e77766dc9fe702",
+      "contextHash": "26dc2e755058c8bf13121047c6757ab87bc96edff984c7eabc65189ad1282b17",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a2ff776b19c0ae0da7141efeef13437994ddbecb1f826aac333761628544f1c7",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-writer",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeca-c41e-79f1-8907-d419f5bce274"
+      ],
+      "usage": {
+        "used": 26121,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33687,
+          "utf8Bytes": 41119,
+          "estimatedTokens": 13707,
+          "budgetedTokens": 17134,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:11:26.749Z",
+    "trace": {
+      "runId": "0d8680c5-6f9a-4f03-ae97-c33894a614ad",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "f76363bb175ea3a1aa86c341753f4ecbc44f42c228ee5c66406bb7b21a37d3d2",
+      "contextHash": "f6c550cdf6b3d5f1a871771cd1a63e4c807968ad0373f0b72d7dcc6dd5e85e26",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "13e4ddf5279945b8fb709572984edb14697422c20a1a946d233e215fca01332f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eecb-0ad4-7022-bc1d-07c504dad163"
+      ],
+      "usage": {
+        "used": 26271,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 36936,
+          "utf8Bytes": 45988,
+          "estimatedTokens": 15330,
+          "budgetedTokens": 19163,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
