@@ -32,11 +32,10 @@ osdk run dev:review
 ```bash
 osdk run review:build
 # 显式调用本机 traecli，生成指定范围的说明；会消耗模型调用
-REVIEW_CODE_MODEL_CONFIG=config/review-code-model.example.json \
-  osdk run review:generate -- --target=apps/server/src/retrieval/keyword.ts
+osdk run review:generate -- --target=apps/server/src/retrieval/keyword.ts
 ```
 
-示例模型是本机 ACP 已发现的 `gpt-5.6-sol` / `medium`；其他机器仍会动态校验模型/effort，不支持就报错。默认启动不调用模型。模型在 `.repo-review/runtime/agent-workspace` 运行，输入是固定材料，工具权限请求不会自动批准。模型说明未经过独立语义复核，不自动成为已验证记忆。
+实际配置是 `config/review-code-model.json`（环境变量 `REVIEW_CODE_MODEL_CONFIG` 可覆盖）；修改 example 不影响运行。当前模型是本机 ACP 已发现的 `gpt-5.6-sol` / `medium`；其他机器仍会动态校验模型/effort，不支持就报错。默认启动不调用模型。模型在 `.repo-review/runtime/agent-workspace` 运行，输入是固定材料，工具权限请求不会自动批准。模型说明未经过独立语义复核，不自动成为已验证记忆。
 
 生成预算可在模型配置中设置 `maxInputTokens`、`maxOutputTokens`、`contextReserveTokens`。示例为 96000 / 24000 / 16000；未覆盖时沿用角色默认预算。当前没有 GPT‑5.6 的精确本地 tokenizer，按完整提示词 UTF‑8 字节数 ÷ 3 估算，再计入 25% 余量；输入、输出和 Agent 预留合计不得超过 ACP 返回的当前模型上下文窗口。实际 provider token 用量可能与估算不同。结果记录字符数、字节数、估算方法和本次限制，不再用写死的 8 万字符门槛。输出限制是本地估算校验，ACP 当前不保证提供等价的 provider `max_tokens` 控件。
 
@@ -45,8 +44,8 @@ REVIEW_CODE_MODEL_CONFIG=config/review-code-model.example.json \
 - `.repo-review/wiki.md`：可读 Wiki，包含仓库模块目录、已有说明与源码链接。
 - `.repo-review/knowledge/generated/*.json`：可提交的真实模型产物，含原始生成元信息、依赖 hash 和符号 locator。恢复时检查来源和引用，变化后标过期，不能静默盖成当前结果。
 - `.repo-review/knowledge/understandings/*.seed.json`：既有人工说明，始终标人工整理，不能冒充模型生成。
-- `.repo-review/runtime/`：忽略提交的 SQLite / 索引 / 临时工作文件。首启从冻结数据库的临时副本恢复，再以仓库材料重建当前投影。产生这个目录是本地建索引，不是又一份需要提交的 Wiki。
-- `.repo-review/data/` 与根级旧 `last-sync.*` / `browser.*.log` / `migrated-v2.flag`：保留的冻结历史资产，不再写入、删除或取消跟踪。
+- `.repo-review/runtime/`：忽略提交的 SQLite / 索引 / 临时工作文件。默认直接从仓库材料和已提交知识重建；不读取外层 data。只有显式设置 `REVIEW_IMPORT_LEGACY=1` 才从冻结数据库的临时副本导入旧历史。产生这个目录是本地建索引，不是又一份需要提交的 Wiki。
+- `.repo-review/data/` 与根级旧 `last-sync.*` / `browser.*.log` / `migrated-v2.flag`：旧修订和旧片段 ID 的历史档案，当前 Wiki 不依赖它。删除不会影响当前知识重建，但会失去仅存在其中的历史记录；本次保留原资产。
 
 结构图用 TypeScript AST、Vue SFC 和保守规则解析；评审意图边只来自 `docs/repo-review/associations.json`。跨文件 calls、跨 revision 语义身份续接、embedding 检索和下游自动重核验尚未实现。个人助手的所有输入渠道尚未统一接入代码角色任务编排；本切片不宣称这些能力已经交付。
 

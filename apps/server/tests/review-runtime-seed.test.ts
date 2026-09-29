@@ -14,6 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Store } from "../src/store.js";
 import {
   ensureReviewRuntimeSeeded,
+  createReviewStore,
   reviewDataDir,
   reviewStateDir,
 } from "../src/review/store.js";
@@ -92,6 +93,17 @@ function count(dbPath: string, table: string): number {
     d.close();
   }
 }
+
+it("default startup ignores an unusable legacy database and starts a rebuildable runtime", () => {
+  const root = makeRepoRoot();
+  const legacy = join(root, ".repo-review/data");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, "omem.sqlite"), "not a sqlite file");
+  const store = createReviewStore(root);
+  expect(store.list()).toEqual([]);
+  store.close();
+  expect(readFileSync(join(legacy, "omem.sqlite"), "utf8")).toBe("not a sqlite file");
+});
 
 describe("ensureReviewRuntimeSeeded", () => {
   it("backs up the legacy DB and projects state on first boot, leaving legacy untouched", () => {

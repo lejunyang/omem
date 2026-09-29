@@ -102,7 +102,9 @@ export function ensureReviewRuntimeSeeded(repoRoot: string): void {
  * boot the runtime is seeded from the tracked legacy snapshot (see
  * {@link ensureReviewRuntimeSeeded}). */
 export function createReviewStore(repoRoot: string): Store {
-  ensureReviewRuntimeSeeded(repoRoot);
+  // Current Wiki is rebuilt from source + committed knowledge. Import legacy
+  // history only when explicitly requested; default startup has no data/ dependency.
+  if (process.env.REVIEW_IMPORT_LEGACY === "1") ensureReviewRuntimeSeeded(repoRoot);
   return new Store(reviewDataDir(repoRoot));
 }
 

@@ -1,0 +1,16 @@
+{
+  "transport": "acp",
+  "command": "traecli",
+  "args": [
+    "-c",
+    "sandbox_mode=\"read-only\"",
+    "acp",
+    "serve"
+  ],
+  "model": "gpt-5.6-sol",
+  "effort": "medium",
+  "timeoutMs": 480000,
+  "maxInputTokens": 96000,
+  "maxOutputTokens": 24000,
+  "contextReserveTokens": 16000
+}

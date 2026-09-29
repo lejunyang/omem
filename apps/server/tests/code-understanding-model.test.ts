@@ -246,9 +246,9 @@ describe("code understanding model port / generation", () => {
 
 
 describe("review model config entry (REVIEW_CODE_MODEL_CONFIG)", () => {
-  it("unset path -> no model, never reads personal config", () => {
-    expect(loadReviewCodeModelConfig(undefined).transport).toBe("none");
-    expect(buildReviewCodeModel(undefined)).toBeNull();
+  it("empty explicit path disables the model without reading personal config", () => {
+    expect(loadReviewCodeModelConfig("").transport).toBe("none");
+    expect(buildReviewCodeModel("")).toBeNull();
   });
 
   it("reads only the explicit config file path and builds the http port", async () => {
