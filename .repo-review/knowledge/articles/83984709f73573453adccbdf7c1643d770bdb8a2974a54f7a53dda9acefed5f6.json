@@ -2,152 +2,114 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/knowledge-repository.test.ts",
-    "title": "知识仓库的不变性、恢复与检索测试",
-    "summary": "覆盖精确行内引用、依赖失效传播、artifact 恢复、问题动作、派生知识辅助检索、来源身份隔离及通知去重。",
+    "title": "知识仓库的引用、失效与恢复测试",
+    "summary": "该测试以临时 Store 验证固定材料引用、不可变知识修订、依赖失效、资产恢复、问题动作、原始证据召回和通知去重等知识仓库核心语义。",
     "category": "tests",
     "sections": [
       {
-        "key": "citations-invalidation",
-        "title": "引用校验与失效传播",
-        "body": "测试将引用绑定到材料第二行的精确文本，并验证缺少行内引用、未知引用键和越界行号都会被拒绝。[[c1]] 子文章依赖原材料，概览再依赖子文章；材料更新后两级知识都变为非当前，但旧材料文本和旧知识正文仍可按固定修订读取，尝试重新发布旧 artifact 会得到输入变化错误。[[c2]]"
+        "key": "fixtures",
+        "title": "固定知识夹具",
+        "body": "测试为每个用例创建临时 Store、知识仓库和手工捕获入口，并构造带内联引用、调查问题、生成 trace 与已接受复核结果的固定知识资产。[[c1]] 清理钩子会关闭数据库并删除临时目录，使后续断言都在隔离环境中围绕同一最小合同展开。"
       },
       {
-        "key": "restore-questions",
-        "title": "恢复与问题操作",
-        "body": "已复核文章写入 artifact 目录后，可在新数据库捕获相同材料并恢复为相同修订；损坏 JSON 被标记为 rejected，且不会覆盖先前好文章。[[c3]] 恢复出的调查问题创建任务具有幂等性，回答则形成 `original` provenance 的新修订并把问题标为 answered。"
+        "key": "citation-validation",
+        "title": "引用绑定与严格校验",
+        "body": "仓库把材料行范围绑定为精确引文，并接受正文中就近出现的有效引用；正文没有引用、引用未知键或行号越界都会被拒绝。[[c2]] 因而引用位置和固定原文范围是发布合同的一部分，而不是仅供展示的附加信息。"
       },
       {
-        "key": "retrieval-identity",
-        "title": "检索、身份与通知",
-        "body": "派生文章标题可帮助关键词检索命中，但返回的是原材料 fragment；材料 head 更新后，即使投影尚未刷新，也不会召回陈旧来源。[[c4]] 相同 external id 在 file 与 manual carrier 下保持不同 material key。重复发布同一 artifact 不新增通知；新知识修订移除问题时，旧问题转为 superseded，并只新增一次通知。[[c5]] 未覆盖数据库并发写入、循环文章依赖、超深依赖链和 artifact 文件名冲突。"
+        "key": "revision-lifecycle",
+        "title": "修订失效、恢复与问题动作",
+        "body": "材料产生新修订后，直接依赖章节及引用它的上层文章都会变为非当前状态，但旧材料与旧知识修订仍可按固定标识读取；测试还确认，依赖旧材料摘要的 child 资产不能再次发布。[[c3]] 已复核资产可恢复到新数据库；在本测试场景中，新增的损坏 JSON 被标记为 rejected，且未覆盖已恢复版本。问题转待办具备幂等性，用户回答作为原始材料保存并把问题置为已回答。[[c4]]"
+      },
+      {
+        "key": "retrieval-and-notification",
+        "title": "召回、身份与通知边界",
+        "body": "派生知识标题可帮助检索，但命中仍返回原始 Fragment；材料换头后，即使投影尚未刷新，旧派生词也不会召回过期证据。[[c5]] 不同载体即使 external id 相同仍保持不同材料身份。重复发布同一资产不新增通知，而删除问题形成的新修订会把旧问题标为被替代并新增一次通知。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "行内引用校验测试",
-        "reason": "支持精确 quote 绑定以及缺失、未知、越界引用被拒绝的说明。",
+        "label": "知识文档与资产夹具",
+        "reason": "支持临时仓库、手工捕获、内联引用、调查问题以及生成和复核元数据的测试基础。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-repository.test.ts",
+          "startLine": 11,
+          "endLine": 30
+        },
+        "quote": "const cleanup: (() => void)[] = [];\nafterEach(() => cleanup.splice(0).reverse().forEach(f => f()));\nfunction setup() {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-knowledge-test-\"));\n  cleanup.push(() => rmSync(dir, { recursive: true, force: true }));\n  const store = new Store(join(dir, \"db\")); cleanup.push(() => st"
+      },
+      {
+        "key": "c2",
+        "label": "引用绑定与错误拒绝",
+        "reason": "支持精确引文绑定，以及缺少内联引用、未知引用和越界范围均被拒绝的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-repository.test.ts",
           "startLine": 33,
-          "endLine": 45
+          "endLine": 44
         },
         "quote": "it(\"binds inline citations to exact fixed text, rejects detached/unknown references\", () => {\n  const { repository, capture } = setup(); capture(\"export function value() {\\n  return 42;\\n}\");\n  const materials = new Map(repository.materials().map(m => [m.key, m]));\n  const d = bindKnowledgeQuotes(document(), materials)"
       },
       {
-        "key": "c2",
-        "label": "级联失效与旧修订保留",
-        "reason": "支持材料变化使子知识和概览失效，同时保留旧证据及拒绝旧 artifact 再发布。",
+        "key": "c3",
+        "label": "依赖知识失效测试",
+        "reason": "支持材料换头造成 child 与上层文章失效、旧修订仍可读取，以及旧摘要绑定的 child 不能重发。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-repository.test.ts",
           "startLine": 47,
-          "endLine": 60
+          "endLine": 59
         },
         "quote": "it(\"invalidates dependent chapters while preserving old immutable source and knowledge\", () => {\n  const { repository, capture } = setup(); capture(\"function value() {\\n  return 42;\\n}\");\n  const m = repository.materials()[0]!;\n  const child = repository.publish(artifact(bindKnowledgeQuotes(document(), new Map([[m.key,"
       },
       {
-        "key": "c3",
-        "label": "知识恢复和问题动作",
-        "reason": "支持跨数据库恢复、坏文件隔离、任务幂等及回答 provenance 状态。",
+        "key": "c4",
+        "label": "资产恢复与问题动作测试",
+        "reason": "支持已复核资产恢复、当前测试中的损坏文件隔离、待办幂等和回答保存语义。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-repository.test.ts",
           "startLine": 62,
-          "endLine": 80
+          "endLine": 79
         },
         "quote": "it(\"restores reviewed knowledge in a fresh DB and preserves question actions\", () => {\n  const first = setup(); first.capture(\"function value() {\\n  return 42;\\n}\");\n  const m = first.repository.materials()[0]!;\n  const a = first.repository.publish(artifact(bindKnowledgeQuotes(document(), new Map([[m.key, m]])), [{ kin"
       },
       {
-        "key": "c4",
-        "label": "派生知识引导原证据检索",
-        "reason": "支持检索利用派生标题但返回原始 fragment，并排除 head 已变化的陈旧来源。",
+        "key": "c5",
+        "label": "派生知识引导原始证据召回",
+        "reason": "支持派生标题用于检索但返回原始证据，并在材料换头后过滤过期召回。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-repository.test.ts",
           "startLine": 82,
-          "endLine": 96
+          "endLine": 95
         },
         "quote": "it(\"uses derived knowledge to find original evidence without promoting prose or stale sources\", () => {\n  const { repository, store, capture } = setup();\n  capture(\"function value() {\\n  return 42;\\n}\");\n  const m = repository.materials()[0]!;\n  const d = document(); d.title = \"Aurora release rationale\";\n  repository.p"
       },
       {
-        "key": "c5",
-        "label": "来源身份和通知生命周期",
-        "reason": "支持不同 carrier 的身份隔离，以及相同修订通知去重和旧问题退役。",
+        "key": "c6",
+        "label": "材料身份与通知去重",
+        "reason": "支持不同材料载体的身份隔离、重复发布不重复通知及旧问题被替代。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-repository.test.ts",
           "startLine": 98,
-          "endLine": 116
+          "endLine": 115
         },
         "quote": "it(\"keeps identical external ids from different material carriers distinct\", () => {\n  const { store, repository } = setup();\n  for (const source of [\"file\", \"manual\"] as const) store.capture({ source, externalId: \"omem:README.md\", title: source, parts: [{ type: \"text\", text: \"Same text, different source identity.\" }],"
       }
     ],
-    "questions": [
-      {
-        "question": "文章依赖形成循环或超过恢复遍历预算时应如何诊断？",
-        "why": "当前测试只构造一层父子依赖，没有覆盖循环、缺失链条或很深的拓扑关系，因此无法确认恢复结果是否提供足够可操作信息。",
-        "nextStep": "增加循环、缺失子文章和超过多轮解析的 artifact 集合，断言状态、原因及好文章不被覆盖。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c3"
-        ]
-      },
-      {
-        "question": "并发回答问题或并发发布相同文档时，幂等性和通知去重是否由事务保证？",
-        "why": "现有测试是串行调用，只证明顺序执行下任务复用和通知计数正确。",
-        "nextStep": "增加并发或事务冲突测试，核对唯一约束、最终 question state、文章 head 和 outbox 数量。",
-        "blocking": false,
-        "citationKeys": [
-          "c3",
-          "c5"
-        ]
-      },
-      {
-        "question": "文章依赖形成循环、缺少子文章或超过恢复遍历预算时应如何诊断？",
-        "why": "当前测试只覆盖一层父子依赖，不能确认循环、缺失链条或深层依赖的状态与原因是否足够可操作。",
-        "nextStep": "增加循环、缺失子文章和超过多轮解析预算的 artifact 集合测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c3"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/knowledge.ts",
-      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/main.ts",
-      "digest": "e88f3b118275e4adce3b678c6e607b2da995903805d628ce2060bdf4bc8aea80"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-api.test.ts",
-      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "60ba418153006bb59e5d327ea25fc7e20b4b0b06d4a4ae55ecd7979c6661fa3d"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/knowledge-repository.test.ts",
@@ -155,55 +117,60 @@
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "key": "omem:scripts/knowledge-browser.ts",
+      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+      "key": "omem:scripts/live-role-smoke.ts",
+      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/knowledge/artifacts.ts",
-      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+      "key": "omem:scripts/quality-evaluate.ts",
+      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-run.ts",
+      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:03:39.352Z",
+    "at": "2026-09-29T20:46:50.120Z",
     "trace": {
-      "runId": "70ffcd8d-15d2-4f86-b181-cac14c31a865",
-      "roleId": "code-analyst",
+      "runId": "02b7be29-5096-45d7-a278-87fa116e4607",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "9859ba992394ba1173ea317a45fe1841954b1e357c38358b356cedeaade3e0d3",
-      "contextHash": "2147ddf7fe4a6e669d9c63308c8a9e2b7dee4494459678ad2b2ee5f95a5129cb",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "742b32caf4d7b28712e03dc4171d3f8266bfc45c22777e8da47e01862f0e3225",
+      "contextHash": "2a2742a14f00d0a5b68ed4df1c7922aa1fc4fd7b9921da4a3b67fa1e844c6879",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "875914a960324409cf3b454417e5fe8ac92df9970d70c69570b860497ed26bf6",
+      "fingerprint": "48e67deea6c7cbac1ce93e68013fdbfc1714fb4a1cb1af205e51fe2d2b811e1b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-0df3-7b61-aa0a-a4c8b7030c82"
+        "01a0eeeb-1fb4-70d1-bcaf-ed42732f2b65"
       ],
       "usage": {
-        "used": 36552,
+        "used": 35326,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -212,10 +179,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 62403,
-          "utf8Bytes": 65060,
-          "estimatedTokens": 21687,
-          "budgetedTokens": 27109,
+          "chars": 61645,
+          "utf8Bytes": 71957,
+          "estimatedTokens": 23986,
+          "budgetedTokens": 29983,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -224,17 +191,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:04:02.270Z",
+    "at": "2026-09-29T20:46:58.341Z",
     "trace": {
-      "runId": "facc1a5c-031e-4a88-aa19-b66d72392fa0",
+      "runId": "95bc7121-a43d-416d-af26-20f580cfb551",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "1e016c68b564f5fc83d4f039e2b49da37ac95c5b9980517c860aaf912b14c495",
-      "contextHash": "1a68d53cf3735ad8ddcd2d0ba43ca472fbe2ad2e15f8464619d693cd745595a9",
+      "promptHash": "e56ae2be9aed635efcf6aa8557b5f45a684a6c03c314f90689f9f378019248a8",
+      "contextHash": "296c5641c062d4414d1a7a2bea0b2879cfbe39ad36eb6fbdf5c8ba327c4428df",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1410547631a9f3591b4c02833ddc985685f3ca5643ae030dc316675365dfc8b4",
+      "fingerprint": "a5f65c11b230e527d63b45f39b56123a5541ec09989e91372f5d2454e956f18f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -247,10 +214,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-08ae-73d3-b213-87a05bfb04ce"
+        "01a0eeeb-91a4-77f2-8451-4bead72ff742"
       ],
       "usage": {
-        "used": 39789,
+        "used": 30333,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -259,10 +226,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 82614,
-          "utf8Bytes": 93683,
-          "estimatedTokens": 31228,
-          "budgetedTokens": 39035,
+          "chars": 57274,
+          "utf8Bytes": 64742,
+          "estimatedTokens": 21581,
+          "budgetedTokens": 26977,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

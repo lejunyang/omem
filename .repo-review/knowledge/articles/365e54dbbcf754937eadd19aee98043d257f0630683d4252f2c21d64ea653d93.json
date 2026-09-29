@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+    "title": "SQLite 并发写入等待测试",
+    "summary": "通过独立子进程持有真实 SQLite 写锁，验证知识存储会等待锁释放并完成捕获，而不是丢失操作。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "lock-fixture",
+        "title": "真实并发写锁场景",
+        "body": "测试先初始化数据库，再启动独立 Node 子进程，以 `BEGIN IMMEDIATE` 持有 SQLite 写锁约 250 毫秒。主测试等待子进程明确报告锁已建立后，才创建存储和知识仓库并执行手动材料捕获，因此覆盖的是实际进程间锁竞争，而非模拟异常。[[c1]]"
+      },
+      {
+        "key": "outcome",
+        "title": "完成条件与清理",
+        "body": "断言要求捕获结果中的 fragment 保留完整固定文本，同时持锁子进程必须以状态码 0 正常退出，证明写操作等待后成功而未丢失。无论测试结果如何，清理逻辑都会终止仍存活的子进程、关闭存储并删除临时目录。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "并发写锁测试装置",
+        "reason": "支持子进程持有真实 SQLite 即时事务写锁以及主进程随后执行捕获的流程。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+          "startLine": 9,
+          "endLine": 18
+        },
+        "quote": "it(\"waits for a real concurrent writer instead of losing a knowledge operation\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-busy-\"));\n  const initial = new Store(dir); initial.close();\n  let store: Store | undefined;\n  const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", \"import {D"
+      },
+      {
+        "key": "c2",
+        "label": "等待结果与资源清理",
+        "reason": "支持捕获内容、子进程退出状态以及测试结束时资源清理的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+          "startLine": 19,
+          "endLine": 21
+        },
+        "quote": "    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material remains available.\");\n    expect(await exited).toBe(0);\n  } finally { if (child.exitCode === null) child.kill(); store?.close(); rmSync(dir, { recursive: true, force: true }); }"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "82eb5847c2e790d30601c56f56510991f1469df01ee9c2cf2321fc0a2324e5b4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-api.test.ts",
+      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+      "digest": "f5e49b50ac988174f6bcc5d099d50228c29a8bc54ab02af13814683eec8bfd1b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+      "digest": "3daf657af4eb9db8b2365d6c97deae0b6232b561aa6cd2f681fa8d3049fee7ff"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:44:29.397Z",
+    "trace": {
+      "runId": "6569a68b-6ba2-4089-be9d-adee179faab1",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "776b7b3be0ed1f8922ea654d0fa1c4025565137d558354f6d87ab481c6e5a169",
+      "contextHash": "c085d39e51f73fe0691345f3ff79858641696c76cfa4e0aaef5da094d0cfef37",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "78e6afd671bb4c28e89a1947e909aa757468175c3162345716f3430c3a0696a2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee8-c508-7e83-ab2d-8229141021c9"
+      ],
+      "usage": {
+        "used": 29595,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 43380,
+          "utf8Bytes": 47983,
+          "estimatedTokens": 15995,
+          "budgetedTokens": 19994,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:44:52.804Z",
+    "trace": {
+      "runId": "2df91236-7d83-4a92-b272-a66f15eac344",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "9f29228a190b37c09db7829eea1e485c56b77df360c7345048870791f0d74bcb",
+      "contextHash": "2e7002d22379dfe8e5039efb9ba6e0bd772352cf3a02dcd569ae2c67ef922549",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "208d8661b0c1129b0dd5d6102c0c630ba050761de6452b205e7776a56483b87f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee9-6b38-7472-aaa4-c0fff44c26fc"
+      ],
+      "usage": {
+        "used": 30214,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 51488,
+          "utf8Bytes": 59994,
+          "estimatedTokens": 19998,
+          "budgetedTokens": 24998,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
