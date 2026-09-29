@@ -1,6 +1,6 @@
 # omem
 
-个人工作记忆与助理基础系统。Vue 阅读台 + 固定版本的多模态证据 + Agent CLI/ACP 问答 + 需求待办与通知。当前交付包含第一批可运行基础链路，以及 Batch 2 的版本化合同/SQLite 迁移、持久任务、输入缓冲、受治理记忆应用、飞书连接/可靠投递核心与 Vue 产品流程；自动 worker 编排和屏幕采集器仍按后续里程碑推进。
+个人工作记忆与助理系统。统一接收文本、图片、链接与上下文，保留不可变证据，通过 Agent CLI/ACP 分析、独立复核和组织知识正文。个人问答、受治理记忆、待办与通知沿用同一证据链；本仓库的 Wiki 是代码材料的一种应用。外部屏幕采集器等接入仍需单独配置。
 
 ## 启动
 
@@ -17,37 +17,39 @@ osdk run start
 
 浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 与 Vue（默认 4317 / 5173）。默认端口被占用时选择空闲端口，并将实际 API 地址传给前端代理；请打开终端打印的 web URL。可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定端口（显式指定且被占用会报错）。根 `tsconfig.json` 为编辑器提供与服务端检查一致的 Node 类型配置。
 
-## Code Wiki：统一材料的代码视图
+## 知识整理与本仓库 Wiki
 
-Code Wiki 沿用 Capture → Source / Revision / Fragment → Relation / Retrieval。代码图解析已捕获的固定文本，模型说明是带引用的派生资料。repo-review 是本仓库的隔离开发配置（独立运行库、不起个人业务 worker），当前仍有单仓库适配边界，详见 [复审记录](docs/implementation/code-wiki-review-2026-09-29.md)。
+知识处理复用 Capture → Source / Revision / Fragment、现有持久 jobs 和 RoleRuntimeGateway。代码、文档、对话、图像使用专门角色；分析后由独立角色复核，再由 AI 组织模块、架构、背景、需求、进展与概览章节。正文引用直接贴近论断，带名称、理由、固定位置，可逐层进入子知识、原文与代码。代码 AST 用于定位和明确的结构关系，语义说明与关系由模型分析和复核。
 
 ```bash
+# 本仓库阅读视图：恢复已提交知识，不调用模型
 osdk run dev:review
-```
-
-默认 API / web 端口是 5180 / 5181；被占用时自动选择空闲端口，请打开终端打印的 web URL。`REVIEW_PORT` / `REVIEW_WEB_PORT` 可显式指定，此时冲突严格报错。启动会自动完成材料同步、代码图重建和已提交知识恢复，无需再手动点一次同步。仓库后续变更可在页面重新同步。
-
-直接阅读随 Git 提交的 [本仓库 Wiki](.repo-review/wiki.md)。更新可提交的目录与说明：
-
-```bash
-osdk run review:build
-# 显式调用本机 traecli，生成指定范围的说明；会消耗模型调用
+# 分析全部仓库材料，独立复核并生成章节；真实消耗模型调用
+osdk run review:analyze
+# 只处理一个文件或目录
 osdk run review:generate -- --target=apps/server/src/retrieval/keyword.ts
+# 重试未完成/过期项；正常运行会复用已完成知识与持久结果
+osdk run review:analyze -- --retry
+# 仅重建索引，不调用模型
+osdk run review:build
 ```
 
-实际配置是 `config/review-code-model.json`（环境变量 `REVIEW_CODE_MODEL_CONFIG` 可覆盖）；修改 example 不影响运行。当前模型是本机 ACP 已发现的 `gpt-5.6-sol` / `medium`；其他机器仍会动态校验模型/effort，不支持就报错。默认启动不调用模型。模型在 `.repo-review/runtime/agent-workspace` 运行，输入是固定材料，工具权限请求不会自动批准。模型说明未经过独立语义复核，不自动成为已验证记忆。
+默认 API / web 端口是 5180 / 5181；占用时选择空闲端口，打开终端打印的 web URL。`REVIEW_PORT` / `REVIEW_WEB_PORT` 可显式指定，冲突时会报错。review 是本仓库的隔离运行配置，使用独立 SQLite，不启动个人业务 worker。
 
-生成预算可在模型配置中设置 `maxInputTokens`、`maxOutputTokens`、`contextReserveTokens`。示例为 96000 / 24000 / 16000；未覆盖时沿用角色默认预算。当前没有 GPT‑5.6 的精确本地 tokenizer，按完整提示词 UTF‑8 字节数 ÷ 3 估算，再计入 25% 余量；输入、输出和 Agent 预留合计不得超过 ACP 返回的当前模型上下文窗口。实际 provider token 用量可能与估算不同。结果记录字符数、字节数、估算方法和本次限制，不再用写死的 8 万字符门槛。输出限制是本地估算校验，ACP 当前不保证提供等价的 provider `max_tokens` 控件。
+实际模型配置是 [`config/review-code-model.json`](config/review-code-model.json)，环境变量 `REVIEW_CODE_MODEL_CONFIG` 可覆盖；修改 example 不影响运行。当前使用本机 ACP 已发现的 `gpt-5.6-sol` / `medium`。实际 review 预算为 192000 输入 / 24000 输出 / 16000 Agent 预留 tokens，角色 manifest 的默认预算为 96000 / 24000。按完整提示词 UTF-8 字节数 ÷ 3 估算，再加 25% 余量，并检查当前模型声明的上下文窗口；这是工程估算，不是实际计费数。`REVIEW_KNOWLEDGE_CONCURRENCY` 可设置 1–6 路并发，默认 3。
 
-目录用途：
+直接阅读随 Git 提交的 [Wiki 索引](.repo-review/wiki.md)。目录用途：
 
-- `.repo-review/wiki.md`：可读 Wiki，包含仓库模块目录、已有说明与源码链接。
-- `.repo-review/knowledge/generated/*.json`：可提交的真实模型产物，含原始生成元信息、依赖 hash 和符号 locator。恢复时检查来源和引用，变化后标过期，不能静默盖成当前结果。
-- `.repo-review/knowledge/understandings/*.seed.json`：既有人工说明，始终标人工整理，不能冒充模型生成。
-- `.repo-review/runtime/`：忽略提交的 SQLite / 索引 / 临时工作文件。默认直接从仓库材料和已提交知识重建；不读取外层 data。只有显式设置 `REVIEW_IMPORT_LEGACY=1` 才从冻结数据库的临时副本导入旧历史。产生这个目录是本地建索引，不是又一份需要提交的 Wiki。
-- `.repo-review/data/` 与根级旧 `last-sync.*` / `browser.*.log` / `migrated-v2.flag`：旧修订和旧片段 ID 的历史档案，当前 Wiki 不依赖它。删除不会影响当前知识重建，但会失去仅存在其中的历史记录；本次保留原资产。
+- `.repo-review/knowledge/articles/*.json` 与 `.md`：当前流程的知识正文、内联引用、原材料/子知识依赖及真实分析和复核记录。
+- `.repo-review/knowledge/coverage.json`：逐文件处理结果与排除理由；失败、过期和待处理不会算作完成。
+- `.repo-review/knowledge/user-notes.json`：用户在 review 界面明确保存的补充材料，用于后续核对。
+- `.repo-review/knowledge/understandings/` 和 `generated/`：早期切片的人工说明与模型产物，保留溯源；不冒充新流程独立复核结果。
+- `.repo-review/runtime/`：可重建数据库、任务、模型工作目录与暂存文件。默认从仓库材料及已提交知识恢复，不读取外层 `data/`。
+- `.repo-review/data/` 与旧同步日志：旧修订和旧片段 ID 的历史档案。当前 Wiki 不依赖它；仅 `REVIEW_IMPORT_LEGACY=1` 导入。删除会失去只在其中保存的历史，本轮保留原资产。
 
-结构图用 TypeScript AST、Vue SFC 和保守规则解析；评审意图边只来自 `docs/repo-review/associations.json`。跨文件 calls、跨 revision 语义身份续接、embedding 检索和下游自动重核验尚未实现。个人助手的所有输入渠道尚未统一接入代码角色任务编排；本切片不宣称这些能力已经交付。
+个人服务的“知识整理”使用同一流程处理已进入 Capture 的材料。知识正文可引导助手召回，但返回的依据仍是原始 Fragment，继续经过会话可见性过滤。疑问保留为有依据的调查项，用户可以补充背景或加入待办；回答作为原始材料保存并触发重核对。派生解释与已应用事实保持区别，独立模型复核也不等于人工验收。
+
+跨文件调用的精确类型解析、embedding 检索和所有来源的自动重核验尚未完成；不会把这些能力写成已交付。流程、分项提交与验证记录见 [通用知识流程](docs/implementation/knowledge-pipeline.md)，早期问题见 [复审记录](docs/implementation/code-wiki-review-2026-09-29.md)。
 
 工具版本由 [osdk.toml](osdk.toml)、[osdk.lock](osdk.lock) 固定；应用包由 pnpm 工作区管理，锁文件为 [pnpm-lock.yaml](pnpm-lock.yaml)（`pnpm-workspace.yaml` 声明 `apps/*`、`packages/*` 成员）。`osdk deps --frozen` 负责调用 pnpm 以 `--frozen-lockfile` 安装应用依赖；本项目声明的构建脚本（esbuild、protobufjs）由 pnpm 按需从源码构建。首次安装如遇包构建脚本门禁，请依本机提示检查并批准对应包，不关闭全局门禁。
 
@@ -85,7 +87,7 @@ osdk exec --tool node --tool pnpm -- pnpm run cli -- capture ./capture.json
 
 ## 数据与服务部署
 
-数据位于 `.omem/`，可用 `OMEM_DATA_DIR` 指定。SQLite 保存版本、片段、引用、待办、变更、通知和持久 job；图片为 hash 对象文件。数据库按递增 migration 升级，拒绝写入高于当前程序支持版本的库。相同来源标识+相同内容重试不重复录入；不同内容追加版本，旧引用仍可访问。原始材料与首个提炼 job 同事务提交，job 支持租约、fencing token、分类重试、取消和 attempt 指纹；B2-03 的真实提炼 handler 尚未接入，因此服务当前不会假装处理这些排队任务。恢复会生成新版本；有后续变更时返回 REBASE_REQUIRED。
+数据位于 `.omem/`，可用 `OMEM_DATA_DIR` 指定。SQLite 保存版本、片段、引用、待办、变更、通知和持久 job；图片为 hash 对象文件。数据库按递增 migration 升级，拒绝写入高于当前程序支持版本的库。相同来源标识+相同内容重试不重复录入；不同内容追加版本，旧引用仍可访问。原始材料与首个提炼 job 同事务提交，job 支持租约、fencing token、分类重试、取消和 attempt 指纹；配置 `learning.enabled=true` 并提供可用 Agent 后会执行提炼与独立复核；关闭时任务保持排队，不冒充处理完成。恢复会生成新版本；有后续变更时返回 REBASE_REQUIRED。
 
 单用户部署默认仅监听 loopback。公网/局域网监听需设置 `OMEM_HOST` 和强 `OMEM_TOKEN`，所有 `/api/*` 都校验 Bearer；浏览器令牌仅放 sessionStorage。部署到服务器建议用 TLS 反向代理/SSH 隧道。当前不是多租户服务，不把一个 shared token 当团队权限系统。
 
