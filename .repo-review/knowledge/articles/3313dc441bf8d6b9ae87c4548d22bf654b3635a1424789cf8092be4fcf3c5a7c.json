@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/app.test.ts",
+    "title": "服务器 HTTP 集成测试",
+    "summary": "覆盖应用装配后的来源端点认证示例、输入安全、采集与生成、证据持久化、作业控制、受治理任务应用及助手取消路由，是多模块 HTTP 合同的纵向集成测试。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "app-boundary",
+        "title": "应用边界与输入安全",
+        "body": "`setup` 使用临时数据目录、回环地址和 ACP 夹具构建应用。认证用例具体证明 `/api/sources` 在配置 token 时无凭证返回 401、正确 Bearer 返回 200，并证明无 token 配置下该端点会拒绝跨源匿名请求；它没有逐一覆盖所有私有端点。文件导入不能越过允许根目录，运行请求中的 selection 必须匹配真实证据；hook 标准化则过滤 thoughts 和未知 secret。[[c1]] [[c2]] [[c3]]"
+      },
+      {
+        "key": "capture-answer",
+        "title": "采集、生成与证据链",
+        "body": "手工捕获证据后，`POST /api/runs` 异步启动生成；轮询完成后，测试确认回答作为新 revision 持久化，并从回答片段建立显式证据关系。图像场景进一步验证 base64 字节原样保存，且 ACP 夹具观察到 prompt 中包含一张图片。[[c4]] [[c5]]"
+      },
+      {
+        "key": "jobs-policy",
+        "title": "持久作业与受治理写入",
+        "body": "采集 API 返回排队作业，详情包含 generation 和 attempts；取消以 `expectedGeneration` 与 `requestId` 实现重复请求幂等，重试再把 generation 从 1 推进到 2。任务纵向流程提交带 owner provenance 和 Unicode selector 的提案，获得 `auto_apply` receipt，并断言任务、提案、通知、证据引用及待投递记录相互一致。[[c6]] [[c7]]"
+      },
+      {
+        "key": "assistant-cancel",
+        "title": "助手取消路由的覆盖范围",
+        "body": "测试先建立会话并让快速 ACP 夹具完成一轮，再调用 turn cancel，得到 `{ok:true}`；不存在的 turn 返回 404。因此它验证了 HTTP 路由与 runtime 的接线及错误映射，但没有制造真实在途生成，不能据此证明 AbortSignal 传播、迟到工具调用拦截或取消后的持久状态。[[c8]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "来源端点认证示例",
+        "reason": "支持 `/api/sources` 的 Bearer 成功与无凭证、跨源匿名拒绝；引用范围不足以推广到全部私有端点。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 8,
+          "endLine": 64
+        },
+        "quote": "async function setup(token?: string) {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-api-\"));\n  const result = await buildApp({\n    dataDir: dir,\n    agentCwd: join(dir, \"agent\"),\n    token,\n    host: \"127.0.0.1\",\n    port: 4317,\n    captureRoots: [],\n    notifications: { mode: \"instant\" },\n    profiles: [\n      profi"
+      },
+      {
+        "key": "c2",
+        "label": "文件与选择文本校验",
+        "reason": "支持文件导入根目录限制以及 selection 必须匹配证据原文。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 100,
+          "endLine": 135
+        },
+        "quote": "it(\"validates selected text and restricts filesystem imports\", async () => {\n  const x = await setup();\n  try {\n    expect(\n      (\n        await x.app.inject({\n          method: \"POST\",\n          url: \"/api/connectors/file\",\n          payload: { path: \"/etc/passwd\" },\n        })\n      ).statusCode,\n    ).toBe(400);\n  "
+      },
+      {
+        "key": "c3",
+        "label": "Hook 隐藏字段过滤",
+        "reason": "支持 hook 标准化仅保留预期数据，不持久化 thoughts 与未知 secret。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 180,
+          "endLine": 192
+        },
+        "quote": "it(\"normalizes hook events without persisting unknown hidden payloads\", () => {\n  const v = hookInput({\n    hook_event_name: \"PostToolUse\",\n    session_id: \"s\",\n    tool_name: \"Bash\",\n    tool_input: { command: \"git status\" },\n    thoughts: \"private\",\n    secret: \"never\",\n  });\n  expect(v.context.event).toBe(\"PostToolU"
+      },
+      {
+        "key": "c4",
+        "label": "回答与证据关系持久化",
+        "reason": "支持异步运行完成后保存回答 revision，并建立显式证据链接。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 65,
+          "endLine": 99
+        },
+        "quote": "it(\"persists a generated answer and its explicit evidence links\", async () => {\n  const x = await setup();\n  try {\n    const captured = x.store.capture({\n      source: \"manual\",\n      externalId: \"x\",\n      title: \"Evidence\",\n      parts: [{ type: \"text\", text: \"Some evidence\" }],\n      context: {},\n    });\n    const r"
+      },
+      {
+        "key": "c5",
+        "label": "图像字节与 ACP 输入",
+        "reason": "支持图像资产字节不变以及生成输入包含图像。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 136,
+          "endLine": 179
+        },
+        "quote": "it(\"preserves image bytes and includes images in an ACP prompt\", async () => {\n  const x = await setup();\n  try {\n    const png =\n      \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6vO8AAAAASUVORK5CYII=\";\n    const c = x.store.capture({\n      source: \"screen\",\n      externalId: \"screenshot\",\n"
+      },
+      {
+        "key": "c6",
+        "label": "作业取消与重试合同",
+        "reason": "支持作业详情、generation 校验、取消幂等和重试代际推进。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 194,
+          "endLine": 245
+        },
+        "quote": "it(\"exposes durable capture jobs with idempotent generation-checked controls\", async () => {\n  const x = await setup();\n  try {\n    const captured = await x.app.inject({\n      method: \"POST\",\n      url: \"/api/captures\",\n      payload: {\n        source: \"manual\",\n        externalId: \"job-api\",\n        title: \"Queued inp"
+      },
+      {
+        "key": "c7",
+        "label": "Owner 任务自动应用链路",
+        "reason": "支持提案评估、任务落库、receipt、通知、投递和证据引用的一致性断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 247,
+          "endLine": 368
+        },
+        "quote": "it(\"evaluates and atomically applies a supported owner task through HTTP\", async () => {\n  const x = await setup();\n  try {\n    const text = \"我负责在周五前提交验证报告。\";\n    const captured = (\n      await x.app.inject({\n        method: \"POST\",\n        url: \"/api/captures\",\n        payload: {\n          source: \"manual\",\n          "
+      },
+      {
+        "key": "c8",
+        "label": "HTTP 助手取消端点",
+        "reason": "支持现有 turn 取消成功与不存在 turn 返回 404，同时表明夹具回复很快、未形成真实在途取消。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 370,
+          "endLine": 411
+        },
+        "quote": "it(\"HTTP cancel e2e: POST /api/assistant/conversations/:id/turns/:turnId/cancel wires to runtime\", async () => {\n  const a = await setup();\n  try {\n    // 1. Create a web conversation.\n    const convRes = await a.app.inject({\n      method: \"POST\",\n      url: \"/api/assistant/conversations\",\n      payload: { chatId: \"tes"
+      }
+    ],
+    "questions": [
+      {
+        "question": "HTTP 层是否需要覆盖真正处于生成中的 turn 取消？",
+        "why": "当前 ACP 夹具快速完成后才取消，只证明路由返回值，不能证明 AbortSignal 传播和晚到写入被阻断。",
+        "nextStep": "换用可阻塞模型夹具，经 HTTP 发起 turn，在模型挂起时调用 cancel，再释放带 `create_task` 的迟到回复并断言零任务写入及取消状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "全部私有端点受 Bearer 保护的应用级合同由何处验证？",
+        "why": "本文件仅对 `/api/sources` 进行了认证断言，测试名称的全局范围大于实际参数化覆盖。",
+        "nextStep": "若要保留全局合同，补充认证中间件的实现证据或对代表性私有路由进行参数化测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/acp-model.test.ts",
+      "digest": "942f2dbe8220d012e8d1ab1427eec8313367c90470848697afc3a98c7f952a10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/agents.test.ts",
+      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/app.test.ts",
+      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/attention-gate.test.ts",
+      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:08:58.104Z",
+    "trace": {
+      "runId": "ce89aea8-00ae-4b7f-8bb0-e96fcc21bf87",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "bf6677f6740f05519c730680c31b3ce4b87ff58b65ef3d9b1e48854a10c69fb7",
+      "contextHash": "8de262284abc31d113cce776abc01270bd72c2d7b1929609ff39c5bfe9feb04b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3baccbfb4c459ec7d3a3926540ac6c9177d3e0f54d6b64846747b9d2f303fa34",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-4666-7411-85e7-8abcb842bd5c"
+      ],
+      "usage": {
+        "used": 61903,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 144579,
+          "utf8Bytes": 156807,
+          "estimatedTokens": 52269,
+          "budgetedTokens": 65337,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:09:09.429Z",
+    "trace": {
+      "runId": "f9c1b448-7451-47e3-9383-cb672e94f364",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "400acf43032375ca4d2e60a9ed5737396e51fa2048e9fbb2f07ffb3e80a9d4eb",
+      "contextHash": "e3d0b84b64d5a840cf56a76ad4aa5302065ad1ace05772ffdfd8b8720523dfbd",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "83b4d5e16e54bb86a86dac8dbf877092b8ff4c4346a65091dcd19abfd5a21cb3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-f732-76b2-a67e-d039692178d2"
+      ],
+      "usage": {
+        "used": 55822,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 141376,
+          "utf8Bytes": 152758,
+          "estimatedTokens": 50920,
+          "budgetedTokens": 63650,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

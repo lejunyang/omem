@@ -1,0 +1,249 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/lark-realtime.test.ts",
+    "title": "Lark 实时接入与卡片回调验收测试",
+    "summary": "验证 Lark 长连接租约、群消息采集与幂等、决策卡片安全，以及机器人退群后立即停采；证据限于伪适配器和单进程 SQLite。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "realtime-ingress",
+        "title": "实时连接与群消息入口",
+        "body": "测试以临时 SQLite、加密凭据仓库和伪实时适配器构造运行边界。首个连接管理器取得租约后，第二个管理器不能同时消费；首个停止后，后者可以接管。连接状态变化会被记录，配对消息与 SDK 卡片事件也会规范化进入统一入口。[[c1]]\n\n群聊测试覆盖既有群消息采集、机器人入群后启用监听、忽略自身消息及事件幂等：相同载荷重投标为重复，相同事件号携带冲突载荷则报错；较旧的消息更新仍作为独立输入保存，并保留发送者类型和观测时间。[[c2]] 机器人被移出已批准群后，相关目标全部转为禁用且关闭采集，随后的群消息明确返回不允许采集。[[c5]]"
+      },
+      {
+        "key": "decision-safety",
+        "title": "决策卡片的一次性业务效果",
+        "body": "测试从待决策提案生成并投递真实卡片动作，再由卡片服务排队执行。重复点击、相互竞争的动作以及 Web 端抢先决策，最多产生一次可观察业务效果；卡片最终渲染数据库中的实际批准或拒绝状态，而非后来点击者的期望。[[c3]]\n\n回调会核对操作者、会话、消息、nonce、提案摘要、版本摘要和有效期，伪造字段不会消耗原动作。数据库写入失败时事件保留为可重投状态；动作入队后若来源出现新修订，批准转为 stale 且不创建任务。[[c4]] 这些断言尚不能代表真实 WebSocket 断线、限流、乱序投递或跨进程数据库竞争下的行为。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "长连接租约、配对与状态记录断言",
+        "reason": "支持单消费者租约、停止后接管、配对路由、连接状态记录和事件规范化的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-realtime.test.ts",
+          "startLine": 254,
+          "endLine": 364
+        },
+        "quote": "describe(\"B2-06 Lark realtime and callback acceptance\", () => {\n  it(\"A-L08 leases one WebSocket consumer, routes pairing, and records reconnect health\", async () => {\n    const resource = setup();\n    const adapterA = new FakeRealtime();\n    const adapterB = new FakeRealtime();\n    const inbox = new LarkEventInbox(res"
+      },
+      {
+        "key": "c2",
+        "label": "群消息监听与幂等断言",
+        "reason": "支持入群启用监听、消息采集、自身消息忽略、冲突重放检测及身份时间保留的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-realtime.test.ts",
+          "startLine": 366,
+          "endLine": 450
+        },
+        "quote": "  it(\"A-L09 auto-monitors joined groups, deduplicates events, preserves identity/order, and ignores self\", async () => {\n    const resource = setup(\"group\");\n    const inbox = new LarkEventInbox(resource.store);\n    expect(\n      await inbox.processMessage(\n        event({ eventId: \"evt-existing-group\", messageId: \"om-"
+      },
+      {
+        "key": "c3",
+        "label": "卡片动作竞争与实际状态渲染断言",
+        "reason": "支持重复或竞态操作最多产生一次业务效果，并按持久化实际状态更新卡片。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-realtime.test.ts",
+          "startLine": 452,
+          "endLine": 515
+        },
+        "quote": "  it(\"A-L10 gives repeated or racing card actions at most one business effect and renders actual state\", async () => {\n    const resource = setup();\n    const prepared = await prepareDecision(resource);\n    const cards = new LarkCardActionService(\n      resource.store,\n      prepared.memory,\n      resource.secrets,\n   "
+      },
+      {
+        "key": "c4",
+        "label": "伪造、持久化失败与证据过期断言",
+        "reason": "支持回调字段校验、写入失败后的重投能力，以及来源变化后拒绝执行的边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-realtime.test.ts",
+          "startLine": 517,
+          "endLine": 630
+        },
+        "quote": "  it(\"A-L11 rejects forged operator/chat/message/nonce/digest/expiry fields without consuming the action\", async () => {\n    const resource = setup();\n    const prepared = await prepareDecision(resource);\n    const cards = new LarkCardActionService(\n      resource.store,\n      prepared.memory,\n      resource.secrets,\n "
+      },
+      {
+        "key": "c5",
+        "label": "机器人退群后的立即停采断言",
+        "reason": "直接支持机器人被移出群后禁用全部相关目标，并拒绝采集后续消息。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-realtime.test.ts",
+          "startLine": 632,
+          "endLine": 668
+        },
+        "quote": "  it(\"A-L14 disables capture immediately when the bot is removed from an approved group\", async () => {\n    const resource = setup(\"group\");\n    resource.store.db\n      .prepare(\n        `INSERT INTO lark_targets(\n           id,workspace_id,connection_id,binding_version,chat_id,target_type,\n           purpose,capture_e"
+      }
+    ],
+    "questions": [
+      {
+        "question": "真实 Lark 服务发生断线、乱序重投或限流时，是否仍满足单消费者与一次性业务效果？",
+        "why": "当前测试使用同步伪适配器和单进程 SQLite，未提供真实网络及跨进程竞争证据。",
+        "nextStep": "增加可控网络故障的适配器集成测试，并以两个独立进程竞争同一连接租约和卡片命令。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-realtime.test.ts",
+      "digest": "8c9f2eeca9a0ad0586572c2ac64d5b5f35a631f2f6199f10ba0db0474c680508"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+      "digest": "c527d049388fa485c086e91af83054f6983c0dd9bdc338f6cc60643f46042600"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-runtime.test.ts",
+      "digest": "d012868f2a7037e3d0e8b4be9a1af3dd29beb77235639fbeb21de9201329edf6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+      "digest": "ccc264f5b3eb1f8c6062722ced2d70a544efb31e3fc38d81fdc823d41afa252e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-refresh.test.ts",
+      "digest": "fe2dad4b8162d09a09f981b6307cfca63749a5b369e315629ab44c31b6be3d20"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/migrations.test.ts",
+      "digest": "bc5b4990d965d39d896c285d9548ca5b428a32b4149cf58e4713876379c78430"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:41:25.665Z",
+    "trace": {
+      "runId": "a2edffe1-1898-45f7-a478-60dd8b1aaef6",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "3fa90c8bcbc8e4ca71e9e9469a9a332975fd449cc46584540bf3258d74159e33",
+      "contextHash": "f6be53512ce24a1a478978535e046e261d09d1379cc14969c84b09b351b112f6",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "43a78522c6e7bb064f408b5155c3c89bc888131c990fcafbcf11c33d9d998a39",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-2dff-7143-b750-5b155df86c99"
+      ],
+      "usage": {
+        "used": 59659,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 142475,
+          "utf8Bytes": 152273,
+          "estimatedTokens": 50758,
+          "budgetedTokens": 63448,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:41:50.026Z",
+    "trace": {
+      "runId": "26c3e0a2-785e-408a-9537-aa2c03688365",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "1191f94c980dc422a5265c4c0b864b63fdb29717fc7201575c2c28838cb7e4da",
+      "contextHash": "74507541e2d4ea570c357cb76866e69bef05ed56de0cca973235cbc23aba2ef7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "31ffc9f0520b6e75503ec67d79692561e856aab3b2e561327c97b8f12aa13728",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-aee7-73c1-93cb-fa080e033449"
+      ],
+      "usage": {
+        "used": 56270,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 138275,
+          "utf8Bytes": 145969,
+          "estimatedTokens": 48657,
+          "budgetedTokens": 60822,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

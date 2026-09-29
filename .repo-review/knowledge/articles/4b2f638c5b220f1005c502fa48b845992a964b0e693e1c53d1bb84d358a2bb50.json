@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+    "title": "Lark 会话回复的持久投递与崩溃恢复测试",
+    "summary": "从实时入站事件贯穿模型与回复 outbox，验证崩溃重放、并发事件去重、相同正文区分、模糊失败重试及未完成 turn 重置，并明确供应商级幂等和恢复后重投尚未验证。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "harness",
+        "title": "运行时夹具与事件边界",
+        "body": "夹具在临时 Store 中植入活动连接、版本和 owner 群聊 binding，再以假的实时适配器、消息适配器和模型组装 `LarkRuntimeHost`。消息端可按次数抛出模糊网络失败，模型 gate 可暂停执行；入站事件则固定为已绑定 owner 在群聊中 @ 机器人，因而测试能控制并发和崩溃时序。[[c1]]"
+      },
+      {
+        "key": "dedupe",
+        "title": "崩溃窗口与事件去重",
+        "body": "回复已写入 outbox、但 inbox 尚未确认时发生模拟崩溃，唯一投递行仍为 pending，事件仍为 received；同一事件重放后不会创建第二行，inbox 转为 processed，worker 最终发送一次。[[c2]] 两个并发到达的相同 transport event 也只产生一个 turn、一个 outbox 行和一次发送，说明此处验证的是事件级并发去重。[[c3]]"
+      },
+      {
+        "key": "retry",
+        "title": "回复区分、重试与恢复限制",
+        "body": "两个不同事件即使生成相同回复正文，仍拥有不同 provider UUID 并分别发送，避免按文本误合并。[[c4]] 模糊发送失败会让唯一 outbox 行进入 retry_wait，退避后转为 delivered；另一个场景仅证明 `recoverUnfinishedTurns` 会重置未完成的 pending turn，并未执行事件重投或断言模型重新运行。[[c5]]\n\n因此，恢复后重投能否重新完成模型与回复流程，以及远端已接收但本地未记录 delivered 时 provider UUID 是否实现供应商侧幂等，仍需独立验证。"
+      },
+      {
+        "key": "questions",
+        "title": "待验证风险",
+        "body": "现有测试覆盖本地数据库状态和适配器调用次数，但没有构造“供应商已接受、响应随后丢失”的远端状态，也没有在重置 pending turn 后重新投递同一事件。[[c2]] [[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Lark 恢复测试夹具",
+        "reason": "支持连接、binding、可脚本化消息失败、模型 gate 与 owner 群聊事件的夹具说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+          "startLine": 77,
+          "endLine": 161
+        },
+        "quote": "const setup = (\n  opts: {\n    answer?: string;\n    afterReplyEnqueued?: (info: { turnId: string; outboxId: string }) => void;\n  } = {},\n) => {\n  const directory = mkdtempSync(join(tmpdir(), \"omem-lark-recovery-\"));\n  directories.push(directory);\n  const store = new Store(directory);\n  const secrets = new EncryptedSecre"
+      },
+      {
+        "key": "c2",
+        "label": "入队后崩溃与事件重放",
+        "reason": "支持 outbox 已提交而 inbox 未确认时保留状态，以及同事件重放不新增投递行并最终只发送一次。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+          "startLine": 172,
+          "endLine": 216
+        },
+        "quote": "describe(\"E persistent Lark reply delivery & recovery\", () => {\n  it(\"keeps the outbox row after a crash between enqueue and inbox-ack, and redelivers without duplicating\", async () => {\n    let crashed = false;\n    const { store, host, realtime, messages } = setup({\n      afterReplyEnqueued: () => {\n        crashed = "
+      },
+      {
+        "key": "c3",
+        "label": "并发重复事件去重",
+        "reason": "支持两个并发相同事件只建立一个 turn、一个 outbox 行并发送一次。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+          "startLine": 218,
+          "endLine": 239
+        },
+        "quote": "  it(\"deduplicates two concurrent deliveries of the same event into one turn and one outbox row\", async () => {\n    const { store, host, realtime, messages, model } = setup();\n    await host.processOnce();\n    let releaseGate!: () => void;\n    model.gate = () => new Promise<void>((r) => (releaseGate = r));\n\n    const p"
+      },
+      {
+        "key": "c4",
+        "label": "相同回复文本分别投递",
+        "reason": "支持不同 turn 即使正文一致也使用不同 provider UUID，并产生两次发送。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+          "startLine": 241,
+          "endLine": 254
+        },
+        "quote": "  it(\"delivers two turns that happen to produce the same reply text (no false dedupe)\", async () => {\n    const { store, host, realtime, messages } = setup({ answer: \"同一个回复\" });\n    await host.processOnce();\n    await realtime.connections[0]!.onEvent(ownerGroupEvent(\"evt-same-1\", \"first\"));\n    await realtime.connectio"
+      },
+      {
+        "key": "c5",
+        "label": "模糊失败重试与 pending turn 重置",
+        "reason": "支持 retry_wait 到 delivered 的本地状态变化，并限定恢复场景只断言未完成 turn 被重置。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+          "startLine": 256,
+          "endLine": 292
+        },
+        "quote": "  it(\"retries a failed send and delivers once without creating a second outbox row\", async () => {\n    const { store, host, realtime, messages } = setup();\n    await host.processOnce();\n    messages.failingAttempts = 1; // first send attempt fails ambiguously\n    await realtime.connections[0]!.onEvent(ownerGroupEvent(\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "远端已经接受消息、但本地在记录 delivered 前崩溃时，provider UUID 是否能保证供应商侧不重复发送？",
+        "why": "现有崩溃点位于回复入队后、实际发送前；模糊发送失败测试也只观察本地最终状态，未模拟远端已成功而响应丢失。",
+        "nextStep": "为消息适配器增加“远端接受后抛错”的可观测幂等存根，按 provider UUID 记录供应商侧接收次数。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c5"
+        ]
+      },
+      {
+        "question": "重置未完成 turn 后，相同 transport event 的重投是否确实会重新执行模型并完成回复？",
+        "why": "恢复场景只断言未完成 turn 被重置，没有重投 `evt-stuck`、观察模型调用或检查 inbox/outbox 最终状态。",
+        "nextStep": "恢复后重投 `evt-stuck`，断言模型重新调用、inbox 最终 processed，且只产生一个有效 outbox 行。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery.test.ts",
+      "digest": "77aa882e9476a521c31857548c2d3cb7631b859867d375aa56c4c08157938ca9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-onboarding.test.ts",
+      "digest": "53ebb0531146d960d3e29d618eaaafff15e624746100a1cbc168f3bd5fef1488"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-materials.test.ts",
+      "digest": "c7aac5333878fa569148d29e0eda92d9830006444c5e89e96351205f2a88d348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-migration.test.ts",
+      "digest": "aac9e5aded456d6287dfceaf8b674320541bf0aa19f1636e28c5135649096fee"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-relations.test.ts",
+      "digest": "712eb29abc8429b4ff8597d6054b37333d4d91d701542465465e2fa5cf449602"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:04:01.660Z",
+    "trace": {
+      "runId": "4edb4b1d-549e-48f2-b368-3aa2fb5d5785",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "50b624a98a57465c86ff848698749228f32932dda3164b56c7e3f1fa6bb8c30f",
+      "contextHash": "f5f31135c7009fa2d9758abda35806103f7ab7c7c891ee33489042cfb78aa5b0",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "50abb2bab698468840298d5deac334d4b5bb5314738352a544e05fbc1da8671f",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-858d-7b23-9303-33ce0a06772f"
+      ],
+      "usage": {
+        "used": 63513,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143080,
+          "utf8Bytes": 153964,
+          "estimatedTokens": 51322,
+          "budgetedTokens": 64153,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:22.995Z",
+    "trace": {
+      "runId": "74612ce0-414a-4476-b67e-476132ac74ea",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "53aeefe6a4e64c6a12c42035d4eb24afb823ac106bbfc39171380460184dbf67",
+      "contextHash": "b2e6a82c3dac4e20cd2e445f66a8f5600f26782f8cf0bb5174099e2e1a3c2503",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5c74cceb6518bf17bc47b6f8fedc63b0944291a246ebb0b577e5785d52d27e5a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-5fc4-7793-9ad9-f96c290d8107"
+      ],
+      "usage": {
+        "used": 59759,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 146050,
+          "utf8Bytes": 157432,
+          "estimatedTokens": 52478,
+          "budgetedTokens": 65598,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

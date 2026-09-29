@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/acp-model.test.ts",
+    "title": "ACP 助手模型适配器测试",
+    "summary": "验证助手模型只接受 ACP 配置、对缺失或 CLI 配置诚实报不可用，并覆盖结构化回复解析；历史截断仅验证了构造参数，未形成行为断言。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "transport-routing",
+        "title": "传输路由与失败语义",
+        "body": "测试构造无 profile、CLI profile 与 ACP profile 三种情形。无配置必须抛出 `ModelUnavailableError`；CLI 不得被误送入 ACP，并要求错误消息明确包含 CLI transport；ACP 配置则应越过路由检查，随后因不存在的命令在启动阶段失败。这样区分“配置不支持”和“真实传输不可用”，且不生成伪答案。[[c1]] [[c2]]"
+      },
+      {
+        "key": "reply-parsing",
+        "title": "结构化回复解析",
+        "body": "解析夹具覆盖回答、引用列表及可选 `create_task`：合法 JSON 被映射为回答、字符串引用和单个工具调用；`create_task` 缺失时不产生工具调用。非 JSON、缺少 answer 会抛错，混合类型的引用数组会过滤非字符串项。[[c3]]"
+      },
+      {
+        "key": "coverage-limit",
+        "title": "覆盖边界",
+        "body": "所谓历史预算测试只确认传入 `maxPriorTurns: 3` 后对象可构造，并未拦截 ACP 调用或检查最终 prompt；注释也承认截断逻辑仍属内部行为。因此它不能证明旧轮次确实被截断，也未覆盖回答字段类型错误、畸形工具调用、多工具调用或 ACP 成功返回的端到端路径。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "传输路由测试",
+        "reason": "支持无配置、CLI 与 ACP 三类路由结果及错误语义的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/acp-model.test.ts",
+          "startLine": 25,
+          "endLine": 78
+        },
+        "quote": "describe(\"AcpAssistantModel transport routing (G)\", () => {\n  it(\"rejects when no profile is configured\", async () => {\n    const model = new AcpAssistantModel({ profile: null, workspaceRoot: \".\" });\n    await expect(\n      model.generate({\n        userText: \"hi\",\n        priorTurns: [],\n        evidence: [],\n        v"
+      },
+      {
+        "key": "c2",
+        "label": "ACP 模型路由实现",
+        "reason": "说明生产适配器仅允许 ACP，且缺少配置或 CLI transport 时抛出模型不可用错误。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 11,
+          "endLine": 51
+        },
+        "quote": "/**\n * Production assistant model adapter. It reuses the project's real ACP transport\n * (`acp()` from agents.ts) against a configured AgentProfile.\n *\n * G: transport routing is enforced here:\n *  - profile.transport === \"acp\" → real ACP session;\n *  - any CLI transport (codex-cli / trae-cli / claude-cli) → ModelUnava"
+      },
+      {
+        "key": "c3",
+        "label": "助手回复解析断言",
+        "reason": "支持合法 JSON、可选任务、非法 JSON、缺失回答与引用过滤等解析行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/acp-model.test.ts",
+          "startLine": 81,
+          "endLine": 127
+        },
+        "quote": "describe(\"parseAssistantReply (G fixture parsing)\", () => {\n  it(\"parses a well-formed JSON reply with citations and create_task\", () => {\n    const raw = JSON.stringify({\n      answer: \"接口在 GET /v1/items。\",\n      citation_ids: [\"frag-1\", \"frag-2\"],\n      create_task: {\n        title: \"补文档\",\n        detail: \"加示例\",\n    "
+      },
+      {
+        "key": "c4",
+        "label": "历史预算占位测试",
+        "reason": "证明该用例只断言实例构造成功，没有验证 prompt 的实际截断结果。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/acp-model.test.ts",
+          "startLine": 129,
+          "endLine": 141
+        },
+        "quote": "describe(\"AcpAssistantModel history budget (G)\", () => {\n  it(\"truncates prior turns to maxPriorTurns\", async () => {\n    // We can't easily intercept the acp() call, but we verify the constructor\n    // accepts maxPriorTurns and the prompt truncates by spying on console.\n    // Instead, we test that the model construc"
+      }
+    ],
+    "questions": [
+      {
+        "question": "历史轮次预算是否需要补充可观测的 prompt 断言？",
+        "why": "现有测试名称声称验证截断，但实际只检查构造成功，无法防止 `slice(-maxPrior)` 等逻辑回归。",
+        "nextStep": "为 ACP 调用注入可控适配器或导出纯 prompt 构造函数，断言只保留最后 N 轮及单轮回答长度上限。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/acp-model.test.ts",
+      "digest": "942f2dbe8220d012e8d1ab1427eec8313367c90470848697afc3a98c7f952a10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/agents.test.ts",
+      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/app.test.ts",
+      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/attention-gate.test.ts",
+      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:07:43.257Z",
+    "trace": {
+      "runId": "4b2a8a37-0158-4003-a5a4-3a0ebe8fba81",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "b1f1374e7b6968399eb47b28debf8c6b17b873bf5c388a3a0093751f75bdb9fc",
+      "contextHash": "04fe68b9358817fcca90322193ccba061045811fa165d9984436c6148a2bf5f2",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "11da38c571926337ee4964e4409eaea05ef12f003589ce9a138a3664d5b86136",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8f-e9a8-7d72-9220-f8f249d8db74"
+      ],
+      "usage": {
+        "used": 54122,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 120469,
+          "utf8Bytes": 123995,
+          "estimatedTokens": 41332,
+          "budgetedTokens": 51665,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:08:12.218Z",
+    "trace": {
+      "runId": "084c0ef4-b7c9-496c-8920-b6097711335a",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "246a5dc714a2e42c51b72aaca805a600c234a2906f67bd96ad1ee7a3ba01414e",
+      "contextHash": "72cb39db7187d029b83877793cbca0af0be83ac9ed08e72c574819f12d443cf9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d81643d6f67a55ed66e8a06044baff14c8d69ba311ebae7713e48ff8995009ff",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee90-d30d-7562-bf28-e19a35731ec2"
+      ],
+      "usage": {
+        "used": 59454,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 146894,
+          "utf8Bytes": 158886,
+          "estimatedTokens": 52962,
+          "budgetedTokens": 66203,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

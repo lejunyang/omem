@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+    "title": "来源画像与统一关键词检索验收测试",
+    "summary": "该测试验证文档捕获后生成轻量来源画像并保留原始 fragment 可检索；画像区分标题、时态、计划、回指与代码示例，并在部分解析时记录覆盖缺口。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "capture-profile-recall",
+        "title": "捕获、画像与检索衔接",
+        "body": "业务 Markdown 经 `Store.capture` 后会产生 derived 来源画像，记录 carrier 类型、标题路径和话语片段；原始 fragments 随即可由 `KeywordRetrieval` 搜索。导入不会逐句创建确认卡或质量数据集，只产生一次通知，体现先保留可检索原文、再派生理解的低打扰路径。[[c1]]\n\n用例还直接 seed 一条 active memory，再以复用其词项的查询调用 `searchMemories`，能够召回该记忆并排除无关查询。它没有实际捕获一份“新材料”并由材料自动触发召回，因此该表述替代旧稿中的自动衔接结论。[[c2]] `readEvidence` 则按 revision 与可选 fragment 返回固定文本，未知标识返回 null。[[c3]]"
+      },
+      {
+        "key": "discourse-boundaries",
+        "title": "话语分类与安全边界",
+        "body": "画像区分当前事实和未来计划，并为“上述三种”保留父标题回指，避免把整篇文档压成单一事实桶。[[c4]] SQL、TODO 和代码对象被标记为 code/example，而非 owner instruction，也不会生成任务，防止资料中的命令式文本被当成用户授权。[[c5]]\n\n表格类内容会让画像状态变为 partial 并记录 coverage gap；测试同时确认该 revision 仍至少有 fragment 可读取。[[c6]] 这替代了旧稿“原始 fragments 仍完整存在”的过强结论，因为用例没有逐段核对表格及普通段落的完整文本，也没有模拟画像服务抛异常或数据库写入中断。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "导入后画像与即时检索",
+        "reason": "支持 Markdown 画像、原文关键词召回、零逐句确认及单次通知的流程。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 64,
+          "endLine": 115
+        },
+        "quote": "describe(\"V3-03 unified retrieval port and lightweight source profile\", () => {\n  it(\"G01: importing a business doc profiles it, makes it keyword-searchable, asks zero per-sentence confirmations\", () => {\n    const store = setup();\n    const doc = [\n      \"# 订单同步说明\",\n      \"\",\n      \"订单同步是核心后台任务，负责把店铺订单同步到仓储系统。\",\n     "
+      },
+      {
+        "key": "c2",
+        "label": "已应用记忆的关键词查询",
+        "reason": "支持直接 seed 的 active memory 可由复用词项的查询召回，并显示该用例未捕获新的材料。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 189,
+          "endLine": 230
+        },
+        "quote": "  it(\"G12: recalling an already-applied memory by keyword when new material reuses its terms\", () => {\n    const store = setup();\n    const retrieval = new KeywordRetrieval(store.db);\n\n    // Seed an existing active memory about order-sync retries.\n    store.applications.applyMemory({\n      metadata: {\n        workspac"
+      },
+      {
+        "key": "c3",
+        "label": "固定证据读取",
+        "reason": "支持按 revision 和 fragment 读取固定文本，以及未知 revision 或 fragment 返回 null。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 232,
+          "endLine": 248
+        },
+        "quote": "  it(\"readEvidence returns fixed fragment text and null for unknown ids\", () => {\n    const store = setup();\n    const { revision } = capture(\n      store,\n      \"evidence-read\",\n      \"证据读取\",\n      \"第一段内容\\n\\n第二段独特内容\",\n    );\n    const retrieval = new KeywordRetrieval(store.db);\n    const first = revision.fragments[0]!"
+      },
+      {
+        "key": "c4",
+        "label": "时态、计划与父级回指",
+        "reason": "支持画像对 present、future plan 和 anaphora parent context 的区分。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 117,
+          "endLine": 159
+        },
+        "quote": "  it(\"G02: keeps parent context for anaphora and separates present-state from planning discourse\", () => {\n    const store = setup();\n    const doc = [\n      \"# 订单同步\",\n      \"\",\n      \"当前订单同步每小时执行一次，失败后自动重试。\",\n      \"\",\n      \"未来可能会引入增量同步，减少全量拉取。\",\n      \"\",\n      \"## 重试策略\",\n      \"\",\n      \"上述三种重试方式均已上线运行。\",\n    ].joi"
+      },
+      {
+        "key": "c5",
+        "label": "代码资料不成为指令",
+        "reason": "支持 SQL、TODO 和代码被分类为 example 且不创建 owner task。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 161,
+          "endLine": 187
+        },
+        "quote": "  it(\"G03: code, SQL examples and TODOs are parsed as code examples, not owner instructions\", () => {\n    const store = setup();\n    const doc = [\n      \"SELECT * FROM orders WHERE status = 'pending';\",\n      \"\",\n      \"// TODO: retry on HTTP 503 before surfacing the error\",\n      \"\",\n      \"const fixture = { expected:"
+      },
+      {
+        "key": "c6",
+        "label": "部分画像不遮蔽来源",
+        "reason": "支持表格覆盖缺口、partial 状态及原始来源仍有 fragment 可读取，同时界定未验证逐段完整性。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 250,
+          "endLine": 264
+        },
+        "quote": "  it(\"profile failure cannot hide the original source\", () => {\n    const store = setup();\n    const { revision } = capture(\n      store,\n      \"partial-profile\",\n      \"含表格的文档\",\n      \"# 标题\\n\\n| 列A | 列B |\\n| --- | --- |\\n| 1 | 2 |\\n\\n正常段落。\",\n    );\n    const profile = latestProfile(store, revision.id);\n    // Table-li"
+      }
+    ],
+    "questions": [
+      {
+        "question": "画像生成真正抛出异常或数据库写入中断时，capture 是否仍能原子地保存并检索原始 revision？",
+        "why": "当前用例只产生 partial 画像和 coverage gap，没有注入 SourceProfileService 异常，无法证明异常路径不会回滚或遮蔽原文。",
+        "nextStep": "注入可控的画像服务失败，断言 capture 结果、fragment 检索、通知或作业状态和后续重建行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/proposal-policy.test.ts",
+      "digest": "19c9fe2b49e81db587a4f3b3e6e956c9e99151c9decd8c4943a5fef2b9bc7d57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-annotation.test.ts",
+      "digest": "bfaabb4a2ba8357da6dc8280e3617fcb16aefbfc81487305b88b4c7291cfd086"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+      "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
+      "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+      "digest": "7785c4def39404faf04f4ecf85bca9fecef6413e7b247cbfb011f4b8aefe9e9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-dev.test.ts",
+      "digest": "6ac6cc2db82deff33eb27a466db8dab2f3099421e7135506eee453e154604383"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:42:39.792Z",
+    "trace": {
+      "runId": "de846aa8-ecfb-46ce-9f5b-ad60c91e1dd0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "a04653e64b1aee49f8d8a27936ad72cb0b98edcb22fc25439ead964964f9ed79",
+      "contextHash": "232695e6ae302d6cb59f85587519ff3f40f8d618e09bdfe734ea6ea2639bbee7",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "880a0929ac1c861a10ac0da90fa46ee70dfda02b7ad1ddcc2d8a5ba6512e8e26",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb0-231d-7710-8ae8-31705aaaf133"
+      ],
+      "usage": {
+        "used": 59842,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 133162,
+          "utf8Bytes": 148656,
+          "estimatedTokens": 49552,
+          "budgetedTokens": 61940,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:43:05.172Z",
+    "trace": {
+      "runId": "f7c2f4b3-1d22-4cb0-9b35-e4623f259bef",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "07656017172ace9a504a9a4e15d8e44fdac9626a31beb6bad34d24f4e80a86ca",
+      "contextHash": "18f49a39ae881ce1e93f00c75d6bd0f991d475016106933c38f13a84e20893ff",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bd489f236376e0c87a42178bf61ca11aed7be51b50aadee17930c3ce9ba1af40",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb0-d089-7b81-8822-2fb9d6a0af82"
+      ],
+      "usage": {
+        "used": 54548,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 129043,
+          "utf8Bytes": 141623,
+          "estimatedTokens": 47208,
+          "budgetedTokens": 59010,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

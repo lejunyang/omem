@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/store.test.ts",
+    "title": "Store 的版本化证据与事务行为测试",
+    "summary": "该测试套件以临时目录中的真实 Store 实例验证单用户 SQLite 基础链路，覆盖捕获去重、不可变历史、恢复并发保护、循环引用、图片拒绝、待办提醒幂等及字面量搜索等关键行为。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "setup-and-contract",
+        "title": "测试环境与输入合同",
+        "body": "测试为每个场景创建独立临时目录和 `Store`，并在用例后关闭数据库、递归清理目录，从而隔离持久状态。输入并非随意拼装，而是先通过共享的 `captureSchema` 解析，携带已验证 owner、采集器、事件时间和原始材料标记；这同时验证测试数据符合应用捕获合同。[[c1]]"
+      },
+      {
+        "key": "revision-and-relations",
+        "title": "版本、恢复与关系断言",
+        "body": "捕获相同内容会被识别为重试并复用版本，而内容变化生成 v2；旧片段仍返回原文且旧 revision 被标为非当前，说明历史证据不随 head 改写。恢复操作继续创建 v3，并保留被恢复前的 v2；再次基于旧 head 恢复会抛出 `REBASE_REQUIRED`。[[c2]] 关系测试进一步建立双向循环，再重复写入同一边，断言 outgoing/backlink 都只保留一条，表明循环可导航而重复边幂等。[[c3]]"
+      },
+      {
+        "key": "validation-and-state",
+        "title": "发布前校验与状态版本",
+        "body": "伪造为 PNG 的非图片字节会在发布 revision 前失败，且材料列表和通知均保持为空，验证失败不会留下半完成状态。[[c4]] 过期待办在同一状态版本内重复扫描只提醒一次；状态更新要求期望版本，旧版本写入被拒绝，重新打开后才产生新一轮提醒。搜索 `%` 只命中字面包含百分号的片段，避免 SQL LIKE 通配符扩大结果。[[c5]]"
+      },
+      {
+        "key": "coverage-boundary",
+        "title": "覆盖边界",
+        "body": "这些是 Store 的真实行为断言，但只覆盖列出的代表性路径：未验证进程崩溃后的事务恢复、并发连接竞争、资产文件落盘失败、外部通知实际投递，也没有证明所有 schema 边界和搜索转义字符都正确。测试使用本地临时数据库，因此不能作为团队租户隔离或其他数据库后端的证据。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "临时 Store 与合法捕获输入",
+        "reason": "支持测试隔离方式以及输入经过共享合同校验的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 1,
+          "endLine": 39
+        },
+        "quote": "import { describe, it, expect, afterEach } from \"vitest\";\nimport { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join } from \"node:path\";\nimport { Store } from \"../src/store.js\";\nimport { captureSchema } from \"../../../packages/contracts/src/index.js\";\nconst stores: { store: Store; di"
+      },
+      {
+        "key": "c2",
+        "label": "不可变版本与恢复断言",
+        "reason": "支持内容去重、历史固定、恢复创建新版本及陈旧回滚被拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 40,
+          "endLine": 67
+        },
+        "quote": "describe(\"versioned evidence and transaction outbox\", () => {\n  it(\"deduplicates retries but keeps historical evidence fixed\", () => {\n    const s = setup();\n    const a = s.capture(input());\n    expect(s.capture(input()).duplicate).toBe(true);\n    const b = s.capture(input(\"second\"));\n    expect(b.revision.version).to"
+      },
+      {
+        "key": "c3",
+        "label": "循环关系与重复边测试",
+        "reason": "支持循环引用可导航且重复关系写入幂等的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 68,
+          "endLine": 78
+        },
+        "quote": "  it(\"keeps cyclic references as navigable edges and deduplicates link writes\", () => {\n    const s = setup();\n    const a = s.capture(input(\"a\\n\\nb\")).revision;\n    const [x, y] = a.fragments;\n    s.link(x!.id, y!.id);\n    s.link(y!.id, x!.id);\n    s.link(x!.id, y!.id);\n    expect(s.evidence(x!.id)?.outgoing).toHaveLe"
+      },
+      {
+        "key": "c4",
+        "label": "图片类型不匹配测试",
+        "reason": "支持无效图片在 revision 和通知发布前被整体拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 79,
+          "endLine": 97
+        },
+        "quote": "  it(\"rejects image type mismatch before publishing a revision\", () => {\n    const s = setup();\n    expect(() =>\n      s.capture(\n        captureSchema.parse({\n          ...input(),\n          parts: [\n            {\n              type: \"image\",\n              data: Buffer.from(\"not png\").toString(\"base64\"),\n             "
+      },
+      {
+        "key": "c5",
+        "label": "提醒版本与百分号搜索测试",
+        "reason": "支持提醒幂等、乐观并发控制及字面量百分号搜索行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 98,
+          "endLine": 123
+        },
+        "quote": "  it(\"reminds an overdue task once per state version\", () => {\n    const s = setup();\n    const t = s.createTask({\n      title: \"task\",\n      detail: \"do it\",\n      dueAt: \"2020-01-01T00:00:00Z\",\n    });\n    s.remind();\n    s.remind();\n    expect(s.notifications()).toHaveLength(2);\n    s.setTaskStatus(t.id, \"done\", 1);"
+      },
+      {
+        "key": "c6",
+        "label": "当前测试用例范围",
+        "reason": "界定该文件实际只有六组 Store 行为测试，不能外推到未出现的并发、崩溃和外部集成场景。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 40,
+          "endLine": 124
+        },
+        "quote": "describe(\"versioned evidence and transaction outbox\", () => {\n  it(\"deduplicates retries but keeps historical evidence fixed\", () => {\n    const s = setup();\n    const a = s.capture(input());\n    expect(s.capture(input()).duplicate).toBe(true);\n    const b = s.capture(input(\"second\"));\n    expect(b.revision.version).to"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/store.test.ts",
+      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:42:03.262Z",
+    "trace": {
+      "runId": "0b34c2ee-cc37-4898-a3b0-3c45af7c716f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5472c0246700819a084eb9b5112f3cab41c7cd887a9a982e2163c85d71ff23a4",
+      "contextHash": "364388f74400b7566dbf7577b1f1fc17afb50415dc518f330deef424de88b084",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "de351e4b4d6b07adf806b89a89dc2a996aa6e2c2872ca383c8afc6bd4dbabb66",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-64e6-7921-9472-d7eeeec6806b"
+      ],
+      "usage": {
+        "used": 44865,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 86049,
+          "utf8Bytes": 90813,
+          "estimatedTokens": 30271,
+          "budgetedTokens": 37839,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:42:31.660Z",
+    "trace": {
+      "runId": "83fb26b3-7530-407f-b33d-06482620964c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c1cfa58e2b965d8f14c421193cebb2b5e4a68464425b0990985624d18d0699d0",
+      "contextHash": "9d45216bf97d33f7fe9fa2870144d574d1888a04ddb2ae3f01d72e9fcd052af4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "92cab9424d0317d2bcf680db489b543cfde8b9301ed5f2774ee909f246058b26",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb0-421a-7423-91c2-657cce7e86df"
+      ],
+      "usage": {
+        "used": 48976,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107223,
+          "utf8Bytes": 120168,
+          "estimatedTokens": 40056,
+          "budgetedTokens": 50070,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

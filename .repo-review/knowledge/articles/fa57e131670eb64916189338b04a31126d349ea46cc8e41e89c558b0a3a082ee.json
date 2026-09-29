@@ -1,0 +1,292 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/review-dev.test.ts",
+    "title": "Repo Review 开发编排器进程生命周期测试",
+    "summary": "该集成测试在临时仓库和动态端口上启动真实 dev-review 编排器，验证双端口预检、API/Web 就绪、跨平台终止、端口释放及 SQLite 文件句柄清理。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "harness",
+        "title": "隔离的真实进程测试夹具",
+        "body": "测试不使用固定 5180/5181，也不接触真实 `.repo-review` 数据，而是创建只含一个 TypeScript 文件的临时仓库，通过真实 `scripts/dev-review.ts` 子进程运行编排器；stdout 和 stderr 会持续排空并保留用于失败诊断。[[c1]] 启动时明确传入 API 端口、Web 端口和 fixture 根目录，健康检查要求 review 模式以及非零 source、fragment 数，Web 根路径必须返回 200。关闭后还会等待真实 exit 事件并检查两个端口均已释放。[[c2]]"
+      },
+      {
+        "key": "platform-shutdown",
+        "title": "端口预检与跨平台关闭合同",
+        "body": "API 或 Web 任一端口已占用时，编排器都会退出并产生非零退出码，直接覆盖双端口预检失败合同。[[c3]] Windows 清理函数对精确编排器 PID 执行 `taskkill /T /F`，POSIX 分支则向该 PID 发送 `SIGTERM`。[[c4]] POSIX 专门用例通过 `child.kill(\"SIGTERM\")` 触发编排器关闭处理器，并断言优雅退出码为 0；Windows 对同一路径不要求退出码为 0，而以最终树回收和端口释放为合同。[[c5]]\n\nfixture 只在等待编排器退出后删除，并允许轮询操作系统释放 SQLite/WAL 文件句柄；清理错误不会被吞掉。[[c6]] 另有三轮循环，每轮分配新端口并创建新 fixture，用于暴露重复启动和终止中的竞争问题。[[c7]]"
+      },
+      {
+        "key": "coverage-limits",
+        "title": "测试未证明的范围",
+        "body": "该测试证明开发编排器能让 health 与 SPA 就绪，并在受测关闭路径后释放端口和文件资源，但没有验证具体知识 API、同步结果、前端交互或业务 worker 行为。文件头还明确限定：目录删除轮询只是操作系统锁释放等待，不构成对全部后代进程的确定性追踪。[[c8]] 因而无监听端口且未持有 SQLite 句柄的孤儿进程，仍可能逃过现有观测。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "临时仓库与子进程输出",
+        "reason": "支持动态 fixture 的构造、真实 dev-review 子进程启动以及输出流收集方式。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 105,
+          "endLine": 145
+        },
+        "quote": "function makeFixtureRepo(): string {\n  const root = mkdtempSync(join(tmpdir(), \"omem-review-dev-fixture-\"));\n  mkdirSync(join(root, \"apps\", \"server\", \"src\"), { recursive: true });\n  writeFileSync(\n    join(root, \"apps\", \"server\", \"src\", \"hello.ts\"),\n    \"export function hello() {\\n  return \\\"FIXTURE_HELLO_TOKEN\\\";\\n}\\n"
+      },
+      {
+        "key": "c2",
+        "label": "显式环境配置与就绪检查",
+        "reason": "支持三个环境变量、health 与 SPA 检查、真实退出等待和双端口释放流程。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 201,
+          "endLine": 249
+        },
+        "quote": "/** Boot once, wait for health + web 200, take down the orchestrator via the\n * given shutdown action, await its real exit event, and assert ports released.\n * Returns the captured stdout/stderr and the real exit code. */\nasync function bootAndShutdown(\n  apiPort: number,\n  webPort: number,\n  fixture: string,\n  shutdow"
+      },
+      {
+        "key": "c3",
+        "label": "API 与 Web 双端口预检",
+        "reason": "直接支持 API 或 Web 任一端口被占用时编排器均以非零状态退出。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 256,
+          "endLine": 288
+        },
+        "quote": "describe(\"dev-review orchestrator\", { timeout: 120_000 }, () => {\n  it(\"refuses to start when the API port is already bound and exits non-zero\", async () => {\n    const apiPort = await freePort();\n    const webPort = await freePort();\n    const occupant: Server = createServer();\n    await new Promise<void>((r) => occup"
+      },
+      {
+        "key": "c4",
+        "label": "精确进程终止的平台分支",
+        "reason": "支持 Windows 对精确 PID 及其后代执行树回收，以及 POSIX 向精确 PID 发送 SIGTERM。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 116,
+          "endLine": 130
+        },
+        "quote": "/** taskkill /T /F the exact orchestrator PID and its descendants. We never\n * kill by port and never enumerate node.exe. */\nfunction killTree(pid: number): Promise<void> {\n  return new Promise((resolveP) => {\n    if (isWin)\n      execFile(\"taskkill\", [\"/PID\", String(pid), \"/T\", \"/F\"], () => resolveP());\n    else {\n   "
+      },
+      {
+        "key": "c5",
+        "label": "优雅关闭与退出码合同",
+        "reason": "支持 POSIX 通过 SIGTERM 进入关闭处理器并断言退出码为 0，同时说明 Windows 强制终止路径不作同一退出码断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 306,
+          "endLine": 330
+        },
+        "quote": "  it(\n    isWin\n      ? \"Windows forced-kill contract: child.kill(SIGTERM) does NOT run the handler; tree reap + ports release\"\n      : \"POSIX graceful SIGTERM: the orchestrator runs its shutdown handler and exits 0\",\n    async () => {\n      const apiPort = await freePort();\n      const webPort = await freePort();\n    "
+      },
+      {
+        "key": "c6",
+        "label": "文件锁释放与清理错误传播",
+        "reason": "支持 SQLite/WAL 句柄释放轮询，并说明清理失败会单独抛出或与主错误合并。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 164,
+          "endLine": 199
+        },
+        "quote": "/** Poll rmSync until the fixture dir is removable. This runs ONLY after we have\n * already awaited the orchestrator's own 'exit' event; the bounded retry covers\n * the OS releasing SQLite/WAL file handles asynchronously after process death.\n * It is an OS lock-release wait, not a descendant-tracking guarantee. */\nasyn"
+      },
+      {
+        "key": "c7",
+        "label": "三轮重复启动终止",
+        "reason": "直接支持三轮使用新端口和新 fixture 的启动、终止与清理循环。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 339,
+          "endLine": 359
+        },
+        "quote": "  it(\"repeated boot/kill cycles (3 rounds, fresh ports each) are stable\", async () => {\n    let primaryErr: unknown = null;\n    const fixtures: string[] = [];\n    try {\n      for (let i = 0; i < 3; i++) {\n        const apiPort = await freePort();\n        const webPort = await freePort();\n        const fixture = makeFix"
+      },
+      {
+        "key": "c8",
+        "label": "进程生命周期测试边界",
+        "reason": "说明动态端口、平台终止合同及锁释放轮询不等于确定性追踪全部后代进程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-dev.test.ts",
+          "startLine": 1,
+          "endLine": 30
+        },
+        "quote": "/** Integration tests for scripts/dev-review.ts (the dev orchestrator).\n *\n * These exercise the real orchestrator binary against ephemeral ports and a\n * tiny fixture repo, so they do NOT touch the real .repo-review/ data or the\n * fixed 5180/5181 ports. They deliberately do NOT kill by port or broadly kill\n * node: e"
+      }
+    ],
+    "questions": [
+      {
+        "question": "Windows 强制终止后，是否有独立断言确认所有由编排器创建的后代进程均已退出，而不仅是端口释放和目录最终可删除？",
+        "why": "材料明确说明文件锁轮询不代表确定性追踪所有后代；无监听端口且未持有 SQLite 句柄的孤儿进程可能不被现有断言发现。",
+        "nextStep": "让 fixture 子服务记录 PID 清单或使用受控进程组，并在清理后逐一验证进程不存在，同时继续只操作本次编排器创建的进程树。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/proposal-policy.test.ts",
+      "digest": "19c9fe2b49e81db587a4f3b3e6e956c9e99151c9decd8c4943a5fef2b9bc7d57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-annotation.test.ts",
+      "digest": "bfaabb4a2ba8357da6dc8280e3617fcb16aefbfc81487305b88b4c7291cfd086"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+      "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
+      "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+      "digest": "7785c4def39404faf04f4ecf85bca9fecef6413e7b247cbfb011f4b8aefe9e9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-dev.test.ts",
+      "digest": "6ac6cc2db82deff33eb27a466db8dab2f3099421e7135506eee453e154604383"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:44:41.481Z",
+    "trace": {
+      "runId": "90bbe4fa-d623-49d4-ba9e-21cf6c0a4cd0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "c2f50d42bf06f2640a9f6715775f215dfae78f558a132fd87b6bded88391a675",
+      "contextHash": "f63207bbcf7c11e654e4aea8ff35f7f290f1439eda2390d3326bf847709813e8",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a4c7487f6115e53e54f39c88ff08a4b8677539b9f0e08b97cb3474207fb5762b",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-de95-7442-a005-2aedc2b8a17a",
+        "01a0eeb2-474c-74e0-893e-bb4600a0dc1d"
+      ],
+      "usage": {
+        "used": 52723,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121885,
+          "utf8Bytes": 131327,
+          "estimatedTokens": 43776,
+          "budgetedTokens": 54720,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 1
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:44:55.584Z",
+    "trace": {
+      "runId": "3775c27e-59c6-4a5c-8903-ceb7e9aa1b0f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "03ccc99a2a3f5343017d0e0eaebad77aef2d2b8c2c675604b83533002214a440",
+      "contextHash": "cf6f62b693c39c500efce999204c4a28ac12a9f480446ff42791671a742936af",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "34eea18bd735bf26bd070842b3f92af2c6ff5f270ec23c642ac0eefe5e8088bc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb2-abfa-7c83-a169-02bb6c13a41d"
+      ],
+      "usage": {
+        "used": 49342,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 119395,
+          "utf8Bytes": 127341,
+          "estimatedTokens": 42447,
+          "budgetedTokens": 53059,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

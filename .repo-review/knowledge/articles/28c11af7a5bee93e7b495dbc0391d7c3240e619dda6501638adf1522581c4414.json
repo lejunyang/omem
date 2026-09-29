@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+    "title": "普通采集与质量评测导入隔离测试",
+    "summary": "回归验证普通业务材料只形成可检索的不可变修订与片段，不会生成质量标注工作；研究导入必须携带显式 opt-in。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "ordinary-capture",
+        "title": "普通采集的隔离保证",
+        "body": "测试构造 40 段足以被评测分割器选中的业务文本，经 `captureSchema` 校验后调用 `Store.capture`。它先确认修订确实包含可检索片段，再查询质量数据集、草稿样本和投递意图三张表，要求计数全部为零。[[c1]] 这防止普通材料仅因内容形态类似评测样本，就意外变成人工标注任务。"
+      },
+      {
+        "key": "explicit-opt-in",
+        "title": "研究导入的显式入口",
+        "body": "第二个用例直接调用质量导入器：缺少判别值时必须抛出 `QUALITY_IMPORT_IS_EVAL_ONLY`，显式传入 `QUALITY_EVAL_ONLY` 后才生成 40 个样本。[[c2]] 该值是导出的普通字符串常量，作用是要求调用方明确 opt-in、阻止遗漏参数的意外调用，并非不可伪造的安全凭证。[[c3]] 实现注释同时规定该工具只服务研究标注流程，普通 HTTP、CLI、输入聚合与学习路径不应调用。[[c4]]"
+      },
+      {
+        "key": "coverage",
+        "title": "测试边界",
+        "body": "临时 SQLite 目录在每次用例后递归清理，Store 也在 `finally` 中关闭。[[c5]] 测试覆盖手工来源的普通采集和 Lark 来源的直接评测调用，但没有逐一执行 HTTP、文件、Git、Lark CLI 或学习管线，也未以静态依赖分析证明不存在其他误调用；它验证的是当前 `Store.capture` 行为及导入函数的运行时参数保护。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "普通采集零质量副作用断言",
+        "reason": "支持普通采集保留片段但不创建质量数据集、样本或投递意图的核心保证。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+          "startLine": 36,
+          "endLine": 96
+        },
+        "quote": "describe(\"G01 ordinary import does not create quality annotation work\", () => {\n  it(\"persists source revision + fragments but zero quality datasets/samples/cards\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-g01-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n"
+      },
+      {
+        "key": "c2",
+        "label": "评测导入显式启用测试",
+        "reason": "支持缺少判别值时报错、传入指定常量后生成样本的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+          "startLine": 98,
+          "endLine": 139
+        },
+        "quote": "  it(\"guards the eval-only importer against accidental ordinary-path use\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-g01-guard-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const repository = new QualityRepository(store.db);\n      const document = cap"
+      },
+      {
+        "key": "c3",
+        "label": "评测专用判别常量",
+        "reason": "说明 QUALITY_EVAL_ONLY 是导出的字面量常量，其作用是让遗漏 opt-in 的调用显式失败。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 26,
+          "endLine": 28
+        },
+        "quote": "/** Eval-only opt-in discriminator. Normal import paths never (and must never)\n *  pass this literal; it exists so an accidental production call fails loudly. */\nexport const QUALITY_EVAL_ONLY = \"EVAL_ONLY_RESEARCH\" as const;"
+      },
+      {
+        "key": "c4",
+        "label": "研究标注导入边界",
+        "reason": "解释质量分割器仅供显式研究标注流程使用，不属于普通采集链。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c5",
+        "label": "临时资源清理",
+        "reason": "支持测试在用例后清理临时目录，并结合用例中的 finally 关闭 Store。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+          "startLine": 22,
+          "endLine": 26
+        },
+        "quote": "const directories: string[] = [];\nafterEach(() => {\n  for (const directory of directories.splice(0))\n    rmSync(directory, { recursive: true, force: true });\n});"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/dev-ports.test.ts",
+      "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+      "digest": "313ea67e92b023f8a3ca1a3a9e12d60362719e018b559c88f3da0fae95646c18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+      "digest": "5c03480e00216e0a3bf25e65281ef68fd3bdc0293273cb9c843452046505d381"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/inputs.test.ts",
+      "digest": "724912caf7ff6c35aff905bbad784c410d9874e72d8223c57c063d2d716ecbec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/jobs.test.ts",
+      "digest": "78c38d182c888dfb374df4597a667f368867b28528fa2e31bb78d34271f1077d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:40:25.675Z",
+    "trace": {
+      "runId": "010b26d5-6330-4353-ab48-4bc2784969dc",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "bd3a35128fa5d3b8a0705a37db86081d31587fc2caeb432376b0cd357b606ae9",
+      "contextHash": "0f4341a8a6a91abf63fed2ee2e1f771a93f759bbf7e7b04373f8dc454c43f08c",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ca2f46806fe8dea6137ef430aca0264171eb649bad8179c9530d62b7c09db63a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-3160-7a70-ab21-6404d8e8aece"
+      ],
+      "usage": {
+        "used": 48295,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99608,
+          "utf8Bytes": 108908,
+          "estimatedTokens": 36303,
+          "budgetedTokens": 45379,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:40:51.731Z",
+    "trace": {
+      "runId": "fd668d3c-c98b-4755-b2f1-d5fa1b75f2bf",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "240bf6fa4c00c74578289d6ee720c86639bb172e22097ae07e62d851b58ef8be",
+      "contextHash": "e9c0439c6e073213be35750ddfb37c9158f4fdd253672d6d9904448501e116be",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9e92df9358ba11d8349b9340d54ef8b8277efe983f46f030cb411def46eb4892",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-c508-71b2-9859-dfdec1554f28"
+      ],
+      "usage": {
+        "used": 44755,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 98862,
+          "utf8Bytes": 107150,
+          "estimatedTokens": 35717,
+          "budgetedTokens": 44647,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

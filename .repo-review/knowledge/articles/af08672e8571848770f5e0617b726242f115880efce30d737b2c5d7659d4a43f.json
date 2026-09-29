@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/learning-refresh.test.ts",
+    "title": "学习上下文来源与依赖刷新测试",
+    "summary": "验证模型上下文保留多发言者标识、图片资产引用和非可信项目标志，并明确来源更新后系统目前只能记录待复核，不能声称已完成重新核验。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "fragment-context",
+        "title": "已验证的逐分片上下文",
+        "body": "测试构造含两位发言者、回复关系和图片的 capture，再运行提取角色。角色输出的诊断信息明确包含两位外部身份、一个图片资产引用以及 `projectTrusted=false`，说明多说话人没有被压扁为单一 actor，图片可通过资产引用进入材料，而会话号不会被提升为可信项目。[[c1]]\n\n输入本身还携带事件号、观测时间与回复关系，但当前输出断言没有逐项检查这些字段是否到达模型，因此本文只确认发言者标识、图片资产计数和项目信任标志。逐分片来源合同允许保存 actor、时间、事件和回复等信息，但合同存在并不等同于本测试已验证所有字段的端到端传递。"
+      },
+      {
+        "key": "refresh-limit",
+        "title": "依赖刷新只标记待复核",
+        "body": "第二组测试先创建引用来源第一版的 memory，再以相同外部标识采集内容完全变化的第二版。来源推进会排入 `refresh_dependents` job；当前 `LearningPipeline` 尚未实现真正的重新核验，所以该 job 必须失败并包含 `NOT_IMPLEMENTED`，不能被记录为成功。[[c2]]\n\n刷新记录同时保持 `needs_review`，保存受影响数量及具体 memory 标识，供后续人工或新 worker 接手。[[c3]] 这固定了当前能力边界：系统能追踪受影响知识，却不能判断旧结论仍受支持、应被替代还是需要用户决策。未来的状态迁移政策、级联依赖处理和用户可见行为仍未由这些测试定义。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "发言者、图片引用与项目信任断言",
+        "reason": "仅支持两位 actor 标识、图片资产引用计数和 projectTrusted=false 已进入角色可见输出。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-refresh.test.ts",
+          "startLine": 56,
+          "endLine": 149
+        },
+        "quote": "describe(\"P0: context manifest per-fragment provenance reaches the model\", () => {\n  it(\"materials carry per-fragment actor (alice/bob), image asset_ref, and project_trusted=false\", async () => {\n    const directory = temporary(\"omem-provenance-\");\n    const store = new Store(directory);\n    try {\n      const captured "
+      },
+      {
+        "key": "c2",
+        "label": "依赖刷新未实现的失败断言",
+        "reason": "支持 refresh_dependents 不能虚报重新核验成功，而应以 NOT_IMPLEMENTED 失败。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-refresh.test.ts",
+          "startLine": 152,
+          "endLine": 231
+        },
+        "quote": "describe(\"P0: refresh_dependents does not claim a successful re-verification\", () => {\n  it(\"fails the job NOT_IMPLEMENTED and records needs_review for affected memories\", async () => {\n    const directory = temporary(\"omem-refresh-job-\");\n    const store = new Store(directory);\n    try {\n      const v1 = store.capture"
+      },
+      {
+        "key": "c3",
+        "label": "受影响知识待复核记录断言",
+        "reason": "支持刷新记录保存 needs_review、受影响数量和具体 memory 标识。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-refresh.test.ts",
+          "startLine": 233,
+          "endLine": 245
+        },
+        "quote": "      const row = store.db\n        .prepare(\n          \"SELECT status, affected_count, affected_memory_ids FROM refresh_records WHERE source_id=?\",\n        )\n        .get(v1.revision.sourceId) as {\n        status: string;\n        affected_count: number;\n        affected_memory_ids: string;\n      };\n      expect(row.sta"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`refresh_dependents` 的正式重新核验流程应自动更新、停用旧知识，还是始终形成用户决策？",
+        "why": "当前测试只定义未实现时必须失败并标记待复核，没有定义冲突、仍受支持和证据不足时的状态迁移与用户可见行为。",
+        "nextStep": "先确定三类核验结果的状态迁移政策，再补充级联依赖、覆盖写入和用户通知测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-realtime.test.ts",
+      "digest": "8c9f2eeca9a0ad0586572c2ac64d5b5f35a631f2f6199f10ba0db0474c680508"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+      "digest": "c527d049388fa485c086e91af83054f6983c0dd9bdc338f6cc60643f46042600"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-runtime.test.ts",
+      "digest": "d012868f2a7037e3d0e8b4be9a1af3dd29beb77235639fbeb21de9201329edf6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+      "digest": "ccc264f5b3eb1f8c6062722ced2d70a544efb31e3fc38d81fdc823d41afa252e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-refresh.test.ts",
+      "digest": "fe2dad4b8162d09a09f981b6307cfca63749a5b369e315629ab44c31b6be3d20"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/migrations.test.ts",
+      "digest": "bc5b4990d965d39d896c285d9548ca5b428a32b4149cf58e4713876379c78430"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:41:25.665Z",
+    "trace": {
+      "runId": "a2edffe1-1898-45f7-a478-60dd8b1aaef6",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "3fa90c8bcbc8e4ca71e9e9469a9a332975fd449cc46584540bf3258d74159e33",
+      "contextHash": "f6be53512ce24a1a478978535e046e261d09d1379cc14969c84b09b351b112f6",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "43a78522c6e7bb064f408b5155c3c89bc888131c990fcafbcf11c33d9d998a39",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-2dff-7143-b750-5b155df86c99"
+      ],
+      "usage": {
+        "used": 59659,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 142475,
+          "utf8Bytes": 152273,
+          "estimatedTokens": 50758,
+          "budgetedTokens": 63448,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:41:50.026Z",
+    "trace": {
+      "runId": "26c3e0a2-785e-408a-9537-aa2c03688365",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "1191f94c980dc422a5265c4c0b864b63fdb29717fc7201575c2c28838cb7e4da",
+      "contextHash": "74507541e2d4ea570c357cb76866e69bef05ed56de0cca973235cbc23aba2ef7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "31ffc9f0520b6e75503ec67d79692561e856aab3b2e561327c97b8f12aa13728",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-aee7-73c1-93cb-fa080e033449"
+      ],
+      "usage": {
+        "used": 56270,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 138275,
+          "utf8Bytes": 145969,
+          "estimatedTokens": 48657,
+          "budgetedTokens": 60822,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

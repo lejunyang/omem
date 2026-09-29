@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/dev-ports.test.ts",
+    "title": "开发端口选择的冲突与输入校验测试",
+    "summary": "验证默认端口被占用时自动改选、显式端口冲突时明确失败，以及非法端口值被拒绝；测试还负责释放临时监听服务。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决的问题",
+        "body": "开发环境需要避免前后端误连到已被其他进程占用的端口。测试先在本机回环地址建立临时监听，再把该随机端口作为默认值传给 `selectDevPort`，断言返回有效且不同的端口，覆盖“默认值允许自动迁移”的策略。[[c1]] 这一行为对应实现中捕获 `EADDRINUSE` 后以端口 0 请求系统分配空闲端口的分支。[[c2]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界与未覆盖行为",
+        "body": "同一占用端口若作为显式配置传入，测试要求抛出中文“已被占用”错误；非数字、负数、超过 65535 和小数则必须报 `invalid port`。[[c3]] `finally` 会关闭监听器，避免测试泄漏资源。材料未断言自动选择出的端口随后仍保持可用，也未覆盖非 `EADDRINUSE` 网络错误、IPv6 或并发进程在探测后抢占端口的竞态。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "默认端口冲突测试",
+        "reason": "支持测试通过真实监听端口验证默认端口自动改选的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/dev-ports.test.ts",
+          "startLine": 5,
+          "endLine": 12
+        },
+        "quote": "it(\"moves an occupied default, rejects an occupied override and invalid ports\", async () => {\n  const occupied = createServer();\n  await new Promise<void>((resolve) => occupied.listen(0, \"127.0.0.1\", resolve));\n  const port = (occupied.address() as { port: number }).port;\n  try {\n    const chosen = await selectDevPort("
+      },
+      {
+        "key": "c2",
+        "label": "开发端口选择实现",
+        "reason": "解释默认端口冲突时递归请求系统分配端口的实现背景。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-ports.ts",
+          "startLine": 18,
+          "endLine": 23
+        },
+        "quote": "  } catch (error) {\n    if ((error as NodeJS.ErrnoException).code !== \"EADDRINUSE\") throw error;\n    if (value !== undefined) throw new Error(`端口 ${port}（${label}）已被占用；请设置其他端口`);\n    const assigned = await selectDevPort(\"0\", fallback, label);\n    console.log(`${label}: 默认端口 ${port} 已占用，使用 ${assigned}`);\n    return assi"
+      },
+      {
+        "key": "c3",
+        "label": "显式冲突与非法值断言",
+        "reason": "支持显式占用端口和四类非法输入均被拒绝的边界说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/dev-ports.test.ts",
+          "startLine": 13,
+          "endLine": 16
+        },
+        "quote": "    await expect(selectDevPort(String(port), 4317, \"API\")).rejects.toThrow(\"已被占用\");\n    for (const bad of [\"oops\", \"-1\", \"65536\", \"1.5\"])\n      await expect(selectDevPort(bad, 4317, \"API\")).rejects.toThrow(\"invalid port\");\n  } finally { await new Promise<void>((resolve) => occupied.close(() => resolve())); }"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/dev-ports.test.ts",
+      "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+      "digest": "313ea67e92b023f8a3ca1a3a9e12d60362719e018b559c88f3da0fae95646c18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+      "digest": "5c03480e00216e0a3bf25e65281ef68fd3bdc0293273cb9c843452046505d381"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/inputs.test.ts",
+      "digest": "724912caf7ff6c35aff905bbad784c410d9874e72d8223c57c063d2d716ecbec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/jobs.test.ts",
+      "digest": "78c38d182c888dfb374df4597a667f368867b28528fa2e31bb78d34271f1077d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:39:16.387Z",
+    "trace": {
+      "runId": "2c56f7f9-f4c8-4ab6-8685-15ffa93174f3",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "86db881e64a38d45f336ef3899e1f69b71ff7cc0ad8df3c97d2a288125c2de46",
+      "contextHash": "5696168557661b789e00e320ddfa62ee6d6cfcdea1613e31e446bc2821147294",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "65e4573078435087a934cdc4e401966a5cc1271f3577ed9c0a9bbef3093dc5af",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeac-de8a-7c32-b82e-2c462809564e"
+      ],
+      "usage": {
+        "used": 41746,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 79974,
+          "utf8Bytes": 81998,
+          "estimatedTokens": 27333,
+          "budgetedTokens": 34167,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:39:47.787Z",
+    "trace": {
+      "runId": "96fbeffc-ae70-41fd-9c57-89469077d331",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "321e744f2e758a2c88a17a3513e7a818656e340ec73b48ef3536dcd33a2e2108",
+      "contextHash": "b1f6f24246698dd50a922c4db85c855cc4a4b0f81294fa128ac63f7508c058a2",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2bc2bbfc80a8eab78d491eecc4488cbbb8dbbb8ad7b82e23a18f3655ed8fd008",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-b5f2-76f0-86d5-dc9716988634"
+      ],
+      "usage": {
+        "used": 46428,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 101463,
+          "utf8Bytes": 111059,
+          "estimatedTokens": 37020,
+          "budgetedTokens": 46275,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

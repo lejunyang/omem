@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/conversation-router.test.ts",
+    "title": "ConversationRouter 会话身份与轮次持久化测试",
+    "summary": "验证会话路由按主体、渠道、聊天与线程形成稳定身份，写入有序轮次及所选证据，并断言输入文本、工具动作和当前目标可从存储中读取。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "identity-routing",
+        "title": "会话身份与隔离维度",
+        "body": "ConversationRouter 为不同入口提供统一的会话持久化层。测试使用临时 Store 构造路由器，并在每个用例后关闭数据库和删除目录，以隔离测试状态。[[c1]] 相同 principal、channel、chat 与默认 thread 的重复 `open` 返回同一会话；只改变 chat 或 channel 就得到不同标识，同时保留 private 可见性，并把缺省 thread 规范化为空字符串。[[c2]] 因而本文件证明了组合键复用，但尚未覆盖显式 threadId、不同 principal、group 可见性、并发打开或唯一约束冲突。"
+      },
+      {
+        "key": "turns-goals",
+        "title": "轮次顺序、历史与目标",
+        "body": "记录轮次时，路由器从 1 开始分配单调 ordinal，两次写入后下一个序号推进到 3。首轮写入包含所选证据，次轮写入结构化工具动作；随后测试断言历史按顺序还原两条输入文本，并还原第二轮工具动作。[[c3]] 这替代了“已验证所选证据可从历史还原”的旧结论：当前用例只证明证据被传入写入接口，并未对历史中的 `selectedEvidence` 做往返断言。会话级当前目标则通过设置后再次读取获得验证。[[c4]] 测试未覆盖时间戳、事务回滚、重复消息幂等、并发顺序、会话删除或跨重启读取，也不证明工具动作真正执行。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "路由器测试资源生命周期",
+        "reason": "说明测试使用真实临时 Store，并在用例结束后关闭数据库和清理目录。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/conversation-router.test.ts",
+          "startLine": 8,
+          "endLine": 21
+        },
+        "quote": "const resources: { directory: string; store: Store }[] = [];\nafterEach(() => {\n  for (const resource of resources.splice(0)) {\n    resource.store.close();\n    rmSync(resource.directory, { recursive: true, force: true });\n  }\n});\n\nconst setup = () => {\n  const directory = mkdtempSync(join(tmpdir(), \"omem-router-\"));\n  c"
+      },
+      {
+        "key": "c2",
+        "label": "会话组合键复用",
+        "reason": "支持相同组合键复用会话、不同聊天或渠道隔离，以及默认线程和可见性的行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/conversation-router.test.ts",
+          "startLine": 23,
+          "endLine": 43
+        },
+        "quote": "describe(\"V3-04 ConversationRouter\", () => {\n  it(\"opens one conversation per principal+channel+chat+thread key\", () => {\n    const { router } = setup();\n    const first = router.open({\n      principalId: \"owner\",\n      channel: \"lark_p2p\",\n      chatId: \"oc_owner\",\n      visibility: \"private\",\n    });\n    const again "
+      },
+      {
+        "key": "c3",
+        "label": "有序轮次写入与历史断言",
+        "reason": "支持 ordinal 单调递增、所选证据被传入记录接口，以及历史输入文本和工具动作被实际断言；同时界定未断言证据往返的限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/conversation-router.test.ts",
+          "startLine": 45,
+          "endLine": 81
+        },
+        "quote": "  it(\"records turns with monotonic ordinals and history\", () => {\n    const { router } = setup();\n    const conversation = router.open({\n      principalId: \"owner\",\n      channel: \"web\",\n      chatId: \"web-1\",\n      visibility: \"private\",\n    });\n    expect(router.nextOrdinal(conversation.id)).toBe(1);\n    const t1 = r"
+      },
+      {
+        "key": "c4",
+        "label": "会话当前目标",
+        "reason": "支持路由器能够持久化并读取会话级当前目标。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/conversation-router.test.ts",
+          "startLine": 83,
+          "endLine": 93
+        },
+        "quote": "  it(\"persists current goal on the conversation\", () => {\n    const { router } = setup();\n    const conversation = router.open({\n      principalId: \"owner\",\n      channel: \"web\",\n      chatId: \"web-2\",\n      visibility: \"private\",\n    });\n    router.setGoal(conversation.id, \"整理接口文档\");\n    expect(router.get(conversation"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-model.test.ts",
+      "digest": "ac88b469c5dccac99e5b7535cce1a6ec584abd604338938bfdb07c09340e632a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding.test.ts",
+      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/connectors.test.ts",
+      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:39:16.007Z",
+    "trace": {
+      "runId": "389d9cc8-4eb0-4558-bfa3-5685dfba84ac",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "1c62deb40097c38b81f7767e7fa06cfe31164f94396f604f25dd18085ae2c0c0",
+      "contextHash": "38c0f26a77a1ad6d2719572f30bcd182495eeb18eaf445bc1ff3a55b93f5ad44",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "278bfe0fb8dc071e018cdf3f064701c4fc65548f61d58da45fd8fc34993bafe8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-74c5-7ec3-a54f-97a60975a15b"
+      ],
+      "usage": {
+        "used": 40346,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 87526,
+          "utf8Bytes": 92268,
+          "estimatedTokens": 30756,
+          "budgetedTokens": 38445,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:39:26.653Z",
+    "trace": {
+      "runId": "7d932c9b-83fd-4802-bc75-e1552027dc97",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "135a0f79ebc04971c7f3b2d71e6118503bfc8b4d8962c20e1c7603da9cc387e3",
+      "contextHash": "4747a19a528be08aeb2285a48ac06a7d6ce124ea981dc4c341316c7ea16f3a9a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "fa931ca079323d025e94857f9e07e830eadc554a3182e4782932f6c0d5216245",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-b48b-7643-be41-a74a98979bb0"
+      ],
+      "usage": {
+        "used": 38213,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 85063,
+          "utf8Bytes": 88931,
+          "estimatedTokens": 29644,
+          "budgetedTokens": 37055,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

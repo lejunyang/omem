@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/knowledge-api.test.ts",
+    "title": "知识 API 的证据与操作回归测试",
+    "summary": "以手工材料贯穿文章读取、引用解析、历史修订、问题转任务、无模型错误及历史图片资产访问，验证 API 的关键组合行为。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "article-citation",
+        "title": "文章、引用与历史文本",
+        "body": "测试构造含行内引用和调查问题的知识文档，绑定固定原文并发布；文章 API 必须返回可操作的引用及人读标签、理由，citation API 则解析到带固定摘要的材料。[[c1]] 当同一外部材料产生新 head 后，携带旧摘要读取材料仍应返回原文本且标记为非当前，证明引用可以回看不可变历史修订。[[c2]]"
+      },
+      {
+        "key": "actions-model",
+        "title": "问题动作与模型缺失",
+        "body": "问题列表中的条目可通过 task 端点生成任务，并且 Store 中确实只出现相应任务；未配置分析模型时，分析端点返回 503，而不是伪造成功。[[c3]] 这同时覆盖了读 API 和两类写操作，但没有断言无效问题 ID、重复请求、权限或并发行为。"
+      },
+      {
+        "key": "assets-limits",
+        "title": "历史图片与未覆盖边界",
+        "body": "测试先捕获 PNG，再以文本新修订替代同一材料，随后按旧 asset id 请求仍返回 200 和 `image/png`，说明历史图片不随 source head 更新而失去访问能力。[[c4]] 用例只检查内容类型和状态码，没有核对响应字节、缓存头、未知资产、超大资产或非图片资产的错误处理。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "文章与引用 API 断言",
+        "reason": "支持文章引用可操作字段及 citation 解析到固定材料摘要的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-api.test.ts",
+          "startLine": 11,
+          "endLine": 22
+        },
+        "quote": "it(\"serves fixed inline citations and explicit question actions through the same API for manual materials\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-api-\")), store = new Store(dir), app = Fastify();\n  const repository = registerKnowledgeRoutes(app, { store, prefix: \"/api/knowledge\", workspace: "
+      },
+      {
+        "key": "c2",
+        "label": "旧材料修订读取",
+        "reason": "支持材料更新后仍能按旧摘要取回原始文本和非当前状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-api.test.ts",
+          "startLine": 23,
+          "endLine": 25
+        },
+        "quote": "    store.capture({ source: \"manual\", externalId: \"plan\", title: \"新计划\", parts: [{ type: \"text\", text: \"新的发布内容。\" }], context: {} }); repository.refresh();\n    const original = await app.inject(\"/api/knowledge/materials/\" + encodeURIComponent(m.key) + \"?digest=\" + m.digest);\n    expect(original.json()).toMatchObject({ te"
+      },
+      {
+        "key": "c3",
+        "label": "任务创建与无模型响应",
+        "reason": "支持问题转任务的持久化断言和未配置模型返回 503。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-api.test.ts",
+          "startLine": 26,
+          "endLine": 30
+        },
+        "quote": "    const q = (await app.inject(\"/api/knowledge/questions\")).json()[0];\n    const task = await app.inject({ method: \"POST\", url: `/api/knowledge/questions/${q.id}/task` });\n    expect(task.json().taskId).toBeTruthy(); expect(store.tasks()).toHaveLength(1);\n    const noModel = await app.inject({ method: \"POST\", url: \"/a"
+      },
+      {
+        "key": "c4",
+        "label": "历史图片资产访问",
+        "reason": "支持图片被新修订替代后，旧资产仍可按 id 获取的行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-api.test.ts",
+          "startLine": 31,
+          "endLine": 36
+        },
+        "quote": "    const image = store.capture({ source: \"manual\", externalId: \"diagram\", title: \"历史图像\", parts: [{ type: \"image\", mimeType: \"image/png\", data: \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=\", label: \"原图\" }], context: {} });\n    const assetId = (image.revision.parts[0] as "
+      }
+    ],
+    "questions": [
+      {
+        "question": "知识 API 对不存在、重复或失效的问题操作应返回什么状态码与幂等语义？",
+        "why": "当前测试只覆盖有效问题创建任务，没有验证失败路径或重复调用。",
+        "nextStep": "为未知问题、重复 task 请求、已回答或已 superseded 问题增加 API 断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "历史资产端点是否需要验证原始字节和访问控制？",
+        "why": "现有断言只证明状态码与 MIME 类型正确，不能排除返回内容错误，也没有覆盖资产可见性边界。",
+        "nextStep": "比较响应体摘要，并增加未知 asset id、非图片、可见性和缓存行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "知识 API 对不存在、重复或已失效的问题操作应返回什么状态码与幂等语义？",
+        "why": "当前测试只覆盖有效问题创建任务，没有验证未知问题、重复请求、已回答或已 superseded 问题。",
+        "nextStep": "为这些失败和重复操作补充 API 行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "e88f3b118275e4adce3b678c6e607b2da995903805d628ce2060bdf4bc8aea80"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-api.test.ts",
+      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+      "digest": "60ba418153006bb59e5d327ea25fc7e20b4b0b06d4a4ae55ecd7979c6661fa3d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
+      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:03:39.352Z",
+    "trace": {
+      "runId": "70ffcd8d-15d2-4f86-b181-cac14c31a865",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "9859ba992394ba1173ea317a45fe1841954b1e357c38358b356cedeaade3e0d3",
+      "contextHash": "2147ddf7fe4a6e669d9c63308c8a9e2b7dee4494459678ad2b2ee5f95a5129cb",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "875914a960324409cf3b454417e5fe8ac92df9970d70c69570b860497ed26bf6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-0df3-7b61-aa0a-a4c8b7030c82"
+      ],
+      "usage": {
+        "used": 36552,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 62403,
+          "utf8Bytes": 65060,
+          "estimatedTokens": 21687,
+          "budgetedTokens": 27109,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:02.270Z",
+    "trace": {
+      "runId": "facc1a5c-031e-4a88-aa19-b66d72392fa0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "1e016c68b564f5fc83d4f039e2b49da37ac95c5b9980517c860aaf912b14c495",
+      "contextHash": "1a68d53cf3735ad8ddcd2d0ba43ca472fbe2ad2e15f8464619d693cd745595a9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1410547631a9f3591b4c02833ddc985685f3ca5643ae030dc316675365dfc8b4",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-08ae-73d3-b213-87a05bfb04ce"
+      ],
+      "usage": {
+        "used": 39789,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 82614,
+          "utf8Bytes": 93683,
+          "estimatedTokens": 31228,
+          "budgetedTokens": 39035,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

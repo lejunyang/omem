@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/code-budget.test.ts",
+    "title": "代码生成上下文预算测试",
+    "summary": "该测试验证 UTF-8 输入的保守 token 估算、宿主预算覆盖校验，以及所选模型的已发现上下文窗口能否容纳输入、输出和预留空间。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "estimation",
+        "title": "字符、字节与预算余量",
+        "body": "测试用“中文abc”同时约束字符数、UTF-8 字节数、估算 token 与计费 token，表明预算不是简单按 JavaScript 字符长度计算，并会额外计入余量。宿主传入的合法最大输入值可覆盖默认配置，负数则必须抛出 `Invalid`，避免无效配置绕过限制。[[c1]]\n\n材料只给出了单个中英混合样例，因此无法从测试本身确定完整估算公式在 emoji、组合字符、超长文本或零长度输入上的表现。"
+      },
+      {
+        "key": "model-window",
+        "title": "按已选择模型校验上下文窗口",
+        "body": "`assertContextBudget` 使用模型选项中当前选择项的 `contextWindow` 元数据，将估算输入、最大输出和上下文预留相加。总需求 64000 超过 small 模型的 32000 时抛错；切到 272000 的 large 模型后返回该窗口。若没有发现任何模型选项，则返回空值而不是伪造容量。[[c2]]\n\n测试未覆盖当前值不存在、元数据畸形、多个模型选项组或恰好等于窗口上限等边界，也不证明外部 Agent CLI 一定能报告该元数据。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "UTF-8 估算与宿主覆盖断言",
+        "reason": "支持字节计数、预算余量及非法最大输入配置被拒绝的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-budget.test.ts",
+          "startLine": 5,
+          "endLine": 9
+        },
+        "quote": "it(\"counts UTF-8 bytes and charges headroom, with validated host overrides\", () => {\n  expect(estimateTokens(\"中文abc\")).toMatchObject({ chars: 5, utf8Bytes: 9, estimatedTokens: 3, budgetedTokens: 4 });\n  expect(generationBudget({ maxInputTokens: 96000 }, { max_context_tokens: 12000, max_output_tokens: 3000 }).maxInputTo"
+      },
+      {
+        "key": "c2",
+        "label": "模型窗口容量断言",
+        "reason": "支持上下文需求由输入、输出、预留共同组成，并按当前模型窗口校验的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-budget.test.ts",
+          "startLine": 11,
+          "endLine": 20
+        },
+        "quote": "it(\"checks the selected model's discovered window including output and reserve\", () => {\n  const options = [{ id: \"model\", name: \"Model\", category: \"model\", type: \"select\" as const, currentValue: \"small\", options: [\n    { value: \"small\", name: \"Small\", _meta: { trae: { contextWindow: 32000 } } },\n    { value: \"large\", "
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+      "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-artifacts.test.ts",
+      "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-budget.test.ts",
+      "digest": "2d0812ca8592b2a3702ce8ee0f6cf4568af9356037cb64be6e731d0a949c9fb3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+      "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
+      "digest": "87f1cf57fca10d4cb0a5db8b64e0713611d0a304054c4ffc973bad34c7eb7132"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+      "digest": "d04e8dca741772db0fd43565fb9fd906fb69a09070a5581161a3dcbf0da24140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:09:13.991Z",
+    "trace": {
+      "runId": "161767d8-9f1a-4014-b3e2-a5519e4a6349",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "726468f442488bf98c0d322ffcd85662d4e11aa2707394fbf5ab54cb8e9929dd",
+      "contextHash": "9af6b2612942385a3550bdc42cd7a278c001615d5f3518e0d49ca169147f2ffd",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2792dfab74511e4d9c3d1fad66847b610b0dcf2771d06ced662a74a03afc7db3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-89ed-7981-a74d-c976fa675121"
+      ],
+      "usage": {
+        "used": 35138,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 63078,
+          "utf8Bytes": 64970,
+          "estimatedTokens": 21657,
+          "budgetedTokens": 27072,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:09:19.214Z",
+    "trace": {
+      "runId": "53bcd91e-3bbc-4771-8b13-e0f49b12862d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "bfffdc00a294a0fc9ba2841d7550ed3b91d3edeb17283ca616a10e25557ebdb6",
+      "contextHash": "c592a9202f07dece3bb2c820a5af776e3e76addbe2b695d9b7bdbef8d25776e9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "98ae544d15bad2554e652df2c80081b4bd50a13819b2456c0275d0c0b3489b96",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee92-354d-7ca0-ba75-018248807a3a"
+      ],
+      "usage": {
+        "used": 35630,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 74182,
+          "utf8Bytes": 81700,
+          "estimatedTokens": 27234,
+          "budgetedTokens": 34043,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,249 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+    "title": "受控学习流水线端到端测试",
+    "summary": "验证捕获材料经过独立提取、核验、策略评估后自动应用并生成单一回执，同时覆盖重启重放、陈旧输入、停止重试、批量门禁和 worker 职责隔离。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "end-to-end",
+        "title": "独立角色与自动应用",
+        "body": "测试通过固定 ACP 代理把 HTTP capture 推入真实学习流水线。提取与核验分别形成成功 job，并使用两个不同会话；受支持的提案最终自动应用为任务，只生成一张应用回执，健康接口报告学习 worker 正常。由此可见 `LearningPipeline` 已串联 Store、MemoryService、FeedbackService 与外部角色运行时，而不只是校验协议夹具。[[c1]]\n\n重启场景先完成提取并留下核验工作，关闭后重新打开同一数据库继续处理；任务和回执各保持一份。再次人工排入核验重放也不会增加任务或回执，说明持久 job 与回执共同约束重复效果。[[c2]] 这些断言证明自动应用和重放幂等，但没有在应用事务内部注入失败，因而不单独证明原子回滚。"
+      },
+      {
+        "key": "failure-and-policy",
+        "title": "失败恢复、批量门禁与职责隔离",
+        "body": "若来源在 job 执行前已有新修订，旧 job 会以 `STALE_JOB_INPUT` 失败，新修订对应工作仍可继续；停止 worker 时，正在执行的超时任务回到可重试状态，而非被标记为永久失败。[[c3]]\n\n批量策略按去重后的联合影响评估：12 个不同创建整体进入待决策，只形成一个 AttentionCase 且没有实体落地；12 个同实体创建的影响计为 1，其中一项应用，其余保留为重复。[[c4]] 普通学习 worker 不领取 `knowledge:*` job，避免与知识角色争抢。[[c5]] 当前仍缺少跨进程领取竞争、租约过期接管以及提取、核验和应用边界崩溃的系统性验证。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "捕获、独立角色与自动应用断言",
+        "reason": "支持两个独立角色会话、任务落地、单一应用回执及学习健康状态的说明，不将其扩大为事务原子性证明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 65,
+          "endLine": 148
+        },
+        "quote": "describe(\"B2-08 controlled learning pipeline\", () => {\n  it(\"runs capture through independent extractor/verifier sessions and atomic application\", async () => {\n    const directory = temporary(\"omem-learning-app-\");\n    const built = await buildApp({\n      dataDir: directory,\n      agentCwd: join(directory, \"agent\"),\n "
+      },
+      {
+        "key": "c2",
+        "label": "重启续跑与重放幂等断言",
+        "reason": "支持持久化核验 job 在重启后继续，以及重复核验不增加任务和应用回执。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 150,
+          "endLine": 212
+        },
+        "quote": "  it(\"resumes a persisted verifier job after restart without duplicate effects\", async () => {\n    const directory = temporary(\"omem-learning-restart-\");\n    let store = new Store(directory);\n    const captured = capture(store, \"pipeline-restart\");\n    const first = pipeline(store, join(directory, \"agent-first\"));\n    "
+      },
+      {
+        "key": "c3",
+        "label": "陈旧输入与优雅停止断言",
+        "reason": "支持旧修订 job 被拒绝，以及停止期间运行任务转回可重试状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 214,
+          "endLine": 282
+        },
+        "quote": "  it(\"rejects stale input and preserves graceful shutdown as retryable\", async () => {\n    const directory = temporary(\"omem-learning-stale-\");\n    const store = new Store(directory);\n    try {\n      const stale = capture(store, \"pipeline-stale\");\n      store.capture({\n        source: \"manual\",\n        externalId: \"pip"
+      },
+      {
+        "key": "c4",
+        "label": "批量影响门禁与去重断言",
+        "reason": "支持不同实体批量整体待决策、单一 AttentionCase，以及同实体去重后仅应用一项。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 285,
+          "endLine": 405
+        },
+        "quote": "describe(\"F: G17 evaluateBatch wired into the real verify path\", () => {\n  const captureBatch = (store: Store, text: string, externalId: string) =>\n    store.capture({\n      source: \"manual\",\n      externalId,\n      title: \"Batch source\",\n      parts: [{ type: \"text\", text }],\n      context: { application: \"batch-test\""
+      },
+      {
+        "key": "c5",
+        "label": "知识角色任务隔离断言",
+        "reason": "支持普通学习 worker 不领取知识角色 job 的职责边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 407,
+          "endLine": 417
+        },
+        "quote": "it(\"leaves knowledge-role work for the knowledge worker\", async () => {\n  const directory = temporary(\"omem-learning-kind-isolation-\");\n  const store = new Store(directory);\n  const p = pipeline(store, join(directory, \"agents\"));\n  try {\n    const { job } = store.jobs.enqueue({ kind: \"knowledge:code-analyst\", inputRefs"
+      }
+    ],
+    "questions": [
+      {
+        "question": "多个学习 worker 并发运行且在提取、核验或应用之间崩溃时，租约与回执能否在所有阶段维持恰好一次的可观察效果？",
+        "why": "现有重启和重放发生在单 worker 顺序执行环境，没有跨进程领取竞争证据。",
+        "nextStep": "增加双进程竞争、租约过期接管以及各事务边界注入崩溃的集成测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-realtime.test.ts",
+      "digest": "8c9f2eeca9a0ad0586572c2ac64d5b5f35a631f2f6199f10ba0db0474c680508"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+      "digest": "c527d049388fa485c086e91af83054f6983c0dd9bdc338f6cc60643f46042600"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-runtime.test.ts",
+      "digest": "d012868f2a7037e3d0e8b4be9a1af3dd29beb77235639fbeb21de9201329edf6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+      "digest": "ccc264f5b3eb1f8c6062722ced2d70a544efb31e3fc38d81fdc823d41afa252e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-refresh.test.ts",
+      "digest": "fe2dad4b8162d09a09f981b6307cfca63749a5b369e315629ab44c31b6be3d20"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/migrations.test.ts",
+      "digest": "bc5b4990d965d39d896c285d9548ca5b428a32b4149cf58e4713876379c78430"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:41:25.665Z",
+    "trace": {
+      "runId": "a2edffe1-1898-45f7-a478-60dd8b1aaef6",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "3fa90c8bcbc8e4ca71e9e9469a9a332975fd449cc46584540bf3258d74159e33",
+      "contextHash": "f6be53512ce24a1a478978535e046e261d09d1379cc14969c84b09b351b112f6",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "43a78522c6e7bb064f408b5155c3c89bc888131c990fcafbcf11c33d9d998a39",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-2dff-7143-b750-5b155df86c99"
+      ],
+      "usage": {
+        "used": 59659,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 142475,
+          "utf8Bytes": 152273,
+          "estimatedTokens": 50758,
+          "budgetedTokens": 63448,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:41:50.026Z",
+    "trace": {
+      "runId": "26c3e0a2-785e-408a-9537-aa2c03688365",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "1191f94c980dc422a5265c4c0b864b63fdb29717fc7201575c2c28838cb7e4da",
+      "contextHash": "74507541e2d4ea570c357cb76866e69bef05ed56de0cca973235cbc23aba2ef7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "31ffc9f0520b6e75503ec67d79692561e856aab3b2e561327c97b8f12aa13728",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-aee7-73c1-93cb-fa080e033449"
+      ],
+      "usage": {
+        "used": 56270,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 138275,
+          "utf8Bytes": 145969,
+          "estimatedTokens": 48657,
+          "budgetedTokens": 60822,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

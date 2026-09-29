@@ -1,0 +1,262 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+    "title": "知识分析与独立复核流水线测试",
+    "summary": "通过模拟角色运行验证分析后复核、拒绝与输入漂移保护、失败续跑、持久成果复用及材料类型到分析角色的分派。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "fixture",
+        "title": "受控角色运行环境",
+        "body": "测试环境捕获一条手工材料，建立通用知识仓库、角色注册表和运行网关，并把网关调用替换为可控制的分析者或复核者结果；流水线并发度固定为一。[[c1]] 模拟 trace 为生成和复核提供不同 session id，同时允许在首轮运行中修改来源或让复核者拒绝，从而精确触发关键保护分支。"
+      },
+      {
+        "key": "promotion",
+        "title": "发布、复用与拒绝保护",
+        "body": "成功分析必须调用两个角色，引用 quote 被绑定为固定原文，生成与复核会话不同；删除知识 head 投影后重跑不会再次调用模型，并恢复相同文章修订。[[c2]] 若独立复核拒绝，或分析期间材料 head 变化，流水线都不得发布文章；后一情形明确返回 `KNOWLEDGE_INPUT_CHANGED`。[[c3]]"
+      },
+      {
+        "key": "resume-routing",
+        "title": "续跑和角色分派边界",
+        "body": "语义拒绝后再次运行会调用 `knowledge-refresher`，且任务携带先前草稿与复核反馈，接受后才产生文章。[[c4]] 分派测试还确认普通 Lark 文档走材料分析，带 conversation id 的 Lark 输入走会话分析，而 Git 或 file 来源的常见代码文件走代码分析。[[c5]] 未覆盖并发大于一、网关异常、输出修复耗尽、图片材料及多目标批次。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "流水线模拟环境",
+        "reason": "支持测试如何构造材料、仓库、角色网关以及可控分析和复核结果。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+          "startLine": 14,
+          "endLine": 34
+        },
+        "quote": "function setup(reject = false, changeDuringRun = false) {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-pipeline-\")); cleanups.push(() => rmSync(dir, { recursive: true, force: true }));\n  const store = new Store(join(dir, \"db\")); cleanups.push(() => store.close());\n  const capture = (text: string) => store.captur"
+      },
+      {
+        "key": "c2",
+        "label": "复核后发布与耐久复用",
+        "reason": "支持双角色调用、固定引用、独立会话和投影丢失后不重跑模型的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+          "startLine": 37,
+          "endLine": 49
+        },
+        "quote": "it(\"publishes only after independent review and reuses durable outputs after projection loss\", async () => {\n  const { store, repository, pipeline, run, captured } = setup();\n  expect((await pipeline.analyze(repository.materials())).failures).toEqual([]);\n  expect(run).toHaveBeenCalledTimes(2);\n  const article = reposi"
+      },
+      {
+        "key": "c3",
+        "label": "拒绝和输入变化保护",
+        "reason": "直接断言复核拒绝及分析期间来源变化都不会晋升知识。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+          "startLine": 51,
+          "endLine": 58
+        },
+        "quote": "it(\"does not promote rejected knowledge or a result whose source changed during analysis\", async () => {\n  const rejected = setup(true);\n  expect((await rejected.pipeline.analyze(rejected.repository.materials())).failures).toHaveLength(1);\n  expect(rejected.repository.list()).toEqual([]);\n  const stale = setup(false, t"
+      },
+      {
+        "key": "c4",
+        "label": "语义拒绝续跑",
+        "reason": "支持 refresher 使用先前草稿和反馈继续处理，而非丢弃失败上下文。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+          "startLine": 60,
+          "endLine": 69
+        },
+        "quote": "it(\"resumes a semantic rejection with its exact prior draft and reviewer feedback\", async () => {\n  const { repository, pipeline, run, accept } = setup(true);\n  expect((await pipeline.analyze(repository.materials())).failures).toHaveLength(1);\n  const before = run.mock.calls.length;\n  accept();\n  expect((await pipeline"
+      },
+      {
+        "key": "c5",
+        "label": "分析角色选择",
+        "reason": "支持 Lark 文档、会话及普通导入代码到不同分析角色的映射。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+          "startLine": 71,
+          "endLine": 77
+        },
+        "quote": "it(\"distinguishes Lark documents from conversations and recognizes ordinary imported code\", () => {\n  const { repository } = setup(); const base = repository.materials()[0]!;\n  expect(analystFor({ ...base, namespace: \"lark\", path: null })).toBe(\"material-analyst\");\n  expect(analystFor({ ...base, namespace: \"lark\", path"
+      }
+    ],
+    "questions": [
+      {
+        "question": "多材料并发分析时，来源变化、部分失败和发布顺序是否仍保持相同保证？",
+        "why": "fixture 把并发度固定为一，现有断言无法证明多个目标或多个 worker 下不会交叉复用草稿、会话或依赖快照。",
+        "nextStep": "增加并发批次测试，分别覆盖单项漂移、单项拒绝、网关异常和其余项成功发布。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "角色分派对无扩展名、复合扩展名和图片代码材料如何处理？",
+        "why": "当前只断言 `.ts` 和 `.py` 等普通代码标题及 Lark conversationId，分类边缘情况没有材料依据。",
+        "nextStep": "整理 analystFor 的输入分类合同，并添加边界文件名、图片及混合 part 测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "e88f3b118275e4adce3b678c6e607b2da995903805d628ce2060bdf4bc8aea80"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-api.test.ts",
+      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+      "digest": "60ba418153006bb59e5d327ea25fc7e20b4b0b06d4a4ae55ecd7979c6661fa3d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
+      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:03:39.352Z",
+    "trace": {
+      "runId": "70ffcd8d-15d2-4f86-b181-cac14c31a865",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "9859ba992394ba1173ea317a45fe1841954b1e357c38358b356cedeaade3e0d3",
+      "contextHash": "2147ddf7fe4a6e669d9c63308c8a9e2b7dee4494459678ad2b2ee5f95a5129cb",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "875914a960324409cf3b454417e5fe8ac92df9970d70c69570b860497ed26bf6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-0df3-7b61-aa0a-a4c8b7030c82"
+      ],
+      "usage": {
+        "used": 36552,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 62403,
+          "utf8Bytes": 65060,
+          "estimatedTokens": 21687,
+          "budgetedTokens": 27109,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:02.270Z",
+    "trace": {
+      "runId": "facc1a5c-031e-4a88-aa19-b66d72392fa0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "1e016c68b564f5fc83d4f039e2b49da37ac95c5b9980517c860aaf912b14c495",
+      "contextHash": "1a68d53cf3735ad8ddcd2d0ba43ca472fbe2ad2e15f8464619d693cd745595a9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1410547631a9f3591b4c02833ddc985685f3ca5643ae030dc316675365dfc8b4",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-08ae-73d3-b213-87a05bfb04ce"
+      ],
+      "usage": {
+        "used": 39789,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 82614,
+          "utf8Bytes": 93683,
+          "estimatedTokens": 31228,
+          "budgetedTokens": 39035,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

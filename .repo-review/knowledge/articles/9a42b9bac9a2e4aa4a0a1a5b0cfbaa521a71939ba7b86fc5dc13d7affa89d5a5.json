@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+    "title": "基础 ACP 协议测试替身",
+    "summary": "一个通过标准输入输出模拟 ACP 会话的确定性进程，用于测试能力发现、模型与推理强度配置、文本和图片提示、超时、取消及权限拒绝。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "protocol",
+        "title": "协议握手与动态配置",
+        "body": "该文件明确是协议测试替身而非生产模型。它逐行读取 JSON-RPC 消息，在初始化时声明图片提示和会话关闭能力，新建会话时返回固定会话标识及配置选项。[[c1]] 模型可选 alpha/beta；推理强度默认 low，只有切到 beta 后才出现 high，因此可检验调用方是否重新读取并校验动态能力。[[c2]]"
+      },
+      {
+        "key": "prompt-flow",
+        "title": "提示处理与可见输出",
+        "body": "收到提示后，替身拼接所有文本块；包含 `TIMEOUT` 时故意不响应。普通路径先发送私有思考块，再发送包含当前模型、强度和图片数量的可见消息，最后以 `end_turn` 完成。[[c3]] 这可用于验证调用方区分思考与答案、传递图片并等待终止响应，但替身本身不验证图片内容或真实模型质量。"
+      },
+      {
+        "key": "permission",
+        "title": "权限与取消边界",
+        "body": "包含 `ASK_PERMISSION` 时，替身主动请求写受保护文件的权限并暂停提示。它只接受调用方返回 `cancelled`；其他结果以退出码 8 暴露错误，拒绝后再输出提示并结束。[[c4]] 会话取消则直接把挂起提示标记为 `cancelled`。[[c5]] 未覆盖允许工具执行、多次并发提示、畸形 JSON 或完整 ACP 错误对象。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "ACP 初始化与会话创建",
+        "reason": "支持该替身通过 JSON-RPC 声明能力并建立固定测试会话。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 1,
+          "endLine": 43
+        },
+        "quote": "// Protocol test double: not a production model and never enabled by default.\nimport readline from \"node:readline\";\nconst send = (value) => process.stdout.write(JSON.stringify(value) + \"\\n\");\nlet model = \"alpha\";\nlet effort = \"low\";\nlet promptId;\nlet permission = false;\nconst options = () => [\n  {\n    id: \"model\",\n    "
+      },
+      {
+        "key": "c2",
+        "label": "模型与推理强度选项",
+        "reason": "支持 beta 模型才提供 high 强度以及配置可动态更新的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 8,
+          "endLine": 29
+        },
+        "quote": "const options = () => [\n  {\n    id: \"model\",\n    name: \"Model\",\n    type: \"select\",\n    currentValue: model,\n    options: [\n      { value: \"alpha\", name: \"Alpha\" },\n      { value: \"beta\", name: \"Beta\" },\n    ],\n  },\n  {\n    id: \"reasoning_effort\",\n    name: \"Effort\",\n    type: \"select\",\n    currentValue: effort,\n    op"
+      },
+      {
+        "key": "c3",
+        "label": "提示响应事件序列",
+        "reason": "支持超时触发、思考块、可见答案和结束原因的核心流程说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 48,
+          "endLine": 97
+        },
+        "quote": "  } else if (msg.method === \"session/prompt\") {\n    promptId = msg.id;\n    const text = msg.params.prompt\n      .filter((p) => p.type === \"text\")\n      .map((p) => p.text)\n      .join(\"\");\n    if (text.includes(\"TIMEOUT\")) return;\n    if (text.includes(\"ASK_PERMISSION\")) {\n      permission = true;\n      send({\n        "
+      },
+      {
+        "key": "c4",
+        "label": "权限请求与拒绝处理",
+        "reason": "支持权限必须被取消以及拒绝后继续完成提示的边界说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 55,
+          "endLine": 70
+        },
+        "quote": "    if (text.includes(\"ASK_PERMISSION\")) {\n      permission = true;\n      send({\n        jsonrpc: \"2.0\",\n        id: \"permission-1\",\n        method: \"session/request_permission\",\n        params: {\n          sessionId: \"test-session\",\n          toolCall: { toolCallId: \"call-1\", title: \"Write protected file\" },\n         "
+      },
+      {
+        "key": "c5",
+        "label": "取消与权限响应分支",
+        "reason": "支持会话取消和权限结果处理的终止行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 98,
+          "endLine": 114
+        },
+        "quote": "  } else if (msg.method === \"session/close\") reply({});\n  else if (msg.method === \"session/cancel\")\n    send({ jsonrpc: \"2.0\", id: promptId, result: { stopReason: \"cancelled\" } });\n  else if (msg.id === \"permission-1\" && permission) {\n    if (msg.result.outcome.outcome !== \"cancelled\") process.exit(8);\n    send({\n     "
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/dev-ports.test.ts",
+      "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+      "digest": "313ea67e92b023f8a3ca1a3a9e12d60362719e018b559c88f3da0fae95646c18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+      "digest": "5c03480e00216e0a3bf25e65281ef68fd3bdc0293273cb9c843452046505d381"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/inputs.test.ts",
+      "digest": "724912caf7ff6c35aff905bbad784c410d9874e72d8223c57c063d2d716ecbec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/jobs.test.ts",
+      "digest": "78c38d182c888dfb374df4597a667f368867b28528fa2e31bb78d34271f1077d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:39:16.387Z",
+    "trace": {
+      "runId": "2c56f7f9-f4c8-4ab6-8685-15ffa93174f3",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "86db881e64a38d45f336ef3899e1f69b71ff7cc0ad8df3c97d2a288125c2de46",
+      "contextHash": "5696168557661b789e00e320ddfa62ee6d6cfcdea1613e31e446bc2821147294",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "65e4573078435087a934cdc4e401966a5cc1271f3577ed9c0a9bbef3093dc5af",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeac-de8a-7c32-b82e-2c462809564e"
+      ],
+      "usage": {
+        "used": 41746,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 79974,
+          "utf8Bytes": 81998,
+          "estimatedTokens": 27333,
+          "budgetedTokens": 34167,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:39:47.787Z",
+    "trace": {
+      "runId": "96fbeffc-ae70-41fd-9c57-89469077d331",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "321e744f2e758a2c88a17a3513e7a818656e340ec73b48ef3536dcd33a2e2108",
+      "contextHash": "b1f6f24246698dd50a922c4db85c855cc4a4b0f81294fa128ac63f7508c058a2",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2bc2bbfc80a8eab78d491eecc4488cbbb8dbbb8ad7b82e23a18f3655ed8fd008",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-b5f2-76f0-86d5-dc9716988634"
+      ],
+      "usage": {
+        "used": 46428,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 101463,
+          "utf8Bytes": 111059,
+          "estimatedTokens": 37020,
+          "budgetedTokens": 46275,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

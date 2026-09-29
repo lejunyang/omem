@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+    "title": "标注会话取消与 Lark 投递隔离测试",
+    "summary": "回归验证取消质量标注会话后的最终状态与发送抑制：尚未发送的卡片不再投递，取消后重新入队的意图也会被拦截；已投递及发送中的记录保持真实状态。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "fixture",
+        "title": "隔离环境与关联数据",
+        "body": "测试以临时 SQLite、加密密钥仓库和假消息适配器构造无网络的 Lark 环境，并建立连接、版本、绑定、通知目标、质量数据集和标注样本。辅助函数还能手工插入 `pending` 或带租约的 `sending` 意图，用来模拟服务正常创建流程之外的队列状态。[[c1]] [[c2]]"
+      },
+      {
+        "key": "cancel-guards",
+        "title": "取消后的状态与双重发送防线",
+        "body": "第一个场景在 `cancel` 返回后读取最终状态，确认会话和原 `pending` 意图均为 `cancelled`，错误原因注明发送前取消；worker 随后没有可处理任务，假适配器零发送。该断言验证最终一致状态，但没有并发观察或失败注入，不能单凭测试证明两个更新的事务原子性。取消后若又出现新的 `pending` 意图，发送端仍会拒绝投递并将其置为取消，形成消费侧补充防线。[[c3]] [[c4]]"
+      },
+      {
+        "key": "honest-boundary",
+        "title": "不可撤回边界",
+        "body": "取消不会改写已经 `delivered` 的历史及其消息标识，也不会把租约仍有效的 `sending` 行伪装成已撤回。测试因此只保证尚未发送的卡片不再发送；它没有覆盖发送中意图在租约到期后究竟收敛为已投递、失败还是去重窗口后的未知状态。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "无网络 Lark 测试环境",
+        "reason": "说明该回归测试使用临时数据库和假消息适配器，不发起真实 Lark 或网络调用。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+          "startLine": 1,
+          "endLine": 36
+        },
+        "quote": "/** G18: cancelling a quality annotation session revokes unsent cards, and the\n *  Lark delivery sender never sends a card for a session that is no longer active.\n *\n * Regression for Batch-2 review F9. Uses a temporary SQLite database and a fake\n * message adapter; no real Lark/network calls.\n */\nimport { randomBytes,"
+      },
+      {
+        "key": "c2",
+        "label": "会话与投递夹具",
+        "reason": "支持测试所需连接、绑定、通知目标、数据集以及手工投递意图的构造方式。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+          "startLine": 70,
+          "endLine": 188
+        },
+        "quote": "function setup(): Fixture {\n  const directory = mkdtempSync(join(tmpdir(), \"omem-g18-\"));\n  directories.push(directory);\n  const store = new Store(directory);\n  const secrets = new EncryptedSecretStore(join(directory, \"secrets\"), randomBytes(32));\n  const secretRef = secrets.put({\n    appId: \"cli_g18\",\n    clientSecret"
+      },
+      {
+        "key": "c3",
+        "label": "取消后的最终状态",
+        "reason": "支持 cancel 返回后会话和排队意图均为取消状态，以及 worker 零发送；不将测试名称中的事务性表述当作已独立验证的原子性。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+          "startLine": 191,
+          "endLine": 215
+        },
+        "quote": "describe(\"G18 cancelling an annotation session revokes unsent cards\", () => {\n  it(\"cancel sweeps the queued intent in the same transaction; sender sends nothing\", async () => {\n    const fixture = setup();\n    try {\n      const session = fixture.quality.start(fixture.datasetId, \"cli_g18\");\n      expect(intentRow(fixtu"
+      },
+      {
+        "key": "c4",
+        "label": "发送端抑制迟到意图",
+        "reason": "支持取消后重新出现的 pending 意图仍被 worker 拦截并转为取消。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+          "startLine": 254,
+          "endLine": 285
+        },
+        "quote": "  it(\"sender suppresses a card even if a retry intent appears after cancellation\", async () => {\n    const fixture = setup();\n    try {\n      const session = fixture.quality.start(fixture.datasetId, \"cli_g18\");\n      fixture.quality.cancel(session.id);\n      // Simulate an intent that lands in the queue after the sessi"
+      },
+      {
+        "key": "c5",
+        "label": "保留已投递与发送中状态",
+        "reason": "支持不召回已投递历史、不伪改发送中状态，并界定租约到期后的收敛行为尚未覆盖。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+          "startLine": 217,
+          "endLine": 252
+        },
+        "quote": "  it(\"keeps delivered history and does not recall an in-flight send\", () => {\n    const fixture = setup();\n    try {\n      const session = fixture.quality.start(fixture.datasetId, \"cli_g18\");\n      const at = new Date().toISOString();\n      // The first card already reached the user.\n      fixture.store.db\n        .pre"
+      }
+    ],
+    "questions": [
+      {
+        "question": "发送中意图在租约到期后的最终收敛行为由哪组测试覆盖？",
+        "why": "本文件只断言取消瞬间仍为 `sending`，没有证明后续会落到 delivered、失败或去重窗口后的未知状态。",
+        "nextStep": "增加租约到期与提供方响应的组合测试，验证状态转换、重试或去重策略及用户可见审计记录。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "是否要求独立证明取消会话与撤销 pending 意图之间不存在可见的中间状态？",
+        "why": "当前测试仅在 `cancel` 返回后顺序读取两个最终状态，无法证明更新的事务原子性。",
+        "nextStep": "若原子性是合同要求，增加并发观察或在第二次更新处注入失败，断言回滚后不存在部分提交。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/acp-model.test.ts",
+      "digest": "942f2dbe8220d012e8d1ab1427eec8313367c90470848697afc3a98c7f952a10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/agents.test.ts",
+      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/app.test.ts",
+      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/attention-gate.test.ts",
+      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:08:58.104Z",
+    "trace": {
+      "runId": "ce89aea8-00ae-4b7f-8bb0-e96fcc21bf87",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "bf6677f6740f05519c730680c31b3ce4b87ff58b65ef3d9b1e48854a10c69fb7",
+      "contextHash": "8de262284abc31d113cce776abc01270bd72c2d7b1929609ff39c5bfe9feb04b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3baccbfb4c459ec7d3a3926540ac6c9177d3e0f54d6b64846747b9d2f303fa34",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-4666-7411-85e7-8abcb842bd5c"
+      ],
+      "usage": {
+        "used": 61903,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 144579,
+          "utf8Bytes": 156807,
+          "estimatedTokens": 52269,
+          "budgetedTokens": 65337,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:09:09.429Z",
+    "trace": {
+      "runId": "f9c1b448-7451-47e3-9383-cb672e94f364",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "400acf43032375ca4d2e60a9ed5737396e51fa2048e9fbb2f07ffb3e80a9d4eb",
+      "contextHash": "e3d0b84b64d5a840cf56a76ad4aa5302065ad1ace05772ffdfd8b8720523dfbd",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "83b4d5e16e54bb86a86dac8dbf877092b8ff4c4346a65091dcd19abfd5a21cb3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-f732-76b2-a67e-d039692178d2"
+      ],
+      "usage": {
+        "used": 55822,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 141376,
+          "utf8Bytes": 152758,
+          "estimatedTokens": 50920,
+          "budgetedTokens": 63650,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

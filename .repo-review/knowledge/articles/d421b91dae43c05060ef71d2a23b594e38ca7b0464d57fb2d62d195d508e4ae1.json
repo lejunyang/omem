@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/review-materials.test.ts",
+    "title": "仓库评审材料捕获与用户澄清恢复测试",
+    "summary": "验证评审同步捕获源码关联文档、部署示例和图片，同时排除私有配置；用户澄清则作为带来源信息的原始材料发布并可恢复到独立数据库。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "capture-boundary",
+        "title": "仓库材料的捕获边界",
+        "body": "测试构造 README、被其链接的部署示例、PNG 图片、`.env` 和本地设置文件。首次捕获只纳入 README、部署示例和图片，图片在知识仓库中具有图像内容，README 还能发现链接材料；重复捕获不会增加 revision 数量。私有 `.env` 与 `settings.local.json` 不出现在材料列表中，说明该用例同时检查多模态、链接发现、幂等性和私有配置排除。[[c1]]"
+      },
+      {
+        "key": "clarification",
+        "title": "用户回答作为原始证据",
+        "body": "另一用例先把职责澄清以 manual source 捕获，记录 owner、local-ui 验证、时区及 `producerKind: original`，再保存为评审知识资产。新的、无 legacy 数据库的 Store 恢复后，仍能按固定 key 找到原文和 actor，并保持原始材料 provenance。[[c2]] 这验证了用户回答可跨运行库恢复，但只覆盖单条文本澄清，未展示冲突回答、撤回、图片回答或多个版本的裁决。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "仓库材料捕获与排除测试",
+        "reason": "支持文档、部署配置和图片捕获，链接材料发现、重复捕获幂等，以及私有配置不导入。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-materials.test.ts",
+          "startLine": 9,
+          "endLine": 29
+        },
+        "quote": "it(\"captures source, deployment configuration and image materials without importing runtime or private config\", () => {\n  const root = mkdtempSync(join(tmpdir(), \"review-materials-\"));\n  const store = new Store(join(root, \".repo-review/runtime/db\"));\n  try {\n    mkdirSync(join(root, \"deploy\"), { recursive: true });\n   "
+      },
+      {
+        "key": "c2",
+        "label": "用户澄清保存与恢复测试",
+        "reason": "支持用户回答作为 original material 保存，并在独立运行数据库中恢复正文、actor 和 provenance。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-materials.test.ts",
+          "startLine": 31,
+          "endLine": 42
+        },
+        "quote": "it(\"persists user clarification as original material and restores it without a legacy database\", () => {\n  const root = mkdtempSync(join(tmpdir(), \"review-user-notes-\"));\n  const first = new Store(join(root, \".repo-review/runtime/first\"));\n  const second = new Store(join(root, \".repo-review/runtime/second\"));\n  try {\n "
+      }
+    ],
+    "questions": [
+      {
+        "question": "同一问题出现多次用户澄清、撤回或相互冲突的回答时，恢复过程如何保留版本并确定当前有效回答？",
+        "why": "材料只保存和恢复一条固定 key 的文本回答，没有覆盖同 key 多版本、撤回标记或冲突裁决。",
+        "nextStep": "增加同一问题多次回答与撤回的测试，断言不可变 revision、当前 head、历史可追溯性及正文重核对触发条件。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "私有配置排除规则是否覆盖嵌套目录、其他常见密钥文件名和符号链接逃逸？",
+        "why": "当前用例只检查根目录下 `.env` 与 `settings.local.json`，不足以说明更广泛路径和链接边界。",
+        "nextStep": "增加嵌套 `.env.*`、密钥文件、gitignored 文件及指向仓库外部的符号链接夹具，逐项断言拒绝原因。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery.test.ts",
+      "digest": "77aa882e9476a521c31857548c2d3cb7631b859867d375aa56c4c08157938ca9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-onboarding.test.ts",
+      "digest": "53ebb0531146d960d3e29d618eaaafff15e624746100a1cbc168f3bd5fef1488"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-materials.test.ts",
+      "digest": "c7aac5333878fa569148d29e0eda92d9830006444c5e89e96351205f2a88d348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-migration.test.ts",
+      "digest": "aac9e5aded456d6287dfceaf8b674320541bf0aa19f1636e28c5135649096fee"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-relations.test.ts",
+      "digest": "712eb29abc8429b4ff8597d6054b37333d4d91d701542465465e2fa5cf449602"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:04:01.660Z",
+    "trace": {
+      "runId": "4edb4b1d-549e-48f2-b368-3aa2fb5d5785",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "50b624a98a57465c86ff848698749228f32932dda3164b56c7e3f1fa6bb8c30f",
+      "contextHash": "f5f31135c7009fa2d9758abda35806103f7ab7c7c891ee33489042cfb78aa5b0",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "50abb2bab698468840298d5deac334d4b5bb5314738352a544e05fbc1da8671f",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-858d-7b23-9303-33ce0a06772f"
+      ],
+      "usage": {
+        "used": 63513,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143080,
+          "utf8Bytes": 153964,
+          "estimatedTokens": 51322,
+          "budgetedTokens": 64153,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:22.995Z",
+    "trace": {
+      "runId": "74612ce0-414a-4476-b67e-476132ac74ea",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "53aeefe6a4e64c6a12c42035d4eb24afb823ac106bbfc39171380460184dbf67",
+      "contextHash": "b2e6a82c3dac4e20cd2e445f66a8f5600f26782f8cf0bb5174099e2e1a3c2503",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5c74cceb6518bf17bc47b6f8fedc63b0944291a246ebb0b577e5785d52d27e5a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-5fc4-7793-9ad9-f96c290d8107"
+      ],
+      "usage": {
+        "used": 59759,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 146050,
+          "utf8Bytes": 157432,
+          "estimatedTokens": 52478,
+          "budgetedTokens": 65598,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
