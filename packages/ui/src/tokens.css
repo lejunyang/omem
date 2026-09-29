@@ -95,3 +95,15 @@ a {
     scroll-behavior: auto !important;
   }
 }
+
+/* Shared neutral syntax theme; also applies to Markdown fences. */
+:is(.om-code-view, .om-markdown) .hljs-keyword,
+:is(.om-code-view, .om-markdown) .hljs-selector-tag { color: #202020; font-weight: 700; }
+:is(.om-code-view, .om-markdown) .hljs-comment,
+:is(.om-code-view, .om-markdown) .hljs-quote { color: #737373; font-style: italic; }
+:is(.om-code-view, .om-markdown) .hljs-string,
+:is(.om-code-view, .om-markdown) .hljs-attr { color: #555; }
+:is(.om-code-view, .om-markdown) .hljs-title,
+:is(.om-code-view, .om-markdown) .hljs-built_in { color: #303030; font-weight: 600; }
+:is(.om-code-view, .om-markdown) .hljs-number,
+:is(.om-code-view, .om-markdown) .hljs-literal { color: #666; }

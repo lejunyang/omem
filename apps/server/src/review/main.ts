@@ -27,6 +27,7 @@ try {
     store,
     repoRoot,
     port,
+    webPort: Number(process.env.REVIEW_WEB_PORT || 5181),
     codeUnderstandingModel,
   });
   await app.listen({ port, host });

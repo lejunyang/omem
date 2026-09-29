@@ -1,15 +1,7 @@
 <script setup lang="ts">
-/** On-demand source viewer with line numbers, range anchors and a monochrome
- * hljs theme. Highlight.js is dynamically imported and only the requested
- * language is registered (never the full bundle). The highlighted HTML is run
- * through a strict allow-list sanitizer before v-html: only <span class="hljs-*">
- * and whitespace text nodes survive, no attributes other than class.
- *
- * Lines are highlighted one-by-one so line numbers / range anchors stay exact;
- * multi-line block comments and template literals therefore do not colour
- * across line boundaries (a documented limit of this slice).
- */
-import { ref, watch, nextTick, onMounted } from "vue";
+/** Shared source viewer: full-document highlighting with stable line anchors. */
+import { ref, watch, nextTick } from "vue";
+import { escapeCode as escapeHtml, highlightCode, highlightedLines } from "../highlight";
 
 export type CodeRangeMark = {
   start: number;
@@ -36,68 +28,21 @@ const loading = ref(false);
 const root = ref<HTMLElement>();
 const flashed = ref(false);
 
-const LANG_IMPORT: Record<string, string> = {
-  typescript: "typescript",
-  ts: "typescript",
-  tsx: "typescript",
-  javascript: "javascript",
-  js: "javascript",
-  mjs: "javascript",
-  vue: "xml",
-  html: "xml",
-  md: "markdown",
-  markdown: "markdown",
-  json: "json",
-  toml: "ini",
-  bash: "bash",
-  sh: "bash",
-};
-
 const lines = () => props.code.split("\n");
-
-async function highlightAll() {
-  const lang = props.language || "typescript";
-  const hljsLang = LANG_IMPORT[lang];
-  if (!hljsLang) {
-    hl.value = {};
-    return;
-  }
+let generation = 0;
+watch(() => [props.code, props.language] as const, async ([code, language]) => {
+  const current = ++generation;
+  hl.value = {};
   loading.value = true;
   try {
-    const [core, langMod] = await Promise.all([
-      import("highlight.js/lib/core"),
-      import(`highlight.js/lib/languages/${hljsLang}`),
-    ]);
-    if (!core.default.getLanguage(hljsLang))
-      core.default.registerLanguage(hljsLang, (langMod as { default: unknown }).default);
-    const out: Record<number, string> = {};
-    lines().forEach((line, i) => {
-      try {
-        out[i + 1] = core.default.highlight(line, { language: hljsLang, ignoreIllegals: true }).value;
-      } catch {
-        out[i + 1] = escapeHtml(line);
-      }
-    });
-    hl.value = out;
+    const rows = highlightedLines(await highlightCode(code, language || "typescript"));
+    if (current === generation) hl.value = Object.fromEntries(rows.map((line, i) => [i + 1, line]));
   } catch {
-    hl.value = {}; // fall back to plain text lines
+    if (current === generation) hl.value = {};
   } finally {
-    loading.value = false;
+    if (current === generation) loading.value = false;
   }
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-watch(
-  () => props.code,
-  () => void highlightAll(),
-  { immediate: true },
-);
+}, { immediate: true });
 
 watch(
   () => props.anchorLine,
@@ -111,7 +56,6 @@ watch(
   },
 );
 
-onMounted(() => void highlightAll());
 
 function isHighlighted(n: number): boolean {
   return props.highlightLines?.includes(n) || props.anchorLine === n;

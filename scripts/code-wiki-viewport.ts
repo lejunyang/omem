@@ -54,6 +54,9 @@ async function scrollTrail(page: import("@playwright/test").Page) {
 try {
   const page = await browser.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (message) => {
+    if (/highlight|dynamic import/i.test(message.text()) && ["warning", "error"].includes(message.type())) errors.push(message.text());
+  });
 
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -89,6 +92,8 @@ try {
     expect(t).not.toContain("Failed to fetch");
     await expect(page.locator(".om-trail .om-code-view .ln").first()).toBeVisible({ timeout: 10000 });
     expect(await page.locator(".om-trail .om-code-view .ln").count()).toBeGreaterThan(5);
+    await expect(page.locator(".om-trail .om-code-view .hljs-keyword").first()).toBeVisible();
+    expect(await page.locator(".om-trail .om-code-view .hljs-keyword").first().evaluate(el => getComputedStyle(el).fontWeight)).toBe("700");
   });
 
   // --- Frame 2: governCreateTask call edge drills a symbol frame (same-file) --

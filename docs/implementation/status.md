@@ -1,3 +1,5 @@
+> 2026-09-29 本机复审更新：开发启动已共用进程管理和动态端口选择，显式端口冲突失败；根 tsconfig 修复编辑器 Node 项目识别。共享 CodeViewer / Markdown 使用可被 Vite 打包的语言导入、完整文本语法解析和中性色高亮。验证：`osdk run check` exit 0（49 文件 / 309 用例 + typecheck/build）；实际新端口 27585/33685 上的 `code-wiki-viewport.ts` exit 0，包含高亮关键词样式、1440/768/390、引用栈与 XSS。下文旧的“端口固定/本机没有 traecli”是此前环境记录。
+
 # 实现状态
 
 > 本页为唯一当前状态来源。文档最后更新：2026-09-29（通用 Code Knowledge / Code Wiki 纵向切片完成后）。**运行时权威**：当前 commit / 工作树状态以 `git rev-parse --short HEAD`、`git status --short` 为准，代码 snapshot 以运行中 `GET /api/review/code/current-snapshot` 为准；本静态页只记录最后一次验证命令与历史证据，不固化任何 commit id、snapshot id 或本地提交数。

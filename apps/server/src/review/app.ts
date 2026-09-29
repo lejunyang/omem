@@ -50,14 +50,6 @@ type Row = Record<string, unknown>;
 
 export const REVIEW_API_PREFIX = "/api/review";
 
-/** Browser origins allowed to call the loopback API without a token. The web UI
- * is served by Vite (5181) or the static production bundle (5180). */
-const ALLOWED_ORIGINS = new Set([
-  "http://127.0.0.1:5181",
-  "http://localhost:5181",
-  "http://127.0.0.1:5180",
-  "http://localhost:5180",
-]);
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 export type ReviewAppDeps = {
@@ -67,6 +59,7 @@ export type ReviewAppDeps = {
    * `<repoRoot>/apps/web/dist`. */
   webDistDir?: string;
   port?: number;
+  webPort?: number;
   /** Explicit, opt-in model for Code Understanding generation. Defaults to no
    *  model: the review app never reads secrets or calls a live LLM by default. */
   codeUnderstandingModel?: UnderstandingTransportConfig;
@@ -74,6 +67,9 @@ export type ReviewAppDeps = {
 
 export async function buildReviewApp(deps: ReviewAppDeps) {
   const { store, repoRoot } = deps;
+  const allowedOrigins = new Set([deps.port ?? 5180, deps.webPort ?? 5181].flatMap(
+    (port) => [`http://127.0.0.1:${port}`, `http://localhost:${port}`],
+  ));
   ensureReviewMetaTable(store);
   ensureReviewRelationsTable(store);
   const memory = new MemoryService(store);
@@ -110,7 +106,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       return reply.code(403).send({ error: "Local host required" });
     if (req.headers.origin) {
       const origin = String(req.headers.origin).replace(/\/$/, "");
-      if (!ALLOWED_ORIGINS.has(origin))
+      if (!allowedOrigins.has(origin))
         return reply.code(403).send({ error: "Cross-origin request rejected" });
     }
   });

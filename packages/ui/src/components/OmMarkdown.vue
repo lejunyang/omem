@@ -1,15 +1,8 @@
 <script setup lang="ts">
-/** Safe Markdown renderer. `marked` compiles to HTML, then DOMPurify strips
- * everything but a small allow-list (no script/iframe/img/form/input/svg/style,
- * no inline event handlers, no javascript: URIs). marked and dompurify are
- * dynamic-imported on first use so they are not in the first-paint bundle.
- *
- * Fenced code blocks are NOT passed through the HTML channel: they are extracted
- * and re-rendered as plain <pre> text (syntax highlighting for docs is out of
- * scope for this slice). Relative ./ links are intercepted and emitted as
- * navigate-internal so the SPA can deep-link instead of navigating away.
- */
+/** Markdown is compiled, highlighted with the shared code renderer, then
+ * sanitized with DOMPurify. Relative links remain in the evidence reader. */
 import { ref, watch } from "vue";
+import { highlightCode } from "../highlight";
 
 const props = defineProps<{ source: string }>();
 const emit = defineEmits<{
@@ -23,7 +16,7 @@ const failed = ref(false);
 const ALLOWED_TAGS = new Set([
   "p", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6",
   "code", "pre", "a", "strong", "em", "blockquote", "table", "thead",
-  "tbody", "tr", "th", "td", "hr", "br", "del", "input",
+  "tbody", "tr", "th", "td", "hr", "br", "del", "span",
 ]);
 
 async function render() {
@@ -38,12 +31,18 @@ async function render() {
       import("marked"),
       import("dompurify"),
     ]);
-    marked.setOptions({ async: false, breaks: false });
-    const raw = marked(props.source) as string;
+    const raw = await marked.parse(props.source, {
+      async: true,
+      walkTokens: async (token) => {
+        if (token.type !== "code") return;
+        const value = await highlightCode(token.text, (token.lang || "").split(/\s/)[0] || "");
+        Object.assign(token, { type: "html", text: `<pre><code>${value}</code></pre>` });
+      },
+    });
     const purify = DOMPurify.default;
     const clean = purify.sanitize(raw, {
       ALLOWED_TAGS: [...ALLOWED_TAGS],
-      ALLOWED_ATTR: ["href"],
+      ALLOWED_ATTR: ["href", "class"],
       ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|\/|\.\/|\.\.\/)/i,
       ALLOW_DATA_ATTR: false,
     });

@@ -15,7 +15,7 @@ osdk run build
 osdk run start
 ```
 
-浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 4317 和 Vue 5173。
+浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 与 Vue（默认 4317 / 5173）。默认端口被占用时选择空闲端口，并将实际 API 地址传给前端代理；请打开终端打印的 web URL。可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定端口（显式指定且被占用会报错）。根 `tsconfig.json` 为编辑器提供与服务端检查一致的 Node 类型配置。
 
 ## Code Wiki（通用代码知识纵向切片）
 
@@ -25,7 +25,7 @@ Code Wiki **不是独立产品**，也不是第二套知识库。它是同一套
 osdk run dev:review
 ```
 
-启动后 API 在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`（在浏览器打开这个 URL，Vite strictPort，5180/5181 被占时 preflight 明确报错退出，不静默换端口）。首次启动自动全量同步仓库材料；之后在 web「同步」页点「立即同步」做增量更新（幂等，重复运行不重复入库）。dev 脚本用直接 node 子进程管理 API 与 Vite，退出时 `taskkill /T /F` 清理整棵进程树，API 非 0 退出透传为 dev-review 退出码。实测当前同步库约 160 个 source / 1.2 万个 fragment，代码图投影 190 个文件（`ts-ast@1+vue-sfc@1+regex@1` 解析器）。
+启动后 API 在 `http://127.0.0.1:5180`，Vue dev web 在 `http://127.0.0.1:5181`（默认端口；已被占用时选择空闲端口，终端打印实际 URL）。`REVIEW_PORT` / `REVIEW_WEB_PORT` 可显式指定端口，此时冲突严格报错。首次启动自动全量同步仓库材料；之后在 web「同步」页点「立即同步」做增量更新（幂等，重复运行不重复入库）。dev 脚本用直接 node 子进程管理 API 与 Vite，退出时 `taskkill /T /F` 清理整棵进程树，API 非 0 退出透传为 dev-review 退出码。实测当前同步库约 160 个 source / 1.2 万个 fragment，代码图投影 190 个文件（`ts-ast@1+vue-sfc@1+regex@1` 解析器）。
 
 **结构图是确定性的，不需要模型**：TypeScript Compiler AST（单文件、不建 Program）+ `@vue/compiler-sfc` 解析 `.vue` + 保守正则补 Fastify 路由与 `it/test` 用例，产出 imports/exports/defines/routes/tests/组件/range 边；零新 pnpm 依赖、离线、可重跑。评审意图边（`implements/requires/decided_by/researched_by/tested_by/candidate_for`）仍只来自手维护的 `docs/repo-review/associations.json`。派生模块说明是 committed 的 curated seed（`.repo-review/knowledge/understandings/*.seed.json`），同步时把 seed 里的 path+qualifiedName 定位到 head 图、盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验后投影为 current 行——**没有任何生产模型被调用**，seed 行恒为 `seed=true / verified_by_agent=false`。
 
