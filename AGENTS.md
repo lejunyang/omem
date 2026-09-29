@@ -15,15 +15,24 @@ Read `README.md` and `docs/implementation/status.md` for actual capabilities. In
 
 ## Code Wiki / repo-review 维护规则
 
-Code Wiki 不是独立产品：`code_*` 表是权威 Capture→Source/Revision/Fragment→Relation/Retrieval 链上可重建的 typed projection；repo-review 只是隔离 dev 配置/视图（独立 SQLite、5180 API + 5181 web、不起业务 worker）。启动用 `osdk run dev:review`。
+Code Wiki 不是独立产品：`knowledge_*` 正文/引用与 `code_*` 结构图都是统一 Capture→Source/Revision/Fragment 链上的派生视图。通用处理使用 `KnowledgePipeline` + `RoleRuntimeGateway` + 现有 jobs；repo-review 只是本仓库输入适配器与隔离运行配置（独立 SQLite、默认 5180 API / 5181 web，端口可变，不起业务 worker）。启动用 `osdk run dev:review`。
 
 - **DTO 人类 label / internal id 分离**：返回给前端时铺开内部 `*Id` 键（fileId/symbolId/edgeId/fragmentId…）供路由与深链，但展示字段必须用 `displayTitle/displayPath/symbolName/citationLabel/actionable/reason`；任何内部 id（`file_…/sym_…/frag_…`、裸 UUID）不得作为可见文本渲染。missing/stale 节点 `actionable=false` 并带人读 reason，不静默跳转目标。
 - **trail 交互与个人 EvidenceReader 共用同一合同**：帧栈（push/pop/jump/loop、滚动记忆、Esc 退层、close-all 归还焦点）放在 `packages/ui` 的 trail composable/OmDialog 系组件里，Code Wiki 直接复用，不在 codewiki 侧另造第二套 drawer。URL hash 深链可序列化整栈；`MAX_TRAIL` 只是深链 URL 长度预算（200），渲染栈不静默截断。
 - **seed 引用必须可校验**：评审边唯一来源是手维护的 `docs/repo-review/associations.json`（每条点名 codePath+symbol + requirement/decision/research/test 锚点）；模块理解 seed（`.repo-review/knowledge/understandings/*.seed.json`）用 path+qualifiedName+kind 定位。同步时把这些 locator 重新解析到 head 图并盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验；解析不到的 locator 保留为 rejected 行，永不覆盖好行。**不要**用语义相似度自动加边。
-- **模型默认关闭**：review 只读可选 `REVIEW_CODE_MODEL_CONFIG` 指向的 JSON，从不读个人 Agent profile；未配置时图与 curated seed 照常服务，生成端点 503。curated seed 行恒 `seed=true / verified_by_agent=false`，不要在 narrative 里宣称跑过模型。
-- **写边界（三层目录）**：所有实时写入只落 `.repo-review/runtime/`（gitignored，唯一写入处）。tracked 的 `.repo-review/data/` 种子快照与 `last-sync.*`/`browser.*.log`/`migrated-v2.flag` 是用户冻结资产——**不得删除、不得 untrack**；`.repo-review/knowledge/**` curated 资产入库。任务若意外改动了 tracked 文件，先 `git status`/`git diff` 确认归属，把本任务自己造成的 tracked 变更恢复到任务开始基线，再只提交本任务明确的切片。
+- **实际模型配置**：review 默认读取 `config/review-code-model.json`，`REVIEW_CODE_MODEL_CONFIG` 可覆盖，不读个人 Agent profile。启动只恢复知识，不自动调用模型；显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模型成果。
+- **数据与发布边界**：数据库、临时工作目录和构建暂存写 `.repo-review/runtime/`（gitignored）。明确的知识生成/保存操作可以发布 `.repo-review/knowledge/articles/*.json|md`、user-notes、覆盖记录与 wiki 索引，按功能提交。旧 `.repo-review/data/` 与根级同步日志仅是历史档案，默认启动不再读取；仅 `REVIEW_IMPORT_LEGACY=1` 导入旧历史，未经用户明确要求不删除/untrack。已有用户修改必须保留。
 - **改完必跑**：`osdk deps --frozen` 与 `osdk run check`（typecheck + 全量 vitest + build）；UI 改动在 `osdk run dev:review` 起来后跑 `scripts/code-wiki-viewport.ts`（Playwright，首次先 `pnpm exec playwright install chromium`；按稳定名称点穿真实 UI，不用硬编码 DB id）。
 - **边界**：跨文件 calls 不解析（单文件名称级 calls 标 candidate）；跨 revision 符号/fragment 身份续接未实现，代码改完要重新 sync 让 locator 在新 head 重定位。
+
+### 正文知识与 Agent 流程
+
+- 先分析原始材料，再独立复核，最后组织模块/主题/概览。代码、文档、对话、图像的角色使用同一合同和运行时，不能另建 code-only 捕获或事实 authority。
+- 正文的 `[[citation]]` 必须贴近论断，引用有可读名称、理由、关系和固定目标。模型选定位范围，宿主复制精确原文，独立角色核对支持性；位置校验不等于语义核验。
+- 知识、原文、代码 import 的阅读使用 `packages/ui` 的 `useEvidenceTrail` / `OmTrailDrawer`，与个人知识入口共用。不要再把所有引用堆到文章底部。
+- 无法确认的事项保留为有依据的疑问/调查项；用户明确操作可入现有待办，回答作为原始材料保存并触发重核对。派生正文用于引导召回时仍返回原始 Fragment，保留原有可见性过滤。
+- 两类 worker 都必须限定自己处理的 kind，避免抢占对方任务。错误/过期结果不得覆盖有效知识，失败覆盖不得计为完成。
+- 每项功能相关检查通过后立即单独提交；阅读界面、运行流程、仓库适配和已复核知识资产不要混成一笔大提交。
 
 ### 关系模型
 
