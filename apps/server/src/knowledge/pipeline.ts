@@ -50,7 +50,7 @@ export class KnowledgePipeline {
     return {
       schema_version: 1, job_id: jobId, role_id: role as ContextManifest["role_id"],
       trusted_context: { workspace_id: "personal", project_id: null, owner_id: "owner", observed_at: new Date().toISOString(), timezone: "Asia/Shanghai",
-        actor_binding: { id: null, verified_by: null }, source_kind: "file", is_forwarded: false, producer_kind: "original", source_epoch: 1, project_trusted: false },
+        actor_binding: { id: null, verified_by: null }, source_kind: (offers[0]?.material.namespace ?? "file") as ContextManifest["trusted_context"]["source_kind"], is_forwarded: offers.some(o => o.material.forwarded), producer_kind: "original", source_epoch: 1, project_trusted: false },
       materials, related_memories: [], confirmed_corrections: [],
       task: { ...task, articles: articles.map(a => ({ ...a.document, revision: a.revision, provenance: "derived knowledge, not independent evidence" })),
         allowedMaterials: offers.map(o => ({ key: o.material.key, title: o.material.title, ranges: o.ranges, image: !!o.material.images.length })) },
@@ -114,8 +114,8 @@ export class KnowledgePipeline {
     let repair: unknown = undefined;
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const write = await this.runRole(role, offers, articles, { targetKeys: remaining.map(t => t.key), targets: remaining, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const write = await this.runRole(attempt ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
       const batch = knowledgeBatchSchema.parse(write.result);
       const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents }, out => {
         const r = knowledgeReviewSchema.parse(out);
