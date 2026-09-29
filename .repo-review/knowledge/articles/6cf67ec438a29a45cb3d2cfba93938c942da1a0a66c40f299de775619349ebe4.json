@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
-    "title": "评审运行时种子迁移测试",
-    "summary": "验证 repo-review 从历史快照一次性迁移到隔离运行目录时的数据保全、幂等性、空启动与失败恢复边界。",
+    "title": "Repo-review 运行时数据迁移与启动隔离测试",
+    "summary": "验证默认启动忽略旧数据库，而显式种子流程可首次备份旧快照与状态到运行时目录，并保证幂等、失败清理和旧文件不变。",
     "category": "tests",
     "sections": [
       {
-        "key": "migration-boundary",
-        "title": "历史快照与运行时的边界",
-        "body": "默认启动直接使用可重建的运行时存储，即使历史数据库损坏也不会读取或改写它。显式执行种子迁移时，测试先构造包含 source、revision、fragment 和同步状态的历史快照，再核对运行时数据库中的行数及状态文件，证明迁移既复制知识数据，也投影同步进度。[[c1]][[c2]]"
+        "key": "default-startup",
+        "title": "默认启动与旧数据隔离",
+        "body": "测试构造不可用的旧数据库后直接创建 review Store，期望得到空的可重建运行时，同时原损坏文件内容保持不变。[[c1]] 这表明默认启动不会读取或修复历史 `.repo-review/data`，旧数据也不会因新运行时初始化而被覆盖。该行为与显式导入路径分离：它保障启动安全，但不会自动恢复旧知识。"
       },
       {
-        "key": "idempotence-recovery",
+        "key": "first-seed",
+        "title": "首次种子复制与状态投影",
+        "body": "显式种子流程以包含 source、revision、fragment 和旧同步状态的快照为输入。首次执行后，运行时数据库存在且关键表行数保持一致，旧同步标记被投影到新状态目录；与此同时，旧数据库和旧状态文件的摘要不变。[[c2]] 因而迁移采用复制并保留来源的策略，而非原地移动或改写。"
+      },
+      {
+        "key": "retry-safety",
         "title": "幂等、空启动与失败恢复",
-        "body": "运行时数据库一旦存在便成为权威副本：第二次迁移不会重新覆盖其中的后续写入；没有历史快照时则保持空启动，不凭空创建数据库。若历史 SQLite 损坏导致迁移失败，部分生成的运行时数据库会被移除，以便下次重试，同时历史文件哈希保持不变。[[c3]][[c4]]"
-      },
-      {
-        "key": "coverage-limit",
-        "title": "测试范围与限制",
-        "body": "这些用例重点证明单次本地迁移的文件与数据安全，没有覆盖并发启动、迁移期间进程崩溃、超大数据库性能或 WAL 持续写入时的竞争行为。因此它们支持“可恢复的一次性导入”，但不能单独证明所有生产环境下的原子切换。[[c2]][[c4]]"
+        "body": "运行时数据库一旦存在，第二次种子调用不会重新复制；测试写入 marker 后仍能读到它，证明已有运行时状态未被重置。[[c3]] 没有旧快照时，流程不会凭空创建数据库。对于损坏旧库，种子会抛错并删除部分目标，使后续仍可重试，同时旧文件摘要保持不变。[[c4]] 本文件验证本地复制一致性与清理边界，但未覆盖超大数据库、进程中断或并发种子调用。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "损坏历史库的默认启动",
-        "reason": "支持默认启动忽略不可用历史数据库、创建空运行时且不改写历史文件的论断。",
+        "label": "默认启动忽略损坏旧库",
+        "reason": "支持默认创建运行时 Store 不读取不可用旧库，并保持旧文件原样。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -38,8 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "首次迁移的数据与状态保全",
-        "reason": "支持首次迁移复制数据库内容、投影同步状态并保持历史文件不变的论断。",
+        "label": "首次备份与状态投影",
+        "reason": "支持数据库行数和状态文件被复制到运行时目录，同时旧快照保持不变。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -51,45 +51,49 @@
       },
       {
         "key": "c3",
-        "label": "重复迁移与全新启动",
-        "reason": "支持重复调用不覆盖运行时修改，以及无历史快照时不创建数据库的论断。",
+        "label": "重复种子的幂等性",
+        "reason": "支持第二次调用不会覆盖已修改的运行时数据库。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
           "startLine": 137,
-          "endLine": 163
+          "endLine": 157
         },
         "quote": "  it(\"is idempotent: a second call does not overwrite the runtime or touch legacy\", () => {\n    const repoRoot = makeRepoRoot();\n    buildLegacy(repoRoot);\n    ensureReviewRuntimeSeeded(repoRoot);\n    const runtimeDb = join(reviewDataDir(repoRoot), \"omem.sqlite\");\n    const firstHash = sha(runtimeDb);\n\n    // Mutate th"
       },
       {
         "key": "c4",
-        "label": "失败后的清理与历史保留",
-        "reason": "支持迁移失败时清理部分目标并保持损坏历史快照原样的论断。",
+        "label": "新启动与失败清理",
+        "reason": "支持无旧快照时不创建数据库，以及损坏快照失败后删除部分目标并保留旧文件。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
-          "startLine": 165,
+          "startLine": 159,
           "endLine": 178
         },
-        "quote": "  it(\"removes a partial destination on failure and leaves legacy intact\", () => {\n    const repoRoot = makeRepoRoot();\n    const dataDir = join(repoRoot, \".repo-review\", \"data\");\n    mkdirSync(dataDir, { recursive: true });\n    // Corrupt legacy DB: not valid SQLite.\n    writeFileSync(join(dataDir, \"omem.sqlite\"), \"thi"
+        "quote": "  it(\"does nothing when there is no legacy snapshot (fresh start)\", () => {\n    const repoRoot = makeRepoRoot();\n    ensureReviewRuntimeSeeded(repoRoot);\n    expect(existsSync(join(reviewDataDir(repoRoot), \"omem.sqlite\"))).toBe(false);\n  });\n\n  it(\"removes a partial destination on failure and leaves legacy intact\", () "
       }
     ],
-    "questions": [
-      {
-        "question": "并发启动或迁移中途进程终止时，能否保证只有一个完整运行时副本成为权威？",
-        "why": "现有测试覆盖正常完成和可捕获的损坏库失败，但没有模拟多进程竞争或不可控终止。",
-        "nextStep": "增加并发调用、临时文件原子替换及迁移中断后的恢复测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c4"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
@@ -98,63 +102,28 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/review-sync.test.ts",
-      "digest": "4ad7197425da98dc5d8d37074bcdbc1081617d0088d775e5f5b13d8aa1bd22f4"
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/role-runtime.test.ts",
       "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:36.291Z",
+    "at": "2026-09-29T20:56:18.672Z",
     "trace": {
-      "runId": "6abf8da3-3426-4100-b32c-3d2f607d8325",
+      "runId": "8b022fcb-0489-4a9f-9c58-bb13bf1d5265",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "dd49223145fa263f6514dabcc321511dcd160a09f174845b2e5ad222b848c42b",
-      "contextHash": "f6f645b2eddc58e0f7bb1fb06053b3d13f7f93ff914ca9f50d23944491b1482a",
+      "promptHash": "28f162b5fdd19dee27f60efa17a2ade24d48f49905e52bf187ad4651628e991e",
+      "contextHash": "b273c249f5e9686afafa493be9ebacf2afadad0c407b7ce596b1e46c515b765d",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b0100a4e69f67eaae24cfec12e52370c91173a0d3ee4224bc2af05867f25c2da",
+      "fingerprint": "8e82f4a19a8de32018e91ac1f00934f8444541d9bce198b33ccb400d54e9affe",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -167,10 +136,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-211f-75d0-874c-940896d45237"
+        "01a0eef3-6f73-70e1-b199-fd2e4ebd2a07"
       ],
       "usage": {
-        "used": 47761,
+        "used": 47231,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -179,10 +148,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101196,
-          "utf8Bytes": 105217,
-          "estimatedTokens": 35073,
-          "budgetedTokens": 43842,
+          "chars": 96381,
+          "utf8Bytes": 99567,
+          "estimatedTokens": 33189,
+          "budgetedTokens": 41487,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -191,17 +160,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:05:05.871Z",
+    "at": "2026-09-29T20:56:37.403Z",
     "trace": {
-      "runId": "9e4c7091-3fe1-4a79-875d-7f80f6d5979e",
+      "runId": "bbdd736a-0c79-4c08-8638-e04b2db04eee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4e3efc47d9edefef51d6e885ae60a6a3299149c3e0a0b54d1dfae77a658014ac",
-      "contextHash": "d4a9ea49aa55f152c53eed85a2471f1f88a11837ee4a96c600e5b5b8f692b76e",
+      "promptHash": "f763b4cc0e33169431085e2f2e538a9b6bbbb35fbfaaaf4bb005198c63129a6d",
+      "contextHash": "343fff722811cffaaef3badc68d1c712e9b82bb04fff8be209bdba1b4a1ffc14",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c3866a0fdf865fa95a255f42d4c4e0462486b8578481108b14e5db68c5f5071a",
+      "fingerprint": "1f63bd76d964bb212c90cf87896088a498608eedb5df9c8ed36796bdc2c081e0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -214,10 +183,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-e750-7ea1-a7be-51c0712b2831"
+        "01a0eef4-3da0-7b53-969b-10d287a2bb3a"
       ],
       "usage": {
-        "used": 49986,
+        "used": 49394,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -226,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 114038,
-          "utf8Bytes": 123900,
-          "estimatedTokens": 41300,
-          "budgetedTokens": 51625,
+          "chars": 115704,
+          "utf8Bytes": 126274,
+          "estimatedTokens": 42092,
+          "budgetedTokens": 52615,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,129 +2,168 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/review-sync.test.ts",
-    "title": "仓库增量同步、检索与 API 安全测试",
-    "summary": "覆盖路径稳定身份、不可变 revision、Git 增量扫描、失败基线、检索预过滤、安全边界以及需求与决策锚点解析。",
+    "title": "Repo-review 同步、修订与检索可靠性测试",
+    "summary": "系统性验证仓库文件同步的稳定来源身份、不可变修订、增量与脏工作树处理、检索和 API 安全、失败基线控制、关系锚点及新数据库重建。",
     "category": "tests",
     "sections": [
       {
-        "key": "identity-history",
-        "title": "稳定来源身份与历史版本",
-        "body": "同步以仓库相对路径区分来源：内容相同的两个文件仍是独立 source；同一文件变化会追加 revision，旧版本保留但退出默认召回。删除文件会标记 removed，默认检索隐藏它，显式参数仍可查看；没有变化的再次同步不会增加 revision。[[c1]][[c2]] 这些用例尚未证明路径重命名能够延续原来源身份。"
+        "key": "identity-revisions",
+        "title": "来源身份、修订与删除",
+        "body": "显式 `only` 同步可以导入真实代码文件，重复执行保持修订数不变，并能通过关键词检索。[[c1]] 在夹具仓库中，内容相同但路径不同的文件仍是独立来源；内容变化会追加修订，旧版不再是 current，也不进入默认召回。删除文件则被标记为 removed，默认搜索排除它，只有显式 `includeRemoved` 才返回。[[c2]] 这些断言确立了以路径来源为身份、以修订保存历史、以当前状态控制默认可见性的基本模型。"
       },
       {
-        "key": "incremental-reliability",
-        "title": "Git 增量、脏树与失败基线",
-        "body": "增量同步覆盖已提交差异、已修改文件和未跟踪文件；基线无效时退化为全量扫描并给出警告。非法 UTF-8 仅使单文件失败，越界符号链接不会被跟随。[[c3]] 中文路径与未跟踪目录可被展开；脏树或文件失败不会推进 baseline，恢复工作树或修复文件后仍会重新扫描并最终推进。[[c5]]"
+        "key": "incremental-snapshot",
+        "title": "增量范围与快照上下文",
+        "body": "基线等于 HEAD 且工作树干净时不扫描；脏树会同时处理已修改跟踪文件和新文件，基线落后时还会覆盖已提交漂移与当前未提交内容。[[c3]] 每个快照记录真实提交、dirty、内容摘要和同步时间；缺失基线提交触发全量重扫并产生警告，非 UTF-8 文件只记失败而不阻断其他文件，白名单外的符号链接目标不会被跟随。[[c4]] 因此增量优化不能以静默漏扫或越界读取为代价。"
       },
       {
-        "key": "retrieval-api-anchors",
-        "title": "检索安全与结构化锚点",
-        "body": "较小数据集证明 category 查询只返回目标类别，并同时覆盖跨源 POST 拒绝、健康接口路径脱敏和版本 current 标志。[[c4]] 更强的 250 个 architecture 命中场景进一步证明类别约束发生在受限候选池之前，唯一 decision 不会被截断淹没。[[c5]] requirement locator 会定位各自标题 fragment，而非共享总表；决策日期来自正文，缺失时为 unknown，并与同步时间分离。[[c6]]"
+        "key": "retrieval-api",
+        "title": "检索预过滤与 API 边界",
+        "body": "类别过滤在大量架构结果占据关键词池时仍能返回唯一 decision，后续用超过 200 个干扰项的用例进一步证明过滤发生在受限候选池之前。[[c5]] API 还拒绝无 token 时的跨源同步 POST，健康接口仅返回相对运行时目录，版本接口列出全部修订及 current 标记。[[c6]] 这些测试覆盖检索正确性和接口信息暴露边界，但没有证明生产网络代理或外部认证配置。"
+      },
+      {
+        "key": "baseline-relations",
+        "title": "失败基线、关系锚点与重建",
+        "body": "脏同步不会推进基线，恢复到 HEAD 后会重新扫描并撤销脏内容；存在失败文件时基线保持为空，修复后才推进到当前提交。[[c7]] requirement 关系会落到各自标题片段，而不是共享概览表；决策日期取自文档，缺失时为 `unknown`，与同步时间相互独立。[[c8]] 最后，新数据库即使共享状态目录中已有干净基线，也会检测自身缺失来源并完整重建，避免把另一数据库的同步状态误当成本库完成。[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "显式单文件捕获",
-        "reason": "支持指定文件导入、重复同步幂等以及同步后可检索的论断。",
+        "label": "显式文件同步与幂等检索",
+        "reason": "支持单文件导入、重复同步不追加修订及关键词可检索。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 116,
-          "endLine": 136
+          "startLine": 112,
+          "endLine": 137
         },
-        "quote": "describe(\"repo-review explicit-only capture (existing behavior)\", () => {\n  it(\"imports a code file, is idempotent, and is searchable\", async () => {\n    const store = setup();\n    const first = await runReviewSync(store, realRepoRoot, { only: [TARGET] });\n    expect(first.totalScanned).toBe(1);\n    expect(first.import"
+        "quote": "// ---------------------------------------------------------------------------\n// Existing behavior: the real repo, explicit `only` capture.\n// ---------------------------------------------------------------------------\n\ndescribe(\"repo-review explicit-only capture (existing behavior)\", () => {\n  it(\"imports a code file"
       },
       {
         "key": "c2",
-        "label": "来源身份与 revision 历史",
-        "reason": "支持同内容文件保持独立、内容变化追加版本、删除隐藏及无变化不新增版本。",
+        "label": "稳定来源、修订历史与删除状态",
+        "reason": "支持相同内容不同路径保持独立、内容变更追加修订，以及删除来源默认不召回。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 143,
+          "startLine": 139,
           "endLine": 230
         },
-        "quote": "describe(\"group 1: source identity and revisions\", () => {\n  it(\"keeps two files with identical content as independent sources\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"one\", \"SHARED_BODY_ALPHA\");\n    archFile(root, \"two\", \"SHARED_BODY_ALPHA\");\n    commitAll(root, \"init\");\n    const store "
+        "quote": "// ---------------------------------------------------------------------------\n// Group 1: stable source identity + revision history.\n// ---------------------------------------------------------------------------\n\ndescribe(\"group 1: source identity and revisions\", () => {\n  it(\"keeps two files with identical content as"
       },
       {
         "key": "c3",
-        "label": "增量扫描与输入边界",
-        "reason": "支持干净基线跳过、提交与脏树共同扫描、失效基线全扫、编码失败隔离和符号链接限制。",
+        "label": "增量与脏工作树扫描",
+        "reason": "支持干净基线零扫描，以及提交漂移、跟踪修改和未跟踪文件均被覆盖。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 237,
-          "endLine": 363
+          "startLine": 233,
+          "endLine": 281
         },
-        "quote": "describe(\"group 2: incremental and snapshot reliability\", () => {\n  it(\"clean worktree at baseline==HEAD scans nothing\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"c\", \"CLEAN_TOKEN\");\n    commitAll(root, \"init\");\n    const store = setup();\n    await runReviewSync(store, root);\n    const secon"
+        "quote": "// ---------------------------------------------------------------------------\n// Group 2: incremental / snapshot reliability.\n// ---------------------------------------------------------------------------\n\ndescribe(\"group 2: incremental and snapshot reliability\", () => {\n  it(\"clean worktree at baseline==HEAD scans no"
       },
       {
         "key": "c4",
-        "label": "检索与 API 安全行为",
-        "reason": "支持普通规模下的类别过滤、跨源写入拒绝、数据目录脱敏及版本 current 标志。",
+        "label": "快照元数据与异常文件安全",
+        "reason": "支持提交和摘要上下文、缺失基线全扫、非 UTF-8 局部失败及符号链接边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 369,
-          "endLine": 459
+          "startLine": 283,
+          "endLine": 363
         },
-        "quote": "describe(\"group 4: retrieval and API safety\", () => {\n  it(\"category filter still returns results when other categories dominate the top-N\", async () => {\n    const root = makeFixtureRepo();\n    for (let i = 0; i < 22; i++) archFile(root, `arch${i}`, \"SHARED_Q\");\n    decisionsFile(root, \"my-decision\", \"decided SHARED_Q"
+        "quote": "  it(\"records real commit + dirty + contentHash in the snapshot context\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"snap\", \"SNAP_TOKEN\");\n    commitAll(root, \"init\");\n    const store = setup();\n    await runReviewSync(store, root);\n    const row = store.db\n      .prepare(\n        `SELECT r.b"
       },
       {
         "key": "c5",
-        "label": "深候选预过滤与基线可靠性",
-        "reason": "以超过候选池上限的命中证明类别预过滤，并支持非 ASCII 路径、目录展开及失败或脏树不推进基线。",
+        "label": "类别检索预过滤",
+        "reason": "支持类别结果在大量其他类别命中占优时仍可返回，包括超过候选池上限的压力场景。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
           "startLine": 465,
-          "endLine": 569
+          "endLine": 493
         },
         "quote": "describe(\"group 5: pre-filtering and sync reliability\", () => {\n  it(\"category filter returns the lone decision hit even when >200 architecture hits dominate\", async () => {\n    const root = makeFixtureRepo();\n    for (let i = 0; i < 250; i++) archFile(root, `arch${i}`, \"SHARED_Q\");\n    decisionsFile(root, \"the-decisio"
       },
       {
         "key": "c6",
+        "label": "Review API 安全与版本接口",
+        "reason": "支持跨源同步被拒绝、健康接口隐藏绝对路径，并列出修订 current 状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 396,
+          "endLine": 458
+        },
+        "quote": "  it(\"rejects a cross-origin POST /sync when no token is set\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"x\", \"X_TOKEN\");\n    commitAll(root, \"init\");\n    const store = setup();\n    const { app } = await buildReviewApp({ store, repoRoot: root });\n    await app.ready();\n    const bad = await a"
+      },
+      {
+        "key": "c7",
+        "label": "脏同步与失败文件的基线控制",
+        "reason": "支持脏树或文件失败时不推进基线，并在恢复或修复后重新同步。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 527,
+          "endLine": 571
+        },
+        "quote": "  it(\"a dirty sync does not advance the baseline; restoring to HEAD re-scans\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"a\", \"V1_TOKEN\");\n    commitAll(root, \"c1\");\n    const store = setup();\n    await runReviewSync(store, root);\n    expect(readSyncStatus(root).lastSyncCommit).toBe(headCommi"
+      },
+      {
+        "key": "c8",
         "label": "需求锚点与决策日期",
-        "reason": "支持需求引用落到专属标题 fragment，以及正文决策日期与同步时间分离。",
+        "reason": "支持关系指向各自需求标题片段，并区分文档决策日期和同步时间。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
           "startLine": 573,
-          "endLine": 683
+          "endLine": 684
         },
         "quote": "  it(\"requirement refs anchor to their own heading fragment, not a shared G01-G20 table\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(\n      root,\n      \"docs/implementation/status.md\",\n      [\n        \"# Status\",\n        \"\",\n        \"## Acceptance overview\",\n        \"| ID | Intent |\",\n        \"|---"
-      }
-    ],
-    "questions": [
-      {
-        "question": "文件重命名后应延续原 source，还是按新路径创建独立来源？",
-        "why": "当前测试确认路径是来源身份，也覆盖修改与删除，但没有定义重命名的身份续接语义。",
-        "nextStep": "明确产品语义后增加 Git rename 场景，并检查旧路径、revision 历史和关系定位结果。",
-        "blocking": false,
-        "citationKeys": [
-          "c2"
-        ]
       },
       {
-        "question": "鉴权 token 模式和大型真实仓库的检索、同步性能是否满足发布要求？",
-        "why": "现有 API 安全测试集中于无 token 的本地同源边界；250 条竞争命中只验证过滤正确性，不代表大仓库性能。",
-        "nextStep": "补充 token 全路由鉴权测试与分层规模基准，记录响应时间和资源消耗。",
-        "blocking": false,
-        "citationKeys": [
-          "c4",
-          "c5"
-        ]
+        "key": "c9",
+        "label": "新数据库强制重建",
+        "reason": "支持同步状态不能替代数据库自身内容检查，新库缺少来源时仍会重新扫描。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 687,
+          "endLine": 699
+        },
+        "quote": "it(\"rebuilds a fresh database even when another database left a clean sync baseline\", async () => {\n  const root = makeFixtureRepo();\n  try {\n    archFile(root, \"first\", \"ONE\"); archFile(root, \"second\", \"TWO\"); commitAll(root, \"fixture\");\n    const original = setup(); const stateDir = join(original.dataDir, \"shared-sta"
       }
-    ]
+    ],
+    "questions": []
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
@@ -133,63 +172,28 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/review-sync.test.ts",
-      "digest": "4ad7197425da98dc5d8d37074bcdbc1081617d0088d775e5f5b13d8aa1bd22f4"
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/role-runtime.test.ts",
       "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:36.291Z",
+    "at": "2026-09-29T20:56:18.672Z",
     "trace": {
-      "runId": "6abf8da3-3426-4100-b32c-3d2f607d8325",
+      "runId": "8b022fcb-0489-4a9f-9c58-bb13bf1d5265",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "dd49223145fa263f6514dabcc321511dcd160a09f174845b2e5ad222b848c42b",
-      "contextHash": "f6f645b2eddc58e0f7bb1fb06053b3d13f7f93ff914ca9f50d23944491b1482a",
+      "promptHash": "28f162b5fdd19dee27f60efa17a2ade24d48f49905e52bf187ad4651628e991e",
+      "contextHash": "b273c249f5e9686afafa493be9ebacf2afadad0c407b7ce596b1e46c515b765d",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b0100a4e69f67eaae24cfec12e52370c91173a0d3ee4224bc2af05867f25c2da",
+      "fingerprint": "8e82f4a19a8de32018e91ac1f00934f8444541d9bce198b33ccb400d54e9affe",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -202,10 +206,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-211f-75d0-874c-940896d45237"
+        "01a0eef3-6f73-70e1-b199-fd2e4ebd2a07"
       ],
       "usage": {
-        "used": 47761,
+        "used": 47231,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -214,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101196,
-          "utf8Bytes": 105217,
-          "estimatedTokens": 35073,
-          "budgetedTokens": 43842,
+          "chars": 96381,
+          "utf8Bytes": 99567,
+          "estimatedTokens": 33189,
+          "budgetedTokens": 41487,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -226,17 +230,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:05:05.871Z",
+    "at": "2026-09-29T20:56:37.403Z",
     "trace": {
-      "runId": "9e4c7091-3fe1-4a79-875d-7f80f6d5979e",
+      "runId": "bbdd736a-0c79-4c08-8638-e04b2db04eee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4e3efc47d9edefef51d6e885ae60a6a3299149c3e0a0b54d1dfae77a658014ac",
-      "contextHash": "d4a9ea49aa55f152c53eed85a2471f1f88a11837ee4a96c600e5b5b8f692b76e",
+      "promptHash": "f763b4cc0e33169431085e2f2e538a9b6bbbb35fbfaaaf4bb005198c63129a6d",
+      "contextHash": "343fff722811cffaaef3badc68d1c712e9b82bb04fff8be209bdba1b4a1ffc14",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c3866a0fdf865fa95a255f42d4c4e0462486b8578481108b14e5db68c5f5071a",
+      "fingerprint": "1f63bd76d964bb212c90cf87896088a498608eedb5df9c8ed36796bdc2c081e0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -249,10 +253,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-e750-7ea1-a7be-51c0712b2831"
+        "01a0eef4-3da0-7b53-969b-10d287a2bb3a"
       ],
       "usage": {
-        "used": 49986,
+        "used": 49394,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -261,10 +265,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 114038,
-          "utf8Bytes": 123900,
-          "estimatedTokens": 41300,
-          "budgetedTokens": 51625,
+          "chars": 115704,
+          "utf8Bytes": 126274,
+          "estimatedTokens": 42092,
+          "budgetedTokens": 52615,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

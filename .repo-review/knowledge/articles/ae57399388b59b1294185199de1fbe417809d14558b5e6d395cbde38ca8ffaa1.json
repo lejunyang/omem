@@ -2,85 +2,96 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/conversation-security.test.ts",
-    "title": "会话渠道、可见性与群聊检索安全测试",
-    "summary": "以 Web API 和飞书运行时的集成场景验证服务端身份收口、群聊会话命名空间隔离、证据可见性过滤及中文关键词召回。",
+    "title": "会话渠道、可见性与群组检索安全测试",
+    "summary": "覆盖 Web 会话参数收口、Lark 群聊会话命名空间隔离、私有证据过滤及中文关键词召回，验证伪造渠道或可见性不会绕过群组边界。",
     "category": "tests",
     "sections": [
       {
-        "key": "web-hardening",
-        "title": "Web 入口不能伪造渠道身份",
-        "body": "第一组测试从真实应用 HTTP 接口验证信任边界：客户端不能把 Web 会话伪造成飞书渠道或群组可见性，相关请求返回 400；即使提交攻击者 principal，合法 Web 请求最终仍由服务端固定为 `web`、`private` 和 `owner`。[[c1]] 这防止不可信请求自行扩大检索作用域或冒充外部传输身份。测试使用本地应用与临时密钥，但未覆盖令牌认证、跨站请求、其他 API 路由、反向代理头或多用户租户隔离；现有断言体现的是单用户入口收口。"
+        "key": "web-boundary",
+        "title": "Web 入口的服务器端身份收口",
+        "body": "Web 创建会话接口拒绝伪造的 Lark 群聊渠道和 `group` 可见性；即使同时篡改 principal，群组可见性仍返回 400。合法请求可以携带伪造 principal，但响应由服务器强制为 `channel=web`、`visibility=private`、`principalId=owner`。[[c1]] 这验证了 Web 入口不信任客户端提交的渠道、可见性和主体字段，不过测试使用单用户 owner 语义，并不证明多租户授权已经实现。"
       },
       {
-        "key": "group-isolation-retrieval",
+        "key": "group-isolation",
         "title": "群聊命名空间与证据过滤",
-        "body": "第二组测试故意直接植入一个同 chatId 的伪造私有 `lark_group` 会话，并同时捕获无群聊绑定的私有证据与合法群聊证据。飞书事件到达后，运行时创建带连接版本线程命名空间的新 group 会话，不复用旧私有行；传给模型的证据只包含群聊片段。[[c2]] 这条链路联结 ConversationRouter、LarkRuntimeHost、MemoryService、Store 与模型端口，证明隔离发生在实际事件处理和检索交付路径，而非仅检查数据库字段。"
+        "body": "测试先直接植入同一聊天下伪造的私有 `lark_group` 会话，再分别捕获无群聊绑定的私有证据和绑定该聊天的群组证据。[[c2]] Lark 事件处理后实际使用的是新建的群组会话，其 thread 带连接与版本命名空间，伪造私有行保持不变；送入模型的证据排除了私有片段，只包含群组片段。[[c3]] 因而这里同时验证了会话复用隔离和检索结果的可见性过滤，而不是仅检查路由字段。"
       },
       {
-        "key": "cjk-boundaries",
-        "title": "中文召回与剩余边界",
-        "body": "第三组测试用不包含完整查询字面串的中文材料作为控制：基础整句搜索无法命中，而飞书群聊运行时通过关键词分词仍把该片段交给模型，说明中文召回依赖 KeywordRetrieval，而不是旧式整句 LIKE。[[c3]] 当前覆盖均使用内存伪适配器与单个已绑定群聊；未验证真实飞书网络、消息发送失败、非 owner 发送者、线程回复、多绑定冲突、重复事件幂等、群聊证据误标后的处置，以及模型返回 citationIds 的授权复核。它也不证明语义检索或中文分词在所有短词、标点和混合语言下的质量。"
+        "key": "cjk-retrieval",
+        "title": "中文关键词召回路径",
+        "body": "另一用例构造不含字面查询串“复盘 周三”的中文群组片段，并先证明旧式整句 LIKE 搜索无法命中。[[c4]] 相同查询经 Lark 群聊运行链进入 KeywordRetrieval 后，模型收到的证据包含该片段。[[c5]] 这说明中文分词检索参与了真实群聊召回路径；测试只验证一个固定短语和单个群组片段，未衡量排序质量、召回率或更复杂语言组合。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Web 会话入口收口",
-        "reason": "支持伪造飞书渠道或群可见性被拒绝、服务端固定 Web 私有 owner 身份的论断。",
+        "label": "Web 会话参数强制策略",
+        "reason": "支持伪造渠道和群组可见性被拒绝，以及服务器强制 Web、私有和 owner 身份。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/conversation-security.test.ts",
           "startLine": 64,
-          "endLine": 129
+          "endLine": 130
         },
         "quote": "describe(\"C conversation channel/visibility hardening\", () => {\n  it(\"web API rejects a forged Lark channel or group visibility and forces web/private/owner\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-convsec-\"));\n    directories.push(directory);\n    const previous = process.env.OMEM_SECRET_K"
       },
       {
         "key": "c2",
-        "label": "群聊会话与私有证据隔离",
-        "reason": "支持运行时不复用伪造私有会话，并只向模型交付群聊范围证据的完整集成断言。",
-        "relation": "supports",
+        "label": "伪造会话与双范围证据夹具",
+        "reason": "说明测试如何设置同聊天的私有伪造会话、私有证据与合法群组证据。",
+        "relation": "background",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/conversation-security.test.ts",
-          "startLine": 173,
-          "endLine": 293
+          "startLine": 132,
+          "endLine": 230
         },
-        "quote": "    // Step 1: an attacker (or legacy HTTP) forges a PRIVATE lark_group row for the\n    // same chat. Web can no longer create this, so we plant it directly to prove the\n    // transport namespacing still prevents reuse.\n    const router = new ConversationRouter(store.db);\n    const forged = router.open({\n      princip"
+        "quote": "  it(\"never reuses an HTTP-forged lark_group/private row; the Lark route is group-scoped\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-convsec-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    const secrets = new EncryptedSecretStore(\n      join(directory, \"secre"
       },
       {
         "key": "c3",
-        "label": "群聊中文关键词召回",
-        "reason": "支持整句 LIKE 控制失败而 KeywordRetrieval 路径成功召回中文片段的结论。",
+        "label": "群聊会话隔离与证据过滤断言",
+        "reason": "支持运行时新建群组范围会话、保留伪造行，并阻止私有证据进入模型。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/conversation-security.test.ts",
-          "startLine": 337,
-          "endLine": 409
+          "startLine": 232,
+          "endLine": 293
         },
-        "quote": "    // Group-sourced Chinese fragment. Note the literal query \"复盘 周三\" does NOT\n    // appear verbatim in the text (no space between the two concepts), so the legacy\n    // whole-sentence LIKE fallback could never recall it; only the CJK tokenizing\n    // KeywordRetrieval can.\n    const rev = store.capture({\n      sourc"
+        "quote": "    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const realtime = new FakeRealtime();\n    const messages = new FakeMessages();\n    const model = new SpyModel();\n    const host = new LarkRuntimeHost({\n      store,\n      memory,\n      onboarding: noopOnboarding,\n      secrets,\n      realtimeAdapter:"
+      },
+      {
+        "key": "c4",
+        "label": "中文片段与整句搜索对照",
+        "reason": "支持固定查询并非材料原文子串，且旧式整句搜索不能召回该片段。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/conversation-security.test.ts",
+          "startLine": 296,
+          "endLine": 365
+        },
+        "quote": "  it(\"lark group conversation recalls CJK fragments via KeywordRetrieval (not whole-sentence LIKE)\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-larkret-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    const secrets = new EncryptedSecretStore(\n      join(directo"
+      },
+      {
+        "key": "c5",
+        "label": "Lark 中文关键词召回断言",
+        "reason": "支持群聊事件经过运行链后，模型证据中确实包含目标中文片段。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/conversation-security.test.ts",
+          "startLine": 367,
+          "endLine": 410
+        },
+        "quote": "    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const realtime = new FakeRealtime();\n    const messages = new FakeMessages();\n    const model = new SpyModel();\n    const host = new LarkRuntimeHost({\n      store,\n      memory,\n      onboarding: noopOnboarding,\n      secrets,\n      realtimeAdapter:"
       }
     ],
     "questions": []
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-understanding-model.test.ts",
-      "digest": "ac88b469c5dccac99e5b7535cce1a6ec584abd604338938bfdb07c09340e632a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-understanding.test.ts",
-      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/connectors.test.ts",
-      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/contracts.test.ts",
@@ -98,55 +109,50 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-store.ts",
-      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+      "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+      "digest": "4da0fd6c62ebc6680f8ef9f78780211be16d90afd93a01666bf420473f59bc48"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+      "key": "omem:apps/server/tests/review-sync.test.ts",
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "key": "omem:apps/server/tests/role-runtime.test.ts",
+      "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:38:35.369Z",
+    "at": "2026-09-29T20:56:18.672Z",
     "trace": {
-      "runId": "c35b15c3-b40c-4db9-bf7f-5f96f87be5e2",
-      "roleId": "code-analyst",
+      "runId": "8b022fcb-0489-4a9f-9c58-bb13bf1d5265",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6ad29a3453fe7f592d5651ee3be81c44c0953504d1e6ece46a14bdd39c89c0ee",
-      "contextHash": "b6fc42c31c8a77a2df34f5f1833aafdbbb8bec6e579f658b50a66d3b6c21c3ff",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "28f162b5fdd19dee27f60efa17a2ade24d48f49905e52bf187ad4651628e991e",
+      "contextHash": "b273c249f5e9686afafa493be9ebacf2afadad0c407b7ce596b1e46c515b765d",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "85ac312a6523bab7c464e1288bbd6b3f3f84a6f261b85e61338b0001b25fdfcc",
+      "fingerprint": "8e82f4a19a8de32018e91ac1f00934f8444541d9bce198b33ccb400d54e9affe",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeac-604c-7df1-838e-b713f23605b6"
+        "01a0eef3-6f73-70e1-b199-fd2e4ebd2a07"
       ],
       "usage": {
-        "used": 40749,
+        "used": 47231,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -155,10 +161,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 80664,
-          "utf8Bytes": 82612,
-          "estimatedTokens": 27538,
-          "budgetedTokens": 34423,
+          "chars": 96381,
+          "utf8Bytes": 99567,
+          "estimatedTokens": 33189,
+          "budgetedTokens": 41487,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -167,17 +173,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:38:59.115Z",
+    "at": "2026-09-29T20:56:37.403Z",
     "trace": {
-      "runId": "69a05df4-9615-4f2a-833f-1d05fa3e4f37",
+      "runId": "bbdd736a-0c79-4c08-8638-e04b2db04eee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "35c47a7f8ae34f5df46df1bb1f12106ea0e5f730fa84e893d977f32d7d2834a5",
-      "contextHash": "218d2ec317bf3d0a81eab354261b7fc38bf1b695c877280c8757b349ced72762",
+      "promptHash": "f763b4cc0e33169431085e2f2e538a9b6bbbb35fbfaaaf4bb005198c63129a6d",
+      "contextHash": "343fff722811cffaaef3badc68d1c712e9b82bb04fff8be209bdba1b4a1ffc14",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b3d32ca2e151d674caa545662f7b50becf93d7b3da4f6f14fb5a4615639e23c1",
+      "fingerprint": "1f63bd76d964bb212c90cf87896088a498608eedb5df9c8ed36796bdc2c081e0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -190,10 +196,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eead-15e6-7a91-9f22-9d545519e995"
+        "01a0eef4-3da0-7b53-969b-10d287a2bb3a"
       ],
       "usage": {
-        "used": 43191,
+        "used": 49394,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -202,10 +208,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 96153,
-          "utf8Bytes": 104651,
-          "estimatedTokens": 34884,
-          "budgetedTokens": 43605,
+          "chars": 115704,
+          "utf8Bytes": 126274,
+          "estimatedTokens": 42092,
+          "budgetedTokens": 52615,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
