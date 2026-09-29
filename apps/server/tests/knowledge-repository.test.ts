@@ -1,3 +1,4 @@
+import { KeywordRetrieval } from "../src/retrieval/keyword.js";
 import { afterEach, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -76,4 +77,20 @@ it("restores reviewed knowledge in a fresh DB and preserves question actions", (
   const answer = second.repository.answer(q.id, "需要配置，默认保持 42。");
   expect(second.store.revision(answer)!.provenance?.producerKind).toBe("original");
   expect(second.repository.questions()[0]!.state).toBe("answered");
+});
+
+it("uses derived knowledge to find original evidence without promoting prose or stale sources", () => {
+  const { repository, store, capture } = setup();
+  capture("function value() {\n  return 42;\n}");
+  const m = repository.materials()[0]!;
+  const d = document(); d.title = "Aurora release rationale";
+  repository.publish(artifact(bindKnowledgeQuotes(d, new Map([[m.key, m]])), [{ kind: "material", key: m.key, digest: m.digest }]));
+  const retrieval = new KeywordRetrieval(store.db);
+  const hits = retrieval.searchSources({ text: "Aurora" });
+  expect(hits).toHaveLength(1);
+  expect(hits[0]!.fragmentId).toBe(m.fragments[0]!.id);
+  expect(store.evidence(hits[0]!.fragmentId)!.fragment.text).toContain("return 42");
+  // Even before a projection refresh, actual head content prevents stale recall.
+  capture("function value() {\n  return 99;\n}");
+  expect(retrieval.searchSources({ text: "Aurora" })).toEqual([]);
 });
