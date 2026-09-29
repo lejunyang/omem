@@ -2,31 +2,36 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/role-runtime.test.ts",
-    "title": "版本化角色运行时验收测试",
-    "summary": "验证角色包隔离、技能加载、模型能力协商、上下文传递、失败封闭、会话隔离以及运行时权限请求边界。",
+    "title": "版本化角色运行时与共享知识网关测试",
+    "summary": "验证角色包隔离、技能加载、模型能力协商、图像上下文、输出与超时故障、会话隔离、工具请求拒绝，以及知识角色复用共享网关和宿主绑定引用。",
     "category": "tests",
     "sections": [
       {
-        "key": "bundle-capabilities",
-        "title": "角色包、技能与模型能力",
-        "body": "不同角色获得不同提示词、技能和有效哈希，任务执行后还会把角色包、输出 schema 与技能清单写入 attempt。[[c1]] 技能既可内联也可原生发现；缺少发现结果或重复声明会被拒绝。模型选择先重新协商能力，再校验 effort，因此有效组合被记录，不支持的组合直接报错。[[c2]][[c3]]"
+        "key": "bundles-skills",
+        "title": "角色包、技能与作业追踪",
+        "body": "extractor 与 verifier 通过同一网关运行，但结果角色、bundle、prompt 和 skill 摘要彼此不同，各自加载指定 inline 技能。作业处理后状态成功，并把角色包摘要、输出合同和已加载技能写入 attempt。[[c1]] 运行时也支持 native 技能发现；代理不报告发现结果会失败，清单出现重复技能则在加载阶段被拒绝。[[c2]] 这使版本化角色配置和实际执行痕迹可核对，而不是只依赖角色名称。"
       },
       {
-        "key": "context-failure-isolation",
-        "title": "上下文保真与失败封闭",
-        "body": "运行时携带身份、时间、转发状态和图片；不支持图片的 agent 会在执行前被拒绝。[[c4]] 畸形、超限、非正常结束或超时输出都不会产生应用回执或任务。不同项目使用新会话与不同上下文哈希，verifier 也不会继承 extractor 的项目结果。[[c5]][[c6]]"
+        "key": "capabilities-failures",
+        "title": "能力协商与失败不应用",
+        "body": "模型选项会先重新协商，再校验 effort：`beta/high` 可用，而不支持该强度的模型会被拒绝。[[c3]] 上下文可携带主体、时间、转发状态和图片；支持图片的代理能读取这些信息，不支持图片的代理在运行前失败。[[c4]] 对格式错误、输出洪泛、非正常结束和超时，网关分别报错；随后任务和应用回执仍为空，说明这些失败不会落成业务变更。[[c5]]"
       },
       {
-        "key": "instruction-trust-boundary",
-        "title": "材料指令与权限边界",
-        "body": "嵌入材料的工具命令只被当作数据：运行没有可用工具，危险权限请求被拒绝并持久化，也不会转化为业务变更；事后批准已失效请求同样被拒绝。[[c7]][[c8]] 知识角色继续走共享 gateway，由宿主绑定固定引用，并记录输出 schema 与输入预算；模型草稿和目录被放在非可信材料区，而非可信任务指令中。[[c9]][[c10]]"
+        "key": "isolation-safety",
+        "title": "会话隔离与材料指令防护",
+        "body": "不同项目运行使用新会话并产生不同上下文摘要，verifier 只接收其固定输入，不继承 extractor 的项目内容。[[c6]] 当材料嵌入调用工具、发消息或改权限的文字时，运行时允许工具列表为空，结果以不安全指令弃权，并持久化 denied 权限请求；任务和应用回执不产生。已拒绝请求也不能迟到批准，更不会转成业务决策。[[c7]] 这验证材料被当作数据处理，并将运行时权限与业务授权分开。"
+      },
+      {
+        "key": "knowledge-gateway",
+        "title": "知识角色的共享网关合同",
+        "body": "知识角色同样经共享 RoleRuntimeGateway 执行，宿主的输出校验阶段可把引用替换为固定材料中的精确文本；结果记录知识角色技能、`KnowledgeBatch.v1` 输出合同和输入预算。[[c8]] 另一个测试确认模型草稿与目录不会混入首个可信任务指令块，而会被放入标记为不可信派生知识的文本块。[[c9]] 因此知识生产复用通用运行时安全边界，但这些夹具测试不等于已验证所有外部 ACP CLI 的真实兼容性。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "角色包隔离与执行追踪",
-        "reason": "支持不同角色使用不同提示词和技能，并把有效运行信息记录到任务 attempt。",
+        "label": "角色差异与作业追踪",
+        "reason": "支持不同角色的提示、技能和摘要隔离，以及执行信息持久化到作业 attempt。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -38,8 +43,8 @@
       },
       {
         "key": "c2",
-        "label": "技能加载与发现校验",
-        "reason": "支持 inline/native 两种加载模式以及缺失发现、重复技能被拒绝。",
+        "label": "Inline 与 native 技能加载",
+        "reason": "支持两种技能装载模式，并验证缺失发现和重复技能会被拒绝。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -52,7 +57,7 @@
       {
         "key": "c3",
         "label": "模型与 effort 协商",
-        "reason": "支持运行时先协商模型选项，再接受或拒绝对应推理强度。",
+        "reason": "支持先确定有效模型与强度，并拒绝模型不支持的 reasoning effort。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -65,7 +70,7 @@
       {
         "key": "c4",
         "label": "可信上下文与图片能力",
-        "reason": "支持身份、时间、转发和图片上下文传递，以及图片能力不足时拒绝执行。",
+        "reason": "支持转发、时区和图片进入上下文，并在代理不支持图片时拒绝执行。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -77,8 +82,8 @@
       },
       {
         "key": "c5",
-        "label": "异常输出与超时封闭",
-        "reason": "支持异常或超时结果不被应用为回执或任务。",
+        "label": "异常输出与超时隔离",
+        "reason": "支持多类运行失败均被拒绝，且不会产生任务或应用回执。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -90,8 +95,8 @@
       },
       {
         "key": "c6",
-        "label": "会话与验证输入隔离",
-        "reason": "支持不同项目使用独立会话，并证明 verifier 输入不混入 extractor 的项目结果。",
+        "label": "独立会话与 verifier 输入",
+        "reason": "支持跨项目使用不同会话和上下文，并防止 verifier 继承其他项目内容。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -103,34 +108,21 @@
       },
       {
         "key": "c7",
-        "label": "材料内命令与权限拒绝",
-        "reason": "支持把嵌入命令当作数据、拒绝危险调用并避免产生业务写入。",
+        "label": "嵌入命令与迟到批准防护",
+        "reason": "支持材料命令被视为不安全数据、权限请求被拒绝，且迟到批准不形成业务决定。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/role-runtime.test.ts",
           "startLine": 372,
-          "endLine": 409
+          "endLine": 433
         },
         "quote": "  it(\"A-R07 treats embedded commands as data and persists a denied runtime request\", async () => {\n    const store = new Store(temporary(\"omem-role-injection-\"));\n    const events: { type: string; text: string }[] = [];\n    try {\n      const runtime = new RoleRuntimeGateway(\n        new RoleBundleRegistry(),\n        te"
       },
       {
         "key": "c8",
-        "label": "过期运行时批准",
-        "reason": "支持已拒绝的运行时请求不能被事后批准，也不会成为业务决策。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/role-runtime.test.ts",
-          "startLine": 411,
-          "endLine": 433
-        },
-        "quote": "  it(\"A-R08 rejects late runtime approval and never converts it into a business decision\", async () => {\n    const store = new Store(temporary(\"omem-runtime-request-\"));\n    try {\n      const runtime = new RoleRuntimeGateway(\n        new RoleBundleRegistry(),\n        temporary(\"omem-runtime-request-workspace-\"),\n      "
-      },
-      {
-        "key": "c9",
-        "label": "共享知识角色网关",
-        "reason": "支持知识角色复用共享 gateway、由宿主绑定引用并记录 schema 与预算。",
+        "label": "知识角色共享网关",
+        "reason": "支持知识角色复用网关、宿主绑定固定引用，并记录技能、输出合同和预算。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -141,9 +133,9 @@
         "quote": "it(\"runs knowledge roles through the shared gateway and preserves host-bound citations\", async () => {\n  const result = await gateway().run({ roleId: \"code-analyst\", profile: profile(), context: context(\"code-analyst\", \"fixed evidence\", { task: { targetKeys: [\"manual:a\"] } }),\n    validateOutput: out => { const normali"
       },
       {
-        "key": "c10",
-        "label": "非可信草稿隔离",
-        "reason": "支持模型草稿和目录不会进入可信任务指令，而会被明确放入非可信派生知识区域。",
+        "key": "c9",
+        "label": "草稿与可信指令隔离",
+        "reason": "支持模型草稿和目录不进入可信任务指令，而被明确放入不可信派生知识区。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -154,21 +146,24 @@
         "quote": "it(\"keeps model drafts and catalogs outside the trusted task instructions\", () => {\n  const marker = \"UNTRUSTED_DRAFT_DO_NOT_EXECUTE\";\n  const rendered = renderRolePrompt(new RoleBundleRegistry().load(\"code-analyst\"), context(\"code-analyst\", \"fixed source\", { task: { targetKeys: [\"manual:a\"], drafts: [{ body: marker }]"
       }
     ],
-    "questions": [
-      {
-        "question": "真实外部 Agent CLI 的发现、图片、超时与关闭行为是否与本地 fixture 一致？",
-        "why": "这些验收主要使用快速、可控的 fixture agent；协议路径成立不等于每个外部 CLI 都具备相同行为。",
-        "nextStep": "为支持的 CLI 建立标注为 live check 的兼容性矩阵，分别验证能力发现、取消、超时和子进程退出。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c4",
-          "c5"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
@@ -177,63 +172,28 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/review-sync.test.ts",
-      "digest": "4ad7197425da98dc5d8d37074bcdbc1081617d0088d775e5f5b13d8aa1bd22f4"
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/role-runtime.test.ts",
       "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:36.291Z",
+    "at": "2026-09-29T20:56:18.672Z",
     "trace": {
-      "runId": "6abf8da3-3426-4100-b32c-3d2f607d8325",
+      "runId": "8b022fcb-0489-4a9f-9c58-bb13bf1d5265",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "dd49223145fa263f6514dabcc321511dcd160a09f174845b2e5ad222b848c42b",
-      "contextHash": "f6f645b2eddc58e0f7bb1fb06053b3d13f7f93ff914ca9f50d23944491b1482a",
+      "promptHash": "28f162b5fdd19dee27f60efa17a2ade24d48f49905e52bf187ad4651628e991e",
+      "contextHash": "b273c249f5e9686afafa493be9ebacf2afadad0c407b7ce596b1e46c515b765d",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b0100a4e69f67eaae24cfec12e52370c91173a0d3ee4224bc2af05867f25c2da",
+      "fingerprint": "8e82f4a19a8de32018e91ac1f00934f8444541d9bce198b33ccb400d54e9affe",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -246,10 +206,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-211f-75d0-874c-940896d45237"
+        "01a0eef3-6f73-70e1-b199-fd2e4ebd2a07"
       ],
       "usage": {
-        "used": 47761,
+        "used": 47231,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -258,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101196,
-          "utf8Bytes": 105217,
-          "estimatedTokens": 35073,
-          "budgetedTokens": 43842,
+          "chars": 96381,
+          "utf8Bytes": 99567,
+          "estimatedTokens": 33189,
+          "budgetedTokens": 41487,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -270,17 +230,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:05:05.871Z",
+    "at": "2026-09-29T20:56:37.403Z",
     "trace": {
-      "runId": "9e4c7091-3fe1-4a79-875d-7f80f6d5979e",
+      "runId": "bbdd736a-0c79-4c08-8638-e04b2db04eee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4e3efc47d9edefef51d6e885ae60a6a3299149c3e0a0b54d1dfae77a658014ac",
-      "contextHash": "d4a9ea49aa55f152c53eed85a2471f1f88a11837ee4a96c600e5b5b8f692b76e",
+      "promptHash": "f763b4cc0e33169431085e2f2e538a9b6bbbb35fbfaaaf4bb005198c63129a6d",
+      "contextHash": "343fff722811cffaaef3badc68d1c712e9b82bb04fff8be209bdba1b4a1ffc14",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c3866a0fdf865fa95a255f42d4c4e0462486b8578481108b14e5db68c5f5071a",
+      "fingerprint": "1f63bd76d964bb212c90cf87896088a498608eedb5df9c8ed36796bdc2c081e0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -293,10 +253,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-e750-7ea1-a7be-51c0712b2831"
+        "01a0eef4-3da0-7b53-969b-10d287a2bb3a"
       ],
       "usage": {
-        "used": 49986,
+        "used": 49394,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -305,10 +265,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 114038,
-          "utf8Bytes": 123900,
-          "estimatedTokens": 41300,
-          "budgetedTokens": 51625,
+          "chars": 115704,
+          "utf8Bytes": 126274,
+          "estimatedTokens": 42092,
+          "budgetedTokens": 52615,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
