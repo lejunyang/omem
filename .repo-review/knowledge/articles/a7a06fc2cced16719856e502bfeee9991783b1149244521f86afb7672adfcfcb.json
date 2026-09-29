@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
+    "title": "知识刷新角色清单与运行约束",
+    "summary": "清单静态声明了 knowledge-refresher 第 1 版的配置档案、提示模板、内联技能、输出合同、工具与会话策略及生成预算；这些字段描述预期装配和限制，不构成摘要校验、能力协商或真实执行已经成功的证据。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "identity",
+        "title": "角色装配与输出约定",
+        "body": "该清单将角色规范标识为 `knowledge-refresher` 第 1 版，引用 `traex` 配置档案和 `prompt.md` 提示模板。[[c1]] 它还声明加载规范名称为 `omem-knowledge-refresher` 的第 1 版技能包，采用内联模式并记录制品摘要，输出类型指定为 `KnowledgeBatch.v1`。[[c2]] 这些内容属于静态配置：材料没有给出技能摘要核验、输出模式解析或一次真实调用的结果，因此不能据此认定角色已经成功加载或产出合规数据。"
+      },
+      {
+        "key": "isolation",
+        "title": "能力隔离与资源边界",
+        "body": "工具策略设为 `none`，允许工具列表为空；会话策略要求不复用会话，并关闭用户技能与 MCP 的继承。[[c3]] 这表明清单明确限制了工具和用户扩展能力，但不能进一步推断模型仅受本次固定上下文影响，因为配置档案、提示模板及其他宿主注入上下文仍可能参与执行。预算配置将上下文、输出和修复尝试分别限制为 96000、24000 和 2。[[c4]] 这些数值是声明的资源上限，不证明 `traex` 已接受相应设置，也不证明实际请求能够在预算内完成。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "角色身份与提示模板配置",
+        "reason": "支持角色规范名称、版本、配置档案引用和提示模板来源均由清单静态声明的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
+          "startLine": 2,
+          "endLine": 8
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"knowledge-refresher\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],"
+      },
+      {
+        "key": "c2",
+        "label": "内联技能与输出合同配置",
+        "reason": "支持规范技能名称、版本、内联加载方式、制品摘要及 KnowledgeBatch 输出类型的装配说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
+          "startLine": 9,
+          "endLine": 17
+        },
+        "quote": "  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-knowledge-refresher\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"9b98f709fb68d9d3446cf26938583260908d48bd0a75516938f3871e1e924dc0\"\n    }\n  ],\n  \"output_schema\": \"KnowledgeBatch.v1\","
+      },
+      {
+        "key": "c3",
+        "label": "工具与会话隔离配置",
+        "reason": "支持禁用工具、不复用会话以及不继承用户技能和 MCP 的配置事实，同时限定这些只是所列能力的隔离声明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c4",
+        "label": "生成预算上限",
+        "reason": "支持上下文令牌、输出令牌和修复尝试次数具有明确静态上限的论断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
+          "startLine": 27,
+          "endLine": 30
+        },
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "技能制品摘要是否与当前技能内容一致，且 `traex` 配置档案是否接受所列预算？",
+        "why": "清单只声明了制品摘要、配置档案和预算上限，没有提供加载摘要校验、模型能力协商、最终生效参数或真实结构化调用结果。",
+        "nextStep": "检查宿主加载记录和摘要校验结果，核对 `traex` 的能力协商与最终生效预算，并执行一次受控的结构化调用验证输出合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
+      "digest": "468bbb6b669089c57790cb8ba50178f9d7d9a8ffb6835dd48c18a137f7e25fa1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
+      "digest": "eb5e63bd3b6e3878ed2dffe409bae271e20993ac0baabdf1e4c47bb12cfbb27d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
+      "digest": "4314f06e1b0e6ba910552b65d93ffce60f1ada2837ed285ca1979b5f9afa1e94"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/SKILL.md",
+      "digest": "7cc6c58913efeb9fd59c189e30c43fe0b266d747e6671e61c977949c27ac9b6f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
+      "digest": "df5592fd59bc200546ba138dee22816073a69783056f7324f74eaeed4938a78f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:24:04.534Z",
+    "trace": {
+      "runId": "913c861b-27e4-4957-9fbf-cd0cb7a9d4d3",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "ea0a2aeb3749d41a2cfae2263d8fb8fccfaed5861d434c3ab77c573b71c10699",
+      "contextHash": "2769c7c3f92be5fc5745141159be2d4e071b8d537aa8751006340b095c0671a1",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a07cf46600f975ecd3a1421c85a2d50a77e917cd54d8d0e07bd8332321686af4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9f-9bc6-70e1-bc22-316cc9428176"
+      ],
+      "usage": {
+        "used": 20763,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 25040,
+          "utf8Bytes": 29976,
+          "estimatedTokens": 9992,
+          "budgetedTokens": 12490,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:24:21.190Z",
+    "trace": {
+      "runId": "268aae59-55c2-4783-9d3e-75dd0e56a84e",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "521bba3188d0c2ed358812c9b3ef542a821f58c8f8046ad9d7f6d8fcc80bf9d3",
+      "contextHash": "c9b196aca639e218335d46a28ce3dc4fe78d939255f54eb70eaa9a5ab1005ddc",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6be3f31ed6342ec23aff2c73e68e8651a484681c49e9176ffb2b53410f56c562",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9f-cd61-7d32-a2b5-671c86475f7e"
+      ],
+      "usage": {
+        "used": 19431,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22598,
+          "utf8Bytes": 26914,
+          "estimatedTokens": 8972,
+          "budgetedTokens": 11215,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

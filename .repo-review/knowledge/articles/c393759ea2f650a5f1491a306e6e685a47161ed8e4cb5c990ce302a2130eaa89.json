@@ -1,0 +1,197 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/visual-analyst/1/output.schema.json",
+    "title": "视觉分析角色的结构化输出合同",
+    "summary": "该文件以 JSON Schema 规定视觉分析结果的批量文档、章节、引用和待确认问题结构，是声明性的输出规范；它能够描述合法数据形态，但本身不证明视觉分析、Schema 校验、引文抽取或独立复核已经接入运行时。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "document-structure",
+        "title": "批量文档结构",
+        "body": "合同将 `schema_version` 固定为 1，并把顶层 `documents` 限制为 1 至 16 项。每份文档包含标题、摘要、类别和章节；类别覆盖概览、架构、需求、进展、实现、测试、配置、研究与视觉等知识类型，章节则要求稳定键、标题和非空正文。[[c1]]\n\n文档对象必须同时提供键、标题、摘要、类别、章节、引用和问题，顶层必须提供版本与文档数组；这两层均拒绝未声明字段。[[c2]] 这些内容规定的是结果格式，而非视觉能力或处理流程已经实现。"
+      },
+      {
+        "key": "evidence-and-questions",
+        "title": "证据与不确定性表达",
+        "body": "引用项以人读标签和理由说明证据用途，并通过限定枚举表达支持、解释、依赖或矛盾等关系。目标可以指向材料或文章；材料目标可携带固定行范围，而 `quote` 的描述约定由宿主在独立复核前抽取精确引文。问题项用于记录疑问、原因、下一步、阻塞状态和关联引用键。[[c3]]\n\n因此，该合同既能连接论断与证据，也能保留尚未解决的不确定性；但“由宿主抽取”仍只是字段说明中的约定，不能单凭 Schema 认定相应运行逻辑已经存在。"
+      },
+      {
+        "key": "contract-boundary",
+        "title": "合同边界",
+        "body": "引用项、问题项和文档对象分别通过 `required` 列表规定最低完整性，并各自禁止额外属性；顶层对象也采用相同的封闭结构。[[c3]][[c2]] 这有助于拒绝缺字段或携带未知字段的结果，但只能校验结构，不能判断图片是否真实可见、不可读文字是否被虚构，或引用在语义上是否确实支持附近论断。后续仍需运行入口、校验器、引文抽取和独立复核流程提供实现与测试证据。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "文档类别与章节结构",
+        "reason": "支持批量文档数量、类别枚举，以及章节键、标题和正文约束的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/output.schema.json",
+          "startLine": 5,
+          "endLine": 77
+        },
+        "quote": "    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLen"
+      },
+      {
+        "key": "c2",
+        "label": "文档与顶层必填约束",
+        "reason": "支持文档对象和顶层对象的必填字段及禁止额外属性，并用于界定这两层的合同边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/output.schema.json",
+          "startLine": 209,
+          "endLine": 227
+        },
+        "quote": "        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalProperties\":"
+      },
+      {
+        "key": "c3",
+        "label": "引用与问题结构约束",
+        "reason": "支持引用目标、关系、宿主抽取引文的字段约定，以及引用项和问题项各自的必填字段与封闭对象约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/output.schema.json",
+          "startLine": 78,
+          "endLine": 207
+        },
+        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+      }
+    ],
+    "questions": [
+      {
+        "question": "运行时是否已经执行该 Schema 校验，并由宿主根据固定行范围填充精确引文？",
+        "why": "材料只声明输出结构和宿主抽取 `quote` 的约定，没有提供校验器调用链、失败处理、引文抽取实现或行为测试证据，因此不能据此确认这些能力已经实现。",
+        "nextStep": "检查角色运行入口、Schema 校验器和引文抽取代码，并执行覆盖合法输出、非法输出及行范围错误的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/prompt.md",
+      "digest": "3a5e1432829bfb0b77fdfd57a986d2d0f24b7f3d0656d8617e2c7faed28dff50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/skills/omem-visual-analyst/SKILL.md",
+      "digest": "f3bc7bd10df4298be3c4d9b573f28f11eba1aa7822841e00a869ed90084c1299"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/skills/omem-visual-analyst/agents/openai.yaml",
+      "digest": "75c68e75e0b8b2020663d19f2e4b655459166a7a5645d570e84bbfdb6fd70317"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:51.833Z",
+    "trace": {
+      "runId": "0adc7d7d-dcd0-4338-be02-1f2ae1a4e8ad",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "fa0d6f7b68f8ec030e680fbc6a8e3d11890ffbfb2b8b943fa8893edbfa60dff4",
+      "contextHash": "ecb626e409c325e2948044f8ab2b9757bb3894e8b151a574207c16244294685c",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7dbf918ab99ce6522859ba86a937ee73f0d83647a8ea586adeeb57633e457fe5",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-24bd-7381-93ca-dfc30c47a82a"
+      ],
+      "usage": {
+        "used": 20043,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22251,
+          "utf8Bytes": 27691,
+          "estimatedTokens": 9231,
+          "budgetedTokens": 11539,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:03.923Z",
+    "trace": {
+      "runId": "b9156d53-47f5-4625-a5ec-6375c7134c14",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "d05086a147503dbc34c51e176d2e6f785960ccab07635c96f11a32ca302471c9",
+      "contextHash": "292c44a04fa9e9a4d72fcce185aa3c7f171e899ad2bc41b195aa4f755e74ab60",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ac3b8128033cff79fbbd3dfd1fdd60ad11a39cdfacc0147b68a80230af6c167b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-597c-7681-90ea-ae8dbd2a6e1e"
+      ],
+      "usage": {
+        "used": 18529,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 19645,
+          "utf8Bytes": 24301,
+          "estimatedTokens": 8101,
+          "budgetedTokens": 10127,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

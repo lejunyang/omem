@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+    "title": "知识规划角色清单",
+    "summary": "声明 knowledge-planner 角色版本、提示与内联技能、输出合同、无工具策略、会话隔离和预算上限；属于配置事实，实际执行与强制校验仍需运行时证据。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "role_artifacts",
+        "title": "角色与产物绑定",
+        "body": "清单声明角色为 `knowledge-planner` 版本 1，使用 `traex` profile，并加载 `prompt.md`。[[c1]] 它还以内联模式绑定带摘要指纹的 `omem-knowledge-planner` 技能，并指定输出合同为 `KnowledgePlan.v1`，体现角色资产与结构化结果之间的配置关联。[[c2]]"
+      },
+      {
+        "key": "isolation_budget",
+        "title": "隔离、工具与预算",
+        "body": "工具策略被声明为 `none`，允许工具列表为空；会话不复用，也不继承用户技能或 MCP。[[c3]] 这意在让规划过程只依赖提供的目录上下文，减少外部状态影响。预算上限为 96,000 个上下文 token、24,000 个输出 token，并允许最多两次修复。[[c4]] 这些是清单中的期望约束，材料没有证明运行时已逐项执行。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "知识规划角色基本配置",
+        "reason": "支持角色标识、版本、profile 和提示模板的配置事实。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+          "startLine": 2,
+          "endLine": 8
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"knowledge-planner\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],"
+      },
+      {
+        "key": "c2",
+        "label": "内联技能与输出合同",
+        "reason": "支持技能的加载方式、摘要绑定以及 KnowledgePlan.v1 输出声明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+          "startLine": 9,
+          "endLine": 17
+        },
+        "quote": "  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-knowledge-planner\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"c3856cb51f7e47e53a96251712922dd2dc041fc6317cc0803fc96037d6e8e4d9\"\n    }\n  ],\n  \"output_schema\": \"KnowledgePlan.v1\","
+      },
+      {
+        "key": "c3",
+        "label": "工具和会话隔离策略",
+        "reason": "支持无工具、会话不复用且不继承用户扩展能力的配置。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c4",
+        "label": "知识规划预算",
+        "reason": "支持上下文、输出及修复次数的具体配置上限。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+          "startLine": 27,
+          "endLine": 30
+        },
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "运行时是否验证内联技能摘要、强制禁用工具与继承，并对 KnowledgePlan.v1 失败结果执行至多两次修复？",
+        "why": "manifest 只声明策略和预算，没有执行日志、宿主实现或测试来证明摘要不匹配、越权工具调用及 schema 失败时的实际行为。",
+        "nextStep": "核对角色加载器、会话创建器、输出验证与修复循环的实现，并补充覆盖拒绝和重试上限的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/SKILL.md",
+      "digest": "17a72da2e7939a4aa24ef5999539bccf29485c5e976c1cabf0f159e23b8ab88d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/agents/openai.yaml",
+      "digest": "643869290ef1d25177dd0ab88d69d4272dd2b50be3630a168d87332240b161df"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+      "digest": "3f647bae16f9c6ab67e0da8f7f28ed24abf4f0fdf7a20da54f49da297966be87"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+      "digest": "e79b69480df9d929d9da3680a861a0b693d7a2f4eb1e2e1345e34d6e858ce595"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/prompt.md",
+      "digest": "03a99bbac3aa70981f33863997e9efca6d9addf20b89ecf1ff5112fbd7589118"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/SKILL.md",
+      "digest": "8fc03c84b4b4e8449ae040d489e11043eee3473a638caf4e0a2a506b4f0a4512"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:47:25.016Z",
+    "trace": {
+      "runId": "e5ee1328-ff1c-476d-94b1-6024afc2da63",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "f0d1faaada2bdaef1a015102cdc1273cc68641efbb283e6c6bd805d0ee88842c",
+      "contextHash": "c3d36ddfc80ec4a8d8e93d87147be37124c7afcae7c06681897f61c1dc2f1ff6",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2d30d056e755edc739171f30a0dd2b4fefc4a5ab19370a71a01b065d87507041",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-85b2-7f33-a4ea-3224a07e11b7"
+      ],
+      "usage": {
+        "used": 21996,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 17010,
+          "utf8Bytes": 19406,
+          "estimatedTokens": 6469,
+          "budgetedTokens": 8087,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:47:49.012Z",
+    "trace": {
+      "runId": "6d3d25ed-f799-4bfa-9a17-d97c2ef4a2d5",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "d3afdc80300d2abfbf56f52ed24fc55de135864736ec4d605df4f0ff8270b409",
+      "contextHash": "482aec7930cc6416c3ae91195f553b55af21c8d89b4bba9f426d3f9d8506f7eb",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "63e0b4236d62414904ae1815d4aa444047740035997440a29010e2b599781ba9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-2b0c-7c60-bee1-3c4c02ce3691"
+      ],
+      "usage": {
+        "used": 23344,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28751,
+          "utf8Bytes": 37933,
+          "estimatedTokens": 12645,
+          "budgetedTokens": 15807,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

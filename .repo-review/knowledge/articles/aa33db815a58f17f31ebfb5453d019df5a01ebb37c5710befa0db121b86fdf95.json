@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/agents/openai.yaml",
+    "title": "可追溯章节技能的 OpenAI 界面配置",
+    "summary": "该 YAML 为技能声明展示名称、简短英文说明和默认调用提示，用于代理界面中的发现与启动。文件只描述界面元数据，未包含模型、预算、工具权限或输出校验配置。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "interface_metadata",
+        "title": "展示与发现信息",
+        "body": "配置在 interface 下提供中文展示名“撰写可追溯章节”和英文短描述“Build linked knowledge from fixed evidence”。这使用户或代理目录能够以人读名称识别技能，并突出其从固定证据构建关联知识的用途。[[c1]]\n\n材料只有五行，未声明模型选择、推理强度、工具权限、上下文预算或 Schema，因此不应把它解释为完整的角色运行配置。"
+      },
+      {
+        "key": "default_invocation",
+        "title": "默认调用入口",
+        "body": "default_prompt 建议通过 `$omem-knowledge-writer` 处理已提供的固定材料，说明该文件的主要作用是生成一个技能调用入口。[[c2]]\n\n默认提示没有复述章节、引用和问题等详细规则；这些行为需要由相应技能正文或角色提示补充。材料也未展示哪个宿主读取此 YAML、变量如何解析以及调用失败如何处理，所以这里只能确认配置意图，不能确认界面集成已运行。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "技能界面名称与简介",
+        "reason": "支持附近关于展示名称、英文短描述及界面发现用途的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/agents/openai.yaml",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "interface:\n  display_name: \"撰写可追溯章节\"\n  short_description: \"Build linked knowledge from fixed evidence\""
+      },
+      {
+        "key": "c2",
+        "label": "技能默认调用提示",
+        "reason": "支持附近关于默认提示通过技能名处理固定材料的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/agents/openai.yaml",
+          "startLine": 4,
+          "endLine": 4
+        },
+        "quote": "  default_prompt: \"Use $omem-knowledge-writer to process the supplied fixed materials.\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "哪个运行时或客户端消费这份 OpenAI 界面配置，并且 `$omem-knowledge-writer` 是否会被可靠解析为对应技能？",
+        "why": "当前材料只给出静态界面字段，没有装载器、注册结果或集成测试，无法确认配置已生效。",
+        "nextStep": "检查技能注册和客户端发现流程，并用集成测试验证展示信息及默认提示能够启动正确技能。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/prompt.md",
+      "digest": "a139c9318e2687fb85358fbd369d5b7ac7f0dc0fb1369c4261a714d3e1ca324e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/SKILL.md",
+      "digest": "eeb26db50c60090599b6de6aac0804459a184d21afdcad5e07e3dbe49d6b1054"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/agents/openai.yaml",
+      "digest": "00a4929cd148fb583122620865b904f4030ceb4c3d16781a02cb248ffaf148f6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/manifest.json",
+      "digest": "7f61ba46e4f43f27d72c37ab46ea98b2e3206700a2bd3f4a6c3dd19adb3c136f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:24:10.377Z",
+    "trace": {
+      "runId": "9947d76d-cca2-4af7-bf43-3e0fab10a425",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "7ab64e79f810668440685fa0433d733074cd6674bb7cf5e7407c7782c6818328",
+      "contextHash": "e30a5bdefaad321a84be5e75e1d5f02026e5afc0e31497a60fc36d9e7bb67074",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1105a02b23e6d9c8e0add5789539d3aaba6b7a95782701d8656d866e23c6429d",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9f-2cfb-7b02-85cd-84ef3004a8d7"
+      ],
+      "usage": {
+        "used": 25042,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 30662,
+          "utf8Bytes": 33968,
+          "estimatedTokens": 11323,
+          "budgetedTokens": 14154,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:24:26.698Z",
+    "trace": {
+      "runId": "19f6180c-6a31-45ee-b45f-a63cc19edfc4",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "38474e2e7115fe4c723b8b1d1e4ee42363d082f5e47e2cd28923dbf2a726cb0b",
+      "contextHash": "1b8c93c38cf67cb58ccca9a7a9182c24964728d39d06449520380c9f73b8a899",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ddc9d5794730afc43947b07503bd79df5ff726849a0f8809302d8723ac2f9ecc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9f-e30a-7861-a9da-6782439d6e8f"
+      ],
+      "usage": {
+        "used": 26457,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 41065,
+          "utf8Bytes": 52807,
+          "estimatedTokens": 17603,
+          "budgetedTokens": 22004,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

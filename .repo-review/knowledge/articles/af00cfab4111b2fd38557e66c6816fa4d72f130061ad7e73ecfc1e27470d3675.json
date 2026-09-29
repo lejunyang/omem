@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+    "title": "提取角色的提案批次合同",
+    "summary": "该文件定义 ProposalBatch.v1：顶层包含作业和角色身份、观察、提案及弃权；每项提案描述知识类型、操作、证据、不确定性、版本预期和来源。多个内部对象仅约束为普通对象，语义细节仍依赖其他合同或运行时验证。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "batch-envelope",
+        "title": "批次信封与角色绑定",
+        "body": "合同采用封闭顶层对象，要求版本、作业标识、角色标识、观察、提案和弃权全部存在；版本固定为 1，角色固定为 `extractor`。[[c1]] 观察和弃权只被约束为数组，当前文件没有进一步规定其元素结构，因此不能从这里推断观察或弃权的标准字段。"
+      },
+      {
+        "key": "proposal-model",
+        "title": "提案类型与变更操作",
+        "body": "每项提案同样禁止额外字段，并要求提案标识、知识类型、操作、范围、正文、证据、不确定性、理由、预期版本和来源。知识类型限定为任务、主张、事件和流程，操作限定为创建、更新和取代。[[c2]] 这说明输出是待处理的变更提案，而不是已经写入知识库的事实。"
+      },
+      {
+        "key": "evidence-concurrency",
+        "title": "证据、不确定性与并发信息",
+        "body": "提案必须至少含一项证据，同时显式携带不确定性、理由、预期版本和来源；可选目标标识允许字符串或空值。[[c3]] 这些字段为证据追溯和更新冲突处理预留位置，但 `scope`、`body`、`expected_versions` 与 `origin` 仅声明为对象，没有在本文件中限定内部结构，也未展示提案后续验证或应用流程。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "提案批次顶层结构",
+        "reason": "支持顶层封闭性、必填字段、版本和角色绑定的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 1,
+          "endLine": 20
+        },
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"https://omem.invalid/contracts/ProposalBatch.v1\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",\n    \"job_id\",\n    \"role_id\",\n    \"observations\",\n    \"proposals\",\n    \"abstentions\"\n  ],\n  \"properties\": {"
+      },
+      {
+        "key": "c2",
+        "label": "提案必填字段与枚举",
+        "reason": "支持提案封闭结构、知识类型及变更操作范围的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 21,
+          "endLine": 43
+        },
+        "quote": "      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"schema_version\",\n          \"proposal_id\",\n          \"kind\",\n          \"operation\",\n          \"scope\",\n          \"body\",\n          \"evidence\",\n          \"uncertainties\",\n          \"reason\",\n          \"expec"
+      },
+      {
+        "key": "c3",
+        "label": "提案证据与版本字段",
+        "reason": "支持证据最小数量、不确定性、预期版本、来源和可选目标标识的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 44,
+          "endLine": 53
+        },
+        "quote": "          \"evidence\": { \"type\": \"array\", \"minItems\": 1 },\n          \"uncertainties\": { \"type\": \"array\" },\n          \"reason\": { \"type\": \"string\" },\n          \"expected_versions\": { \"type\": \"object\" },\n          \"origin\": { \"type\": \"object\" },\n          \"target_id\": { \"type\": [\"string\", \"null\"] }\n        }\n      }\n    }"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`observations`、`abstentions`、`scope`、`body`、`expected_versions` 和 `origin` 是否另有细化 schema？",
+        "why": "当前合同只约束它们为数组或对象，无法验证内部字段、作用域安全性和并发版本语义。",
+        "nextStep": "查找组合 schema 或宿主侧验证器；若不存在，为这些结构补充明确合同和负面测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "ProposalBatch.v1 的提案由哪个阶段进行证据核验、冲突检查和最终应用？",
+        "why": "合同描述提案形状，不证明提案会被接受，也未说明失败提案是否会覆盖有效知识。",
+        "nextStep": "核对提案验证与应用流程、状态机及行为测试，并记录各失败路径。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/prompt.md",
+      "digest": "95e5365efe5fc2b6acf74b1b4aa3436e115ee2b00f5bbb2bcf56398a2cf2d1fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/SKILL.md",
+      "digest": "b496b1119b4959702ca15ae7f04af55d900642813af3a614a4bb77cf6f4698b5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml",
+      "digest": "76401f4dbc5664a0393bb4935243faeb38c159fb1e0296c04e9457601cbecdf6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
+      "digest": "f292d7b1582aae1f2ac92c146cfa1adc98c71b4f3ee52ab4bac4fadc30e821fd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+      "digest": "763b50103fdd95fef13b764dd1e7ca464c79fe7a860f6337e6dbbe2d56448b50"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:46:31.562Z",
+    "trace": {
+      "runId": "fd6934d0-7425-473c-bb8c-c2a05c3176cb",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "24a2bdd5b82a50dcef62529139a824274131d6258e7fa6151636c47ea3c9afbf",
+      "contextHash": "794e2286e04e1e1101da64af54fe644ecebbb658e1fdcc3821f9af7f56831c7b",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "49551b3df3c230fa79adcac1a9e70a3556e89cb3d4d180404458e7d649fe5dbd",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb3-9ba5-7c43-ba95-3acb0bf60f29"
+      ],
+      "usage": {
+        "used": 24511,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 24713,
+          "utf8Bytes": 27959,
+          "estimatedTokens": 9320,
+          "budgetedTokens": 11650,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:46:59.017Z",
+    "trace": {
+      "runId": "87d870ca-ff46-41fc-9c42-4eeee3e0f866",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "6c0ced0bec75ba6bbf99d1ce67eaa051da842ccae342feecc6aa49be60c4594d",
+      "contextHash": "78371b25676653ad69abee0350800c615305e3e40f006695b500805da7024919",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "00060cd282b39344704d580d841edd3a30624b8bd6f3d949b1ae55c486a20625",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-59ca-7070-9b77-6bc267dd7841"
+      ],
+      "usage": {
+        "used": 27897,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 38202,
+          "utf8Bytes": 50488,
+          "estimatedTokens": 16830,
+          "budgetedTokens": 21038,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

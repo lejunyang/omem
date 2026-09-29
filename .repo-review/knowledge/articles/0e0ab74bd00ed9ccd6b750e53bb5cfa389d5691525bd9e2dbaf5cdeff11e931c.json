@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+    "title": "KnowledgePlan.v1 输出结构",
+    "summary": "定义知识规划结果的顶层必填字段、章节数量、章节字段格式与封闭对象约束；它负责校验结构，但不覆盖材料目录成员关系或固定章节语义。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "plan_shape",
+        "title": "顶层结构",
+        "body": "该文件以 JSON Schema 2020-12 描述 `KnowledgePlan.v1`：输出必须是对象，`schema_version` 为数值且固定为 1。[[c1]] 标题是 1–240 字符的字符串，`chapters` 是包含 4–32 项的数组。[[c2]] 顶层明确要求同时提供版本、标题和章节数组，并禁止出现未声明属性。[[c3]]"
+      },
+      {
+        "key": "chapter_contract",
+        "title": "章节合同与校验边界",
+        "body": "每个章节对象包含 key、标题、用途和材料键列表：key 必须以字母开头并遵循限定字符格式，标题与用途均为受长度限制的非空字符串。[[c4]] `materialKeys` 每章至少 1 项、最多 400 项；四个章节字段全部必填，且章节对象同样禁止额外属性。[[c5]] 这些规则只验证形状与基数，不能单独确认材料键属于目录，也没有枚举必须出现的五个语义章节。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "版本与对象类型约束",
+        "reason": "支持附近关于 JSON Schema 方言、顶层对象类型以及版本固定为 1 的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },"
+      },
+      {
+        "key": "c2",
+        "label": "标题和章节数组限制",
+        "reason": "支持附近关于标题长度以及章节数组数量和类型的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+          "startLine": 9,
+          "endLine": 18
+        },
+        "quote": "    \"title\": {\n      \"type\": \"string\",\n      \"minLength\": 1,\n      \"maxLength\": 240\n    },\n    \"chapters\": {\n      \"minItems\": 4,\n      \"maxItems\": 32,\n      \"type\": \"array\",\n      \"items\": {"
+      },
+      {
+        "key": "c3",
+        "label": "顶层必填与封闭属性",
+        "reason": "直接支持顶层版本、标题、章节数组均为必填项，并禁止额外属性的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+          "startLine": 56,
+          "endLine": 62
+        },
+        "quote": "  \"required\": [\n    \"schema_version\",\n    \"title\",\n    \"chapters\"\n  ],\n  \"additionalProperties\": false,\n  \"$id\": \"https://omem.local/schemas/KnowledgePlan.v1\""
+      },
+      {
+        "key": "c4",
+        "label": "章节标识、标题与用途",
+        "reason": "支持章节 key 的格式，以及标题和用途字段的类型与长度限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+          "startLine": 19,
+          "endLine": 34
+        },
+        "quote": "        \"type\": \"object\",\n        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,59}$\"\n          },\n          \"title\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLength\": 200\n          },\n          \"purpose\": {\n         "
+      },
+      {
+        "key": "c5",
+        "label": "材料键与章节必填项",
+        "reason": "支持 materialKeys 的数量及字符串约束、四个章节必填字段和章节对象禁止额外属性。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+          "startLine": 35,
+          "endLine": 52
+        },
+        "quote": "          \"materialKeys\": {\n            \"minItems\": 1,\n            \"maxItems\": 400,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1,\n              \"maxLength\": 500\n            }\n          }\n        },\n        \"required\": [\n          \"key\",\n          \"titl"
+      }
+    ],
+    "questions": [
+      {
+        "question": "由哪个宿主校验 materialKeys 必须来自 task.catalog，并保证五个规定章节 key 均存在？",
+        "why": "当前 schema 只约束材料键的字符串形状与数量，也未枚举 overview、architecture、background、requirements、progress；这些语义要求无法仅凭该 schema 保证。",
+        "nextStep": "检查运行时是否存在 schema 之外的语义验证器；若没有，补充目录成员校验、固定章节校验及相应失败测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/SKILL.md",
+      "digest": "17a72da2e7939a4aa24ef5999539bccf29485c5e976c1cabf0f159e23b8ab88d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/agents/openai.yaml",
+      "digest": "643869290ef1d25177dd0ab88d69d4272dd2b50be3630a168d87332240b161df"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+      "digest": "3f647bae16f9c6ab67e0da8f7f28ed24abf4f0fdf7a20da54f49da297966be87"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+      "digest": "e79b69480df9d929d9da3680a861a0b693d7a2f4eb1e2e1345e34d6e858ce595"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/prompt.md",
+      "digest": "03a99bbac3aa70981f33863997e9efca6d9addf20b89ecf1ff5112fbd7589118"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/SKILL.md",
+      "digest": "8fc03c84b4b4e8449ae040d489e11043eee3473a638caf4e0a2a506b4f0a4512"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:48:07.443Z",
+    "trace": {
+      "runId": "66e4b1ee-637d-49b8-aa93-c6f3e263fd22",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "06b82e0b655590a5d190643b33f51bbe15d28248ecc666fa2204cba170c0ecd9",
+      "contextHash": "3f7d106c9c0a87f5060d33109023c66268b827c9d8e9c00021580fe66fa3d8ed",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8f2d08aaa53c4f6100f881e8b8b576b90d31dd90029d81bc89d6a6a00cb71892",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-8a37-72c0-8933-a2381bf4b6af"
+      ],
+      "usage": {
+        "used": 21514,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22742,
+          "utf8Bytes": 28700,
+          "estimatedTokens": 9567,
+          "budgetedTokens": 11959,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:48:16.659Z",
+    "trace": {
+      "runId": "0d9cc64b-0709-442c-bb6c-37e02eb3e2ff",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c7b28fd115c5b532ea790c938e6ac826d48dcd0f108462d4346a8ff9f7323cbe",
+      "contextHash": "9ba4c74f64069bf69b5b4a54fbbdf16f2d8b1392101e8f0cb06c0968ea852569",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5178d7edcbf48e27d3a7f693b0c8659ba2d243273cd4bc020a9f9c7c5530d4b9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-d06d-7771-9890-531aeb0668f5"
+      ],
+      "usage": {
+        "used": 19205,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 19982,
+          "utf8Bytes": 25004,
+          "estimatedTokens": 8335,
+          "budgetedTokens": 10419,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+    "title": "CorrectionProposal.v1 的顶层输出结构",
+    "summary": "该 JSON Schema 定义反馈纠正候选的封闭顶层对象，要求版本、纠正标识、目标、范围、停止使用内容、替代内容、证据、原因与来源。当前材料只对部分字段给出宽泛类型，因此能约束字段存在性，却不足以证明内部对象语义和证据定位得到严格验证。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "closed-contract",
+        "title": "封闭对象与必需字段",
+        "body": "Schema 使用 JSON Schema 2020-12，标识自身为 `CorrectionProposal.v1`，要求输出是对象且禁止未声明的顶层属性。九个字段均为必需项，覆盖版本、纠正目标与范围、被停止采用的内容、替代内容、证据、原因及来源。[[c1]] 这与角色清单声明的输出合同相呼应，构成静态格式入口。"
+      },
+      {
+        "key": "validation-depth",
+        "title": "字段类型与校验深度限制",
+        "body": "版本固定为 1；纠正标识、停止使用内容、替代内容和原因是字符串，目标、范围与来源仅被约束为对象，证据仅要求是至少含一项的数组。[[c2]] 因此当前材料未显示这些嵌套结构的必需字段、引用定位格式、字符串最小长度或对象附加属性限制，不能据此认定语义级纠正合同完整。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "纠正候选顶层合同",
+        "reason": "支持 schema 版本、封闭顶层对象以及九个必需字段的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+          "startLine": 1,
+          "endLine": 16
+        },
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"https://omem.invalid/contracts/CorrectionProposal.v1\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",\n    \"correction_id\",\n    \"target\",\n    \"scope\",\n    \"stop_using\",\n    \"replacement\",\n    \"evidence\",\n"
+      },
+      {
+        "key": "c2",
+        "label": "纠正候选字段类型",
+        "reason": "支持字段当前仅具基础类型和证据最小项数约束，并揭示嵌套校验深度有限。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+          "startLine": 17,
+          "endLine": 26
+        },
+        "quote": "  \"properties\": {\n    \"schema_version\": { \"const\": 1 },\n    \"correction_id\": { \"type\": \"string\" },\n    \"target\": { \"type\": \"object\" },\n    \"scope\": { \"type\": \"object\" },\n    \"stop_using\": { \"type\": \"string\" },\n    \"replacement\": { \"type\": \"string\" },\n    \"evidence\": { \"type\": \"array\", \"minItems\": 1 },\n    \"reason\": { \""
+      }
+    ],
+    "questions": [
+      {
+        "question": "`target`、`scope`、`evidence` 和 `origin` 是否另有被宿主组合进来的严格 schema？",
+        "why": "当前文件仅将这些关键字段定义为一般对象或数组；若无额外校验，错误作用域或不可定位证据仍可能通过。",
+        "nextStep": "检查宿主 schema 注册和验证代码；若没有组合合同，应为嵌套对象补充明确字段、封闭属性和证据格式。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
+      "digest": "8360aadfcdad2fb2f7f55a87fb069e9d35353b2c2eb6d6e965579c855f4c9b57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
+      "digest": "2270241f396ff675d0d702907dfed9465c7f9078b9ece6ff532611cfaea37140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
+      "digest": "1d51df6a2bf8a9efa743b139e36df5e37ba0eb7b79790635ff73cde54cbd7bb6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
+      "digest": "5a382d0ffad0f254164f51864bc530bc556a6231af09107d4194ec5feecf4039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+      "digest": "1fbb87e87e40252797492748cf8809f1a435df9e6db7546360f4b028f8c7b83e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
+      "digest": "986867580df9cfc41b753de7e718bba3e1c6d2fe55a25f86e17ae6da8b57ec8f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:46:52.956Z",
+    "trace": {
+      "runId": "b3e5ebb9-937c-47af-b51c-27975e731aa0",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "45d80c47306fa40772a2beea53b4869f3a0c7cea41c14f47683be2496c351c05",
+      "contextHash": "5af7dbc4645f7a96a96508b8943fe9158bf854159afa44ac3fa0c6177f5f9f09",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "92a84f389485d1e1a3999d57c480361df01eac264085e99663ec506e60988e16",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-0aa3-7c33-8a24-575c2462578f"
+      ],
+      "usage": {
+        "used": 21331,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 17071,
+          "utf8Bytes": 18691,
+          "estimatedTokens": 6231,
+          "budgetedTokens": 7789,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:47:06.872Z",
+    "trace": {
+      "runId": "07c35bf7-55c9-49b8-9acc-4219908aaf45",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "08bdef014dcfc514e247672efda5c33a74b8acc092a37b3a77b1b373f03d8cda",
+      "contextHash": "bd9124667ded09be016e3a9db6dd23112c8b7bee3efe8fb7fd7ee657116971d0",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e227ae103c81dd60c9ad3a83f3953eb7cc151ec36e2f9129b6908676c120ce82",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-aea0-74b0-a4e0-8f10b624efb4"
+      ],
+      "usage": {
+        "used": 22302,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 26150,
+          "utf8Bytes": 33998,
+          "estimatedTokens": 11333,
+          "budgetedTokens": 14167,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

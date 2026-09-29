@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+    "title": "视觉材料分析角色 v1 运行清单",
+    "summary": "该清单声明 visual-analyst 的角色包、KnowledgeBatch 输出、隔离策略和预算，但未定义图像载荷通道、模型视觉能力协商或这些策略的实际执行情况。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "visual_role_contract",
+        "title": "角色包与知识输出",
+        "body": "清单定义 `visual-analyst` v1，引用 `traex` profile 与 `prompt.md`，并以内联方式加载固定版本和制品摘要的 `omem-visual-analyst` 技能。其输出合同为 `KnowledgeBatch.v1`，说明配置期望该角色产生结构化知识批次。[[c1]]\n\n现有材料只有运行清单，没有提供视觉提示词、技能正文、输出 Schema 或执行记录。因此可以确认角色及输出合同的声明，但不能进一步认定 OCR、图像理解、视觉引用定位或制品摘要验证已经由运行时实现。"
+      },
+      {
+        "key": "visual_isolation",
+        "title": "隔离、输入边界与预算",
+        "body": "该角色的工具策略为 `none`，允许工具列表为空；会话声明永不复用，并禁止继承用户技能和 MCP。[[c2]] 这些字段仅表明可用工具和可继承上下文受到限制。此前“图像必须由宿主随上下文提供”的结论由此替代：清单没有定义图像载荷通道，无法区分上下文、任务附件或其他宿主管理机制。\n\n预算配置为 96,000 个上下文 token、24,000 个输出 token和最多两次修复尝试。[[c3]] 它没有说明所选 profile 是否支持视觉输入、如何拒绝不兼容模型，也未证明预算计量及修复行为已经生效。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "视觉角色、技能与知识输出配置",
+        "reason": "支持视觉角色身份、profile、内联技能制品及 KnowledgeBatch 输出合同的配置说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+          "startLine": 2,
+          "endLine": 17
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"visual-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-visual-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"feef67248fed3d15d94d9"
+      },
+      {
+        "key": "c2",
+        "label": "视觉角色工具与会话配置",
+        "reason": "支持无可调用工具、会话不复用以及不继承用户技能和 MCP 的配置事实，同时说明清单并未定义图像载荷通道。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c3",
+        "label": "视觉分析任务预算配置",
+        "reason": "支持上下文、输出 token 和修复尝试次数的配置上限。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+          "startLine": 27,
+          "endLine": 30
+        },
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "宿主通过什么机制向无工具的 visual-analyst 提供原始图像，并如何确认所选 profile 具备所需视觉能力？",
+        "why": "清单禁止工具但没有描述图像载荷、模型能力协商、不支持视觉输入时的拒绝行为或 KnowledgeBatch 生成结果。",
+        "nextStep": "检查角色输入封装、profile 能力发现和视觉任务集成测试，验证原图传递、能力不兼容时的失败处理及 KnowledgeBatch 引用生成。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
+      "digest": "1ec6d9a7e7997db6ff2f98381d8acd1ef976ff9e21201d6c5bb73824d97f9555"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/output.schema.json",
+      "digest": "6ab370d7f0c7af0c0433a7b98677e949fd8c45df348c52020af5aaecd8371670"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
+      "digest": "588a152e46dc50fce04717dcc7ebe386913f8f45da0ae090b735f16dcbce6f23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
+      "digest": "1066d9fa84cc7dacab542e8ff908be35fd27ac116f78aa38fd11f944c3f34227"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
+      "digest": "dab14a5bbcf124b8c2676845e2977bb2a21fa8686310c037b62046a826d23edf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+      "digest": "c8b425766c71d518aefc2d4a3577d4ba6993843610bb4bb24400c2f2d3251e89"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:50:33.450Z",
+    "trace": {
+      "runId": "1741f66b-807a-42a9-b7bc-5929fa4143c0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "ceef0e66be17027159970992bd7b280497a012241177cbdb0d265865a88a9630",
+      "contextHash": "abf23acb200f5df6bc7abd3504c90453ceb67b439059c1ed0b7d40c0cb533126",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1f3d66be2a1f4535d1d821bb14b0e9732d50fae8af593bf875df386cc36f18b0",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb7-bf69-7003-9780-292fef3b8d64"
+      ],
+      "usage": {
+        "used": 21396,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22352,
+          "utf8Bytes": 27456,
+          "estimatedTokens": 9152,
+          "budgetedTokens": 11440,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:50:41.995Z",
+    "trace": {
+      "runId": "7e2e3b60-4d82-4b29-bf72-5f194bb6ebb3",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "02648273572f4b98b058346c82752eb43acebe2b3486030efbb3a21673f8b950",
+      "contextHash": "171497f3db0d6c4175eacd210c4af33cda91b06253bf7717c6c5fff8d314bfdc",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6da32fc1d467062084f4268ad0b6bb230bc6e460cdef6794699b2a092ef4765a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb8-0d26-7cc0-a87a-23d8f299cb5c"
+      ],
+      "usage": {
+        "used": 18958,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 19527,
+          "utf8Bytes": 23353,
+          "estimatedTokens": 7785,
+          "budgetedTokens": 9732,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

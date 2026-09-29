@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+    "title": "知识撰写角色的结构化输出合同",
+    "summary": "该文件声明 KnowledgeBatch.v1 的 JSON Schema：一批输出包含 1–16 个知识文档，每份文档由元数据、Markdown 章节、可追溯引用和待确认问题组成。它定义的是静态格式约束，不能单独证明运行时已经执行校验、引用抽取或语义复核。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "document_shape",
+        "title": "文档与章节结构",
+        "body": "合同将顶层数据限定为版本号和文档数组，并把单批文档数限制为 1–16。文档属性包括键、标题、摘要、分类以及章节；分类覆盖架构、需求、进展、实现、测试、配置和研究等用途。章节数量为 1–20，每节必须提供格式受限的 key、标题与 Markdown 正文，且章节对象不接受额外字段。[[c1]]\n\n文档级 required 列表进一步明确：每份文档都必须包含 key、title、summary、category、sections、citations 和 questions，并由 `additionalProperties: false` 排除未声明属性。顶层同样要求 schema_version 与 documents，且拒绝额外属性。[[c3]] 这些内容能证明合同如何声明有效数据形状，但不能据此断言实际生成结果已经过运行时验证。"
+      },
+      {
+        "key": "evidence_and_questions",
+        "title": "证据与不确定性表达",
+        "body": "引用对象要求人读标签、引用理由、受限关系、目标与 quote；目标可以指向材料或文章，并可携带材料行号或文章章节。关系仅允许 supports、explains、implements、depends_on、calls、contradicts、background 和 tracks。quote 的描述要求留空，由宿主依据固定行范围抽取原文。[[c2]]\n\nquestions 最多 20 项，每项必须表达问题、原因、下一步、是否阻塞以及关联引用键。它让未确认事项可以与证据一起结构化保存，而不必伪装成结论。不过，Schema 本身无法证明宿主确实抽取了原文，也不能证明引用语义足以支撑附近论断；这些仍需调用链与行为测试佐证。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "文档属性与章节约束",
+        "reason": "支持附近关于批量数量、文档属性、分类枚举以及章节必填字段和额外属性限制的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+          "startLine": 5,
+          "endLine": 77
+        },
+        "quote": "    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLen"
+      },
+      {
+        "key": "c2",
+        "label": "引用与问题结构",
+        "reason": "支持附近关于引用关系、目标定位、quote 宿主抽取约定及 questions 必填结构的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+          "startLine": 78,
+          "endLine": 206
+        },
+        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+      },
+      {
+        "key": "c3",
+        "label": "文档与顶层必填约束",
+        "reason": "直接支持附近关于文档全部必填字段、文档级额外属性禁用，以及顶层必填字段和额外属性限制的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+          "startLine": 208,
+          "endLine": 227
+        },
+        "quote": "        },\n        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalP"
+      }
+    ],
+    "questions": [
+      {
+        "question": "知识撰写角色的输出是否在运行时使用该 Schema 做强制校验，并由宿主补全引用原文？",
+        "why": "材料只提供 JSON Schema 及 quote 字段中的宿主行为描述，没有提供验证器、引用抽取调用链或行为测试，不能把格式声明视为已实现能力。",
+        "nextStep": "检查角色执行器的 Schema 加载、失败处理和引用抽取实现，并补充有效输出、越界行号、多余字段及抽取结果的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "运行时是否确实使用该 Schema 强制校验输出，并由宿主按固定行范围补全引用原文？",
+        "why": "草稿已明确把这些内容标为未确认事项；所给材料只定义静态合同和宿主行为描述，没有展示验证器、引用抽取调用链或行为测试。",
+        "nextStep": "检查角色执行器的 Schema 加载、校验失败处理、引用抽取实现及相应行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/prompt.md",
+      "digest": "a139c9318e2687fb85358fbd369d5b7ac7f0dc0fb1369c4261a714d3e1ca324e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/SKILL.md",
+      "digest": "eeb26db50c60090599b6de6aac0804459a184d21afdcad5e07e3dbe49d6b1054"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/agents/openai.yaml",
+      "digest": "00a4929cd148fb583122620865b904f4030ceb4c3d16781a02cb248ffaf148f6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/manifest.json",
+      "digest": "7f61ba46e4f43f27d72c37ab46ea98b2e3206700a2bd3f4a6c3dd19adb3c136f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:24:46.359Z",
+    "trace": {
+      "runId": "6fb82252-75d6-4b21-88d5-ec78686ccb46",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "b1ed6ac1919e20b9302850ea22b05f239c58044b8e8a81f04895d725763194a5",
+      "contextHash": "70cad412e1d0e260226e1d56440df6973bee07375c95596bdb89569551f99432",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2bda0c5966449631e4d2d99a2b4f7b0baf82488376f9963161b0a1d3874f6c22",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea0-25f2-7ec0-9985-c97f28da8f3e"
+      ],
+      "usage": {
+        "used": 24577,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 35293,
+          "utf8Bytes": 41581,
+          "estimatedTokens": 13861,
+          "budgetedTokens": 17327,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:24:59.519Z",
+    "trace": {
+      "runId": "677133cc-131f-4e39-87d6-298a3808922c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "bdb39dbf86213d9c759bfa483c4162e1a5f3253d5922421232fb0664d775316f",
+      "contextHash": "712fa7b2f5e02a00f67af4f0983ed747915a090e93eae838e27509bd462e9d39",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e0cad97e427339a83eed49130ab909ee1518db39061083c3d7014b9c582f5192",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea0-6fe2-7763-b4ce-bbe33fbfa4b9"
+      ],
+      "usage": {
+        "used": 23169,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 34061,
+          "utf8Bytes": 40201,
+          "estimatedTokens": 13401,
+          "budgetedTokens": 16752,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

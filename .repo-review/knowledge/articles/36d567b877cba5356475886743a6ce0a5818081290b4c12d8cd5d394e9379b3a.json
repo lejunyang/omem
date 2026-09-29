@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/module-architect/1/manifest.json",
+    "title": "模块架构师角色清单",
+    "summary": "声明 module-architect v1 的输出合同、提示模板、技能包摘要、上下文与输出预算以及最大引用节点数；这是静态配置声明，不等同于模型能力验证或角色执行结果。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "role_binding",
+        "title": "角色与工件绑定",
+        "body": "清单将角色标识和版本分别设为 `module-architect` 与 `1`，输出合同指向 `CodeUnderstanding.v1`，提示模板为 `prompt.md`。[[c1]] 它还绑定名为 `omem-code-module-architect`、版本 `code-1` 的技能包，并记录一个工件摘要，意在让角色装配可追踪到特定技能内容。[[c2]] 但材料未给出摘要的生成方式或加载时是否校验。"
+      },
+      {
+        "key": "resource_limits",
+        "title": "资源与引用限制",
+        "body": "配置为角色声明最多 96,000 个上下文 token、24,000 个输出 token，并将引用节点上限设为 200。[[c3]] 这些数值体现运行预算和结果规模边界，但它们只是清单中的期望配置；没有模型能力发现、超限行为或实际执行 trace，因而不能认定所有后端都支持这些额度，也不能确认限制已经被强制执行。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "角色版本与输出合同",
+        "reason": "支持角色标识、版本、输出模式和提示模板之间的配置关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/module-architect/1/manifest.json",
+          "startLine": 2,
+          "endLine": 8
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"module-architect\",\n  \"role_version\": \"1\",\n  \"output_schema\": \"CodeUnderstanding.v1\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],"
+      },
+      {
+        "key": "c2",
+        "label": "技能包版本与摘要",
+        "reason": "支持清单绑定特定技能包名称、版本和工件摘要的论断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/module-architect/1/manifest.json",
+          "startLine": 9,
+          "endLine": 15
+        },
+        "quote": "  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-code-module-architect\",\n      \"version\": \"code-1\",\n      \"artifact_digest\": \"34bd73a31559dcdc6815bfdeb168445eb8009756681aa57959b96591764559cf\"\n    }\n  ],"
+      },
+      {
+        "key": "c3",
+        "label": "预算与节点上限",
+        "reason": "支持上下文预算、输出预算及最大引用节点数的配置说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/module-architect/1/manifest.json",
+          "startLine": 16,
+          "endLine": 20
+        },
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000\n  },\n  \"max_referenced_nodes\": 200"
+      }
+    ],
+    "questions": [
+      {
+        "question": "运行时是否验证技能包工件摘要，并在不匹配时拒绝执行？",
+        "why": "清单记录了摘要，但没有提供解析、校验或失败策略，无法判断它是强约束还是仅用于记录。",
+        "nextStep": "检查角色加载器和摘要校验测试，确认不匹配、缺失技能包及版本冲突的行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "预算和 200 个引用节点上限由哪个组件强制，超限时会截断还是拒绝？",
+        "why": "清单只声明数值，未描述模型兼容性验证及超限语义。",
+        "nextStep": "核对调度器、模型能力发现和结果验证逻辑，并补充边界值测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/prompt.md",
+      "digest": "23f7b389ae2769c602f19826ddc3662ca6d8f795949f1a46939f047652db3894"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/SKILL.md",
+      "digest": "e85adc7aad199487c68d3316e0d673af3b8fc550cbe045f62009987d0350958c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/agents/openai.yaml",
+      "digest": "b9df313e53d35f9d22a271a47a06bbde73b0c3b67981387c8fe5193a4384e2c4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/manifest.json",
+      "digest": "0ffe3306333fad0fb908de0a1255e0d9c281d248ec9cf5cfbecde33f7549e716"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/output.schema.json",
+      "digest": "845aa23b7007ca89aaf9d68a5e0fc411e70492ee15b365d9fc5a31085e8623c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/prompt.md",
+      "digest": "546473a912c3257ec572c669a86f752d594e92f5a9a0dbad489e2adc2eba6e9e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:48:16.369Z",
+    "trace": {
+      "runId": "8c94ae67-59cc-4ae4-a8e5-0b94d0c293bd",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "32b430158a74d68cbdc4f279b97c06bd11ffccda8c6df0e963b6c67101d4d4a5",
+      "contextHash": "bdd40c3c16675c49bdeaa07901f772c7ea33613de8850b24c5c6e43233f78c8f",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c1b3fd2f277fdaea48c601c604cb054c963440980886fa97a62c7a977eee4232",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-236a-7013-86b1-f897e6d985dd"
+      ],
+      "usage": {
+        "used": 23753,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 18269,
+          "utf8Bytes": 21525,
+          "estimatedTokens": 7175,
+          "budgetedTokens": 8969,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:48:41.069Z",
+    "trace": {
+      "runId": "52a18496-26c0-412a-b6a3-ca89475e0183",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "29507a8f203b5dd785db5096492e92f5fd18e7e1658296ab36fe5cca3c37f2f0",
+      "contextHash": "f3b724962e09b30bd081d9b80d0b3af4d9a91555724c71dd2e0e910edd0d55c6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7d7c374a48d5d7de6b8faf4f670dcb5c31453ec78cd917b987c7b8b4422c2fec",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-f34e-7ac0-8ed5-bac2e60455f6"
+      ],
+      "usage": {
+        "used": 26255,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33341,
+          "utf8Bytes": 46791,
+          "estimatedTokens": 15597,
+          "budgetedTokens": 19497,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
