@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/tokens.css",
+    "title": "共享视觉令牌与全局基础样式",
+    "summary": "定义 UI 的中性配色、中文优先字体、标题与表单基线、键盘焦点、减少动效策略，以及代码查看器和 Markdown 共用的语法高亮主题。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "foundation",
+        "title": "视觉令牌与排版基线",
+        "body": "根节点集中定义正文、次级与弱化文字色，纸张、面板、边线、警告和危险色，以及圆角和中西文字体栈；页面据此建立浅色背景、正文颜色、无衬线字号与统一盒模型。[[c1]] 一级、二级标题明确改用衬线字体并分别设置字号，形成与正文不同的内容层级；小字则使用更小字号和弱化色。[[c2]]"
+      },
+      {
+        "key": "controls",
+        "title": "表单控件与内容细节",
+        "body": "按钮、输入框、文本域和选择器首先继承页面字体；按钮以指针表示可点击，禁用时改为不可用光标并降低透明度。[[c3]] 输入框、文本域和选择器共享最大宽度、边框、圆角、内边距、白色背景及文字色，文本域只允许垂直缩放；标签以纵向 flex 和间距组织字段说明。[[c4]] 段落另设较宽行高，选中文本使用灰色背景，链接继承上下文颜色，因此该文件提供的是全局基线而非完整组件状态体系。"
+      },
+      {
+        "key": "accessibility-and-code",
+        "title": "键盘、动效与语法主题",
+        "body": "按钮、链接、各类输入控件及 `summary` 在 `:focus-visible` 下获得统一轮廓和偏移，为键盘操作提供可见焦点。[[c5]] 当系统请求减少动态效果时，全局关闭动画与过渡并取消平滑滚动；其中 `!important` 会覆盖组件自身的相关声明。[[c6]]\n\n语法主题限定在代码查看器与 Markdown 容器中，按 highlight.js 输出的关键字、注释、字符串、标题、数字等类名设置中性色与字重。它只负责这些类的呈现，是否生成相应高亮标记需由其他模块完成。[[c7]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "根视觉变量与页面排版",
+        "reason": "支持共享颜色、圆角、字体栈、统一盒模型以及页面正文基础样式的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/tokens.css",
+          "startLine": 1,
+          "endLine": 24
+        },
+        "quote": ":root {\n  --om-ink: #202020;\n  --om-secondary: #606060;\n  --om-muted: #737373;\n  --om-paper: #fafafa;\n  --om-panel: #fff;\n  --om-soft: #eee;\n  --om-line: #dedede;\n  --om-warning: #765820;\n  --om-danger: #a13232;\n  --om-radius: 8px;\n  --om-sans:\n    \"Noto Sans CJK SC\", \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-s"
+      },
+      {
+        "key": "c2",
+        "label": "标题与小字排版规则",
+        "reason": "直接支持标题使用衬线字体、标题字号分级及小字弱化样式的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/tokens.css",
+          "startLine": 47,
+          "endLine": 62
+        },
+        "quote": "h1,\nh2 {\n  font-family: var(--om-serif);\n  font-weight: 600;\n  line-height: 1.6;\n}\nh1 {\n  font-size: 30px;\n}\nh2 {\n  font-size: 24px;\n}\nsmall {\n  font-size: 12px;\n  color: var(--om-muted);\n}"
+      },
+      {
+        "key": "c3",
+        "label": "控件字体与按钮状态",
+        "reason": "支持表单控件继承字体，以及按钮普通和禁用状态反馈的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/tokens.css",
+          "startLine": 25,
+          "endLine": 37
+        },
+        "quote": "button,\ninput,\ntextarea,\nselect {\n  font: inherit;\n}\nbutton {\n  cursor: pointer;\n}\nbutton:disabled {\n  cursor: not-allowed;\n  opacity: 0.5;\n}"
+      },
+      {
+        "key": "c4",
+        "label": "输入控件、文本域与标签布局",
+        "reason": "直接支持输入控件共享边框、圆角、间距和颜色，以及文本域缩放和标签布局的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/tokens.css",
+          "startLine": 63,
+          "endLine": 81
+        },
+        "quote": "input,\ntextarea,\nselect {\n  max-width: 100%;\n  border: 1px solid var(--om-line);\n  border-radius: 6px;\n  padding: 10px 12px;\n  background: white;\n  color: var(--om-ink);\n}\ntextarea {\n  resize: vertical;\n}\nlabel {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  font-size: 13px;\n}"
+      },
+      {
+        "key": "c5",
+        "label": "可见键盘焦点规则",
+        "reason": "支持多类交互元素获得统一焦点轮廓的无障碍行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/tokens.css",
+          "startLine": 38,
+          "endLine": 46
+        },
+        "quote": "button:focus-visible,\na:focus-visible,\ninput:focus-visible,\ntextarea:focus-visible,\nselect:focus-visible,\nsummary:focus-visible {\n  outline: 2px solid #666;\n  outline-offset: 3px;\n}"
+      },
+      {
+        "key": "c6",
+        "label": "减少动态效果媒体查询",
+        "reason": "支持系统偏好触发全局禁用动画、过渡和平滑滚动，并说明强制覆盖边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/tokens.css",
+          "startLine": 91,
+          "endLine": 97
+        },
+        "quote": "@media (prefers-reduced-motion: reduce) {\n  * {\n    animation: none !important;\n    transition: none !important;\n    scroll-behavior: auto !important;\n  }\n}"
+      },
+      {
+        "key": "c7",
+        "label": "共享中性语法主题",
+        "reason": "支持代码查看器和 Markdown 围栏共用 highlight.js 类样式，并界定该 CSS 仅负责呈现。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/tokens.css",
+          "startLine": 99,
+          "endLine": 109
+        },
+        "quote": "/* Shared neutral syntax theme; also applies to Markdown fences. */\n:is(.om-code-view, .om-markdown) .hljs-keyword,\n:is(.om-code-view, .om-markdown) .hljs-selector-tag { color: #202020; font-weight: 700; }\n:is(.om-code-view, .om-markdown) .hljs-comment,\n:is(.om-code-view, .om-markdown) .hljs-quote { color: #737373; fon"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.test.ts",
+      "digest": "e28c86210be9b50f634470deb2febca4ebba15c398236484c9eeded020ab5033"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/index.ts",
+      "digest": "e33d8712c3cd93e2ea519cdd60dbec8c2407918313f14927d6e4b0cc7e61d84d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/tokens.css",
+      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
+      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:28:22.704Z",
+    "trace": {
+      "runId": "8aa13412-ce46-4b2a-a2c7-bc6b2e10d0f8",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "48ff6c16c256e27b8256fa86e690744d409410d96b5e2588929e1a7de1a7914a",
+      "contextHash": "645d76c338291729beeca3581653ea26f851167d9685b417c985ceedf3050567",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "dc4b87c12f15282cd42b9ddf1eb2c431c595357ecf6b223145aeb8a357c31688",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-8967-7aa2-8b3e-3a04180b6ef0"
+      ],
+      "usage": {
+        "used": 21072,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 24547,
+          "utf8Bytes": 27773,
+          "estimatedTokens": 9258,
+          "budgetedTokens": 11573,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:28:29.253Z",
+    "trace": {
+      "runId": "f1017e29-16dc-4506-9d1e-3560b7a556e6",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "751c8f6cfb90a55188769c3ecf475ba89e1046f2a2fd08d2bae8fe8585cbd3b5",
+      "contextHash": "9f1cd3b5b61f0c8cbfd676953285c45de726c943c22b6d3301090a5bfe6efc6c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "84bc466649a332444aed802452070e1d65f055548fb2c509dcaa26b6845fa161",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-bde3-7072-80c0-b60b73d3a8be"
+      ],
+      "usage": {
+        "used": 19642,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 23126,
+          "utf8Bytes": 25778,
+          "estimatedTokens": 8593,
+          "budgetedTokens": 10742,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

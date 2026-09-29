@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmDialog.vue",
+    "title": "证据路径模态对话框",
+    "summary": "基于原生 dialog 管理模态打开、焦点归还、返回与关闭事件，并支持证据层级、操作区和可选侧栏。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "lifecycle",
+        "title": "打开、关闭与焦点",
+        "body": "组件监听 open 属性：打开前等待 DOM 更新，保存当前活动元素并调用 showModal；关闭时调用原生 close，再把焦点还给仍连接在文档中的原元素。卸载前也会关闭 dialog。[[c1]] 原生 cancel 被阻止并转换为 back，因此 Esc 表示退一层而非直接关闭全部；点击遮罩或右上关闭按钮则发出 close。[[c2]] 组件自身不修改 open，状态所有权留给父组件。"
+      },
+      {
+        "key": "composition",
+        "title": "证据阅读布局",
+        "body": "标题区可按 depth 显示“证据路径”层级，主体包含默认滚动插槽、可选 aside 和 actions 页脚；sideOpen 同时决定侧栏可见性与宽版样式。[[c3]] OmButton 和 OmIcon 被直接用于关闭按钮，表明该组件依赖基础 UI 原语来保持交互外观一致。桌面端侧栏固定 330px，移动端改为纵向并给正文和侧栏分别设置视口高度约束。[[c4]]"
+      },
+      {
+        "key": "limits",
+        "title": "边界条件",
+        "body": "焦点仅在由 open 变为 false 的分支中归还；若组件仍打开时直接卸载，卸载钩子只关闭 dialog，没有执行焦点恢复。[[c1]] 标题使用固定 id `om-dialog-title`，若页面同时挂载多个实例，aria-labelledby 可能指向重复标识；材料也没有显示组件内部的焦点陷阱测试或多层实例测试。sideOpen 为假时 aside 仍通过 v-if 创建、再由 v-show 隐藏，插槽内容仍可能保留状态与成本。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "对话框生命周期与焦点恢复",
+        "reason": "支持模态打开、受控关闭、焦点归还及卸载行为的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmDialog.vue",
+          "startLine": 1,
+          "endLine": 28
+        },
+        "quote": "<script setup lang=\"ts\">\nimport { ref, watch, nextTick, onBeforeUnmount } from \"vue\";\nimport OmButton from \"./OmButton.vue\";\nimport OmIcon from \"./OmIcon.vue\";\nconst props = defineProps<{\n  open: boolean;\n  title: string;\n  depth?: number;\n  sideOpen?: boolean;\n}>();\nconst emit = defineEmits<{ close: []; back: [] }>();"
+      },
+      {
+        "key": "c2",
+        "label": "返回与关闭事件",
+        "reason": "说明 Esc、遮罩点击和关闭按钮分别映射到 back 或 close。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmDialog.vue",
+          "startLine": 30,
+          "endLine": 52
+        },
+        "quote": "<template>\n  <dialog\n    ref=\"dialog\"\n    class=\"om-dialog\"\n    :class=\"{ wide: sideOpen }\"\n    aria-labelledby=\"om-dialog-title\"\n    @cancel.prevent=\"emit('back')\"\n    @click=\"\n      (e) => {\n        if (e.target === dialog) emit('close');\n      }\n    \"\n  >\n    <div class=\"dialog-inner\">\n      <header>\n        <div>\n "
+      },
+      {
+        "key": "c3",
+        "label": "插槽与侧栏结构",
+        "reason": "支持层级标题、正文、侧栏、操作区和 sideOpen 渲染方式的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmDialog.vue",
+          "startLine": 43,
+          "endLine": 61
+        },
+        "quote": "    <div class=\"dialog-inner\">\n      <header>\n        <div>\n          <small v-if=\"depth\">证据路径 · 第 {{ depth }} 层</small>\n          <h2 id=\"om-dialog-title\">{{ title }}</h2>\n        </div>\n        <OmButton variant=\"ghost\" aria-label=\"关闭全部\" @click=\"emit('close')\"\n          ><OmIcon name=\"close\"\n        /></OmButton>\n   "
+      },
+      {
+        "key": "c4",
+        "label": "响应式双栏布局",
+        "reason": "说明宽版对话框、固定侧栏及移动端纵向布局的实现。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmDialog.vue",
+          "startLine": 128,
+          "endLine": 164
+        },
+        "quote": ".om-dialog.wide {\n  width: min(1160px, calc(100vw - 64px));\n}\n.dialog-body {\n  display: flex;\n  flex: 1;\n  min-height: 0;\n}\n.dialog-body > .dialog-scroll {\n  min-width: 0;\n}\n.dialog-body > aside {\n  width: 330px;\n  flex-shrink: 0;\n  border-left: 1px solid var(--om-line);\n  overflow: auto;\n}\n@media (max-width: 700px) {\n"
+      }
+    ],
+    "questions": [
+      {
+        "question": "多层或多个对话框实例是否会同时留在 DOM 中，并要求各自独立的标题关联？",
+        "why": "模板固定使用 om-dialog-title，多个实例会产生重复 id；材料没有父层挂载策略可证明该情况不会发生。",
+        "nextStep": "检查实际 trail 容器的实例数量；若允许并存，为每个实例生成稳定唯一 id，并增加 aria-labelledby 断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "打开状态下卸载时是否必须把焦点归还给触发元素？",
+        "why": "正常关闭分支会恢复焦点，但 onBeforeUnmount 仅调用 close，二者行为不一致。",
+        "nextStep": "明确 close-all 与路由卸载的焦点合同，并用真实 dialog 行为测试正常关闭、Esc 返回和直接卸载。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCitation.vue",
+      "digest": "39a341b80f8588122a83e872e3442cf37918772f48b495b5a26290ef596c0963"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+      "digest": "0af2854bc826cd4d491bbc41aeec9e3fbf73e21454e58aab12442b456298b927"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmDialog.vue",
+      "digest": "4c6e911f2c8623ff81e0ed0bcbce94e720686ce88b1e727549d4dd046c757aca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmEmpty.vue",
+      "digest": "838919dc7d112217a2f091d1f1926a75f125c8a351e602db6da5b9cdb24f3461"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:43.112Z",
+    "trace": {
+      "runId": "5a897ff4-2f7f-4bb0-87e7-0489c058b660",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "054953049f672eb6c6153f8efd1217fd698c97aabb776c440705ca81cd5e47d8",
+      "contextHash": "a82b799927ee3d841f3d150b78efe355d3f1f3cecbd9861dcfd6382d1745e36b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "adb2b4a0f5bd5cea2387dbca9b707530dcb877c3ac96e083c82af470b96e7f52",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea1-7285-7040-b436-43bf6d815b89"
+      ],
+      "usage": {
+        "used": 26233,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 27815,
+          "utf8Bytes": 29626,
+          "estimatedTokens": 9876,
+          "budgetedTokens": 12345,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:04.679Z",
+    "trace": {
+      "runId": "ee661d7b-0f4a-40c2-81ce-3c4b830a2219",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "fe2eddf120d1c948f79e5fe3e2c2642a1ff4536bb1cf70ab7c9005870c4b852c",
+      "contextHash": "99fafe5e2174452e9a9f9115b12332dcd94d9449c86fd7bc968ff3b4ce490fad",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "de459135a2e3986ead0af15dbe6d9d467ea7eb8b64bf46879ce09389bcbfc2c3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-3783-75b2-ae53-4be1a3cbe306"
+      ],
+      "usage": {
+        "used": 29398,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 42572,
+          "utf8Bytes": 51319,
+          "estimatedTokens": 17107,
+          "budgetedTokens": 21384,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

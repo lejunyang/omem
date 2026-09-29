@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmIcon.vue",
+    "title": "共享线条图标组件",
+    "summary": "根据名称从内置路径表选择 SVG 图形，以统一尺寸、描边风格和装饰性无障碍行为。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "selection",
+        "title": "图标选择与回退",
+        "body": "组件提供可选 name 和 size，默认分别为 book 与 18；内置路径覆盖书籍、层级、方向、关闭、菜单、状态、链接、时间和新增等常用符号。[[c1]] 渲染时以 name 查表，未知名称不会报错或留下空白，而是回退到 book。这提高了运行时容错，但也可能掩盖拼写错误；由于 name 类型是任意字符串，编译期不能限制调用方只能选择已知图标。"
+      },
+      {
+        "key": "rendering",
+        "title": "渲染与模块关系",
+        "body": "所有图标共用 24×24 viewBox、无填充、currentColor 描边以及圆角端点和连接，实际宽高由 size 同步控制，因此会继承父元素文字颜色并保持一致线条风格。SVG 标记为 aria-hidden，定位为装饰性图形；可访问名称必须由外层控件提供。[[c2]] 对话框正是将 close 图标放入带 aria-label 的 OmButton 中，展示了预期组合方式。[[c3]] 组件不支持非正方形尺寸、独立标题或多路径样式。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "图标默认值与路径字典",
+        "reason": "支持名称、尺寸默认值、已知图标集合及未知名称回退逻辑的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmIcon.vue",
+          "startLine": 1,
+          "endLine": 18
+        },
+        "quote": "<script setup lang=\"ts\">\nwithDefaults(defineProps<{ name?: string; size?: number }>(), {\n  size: 18,\n  name: \"book\",\n});\nconst paths: Record<string, string> = {\n  book: \"M12 5v16M3 4c4-1 7 0 9 2 2-2 5-3 9-2v15c-4-1-7 0-9 2-2-2-5-3-9-2z\",\n  layers: \"m12 3 10 5-10 5L2 8zM2 12l10 5 10-5M2 16l10 5 10-5\",\n  arrow: \"m9 5 7 7"
+      },
+      {
+        "key": "c2",
+        "label": "SVG 渲染合同",
+        "reason": "说明尺寸、继承颜色、统一描边、装饰性语义和路径回退。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmIcon.vue",
+          "startLine": 20,
+          "endLine": 33
+        },
+        "quote": "<template>\n  <svg\n    :width=\"size\"\n    :height=\"size\"\n    viewBox=\"0 0 24 24\"\n    fill=\"none\"\n    stroke=\"currentColor\"\n    stroke-width=\"1.6\"\n    stroke-linecap=\"round\"\n    stroke-linejoin=\"round\"\n    aria-hidden=\"true\"\n  >\n    <path :d=\"paths[name] || paths.book\" />\n  </svg>"
+      },
+      {
+        "key": "c3",
+        "label": "关闭图标的按钮组合",
+        "reason": "证明上层对话框通过带 aria-label 的按钮承载装饰性 close 图标。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmDialog.vue",
+          "startLine": 43,
+          "endLine": 52
+        },
+        "quote": "    <div class=\"dialog-inner\">\n      <header>\n        <div>\n          <small v-if=\"depth\">证据路径 · 第 {{ depth }} 层</small>\n          <h2 id=\"om-dialog-title\">{{ title }}</h2>\n        </div>\n        <OmButton variant=\"ghost\" aria-label=\"关闭全部\" @click=\"emit('close')\"\n          ><OmIcon name=\"close\"\n        /></OmButton>\n   "
+      }
+    ],
+    "questions": [
+      {
+        "question": "name 是否应收窄为内置图标名称的联合类型，并在开发环境暴露未知名称错误？",
+        "why": "当前 Record<string, string> 与 string 属性允许拼写错误静默回退为 book，可能让错误图标进入界面而不易察觉。",
+        "nextStep": "导出图标名称类型，并增加已知名称、默认值与未知名称策略的渲染测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCitation.vue",
+      "digest": "39a341b80f8588122a83e872e3442cf37918772f48b495b5a26290ef596c0963"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+      "digest": "0af2854bc826cd4d491bbc41aeec9e3fbf73e21454e58aab12442b456298b927"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmDialog.vue",
+      "digest": "4c6e911f2c8623ff81e0ed0bcbce94e720686ce88b1e727549d4dd046c757aca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmEmpty.vue",
+      "digest": "838919dc7d112217a2f091d1f1926a75f125c8a351e602db6da5b9cdb24f3461"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:43.112Z",
+    "trace": {
+      "runId": "5a897ff4-2f7f-4bb0-87e7-0489c058b660",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "054953049f672eb6c6153f8efd1217fd698c97aabb776c440705ca81cd5e47d8",
+      "contextHash": "a82b799927ee3d841f3d150b78efe355d3f1f3cecbd9861dcfd6382d1745e36b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "adb2b4a0f5bd5cea2387dbca9b707530dcb877c3ac96e083c82af470b96e7f52",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea1-7285-7040-b436-43bf6d815b89"
+      ],
+      "usage": {
+        "used": 26233,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 27815,
+          "utf8Bytes": 29626,
+          "estimatedTokens": 9876,
+          "budgetedTokens": 12345,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:04.679Z",
+    "trace": {
+      "runId": "ee661d7b-0f4a-40c2-81ce-3c4b830a2219",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "fe2eddf120d1c948f79e5fe3e2c2642a1ff4536bb1cf70ab7c9005870c4b852c",
+      "contextHash": "99fafe5e2174452e9a9f9115b12332dcd94d9449c86fd7bc968ff3b4ce490fad",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "de459135a2e3986ead0af15dbe6d9d467ea7eb8b64bf46879ce09389bcbfc2c3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-3783-75b2-ae53-4be1a3cbe306"
+      ],
+      "usage": {
+        "used": 29398,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 42572,
+          "utf8Bytes": 51319,
+          "estimatedTokens": 17107,
+          "budgetedTokens": 21384,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

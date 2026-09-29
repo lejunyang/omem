@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/package.json",
+    "title": "共享 UI 包清单",
+    "summary": "该清单将 @omem/ui 定义为私有 ESM 包，直接导出源码入口与设计令牌样式，并声明 Vue 3.5 为宿主侧对等依赖。包内同时依赖 Markdown 解析、代码高亮和 HTML 净化库，表明其依赖边界支持富文本展示，但清单本身不能证明具体组件、渲染流程或安全策略已经实现。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "package-boundary",
+        "title": "包边界与对外入口",
+        "body": "清单把包命名为 `@omem/ui`，版本为 `0.1.0`，并标记为私有、采用 ESM。对外只声明根入口 `./src/index.ts` 与 `./tokens.css` 两个导出，因此它承担共享 TypeScript UI 能力和视觉令牌样式的发布边界，而不是独立应用。Vue `^3.5.0` 被列为对等依赖，意味着实际 Vue 运行时应由消费方提供，以减少重复运行时或版本分裂的风险。[[c1]]\n\n这些结论属于配置事实；仅凭清单无法确认入口实际导出了哪些组件、消费项目是否正确加载令牌，或构建工具是否能直接处理导出的 TypeScript 源码。"
+      },
+      {
+        "key": "content-dependencies",
+        "title": "富文本相关依赖与证据限制",
+        "body": "包内直接依赖 `marked`、`highlight.js` 和 `dompurify`，分别对应 Markdown 解析、代码语法高亮与 HTML 净化所需的基础能力。这种依赖组合可为证据正文或富文本阅读界面提供技术支撑，但只能说明库已进入依赖声明，不能据此断言三者已被调用，也不能证明净化发生在正确阶段或覆盖所有不可信输入。[[c2]]\n\n清单没有脚本、测试配置、构建产物入口及更细的运行环境约束；因而无法从本材料判断组件行为、浏览器兼容范围、服务端渲染适配情况或安全测试状态。相关实现事实需要结合源码、测试和实际检查结果确认。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "共享 UI 包元数据与导出配置",
+        "reason": "支持附近关于包名、版本、私有属性、ESM 类型、两个公开入口以及 Vue 对等依赖的配置事实。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/package.json",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "{\"name\":\"@omem/ui\",\"version\":\"0.1.0\",\"private\":true,\"type\":\"module\",\"exports\":{\".\":\"./src/index.ts\",\"./tokens.css\":\"./src/tokens.css\"},\"peerDependencies\":{\"vue\":\"^3.5.0\"},\"dependencies\":{\"dompurify\":\"^3.4.16\",\"highlight.js\":\"^11.12.0\",\"marked\":\"^18.0.14\"}}"
+      },
+      {
+        "key": "c2",
+        "label": "富文本处理依赖声明",
+        "reason": "支持附近关于 Markdown 解析、代码高亮和 HTML 净化依赖已经声明，同时不能证明其实际调用与安全效果的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/package.json",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "{\"name\":\"@omem/ui\",\"version\":\"0.1.0\",\"private\":true,\"type\":\"module\",\"exports\":{\".\":\"./src/index.ts\",\"./tokens.css\":\"./src/tokens.css\"},\"peerDependencies\":{\"vue\":\"^3.5.0\"},\"dependencies\":{\"dompurify\":\"^3.4.16\",\"highlight.js\":\"^11.12.0\",\"marked\":\"^18.0.14\"}}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "根入口目前实际导出了哪些共享组件、组合式函数和类型？",
+        "why": "清单只给出 `./src/index.ts` 这一入口，无法确认其公开 API，也不能判断消费者可以复用哪些能力。",
+        "nextStep": "检查入口源码及其导出测试，形成公开 API 清单并核对消费方用法。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "不可信 Markdown 是否始终经过 HTML 净化，并有针对脚本注入与危险 URL 的行为测试？",
+        "why": "依赖清单同时包含 Markdown 解析和 HTML 净化库，但依赖存在不等于安全链路已正确接入。",
+        "nextStep": "核对富文本渲染源码中的处理顺序、净化配置与相关安全测试；若缺失，再确定需要补充的策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/package.json",
+      "digest": "755ac58962dc9eb9ebad8e9001a9d83e326ecff277e56289915908dfa4bfd997"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:35:29.603Z",
+    "trace": {
+      "runId": "afd746b6-0ea7-4486-9baf-9dd47b716b44",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "b262d2b3d65c56b46088110fcc1a827fb79522a8db0bcdb1e4d08c84b1149116",
+      "contextHash": "df9877d3e5031d00b48971fa7b539f8c4dade85c2f1393841a79e9863e6fe086",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2ab29fe27c200e82919807a31e9825a4d5681caabfa4bf30c9b55887effbde88",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed60-6fff-7c11-a2da-ea2a966a16d1"
+      ],
+      "usage": {
+        "used": 14458,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 5840,
+          "utf8Bytes": 7396,
+          "estimatedTokens": 2466,
+          "budgetedTokens": 3083,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:35:37.604Z",
+    "trace": {
+      "runId": "5818ab1d-72c6-483e-8bbf-b35f0ffffd48",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "83b187010fd97e320fe5678f232a2a32d32fefd270e0a3ab1707452344d805fd",
+      "contextHash": "243ee76da910d7ef87d58fc36668921e12c253766eda7483359d0a9b09e794ef",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "eab2f28d2100ddd877e941ec4ad85130b6d53d2aec87ab74bde4a3752c94cf1a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed60-a9a2-7243-b5a2-bb4b42334eb3"
+      ],
+      "usage": {
+        "used": 14281,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 6427,
+          "utf8Bytes": 9175,
+          "estimatedTokens": 3059,
+          "budgetedTokens": 3824,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

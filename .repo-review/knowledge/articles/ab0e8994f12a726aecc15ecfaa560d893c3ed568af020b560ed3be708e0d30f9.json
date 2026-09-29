@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmShell.vue",
+    "title": "OmShell：三栏应用外壳与响应式侧栏",
+    "summary": "OmShell 提供固定顶栏、导航、主内容和可选助手栏；桌面端保持三栏布局，中小屏通过本地开关将侧栏改为覆盖层。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "composition",
+        "title": "页面骨架与状态",
+        "body": "组件解决应用级布局复用问题。顶栏包含导航按钮、品牌区、业务自定义的 `top` 插槽，以及仅在存在助手插槽时出现的“追问”按钮；主体由导航插槽、默认主内容和可选助手插槽组成。两个本地布尔状态分别控制窄屏导航和助手栏显隐，点击导航区域会自动收起导航。[[c1]] 它复用通用按钮与图标组件，但不掌握路由、助手数据或页面业务状态。"
+      },
+      {
+        "key": "responsive",
+        "title": "响应式流程与限制",
+        "body": "外壳占满动态视口并禁止根级滚动，将滚动职责交给导航、主区和助手栏。桌面导航宽 240px、助手栏宽 330px；宽度低于 1100px 时助手栏默认隐藏并可从右侧固定展开，低于 700px 时导航也转为左侧覆盖层，同时缩短顶栏并精简品牌。[[c2]]\n\n两个覆盖侧栏没有可见遮罩、焦点约束或 Escape 关闭逻辑，助手栏内部点击也不会像导航一样自动关闭；按钮只通过可见文本表达助手用途，未暴露展开状态。材料未显示路由跳转或跨组件调用依据，也未提供响应式浏览器测试。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "应用外壳插槽与开关状态",
+        "reason": "支持顶栏、导航、主内容、助手插槽组成方式以及本地显隐状态的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmShell.vue",
+          "startLine": 1,
+          "endLine": 44
+        },
+        "quote": "<script setup lang=\"ts\">\nimport { ref } from \"vue\";\nimport OmButton from \"./OmButton.vue\";\nimport OmIcon from \"./OmIcon.vue\";\nconst nav = ref(false);\nconst assist = ref(false);\n</script>\n<template>\n  <div class=\"om-shell\">\n    <header class=\"om-top\">\n      <OmButton\n        class=\"nav-toggle\"\n        variant=\"ghost\"\n  "
+      },
+      {
+        "key": "c2",
+        "label": "基础三栏布局",
+        "reason": "支持视口高度、滚动职责及桌面端导航和助手栏尺寸的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmShell.vue",
+          "startLine": 45,
+          "endLine": 106
+        },
+        "quote": "<style scoped>\n.om-shell {\n  height: 100dvh;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n.om-top {\n  height: 70px;\n  flex-shrink: 0;\n  background: #171717;\n  color: white;\n  display: flex;\n  align-items: center;\n  gap: 24px;\n  padding: 0 24px;\n}\n.om-brand {\n  display: flex;\n  gap: 12px;\n  align-ite"
+      },
+      {
+        "key": "c3",
+        "label": "窄屏覆盖侧栏规则",
+        "reason": "支持 1100px 与 700px 两级响应式切换，并揭示覆盖层仅由 CSS 显隐的边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmShell.vue",
+          "startLine": 107,
+          "endLine": 167
+        },
+        "quote": ".nav-toggle,\n.assistant-toggle {\n  display: none !important;\n}\n@media (max-width: 1100px) {\n  .om-assistant {\n    display: none;\n  }\n  .assistant-toggle {\n    display: inline-flex !important;\n    color: white;\n  }\n  .om-assistant.shown {\n    display: block;\n    position: fixed;\n    right: 0;\n    top: 70px;\n    bottom: "
+      }
+    ],
+    "questions": [
+      {
+        "question": "移动端导航和助手覆盖层是否需要焦点管理、Escape 关闭、遮罩及 `aria-expanded`？",
+        "why": "当前材料只显示布尔显隐与固定定位，无法看到对键盘用户和背景交互的约束。",
+        "nextStep": "确认侧栏的对话框或导航语义，并补充键盘、焦点返回和不同视口宽度的浏览器测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "移动端导航和助手覆盖层是否需要焦点管理、Escape 关闭、遮罩及 aria-expanded？",
+        "why": "当前材料只显示布尔显隐与固定定位，无法看到对键盘用户和背景交互的约束。",
+        "nextStep": "确认侧栏的对话框或导航语义，并补充键盘、焦点返回和不同视口宽度的浏览器测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmPanel.vue",
+      "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmShell.vue",
+      "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+      "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
+      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:55.969Z",
+    "trace": {
+      "runId": "f0a2b923-fe64-4f46-a375-0c579799d0c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "efd3d1ff303420d53087badd2f464bf3aa8af87cfd54c30ed58bf02f24e5b8d2",
+      "contextHash": "7757dfeebda306a48c1622bc127ad757355a97b2adcedddbc067054f1a5e145a",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a55b61e8eae72a7843c32cbe28f2f184d2d2358e900c2034101338d8e48a648c",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea1-9483-76f2-b00c-f39d11d9b12f"
+      ],
+      "usage": {
+        "used": 34567,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 51248,
+          "utf8Bytes": 53271,
+          "estimatedTokens": 17757,
+          "budgetedTokens": 22197,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:20.220Z",
+    "trace": {
+      "runId": "6633981a-2593-4850-bc67-603ea31b227a",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0c4ed297379bac8b72fd264a7dfc8b50245b813d8943880f8519c6281265990e",
+      "contextHash": "afef2621b0f791d244cfd43f8ab6aa704d541379ab6ae6a336528fdb10b4d141",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "eabebc66d564f07fe2b3e0059765d8da27b4fac7ead33b03960fea24900c6e4d",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-69a8-73c1-8014-650a56b0797e"
+      ],
+      "usage": {
+        "used": 37890,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 66460,
+          "utf8Bytes": 76474,
+          "estimatedTokens": 25492,
+          "budgetedTokens": 31865,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmEmpty.vue",
+    "title": "空状态展示组件",
+    "summary": "为无数据或无结果场景提供居中的标题、可选说明与扩展操作插槽。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "structure",
+        "title": "内容结构与扩展点",
+        "body": "组件要求调用方提供 title，可选提供 description；模板始终渲染二级标题，仅在说明存在时渲染段落，并通过默认插槽容纳按钮、链接或其他后续动作。[[c1]] 它不感知数据加载、错误类型或重试逻辑，只负责把上层决定的空状态内容统一排版，因此业务含义和交互均由调用方控制。"
+      },
+      {
+        "key": "presentation",
+        "title": "视觉边界",
+        "body": "容器采用较大的上下内边距、居中排版和次级文字色，标题恢复主要文字色；说明文字最大宽度为 480px，并在下方保留动作区间距。[[c2]] 当前文件没有图标、状态角色、aria-live 或标题层级参数。固定使用 h2 是否符合所在页面的标题大纲取决于调用环境，材料中也没有组件测试说明空 description、插槽内容或无障碍语义的预期。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "空状态属性与插槽",
+        "reason": "支持标题必填、说明可选及默认插槽扩展职责的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmEmpty.vue",
+          "startLine": 1,
+          "endLine": 9
+        },
+        "quote": "<script setup lang=\"ts\">\ndefineProps<{ title: string; description?: string }>();\n</script>\n<template>\n  <div class=\"om-empty\">\n    <h2>{{ title }}</h2>\n    <p v-if=\"description\">{{ description }}</p>\n    <slot />\n  </div>"
+      },
+      {
+        "key": "c2",
+        "label": "空状态排版样式",
+        "reason": "支持居中布局、颜色与说明宽度限制的视觉说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmEmpty.vue",
+          "startLine": 11,
+          "endLine": 23
+        },
+        "quote": "<style scoped>\n.om-empty {\n  padding: 48px 24px;\n  text-align: center;\n  color: var(--om-secondary);\n}\n.om-empty h2 {\n  color: var(--om-ink);\n}\n.om-empty p {\n  max-width: 480px;\n  margin: 0 auto 24px;\n}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "空状态标题是否必须固定为 h2，还是应允许调用方选择语义层级？",
+        "why": "组件可能嵌套在不同页面结构中，固定 h2 的视觉效果明确，但材料没有提供页面标题大纲或无障碍测试来确认语义总是正确。",
+        "nextStep": "审查实际使用位置的标题层级；若层级不统一，增加可配置标签或以样式类分离视觉与语义。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCitation.vue",
+      "digest": "39a341b80f8588122a83e872e3442cf37918772f48b495b5a26290ef596c0963"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+      "digest": "0af2854bc826cd4d491bbc41aeec9e3fbf73e21454e58aab12442b456298b927"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmDialog.vue",
+      "digest": "4c6e911f2c8623ff81e0ed0bcbce94e720686ce88b1e727549d4dd046c757aca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmEmpty.vue",
+      "digest": "838919dc7d112217a2f091d1f1926a75f125c8a351e602db6da5b9cdb24f3461"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:43.112Z",
+    "trace": {
+      "runId": "5a897ff4-2f7f-4bb0-87e7-0489c058b660",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "054953049f672eb6c6153f8efd1217fd698c97aabb776c440705ca81cd5e47d8",
+      "contextHash": "a82b799927ee3d841f3d150b78efe355d3f1f3cecbd9861dcfd6382d1745e36b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "adb2b4a0f5bd5cea2387dbca9b707530dcb877c3ac96e083c82af470b96e7f52",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea1-7285-7040-b436-43bf6d815b89"
+      ],
+      "usage": {
+        "used": 26233,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 27815,
+          "utf8Bytes": 29626,
+          "estimatedTokens": 9876,
+          "budgetedTokens": 12345,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:04.679Z",
+    "trace": {
+      "runId": "ee661d7b-0f4a-40c2-81ce-3c4b830a2219",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "fe2eddf120d1c948f79e5fe3e2c2642a1ff4536bb1cf70ab7c9005870c4b852c",
+      "contextHash": "99fafe5e2174452e9a9f9115b12332dcd94d9449c86fd7bc968ff3b4ce490fad",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "de459135a2e3986ead0af15dbe6d9d467ea7eb8b64bf46879ce09389bcbfc2c3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-3783-75b2-ae53-4be1a3cbe306"
+      ],
+      "usage": {
+        "used": 29398,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 42572,
+          "utf8Bytes": 51319,
+          "estimatedTokens": 17107,
+          "budgetedTokens": 21384,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

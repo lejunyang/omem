@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmCitation.vue",
+    "title": "可点击引用标签组件",
+    "summary": "把人类可读的引用标签与可选版本提示呈现为按钮，并通过 open 事件把证据打开行为交给父组件。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "contract",
+        "title": "交互合同",
+        "body": "组件只接收 label 与可选的 number 型 version，并声明无参数 open 事件；点击时不解析目标，而是通知父组件执行导航或打开证据，因此目标标识、权限判断和 trail 管理均不在本文件内。[[c1]] 模板采用真值判断：version 为真值时显示 `v` 加数字，否则显示箭头；所以 0 会落入箭头分支，不能笼统理解为“只要提供版本就显示版本号”。[[c2]]"
+      },
+      {
+        "key": "layout",
+        "title": "布局与限制",
+        "body": "按钮使用柔和背景、下边框和左对齐，并允许在任意位置换行，避免较长的人类标签撑破容器；版本或箭头以较小上标呈现。[[c3]] 当前接口没有 disabled、actionable 或 reason，也未显式设置 type=\"button\"。因此它位于表单中时可能触发原生默认提交；失效引用如何展示原因、禁止打开，以及版本是否允许 0，均无法仅凭该文件确认。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "引用组件事件接口",
+        "reason": "支持组件输入、无参数 open 事件，以及点击行为交由父组件处理的职责边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmCitation.vue",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "<script setup lang=\"ts\">\ndefineProps<{ label: string; version?: number }>();\ndefineEmits<{ open: [] }>();\n</script>\n<template>\n  <button class=\"om-citation\" @click=\"$emit('open')\">\n    {{ label }}<sup>{{ version ? \"v\" + version : \"↗\" }}</sup>\n  </button>"
+      },
+      {
+        "key": "c2",
+        "label": "引用版本分支",
+        "reason": "支持模板按 version 真值选择版本标记或箭头，并揭示数值 0 的边界行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmCitation.vue",
+          "startLine": 5,
+          "endLine": 8
+        },
+        "quote": "<template>\n  <button class=\"om-citation\" @click=\"$emit('open')\">\n    {{ label }}<sup>{{ version ? \"v\" + version : \"↗\" }}</sup>\n  </button>"
+      },
+      {
+        "key": "c3",
+        "label": "引用标签样式",
+        "reason": "支持长标签换行、柔和背景、下边框以及较小上标等布局说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmCitation.vue",
+          "startLine": 10,
+          "endLine": 29
+        },
+        "quote": "<style scoped>\n.om-citation {\n  border: 0;\n  border-bottom: 1px solid #888;\n  background: var(--om-soft);\n  color: var(--om-ink);\n  padding: 3px 6px;\n  border-radius: 3px;\n  text-align: left;\n  line-height: 1.8;\n  max-width: 100%;\n  overflow-wrap: anywhere;\n}\n.om-citation:hover {\n  background: #ddd;\n}\nsup {\n  font-size"
+      }
+    ],
+    "questions": [
+      {
+        "question": "引用按钮是否需要显式设置 type=\"button\"，并为不可操作或失效目标增加 disabled、actionable 与 reason 等状态？",
+        "why": "当前模板是未指定 type 的原生按钮，接口也只能表达标签、版本和 open 事件；材料无法证明所有调用位置均不在表单内，也无法表达失效引用。",
+        "nextStep": "检查实际调用位置与引用交互合同，并增加表单点击、不可操作引用及失效原因展示的组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "version 是否保证为大于零的整数？",
+        "why": "属性类型允许任意 number，而模板使用真值判断；如果 0 是合法版本，它会显示箭头而不是 v0。",
+        "nextStep": "确认版本数据约束；若只允许正整数，将约束写入类型或运行时校验，否则改用 version !== undefined 判断。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCitation.vue",
+      "digest": "39a341b80f8588122a83e872e3442cf37918772f48b495b5a26290ef596c0963"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+      "digest": "0af2854bc826cd4d491bbc41aeec9e3fbf73e21454e58aab12442b456298b927"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmDialog.vue",
+      "digest": "4c6e911f2c8623ff81e0ed0bcbce94e720686ce88b1e727549d4dd046c757aca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmEmpty.vue",
+      "digest": "838919dc7d112217a2f091d1f1926a75f125c8a351e602db6da5b9cdb24f3461"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:27:23.180Z",
+    "trace": {
+      "runId": "2cc0a708-59d6-43a2-b54a-3e96be892893",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "274dfd52ac875deac1afd627380e31317dea9dda7679f2953abe76f031581284",
+      "contextHash": "002d0b569b2a4db996f9b39b24cec0de66bbc6577f980bfd6194553cbdf43705",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c6f44a71cfc6b90a88dc707a4fb33b803b95c04f6751d3e3a0235f7c00baf62f",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-9027-7130-92ab-39f149324084"
+      ],
+      "usage": {
+        "used": 25341,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33736,
+          "utf8Bytes": 38704,
+          "estimatedTokens": 12902,
+          "budgetedTokens": 16128,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:33.844Z",
+    "trace": {
+      "runId": "92043a0a-81f7-45df-8ca6-b129dcab93ea",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "4cf429ce6de9f9ee777eee88a23aa6a938e4bab1f9c649df72a7cb8718765784",
+      "contextHash": "d2095fcc53cbf97a69c21635cbebdc8c5ac0897924cf301e50dc8a6b53b352f1",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6a0fe08611ace553c62394d47053bd0ddb74ea75b051724f66fc3ac7c4767d72",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-d3fb-7003-8aa9-9dc8165bfcbe"
+      ],
+      "usage": {
+        "used": 23343,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 30689,
+          "utf8Bytes": 34421,
+          "estimatedTokens": 11474,
+          "budgetedTokens": 14343,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

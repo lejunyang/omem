@@ -1,0 +1,236 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+    "title": "OmMarkdown：安全的 Markdown 与内联证据引用渲染",
+    "summary": "该组件把 Markdown、代码高亮和证据引用转换为经过清洗的 HTML，并将引用、站内链接和外部链接分流为不同交互；它同时处理异步竞态、失败回退和不可用引用。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose-flow",
+        "title": "作用与核心流程",
+        "body": "组件解决“富文本可读性”与“不可信 HTML 安全性”并存的问题。`source` 或引用表变化后异步加载 Markdown 解析器和清洗器，将 `[[引用键]]` 替换为带人类标签的链接或不可用提示，再调用共享代码高亮器处理代码块。最终 HTML 只允许有限标签、属性和 URI 协议，并仅由最新一轮渲染写入视图，避免快速切换材料时旧结果覆盖新结果。[[c1]]\n\n渲染成功后使用事件委托区分三类点击：证据引用发出 `cite`，HTTP、邮件和电话链接在新窗口打开并补充隔离属性，其余相对路径发出 `navigate-internal`，因此路由和证据抽屉仍由父组件控制。[[c2]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界与退化行为",
+        "body": "空正文直接清空结果；依赖加载、解析、高亮或清洗任一步失败时，组件不继续展示残留 HTML，而是显示原始 Markdown。未知引用不会变成可点击目标；已知但不可操作的引用会显示原因。[[c3]]\n\n该组件依赖 `highlightCode` 的语言映射与转义策略；未知语言只转义代码，已知语言才动态加载语法包。这里没有材料证明外部链接是否应在点击前就带 `target`，也没有提供测试文件，因而异步竞态、清洗规则及键盘激活引用的覆盖情况无法确认。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Markdown 编译、引用替换与清洗流程",
+        "reason": "支持组件如何异步解析引用、突出显示代码、限制 HTML 能力并用 generation 防止旧结果覆盖的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 25,
+          "endLine": 64
+        },
+        "quote": "async function render() {\n  const current = ++generation;\n  failed.value = false;\n  if (!props.source) {\n    html.value = \"\";\n    return;\n  }\n  loading.value = true;\n  try {\n    const [{ marked }, DOMPurify] = await Promise.all([\n      import(\"marked\"),\n      import(\"dompurify\"),\n    ]);\n    const source = props.source"
+      },
+      {
+        "key": "c2",
+        "label": "链接点击分流逻辑",
+        "reason": "支持引用、外部链接和内部路径分别交给不同交互出口的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 69,
+          "endLine": 81
+        },
+        "quote": "function onClick(ev: MouseEvent) {\n  const a = (ev.target as HTMLElement).closest(\"a\");\n  if (!a) return;\n  const href = a.getAttribute(\"href\") || \"\";\n  if (href.startsWith(\"/__omem/citation/\")) { ev.preventDefault(); emit(\"cite\", decodeURIComponent(href.slice(\"/__omem/citation/\".length))); return; }\n  if (/^(https?:|m"
+      },
+      {
+        "key": "c3",
+        "label": "加载状态与失败回退界面",
+        "reason": "支持渲染失败后显示原文以及正常结果通过 v-html 呈现的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 84,
+          "endLine": 92
+        },
+        "quote": "<template>\n  <div class=\"om-markdown\">\n    <small v-if=\"loading\">正在渲染 Markdown…</small>\n    <div v-else-if=\"failed\" class=\"md-failed\">\n      Markdown 渲染失败，以下为原文：\n      <pre>{{ source }}</pre>\n    </div>\n    <div v-else class=\"md-body\" v-html=\"html\" @click=\"onClick\"></div>\n  </div>"
+      },
+      {
+        "key": "c4",
+        "label": "共享代码高亮实现",
+        "reason": "说明 OmMarkdown 所调用高亮模块对已知语言动态加载、对未知语言安全转义的边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.ts",
+          "startLine": 21,
+          "endLine": 32
+        },
+        "quote": "export function escapeCode(text: string): string {\n  return text.replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");\n}\n\nexport async function highlightCode(code: string, language: string): Promise<string> {\n  const lang = aliases[language.toLowerCase()];\n  if (!lang) return escapeCode(code);\n  const req"
+      }
+    ],
+    "questions": [
+      {
+        "question": "异步竞态、恶意 Markdown、未知引用和内部链接分流是否已有组件测试或浏览器测试？",
+        "why": "材料展示了这些关键分支，但未提供任何测试文件，无法确认安全规则和快速更新行为已被回归保护。",
+        "nextStep": "检查对应测试套件，并至少加入快速连续更新 source、危险协议、引用不可用和点击分流的行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmPanel.vue",
+      "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmShell.vue",
+      "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+      "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
+      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:55.969Z",
+    "trace": {
+      "runId": "f0a2b923-fe64-4f46-a375-0c579799d0c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "efd3d1ff303420d53087badd2f464bf3aa8af87cfd54c30ed58bf02f24e5b8d2",
+      "contextHash": "7757dfeebda306a48c1622bc127ad757355a97b2adcedddbc067054f1a5e145a",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a55b61e8eae72a7843c32cbe28f2f184d2d2358e900c2034101338d8e48a648c",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea1-9483-76f2-b00c-f39d11d9b12f"
+      ],
+      "usage": {
+        "used": 34567,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 51248,
+          "utf8Bytes": 53271,
+          "estimatedTokens": 17757,
+          "budgetedTokens": 22197,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:20.220Z",
+    "trace": {
+      "runId": "6633981a-2593-4850-bc67-603ea31b227a",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0c4ed297379bac8b72fd264a7dfc8b50245b813d8943880f8519c6281265990e",
+      "contextHash": "afef2621b0f791d244cfd43f8ab6aa704d541379ab6ae6a336528fdb10b4d141",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "eabebc66d564f07fe2b3e0059765d8da27b4fac7ead33b03960fea24900c6e4d",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-69a8-73c1-8014-650a56b0797e"
+      ],
+      "usage": {
+        "used": 37890,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 66460,
+          "utf8Bytes": 76474,
+          "estimatedTokens": 25492,
+          "budgetedTokens": 31865,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

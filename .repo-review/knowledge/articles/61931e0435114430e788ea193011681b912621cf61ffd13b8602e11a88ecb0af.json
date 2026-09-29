@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+    "title": "带稳定行锚点的源码查看器",
+    "summary": "按行展示完整源码，异步完成语法高亮，并提供行号锚定、范围标记、引用打开与行导航事件。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "pipeline",
+        "title": "高亮与竞态处理",
+        "body": "查看器接收源码、语言、起始行、锚点、高亮行、范围及逐行引用；它把语法着色委托给共享 highlight 模块，并将返回 HTML 拆成逐行片段。[[c1]] 每次源码或语言变化都会递增 generation、清空旧结果并进入 loading；异步结果只有仍属于最新代次时才写回，失败则退回空高亮映射，模板随后使用转义后的原文。这避免较慢的旧请求覆盖新内容，也保证高亮失败时仍能安全显示代码。[[c2]]"
+      },
+      {
+        "key": "navigation",
+        "title": "行定位与事件流",
+        "body": "startLine 负责把数组下标转换为稳定显示行号。anchorLine 更新后，组件等待 DOM 刷新，将对应行滚动到视口中央并短暂闪烁三秒；显式 highlightLines 与锚点都会形成命中背景。[[c3]] 点击处于 ranges 中的代码行只发出带 line 的 navigate 事件；范围的 id、kind、title 除标题提示外未进入导航载荷。逐行引用按钮则阻止事件冒泡并发出 open-reference，其目标解释仍由父层处理。[[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "显示边界与依赖",
+        "body": "组件通过 v-html 注入共享高亮模块生成的片段；该模块对未知语言先转义文本，对已知语言使用 highlight.js，并维护跨行 span 状态，因此这里依赖其输出安全约束。[[c5]] 表格限制为 70vh 并可滚动，窄屏仅收紧行号栏；没有虚拟列表，大文件会为每一行创建表格节点，性能上限未在材料中验证。范围重叠时使用 find，只有首个匹配范围生效，且行点击不会携带该范围的目标身份。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "源码查看器输入与高亮依赖",
+        "reason": "说明查看器的输入合同、输出事件以及对共享高亮模块的依赖。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+          "startLine": 1,
+          "endLine": 27
+        },
+        "quote": "<script setup lang=\"ts\">\n/** Shared source viewer: full-document highlighting with stable line anchors. */\nimport { ref, watch, nextTick } from \"vue\";\nimport { escapeCode as escapeHtml, highlightCode, highlightedLines } from \"../highlight\";\n\nexport type CodeRangeMark = {\n  start: number;\n  end: number;\n  id: string;\n  "
+      },
+      {
+        "key": "c2",
+        "label": "异步高亮状态机",
+        "reason": "支持 generation 防竞态、失败降级和 loading 状态的核心流程说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+          "startLine": 29,
+          "endLine": 49
+        },
+        "quote": "const hl = ref<Record<number, string>>({});\nconst loading = ref(false);\nconst root = ref<HTMLElement>();\nconst flashed = ref(false);\n\nconst lines = () => props.code.split(\"\\n\");\nconst lineNumber = (i: number) => (props.startLine ?? 1) + i;\nlet generation = 0;\nwatch(() => [props.code, props.language] as const, async ([c"
+      },
+      {
+        "key": "c3",
+        "label": "锚点滚动与命中判断",
+        "reason": "支持锚点变化后的滚动、闪烁及高亮行判定。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+          "startLine": 51,
+          "endLine": 66
+        },
+        "quote": "watch(\n  () => props.anchorLine,\n  async (line) => {\n    if (!line) return;\n    await nextTick();\n    flashed.value = true;\n    setTimeout(() => (flashed.value = false), 3000);\n    const el = root.value?.querySelector<HTMLElement>(`[data-line=\"${line}\"]`);\n    el?.scrollIntoView({ block: \"center\", behavior: \"auto\" });\n"
+      },
+      {
+        "key": "c4",
+        "label": "逐行渲染与导航",
+        "reason": "说明范围点击导航、稳定行号、引用按钮和安全回退渲染的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+          "startLine": 68,
+          "endLine": 101
+        },
+        "quote": "function rangeForLine(n: number): CodeRangeMark | undefined {\n  return props.ranges?.find((r) => n >= r.start && n <= r.end);\n}\n\nfunction onLineClick(n: number) {\n  const r = rangeForLine(n);\n  if (r) emit(\"navigate\", { line: n });\n}\n</script>\n\n<template>\n  <div ref=\"root\" class=\"om-code-view\" :class=\"{ loading }\">\n   "
+      },
+      {
+        "key": "c5",
+        "label": "共享高亮与逐行 HTML",
+        "reason": "证明未知语言会转义，并说明多行 span 被拆成有效逐行 HTML 的依赖约束。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.ts",
+          "startLine": 21,
+          "endLine": 50
+        },
+        "quote": "export function escapeCode(text: string): string {\n  return text.replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");\n}\n\nexport async function highlightCode(code: string, language: string): Promise<string> {\n  const lang = aliases[language.toLowerCase()];\n  if (!lang) return escapeCode(code);\n  const req"
+      }
+    ],
+    "questions": [
+      {
+        "question": "ranges 重叠或需要跳转具体符号时，navigate 是否应携带命中的范围 id、kind 或目标信息？",
+        "why": "当前点击逻辑只取第一个匹配范围并仅发送行号，可能无法区分同一行上的多个语义范围。",
+        "nextStep": "结合父组件的导航需求确定优先级与事件载荷，并补充重叠范围、无范围行和引用按钮阻止冒泡的测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c4"
+        ]
+      },
+      {
+        "question": "需要支持多大的源码文件，是否应引入虚拟化？",
+        "why": "模板逐行生成表格节点且材料未提供性能测试，大文件下的渲染与高亮成本无法确定。",
+        "nextStep": "用预期最大文件建立基准，测量初次高亮、重新高亮和锚点滚动后再决定是否虚拟化。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCitation.vue",
+      "digest": "39a341b80f8588122a83e872e3442cf37918772f48b495b5a26290ef596c0963"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+      "digest": "0af2854bc826cd4d491bbc41aeec9e3fbf73e21454e58aab12442b456298b927"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmDialog.vue",
+      "digest": "4c6e911f2c8623ff81e0ed0bcbce94e720686ce88b1e727549d4dd046c757aca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmEmpty.vue",
+      "digest": "838919dc7d112217a2f091d1f1926a75f125c8a351e602db6da5b9cdb24f3461"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:43.112Z",
+    "trace": {
+      "runId": "5a897ff4-2f7f-4bb0-87e7-0489c058b660",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "054953049f672eb6c6153f8efd1217fd698c97aabb776c440705ca81cd5e47d8",
+      "contextHash": "a82b799927ee3d841f3d150b78efe355d3f1f3cecbd9861dcfd6382d1745e36b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "adb2b4a0f5bd5cea2387dbca9b707530dcb877c3ac96e083c82af470b96e7f52",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea1-7285-7040-b436-43bf6d815b89"
+      ],
+      "usage": {
+        "used": 26233,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 27815,
+          "utf8Bytes": 29626,
+          "estimatedTokens": 9876,
+          "budgetedTokens": 12345,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:04.679Z",
+    "trace": {
+      "runId": "ee661d7b-0f4a-40c2-81ce-3c4b830a2219",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "fe2eddf120d1c948f79e5fe3e2c2642a1ff4536bb1cf70ab7c9005870c4b852c",
+      "contextHash": "99fafe5e2174452e9a9f9115b12332dcd94d9449c86fd7bc968ff3b4ce490fad",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "de459135a2e3986ead0af15dbe6d9d467ea7eb8b64bf46879ce09389bcbfc2c3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-3783-75b2-ae53-4be1a3cbe306"
+      ],
+      "usage": {
+        "used": 29398,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 42572,
+          "utf8Bytes": 51319,
+          "estimatedTokens": 17107,
+          "budgetedTokens": 21384,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
