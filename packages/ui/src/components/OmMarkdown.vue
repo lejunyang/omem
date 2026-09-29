@@ -4,14 +4,17 @@
 import { ref, watch } from "vue";
 import { highlightCode } from "../highlight";
 
-const props = defineProps<{ source: string }>();
+const props = defineProps<{ source: string; citations?: { key: string; label: string; reason: string; actionable: boolean; unavailableReason?: string | null }[] }>();
 const emit = defineEmits<{
   "navigate-internal": [path: string];
+  cite: [key: string];
 }>();
 
 const html = ref("");
 const loading = ref(false);
 const failed = ref(false);
+let generation = 0;
+const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 const ALLOWED_TAGS = new Set([
   "p", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -20,6 +23,7 @@ const ALLOWED_TAGS = new Set([
 ]);
 
 async function render() {
+  const current = ++generation;
   failed.value = false;
   if (!props.source) {
     html.value = "";
@@ -31,7 +35,13 @@ async function render() {
       import("marked"),
       import("dompurify"),
     ]);
-    const raw = await marked.parse(props.source, {
+    const source = props.source.replace(/\[\[([a-zA-Z][a-zA-Z0-9_-]*)\]\]/g, (_token, key: string) => {
+      const c = props.citations?.find(c => c.key === key);
+      if (!c) return '<span class="om-inline-citation unavailable">引用不可用</span>';
+      const label = escape(c.label), description = escape(c.reason);
+      return c.actionable ? `<a class="om-inline-citation" href="/__omem/citation/${encodeURIComponent(key)}" title="${description}">${label} ↗</a>` : `<span class="om-inline-citation unavailable" title="${escape(c.unavailableReason || c.reason)}">${label}（不可用）</span>`;
+    });
+    const raw = await marked.parse(source, {
       async: true,
       walkTokens: async (token) => {
         if (token.type !== "code") return;
@@ -42,25 +52,25 @@ async function render() {
     const purify = DOMPurify.default;
     const clean = purify.sanitize(raw, {
       ALLOWED_TAGS: [...ALLOWED_TAGS],
-      ALLOWED_ATTR: ["href", "class"],
+      ALLOWED_ATTR: ["href", "class", "title"],
       ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|\/|\.\/|\.\.\/)/i,
       ALLOW_DATA_ATTR: false,
     });
-    html.value = clean;
+    if (current === generation) html.value = clean;
   } catch {
-    failed.value = true;
-    html.value = "";
+    if (current === generation) { failed.value = true; html.value = ""; }
   } finally {
-    loading.value = false;
+    if (current === generation) loading.value = false;
   }
 }
 
-watch(() => props.source, () => void render(), { immediate: true });
+watch(() => [props.source, props.citations], () => void render(), { immediate: true, deep: true });
 
 function onClick(ev: MouseEvent) {
   const a = (ev.target as HTMLElement).closest("a");
   if (!a) return;
   const href = a.getAttribute("href") || "";
+  if (href.startsWith("/__omem/citation/")) { ev.preventDefault(); emit("cite", decodeURIComponent(href.slice("/__omem/citation/".length))); return; }
   if (/^(https?:|mailto:|tel:)/i.test(href)) {
     a.setAttribute("target", "_blank");
     a.setAttribute("rel", "noopener noreferrer");
@@ -107,6 +117,10 @@ function onClick(ev: MouseEvent) {
 .md-body :deep(a) {
   text-decoration: underline;
 }
+.md-body :deep(.om-inline-citation) {
+  display: inline; padding: 1px 4px; margin: 0 2px; border-bottom: 1px solid var(--om-muted); border-radius: 3px; background: var(--om-soft); color: var(--om-ink); text-decoration: none; cursor: pointer;
+}
+.md-body :deep(.om-inline-citation.unavailable) { color: var(--om-muted); cursor: default; }
 .md-body :deep(blockquote) {
   border-left: 3px solid var(--om-line);
   margin: 8px 0;

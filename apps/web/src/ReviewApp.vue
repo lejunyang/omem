@@ -143,7 +143,7 @@ function groupRelations(list: ReviewRelation[]): { type: string; items: ReviewRe
 }
 
 const navItems: { id: View; label: string; icon: string }[] = [
-  { id: "wiki", label: "代码 Wiki", icon: "layers" },
+  { id: "wiki", label: "仓库知识", icon: "layers" },
   { id: "browse", label: "浏览材料", icon: "book" },
   { id: "search", label: "全文搜索", icon: "spark" },
   { id: "trace", label: "代码追溯", icon: "link" },
@@ -422,7 +422,7 @@ onMounted(() => void boot());
     </template>
     <template #navigation>
       <div class="workspace-title">
-        <b>repo-review</b><small>代码材料知识库 · {{ health?.sourceCount ?? 0 }} 源 / {{ health?.fragmentCount ?? 0 }} 片段</small>
+        <b>本仓库 · omem</b><small>材料与知识 · {{ health?.sourceCount ?? 0 }} 源 / {{ health?.fragmentCount ?? 0 }} 片段</small>
       </div>
       <nav class="navigation">
         <button
@@ -448,8 +448,8 @@ onMounted(() => void boot());
     </template>
 
     <div class="page-bar">
-      <span>repo-review / {{ pageTitle }}</span>
-      <OmBadge>本地只读浏览 · 无模型依赖</OmBadge>
+      <span>本仓库 / {{ pageTitle }}</span>
+      <OmBadge>知识阅读 · 固定证据</OmBadge>
     </div>
     <div v-if="error" class="error-banner" role="alert">
       {{ error

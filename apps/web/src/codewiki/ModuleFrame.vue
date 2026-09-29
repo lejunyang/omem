@@ -3,8 +3,10 @@
  * 入口出口/风险/unknowns/confidence/seed + clickable symbol & evidence refs),
  * then lists the files in the bucket. When no curated note exists it says so
  * honestly instead of inventing a summary — parser-derived counts are secondary. */
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { OmPanel, OmBadge, OmEmpty, OmMarkdown, OmStatusLine } from "@omem/ui";
+import KnowledgeDocument from "../knowledge/KnowledgeDocument.vue";
+import { knowledgeApi, type ArticleMeta, type KnowledgeFrame } from "../knowledge/api";
 import type { AggModule } from "./modules";
 import { moduleLabel } from "./modules";
 import type { CodeFile, CodeUnderstandingDetail } from "../review-api";
@@ -17,6 +19,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  knowledge: [frame: KnowledgeFrame];
   drill: [
     target:
       | { type: "file"; fileId: string }
@@ -24,6 +27,9 @@ const emit = defineEmits<{
       | { type: "fragment"; fragmentId: string; title?: string },
   ];
 }>();
+
+const knowledge = ref<ArticleMeta | null>(null);
+watch(() => props.mod.id, async (id) => { knowledge.value = null; try { knowledge.value = await knowledgeApi<ArticleMeta>("/api/review/knowledge", "/articles/" + encodeURIComponent("module:" + id)); } catch {} }, { immediate: true });
 
 const grouped = computed(() => {
   const byLang = new Map<string, CodeFile[]>();
@@ -64,7 +70,8 @@ function confLabel(c: number | null | undefined): string {
     <h2>{{ moduleLabel(mod.id) }}</h2>
     <p class="muted">{{ mod.fileCount }} 个文件 · {{ mod.symbolCount }} 个解析符号</p>
 
-    <div v-if="loading" class="muted">正在读取模块说明…</div>
+    <KnowledgeDocument v-if="knowledge" prefix="/api/review/knowledge" :document-key="knowledge.key" :revision="knowledge.revision" @navigate="emit('knowledge', $event)" />
+    <div v-else-if="loading" class="muted">正在读取模块说明…</div>
 
     <OmEmpty
       v-else-if="!detail || !out"

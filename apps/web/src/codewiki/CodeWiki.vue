@@ -17,6 +17,7 @@ import {
   type TrailFrame,
   parseHash,
   writeHash,
+  useEvidenceTrail,
 } from "@omem/ui";
 import {
   codeCurrentSnapshot,
@@ -31,12 +32,16 @@ import {
   type CodeUnderstandingDetail,
 } from "../review-api";
 import { aggregateGraph, moduleLabel, matchModuleUnderstanding, fileLabel, symbolLabel, type AggModule } from "./modules";
+import KnowledgeHome from "../knowledge/KnowledgeHome.vue";
+import KnowledgeFrame from "../knowledge/KnowledgeFrame.vue";
+import KnowledgeDocument from "../knowledge/KnowledgeDocument.vue";
+import { knowledgeApi, type ArticleMeta, type KnowledgeFrame as KnowledgeNavigation } from "../knowledge/api";
 import ModuleFrame from "./ModuleFrame.vue";
 import FileFrame from "./FileFrame.vue";
 import FragmentFrame from "./FragmentFrame.vue";
 import SymbolFrame from "./SymbolFrame.vue";
 
-type WikiView = "overview" | "graph" | "module" | "file";
+type WikiView = "overview" | "structure" | "graph" | "module" | "file";
 
 const view = ref<WikiView>("overview");
 const snapshot = ref<CodeSnapshot | null>(null);
@@ -109,10 +114,7 @@ function detailForModule(modId: string): CodeUnderstandingDetail | null {
 }
 
 // ---- trail stack ----
-const trail = ref<TrailFrame[]>([]);
-const trailCurrent = ref(0);
-const trailOpen = ref(false);
-const loopAt = ref<number | null>(null);
+const { frames: trail, current: trailCurrent, open: trailOpen, loopAt, trigger: trailTrigger, push: pushTrail, back: backTrail, jump: jumpTrail, close: closeTrail } = useEvidenceTrail(() => syncHash());
 let restoring = false;
 
 async function loadAll() {
@@ -155,46 +157,7 @@ function openFile(f: CodeFile, line?: number) {
   syncHash();
 }
 
-// ---- trail ----
-const trailTrigger = ref<HTMLElement | null>(null);
-function pushTrail(frame: Omit<TrailFrame, "id"> & { id: string }) {
-  const idx = trail.value.findIndex((f) => f.kind === frame.kind && f.id === frame.id);
-  if (idx >= 0) {
-    loopAt.value = idx;
-    return;
-  }
-  // Capture the real trigger on the FIRST open; never overwrite on deeper pushes.
-  if (!trailOpen.value && document.activeElement instanceof HTMLElement) {
-    trailTrigger.value = document.activeElement;
-  }
-  trail.value = [...trail.value, frame as TrailFrame];
-  trailCurrent.value = trail.value.length - 1;
-  trailOpen.value = true;
-  syncHash();
-}
-function backTrail() {
-  // Actually pop the current frame so breadcrumb/chip count shrinks; not just
-  // move the pointer. Last frame closes the trail.
-  if (trail.value.length > 1) {
-    trail.value = trail.value.slice(0, -1);
-    trailCurrent.value = trail.value.length - 1;
-  } else {
-    trail.value = [];
-    trailCurrent.value = 0;
-    trailOpen.value = false;
-  }
-  syncHash();
-}
-function jumpTrail(i: number) {
-  trail.value = trail.value.slice(0, i + 1);
-  trailCurrent.value = i;
-  syncHash();
-}
-function closeTrail() {
-  trail.value = [];
-  trailOpen.value = false;
-  syncHash();
-}
+// ---- shared evidence trail ----
 function dismissLoop() {
   loopAt.value = null;
 }
@@ -212,6 +175,7 @@ function resolveFrameTitle(f: TrailFrame): string {
   }
   if (f.kind === "fragment") return f.title && !/^[0-9a-f-]{36}$/.test(f.title) ? f.title : "决策片段";
   if (f.kind === "module") return moduleLabel(f.module || f.id);
+  if (["knowledge", "citation", "source"].includes(f.kind)) return "知识与证据";
   return f.title || "证据";
 }
 function retitleTrail() {
@@ -256,6 +220,7 @@ function syncHash() {
   if (restoring) return;
   let url: string;
   if (view.value === "overview") url = "#/overview";
+  else if (view.value === "structure") url = "#/structure";
   else if (view.value === "graph") url = "#/graph";
   else if (view.value === "module") url = "#/module/" + encodeURIComponent(selectedModule.value);
   else if (view.value === "file" && selectedFile.value) {
@@ -307,8 +272,12 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
       <OmButton variant="ghost" @click="loadAll">重试</OmButton>
     </div>
 
-    <!-- overview -->
-    <section v-if="view === 'overview' && !loading" class="page">
+    <section v-if="view === 'overview'" class="page">
+      <KnowledgeHome prefix="/api/review/knowledge" @navigate="pushTrail" />
+      <OmButton variant="secondary" @click="view = 'structure'; syncHash()">查看代码结构与模块</OmButton>
+    </section>
+    <!-- deterministic structure is an additional reading surface -->
+    <section v-else-if="view === 'structure' && !loading" class="page">
       <span class="eyebrow">仓库 / 快照总览</span>
       <h1>Code Wiki</h1>
       <OmEmpty
@@ -387,7 +356,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
         :mod="modules.find((m) => m.id === selectedModule)!"
         :detail="selectedModuleDetail"
         :loading="underLoading" :symbol-map="symbolMap"
-        @drill="onDrill"
+        @drill="onDrill" @knowledge="pushTrail"
       />
     </section>
 
@@ -396,7 +365,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
       <div class="row">
         <OmButton variant="ghost" @click="view = 'module'; syncHash()">< 返回模块</OmButton>
       </div>
-      <FileFrame :file="selectedFile" :anchor-line="anchorLine" :file-map="fileMap" :symbol-map="symbolMap" @drill="onDrill" />
+      <FileFrame :file="selectedFile" :anchor-line="anchorLine" :file-map="fileMap" :symbol-map="symbolMap" @drill="onDrill" @knowledge="pushTrail" />
     </section>
 
     <!-- trail drawer -->
@@ -411,13 +380,14 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
       @jump="jumpTrail"
       @dismiss-loop="dismissLoop"
     >
-      <template v-if="currentFrame?.kind === 'module'">
+      <KnowledgeFrame v-if="currentFrame && ['knowledge', 'citation', 'source'].includes(currentFrame.kind)" :frame="currentFrame" prefix="/api/review/knowledge" @navigate="pushTrail" @loaded="currentFrame.title = $event" />
+      <template v-else-if="currentFrame?.kind === 'module'">
         <ModuleFrame
           v-if="modules.find((m) => m.id === ((currentFrame as TrailFrame).module ?? currentFrame.id))"
           :mod="modules.find((m) => m.id === ((currentFrame as TrailFrame).module ?? currentFrame.id))!"
           :detail="detailForModule((currentFrame as TrailFrame).module ?? currentFrame.id)"
           :loading="underLoading" :symbol-map="symbolMap"
-          @drill="onDrill"
+          @drill="onDrill" @knowledge="pushTrail"
         />
       </template>
       <template v-else-if="currentFrame?.kind === 'file'">
@@ -425,7 +395,7 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
           v-if="graph?.files.find((f) => f.fileId === ((currentFrame as TrailFrame).fileId ?? currentFrame.id))"
           :file="graph!.files.find((f) => f.fileId === ((currentFrame as TrailFrame).fileId ?? currentFrame.id))!"
           :anchor-line="(currentFrame as TrailFrame).line" :file-map="fileMap" :symbol-map="symbolMap"
-          @drill="onDrill"
+          @drill="onDrill" @knowledge="pushTrail"
         />
       </template>
       <template v-else-if="currentFrame?.kind === 'symbol'">
@@ -433,14 +403,14 @@ const currentFrame = computed(() => trail.value[trailCurrent.value] ?? null);
           v-if="symbolMap.has((currentFrame as TrailFrame).symbolId ?? currentFrame.id)"
           :symbol-id="(currentFrame as TrailFrame).symbolId ?? currentFrame.id"
           :file-map="fileMap" :symbol-map="symbolMap"
-          @drill="onDrill"
+          @drill="onDrill" @knowledge="pushTrail"
         />
       </template>
       <template v-else-if="currentFrame?.kind === 'fragment'">
         <FragmentFrame
           :fragment-id="(currentFrame as TrailFrame).fragmentId ?? currentFrame.id"
           :file-map="fileMap"
-          @drill="onDrill"
+          @drill="onDrill" @knowledge="pushTrail"
         />
       </template>
     </OmTrailDrawer>

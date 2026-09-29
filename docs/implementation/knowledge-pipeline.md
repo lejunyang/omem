@@ -41,3 +41,9 @@
 extractor/verifier/planner/feedback-curator 与早期四个代码角色的实际 manifest 预算也已统一到 96000 输入 / 24000 输出，避免只有新角色或 example 文件生效。review 的正式配置仍可覆盖到 192000 输入。更严格的 token 估算曾使旧批量提案 fixture 触到旧输出预算，已通过实际角色预算修正；输出洪泛测试仍验证硬性拒绝。
 
 验证：learning-pipeline、role-runtime、code-understanding 共 31 用例通过。
+
+## 已完成：正文内联引用阅读
+
+个人“知识整理”和仓库“仓库知识”使用同一组阅读组件；代码结构视图作为补充入口。正文中的引用带可读名称，打开后先展示引用理由，再进入固定知识章节或原始材料；代码 import 行旁也能进入目标模块知识。帧栈行为已集中到 `packages/ui/useEvidenceTrail`，知识、材料与旧代码视图使用同一 dialog 合同，支持逐层返回、循环跳回、滚动与焦点恢复以及深链。
+
+验证：完整 `osdk run check` 通过；`knowledge-browser.ts` 用真实 Vue/API/SQLite 验证正文→章节→三个模块→固定代码的五层链、理由、import 跳转、Esc、深链、焦点、1440/768/390 和显式待办；规定的 `dev:review` + `code-wiki-viewport.ts`（本仓库材料镜像）及个人 `osdk run browser` 均通过。fixture 知识与真实模型产物在验证记录中保持区分。

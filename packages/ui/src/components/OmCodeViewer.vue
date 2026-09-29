@@ -15,12 +15,14 @@ const props = defineProps<{
   code: string;
   language?: string;
   startLine?: number;
+  links?: { line: number; label: string; reason: string; target: string }[];
   anchorLine?: number;
   highlightLines?: number[];
   ranges?: CodeRangeMark[];
 }>();
 
 const emit = defineEmits<{
+  "open-reference": [key: string];
   navigate: [target: { filePath?: string; symbol?: string; line?: number }];
 }>();
 
@@ -90,6 +92,7 @@ function onLineClick(n: number) {
             <code
               v-html="hl[i + 1] !== undefined ? hl[i + 1] : escapeHtml(line)"
             ></code>
+            <button v-for="link in (links ?? []).filter(l => l.line === lineNumber(i))" :key="link.target" class="line-reference" :title="link.reason" @click.stop="emit('open-reference', link.target)">{{ link.label }} ↗</button>
           </td>
         </tr>
       </tbody>
@@ -109,6 +112,7 @@ function onLineClick(n: number) {
   font-size: 12.5px;
   line-height: 1.6;
 }
+.line-reference { margin-left: 12px; padding: 3px 8px; color: var(--om-secondary); background: var(--om-soft); border: 1px solid var(--om-line); border-radius: 4px; cursor: pointer; font: inherit; }
 .code-table {
   border-collapse: collapse;
   width: 100%;

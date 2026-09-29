@@ -8,7 +8,10 @@ export type TrailFrameKind =
   | "file"
   | "symbol"
   | "fragment" // a review (doc/decision/research) fragment
-  | "decision";
+  | "decision"
+  | "knowledge"
+  | "citation"
+  | "source";
 
 export type TrailFrame = {
   kind: TrailFrameKind;
@@ -46,5 +49,5 @@ export function findLoop(frames: TrailFrame[], next: Pick<TrailFrame, "kind" | "
 
 /** Push a frame, bounded to MAX_TRAIL. Returns the new stack. */
 export function pushFrame(frames: TrailFrame[], next: TrailFrame): TrailFrame[] {
-  return [...frames, next].slice(-MAX_TRAIL);
+  return [...frames, next];
 }

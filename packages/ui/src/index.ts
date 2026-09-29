@@ -20,3 +20,5 @@ export type { TrailFrame, TrailFrameKind } from "./trail";
 export { MAX_TRAIL, frameToSegment, findLoop, pushFrame } from "./trail";
 export { parseHash, writeHash } from "./OmHashRoute";
 export type { WikiRoute, WikiView } from "./OmHashRoute";
+
+export { useEvidenceTrail } from "./useEvidenceTrail";

@@ -26,6 +26,7 @@ import {
 import EvidenceReader from "./EvidenceReader.vue";
 import ChatPane from "./ChatPane.vue";
 import AssetImage from "./AssetImage.vue";
+import PersonalKnowledge from "./knowledge/PersonalKnowledge.vue";
 import LearningView from "./LearningView.vue";
 import DecisionsView from "./DecisionsView.vue";
 import NotificationDetail from "./NotificationDetail.vue";
@@ -430,6 +431,7 @@ onBeforeUnmount(() => {
         <button
           v-for="[id, icon, label] in [
             ['read', 'book', '知识阅读'],
+            ['knowledge', 'layers', '知识整理'],
             ['capture', 'plus', '输入材料'],
             ['learning', 'spark', '学习流程'],
             ['decisions', 'check', '待判断'],
@@ -667,6 +669,7 @@ onBeforeUnmount(() => {
         >
       </form>
     </section>
+    <PersonalKnowledge v-else-if="view === 'knowledge'" />
     <LearningView
       v-else-if="view === 'learning'"
       :jobs="jobs"
