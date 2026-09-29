@@ -1,0 +1,486 @@
+{
+  "version": 1,
+  "document": {
+    "key": "topic:quality_validation",
+    "title": "验证体系、质量评测与证据强度",
+    "summary": "以分层证据解释类型检查、全量测试、构建、真实浏览器、协议夹具和实时外部检查各自能证明什么，并说明隔离质量数据集、人工标注、冻结与确定性指标组成的评测闭环及其当前限制。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "evidence-layers",
+        "title": "验证证据应分层解读",
+        "body": "类型检查证明静态合同可成立，Vitest 证明已编码断言在测试环境通过，构建证明服务端与 Web 产物可生成。现有记录并未为三者分别登记退出码，而是记录包含 TypeScript/Vue 类型检查、全量 Vitest 和服务端/Web 构建的完整检查命令退出码为 0；这仍不等于真实浏览器、模型或外部连接器已经可用。记录也明确限定其不是所有外部集成的验收。[[c1]]\n\n真实浏览器检查进一步覆盖 Vue、API、SQLite、层栈导航、响应式布局与故障展示，但 Agent 使用确定性 ACP 协议夹具；因此它能证明夹具路径上的产品接线和交互回归，不能证明真实模型执行。[[c2]] 开发与浏览器验收子知识进一步解释了真实装配、直接驱动的测试步骤及其证明边界。[[c3]]"
+      },
+      {
+        "key": "quality-loop",
+        "title": "隔离数据集与确定性质量闭环",
+        "body": "质量评测不直接生产知识：研究文档必须通过显式评测入口生成候选，再由人工确认；只有样本数达到目标且全部确认的数据集才能冻结，并可依据摘要复验、防止标签被静默篡改。[[c4]] 质量模块子知识串联了候选生成、Lark 标注、冻结和评分的完整生命周期及其限制。[[c5]]\n\n评分把“引文能在原文找到”与“结论受引文支持”分开，并另算数字事实槽、必要证据覆盖、任务完成、自动应用精度、打扰和延迟。反向结论即使引用可定位也不会获得语义支持，空答案则形成覆盖缺失而非免费满分。[[c6]] 门禁脚本先复验冻结数据，再对语义支持、引用定位、证据覆盖等阈值逐项判断；任一门禁失败都会设置非零退出状态，使结果可进入持续回归，而不只是保存报告。[[c7]]"
+      },
+      {
+        "key": "live-scope",
+        "title": "实时检查、进展与限制",
+        "body": "实时 ACP 的模型选择会先读取 ACP 暴露的可选模型；若显式请求的模型不在候选中则报错，而不是静默降级。该选择函数只是把环境中的 effort 写入 profile，所示范围没有验证推理强度是否受支持。[[c8]] 随后的基础冒烟以回答包含“12”为硬断言，有效模型、推理强度和事件类型主要进入诊断输出。[[c9]] 已保存的 ACP 快照也只记录 Agent、模型、effort、回答和事件类型，缺少固定输入关联、执行时间与退出码，因而只是窄范围实机证据。[[c10]]\n\nLark 实机快照确认 `lark-cli` 返回指定文档版本、text/link 两类内容和字符规模，但没有绑定固定 Source/Revision、退出码或关键内容断言，不能推广为 WebSocket、图片下载、幂等导入和引用定位均已验收。[[c11]] 当前可确认的是：包含类型检查、全量测试和构建的完整检查、真实浏览器夹具路径以及确定性质量闭环已有证据；真实外部系统仍需按授权主体、固定输入、时间、退出状态和行为断言分别验收，配置、测试夹具、历史快照或单次冒烟都不能替代完整生产验收。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "知识功能实现验证记录",
+        "reason": "支持完整检查命令退出码为 0、检查包含类型检查、全量 Vitest 和构建，并限定记录不覆盖所有外部集成。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/knowledge-verification.json",
+          "startLine": 5,
+          "endLine": 23
+        },
+        "quote": "  \"scope\": \"Implementation verification. Knowledge corpus generation and coverage are recorded separately; this is not a claim that every external integration was tested.\",\n  \"workingTree\": \"Pre-existing apps/web/package.json formatting, osdk.lock receipt changes and frozen SQLite shm changes were preserved; generated "
+      },
+      {
+        "key": "c2",
+        "label": "浏览器验证环境",
+        "reason": "支持浏览器检查使用真实 Fastify 与 SQLite，同时明确 Agent 是确定性 ACP 协议夹具。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/browser-verification.json",
+          "startLine": 4,
+          "endLine": 20
+        },
+        "quote": "  \"checks\": [\n    \"empty real workspace and material capture\",\n    \"A-U01 real job, applied proposal, notification and evidence flow\",\n    \"recursive evidence, cycle and return focus\",\n    \"version update and immutable prior revision\",\n    \"task creation and persistent change notifications\",\n    \"A-U02 decision diff, e"
+      },
+      {
+        "key": "c3",
+        "label": "开发与浏览器验收流程",
+        "reason": "提供相邻子知识入口，解释真实浏览器装配、确定性驱动方式及 fixture 对证据范围的限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:scripts",
+          "section": "development_and_acceptance"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c4",
+        "label": "质量数据集生命周期测试",
+        "reason": "支持评测专用入口、重复导入、人工确认前拒绝冻结、冻结摘要复验与篡改检测。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+          "startLine": 50,
+          "endLine": 143
+        },
+        "quote": "describe(\"B2-08 quality dataset and evaluation\", () => {\n  it(\"imports deduplicated source samples, requires human labels and freezes a digest\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-quality-eval-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const"
+      },
+      {
+        "key": "c5",
+        "label": "质量模块的评测流程",
+        "reason": "提供相邻子知识入口，串联隔离候选、人工标注、数据集冻结、指标计算和已知限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:quality",
+          "section": "evaluation-progress-limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c6",
+        "label": "分维度质量指标测试",
+        "reason": "支持引用定位与语义支持分离，并覆盖反向结论、空答案、限定条件、时间和数字事实槽等确定性行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+          "startLine": 201,
+          "endLine": 359
+        },
+        "quote": "describe(\"G19 split evidence metrics\", () => {\n  it(\"judges a reverse statement as contradicted even when the quote is a substring\", () => {\n    const text =\n      \"当前甲系统与乙主体是单一关联关系，未来可能允许多对多绑定。\";\n    const sample = makeSample(\n      makeInput(text),\n      makeLabel([claim(text, text)], { autoApply: true }),\n    );\n   "
+      },
+      {
+        "key": "c7",
+        "label": "质量评估门禁",
+        "reason": "支持冻结数据复验、各项质量阈值以及任一门禁失败时设置非零退出码。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-evaluate.ts",
+          "startLine": 14,
+          "endLine": 62
+        },
+        "quote": "  const repository = new QualityRepository(store.db);\n  const frozen = repository.verifyFrozen(datasetId);\n  const predictions = JSON.parse(\n    readFileSync(resolve(predictionPath), \"utf8\"),\n  ) as unknown[];\n  if (!Array.isArray(predictions)) throw Error(\"QUALITY_PREDICTIONS_NOT_ARRAY\");\n  const metrics = evaluateQua"
+      },
+      {
+        "key": "c8",
+        "label": "实时 ACP 模型选择",
+        "reason": "支持从 ACP 配置选项探测可用模型、拒绝不可用的显式模型，并显示 effort 在此处仅被写入 profile。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 4,
+          "endLine": 35
+        },
+        "quote": "export async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  );\n  const modelOption = probe.configOptions.find(\n    (option) => option.id === \"model\",\n  );\n  if (!modelOption || modelOption.type !== \""
+      },
+      {
+        "key": "c9",
+        "label": "实时 ACP 冒烟判定",
+        "reason": "支持基础实机冒烟以答案包含 12 为硬断言，而有效配置和事件类型主要进入诊断输出。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-acp-smoke.ts",
+          "startLine": 5,
+          "endLine": 42
+        },
+        "quote": "const config = loadConfig();\nconst base = config.profiles.find((profile) => profile.id === \"traex\")!;\nconst { probe, profile } = await selectLiveProfile(base, config.agentCwd);\nlet answer = \"\";\nconst events: string[] = [];\nconst live = await acp(\n  profile,\n  config.agentCwd,\n  [\n    {\n      type: \"text\",\n      text: \""
+      },
+      {
+        "key": "c10",
+        "label": "ACP 实机结果快照",
+        "reason": "支持快照字段仅包含 Agent、模型、effort、回答与事件类型，从而限定其证据强度。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/live-acp-verification.json",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "{\n  \"agent\": {\n    \"name\": \"traex-acp\",\n    \"title\": \"TraeCode CLI\",\n    \"version\": \"0.207.1\"\n  },\n  \"configuredModel\": \"gpt-6-astra\",\n  \"configuredEffort\": \"high\",\n  \"answer\": \"总共 12 件。\",\n  \"eventTypes\": [\n    \"status\",\n    \"text\"\n  ]\n}"
+      },
+      {
+        "key": "c11",
+        "label": "飞书文档导入实机快照",
+        "reason": "支持快照记录连接器、文档版本、part 类型和字符规模，同时显示未记录运行状态与固定版本映射。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/live-lark-verification.json",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "{\n  \"connector\": \"lark-cli\",\n  \"title\": \"ACP 接入与使用指南\",\n  \"version\": \"15\",\n  \"partTypes\": [\n    \"text\",\n    \"link\"\n  ],\n  \"textCharacters\": 12245\n}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "ACP 与 Lark 的后续 live 验收是否会统一记录固定输入、执行时间、退出码、能力协商结果和关键内容断言？",
+        "why": "现有两个实机快照字段不足以复核回答正确性、调用完整结束、固定版本映射及导入内容完整性。",
+        "nextStep": "为每次 live 运行保存不可变 trace，关联输入摘要或 Source/Revision，并将配置一致性、退出状态和场景断言设为硬门禁。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c9",
+          "c10",
+          "c11"
+        ]
+      },
+      {
+        "question": "质量运行中的基础设施或模型传输错误是否应继续编码为业务处置 needs_context？",
+        "why": "若运行错误与材料确实缺少背景共用同一预测类别，质量指标会混合系统可靠性和模型判断能力，影响门禁解释。",
+        "nextStep": "增加独立运行失败状态或在业务质量指标外单独统计基础设施失败率，并补充相应回归样本。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c7"
+        ]
+      },
+      {
+        "question": "确定性语义规则在跨句限定、双重否定、单位换算和多时间区间上的误判率是多少？",
+        "why": "现有测试证明少量中文样例的确定性结果，但不能推断复杂表达上的泛化质量。",
+        "nextStep": "扩充人工冻结的 holdout 数据集，分别报告 supported、partial、contradicted、unsupported 和事实槽的混淆矩阵。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/evaluator.ts",
+      "digest": "4c6debef6cb90bdc11eb1004b1e1f3f6be43688d996416c2b523165829af2835"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/knowledge-browser.ts",
+      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-model.ts",
+      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-acp-smoke.ts",
+      "digest": "77bb1bae7fda3921075810520871f00b36bba21f3cbd38dec173f39c18af1afe"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-pipeline-smoke.ts",
+      "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-run.ts",
+      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-evaluate.ts",
+      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-wiki.ts",
+      "digest": "e0c0689831eef638a197005cdea1df5c281b01ef2e5971a5f3e879032689f060"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/knowledge-verification.json",
+      "digest": "1d3c500aa969b6dcc86b6dfcfede205c50896ab2ef774e3e663ea6cf33598b87"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/browser-verification.json",
+      "digest": "1bb4e5292e112dfabc083287bd958422c0d4a3aa28d1de68756235e6cf993beb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/app.test.ts",
+      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+      "digest": "3daf657af4eb9db8b2365d6c97deae0b6232b561aa6cd2f681fa8d3049fee7ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+      "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/live-acp-verification.json",
+      "digest": "7f9b2adeb03904d1402045b321781c8d2e51f8ad50beb3f0cda580cb8bcb5712"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/live-lark-verification.json",
+      "digest": "de5202be07d3550e0ffa918f64ef5e2747117a9372e24ec0509568edfd2e0e46"
+    },
+    {
+      "kind": "article",
+      "key": "module:quality",
+      "digest": "1507bc01a9ebe7dd29ed5881c0ca35bda127b05b7915c21123202f7b2824de9e"
+    },
+    {
+      "kind": "article",
+      "key": "module:scripts",
+      "digest": "b6c093a100e0d5af9c294bf640afb0d5576a98c9282e1a3320e5c31c2f35e7aa"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/knowledge-verification.json",
+      "digest": "461148f0fdae603da46fe371328711332b9585fa405136d5d383e02fb86b1222"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/browser-verification.json",
+      "digest": "eed67b26db33d0726d6159198a26d150428119c29d7a1e56d43fa1f04cba1b9c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/tests/app.test.ts",
+      "digest": "b98a023f63b86fa07b3cc3665b870e0f829998c909696a6da416da31a5d67df9"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+      "digest": "4e1afbbaa485509ab474ff0e10239bcad6414c58945ae3652ee0159ac40c6809"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "b4a1da11ea6b290612f9c53f4afd250d96e1037a9a92eca6052c0bf2fc2bdc10"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "6d3b591819bd9638ff323fd7a280db38b33622378c943d2e2956d9beb51a0dc8"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+      "digest": "ab4150ccc25cbd7bcc74b508122d952b1538fbe915f32044738f24597914c65f"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/live-acp-verification.json",
+      "digest": "d24f9288a02c65607b828e4acfd062e026226836f52648ddac8240423e735137"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/live-lark-verification.json",
+      "digest": "bb0fa1d1f54e6b9310fcfbcab32dadf9fc619d80fcd8df02c18495ec6e1aee6d"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:06:39.830Z",
+    "trace": {
+      "runId": "9e3ca369-3017-4b67-948e-37ed4de24bc1",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "11583ed3bfa8aa18ab0ac6e5a23bce2be80d74e94b5d2d6ecb35d07b5ae54066",
+      "contextHash": "d4c98e33522800549253ee3e399fb8c10540e4b8a677e16c88c470d8fc1746b9",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "23e1c00a0b792c1f009e7a7a2fab665aa6aa546a3b71c88f580878eca8a027ea",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefd-67f2-7df0-aa03-04ea3d80441e"
+      ],
+      "usage": {
+        "used": 118262,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 335624,
+          "utf8Bytes": 368141,
+          "estimatedTokens": 122714,
+          "budgetedTokens": 153393,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:06:55.315Z",
+    "trace": {
+      "runId": "fcefb22b-0572-41ec-95d2-10f7136237ce",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "20315ac131f4f44fabb79d949baf7cd32fa09393b3125fdd3cb4eb9e23def146",
+      "contextHash": "62a95f1c875e5fac7398bc8c1e08bfb208aef97c52870ce9f2495df9b5b49ebd",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e6bd086e604bd785aca840726694a7258a2eaa33aa2d81c799f231400566c679",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefd-b810-7491-8109-b94d242ff583"
+      ],
+      "usage": {
+        "used": 116155,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 333535,
+          "utf8Bytes": 365020,
+          "estimatedTokens": 121674,
+          "budgetedTokens": 152093,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
