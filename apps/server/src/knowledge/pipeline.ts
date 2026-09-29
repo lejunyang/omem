@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
 import { knowledgeBatchSchema, knowledgePlanSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial, type KnowledgePlan } from "../../../../packages/contracts/src/knowledge.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
-import { RoleRuntimeGateway, type RoleRunTrace } from "../agent-runtime/gateway.js";
+import { RoleRuntimeGateway, renderRolePrompt, type RoleRunTrace } from "../agent-runtime/gateway.js";
 import { DurableJobWorker } from "../jobs/worker.js";
 import { stableDigest } from "../storage/digest.js";
-import type { GenerationBudget } from "../agent-runtime/budget.js";
+import { estimateTokens, type GenerationBudget } from "../agent-runtime/budget.js";
 import { KnowledgeRepository, materialFromRevision, bindKnowledgeQuotes, validateKnowledgeDocument, type KnowledgeArticle } from "./repository.js";
 
 type Offer = { material: KnowledgeMaterial; ranges: { start: number; end: number }[] };
@@ -228,6 +228,27 @@ export class KnowledgePipeline {
       const d = child.dependencies.find(d => d.kind === "material" && materials.has(d.key));
       if (d) { const m = materials.get(d.key)!; offers.set(m.key, { material: m, ranges: [{ start: 1, end: Math.min(m.lineCount, 60) }] }); break; }
     }
-    return this.writeAndVerify("knowledge-writer", [target], [...offers.values()], children);
+    let selected = [...offers.values()];
+    for (const offer of selected) {
+      const merged: { start: number; end: number }[] = [];
+      for (const range of offer.ranges.sort((a, b) => a.start - b.start)) {
+        const last = merged.at(-1);
+        if (last && range.start <= last.end + 1) last.end = Math.max(last.end, range.end);
+        else merged.push({ ...range });
+      }
+      offer.ranges = merged;
+    }
+    // When the configured budget permits it, provide the full relevant source
+    // instead of making a chapter infer behavior between isolated excerpts.
+    const full = selected.map(o => ({ material: o.material, ranges: [{ start: 1, end: o.material.lineCount }] }));
+    try {
+      const base = this.registry.load("knowledge-writer");
+      const maxInput = this.options.budget?.maxInputTokens ?? base.manifest.budget.max_context_tokens;
+      const bundle = { ...base, manifest: { ...base.manifest, budget: { ...base.manifest.budget, max_context_tokens: maxInput } } };
+      const preview = renderRolePrompt(bundle, this.context("knowledge-writer", "context-budget-preview", full, children, { targetKeys: [target.key], targets: [target] }));
+      const text = preview.blocks.map(b => b.type === "text" ? b.text : "").join("\n");
+      if (estimateTokens(text).budgetedTokens <= maxInput * 0.8) selected = full;
+    } catch { /* Bounded excerpts remain explicit when the whole source is too large. */ }
+    return this.writeAndVerify("knowledge-writer", [target], selected, children);
   }
 }
