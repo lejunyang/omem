@@ -1,0 +1,401 @@
+{
+  "version": 1,
+  "document": {
+    "key": "topic:requirements",
+    "title": "现行产品原则、信任边界与工程约束",
+    "summary": "系统当前以个人助手和单用户实现为边界，统一接收多模态材料及上下文信息，并以不可变修订、固定引用、能力协商和风险分级自治维持信任。外部集成必须获得明确授权；设计合同和 v3 验收方案提供评价尺度，但不能替代当前实现、真实行为测试和 live 检查证据。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "product-boundary",
+        "title": "个人优先、统一输入与执行边界",
+        "body": "系统先服务个人并保留团队化架构，飞书主 Agent 是主要入口，Web 是后台与第二入口；模型先经 Agent CLI／ACP 接入，不要求本地大模型。[[c1]] 当前 SQLite／共享令牌实现明确属于单用户，不能据此宣称租户隔离；执行器还应发现模型与 effort 能力，并明确拒绝不支持的组合。采集入口统一容纳文本、图片、链接及上下文元数据，而采集内容只是资料，不能自动成为工具指令。[[c2]] 已确认的产品方向可从相关子知识继续下钻。[[c3]]"
+      },
+      {
+        "key": "evidence-trust",
+        "title": "不可变证据与阅读体验",
+        "body": "Source、Fragment 等稳定身份用于跨版本追踪，Revision 固定某一时刻的内容；正文和引用不得以原地修改方式抹去历史。[[c4]] “提到、派生、相关”与事实支持必须分开，支持关系不能沿多跳引用自动传递，多来源结论仍受证据可见性约束。[[c5]] 派生回答不是新的独立证据；即使沉淀为候选，也必须回连原始材料。该约束由现行实施规范直接规定，而不是由对象字段本身自动保证。[[c2]] 身份与关系语义可继续阅读证据合同子知识。[[c6]]\n\n阅读侧要求引用贴近论断并固定到 FragmentRevision；共享 trail 支持逐层进入、返回、循环跳回、滚动与草稿记忆，关闭后恢复焦点，同时保留背景文章状态。[[c7]] 对应组件和引用链规范可从界面子知识继续下钻。[[c8]]"
+      },
+      {
+        "key": "autonomy-integrations",
+        "title": "自治变更与外部授权",
+        "body": "普通、高置信且小范围的变更可以自主执行，但每次都应通知修改内容；歧义、背景不足、范围过大或危险操作需要用户决策。[[c1]][[c2]] 这取代了此前仅由工程验证条款支撑自治分级的宽泛表述，使自治依据与通知要求直接对应已确认决策。\n\n外部通知、采集范围变化、屏幕观察、全局 hooks 和操作系统服务属于独立集成，必须具有具体范围并保留用户配置；真实连接、采集和投递还取决于当前配置与授权。[[c9]] 因此，“允许助理主动工作”不等于默认授权其扩大观察范围、向外发送消息或执行不可逆操作。"
+      },
+      {
+        "key": "progress-acceptance",
+        "title": "进展判断、验证与发布纪律",
+        "body": "能力只能依据实施状态和真实行为判断，早期架构或原型不能当作已交付证明；后续应按带测试的具体垂直切片推进。[[c10]] 每个切片须用真实退出码、行为断言及必要的浏览器检查验证，协议 fixture 不能代替外部 CLI 的 live 检查；通过后应连同测试和文档独立提交，共享工作区只暂存目标改动，推送仍需明确请求。[[c9]]\n\nv3 的 G01–G20、Scenario 指标和初始硬门被明确标为待实现验收，覆盖主体身份、隐私、多模态材料、停止语义、降级和引用回查，不能把当前缺陷行为或设计文本算作通过。[[c11]] 相关验收子知识提供逐项下钻入口，但仍不是完成证明。[[c12]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "已确认的个人助手与自治方向",
+        "reason": "支持个人优先、飞书主入口、CLI／ACP 模型接入、文本图片链接输入，以及高置信变更自动执行并逐次通知的已确认方向。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/decisions.md",
+          "startLine": 7,
+          "endLine": 14
+        },
+        "quote": "| 使用对象 | 先服务个人，保留团队模型设计 |\n| 主入口（2026-09-27补充） | 飞书机器人上的主Agent承担入口和个人助手角色，应能主动对话治理知识/记忆；Web是后台与第二入口 |\n| 部署 | 长期服务器运行，也能本地运行 |\n| 大语言模型 | 不使用本地 LLM；先通过 Agent CLI/ACP（TraeX、Codex、Claude Code），以后接 API；模型、effort、上下文可配置 |\n| 本地模型 | 当前无现成权重；需要时下载 embedding/reranker 等小模型，使用 osdk 管理；本轮不引入本地 LLM |\n| 首批材料 | lark-cli 飞书文档、Git、纯文本、Ag"
+      },
+      {
+        "key": "c2",
+        "label": "模型、单用户、采集与证据边界",
+        "reason": "支持模型能力协商、当前单用户限制、包含上下文元数据的统一采集格式、材料非指令、派生回答非独立证据及自治风险分级。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 7,
+          "endLine": 10
+        },
+        "quote": "- LLMs use configurable Agent CLI/ACP initially, later API. Do not make a local LLM required. Discover model/effort capabilities; reject unsupported settings. Local embedding/reranker weights may be added via osdk when semantic retrieval is implemented.\n- Personal-first, server or local. Preserve team scope in architec"
+      },
+      {
+        "key": "c3",
+        "label": "产品与技术方向子知识",
+        "reason": "提供已确认产品方向的可读下钻入口；事实依据仍由相邻原始决策记录承担。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/decisions.md",
+          "section": "direction"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c4",
+        "label": "稳定身份与不可变修订",
+        "reason": "支持稳定对象身份与固定内容修订相分离，以及引用目标具有明确版本和建立原因。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 9,
+          "endLine": 17
+        },
+        "quote": "| Source | `tenant_id, source_id, connector_id, external_key, canonical_uri, current_revision_id, acl_policy_id` | URL 可变；ID 不随 URL/标题变化；同 connector/external_key 在 tenant 内唯一 |\n| SourceRevision | `revision_id, source_id, upstream_revision, raw_hash, normalized_hash, object_keys, fetched_at, parser_version, normalizatio"
+      },
+      {
+        "key": "c5",
+        "label": "关系类型与支持边界",
+        "reason": "支持引用、派生、相关和事实支持不可混同，以及多跳引用不能自动传递支持、多来源结论仍受权限约束。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 60,
+          "endLine": 73
+        },
+        "quote": "| type | 方向 A→B 的含义 | 可否当事实支持 |\n| --- | --- | --- |\n| contains | A 包含 B | 否，结构关系 |\n| references | A 明确提到了/链接到了 B | 否，仅证明引用存在 |\n| derived_from | A 的内容由 B 提炼/生成 | 否，生成来源不等于结论正确 |\n| supported_by | A 的原子主张受到 B 支持 | 是，但需有效的 EvidenceAssessment |\n| contradicted_by | B 与 A 的主张相冲突 | 作为冲突提示 |\n| supersedes | A 在确定范围/时间取代 B | 不自动跨"
+      },
+      {
+        "key": "c6",
+        "label": "身份、修订与时间子知识",
+        "reason": "提供稳定身份、不可变修订和证据关系语义的分层阅读入口，不把派生概括视为新的事实依据。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "section": "identity"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c7",
+        "label": "固定引用与层级阅读合同",
+        "reason": "支持材料非指令、固定版本引用、逐层导航、循环返回、局部状态保存以及背景文章状态保留。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 24,
+          "endLine": 42
+        },
+        "quote": "顶栏品牌、搜索和通知；左侧入口/材料目录；中间为当前材料与片段；右侧为基于固定片段的追问。需求、待办和观察记录是个人助理的一等信息，但材料内容不自动变成执行指令。\n\n引用贴近原句。明确显示固定版本、源类型、原文、关系类型。正文渲染为文本或经审查的 AST；绝不把采集来的 HTML 直接 v-html。模型回答与验证后的事实有不同状态。\n\n## 组件合同\n\n从 `@omem/ui` 复用：OmButton、OmIcon、OmBadge、OmEmpty、OmPanel、OmShell、OmDialog、OmCitation。禁止业务页面重新创建不同配色/焦点/圆角的按钮和弹窗。业务数据只通过 props/slots/events 注入；"
+      },
+      {
+        "key": "c8",
+        "label": "共享组件与引用阅读链",
+        "reason": "提供共享 UI 组件和引用 trail 交互要求的子知识下钻入口。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:design.md",
+          "section": "components-trail"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c9",
+        "label": "验证、提交与外部集成纪律",
+        "reason": "支持真实行为验证、切片提交、共享工作区暂存纪律，以及外部通知、采集范围和系统服务必须单独授权。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 11,
+          "endLine": 14
+        },
+        "quote": "- Test via actual exit codes and real behavioral assertions. Protocol fixture tests are not evidence that every external CLI works; label live checks separately. Run browser checks for UI and update docs with any remaining limits.\n- Commit each completed functional slice promptly after its relevant checks pass, includi"
+      },
+      {
+        "key": "c10",
+        "label": "能力判断与垂直切片原则",
+        "reason": "支持设计提案不等于已实现，并要求后续工作以带测试的具体垂直切片推进。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 3,
+          "endLine": 3
+        },
+        "quote": "Read `README.md` and `docs/implementation/status.md` for actual capabilities. Initial architecture proposals do not imply features are implemented. The user has authorized incremental implementation of the personal assistant; build the next concrete vertical slice with tests."
+      },
+      {
+        "key": "c11",
+        "label": "待实现回归场景与任务指标",
+        "reason": "支持 G01–G20 属于待实现验收，并说明 Scenario 评估、分项指标和初始硬门的范围。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+          "startLine": 84,
+          "endLine": 125
+        },
+        "quote": "## 6. 必须新增的回归场景\n\n这些是待实现验收，不能把本轮复现的缺陷行为当pass标准。\n\n| ID | 输入与过程 | 必须出现 | 禁止出现 |\n| --- | --- | --- | --- |\n| G01 | 导入一份40段的业务说明，当前无相关请求 | 原件/结构/索引/一次概览 | 40张“是否值得记”的确认卡 |\n| G02 | 含“当前…未来可能…”、“上述三种”的段落 | 保留父上下文，区分现状与规划 | 统一标explicit verified fact |\n| G03 | 代码仓库含TODO、SQL示例、测试数据 | 按代码/示例解析，保留符号与commit | 当成本人交办或执行命令 |\n| G04 | "
+      },
+      {
+        "key": "c12",
+        "label": "主助手 v3 验收子知识",
+        "reason": "提供回归场景和价值评估的可读下钻入口，同时保持其待实现状态，不将派生总结当作完成证明。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+          "section": "acceptance"
+        },
+        "quote": ""
+      }
+    ],
+    "questions": [
+      {
+        "question": "上述原则中，哪些已经由当前数据库约束、运行时代码和端到端测试强制执行？",
+        "why": "材料混合了已确认方向、设计合同和明确待实现的验收项，不能仅凭规范判断单用户边界、固定引用、自治通知和停止语义的当前完成度。",
+        "nextStep": "建立“原则—实现位置—确定性测试—真实 Agent／Lark 检查—剩余限制”矩阵，优先核对单用户边界、固定引用、自治通知和停止语义。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4",
+          "c10",
+          "c11"
+        ]
+      },
+      {
+        "question": "当前实际获准启用的外部通知、飞书采集、Agent hooks、屏幕观察和操作系统服务分别有哪些？",
+        "why": "材料只确认产品方向，并明确外部集成必须具有具体范围；当前配置、授权主体和停止方式未包含在所给材料中。",
+        "nextStep": "按集成列出启用状态、授权主体、采集或投递范围、停止方式和最近一次 live 验证；未经确认的项目保持关闭。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c9"
+        ]
+      },
+      {
+        "question": "各 Agent CLI／ACP 执行器当前支持哪些模型、effort 和上下文组合，拒绝路径是否已有行为测试？",
+        "why": "规范要求发现并校验执行器能力，但材料未提供实际能力矩阵、不支持配置的拒绝结果或各执行器的 live 验证记录。",
+        "nextStep": "对每个已配置执行器记录能力发现结果，并分别验证支持组合的真实传参与不支持组合的明确拒绝。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:AGENTS.md",
+      "digest": "d4f72638286fc89318f409eefe2ff84e4774205f99acf4eeee6067b60c6565a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/decisions.md",
+      "digest": "0c9ad65608b280513073e08eb7a7ebf2dba050641f385305f7526cd7a0eb5ad7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:design.md",
+      "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/contracts/evidence-model.md",
+      "digest": "4349bdff85f4677a3fe9d290f3a06bc883e4da404461f4c0f2872e16027f72a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/interaction-design.md",
+      "digest": "4a83de70b72a03f14d1f1e41a834e6c64462584fb887792b9fe1b03c0b129497"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "article",
+      "key": "omem:AGENTS.md",
+      "digest": "e7a464404acc1389133908551684f26326ec332b4a1521e514d4853d61482588"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/decisions.md",
+      "digest": "afcffb6e25a1a0798f895f5fb749d1c382170de95bdad7479ead39cddbb420b3"
+    },
+    {
+      "kind": "article",
+      "key": "omem:design.md",
+      "digest": "b95261ad0e3ffc78e4f7d758e01a26b0c86274fb849aafbf4d4de6b2102c4d07"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/contracts/evidence-model.md",
+      "digest": "a8e6326f0bddfe6b77e1547142eda10b1ceac0e239b8a8aa2064e0e2b61f9ff0"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/interaction-design.md",
+      "digest": "24c479533044e54a6e086de66159602383c8b3c4b86f7c036729a716dd4f9498"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "5dea39896559cee40ecd69dfe44d262e6cb34dc710349b14f94abf99d881eb2e"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-contracts",
+      "digest": "2f3e3815018d291cb421188d0a50e4f512dcbfe37dbc6e0657c41e55a75ef025"
+    },
+    {
+      "kind": "article",
+      "key": "module:contracts",
+      "digest": "5243602fde7393ee5028cad0df502cd21c248e6c58d8debf1fb75478c9be2201"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:02:57.955Z",
+    "trace": {
+      "runId": "98cfd5aa-ab70-4aa0-8dbe-ab5761b5cedb",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "04c9136204dbde628a81f2f3a64422faf419168b6aacae03bddb71aa0e8cb8fb",
+      "contextHash": "e156ca1bdf009bebe12ff0f21c79792009e78e995e1122f8f715ba2bf19bb476",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "aec9b7979aed637709ad4cc724be4edb17f37d491377ae9810a37dd93536d866",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef9-f49c-7650-9991-42ce71275273"
+      ],
+      "usage": {
+        "used": 71026,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 138921,
+          "utf8Bytes": 201362,
+          "estimatedTokens": 67121,
+          "budgetedTokens": 83902,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:03:12.929Z",
+    "trace": {
+      "runId": "85c7fc17-dbc9-43b1-aa26-0185053a06b1",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "d96c8b01989d5abc515d9a2db2da49b39a95141c3a5a6f82c114c8eac272ea48",
+      "contextHash": "7e0e0af33b1740a43a8824398986d73728c817d5fc5a8ec837718617ae0c3bb7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "dcceb1f6b8878b1a292e895c9c4bf5153351876f9be2cddaa9ab54c73201df57",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefa-5608-75d2-80e6-33f88abd2d6c"
+      ],
+      "usage": {
+        "used": 68004,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 135590,
+          "utf8Bytes": 196295,
+          "estimatedTokens": 65432,
+          "budgetedTokens": 81790,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
