@@ -1,0 +1,493 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:docs-prototype",
+    "title": "docs-prototype：可追溯知识交互的离线原型",
+    "summary": "该模块以自包含 HTML 演示知识结论到固定材料的递归阅读、局部追问、版本与异常状态及响应式布局；已有离线 Chromium 检查记录，但真实数据、模型、权限、同步和后台任务均未接入。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "定位与设计背景",
+        "body": "`docs/prototype` 是可直接传阅的离线交互样稿：脚本与样式收入单个 HTML，可通过 `file://` 打开，无需 CDN、密钥或后端。[[c1]] 它覆盖文章与材料搜索、递归引用、追问、版本比较和异常来源展示。[[c2]] 视口不超过 1050px 时固定问答栏隐藏并可作为浮层打开；手机端再收起侧栏，将证据对话框铺满动态视口并纵向排列追问区。[[c3]][[c4]]"
+      },
+      {
+        "key": "workflow",
+        "title": "证据阅读与问答流程",
+        "body": "三篇示例文章分别声明各自的首层证据映射。[[c5]] 已确认的后续关系应分开理解：发布规范连接回滚手册；验证轨迹则连接代码修订、测试、健康指标和原始采样。[[c6]][[c7]] 这替代了此前把两段材料串成同一连续链的过宽结论。阅读器用帧栈保存层级和滚动位置，支持循环检测、返回、跳转及关闭后归还焦点。[[c8]] 不可用来源展示原因并禁用追问；模拟回答仅选可用材料，保存后也只是待核对候选。[[c9]][[c10]][[c11]]"
+      },
+      {
+        "key": "delivery",
+        "title": "构建、状态与验证进展",
+        "body": "构建脚本用 esbuild 打包 React 应用，并内联样式与第三方声明生成自包含 HTML。[[c12]] 演示变更历史写入 `localStorage`，问题草稿和会话只保存在页面内存。[[c13]] 冒烟脚本明确通过 Playwright 启动 Chromium；验证记录显示 2026-09-26 使用版本 153.0.8010.12 检查了长链、循环、版本、追问、恢复、搜索和移动布局，错误及外部请求为空。[[c14]][[c15]] 该记录只覆盖离线原型，不证明后端或模型能力。"
+      },
+      {
+        "key": "limits",
+        "title": "能力边界与待确认关系",
+        "body": "原型未连接 LLM、真实数据源、数据库或记忆引擎；同步、学习和恢复都只是演示状态。[[c16]] 因此不能把它已作为正式 UI 合同视为既定事实。当前 hash 仅记录当前节点，初始化只恢复单帧，无法还原完整阅读路径。[[c17]] 调节参数通过跨窗口消息请求宿主持久化；发送使用通配目标，激活与停用消息也未校验来源，可信嵌入边界仍待明确。[[c18]][[c19]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "离线单文件交付说明",
+        "reason": "支持原型可直接打开且不依赖外部服务的定位。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# omem 交互原型\n\n直接用浏览器打开 [index.html](index.html)。它包含全部脚本与样式，无 CDN、API key 或后端依赖；支持 `file://` 打开，也可以用任意静态 HTTP 服务预览。只发送 HTML 给别人也能体验。"
+      },
+      {
+        "key": "c2",
+        "label": "原型交互范围",
+        "reason": "支持搜索、递归引用、追问、版本、异常来源及响应式展示等交互范围。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 5,
+          "endLine": 16
+        },
+        "quote": "## 已实现的交互\n\n- 三篇知识文章、材料/片段搜索、空状态。\n- 8 层业务示例引用链、100 层合成链；renderer 不设深度上限。\n- 弹窗面包屑、上层返回、Esc 退一层、关闭恢复起始焦点。\n- 原文/上下文/反向引用/版本页；历史与现行对比；循环引用提示。\n- 弹窗内追问、圈选追问、回答引用继续展开、停止生成、问题草稿与历史保留。\n- 回答范围改变引用集合；所有回答明确标为模拟。\n- 无权限/已删除/锚点不确定状态，不伪装原文可见。\n- 经验→验证→方法浏览、例外判断、模拟同步、引擎启停。\n- 变更差异和恢复为新记录，localStorage 保留演示历史，可重置。\n- 桌面/手机布局，字号与密度调整。"
+      },
+      {
+        "key": "c3",
+        "label": "窄屏问答栏与手机侧栏规则",
+        "reason": "直接支持窄屏隐藏固定问答栏、按需浮层打开，以及手机端收起侧栏的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/index.html",
+          "startLine": 1721,
+          "endLine": 1847
+        },
+        "quote": "@media (max-width: 1050px) {\n  .sidebar {\n    width: 215px;\n  }\n  .brand {\n    width: 182px;\n  }\n  .right-panel {\n    display: none;\n  }\n  .mobile-ai {\n    display: flex;\n    align-items: center;\n    gap: 5px;\n    color: #333;\n    font-size: 11px;\n  }\n  .right-panel.mobile-open {\n    display: flex;\n    position: fixed;"
+      },
+      {
+        "key": "c4",
+        "label": "手机端证据阅读布局",
+        "reason": "支持证据对话框全屏化和追问区纵向排列的手机布局。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/styles.css",
+          "startLine": 1909,
+          "endLine": 1975
+        },
+        "quote": "  .trace-dialog,\n  .trace-dialog.with-chat {\n    width: 100%;\n    height: 100dvh;\n    border-radius: 0;\n    border: 0;\n    margin: 0;\n    max-height: 100dvh;\n  }\n  .trace-top {\n    padding: 12px 16px;\n  }\n  .trace-breadcrumb {\n    padding: 9px 16px;\n  }\n  .trace-heading {\n    padding: 21px 20px 17px;\n  }\n  .trace-headi"
+      },
+      {
+        "key": "c5",
+        "label": "示例文章与首层证据映射",
+        "reason": "直接证明三篇示例文章分别声明了不同的首层证据引用。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/data.js",
+          "startLine": 178,
+          "endLine": 203
+        },
+        "quote": "export const articles = [\n  {\n    id: \"release\",\n    title: \"发布前，为什么必须先验证回滚？\",\n    group: \"工程实践\",\n    kind: \"方法与依据\",\n    summary: \"从一条发布准入要求，回到一次发布问题应如何验证的完整证据链。\",\n    refs: [\"policy\", \"incident\", \"old\"],\n  },\n  {\n    id: \"memory\",\n    title: \"把一次错误，变成下一次的经验\",\n    group: \"Agent 经验\",\n    kind: \"学习笔记\",\n    summary: \"保留触发"
+      },
+      {
+        "key": "c6",
+        "label": "发布规范与回滚手册",
+        "reason": "证明发布规范直接引用回滚操作手册，并限定这一段已确认关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/data.js",
+          "startLine": 3,
+          "endLine": 30
+        },
+        "quote": "  policy: {\n    title: \"发布管理规范\",\n    section: \"§ 3.2 · 回滚准入\",\n    kind: \"制度文档\",\n    version: \"r7\",\n    date: \"2026-09-24\",\n    status: \"available\",\n    owner: \"平台工程组\",\n    quote:\n      \"发布前必须确认回滚方案、负责人和验证结果；未经验证的回滚脚本不能作为发布保障。\",\n    body: \"回滚验证应在与目标环境配置一致的预发环境完成。执行步骤及判断标准见下方操作手册。此条款适用于普通应用发布，不直接覆盖数据库不可逆迁移。\",\n    refs: ["
+      },
+      {
+        "key": "c7",
+        "label": "验证轨迹与原始观测链",
+        "reason": "证明验证轨迹到代码修订、测试、指标和原始采样的连续关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/data.js",
+          "startLine": 47,
+          "endLine": 108
+        },
+        "quote": "  trace: {\n    title: \"发布任务 · 验证轨迹\",\n    section: \"Run 42 · 验证步骤\",\n    kind: \"工具记录\",\n    version: \"快照 1\",\n    date: \"2026-09-21 14:32\",\n    status: \"available\",\n    owner: \"发布 Agent\",\n    quote:\n      \"配置回退完成后，健康检查恢复正常；结果由执行记录与后续观测共同验证。\",\n    body: \"轨迹保留命令结果、配置版本和验证步骤。由此可以区分操作假设与已观察到的事实。下面的配置修订是本次操作使用的固定版本。\",\n    refs:"
+      },
+      {
+        "key": "c8",
+        "label": "证据路径栈与焦点管理",
+        "reason": "支持层级压栈、循环检测、滚动记忆、返回、跳转及焦点归还流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/app.jsx",
+          "startLine": 385,
+          "endLine": 440
+        },
+        "quote": "  useEffect(() => {\n    const d = dialog.current;\n    if (frames.length) {\n      if (!d.open) d.showModal();\n    } else if (d.open) {\n      d.close();\n      returnFocus.current?.isConnected && returnFocus.current.focus();\n    }\n  }, [frames.length]);\n  useEffect(() => {\n    if (current) {\n      modalBody.current.scroll"
+      },
+      {
+        "key": "c9",
+        "label": "异常来源与追问限制",
+        "reason": "支持历史版本提示、不可用来源原因页以及追问禁用规则。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/app.jsx",
+          "startLine": 1396,
+          "endLine": 1563
+        },
+        "quote": "                  {node.status === \"superseded\" && (\n                    <div className=\"state-banner\">\n                      <I name=\"clock\" size={17} />\n                      <span>正在查看历史版本 r6，现行版本是 r7。</span>\n                      <button onClick={() => openNode(\"policy\")}>\n                        查看现行版本\n           "
+      },
+      {
+        "key": "c10",
+        "label": "模拟回答的证据筛选",
+        "reason": "支持回答仅选取可用或已替代材料，并拒绝把缺失正文作为证据。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/app.jsx",
+          "startLine": 163,
+          "endLine": 204
+        },
+        "quote": "  const submit = (preset) => {\n    const q = (preset || question).trim();\n    if (!q) {\n      setHint(\"先写下你想了解的问题。\");\n      return;\n    }\n    if (busy) return;\n    setHint(\"\");\n    setQuestion(\"\");\n    setBusy(true);\n    const user = { id: Date.now() + \"u\", role: \"user\", text: q };\n    setThreads((t) => ({ ...t, [threa"
+      },
+      {
+        "key": "c11",
+        "label": "回答保存为待核对候选",
+        "reason": "证明演示回答不会直接成为正式事实，而是进入待核对候选。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/app.jsx",
+          "startLine": 463,
+          "endLine": 483
+        },
+        "quote": "  const saveAnswer = (m) => {\n    const id = \"candidate-\" + m.id;\n    if (changes.some((c) => c.id === id)) {\n      say(\"这条回答已经进入候选。\");\n      return;\n    }\n    setChanges((c) => [\n      {\n        id,\n        title: \"从追问中提炼的知识候选\",\n        type: \"问答候选\",\n        time: \"刚刚\",\n        why: \"需要回到原始片段核对；演示回答不会直接成为正式事实。\",\n     "
+      },
+      {
+        "key": "c12",
+        "label": "自包含 HTML 构建流程",
+        "reason": "支持应用打包、样式和声明内联以及离线 HTML 输出流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/build.mjs",
+          "startLine": 1,
+          "endLine": 29
+        },
+        "quote": "// Produce a portable, offline HTML artifact. No source corpus or credentials are bundled.\nimport { build } from \"esbuild\";\nimport { readFile, writeFile } from \"node:fs/promises\";\nconst output = await build({\n  entryPoints: [new URL(\"./app.jsx\", import.meta.url).pathname],\n  bundle: true,\n  write: false,\n  minify: true"
+      },
+      {
+        "key": "c13",
+        "label": "本地演示状态生命周期",
+        "reason": "说明变更历史与问题会话分别保存在本地存储和页面内存。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 41,
+          "endLine": 41
+        },
+        "quote": "示例数据通过 `localStorage['omem-demo-v1']` 保存变更历史，问题草稿/会话保存在本次页面内存。截图是验证产物，不是虚假的生产页面。"
+      },
+      {
+        "key": "c14",
+        "label": "Chromium 启动流程",
+        "reason": "证明冒烟脚本实际通过 Playwright 启动 Chromium，从而确定验证记录中的浏览器类型。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 2,
+          "endLine": 10
+        },
+        "quote": "import { chromium, expect } from \"@playwright/test\";\nimport { mkdir, writeFile } from \"node:fs/promises\";\nimport { fileURLToPath } from \"node:url\";\nconst browser = await chromium.launch({\n  headless: true,\n  ...(process.env.OMEM_CHROMIUM\n    ? { executablePath: process.env.OMEM_CHROMIUM }\n    : {}),\n});"
+      },
+      {
+        "key": "c15",
+        "label": "离线原型验证记录",
+        "reason": "支持检查日期、浏览器版本、场景清单、空错误和空外部请求，并限定验证范围。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/verification.json",
+          "startLine": 2,
+          "endLine": 23
+        },
+        "quote": "  \"date\": \"2026-09-26\",\n  \"browser\": \"153.0.8010.12\",\n  \"checks\": [\n    \"离线首页与桌面布局\",\n    \"8 层业务示例下钻与末端\",\n    \"循环引用保持路径且可跳回\",\n    \"固定历史引用与版本对比\",\n    \"弹窗原位追问、范围和草稿保留\",\n    \"圈选原文并在原位追问\",\n    \"Esc、焦点与正文滚动恢复\",\n    \"100 层合成链不限制业务深度\",\n    \"无权限、删除、定位失效的诚实状态\",\n    \"搜索与无结果状态\",\n    \"模拟同步有状态变化\",\n    \"恢复追加历史且刷新后保留\",\n    \"阅读风格控件影响正文"
+      },
+      {
+        "key": "c16",
+        "label": "真实能力边界",
+        "reason": "直接支持模型、真实数据、数据库、记忆引擎和后台任务尚未接入的限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 18,
+          "endLine": 18
+        },
+        "quote": "此原型未连接 LLM、真实数据源、数据库或记忆引擎。问答使用确定性示例模板，范围选择只演示上下文/引用变化；学习和同步动作不会启动真实后台任务。恢复操作只改变演示历史，不修改正文中的静态知识 fixture。完整策略、权限和副作用语义见技术方案。"
+      },
+      {
+        "key": "c17",
+        "label": "单节点链接与恢复",
+        "reason": "支持链接只记录当前节点、初始化只恢复单帧，无法还原完整路径的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/app.jsx",
+          "startLine": 400,
+          "endLine": 493
+        },
+        "quote": "  useEffect(() => {\n    const id = location.hash.slice(1);\n    if (nodes[id]) setFrames([{ id, tab: \"excerpt\", ask: false, scroll: 0 }]);\n  }, []);\n  const updateFrame = (patch) =>\n    setFrames((f) =>\n      f.map((x, i) => (i === f.length - 1 ? { ...x, ...patch } : x)),\n    );\n  const openNode = (id) => {\n    if (!nod"
+      },
+      {
+        "key": "c18",
+        "label": "调节参数持久化请求",
+        "reason": "支持参数更新后通过通配目标跨窗口消息请求宿主持久化。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 177,
+          "endLine": 195
+        },
+        "quote": "// ── useTweaks ───────────────────────────────────────────────────────────────\n// Single source of truth for tweak values. setTweak persists via the host\n// (miaoda:tweaks:set-keys → host rewrites the EDITMODE block on disk).\nfunction useTweaks(defaults) {\n  const [values, setValues] = React.useState(defaults);\n  // A"
+      },
+      {
+        "key": "c19",
+        "label": "调节面板消息边界",
+        "reason": "支持激活与停用消息仅检查类型、未校验消息来源的风险判断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 236,
+          "endLine": 249
+        },
+        "quote": "  React.useEffect(() => {\n    const onMsg = (e) => {\n      const t = e?.data?.type;\n      if (t === 'miaoda:tweaks:activate') setOpen(true);\n      else if (t === 'miaoda:tweaks:deactivate') setOpen(false);\n    };\n    window.addEventListener('message', onMsg);\n    window.parent.postMessage({ type: 'miaoda:tweaks:availab"
+      }
+    ],
+    "questions": [
+      {
+        "question": "该离线原型目前是正式 UI 的持续设计基线，还是仅保留作历史参考？",
+        "why": "材料只证明原型自身的交互与离线验证，未说明它和正式前端、共享组件或当前验收路线的关系。",
+        "nextStep": "对照正式 UI 入口与实现状态，建立原型交互到正式能力、可复用组件和未实现项的映射。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c15",
+          "c16"
+        ]
+      },
+      {
+        "question": "真实知识服务接入后，问答候选、同步和恢复分别采用什么权限、复核与事务规则？",
+        "why": "材料明确这些行为目前是本地模拟，不能据此推断生产环境中的授权、证据核验、副作用或失败恢复语义。",
+        "nextStep": "依据正式技术方案定义候选审核、来源同步、版本固定、恢复写入和失败处理合同，并增加服务端集成测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c11",
+          "c16"
+        ]
+      },
+      {
+        "question": "调节面板是否保证只嵌入完全可信且处于同一管理边界的宿主？",
+        "why": "参数持久化和面板控制使用跨窗口消息，发送目标为通配符，接收逻辑没有校验来源。",
+        "nextStep": "确认部署与嵌入模型；若存在不可信宿主，限制目标来源并校验 origin、source、消息类型及参数结构。",
+        "blocking": false,
+        "citationKeys": [
+          "c18",
+          "c19"
+        ]
+      },
+      {
+        "question": "正式验收需要覆盖哪些浏览器、移动软键盘和视觉回归基线？",
+        "why": "现有记录只证明一次 Chromium 离线检查，未证明其他浏览器、动态视口、软键盘遮挡或跨版本视觉稳定性。",
+        "nextStep": "确定浏览器与视口矩阵，为关键桌面和移动页面建立截图基线，并补测动态视口和软键盘场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c14",
+          "c15"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/README.md",
+      "digest": "81a869cff3e3b202e0f60f84da90d94d3f91cb5526941c551699d9b76485266e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/index.html",
+      "digest": "63c428fc0ed5bcabaafe6f44737cf209b36644d5dd0dd69c3b6bbba51b492730"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/data.js",
+      "digest": "8d41ea8966b884ea81c9356546e94938fa4562452971e9d0f23609893affc1ec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/app.jsx",
+      "digest": "3463c1c480ab929a16f0be14f47a817ec6729c09d221429243628708aafba731"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/build.mjs",
+      "digest": "faa46761eaf99cdc7bd3ef5e9f013f18d386176844ac8c4ac5261db2b8149470"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/package.json",
+      "digest": "bdd0173363f88a2a890902276fa238f5bd81790f745686149fdc960158f76c87"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/package-lock.json",
+      "digest": "bce614b33197d73070958de897687f7a2c4e21280ade9082cff92fb42d4a8a91"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+      "digest": "f5617b5a98527a2370b6b3c6a2f1dbc040e0f281615ff3ab9dbd81b465e5c251"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/styles.css",
+      "digest": "c3f02f7ba444bfe662577f604931c38372a76d9500d7cb270b4678131709992b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/tweaks-panel.jsx",
+      "digest": "b77bf1ccfdb9d8459080d4465294899738f48dea68c7e8640b4a976c1b8e4290"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/smoke.mjs",
+      "digest": "d720ba9d0168f6974e900cbe4fe5a2ece652f8eec8fe68497cc9902bc84ee702"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/verification.json",
+      "digest": "119cee36eea3c718dfbf9abdea0a39c24ce95ffb7269890c5f8b5dd6c71c4462"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-prototype:part-1",
+      "digest": "79568f54250aca3f5755dcb201a619812cab27dfc2dba82f681c75881a794c98"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-prototype:part-2",
+      "digest": "0ddc75da9713307374e7863fbb20831b5599dec98add69fbe7ceb6d57f640eb6"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:51:22.262Z",
+    "trace": {
+      "runId": "b2e041d6-4e3d-4296-8b49-40f0c342ebd3",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5db28b10e2002cd99c69457cb464b5257435888dfda93082a7c2ba9aaa47817b",
+      "contextHash": "a35884408270295908ed303ec17f436359d56fa9c245bdbe4e250e0e0bb2f80a",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "0888c6dcd798b9139ec6a0d0fb93ac66234d6aecf2dee9e505978af5fe42c9e0",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeef-5b87-7893-9eae-6b0ac2708c3a"
+      ],
+      "usage": {
+        "used": 50388,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 94601,
+          "utf8Bytes": 118052,
+          "estimatedTokens": 39351,
+          "budgetedTokens": 49189,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:51:36.027Z",
+    "trace": {
+      "runId": "0a3d2ee8-f3ef-479f-8ff9-d41970c4b668",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "223a0230976412cdab7ea1e97c21d172087c59338ec8bddb5029a6578f2ba076",
+      "contextHash": "df9b0341355f207fb3dbaf125c4f97b123b6f7955456a2ddaeaeb359ab10b0d3",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "456e02d9af2446c946e7346015da35a548e6f89b7eb558f3c896260ef08cabe2",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeef-b914-7e23-9610-9abc6c5035c3"
+      ],
+      "usage": {
+        "used": 47091,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 91733,
+          "utf8Bytes": 112945,
+          "estimatedTokens": 37649,
+          "budgetedTokens": 47062,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
