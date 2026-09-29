@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/research/code-wiki-landscape.md",
+    "title": "Code Wiki 与代码知识技术版图",
+    "summary": "该调研比较代码 Wiki、索引协议、语法解析、代码图谱、代码 RAG 和本地 embedding，建议借用 SCIP 数据模型、引入 Tree-sitter 结构层并移植 repo-map 算法；这些仍是研究结论和顺序化 PoC 计划。",
+    "category": "research",
+    "sections": [
+      {
+        "key": "current-constraints",
+        "title": "现状与治理约束",
+        "body": "评估以 TypeScript/Vue、Fastify、单用户 SQLite 和本地隐私为边界。材料陈述当前已有固定 revision 与 fragment 引用、关键词检索和人工关联清单，但跨 revision 身份续接及语义检索尚未实现；未登记的代码与文档关系也不能自动成为 confirmed。[[c1]]"
+      },
+      {
+        "key": "reuse-decisions",
+        "title": "复用组件而非整个平台",
+        "body": "研究优先考虑 SCIP 的快照式符号模型、Tree-sitter 的 TS/Vue 结构化切片、Aider repo-map 的图排序以及本地 embedding。完整 Wiki 平台往往重复数据库、UI 与模型编排，生成散文又缺少不可变证据回链，因此结论是借鉴组件、协议和流水线，而非直接引入整个平台。[[c2]]"
+      },
+      {
+        "key": "poc-sequence",
+        "title": "验证顺序与依赖关系",
+        "body": "计划依次验证 TS/Vue outline、SCIP 风格 occurrence 表、跨 revision 续接启发式、本地语义召回和 PageRank 上下文。P1–P3 是不依赖 embedding 的代码索引主线，P4 是平行项目；这些都是尚待执行并跨过验收门的计划，不能描述成现有能力。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "代码知识评估的当前约束",
+        "reason": "支持附近对技术栈、固定版本、检索现状、人工关系治理及未实现缺口的说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 5,
+          "endLine": 11
+        },
+        "quote": "评估对象对齐 omem 当前约束（见 [implementation/status.md](../implementation/status.md) 与仓库 AGENTS.md）：\n\n- TypeScript + Vue 3 UI、Fastify API、SQLite 单用户；依赖由 osdk 管理（node 24，python 3.12 可选，本机未装 Docker）。\n- **固定 revision + 固定 fragment ID**：材料按不可变版本切片，引用锚在具体 fragment 上；repo-review 当前关系锚在 head revision 的 fragment 上，**跨 revision fragment 身份续接尚未实现**。\n- RetrievalPort 是可替换接口（当前为 SQLite 关键词召回，CJK 2-gram）；语义/embedding 检索尚未接线。\n- 关系边唯一来源是手维护的 `docs/repo-review/associations.json`；未登记的代码↔文档关系**永远不会自动变成 confirmed**。\n- 本地隐私优先：不要求任何 SaaS，模型端点可本地。"
+      },
+      {
+        "key": "c2",
+        "label": "组件复用与平台取舍结论",
+        "reason": "说明建议复用哪些协议和算法，并解释完整平台及自动抽边为何不直接进入 omem。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 13,
+          "endLine": 20
+        },
+        "quote": "## 0. 一页结论\n\n| 结论 | 内容 |\n| --- | --- |\n| 可直接复用的**组件/协议**（不引入平台） | ① **SCIP protobuf 数据模型**（per-snapshot 的 def/reference/moniker）作为 omem 代码索引的落盘格式参考；② **Tree-sitter**（Node 绑定）做 TS/Vue 结构化 outline 与语法感知切片；③ **Aider repo-map 算法**（tree-sitter tags + def/ref 二部图 + PageRank + token 预算）作为 RetrievalPort 的候选上下文组装器；④ 本地 embedding（BGE-M3 优先，osdk 锁权重）做语义召回投影。 |\n| 为何不直接引入平台 | DeepWiki-open / OpenDeepWiki 是自带 DB+UI+LLM 编排的完整应用，生成的 wiki 散文不绑定 omem fragment；Sourcegraph Cody 客户端 Apache-2.0 但服务端私有；Continue 官网确认已并入 Cursor（GitHub 仓库未归档、仍 Apache-2.0 活跃推送）；CodeQL 对私有仓库需 GitHub Code Security 商业授权；Joern 是 JVM 安全分析平台、无 Vue；Docusaurus/VitePress/MkDocs 是静态发布层，没有交互引用弹窗与 revision 图；GraphRAG 的 LLM 抽边若直接 confirmed 会违反 omem「未登记边不得 confirmed」规则。 |\n| PoC 门（按顺序，全部本地进程内、不起 Docker） | P1：Tree-sitter 在本仓库 TS+Vue 上抽符号，对照 `associations.json` 种子测准确率；P2：在 HEAD snapshot 上建一份 SCIP 风格 occurrence 表，验证 fragment↔符号 range 双向回链；P3：相邻 commit 间用「同名符号 + range 重叠率」做跨 revision fragment 身份启发式，在真实历史上测续接率；P4：BGE-M3 经 osdk 拉权重，在 RetrievalPort 后做 holdout 召回对照关键词基线，断网可跑；P5：repo-map PageRank 上下文注入 ACP，测「被引符号真实存在于上下文」的精度。 |\n| 主要风险 | scip-typescript 近一年未发新版、对 `.vue` SFC 支持未确认；CodeQL 私有仓库授权；LLM 生成 wiki 散文会被误当证据；GraphRAG 社区摘要随 revision 过时；embedding 权重许可与体积需在 osdk `[models]` 中显式锁。 |"
+      },
+      {
+        "key": "c3",
+        "label": "代码索引 PoC 门",
+        "reason": "支持附近对五步验证顺序、验收门和 P1–P3 不依赖 embedding 的说明。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 281,
+          "endLine": 291
+        },
+        "quote": "## 8. PoC 门与风险（按执行顺序）\n\n所有 PoC 都在本机 node/python 进程内跑，不起 Docker、不连外部 LLM 做证据写入。\n\n1. **P1 Tree-sitter outline（TS+Vue）**：osdk 加 node 依赖，对本仓库 `.ts/.vue` 抽函数/类/import；以 `docs/repo-review/associations.json` 的 23 个 seed 里点名的 codePath+symbol 为金标准，测抽出的 symbol 命中率与误报。门：命中 seed symbol ≥ 阈值且无崩溃。\n2. **P2 SCIP 风格 occurrence 表**：参考 scip.proto 的 Document/Occurrence/SymbolInformation 字段，在 HEAD snapshot 上落一张 SQLite 表；验证「fragment → 它包含的 symbol → 该 symbol 的所有引用」一跳可查。门：range 双向回链一致，重建幂等。\n3. **P3 跨 revision fragment 续接启发式**：取本仓库最近 N 个 commit，用「同名符号 + range 重叠率」匹配前后 revision 的 fragment，统计续接率；匹配不上的按现有逻辑标「历史版本」。门：误续接率可忽略（<5%），宁可断开不可错接。\n4. **P4 本地 embedding RetrievalPort**：osdk `[models]` 锁 BGE-M3 快照，实现第二个 RetrievalPort 后端；在 repo-review 现有语料上与 KeywordRetrieval 做 holdout 对照；验证断网运行零外网请求。门：召回质量不低于关键词基线（否则不切），且缓存预热后离线可跑。\n5. **P5 repo-map PageRank 上下文**：把 P1 的 tags 邻接表跑 PageRank，top-K 符号注入 ACP 上下文；测「模型实际引用的符号是否在注入集合内」。门：引用精确率达标，token 预算可控。\n\n> 说明：P1–P3（Tree-sitter outline、SCIP 风格 occurrence、跨 revision fragment 续接）是当前代码索引主线，**不依赖 embedding，可独立完成**；P4 语义召回是平行的独立项，不是 P1–P3 的前置门，按语料需要再排期。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "P1 的符号命中率阈值、样本规模与 Vue 特殊语法覆盖范围应定为多少？",
+        "why": "材料要求达到阈值且无崩溃，却没有给出具体阈值；Vue grammar 又是社区实现，覆盖度未经实测。",
+        "nextStep": "冻结关联种子与 Vue 语法样本，定义命中率、误报率和崩溃率门槛后再实施 P1。",
+        "blocking": true,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "跨 revision 续接测试中的最近提交数量 N 如何选择？",
+        "why": "P3 给出了误续接率目标，但历史窗口仍是变量，会影响样本代表性与运行成本。",
+        "nextStep": "按重命名、移动、大改和小改分层抽取提交，再确定足以覆盖各类变化的 N。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "P1 的符号命中率阈值、样本规模和 Vue 特殊语法覆盖范围应如何确定？",
+        "why": "材料只要求命中率达到阈值且无崩溃，未给出具体阈值；Vue grammar 的成熟度及 script setup 覆盖也尚未实测。",
+        "nextStep": "冻结关联种子和 Vue 语法样本，并定义命中率、误报率及崩溃率门槛。",
+        "blocking": true,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "P3 中最近提交数量 N 应如何选择？",
+        "why": "材料规定了误续接率目标，但没有确定历史窗口，样本代表性和执行成本仍不明确。",
+        "nextStep": "按重命名、移动、大改和小改分层选取提交后确定 N。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/verification.json",
+      "digest": "119cee36eea3c718dfbf9abdea0a39c24ce95ffb7269890c5f8b5dd6c71c4462"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/repo-review/associations.json",
+      "digest": "429b7ef17ce31f34a900c3b61ce7de615ec71072da3d3d274898fb03c0420731"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research.md",
+      "digest": "c375439684084fa36713fd5e621534b010f2b06aca3953daf41590ca43860352"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/integration-readiness.md",
+      "digest": "de753c07b88e5b5cc8b6fcb8f32f99cb980cc1238d2e6ceb2f85eee4af8a6d61"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/README.md",
+      "digest": "652c0c4315e44d157069a326d0d413dbedb9a6b4e276eebe57b6a8fd5d501c40"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:22:00.204Z",
+    "trace": {
+      "runId": "c4b9999f-f3f0-4e3c-b6a7-c8df3c6d66a4",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "e6044b848f715c51c5ffe661de5de5b8a7327b5d0ce517e899c6395d76549dd4",
+      "contextHash": "16f7057369e5c7320aa5b8b38f590bd1c93817cb0b34e9bb124a56a0f3763e69",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9c143cb35e10bdb27b8e5740a2cd71fa556f6eacb5d3d4e3cb94059ef2de9f24",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed53-03a8-76d3-929d-aafc0fd25c9f"
+      ],
+      "usage": {
+        "used": 66100,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99823,
+          "utf8Bytes": 149713,
+          "estimatedTokens": 49905,
+          "budgetedTokens": 62382,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:22:27.698Z",
+    "trace": {
+      "runId": "4e00f027-bdba-4f39-b57d-c142c2c9b8f0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "f69bd3f4dc37fdcf792c28f38580be421cceac35ffaacb308a60669e2e4731de",
+      "contextHash": "892bc80a613d31b2be4d9827d0d358113793d1adeddf79bbbeab0f0e03b24a59",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "45865a8d9a17681a4637bd9da517d8a682db09303f4bfbd65b04180e5517e61a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed54-4f68-7543-aef2-9c7e88bb5a8e"
+      ],
+      "usage": {
+        "used": 56334,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 97306,
+          "utf8Bytes": 146552,
+          "estimatedTokens": 48851,
+          "budgetedTokens": 61064,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
