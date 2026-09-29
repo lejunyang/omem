@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:storage",
+    "title": "storage · 模块理解",
+    "summary": "storage 模块以 SQLite 迁移建立持久化边界，并通过规范摘要、事务、幂等回执和乐观锁，原子应用记忆与任务变更，同时记录修订、证据依赖、通知及外部投递意图。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "responsibility",
+        "title": "职责与背景",
+        "body": "storage 是服务端的持久化基础：顺序迁移逐步承载来源、修订、片段、作业、受治理记忆、通知、会话与质量标注等数据，当前支持到模式版本 14。它把原始证据、派生知识和应用结果纳入同一 SQLite 数据边界，但表结构存在并不代表上层治理流程已经执行。[[c1]][[c2]]"
+      },
+      {
+        "key": "schema_flow",
+        "title": "模式演进与一致性",
+        "body": "启动时先启用外键并检查磁盘版本；数据库版本高于程序支持范围时拒绝写入。迁移历史按版本确认记录未超前、版本已知且应有记录齐全，并比较 SQL 清单校验和；代码虽读取迁移名称，却没有比较名称，因此此前“名称也会被核对”的结论已被替代。[[c3]] 每版迁移在 `BEGIN IMMEDIATE` 事务中顺序执行，写入历史并更新 `user_version` 后提交，失败整体回滚，全部完成后启用 WAL。[[c4]]"
+      },
+      {
+        "key": "application_flow",
+        "title": "业务写入主线",
+        "body": "应用仓储先按应用标识或“提案摘要＋代次”查找回执：相同请求重复提交返回既有结果，幂等键相同但内容不同则报冲突。首次提交在同一事务内更新记忆或任务、追加修订，并记录变化、站内通知、投递意图和应用回执。[[c5]] 记忆与任务更新均以 `expectedVersion` 乐观锁防止覆盖并发修改；记忆还会把格式完整的来源引用登记为依赖。[[c6]]"
+      },
+      {
+        "key": "relations_limits",
+        "title": "跨模块关系与限制",
+        "body": "飞书卡片载荷使用规范化 JSON 的 SHA-256 指纹：普通对象键顺序不影响结果，对象属性中的 `undefined` 会被移除，但特殊值和循环输入没有独立合同。[[c7]] 通知排程支持即时、延迟窗口和按时区定时。[[c8]] 本模块只创建投递意图，不能证明发送、重试与聚合 worker 的完整行为；公共应用入口也未读取审批状态，所以“批准后才能应用”仍须由上层编排保证。[[c9]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "SQLite 模式迁移与历史校验",
+        "reason": "概括迁移模块覆盖的数据能力、当前版本和持久化边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "section": "purpose"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "模式版本与迁移清单",
+        "reason": "迁移清单支持当前最高版本为 14，并展示各功能切片的顺序演进。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 920,
+          "endLine": 1005
+        },
+        "quote": "const migrations: readonly Migration[] = [\n  {\n    version: 1,\n    name: \"foundation\",\n    statements: baselineStatements,\n    checksum: checksum(baselineStatements),\n  },\n  {\n    version: 2,\n    name: \"batch-two-contracts\",\n    statements: batchTwoStatements,\n    checksum: checksum(batchTwoStatements),\n  },\n  {\n    ve"
+      },
+      {
+        "key": "c3",
+        "label": "迁移历史核验",
+        "reason": "支持历史超前、未知版本、缺失记录及校验和不匹配检查，也表明读取的名称未参与比较。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 1024,
+          "endLine": 1055
+        },
+        "quote": "function validateHistory(db: DatabaseSync, version: number) {\n  if (!tableExists(db, \"migrations\")) {\n    if (version === 0 || version === 1) return;\n    throw Error(`Schema ${version} is missing migration history`);\n  }\n  const rows = db\n    .prepare(\"SELECT version,name,checksum FROM migrations ORDER BY version\")\n   "
+      },
+      {
+        "key": "c4",
+        "label": "原子迁移执行",
+        "reason": "支持迁移顺序约束、事务提交与回滚、新版数据库拒写以及完成后启用 WAL 的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 1057,
+          "endLine": 1111
+        },
+        "quote": "function applyMigration(\n  db: DatabaseSync,\n  migration: Migration,\n  hooks: MigrationHooks,\n) {\n  db.exec(\"BEGIN IMMEDIATE\");\n  try {\n    const currentVersion = userVersion(db);\n    if (currentVersion >= migration.version) {\n      db.exec(\"COMMIT\");\n      return;\n    }\n    if (currentVersion !== migration.version - 1"
+      },
+      {
+        "key": "c5",
+        "label": "原子应用仓储",
+        "reason": "概括应用事务、幂等回执以及变化和通知记录之间的关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "section": "purpose"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c6",
+        "label": "记忆与任务版本化写入",
+        "reason": "支持记忆和任务的乐观锁、修订追加，以及记忆来源依赖登记。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 400,
+          "endLine": 642
+        },
+        "quote": "  applyMemory(\n    input: MemoryApplication,\n    hooks: ApplicationHooks = {},\n  ): ApplicationReceipt {\n    const requestDigest = digest(input);\n    return this.commitApplication(\n      input.metadata,\n      requestDigest,\n      \"memory\",\n      () => {\n        const date = timestamp();\n        const status = input.mem"
+      },
+      {
+        "key": "c7",
+        "label": "规范化摘要",
+        "reason": "支持对象键排序、undefined 属性过滤和 SHA-256 稳定摘要，并揭示输入类型边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+      },
+      {
+        "key": "c8",
+        "label": "通知排程策略",
+        "reason": "支持即时、窗口延迟和按时区定时三种投递时间计算方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 125,
+          "endLine": 157
+        },
+        "quote": "export function externalDeliveryTiming(\n  createdAt: string,\n  policy: ExternalNotificationPolicy = defaultNotificationPolicy,\n) {\n  const created = new Date(createdAt);\n  if (policy.mode === \"instant\")\n    return { mode: policy.mode, after: created.toISOString() };\n  if (policy.mode === \"window\")\n    return {\n      mo"
+      },
+      {
+        "key": "c9",
+        "label": "投递意图与应用回执",
+        "reason": "支持仓储创建飞书投递意图和应用回执，同时表明该事务未读取提案审批状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 294,
+          "endLine": 397
+        },
+        "quote": "      const larkTargets = this.db\n        .prepare(\n          `SELECT t.chat_id,t.binding_version,b.id AS binding_id\n           FROM lark_targets t JOIN lark_bindings b\n             ON b.connection_id=t.connection_id\n            AND b.binding_version=t.binding_version\n           JOIN lark_connections c ON c.id=t.connec"
+      }
+    ],
+    "questions": [
+      {
+        "question": "外部投递意图由哪个 worker 领取，并如何完成重试、租约恢复和聚合？",
+        "why": "现有材料只展示投递时间计算和意图持久化，无法确认从 pending 到 delivered 或 failed 的完整执行语义。",
+        "nextStep": "补充投递 worker、状态迁移及行为测试材料，核对领取、发送、重试和聚合路径。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c9"
+        ]
+      },
+      {
+        "question": "批准后才能应用记忆或任务的约束由哪一层保证？",
+        "why": "公共应用入口依赖调用方传入提案元数据，但所示事务没有读取 proposals、decisions 或策略评估状态。",
+        "nextStep": "检查调用 ApplicationRepository 的编排层及其测试，明确审批前置条件与可能的绕过入口。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "稳定摘要的输入是否始终限制为无循环的 JSON 型数据？",
+        "why": "摘要函数接受 unknown，但未定义循环引用、BigInt、Map、Set 等值的规范化或失败合同。",
+        "nextStep": "核对全部调用点；必要时收窄输入类型，并增加特殊值与循环输入测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "2a2f7075bdf0d349cba5b68104c83fba9c240ed2c77327ade76af6c94f916fb9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/repository.ts",
+      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "606c0356db0f0f8c545700297688d2ce9bff0bf2dc864b9b074f911f38731abb"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "07d080fe920577ad66f04451cf01da9c070b8f506f41c3dd42875d4e3075aadb"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/storage/repository.ts",
+      "digest": "b77eec39a8c0f13f4171d77c991c90ab871aac7d261e18d3c2149e9b0a856b52"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:55:16.658Z",
+    "trace": {
+      "runId": "0b594c66-6a97-4793-8d7d-2137a35d9831",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "9f4e0ffbea0dabd494ea1f1de08e6d631610fa97728e2da240b388e0fd6ac495",
+      "contextHash": "7e84ecfda47bbcb705f7cd5354625b7a1e79ff20242da34be9697ae8577005f6",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bca9e5df0b77c2723a8f3e468c347027ad1be4f09b56c24f8c79a4aeec9d40e0",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef3-0674-75a2-955f-84adb5b814b9"
+      ],
+      "usage": {
+        "used": 43421,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 102994,
+          "utf8Bytes": 112552,
+          "estimatedTokens": 37518,
+          "budgetedTokens": 46898,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:55:29.774Z",
+    "trace": {
+      "runId": "94c3eb48-f4f2-4454-a76b-1b5b57e1eb46",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "7302d315e5c5092b95e154b3239a832c18ac68056ba8622ac8eee3d92567abde",
+      "contextHash": "127329ae902107d62de6562efa004e1ed755e438601954a60a3759ca121be212",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "130b130f058e4d62ed83de366e74241be640b86c35949ddc9cb86f3bd8e3aee6",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef3-4d54-75c2-839a-bec1f454e0f9"
+      ],
+      "usage": {
+        "used": 40850,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99894,
+          "utf8Bytes": 108165,
+          "estimatedTokens": 36055,
+          "budgetedTokens": 45069,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
