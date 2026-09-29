@@ -35,6 +35,7 @@ onBeforeUnmount(() => clearInterval(timer));
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div class="coverage"><OmBadge>{{ reviewed }} / {{ materials.length }} 份材料已有当前解读</OmBadge><OmBadge v-if="running">正在分析与复核</OmBadge><OmButton v-if="reviewed < materials.length" variant="ghost" :disabled="running" @click="analyze">整理待处理材料</OmButton></div>
     <nav v-if="topics.length" aria-label="知识主题" class="topics"><button v-for="topic in topics" :key="topic.key" :class="{ active: selected === topic.key }" @click="selected = topic.key; selectedByUser = true">{{ topic.title }}</button></nav>
+    <div v-if="topics.length" class="mobile-topic-picker"><label for="knowledge-topic">阅读主题</label><select id="knowledge-topic" v-model="selected" @change="selectedByUser = true"><option v-for="topic in topics" :key="topic.key" :value="topic.key">{{ topic.title }}</option></select></div>
     <KnowledgeDocument v-if="current" :prefix="prefix" :document-key="current.key" :revision="current.revision" @navigate="emit('navigate', $event)" />
     <OmEmpty v-else title="从材料解读开始阅读" description="主题章节会在材料分析和复核完成后形成；已完成的材料可从下方直接打开。" />
     <section class="knowledge-index">
@@ -46,5 +47,9 @@ onBeforeUnmount(() => clearInterval(timer));
   </section>
 </template>
 <style scoped>
+.mobile-topic-picker {display:none;}
+.mobile-topic-picker label {margin:0;}
+.mobile-topic-picker select {width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--om-line);border-radius:6px;background:var(--om-panel);color:var(--om-ink);font:inherit;}
+@media(max-width:700px){.knowledge-home .topics{display:none;}.mobile-topic-picker{display:grid;gap:8px;margin:20px 0 24px;}}
 .knowledge-home {padding:24px 0;max-width:1000px;min-width:0;margin:0 auto;}h1{font:32px/1.5 var(--om-serif);margin:10px 0 14px;}header p{line-height:1.8;}.coverage{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:20px 0;}.topics{display:flex;gap:8px;flex-wrap:wrap;padding:16px 0;border-block:1px solid var(--om-line);margin-bottom:24px;}.topics button{min-height:44px;border:0;background:transparent;color:var(--om-secondary);padding:8px 12px;cursor:pointer;border-radius:6px;}.topics button.active{background:var(--om-ink);color:var(--om-panel);}.knowledge-index{margin:40px 0;}.knowledge-index h2{font:25px/1.5 var(--om-serif);}label{display:block;font-size:14px;margin:12px 0 6px;}input{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--om-line);border-radius:6px;background:var(--om-panel);color:var(--om-ink);}.article-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:20px 0;}.knowledge-card{display:flex;flex-direction:column;gap:10px;text-align:left;padding:18px;background:var(--om-panel);border:1px solid var(--om-line);border-radius:8px;color:var(--om-ink);cursor:pointer;overflow-wrap:anywhere;}.knowledge-card strong{font-size:16px;}.knowledge-card span{color:var(--om-secondary);font-size:14px;line-height:1.8;}.knowledge-card small{color:var(--om-muted);font-size:12px;}.error{color:var(--om-danger);}@media(max-width:700px){.article-grid{grid-template-columns:1fr;}.knowledge-home{padding:12px 0;}h1{font-size:28px;}}
 </style>
