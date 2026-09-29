@@ -3,43 +3,43 @@
   "document": {
     "key": "omem:scripts/live-role-smoke.ts",
     "title": "Extractor 与 Verifier 的实时角色冒烟流程",
-    "summary": "该脚本选择可用的 TraeX 实时配置，以固定上下文串联 extractor 与 verifier，并保存两阶段结果和 trace；它验证实时配置与编排可运行，不构成语义质量验收。",
+    "summary": "该脚本选择可用的 TraeX 实时配置，以固定上下文串联 extractor 与 verifier，并保存两阶段结果和 trace；它验证显式编排能完成，不构成语义质量验收。",
     "category": "tests",
     "sections": [
       {
         "key": "setup",
         "title": "配置与输入",
-        "body": "脚本从应用配置中寻找 `traex` profile，再经实时能力选择得到可运行配置；缺少 profile 会立即失败。固定示例 context 通过合同 schema 解析，角色包由生产 `RoleBundleRegistry` 和 `RoleRuntimeGateway` 加载执行。[[c1]] 因此它依赖外部实时角色运行配置，但仅凭本材料不能进一步确认网关具体采用何种传输后端。"
+        "body": "脚本从应用配置中查找 `traex` profile，再通过实时能力选择取得可运行配置；缺少该 profile 会立即失败。固定示例 context 经合同 schema 解析，随后实例化 `RoleBundleRegistry` 与 `RoleRuntimeGateway`。[[c1]] 本文件没有进一步说明网关内部采用哪种 CLI 或 ACP 传输实现。"
       },
       {
         "key": "flow",
         "title": "提取到复核",
-        "body": "第一阶段运行 `extractor` 并取得 proposals；第二阶段复制 context、更换 verifier 的 job 与 role，为每个 proposal 计算稳定摘要并放入 candidates，然后调用 `verifier`。[[c2]] 这证明两个角色可以串联、提取结果可成为复核输入，但没有断言 proposal 数量、复核 verdict、引用有效性或 trace 完整性；当前成功条件主要是调用未抛错。"
+        "body": "第一阶段调用 `extractor` 并读取 proposals；第二阶段复制 context，更换 verifier 的 job 与 role，为每项 proposal 计算稳定摘要并放入 candidates，然后调用 `verifier`。[[c2]] 这证明脚本显式串联了两次角色调用，但没有断言 proposal 数量、复核 verdict、引用支持性或 trace 完整性。"
       },
       {
         "key": "report",
-        "title": "报告与边界",
-        "body": "报告保存提取和复核的 result、trace、fixture 与生成时间，默认写入本地验证路径，也允许环境变量覆盖，并把结果打印到标准输出。脚本仅在创建目录和报告文件时请求 `0700` 与 `0600` 模式，没有显式收紧既有路径权限。[[c3]] 它不写入知识库、不自动应用 proposal，也未设置显式重试或语义门禁，更适合人工检查实时调用。"
+        "title": "报告与脚本边界",
+        "body": "报告保存固定 fixture、生成时间，以及提取和复核两阶段的 result 与 trace；默认写入本地验证路径，也允许环境变量覆盖，并把主要结果打印到标准输出。[[c3]] 新建目录和文件时分别请求 `0700`、`0600` 模式。本脚本未显式写入知识库、应用 proposal，也未显式配置重试、超时或语义门禁；这些行为是否存在于 `gateway.run` 内部无法由本文件判断。"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "实时角色运行初始化",
-        "reason": "支持 TraeX profile 选择、固定 context 校验和生产角色网关初始化；附近表述已收窄为实时运行配置。",
+        "reason": "支持 TraeX profile 选择、固定 context 校验，以及两个运行时类的实例化。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-role-smoke.ts",
-          "startLine": 1,
+          "startLine": 10,
           "endLine": 25
         },
-        "quote": "import { mkdirSync, readFileSync, writeFileSync } from \"node:fs\";\nimport { dirname, resolve } from \"node:path\";\nimport { loadConfig } from \"../apps/server/src/config.js\";\nimport { RoleBundleRegistry } from \"../apps/server/src/agent-runtime/bundles.js\";\nimport { RoleRuntimeGateway } from \"../apps/server/src/agent-runtim"
+        "quote": "const config = loadConfig();\nconst profile = config.profiles.find((candidate) => candidate.id === \"traex\");\nif (!profile) throw Error(\"TraeX profile is not configured\");\nconst { profile: liveProfile } = await selectLiveProfile(\n  profile,\n  config.agentCwd,\n);\nconst context = contextManifestSchema.parse(\n  JSON.parse(\n"
       },
       {
         "key": "c2",
         "label": "提取与复核串联",
-        "reason": "说明 extractor 产物如何加摘要并作为 verifier 的候选输入。",
+        "reason": "说明 extractor 的 proposals 如何生成摘要并作为 verifier 的候选输入。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -52,7 +52,7 @@
       {
         "key": "c3",
         "label": "实时冒烟报告持久化",
-        "reason": "支持报告内容、可覆盖路径、创建时请求的权限模式及标准输出行为。",
+        "reason": "支持报告内容、可覆盖输出路径、文件模式和标准输出行为，并界定脚本显式执行的步骤。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -65,9 +65,9 @@
     ],
     "questions": [
       {
-        "question": "这项冒烟检查期望哪些 extractor/verifier 语义结果才算通过？",
-        "why": "当前材料只展示角色调用、候选串联和报告保存，没有断言 proposal 数量、复核结论、引用有效性或 trace 完整性。",
-        "nextStep": "为固定 context 定义最小行为断言，并把“调用成功”与“语义质量通过”区分为两种结果。",
+        "question": "这项冒烟检查期望哪些 extractor 与 verifier 语义结果才算通过？",
+        "why": "当前脚本只要两次角色调用和报告写入未抛错即可结束，没有断言 proposal 数量、复核结论、引用有效性或 trace 完整性。",
+        "nextStep": "为固定 context 定义最小行为断言，并把“调用成功”和“语义质量通过”拆成两种明确结果。",
         "blocking": false,
         "citationKeys": [
           "c2",
@@ -77,6 +77,11 @@
     ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
+      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
+    },
     {
       "kind": "material",
       "key": "omem:scripts/knowledge-browser.ts",
@@ -101,47 +106,22 @@
       "kind": "material",
       "key": "omem:scripts/quality-run.ts",
       "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/review-knowledge.ts",
-      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:06:37.183Z",
+    "at": "2026-09-29T20:46:50.120Z",
     "trace": {
-      "runId": "08159a2c-09f4-4c5f-af53-18d681072950",
+      "runId": "02b7be29-5096-45d7-a278-87fa116e4607",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "560e0dafdece563379ca36d9f827db981aecf29010ed6bc287681ea260c2aabe",
-      "contextHash": "a0386111362f9910f6f6e097f2c8c27a197e97c1848e23f7d41e359787490d54",
+      "promptHash": "742b32caf4d7b28712e03dc4171d3f8266bfc45c22777e8da47e01862f0e3225",
+      "contextHash": "2a2742a14f00d0a5b68ed4df1c7922aa1fc4fd7b9921da4a3b67fa1e844c6879",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d435b80c27c9bf1088a8d21522e860b207fa1cb6ac151fa7db2dcb89b080799b",
+      "fingerprint": "48e67deea6c7cbac1ce93e68013fdbfc1714fb4a1cb1af205e51fe2d2b811e1b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -154,10 +134,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-132c-7d61-ab05-7f429116a569"
+        "01a0eeeb-1fb4-70d1-bcaf-ed42732f2b65"
       ],
       "usage": {
-        "used": 40617,
+        "used": 35326,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -166,10 +146,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 76094,
-          "utf8Bytes": 83293,
-          "estimatedTokens": 27765,
-          "budgetedTokens": 34707,
+          "chars": 61645,
+          "utf8Bytes": 71957,
+          "estimatedTokens": 23986,
+          "budgetedTokens": 29983,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -178,17 +158,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:06:58.706Z",
+    "at": "2026-09-29T20:46:58.341Z",
     "trace": {
-      "runId": "309630fc-fe68-47fd-989d-d0bee97924a8",
+      "runId": "95bc7121-a43d-416d-af26-20f580cfb551",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "f530586ec0566c1350092d0d3b25618eccf22b070166f09429c21cddf3bab6fb",
-      "contextHash": "36bf10a5b67323f29fc6afa29691164466834c655ab7c1fbe69102e6fd9e1466",
+      "promptHash": "e56ae2be9aed635efcf6aa8557b5f45a684a6c03c314f90689f9f378019248a8",
+      "contextHash": "296c5641c062d4414d1a7a2bea0b2879cfbe39ad36eb6fbdf5c8ba327c4428df",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9f7535e6b759bcafcb3c4fa2830a721846ca0774086343ceb4c44d1d206964aa",
+      "fingerprint": "a5f65c11b230e527d63b45f39b56123a5541ec09989e91372f5d2454e956f18f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -201,10 +181,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-c1b6-7753-9e21-feaa8d40754e"
+        "01a0eeeb-91a4-77f2-8451-4bead72ff742"
       ],
       "usage": {
-        "used": 40054,
+        "used": 30333,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -213,10 +193,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 84512,
-          "utf8Bytes": 94799,
-          "estimatedTokens": 31600,
-          "budgetedTokens": 39500,
+          "chars": 57274,
+          "utf8Bytes": 64742,
+          "estimatedTokens": 21581,
+          "budgetedTokens": 26977,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

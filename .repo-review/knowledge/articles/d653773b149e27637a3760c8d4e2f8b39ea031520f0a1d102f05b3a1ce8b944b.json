@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:scripts/quality-evaluate.ts",
     "title": "冻结质量集的预测评估与门禁",
-    "summary": "该命令校验冻结数据集，读取预测数组并调用统一 evaluator 计算指标，生成带输入摘要的报告；任一质量门禁失败时以非零退出码通知自动化流程。",
+    "summary": "该命令验证冻结数据集，读取预测数组并调用统一 evaluator，生成带输入摘要的评估报告；任一门禁失败时以非零退出码通知自动化流程。",
     "category": "workflow",
     "sections": [
       {
         "key": "inputs",
         "title": "输入与可复现性",
-        "body": "命令从位置参数或环境变量取得数据集标识和预测文件，缺少任一项即报用法错误。它打开指定数据目录中的 Store，通过 `verifyFrozen` 确认数据集冻结状态，要求预测 JSON 顶层为数组，再交给 `evaluateQuality`。[[c1]] 报告记录数据集 split、冻结 manifest 摘要和预测摘要，使评估对应到明确的样本与输出版本。"
+        "body": "命令从位置参数或环境变量取得数据集标识和预测文件，缺少任一项即报用法错误。它打开指定数据目录中的 Store，通过仓库验证数据集已冻结，要求预测 JSON 顶层为数组，再交给 `evaluateQuality`。报告记录 split、冻结 manifest 摘要和预测摘要，使评估结果能够对应明确输入版本。[[c1]]"
       },
       {
         "key": "gates",
         "title": "指标门禁",
-        "body": "门禁要求自动应用精确率、`semanticSupport` 率和引用位置准确率至少 0.95，必要证据覆盖率与显式覆盖率至少 0.8；模糊 owner 误报必须为零，且不得缺预测。[[c2]] 注释声明语义支持应采用蕴含而非子串匹配，并让反向陈述得零分；但本材料只展示阈值与设计声明，不能独立证明 evaluator 的实际算法已经满足该语义。"
+        "body": "门禁要求自动应用精确率、`semanticSupport` 率和引用位置准确率至少 0.95，必要证据覆盖率与显式覆盖率至少 0.8；模糊 owner 误报必须为零，且不得缺预测。[[c2]] 代码注释声明语义支持应基于蕴含而非子串、反向陈述应得零分，但本材料只证明脚本读取该指标并执行 0.95 门禁；实际计算逻辑仍在未提供的 evaluator 中。"
       },
       {
         "key": "outputs",
         "title": "输出与失败语义",
-        "body": "报告默认写入质量目录，也可由环境变量覆盖；创建目录时请求 `0700`，但既有目录不会在此被显式收紧，而输出文件写入后会明确执行 `chmod 0600`。任一 gate 为假时退出码设为 1，无论成功失败都会关闭 Store。[[c3]] 本文件没有展示 evaluator 对重复、未知或多余 sample 的处理规则。"
+        "body": "报告默认写入质量目录，也可由环境变量覆盖；创建目录时请求 `0700`，但不会显式收紧既有目录，报告文件写入后则明确执行 `chmod 0600`。任一 gate 为假时退出码设为 1，无论成功失败最终都会关闭 Store。[[c3]] 该文件也未展示重复、未知或数据集外 sampleId 的匹配规则。"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "冻结数据集与预测输入",
-        "reason": "支持参数解析、冻结校验、预测数组检查及报告中的可复现摘要字段。",
+        "reason": "支持参数解析、冻结校验、预测顶层数组检查和可复现摘要字段。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -38,8 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "质量指标阈值与设计声明",
-        "reason": "支持各项门禁阈值，并证明源码注释声明了语义蕴含目标；不将注释扩大为算法实现证据。",
+        "label": "质量指标门禁",
+        "reason": "支持各指标名称、阈值和注释中声明的语义支持设计意图。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -52,7 +52,7 @@
       {
         "key": "c3",
         "label": "评估报告与退出码",
-        "reason": "支持目录创建模式、文件强制权限、标准输出、失败退出码和 Store 清理的区分描述。",
+        "reason": "支持目录创建模式、文件权限收紧、标准输出、失败退出码和 Store 清理。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -66,8 +66,8 @@
     "questions": [
       {
         "question": "预测中的重复、未知或数据集外 sampleId 会如何计入指标？",
-        "why": "输入流程只验证预测 JSON 顶层为数组，具体匹配和异常样本语义封装在未提供的 `evaluateQuality` 中。",
-        "nextStep": "检查 evaluator 实现及其测试，确认重复预测、额外预测和 schema 错误的处理规则。",
+        "why": "命令只验证预测 JSON 顶层是数组，具体匹配和异常样本语义封装在本次未提供的 `evaluateQuality` 中。",
+        "nextStep": "检查 evaluator 实现及其行为测试，确认重复预测、额外预测和字段错误的处理规则。",
         "blocking": false,
         "citationKeys": [
           "c1"
@@ -75,8 +75,8 @@
       },
       {
         "question": "`semanticSupport` 是否确实由语义蕴含算法计算，并对反向陈述计零分？",
-        "why": "当前材料只有该行为的代码注释和门禁阈值，实际指标计算位于本次未提供的 evaluator 实现。",
-        "nextStep": "提供 evaluator 对应实现和行为测试，特别是正向支持、反向陈述及只有字符串重合的反例。",
+        "why": "材料中只有关于该行为的注释和结果阈值，不能独立证明 evaluator 的实际算法。",
+        "nextStep": "提供 evaluator 对应实现与正向支持、反向陈述、仅字符串重合等反例测试。",
         "blocking": false,
         "citationKeys": [
           "c2"
@@ -85,6 +85,11 @@
     ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
+      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
+    },
     {
       "kind": "material",
       "key": "omem:scripts/knowledge-browser.ts",
@@ -109,47 +114,22 @@
       "kind": "material",
       "key": "omem:scripts/quality-run.ts",
       "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/review-knowledge.ts",
-      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:06:37.183Z",
+    "at": "2026-09-29T20:46:02.929Z",
     "trace": {
-      "runId": "08159a2c-09f4-4c5f-af53-18d681072950",
+      "runId": "4880e74a-2b02-4a28-9a75-c4da11ae5a54",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "560e0dafdece563379ca36d9f827db981aecf29010ed6bc287681ea260c2aabe",
-      "contextHash": "a0386111362f9910f6f6e097f2c8c27a197e97c1848e23f7d41e359787490d54",
+      "promptHash": "a996affef32f5651acd1523cd305ecf6778fa538ee3a5fcd1c135c68eb4ed646",
+      "contextHash": "bcb01aab653311c7503eb8eeb688ff7f7512945c50752e844312b3d8173f8c73",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d435b80c27c9bf1088a8d21522e860b207fa1cb6ac151fa7db2dcb89b080799b",
+      "fingerprint": "5900840874c5610ceaea40658e8d29011c9360750eed2fe6b3d3eee2d6d05936",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -162,10 +142,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-132c-7d61-ab05-7f429116a569"
+        "01a0eeea-12c8-76f0-ba5a-602114160399"
       ],
       "usage": {
-        "used": 40617,
+        "used": 35183,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -174,10 +154,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 76094,
-          "utf8Bytes": 83293,
-          "estimatedTokens": 27765,
-          "budgetedTokens": 34707,
+          "chars": 56963,
+          "utf8Bytes": 64151,
+          "estimatedTokens": 21384,
+          "budgetedTokens": 26730,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +166,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:06:58.706Z",
+    "at": "2026-09-29T20:46:20.562Z",
     "trace": {
-      "runId": "309630fc-fe68-47fd-989d-d0bee97924a8",
+      "runId": "2e62fde2-2f2e-47ff-b2a3-0f6eb82e423c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "f530586ec0566c1350092d0d3b25618eccf22b070166f09429c21cddf3bab6fb",
-      "contextHash": "36bf10a5b67323f29fc6afa29691164466834c655ab7c1fbe69102e6fd9e1466",
+      "promptHash": "5911744546482c3adcfd438d44f4e0aecba4f428440a01fcbe23f1e20537b307",
+      "contextHash": "02f1d2c819d33419cc520135180edbada89f1a4ee5dfc38c4004a70a88b90204",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9f7535e6b759bcafcb3c4fa2830a721846ca0774086343ceb4c44d1d206964aa",
+      "fingerprint": "373dd1d8539136d5c701d10a0fb9b7f9e9d0b97d4bbf912f005fd79bc092edcd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,10 +189,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-c1b6-7753-9e21-feaa8d40754e"
+        "01a0eeea-d8a9-7663-be9a-aa9e943fc23a"
       ],
       "usage": {
-        "used": 40054,
+        "used": 33329,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -221,10 +201,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 84512,
-          "utf8Bytes": 94799,
-          "estimatedTokens": 31600,
-          "budgetedTokens": 39500,
+          "chars": 62318,
+          "utf8Bytes": 72236,
+          "estimatedTokens": 24079,
+          "budgetedTokens": 30099,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
