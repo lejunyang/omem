@@ -24,6 +24,7 @@ export function materialFromRevision(store: Store, revisionId: string): Knowledg
     key: external.startsWith("omem:") ? external : `${r.source}:${external}`,
     title: r.title, path: typeof context.filePath === "string" ? context.filePath : null,
     sourceId: r.sourceId, revisionId: r.id, namespace: r.source,
+    actorId: r.provenance?.actorId, actorVerifiedBy: r.provenance?.actorVerifiedBy, eventAt: r.provenance?.eventAt, quoted: r.provenance?.quoted, forwarded: r.provenance?.forwarded,
     digest: stableDigest({ text, images, actor: r.provenance?.actorId ?? null, quoted: r.provenance?.quoted ?? false, forwarded: r.provenance?.forwarded ?? false }),
     text, lineCount: text.split("\n").length, fragments: r.fragments, images,
   };
@@ -92,6 +93,7 @@ export class KnowledgeRepository {
       CREATE TABLE IF NOT EXISTS knowledge_heads(document_key TEXT PRIMARY KEY, revision_id TEXT NOT NULL REFERENCES knowledge_revisions(id), current INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS knowledge_questions(id TEXT PRIMARY KEY, document_key TEXT NOT NULL, article_revision TEXT NOT NULL,
       body TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open', answer_revision TEXT, task_id TEXT, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS knowledge_invalidations(document_key TEXT PRIMARY KEY, reason TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS knowledge_imports(asset TEXT PRIMARY KEY, state TEXT NOT NULL, reason TEXT NOT NULL, checked_at TEXT NOT NULL);`);
   }
 
@@ -118,6 +120,7 @@ export class KnowledgeRepository {
     this.store.tx(() => {
       this.store.db.prepare("INSERT OR IGNORE INTO knowledge_revisions VALUES(?,?,?,?)").run(revision, artifact.document.key, JSON.stringify(artifact), artifact.generation.at);
       this.store.db.prepare("INSERT INTO knowledge_heads VALUES(?,?,1) ON CONFLICT(document_key) DO UPDATE SET revision_id=excluded.revision_id,current=1").run(artifact.document.key, revision);
+      this.store.db.prepare("DELETE FROM knowledge_invalidations WHERE document_key=?").run(artifact.document.key);
       for (const question of artifact.document.questions) {
         const id = digest(artifact.document.key + ":" + question.question);
         this.store.db.prepare("INSERT OR IGNORE INTO knowledge_questions(id,document_key,article_revision,body,updated_at) VALUES(?,?,?,?,?)").run(id, artifact.document.key, revision, JSON.stringify(question), new Date().toISOString());
@@ -132,7 +135,7 @@ export class KnowledgeRepository {
     const materials = new Map(this.materials().map(m => [m.key, m.digest]));
     const articles = this.list();
     const articleMap = new Map(articles.map(a => [a.document.key, a]));
-    const bad = new Set<string>();
+    const bad = new Set((this.store.db.prepare("SELECT document_key FROM knowledge_invalidations").all() as Row[]).map(r => String(r.document_key)));
     for (const a of articles) if (a.dependencies.some(d => d.kind === "material" ? materials.get(d.key) !== d.digest : articleMap.get(d.key)?.revision !== d.digest)) bad.add(a.document.key);
     for (let i = 0; i < articles.length; i++) {
       const before = bad.size;
@@ -159,6 +162,8 @@ export class KnowledgeRepository {
     if (!q) throw Error("Question not found");
     const capture = this.store.capture({ source: "manual", externalId: `knowledge-answer:${id}`, title: q.question, parts: [{ type: "text", text: answer }], context: { application: "knowledge-reader", event: id, conversationId: q.documentKey }, provenance: { collectorId: "knowledge-reader", actorId: "owner", actorType: "owner", actorVerifiedBy: "local-ui", sourceUri: null, eventId: null, eventAt: new Date().toISOString(), timezone: "Asia/Shanghai", quoted: false, forwarded: false, producerKind: "original" } });
     this.store.db.prepare("UPDATE knowledge_questions SET state='answered',answer_revision=?,updated_at=? WHERE id=?").run(capture.revision.id, new Date().toISOString(), id);
+    this.store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(q.documentKey, "用户补充了背景，需要重新核对");
+    this.refresh();
     return capture.revision.id;
   }
 

@@ -1,0 +1,97 @@
+import type { FastifyInstance } from "fastify";
+import type { Store } from "../store.js";
+import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
+import type { GenerationBudget } from "../agent-runtime/budget.js";
+import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
+import { RoleRuntimeGateway } from "../agent-runtime/gateway.js";
+import { RuntimeRequestRepository } from "../agent-runtime/requests.js";
+import { KnowledgePipeline } from "./pipeline.js";
+import { KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
+import { posix } from "node:path";
+import { parseFile } from "../code/parse.js";
+
+export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
+  const repository = input.repository ?? new KnowledgeRepository(input.store);
+  const prefix = input.prefix;
+  let running: KnowledgePipeline | null = null;
+  let lastRun: unknown = null;
+  const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,
+    generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length });
+  const resolveCitation = (a: KnowledgeArticle, key: string) => {
+    const c = a.document.citations.find(c => c.key === key);
+    if (!c) return null;
+    const dependency = a.dependencies.find(d => d.kind === c.target.kind && d.key === c.target.key);
+    if (!dependency) return { ...c, actionable: false, unavailableReason: "引用缺少固定版本依据" };
+    if (c.target.kind === "article") {
+      const target = repository.get(c.target.key, dependency.digest);
+      return { ...c, actionable: !!target, unavailableReason: target ? null : "被引用的知识版本不可用", current: target?.current ?? false,
+        resolved: target ? { kind: "article", key: target.document.key, revision: target.revision, section: c.target.section, title: target.document.title } : null };
+    }
+    const target = repository.resolveMaterial(c.target.key, dependency.digest);
+    return { ...c, actionable: !!target, unavailableReason: target ? null : "被引用的原始材料版本不可用", current: target?.current ?? false,
+      resolved: target ? { kind: "material", key: target.material.key, digest: target.material.digest, title: target.material.title, startLine: c.target.startLine, endLine: c.target.endLine } : null };
+  };
+  app.get(prefix + "/articles", async () => ({ articles: repository.list().map(meta), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running, lastRun }));
+  app.get<{ Params: { key: string }; Querystring: { revision?: string } }>(prefix + "/articles/:key", async (req, reply) => {
+    const a = repository.get(req.params.key, req.query.revision);
+    if (!a) return reply.code(404).send({ error: "尚未生成这份知识" });
+    return { ...meta(a), document: a.document, citations: a.document.citations.map(c => resolveCitation(a, c.key)) };
+  });
+  app.get<{ Querystring: { document: string; revision?: string; citation: string } }>(prefix + "/citation", async (req, reply) => {
+    const a = repository.get(req.query.document, req.query.revision);
+    const c = a && resolveCitation(a, req.query.citation);
+    return c ?? reply.code(404).send({ error: "引用不存在" });
+  });
+  app.get<{ Params: { key: string }; Querystring: { digest?: string } }>(prefix + "/materials/:key", async (req, reply) => {
+    const entry = repository.resolveMaterial(req.params.key, req.query.digest);
+    if (!entry) return reply.code(404).send({ error: "固定材料不可用" });
+    const m = entry.material;
+    const knowledge = repository.get(m.key);
+    const all = repository.materials();
+    const links: { line: number; label: string; reason: string; target: string }[] = [];
+    if (m.path && /\.(?:[cm]?[jt]sx?|vue)$/.test(m.path)) {
+      const parsed = parseFile(m.path, m.text);
+      for (const imp of parsed.imports) {
+        if (!imp.specifier.startsWith(".")) continue;
+        const path = posix.normalize(posix.join(posix.dirname(m.path), imp.specifier));
+        const base = path.replace(/\.[cm]?js$/, "");
+        const candidates = [path, ...[".ts", ".tsx", ".vue", ".js", "/index.ts"].map(e => base + e)];
+        const target = all.find(x => x.path && candidates.includes(x.path));
+        if (target) links.push({ line: imp.rangeStart.line, label: target.path?.split("/").pop() ?? target.title, reason: `该 import 引用了 ${target.title}；这是确定性的模块依赖，调用行为请结合知识正文。`, target: target.key });
+      }
+    }
+    return { key: m.key, title: m.title, path: m.path, digest: m.digest, revisionId: m.revisionId, text: m.text, lineCount: m.lineCount, current: entry.current,
+      images: m.images.map(i => ({ ...i, url: prefix + "/assets/" + i.assetId })), knowledge: knowledge ? meta(knowledge) : null, links };
+  });
+  app.get<{ Params: { id: string } }>(prefix + "/assets/:id", async (req, reply) => {
+    const image = repository.materials().flatMap(m => m.images).find(i => i.assetId === req.params.id);
+    const bytes = image && input.store.asset(image.assetId);
+    if (!image || !bytes) return reply.code(404).send({ error: "图片不可用" });
+    return reply.type(image.mimeType).send(bytes);
+  });
+  app.get(prefix + "/questions", async () => repository.questions());
+  app.post<{ Params: { id: string }; Body: { answer: string } }>(prefix + "/questions/:id/answer", async (req, reply) => {
+    if (typeof req.body?.answer !== "string" || !req.body.answer.trim() || req.body.answer.length > 20000) return reply.code(400).send({ error: "请提供 1–20000 字的回答" });
+    const revisionId = repository.answer(req.params.id, req.body.answer.trim()); input.onAnswer?.();
+    return { revisionId };
+  });
+  app.post<{ Params: { id: string } }>(prefix + "/questions/:id/task", async req => ({ taskId: repository.createTask(req.params.id) }));
+  app.get<{ Querystring: { q?: string } }>(prefix + "/search", async req => {
+    const terms = (req.query.q ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return [];
+    return repository.list().flatMap(a => a.document.sections.filter(s => terms.some(t => (s.title + s.body).toLowerCase().includes(t))).map(s => ({ ...meta(a), section: s.key, sectionTitle: s.title, excerpt: s.body.slice(0, 600), derived: true }))).slice(0, 50);
+  });
+  app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
+    if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });
+    if (running) return reply.code(409).send({ error: "知识整理正在进行" });
+    if (!Array.isArray(req.body?.revisionIds) || !req.body.revisionIds.length || req.body.revisionIds.length > 500) return reply.code(400).send({ error: "请选择要整理的固定材料版本" });
+    const ids = new Set(req.body.revisionIds), selected = repository.materials().filter(m => ids.has(m.revisionId));
+    if (selected.length !== ids.size) return reply.code(400).send({ error: "部分材料已更新或不可用，请刷新后重试" });
+    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: "traex" }, { budget: input.budget, concurrency: 2, onPublish: input.onPublish });
+    const pipeline = running;
+    void pipeline.analyze(selected).then(result => { lastRun = result; }).catch(error => { lastRun = { error: String(error) }; }).finally(() => { running = null; });
+    return reply.code(202).send({ state: "running", materials: selected.length });
+  });
+  app.addHook("preClose", async () => { await running?.stop(); });
+  return repository;
+}
