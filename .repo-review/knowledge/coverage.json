@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "checkedAt": "2026-09-29T21:27:20.165Z",
+  "checkedAt": "2026-09-29T21:46:39.233Z",
   "profile": "config/review-code-model.json",
   "model": "gpt-5.6-sol",
   "files": [
@@ -6814,7 +6814,7 @@
       "path": "apps/web/src/knowledge/KnowledgeHome.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "56854a680ddd4b715cce34eb12d5307c5102ff708aa345cf79cf6dacc1de68bc",
+      "digest": "4ff7ddf1a344acf407e68c913970c061ddf26b7758f2130721431d21edda7090",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
     },
@@ -8559,8 +8559,8 @@
   "counts": {
     "materials": 375,
     "articles": 450,
-    "citations": 2752,
-    "articleCitations": 129,
-    "openQuestions": 753
+    "citations": 2707,
+    "articleCitations": 121,
+    "openQuestions": 749
   }
 }
