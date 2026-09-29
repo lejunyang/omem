@@ -3,36 +3,36 @@
   "document": {
     "key": "topic:evidence_knowledge",
     "title": "证据、知识生成与递归阅读",
-    "summary": "固定原始材料经角色化分析、引用绑定、独立语义复核和不可变发布形成派生知识；来源或用户回答变化会触发失效与重核对，阅读和检索最终沿固定引用回到原始 Fragment。",
+    "summary": "固定原始材料经角色化分析、结构校验和独立语义复核形成不可变知识修订；派生正文只负责解释与导航，事实依据仍回到原始 Fragment。来源变化和用户回答触发失效与重核对，共享 Evidence Trail 让个人知识与代码知识沿引用逐层下钻。",
     "category": "architecture",
     "sections": [
       {
         "key": "evidence_boundary",
-        "title": "知识正文与事实依据的边界",
-        "body": "知识正文用于解释和导航原始材料，而不取代事实依据。仓库从非派生 Revision 的文本、链接、图片及来源属性构造固定材料；标记为派生的 Revision 不会再次成为原始证据。[[c1]] 正文中的引用必须贴近论断，模型选择固定行范围，宿主复制精确短引文；结构与位置校验不能代替独立角色的语义判断。[[c2]] 材料身份、引用合同及修订边界可继续下钻到“知识材料、修订与失效管理仓库”。[[c3]]"
+        "title": "证据边界与知识作用",
+        "body": "原始捕获适合取证，却不便形成跨材料理解；派生正文便于阅读，却不能升级为新的事实来源。系统从非派生 Revision 组合文本、链接与图片，并把内容和来源属性纳入材料摘要。[[c1]] 正文以具名章节和相邻内联引用组织：模型选择固定范围，宿主复制精确短引文，独立角色另行判断语义支持性。[[c2]] 因此可先下钻“知识材料、修订与失效管理仓库”理解证据合同，[[c3]]再沿“知识生成、复核与发布流水线”查看执行过程；[[c4]]这些子知识仍是派生导航，不是独立事实依据。"
       },
       {
         "key": "generation_lifecycle",
-        "title": "角色分析、复核与不可变发布",
-        "body": "流水线先按图片、会话、代码或普通材料选择分析角色。[[c4]] 角色上下文只包含获准的固定范围、图片和来源元数据，并明确把子文章标为非独立证据。[[c5]] 批次必须完整覆盖目标键，随后绑定引文并检查文档结构、目标可见性和引用行范围。[[c6]] 初稿再交给独立 verifier；只有通过的文档才发布，退回目标由刷新角色定向修改，最多四轮，最后一轮把仍不确定的结论降为有依据的问题。[[c7]] 此处替代此前把角色路由、范围约束和批次检查一并归因于复核循环的过宽表述。\n\n发布前仓库重新核对材料摘要和子文章修订，再保存不可变修订并切换 current 指针；依赖变化会递归使上层正文失效，但不删除历史。[[c8]] 完整编排可从“知识生成、复核与发布流水线”继续阅读。[[c11]]"
+        "title": "生成、复核、发布与失效",
+        "body": "材料先按图片、会话、代码或普通文本选择分析角色。[[c5]] 角色只接收获准的固定行范围、图片和来源元数据，子文章会明确标为非独立证据。[[c6]] 输出批次还须完整覆盖目标键，绑定引文并通过正文引用、可见材料及行范围校验。[[c7]] 初稿随后交给独立 verifier；仅 accepted 文档发布，失败目标最多经历四轮定向修订，最后仍不确定的内容应降为有依据的问题。[[c8]] 发布仓库会再次核对材料摘要和子文章修订，再写入不可变 revision、切换当前 head，并演进问题状态。[[c9]] 材料或子知识变化时，失效沿依赖递归传播，受影响 head 不再 current，但历史修订仍保留。[[c10]]"
       },
       {
         "key": "questions_and_retrieval",
         "title": "疑问、用户回答与原始证据召回",
-        "body": "无法确认的事项会在最终修订轮次保留为带依据的问题，而不是写成确定事实。[[c7]] 用户回答由服务端保存为新的手工原始 Revision，并将对应知识标记为待重新核对。[[c9]] 后续分析会把该回答 Revision 加入固定输入，再经过相同的生成与独立复核流程。[[c10]] 这替代了此前仅凭前端疑问界面推断服务端持久化与重核对行为的结论。\n\n派生正文可以引导助手检索，但返回候选始终是原始固定 Fragment，之后仍执行可见性规则。[[c12]] 召回会核验整条依赖链，并沿命中章节实际出现的引用递归到子文章或精确引文所在 Fragment；失效依赖、空引文或无法定位的引文不会成为证据。[[c13]] 当前关键词、递归深度、数量检查和精确引文定位等限制可在“派生知识引导的原始证据召回”继续下钻。[[c14]]"
+        "body": "无法确认的事项会保留问题、原因和下一步；用户可显式转为待办。补充答案时，答案先成为带来源的手工原始 Revision，问题转为 answered，相关知识被标记失效。[[c11]] 后续分析才读取该回答 Revision，将其加入固定材料后重新生成和复核。[[c12]]\n\n召回中，派生正文只用于引导，返回候选始终是原始固定 Fragment，之后仍执行可见性规则。[[c13]] 入口只查询 current head，并先取最多三十篇匹配文章；子文章解析也要求 current。[[c14]] 遍历会核验文章的材料与子文章依赖：顶层只处理命中章节实际使用的引用键；一旦沿文章引用进入子文章，递归调用不再携带该键集合，因此会遍历子文章的全部引用。材料引用则以精确引文定位 Fragment；深度超过八层或已有输出达到三十条时停止继续进入文章。[[c15]] 因而三十不是严格的最终 Fragment 上限，空引文、定位失败或依赖过期均不会产生对应证据。更完整的边界可沿“派生知识引导的原始证据召回”继续下钻。[[c16]]"
       },
       {
         "key": "recursive_reader",
-        "title": "共享 Evidence Trail 与阅读限制",
-        "body": "个人知识与仓库代码知识共用 Evidence Trail：正文引用先展示人读理由，再逐层进入子知识、固定原文或代码位置；共享帧栈支持返回、循环跳回、滚动与焦点恢复以及深链。真实浏览器验证覆盖了五层引用链、Esc、深链、焦点和多视口。[[c15]] 阅读界面的来源状态还能明确区分原始证据、派生说明、候选、过期、错误和人工整理，避免把导航内容误认作事实依据。[[c16]]\n\n当前限制是哈希深链只序列化帧种类与身份，标题在刷新后可能退化；超过 200 帧时序列化会截断，而内存渲染栈不受同一上限约束。相关实现与不一致之处可从 UI 模块的 Trail 子章节继续核对。[[c17]]"
+        "title": "共享 Evidence Trail 与当前闭环",
+        "body": "个人知识页把首页、知识正文和引用阅读接到共享 Trail 状态与同一抽屉。[[c17]] 引用帧先显示关系和理由，再进入固定文章章节，或进入携带 digest、起止行的原始材料。[[c18]] 抽屉负责打开与关闭焦点、切层滚动恢复及 Esc 逐层返回；[[c19]]面包屑回跳、循环提示和上一层入口则由其导航界面提供。[[c20]] 实现记录表明个人知识与仓库知识共用这套阅读合同，并以真实浏览器验证了多层引用链、Esc、深链和焦点。[[c21]] 共享 Trail 的状态语义还可沿相关子知识继续阅读。[[c22]]\n\n由此形成“固定材料—角色生成—独立复核—不可变发布—级联失效—用户回答—原始证据召回”的闭环：生成与发布由前述流水线和仓库证据支持，[[c8]][[c9]][[c10]][[c12]][[c15]]阅读界面负责逐层回到依据。此前将递归范围概括为“始终只沿命中章节引用”的结论已被替代：该筛选仅适用于顶层，进入子文章后会遍历其全部引用。当前仍有限制：Hash 读写会把持久化路径截到二百帧，超限提示尚未在所给实现中出现。[[c23]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "固定材料的来源边界",
-        "reason": "支持非派生 Revision 才能构成固定材料，以及材料内容和来源属性参与身份计算的论断。",
-        "relation": "supports",
+        "label": "固定材料的构造与派生排除",
+        "reason": "支持仅从非派生 Revision 构造材料，并将文本、图片及来源属性纳入摘要的论断。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
@@ -43,8 +43,8 @@
       },
       {
         "key": "c2",
-        "label": "内联引用与语义复核分工",
-        "reason": "支持内联引用、范围验证、宿主绑定精确引文以及结构校验不替代独立语义复核。",
+        "label": "内联引用校验与宿主引文绑定",
+        "reason": "支持正文引用合同、固定范围校验、宿主复制短引文以及结构校验与独立语义复核的分工。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -57,7 +57,7 @@
       {
         "key": "c3",
         "label": "知识材料、修订与失效管理仓库",
-        "reason": "提供固定材料、引用合同和证据边界的相关子知识下钻入口。",
+        "reason": "提供材料身份、引用合同和不可变修订的相关子知识入口。",
         "relation": "explains",
         "target": {
           "kind": "article",
@@ -68,7 +68,19 @@
       },
       {
         "key": "c4",
-        "label": "分析角色选择",
+        "label": "知识生成、复核与发布流水线",
+        "reason": "提供角色路由、持久执行、独立复核和分层综合的相关子知识入口。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/knowledge/pipeline.ts",
+          "section": "review-publication"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "材料分析角色选择",
         "reason": "支持图片、会话、代码和普通材料分别选择对应分析角色。",
         "relation": "implements",
         "target": {
@@ -80,9 +92,9 @@
         "quote": "export function analystFor(m: KnowledgeMaterial) {\n  if (m.images.length) return \"visual-analyst\";\n  if ([\"chat\", \"hook\"].includes(m.namespace) || (m.namespace === \"lark\" && !!m.conversationId)) return \"conversation-analyst\";\n  return /\\.(?:[cm]?[jt]sx?|vue|css|py|go|rs|sh)$/.test(m.path ?? ([\"file\", \"git\"].includes(m."
       },
       {
-        "key": "c5",
-        "label": "固定角色上下文",
-        "reason": "支持仅提供获准行范围、图片和来源元数据，并明确标注派生文章的证据身份。",
+        "key": "c6",
+        "label": "角色固定上下文",
+        "reason": "支持按获准范围提供文本和图片、保留来源元数据，并把子文章标为非独立证据。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -93,22 +105,22 @@
         "quote": "  private context(role: string, jobId: string, offers: Offer[], articles: KnowledgeArticle[], task: Record<string, unknown>): ContextManifest {\n    const materials: ContextManifest[\"materials\"] = [];\n    for (const { material: m, ranges } of offers) {\n      const lines = m.text.split(\"\\n\");\n      for (const range of ra"
       },
       {
-        "key": "c6",
-        "label": "知识批次与引用范围检查",
-        "reason": "支持目标键完整性、引文绑定、文档验证及引用不得越出提供范围。",
+        "key": "c7",
+        "label": "知识批次与可见范围校验",
+        "reason": "支持目标键完整覆盖、引文绑定、正文合同校验及材料行范围限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/pipeline.ts",
           "startLine": 96,
-          "endLine": 110
+          "endLine": 108
         },
         "quote": "  private checkBatch(out: unknown, targets: Target[], offers: Offer[], articles: KnowledgeArticle[]) {\n    const batch = knowledgeBatchSchema.parse(out);\n    if (batch.documents.length !== targets.length || new Set(batch.documents.map(d => d.key)).size !== targets.length || targets.some(t => !batch.documents.some(d => "
       },
       {
-        "key": "c7",
-        "label": "独立复核与定向修订",
-        "reason": "支持独立复核发布门槛、最多四轮定向修订，以及最终将不确定结论转为问题。",
+        "key": "c8",
+        "label": "独立复核与定向修订循环",
+        "reason": "支持独立复核、只发布通过文档、最多四轮修订及末轮保守处理。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -119,60 +131,61 @@
         "quote": "  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown) {\n    let repair: unknown = priorFeedback;\n    let remaining = targets;\n    const published: KnowledgeArticle[] = [];\n    for (let attempt = 0; attempt < 4; attempt++) {\n      const wr"
       },
       {
-        "key": "c8",
-        "label": "不可变发布与依赖失效",
-        "reason": "支持发布前依赖核验、不可变修订、current 指针切换和递归失效传播。",
+        "key": "c9",
+        "label": "不可变文章发布事务",
+        "reason": "支持发布前重新核对依赖、生成内容修订、事务内写入 revision 和切换当前 head。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
           "startLine": 118,
-          "endLine": 157
+          "endLine": 141
         },
         "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
       },
       {
-        "key": "c9",
-        "label": "用户回答保存与失效登记",
-        "reason": "支持把回答保存为原始手工捕获，并将相关知识登记为需要重新核对。",
+        "key": "c10",
+        "label": "依赖变化的递归失效",
+        "reason": "支持材料或子文章变化递归使相关 head 失去 current 状态，同时保留历史修订。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 171,
-          "endLine": 178
+          "startLine": 144,
+          "endLine": 157
         },
-        "quote": "  answer(id: string, answer: string) {\n    const q = this.questions().find(q => q.id === id);\n    if (!q) throw Error(\"Question not found\");\n    const capture = this.store.capture({ source: \"manual\", externalId: `knowledge-answer:${id}`, title: q.question, parts: [{ type: \"text\", text: answer }], context: { application"
+        "quote": "  /** Refresh checks content identity, including dependencies on derived pages. */\n  refresh() {\n    const materials = new Map(this.materials().map(m => [m.key, m.digest]));\n    const articles = this.list();\n    const articleMap = new Map(articles.map(a => [a.document.key, a]));\n    const bad = new Set((this.store.db.p"
       },
       {
-        "key": "c10",
-        "label": "回答进入后续分析",
-        "reason": "支持后续分析读取回答 Revision，并将其作为固定材料加入输入。",
+        "key": "c11",
+        "label": "问题回答与待办处理",
+        "reason": "支持问题保留原因和下一步、回答被保存为原始捕获、状态更新、知识失效及用户显式创建待办。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 169,
+          "endLine": 188
+        },
+        "quote": "  questions() { return (this.store.db.prepare(\"SELECT * FROM knowledge_questions ORDER BY updated_at DESC\").all() as Row[]).map(r => ({ id: String(r.id), documentKey: String(r.document_key), ...JSON.parse(String(r.body)), state: String(r.state), taskId: r.task_id, answerRevision: r.answer_revision })); }\n\n  answer(id: "
+      },
+      {
+        "key": "c12",
+        "label": "后续分析纳入用户回答",
+        "reason": "支持分析阶段读取问题关联的回答 Revision，并将其作为固定材料加入生成与复核输入。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/pipeline.ts",
-          "startLine": 176,
+          "startLine": 161,
           "endLine": 181
         },
-        "quote": "        for (const q of this.repository.questions().filter(q => q.answerRevision && targets.some(t => t.key === q.documentKey))) {\n          const answer = materialFromRevision(this.repository.store, String(q.answerRevision));\n          if (answer) offers.push({ material: answer, ranges: [{ start: 1, end: answer.lineCo"
+        "quote": "  async analyze(materials: KnowledgeMaterial[], supplements: (targets: KnowledgeMaterial[]) => Offer[] = () => []) {\n    const current = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));\n    const pending = materials.filter(m => { const a = current.get(m.key); return !a; });\n    cons"
       },
       {
-        "key": "c11",
-        "label": "知识生成、复核与发布流水线",
-        "reason": "提供角色路由、固定上下文、独立复核和分层综合的相关子知识入口。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/src/knowledge/pipeline.ts",
-          "section": "review-publication"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c12",
-        "label": "派生导航与原始证据边界",
-        "reason": "支持派生正文只用于引导检索，最终候选仍为原始固定 Fragment。",
+        "key": "c13",
+        "label": "派生正文与原始证据边界",
+        "reason": "支持派生正文只引导检索、返回候选仍为原始固定 Fragment，并继续执行可见性规则。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -183,88 +196,165 @@
         "quote": "/** Derived prose can guide retrieval, but the returned candidates are always\n * original fixed fragments. Assistant visibility rules still run afterwards. */"
       },
       {
-        "key": "c13",
-        "label": "引用链与 Fragment 回溯",
-        "reason": "支持依赖核验、子文章递归、精确引文定位和无效投影隔离的召回流程。",
+        "key": "c14",
+        "label": "当前文章筛选与初始数量限制",
+        "reason": "支持只检索 current head、初始查询最多取三十篇，以及子文章也按 current 状态解析。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 8,
+          "endLine": 31
+        },
+        "quote": "export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): Row[] {\n  if (!terms.length || !db.prepare(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_heads'\").get()) return [];\n  const rows = db.prepare(`SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON"
+      },
+      {
+        "key": "c15",
+        "label": "顶层筛选、子文章递归与证据回溯",
+        "reason": "支持依赖核验、顶层引用键筛选、进入子文章后不带筛选键递归、精确引文定位，以及深度和输出规模边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
           "startLine": 33,
-          "endLine": 55
+          "endLine": 54
         },
         "quote": "  const seen = new Set<string>(), output = new Map<string, Row>();\n  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || seen.has(a.document.key) || output.size >= 30) return;\n    seen.add(a.document.key);\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?"
       },
       {
-        "key": "c14",
+        "key": "c16",
         "label": "派生知识引导的原始证据召回",
-        "reason": "提供递归深度、数量检查及精确引文定位限制的相关子知识入口。",
+        "reason": "提供检索入口、依赖核验、引用回溯和限制说明的子知识入口。",
         "relation": "explains",
         "target": {
           "kind": "article",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
-          "section": "limits"
+          "section": "verification"
         },
         "quote": ""
       },
       {
-        "key": "c15",
-        "label": "共享 Evidence Trail 与浏览器验证",
-        "reason": "支持个人知识和仓库知识共用逐层阅读合同，以及五层链、Esc、深链、焦点和多视口验证。",
+        "key": "c17",
+        "label": "个人知识页的共享 Trail 装配",
+        "reason": "支持个人知识首页与活动阅读帧共用 Trail 状态、抽屉和导航事件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+          "startLine": 1,
+          "endLine": 11
+        },
+        "quote": "<script setup lang=\"ts\">\nimport { OmTrailDrawer, useEvidenceTrail } from \"@omem/ui\";\nimport KnowledgeHome from \"./KnowledgeHome.vue\";\nimport KnowledgeFrame from \"./KnowledgeFrame.vue\";\nconst { frames, current, open, loopAt, trigger, active, push, back, jump, close } = useEvidenceTrail();\n</script>\n<template>\n  <section"
+      },
+      {
+        "key": "c18",
+        "label": "固定引用的理由与目标阅读",
+        "reason": "支持引用帧先展示关系和理由，再进入固定文章章节或带摘要与行范围的原始材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 23,
+          "endLine": 30
+        },
+        "quote": "  <template v-else>\n    <OmEmpty v-if=\"error\" title=\"引用不可用\" :description=\"error\" />\n    <p v-else-if=\"!citation\">正在解析固定引用…</p>\n    <template v-else>\n      <aside class=\"citation-reason\"><OmBadge>{{ relationLabels[citation.relation] || '引用' }}</OmBadge><p>{{ citation.reason }}</p></aside>\n      <OmEmpty v-if=\"!citation."
+      },
+      {
+        "key": "c19",
+        "label": "Trail 焦点、滚动与 Escape 生命周期",
+        "reason": "支持模态打开、关闭后的焦点归还、切层滚动恢复以及 Escape 逐层返回。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
+          "startLine": 35,
+          "endLine": 80
+        },
+        "quote": "watch(\n  () => props.open,\n  async (open) => {\n    await nextTick();\n    if (open && !dialog.value?.open) {\n      previousFocus = document.activeElement as HTMLElement;\n      dialog.value?.showModal();\n      await nextTick();\n      titleEl.value?.focus({ preventScroll: true });\n    } else if (!open && dialog.value?.ope"
+      },
+      {
+        "key": "c20",
+        "label": "Trail 面包屑与循环提示",
+        "reason": "支持面包屑回跳、上一层入口、循环跳回或留在当前层以及页脚返回操作。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
+          "startLine": 106,
+          "endLine": 149
+        },
+        "quote": "      <nav class=\"trail-breadcrumb\" aria-label=\"证据路径\">\n        <template v-for=\"(f, i) in frames\" :key=\"i\">\n          <button\n            class=\"crumb\"\n            :class=\"{ active: i === current }\"\n            :aria-current=\"i === current ? 'step' : undefined\"\n            :disabled=\"i > current\"\n            :title=\"f."
+      },
+      {
+        "key": "c21",
+        "label": "共用阅读组件与浏览器验证",
+        "reason": "支持个人知识和仓库知识共用阅读合同，并记录多层引用链、Esc、深链和焦点的真实浏览器验证。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/knowledge-pipeline.md",
           "startLine": 45,
-          "endLine": 49
+          "endLine": 59
         },
         "quote": "## 已完成：正文内联引用阅读\n\n个人“知识整理”和仓库“仓库知识”使用同一组阅读组件；代码结构视图作为补充入口。正文中的引用带可读名称，打开后先展示引用理由，再进入固定知识章节或原始材料；代码 import 行旁也能进入目标模块知识。帧栈行为已集中到 `packages/ui/useEvidenceTrail`，知识、材料与旧代码视图使用同一 dialog 合同，支持逐层返回、循环跳回、滚动与焦点恢复以及深链。\n\n验证：完整 `osdk run check` 通过；`knowledge-browser.ts` 用真实 Vue/API/SQLite 验证正文→章节→三个模块→固定代码的五层链、理由、import 跳转、Esc、深链、"
       },
       {
-        "key": "c16",
-        "label": "内容来源状态提示",
-        "reason": "支持阅读界面区分原始证据、派生说明、候选、过期、错误和人工整理等来源层级。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/components/OmStatusLine.vue",
-          "startLine": 2,
-          "endLine": 16
-        },
-        "quote": "/** A small prefix tag that distinguishes the PROVENANCE LAYER of a block of\n * content (raw evidence vs derived explanation vs candidate guess vs stale vs\n * load error). This is intentionally NOT a relation-status badge: edge status\n * stays on OmBadge. See docs/implementation/code-wiki-ui-design.md §9. */\ntype Kind "
-      },
-      {
-        "key": "c17",
-        "label": "Trail 深链与路由限制",
-        "reason": "提供内存栈与 URL 预算分离、标题恢复和 200 帧静默截断限制的相关子知识入口。",
+        "key": "c22",
+        "label": "共享证据 Trail 状态管理",
+        "reason": "提供入栈、循环检测、返回、跳转和关闭语义的相关子知识入口。",
         "relation": "explains",
         "target": {
           "kind": "article",
-          "key": "module:ui",
-          "section": "trail-and-routing"
+          "key": "omem:packages/ui/src/useEvidenceTrail.ts",
+          "section": "state-and-push"
         },
         "quote": ""
+      },
+      {
+        "key": "c23",
+        "label": "Hash 深链的二百帧截断",
+        "reason": "支持 Hash 解析和写入都会将持久化 Trail 截到最多二百帧，并界定当前超限行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 27,
+          "endLine": 83
+        },
+        "quote": "export function parseHash(hash: string): WikiRoute {\n  let raw = hash.replace(/^#\\/?/, \"\");\n  if (!raw) return { view: { name: \"overview\" }, trail: [] };\n  const lineMatch = raw.match(/[?&]line=(\\d+)/);\n  const queryLine = lineMatch ? Number(lineMatch[1]) : undefined;\n\n  // Pull off a trailing /trail/<kind>/<id>/... su"
       }
     ],
     "questions": [
       {
-        "question": "超过 200 个 Evidence Trail 帧时，产品应拒绝深链写入、明确提示无法完整持久化，还是采用另一种可恢复编码？",
-        "why": "内存阅读栈不受同一上限约束，但哈希解析和写入会截断到 200 帧；刷新后可能丢失后续路径，与递归阅读保留来路的目标不一致。",
-        "nextStep": "确定超限语义，让路由写入返回可检测结果，并增加超过 200 帧时的提示和刷新恢复测试。",
+        "question": "超过二百个 Evidence Trail 帧时，应拒绝写入、提示路径无法完整持久化，还是采用新的可恢复编码？",
+        "why": "内存阅读栈不设相同上限，但 Hash 解析和写入都会截断到二百帧，所给实现没有向用户暴露超限结果。",
+        "nextStep": "确定产品语义，为序列化调用增加可检测结果和可见提示，并补充超过二百帧的往返测试。",
         "blocking": false,
         "citationKeys": [
-          "c17"
+          "c22",
+          "c23"
         ]
       },
       {
-        "question": "助手的证据召回是否需要在关键词和精确引文之外增加语义匹配或跨修订位置续接？",
-        "why": "当前实现先以关键词命中 current 派生文章，再依赖固定引文在当前来源 Fragment 中做精确定位；正文改写、引文漂移或只存在语义相关性时可能无法召回，但派生正文仍不能直接充当事实证据。",
-        "nextStep": "先明确允许的召回质量与证据可验证性要求；若扩展检索，仍须返回原始 Fragment、核验依赖并执行相同的可见性过滤。",
+        "question": "派生正文搜索应继续作为阅读导航，还是统一纳入返回原始 Fragment 的事实检索合同？",
+        "why": "现有证据召回会限制 current 文章、核验依赖并回到原始 Fragment，但文章浏览和文本搜索还可能承担不同的导航用途。",
+        "nextStep": "明确搜索入口的产品用途；用于事实回答时统一执行原始证据回溯和相同的可见性过滤。",
         "blocking": false,
         "citationKeys": [
-          "c12",
           "c13",
-          "c14"
+          "c14",
+          "c15",
+          "c16"
+        ]
+      },
+      {
+        "question": "多服务实例共享知识数据库时，分析启动与发布是否需要数据库租约或队列级协调？",
+        "why": "材料证明角色任务持久化、单条流水线复核和发布前依赖校验，但没有证明多个服务副本之间存在全局分析互斥。",
+        "nextStep": "确认支持的部署拓扑；若允许多副本，设计租约或队列协调，并增加竞争、崩溃恢复和重复发布测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c9"
         ]
       }
     ]
@@ -367,8 +457,13 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/web/src/main.ts",
+      "digest": "e28bb90369dd31edb2423c029d0d215f9ef339d91bbfd97cebc5dfeb522c1db5"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+      "digest": "25fc3c91a561c2e0f39ed27224f02c8ecda0c740198171974497b5c42a7ab463"
     },
     {
       "kind": "material",
@@ -382,8 +477,8 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
     },
     {
       "kind": "material",
@@ -392,28 +487,8 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/main.ts",
-      "digest": "e28bb90369dd31edb2423c029d0d215f9ef339d91bbfd97cebc5dfeb522c1db5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/styles.css",
-      "digest": "67910ac93e56f8446d578981a1fc76c94dbbc0499ba88e982cbc49cbc033be3a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/tsconfig.json",
-      "digest": "7a61554f3814816b2e147949e7f630c712b00074444c2aaee5924511e2af0a0c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/vite.config.ts",
-      "digest": "4fcb2917c4add37f82214643fd7c2b9ccad0f64d44cbf0526cc21aa0c032a2e1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/api.ts",
-      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
     },
     {
       "kind": "article",
@@ -463,23 +538,23 @@
     {
       "kind": "article",
       "key": "module:web:part-3",
-      "digest": "75e4f5828ec1cd93c3889cbf3ebcef86033a77f8fc85c1a99e6fcaf8d84cb459"
+      "digest": "c9ebfa440535f56e22818159f17218c163436350a030cbbec6491e57b5e99e21"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:17:38.262Z",
+    "at": "2026-09-29T21:44:06.626Z",
     "trace": {
-      "runId": "7f467f85-4c13-4b6e-9e20-5905bb8ad3fb",
+      "runId": "a0092c6b-1bec-4768-9dc9-373d32caa4b7",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "bb692b774ffb9e81b9b70d4303e1d3204769eef09a7d7b58c9bcba7d58ef4d66",
-      "contextHash": "1995384a4fd6207a537f63dfe157d304df686a3f50b86799cae43a01ae89a0aa",
+      "promptHash": "fc511e751c2a4fa9eabe583b11224af9badfd221be1c810fbc58b84a91b2d61e",
+      "contextHash": "13725ece1bf6f686c064c3816618d53f7a5a2a5430974d8bf2ddbf56554c2b3d",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "816d341b703c6d1cf597ae3e8d9258ce74919f66a9b88dc4c4d804461648d4e7",
+      "fingerprint": "48696a0b2594a86166f1c21ab86d73aa031f2a1d9cd30e890c7eddd614ad9911",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -492,10 +567,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef07-4515-7b21-8f07-3a408b3bdb29"
+        "01a0ef1f-99c3-7693-915b-4cb5ff587497"
       ],
       "usage": {
-        "used": 97049,
+        "used": 95451,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -504,10 +579,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 243018,
-          "utf8Bytes": 285178,
-          "estimatedTokens": 95060,
-          "budgetedTokens": 118825,
+          "chars": 238295,
+          "utf8Bytes": 280948,
+          "estimatedTokens": 93650,
+          "budgetedTokens": 117063,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -516,17 +591,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:17:51.537Z",
+    "at": "2026-09-29T21:44:18.901Z",
     "trace": {
-      "runId": "db96eb71-f49f-401d-a46a-112ec2caa164",
+      "runId": "6f20ce0b-aaef-44e3-be9f-1c0f9946fc18",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b2c33fc958860fc62ed3cd544c8789e00b2d8b3dd04205809bd15fcfff7cd59a",
-      "contextHash": "d113fd5544ac3a952dffe03785a104878c113120ba0dc283cce9818311f1bd0d",
+      "promptHash": "1b52434f1f32f80500d3a6ba92c70f2cb2dcc3bd5e1a53aded5ab556bec8d9a3",
+      "contextHash": "a520ff7ebaa657f97fd93f76fa31928dfefe4b6f103b82c32521eadf07c6af51",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5e88e1ab64b5c87f7a91c59a0895226e56393c85af6e65e6fc109b077765857d",
+      "fingerprint": "c44a3e330605ae2844811712e279fb2165c51baef076b2dad30d72ecfb51e4ed",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -539,10 +614,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef07-c440-7f81-9361-5e30162d505f"
+        "01a0ef20-00d4-7aa2-80ba-02130e53fe23"
       ],
       "usage": {
-        "used": 94020,
+        "used": 91263,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -551,10 +626,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 242528,
-          "utf8Bytes": 283449,
-          "estimatedTokens": 94483,
-          "budgetedTokens": 118104,
+          "chars": 235304,
+          "utf8Bytes": 276701,
+          "estimatedTokens": 92234,
+          "budgetedTokens": 115293,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
