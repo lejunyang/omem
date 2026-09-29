@@ -1,0 +1,502 @@
+{
+  "version": 1,
+  "document": {
+    "key": "topic:inputs_integrations",
+    "title": "统一输入、外部接入与可靠投递",
+    "summary": "手工、文件、Git、Lark、Agent Hook、聊天与屏幕事件被约束为统一 CaptureInput，并依靠稳定外部身份、内容版本规则、暂存或聚合实现可追踪投递；Lark 进一步提供应用接入、能力核验、配对、实时收件、可靠发件与决策卡。当前代码可证明本地持久化和状态机行为，但真实平台授权、媒体下载、群聊采集同意与异常对账仍待闭合。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "unified-capture",
+        "title": "统一输入合同与有界转换",
+        "body": "手工、文件、Git、Lark、Agent Hook、聊天和屏幕事件共享统一 CaptureInput，用相同结构表达文本、图片、链接、观察时间、上下文与来源信息。相同 source、externalId 和规范内容会复用当前版本，内容变化才创建下一版本；URL 仅作为材料保存，不自动访问。这里能确认的是统一载荷与版本规则，不据此扩展为 Fragment 创建或修订不可变性的结论。[[c1]]\n\n连接器负责收窄外部读取边界：文件须位于配置根目录并是有界 UTF-8 文本；Git 固定到已解析提交后读取指定路径；Hook 只选择 profile 明示字段，生成稳定事件身份，且不把未知 actor 强行绑定到用户。[[c2]] 更细的职责与风险可下钻至 inputs 模块理解和外部来源转换器。[[c3]][[c4]]"
+      },
+      {
+        "key": "reliability-flow",
+        "title": "暂存、聚合与提交边界",
+        "body": "即时材料可直接捕获；连续 chat／screen 事件则按会话或应用窗口分流，在静默 15 秒、最长等待 5 分钟或数量阈值到达时封包。聚合按“内容摘要＋说话者”去重，保留不同说话者的相同内容，并记录事件集合、观察窗口、part 来源与迟到批次关系。[[c5]]\n\nHook 下游不可用时先写本地 spool：生产者和事件 ID 形成稳定键，同键异载荷拒绝覆盖；临时文件同步后重命名。刷新严格核对 producer、eventId、payloadDigest，匹配回执才删除，失败即停止本轮。[[c6]] 这提供单机可重放性，但没有证明多消费者协调；聚合器又在批次事务和 pending 复核前调用 capture，后续失败时缺少对已产生外部效果的显式补偿。[[c7]][[c8]]"
+      },
+      {
+        "key": "lark-integration",
+        "title": "Lark 接入、交互闭环与现有限制",
+        "body": "Lark 把应用注册或既有凭据导入、加密存储、能力探测和 owner 配对串成版本化连接。公开接口核验 scopes、callbacks 与机器人身份，事件订阅由 WebSocket 实际投递确认；未配置真实探针时保守拒绝激活。[[c9]] 实时事件按应用和事件 ID 幂等入收件箱，允许的群消息转为统一 chat 捕获；助手回复先写事务性发件箱，再确认收件事件。[[c10]] 注册信任链与回复恢复细节可分别下钻到 Lark 模块理解和实时事件章节。[[c11]][[c12]]\n\n出站通知使用租约、平台去重 UUID、错误分类与有限重试，超出去重窗口且结果不明确时转为 `unknown`。决策卡联合核验操作者、绑定、消息、摘要、随机数、版本与有效期，再以租约执行幂等决策并更新原卡片。[[c13]][[c14]] 凭据采用 AES-256-GCM 和受限权限原子落盘，但格式未展示主密钥轮换。[[c15]] 真实应用创建与授权仍须显式进行，屏幕观察器由外部提供；现有代码和 fixture 不能替代真实租户验收。[[c16]] 图片下载仅展示可注入媒体端口，测试替身也不能证明生产下载已具备大小、超时与 MIME 防护。[[c17]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "统一捕获合同与版本规则",
+        "reason": "支持多来源统一载荷、图片与文本预算、相同规范内容复用版本、内容变化创建下一版本及 URL 不自动访问；也限定本文不扩展声称 Fragment 或不可变修订。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/inputs.md",
+          "startLine": 3,
+          "endLine": 42
+        },
+        "quote": "立即保存的统一入口是 `POST /api/captures`；需要静默窗/最大窗口聚合的 chat/screen 事件使用 `POST /api/input-events`。运行时 Zod 合同在 packages/contracts/src/index.ts。私有/远程服务器请求带 Bearer token。\n\n```json\n{\n  \"source\": \"screen\",\n  \"externalId\": \"desktop-observer/event-001\",\n  \"title\": \"正在阅读产品需求\",\n  \"observedAt\": \"2026-09-26T16:00:00+08:00\",\n  \"provenance\":"
+      },
+      {
+        "key": "c2",
+        "label": "文件、Git 与 Hook 有界转换",
+        "reason": "支持真实路径限制、固定提交读取、Hook 字段白名单、稳定事件身份及未知 actor 的来源表达。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 10,
+          "endLine": 238
+        },
+        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
+      },
+      {
+        "key": "c3",
+        "label": "输入可靠性模块理解",
+        "reason": "提供暂存、聚合职责及跨事务风险的子知识入口。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:inputs",
+          "section": "responsibility"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c4",
+        "label": "外部来源转换器",
+        "reason": "提供文件、Git、飞书文档与 Hook 转换为统一捕获输入的实现子知识。",
+        "relation": "implements",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/connectors.ts",
+          "section": "hook"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "聊天与屏幕聚合流程",
+        "reason": "支持流划分、就绪窗口、按说话者去重、part 来源、观察窗口和迟到批次的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 39,
+          "endLine": 317
+        },
+        "quote": "  private streamKey(input: CaptureInput) {\n    if (input.source === \"chat\") {\n      if (!input.context.conversationId)\n        throw Error(\"CHAT_CONVERSATION_ID_REQUIRED\");\n      return input.context.conversationId;\n    }\n    if (input.source === \"screen\")\n      return [\n        input.context.application || \"unknown-ap"
+      },
+      {
+        "key": "c6",
+        "label": "Hook 暂存与严格回执",
+        "reason": "支持稳定事件键、冲突拒绝、原子写入、顺序刷新及回执匹配后删除的可靠投递流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 69,
+          "endLine": 229
+        },
+        "quote": "  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord, \"producer\" | \"eventId\">) {\n    return join(\n      this.directory,\n      this.key(record.producer, record.eventId) + \".json\",\n    );\n  }\n\n  private syncDirectory() {\n    try {\n"
+      },
+      {
+        "key": "c7",
+        "label": "暂存与聚合剩余风险",
+        "reason": "提供多消费者认领、跨事务补偿和身份继承问题的子知识入口。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "module:inputs",
+          "section": "progress-limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c8",
+        "label": "聚合捕获提交边界",
+        "reason": "支持 capture 发生在批次事务与 pending 状态复核之前，说明提交失败时可能遗留外部效果。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 320,
+          "endLine": 403
+        },
+        "quote": "  flushReady(\n    capture: (input: CaptureInput) => CaptureResult,\n    options: AggregationOptions = {},\n  ) {\n    const maxEvents = Math.max(1, Math.min(options.maxEvents ?? 50, 500));\n    const results: {\n      batchId: string;\n      revisionId: string;\n      jobId: string | null;\n      eventIds: string[];\n      late"
+      },
+      {
+        "key": "c9",
+        "label": "Lark 能力实测与保守拒绝",
+        "reason": "支持公开接口能力核验、事件订阅由运行时确认，以及未配置真实探针时拒绝激活。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/registration.ts",
+          "startLine": 135,
+          "endLine": 242
+        },
+        "quote": "/** Public OpenAPI capability probe. Event subscriptions are confirmed by the\n * first matching WebSocket delivery (pairing requires im.message.receive_v1),\n * because the public application endpoint does not expose the event list. */\nexport class OfficialLarkCapabilityProbe implements LarkCapabilityProbe {\n  construct"
+      },
+      {
+        "key": "c10",
+        "label": "Lark 收件、采集与回复发件箱",
+        "reason": "支持事件幂等、身份分流、群聊统一捕获，以及先持久化回复再确认收件的顺序。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 337,
+          "endLine": 657
+        },
+        "quote": "  persist(event: LarkInboundEvent) {\n    const connection = this.store.db\n      .prepare(\n        `SELECT id,COALESCE(active_version,(\n           SELECT MAX(version) FROM lark_connection_versions\n           WHERE connection_id=lark_connections.id AND state='awaiting_pair'\n         )) AS connection_version\n         FROM"
+      },
+      {
+        "key": "c11",
+        "label": "Lark 接入与信任链",
+        "reason": "提供应用注册、能力核验、配对、凭据保护和采集范围边界的模块级子知识。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:lark",
+          "section": "onboarding-and-trust"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "Lark 实时事件与回复交付",
+        "reason": "提供 WebSocket 收件、助手回复、重投处理和事务性发件箱的子知识入口。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "section": "reply_delivery"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c13",
+        "label": "通知租约与不明确投递",
+        "reason": "支持租约认领、平台去重窗口、有限重试、unknown 状态及鉴权失败级联停用。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+          "startLine": 190,
+          "endLine": 457
+        },
+        "quote": "  claim(\n    workerId: string,\n    now = new Date(),\n    leaseMs = 60_000,\n  ): DeliveryLease | null {\n    const at = now.toISOString();\n    return this.transaction(() => {\n      while (true) {\n        const row = this.db\n          .prepare(\n            `SELECT i.*,b.connection_id,b.state AS binding_state,\n            "
+      },
+      {
+        "key": "c14",
+        "label": "决策卡核验与租约执行",
+        "reason": "支持卡片动作的上下文联合校验、一次性消费、幂等决策和结果卡片更新流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 152,
+          "endLine": 382
+        },
+        "quote": "    return this.store.tx(() => {\n      const row = this.store.db\n        .prepare(\n          `SELECT a.*,d.expected_versions,d.owner_binding,d.state AS decision_state,\n             d.request_id,b.state AS binding_state,c.app_id,c.state AS connection_state\n           FROM lark_card_actions a\n           JOIN decisions d "
+      },
+      {
+        "key": "c15",
+        "label": "Lark 凭据认证加密",
+        "reason": "支持 32 字节主密钥、AES-256-GCM、受限文件权限和原子落盘，同时显示存储格式中没有密钥标识。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 22,
+          "endLine": 123
+        },
+        "quote": "type SecretPayload = { appId: string; clientSecret: string };\n\nfunction parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexp"
+      },
+      {
+        "key": "c16",
+        "label": "外部接入实施边界",
+        "reason": "支持真实 Lark 应用创建与授权仍需显式进行、屏幕观察器由外部负责，以及部分连接器能力尚有限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/inputs.md",
+          "startLine": 44,
+          "endLine": 58
+        },
+        "quote": "群聊连接器可传 `conversationId`，并在 provenance 中提供稳定 eventId；hook/会话可传 `runId`、`event`。chat/screen 缓冲按来源与会话/窗口分流，默认静默 15 秒或最长 5 分钟强制封包，相同事件去重、相同 ID 不同内容拒绝，迟到事件形成带 `lateForBatchId` 的补充批次。聚合修订保留 eventIds 和观察时间范围。B2-06 已提供飞书机器人 WebSocket 接收：bot 加群事件会自动启用该群监控，移群停用；首次收到已有成员群的消息也会补建 active target。真实应用创建/授权仍需显式进行，本仓库没有替用户执行 live 接入；历"
+      },
+      {
+        "key": "c17",
+        "label": "图片媒体端口与测试替身",
+        "reason": "支持图片下载通过抽象端口完成且测试可注入 fixture，因此不能据此认定真实网络下载已经验收。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 38,
+          "endLine": 48
+        },
+        "quote": "/**\n * Inbound media download port. The production implementation calls Lark's\n * message-resource API; tests inject a fake that returns fixture bytes without\n * touching the network.\n */\nexport interface LarkMediaPort {\n  downloadImage(input: {\n    appId: string;\n    messageId: string;\n    imageKey: string;\n  }): Prom"
+      }
+    ],
+    "questions": [
+      {
+        "question": "群聊配对、机器人入群或首次收到群消息时，是否必须单独确认后才能开启持续捕获？",
+        "why": "现有流程会在群聊配对或机器人加入后直接启用 group_monitoring，首次群消息也可能补建目标；身份绑定、入群与采集范围变更尚未明确分离，涉及隐私授权。",
+        "nextStep": "确定产品与隐私规则；若入群或配对不等于授权，增加默认关闭、显式确认、范围展示和审计记录。",
+        "blocking": true,
+        "citationKeys": [
+          "c10",
+          "c11",
+          "c16"
+        ]
+      },
+      {
+        "question": "是否要求多个进程同时消费同一 Hook spool，以及聚合 capture 成功后数据库提交失败时采用何种补偿语义？",
+        "why": "spool 有原子文件写入但没有原子认领或租约；聚合器又先产生 capture 外部效果再提交批次状态，并发或故障下可能重复投递或遗留未关联结果。",
+        "nextStep": "确认部署拓扑和 capture 幂等规则；按结论增加文件认领或持久租约，并在确定性结果复用、事务外盒或显式补偿中选择方案，补充并发与失败注入测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c7",
+          "c8"
+        ]
+      },
+      {
+        "question": "`unknown` 投递或“决策已成功但卡片更新最终失败”由谁对账和告知用户？",
+        "why": "系统为避免重复发送会停止超过平台去重窗口的不明确投递，而业务决策先于结果卡片更新执行，数据库真实状态可能长期不同于用户所见卡片。",
+        "nextStep": "定义运维列表、告警、供应商状态查询、人工重发与结果卡片修复入口，并补充两类端到端故障测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c13",
+          "c14"
+        ]
+      },
+      {
+        "question": "生产 Lark 图片下载和主密钥轮换分别由哪个组件保障并接受真实环境验收？",
+        "why": "当前材料只展示可注入的媒体端口及单一主密钥格式；fixture 不能证明网络下载的大小、超时、鉴权和 MIME 校验，秘密文件也没有 key ID 支持旧密钥迁移。",
+        "nextStep": "定位并审查生产媒体实现，执行真实租户小范围验收；同时决定是否需要带 key ID 的轮换与原子重加密流程。",
+        "blocking": false,
+        "citationKeys": [
+          "c15",
+          "c16",
+          "c17"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/spool.ts",
+      "digest": "6e815455823d4befbba2dcce822d0c1b3e12b4b08f7f86def8945493dabe3039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/inputs.md",
+      "digest": "03325a77843b261a8df74739a6bfa20b90f1b8dd9f1596b01003c463dc3c53c5"
+    },
+    {
+      "kind": "article",
+      "key": "module:inputs",
+      "digest": "2716ca854623210eaa2a0a310e39253436c6b63034c7f4286da2e1e283b9270d"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "8d6ecd020af27c8f64f03d8c30b32e66ff6af0227cf050e2664c5918351a3056"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/inputs/spool.ts",
+      "digest": "11a5366ad29e4ba79fbffa748d97ec4994d5f02f3c923f3270cd8d0528bbee47"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "995c004b4f30ed757c72e98d51bb7a1e852f7253ca1df741ea5499f5de5d4607"
+    },
+    {
+      "kind": "article",
+      "key": "module:lark",
+      "digest": "4ca1c9abac2fbde480cf39d57a8f2e367800be0f69f6a2d0a16be8fc55c116fd"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "46b00be80ba5e0ec0104f1bd5fe25adeda2d6770ca544b05f8f49736d070b987"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "5db208c45568a4ed88d096cb56e27f6fc23db66b421b23e40686d1dff0277b7c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+      "digest": "a6be962d55c2c5fe0dfdf4bbe08d31b68c9910cb2a294d2a04b94bcc0b23894c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "e8ddd5b3ea0ebc6cca2f7ba97e1d72a76be357ad336d1be651a4b18028a8deb4"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/inputs.md",
+      "digest": "47a86b8452ff81cf84e80a9fc3bc6cb20cd2949b194ce02ff1031da304543855"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:04:41.548Z",
+    "trace": {
+      "runId": "5a1ec10d-31ee-4437-a51f-e4b59f67de33",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "be3b8573a62750c649e22baa03ea52910de854a007efb7a718d60d79d29bf886",
+      "contextHash": "01ca4e77dce56fc46adae8f61e91f41c6fd382de607f79e51f82edd0cbe13036",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b2b7a3dea450be60143bd2a17bdc485f5827812aec1ccbda8482d722f363a812",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefb-7aa7-7663-b73a-5e00412af23e"
+      ],
+      "usage": {
+        "used": 102255,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 281718,
+          "utf8Bytes": 315891,
+          "estimatedTokens": 105297,
+          "budgetedTokens": 131622,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:04:57.522Z",
+    "trace": {
+      "runId": "6efd8baa-c7dd-4393-84d7-ff748fcfb4f1",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "aa5c13d338b06d0c313bf4952b82d2e47d5dc2d8aa4bf0e8164c0c7f10236573",
+      "contextHash": "913906efb7a7ba83eb81aa54573d7471d7c512cf664c19c46f05cac27f64b816",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1fd609b2c3ab9bf4ceb27e24e4c33f2a5d2fc4842cda98cae5c91370edcbc17f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefb-ea3d-73d2-a661-b68454343ce9"
+      ],
+      "usage": {
+        "used": 98792,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 277805,
+          "utf8Bytes": 309792,
+          "estimatedTokens": 103264,
+          "budgetedTokens": 129080,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
