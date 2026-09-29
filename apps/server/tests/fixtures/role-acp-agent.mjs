@@ -46,7 +46,7 @@ function output(text) {
   const roleId = field(text, "role_id", "extractor");
   const projectId = field(text, "project_id", "none");
   const imageCount = (pendingText.match(/"asset_hash"/g) || []).length;
-  if (text.includes("OUTPUT_FLOOD")) return "x".repeat(20_000);
+  if (text.includes("OUTPUT_FLOOD")) return "x".repeat(120_000);
   if (text.includes("MALFORMED_OUTPUT")) return "not-json";
   if (roleId.endsWith("-analyst") || roleId === "knowledge-writer" || roleId === "knowledge-refresher") {
     const keys = JSON.parse(text.match(/"targetKeys":(\[[^\]]+\])/)?.[1] || '["manual:a"]');
