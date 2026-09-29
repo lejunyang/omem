@@ -14,8 +14,8 @@ type RunResult = { result: unknown; trace: RoleRunTrace; at: string };
 
 export function analystFor(m: KnowledgeMaterial) {
   if (m.images.length) return "visual-analyst";
-  if (["chat", "hook", "lark"].includes(m.namespace) && !m.path) return "conversation-analyst";
-  return /\.(?:[cm]?[jt]sx?|vue|css|py|go|rs|sh)$/.test(m.path ?? "") ? "code-analyst" : "material-analyst";
+  if (["chat", "hook"].includes(m.namespace) || (m.namespace === "lark" && !!m.conversationId)) return "conversation-analyst";
+  return /\.(?:[cm]?[jt]sx?|vue|css|py|go|rs|sh)$/.test(m.path ?? (["file", "git"].includes(m.namespace) ? m.title : "")) ? "code-analyst" : "material-analyst";
 }
 
 export class KnowledgePipeline {

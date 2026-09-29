@@ -61,7 +61,9 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
         if (target) links.push({ line: imp.rangeStart.line, label: target.path?.split("/").pop() ?? target.title, reason: `该 import 引用了 ${target.title}；这是确定性的模块依赖，调用行为请结合知识正文。`, target: target.key });
       }
     }
-    return { key: m.key, title: m.title, path: m.path, digest: m.digest, revisionId: m.revisionId, text: m.text, lineCount: m.lineCount, current: entry.current,
+    const filename = m.path ?? (["file", "git"].includes(m.namespace) ? m.title : "");
+    const codeLanguage = filename && !/\.(md|markdown)$/i.test(filename) ? filename.split(".").at(-1)?.toLowerCase() ?? "text" : null;
+    return { key: m.key, title: m.title, path: m.path, codeLanguage, digest: m.digest, revisionId: m.revisionId, text: m.text, lineCount: m.lineCount, current: entry.current,
       images: m.images.map(i => ({ ...i, url: prefix + "/assets/" + i.assetId })), knowledge: knowledge ? meta(knowledge) : null, links };
   });
   app.get<{ Params: { id: string } }>(prefix + "/assets/:id", async (req, reply) => {

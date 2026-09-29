@@ -22,7 +22,8 @@ export function materialFromRevision(store: Store, revisionId: string): Knowledg
   const external = source.external_id ? String(source.external_id) : r.sourceId;
   const material: KnowledgeMaterial = {
     key: r.source === "file" && external.startsWith("omem:") ? external : `${r.source}:${external}`,
-    title: r.title, path: typeof context.filePath === "string" ? context.filePath : null,
+    title: r.title, path: typeof context.filePath === "string" ? context.filePath : r.source === "file" && /^(?:\/|[A-Za-z]:[\\/])/.test(external) ? external.replace(/\\/g, "/") : null,
+    conversationId: typeof context.conversationId === "string" ? context.conversationId : undefined,
     sourceId: r.sourceId, revisionId: r.id, namespace: r.source,
     actorId: r.provenance?.actorId, actorVerifiedBy: r.provenance?.actorVerifiedBy, eventAt: r.provenance?.eventAt, quoted: r.provenance?.quoted, forwarded: r.provenance?.forwarded,
     digest: stableDigest({ text, images, actor: r.provenance?.actorId ?? null, quoted: r.provenance?.quoted ?? false, forwarded: r.provenance?.forwarded ?? false }),
