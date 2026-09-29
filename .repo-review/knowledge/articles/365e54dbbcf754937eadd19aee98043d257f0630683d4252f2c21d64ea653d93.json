@@ -1,66 +1,48 @@
 {
   "version": 1,
   "document": {
-    "key": "omem:apps/server/tests/knowledge-api.test.ts",
-    "title": "知识 API 的引用、疑问与历史材料测试",
-    "summary": "以真实 Fastify 路由和临时存储验证内联引用解析、历史 revision 读取、问题转任务、无模型错误以及历史图像资产保留。",
+    "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+    "title": "SQLite 并发写入等待测试",
+    "summary": "通过独立子进程持有真实 SQLite 写锁，验证知识存储会等待锁释放并完成捕获，而不是丢失操作。",
     "category": "tests",
     "sections": [
       {
-        "key": "citation-contract",
-        "title": "文章与引用合同",
-        "body": "测试从手动发布计划构造带内联引用和明确疑问的知识文档，经引用绑定后发布。文章接口必须返回可操作、具有人读标签和理由的引用；引用解析接口还必须定位到固定材料及其摘要，验证正文展示与底层证据目标使用同一合同。[[c1]]"
+        "key": "lock-fixture",
+        "title": "真实并发写锁场景",
+        "body": "测试先初始化数据库，再启动独立 Node 子进程，以 `BEGIN IMMEDIATE` 持有 SQLite 写锁约 250 毫秒。主测试等待子进程明确报告锁已建立后，才创建存储和知识仓库并执行手动材料捕获，因此覆盖的是实际进程间锁竞争，而非模拟异常。[[c1]]"
       },
       {
-        "key": "history-and-actions",
-        "title": "历史证据与问题动作",
-        "body": "当同一手动来源捕获新版本并刷新仓库后，旧摘要仍可读取原始文本，但会标记为非当前版本。知识疑问可显式转换为任务并进入任务列表；在没有配置模型时，请求分析返回 503，而不是伪造分析结果或静默成功。[[c2]]"
-      },
-      {
-        "key": "historical-assets",
-        "title": "历史图像资产保留",
-        "body": "测试先捕获 PNG 图像并记录其资产标识，再用文本 revision 替代同一来源。即使图像已不再是当前版本，历史资产接口仍返回成功且保持图像 MIME 类型，说明固定引用所需的旧二进制证据不会随 head 更新而消失。[[c3]]"
+        "key": "outcome",
+        "title": "完成条件与清理",
+        "body": "断言要求捕获结果中的 fragment 保留完整固定文本，同时持锁子进程必须以状态码 0 正常退出，证明写操作等待后成功而未丢失。无论测试结果如何，清理逻辑都会终止仍存活的子进程、关闭存储并删除临时目录。[[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "内联引用 API 验证",
-        "reason": "支持文章引用的人读字段、可操作状态及固定材料解析行为。",
+        "label": "并发写锁测试装置",
+        "reason": "支持子进程持有真实 SQLite 即时事务写锁以及主进程随后执行捕获的流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-api.test.ts",
-          "startLine": 11,
-          "endLine": 22
+          "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+          "startLine": 9,
+          "endLine": 18
         },
-        "quote": "it(\"serves fixed inline citations and explicit question actions through the same API for manual materials\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-api-\")), store = new Store(dir), app = Fastify();\n  const repository = registerKnowledgeRoutes(app, { store, prefix: \"/api/knowledge\", workspace: "
+        "quote": "it(\"waits for a real concurrent writer instead of losing a knowledge operation\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-busy-\"));\n  const initial = new Store(dir); initial.close();\n  let store: Store | undefined;\n  const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", \"import {D"
       },
       {
         "key": "c2",
-        "label": "历史材料与问题任务验证",
-        "reason": "支持旧 revision 读取、问题转任务以及未配置模型时返回 503 的断言。",
+        "label": "等待结果与资源清理",
+        "reason": "支持捕获内容、子进程退出状态以及测试结束时资源清理的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-api.test.ts",
-          "startLine": 23,
-          "endLine": 30
+          "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+          "startLine": 19,
+          "endLine": 21
         },
-        "quote": "    store.capture({ source: \"manual\", externalId: \"plan\", title: \"新计划\", parts: [{ type: \"text\", text: \"新的发布内容。\" }], context: {} }); repository.refresh();\n    const original = await app.inject(\"/api/knowledge/materials/\" + encodeURIComponent(m.key) + \"?digest=\" + m.digest);\n    expect(original.json()).toMatchObject({ te"
-      },
-      {
-        "key": "c3",
-        "label": "历史图像资产验证",
-        "reason": "支持来源被新 revision 替代后，旧图像资产仍可按原 MIME 类型读取。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-api.test.ts",
-          "startLine": 31,
-          "endLine": 37
-        },
-        "quote": "    const image = store.capture({ source: \"manual\", externalId: \"diagram\", title: \"历史图像\", parts: [{ type: \"image\", mimeType: \"image/png\", data: \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=\", label: \"原图\" }], context: {} });\n    const assetId = (image.revision.parts[0] as "
+        "quote": "    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material remains available.\");\n    expect(await exited).toBe(0);\n  } finally { if (child.exitCode === null) child.kill(); store?.close(); rmSync(dir, { recursive: true, force: true }); }"
       }
     ],
     "questions": []
