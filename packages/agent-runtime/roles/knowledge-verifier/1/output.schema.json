@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "verdicts": {
+      "minItems": 1,
+      "maxItems": 16,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "documentKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "needs_revision"
+            ]
+          },
+          "issues": {
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1600
+            }
+          },
+          "questions": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000
+                },
+                "why": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1200
+                },
+                "nextStep": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1000
+                },
+                "blocking": {
+                  "type": "boolean"
+                },
+                "citationKeys": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "question",
+                "why",
+                "nextStep",
+                "blocking",
+                "citationKeys"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "documentKey",
+          "verdict",
+          "issues",
+          "questions"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "verdicts"
+  ],
+  "additionalProperties": false,
+  "$id": "https://omem.local/schemas/KnowledgeReview.v1"
+}

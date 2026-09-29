@@ -263,6 +263,8 @@ export class JobRepository {
     fingerprint: JobAttemptFingerprint;
     now?: Date;
     leaseMs?: number;
+    kinds?: string[];
+    jobIds?: string[];
   }): JobLease | null {
     const now = input.now ?? new Date();
     const at = iso(now);
@@ -272,12 +274,12 @@ export class JobRepository {
         const row = this.db
           .prepare(
             `SELECT * FROM jobs
-             WHERE cancel_requested=0 AND not_before<=? AND
+             WHERE cancel_requested=0 ${input.kinds ? `AND kind IN (${input.kinds.map(() => "?").join(",")})` : ""} ${input.jobIds ? `AND id IN (${input.jobIds.map(() => "?").join(",")})` : ""} AND not_before<=? AND
                (state IN ('queued','retry_wait') OR
                 (state IN ('leased','running') AND lease_expires_at<=?))
              ORDER BY not_before,created_at LIMIT 1`,
           )
-          .get(at, at) as Row | undefined;
+          .get(...(input.kinds ?? []), ...(input.jobIds ?? []), at, at) as Row | undefined;
         if (!row) return null;
         const job = fromRow(row);
         if (job.state === "leased" || job.state === "running")

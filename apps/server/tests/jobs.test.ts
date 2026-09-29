@@ -427,3 +427,13 @@ describe("B2-02 durable job acceptance", () => {
     });
   });
 });
+
+it("scoped workers leave unrelated queued jobs untouched", async () => {
+  const store = setup();
+  const other = enqueue(store, "extract_claims"), wanted = enqueue(store, "knowledge:code-analyst");
+  const worker = new DurableJobWorker(store.jobs, "knowledge-only", { "knowledge:code-analyst": async () => ({ resultRef: "reviewed" }) }, { fingerprint: () => fingerprint("v1"), kinds: ["knowledge:code-analyst"], jobIds: [wanted.id] });
+  await worker.processOne();
+  expect(store.jobs.get(wanted.id)?.state).toBe("succeeded");
+  expect(store.jobs.get(other.id)?.state).toBe("queued");
+  expect(await worker.processOne()).toEqual({ processed: false });
+});

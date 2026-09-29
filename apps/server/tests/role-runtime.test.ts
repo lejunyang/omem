@@ -432,3 +432,12 @@ describe("B2-03 versioned role runtime acceptance", () => {
     }
   });
 });
+
+it("runs knowledge roles through the shared gateway and preserves host-bound citations", async () => {
+  const result = await gateway().run({ roleId: "code-analyst", profile: profile(), context: context("code-analyst", "fixed evidence", { task: { targetKeys: ["manual:a"] } }),
+    validateOutput: out => { const normalized = out as { documents: { citations: { quote: string }[] }[] }; normalized.documents[0]!.citations[0]!.quote = "fixed evidence"; return normalized; } });
+  expect((result.result as { documents: { citations: { quote: string }[] }[] }).documents[0]!.citations[0]!.quote).toBe("fixed evidence");
+  expect(result.trace.loadedSkills).toEqual([{ name: "omem-code-analyst", version: "1", mode: "inline" }]);
+  expect(result.trace.outputSchema).toBe("KnowledgeBatch.v1");
+  expect(result.trace.usage).toHaveProperty("budget.maxInputTokens", 96000);
+});

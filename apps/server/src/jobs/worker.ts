@@ -39,6 +39,8 @@ export class DurableJobWorker {
       heartbeatMs?: number;
       retryBaseMs?: number;
       now?: () => Date;
+      kinds?: string[];
+      jobIds?: string[];
     },
   ) {}
 
@@ -47,6 +49,8 @@ export class DurableJobWorker {
     const leaseMs = this.options.leaseMs ?? 60_000;
     const lease = this.repository.claimNext({
       workerId: this.workerId,
+      kinds: this.options.kinds,
+      jobIds: this.options.jobIds,
       fingerprint: this.options.fingerprint(),
       leaseMs,
       now: now(),

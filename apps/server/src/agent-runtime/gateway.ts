@@ -1,3 +1,5 @@
+import { knowledgeBatchSchema, knowledgeReviewSchema, knowledgePlanSchema } from "../../../../packages/contracts/src/knowledge.js";
+import { estimateTokens, generationBudget, type GenerationBudget } from "./budget.js";
 import { createHash, randomUUID } from "node:crypto";
 import type {
   ContentBlock,
@@ -21,6 +23,9 @@ import { RoleBundleRegistry, type RoleBundle } from "./bundles.js";
 import type { RuntimeRequestRepository } from "./requests.js";
 
 const outputSchemas = {
+  "KnowledgeBatch.v1": knowledgeBatchSchema,
+  "KnowledgeReview.v1": knowledgeReviewSchema,
+  "KnowledgePlan.v1": knowledgePlanSchema,
   "ProposalBatch.v1": proposalBatchSchema,
   "AssessmentBatch.v1": assessmentBatchSchema,
   "PlanProposal.v1": planProposalSchema,
@@ -114,6 +119,7 @@ export function renderRolePrompt(
     )
     .join("\n");
   const materialIndex = context.materials.map((material) => ({
+    content_scope: material.content_scope ?? "fragment",
     fragment_revision_id: material.fragment_revision_id,
     source_revision_id: material.source_revision_id,
     has_text: material.text !== undefined,
@@ -237,8 +243,12 @@ export class RoleRuntimeGateway {
     signal?: AbortSignal;
     managedTools?: ManagedTool[];
     emit?: Emit;
+    budget?: Partial<GenerationBudget>;
+    validateOutput?: (output: unknown) => unknown;
   }) {
-    const bundle = this.registry.load(input.roleId, input.roleVersion ?? "1");
+    const originalBundle = this.registry.load(input.roleId, input.roleVersion ?? "1");
+    const limits = generationBudget(input.budget ?? {}, originalBundle.manifest.budget);
+    const bundle = { ...originalBundle, manifest: { ...originalBundle.manifest, budget: { ...originalBundle.manifest.budget, max_context_tokens: limits.maxInputTokens, max_output_tokens: limits.maxOutputTokens } } };
     if (bundle.manifest.profile_ref !== input.profile.id)
       throw Error("ROLE_PROFILE_MISMATCH");
     if (bundle.manifest.session_policy.reuse !== "never")
@@ -294,6 +304,8 @@ export class RoleRuntimeGateway {
           : undefined,
       );
       finalPromptHash = rendered.promptHash;
+      const estimate = estimateTokens(rendered.blocks.map(b => b.type === "text" ? b.text : "").join("\n"));
+      if (estimate.budgetedTokens > limits.maxInputTokens) throw Error(`ROLE_CONTEXT_BUDGET_EXCEEDED: ${estimate.budgetedTokens} > ${limits.maxInputTokens}`);
       const emit: Emit = (type, text) => {
         input.emit?.(type, text);
         if (type === "text") output += text;
@@ -309,7 +321,8 @@ export class RoleRuntimeGateway {
             {
               mcpServers: allowed.map((name) => supplied.get(name)!),
               expectedSkills: nativeSkills.map((skill) => skill.canonical_name),
-              maxOutputChars: bundle.manifest.budget.max_output_tokens * 4,
+              maxOutputChars: limits.maxOutputTokens * 4,
+              contextBudget: { estimatedInputTokens: estimate.budgetedTokens, maxOutputTokens: limits.maxOutputTokens, contextReserveTokens: limits.contextReserveTokens },
               onRuntimeRequest: async (request) => {
                 this.runtimeRequests?.recordDenied({
                   workspaceId: context.trusted_context.workspace_id,
@@ -340,7 +353,9 @@ export class RoleRuntimeGateway {
           );
           sessionIds.push(`cli-${runId}-${repairAttempt}`);
         }
-        const result = parseOutput(bundle, output, context);
+        if (estimateTokens(output).budgetedTokens > limits.maxOutputTokens) throw Error("ROLE_OUTPUT_BUDGET_EXCEEDED");
+        let result = parseOutput(bundle, output, context);
+        try { const normalized = input.validateOutput?.(result); if (normalized !== undefined) result = normalized as Record<string, unknown>; } catch (error) { throw Error(`ROLE_OUTPUT_REFERENCES: ${error instanceof Error ? error.message : String(error)}`); }
         const trace: RoleRunTrace = {
           runId,
           roleId: bundle.manifest.role_id,
@@ -365,7 +380,7 @@ export class RoleRuntimeGateway {
           loadedSkills,
           allowedTools: allowed,
           sessionIds,
-          usage,
+          usage: { ...usage, budget: limits, estimate },
           repairAttempts: repairAttempt,
         };
         return { result, trace, bundle };

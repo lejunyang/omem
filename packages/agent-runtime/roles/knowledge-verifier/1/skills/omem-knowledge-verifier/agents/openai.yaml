@@ -1,0 +1,4 @@
+interface:
+  display_name: "复核知识正文"
+  short_description: "Build linked knowledge from fixed evidence"
+  default_prompt: "Use $omem-knowledge-verifier to process the supplied fixed materials."

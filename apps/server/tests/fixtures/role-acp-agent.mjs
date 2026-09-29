@@ -48,6 +48,10 @@ function output(text) {
   const imageCount = (pendingText.match(/"asset_hash"/g) || []).length;
   if (text.includes("OUTPUT_FLOOD")) return "x".repeat(20_000);
   if (text.includes("MALFORMED_OUTPUT")) return "not-json";
+  if (roleId.endsWith("-analyst") || roleId === "knowledge-writer" || roleId === "knowledge-refresher") {
+    const keys = JSON.parse(text.match(/"targetKeys":(\[[^\]]+\])/)?.[1] || '["manual:a"]');
+    return JSON.stringify({ schema_version: 1, documents: keys.map(key => ({ key, title: "Fixture knowledge", summary: "Fixture summary", category: "implementation", sections: [{key:"behavior",title:"Behavior",body:"Fixed source is cited here.[[c1]]"}], citations:[{key:"c1",label:"Fixed source",reason:"Supports the behavior",relation:"supports",target:{kind:"material",key,startLine:1,endLine:1},quote:""}],questions:[] })) });
+  }
   if (roleId === "verifier") {
     // Batch acceptance: the verifier context carries a `candidates` array with one
     // entry per proposal (each with proposal_id + proposal_digest). Return one

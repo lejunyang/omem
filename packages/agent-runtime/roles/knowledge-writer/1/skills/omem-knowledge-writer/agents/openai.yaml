@@ -1,0 +1,4 @@
+interface:
+  display_name: "撰写可追溯章节"
+  short_description: "Build linked knowledge from fixed evidence"
+  default_prompt: "Use $omem-knowledge-writer to process the supplied fixed materials."

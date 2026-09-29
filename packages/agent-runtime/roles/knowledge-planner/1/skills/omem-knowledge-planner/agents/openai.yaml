@@ -1,0 +1,4 @@
+interface:
+  display_name: "组织知识章节"
+  short_description: "Build linked knowledge from fixed evidence"
+  default_prompt: "Use $omem-knowledge-planner to process the supplied fixed materials."
