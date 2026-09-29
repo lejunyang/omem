@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/package.json",
+    "title": "Web 应用包配置",
+    "summary": "该配置定义私有的 ESM Web 工作区包，使用 Vite 提供开发与构建命令，依赖 Vue 3、共享 UI 包以及 Markdown 渲染、代码高亮、内容净化和二维码组件。依赖声明反映可用技术组件，不等同于相关功能已被实际调用或完整实现。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "package-runtime",
+        "title": "包属性与运行方式",
+        "body": "包名为 `@omem/web`、版本为 `0.1.0`，设置 `private: true` 与 `type: module`，表明它是工作区内部使用的 ESM 应用包，而非从这份配置直接发布的公共包。脚本仅包含绑定 `127.0.0.1` 的 Vite 开发服务和生产构建；材料没有列出独立的测试、类型检查或预览脚本。[[c1]]"
+      },
+      {
+        "key": "dependency-roles",
+        "title": "前端依赖及能力边界",
+        "body": "运行依赖以 Vue 3 为框架，并通过 `workspace:*` 复用 `@omem/ui`。`marked`、`highlight.js` 与 `dompurify` 组合上可支持 Markdown 解析、代码高亮及 HTML 净化，`qrcode.vue` 可用于二维码展示。这里能确认的是依赖可用性，而不是调用事实；是否安全配置净化策略、是否真正渲染 Markdown 或二维码，仍需组件源码和测试佐证。[[c2]]"
+      },
+      {
+        "key": "relation-to-entry",
+        "title": "与 HTML 入口的关系",
+        "body": "配置中的 ESM 与 Vite 构建方式，与 HTML 入口通过模块脚本加载 `/src/main.ts` 的结构相互吻合：HTML 负责浏览器启动点，包配置负责开发、构建及依赖解析。两份材料共同勾勒出 Vue/Vite 前端骨架，但仍不足以确认具体业务页面、API 接入或部署流程。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "包元数据与 Vite 脚本",
+        "reason": "支持工作区私有 ESM 包、开发服务绑定地址、构建命令以及未声明测试和类型检查脚本的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/package.json",
+          "startLine": 1,
+          "endLine": 9
+        },
+        "quote": "{\n  \"name\": \"@omem/web\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite --host 127.0.0.1\",\n    \"build\": \"vite build\"\n  },"
+      },
+      {
+        "key": "c2",
+        "label": "Web 运行依赖清单",
+        "reason": "支持对 Vue、共享 UI、Markdown、代码高亮、内容净化和二维码依赖角色的分析，同时不把依赖声明误述为实现事实。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/package.json",
+          "startLine": 10,
+          "endLine": 17
+        },
+        "quote": "  \"dependencies\": {\n    \"@omem/ui\": \"workspace:*\",\n    \"dompurify\": \"^3.4.16\",\n    \"highlight.js\": \"^11.12.0\",\n    \"marked\": \"^18.0.14\",\n    \"qrcode.vue\": \"3.8.0\",\n    \"vue\": \"3.5.43\"\n  }"
+      },
+      {
+        "key": "c3",
+        "label": "浏览器模块启动点",
+        "reason": "将 Vite/ESM 包配置与 HTML 中加载 TypeScript 主入口的方式关联起来，支持对前端骨架的整体说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/index.html",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>omem · 个人工作记忆</title></head><body><div id=\"app\"></div><script type=\"module\" src=\"/src/main.ts\"></script></body></html>"
+      }
+    ],
+    "questions": [
+      {
+        "question": "Markdown、高亮、HTML 净化和二维码依赖分别在哪些组件中使用，净化策略如何配置？",
+        "why": "依赖清单只能说明这些库被声明，不能确认实际调用路径、渲染顺序或不可信内容的安全边界。",
+        "nextStep": "补充相关 Vue 组件、渲染适配层及安全测试材料，核对是否先解析再净化，以及链接和代码块的处理规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "Web 包的类型检查和测试由根工作区统一执行，还是目前尚未配置？",
+        "why": "当前包脚本只有 `dev` 与 `build`；仅凭该文件无法区分“由根级命令集中管理”和“缺少检查”这两种情况。",
+        "nextStep": "补充根目录包配置、工作区任务配置及测试配置材料，以确定真实验证入口。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/index.html",
+      "digest": "9eba05b8514ffe71592094d06a723f5e8775521106e4d68b9b871d87dbc4b1b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/package.json",
+      "digest": "85268e48064a45b61d7e07e1b2bcbab67fc0d323ff79ed09eb38864c67ea3845"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T12:50:28.187Z",
+    "trace": {
+      "runId": "7fe25cf0-ab78-4c8e-96ec-7675cd17601d",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "256f4f53ac26a7ce40b9823fddb624719bdb49a6faf7598d5294df8bfa09934d",
+      "contextHash": "aa9ce5410003a0312ba799e3bea681e0f021303022884951bf59ab83c538faa7",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3b274c24b06d8f32c6789d113c0e471ca9dc37d32efbe2a399dfce27c8ee3684",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed37-22b6-72a1-a988-3f173e318878"
+      ],
+      "usage": {
+        "used": 15827,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 7087,
+          "utf8Bytes": 8656,
+          "estimatedTokens": 2886,
+          "budgetedTokens": 3608,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T12:50:33.972Z",
+    "trace": {
+      "runId": "5edcb9a3-f44c-4133-bc85-75f0c91bc55d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "ca12a7cf3aba042a398e6883960f1f317d28840b88e90016abb196bb22140e7e",
+      "contextHash": "e14970c18c926a8171b24ad25395288a07bc1c1d42197cfecbd759d0324314ce",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "70bbe123abe0ee0bba567357803b74ec83b50221714e9004e436fc380f6f6bb9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed37-70e9-7cb2-8a0c-63de974c01bb"
+      ],
+      "usage": {
+        "used": 15529,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 9795,
+          "utf8Bytes": 13486,
+          "estimatedTokens": 4496,
+          "budgetedTokens": 5620,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

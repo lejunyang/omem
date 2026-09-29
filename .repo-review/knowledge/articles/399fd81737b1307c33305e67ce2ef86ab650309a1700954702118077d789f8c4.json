@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/LearningView.vue",
+    "title": "学习任务与提案进度视图",
+    "summary": "呈现持久学习任务、模型尝试、提案及证据，把等待、失败、人工判断和最终应用区分开，并按当前状态提供取消或重试入口。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "progress-model",
+        "title": "任务状态与进度语义",
+        "body": "组件接收任务和提案列表，通过提案的 `origin.job_id` 将两者关联，并为任务与提案状态提供中文标签和视觉色调。色调仅是呈现分类，不负责改变状态。[[c1]] 四段进度分别依据材料已保存、尝试次数大于零、是否形成提案、是否存在已应用提案点亮，因此“产生尝试”不等于成功，“形成提案”也不等于已经生效。[[c2]]"
+      },
+      {
+        "key": "details-and-controls",
+        "title": "详情加载、证据与控制边界",
+        "body": "展开任务详情时才请求完整任务，并列出每次尝试的模型、effort、结果与错误；没有尝试时明确提示不能视为处理成功。相关提案展示操作、影响数量、策略原因，并把证据片段标识交给父组件打开。[[c3]] 取消或重试请求携带当前 generation 和随机 requestId，为服务端进行乐观并发与幂等判断提供输入，但本文件不能证明服务端确实执行了这些校验。[[c4]] 界面仅为排队、已领取、运行、等待重试或等待判断的任务显示取消按钮；重试按钮只出现在失败和已取消状态。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "任务与提案状态映射",
+        "reason": "支持任务、提案关联方式以及状态文本和色调分类。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 6,
+          "endLine": 41
+        },
+        "quote": "const props = defineProps<{ jobs: Job[]; proposals: Proposal[] }>();\nconst emit = defineEmits<{\n  refresh: [];\n  open: [id: string];\n  error: [text: string];\n}>();\nconst details = ref<Record<string, Job>>({});\nconst busy = ref(\"\");\n\nconst stateText: Record<string, string> = {\n  queued: \"等待处理\",\n  leased: \"已领取\",\n  runnin"
+      },
+      {
+        "key": "c2",
+        "label": "学习进度轨道",
+        "reason": "支持四个阶段分别采用持久材料、尝试数、提案存在和已应用提案作为完成条件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 66,
+          "endLine": 106
+        },
+        "quote": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">材料进入后，每一步都保留状态</span>\n    <h1>学习流程</h1>\n    <p class=\"muted\">\n      这里显示真实持久任务、模型尝试和提案结果。等待 worker\n      的任务保持“等待处理”，失败不会显示为完成。\n    </p>\n    <OmPanel v-for=\"job in jobs\" :key=\"job.id\" class=\"stack\">\n      <template #heading>\n        <div class="
+      },
+      {
+        "key": "c3",
+        "label": "尝试记录与提案证据",
+        "reason": "支持延迟加载详情、展示模型尝试、错误、提案结果和原始证据入口。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 107,
+          "endLine": 165
+        },
+        "quote": "      <details\n        @toggle=\"($event.currentTarget as HTMLDetailsElement).open && load(job)\"\n      >\n        <summary>运行详情与尝试记录</summary>\n        <p v-if=\"!details[job.id]\" class=\"muted\">正在读取…</p>\n        <div\n          v-for=\"attempt in details[job.id]?.attempts || []\"\n          :key=\"attempt.id\"\n          class=\"a"
+      },
+      {
+        "key": "c4",
+        "label": "任务控制请求",
+        "reason": "支持取消与重试请求携带 expectedGeneration、requestId，并在完成后刷新或报告错误。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 43,
+          "endLine": 63
+        },
+        "quote": "async function load(job: Job) {\n  try {\n    details.value[job.id] = await api<Job>(`/jobs/${job.id}`);\n  } catch (error) {\n    emit(\"error\", String(error));\n  }\n}\nasync function control(job: Job, action: \"cancel\" | \"retry\") {\n  busy.value = job.id;\n  try {\n    await api(`/jobs/${job.id}/${action}`, {\n      expectedGene"
+      },
+      {
+        "key": "c5",
+        "label": "控制按钮状态条件",
+        "reason": "支持取消只对活动或等待状态开放、重试只对失败和已取消任务开放。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 166,
+          "endLine": 187
+        },
+        "quote": "      <template #actions>\n        <OmButton\n          v-if=\"\n            [\n              'queued',\n              'leased',\n              'running',\n              'retry_wait',\n              'awaiting_decision',\n            ].includes(job.state)\n          \"\n          :loading=\"busy === job.id\"\n          @click=\"control("
+      }
+    ],
+    "questions": [
+      {
+        "question": "服务端如何处理重复 requestId、过期 generation，以及任务状态在点击后到请求到达前发生变化的竞态？",
+        "why": "界面提交了并发控制所需字段，但材料没有服务端校验和幂等结果，无法确认重复取消或旧代重试的行为。",
+        "nextStep": "检查任务控制端点及测试，验证旧 generation 返回冲突、相同 requestId 可安全重放且状态迁移受约束。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/DecisionsView.vue",
+      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LarkSetup.vue",
+      "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ReviewApp.vue",
+      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:16:37.262Z",
+    "trace": {
+      "runId": "d6aa69c6-5d9b-4efa-8759-4fc06c0f72fb",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "43e04907e63ceac45132d3cb6693ccdf8b2d3b9f42392b3b64dfcb9f7578479b",
+      "contextHash": "fc3c7cd75514abae88d5177381834e52e3531c5c7b4a853e6421dc2a7ba4dbb9",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "839fa807bd510435d3f330acf0dd6d1093bfbe3f159fb8aa7d652f57515ec892",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee97-27c7-7903-9ccf-2a817f6755a1",
+        "01a0ee97-c35e-7b02-b29c-89cb07fa8fbb",
+        "01a0ee98-555c-7bb2-a6bb-c08fcde3c787"
+      ],
+      "usage": {
+        "used": 57830,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 122838,
+          "utf8Bytes": 139688,
+          "estimatedTokens": 46563,
+          "budgetedTokens": 58204,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 2
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:16:55.623Z",
+    "trace": {
+      "runId": "93b21d88-f347-4cb1-93ec-0c9dba8183e9",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "4d5b1811f813ede91e5cfd403803e148f513ef6912e23793f813ba20f7c9646b",
+      "contextHash": "4226dfbebd3003a0b52b664fe48a25d3b964cc23391d60eb7b6559bbd45c1ea2",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "05504554777485c19bc41ab2ac837bbba73c0777dc1afe984094002a78a43aca",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee98-f8c4-7de2-b9a7-95b7eef2030d"
+      ],
+      "usage": {
+        "used": 53078,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121288,
+          "utf8Bytes": 135480,
+          "estimatedTokens": 45160,
+          "budgetedTokens": 56450,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

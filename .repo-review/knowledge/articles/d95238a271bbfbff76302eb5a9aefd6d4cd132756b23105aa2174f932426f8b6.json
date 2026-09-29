@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+    "title": "符号源码范围与双向关系帧",
+    "summary": "围绕单个解析符号读取局部源码和相关边，使调用、测试、规则及同文件符号关系可继续下探。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "source-window",
+        "title": "定位与源码窗口",
+        "body": "组件从 symbolMap 找符号，再由 fileMap 找所属文件；任一缺失都会进入“符号不在当前代码图中”的错误态。加载时先请求首行以取得总行数，再按符号起止行向前后各扩六行计算窗口，随后并行读取源码切片和文件关系边。[[c1]] 符号自身的固定范围被转换成高亮标记，源码查看器使用切片的真实 startLine 保持行号一致。[[c2]]"
+      },
+      {
+        "key": "edges",
+        "title": "符号级关系流程",
+        "body": "文件级边会进一步筛选为与当前 symbolId 任一端相连的 `myEdges`。每条边通过共享 `edgeDrillTarget` 解析目标，并根据当前符号处于 from 或 to 端显示方向；可解析目标发出文件或符号 drill，不可解析目标禁用。[[c3]] 这一设计保留同文件跳转：目标仍作为新的符号范围帧进入 trail，而不是因为 fileId 相同而被吞掉。"
+      },
+      {
+        "key": "fragment-and-limits",
+        "title": "证据入口与限制",
+        "body": "若符号带 fragmentId，用户可进入对应决策或规则片段；没有 fragment 并不妨碍查看源码和关系。[[c4]] 页面仅展示前 60 条相关边，且徽标直接显示 `edgeKind` 原始枚举，与其他帧使用中文关系词的做法不一致。边加载失败会被降级为空数组，因此界面会显示“暂无登记边”，无法区分真正为空与接口失败。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "符号窗口加载流程",
+        "reason": "支持符号、文件解析，源码窗口计算以及边请求降级行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+          "startLine": 43,
+          "endLine": 82
+        },
+        "quote": "const symbol = computed<CodeSymbol | undefined>(() => props.symbolMap.get(props.symbolId));\nconst file = computed<CodeFile | undefined>(() =>\n  symbol.value ? props.fileMap.get(symbol.value.fileId) : undefined,\n);\n\nconst source = ref(\"\");\nconst totalLines = ref(0);\nconst startLine = ref(1);\nconst edges = ref<CodeEdge[]"
+      },
+      {
+        "key": "c2",
+        "label": "符号固定范围标记",
+        "reason": "说明源码切片中用于突出符号范围的行号和元数据。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+          "startLine": 84,
+          "endLine": 95
+        },
+        "quote": "const rangeMark = computed<CodeRangeMark[]>(() => {\n  if (!symbol.value?.rangeStart) return [];\n  return [\n    {\n      start: symbol.value.rangeStart.line,\n      end: symbol.value.rangeEnd?.line ?? symbol.value.rangeStart.line,\n      id: symbol.value.symbolId,\n      kind: symbol.value.kind,\n      title: symbol.value.na"
+      },
+      {
+        "key": "c3",
+        "label": "符号边解析与方向",
+        "reason": "支持关系筛选、目标解析、入出方向以及文件或符号下探。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+          "startLine": 97,
+          "endLine": 131
+        },
+        "quote": "/** Edges that touch this symbol on either side. */\nconst myEdges = computed(() =>\n  edges.value.filter(\n    (e) => e.fromSymbolId === props.symbolId || e.toSymbolId === props.symbolId,\n  ),\n);\n\nfunction drillEdge(e: CodeEdge) {\n  const self = symbol.value?.fileId ?? \"\";\n  const t = edgeDrillTarget(e, props.fileMap, pr"
+      },
+      {
+        "key": "c4",
+        "label": "规则片段与关系界面",
+        "reason": "证明 fragment 入口、关系数量限制、不可解析禁用和空状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+          "startLine": 134,
+          "endLine": 180
+        },
+        "quote": "function openFragment() {\n  if (symbol.value?.fragmentId)\n    emit(\"drill\", { type: \"fragment\", fragmentId: symbol.value.fragmentId, title: symbol.value.name });\n}\n</script>\n\n<template>\n  <div class=\"symbol-frame\">\n    <div v-if=\"loadError\" class=\"error-banner\" role=\"alert\">\n      符号加载失败：{{ loadError }}\n      <OmButton"
+      }
+    ],
+    "questions": [
+      {
+        "question": "符号边接口失败是否应与“确实没有边”区分，并统一使用人类可读关系名称？",
+        "why": "当前边请求异常被转为空数组，模板随即展示“暂无登记边”；同时徽标直接渲染 `edgeKind`，可能暴露内部枚举且造成误判。",
+        "nextStep": "确认错误降级与标签合同，补充同文件边、入边、不可解析边、超过 60 条及边请求失败的组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "符号边接口失败是否应与“确实没有边”区分，并统一使用人类可读的关系名称？",
+        "why": "边请求异常被降级为空数组，随后界面显示“该符号暂无登记边”；徽标还直接渲染 `edgeKind`，可能暴露内部枚举并造成误判。",
+        "nextStep": "确认错误降级和可见标签合同，补充同文件边、入边、不可解析边、超过 60 条以及边请求失败的组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+      "digest": "6bf08120dbba105389b257dbc604f8501fd6b0717ba2bd055340e8fd165e2565"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+      "digest": "085ceb881ef2506da6bc0d4c20fd17b636a650f2276dd2c6d4f5f9dfb1d360f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+      "digest": "89b59531ff437aff27e5ef45f8f284f311ce13d221e97ef219867ed21f7106bb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+      "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:14:13.079Z",
+    "trace": {
+      "runId": "0de67419-eddd-4973-b845-63b94489af0e",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "fb22c7cb9a2863263490e8c9a42b9d235044e8259e7bfa766b5c486042c78221",
+      "contextHash": "0a976200683bffd3980c1a43331093323817ed1972275354110300cfc8fe455e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "679dcec9f3431b60528835f33f863c96162440c77df79be89a0ac8595d7599d4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee95-eaa9-78f2-8a13-bcab229dc57b"
+      ],
+      "usage": {
+        "used": 47153,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 94884,
+          "utf8Bytes": 98615,
+          "estimatedTokens": 32872,
+          "budgetedTokens": 41090,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:14:40.052Z",
+    "trace": {
+      "runId": "5b21408f-477b-4b7c-8268-13750b77f825",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "54481bf1bf98bea20ba0c5a20a05fd3d0305a7aa0d197f41af71ae0232e85c4f",
+      "contextHash": "45831a42c0bcfbcc16eb467d09c16a0b3da3a5611edcf8f79d589271469e5e7a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9622dd411719c6e24239714c90f04f6e97e7251a9f9726f05f79679517f2442c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-c607-7fe3-a53e-ee9ef87db453"
+      ],
+      "usage": {
+        "used": 50908,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 113285,
+          "utf8Bytes": 125002,
+          "estimatedTokens": 41668,
+          "budgetedTokens": 52085,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

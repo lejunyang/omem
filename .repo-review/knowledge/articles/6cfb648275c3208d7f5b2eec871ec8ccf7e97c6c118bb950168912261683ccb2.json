@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+    "title": "个人知识页与共享证据 Trail 的装配",
+    "summary": "PersonalKnowledge 以薄装配层连接知识首页、活动知识帧和共享 Trail 抽屉；现有材料能确认数据与事件接线，但不足以证明共享组件的全部运行时交互。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "composition",
+        "title": "页面装配与连续阅读路径",
+        "body": "该文件的脚本和模板只承担组件装配：KnowledgeHome 与活动 KnowledgeFrame 都接收 `/api/knowledge` 前缀，两者产生的导航都交给共享 `push`。因此，从首页进入正文后，再沿引用或原始材料继续阅读，会使用同一帧栈入口；文件本身未声明额外的数据请求或解析逻辑。[[c1]]\n\n帧内具体内容由 KnowledgeFrame 分派：知识帧进入正文组件，原始材料帧进入材料组件，引用帧则请求固定引用并依据解析结果打开文章或材料；不可操作或无法解析的引用会显示原因。[[c2]]"
+      },
+      {
+        "key": "trail",
+        "title": "Trail 接线合同与证据边界",
+        "body": "`useEvidenceTrail` 在此提供帧集合、当前位置、开关状态、循环位置、焦点目标、活动帧及 push、back、jump、close 操作。[[c3]] 抽屉实际接收 open、frames、current、loopAt，并把 trigger 配置为 `return-focus-to`；active 用于默认插槽中的 KnowledgeFrame，而不是作为抽屉属性传入。\n\nclose、back、jump 和清除循环状态分别绑定到抽屉事件。活动帧触发 `loaded` 后，`active.title` 会直接更新为事件载荷。[[c4]] 这些代码证明了状态和事件接线，但不能单独确认 URL 深链、滚动恢复、Esc 退层、循环栈处理或关闭后的实际焦点归还。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "个人知识页完整装配",
+        "reason": "完整文件支持该组件仅导入并装配首页、知识帧和共享 Trail，同时证明两处统一使用知识 API 前缀和 push 导航。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+          "startLine": 1,
+          "endLine": 13
+        },
+        "quote": "<script setup lang=\"ts\">\nimport { OmTrailDrawer, useEvidenceTrail } from \"@omem/ui\";\nimport KnowledgeHome from \"./KnowledgeHome.vue\";\nimport KnowledgeFrame from \"./KnowledgeFrame.vue\";\nconst { frames, current, open, loopAt, trigger, active, push, back, jump, close } = useEvidenceTrail();\n</script>\n<template>\n  <section"
+      },
+      {
+        "key": "c2",
+        "label": "知识帧内容分派",
+        "reason": "说明知识、原始材料与固定引用由 KnowledgeFrame 分别处理，并展示不可操作引用的原因。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 20,
+          "endLine": 30
+        },
+        "quote": "<template>\n  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event)\" />\n"
+      },
+      {
+        "key": "c3",
+        "label": "共享 Trail 状态来源",
+        "reason": "界定 composable 向页面提供的状态和操作，为区分抽屉属性与活动帧插槽状态提供依据。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+          "startLine": 2,
+          "endLine": 5
+        },
+        "quote": "import { OmTrailDrawer, useEvidenceTrail } from \"@omem/ui\";\nimport KnowledgeHome from \"./KnowledgeHome.vue\";\nimport KnowledgeFrame from \"./KnowledgeFrame.vue\";\nconst { frames, current, open, loopAt, trigger, active, push, back, jump, close } = useEvidenceTrail();"
+      },
+      {
+        "key": "c4",
+        "label": "抽屉事件与活动帧接线",
+        "reason": "支持抽屉属性、焦点目标配置、事件处理及 loaded 事件载荷写入活动帧标题的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+          "startLine": 9,
+          "endLine": 10
+        },
+        "quote": "  <OmTrailDrawer :open=\"open\" :frames=\"frames\" :current=\"current\" :loop-at=\"loopAt\" :return-focus-to=\"trigger\" @close=\"close\" @back=\"back\" @jump=\"jump\" @dismiss-loop=\"loopAt = null\">\n    <KnowledgeFrame v-if=\"active\" :frame=\"active\" prefix=\"/api/knowledge\" @navigate=\"push\" @loaded=\"active.title = $event\" />"
+      }
+    ],
+    "questions": [
+      {
+        "question": "共享 `useEvidenceTrail` 和 `OmTrailDrawer` 是否实现了 URL 深链、滚动位置恢复、Esc 退层、实际焦点归还和循环栈的完整行为？",
+        "why": "当前材料只展示 composable 返回值、抽屉属性、事件接线及 `return-focus-to` 配置，没有共享组件实现或浏览器测试，无法确认这些交互在运行时均已生效。",
+        "nextStep": "审阅 packages/ui 中 Trail 与 OmTrailDrawer 的实现及相关浏览器测试，逐项验证深链恢复、滚动位置、Esc、循环处理和关闭后的焦点归还。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+      "digest": "d10e4fe95d71f27225663cc3081e7c259308ec05b72a400e228f4dde1756d36f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+      "digest": "8642623296154c94e9930ac91046b69f5ef988082489e22c2263e23aafd08985"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:04:32.083Z",
+    "trace": {
+      "runId": "3acbee35-5e61-484c-b0e8-dc24f579d442",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "f88f0ba40683602020b091f3f506694958919df8f79d19b0ef3f2b5a974bdb4f",
+      "contextHash": "a5f97eb4e07a0839eb78e3d2d696dd4d41fd599884ca9a5099940f4c26be0be7",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1324b4ea8afe0020ccd88198e4b3b62d5ad1c14cf8d66655907e27094fc89d64",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-6561-7f31-a095-592c4ef97449"
+      ],
+      "usage": {
+        "used": 25593,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 34827,
+          "utf8Bytes": 39480,
+          "estimatedTokens": 13160,
+          "budgetedTokens": 16450,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:51.178Z",
+    "trace": {
+      "runId": "4ef27e55-6378-4305-a55d-e02662acec8d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "f218f46f4572ce34beff1abf4c77621b82e482449e45f1a9087892f5994066cd",
+      "contextHash": "cf6f2046cf1edf3fd66f0a05f8cc56be0350196bb072cecd904c87bb37af77ca",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8f59ef6dc3d53019f137eff80eda38e1b92c12af6207894f8caed055ed2160ef",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-d69f-77c3-b2d7-fe41fa08f015"
+      ],
+      "usage": {
+        "used": 25051,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 36659,
+          "utf8Bytes": 42345,
+          "estimatedTokens": 14115,
+          "budgetedTokens": 17644,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

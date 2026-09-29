@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+    "title": "知识文章正文加载与引用导航组件",
+    "summary": "KnowledgeDocument.vue 根据文档键和可选 revision 加载知识文章，呈现摘要、来源状态、目录、Markdown 正文与开放问题，并把可操作引用转换为上层 trail 导航帧。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "load-and-race",
+        "title": "加载、版本与竞态处理",
+        "body": "组件监听 documentKey 与 revision，并立即执行文章请求；文档键和 revision 都经过 URL 编码。每轮请求递增 generation，只有仍为最新的一轮可以写入 article、发出 loaded 或显示错误，从而避免快速切换文档时旧响应覆盖新页面。加载前清空旧文章；成功渲染后等待 DOM 更新，再按可选 section 使用 `CSS.escape` 定位并滚动到对应章节。[[c1]]"
+      },
+      {
+        "key": "rendering",
+        "title": "正文结构与来源状态",
+        "body": "请求期间显示读取状态，失败显示知识不可用空态。成功后依次展示标题、摘要、当前或历史知识徽标、模型来源说明；章节超过两个时才生成目录。每个 section 交给共享 `OmMarkdown` 渲染，并传入文章 citations；文末挂载 `KnowledgeQuestions`，使用当前文章 key 继续读取或处理开放问题。[[c2]]"
+      },
+      {
+        "key": "citation-navigation",
+        "title": "引用导航与边界",
+        "body": "Markdown 发出 citation key 后，`cite` 在当前文章 citations 中查找目标。只有 citation 标记为 actionable 且文章仍存在时才发出 navigate；导航帧 id 序列化 document、文章 revision 和 citation key，标题使用人读 label。[[c3]] 组件不自行读取原始证据，也不解释不可操作 reason，而把具体引用页面和 trail 栈管理交给父层。章节滚动使用选择器定位，目录点击也在当前根节点内滚动；本文件没有加载取消、重试按钮或空章节校验。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "文章加载与 generation 防竞态",
+        "reason": "支持参数编码、迟到响应抑制、加载后章节定位的完整流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 6,
+          "endLine": 19
+        },
+        "quote": "const props = defineProps<{ prefix: string; documentKey: string; revision?: string; section?: string }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst article = ref<Article | null>(null), error = ref(\"\");\nconst root = ref<HTMLElement>();\nlet generation = 0;\nwatch(()"
+      },
+      {
+        "key": "c2",
+        "label": "知识正文与开放问题渲染",
+        "reason": "支持加载状态、来源徽标、目录、Markdown 章节及问题组件的结构。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 26,
+          "endLine": 43
+        },
+        "quote": "<template>\n  <article ref=\"root\" class=\"knowledge-document\">\n    <OmEmpty v-if=\"error\" title=\"知识暂不可用\" :description=\"error\" />\n    <p v-else-if=\"!article\" class=\"muted\" role=\"status\">正在读取知识正文…</p>\n    <template v-else>\n      <h2>{{ article.title }}</h2>\n      <p class=\"knowledge-summary\">{{ article.summary }}</p>\n      "
+      },
+      {
+        "key": "c3",
+        "label": "可操作引用转导航帧",
+        "reason": "支持引用查找、actionable 门槛和导航载荷所含字段。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 20,
+          "endLine": 24
+        },
+        "quote": "function cite(key: string) {\n  const c = article.value?.citations.find(c => c.key === key);\n  if (!c?.actionable || !article.value) return;\n  emit(\"navigate\", { kind: \"citation\", id: JSON.stringify({ document: props.documentKey, revision: article.value.revision, citation: key }), title: c.label });\n}"
+      },
+      {
+        "key": "c4",
+        "label": "目录与章节滚动行为",
+        "reason": "支持目录只在章节较多时出现，并在组件根节点内定位章节。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 31,
+          "endLine": 41
+        },
+        "quote": "      <h2>{{ article.title }}</h2>\n      <p class=\"knowledge-summary\">{{ article.summary }}</p>\n      <div class=\"knowledge-provenance\"><OmBadge>{{ article.current ? '当前知识' : '历史知识 · 来源已变化' }}</OmBadge><span>AI 分析并独立复核 · {{ article.model }}</span></div>\n      <nav v-if=\"article.document.sections.length > 2\" class=\"arti"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/store.test.ts",
+      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:42:03.262Z",
+    "trace": {
+      "runId": "0b34c2ee-cc37-4898-a3b0-3c45af7c716f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5472c0246700819a084eb9b5112f3cab41c7cd887a9a982e2163c85d71ff23a4",
+      "contextHash": "364388f74400b7566dbf7577b1f1fc17afb50415dc518f330deef424de88b084",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "de351e4b4d6b07adf806b89a89dc2a996aa6e2c2872ca383c8afc6bd4dbabb66",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-64e6-7921-9472-d7eeeec6806b"
+      ],
+      "usage": {
+        "used": 44865,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 86049,
+          "utf8Bytes": 90813,
+          "estimatedTokens": 30271,
+          "budgetedTokens": 37839,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:42:31.660Z",
+    "trace": {
+      "runId": "83fb26b3-7530-407f-b33d-06482620964c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c1cfa58e2b965d8f14c421193cebb2b5e4a68464425b0990985624d18d0699d0",
+      "contextHash": "9d45216bf97d33f7fe9fa2870144d574d1888a04ddb2ae3f01d72e9fcd052af4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "92cab9424d0317d2bcf680db489b543cfde8b9301ed5f2774ee909f246058b26",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb0-421a-7423-91c2-657cce7e86df"
+      ],
+      "usage": {
+        "used": 48976,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107223,
+          "utf8Bytes": 120168,
+          "estimatedTokens": 40056,
+          "budgetedTokens": 50070,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

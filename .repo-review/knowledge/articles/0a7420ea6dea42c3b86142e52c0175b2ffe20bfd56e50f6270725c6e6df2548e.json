@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/api.ts",
+    "title": "个人工作区前端 API 合同与请求封装",
+    "summary": "集中定义个人工作区前端使用的数据形状，并提供带会话令牌、JSON 编解码和统一错误处理的通用请求函数。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "responsibility",
+        "title": "解决的问题与合同范围",
+        "body": "该文件是个人工作区前端的轻量 API 边界：一部分类型直接复用共享合同中的 Revision、Fragment、Change 与 RunEvent，另一部分在前端补充 Source、Evidence、Task、运行任务、提案审批、通知投递和飞书接入等响应形状。[[c1]] 这些声明主要提供静态约束，本身不执行校验；例如 Proposal 明确记录证据、疑点、策略结论与评估结果，Decision 则表达待审批到过期或失效的状态变化。[[c2]]"
+      },
+      {
+        "key": "request-flow",
+        "title": "请求流程与认证",
+        "body": "`headers` 从 `sessionStorage` 读取个人工作区令牌，存在时生成 Bearer Authorization；`api` 根据是否传入 body 默认选择 GET 或 POST，统一请求 `/api` 前缀，并以 JSON 发送和解析。响应非成功状态时，它优先抛出服务端 `error`，否则使用通用中文错误。[[c3]] 因而调用方得到的是已解析的泛型结果，而认证、序列化和基本错误转换被收敛在一处。"
+      },
+      {
+        "key": "limits",
+        "title": "边界与模块关系",
+        "body": "该封装假定响应体始终可解析为 JSON，未处理空响应、非 JSON 错误页、超时、取消、重试或并发去重；泛型 `T` 也不会带来运行时验证。[[c3]] 与 Code Wiki 使用的评审接口不同：评审客户端材料明确说明其 loopback 浏览面不发送 Authorization，因此不能把这里的令牌策略直接套到 `/api/review/*`。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "共享合同导入与基础数据类型",
+        "reason": "支持该文件复用共享合同并补充前端响应类型的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 1,
+          "endLine": 30
+        },
+        "quote": "import type {\n  Revision,\n  Fragment,\n  Change,\n  RunEvent,\n} from \"../../../packages/contracts/src/index\";\nexport type { Revision, Fragment, Change };\nexport type Source = {\n  id: string;\n  title: string;\n  source: string;\n  version: number;\n  sourceId: string;\n  externalId: string;\n  createdAt: string;\n};\nexport type"
+      },
+      {
+        "key": "c2",
+        "label": "提案与决策状态合同",
+        "reason": "支持提案证据、策略评估以及审批状态建模的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 101,
+          "endLine": 157
+        },
+        "quote": "export type ProposalEvidence = {\n  fragment_revision_id: string;\n  source_revision_id: string;\n  exact_quote?: string;\n  asset_hash?: string;\n};\nexport type Proposal = {\n  id: string;\n  kind: \"task\" | \"claim\" | \"episode\" | \"procedure\";\n  operation: \"create\" | \"update\" | \"supersede\";\n  targetId: string | null;\n  body: R"
+      },
+      {
+        "key": "c3",
+        "label": "通用请求封装",
+        "reason": "说明令牌来源、默认方法、JSON 编解码和错误处理流程及其限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 240,
+          "endLine": 257
+        },
+        "quote": "export function headers(): Record<string, string> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n): Promise<T> {\n  const r = await fetch("
+      },
+      {
+        "key": "c4",
+        "label": "评审 API 的认证边界",
+        "reason": "证明 repo-review 客户端与个人工作区 API 的认证策略不同。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "/** Client for the repo-review knowledge-base API (/api/review/*). This surface is\n * read/browse/sync only, bound to loopback, and has no token gating, so unlike the\n * personal workspace api.ts it sends no Authorization header. Shapes mirror\n * apps/server/src/review/app.ts exactly. */"
+      }
+    ],
+    "questions": [
+      {
+        "question": "服务端是否保证所有 `/api` 响应（包括错误和无内容响应）都包含合法 JSON？",
+        "why": "当前实现无条件调用 `r.json()`；若服务端返回 204 或代理生成 HTML 错误页，实际异常会掩盖服务端状态与通用错误信息。",
+        "nextStep": "核对服务端路由的响应约定，并补充空响应、非 JSON 错误及网络失败的行为测试；若不能保证，再决定是否增强解析分支。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+      "digest": "6bf08120dbba105389b257dbc604f8501fd6b0717ba2bd055340e8fd165e2565"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+      "digest": "085ceb881ef2506da6bc0d4c20fd17b636a650f2276dd2c6d4f5f9dfb1d360f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+      "digest": "89b59531ff437aff27e5ef45f8f284f311ce13d221e97ef219867ed21f7106bb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+      "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:14:13.079Z",
+    "trace": {
+      "runId": "0de67419-eddd-4973-b845-63b94489af0e",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "fb22c7cb9a2863263490e8c9a42b9d235044e8259e7bfa766b5c486042c78221",
+      "contextHash": "0a976200683bffd3980c1a43331093323817ed1972275354110300cfc8fe455e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "679dcec9f3431b60528835f33f863c96162440c77df79be89a0ac8595d7599d4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee95-eaa9-78f2-8a13-bcab229dc57b"
+      ],
+      "usage": {
+        "used": 47153,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 94884,
+          "utf8Bytes": 98615,
+          "estimatedTokens": 32872,
+          "budgetedTokens": 41090,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:14:40.052Z",
+    "trace": {
+      "runId": "5b21408f-477b-4b7c-8268-13750b77f825",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "54481bf1bf98bea20ba0c5a20a05fd3d0305a7aa0d197f41af71ae0232e85c4f",
+      "contextHash": "45831a42c0bcfbcc16eb467d09c16a0b3da3a5611edcf8f79d589271469e5e7a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9622dd411719c6e24239714c90f04f6e97e7251a9f9726f05f79679517f2442c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-c607-7fe3-a53e-ee9ef87db453"
+      ],
+      "usage": {
+        "used": 50908,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 113285,
+          "utf8Bytes": 125002,
+          "estimatedTokens": 41668,
+          "budgetedTokens": 52085,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/index.html",
+    "title": "Web 应用 HTML 入口",
+    "summary": "该文件是 omem Web 前端的最小 HTML 外壳：声明中文页面环境与移动端视口，提供 Vue 应用挂载节点，并通过 ES 模块加载 TypeScript 入口。材料仅能证明启动结构与页面标题，不能据此判断具体界面、路由或业务能力已经实现。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "entry-structure",
+        "title": "页面入口结构",
+        "body": "文件以 HTML5 文档启动，在同一行设置 UTF-8 编码、响应式 viewport，并把页面语言标记为 `zh-CN`。页面可见标题是“omem · 个人工作记忆”，说明产品定位在个人工作记忆场景；但标题属于界面元数据，不能单独证明记忆采集、检索或助理流程已经实现。[[c1]]"
+      },
+      {
+        "key": "vue-bootstrap",
+        "title": "应用挂载与启动边界",
+        "body": "`body` 只提供 `#app` 容器，并以 `type=\"module\"` 加载 `/src/main.ts`，呈现典型的客户端应用启动方式。实际组件树、状态管理、接口连接和错误处理都位于未提供的 TypeScript 源码或其他模块中，因此本材料只能确认启动契约，不能确认运行后的功能范围。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "HTML 文档头与产品标题",
+        "reason": "支持页面语言、字符集、移动端视口以及“个人工作记忆”标题的判断，同时界定这些内容仅是入口元数据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/index.html",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>omem · 个人工作记忆</title></head><body><div id=\"app\"></div><script type=\"module\" src=\"/src/main.ts\"></script></body></html>"
+      },
+      {
+        "key": "c2",
+        "label": "Vue 挂载容器与模块入口",
+        "reason": "解释浏览器如何从空挂载节点进入 `/src/main.ts`，并支持对该文件职责边界的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/index.html",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>omem · 个人工作记忆</title></head><body><div id=\"app\"></div><script type=\"module\" src=\"/src/main.ts\"></script></body></html>"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`/src/main.ts` 当前挂载了哪些根组件、路由和全局能力？",
+        "why": "入口文件只给出模块路径，没有提供该模块内容，无法确认页面启动后的实际功能，也不能把产品标题推断成已完成的业务能力。",
+        "nextStep": "补充 `apps/web/src/main.ts` 及其直接导入的根组件材料，再梳理真实初始化流程和已实现界面。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/index.html",
+      "digest": "9eba05b8514ffe71592094d06a723f5e8775521106e4d68b9b871d87dbc4b1b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/package.json",
+      "digest": "85268e48064a45b61d7e07e1b2bcbab67fc0d323ff79ed09eb38864c67ea3845"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T12:50:28.187Z",
+    "trace": {
+      "runId": "7fe25cf0-ab78-4c8e-96ec-7675cd17601d",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "256f4f53ac26a7ce40b9823fddb624719bdb49a6faf7598d5294df8bfa09934d",
+      "contextHash": "aa9ce5410003a0312ba799e3bea681e0f021303022884951bf59ab83c538faa7",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3b274c24b06d8f32c6789d113c0e471ca9dc37d32efbe2a399dfce27c8ee3684",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed37-22b6-72a1-a988-3f173e318878"
+      ],
+      "usage": {
+        "used": 15827,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 7087,
+          "utf8Bytes": 8656,
+          "estimatedTokens": 2886,
+          "budgetedTokens": 3608,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T12:50:33.972Z",
+    "trace": {
+      "runId": "5edcb9a3-f44c-4133-bc85-75f0c91bc55d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "ca12a7cf3aba042a398e6883960f1f317d28840b88e90016abb196bb22140e7e",
+      "contextHash": "e14970c18c926a8171b24ad25395288a07bc1c1d42197cfecbd759d0324314ce",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "70bbe123abe0ee0bba567357803b74ec83b50221714e9004e436fc380f6f6bb9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed37-70e9-7cb2-8a0c-63de974c01bb"
+      ],
+      "usage": {
+        "used": 15529,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 9795,
+          "utf8Bytes": 13486,
+          "estimatedTokens": 4496,
+          "budgetedTokens": 5620,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

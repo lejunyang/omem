@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/LarkSetup.vue",
+    "title": "飞书应用接入与 owner 配对流程",
+    "summary": "管理新建、更新或导入飞书应用的完整接入状态机，包括授权、权限探测、一次性配对、连接展示及凭据清理。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "entry-modes",
+        "title": "三种接入入口与敏感信息边界",
+        "body": "组件支持创建新应用、授权已有应用，以及直接导入凭据；导入又可选择复用本机 botmux 配置或手工输入 secret。启动前会校验非新建模式的 App ID 格式，然后按模式调用不同端点，并始终在请求结束后清空 `clientSecret`。[[c1]] 页面只展示可复用应用的名称和 App ID，并声明 secret 不返回浏览器；不过“服务端加密保存、日志不泄露”属于界面表达，单凭此文件不能验证后端实现。[[c2]]"
+      },
+      {
+        "key": "state-machine",
+        "title": "授权、核验与轮询状态机",
+        "body": "接入对象从等待扫码、收到凭据、权限核验推进到等待 owner 配对或终态。非终态期间每 1.5 秒刷新接入状态，同时更新连接列表；进入 active、cancelled、denied、expired 或 failed 后停止轮询，组件卸载也清理定时器。[[c3]] 扫码页使用同一验证链接生成二维码和外部链接；收到凭据后仍显示核验中，强调 capability probe 完成前不能视为 active。[[c4]]"
+      },
+      {
+        "key": "owner-pairing",
+        "title": "owner 绑定与失败边界",
+        "body": "等待配对时，用户先申请一次性配对码，再由同一应用收到私聊消息并回传候选 open ID；确认请求同时提交配对记录和预期 open ID，成功后刷新状态。[[c5]] 终态失败会展示错误与缺失能力，但重新配置不会自动删除平台侧可能已经创建的应用。已有连接单独列出应用、租户、版本、状态和 owner；界面没有提供删除连接或撤销平台授权的动作。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "接入启动与凭据清理",
+        "reason": "支持模式分流、App ID 校验、不同接入端点以及 secret 清空行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 94,
+          "endLine": 137
+        },
+        "quote": "async function start() {\n  if (!config.value) return;\n  if (mode.value !== \"new\" && !/^cli_[a-zA-Z0-9]+$/.test(appId.value)) {\n    emit(\"error\", \"请输入有效的飞书 App ID（cli_…）\");\n    return;\n  }\n  busy.value = true;\n  pairingCode.value = \"\";\n  try {\n    if (mode.value === \"import\") {\n      onboarding.value = await api<LarkOnb"
+      },
+      {
+        "key": "c2",
+        "label": "接入方式与凭据说明",
+        "reason": "支持三种入口、手工 secret 输入和 botmux 复用时的前端可见范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 204,
+          "endLine": 275
+        },
+        "quote": "<template>\n  <section class=\"page lark-page\">\n    <span class=\"eyebrow\">同一个应用用于群消息、owner 通知与确认</span>\n    <h1>飞书机器人</h1>\n    <p class=\"muted\">\n      新建或更新应用需要平台授权；也可安全复用 botmux 已有应用。App Secret\n      只提交给服务端加密保存，不会出现在状态响应、日志或页面结果中。\n    </p>\n\n    <OmPanel v-if=\"!onboarding\" title=\"选择接入方式\">\n      <div class=\"tabs\" role=\"t"
+      },
+      {
+        "key": "c3",
+        "label": "状态终止条件与轮询",
+        "reason": "支持状态标签、终态定义、定时刷新及卸载清理流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 24,
+          "endLine": 56
+        },
+        "quote": "let timer: ReturnType<typeof setInterval> | undefined;\n\nconst terminal = computed(() =>\n  onboarding.value\n    ? [\"active\", \"cancelled\", \"denied\", \"expired\", \"failed\"].includes(\n        onboarding.value.status,\n      )\n    : true,\n);\nconst statusLabel: Record<string, string> = {\n  draft: \"准备中\",\n  awaiting_scan: \"等待授权\","
+      },
+      {
+        "key": "c4",
+        "label": "授权与能力核验界面",
+        "reason": "支持二维码授权、同一 device 流程以及能力探测完成前不标记启用。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 314,
+          "endLine": 371
+        },
+        "quote": "    <OmPanel v-else title=\"接入状态\">\n      <div class=\"row\">\n        <OmBadge :tone=\"statusTone(onboarding.status)\">{{\n          statusLabel[onboarding.status] || onboarding.status\n        }}</OmBadge>\n        <code>{{\n          onboarding.appId || onboarding.requestedAppId || \"等待平台返回 App ID\"\n        }}</code>\n      </div"
+      },
+      {
+        "key": "c5",
+        "label": "一次性 owner 配对",
+        "reason": "支持生成配对码、提交候选 open ID 并确认绑定的核心流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 150,
+          "endLine": 181
+        },
+        "quote": "async function issuePairing() {\n  if (!onboarding.value) return;\n  busy.value = true;\n  try {\n    const result = await api<{ code: string; expiresAt: string }>(\n      `/integrations/lark/onboarding/${onboarding.value.id}/pairing-code`,\n      {},\n    );\n    pairingCode.value = result.code;\n    await refreshOnboarding();"
+      },
+      {
+        "key": "c6",
+        "label": "终态与已有连接",
+        "reason": "支持成功、失败、重新配置边界及已有连接展示范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 399,
+          "endLine": 453
+        },
+        "quote": "      <div v-else-if=\"onboarding.status === 'active'\" class=\"success-state\">\n        <h3>机器人连接已启用</h3>\n        <p>\n          owner\n          通知和判断已绑定。机器人加入群聊后会自动读取该群消息；移出群后自动停用采集。\n        </p>\n      </div>\n      <div v-else-if=\"terminal\" class=\"failure-state\" role=\"alert\">\n        <h3>{{ statusLabel[onboarding.status] "
+      }
+    ],
+    "questions": [
+      {
+        "question": "手工 secret 的服务端加密、日志脱敏、botmux 读取边界及授权调用是否有自动化安全测试？",
+        "why": "前端会清空表单内存并陈述安全承诺，但无法证明传输后的持久化、日志和错误响应不会泄露凭据。",
+        "nextStep": "审查对应服务端端点、密钥存储与日志过滤，并执行覆盖成功和失败路径的泄露检查。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/DecisionsView.vue",
+      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LarkSetup.vue",
+      "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ReviewApp.vue",
+      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:14:04.921Z",
+    "trace": {
+      "runId": "be6fc3f7-c7df-42d5-81d1-871d23b83cbc",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "09bb1359a06c92dc964d25e26d0ac4312df9affcb24cb7d9989bdec5f3bc2274",
+      "contextHash": "8eb1a82d1c354fc691663f437e0b6103ea7e5ce0ff9483c5c778b527f16149f6",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f766a9fdd0757476654d55af231c4f9347c10bd1fe2bd622ed9264469e2c5fab",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee95-cebd-7400-a4f7-2bef20d3f867"
+      ],
+      "usage": {
+        "used": 50262,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 102928,
+          "utf8Bytes": 109158,
+          "estimatedTokens": 36386,
+          "budgetedTokens": 45483,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:14:37.933Z",
+    "trace": {
+      "runId": "5c41d50a-29e7-45c8-badf-ff5da1bc0b3a",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "2e40ce571b46a8495670109881a32eb09f0a393181b8f093c10936a064a0ac97",
+      "contextHash": "b490ef41330f39047dcf32f4922ff3195e114946ddbba1af4da0615db9b1c287",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9769cf216e7464683d2126acd2d0d852c7bf2787b8271c49a1526d54cd65de04",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-a6a5-7a61-ae42-3c0708653d74"
+      ],
+      "usage": {
+        "used": 55188,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121596,
+          "utf8Bytes": 136930,
+          "estimatedTokens": 45644,
+          "budgetedTokens": 57055,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

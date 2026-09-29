@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+    "title": "知识疑问的展示与前端操作入口",
+    "summary": "展示未被替代的知识疑问，并提供补充背景与加入待办的请求入口；组件只能证明前端请求、提示及刷新行为，不能单独证明服务端持久化结果。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "question-lifecycle",
+        "title": "疑问筛选与状态表达",
+        "body": "组件加载疑问列表，可用 `documentKey` 限定所属文档，并从可见结果中排除 `superseded` 项；摘要数量只统计 `open` 状态。界面把其余状态显示为“已补充背景”“已加入待办”“需要判断”或“后续调查”，同时呈现原因与建议下一步，使尚不能从材料确认的事项继续保持可见。[[c1]][[c2]]"
+      },
+      {
+        "key": "answer-and-task",
+        "title": "补充背景与待办请求",
+        "body": "对开放疑问，用户可填写必填文本并提交；前端向该疑问的 `answer` 端点发送回答，成功返回后显示“作为原始材料保存”的提示、清空输入并重新加载列表。另一按钮会向 `task` 端点发送 POST，随后显示“已加入待办”并刷新。这里描述的是请求和界面反馈，不能据此断言服务端已经创建原始材料或待办；此前把两者直接表述为已持久化语义的结论由此替代。[[c3]][[c2]]"
+      },
+      {
+        "key": "interaction-limits",
+        "title": "反馈边界与待验证能力",
+        "body": "初次加载错误、回答结果和待办结果共用同一个 `message`；组件未展示逐问题 pending 状态、按钮禁用或重复提交防护，也只在挂载及操作完成后主动刷新。成功文案依赖请求正常返回，但当前材料没有服务端路由、存储实现或行为测试，因此持久化内容、失败后的状态一致性与重试语义仍需另行核验。[[c1]][[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "疑问加载与可见范围",
+        "reason": "支持组件加载疑问、按文档筛选、排除已被替代项，以及共享消息状态等论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+          "startLine": 5,
+          "endLine": 10
+        },
+        "quote": "const props = defineProps<{ prefix: string; documentKey?: string }>();\ntype Question = { id: string; question: string; why: string; nextStep: string; blocking: boolean; state: string; documentKey: string };\nconst questions = ref<Question[]>([]), active = ref(\"\"), answer = ref(\"\"), message = ref(\"\");\nconst visible = com"
+      },
+      {
+        "key": "c2",
+        "label": "疑问状态与操作界面",
+        "reason": "支持状态标签、开放疑问的两个操作入口、回答表单和统一状态消息的界面行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+          "startLine": 17,
+          "endLine": 28
+        },
+        "quote": "<template>\n  <details v-if=\"visible.length\" class=\"knowledge-questions\">\n    <summary>待核对与后续调查 · {{ visible.filter(q => q.state === 'open').length }}</summary>\n    <p class=\"muted\">材料中还不能确定的事项保留在这里。你可以补充背景，或将下一步调查加入待办。</p>\n    <div v-for=\"q in visible\" :key=\"q.id\" class=\"question\">\n      <OmBadge>{{ q.state === 'answer"
+      },
+      {
+        "key": "c3",
+        "label": "回答与待办请求处理",
+        "reason": "支持前端向 answer 和 task 端点发起请求、设置成功提示并刷新列表的限定性论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+          "startLine": 11,
+          "endLine": 15
+        },
+        "quote": "async function save(q: Question) {\n  try { await knowledgeApi(props.prefix, `/questions/${q.id}/answer`, { method: \"POST\", body: JSON.stringify({ answer: answer.value }) }); message.value = \"回答已作为原始材料保存，相关知识等待重新核对。\"; active.value = \"\"; answer.value = \"\"; await load(); }\n  catch (e) { message.value = String(e); }\n}\nasyn"
+      }
+    ],
+    "questions": [
+      {
+        "question": "回答或创建待办的请求处理中，是否需要禁用对应按钮并提供逐问题的 pending、错误与成功状态？",
+        "why": "当前组件没有重复提交防护，且加载错误与所有操作反馈共用同一条消息，慢请求或并发操作时可能难以判断具体状态。",
+        "nextStep": "补充慢请求、重复点击和失败重试的组件交互测试，再确定逐项状态模型与按钮禁用规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "answer 与 task 端点是否分别持久化了新的原始材料和待办，并在请求失败时保持疑问状态一致？",
+        "why": "现有材料只证明前端发送 POST、显示提示并重新加载列表，没有提供对应服务端路由、持久化实现及行为测试。",
+        "nextStep": "补充服务端知识路由、存储实现和端到端行为测试作为证据，并核验成功、失败与重复请求的状态转换。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+      "digest": "4da0fd6c62ebc6680f8ef9f78780211be16d90afd93a01666bf420473f59bc48"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-sync.test.ts",
+      "digest": "4ad7197425da98dc5d8d37074bcdbc1081617d0088d775e5f5b13d8aa1bd22f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/role-runtime.test.ts",
+      "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:05:23.601Z",
+    "trace": {
+      "runId": "85480cb8-1a31-4230-ac7d-a3ecef9cb568",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "3f53fe54bc1fa3a4344ec3782383c21200545ee28b0fb1a3a7e233e9c495a36c",
+      "contextHash": "b95e0539aa9fdcdf14b861d21cf2744b0449483a6e88fb278ccd30a0b4c7d2d4",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b56f4309cc24f45f2a5db857c78e954a2aa7b80a1220a6a0ff7533a452208899",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec5-5cec-7b00-83f2-f9f95767d2d1"
+      ],
+      "usage": {
+        "used": 42889,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 98203,
+          "utf8Bytes": 102349,
+          "estimatedTokens": 34117,
+          "budgetedTokens": 42647,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:05:33.564Z",
+    "trace": {
+      "runId": "c3c625c1-5fbb-4d83-9214-e4dbe56f1f55",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "3dacb6cc404ceb9e59cc99f74b426b56b12dbbf0803963589ad5ed875d7e593e",
+      "contextHash": "d12231fbf56a44b233ab8d7d2a947d9a453004bc40838e2171c4d79098d1dbf4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f0e538f428369d246ac40ebf0e584291561227cfe625a6f1d11d719179b0fc7f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec5-9fac-7592-acfd-a023da1096f9"
+      ],
+      "usage": {
+        "used": 41751,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 96173,
+          "utf8Bytes": 99769,
+          "estimatedTokens": 33257,
+          "budgetedTokens": 41572,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

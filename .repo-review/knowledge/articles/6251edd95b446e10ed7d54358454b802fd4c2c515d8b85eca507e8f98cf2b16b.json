@@ -1,0 +1,283 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/codewiki/modules.ts",
+    "title": "Code Wiki 模块图聚合与导航辅助函数",
+    "summary": "modules.ts 是无 Vue/DOM 依赖的纯函数层：将代码文件归入稳定模块、聚合可信 import 边、匹配模块理解、解析下钻目标，并统一生成人读标签与不可操作原因。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "graph-aggregation",
+        "title": "模块图聚合",
+        "body": "文件路径先交给 contracts 中的 `moduleForPath` 映射到稳定桶；已删除文件不进入图，符号数按所属文件累计，模块及文件按名称排序以获得确定输出。[[c1]] 模块依赖只采纳 `edgeKind=imports` 且两端文件都已解析的仓库内边，同模块边和外部/缺失目标被丢弃。相同模块对合并计数与 evidence；若后续边为 candidate 或 missing，聚合状态会被该值覆盖，但这里没有定义多种非确认状态的严格优先级。[[c2]]"
+      },
+      {
+        "key": "understanding-and-outline",
+        "title": "大纲与模块理解匹配",
+        "body": "文件大纲只保留函数、类、方法、组件、路由、测试、接口和类型，并按起始行排序；变量等符号不会进入该紧凑视图。[[c3]] 模块理解候选限定为 module 类型、curated-seed 或 model-generated 来源、未 stale，且状态为 seed/generated/verified。匹配会检查模块内每一个文件，并选覆盖路径的最长 targetId 前缀，避免浅层文件遮蔽更具体的目录理解；同前缀选择还受 seed 标记和生成时间排序影响。[[c4]]"
+      },
+      {
+        "key": "navigation-and-labels",
+        "title": "边下钻与人读展示",
+        "body": "`resolveEdgeTarget` 把同文件目标视为不可解析跳转，而较新的 `edgeDrillTarget` 会把同文件符号解析成 symbol frame，跨文件符号则转成带行号的 file frame；同文件的纯文件边仍不下钻，缺失映射返回 none。[[c5]] 标签函数优先 DTO 的 display 字段，再退回文件名、路径或符号名，绝不以内部 id 充当可见文本；不可操作原因优先使用服务端 reason，否则为 missing/stale 给出人读回退。[[c6]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "能力边界",
+        "body": "本文件只聚合解析器已经提供的结构，不读取源码，也不证明 calls 或 imports 的语义正确性；外部包依赖被有意排除在模块图外。`fileByPath` 还是线性精确匹配，不处理路径别名或 revision 间身份续接。两套 target 解析函数对同文件符号的语义不同，调用方必须选择正确合同，不能互换推断。[[c7]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "稳定模块归类与节点统计",
+        "reason": "支持已删除文件过滤、路径归类、符号计数及确定性排序流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 7,
+          "endLine": 87
+        },
+        "quote": "/** Map a repo-relative path to a stable module bucket id. The required modules\n * (assistant / memory / retrieval / lark / web) all resolve here. */\nimport { moduleForPath } from \"../../../../packages/contracts/src/code-modules\";\nexport { moduleForPath };\n\nexport const MODULE_LABELS: Record<string, string> = {\n  assis"
+      },
+      {
+        "key": "c2",
+        "label": "模块依赖边聚合规则",
+        "reason": "支持只采纳已解析 imports、过滤同模块边并合并证据和状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 89,
+          "endLine": 115
+        },
+        "quote": "  // Aggregate import edges between modules.\n  const edgeMap = new Map<string, AggEdge>();\n  for (const e of edges) {\n    if (e.edgeKind !== \"imports\") continue;\n    if (!e.fromFileId || !e.toFileId) continue;\n    const from = fileModule.get(e.fromFileId);\n    const to = fileModule.get(e.toFileId);\n    if (!from || !to"
+      },
+      {
+        "key": "c3",
+        "label": "紧凑符号大纲",
+        "reason": "支持符号种类筛选和按源码起始行排序的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 117,
+          "endLine": 122
+        },
+        "quote": "/** Group a file's symbols into a compact outline. */\nexport function outlineSymbols(symbols: CodeSymbol[]): CodeSymbol[] {\n  return symbols\n    .filter((s) => [\"function\", \"class\", \"method\", \"component\", \"route\", \"test\", \"interface\", \"type\"].includes(s.kind))\n    .sort((a, b) => (a.rangeStart?.line ?? 0) - (b.rangeSta"
+      },
+      {
+        "key": "c4",
+        "label": "模块理解最长前缀匹配",
+        "reason": "支持候选过滤、检查所有文件及最长目录前缀优先策略。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 149,
+          "endLine": 182
+        },
+        "quote": "/** Pick the curated module-architect understanding that best describes a module\n * bucket. The curated `targetId` is a repo directory (e.g.\n * `apps/server/src/memory`); we match it by longest prefix against the module's\n * files, preferring the current (non-stale, non-rejected) row. Pure. */\nexport function matchModu"
+      },
+      {
+        "key": "c5",
+        "label": "关系目标与下钻目标解析",
+        "reason": "支持两种解析函数对同文件符号、跨文件和缺失目标的不同处理。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 124,
+          "endLine": 147
+        },
+        "quote": "export interface ResolvedTarget {\n  fileId?: string;\n  line?: number;\n  symbolName?: string;\n  resolvable: boolean;\n}\n\nexport function resolveEdgeTarget(\n  edge: CodeEdge,\n  fileMap: Map<string, CodeFile>,\n  symbolMap: Map<string, CodeSymbol>,\n  selfFileId: string,\n): ResolvedTarget {\n  if (edge.toFileId && fileMap.has"
+      },
+      {
+        "key": "c6",
+        "label": "DTO 优先的人读标签",
+        "reason": "支持显示字段回退策略以及 missing/stale 的不可操作原因。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 222,
+          "endLine": 251
+        },
+        "quote": "// ---- Human label resolution (DTO-first; never leaks an internal id) --------\n// Prefer the server DTO display fields; fall back to a readable raw field\n// (basename / name / path). If nothing readable exists, say \"未命名{type}\" —\n// the internal id must NEVER appear as a DOM label.\n\nexport function fileLabel(f: Partial"
+      },
+      {
+        "key": "c7",
+        "label": "文件路径精确查找与下钻合同",
+        "reason": "支持路径查找仅为精确线性匹配，并界定下钻只基于已有 CodeEdge 数据。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 184,
+          "endLine": 219
+        },
+        "quote": "/** Resolve an edge to a drill target. Same-file symbol edges DO drill (to a\n * symbol/range frame) rather than being swallowed; only truly external /\n * unresolved targets are non-navigable. */\nexport type EdgeDrill =\n  | { kind: \"file\"; fileId: string; line?: number }\n  | { kind: \"symbol\"; fileId: string; symbolId: s"
+      }
+    ],
+    "questions": [
+      {
+        "question": "模块聚合边同时出现 candidate 与 missing 时，最终状态应采用何种稳定优先级？",
+        "why": "当前实现按输入顺序让后遇到的 candidate 或 missing 覆盖已有状态；若上游 edges 顺序变化，同一模块对的显示状态可能变化。",
+        "nextStep": "在产品合同中明确 confirmed、candidate、missing 的严重度或混合状态规则，并增加不同输入顺序的纯函数测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/store.test.ts",
+      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:42:03.262Z",
+    "trace": {
+      "runId": "0b34c2ee-cc37-4898-a3b0-3c45af7c716f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5472c0246700819a084eb9b5112f3cab41c7cd887a9a982e2163c85d71ff23a4",
+      "contextHash": "364388f74400b7566dbf7577b1f1fc17afb50415dc518f330deef424de88b084",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "de351e4b4d6b07adf806b89a89dc2a996aa6e2c2872ca383c8afc6bd4dbabb66",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaf-64e6-7921-9472-d7eeeec6806b"
+      ],
+      "usage": {
+        "used": 44865,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 86049,
+          "utf8Bytes": 90813,
+          "estimatedTokens": 30271,
+          "budgetedTokens": 37839,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:42:31.660Z",
+    "trace": {
+      "runId": "83fb26b3-7530-407f-b33d-06482620964c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c1cfa58e2b965d8f14c421193cebb2b5e4a68464425b0990985624d18d0699d0",
+      "contextHash": "9d45216bf97d33f7fe9fa2870144d574d1888a04ddb2ae3f01d72e9fcd052af4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "92cab9424d0317d2bcf680db489b543cfde8b9301ed5f2774ee909f246058b26",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb0-421a-7423-91c2-657cce7e86df"
+      ],
+      "usage": {
+        "used": 48976,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107223,
+          "utf8Bytes": 120168,
+          "estimatedTokens": 40056,
+          "budgetedTokens": 50070,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
