@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/package.json",
+    "title": "设计原型包配置",
+    "summary": "该包清单定义了一个私有的 ES 模块 React 原型，提供构建与冒烟测试脚本，并声明 esbuild 和 Playwright 测试依赖。它体现预期工具链入口，不等同于这些流程已运行或通过。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "package-purpose",
+        "title": "包定位与模块模式",
+        "body": "包名为 `omem-design-prototype`，被标记为私有包并采用 ES module 模式。这说明它是仓库内的设计原型包，配置上避免被公开发布，同时相关 Node.js 脚本应按 ESM 语义加载。[[c1]] 材料本身没有说明该原型与当前正式界面的生命周期关系。"
+      },
+      {
+        "key": "scripts-and-dependencies",
+        "title": "脚本与依赖分工",
+        "body": "配置提供 `build` 与 `test` 两个入口，分别执行 `build.mjs` 和 `smoke.mjs`；后者名称指向冒烟检查，但材料未展示脚本内容、断言范围或执行结果。[[c2]] 运行依赖固定为 React 18.3.1 与 React DOM 18.3.1，开发侧使用 esbuild 0.28.1 和 Playwright Test 1.58.2。[[c3]]"
+      },
+      {
+        "key": "evidence-boundary",
+        "title": "与锁文件的关系及限制",
+        "body": "package.json 表达直接依赖和可调用脚本，package-lock.json 则补充解析后的传递依赖、平台包、完整性摘要与来源；两者共同构成安装配置。[[c3]] 但脚本入口的存在不证明构建或测试曾成功执行，也无法说明测试是否启动真实浏览器、覆盖哪些用户流程，这些仍需脚本源码和真实运行证据。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "原型包元数据",
+        "reason": "支持该包为私有包且采用 ES module 模式，并用于界定材料能够确认的包级定位。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/package.json",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "{\n  \"name\": \"omem-design-prototype\",\n  \"private\": true,\n  \"type\": \"module\","
+      },
+      {
+        "key": "c2",
+        "label": "构建与冒烟脚本",
+        "reason": "支持两个脚本入口的具体命令，并说明材料仅声明入口而未提供执行结果或断言内容。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/package.json",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "  \"scripts\": {\"build\": \"node build.mjs\", \"test\": \"node smoke.mjs\"},"
+      },
+      {
+        "key": "c3",
+        "label": "直接依赖版本",
+        "reason": "支持 React 运行依赖与 esbuild、Playwright 开发依赖的精确版本及其职责划分。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/package.json",
+          "startLine": 6,
+          "endLine": 7
+        },
+        "quote": "  \"dependencies\": {\"react\": \"18.3.1\", \"react-dom\": \"18.3.1\"},\n  \"devDependencies\": {\"esbuild\": \"0.28.1\", \"@playwright/test\": \"1.58.2\"}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`smoke.mjs` 实际覆盖哪些用户流程和断言？",
+        "why": "包清单只给出测试入口名称，无法确认它是否启动浏览器、覆盖真实交互，或仅检查静态产物。",
+        "nextStep": "分析 `smoke.mjs` 及其调用的测试文件，并结合实际退出码和断言结果记录测试能力。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "该 React 原型是历史设计样例，还是仍需维护的当前实现？",
+        "why": "材料仅能确认包名和依赖配置，不能确定它与项目当前 UI、正式构建链或产品能力的关系；若直接视作当前实现，可能混淆历史原型与已落地能力。",
+        "nextStep": "结合原型目录说明、当前实现状态文档和入口引用关系，确认其生命周期与维护边界。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "smoke.mjs 实际覆盖哪些用户流程和断言？",
+        "why": "包清单只声明 test 脚本执行 node smoke.mjs，没有提供脚本内容、浏览器启动方式、行为断言或执行结果。",
+        "nextStep": "核验 smoke.mjs 及其调用内容，并结合真实退出码和断言结果记录测试范围。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/package-lock.json",
+      "digest": "bce614b33197d73070958de897687f7a2c4e21280ade9082cff92fb42d4a8a91"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/package.json",
+      "digest": "bdd0173363f88a2a890902276fa238f5bd81790f745686149fdc960158f76c87"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:14:42.493Z",
+    "trace": {
+      "runId": "db081abd-f949-4e09-83b0-09e4f222fdb1",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "d9117c31d2fa9b1356b9b4d6c5566d02d05fcc6b9f0865dc2f85707ae43a2797",
+      "contextHash": "12ee91f4c897af1fd564f2ad2f5d5fa191408fa738b453312eb31a71d7e9acbf",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "aa1ec649a5781b593446b7633c6d4363488b016ae7d64e8afb8f589fb3f44597",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4d-4ba5-7d31-b6bd-f91acf1592da"
+      ],
+      "usage": {
+        "used": 29037,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 37163,
+          "utf8Bytes": 41929,
+          "estimatedTokens": 13977,
+          "budgetedTokens": 17472,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:14:53.360Z",
+    "trace": {
+      "runId": "eb587798-2a3d-4941-a341-b6b3153b119d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "28c4e649b945de32c1a58c697a0f104dcb138571fb20741c152607aeb39c6d49",
+      "contextHash": "2857c70b8777a3cc9b7f97d16f76ff3a5c212fd697c9c50f6b86456bd114cfe7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "4c6df89113cdfe966db302325d61a358109d46e46bf9f3c098822f95ab0cdd5f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4d-a176-7e51-bb6d-50ca87143fc7"
+      ],
+      "usage": {
+        "used": 26192,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 35873,
+          "utf8Bytes": 39903,
+          "estimatedTokens": 13301,
+          "budgetedTokens": 16627,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

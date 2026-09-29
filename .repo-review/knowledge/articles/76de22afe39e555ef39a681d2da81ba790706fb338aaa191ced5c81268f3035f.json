@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/screenshots/trace-and-ai.png",
+    "title": "证据路径与就该段原文追问界面",
+    "summary": "截图展示一个覆盖在主界面上的大型证据阅读弹窗：左侧阅读“发布任务·验证轨迹”的引用片段及关联材料，右侧围绕当前原文片段进行演示性问答。顶部路径、返回上层和收起追问等控件共同表达分层浏览、来源追溯与上下文问答的组合流程。",
+    "category": "visual",
+    "sections": [
+      {
+        "key": "overall-layout",
+        "title": "整体结构与层级导航",
+        "body": "画面中央是带圆角的大型模态窗口，背景主界面被灰化，说明当前操作聚焦于证据阅读。弹窗顶部标为“证据路径”和“第4层”，其下按 1—4 展示面包屑式路径，当前节点是“发布任务·验证轨迹”；再下一行注明来自第 3 层“订单服务发布复盘”。这套可见结构表达了从上游材料逐层深入、同时保留返回关系的阅读方式。[[c1]]"
+      },
+      {
+        "key": "evidence-reader",
+        "title": "证据正文与关联材料",
+        "body": "左侧主体以“工具记录”为类型提示，标题下可见 Run、时间及“固定原文快照”等元数据。选中的“引用片段”页签展示一段加框原文，随后用说明文字区分可观察事实与本次操作所用的固定版本；下方“这段材料还引用了”列出“回滚配置的 Git 修订”，并标注固定版本与提交名。由此可见，该区域不仅呈现结论，还把结论所依赖的原文和版本化材料连接起来。[[c2]]"
+      },
+      {
+        "key": "contextual-ai",
+        "title": "围绕当前片段的追问",
+        "body": "右栏标题为“就这段原文追问”，并明确标注“演示回答·未连接模型”。示例问题询问为何本次验证有效，回答结合配置回退、健康检查恢复和后续观测共同验证，同时指出单次记录不能推断所有场景都适用；其下列出四项带跳转图标的依据。底部可选择回答范围“当前引用路径”并继续输入。可见设计意图是让问答受当前证据路径约束，但截图只证明演示状态，不能据此认定真实模型调用、引用校验或跳转行为已经实现。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "证据路径弹窗顶部与层级导航",
+        "reason": "支持对模态布局、背景灰化、四层路径以及当前节点和来源层级的描述；对应图片中央弹窗顶部区域。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/screenshots/trace-and-ai.png"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "引用片段与关联修订区域",
+        "reason": "支持对固定原文快照、引用片段、事实说明及 Git 修订关联项的描述；对应图片弹窗左侧主体区域。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/screenshots/trace-and-ai.png"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c3",
+        "label": "当前原文追问侧栏",
+        "reason": "支持对演示问答、依据列表、回答范围和输入框的描述，也支撑“未连接模型”这一可见限制；对应图片弹窗右侧栏。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/screenshots/trace-and-ai.png"
+        },
+        "quote": ""
+      }
+    ],
+    "questions": [
+      {
+        "question": "右侧依据项、顶部路径节点和“返回上一层”在实际产品中是否都可跳转并恢复各层阅读位置？",
+        "why": "截图能看见跳转样式和层级控件，但静态图片无法验证点击行为、滚动位置记忆及返回逻辑。",
+        "nextStep": "结合交互原型或运行页面逐项点击，记录入栈、返回、焦点恢复与滚动恢复结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "“就这段原文追问”接入真实模型后，回答是否强制限定于当前引用路径并逐条校验依据？",
+        "why": "界面明确显示“演示回答·未连接模型”，因此无法从截图确认真实生成、范围约束和引用校验机制。",
+        "nextStep": "检查真实模型配置与问答接口，并用包含可证伪内容的材料验证回答范围及引用对应关系。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/screenshots/trace-and-ai.png",
+      "digest": "f7089f6115ea33d615d4a4e6d3791ce5f3cbb784d3377d5fe9417d54c0176bd0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:15:30.372Z",
+    "trace": {
+      "runId": "ffa1df53-9be5-467d-9a24-3a6b34fa1882",
+      "roleId": "visual-analyst",
+      "roleVersion": "1",
+      "bundleHash": "ee04e30486d1d6acf3403e6486e561e2d35c404f26dacd471d8fc880a7e59f96",
+      "promptHash": "87532392d841efa611e6c471c4a1a0757f4bb6e93fdac12de84d5a1cbcdac1fa",
+      "contextHash": "7acd34f88c9d95f9bf89956d878c4a5ed72d035a20dd0a46a71ac77a07642087",
+      "skillHash": "c1865e07aff88b39f38d3d020c9b041d74258eedc2ba36936a94a03addd566f3",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d950afd18d957754ed01cde06d127d1ed4c78b1164a3ee93b716a9d3a2c88cdf",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-visual-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4e-212c-7902-a583-ff0f0787cfec"
+      ],
+      "usage": {
+        "used": 16408,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 6429,
+          "utf8Bytes": 7991,
+          "estimatedTokens": 2664,
+          "budgetedTokens": 3330,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:15:41.485Z",
+    "trace": {
+      "runId": "c7dfedc0-abc9-4eca-b106-21f124e9e104",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "6c54f2bc54e92e80d39eb1a534b334363ae28c5b65a1337a494883e6cf42146a",
+      "contextHash": "029c7b6b18727d5604102dc672e3602c55b4c4e63865bb4969ec08a7dbcbed98",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e17497c60d365803a645d65a5cc2f4ff5a1cb61e856db3d00459e0ddeec04cb7",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4e-5ffd-7f53-8cd1-794c9371df25"
+      ],
+      "usage": {
+        "used": 16136,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 6566,
+          "utf8Bytes": 9826,
+          "estimatedTokens": 3276,
+          "budgetedTokens": 4095,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

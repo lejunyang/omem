@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/build.mjs",
+    "title": "自包含离线原型构建脚本",
+    "summary": "使用 esbuild 将 React 入口压缩为 IIFE，并把脚本、样式、第三方声明和可编辑视觉参数内联到单个中文 HTML 文件。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "build-flow",
+        "title": "构建流程",
+        "body": "脚本以 `app.jsx` 为唯一 JavaScript 入口，调用 esbuild 完成依赖打包、生产环境常量替换和压缩，但先保留产物在内存中。[[c1]] 随后读取样式表与第三方声明，转义打包脚本中的 `</script`，避免内联内容提前结束 HTML 脚本标签。[[c2]] 最终写出 `index.html`，其中包含根挂载点、全部 CSS、默认字号与阅读密度配置，以及 IIFE 脚本。[[c3]]"
+      },
+      {
+        "key": "scope-and-dependencies",
+        "title": "用途与边界",
+        "body": "生成物定位为可携带的离线交互演示，HTML 注释明确声明示例虚构、AI 为模拟且不发起网络请求。[[c4]] 它依赖同目录的应用入口、样式和第三方声明；应用入口又导入数据与调节面板，因此“单文件”描述的是构建产物，而不是构建输入。[[c5]] 脚本没有显式配置 sourcemap、目标浏览器、错误恢复或构建后行为测试；成功标准目前只是构建调用和文件写入未抛错，并打印完成消息。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "esbuild 打包配置",
+        "reason": "说明入口、内存输出、压缩、IIFE 格式及生产环境替换。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/build.mjs",
+          "startLine": 2,
+          "endLine": 12
+        },
+        "quote": "import { build } from \"esbuild\";\nimport { readFile, writeFile } from \"node:fs/promises\";\nconst output = await build({\n  entryPoints: [new URL(\"./app.jsx\", import.meta.url).pathname],\n  bundle: true,\n  write: false,\n  minify: true,\n  format: \"iife\",\n  define: { \"process.env.NODE_ENV\": '\"production\"' },\n  legalComments: "
+      },
+      {
+        "key": "c2",
+        "label": "资源读取与脚本转义",
+        "reason": "支持构建读取外部资源并对内联 script 闭合标签进行防护的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/build.mjs",
+          "startLine": 13,
+          "endLine": 18
+        },
+        "quote": "const css = await readFile(new URL(\"./styles.css\", import.meta.url), \"utf8\");\nconst notices = await readFile(\n  new URL(\"./THIRD_PARTY_NOTICES.txt\", import.meta.url),\n  \"utf8\",\n);\nconst script = output.outputFiles[0].text.replace(/<\\/script/gi, \"<\\\\/script\");"
+      },
+      {
+        "key": "c3",
+        "label": "自包含 HTML 模板",
+        "reason": "解释输出文件内联样式、调节配置与打包脚本的结构。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/build.mjs",
+          "startLine": 19,
+          "endLine": 28
+        },
+        "quote": "await writeFile(\n  new URL(\"./index.html\", import.meta.url),\n  `<!doctype html>\n<!-- omem v0.1 interaction prototype. Fictional examples; simulated AI; no network requests.\nVisual reference: user-provided 企业知识管理系统-前端设计稿.html.\nDesign: neutral black/white/gray, document-first reading, recursive evidence dialogs.\nSource: "
+      },
+      {
+        "key": "c4",
+        "label": "离线演示声明",
+        "reason": "支持生成物不包含真实语料或凭据、AI 与数据均为演示的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/build.mjs",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "// Produce a portable, offline HTML artifact. No source corpus or credentials are bundled."
+      },
+      {
+        "key": "c5",
+        "label": "应用的额外模块依赖",
+        "reason": "说明构建入口还依赖调节面板和数据模块，避免把构建输入误解为单文件。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/app.jsx",
+          "startLine": 6,
+          "endLine": 15
+        },
+        "quote": "import React, { useState, useEffect, useRef } from \"react\";\nimport { createRoot } from \"react-dom/client\";\nimport \"./tweaks-panel.jsx\";\nimport {\n  nodes,\n  articles,\n  initialChanges,\n  sources as seedSources,\n} from \"./data.js\";\nconst { useTweaks, TweaksPanel, TweakSlider, TweakSelect } = window;"
+      },
+      {
+        "key": "c6",
+        "label": "输出完成点",
+        "reason": "支持脚本以写入文件和打印消息结束、未展示额外验证步骤的判断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/build.mjs",
+          "startLine": 18,
+          "endLine": 29
+        },
+        "quote": "const script = output.outputFiles[0].text.replace(/<\\/script/gi, \"<\\\\/script\");\nawait writeFile(\n  new URL(\"./index.html\", import.meta.url),\n  `<!doctype html>\n<!-- omem v0.1 interaction prototype. Fictional examples; simulated AI; no network requests.\nVisual reference: user-provided 企业知识管理系统-前端设计稿.html.\nDesign: neutra"
+      }
+    ],
+    "questions": [
+      {
+        "question": "样式表、调节面板与第三方声明是否存在配套构建测试或完整性校验？",
+        "why": "这些文件未包含在本次材料中，但构建和运行直接依赖它们；无法确认缺失资源、错误声明内容或浏览器兼容问题是否会被自动发现。",
+        "nextStep": "提供相关文件及构建测试，至少验证生成 HTML 可离线加载、无网络请求、资源完整内联且关键交互能启动。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c5",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/app.jsx",
+      "digest": "3463c1c480ab929a16f0be14f47a817ec6729c09d221429243628708aafba731"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/build.mjs",
+      "digest": "faa46761eaf99cdc7bd3ef5e9f013f18d386176844ac8c4ac5261db2b8149470"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/data.js",
+      "digest": "8d41ea8966b884ea81c9356546e94938fa4562452971e9d0f23609893affc1ec"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:19:09.560Z",
+    "trace": {
+      "runId": "8915ca7d-1822-4189-818d-697ff90a522f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d6c4e0cd9cb835a636e1c4f32f89434c85bde68969fb0e76312d38929b69bd44",
+      "contextHash": "44ebb2c89963779612a8b60d1ed963b8f116f927bf7da775cc37c56c5fef1dbc",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2f7740ca78a4398be2b81ab42f3ff4a134b0cc169a82bded6d342d4e35eb2f61",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9a-4cef-7702-97c3-c1fbd08b0ee3"
+      ],
+      "usage": {
+        "used": 42875,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 86630,
+          "utf8Bytes": 96938,
+          "estimatedTokens": 32313,
+          "budgetedTokens": 40392,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:19:44.198Z",
+    "trace": {
+      "runId": "9eebbfb1-afcd-4046-a416-c58009969f59",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "d4fbaf6d675284b2eff68612a27e5d790c078f11284fd91b68b23e480d03ced5",
+      "contextHash": "0518b1a6fc646b4d0a7f0c67117b071b3c18fb484dfb8215d673801ffd3ac2f4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c8b37798ea349484cb93538ddd55427225be7499f6140b0c0e9523bfbb2781c0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9b-4c06-7c32-8652-bdd2eb856d5e"
+      ],
+      "usage": {
+        "used": 47385,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 103419,
+          "utf8Bytes": 121988,
+          "estimatedTokens": 40663,
+          "budgetedTokens": 50829,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

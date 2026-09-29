@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/smoke.mjs",
+    "title": "离线原型浏览器冒烟验证",
+    "summary": "使用 Playwright 在真实 Chromium 中验证离线知识阅读原型的主要交互合同，覆盖证据下钻、循环与历史版本、原位追问、状态恢复、响应式布局和离线约束；明确不验证后端或模型质量。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "purpose-and-harness",
+        "title": "目标与测试装置",
+        "body": "该脚本解决的是“静态原型能否在真实浏览器中完成关键交互”的回归验证问题。它启动无头 Chromium，固定桌面视口，监听脚本异常及 HTTP(S) 请求，并以本地 `index.html` 为入口；每项检查成功后记录名称，最终生成带浏览器版本和范围声明的验证报告。[[c1]]\n\n测试开始时清除演示用本地存储并刷新，因此主要场景从已知初始状态运行。它还会保存桌面、引用追问和移动端截图，但截图本身没有在脚本中做像素差异断言。[[c2]]"
+      },
+      {
+        "key": "interaction-contract",
+        "title": "核心交互断言",
+        "body": "证据阅读合同是测试重点：脚本验证八层业务链到达末端、`Escape` 逐层返回、循环引用保留路径并可跳回既有层，以及历史修订能够切换到现行版本。[[c3]] 对更深路径，它构造并走完 100 层合成链，再通过面包屑回到首层，说明原型不应把展示层数误作业务深度上限。[[c4]]\n\n追问流程覆盖回答范围选择、未发送草稿保留、回答引用继续下钻和圈选原文后原位提问；导航返回时还断言父层滚动位置、对话消息及触发按钮焦点得到恢复。[[c5]] 无权限、来源删除和定位待核对三类状态必须展示诚实说明，并禁用针对不可用证据的追问。[[c6]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "响应式、持久化与未覆盖边界",
+        "body": "外围场景还断言搜索结果与空状态、模拟同步的可见状态变化、恢复操作追加历史并在刷新后保留，以及阅读字号控件确实修改正文 CSS 变量。[[c7]] 移动视口下要求页面无横向溢出、引用对话框占满屏幕，并可继续完成追问。最后统一要求无页面异常且没有外部网络请求。[[c8]]\n\n边界必须按脚本自己的范围理解：报告明确标注为离线原型验证，不蕴含后端行为或模型评估。它没有验证真实同步、真实知识检索、模型答案正确性、服务端持久化、多浏览器兼容性，也没有覆盖视觉截图回归。[[c9]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "浏览器装置与事件监控",
+        "reason": "支持脚本使用 Chromium、固定视口并收集页面异常和外部请求的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 1,
+          "endLine": 28
+        },
+        "quote": "// Real browser checks for the main interaction contract. No backend behavior is implied.\nimport { chromium, expect } from \"@playwright/test\";\nimport { mkdir, writeFile } from \"node:fs/promises\";\nimport { fileURLToPath } from \"node:url\";\nconst browser = await chromium.launch({\n  headless: true,\n  ...(process.env.OMEM_C"
+      },
+      {
+        "key": "c2",
+        "label": "初始状态与桌面截图",
+        "reason": "支持清除本地存储、重新加载并保存桌面截图的测试准备说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 38,
+          "endLine": 55
+        },
+        "quote": "await mkdir(new URL(\"./screenshots/\", root), { recursive: true });\ntry {\n  await page.goto(url);\n  await page.evaluate(() => localStorage.removeItem(\"omem-demo-v1\"));\n  await page.reload();\n  await check(\"离线首页与桌面布局\", async () => {\n    await expect(page.locator(\"h1\")).toHaveText(\n      \"发布前，为什么必须先验证回滚？\",\n    );\n    expe"
+      },
+      {
+        "key": "c3",
+        "label": "证据路径、循环与版本断言",
+        "reason": "支持多层下钻、逐层返回、循环跳转及历史版本切换等核心合同。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 56,
+          "endLine": 108
+        },
+        "quote": "  await check(\"8 层业务示例下钻与末端\", async () => {\n    await openPolicy();\n    for (const id of [\n      \"runbook\",\n      \"incident\",\n      \"trace\",\n      \"commit\",\n      \"test\",\n      \"metric\",\n      \"raw\",\n    ]) {\n      await dialog\n        .locator(\".next-refs button\")\n        .filter({\n          hasText: {\n            run"
+      },
+      {
+        "key": "c4",
+        "label": "百层合成链",
+        "reason": "支持原型允许长证据路径并能从面包屑跳回首层的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 175,
+          "endLine": 185
+        },
+        "quote": "  await check(\"100 层合成链不限制业务深度\", async () => {\n    await page.locator(\".demo-tools summary\").click();\n    await page.getByRole(\"button\", { name: \"100 层长链\" }).click();\n    for (let i = 1; i < 100; i++)\n      await dialog.getByRole(\"button\", { name: /继续查看下一份材料/ }).click();\n    await expect(dialog.locator(\".trace-label\"))"
+      },
+      {
+        "key": "c5",
+        "label": "原位追问与状态恢复",
+        "reason": "支持回答范围、草稿、回答引用下钻、圈选提问及滚动和焦点恢复的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 109,
+          "endLine": 174
+        },
+        "quote": "  await check(\"弹窗原位追问、范围和草稿保留\", async () => {\n    await openPolicy();\n    await dialog.locator(\".next-refs button\").first().click();\n    await dialog.locator(\".next-refs button\").first().click();\n    await dialog.locator(\".next-refs button\").first().click();\n    await dialog.getByRole(\"button\", { name: \"就这段追问\" }).click"
+      },
+      {
+        "key": "c6",
+        "label": "不可用证据状态",
+        "reason": "支持无权限、删除和定位失效时展示原因并禁用追问的边界行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 186,
+          "endLine": 199
+        },
+        "quote": "  await check(\"无权限、删除、定位失效的诚实状态\", async () => {\n    for (const [button, text] of [\n      [\"来源无权限\", \"当前无权查看\"],\n      [\"来源已删除\", \"原始内容已删除\"],\n      [\"定位待核对\", \"原文位置尚待核对\"],\n    ]) {\n      await page.getByRole(\"button\", { name: button, exact: true }).click();\n      await expect(dialog.locator(\".evidence-empty\")).toContainText"
+      },
+      {
+        "key": "c7",
+        "label": "搜索、同步、恢复与阅读样式",
+        "reason": "支持外围功能状态变化、本地历史保留及阅读字号生效的断言概述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 200,
+          "endLine": 242
+        },
+        "quote": "  await check(\"搜索与无结果状态\", async () => {\n    await page.getByLabel(\"搜索知识、材料和经历\").fill(\"配置\");\n    await expect(page.locator(\".result-row\").first()).toBeVisible();\n    await page.getByLabel(\"搜索知识、材料和经历\").fill(\"完全不存在的关键字\");\n    await expect(page.locator(\".empty\")).toContainText(\"没有找到相关示例\");\n    await page.getByRole(\"button"
+      },
+      {
+        "key": "c8",
+        "label": "移动布局与离线约束",
+        "reason": "支持移动端全屏引用、可追问、零脚本异常和零外部请求的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 243,
+          "endLine": 270
+        },
+        "quote": "  await check(\"手机布局与全屏引用\", async () => {\n    await page.setViewportSize({ width: 390, height: 844 });\n    await page.reload();\n    await expect(page.locator(\"h1\")).toBeVisible();\n    expect(\n      await page.evaluate(\n        () => document.documentElement.scrollWidth <= innerWidth,\n      ),\n    ).toBe(true);\n    await"
+      },
+      {
+        "key": "c9",
+        "label": "验证报告范围",
+        "reason": "支持该测试仅覆盖离线原型、不代表后端或模型评估的限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/smoke.mjs",
+          "startLine": 271,
+          "endLine": 288
+        },
+        "quote": "  await writeFile(\n    new URL(\"./verification.json\", root),\n    JSON.stringify(\n      {\n        date: \"2026-09-26\",\n        browser: browser.version(),\n        checks,\n        errors,\n        externalRequests: external,\n        scope: \"Offline prototype only; no backend or model evaluation\",\n      },\n      null,\n     "
+      }
+    ],
+    "questions": [
+      {
+        "question": "是否需要把截图升级为有基线和容差的视觉回归测试？",
+        "why": "当前脚本会产出多种视口截图，但只断言元素、文本和尺寸，不比较视觉结果，因此排版或色彩退化可能漏检。",
+        "nextStep": "确定需稳定支持的视口和浏览器后，为关键截图建立基线、字体环境与差异阈值。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c8"
+        ]
+      },
+      {
+        "question": "真实后端同步、检索和模型回答应由哪一组集成测试承担？",
+        "why": "材料明确将本脚本限定为离线原型，现有“模拟同步”和固定回答不能证明真实服务行为。",
+        "nextStep": "在后端接口和模型评估标准确定后，另建端到端或契约测试，并保留本脚本作为纯前端快速回归。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c9"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/smoke.mjs",
+      "digest": "d720ba9d0168f6974e900cbe4fe5a2ece652f8eec8fe68497cc9902bc84ee702"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/styles.css",
+      "digest": "c3f02f7ba444bfe662577f604931c38372a76d9500d7cb270b4678131709992b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/tweaks-panel.jsx",
+      "digest": "b77bf1ccfdb9d8459080d4465294899738f48dea68c7e8640b4a976c1b8e4290"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:20:28.327Z",
+    "trace": {
+      "runId": "fe0b21db-396e-47f5-970d-2bcec7c1358c",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "a1cbbd40b547f3f9ffbccadaa555fe47e72ca0b89e76a7d7bbd6afa0c4f43e69",
+      "contextHash": "b456c1e5916b489cf4f1963b659189e997b76d576157f4e9204b4ddb0ed155ca",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6a5bcb6f738f2db0a29348a1318753d3238af17c036b6955ea62b03430e209a3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9b-b933-7a00-a64d-7fefe27c2a2b"
+      ],
+      "usage": {
+        "used": 52024,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 95899,
+          "utf8Bytes": 99597,
+          "estimatedTokens": 33199,
+          "budgetedTokens": 41499,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:20:53.163Z",
+    "trace": {
+      "runId": "e6f431d8-1dc6-461a-bb74-746967c4d65f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "912932824d677c3e8cf41b21852ae646486f0611d28e56a7ad783536723cf3b9",
+      "contextHash": "1799b2ff498a40cb78f90d732a92cc95c2cf0a60d4a370e53cc944429218c51d",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "89d96e60657d0c8f446acf788b4b34b5812b3f5fb7089759f190c5ca648f46fc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9c-7f9a-7900-9414-ad0d72a5507d"
+      ],
+      "usage": {
+        "used": 55843,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 111891,
+          "utf8Bytes": 123453,
+          "estimatedTokens": 41151,
+          "budgetedTokens": 51439,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

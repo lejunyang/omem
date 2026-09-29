@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/screenshots/desktop.png",
+    "title": "桌面端知识阅读与循证问答界面",
+    "summary": "图片展示一个三栏式个人知识工作台：左侧组织工作区与知识目录，中间阅读带引用标记的文章，右侧依据当前内容提供循证问答。界面强调来源可追溯、版本固定及回答范围约束，但静态截图无法验证控件的实际交互和数据状态。",
+    "category": "visual",
+    "sections": [
+      {
+        "key": "overall_layout",
+        "title": "整体结构与导航",
+        "body": "截图采用顶部全局栏加左、中、右三栏布局。顶部可见品牌、全局搜索框、原型/示例数据提示及账户入口；左栏展示“我的工作记忆”、知识阅读等主导航，并以分组目录定位当前文章。当前选中的“发布前，为什么必须先验证回滚？”同时出现在目录与中央阅读区，形成从工作区到主题内容的明确层级。[[c1]]"
+      },
+      {
+        "key": "evidence_reader",
+        "title": "中央循证阅读区",
+        "body": "中央区域是一篇方法类文章，包含标题、摘要、作者与更新时间、固定版本标识，以及按编号组织的正文小节。正文中的关键句带上标引用，页面还提示“每一条引用，都可以继续往下看”，并展示由知识结论通向发布规范、任务经历和原始记录的路径。可见设计意图是让结论与依据保持关联；但引用能否展开、路径是否可点击，仅凭截图不能确认。[[c1]]"
+      },
+      {
+        "key": "assistant_panel",
+        "title": "右侧上下文问答",
+        "body": "右栏标题为“和记忆一起思考”，状态注明“演示回答·未连接模型”。面板先列出“本次依据”的发布管理规范卡片，再给出回答原则、两个建议问题，以及底部输入框；回答范围显示为“本段与直接依据”。这表明问答被约束在当前阅读上下文和直接证据内，而不是无边界生成。由于模型未连接，截图呈现的是原型状态，不能据此判断真实生成质量。[[c1]]"
+      },
+      {
+        "key": "visual_language",
+        "title": "视觉层级与状态表达",
+        "body": "界面以黑、白、浅灰为主，选中导航和发送按钮使用深色强调，正文留白宽裕，卡片、引用框与细分隔线用于区分证据层级。左下角“记忆持续整理中”提示后台整理状态，右上“私有工作区”提示空间属性；这些文字说明了界面状态，但并不足以证明后台任务正在运行或权限隔离已经实现。[[c1]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "桌面端原型截图",
+        "reason": "引用整张截图中可见的顶部导航、左侧知识目录、中央循证文章及右侧上下文问答区域，支持对布局、文字状态和视觉层级的描述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/screenshots/desktop.png"
+        },
+        "quote": ""
+      }
+    ],
+    "questions": [
+      {
+        "question": "正文引用、知识路径和左侧目录在原型中分别支持哪些具体交互？",
+        "why": "截图能看见引用上标、路径条目和选中状态，但静态图片无法证明点击后是展开来源、切换页面还是打开侧栏。",
+        "nextStep": "结合交互规格或可运行原型，逐项验证点击行为、返回路径、焦点管理及加载状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "右侧问答在连接模型后如何选择依据并展示引用？",
+        "why": "画面明确标注“未连接模型”，当前依据卡片和回答范围只能说明预期界面，不能确认实际检索、生成及引用校验流程。",
+        "nextStep": "提供已连接模型的交互记录或产品规则，以核对依据选择、回答范围、失败提示和引用展开方式。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/screenshots/desktop.png",
+      "digest": "95b3415b3d5f8df945daabff48b77808e430dc56b146bc26e19ba7886444e10e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:15:07.065Z",
+    "trace": {
+      "runId": "06b67d0f-68a8-4ac1-a975-a99b6cbec58b",
+      "roleId": "visual-analyst",
+      "roleVersion": "1",
+      "bundleHash": "ee04e30486d1d6acf3403e6486e561e2d35c404f26dacd471d8fc880a7e59f96",
+      "promptHash": "2437d1e1845a3edba2836bd2da7a63771ea036b5a43d30677e4ee33f8a39f593",
+      "contextHash": "091cc445b1ad8173b2169c5e846b5d1b6803d1dd5ce7161c7f55b0483b1681d8",
+      "skillHash": "c1865e07aff88b39f38d3d020c9b041d74258eedc2ba36936a94a03addd566f3",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "abbed8ccb28fe4e30ebe7ae85f3a6f19f269aacf864a22c969ea759df059651c",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-visual-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4d-ccad-7871-8379-f8cc01a7b228"
+      ],
+      "usage": {
+        "used": 16223,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 6379,
+          "utf8Bytes": 7941,
+          "estimatedTokens": 2647,
+          "budgetedTokens": 3309,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:15:15.126Z",
+    "trace": {
+      "runId": "df3e07b4-2ecb-4262-84c1-dfdd22261e0c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "05399f323b71599c58ffeae6640edde67190e713c92e5fc3049e943b582c5a39",
+      "contextHash": "cc9c36703836119cd45f1c172f4896e2494a4aca5f777bf8be13b52f1cd40d25",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "fd92d56a8689ef74c608116253c0d6df116b94801cf7b9e6b34dd82cce6b75b9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4e-01c8-78f3-aef7-52948305a799"
+      ],
+      "usage": {
+        "used": 15994,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 6202,
+          "utf8Bytes": 9399,
+          "estimatedTokens": 3133,
+          "budgetedTokens": 3917,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

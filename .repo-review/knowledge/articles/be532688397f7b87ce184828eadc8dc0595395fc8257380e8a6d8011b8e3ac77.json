@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/.gitignore",
+    "title": "交互原型的目录忽略配置",
+    "summary": "该配置仅确认 `node_modules/`、`.build/` 与 `test-results/` 三个目录不纳入版本控制。结合 README 可知原型具有 npm 构建和浏览器检查流程，但材料未说明 `.build/` 的用途，也未证明验证产物实际写入 `test-results/`。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "scope",
+        "title": "忽略范围",
+        "body": "配置明确忽略 `node_modules/`、`.build/` 和 `test-results/` 三个目录。[[c1]] README 另有 `npm ci` 与 `npm run build` 的操作说明，并称 `build.mjs` 会将源码打包成单个 `index.html`；但它没有交代 `.build/` 是否参与该过程，因此不能把这个目录确定解释为构建中间产物。[[c2]]"
+      },
+      {
+        "key": "evidence_boundary",
+        "title": "测试产物与证据边界",
+        "body": "`test-results/` 被排除在版本控制之外，这是配置能够直接证明的唯一相关事实。[[c3]] README 表示浏览器检查会输出 `verification.json` 和截图，却没有给出这些文件的具体落盘目录。[[c4]] 因而不能仅凭目录名称断定这些验证产物均写入 `test-results/`；忽略规则本身也不能证明构建或测试已经执行成功。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "目录忽略规则",
+        "reason": "支持三个目录被忽略的直接配置事实，不为目录用途作额外推断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/.gitignore",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "node_modules/\n.build/\ntest-results/"
+      },
+      {
+        "key": "c2",
+        "label": "原型构建说明",
+        "reason": "说明文档定义了 npm 构建流程和单文件打包结果，同时未解释 `.build/` 在流程中的角色。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 20,
+          "endLine": 28
+        },
+        "quote": "## 修改与构建\n\n```bash\ncd docs/prototype\nnpm ci\nnpm run build\n```\n\n`app.jsx` 是 React 交互逻辑，`data.js` 是虚构示例图，`styles.css` 是样式；`build.mjs` 将这些打包到单个 `index.html`。React/ReactDOM 18.3.1、esbuild 0.28.1 均固定在 lockfile。不需要运行 esbuild 才能打开已交付 HTML。"
+      },
+      {
+        "key": "c3",
+        "label": "测试结果目录规则",
+        "reason": "支持 `test-results/` 被忽略这一有限结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/.gitignore",
+          "startLine": 3,
+          "endLine": 3
+        },
+        "quote": "test-results/"
+      },
+      {
+        "key": "c4",
+        "label": "浏览器检查产物说明",
+        "reason": "说明 README 声称检查会产生验证摘要和截图，但未给出它们与 `test-results/` 的路径对应关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 32,
+          "endLine": 39
+        },
+        "quote": "## 浏览器检查\n\n```bash\nnpx playwright install chromium\nnpm test\n```\n\n已有浏览器时可用 `OMEM_CHROMIUM=/path/to/chrome npm test` 指定。测试用 `file://` 打开 HTML，检查长链、环、版本、圈选与追问、同步、恢复、搜索、移动布局及零外部请求；输出 [verification.json](verification.json) 与截图。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`.build/` 是否确为该原型构建流程产生的中间产物目录？",
+        "why": "忽略配置只给出目录名；README 虽说明 `build.mjs` 会打包单个 `index.html`，却未说明 `.build/` 在该流程中的角色。",
+        "nextStep": "提供构建脚本或构建输出记录；在此之前保持为“被忽略的 `.build/` 目录”，不赋予具体用途。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "浏览器检查的哪些产物实际写入 `test-results/`？",
+        "why": "README 提到 `verification.json` 与截图，但没有给出其具体输出路径，不能仅从 `.gitignore` 建立确定映射。",
+        "nextStep": "提供测试脚本或一次实际输出目录清单，以确认 `test-results/` 与各验证产物的关系。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/.gitignore",
+      "digest": "ab072b5ed5d4c38dfbfe825096622076208516775272b714a77244854225779d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/README.md",
+      "digest": "81a869cff3e3b202e0f60f84da90d94d3f91cb5526941c551699d9b76485266e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+      "digest": "f5617b5a98527a2370b6b3c6a2f1dbc040e0f281615ff3ab9dbd81b465e5c251"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:12:09.170Z",
+    "trace": {
+      "runId": "d930c308-78d2-45ed-b53d-7432c1cc001a",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "0a4fb544d5f68222cf9060aed3623461f6ddc45288cecbffad64a0b4e42439f7",
+      "contextHash": "9e6d2dc863142f0ac0eeb34b078df1d7ae962a3c0896a8e82213a845d5e6f2fc",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "20319020826858d31daa438740066500d6481ffffa2c569edd188d96e51ed01e",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4a-e0b7-7cf2-bd87-2c1a962e8966"
+      ],
+      "usage": {
+        "used": 24396,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22259,
+          "utf8Bytes": 32117,
+          "estimatedTokens": 10706,
+          "budgetedTokens": 13383,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:12:18.871Z",
+    "trace": {
+      "runId": "40e64481-4b14-40b1-a8c3-ee6443cf5aba",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "d47421dbebdb0aeea9f16404c272de499d2ba90b9f6c7ea6a9129502048d5209",
+      "contextHash": "2e37e9fd38f23b0e09e4374d4450ff7fd90cbee2033edb95d570bc806533d24c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "4feb03a61db733610a87bcf62a6c504267d759a2dbb08f0822080cf2a26f8b34",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4b-4c31-7c53-bbc3-6bb3a718af6f"
+      ],
+      "usage": {
+        "used": 19666,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 18955,
+          "utf8Bytes": 27285,
+          "estimatedTokens": 9095,
+          "budgetedTokens": 11369,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
