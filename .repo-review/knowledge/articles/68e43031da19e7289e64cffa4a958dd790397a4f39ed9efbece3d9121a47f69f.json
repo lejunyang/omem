@@ -1,0 +1,348 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+    "title": "osdk 配置文件参考",
+    "summary": "说明项目与用户 TOML 配置的合并优先级、顶层段、信任边界，以及工具、源、任务、依赖、模型和 Agent skills 等声明格式；示例是配置语义，不证明项目已经采用。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "layers-and-trust",
+        "title": "配置层级与信任模型",
+        "body": "osdk 使用字段结构相同的项目配置和用户全局配置：项目文件从当前目录向上查找，用户文件承载跨项目默认。覆盖顺序为 CLI、环境变量、项目配置、用户配置、内置默认。[[c1]] 顶层段覆盖设置、工具、别名、源、Registry、容器、系统包、任务、依赖、模型和 skills；其中改变执行或下载来源的配置通常需要信任。受管数据与配置目录内的源或代理设置不应手写。[[c2]]\n\n材料对信任规则有概括性与分段细则，实际是否触发仍应以当前 osdk 的逐键诊断为准。"
+      },
+      {
+        "key": "tools-sources-platform",
+        "title": "工具、设置与来源声明",
+        "body": "`[settings]` 控制并发、校验、离线、语言、预发布和 shim 行为，其中 `shims.include` 是全局白名单式限制，补充命令更适合使用 `expose`。[[c3]] `[tools]` 可用字符串或结构化对象固定版本，结构化形式还能携带平台过滤和 backend 选项；动态工具键需要包含命名空间。[[c4]]\n\n`[sources]` 可定义测速、重试、缓存、固定源和自定义源，但建议通过 source 命令修改。Registry 镜像与工具下载源相互独立，Python 私有 index 不应被公共镜像覆盖。[[c5]] 未识别的平台维度或 token 会直接报错，而非静默不匹配。[[c6]]"
+      },
+      {
+        "key": "tasks-and-dependencies",
+        "title": "任务图与应用依赖",
+        "body": "`[tasks]` 支持字符串、顺序命令数组和完整对象，可定义前置任务、并行子任务、环境、目录、超时、输入输出与新鲜度；数组默认失败即停，只有显式 `ignore_error` 才继续。[[c7]] 根级 `[task_config]` 提供 runner 默认与 monorepo roots，子项目不能另行声明该段。\n\n`[deps]` 与 `[tools]` 分工：前者安装项目依赖，声明 provider 即默认开启自动兑现。provider 可覆盖输入、输出、命令、目录、依赖和安装器，但自定义 index 或允许源码构建会提高信任要求；未知字段会硬报错。[[c8]] 这有助于复现，却不能证明某个 lockfile 完整或依赖已成功安装。"
+      },
+      {
+        "key": "models-skills-and-example",
+        "title": "模型、skills 与最小项目结构",
+        "body": "`[models]` 把模型来源、筛选规则、变体、平台和消费者视图声明化；pull 或首次 sync 会结合声明写入锁并渲染视图，改变 endpoint 才进入额外信任边界。[[c9]] `[skills]` 以相似方式声明来源、版本引用、目标 Agent、作用域和链接模式；osdk 只搬运、锁定和链接内容，不执行其中脚本。[[c10]]\n\n文末最小示例把工具、pnpm 依赖和任务图放进同一 `osdk.toml`。[[c11]] 该示例仅展示合法结构，不是当前项目配置、执行历史或验收结果。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "配置文件类型与覆盖顺序",
+        "reason": "支持项目和用户配置的用途、查找方式及五级合并优先级。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 1,
+          "endLine": 11
+        },
+        "quote": "# osdk 配置文件编写格式参考\n\nosdk 读两类配置文件，两者都是 TOML，**段与字段完全相同**：\n\n- **项目配置**：`osdk.toml`（或 `.osdk.toml`），从当前目录向上查找。放项目专属声明，\n  可提交进仓库。\n- **用户全局配置**：`$OSDK_CONFIG_DIR/config.toml`（`osdk config path` 可打印路径）。放\n  跨项目的个人默认。\n\n**合并优先级（高者胜）**：CLI 参数 → 环境变量（`OSDK_*`）→ 项目配置 → 用户全局配置 →\n内置默认。字段名对齐 `crates/osdk-core/src/config/mod.rs` 的 `Con"
+      },
+      {
+        "key": "c2",
+        "label": "顶层段和信任边界",
+        "reason": "支持合法顶层段、各段用途、信任要求及禁止手写受管配置的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 13,
+          "endLine": 33
+        },
+        "quote": "**顶层段一览**（`ConfigFile` 的字段即合法顶层段）：\n\n| 段 | 用途 | 需要 trust？ |\n| --- | --- | --- |\n| `[settings]` | osdk 自身行为默认值 | 否 |\n| `[tools]` | 项目/全局固定的工具及版本 | 否（仅声明装什么） |\n| `[aliases]` | 版本别名 | 否 |\n| `[sources]` | 下载源 / 镜像策略 | 改写来源的键需要 |\n| `[registries]` | 依赖 Registry 预检候选 | 是（WeakensVerification） |\n| `[containers]` | 原生容器运行时设置 | 镜像"
+      },
+      {
+        "key": "c3",
+        "label": "设置项与 shim 风险",
+        "reason": "支持 settings 的主要字段以及 include 与 expose 的不同风险语义。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 37,
+          "endLine": 92
+        },
+        "quote": "## `[settings]` — osdk 自身行为\n\n对应 `Settings` 结构。这些也可用 `osdk config set <key> <value>` 写入（键名见下方「config\n键名」列）。\n\n| 字段 | 类型 / 取值 | 默认 | 说明 |\n| --- | --- | --- | --- |\n| `link_mode` | 见下 | 平台自适应 | store 对象如何物化进安装目录 |\n| `jobs` | 正整数 | CPU 数（上限 8） | 最大并发下载 / 安装 |\n| `yes` | bool | `false` | 对提示默认「是」 |\n| `verify_signatures` | boo"
+      },
+      {
+        "key": "c4",
+        "label": "工具声明格式",
+        "reason": "支持字符串、结构化工具、动态命名空间和平台过滤的配置方式。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 102,
+          "endLine": 130
+        },
+        "quote": "## `[tools]` — 固定工具与版本\n\n键是 backend id（或动态工具全名），值有两种写法：\n\n```toml\n[tools]\n# 1) 传统字符串：只给版本\nnode = \"20\"\npython = \"3.12\"\n\n# 2) 结构化对象：版本 + backend 专属选项 + 平台过滤\nrust = { version = \"1.98.0\", components = \"rustfmt,clippy\", targets = \"x86_64-pc-windows-gnu\" }\njava = { version = \"21\", distribution = \"zulu\", package-type = \"jdk\" }\n"
+      },
+      {
+        "key": "c5",
+        "label": "来源与 Registry 配置",
+        "reason": "支持来源测速、自定义源、推荐修改入口以及 Registry 的依赖混淆防护。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 147,
+          "endLine": 197
+        },
+        "quote": "## `[sources]` — 下载源与镜像\n\n顶层字段 + 每工具子表（`per_tool` 以工具名 flatten 进 `[sources]`）。\n\n```toml\n[sources]\nselection = \"auto\"          # auto（测速排序）/ 其他选择策略\nmode = \"auto\"               # auto：环境镜像参与测速；env：原样遵循、缺失即报错\nprobe_timeout_ms = 1500              # 普通 SDK / 工具源单次测速超时\nmodel_probe_timeout_ms = 8000        # 模型 metadata / 响应头 "
+      },
+      {
+        "key": "c6",
+        "label": "平台过滤词汇",
+        "reason": "支持跨配置段共用的 os、arch 过滤规则及非法值硬错误行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 392,
+          "endLine": 404
+        },
+        "quote": "## 平台过滤（`when` / `os` / `arch` 通用词汇）\n\n多处（`[tools]` 的 `when`、`[tasks]` 的 `when`、`[syspkg]` 的 `os`/`arch`）共用一套词汇：\n\n```toml\nwhen = { os = \"windows\" }\nwhen = { os = [\"linux\", \"macos\"] }\nwhen = { arch = \"arm64\" }\nwhen = { os = \"linux\", arch = [\"x86_64\", \"arm64\"] }\n```\n- `os` 常见 token：`windows` / `macos`（`darwin`）/ `linux`。\n"
+      },
+      {
+        "key": "c7",
+        "label": "任务定义和执行语义",
+        "reason": "支持任务结构、前置与并行关系、失败处理和 runner 配置边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 244,
+          "endLine": 298
+        },
+        "quote": "## `[tasks]` 与 `[task_config]` — 项目任务（运行时需要 trust）\n\n`[tasks]` 的键是任务名，值有三种：字符串、命令数组、或完整对象（`TaskDef`）。\n\n```toml\n[tasks]\n# 1) 单行字符串\nfmt = \"cargo fmt --all\"\n\n# 2) 命令数组：依次执行、失败即停\n[tasks.ci]\ndescription = \"CI 全流程\"\nrun = [\n  \"cargo fmt --all --check\",\n  { cmd = \"cargo clippy -- -D warnings\", ignore_error = true },  # 容错继续\n  {"
+      },
+      {
+        "key": "c8",
+        "label": "应用依赖 provider",
+        "reason": "支持 tools 与 deps 的职责划分、自动兑现、覆盖字段及提高信任等级的配置。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 302,
+          "endLine": 334
+        },
+        "quote": "## `[deps]` — 应用依赖 provider\n\n`[tools]` 装包管理器本身，`[deps.<provider>]` 装项目自己的包。**空表即选中内置 provider**\n（`auto` 默认 true，声明 provider 就等于开启自动兑现）。\n\n```toml\n[deps]\ndisable = [\"yarn\"]                 # 即使上层启用也在此关掉（不卸载，只不跑）\nroots = [\"apps/*\", \"packages/*\"]   # monorepo：显式声明子项目，绝不盲扫\n\n[deps.pnpm]                        # 键是 provider i"
+      },
+      {
+        "key": "c9",
+        "label": "声明式模型配置",
+        "reason": "支持模型同步、锁定、视图、平台过滤和自定义 endpoint 信任边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 338,
+          "endLine": 361
+        },
+        "quote": "## `[models]` — 声明式模型\n\n`osdk model pull <name>` 会读取同名声明；模型 lock 尚为空时，`osdk model sync` 会按\n当前平台适用的声明批量完成首次拉取。两者都会写 lock 并立即渲染视图。\n\n```toml\n[models.flux]\nsource = \"hf:black-forest-labs/FLUX.1-dev@main\"   # 必填\ninclude = [\"*.safetensors\", \"*.json\"]              # pull 时的 glob 白名单\nexclude = []\nvariant = \"fp16\"               "
+      },
+      {
+        "key": "c10",
+        "label": "声明式 Agent skills",
+        "reason": "支持 skill 来源、目标 Agent、版本锁定及 osdk 不执行脚本的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 365,
+          "endLine": 389
+        },
+        "quote": "## `[skills]` — 声明式 Agent skill\n\n与 `[models]` 同构：声明「要哪个 skill、从哪来、装给哪些 Agent」，`osdk skills sync` 据此复现。\n\n```toml\n[skills]\n# 顶层默认（都可省）\ndefault_agents = [\"claude-code\"]      # add/sync 未指定 -a 时的目标 Agent\nscope = \"project\"                      # project（默认）/ global\nlink_mode = \"symlink\"                  # 可选：仅对 skill 覆盖全局 l"
+      },
+      {
+        "key": "c11",
+        "label": "典型项目最小示例",
+        "reason": "支持工具、依赖和任务可组合在一个项目配置中的说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+          "startLine": 423,
+          "endLine": 441
+        },
+        "quote": "## 最小可用示例（一个典型项目 `osdk.toml`）\n\n```toml\n[tools]\nnode = \"20\"\npython = \"3.12\"\nrust = { version = \"1.98.0\", components = \"rustfmt,clippy\" }\n\n[deps.pnpm]\n\n[tasks]\nbuild = \"cargo build --release\"\n[tasks.ci]\nrun = [{ tasks = [\"fmt-check\", \"test\"] }]\n[tasks.fmt-check]\nrun = \"cargo fmt --all --check\"\n[tasks.test]\nrun = \"cargo t"
+      }
+    ],
+    "questions": [
+      {
+        "question": "顶层信任规则的概括与各段“视字段而定”的细则，当前实现究竟按顶层段还是按具体字段判定？",
+        "why": "材料一处说除 tools 和 aliases 外每个顶层键都需信任，表格及 models、skills、deps 分段又描述只有特定字段需要信任，存在需要实现或文档澄清的表述张力。",
+        "nextStep": "用当前版本对仅含普通 `[settings]`、空 `[deps.pnpm]`、普通 `[models]` 和带 endpoint 的配置分别运行只读解析或信任诊断，并据结果统一文档。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c8",
+          "c9",
+          "c10"
+        ]
+      },
+      {
+        "question": "项目是否需要采用文末示例中的 pnpm、Rust 和 Python 组合，还是示例仅用于说明语法？",
+        "why": "最小示例没有项目背景，直接复制可能引入无关工具和任务。",
+        "nextStep": "依据现有项目清单和锁文件选择实际需要的 `[tools]`、`[deps]` 与 `[tasks]`，不要把示例视为默认方案。",
+        "blocking": false,
+        "citationKeys": [
+          "c11"
+        ]
+      },
+      {
+        "question": "顶层信任规则的概括与各段“视字段而定”的细则，当前实现究竟按顶层段还是具体字段判定？",
+        "why": "材料第 29—30 行称除 `tools` 和 `aliases` 外每个顶层键都需信任，但表格及 `[deps]`、`[models]`、`[skills]` 分段又称只有特定字段需要信任；草稿已明确保留这一不确定性。",
+        "nextStep": "使用当前版本对普通 `[settings]`、空 `[deps.pnpm]`、普通 `[models]` 和带自定义 endpoint 的配置分别运行只读解析或信任诊断，再统一文档表述。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c8",
+          "c9",
+          "c10"
+        ]
+      },
+      {
+        "question": "项目是否确实需要文末示例中的 pnpm、Rust 和 Python 组合？",
+        "why": "该组合仅是语法示例，材料没有提供当前项目采用它的背景。",
+        "nextStep": "根据项目实际清单和锁文件选择 `[tools]`、`[deps]` 与 `[tasks]`，不要直接复制示例。",
+        "blocking": false,
+        "citationKeys": [
+          "c11"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/agents/openai.yaml",
+      "digest": "79114042766ffd95bd85bc19efb22162118bda72b30963e11a307f702b6143eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+      "digest": "3a314043cc40e4e95900a1ecb9d7fea677fbef80f07fcec049ebcedb7d1adde7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/commands.md",
+      "digest": "ad727b71bd400dd964c6d3c10e3c0bd7606736a35b150cb0b35d0d16e52c8e6e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+      "digest": "eb6727e632faf5b3f54eeb2c86f93aa238f17396725906789c2bcdd56364e050"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:34.034Z",
+    "trace": {
+      "runId": "492f2b79-7391-4af4-8fbc-8a862fdbf337",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "ef334ee5b0bcc7cea8013d664f2dc8a0c452d38fea76a1f013701199065f6c82",
+      "contextHash": "aa6f815a9d7ed0bc0c3928f6d51b38b98fcf890485d532572143e59402e85e35",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1d042ea70126c9ab71103a1b8e0d2e9b851f5db43284ed36c00b078cf0a5f2d5",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-39e4-7530-82d0-d718ab985881"
+      ],
+      "usage": {
+        "used": 40878,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49737,
+          "utf8Bytes": 67589,
+          "estimatedTokens": 22530,
+          "budgetedTokens": 28163,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:01:06.646Z",
+    "trace": {
+      "runId": "81367b32-d037-4ab1-b943-4dd3a8a9e02f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "8bd3a538623dbc8686abb0c4258b7a1aa0445191e837ea797f7360487242790e",
+      "contextHash": "f60ffb90b4fe192677946d6f43b34626aa84046714c05fcd8738eec57103d8c8",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "86cbaac36f3c4657a076ec950be47183d17e9db90e9af6e611e8df0ab778afaa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8a-46fc-7f50-be17-5859206038c9"
+      ],
+      "usage": {
+        "used": 47791,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 75459,
+          "utf8Bytes": 110565,
+          "estimatedTokens": 36855,
+          "budgetedTokens": 46069,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

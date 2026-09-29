@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:.agents/skills/omem-design/agents/openai.yaml",
+    "title": "omem 界面设计技能入口配置",
+    "summary": "为 Agent 界面登记 omem 设计技能的展示名称、简短说明和默认提示词；这是入口元数据，不是 UI 实现或技能执行记录。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "interface-metadata",
+        "title": "界面展示元数据",
+        "body": "配置在 `interface` 下提供人类可读名称“omem 界面设计”，并用简短说明把能力定位为：沿用证据阅读设计语言，构建可访问的 Vue 组件和移动端页面。[[c1]] 它承担的是技能发现与展示作用，没有声明运行时、组件路径、权限或验证结果。"
+      },
+      {
+        "key": "default-invocation",
+        "title": "默认调用语义",
+        "body": "默认提示词要求调用 `$omem-design`，并以项目 `design.md` 作为 Vue 界面的设计依据。[[c2]] 这一行只表达默认引导语；是否实际加载对应技能、读取设计文件并完成实现，仍取决于宿主的技能解析与执行流程，不能由该 YAML 本身证明。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "技能展示名称与简介",
+        "reason": "支持该配置用于人类可读展示，并界定可访问 Vue 与移动端页面的能力描述。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/omem-design/agents/openai.yaml",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "interface:\n  display_name: \"omem 界面设计\"\n  short_description: \"沿用证据阅读设计语言构建可访问的 Vue 组件与移动端页面\""
+      },
+      {
+        "key": "c2",
+        "label": "默认技能提示词",
+        "reason": "支持默认提示词会引用 omem-design 技能和项目 design.md 的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/omem-design/agents/openai.yaml",
+          "startLine": 4,
+          "endLine": 4
+        },
+        "quote": "  default_prompt: \"使用 $omem-design 为 omem 构建遵循项目 design.md 的 Vue 界面。\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前 Agent 宿主是否会读取此 `openai.yaml`，以及 `$omem-design` 名称是否已成功解析到同目录技能？",
+        "why": "材料只有声明式入口配置，没有宿主加载日志、注册结果或端到端调用证据。",
+        "nextStep": "在宿主的技能列表或诊断输出中核对展示名称与技能映射，并执行一次只读发现测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "当前 Agent 宿主是否会读取此 `openai.yaml`，且 `$omem-design` 是否能解析到同目录技能？",
+        "why": "材料仅包含声明式入口元数据，没有宿主加载、注册或端到端调用证据。",
+        "nextStep": "通过宿主的技能列表或诊断输出核对展示名称与技能映射，并执行一次只读发现测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/agents/openai.yaml",
+      "digest": "79114042766ffd95bd85bc19efb22162118bda72b30963e11a307f702b6143eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+      "digest": "3a314043cc40e4e95900a1ecb9d7fea677fbef80f07fcec049ebcedb7d1adde7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/commands.md",
+      "digest": "ad727b71bd400dd964c6d3c10e3c0bd7606736a35b150cb0b35d0d16e52c8e6e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+      "digest": "eb6727e632faf5b3f54eeb2c86f93aa238f17396725906789c2bcdd56364e050"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:34.034Z",
+    "trace": {
+      "runId": "492f2b79-7391-4af4-8fbc-8a862fdbf337",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "ef334ee5b0bcc7cea8013d664f2dc8a0c452d38fea76a1f013701199065f6c82",
+      "contextHash": "aa6f815a9d7ed0bc0c3928f6d51b38b98fcf890485d532572143e59402e85e35",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1d042ea70126c9ab71103a1b8e0d2e9b851f5db43284ed36c00b078cf0a5f2d5",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-39e4-7530-82d0-d718ab985881"
+      ],
+      "usage": {
+        "used": 40878,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49737,
+          "utf8Bytes": 67589,
+          "estimatedTokens": 22530,
+          "budgetedTokens": 28163,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:01:06.646Z",
+    "trace": {
+      "runId": "81367b32-d037-4ab1-b943-4dd3a8a9e02f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "8bd3a538623dbc8686abb0c4258b7a1aa0445191e837ea797f7360487242790e",
+      "contextHash": "f60ffb90b4fe192677946d6f43b34626aa84046714c05fcd8738eec57103d8c8",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "86cbaac36f3c4657a076ec950be47183d17e9db90e9af6e611e8df0ab778afaa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8a-46fc-7f50-be17-5859206038c9"
+      ],
+      "usage": {
+        "used": 47791,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 75459,
+          "utf8Bytes": 110565,
+          "estimatedTokens": 36855,
+          "budgetedTokens": 46069,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

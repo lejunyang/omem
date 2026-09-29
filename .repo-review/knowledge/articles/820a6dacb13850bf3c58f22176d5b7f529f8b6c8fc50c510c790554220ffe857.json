@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:package.json",
+    "title": "omem 项目清单与运行入口",
+    "summary": "该清单定义了 omem 的 Node.js 运行基线、开发与验证脚本，以及服务端、Vue 构建、ACP、Lark、测试和格式化所需的直接依赖。它能说明项目声明的工具链和入口，但不能单独证明脚本已成功执行、能力已完整实现，或传递依赖已被锁定。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "runtime-and-entrypoints",
+        "title": "运行基线与主要入口",
+        "body": "项目是版本 0.1.0 的私有 ESM 包，要求 Node.js 24 或更高版本，这是运行各入口的基础兼容条件。[[c1]] 开发脚本分别覆盖统一开发、服务端监听、Web 前端和 repo-review；构建流程先编译服务端 TypeScript，再构建 Web 应用，生产入口执行编译后的服务端文件。[[c2]] 这些只是预期调用链的配置声明，不能证明对应服务已经启动或通过验收。"
+      },
+      {
+        "key": "verification-workflows",
+        "title": "验证、质量与维护流程",
+        "body": "清单提供服务端与 Vue 的联合类型检查、Vitest、浏览器冒烟测试，以及角色、学习、流水线和 Lark Host 的独立现场检查入口。[[c3]] 此外还有 Lark 标注、质量评估、组合质量运行、服务端 CLI 与 Prettier 格式化命令。[[c4]] 这种拆分体现了静态检查、自动化测试和外部集成检查的不同边界；由于材料没有退出码、行为断言或凭据状态，它只能作为命令目录，不能作为验证通过的证据。"
+      },
+      {
+        "key": "dependency-profile",
+        "title": "依赖结构与技术边界",
+        "body": "运行依赖包括 ACP SDK、Fastify 及其静态资源插件、Lark SDK 和 Zod，表明服务端预期涉及协议接入、HTTP 服务、飞书集成和数据校验。[[c5]] 开发依赖覆盖 Vue 单文件组件编译、Vite、TypeScript、Vitest、Playwright 和 vue-tsc，构成前端构建、类型检查、单元测试与浏览器自动化工具链。[[c6]] 清单中的直接依赖与开发依赖均声明为明确版本；这不等于传递依赖全部锁定，而且文件未声明包管理器版本或展示锁文件状态，冻结解析规则仍需另行核实。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "包元数据与 Node.js 版本要求",
+        "reason": "支持项目为私有 ESM 包、当前清单版本及 Node.js 最低运行版本的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 2,
+          "endLine": 8
+        },
+        "quote": "  \"name\": \"omem\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"engines\": {\n    \"node\": \">=24.0.0\"\n  },"
+      },
+      {
+        "key": "c2",
+        "label": "开发、构建与启动脚本",
+        "reason": "说明各类开发入口，以及服务端编译、Web 构建和生产启动之间的配置关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 9,
+          "endLine": 15
+        },
+        "quote": "  \"scripts\": {\n    \"dev\": \"tsx scripts/dev.ts\",\n    \"dev:server\": \"tsx watch apps/server/src/main.ts\",\n    \"dev:web\": \"pnpm --filter @omem/web run dev\",\n    \"dev:review\": \"tsx scripts/dev-review.ts\",\n    \"build\": \"tsc -p tsconfig.server.json && pnpm --filter @omem/web run build\",\n    \"start\": \"node dist/apps/server/src"
+      },
+      {
+        "key": "c3",
+        "label": "类型检查与测试入口",
+        "reason": "支持类型检查、Vitest、浏览器测试和多类现场集成检查被分别声明的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 16,
+          "endLine": 22
+        },
+        "quote": "    \"typecheck\": \"tsc --noEmit -p tsconfig.server.json && vue-tsc --noEmit -p apps/web/tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"test:browser\": \"tsx scripts/browser-smoke.ts\",\n    \"test:live-role\": \"tsx scripts/live-role-smoke.ts\",\n    \"test:live-learning\": \"tsx scripts/live-learning-smoke.ts\",\n    \"test:live-pipe"
+      },
+      {
+        "key": "c4",
+        "label": "质量评估、CLI 与格式化脚本",
+        "reason": "说明质量处理、服务端 CLI 和代码格式化所对应的维护入口。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 23,
+          "endLine": 27
+        },
+        "quote": "    \"quality:lark-annotate\": \"tsx scripts/quality-lark-annotate.ts\",\n    \"quality:evaluate\": \"tsx scripts/quality-evaluate.ts\",\n    \"quality:run\": \"tsx scripts/quality-run.ts\",\n    \"cli\": \"tsx apps/server/src/cli.ts\",\n    \"format\": \"prettier --write \\\"apps/**/*.{ts,vue,css,mjs}\\\" \\\"packages/**/*.{ts,vue,css}\\\" \\\"script"
+      },
+      {
+        "key": "c5",
+        "label": "应用运行依赖",
+        "reason": "支持 ACP、Fastify、Lark 与数据校验构成主要服务端直接依赖面的分析。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 29,
+          "endLine": 35
+        },
+        "quote": "  \"dependencies\": {\n    \"@agentclientprotocol/sdk\": \"1.5.0\",\n    \"@fastify/static\": \"8.3.0\",\n    \"@larksuiteoapi/node-sdk\": \"1.74.0\",\n    \"fastify\": \"5.12.5\",\n    \"zod\": \"4.1.12\"\n  },"
+      },
+      {
+        "key": "c6",
+        "label": "开发与测试工具依赖",
+        "reason": "支持 Vue 构建、TypeScript 检查、Vitest 测试和 Playwright 浏览器自动化工具链的说明，并限定明确版本结论仅适用于清单所列直接开发依赖。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 36,
+          "endLine": 46
+        },
+        "quote": "  \"devDependencies\": {\n    \"@playwright/test\": \"1.58.2\",\n    \"@types/node\": \"24.10.1\",\n    \"@vitejs/plugin-vue\": \"6.0.9\",\n    \"@vue/compiler-sfc\": \"3.5.43\",\n    \"prettier\": \"3.6.2\",\n    \"tsx\": \"4.20.6\",\n    \"typescript\": \"5.9.3\",\n    \"vite\": \"7.3.1\",\n    \"vitest\": \"3.2.4\",\n    \"vue-tsc\": \"3.1.4\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "清单中声明的 build、typecheck、test 与浏览器测试目前是否都能在规定环境下成功退出？",
+        "why": "package.json 第 14 至 22 行只定义命令，没有运行记录、退出码或行为断言，无法据此判断当前实现和验证状态。",
+        "nextStep": "查阅最新检查记录，或在依赖已冻结安装的规定环境中分别执行这些入口并保存退出码与失败项。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "项目使用的包管理器版本及冻结依赖解析规则是什么？",
+        "why": "脚本调用了 pnpm，但清单没有 packageManager 字段；直接依赖和开发依赖声明为明确版本，也不能单独确定包管理器版本、锁文件状态或传递依赖解析结果。",
+        "nextStep": "结合锁文件、osdk 配置或项目安装文档确认 pnpm 版本和冻结安装流程。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:package.json",
+      "digest": "6d4b9075ac687e5b6fdd63098d88fbe3855ab556cc0186f6101af47db1f38f0f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:11.641Z",
+    "trace": {
+      "runId": "57a9976f-a869-431b-b09c-4a22cbe4343c",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "f8f1c2aa0919a9c96f4e208d0bfd13d2cc0dd5ceaf0646dd1c4e1433844b666b",
+      "contextHash": "cf22c8821d2e47db7a2f896da1efcd45e865d27d855a4d2c874f7de22b4d6e9e",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "222327d75ab67278b5ec31194a90c0359fb8230405341364d3a4c41d2900d576",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-2d19-72f2-abc7-87b4330654bc"
+      ],
+      "usage": {
+        "used": 17905,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 13196,
+          "utf8Bytes": 17566,
+          "estimatedTokens": 5856,
+          "budgetedTokens": 7320,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:06:18.029Z",
+    "trace": {
+      "runId": "e4c07f33-013a-4226-816b-688d2a646a94",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b3ea9b4351fa11d235afb031299a06be7b597350e57a41f9ead774b8d58f4466",
+      "contextHash": "41080be26d5c883bff8f17c7b7ff7b843e820dfeddd7743a0f06076c5099f585",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8ff8747b49399a81624a98c61351657bbc6207fa3345cb7e1778b21f7dd6cefa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-5b90-7de1-bad7-7267f73f8faa"
+      ],
+      "usage": {
+        "used": 15825,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 10247,
+          "utf8Bytes": 13305,
+          "estimatedTokens": 4435,
+          "budgetedTokens": 5544,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

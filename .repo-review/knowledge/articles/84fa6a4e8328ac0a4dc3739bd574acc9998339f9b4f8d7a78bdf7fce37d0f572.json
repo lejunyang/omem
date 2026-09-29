@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:integrations/traex/hooks.example.json",
+    "title": "TraeX 可选捕获 Hook 示例",
+    "summary": "这是版本 1 的 opt-in 配置模板，为用户提示提交、工具使用后和停止三个事件配置同一转发命令、5 秒超时及异步标志。模板尚含绝对路径占位符，也未规定字段范围、宿主调度语义和失败处理，因此不代表已经安装、授权或验证。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "intent",
+        "title": "用途与启用边界",
+        "body": "配置说明将该集成定义为 opt-in capture，并要求合并前审查字段和捕获范围。[[c1]] 因此它只是供用户选择的接入模板，不能证明配置已写入 TraeX、用户已经授权，或敏感字段、文件内容及工具结果已经完成最小化处理。实际启用属于独立外部集成，应先确定捕获边界并保留用户现有配置。"
+      },
+      {
+        "key": "events",
+        "title": "事件与命令配置",
+        "body": "样例为 `UserPromptSubmit`、`PostToolUse` 和 `Stop` 配置相同的 command Hook：调用构建目录中的 `hook-forward.js`，设置 `timeout` 为 5 秒，并写入 `async:true`。[[c2]] 材料只能证明这些字段存在，不能推导 TraeX 是否等待、如何调度异步任务或怎样呈现超时与失败。命令中的绝对路径仍是占位符，也没有证明目标机器上的 Node 与构建产物可用。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "可选捕获说明",
+        "reason": "支持该模板需由用户选择启用，并在合并前审查字段和捕获范围。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:integrations/traex/hooks.example.json",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "{\n  \"description\": \"omem opt-in capture; merge after reviewing fields and capture scope\",\n  \"version\": \"1\","
+      },
+      {
+        "key": "c2",
+        "label": "三个 Hook 事件配置",
+        "reason": "支持事件名称、转发命令、5 秒超时和异步标志；不扩张解释宿主的实际执行语义。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:integrations/traex/hooks.example.json",
+          "startLine": 4,
+          "endLine": 8
+        },
+        "quote": "  \"hooks\": {\n    \"UserPromptSubmit\": [{\"hooks\":[{\"type\":\"command\",\"command\":\"node /ABSOLUTE/PATH/omem/dist/apps/server/src/hook-forward.js\",\"timeout\":\"5s\",\"async\":true}]}],\n    \"PostToolUse\": [{\"hooks\":[{\"type\":\"command\",\"command\":\"node /ABSOLUTE/PATH/omem/dist/apps/server/src/hook-forward.js\",\"timeout\":\"5s\",\"async\":tr"
+      }
+    ],
+    "questions": [
+      {
+        "question": "三个事件分别允许捕获哪些字段，是否需要排除工具结果、密钥、文件内容或个人信息？",
+        "why": "样例要求合并前审查字段和捕获范围，但没有给出白名单、脱敏规则或保留期限；这些选择会影响未来启用时的隐私与数据最小化。",
+        "nextStep": "由用户确认事件级字段白名单、排除规则和保留策略后，再生成实际宿主配置。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "TraeX 对 `async:true` 的调度、等待、超时和失败呈现语义是什么？",
+        "why": "当前材料只证明三个 Hook 配置了异步标志，不能证明宿主不等待，也不能说明异步失败如何记录。",
+        "nextStep": "引用 TraeX Hook 规范或执行行为测试；在此之前仅陈述配置字段，不推导运行语义。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "实际 omem 构建产物的绝对路径是什么，宿主能否解析 Node 并执行该脚本？",
+        "why": "命令仍包含绝对路径占位符，且样例没有证明目标环境的运行时和构建产物存在。",
+        "nextStep": "实际启用前填写目标机器上的明确路径，并用无敏感数据的测试事件核对退出状态与日志。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/status.md",
+      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/validation.md",
+      "digest": "5eb15b18beab74b3acb92965d549a00866e74a07934129b495f1eacfd0203b5b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:integrations/traex/hooks.example.json",
+      "digest": "0ce9740fd7d84a9b15fbd12ca8bb9d0490f943747b987ea9d4c4246fe5e61279"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.lock",
+      "digest": "8ea83c4ae93ba830a0045e8b54a64455979ac30a10af73730b5546d379eb90e9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.toml",
+      "digest": "f2f80953f5e21a98762274f91832d3384390ba80aaa52869785489a1f8c94d74"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/knowledge-pipeline.md",
+      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/decisions.md",
+      "digest": "0c9ad65608b280513073e08eb7a7ebf2dba050641f385305f7526cd7a0eb5ad7"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:41.658Z",
+    "trace": {
+      "runId": "b1fda0c8-092e-4623-8fb0-53ac699e7b04",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "48eff0a9ff3e5ec32d897f8b081c21836f91e592d8cfcb906e9fafbfa558d358",
+      "contextHash": "eb7f8aff9929ad5bfd1146be69386beb0887bf5238356af3d7efc091978f99bc",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9978df3bd571dd30e804a77ed7ace1bb506f247a21e16c91390384e5a9975a35",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-5a29-7691-bab2-7b7e309fd996"
+      ],
+      "usage": {
+        "used": 43350,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 67006,
+          "utf8Bytes": 100014,
+          "estimatedTokens": 33338,
+          "budgetedTokens": 41673,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:06:57.839Z",
+    "trace": {
+      "runId": "1ad94e6d-07f6-4172-bff9-6b896679fd9b",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "be560d6dfb37f2107591789f28a64f8d80e7bbac1910787075a09f2f6b52867c",
+      "contextHash": "fecea56500ab2da590e3d986c0a3c0e8ba91015c33a2fa8a6bc263a52a551af3",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d06aa101934690360571a2a0fe8a00f0d754aa968cb0ec30fad6745dfbf515c1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-d0e6-77e1-b4ed-cfc43d46218c"
+      ],
+      "usage": {
+        "used": 41059,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 65229,
+          "utf8Bytes": 97923,
+          "estimatedTokens": 32641,
+          "budgetedTokens": 40802,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

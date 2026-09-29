@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:config/review-code-model.json",
+    "title": "代码评审模型的非 example 配置",
+    "summary": "仓库中的非 example 配置文件声明 TraeX ACP、gpt-5.6-sol、中等 effort 及相应资源预算；仅凭文件内容不能确认运行时默认读取它，也不能证明模型调用已经成功。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "execution",
+        "title": "执行器声明",
+        "body": "该非 example 配置选择 ACP transport，以 `traecli` 启动，并传入只读沙箱和 ACP 服务参数。[[c1]] 它与所提供的 example 文件内容一致，但文件名及静态内容只能证明仓库中存在这组声明，不能证明启动流程默认加载该文件，也不能排除环境变量或其他配置来源覆盖它。"
+      },
+      {
+        "key": "limits",
+        "title": "模型、effort 与资源限制",
+        "body": "文件声明模型为 `gpt-5.6-sol`、effort 为 `medium`，单次超时为 480 秒；输入、输出和上下文预留预算分别是 192000、24000 与 16000 token。[[c2]] 这些数值描述预期执行边界，不等同于执行端已接受全部设置，也不证明已经触发显式分析、生成或任何自动模型调用。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "ACP 执行配置",
+        "reason": "支持该非 example 文件中声明 ACP transport、traecli 命令和只读沙箱启动参数。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-code-model.json",
+          "startLine": 2,
+          "endLine": 9
+        },
+        "quote": "  \"transport\": \"acp\",\n  \"command\": \"traecli\",\n  \"args\": [\n    \"-c\",\n    \"sandbox_mode=\\\"read-only\\\"\",\n    \"acp\",\n    \"serve\"\n  ],"
+      },
+      {
+        "key": "c2",
+        "label": "模型与预算配置",
+        "reason": "支持文件中声明的模型、effort、超时和各项 token 预算。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-code-model.json",
+          "startLine": 10,
+          "endLine": 15
+        },
+        "quote": "  \"model\": \"gpt-5.6-sol\",\n  \"effort\": \"medium\",\n  \"timeoutMs\": 480000,\n  \"maxInputTokens\": 192000,\n  \"maxOutputTokens\": 24000,\n  \"contextReserveTokens\": 16000"
+      }
+    ],
+    "questions": [
+      {
+        "question": "运行时是否读取此文件，且最近一次显式分析的 trace 是否记录了相同的模型、effort 和预算？",
+        "why": "静态文件只能确认声明值，无法确认加载路径、覆盖规则、ACP 能力校验结果或执行端最终采用的参数。",
+        "nextStep": "检查启动时的配置解析结果，并将一次显式分析产生的运行 trace 与文件字段逐项对照。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "运行时是否读取此文件，最近一次显式分析是否采用并记录了相同的模型、effort 和预算？",
+        "why": "静态配置只能证明仓库中存在这些声明，不能证明加载路径、覆盖规则、ACP 能力校验结果或最终执行参数。",
+        "nextStep": "检查启动时的配置解析结果，并把一次显式分析的运行 trace 与文件字段逐项对照。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:config/omem.example.json",
+      "digest": "ecba4320f4a1389feece681ad38d82f3eee9ffc22291b9e23f6cafeaea5e523f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/review-code-model.example.json",
+      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/review-code-model.json",
+      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+    },
+    {
+      "kind": "material",
+      "key": "omem:deploy/omem.env.example",
+      "digest": "3a49807415a019629e2766a5356cee26526b901566c16c59f17fc71da5cd3aaa"
+    },
+    {
+      "kind": "material",
+      "key": "omem:deploy/omem.service.example",
+      "digest": "1f1dda957ae1e6765a313da0b7af11b1eae0e0ff58e7bf405d510377e4597861"
+    },
+    {
+      "kind": "material",
+      "key": "omem:design.md",
+      "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/design.md",
+      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:45:05.898Z",
+    "trace": {
+      "runId": "3d2190a5-97e9-469b-b2e7-dc862908f037",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "8df970836bcee3e065165a0dbf38253c1396a1ac6990655ee3e83ffec375cd5a",
+      "contextHash": "702742bd5c7576e3df0b80f7fa6953424bd0868293c8127067136856f20789b7",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9e64681b6aeae4cc3e8e8278ddbfd17676b93b72f878051ae88630f3bb016271",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb2-b71d-7263-af50-7f7e6884af6e"
+      ],
+      "usage": {
+        "used": 25376,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 27039,
+          "utf8Bytes": 38567,
+          "estimatedTokens": 12856,
+          "budgetedTokens": 16070,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:45:22.018Z",
+    "trace": {
+      "runId": "6ad346ba-dce6-4054-8bdb-cb2076d81a8c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "72536710157be82b9647d63f14411c8cc841093b969e2076bfb7deaddb81714e",
+      "contextHash": "7f6bcdbb021bebee33e40c0b25c75ef5c3ec1d532d78076cb0e70546f2aa2395",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d03f1a10f1ce024958593bf9c737b81d621d6a844599b2878450e11d687387f5",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb3-0b90-7e10-aa1b-b82a88c82e02"
+      ],
+      "usage": {
+        "used": 23178,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 23899,
+          "utf8Bytes": 34503,
+          "estimatedTokens": 11501,
+          "budgetedTokens": 14377,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

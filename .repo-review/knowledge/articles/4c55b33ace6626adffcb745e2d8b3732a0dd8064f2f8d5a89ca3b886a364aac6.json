@@ -1,0 +1,312 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:README.md",
+    "title": "omem 项目能力与运行说明",
+    "summary": "README 将 omem 描述为个人工作记忆与助理系统，概述统一采集与知识整理、Agent 配置、单用户部署、外部集成和验证入口，并明确语义检索、多租户、跨轮会话及部分自动重核验能力仍有限制。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "product-and-knowledge",
+        "title": "产品定位与知识流程",
+        "body": "omem 面向个人工作记忆与助理场景，统一接收文本、图片、链接和上下文，保留不可变证据，再通过 Agent CLI/ACP 分析、独立复核并组织知识正文。个人问答、受治理记忆、待办、通知和仓库 Wiki 沿用同一证据链；外部屏幕采集仍需单独配置。[[c1]]\n\n知识处理复用 Capture→Source/Revision/Fragment、持久任务和 RoleRuntimeGateway；AST 用于定位及明确结构关系，语义说明由模型分析和复核。[[c2]] 派生正文只能引导召回，最终依据仍回到经过会话可见性过滤的原始 Fragment；疑问和用户回答进入重核对流程，独立模型复核也不等同于人工验收。[[c3]]"
+      },
+      {
+        "key": "runtime-and-review",
+        "title": "运行方式与仓库评审",
+        "body": "基础运行需要 osdk 和可登录的 Agent CLI，不要求 Docker、Python、Redis 或本地大模型；个人服务可通过默认启动或开发模式运行。[[c4]] 部署边界则更严格：默认只监听 loopback，开放到局域网或公网时必须设置强令牌，并建议使用 TLS 反向代理或 SSH 隧道；当前 shared-token 方案明确是单用户实现，不能视作团队权限系统。[[c5]]\n\n仓库阅读模式 `dev:review` 只恢复已提交知识，不调用模型；`review:analyze` 或定向 `review:generate` 才进行真实分析，`review:build` 仅重建索引。review 使用独立 SQLite 且不启动个人业务 worker。[[c6]] 跨文件调用的精确类型解析、embedding 检索和所有来源的自动重核验仍未完成，不能写成已交付能力。[[c7]]"
+      },
+      {
+        "key": "agents-data-integrations",
+        "title": "Agent、数据治理与外部集成",
+        "body": "Agent profile 可配置 transport、命令、模型和 effort；服务会探测能力并拒绝不受支持的选项。CLI-only 模式不能附图，每次问答使用新会话，尚未实现跨轮 ACP session resume；保存的引用只表示曾提供给模型，不代表事实支持已经验证。[[c8]]\n\nSQLite 保存版本、片段、任务和治理记录；相同来源与内容可幂等重试，不同内容形成新版本。学习开启后，extractor 和独立 verifier 通过持久任务处理材料，最终写入仍受 MemoryService 的确定性门控，模型没有直接写库权限。[[c9]] 飞书是默认关闭的显式集成，需要本地主密钥、授权和同应用 pairing；主密钥丢失或轮换会使已有密文无法解密。[[c10]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "项目定位与统一输入",
+        "reason": "支持个人助理定位、统一多模态输入、不可变证据链以及外部采集需单独配置的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# omem\n\n个人工作记忆与助理系统。统一接收文本、图片、链接与上下文，保留不可变证据，通过 Agent CLI/ACP 分析、独立复核和组织知识正文。个人问答、受治理记忆、待办与通知沿用同一证据链；本仓库的 Wiki 是代码材料的一种应用。外部屏幕采集器等接入仍需单独配置。"
+      },
+      {
+        "key": "c2",
+        "label": "知识整理与代码定位职责",
+        "reason": "支持通用知识管线、独立复核、内联引用及 AST 只负责定位和明确结构关系的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 20,
+          "endLine": 22
+        },
+        "quote": "## 知识整理与本仓库 Wiki\n\n知识处理复用 Capture → Source / Revision / Fragment、现有持久 jobs 和 RoleRuntimeGateway。代码、文档、对话、图像使用专门角色；分析后由独立角色复核，再由 AI 组织模块、架构、背景、需求、进展与概览章节。正文引用直接贴近论断，带名称、理由、固定位置，可逐层进入子知识、原文与代码。代码 AST 用于定位和明确的结构关系，语义说明与关系由模型分析和复核。"
+      },
+      {
+        "key": "c3",
+        "label": "原始证据召回与人工验收边界",
+        "reason": "直接支持派生正文仅作导航、召回仍返回可见性过滤后的原始 Fragment，以及独立复核不等于人工验收。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 50,
+          "endLine": 50
+        },
+        "quote": "个人服务的“知识整理”使用同一流程处理已进入 Capture 的材料。知识正文可引导助手召回，但返回的依据仍是原始 Fragment，继续经过会话可见性过滤。疑问保留为有依据的调查项，用户可以补充背景或加入待办；回答作为原始材料保存并触发重核对。派生解释与已应用事实保持区别，独立模型复核也不等于人工验收。"
+      },
+      {
+        "key": "c4",
+        "label": "基础运行依赖与启动方式",
+        "reason": "支持 osdk、Agent CLI、无需本地模型及默认和开发启动方式的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 5,
+          "endLine": 18
+        },
+        "quote": "## 启动\n\n需要 osdk 和可登录的 Agent CLI；omem 当前运行不需要 Docker、Python、Redis 或本地大语言模型。\n\n```bash\nosdk skills sync\nosdk trust --yes\nosdk install\nosdk deps --frozen\nosdk run build\nosdk run start\n```\n\n浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 与 Vue（默认 4317 / 5173）。默认端口被占用时选择空闲端口，并将实际 API 地址传给前端代理；请打"
+      },
+      {
+        "key": "c5",
+        "label": "单用户网络部署边界",
+        "reason": "直接支持 loopback 默认监听、外部暴露所需令牌与加密通道，以及 shared token 不是团队权限系统。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 92,
+          "endLine": 92
+        },
+        "quote": "单用户部署默认仅监听 loopback。公网/局域网监听需设置 `OMEM_HOST` 和强 `OMEM_TOKEN`，所有 `/api/*` 都校验 Bearer；浏览器令牌仅放 sessionStorage。部署到服务器建议用 TLS 反向代理/SSH 隧道。当前不是多租户服务，不把一个 shared token 当团队权限系统。"
+      },
+      {
+        "key": "c6",
+        "label": "Review 命令与隔离运行",
+        "reason": "支持阅读启动不调用模型、显式分析与索引命令，以及 review 独立数据库和不启动业务 worker的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 24,
+          "endLine": 39
+        },
+        "quote": "```bash\n# 本仓库阅读视图：恢复已提交知识，不调用模型\nosdk run dev:review\n# 分析全部仓库材料，独立复核并生成章节；真实消耗模型调用\nosdk run review:analyze\n# 只处理一个文件或目录\nosdk run review:generate -- --target=apps/server/src/retrieval/keyword.ts\n# 重试未完成/过期项；正常运行会复用已完成知识与持久结果\nosdk run review:analyze -- --retry\n# 仅重建索引，不调用模型\nosdk run review:build\n```\n\n默认 API / web 端口是 5180"
+      },
+      {
+        "key": "c7",
+        "label": "尚未完成的知识能力",
+        "reason": "直接支持跨文件精确调用解析、embedding 检索及所有来源自动重核验尚未完成的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 52,
+          "endLine": 52
+        },
+        "quote": "跨文件调用的精确类型解析、embedding 检索和所有来源的自动重核验尚未完成；不会把这些能力写成已交付。流程、分项提交与验证记录见 [通用知识流程](docs/implementation/knowledge-pipeline.md)，早期问题见 [复审记录](docs/implementation/code-wiki-review-2026-09-29.md)。"
+      },
+      {
+        "key": "c8",
+        "label": "Agent 能力发现与会话限制",
+        "reason": "支持模型能力校验、CLI 图片限制、新会话策略及引用不等同于事实验证的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 56,
+          "endLine": 71
+        },
+        "quote": "## Agent 配置\n\n复制 `config/omem.example.json` 为忽略提交的 `omem.local.json`，按本机命令调整。运行时读取 `OMEM_CONFIG` 指向的文件（默认 omem.local.json，不存在则使用示例）。`profiles` 可配置 transport、command、args、默认 model/effort、instructions、maxContextChars、timeoutMs。文件配置在服务启动时读取，修改后重启；界面中的模型/effort 作用于下一次问题。\n\n- TraeX：`traecli acp serve`，复用宿主登录，动态发现模型/effort，支持图"
+      },
+      {
+        "key": "c9",
+        "label": "持久任务与 MemoryService 写入边界",
+        "reason": "支持版本化存储、幂等捕获、extractor/verifier 流程及模型不能直接写库的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 88,
+          "endLine": 96
+        },
+        "quote": "## 数据与服务部署\n\n数据位于 `.omem/`，可用 `OMEM_DATA_DIR` 指定。SQLite 保存版本、片段、引用、待办、变更、通知和持久 job；图片为 hash 对象文件。数据库按递增 migration 升级，拒绝写入高于当前程序支持版本的库。相同来源标识+相同内容重试不重复录入；不同内容追加版本，旧引用仍可访问。原始材料与首个提炼 job 同事务提交，job 支持租约、fencing token、分类重试、取消和 attempt 指纹；配置 `learning.enabled=true` 并提供可用 Agent 后会执行提炼与独立复核；关闭时任务保持排队，不冒充处理完成。恢复会生成新版本；有后续变更时返回 R"
+      },
+      {
+        "key": "c10",
+        "label": "飞书启用与密钥治理",
+        "reason": "支持飞书默认关闭、需要显式授权和本地主密钥，以及密钥丢失后的解密风险。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 102,
+          "endLine": 106
+        },
+        "quote": "飞书接入已有基于官方 `@larksuiteoapi/node-sdk@1.74.0` 的 `registerApp()` adapter、扫码状态机、AES-256-GCM secret store、公开 OpenAPI capability probe、一次性 pairing/binding、官方 WebSocket adapter、单消费者 lease、事件 inbox、入群自动监控/移群停用、通知 sender 和耐竞态的 Card 2.0 决策队列。可手工导入现有应用，也可从本机 botmux 配置按 app_id 选择后加密转存，不修改 botmux 配置。默认注册 profile 还参考 botmux 权限清单为未来文"
+      }
+    ],
+    "questions": [
+      {
+        "question": "README 中关于现有能力和验证通过的陈述，是否仍与当前实施状态及最新全量检查结果一致？",
+        "why": "README 汇总实现和历史验证结论，但自身不是实时测试报告；当前能力还应结合实施状态、提交记录与最新检查产物判断。",
+        "nextStep": "将知识流程、浏览器交互、学习 worker、飞书适配和质量流程逐项对照当前实施状态及最近一次全量检查。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c6",
+          "c7",
+          "c9",
+          "c10"
+        ]
+      },
+      {
+        "question": "生产部署是否需要团队隔离或跨轮 Agent 会话连续性？",
+        "why": "当前服务明确采用单用户 shared-token 边界，且每次问答新建会话；团队权限隔离和跨轮 ACP session resume 均不在现有能力内。",
+        "nextStep": "由使用者确认部署人数、权限隔离要求和会话连续性需求，再决定是否规划多租户身份模型或 session resume。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c8"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:AGENTS.md",
+      "digest": "d4f72638286fc89318f409eefe2ff84e4774205f99acf4eeee6067b60c6565a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:README.md",
+      "digest": "78dca587dc82b998a52eee9dee4abee4b04608e50df2564bda82ab28ca8231b4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/review-code-model.json",
+      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/knowledge-pipeline.md",
+      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.toml",
+      "digest": "f2f80953f5e21a98762274f91832d3384390ba80aaa52869785489a1f8c94d74"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:02:54.848Z",
+    "trace": {
+      "runId": "38ec948c-c247-4629-bd90-cab448ab9892",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "e0b08b2c7d16b56fffb0029bf00abccff498aeea70fa0d9852f5269fd9f760cd",
+      "contextHash": "492ebde010f6e9a4a2da895c0f85d8c8bd171eddf6181a5fe1e583ac99278643",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1b6e29089469221ca35301e72caef69b1a7c4b5dd7662d34b30f4b6a9d155ea8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-ec61-7550-92ec-6be85b3360cf"
+      ],
+      "usage": {
+        "used": 36048,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 47697,
+          "utf8Bytes": 76680,
+          "estimatedTokens": 25560,
+          "budgetedTokens": 31950,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:05.094Z",
+    "trace": {
+      "runId": "d09d9683-ed3d-4dc1-9a94-cff2cda70d37",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "d8700490fc295a653ca1715b3e0dfbed9c39df409613c9060b8dfd77de7ad618",
+      "contextHash": "17115df3a7d06657af12ba62e110269fae61a350388f6272b33f03bb22c559b9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7eb93d8a26feecf756512ea8a930ac8095c320df664a588ce5c1e0a539d09e23",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-5af6-7f41-afdb-c7e086935a63"
+      ],
+      "usage": {
+        "used": 32907,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 46611,
+          "utf8Bytes": 74684,
+          "estimatedTokens": 24895,
+          "budgetedTokens": 31119,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

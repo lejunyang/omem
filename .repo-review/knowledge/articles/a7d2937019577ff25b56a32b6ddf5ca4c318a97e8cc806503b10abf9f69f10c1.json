@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:.claude/skills/omem-design/SKILL.md",
+    "title": "Claude 侧 omem 界面实现规范",
+    "summary": "Claude 侧的 omem 界面设计与实现规范，覆盖视觉来源、Vue 组件边界、证据阅读交互、不可信内容处理、无障碍和验收流程。提供材料显示其当前文本与 Agent 侧版本一致，但未说明两者的生成关系、权威来源或持续同步机制；规范陈述的是实现要求，并不能单独证明现有界面已经满足这些要求。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "design-contract",
+        "title": "视觉来源与组件边界",
+        "body": "该规范要求以仓库根 `design.md` 为视觉依据，将 `docs/design.md` 视为系统功能资料而非视觉 token。界面使用 Vue 3 `<script setup lang=\"ts\">`，先检索并复用 `packages/ui`、`@omem/ui` 与既有 tokens；公共组件只处理 props、slots 和 emits，网络及应用状态留在 `apps/web`。[[c1]] 视觉语言限定为近黑主色、浅灰目录、白色面板以及衬线标题与无衬线正文，错误和冲突还必须有文字说明。[[c2]]"
+      },
+      {
+        "key": "evidence-safety",
+        "title": "证据交互与安全边界",
+        "body": "证据阅读围绕固定片段展开：递归引用共用一个 dialog，保存路径、当前层滚动和草稿；Esc 退回一层，关闭后恢复焦点，遇到引用环时提供回跳目标，问答过程不能丢失当前证据。[[c3]] 正文应作为不可信资料，以文本或审查后的 AST 渲染，不得直接使用 `v-html`；图片只通过已验证的 asset ID 加载，模型回包也不能直接操作 DOM 或触发工具。[[c4]] 这些内容属于目标约束，不是相关功能已经实现的事实证明。"
+      },
+      {
+        "key": "acceptance-and-alignment",
+        "title": "响应式、验收与双侧材料关系",
+        "body": "交付要求包括至少 44px 的普通点击区域、输入可见标签、700px 以下全屏引用与折叠导航，并在 390、768、1440px 视口检查横向溢出及 reduced-motion。页面还应连接真实 API，在未连接或无材料时展示诚实空态。[[c5]] 完成后运行项目检查；页面变更需在任务已注册时执行浏览器检查并查看桌面、手机截图，未验证边界必须记录，通用行为优先沉淀到 `packages/ui`。[[c6]]\n\n所提供的 Agent 侧文件在相同行号给出了同样的组件、安全、响应式与验收条款，因此只能确认两份材料在本次快照中的内容一致。[[c7]] 材料没有交代复制方向、共同来源或自动一致性检查，不能据此断言未来会持续同步。"
+      },
+      {
+        "key": "status-boundary",
+        "title": "规范与实现状态的区分",
+        "body": "本文是一份面向界面工作的规范：它规定真实 API、空态、通知和验证应如何处理，不能替代代码检查、测试退出码或浏览器行为验证。[[c5]] 同理，“新增通用行为先进入公共组件”描述的是后续实现和评审原则，不能作为现有公共组件已经覆盖递归引用、移动端或无障碍行为的证据。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Claude 侧视觉来源与 Vue 分层",
+        "reason": "支持根设计文件与系统架构文档的用途区分，以及 Vue 3、公共组件复用和应用状态边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/omem-design/SKILL.md",
+          "startLine": 8,
+          "endLine": 9
+        },
+        "quote": "1. 先读仓库根 `design.md`；系统功能见 `docs/design.md`，不要把架构文档当视觉 token。\n2. 在 `packages/ui/src` 搜索已有组件。使用 Vue 3 `<script setup lang=\"ts\">`，从 `@omem/ui` 复用控件与 tokens.css。公共组件只接收 props/slots/emits，网络与状态留给 apps/web。"
+      },
+      {
+        "key": "c2",
+        "label": "Claude 侧阅读界面视觉语言",
+        "reason": "支持黑白灰阅读风格、字体分工以及错误和冲突必须包含文本的要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/omem-design/SKILL.md",
+          "startLine": 10,
+          "endLine": 10
+        },
+        "quote": "3. 沿用近黑主色、浅灰目录、白色面板、衬线标题和无衬线正文；不要新增任意渐变/品牌色。错误、冲突必须包含文本。"
+      },
+      {
+        "key": "c3",
+        "label": "Claude 侧递归证据交互",
+        "reason": "支持单一对话框、路径与滚动保存、逐层返回、焦点恢复、环路回跳和证据连续性要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/omem-design/SKILL.md",
+          "startLine": 11,
+          "endLine": 11
+        },
+        "quote": "4. 以固定证据片段为交互中心。递归引用仅使用一个 dialog，保存路径、当前层滚动与草稿；Esc 返回一层，关闭恢复焦点；环显示跳回目标。问答不得丢失当前证据。"
+      },
+      {
+        "key": "c4",
+        "label": "Claude 侧不可信内容边界",
+        "reason": "支持受控正文渲染、已验证图片资源以及模型回包不能直接操作页面或工具的安全限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/omem-design/SKILL.md",
+          "startLine": 12,
+          "endLine": 12
+        },
+        "quote": "5. 正文当作不可信资料渲染为文本/审查后的 AST，不直接 v-html；图片必须由已验证 asset ID 加载。模型回包不能直接操作 DOM 或触发工具。"
+      },
+      {
+        "key": "c5",
+        "label": "Claude 侧响应式与真实状态要求",
+        "reason": "支持点击尺寸、可见标签、移动端断点、指定视口、真实 API 和诚实空态等交付条件。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/omem-design/SKILL.md",
+          "startLine": 13,
+          "endLine": 14
+        },
+        "quote": "6. 所有普通点击区域至少 44px，输入有可见 label；700px 以下全屏引用和折叠导航；测试 390/768/1440px，不能横向溢出。尊重 reduced-motion。\n7. 接入真实 API，配置与状态必须实际生效。未连接/没有材料时提供诚实空态；不得借演示数据掩盖错误。通知要描述具体变更。"
+      },
+      {
+        "key": "c6",
+        "label": "Claude 侧检查与公共组件原则",
+        "reason": "支持项目检查、浏览器截图验证、记录未验证边界及通用行为优先进入公共组件的要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/omem-design/SKILL.md",
+          "startLine": 15,
+          "endLine": 17
+        },
+        "quote": "8. 运行 `osdk run check`，涉及页面再运行 `osdk run browser`（如已注册），截图检查桌面和手机。记录未验证的边界。\n\n新增通用行为先加入 packages/ui，并在设计系统展示页面验证；不要复制整页原型 CSS 建第二套组件。"
+      },
+      {
+        "key": "c7",
+        "label": "Agent 侧 omem 界面规范",
+        "reason": "与 Claude 侧材料共同支持两份文件在当前提供快照中内容一致；该引用不证明存在自动同步机制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/omem-design/SKILL.md",
+          "startLine": 2,
+          "endLine": 17
+        },
+        "quote": "name: omem-design\ndescription: 为 omem 个人助理构建或修改 Vue 界面、公共组件、证据阅读和递归引用弹窗；在涉及主题色、排版、移动端、无障碍或问答交互时使用。沿用用户确认的黑白灰三栏阅读风格，复用项目 design.md 和 packages/ui。\n---\n\n# omem 界面实现\n\n1. 先读仓库根 `design.md`；系统功能见 `docs/design.md`，不要把架构文档当视觉 token。\n2. 在 `packages/ui/src` 搜索已有组件。使用 Vue 3 `<script setup lang=\"ts\">`，从 `@omem/ui` 复用控件与 tokens.css"
+      }
+    ],
+    "questions": [
+      {
+        "question": "Claude 侧与 Agent 侧的 omem-design 规范是否由同一权威来源生成，或由自动检查保证持续一致？",
+        "why": "两份提供材料在当前快照中内容一致，但均未说明复制方向、共同来源或同步机制；若长期人工维护，后续可能产生宿主间规范漂移。",
+        "nextStep": "确定权威源与适用宿主，并增加生成或内容一致性检查；若允许两侧不同，则记录差异目的和维护责任。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c6",
+          "c7"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/agents/openai.yaml",
+      "digest": "79114042766ffd95bd85bc19efb22162118bda72b30963e11a307f702b6143eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+      "digest": "3a314043cc40e4e95900a1ecb9d7fea677fbef80f07fcec049ebcedb7d1adde7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/commands.md",
+      "digest": "ad727b71bd400dd964c6d3c10e3c0bd7606736a35b150cb0b35d0d16e52c8e6e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+      "digest": "eb6727e632faf5b3f54eeb2c86f93aa238f17396725906789c2bcdd56364e050"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:01:24.952Z",
+    "trace": {
+      "runId": "4412df08-8cb5-4c16-9542-e81861b4f2a7",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "d3cd86e806497fe35155e5b16446f5d71c593284b88a23e9179cf8fddbf43feb",
+      "contextHash": "43bb11a93344d91e062fb3efb9c690b09e9781226180192ed6383afecc6b7348",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "33e662d5bc4170a5bb0481ca74d5c86688b6defca868703931217bbf2853dd6e",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8a-c705-7e32-93b9-6b8b9027dbd6"
+      ],
+      "usage": {
+        "used": 36191,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 53011,
+          "utf8Bytes": 73887,
+          "estimatedTokens": 24629,
+          "budgetedTokens": 30787,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:01:35.312Z",
+    "trace": {
+      "runId": "89f6e02d-4333-4622-a020-89ff22256571",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "1c6af62e523fa0cc8946a0eb6e08720813fc3322cff62ba5e459ac2433b4531a",
+      "contextHash": "6203d2f8c846b1c04b8edf53668b08adf49a6b7fae344613f9aa19e1c9ab9a3d",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "0a99697ea338a1d1dcf983a147a8c3d4a07602ca9f5da645ae948827e6c37539",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8b-0d5e-7882-b619-ecf26ecd8464"
+      ],
+      "usage": {
+        "used": 34558,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 51290,
+          "utf8Bytes": 72244,
+          "estimatedTokens": 24082,
+          "budgetedTokens": 30103,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

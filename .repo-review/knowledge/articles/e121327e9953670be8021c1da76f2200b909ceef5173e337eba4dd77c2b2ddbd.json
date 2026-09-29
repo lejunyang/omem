@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:tsconfig.server.json",
+    "title": "服务端 TypeScript 配置",
+    "summary": "该配置定义 NodeNext、ES2023、严格类型检查及服务端相关源码范围，是服务端应用、共享契约与若干开发和评审脚本的共同 TypeScript 基线；仅凭配置不能证明这些入口均已实现或能成功运行。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "compiler-baseline",
+        "title": "编译与类型检查基线",
+        "body": "配置以 ES2023 为输出目标，同时把模块格式和解析策略设为 `NodeNext`，并启用 Node 类型、`strict` 与 `noUncheckedIndexedAccess`。这些设置面向现代 Node.js 环境，并要求索引访问显式处理可能缺失的值；`esModuleInterop` 提供 CommonJS 互操作便利，`skipLibCheck` 则跳过依赖声明文件检查。[[c1]]"
+      },
+      {
+        "key": "source-scope",
+        "title": "纳入范围与事实边界",
+        "body": "检查范围覆盖服务端源码、共享 contracts，以及开发、review 启动、wiki 和 knowledge 等脚本；输出目录声明为 `dist`，根目录为项目当前目录。[[c2]] 这只能证明文件被纳入 TypeScript 项目，不能证明对应功能已实现、已执行或测试通过。根 `tsconfig.json` 继承本配置并关闭输出，因此经根入口检查时不会生成 `dist` 文件。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "服务端编译器选项",
+        "reason": "支持 ES2023、NodeNext、严格检查、Node 类型及相关互操作选项的配置说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:tsconfig.server.json",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "{\"compilerOptions\":{\"target\":\"ES2023\",\"module\":\"NodeNext\",\"moduleResolution\":\"NodeNext\",\"strict\":true,\"esModuleInterop\":true,\"skipLibCheck\":true,\"outDir\":\"dist\",\"rootDir\":\".\",\"types\":[\"node\"],\"noUncheckedIndexedAccess\":true},\"include\":[\"apps/server/src/**/*.ts\",\"packages/contracts/src/**/*.ts\",\"scripts/dev.ts\",\"scripts/dev-review.ts\",\"scripts/dev-review-vite.ts\",\"scripts/review-wiki.ts\",\"scripts/review-knowledge.ts\"]}"
+      },
+      {
+        "key": "c2",
+        "label": "服务端项目源码范围",
+        "reason": "支持该 TypeScript 项目涵盖服务端、共享契约及多类开发和评审脚本的论断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:tsconfig.server.json",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "{\"compilerOptions\":{\"target\":\"ES2023\",\"module\":\"NodeNext\",\"moduleResolution\":\"NodeNext\",\"strict\":true,\"esModuleInterop\":true,\"skipLibCheck\":true,\"outDir\":\"dist\",\"rootDir\":\".\",\"types\":[\"node\"],\"noUncheckedIndexedAccess\":true},\"include\":[\"apps/server/src/**/*.ts\",\"packages/contracts/src/**/*.ts\",\"scripts/dev.ts\",\"scripts/dev-review.ts\",\"scripts/dev-review-vite.ts\",\"scripts/review-wiki.ts\",\"scripts/review-knowledge.ts\"]}"
+      },
+      {
+        "key": "c3",
+        "label": "根配置关闭输出",
+        "reason": "说明服务端配置虽声明 `dist`，但通过根配置入口运行时会被 `noEmit` 限制为只检查。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:tsconfig.json",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "{\n  \"extends\": \"./tsconfig.server.json\",\n  \"compilerOptions\": { \"noEmit\": true }\n}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "项目是否另有用于实际产物构建的 TypeScript 配置或打包器配置？",
+        "why": "服务端配置声明 `outDir: dist`，但根配置关闭输出；现有材料不足以确定生产构建如何生成可运行产物。",
+        "nextStep": "核对构建脚本及其他 tsconfig 或打包配置，确认产物生成入口和输出目录。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "当前运行环境是否明确保证支持 ES2023 与 NodeNext 组合？",
+        "why": "配置表达了目标环境假设，但没有提供 Node.js 版本约束；版本不匹配可能影响运行或依赖解析。",
+        "nextStep": "检查运行时版本声明与持续集成环境，并将其和 TypeScript 目标对照。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:tsconfig.json",
+      "digest": "c6f05606dc410d012a28d3b2e268b938a42ff2febe61946dd7af5b1dcbb9d21d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:tsconfig.server.json",
+      "digest": "827309efa9dbffa1436169620674803dc8b3bf804534edcc2eeefff47c6b53eb"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:44:05.733Z",
+    "trace": {
+      "runId": "5eb16f79-bcbe-4507-92e1-b24d9a444a53",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "46a96f68a95ee073a309a45670c767033864e3ca7f8547e3d0ded9970c7da27f",
+      "contextHash": "53f121f9595d5a370e80a7625995a421723df35a192eced988c4574205fedf7a",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c6a04fda86171774b91fa7641d3aa23220a23a5530f400e4bdd1aabbb3a975a2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed68-4118-79a3-b225-97dd66ff2099"
+      ],
+      "usage": {
+        "used": 15273,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 6856,
+          "utf8Bytes": 8412,
+          "estimatedTokens": 2804,
+          "budgetedTokens": 3505,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:44:15.724Z",
+    "trace": {
+      "runId": "0606b27f-4262-4f90-84d6-02c8bd2e181c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "be9d4faec72098e0646c84a2a8c8e10aceafb15e0f41d1c94046b60f03426a68",
+      "contextHash": "ec9d8b384b838042233eefa52ce9258a1d5c9a6e70c7cbb7031972cfb84496dc",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e945975e5183030e8993611f11f1610812292ef9c7fc74530fb61bc83c3ff0a7",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed68-8bda-7f91-822d-1fdba647f24d"
+      ],
+      "usage": {
+        "used": 15192,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 9067,
+          "utf8Bytes": 12177,
+          "estimatedTokens": 4059,
+          "budgetedTokens": 5074,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:config/review-code-model.example.json",
+    "title": "代码评审模型配置示例",
+    "summary": "给出 repo-review 模型执行器的 ACP 启动方式、模型与 effort，以及输入、输出和上下文预留预算。它是参考模板，不代表当前实际配置或模型能力验证结果。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "transport",
+        "title": "只读 ACP 执行入口",
+        "body": "模板以 `traecli` 启动 ACP server，并通过参数声明只读沙箱。[[c1]] 这说明预期由外部 Agent 执行代码分析，但文件本身不能证明命令存在、ACP 握手成功或只读限制已被宿主实际落实。"
+      },
+      {
+        "key": "model-budget",
+        "title": "模型选择与预算边界",
+        "body": "示例指定 `gpt-5.6-sol`、中等 effort、480 秒超时，并分别设置 192000 输入 token、24000 输出 token和 16000 上下文预留。[[c2]] 这些值共同约束一次评审任务的规模；模型名称与 effort 是否受当前 ACP 实现支持，仍需运行时能力发现和校验。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "ACP 启动模板",
+        "reason": "支持 transport、命令和只读沙箱参数的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-code-model.example.json",
+          "startLine": 2,
+          "endLine": 9
+        },
+        "quote": "  \"transport\": \"acp\",\n  \"command\": \"traecli\",\n  \"args\": [\n    \"-c\",\n    \"sandbox_mode=\\\"read-only\\\"\",\n    \"acp\",\n    \"serve\"\n  ],"
+      },
+      {
+        "key": "c2",
+        "label": "模型与 token 预算",
+        "reason": "支持模型、effort、超时和三项 token 预算的具体描述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-code-model.example.json",
+          "startLine": 10,
+          "endLine": 15
+        },
+        "quote": "  \"model\": \"gpt-5.6-sol\",\n  \"effort\": \"medium\",\n  \"timeoutMs\": 480000,\n  \"maxInputTokens\": 192000,\n  \"maxOutputTokens\": 24000,\n  \"contextReserveTokens\": 16000"
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前 ACP 服务是否声明支持 `gpt-5.6-sol` 与 `medium` effort，并能执行该 token 预算？",
+        "why": "模板只声明期望值，没有包含能力发现、拒绝不支持设置或真实执行 trace。",
+        "nextStep": "通过实际 ACP capability 查询与一次显式评审任务核验模型、effort、超时和预算记录。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:config/omem.example.json",
+      "digest": "ecba4320f4a1389feece681ad38d82f3eee9ffc22291b9e23f6cafeaea5e523f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/review-code-model.example.json",
+      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/review-code-model.json",
+      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+    },
+    {
+      "kind": "material",
+      "key": "omem:deploy/omem.env.example",
+      "digest": "3a49807415a019629e2766a5356cee26526b901566c16c59f17fc71da5cd3aaa"
+    },
+    {
+      "kind": "material",
+      "key": "omem:deploy/omem.service.example",
+      "digest": "1f1dda957ae1e6765a313da0b7af11b1eae0e0ff58e7bf405d510377e4597861"
+    },
+    {
+      "kind": "material",
+      "key": "omem:design.md",
+      "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/design.md",
+      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:44:10.000Z",
+    "trace": {
+      "runId": "c4e66022-769b-4c8d-9073-66eb5012d0bd",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "d55780757f5d367b21abe583b5f66fab1f81c59622ae371ed6453735dc46fc18",
+      "contextHash": "297fa483d3742d883e58d0a4972cc2657b30a1561e9bab166ae5117f5f069aaf",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "63cc81d9d002c2fb15154b1148a18f5d6e0b0faa148bb35fc667b24892b83ca4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-89a1-7322-aaf1-25c0c53867e7"
+      ],
+      "usage": {
+        "used": 24674,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 19388,
+          "utf8Bytes": 26779,
+          "estimatedTokens": 8927,
+          "budgetedTokens": 11159,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:44:44.113Z",
+    "trace": {
+      "runId": "effcb44a-34bd-42f7-a454-80b0ae07e174",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "0b2978d6ee54d46d3388336b3918623820136d63cb98f829a6495f465eb98913",
+      "contextHash": "7553077f62d88b12c2a503f28e2d418922e4d039bdca2bd544381c9098574515",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a193697de1b2fb51a587685828be169bf1f17e522a5533fbfd206c91e0317dc0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb2-3111-78d0-b113-cac7edd89a39"
+      ],
+      "usage": {
+        "used": 26821,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28964,
+          "utf8Bytes": 42941,
+          "estimatedTokens": 14314,
+          "budgetedTokens": 17893,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
