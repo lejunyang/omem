@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+    "title": "osdk 命令工作流参考",
+    "summary": "该参考按工具生命周期、项目复现、任务、依赖、安全、模型、技能、容器和诊断等领域组织命令，并记录部分退出码；内容标注对应 osdk 0.0.3，实际使用仍应核对当前帮助。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "authority",
+        "title": "覆盖范围与版本边界",
+        "body": "材料自述覆盖全部一级命令，并按功能分组，所依据的是 `osdk 0.0.3` 的命令面。它用于解释命令意图和易错点，而非取代 `osdk <command> --help`；若当前安装版本不同，选项、默认值和可用子命令都需要重新确认。[[c1]]"
+      },
+      {
+        "key": "repro-flow",
+        "title": "复现、任务与应用依赖",
+        "body": "项目工具链的复现流程包括把精确版本写入锁文件、按解析后的配置安装，以及检查过期或升级锁定结果。[[c2]] 项目任务通过 `run` 执行，还可查询任务清单、解析后的定义和执行顺序；材料明确不存在裸 `osdk <name>` 的任务入口。[[c3]] 应用依赖由 `deps` 从项目清单兑现，其中 `--frozen` 要求原生锁文件存在且不被修改，`--verify` 则依据包管理器收据深入核验已安装环境，二者分别约束声明稳定性与落地完整性。[[c4]]"
+      },
+      {
+        "key": "state-and-results",
+        "title": "持久声明与结果判断",
+        "body": "文档把命令视为一次性动作或即时查询，把配置视为持久声明，并给出一般成功为 0、失败非零、参数错误为 2 的约定。部分命令另有专门语义，例如计划检测到改动时返回 2；自动化流程应按具体命令解释退出码，不能将所有非零值视为同一种失败。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "命令参考的范围和版本",
+        "reason": "支持该参考覆盖一级命令、对应实测版本 0.0.3，并明确当前帮助才是权威来源。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "# osdk 命令用法参考（按功能分类）\n\n本文覆盖 `osdk` 的**全部一级命令**，按功能分组。命令面对齐\n`crates/osdk-cli/src/cli.rs` 的 `enum Command`（实测版本 `osdk 0.0.3`）。每个命令的权威\n帮助仍是 `osdk <command> --help`；本文补充的是分类、意图和易错点。"
+      },
+      {
+        "key": "c2",
+        "label": "项目工具链复现命令",
+        "reason": "支持锁定、按配置安装、过期检查和升级共同构成项目工具链复现及维护流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+          "startLine": 71,
+          "endLine": 86
+        },
+        "quote": "## 二、项目复现（lock / install / outdated / upgrade）\n\n| 命令 | 作用与要点 |\n| --- | --- |\n| `lock [tools...]` | 解析项目工具并把精确版本写入 `osdk.lock`；不带参数解析当前项目配置。`-o KEY=VALUE` 传选项。**只锁项目自身声明的工具**，全局固定版本不进 lock；`osdk lock <tool>` 可点名把某工具一起锁 |\n| `install`（不带参数） | 按解析后的配置安装当前平台的锁定结果（见「一、工具生命周期」） |\n| `outdated [tools...]` | 显示已装版本与当前远端解析结果不同的工具 |\n| `upgrade [tools...]` | 安装符合约束的最新版本并更新 `osdk.lock`；`-o KEY=VALUE` 传选项 |\n\n```bash\nosdk use node@20 && osdk use python@3.12 && osdk lock && osdk install\nosdk outdated\nosdk upgrade\n```\n> Rust 若要不可变环境，固定明确版本或带日期的 toolchain；`stable/beta/nightly` 等浮动\n> channel 写入 lock 后仍会随上游更新。"
+      },
+      {
+        "key": "c3",
+        "label": "项目任务命令入口",
+        "reason": "支持任务通过 run 执行，并可查询清单、解析定义和依赖执行顺序。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+          "startLine": 88,
+          "endLine": 107
+        },
+        "quote": "## 三、临时执行与项目任务\n\n| 命令 | 作用与要点 |\n| --- | --- |\n| `exec --tool <t> [--tool <t2>] -- <cmd...>` | 按需装好工具，再用其精确环境跑命令。`-t/--tool` 必填、可重复；`--no-deps` 跳过 `[deps]`；`--` 后是命令及其参数 |\n| `run <task> [-- args...]` | 跑 `[tasks]` 里定义的任务。`--dry-run` 只打印将执行什么；`--no-deps` 跳过 `[deps]`；`--` 后透传参数给任务 |\n| `task list [--hidden]` | 列出可用任务（`--hidden` 含 `hide = true` 的） |\n| `task info <task>` | 显示某任务解析后的定义 |\n| `task deps <task>` | 打印某任务的执行顺序 |\n| `task add <name> -r <cmd> [-d desc] [--depends <t>]` | 向项目配置添加任务；`-r/--run` 必填、可重复表示序列 |\n| `task rm <name>` | 从项目配置删除任务 |\n| `task edit <name>` | 在 `$EDITOR` 中定位到该任务打开项目配置 |\n\n```bash\nosdk run ci                 # 跑 [tasks] 里的 ci\nosdk run ci --dry-run       # 只看会执行什么\nosdk task list\nosdk exec --tool node@20 -- node --version\n```\n> 只有 `osdk run <name>`，没有裸 `osdk <name>`。任务写法见 `configuration.md` 的 `[tasks]`。"
+      },
+      {
+        "key": "c4",
+        "label": "应用依赖命令参数",
+        "reason": "支持 `deps` 的用途，以及冻结安装和环境验证两类约束的区别。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+          "startLine": 109,
+          "endLine": 125
+        },
+        "quote": "## 四、应用依赖（deps）\n\n`osdk deps [providers...]` —— 从项目自身清单（`package.json`、`pyproject.toml`、\n`requirements.txt`、`go.mod` 等）把整份依赖闭包装进项目。声明在 `[deps.<provider>]`。\n\n| 参数 | 作用 |\n| --- | --- |\n| `--list` | 列出探测到的 provider 与新鲜度，不安装（默认只列当前配置根） |\n| `--all` | 与 `--list` 合用，包含 `[deps].roots` 展开的所有子项目 |\n| `--dry-run` | 报告将执行什么命令、为何过期，不执行 |\n| `--force` | 忽略新鲜度强制重跑 |\n| `--explain` | 逐 provider 打印新鲜度判定依据 |\n| `--skip <PROVIDER>` | 跳过这些 provider（可重复） |\n| `-F, --filter <PATTERN>` | 按**路径**限定子项目（可重复），如 `--filter 'apps/*'`；匹配不到即报错 |\n| `--no-install-tools` | 缺包管理器时报错而不是自动装（CI 复现用） |\n| `--frozen` | 要求原生 lockfile 存在且不被修改，否则失败（CI） |\n| `--verify` | 按包管理器自己的收据（`dist-info/RECORD`、`node_modules/.package-lock.json`）深度校验已装环境 |"
+      },
+      {
+        "key": "c5",
+        "label": "退出码与配置对应关系",
+        "reason": "支持自动化应按命令解释退出码，以及命令动作与持久配置之间的关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+          "startLine": 327,
+          "endLine": 338
+        },
+        "quote": "## 退出码约定（部分命令）\n\n- 一般命令：成功 0，失败非零；参数错误打印用法后退出码 2。\n- `pkg status --missing`：有缺包时退出非零。\n- `pkg plan --detailed-exitcode`：会改动则退 2，不会改动则退 0。\n- `container` 直接 `pull`：透传子进程退出码；Unix 上被信号终止规范化为 `128 + signal`。\n\n## 与配置的对应关系\n\n大量命令行为等价于写进 `osdk.toml` / `config.toml` 的声明（如 `use` ≈ `[tools]`、\n`source pin` ≈ `[sources.<tool>].pin`、`config set` 写 `[settings]`）。命令是「一次性动作或\n即时查询」，配置是「持久声明」。要写持久声明，见 `reference/configuration.md`。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前实际安装的 osdk 版本是否仍为文档所述的 0.0.3？",
+        "why": "材料明确标注实测版本，并声明当前命令帮助才是权威来源；版本变化可能使参数和行为发生偏移。",
+        "nextStep": "在实际环境中核对版本，并针对将要使用的子命令查看对应帮助和真实退出码。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/omem-design/agents/openai.yaml",
+      "digest": "79114042766ffd95bd85bc19efb22162118bda72b30963e11a307f702b6143eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/osdk-guide/SKILL.md",
+      "digest": "3a314043cc40e4e95900a1ecb9d7fea677fbef80f07fcec049ebcedb7d1adde7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+      "digest": "ad727b71bd400dd964c6d3c10e3c0bd7606736a35b150cb0b35d0d16e52c8e6e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/osdk-guide/reference/configuration.md",
+      "digest": "eb6727e632faf5b3f54eeb2c86f93aa238f17396725906789c2bcdd56364e050"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.env.example",
+      "digest": "22d98ed66120631b06d3adb6d155ace0a597e5e1c10e2a43bdcbce12d54029a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.gitignore",
+      "digest": "c6899a96bb9bf248c8837cc487dbf652f99d1bc7b8ad15d5f069f669a25d6a55"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T12:22:19.429Z",
+    "trace": {
+      "runId": "2e33257b-ae53-4251-8299-acb27155122d",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "cfc36bfad7e8073b4c470a2652774c989f58f77bf42b5881d87f13c21f5c89a4",
+      "contextHash": "18f8002804e287ebb17cb523ffa4bf3e5215b4880e5936fc8efab109957a79a4",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "36817a01eba7e36110959e054568fd3d8219a26576e140d4b8fa562cfc192552",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed1c-f280-7772-af71-35236b61f210"
+      ],
+      "usage": {
+        "used": 47296,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 63850,
+          "utf8Bytes": 90082,
+          "estimatedTokens": 30028,
+          "budgetedTokens": 37535,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T12:22:28.608Z",
+    "trace": {
+      "runId": "969ef422-6e15-46bf-bc0a-30bfb9880302",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "4b43e142052efae3c2fd5d29b93c26d4902c57346eb0519c475a12ab63b0e4f7",
+      "contextHash": "162c10e6f2af2339ed1ee8e525303f0848833b9b4a142571ef29d4a0533f0383",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ec57bd92bfc2524631484fefdedc14b00d7bb70cb51bddc95bb324d26d2fae16",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed1d-abfa-76e1-ab01-8d954289f996"
+      ],
+      "usage": {
+        "used": 39976,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 64570,
+          "utf8Bytes": 91144,
+          "estimatedTokens": 30382,
+          "budgetedTokens": 37978,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

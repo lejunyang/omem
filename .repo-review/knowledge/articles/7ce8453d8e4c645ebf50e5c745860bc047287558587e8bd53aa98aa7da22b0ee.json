@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+    "title": "osdk 使用指引与参考索引",
+    "summary": "概述 one-sdk 的适用范围、文档路由、复现与信任原则，并把具体命令和配置字段分别引导到两份参考材料；它是速查索引，不替代当前版本命令帮助。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "purpose-and-authority",
+        "title": "定位与权威边界",
+        "body": "osdk 是跨 Windows、macOS、Linux 的统一 SDK 管理器，用来管理语言运行时、包管理器、开发工具、Android SDK 和模型快照，并通过项目锁定结果支持团队与 CI 复现。[[c1]] 此材料定位为命令与配置的速查索引；具体版本的命令面仍以 `osdk --help` 为权威，因此文档陈述不能替代对当前二进制的实际检查。"
+      },
+      {
+        "key": "reference-routing",
+        "title": "按意图选择参考材料",
+        "body": "查询子命令、参数和功能分类时应进入 `reference/commands.md`；编写 `osdk.toml` 或全局 `config.toml` 时应进入 `reference/configuration.md`。两份参考分别声称对齐 CLI 的命令枚举和核心配置结构，并要求能力变化后同步更新相关文档。[[c2]] 这是维护目标，不构成当前实现已逐项核验的独立证据。"
+      },
+      {
+        "key": "core-rules",
+        "title": "任务、依赖、信任与配置分层",
+        "body": "项目任务必须通过 `osdk run <name>` 执行；`install` 面向工具，`deps` 面向项目应用依赖，单个动态工具使用带命名空间的标识。[[c3]] 会执行代码或改变校验、下载来源的配置需要先建立信任；配置优先级由 CLI、环境变量、项目配置、用户配置到内置默认逐级降低。受管数据或配置目录不应手写，应通过 `osdk source`、`osdk config` 等入口修改。[[c4]]"
+      },
+      {
+        "key": "capability-map",
+        "title": "能力入口图",
+        "body": "速查表把工具生命周期、锁定复现、任务、应用依赖、临时执行、源与校验、模型、Agent skills、配置和诊断分别映射到对应入口。[[c5]] 表格只用于定位；参数差异、平台边界及持久配置的等价写法仍需结合两份 reference，不能从入口列表推断某个项目已经完成依赖安装、模型同步或环境诊断。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "osdk 定位与文档权威性",
+        "reason": "支持跨平台工具链管理、锁定复现以及当前版本帮助优先的说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+          "startLine": 12,
+          "endLine": 20
+        },
+        "quote": "# osdk 使用指引\n\nosdk（二进制名 `osdk`，仓库名 one-sdk）是一个跨平台（Windows / macOS / Linux）的\n统一 SDK 管理器：用一套命令管理语言运行时、包管理器、开发工具、Android SDK 与大模型\n快照，并为团队和 CI 保存区分平台、可复现的项目锁定结果。\n\n本 skill 是 osdk 命令与配置的**速查与索引**。它不替代 `osdk --help`：`--help` 永远是某个\n版本命令面的权威来源；本指引提供的是「按功能找到该用哪个命令」「配置字段怎么写」这类\n`--help` 不擅长回答的问题。"
+      },
+      {
+        "key": "c2",
+        "label": "命令与配置参考路由",
+        "reason": "支持按意图选择 reference，并说明参考材料声称对齐的实现来源及同步要求。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+          "startLine": 22,
+          "endLine": 37
+        },
+        "quote": "## 什么时候读哪个 reference\n\n先判断意图属于哪一类，再 `Read` 对应文件，不要凭本页摘要直接下结论：\n\n- **要查某个命令怎么用、有哪些子命令和参数、按功能分类的命令清单** →\n  `reference/commands.md`。它按「工具生命周期 / 项目复现 / 任务 / 应用依赖 / 生态专属 /\n  源与安全 / 模型 / 容器 / 宿主包 / 存储缓存 / 自身与诊断」分类，覆盖全部一级命令。\n- **要写或改 `osdk.toml` / 全局 `config.toml`，想知道有哪些段、字段名怎么拼、取值范围** →\n  `reference/configuration.md`。它按 TOML 段"
+      },
+      {
+        "key": "c3",
+        "label": "任务与依赖职责区分",
+        "reason": "支持 osdk run、install、deps 及动态工具命名空间的关键规则。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+          "startLine": 39,
+          "endLine": 47
+        },
+        "quote": "## 关键前提（先记住，避免走弯路）\n\n- **`osdk run <name>` 才是跑任务，没有裸 `osdk <name>`。** 裸形式会被以后新增的子命令\n  遮蔽，因此项目任务一律 `osdk run`。\n- **`install` 装工具，`deps` 装项目自己的依赖。** `[tools]` 把包管理器本身准备好，\n  `osdk deps` 再驱动它读 `package.json` / `pyproject.toml` 等，把整份依赖闭包装进项目。\n  增删单个依赖仍走 `osdk install <npm:pkg>`。\n- **动态工具带命名空间前缀**：`npm:`、`cargo:`、`go:`、`conda"
+      },
+      {
+        "key": "c4",
+        "label": "信任门槛与配置优先级",
+        "reason": "支持高风险配置的信任要求、配置覆盖次序和禁止手写受管目录的边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+          "startLine": 48,
+          "endLine": 53
+        },
+        "quote": "- **会执行代码或削弱校验的项目配置要先 `osdk trust`**。仅声明「装哪些工具/包」不需要\n  信任；`[syspkg]`、源/镜像改写、`allow_build_from_source`、自定义 index 等才需要。\n- **配置分层，高者胜**：CLI 参数 → 环境变量（`OSDK_*`）→ 项目 `osdk.toml`（向上查找）→\n  用户全局 `config.toml` → 内置默认。\n- **不要手写 osdk 管控目录（data/config）下的配置或代理源**：源与配置一律通过\n  `osdk source` / `osdk config` 等 osdk 自身命令管理。"
+      },
+      {
+        "key": "c5",
+        "label": "功能到命令入口映射",
+        "reason": "支持工具、任务、依赖、模型、skills、配置和诊断等能力的入口概览。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+          "startLine": 55,
+          "endLine": 74
+        },
+        "quote": "## 快速定位（意图 → 命令，细节进 reference）\n\n| 想做什么 | 入口命令 |\n| --- | --- |\n| 装 / 切换 / 卸载某个运行时或工具 | `osdk install` / `osdk use` / `osdk uninstall` |\n| 查已装 / 可装版本、当前生效版本、安装路径 | `osdk list` / `osdk list-remote` / `osdk current` / `osdk where` |\n| 固定并复现项目工具链 | `osdk use` → `osdk lock` → `osdk install`；`osdk outdated` / `osdk upgrade` |"
+      }
+    ],
+    "questions": [
+      {
+        "question": "该指引所称的“当前实现一致”最近一次是针对哪个 osdk 版本和提交完成核对的？",
+        "why": "材料说明应与源码结构一致，却没有给出校验日期、提交摘要或自动一致性测试结果。",
+        "nextStep": "记录当前 `osdk --version`、对应 one-sdk 提交，并将一级命令与配置结构的检查结果附到文档维护记录。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "该指引所称的“与当前实现一致”最近针对哪个 osdk 版本和提交完成核对？",
+        "why": "材料规定参考文档应与源码结构同步，但没有给出校验日期、提交摘要或自动一致性测试结果。",
+        "nextStep": "记录当前 `osdk --version` 和对应 one-sdk 提交，并保存一级命令与配置结构的核验结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/omem-design/agents/openai.yaml",
+      "digest": "79114042766ffd95bd85bc19efb22162118bda72b30963e11a307f702b6143eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/SKILL.md",
+      "digest": "3a314043cc40e4e95900a1ecb9d7fea677fbef80f07fcec049ebcedb7d1adde7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/commands.md",
+      "digest": "ad727b71bd400dd964c6d3c10e3c0bd7606736a35b150cb0b35d0d16e52c8e6e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.agents/skills/osdk-guide/reference/configuration.md",
+      "digest": "eb6727e632faf5b3f54eeb2c86f93aa238f17396725906789c2bcdd56364e050"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/omem-design/SKILL.md",
+      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:34.034Z",
+    "trace": {
+      "runId": "492f2b79-7391-4af4-8fbc-8a862fdbf337",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "ef334ee5b0bcc7cea8013d664f2dc8a0c452d38fea76a1f013701199065f6c82",
+      "contextHash": "aa6f815a9d7ed0bc0c3928f6d51b38b98fcf890485d532572143e59402e85e35",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1d042ea70126c9ab71103a1b8e0d2e9b851f5db43284ed36c00b078cf0a5f2d5",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-39e4-7530-82d0-d718ab985881"
+      ],
+      "usage": {
+        "used": 40878,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49737,
+          "utf8Bytes": 67589,
+          "estimatedTokens": 22530,
+          "budgetedTokens": 28163,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:01:06.646Z",
+    "trace": {
+      "runId": "81367b32-d037-4ab1-b943-4dd3a8a9e02f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "8bd3a538623dbc8686abb0c4258b7a1aa0445191e837ea797f7360487242790e",
+      "contextHash": "f60ffb90b4fe192677946d6f43b34626aa84046714c05fcd8738eec57103d8c8",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "86cbaac36f3c4657a076ec950be47183d17e9db90e9af6e611e8df0ab778afaa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8a-46fc-7f50-be17-5859206038c9"
+      ],
+      "usage": {
+        "used": 47791,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 75459,
+          "utf8Bytes": 110565,
+          "estimatedTokens": 36855,
+          "budgetedTokens": 46069,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

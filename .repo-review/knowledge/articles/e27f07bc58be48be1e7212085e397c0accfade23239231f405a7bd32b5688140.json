@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:pnpm-lock.yaml",
+    "title": "pnpm 依赖锁定与工作区解析快照",
+    "summary": "该锁文件以 pnpm 9 格式记录根项目、Web 应用和共享 UI 包的已解析依赖，固定后端、前端、测试与构建工具版本，并展开传递依赖及平台可选包。它能证明依赖图和工作区链接的当前配置状态，但不能单独证明相关功能已经实现或测试通过。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "scope",
+        "title": "锁定范围与工作区关系",
+        "body": "文件采用 `lockfileVersion: '9.0'`，并启用 peer 依赖自动安装；`importers` 下分别存在根项目、`apps/web` 与 `packages/ui`，说明一次锁定覆盖多个工作区单元。Web 应用通过 `workspace:*` 链接共享 UI，而不是从外部仓库解析该包。[[c1]]\n\n这是一份依赖解析快照：它表明包管理器曾为这些 importer 生成一致的版本关系，但不等同于应用入口、页面或服务端能力已可运行。"
+      },
+      {
+        "key": "dependency_profile",
+        "title": "技术栈、工具链与运行限制",
+        "body": "根项目锁定 Fastify、静态资源插件、Agent Client Protocol SDK、飞书 SDK 与 Zod；开发侧锁定 TypeScript、Vite、Vitest、Playwright、Vue 编译器及类型检查工具。[[c2]] Web 与共享 UI 同时依赖 Vue、Markdown 渲染、代码高亮和 HTML 净化组件，反映出共享富文本展示能力所需的依赖基础。[[c3]]\n\n解析结果还给出明确环境约束，例如 Vite 7.3.1 要求 Node `^20.19.0 || >=22.12.0`。[[c4]] 因此仅看到锁文件不能确定实际部署所用 Node 版本是否兼容，也不能把 Playwright、Vitest 的存在解释为测试已经执行或通过。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "工作区 importer 与本地 UI 链接",
+        "reason": "支持锁文件覆盖根项目、Web 应用和共享 UI，并说明 Web 使用工作区链接引用共享 UI。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-lock.yaml",
+          "startLine": 1,
+          "endLine": 62
+        },
+        "quote": "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .:\n    dependencies:\n      '@agentclientprotocol/sdk':\n        specifier: 1.5.0\n        version: 1.5.0(zod@4.1.12)\n      '@fastify/static':\n        specifier: 8.3.0\n        version: 8.3.0\n      '@larksuiteoapi/node-sdk':\n        specifier: 1.74.0\n        version: 1.74.0(debug@4.4.3)\n      fastify:\n        specifier: 5.12.5\n        version: 5.12.5\n      zod:\n        specifier: 4.1.12\n        version: 4.1.12\n    devDependencies:\n      '@playwright/test':\n        specifier: 1.58.2\n        version: 1.58.2\n      '@types/node':\n        specifier: 24.10.1\n        version: 24.10.1\n      '@vitejs/plugin-vue':\n        specifier: 6.0.9\n        version: 6.0.9(vite@7.3.1(@types/node@24.10.1)(tsx@4.20.6))(vue@3.5.43(typescript@5.9.3))\n      '@vue/compiler-sfc':\n        specifier: 3.5.43\n        version: 3.5.43\n      prettier:\n        specifier: 3.6.2\n        version: 3.6.2\n      tsx:\n        specifier: 4.20.6\n        version: 4.20.6\n      typescript:\n        specifier: 5.9.3\n        version: 5.9.3\n      vite:\n        specifier: 7.3.1\n        version: 7.3.1(@types/node@24.10.1)(tsx@4.20.6)\n      vitest:\n        specifier: 3.2.4\n        version: 3.2.4(@types/node@24.10.1)(tsx@4.20.6)\n      vue-tsc:\n        specifier: 3.1.4\n        version: 3.1.4(typescript@5.9.3)\n\n  apps/web:\n    dependencies:\n      '@omem/ui':\n        specifier: workspace:*\n        version: link:../../packages/ui"
+      },
+      {
+        "key": "c2",
+        "label": "根项目运行与开发依赖",
+        "reason": "支持对后端集成、类型系统、构建和测试工具链构成的概括；这里只证明依赖被锁定。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-lock.yaml",
+          "startLine": 9,
+          "endLine": 56
+        },
+        "quote": "  .:\n    dependencies:\n      '@agentclientprotocol/sdk':\n        specifier: 1.5.0\n        version: 1.5.0(zod@4.1.12)\n      '@fastify/static':\n        specifier: 8.3.0\n        version: 8.3.0\n      '@larksuiteoapi/node-sdk':\n        specifier: 1.74.0\n        version: 1.74.0(debug@4.4.3)\n      fastify:\n        specifier: 5.12.5\n        version: 5.12.5\n      zod:\n        specifier: 4.1.12\n        version: 4.1.12\n    devDependencies:\n      '@playwright/test':\n        specifier: 1.58.2\n        version: 1.58.2\n      '@types/node':\n        specifier: 24.10.1\n        version: 24.10.1\n      '@vitejs/plugin-vue':\n        specifier: 6.0.9\n        version: 6.0.9(vite@7.3.1(@types/node@24.10.1)(tsx@4.20.6))(vue@3.5.43(typescript@5.9.3))\n      '@vue/compiler-sfc':\n        specifier: 3.5.43\n        version: 3.5.43\n      prettier:\n        specifier: 3.6.2\n        version: 3.6.2\n      tsx:\n        specifier: 4.20.6\n        version: 4.20.6\n      typescript:\n        specifier: 5.9.3\n        version: 5.9.3\n      vite:\n        specifier: 7.3.1\n        version: 7.3.1(@types/node@24.10.1)(tsx@4.20.6)\n      vitest:\n        specifier: 3.2.4\n        version: 3.2.4(@types/node@24.10.1)(tsx@4.20.6)\n      vue-tsc:\n        specifier: 3.1.4\n        version: 3.1.4(typescript@5.9.3)"
+      },
+      {
+        "key": "c3",
+        "label": "Web 与共享 UI 的展示依赖",
+        "reason": "支持两个前端工作区共享 Vue、Markdown、高亮与净化依赖这一配置事实。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-lock.yaml",
+          "startLine": 58,
+          "endLine": 92
+        },
+        "quote": "  apps/web:\n    dependencies:\n      '@omem/ui':\n        specifier: workspace:*\n        version: link:../../packages/ui\n      dompurify:\n        specifier: ^3.4.16\n        version: 3.4.16\n      highlight.js:\n        specifier: ^11.12.0\n        version: 11.12.0\n      marked:\n        specifier: ^18.0.14\n        version: 18.0.14\n      qrcode.vue:\n        specifier: 3.8.0\n        version: 3.8.0(vue@3.5.43(typescript@5.9.3))\n      vue:\n        specifier: 3.5.43\n        version: 3.5.43(typescript@5.9.3)\n\n  packages/ui:\n    dependencies:\n      dompurify:\n        specifier: ^3.4.16\n        version: 3.4.16\n      highlight.js:\n        specifier: ^11.12.0\n        version: 11.12.0\n      marked:\n        specifier: ^18.0.14\n        version: 18.0.14\n      vue:\n        specifier: ^3.5.0\n        version: 3.5.43(typescript@5.9.3)"
+      },
+      {
+        "key": "c4",
+        "label": "Vite 的 Node 版本要求",
+        "reason": "支持运行环境存在最低 Node 版本约束，说明锁定成功不代表任意环境均可运行。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:pnpm-lock.yaml",
+          "startLine": 1372,
+          "endLine": 1375
+        },
+        "quote": "  vite@7.3.1:\n    resolution: {integrity: sha512-w+N7Hifpc3gRjZ63vYBXA56dvvRlNWRczTdmCBBa+CotUzAPf5b7YMdMR/8CQoeYE5LX3W4wj6RYTgonm1b9DA==}\n    engines: {node: ^20.19.0 || >=22.12.0}\n    hasBin: true"
+      }
+    ],
+    "questions": [
+      {
+        "question": "实际开发、CI 与部署环境是否统一使用满足 Vite 7.3.1 要求的 Node 版本？",
+        "why": "锁文件明确给出 Node 版本下限，但材料没有提供运行时版本或 CI 配置；若版本不符，安装、构建或开发服务器可能失败。",
+        "nextStep": "核对版本管理文件、CI 配置和部署环境中的 Node 版本，并在需要时统一约束。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:pnpm-lock.yaml",
+      "digest": "02d0a9725d31c52b4031dcd17d719325808e618bb159d1f1c16fd08238cd2b76"
+    },
+    {
+      "kind": "material",
+      "key": "omem:pnpm-workspace.yaml",
+      "digest": "25c83f134f6a94d376b9fd0cca3dd1b36fa6fdca6e54142d8ed47780f6265c61"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:39:59.461Z",
+    "trace": {
+      "runId": "72de11c5-6b5a-4c7d-b955-c38c5405696a",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "786b9fcef17b03ece0438d4c82e847e9c43f5b688fe9deb65b6b552fe1296579",
+      "contextHash": "79ed31ecbb487b0db030d895ece3f4efffe400c7fcc7c9eb64f3f6a1bd2ea311",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "923d0756c3f9ac11b46150062e6ebac0a578d3fd5a8696bf216fc935c9d4a766",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed64-5890-7fa2-a8cd-753a44463fab"
+      ],
+      "usage": {
+        "used": 68434,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 110532,
+          "utf8Bytes": 112088,
+          "estimatedTokens": 37363,
+          "budgetedTokens": 46704,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:40:10.802Z",
+    "trace": {
+      "runId": "dd1141fd-5639-4bca-8417-21373f74d446",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "5f65c598ece43aace27295fd599d040e49bd3f5c29ae22a61c8f3b0a209ddc5d",
+      "contextHash": "660467c6141ca4e931c58fd00b72beea184f5a81154af84fde27a3dae5996973",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1e049025a31b88f5749bfa670090f907552227c94d815e31779a7c7fad154ab9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed64-cb2a-7f42-846b-2bf12d7877ad"
+      ],
+      "usage": {
+        "used": 68159,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 117024,
+          "utf8Bytes": 120228,
+          "estimatedTokens": 40076,
+          "budgetedTokens": 50095,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:design.md",
+    "title": "omem 界面与组件实施规范",
+    "summary": "这是 2026-09-26 的 v1 视觉与交互实施规范，规定黑白灰证据阅读风格、Vue 组件复用、引用层级、响应式与无障碍验收；它是实现约束，不代表所有界面行为均已完成。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "visual-information",
+        "title": "视觉基线与信息架构",
+        "body": "规范将黑白灰证据阅读风格设为产品基线，并明确此文件只管界面与组件，系统架构另见 `docs/design.md`；实现入口是 Vue 3 + TypeScript 的 `packages/ui`。[[c1]] 页面采用顶栏、左侧材料、中间正文与右侧追问的结构，引用需贴近原句并展示版本、来源和关系；采集内容不得自动成为执行指令。[[c2]]"
+      },
+      {
+        "key": "components-trail",
+        "title": "共享组件与引用阅读链",
+        "body": "业务界面必须复用 `@omem/ui` 的按钮、弹窗、引用、面板和壳组件，UI 包只接收 props、slots 与 events，不直接访问 API 或密钥。[[c3]] 引用弹窗以固定片段版本为节点，支持逐层 push、Esc/back、循环返回、滚动与草稿记忆，并保持背景文章状态。[[c4]] 这是交互合同，不是现有代码通过验收的证明。"
+      },
+      {
+        "key": "responsive-acceptance",
+        "title": "响应式、无障碍与真实行为",
+        "body": "布局按 1100px 与 700px 两个边界切换三栏、侧栏和全屏引用；点击区域、标签、焦点、ARIA、Tab 顺序、触屏操作及减弱动画都有明确要求。[[c5]] 验收还要求真实动作、真实错误态、模型配置实际传入执行器、修改通知与 UTC 存储，并在 UI 变更后执行项目和浏览器检查。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "视觉规范定位",
+        "reason": "支持该文档的实施规范状态、视觉基线、职责边界及 Vue 实现入口。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# omem 设计系统\n\n状态：v1 实施规范，2026-09-26。用户已认可的黑白灰证据阅读风格是产品基线。系统架构在 [docs/design.md](docs/design.md)；此文件只定义界面与组件规范。实现入口为 `packages/ui`（Vue 3 + TypeScript），不继续用 React 构建产品界面。"
+      },
+      {
+        "key": "c2",
+        "label": "信息架构与证据展示",
+        "reason": "支持三栏信息结构、引用展示要求以及材料不自动成为指令的约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 22,
+          "endLine": 26
+        },
+        "quote": "## 信息架构与布局\n\n顶栏品牌、搜索和通知；左侧入口/材料目录；中间为当前材料与片段；右侧为基于固定片段的追问。需求、待办和观察记录是个人助理的一等信息，但材料内容不自动变成执行指令。\n\n引用贴近原句。明确显示固定版本、源类型、原文、关系类型。正文渲染为文本或经审查的 AST；绝不把采集来的 HTML 直接 v-html。模型回答与验证后的事实有不同状态。"
+      },
+      {
+        "key": "c3",
+        "label": "共享 UI 组件合同",
+        "reason": "支持组件复用范围、业务注入方式及 UI 包不得连接 API 或读取密钥的边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 28,
+          "endLine": 38
+        },
+        "quote": "## 组件合同\n\n从 `@omem/ui` 复用：OmButton、OmIcon、OmBadge、OmEmpty、OmPanel、OmShell、OmDialog、OmCitation。禁止业务页面重新创建不同配色/焦点/圆角的按钮和弹窗。业务数据只通过 props/slots/events 注入；UI 包不得连接 API 或读取密钥。\n\n- Button：primary/secondary/ghost；loading/disabled；显式 type，键盘 focus-visible。\n- Dialog：原生 dialog 顶层、单一焦点陷阱、Esc 发出 back、显式 close，关闭恢复触发焦点。\n- Citation：可键"
+      },
+      {
+        "key": "c4",
+        "label": "引用弹窗交互",
+        "reason": "支持固定片段、层级导航、循环处理、状态记忆和原位追问合同。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 40,
+          "endLine": 42
+        },
+        "quote": "## 引用弹窗\n\n一条引用对应固定 FragmentRevision。点击下一级 push，Esc/back 退一层，根层退出；循环目标提供跳回，不无限压栈。路径持久保留、正文只呈现当前层；每层记录滚动和局部草稿。当前弹窗可展开追问，答案引用仍可深入。禁止打开弹窗时清掉背景文章状态。"
+      },
+      {
+        "key": "c5",
+        "label": "移动端与无障碍要求",
+        "reason": "支持断点行为、可点击尺寸、焦点、ARIA、触屏和减弱动画要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 44,
+          "endLine": 48
+        },
+        "quote": "## 移动端与无障碍\n\n断点：>1100px 三栏；701–1100px 右栏改可打开侧栏；≤700px 导航折叠、引用全屏、问答在当前视图内展开。窄屏信息按优先级换行，禁止缩小字号挤入桌面布局。\n\n所有可点击区域至少 44×44px（正文内联引用按文本可达性处理）；输入有 label；聚焦 outline 2px；弹窗 aria-labelledby；异步状态 aria-live；保持 Tab 顺序。触屏不依赖 hover 或圈选，始终提供“就这段追问”。尊重 prefers-reduced-motion。覆盖 390px、768px、1440px 和长中文标题。"
+      },
+      {
+        "key": "c6",
+        "label": "真实行为与验收要求",
+        "reason": "支持真实动作、错误态、模型参数传递、通知、时区及检查流程的验收约束。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 50,
+          "endLine": 54
+        },
+        "quote": "## 真实行为与验收\n\n按钮必须执行对应动作或明确禁用；服务未连接显示错误/未配置；不要用模拟回答冒充真实模型。配置的范围和模型需实际传入执行器。每次知识/事项修改形成可读通知，失败不显示成功。时间在界面用本地时区，存储用 UTC。\n\n改 UI 前阅读 `.agents/skills/omem-design/SKILL.md`，复用 token 与组件；之后执行 `osdk run check` 和浏览器检查，验证引用层级、恢复焦点、窄屏、错误态。历史离线原型保留在 docs/prototype 供视觉对照，不作为新产品代码依赖。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前 Vue 界面对引用层级、循环返回、焦点恢复和三个目标视口的实现覆盖到什么程度？",
+        "why": "本文定义的是实施规范和验收要求，没有提供现有组件代码、浏览器结果或通过状态。",
+        "nextStep": "对照实施状态与浏览器检查报告，逐项核验引用栈、焦点、390px、768px、1440px 以及长中文标题。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "业务页面是否仍存在绕过 `@omem/ui` 自建按钮、弹窗或直接连接 API 的实现？",
+        "why": "组件合同明确禁止这些做法，但当前材料只有规范，没有实现审计结果。",
+        "nextStep": "审查 UI 导入和数据访问边界，并将发现的问题与实际检查结果记录到实施状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:config/omem.example.json",
+      "digest": "ecba4320f4a1389feece681ad38d82f3eee9ffc22291b9e23f6cafeaea5e523f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/review-code-model.example.json",
+      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/review-code-model.json",
+      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+    },
+    {
+      "kind": "material",
+      "key": "omem:deploy/omem.env.example",
+      "digest": "3a49807415a019629e2766a5356cee26526b901566c16c59f17fc71da5cd3aaa"
+    },
+    {
+      "kind": "material",
+      "key": "omem:deploy/omem.service.example",
+      "digest": "1f1dda957ae1e6765a313da0b7af11b1eae0e0ff58e7bf405d510377e4597861"
+    },
+    {
+      "kind": "material",
+      "key": "omem:design.md",
+      "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/design.md",
+      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:44:10.000Z",
+    "trace": {
+      "runId": "c4e66022-769b-4c8d-9073-66eb5012d0bd",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "d55780757f5d367b21abe583b5f66fab1f81c59622ae371ed6453735dc46fc18",
+      "contextHash": "297fa483d3742d883e58d0a4972cc2657b30a1561e9bab166ae5117f5f069aaf",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "63cc81d9d002c2fb15154b1148a18f5d6e0b0faa148bb35fc667b24892b83ca4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-89a1-7322-aaf1-25c0c53867e7"
+      ],
+      "usage": {
+        "used": 24674,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 19388,
+          "utf8Bytes": 26779,
+          "estimatedTokens": 8927,
+          "budgetedTokens": 11159,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:44:44.113Z",
+    "trace": {
+      "runId": "effcb44a-34bd-42f7-a454-80b0ae07e174",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "0b2978d6ee54d46d3388336b3918623820136d63cb98f829a6495f465eb98913",
+      "contextHash": "7553077f62d88b12c2a503f28e2d418922e4d039bdca2bd544381c9098574515",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a193697de1b2fb51a587685828be169bf1f17e522a5533fbfd206c91e0317dc0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb2-3111-78d0-b113-cac7edd89a39"
+      ],
+      "usage": {
+        "used": 26821,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28964,
+          "utf8Bytes": 42941,
+          "estimatedTokens": 14314,
+          "budgetedTokens": 17893,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:.gitignore",
+    "title": "本地运行产物与评审数据忽略策略",
+    "summary": "该文件排除依赖、构建产物、本地环境与运行数据，同时保留环境变量示例；对 repo-review，它明确区分受版本控制的冻结基线、知识资产与被忽略的实时运行目录。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "general",
+        "title": "常规本地产物隔离",
+        "body": "忽略规则覆盖依赖目录、构建输出、`.omem/` 本地状态、测试报告、Playwright 报告及 osdk 本地目录。`.env` 和各类 `.env.*` 默认被排除，但 `.env.example` 被显式重新纳入，体现“秘密留在本地、模板进入版本库”的配置边界。规则表达的是版本控制意图，不能单独证明相关文件从未被提交。[[c1]]"
+      },
+      {
+        "key": "review-boundary",
+        "title": "repo-review 三类资产",
+        "body": "注释将 repo-review 数据分为三类：冻结的运行基线被有意跟踪；实时写入迁移到 `.repo-review/runtime/` 后忽略；curated knowledge、清单和种子继续受版本控制。缓存、临时目录、模型输出和嵌入也被排除。由于 Git 忽略规则不影响已跟踪文件，这些模式不能作为冻结资产已被删除或取消跟踪的证据。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "通用忽略项与环境模板例外",
+        "reason": "支持依赖、构建、本地状态和测试产物被忽略，以及 `.env.example` 被保留的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.gitignore",
+          "startLine": 1,
+          "endLine": 13
+        },
+        "quote": "node_modules/\ndist/\napps/web/dist/\n.omem/\n.env\n.env.*\n!.env.example\nomem.local.json\ntest-results/\nplaywright-report/\ndocs/implementation/screenshots/*.png\n.osdk/\n**/.osdk-manifest.json"
+      },
+      {
+        "key": "c2",
+        "label": "repo-review 数据边界",
+        "reason": "支持冻结基线、实时运行目录、知识资产及派生缓存之间的版本控制边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:.gitignore",
+          "startLine": 15,
+          "endLine": 25
+        },
+        "quote": "# repo-review: the runtime baseline (.repo-review/data sqlite/WAL, browser.*.log,\n# last-sync.*, migrated-v2.flag) is intentionally tracked as a reproducible snapshot.\n# The live runtime moves to .repo-review/runtime/ on first boot and is ignored;\n# already-tracked files are unaffected by these patterns. Curated knowledge\n# (.repo-review/knowledge/**, manifests, seeds) stays version-controlled.\n.repo-review/runtime/\n.repo-review/cache/\n.repo-review/tmp/\n.repo-review/temp/\n.repo-review/model-outputs/\n.repo-review/embeddings/"
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前仓库中的 repo-review 冻结基线和 curated knowledge 是否仍按注释所述保持跟踪？",
+        "why": "`.gitignore` 只定义未跟踪文件的默认处理，不能证明具体文件当前的跟踪状态或历史上没有发生删除。",
+        "nextStep": "通过版本控制状态和文件清单核对冻结基线、知识资产与实时运行目录的实际归属。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/omem-design/agents/openai.yaml",
+      "digest": "79114042766ffd95bd85bc19efb22162118bda72b30963e11a307f702b6143eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/osdk-guide/SKILL.md",
+      "digest": "3a314043cc40e4e95900a1ecb9d7fea677fbef80f07fcec049ebcedb7d1adde7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/osdk-guide/reference/commands.md",
+      "digest": "ad727b71bd400dd964c6d3c10e3c0bd7606736a35b150cb0b35d0d16e52c8e6e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.claude/skills/osdk-guide/reference/configuration.md",
+      "digest": "eb6727e632faf5b3f54eeb2c86f93aa238f17396725906789c2bcdd56364e050"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.env.example",
+      "digest": "22d98ed66120631b06d3adb6d155ace0a597e5e1c10e2a43bdcbce12d54029a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:.gitignore",
+      "digest": "c6899a96bb9bf248c8837cc487dbf652f99d1bc7b8ad15d5f069f669a25d6a55"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T12:22:19.429Z",
+    "trace": {
+      "runId": "2e33257b-ae53-4251-8299-acb27155122d",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "cfc36bfad7e8073b4c470a2652774c989f58f77bf42b5881d87f13c21f5c89a4",
+      "contextHash": "18f8002804e287ebb17cb523ffa4bf3e5215b4880e5936fc8efab109957a79a4",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "36817a01eba7e36110959e054568fd3d8219a26576e140d4b8fa562cfc192552",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed1c-f280-7772-af71-35236b61f210"
+      ],
+      "usage": {
+        "used": 47296,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 63850,
+          "utf8Bytes": 90082,
+          "estimatedTokens": 30028,
+          "budgetedTokens": 37535,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T12:22:28.608Z",
+    "trace": {
+      "runId": "969ef422-6e15-46bf-bc0a-30bfb9880302",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "4b43e142052efae3c2fd5d29b93c26d4902c57346eb0519c475a12ab63b0e4f7",
+      "contextHash": "162c10e6f2af2339ed1ee8e525303f0848833b9b4a142571ef29d4a0533f0383",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ec57bd92bfc2524631484fefdedc14b00d7bb70cb51bddc95bb324d26d2fae16",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed1d-abfa-76e1-ab01-8d954289f996"
+      ],
+      "usage": {
+        "used": 39976,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 64570,
+          "utf8Bytes": 91144,
+          "estimatedTokens": 30382,
+          "budgetedTokens": 37978,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
