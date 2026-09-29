@@ -14,6 +14,7 @@ it("captures source, deployment configuration and image materials without import
     writeFileSync(join(root, "README.md"), "# Purpose\n\nFixed evidence matters. [部署](deploy/service.example)\n");
     writeFileSync(join(root, "deploy/service.example"), "[Service]\nExecStart=node main.js\n");
     writeFileSync(join(root, ".env"), "PRIVATE_FIXTURE=not-captured");
+    writeFileSync(join(root, "settings.local.json"), "{\"privateFixture\":true}");
     writeFileSync(join(root, "diagram.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", "base64"));
     const first = captureRepositoryMaterials(store, root);
     expect(first.filter(r => r.state === "captured").map(r => r.path).sort()).toEqual(["README.md", "deploy/service.example", "diagram.png"]);
@@ -23,7 +24,7 @@ it("captures source, deployment configuration and image materials without import
     const versions = store.db.prepare("SELECT count(*) n FROM revisions").get();
     captureRepositoryMaterials(store, root);
     expect(store.db.prepare("SELECT count(*) n FROM revisions").get()).toEqual(versions);
-    expect(repository.materials().some(m => m.path === ".env")).toBe(false);
+    expect(repository.materials().some(m => m.path === ".env" || m.path === "settings.local.json")).toBe(false);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -26,7 +26,7 @@ export function captureRepositoryMaterials(store: Store, repoRoot: string): Repo
   const result: RepositoryCoverage[] = [];
   const realRoot = realpathSync(repoRoot);
   for (const path of paths) {
-    if (path.startsWith(".repo-review/") || /(^|\/)(node_modules|dist|\.git)(\/|$)/.test(path) || /(^|\/)\.env(?!\.example$)/.test(path) || /(?:^|\/)omem\.local\.json$/.test(path)) {
+    if (path.startsWith(".repo-review/") || /(^|\/)(node_modules|dist|\.git)(\/|$)/.test(path) || /(^|\/)\.env(?!\.example$)/.test(path) || /\.local\.json$/.test(path)) {
       result.push({ path, state: "excluded", reason: path.startsWith(".repo-review/") ? "派生知识或历史运行数据，不作为新的独立证据" : "依赖、构建、运行配置或私有环境" }); continue;
     }
     try {
