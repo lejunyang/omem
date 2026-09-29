@@ -3,25 +3,30 @@
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
     "title": "原始材料读取与证据导航",
-    "summary": "KnowledgeSource 按材料键读取原文，并可用可选 digest 请求指定版本；组件处理请求竞态、代码与 Markdown 展示，以及关联知识和内部路径导航。未提供 digest 时，版本选择取决于后端。",
+    "summary": "按材料键及可选 digest 请求材料，展示当前或历史版本、引用位置与附件，并把关联知识和内部链接接回统一导航。",
     "category": "implementation",
     "sections": [
       {
         "key": "loading",
-        "title": "版本请求与竞态保护",
-        "body": "组件接收材料键、可选 digest 和引用行范围。材料键或 digest 变化时会清空旧内容并重新请求；提供 digest 时，它被编码到查询参数中，用于请求指定材料版本，未提供时则只发送材料键，因此此处不能单独证明响应固定到不可变版本，实际版本选择取决于后端。递增的 `generation` 只允许最新请求更新材料、错误和标题，避免较慢的旧响应覆盖当前阅读对象。[[c1]]\n\n界面区分加载、失败和成功状态。成功后以 `current` 标记“当前版本”或“历史版本”，并可显示引用行范围；代码类材料进入代码查看器，Markdown 材料显示所引原文块与完整正文，附件图片继续呈现。加载提示虽称“固定原文”，但版本标签也说明当前结果可能是当前或历史版本。[[c2]]"
+        "title": "可选版本定位与竞态保护",
+        "body": "组件接收材料键、可选 digest 和引用行范围；请求由材料键或 digest 变化触发。提供 digest 时会将其作为查询参数请求指定内容，未提供时仅按材料键请求，版本固定性取决于后端解析，前端材料本身不能证明其不可变。`generation` 只允许最新请求更新材料、错误和标题。[[c1]]"
+      },
+      {
+        "key": "rendering",
+        "title": "材料状态与内容呈现",
+        "body": "界面区分加载、不可用和成功状态，并按返回的 current 标记显示“当前版本”或“历史版本”。若有行号则显示引用位置；代码或非 Markdown 文件进入代码查看器，Markdown 可同时呈现引用原文块与全文，图片附件随后展示。存在知识解读时还可创建知识帧继续阅读。[[c2]]"
       },
       {
         "key": "navigation",
-        "title": "关联知识与内部链接解析",
-        "body": "代码查看器触发引用时，组件先查询同键文章的元数据并创建知识帧；如果文章查询失败，则降级为原始材料帧，让读者仍能回到证据，而不是静默中断。[[c3]]\n\nMarkdown 内部链接仅在材料具有路径时处理：以当前文件目录为基准，逐段规整 `..`、`.` 和普通路径，移除片段部分后补成 `omem:` 键，再复用关联引用流程。由于片段标识被去除，当前实现定位到关联文件，但不会保留目标文档内的锚点位置。[[c4]]"
+        "title": "关联知识与内部链接",
+        "body": "代码引用会先查询同键文章，成功时以文章标题创建知识帧，失败则降级为原始材料帧。Markdown 内部链接以当前材料目录为基准规整 `..`、`.` 和普通路径，去掉片段后补成 `omem:` 键，再复用同一引用流程；因此当前实现定位关联文件，但不保留目标锚点。[[c3]][[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "材料请求与竞态保护",
-        "reason": "支持 digest 仅为可选查询参数、未提供时只按材料键请求，以及 generation 防止旧响应覆盖新状态的论断。",
+        "label": "材料请求与代次保护",
+        "reason": "支持 digest 为可选查询参数、监听触发条件，以及最新请求独占状态更新。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -34,7 +39,7 @@
       {
         "key": "c2",
         "label": "原始材料阅读界面",
-        "reason": "支持加载与错误状态、当前或历史版本标记、引用行提示、代码与 Markdown 分流以及图片展示的说明。",
+        "reason": "支持版本标记、引用行、代码与 Markdown 分派、知识入口及图片呈现。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -46,8 +51,8 @@
       },
       {
         "key": "c3",
-        "label": "关联知识的降级导航",
-        "reason": "支持先打开关联知识文章、查询失败时退回原始材料帧的导航流程。",
+        "label": "关联文章的降级导航",
+        "reason": "支持先查询文章元数据，失败时仍打开原始材料帧。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -60,7 +65,7 @@
       {
         "key": "c4",
         "label": "Markdown 内部路径解析",
-        "reason": "支持内部链接以当前材料目录为基准规整路径、移除片段并转换为材料键的说明。",
+        "reason": "支持以当前文件目录规整内部路径、去除片段并转换为材料键。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -71,9 +76,35 @@
         "quote": "function internal(path: string) {\n  if (!material.value?.path) return;\n  const base = material.value.path.split(\"/\").slice(0, -1);\n  for (const p of path.split(\"#\")[0]!.split(\"/\")) { if (p === \"..\") base.pop(); else if (p && p !== \".\") base.push(p); }\n  void reference(\"omem:\" + base.join(\"/\"));"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "未提供 digest 时，材料端点选择当前版本、最新版本还是其他版本？",
+        "why": "前端只按 materialKey 发出请求，虽展示后端返回的 current 状态，但现有材料没有给出服务端版本解析规则。",
+        "nextStep": "核对材料 API 路由和版本查询测试，明确无 digest 请求的稳定性及缓存语义。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "25fc3c91a561c2e0f39ed27224f02c8ecda0c740198171974497b5c42a7ab463"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+    },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
@@ -88,37 +119,22 @@
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/api.ts",
       "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:05:10.591Z",
+    "at": "2026-09-29T21:35:12.881Z",
     "trace": {
-      "runId": "cd1685df-64a9-4acd-a280-bd8b1d2569d7",
+      "runId": "37b8e422-2f3c-4d65-9512-c500b959680c",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "d54ab1b1d88c7bcbf9c206fc9ee215f58ef05fcd93b8bb9148ab4b4de2f61937",
-      "contextHash": "33abeda1148806fed0e0beb23b9f6cec258a4488ce3ea72cd2123aab9f9c2c40",
+      "promptHash": "84cc1ff1bb1f014328e5c7702077f1dda72e2d5b21f9f556dfbcaf5257bc89b7",
+      "contextHash": "e9d709e8ac9d54e26cef2afd7d357176ed9d6771bfdb0c1f31af779152f4ceae",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bbd9f9c40cda2fe0ab7732332a2d0daaad307e738e531c69e22640d1f1874df2",
+      "fingerprint": "422e0b05be95a2e889bbfe188fe0c915ec1694cb40766fff40be8a404f7961a9",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -131,10 +147,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec5-21cd-7e52-85b5-33f3e8c810a9"
+        "01a0ef17-3b83-77a1-a991-1c7cfebe8637"
       ],
       "usage": {
-        "used": 25182,
+        "used": 32861,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -143,10 +159,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36378,
-          "utf8Bytes": 41972,
-          "estimatedTokens": 13991,
-          "budgetedTokens": 17489,
+          "chars": 48655,
+          "utf8Bytes": 61163,
+          "estimatedTokens": 20388,
+          "budgetedTokens": 25485,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -155,17 +171,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:05:27.474Z",
+    "at": "2026-09-29T21:35:29.405Z",
     "trace": {
-      "runId": "6d3e4664-09c9-4fbe-b922-9ee199c23457",
+      "runId": "e33386af-8dd0-444b-a527-2fb826e1cd30",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "31077f68c7e29842740368c7fc5d19b1d6f1f5a89b85e10c547ab87a0d839220",
-      "contextHash": "884568ace38450508b03df30b0b8f33178c6a5221b7cdff89c385be7ca815b41",
+      "promptHash": "768f3715a631f961ebc7561acf56349fd0c92678a8e08dc5a9032dec2489e49b",
+      "contextHash": "4aae98e56ead896194fb6b2458789e4a0d8d42f4ee3de9fb39d0de2a4196901c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f91a64d3689712c720eeba34bfd5ffcdf2d261d00358882b632b0c5de49d680a",
+      "fingerprint": "bcbd2e1cc61713d665be8daef29874d2bd9e5cb7b68f4e9ca9f31b873ebca5db",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -178,10 +194,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec5-6df1-7931-9752-0fa8d7f23c61"
+        "01a0ef17-dc95-70e0-aa0b-4beab7429d41"
       ],
       "usage": {
-        "used": 23403,
+        "used": 28075,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -190,10 +206,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 33233,
-          "utf8Bytes": 37845,
-          "estimatedTokens": 12615,
-          "budgetedTokens": 15769,
+          "chars": 44806,
+          "utf8Bytes": 54597,
+          "estimatedTokens": 18199,
+          "budgetedTokens": 22749,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

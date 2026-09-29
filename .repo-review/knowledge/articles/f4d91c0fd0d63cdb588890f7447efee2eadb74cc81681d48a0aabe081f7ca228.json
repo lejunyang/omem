@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-    "title": "知识疑问、补充请求与调查入口",
-    "summary": "展示尚未被替代的知识疑问，并允许用户向回答或待办端点发起请求；界面会刷新状态并显示结果提示，但本组件不足以证明服务端持久化语义。",
+    "title": "知识疑问、用户补充与调查请求",
+    "summary": "展示未被替代的疑问，并允许用户向回答或待办端点发起请求；当前材料仅证明前端请求、刷新和提示行为。",
     "category": "implementation",
     "sections": [
       {
         "key": "question-lifecycle",
         "title": "疑问筛选与状态表达",
-        "body": "组件从 questions 接口读取疑问，可用 documentKey 限定所属文档，并排除 superseded 项。摘要只统计 open 状态；每项依据 state 和 blocking 显示“已补充背景”“已加入待办”“需要判断”或“后续调查”，同时呈现问题、原因与建议下一步。这里的状态来自接口返回，组件本身不推导知识结论是否已经更新。[[c1]][[c2]]"
+        "body": "组件加载全部疑问，可按 documentKey 限定文档，并排除 superseded 项。界面区分 open、answered、task 与 blocking 状态，展示问题、缘由和下一步；摘要数量只统计 open 项，使尚待处理内容与已补充或已转待办内容分开呈现。[[c1]][[c2]]"
       },
       {
-        "key": "answer-and-task",
-        "title": "回答与待办请求",
-        "body": "对 open 疑问，用户可展开表单并向 answer 端点 POST 输入内容；请求成功后，界面显示“回答已作为原始材料保存”的提示、清空输入并重新加载列表。另一按钮向 task 端点发起独立 POST，成功时提示“已加入待办”并刷新。上述材料只能证明前端请求及提示行为，不能独立证明服务端确实创建了原始材料或待办。[[c1]][[c2]]"
+        "key": "answer-task",
+        "title": "回答与待办端点交互",
+        "body": "用户提交回答时，前端向该疑问的 answer 端点发送文本；成功后显示“作为原始材料保存”的提示、清空编辑状态并刷新列表。加入待办则向 task 端点 POST，成功后提示并刷新。这里仅能确认请求和界面文案，不能据此断言服务端确已持久化原始材料或待办。[[c1]][[c2]]"
       },
       {
         "key": "interaction-limits",
-        "title": "交互与反馈限制",
-        "body": "初次加载失败以及两个操作的成功或失败都写入同一条 message；回答文本和当前展开项也是组件级单一状态。提交期间没有可见的 pending 标记、按钮禁用或重复提交防护，列表只在挂载及操作成功后重新请求，没有实时订阅。因而慢请求或并发操作时的反馈隔离尚不明确，也无法从本组件判断服务端失败后如何保持疑问状态一致。[[c1]][[c2]]"
+        "title": "反馈与并发限制",
+        "body": "初次加载失败和两类操作结果共用一条 message；代码未呈现逐问题 pending 状态、按钮禁用或重复提交防护。列表仅在挂载和操作成功后刷新，没有轮询，因此慢请求、并发操作及服务端失败时的细粒度反馈仍未定义。[[c1]][[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "疑问加载与操作请求",
-        "reason": "支持疑问过滤、answer 与 task 请求、成功提示、表单清理和列表刷新等前端行为。",
+        "reason": "支持疑问过滤、answer 与 task 请求、成功提示、状态清理及重新加载流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -39,7 +39,7 @@
       {
         "key": "c2",
         "label": "疑问状态与操作界面",
-        "reason": "支持 open 数量、状态标签、原因和下一步展示，以及补充背景和加入待办两个入口。",
+        "reason": "支持状态标签、原因、下一步、回答表单、待办按钮及共享消息区域的描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,7 +64,7 @@
       {
         "question": "answer 与 task 端点是否分别持久化了新的原始材料和待办，并在失败时保持疑问状态一致？",
         "why": "当前引用仅覆盖前端请求和提示文本，无法核验服务端持久化语义。",
-        "nextStep": "补充对应服务端路由、存储实现和行为测试作为引用，或继续把正文限定为前端发起请求的行为。",
+        "nextStep": "补充对应服务端路由、存储实现和行为测试作为引用，或继续将正文限定为前端发起请求的行为。",
         "blocking": false,
         "citationKeys": [
           "c1",
@@ -82,28 +82,43 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+      "digest": "25fc3c91a561c2e0f39ed27224f02c8ecda0c740198171974497b5c42a7ab463"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
       "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+      "digest": "d10e4fe95d71f27225663cc3081e7c259308ec05b72a400e228f4dde1756d36f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+      "digest": "8642623296154c94e9930ac91046b69f5ef988082489e22c2263e23aafd08985"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:56:08.596Z",
+    "at": "2026-09-29T21:35:12.881Z",
     "trace": {
-      "runId": "f194229c-48ca-464d-990b-d6c4a13cda58",
+      "runId": "37b8e422-2f3c-4d65-9512-c500b959680c",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "6aacca70d299f20bec884ae89039227bdec59f953df70ad668d618e49f469b78",
-      "contextHash": "2239c559e878d49d7c50ea1b25957c8acc89bcce95b35dea1db1f777741c2888",
+      "promptHash": "84cc1ff1bb1f014328e5c7702077f1dda72e2d5b21f9f556dfbcaf5257bc89b7",
+      "contextHash": "e9d709e8ac9d54e26cef2afd7d357176ed9d6771bfdb0c1f31af779152f4ceae",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "cbfd6ad22a206830045d3110c53e0f13be007fd7af552bbaa90a889fe09f0eae",
+      "fingerprint": "422e0b05be95a2e889bbfe188fe0c915ec1694cb40766fff40be8a404f7961a9",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -116,10 +131,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef3-9a50-7a91-9988-d3f511570e10"
+        "01a0ef17-3b83-77a1-a991-1c7cfebe8637"
       ],
       "usage": {
-        "used": 22091,
+        "used": 32861,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -128,10 +143,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23448,
-          "utf8Bytes": 27584,
-          "estimatedTokens": 9195,
-          "budgetedTokens": 11494,
+          "chars": 48655,
+          "utf8Bytes": 61163,
+          "estimatedTokens": 20388,
+          "budgetedTokens": 25485,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -140,17 +155,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:56:25.398Z",
+    "at": "2026-09-29T21:35:29.405Z",
     "trace": {
-      "runId": "347a9700-fabb-4d20-aedc-a1233f48a8e6",
+      "runId": "e33386af-8dd0-444b-a527-2fb826e1cd30",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e98b95e315e739b8882dcebb9d145ea173fd4808296b7e40c9b15bdcd0e43f22",
-      "contextHash": "83ad12ba67a848703e0462df5b159fba0de9475e8a7819e157e2805a90e22667",
+      "promptHash": "768f3715a631f961ebc7561acf56349fd0c92678a8e08dc5a9032dec2489e49b",
+      "contextHash": "4aae98e56ead896194fb6b2458789e4a0d8d42f4ee3de9fb39d0de2a4196901c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "55771a836b56d09e2313c256d8827c037c8075af635d522ccd56f48994529c9b",
+      "fingerprint": "bcbd2e1cc61713d665be8daef29874d2bd9e5cb7b68f4e9ca9f31b873ebca5db",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -163,10 +178,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef4-1764-7863-8486-86a65707ac7e"
+        "01a0ef17-dc95-70e0-aa0b-4beab7429d41"
       ],
       "usage": {
-        "used": 21864,
+        "used": 28075,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -175,10 +190,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26169,
-          "utf8Bytes": 32595,
-          "estimatedTokens": 10865,
-          "budgetedTokens": 13582,
+          "chars": 44806,
+          "utf8Bytes": 54597,
+          "estimatedTokens": 18199,
+          "budgetedTokens": 22749,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -3,82 +3,56 @@
   "document": {
     "key": "omem:apps/web/src/knowledge/api.ts",
     "title": "知识前端 API 与阅读帧合同",
-    "summary": "该模块衔接共享知识合同与前端阅读体验：定义文章、引用及帧类型，封装带会话令牌的 JSON 请求，并为知识文章生成可恢复的帧标识；成功体与错误字段的服务端约束仍待确认。",
+    "summary": "定义知识文章、引用和阅读帧的前端类型，封装带会话令牌的 JSON 请求，并构造可序列化的知识阅读帧。",
     "category": "implementation",
     "sections": [
       {
         "key": "contracts",
-        "title": "文章、引用与解析目标",
-        "body": "模块复用共享合同中的知识正文与引用类型，并为前端引用增加可操作状态、不可用原因、当前性及解析结果。解析目标区分文章和材料，可携带 revision、digest（内容摘要标识）、section 与行范围；这些字段为阅读组件定位固定版本、章节或原文片段提供依据，但多为可选值，下游仍需处理目标缺失和不可操作状态。[[c1]]\n\n阅读帧由 `kind`、字符串 `id` 和展示标题组成，种类包括知识、引用与原始材料。这里只规定三类帧共享相同外形，并未规定每种 `id` 都必然包含可解析的导航参数；具体解析和分派由阅读组件按帧种类完成。[[c2]]"
+        "title": "文章、引用与帧类型",
+        "body": "模块复用共享合同中的知识正文与引用类型，并为前端引用补充可操作性、不可用原因、当前状态和解析目标。解析目标可指向文章或材料，并携带 revision、digest（内容摘要标识）、section 及起止行等可选定位信息。KnowledgeFrame 则规定 knowledge、citation、source 三类帧均具有字符串 id 和展示标题，但该类型本身不保证所有 id 都含 JSON 导航参数。[[c1]]"
       },
       {
         "key": "request",
-        "title": "认证请求与响应处理",
-        "body": "`knowledgeApi` 从会话存储取得令牌，存在时加入 Bearer 认证；请求包含 body 时补充 JSON 内容类型，再合并调用方 headers。该合并方式对普通对象形式最直观，但 `RequestInit.headers` 也允许 `Headers` 实例或元组数组，因此不能据此保证所有合法形式都按预期展开。[[c3]]\n\n失败响应会尝试读取 JSON，并优先用其中 truthy 的 `error` 构造异常，否则回退到状态码信息；成功响应则无条件调用 `response.json()`。这意味着封装隐含依赖后端返回 JSON 成功体，也尚未在现有材料中确认 `error` 一定是适合展示的字符串。[[c4]]"
+        "title": "认证请求与错误传播",
+        "body": "`knowledgeApi` 从 sessionStorage 读取令牌，存在时加入 Bearer 认证；请求包含 body 时补 JSON 内容类型。自定义 headers 通过对象展开合并，这只足以描述普通对象形式，不能证明 `Headers` 实例或元组数组都可靠保留。非成功响应尝试读取 JSON 的 error，否则使用状态码；成功响应无条件调用 `response.json()`。[[c2]]"
       },
       {
-        "key": "frame",
-        "title": "知识帧的可恢复导航",
-        "body": "`knowledgeFrame` 专门构造 knowledge 帧：它把文章 key、可选 revision 和 section 序列化进字符串 `id`，同时保留调用方提供的可读标题。[[c5]] 阅读组件随后解析该 `id`，并把其中的文章键、版本与章节交给正文组件；source 与 citation 帧也在同一分派入口处理，但它们的参数来源和构造方式不由本函数定义。[[c6]]\n\n因此，先前将“三类帧都使用字符串 id 保存导航参数”视为统一保证的表述已被替代：当前可以明确确认的是 `knowledgeFrame` 生成的知识帧具有可序列化导航参数，以及阅读入口能够按帧种类解释已有参数。"
+        "key": "frame-construction",
+        "title": "知识帧构造",
+        "body": "`knowledgeFrame` 专门构造 knowledge 帧，将文章键、可选 revision 和 section 序列化进 id，并保留调用方给出的标题。[[c3]] 因而可以确认由该函数生成的知识帧保存了可恢复导航参数；citation 与 source 帧是否采用同样编码方式，需要其各自构造处的证据。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "引用解析目标类型",
-        "reason": "支持引用解析结果区分文章与材料，并可携带 revision、digest、section 和行范围等定位字段的论断。",
+        "label": "知识前端类型合同",
+        "reason": "支持文章、引用解析目标的可选定位字段，以及三类阅读帧的结构边界。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/api.ts",
           "startLine": 1,
-          "endLine": 4
+          "endLine": 5
         },
         "quote": "import type { KnowledgeDocument, KnowledgeCitation } from \"../../../../packages/contracts/src/knowledge\";\nexport type ArticleMeta = { key: string; title: string; summary: string; category: string; current: boolean; revision: string; model: string; reviewedBy: string; generatedAt: string; questionCount: number };\nexport"
       },
       {
         "key": "c2",
-        "label": "阅读帧基础结构",
-        "reason": "支持三类阅读帧共享 kind、字符串 id 与标题结构，同时说明该类型本身未约束 id 内容。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/api.ts",
-          "startLine": 5,
-          "endLine": 5
-        },
-        "quote": "export type KnowledgeFrame = { kind: \"knowledge\" | \"citation\" | \"source\"; id: string; title: string };"
-      },
-      {
-        "key": "c3",
-        "label": "认证与请求头合并",
-        "reason": "支持会话令牌、JSON 内容类型以及调用方 headers 合并方式的说明。",
+        "label": "知识 API 请求封装",
+        "reason": "支持令牌、JSON 请求头、响应解析和错误传播流程，并界定请求头合并限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/api.ts",
           "startLine": 6,
-          "endLine": 8
+          "endLine": 10
         },
         "quote": "export async function knowledgeApi<T>(prefix: string, path: string, init?: RequestInit): Promise<T> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, headers: { ...(init?.body !== undefined ? { \"content-type\": \"application/json\" } : {}), ...(token ? { Autho"
       },
       {
-        "key": "c4",
-        "label": "响应与错误处理",
-        "reason": "支持失败体解析、状态码回退及成功响应无条件按 JSON 解析的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/api.ts",
-          "startLine": 9,
-          "endLine": 10
-        },
-        "quote": "  if (!response.ok) { const body = await response.json().catch(() => ({})); throw Error(body.error || `请求失败 (${response.status})`); }\n  return response.json();"
-      },
-      {
-        "key": "c5",
+        "key": "c3",
         "label": "知识帧构造函数",
-        "reason": "支持仅对 knowledge 帧将文章键、版本和章节序列化进 id 的限定性结论。",
+        "reason": "支持知识帧把文章键、可选版本与章节 JSON 序列化进 id。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -87,34 +61,36 @@
           "endLine": 12
         },
         "quote": "export const knowledgeFrame = (key: string, title: string, revision?: string, section?: string): KnowledgeFrame => ({ kind: \"knowledge\", id: JSON.stringify({ key, revision, section }), title });"
-      },
-      {
-        "key": "c6",
-        "label": "阅读帧解析与分派",
-        "reason": "支持阅读组件解析帧 id，并按 knowledge、source、citation 种类分别加载内容的说明。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 7,
-          "endLine": 30
-        },
-        "quote": "const props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}"
       }
     ],
     "questions": [
       {
         "question": "后端是否保证所有成功响应均为 JSON、所有失败响应的 error 字段均为可安全展示的字符串？",
-        "why": "前端封装对成功响应无条件调用 `response.json()`，并将失败体中的 truthy `error` 值交给 `Error`；现有材料没有提供服务端响应合同，无法确认空响应、非 JSON 成功体或非字符串错误值的行为。",
-        "nextStep": "核对知识 API 路由的响应 schema 与错误处理中间件，并为非 JSON 成功体、空响应及非字符串 `error` 增加合同或行为测试。",
+        "why": "前端对成功响应无条件调用 response.json()，并把失败体中的 truthy error 值交给 Error；现有材料没有服务端响应合同。",
+        "nextStep": "核对知识 API 路由的响应 schema 与错误处理中间件，并为非 JSON 成功体、空响应及非字符串 error 增加合同或行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c4"
+          "c2"
         ]
       }
     ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "25fc3c91a561c2e0f39ed27224f02c8ecda0c740198171974497b5c42a7ab463"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+    },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
@@ -129,37 +105,22 @@
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/api.ts",
       "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:05:42.545Z",
+    "at": "2026-09-29T21:35:12.881Z",
     "trace": {
-      "runId": "69077637-f814-480a-888e-e33949669e82",
+      "runId": "37b8e422-2f3c-4d65-9512-c500b959680c",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9828f61a683875e7a9063f3a437a9dafdee77dbaa8b2bf230062e02f3b3597b4",
-      "contextHash": "01110c5dace39607bbbf1889b52e3edc058cf39d34bf49e0d9e6872cf93757a1",
+      "promptHash": "84cc1ff1bb1f014328e5c7702077f1dda72e2d5b21f9f556dfbcaf5257bc89b7",
+      "contextHash": "e9d709e8ac9d54e26cef2afd7d357176ed9d6771bfdb0c1f31af779152f4ceae",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "79b64ea5cee82a11fc2f35a1dbfbac84e1e6d57d47f0b5dba26d59a6a67254d0",
+      "fingerprint": "422e0b05be95a2e889bbfe188fe0c915ec1694cb40766fff40be8a404f7961a9",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -172,10 +133,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec5-af98-7b53-b07a-e21bef750d33"
+        "01a0ef17-3b83-77a1-a991-1c7cfebe8637"
       ],
       "usage": {
-        "used": 23600,
+        "used": 32861,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -184,10 +145,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 33214,
-          "utf8Bytes": 37685,
-          "estimatedTokens": 12562,
-          "budgetedTokens": 15703,
+          "chars": 48655,
+          "utf8Bytes": 61163,
+          "estimatedTokens": 20388,
+          "budgetedTokens": 25485,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -196,17 +157,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:05:49.738Z",
+    "at": "2026-09-29T21:35:29.405Z",
     "trace": {
-      "runId": "bc3063e3-5c69-4333-a5c6-f6ce42d69364",
+      "runId": "e33386af-8dd0-444b-a527-2fb826e1cd30",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "f2999ea30f7014187733007eb07b648aa58a6a6e88ab026c4bfa554d768040ab",
-      "contextHash": "215f8ac6006361447909b8f0c58af5086757e4ccde9a6d577f2092443f1297ae",
+      "promptHash": "768f3715a631f961ebc7561acf56349fd0c92678a8e08dc5a9032dec2489e49b",
+      "contextHash": "4aae98e56ead896194fb6b2458789e4a0d8d42f4ee3de9fb39d0de2a4196901c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "07bff2a4eaf8cc91825aa8f5b9f0592f7f2e6cb888eaa7e2400668219903022d",
+      "fingerprint": "bcbd2e1cc61713d665be8daef29874d2bd9e5cb7b68f4e9ca9f31b873ebca5db",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -219,10 +180,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec5-e9ee-7fe1-baef-fc567a475191"
+        "01a0ef17-dc95-70e0-aa0b-4beab7429d41"
       ],
       "usage": {
-        "used": 22192,
+        "used": 28075,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -231,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 31651,
-          "utf8Bytes": 35332,
-          "estimatedTokens": 11778,
-          "budgetedTokens": 14723,
+          "chars": 44806,
+          "utf8Bytes": 54597,
+          "estimatedTokens": 18199,
+          "budgetedTokens": 22749,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
