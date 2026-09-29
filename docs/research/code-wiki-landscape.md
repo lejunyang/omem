@@ -204,18 +204,14 @@
 
 ---
 
-## 6. 用户提供的内部架构材料：Aime DeepWiki（内部文档，非公开开源事实）
+## 6. 用户提供的内部架构材料： DeepWiki
 
-> 本节来自用户提供的字节内部飞书文档，通过 `lark-cli docs +fetch --as user` 以用户身份读取（2026-09-28，revision 817）。**这是内部产品自述/设计稿，不是开源实现，未经公开代码核验；本节事实与第 1–5 节公开开源事实严格分开，不得互为佐证，也不进入第 7 节横向对比总表。**
->
-> - 标题：《Aime | DeepWiki：基于智能体深度理解的代码知识库》
-> - URL：https://bytedance.larkoffice.com/wiki/CP8Vw3c5dimnZPkJz7EcUai5nke （解析后 docx：https://bytedance.larkoffice.com/docx/YNOQdM6P6oCrA4xmGgRcIBmAngd ，revision_id=817）
-> - 读取方式：lark-cli，未用浏览器，未下载正文图片；文中「系统架构图」是内嵌第三方块（`<readonly-block type="isv">`），正文未给出图内文字，本节不对该图做任何解读。
+> 本节来自用户提供的飞书文档，通过 `lark-cli docs +fetch --as user` 以用户身份读取（2026-09-28，revision 817）。**这是内部产品自述/设计稿，不是开源实现，未经公开代码核验；本节事实与第 1–5 节公开开源事实严格分开，不得互为佐证，也不进入第 7 节横向对比总表。**
 
 ### 6.1 问题与目标（原文）
 
 - 「企业内部代码文档缺失/脱节极大影响了信息传递」；目标是「借助智能体技术，通过分析代码仓库的结构和功能，自动生成结构化的Wiki文档」，同时服务研发与非研发同学。
-- 产品定位：「让读者更快了解一个代码库、模块，提供高维抽象后的知识总结；而对于代码细节的深究，则可以借助 Ask Aime 继续深入了解」。
+- 产品定位：「让读者更快了解一个代码库、模块，提供高维抽象后的知识总结；而对于代码细节的深究，则可以借助 Ask 继续深入了解」。
 - 设计理念三条：突出重点由表及里（先整体概览再按关键主题分析，**明确不走传统静态代码分析生成文档的路线**）；千仓千面（应用框架→API/核心概念，应用服务→架构/模块/部署，插件→集成/安装/使用）；代码原生 & 有生命的 Wiki（以 Markdown 撰写，未来开放下载与开发者直接参与）。
 
 ### 6.2 Agent 分工与管线（原文组件名）
@@ -242,11 +238,11 @@
 
 ### 6.4 产品交互
 
-高维 Wiki 阅读（文件树/章节/Mermaid 关系图）+ 「Ask Aime」对仓库内问题下钻（原文示例：「xx 能力是如何实现的？」「xx 函数都在哪里被调用？」「如何使用 xx 功能/配置？」）。
+高维 Wiki 阅读（文件树/章节/Mermaid 关系图）+ 「Ask」对仓库内问题下钻（原文示例：「xx 能力是如何实现的？」「xx 函数都在哪里被调用？」「如何使用 xx 功能/配置？」）。
 
 ### 6.5 omem 概念映射
 
-| Aime DeepWiki 自述 | omem 对应 | 判断 |
+| DeepWiki 自述 | omem 对应 | 判断 |
 | --- | --- | --- |
 | Git 仓库 → 仓库探索 | CodeRepository + 现有 file/Git connector | 概念一致 |
 | （未说明） | Snapshot / 固定 revision / 不可变 fragment | **缺口**：它无 per-commit 锚定；omem 的固定 fragment 身份是它没有的硬约束 |
@@ -255,7 +251,7 @@
 | ClassifierAgent → OverviewAgent → ChapterWriterAgent | omem extractor/planner/writer role bundles | 分工流水线可借鉴：先分类选模板 → 再概览 → 再逐章写 |
 | 知识库层（ID/名称/解释/匹配模式，精确+正则） | source-profile 确定性规则 / project_trusted 软过滤 | 可借鉴为注入领域术语表；但 omem 规则不冒充语义证据 |
 | 千仓千面模板策略 | source-profile 规则分析 | 思路一致 |
-| Ask Aime 下钻 | Web 阅读台引用弹窗 + 原位追问 | 产品方向一致 |
+| Ask 下钻 | Web 阅读台引用弹窗 + 原位追问 | 产品方向一致 |
 | Wiki 迁 git、可 clone、可改 markdown | omem 导出带固定引用 ID 的 Markdown | 方向一致；omem 已把 Git 当导出目标而非在线写入协调器 |
 
 ### 6.6 对本调研结论的影响
@@ -322,4 +318,4 @@
 - Docusaurus：https://docusaurus.io/ ；VitePress/MkDocs 对比：https://docsio.co/blog/vitepress 、https://okidoki.dev/documentation-generator-comparison
 - GraphRAG 仓库：https://github.com/microsoft/graphrag ；论文：https://arxiv.org/pdf/2404.16130 ；配置：https://github.com/microsoft/graphrag/blob/main/docs/config/yaml.md
 - BGE-M3：https://arxiv.org/html/2402.03216v3/ ；官网 https://bge.baai.ac.cn/ ；nomic-embed-text：https://www.nomic.ai/news/nomic-embed-text-v1
-- 内部材料（非公开源事实，见第 6 节）：《Aime | DeepWiki：基于智能体深度理解的代码知识库》https://bytedance.larkoffice.com/wiki/CP8Vw3c5dimnZPkJz7EcUai5nke （lark-cli 读取，revision 817，2026-09-28）
+- 内部材料（非公开源事实，见第 6 节）：《DeepWiki：基于智能体深度理解的代码知识库》 
