@@ -1,0 +1,597 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:web:part-1",
+    "title": "web · 模块理解 · 专题 1",
+    "summary": "Web 模块是基于 Vue 3、Vite 与共享 UI 包构建的浏览器交互层，同时承载个人工作记忆和仓库评审两套界面。它编排多来源捕获、固定证据阅读、Agent 问答、学习与人工决策，也提供通知核验、飞书接入、Code Wiki、代码追溯和同步入口；当前仍受精确文本检索、前端轮询及尚待服务端验证的安全、并发和响应合同边界限制。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "role-and-modes",
+        "title": "职责、背景与双模式入口",
+        "body": "该模块是两套 Web 表面的总装层：启动时先探测评审健康接口，命中 review 模式便停止个人工作区初始化；否则加载健康信息、Agent profiles、材料、通知、任务、提案与决策。[[c1]] 根模板据此在仓库评审应用与个人工作区壳层之间切换。[[c2]] 技术上它是私有 Vue 3 ESM 包，使用 Vite 开发和构建，并复用共享 UI；Markdown、高亮、净化和二维码库只是已声明依赖，不能据此断言所有能力均已实际调用。[[c3]]"
+      },
+      {
+        "key": "personal-flow",
+        "title": "个人工作记忆的证据链流程",
+        "body": "个人模式围绕“捕获—固定版本—证据阅读—后续行动”展开：手工输入可组合文本、链接与图片，也可从飞书、Git 或服务器文件导入，保存后刷新集合并打开对应修订。[[c4]] EvidenceReader 以帧栈保存阅读路径和滚动位置，检测循环并支持逐层返回；片段、完整材料和反向引用可分别查看，路径还能传给追问侧栏。[[c5]][[c6]] 图片请求的取消和对象 URL 回收实际由 AssetImage 负责，取代了此前将这部分资源管理宽泛归因于阅读器的结论。[[c7]] 固定片段可作为 Agent 问答焦点，但界面明确提醒：材料可回查不等于回答中的每项主张已经自动核验。[[c8]]"
+      },
+      {
+        "key": "review-and-api",
+        "title": "仓库评审与接口边界",
+        "body": "评审应用将 Wiki 设为初始视图，并在该分支实际渲染 Code Wiki；其余视图覆盖分类浏览、固定修订、全文搜索、代码追溯和同步状态。[[c9]][[c10]] 关系对端缺失或没有修订标识时，`openRelation` 会提示并提前返回，因此“缺失对端不会跳转”现在由实际保护条件直接支持。[[c11]] 追溯页把人工登记关系与关键词候选分区呈现，同步页显示扫描统计并声明当前只读浏览、检索不依赖模型。[[c12]] 评审客户端文件还声明该接口绑定 loopback、无需个人工作区令牌；这是客户端边界说明，不等同于服务端安全审计。[[c13]]"
+      },
+      {
+        "key": "progress-and-limits",
+        "title": "当前进展、被替代结论与限制",
+        "body": "飞书界面声明 App Secret 只提交服务端加密保存且不出现在响应、日志或页面结果中，[[c14]] 并说明手工 secret 提交后清除、botmux 只向浏览器暴露应用名称与 App ID。[[c15]] 这些仍是前端流程与文案，不能替代后端存储和泄露测试。通知详情则区分应用回执、原始证据和投递状态，没有回执时不把通知本身视为事实已生效。[[c16]]\n\n个人搜索仍是精确文本检索，语义检索尚未接入；自动从观测提炼待办也被明确列为后续能力。[[c17]][[c18]] 通用个人 API 无条件解析 JSON，空响应或非 JSON 错误页可能掩盖真实状态。[[c19]] 待办与恢复、学习任务、人工决策分别提交版本、generation、摘要或请求标识，[[c20]][[c21]][[c22]] 但这些字段只为服务端校验提供输入，不能证明并发、幂等或防重放已落实。仓库同步仅维护当前组件的忙碌状态并调用同步接口，取代了“同步也提交版本或请求标识”的旧概括。[[c23]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "评审探测与个人工作区启动",
+        "reason": "支持启动时优先识别评审服务、命中后提前返回，否则初始化个人工作区集合的流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 155,
+          "endLine": 183
+        },
+        "quote": "async function boot() {\n  error.value = \"\";\n  // Review mode: the dev/prod server behind /api is the repo-review knowledge base,\n  // not the personal workspace. Detect it before touching business APIs.\n  try {\n    const r = await fetch(\"/api/review/health\");\n    if (r.ok) {\n      const h = (await r.json()) as { mode?:"
+      },
+      {
+        "key": "c2",
+        "label": "双模式根界面分支",
+        "reason": "直接支持根模板在评审应用和个人工作区壳层之间二选一。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 409,
+          "endLine": 412
+        },
+        "quote": "<template>\n  <ReviewApp v-if=\"reviewMode\" />\n  <OmShell v-else\n    ><template #top"
+      },
+      {
+        "key": "c3",
+        "label": "Web 包脚本与依赖",
+        "reason": "支持私有 ESM 包、Vite 脚本、Vue、共享 UI 和内容呈现相关依赖的技术背景。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/package.json",
+          "startLine": 1,
+          "endLine": 17
+        },
+        "quote": "{\n  \"name\": \"@omem/web\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite --host 127.0.0.1\",\n    \"build\": \"vite build\"\n  },\n  \"dependencies\": {\n    \"@omem/ui\": \"workspace:*\",\n    \"dompurify\": \"^3.4.16\",\n    \"highlight.js\": \"^11.12.0\",\n    \"marked\": \"^18.0.14\",\n    \"qrcode.vue"
+      },
+      {
+        "key": "c4",
+        "label": "多来源捕获与修订打开",
+        "reason": "支持图片限制、连接器分流、手工多模态输入、来源元数据以及保存后打开修订的完整流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 207,
+          "endLine": 289
+        },
+        "quote": "async function upload(e: Event) {\n  const file = (e.target as HTMLInputElement).files?.[0];\n  if (!file) return;\n  if (\n    ![\"image/png\", \"image/jpeg\", \"image/webp\"].includes(file.type) ||\n    file.size > 5_000_000\n  ) {\n    error.value = \"支持 PNG/JPEG/WebP，单张不超过 5 MB\";\n    return;\n  }\n  const reader = new FileReader()"
+      },
+      {
+        "key": "c5",
+        "label": "证据帧栈导航",
+        "reason": "支持帧栈去重、循环检测、滚动记忆、压栈和返回流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/EvidenceReader.vue",
+          "startLine": 9,
+          "endLine": 47
+        },
+        "quote": "type Frame = { e: Evidence; tab: string; ask: boolean; scroll: number };\nconst frames = ref<Frame[]>([]);\nconst current = computed(() => frames.value.at(-1));\nconst error = ref(\"\");\nconst loop = ref(-1);\nconst target = ref(\"\");\nlet loading = false;\nasync function open(id: string) {\n  if (loading) return;\n  const i = fr"
+      },
+      {
+        "key": "c6",
+        "label": "证据视图与路径追问",
+        "reason": "支持片段、完整材料、反向引用三种视图，以及将完整路径传给追问组件。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/EvidenceReader.vue",
+          "startLine": 104,
+          "endLine": 172
+        },
+        "quote": "      <div class=\"tabs\">\n        <OmButton\n          v-for=\"[key, label] in [\n            ['excerpt', '引用片段'],\n            ['context', '完整材料'],\n            ['backlinks', '反向引用'],\n          ]\"\n          :key=\"key\"\n          :variant=\"current.tab === key ? 'primary' : 'ghost'\"\n          @click=\"current.tab = key\"\n       "
+      },
+      {
+        "key": "c7",
+        "label": "图片请求取消与资源回收",
+        "reason": "直接支持图片标识切换和组件卸载时取消请求、撤销对象 URL，说明资源管理职责属于图片组件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/AssetImage.vue",
+          "startLine": 3,
+          "endLine": 34
+        },
+        "quote": "import { headers } from \"./api\";\nconst props = defineProps<{ id: string; label: string }>();\nconst url = ref(\"\");\nconst error = ref(\"\");\nlet controller: AbortController | undefined;\nwatch(\n  () => props.id,\n  async (id) => {\n    controller?.abort();\n    controller = new AbortController();\n    const signal = controller."
+      },
+      {
+        "key": "c8",
+        "label": "固定焦点问答与核验提示",
+        "reason": "支持固定片段和可选路径作为问答上下文，并明确生成回答尚未逐项自动核验。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChatPane.vue",
+          "startLine": 49,
+          "endLine": 120
+        },
+        "quote": "async function ask() {\n  if (!draft.value.trim() || !props.focus || busy.value) return;\n  error.value = \"\";\n  busy.value = true;\n  try {\n    const started = await api<{ id: string; state: \"running\" }>(\"/runs\", {\n      question: draft.value,\n      profileId: props.profileId,\n      focusId: props.focus.id,\n      ...(prop"
+      },
+      {
+        "key": "c9",
+        "label": "评审应用默认 Wiki 状态",
+        "reason": "直接支持评审应用的初始视图为 Wiki。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 37,
+          "endLine": 41
+        },
+        "quote": "type View = \"wiki\" | \"browse\" | \"read\" | \"search\" | \"trace\" | \"sync\";\n\nconst health = ref<ReviewHealth | null>(null);\nconst categories = ref<ReviewCategory[]>([]);\nconst view = ref<View>(\"wiki\");"
+      },
+      {
+        "key": "c10",
+        "label": "Code Wiki 渲染分支",
+        "reason": "证明 Wiki 状态会实际渲染 Code Wiki 组件，而不只是声明一个状态值。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 459,
+          "endLine": 462
+        },
+        "quote": "    <!-- code wiki -->\n    <section v-if=\"view === 'wiki'\" class=\"page wiki-page\">\n      <CodeWiki />\n    </section>"
+      },
+      {
+        "key": "c11",
+        "label": "缺失关系对端跳转保护",
+        "reason": "直接支持关系对端为空或缺少修订标识时提示并拒绝跳转。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 281,
+          "endLine": 288
+        },
+        "quote": "/** Jump to the other side of a relation (bidirectional navigation). */\nasync function openRelation(other: ReviewRelation[\"other\"]) {\n  if (!other || !other.revisionId) {\n    say(\"该关联指向缺失的材料，无法跳转\");\n    return;\n  }\n  await openRevision(other.revisionId, other.fragmentId);\n}"
+      },
+      {
+        "key": "c12",
+        "label": "追溯候选与同步状态界面",
+        "reason": "支持人工关系和关键词候选分区、同步统计以及只读浏览检索不依赖模型的界面边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 644,
+          "endLine": 735
+        },
+        "quote": "        <OmPanel title=\"② 登记链路（意图 → 决策 → 调研 → 测试）\" class=\"stack\">\n          <template v-if=\"groupRelations(traceRelations).length\">\n            <div v-for=\"g in groupRelations(traceRelations)\" :key=\"g.type\">\n              <h4>{{ relationLabel(g.type) }}</h4>\n              <OmPanel\n                v-for=\"r in g.items\"\n "
+      },
+      {
+        "key": "c13",
+        "label": "评审客户端认证边界声明",
+        "reason": "支持评审客户端关于 loopback、只读浏览同步和不发送个人 Authorization 请求头的自述边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "/** Client for the repo-review knowledge-base API (/api/review/*). This surface is\n * read/browse/sync only, bound to loopback, and has no token gating, so unlike the\n * personal workspace api.ts it sends no Authorization header. Shapes mirror\n * apps/server/src/review/app.ts exactly. */"
+      },
+      {
+        "key": "c14",
+        "label": "飞书凭据安全界面说明",
+        "reason": "支持前端关于 App Secret 提交、加密保存及不出现在响应、日志或页面中的明确说明，同时不将其冒充后端验证结果。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 208,
+          "endLine": 211
+        },
+        "quote": "    <p class=\"muted\">\n      新建或更新应用需要平台授权；也可安全复用 botmux 已有应用。App Secret\n      只提交给服务端加密保存，不会出现在状态响应、日志或页面结果中。\n    </p>"
+      },
+      {
+        "key": "c15",
+        "label": "手工 Secret 与 botmux 浏览器边界",
+        "reason": "支持手工 secret 的表单清理说明，以及复用 botmux 时浏览器只获得应用名称和 App ID 的界面边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 263,
+          "endLine": 275
+        },
+        "quote": "          <label v-if=\"credentialSource === 'manual'\">\n            App Secret\n            <input\n              v-model=\"clientSecret\"\n              type=\"password\"\n              required\n              autocomplete=\"new-password\"\n            />\n            <small>仅本次请求使用；提交后立即从表单内存清除。</small>\n          </label>\n        "
+      },
+      {
+        "key": "c16",
+        "label": "通知回执、证据与投递状态",
+        "reason": "支持通知和事实生效的区分，以及原始证据和外部投递结果的展示。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/NotificationDetail.vue",
+          "startLine": 27,
+          "endLine": 103
+        },
+        "quote": "<template>\n  <OmDialog\n    :open=\"open\"\n    title=\"通知与变化详情\"\n    @close=\"emit('close')\"\n    @back=\"emit('close')\"\n  >\n    <p v-if=\"loading\" class=\"muted\">正在读取持久状态…</p>\n    <template v-else-if=\"detail\">\n      <div class=\"row\">\n        <OmBadge>{{ detail.changeKind || \"通知\" }}</OmBadge>\n        <small>{{ new Date(detail.cr"
+      },
+      {
+        "key": "c17",
+        "label": "精确文本检索限制",
+        "reason": "直接支持个人搜索目前使用精确文本检索、语义检索尚未接入。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 505,
+          "endLine": 507
+        },
+        "quote": "    <section v-if=\"query\" class=\"page\">\n      <h1>搜索“{{ query }}”</h1>\n      <p class=\"muted\">当前使用精确文本检索；语义检索尚未接入。</p>"
+      },
+      {
+        "key": "c18",
+        "label": "待办自动提炼限制",
+        "reason": "直接支持从观测自动提炼待办仍是后续能力。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 687,
+          "endLine": 692
+        },
+        "quote": "    <section v-else-if=\"view === 'tasks'\" class=\"page\">\n      <span class=\"eyebrow\">从工作中记下要推进的事</span>\n      <h1>需求与待办</h1>\n      <p class=\"muted\">\n        可关联当前片段、设置到期时间；到期提醒写入通知中心。自动从观测中提炼待办将在后续接入。\n      </p>"
+      },
+      {
+        "key": "c19",
+        "label": "个人 API 请求与 JSON 解析",
+        "reason": "支持会话令牌、统一 JSON 请求流程，以及响应体被无条件解析的限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 240,
+          "endLine": 257
+        },
+        "quote": "export function headers(): Record<string, string> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n): Promise<T> {\n  const r = await fetch("
+      },
+      {
+        "key": "c20",
+        "label": "待办版本与历史恢复前提",
+        "reason": "支持待办更新提交 expectedVersion、历史恢复提交 expectedHead。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 306,
+          "endLine": 355
+        },
+        "quote": "async function changeTask(t: Task) {\n  try {\n    await api(\n      \"/tasks/\" + t.id,\n      {\n        status: t.status === \"open\" ? \"done\" : \"open\",\n        expectedVersion: t.version,\n      },\n      \"PATCH\",\n    );\n    await refresh();\n  } catch (e) {\n    error.value = String(e);\n  }\n}\nasync function readNotification(n:"
+      },
+      {
+        "key": "c21",
+        "label": "学习任务控制字段",
+        "reason": "支持任务取消和重试请求提交 expectedGeneration 与随机 requestId。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 50,
+          "endLine": 56
+        },
+        "quote": "async function control(job: Job, action: \"cancel\" | \"retry\") {\n  busy.value = job.id;\n  try {\n    await api(`/jobs/${job.id}/${action}`, {\n      expectedGeneration: job.generation,\n      requestId: crypto.randomUUID(),\n    });"
+      },
+      {
+        "key": "c22",
+        "label": "人工决策提交字段",
+        "reason": "支持决策请求提交 proposalDigest、requestId、actorId 和动作。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 28,
+          "endLine": 39
+        },
+        "quote": "async function decide(\n  decision: Decision,\n  action: \"approve\" | \"reject\" | \"request_context\",\n) {\n  busy.value = decision.id + action;\n  try {\n    await api(`/decisions/${decision.id}`, {\n      action,\n      proposalDigest: decision.proposalDigest,\n      requestId: crypto.randomUUID(),\n      actorId: decision.actorI"
+      },
+      {
+        "key": "c23",
+        "label": "评审同步调用与本地忙碌状态",
+        "reason": "支持同步界面只设置组件本地忙碌状态、调用同步并刷新数据，未提交版本、摘要或请求标识。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 364,
+          "endLine": 379
+        },
+        "quote": "async function loadSync() {\n  syncState.value = await reviewSyncStatus();\n}\n\nasync function runSync() {\n  syncBusy.value = true;\n  error.value = \"\";\n  try {\n    lastSyncResult.value = await reviewRunSync();\n    await Promise.all([loadSync(), loadCategories(), refreshHealth()]);\n    say(\"同步完成\");\n  } catch (e) {\n    erro"
+      }
+    ],
+    "questions": [
+      {
+        "question": "个人工作区的待办、学习任务、决策和历史恢复端点是否在服务端强制执行版本、摘要与请求标识的并发和幂等校验？",
+        "why": "前端分别提交了 expectedVersion、expectedHead、expectedGeneration、proposalDigest 和 requestId，但现有材料不能证明服务端会拒绝旧版本、重复请求或来源变化后的操作。",
+        "nextStep": "核对对应服务端处理器与冲突、重放、过期状态测试，并记录各端点的错误合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c20",
+          "c21",
+          "c22"
+        ]
+      },
+      {
+        "question": "飞书 App Secret 的加密持久化、日志脱敏、botmux 读取范围与授权失败路径是否已有自动化安全验证？",
+        "why": "当前材料能够证明前端安全文案、密码输入和表单清理，但不能验证凭据离开浏览器后的存储、日志及错误响应边界。",
+        "nextStep": "审查飞书接入服务端实现、密钥存储配置和日志过滤，补充成功、失败及泄露检查。",
+        "blocking": false,
+        "citationKeys": [
+          "c14",
+          "c15"
+        ]
+      },
+      {
+        "question": "仓库同步端点如何处理多个页面同时触发同步、扫描中断和单文件导入失败？",
+        "why": "界面的忙碌状态只约束当前组件，无法证明服务端具有跨请求互斥、事务回滚或明确的部分成功语义。",
+        "nextStep": "检查同步处理器、锁、事务边界及失败测试，并明确失败后的持久状态和恢复方式。",
+        "blocking": false,
+        "citationKeys": [
+          "c12",
+          "c23"
+        ]
+      },
+      {
+        "question": "个人 API 是否保证所有成功、错误及无内容响应都返回合法 JSON？",
+        "why": "通用封装无条件执行 JSON 解析；空响应或代理生成的非 JSON 错误页可能使解析异常掩盖真实状态。",
+        "nextStep": "核对服务端响应合同并增加空响应、非 JSON 错误、网络失败和取消请求测试，必要时增强解析分支。",
+        "blocking": false,
+        "citationKeys": [
+          "c19"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/index.html",
+      "digest": "9eba05b8514ffe71592094d06a723f5e8775521106e4d68b9b871d87dbc4b1b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/package.json",
+      "digest": "85268e48064a45b61d7e07e1b2bcbab67fc0d323ff79ed09eb38864c67ea3845"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/DecisionsView.vue",
+      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LarkSetup.vue",
+      "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ReviewApp.vue",
+      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/index.html",
+      "digest": "5533bd6bcf6e88983f9db7ff86ad542874b53bdc74509416d9977f2e33e04174"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/package.json",
+      "digest": "f10a83a4423ee62b2903832a2efdb24c9ead6030e5182bce44ed8b8451c2db8c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "3ea63a821119c5f03b9aaa5199c713b280244ae3ca6922636ecb79e6e02e5dc5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "0b16c256e426901eb5035d98b7e4892f99189f047837cbf035bba1b18c3377ad"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "17ed84d47da2a85af741cad81ec320d826e8e5be4288f24f59db52dffda0de25"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/DecisionsView.vue",
+      "digest": "101b40ebec0f93e3429de30efd3095dc38aca297cbdf36d26c70a63a903ceff2"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "9499dab1433dc041cef4894c2b17e2d7ba4aa3e2e82718ff9f88e87d931d00d6"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/LarkSetup.vue",
+      "digest": "b8442a61946a1fac29c20ed6447a0ed2288d6bb6c51114df8b77e790add4b1d1"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "1c7f559b833ff9d0ac42d90f7482e0a8a964955578a94cc40bdb698416d5711f"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "3d2244aaa208ce4e9cb69b567e2d282d73ad5b8328fd7d1377017edc17e54867"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/ReviewApp.vue",
+      "digest": "c0e3fb269335eb793985e804a69b2d257332b97e8127ca6a993a2b1c35cd9fd7"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "ebeec6d5a8a11dff5c25d4287737c89c1e4aafb84ae7d0d54b98bc4ae0e596aa"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:40:41.759Z",
+    "trace": {
+      "runId": "1259a8a4-215a-4c14-bd1a-af65e14250f3",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "6c54ccdf7102493ae2a77ada955977f28176541863d3571421b4f7d5f4898b46",
+      "contextHash": "74a191768a5831ea4d2fb37a6e322a77ffb824ea5c0334f471dad8162b820966",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c9585f6eae2733e36d6297bebcbfedbd47cdb041e8e251b4cdd4f6de8cb71e54",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee5-73ba-7093-91bb-b45acc18e283"
+      ],
+      "usage": {
+        "used": 94449,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 234427,
+          "utf8Bytes": 270958,
+          "estimatedTokens": 90320,
+          "budgetedTokens": 112900,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:40:55.095Z",
+    "trace": {
+      "runId": "ba0033ce-9ae3-4013-ba6a-54bec4fa23b4",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2b22ff65bdf9516aaec63d0e04b0b021120840301551e562554038f23663b797",
+      "contextHash": "a3776eb50c4d4d4066eba20286aa5bb5a040423e2b01e33f9072633c8a12b7ee",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "0058406c521f6748bcdec73708e24c7dfd814b28da4943c7a05eed3f67cc6c84",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee5-f214-78b1-8de4-4ce272da62a7"
+      ],
+      "usage": {
+        "used": 88592,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 226617,
+          "utf8Bytes": 259999,
+          "estimatedTokens": 86667,
+          "budgetedTokens": 108334,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

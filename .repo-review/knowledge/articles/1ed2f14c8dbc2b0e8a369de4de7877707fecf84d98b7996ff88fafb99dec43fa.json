@@ -1,0 +1,522 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:web:part-3",
+    "title": "Web 模块专题 3：可追溯知识阅读与双 API 边界",
+    "summary": "Web 模块将个人知识首页、正文、固定引用、原始材料和疑问入口串成连续阅读流程，并提供隔离的 repo-review 浏览客户端；现有实现仍依赖若干未经运行时验证的接口与交互合同。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "personal-knowledge-flow",
+        "title": "个人知识的阅读闭环",
+        "body": "个人知识页把首页和活动阅读帧接到同一知识 API，并用共享 Trail 的 push、back、jump、close 组织连续导航。[[c1]] 首页加载文章、材料和运行状态，计算当前解读覆盖数；未覆盖材料由用户显式触发分析，随后每 15 秒刷新。[[c2]] 阅读帧再按正文、直接原文和固定引用分派；固定引用可解析到文章章节或带 digest、行范围的材料，不可操作目标会显示原因。[[c3]] 原文界面区分当前与历史版本，关联知识查询失败时降级打开材料。[[c4]]"
+      },
+      {
+        "key": "questions-and-evidence",
+        "title": "疑问入口的可确认边界",
+        "body": "前端会过滤被替代的疑问，展示接口返回的状态、原因和下一步，并允许用户提交背景或请求加入待办；成功后显示提示并刷新列表。[[c5]] 旧稿中“正文不会强行补全不确定事项”的结论超出了该组件证据，现改为仅确认疑问区的展示和请求行为。材料也不能证明服务端必然完成原始材料持久化、待办创建或重新核对。"
+      },
+      {
+        "key": "review-api-boundary",
+        "title": "Repo-review 的隔离客户端",
+        "body": "repo-review 客户端声明自己面向回环地址上的读取、浏览和同步接口，因此不发送个人工作区令牌；这只是客户端所依赖的安全前提。[[c6]] 关系 DTO 表达入向关系反转、过期状态和未解析对端。[[c7]] 代码文件、符号和边另有 `displayTitle`、`displayPath`、`actionable`、`reason` 等人类展示与可操作投影；该结论由对应 DTO 行直接支持，替代旧稿误用关系范围引用的表述。[[c8]] 通用请求成功后仅作 TypeScript 泛型断言，未进行运行时 schema 校验。[[c9]] 全文源码则先探测总行数，再发起第二次范围请求。[[c10]]"
+      },
+      {
+        "key": "runtime-and-limits",
+        "title": "运行基础与已知限制",
+        "body": "入口依次加载共享设计令牌和应用样式，再挂载 Vue 根组件。[[c11]] 应用样式实际定义了阅读栏、错误与 Toast 反馈，并在 1100px、700px 两级断点调整布局；这替代了旧稿仅引用入口文件却推断具体样式的结论。[[c12]] TypeScript 采用严格、无输出的跨包源码检查，Vite 在开发期监听回环地址并代理 `/api`。[[c13]][[c14]]\n\n当前限制均有对应材料：个人知识请求假设成功体为 JSON；[[c15]] 帧 JSON 解析失败只退为空对象，缺少必填字段前置校验；[[c16]] 分析成功后只在本地设置 running，疑问操作也没有逐项 pending 状态；[[c2]][[c5]] review 响应缺少运行时验证；[[c9]] Trail 材料仅证明装配和事件接线，不能证明深链、滚动恢复、Esc 或实际焦点归还。[[c1]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "个人知识页与共享 Trail 装配",
+        "reason": "支持首页、活动阅读帧共用知识 API，并展示共享 Trail 的状态、导航事件和焦点目标接线；同时界定其不能证明共享组件内部行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+          "startLine": 1,
+          "endLine": 12
+        },
+        "quote": "<script setup lang=\"ts\">\nimport { OmTrailDrawer, useEvidenceTrail } from \"@omem/ui\";\nimport KnowledgeHome from \"./KnowledgeHome.vue\";\nimport KnowledgeFrame from \"./KnowledgeFrame.vue\";\nconst { frames, current, open, loopAt, trigger, active, push, back, jump, close } = useEvidenceTrail();\n</script>\n<template>\n  <section"
+      },
+      {
+        "key": "c2",
+        "label": "首页覆盖统计与分析流程",
+        "reason": "支持文章材料加载、覆盖计算、显式分析请求、running 本地更新及十五秒轮询。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 9,
+          "endLine": 30
+        },
+        "quote": "const articles = ref<ArticleMeta[]>([]), materials = ref<{ key: string; title: string; path: string | null; revisionId: string }[]>([]);\nconst query = ref(\"\"), selected = ref(\"\"), error = ref(\"\"), running = ref(false), limit = ref(40);\nconst selectedByUser = ref(false);\nlet timer: ReturnType<typeof setInterval> | undef"
+      },
+      {
+        "key": "c3",
+        "label": "阅读帧与固定引用分派",
+        "reason": "支持帧参数解析、固定引用请求和正文、原文、引用三类展示分支，以及不可操作目标与固定行范围的处理。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 7,
+          "endLine": 30
+        },
+        "quote": "const props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}"
+      },
+      {
+        "key": "c4",
+        "label": "原始材料与关联导航",
+        "reason": "支持材料版本请求、当前或历史状态展示，以及关联知识查询失败后降级打开原始材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 5,
+          "endLine": 39
+        },
+        "quote": "const props = defineProps<{ prefix: string; materialKey: string; digest?: string; startLine?: number; endLine?: number }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\ntype Material = { key: string; title: string; text: string; path: string | null; codeLanguage?: string "
+      },
+      {
+        "key": "c5",
+        "label": "疑问展示与操作入口",
+        "reason": "支持疑问过滤、状态展示、回答和待办请求、共享消息及成功后的列表刷新，并限定结论为前端行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+          "startLine": 5,
+          "endLine": 27
+        },
+        "quote": "const props = defineProps<{ prefix: string; documentKey?: string }>();\ntype Question = { id: string; question: string; why: string; nextStep: string; blocking: boolean; state: string; documentKey: string };\nconst questions = ref<Question[]>([]), active = ref(\"\"), answer = ref(\"\"), message = ref(\"\");\nconst visible = com"
+      },
+      {
+        "key": "c6",
+        "label": "Repo-review 客户端边界声明",
+        "reason": "支持不发送个人令牌以及回环、无令牌门禁属于客户端声明前提的说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "/** Client for the repo-review knowledge-base API (/api/review/*). This surface is\n * read/browse/sync only, bound to loopback, and has no token gating, so unlike the\n * personal workspace api.ts it sends no Authorization header. Shapes mirror\n * apps/server/src/review/app.ts exactly. */"
+      },
+      {
+        "key": "c7",
+        "label": "关系方向与有效状态",
+        "reason": "支持入向关系类型反转、过期状态判定及未解析对端为空的语义。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 112,
+          "endLine": 137
+        },
+        "quote": "/** One bidirectional relation touching a fragment. `relationType` is already\n * inverted when the queried fragment is the target (e.g. a decision fragment\n * sees \"implemented_by\"). `other` is null for unresolved (missing) links.\n *\n * `relationStatus` is the EFFECTIVE status shown in the UI: the stored status,\n * for"
+      },
+      {
+        "key": "c8",
+        "label": "代码 DTO 展示投影",
+        "reason": "直接支持代码文件、符号和边的人类可读展示字段、可操作状态、原因及深链字段。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 262,
+          "endLine": 339
+        },
+        "quote": "export type CodeSnapshot = {\n  snapshotId: string;\n  repoId: string;\n  commit: string | null;\n  dirty: boolean;\n  capturedAt: string;\n  parserVersion: string;\n  fileCount: number;\n  changedCount: number;\n  partial: boolean;\n  // DTO projection (forward-compat)\n  displayTitle?: string;\n  shortCommit?: string;\n  citation"
+      },
+      {
+        "key": "c9",
+        "label": "Repo-review 请求包装器",
+        "reason": "支持统一 API 前缀、JSON 错误处理以及成功响应仅作泛型类型断言的限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 174,
+          "endLine": 185
+        },
+        "quote": "async function get<T>(path: string): Promise<T> {\n  const r = await fetch(\"/api/review\" + path);\n  const value = await r.json().catch(() => ({}));\n  if (!r.ok) throw Error((value && (value as { error?: string }).error) || \"请求失败\");\n  return value as T;\n}\n\nasync function post<T>(path: string): Promise<T> {\n  const r = aw"
+      },
+      {
+        "key": "c10",
+        "label": "两阶段源码全文读取",
+        "reason": "支持先用一行请求探测 totalLines，再按完整范围发起第二次请求的流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 498,
+          "endLine": 511
+        },
+        "quote": "export async function codeSourceSlice(\n  id: string,\n  startLine: number,\n  endLine: number,\n): Promise<SourceSlice> {\n  return codeGet(\n    \"/files/\" + encodeURIComponent(id) + \"/source?startLine=\" + startLine + \"&endLine=\" + endLine,\n  );\n}\n/** Fetch the whole file: probe totalLines with a 1-line request, then fetch "
+      },
+      {
+        "key": "c11",
+        "label": "Web 启动与样式导入",
+        "reason": "支持共享设计令牌、应用样式的导入顺序及 Vue 根应用挂载。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/main.ts",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "import { createApp } from \"vue\";\nimport App from \"./App.vue\";\nimport \"@omem/ui/tokens.css\";\nimport \"./styles.css\";\ncreateApp(App).mount(\"#app\");"
+      },
+      {
+        "key": "c12",
+        "label": "应用反馈与响应式样式",
+        "reason": "直接支持错误、Toast 等反馈样式及 1100px、700px 两级响应式布局规则。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 170,
+          "endLine": 272
+        },
+        "quote": ".error-banner {\n  margin: 18px 28px;\n  padding: 14px;\n  background: #fff1f1;\n  border: 1px solid #ebc7c7;\n  color: var(--om-danger);\n  border-radius: 6px;\n  overflow-wrap: anywhere;\n}\n.toast {\n  position: fixed;\n  bottom: 24px;\n  left: 50%;\n  transform: translateX(-50%);\n  max-width: min(600px, 90vw);\n  background: #24"
+      },
+      {
+        "key": "c13",
+        "label": "TypeScript 检查配置",
+        "reason": "支持严格、无输出的 TypeScript 检查，以及应用、共享 UI 和契约源码的跨包 include 范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/tsconfig.json",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "{\"compilerOptions\":{\"target\":\"ES2023\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"skipLibCheck\":true,\"esModuleInterop\":true,\"lib\":[\"ES2023\",\"DOM\",\"DOM.Iterable\"],\"types\":[\"vite/client\"],\"noEmit\":true},\"include\":[\"src/**/*.ts\",\"src/**/*.vue\",\"../../packages/ui/src/**/*.ts\",\"../../packages/ui/src/**/*.v"
+      },
+      {
+        "key": "c14",
+        "label": "Vite 本地开发链路",
+        "reason": "支持 Vue 插件、回环监听、严格端口以及将浏览器 API 请求代理到本地后端。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/vite.config.ts",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "import { defineConfig } from \"vite\";\nimport vue from \"@vitejs/plugin-vue\";\nexport default defineConfig({\n  plugins: [vue()],\n  server: { host: \"127.0.0.1\", port: Number(process.env.OMEM_WEB_PORT || 5173), strictPort: true, proxy: { \"/api\": `http://127.0.0.1:${process.env.OMEM_PORT || 4317}` } },"
+      },
+      {
+        "key": "c15",
+        "label": "个人知识请求响应处理",
+        "reason": "支持成功响应无条件调用 response.json，以及失败响应尝试解析 JSON 的合同假设。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/api.ts",
+          "startLine": 6,
+          "endLine": 10
+        },
+        "quote": "export async function knowledgeApi<T>(prefix: string, path: string, init?: RequestInit): Promise<T> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, headers: { ...(init?.body !== undefined ? { \"content-type\": \"application/json\" } : {}), ...(token ? { Autho"
+      },
+      {
+        "key": "c16",
+        "label": "帧参数解析边界",
+        "reason": "支持帧 id 解析失败时退为空对象，以及 citation 请求仍将参数转换为字符串的现有行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 7,
+          "endLine": 16
+        },
+        "quote": "const props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "共享证据 Trail 是否已完整实现深链恢复、滚动记忆、Esc 退层、循环处理和关闭后的焦点归还？",
+        "why": "现有材料只显示 composable 返回值、抽屉属性与事件接线，不能核验共享组件内部实现和真实浏览器行为。",
+        "nextStep": "检查共享 UI 中 useEvidenceTrail 与 OmTrailDrawer 的实现，并用浏览器测试覆盖多层 push、刷新恢复、返回、关闭和焦点场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "分析、回答和加入待办如何表达“已接受、处理中、失败、完成”，并防止重复提交？",
+        "why": "分析请求成功后只在本地设置 running；回答和待办操作共享一条消息，未显示逐问题 pending 或重复提交防护。",
+        "nextStep": "核对服务端任务与持久化合同，并补充慢请求、失败重试、并发操作和重复点击测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c5"
+        ]
+      },
+      {
+        "question": "个人知识与 repo-review 的成功响应是否由共享 schema 或契约测试保证，部署环境是否始终维持回环安全边界？",
+        "why": "个人知识客户端假设成功体为 JSON，review 客户端直接进行泛型断言；回环无令牌边界主要来自客户端注释和开发服务器配置。",
+        "nextStep": "对照服务端路由、监听配置和共享合同，引入运行时边界解析或契约测试，并验证实际部署的网络可达范围。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c9",
+          "c14",
+          "c15"
+        ]
+      },
+      {
+        "question": "repo-review 全文源码的两次请求在空文件、大文件或快照变化时应如何保证一致性？",
+        "why": "实现先探测总行数再读取完整范围，但材料没有给出大小限制、快照绑定或两次请求间同步发生时的处理规则。",
+        "nextStep": "补充源码接口限制和快照参数，并测试空文件、超大文件及两次请求之间发生同步的场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
+        ]
+      },
+      {
+        "question": "分析、回答和加入待办如何区分已接受、处理中、失败与完成，并防止重复提交？",
+        "why": "分析请求成功后仅在本地设置 running；回答和待办操作共享消息状态，材料中没有逐项 pending 或重复提交防护。",
+        "nextStep": "核对服务端任务及持久化合同，并补充慢请求、失败重试、并发操作和重复点击测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c5"
+        ]
+      },
+      {
+        "question": "个人知识与 repo-review 的响应合同及回环安全边界是否有服务端证据或契约测试保证？",
+        "why": "个人知识客户端假设成功响应为 JSON，review 客户端仅作泛型断言；无令牌且仅限回环的边界主要来自客户端注释和开发服务器配置。",
+        "nextStep": "对照服务端路由、监听配置与共享合同，增加运行时 schema 校验或契约测试，并验证实际部署的网络可达范围。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c9",
+          "c14",
+          "c15"
+        ]
+      },
+      {
+        "question": "repo-review 全文源码的两次请求在空文件、大文件或快照变化时如何保证一致性？",
+        "why": "实现先请求一行探测 totalLines，再按所得范围请求全文；材料未给出大小限制、快照绑定或请求间发生同步时的处理规则。",
+        "nextStep": "补充源码接口限制和快照参数，并测试空文件、超大文件及两次请求之间发生同步的场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+      "digest": "d10e4fe95d71f27225663cc3081e7c259308ec05b72a400e228f4dde1756d36f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+      "digest": "8642623296154c94e9930ac91046b69f5ef988082489e22c2263e23aafd08985"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/main.ts",
+      "digest": "e28bb90369dd31edb2423c029d0d215f9ef339d91bbfd97cebc5dfeb522c1db5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/styles.css",
+      "digest": "67910ac93e56f8446d578981a1fc76c94dbbc0499ba88e982cbc49cbc033be3a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/tsconfig.json",
+      "digest": "7a61554f3814816b2e147949e7f630c712b00074444c2aaee5924511e2af0a0c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/vite.config.ts",
+      "digest": "4fcb2917c4add37f82214643fd7c2b9ccad0f64d44cbf0526cc21aa0c032a2e1"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+      "digest": "ef0ae711c01227e5b376b1b15c28d725a4d80b44f3f5b0d8e6db65e4d60b3b95"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "6dfe791d653ec2f7929f5531b0a5f7f0f813980d7c480c7fd66cc3831e3516e6"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "209e3230276738cae445f8771f88e5ea7ac265c52a77ff8189d61b181be63a0d"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+      "digest": "f7aa74eb09e7b0382c7dd1bec0dbce2bb856a4557b7a6c5b68d33f4935c3bbc6"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+      "digest": "b051f344985f3f6e924bee1d23218b78b532ee60f68b74e744650fdb209f234d"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "5dcb71d03388ee8bb8dbbc4221934cc09d6f16da012b7f215881ae9f08a069b0"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/main.ts",
+      "digest": "f80669d24c113e0c5ab04294c202f7362d0587696ef98150f880984ad3c7d3b9"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "85abfed211e5280c7a579fda437e909d5313e4a5a5c17295155b6ce7817bf8c7"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/styles.css",
+      "digest": "5db74d846ba08f8626140270b2b8ba2405e093af49ef9545ea36aa1c403bd3b1"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/tsconfig.json",
+      "digest": "ae9cb9e5a36637888a622314639916f92f14b017d22f18e28da0edaaf781a9d2"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/vite.config.ts",
+      "digest": "896a863d3550ab410e3c886ae38a1ca21b1477008fb1d72cb31cfe094ddaf10e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:58:22.723Z",
+    "trace": {
+      "runId": "7e310a50-70c1-4b15-b628-5a0f8f83143c",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "9c1eea8f720cea123d1bb54610bcea4064c8970d2c5162cedbc198984ec69feb",
+      "contextHash": "3e5aa7ba02e4ba648d5d3e1d4322b85e5355f3eecc9e9febb2ab2dda9ffee142",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bca8cfd91ea2996ae7df54ae0097b86e4d59cf3f25868f8d91d91094977c6105",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef5-bbff-7771-b441-be7f761fac43"
+      ],
+      "usage": {
+        "used": 53473,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 110547,
+          "utf8Bytes": 138437,
+          "estimatedTokens": 46146,
+          "budgetedTokens": 57683,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:58:39.299Z",
+    "trace": {
+      "runId": "d8f0520d-1fe2-4440-a1d9-4b69c1b0c990",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "a181eccb260eecba73c1fb730764badde478d258cb4d6f812f3172445b1afd14",
+      "contextHash": "85bc47f7e9ea9e23abbc4d3922e875f1a41212a068387aa5927eb8617c0cd469",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bed47e18f78a4ba9fd2b75566040ce8b01bc702911cf52935c141ad8f7c1cf50",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef6-2268-7c61-aab0-75ab72bffd8b"
+      ],
+      "usage": {
+        "used": 50641,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 108447,
+          "utf8Bytes": 133751,
+          "estimatedTokens": 44584,
+          "budgetedTokens": 55730,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
