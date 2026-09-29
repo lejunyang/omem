@@ -1,0 +1,534 @@
+{
+  "version": 1,
+  "document": {
+    "key": "topic:overview",
+    "title": "系统概览与能力边界",
+    "summary": "omem 是以不可变原始证据为基础的个人助手：多类材料进入统一证据链；一般知识经材料分析、独立复核与不可变发布形成派生正文，明确任务和记忆则分别经过服务器意图复核、MemoryService 与 Attention Gate 治理。个人工作区与仓库 Wiki 共用固定引用和递归阅读机制。当前已有可运行闭环，但仍限于单用户 SQLite，语义检索、全面自动重核验、跨修订身份续接及真实外部端到端验收尚未完成。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "purpose-context",
+        "title": "要解决的问题与判断框架",
+        "body": "omem 要解决的不是“再生成一份摘要”，而是让助手理解材料、支持行动，同时让结论始终能回到当时原文。系统以固定 Revision 和 Fragment 为证据锚点，坚持本地优先；当前检索仍是关键词基线，跨 Revision 身份续接与语义检索尚未实现。[[c1]] 背景章节进一步解释本地与证据边界、可替换检索的取舍，以及产品从离线原型向渐进记忆演进的过程。[[c2]][[c21]][[c22]]\n\n阅读仓库时应区分三类信息：状态与验证记录说明现行能力，需求和设计描述目标约束，历史 Batch、原型及研究建议只供追溯。当前产品个人优先，采集材料不是工具指令，单用户实现也不能冒充租户隔离。[[c3]] 普通、高置信且小范围的变化可以自治处理并通知用户；含糊、缺少背景、范围过大或危险的操作仍需用户决策。[[c4]]"
+      },
+      {
+        "key": "shared-architecture",
+        "title": "统一证据链与受治理结果",
+        "body": "手工、文件、Git、聊天、Hook、Lark 和屏幕事件先进入统一 Capture，再归并为 Source，并追加不可变 Revision 与固定 Fragment。[[c5]] 捕获后的持久作业负责去重、租约和重试；一般知识按“分析原始材料—独立复核—组织上层正文”推进，来源变化会使依赖失效。记忆与待办则作为版本化的受治理结果写入，并非都经过同一独立 verifier。[[c6]] 检索候选回连固定证据，主助手和个人阅读界面围绕同一主链工作；代码结构只是附加投影。[[c7]]\n\n知识正文是解释与导航层，不是新的事实权威；发布前会核验依赖并保存不可变修订。[[c8]] 用户回答先保存为新的手工原始 Revision，再作为固定输入进入后续分析和复核。[[c23]] Agent 运行时以版本化角色包及可信、非可信上下文分区约束模型，提示词本身不授予权限。[[c9]] 两条写入路径须明确区分：用户明确交办的任务由服务器复核意图后直接交给 MemoryService，不经过学习管线的独立 verifier；一般知识候选才依次经过 extractor、独立 verifier 与 Attention Gate。[[c10]] 外部输入虽复用统一合同，但真实 Lark 授权、群聊采集同意、媒体下载和异常对账仍是独立集成边界。[[c11]]"
+      },
+      {
+        "key": "code-wiki-relation",
+        "title": "Code Wiki 不是第二套事实库",
+        "body": "repo-review 只是仓库输入适配器和隔离运行配置：文件先进入通用 Capture，代码快照、符号及结构边是按快照保存的附加投影，显式 head 决定当前图。[[c12]] 代码与需求、决策、研究或测试之间的确认关系只能来自人工维护的 association；词面或语义相似不能自动升级为 confirmed。[[c13]]\n\n模块理解不改写原始代码事实。人工 seed 必须定位当前快照中的符号并绑定固定代码或文档证据，无法解析的 locator、证据或引用提示会保存为 rejected。[[c14]] 模型说明也受到生成范围、预算、引用可见性和 head 新鲜度约束；失败或过期结果不得晋升为当前结论。[[c15]] Code Wiki 与个人知识入口共用 Evidence Trail，可从正文逐层进入模块、文件、符号和原始 Fragment。[[c14]] 因此代码图和 Wiki 文章只能帮助导航，不能取代原始证据。"
+      },
+      {
+        "key": "progress-boundary",
+        "title": "当前闭环、验证强度与未交付能力",
+        "body": "当前基线已覆盖共用正文与固定引用、持久分析及独立复核、个人知识入口、多层证据阅读、主助手 ACP 装配、关键词召回、任务治理，以及可恢复的 Code Wiki 知识投影；失败、过期或未生成结果不计完成。[[c16]] 全量类型检查和测试，以及真实 Fastify／SQLite／Chromium 配合确定性 ACP fixture 的浏览器流程，只证明对应代码基线和受控纵向行为。[[c17]] 窄范围真实 ACP 冒烟也只能证明实际调用与有限内容断言。[[c24]] 质量评测流程可用于验证人工确认、数据集冻结、隔离预测和确定性评分，但现有材料不能证明整条路径已完整执行。[[c25]] 当前进展记录还明确指出，40 条 dev 草稿尚未全部人工确认，live 标注已停止，因而尚无冻结数据集。[[c18]]\n\n仍未交付的重点包括 embedding 语义检索、覆盖所有来源的自动重核验、跨文件精确调用与类型解析，以及跨 Revision 的符号和 Fragment 身份续接。[[c18]] 当前关键词检索还缺少可靠的 workspace 过滤，并存在排序和记忆证据回溯限制；这些问题应在引入语义后端前纳入统一检索合同。[[c26]] 真实 ACP 主助手、飞书图片与引用回复、断网恢复和限流窗口仍需独立现场验收；部署继续受个人单用户 SQLite 与 shared token 边界约束，不具备多租户 ACL。[[c19]] Batch 2 清单及旧环境结论已被现行状态替代，只能用于追溯，不能充当当前能力证明。[[c20]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Code Wiki 研究中的现行约束",
+        "reason": "支持固定修订与片段、关键词检索基线、本地优先，以及跨修订身份和语义检索尚未完成的概览判断。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 5,
+          "endLine": 11
+        },
+        "quote": "评估对象对齐 omem 当前约束（见 [implementation/status.md](../implementation/status.md) 与仓库 AGENTS.md）：\n\n- TypeScript + Vue 3 UI、Fastify API、SQLite 单用户；依赖由 osdk 管理（node 24，python 3.12 可选，本机未装 Docker）。\n- **固定 revision + 固定 fragment ID**：材料按不可变版本切片，引用锚在具体 fragment 上；repo-review 当前关系锚在 head revision 的 fragment 上，**跨 revision fragment "
+      },
+      {
+        "key": "c2",
+        "label": "本地优先与证据边界",
+        "reason": "解释固定证据、本地优先及模型接入的背景边界。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "topic:background",
+          "section": "why"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c3",
+        "label": "个人优先与统一输入边界",
+        "reason": "支持个人优先、单用户限制、材料非工具指令及统一输入等现行产品边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:requirements",
+          "section": "product-boundary"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c4",
+        "label": "自治变更与外部授权",
+        "reason": "支持高置信小范围变化可自治并通知，以及含糊、危险或范围过大事项需要决策。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:requirements",
+          "section": "autonomy-integrations"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "从采集到固定证据",
+        "reason": "支持统一 Capture、Source 归并、不可变 Revision 与固定 Fragment 构成证据主链。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:architecture",
+          "section": "evidence-chain"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c6",
+        "label": "持久作业、知识与受治理结果",
+        "reason": "支持持久作业和知识独立复核流程，并说明记忆与待办属于版本化治理结果，不能将独立 verifier 扩大为所有写入的共同门禁。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:architecture",
+          "section": "processing-flow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c7",
+        "label": "检索、对话与阅读投影",
+        "reason": "支持检索候选回连固定证据，以及助手、阅读界面和代码附加投影围绕同一主链工作。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:architecture",
+          "section": "retrieval-assistant-ui"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c8",
+        "label": "知识复核与不可变发布",
+        "reason": "支持发布前依赖核验、不可变知识修订和 current 指针切换。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:evidence_knowledge",
+          "section": "generation_lifecycle"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c9",
+        "label": "Agent 宿主治理与信任边界",
+        "reason": "支持版本化角色资产及可信上下文与不可信材料的分区治理。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:agent_governance",
+          "section": "governance_foundation"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "任务写入与知识学习治理",
+        "reason": "支持明确任务由服务器意图复核后直接交给 MemoryService且不经过学习 verifier，并区分一般知识的 extractor、独立 verifier 与 Attention Gate 路径。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:assistant_memory",
+          "section": "governed_memory"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c11",
+        "label": "Lark 接入与现有限制",
+        "reason": "支持外部输入复用统一合同，同时限定真实授权、群聊采集、媒体下载和异常对账边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:inputs_integrations",
+          "section": "lark-integration"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "仓库证据与代码投影",
+        "reason": "支持 repo-review 以通用 Capture 为输入，并用不可变快照和显式 head 构建附加代码投影。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:code_wiki",
+          "section": "capture_projection"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c13",
+        "label": "确定性结构与人工关系",
+        "reason": "支持确认关系只来自人工 association，语义相似不得自动形成 confirmed 关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:code_wiki",
+          "section": "structure_relations"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c14",
+        "label": "人工理解与证据阅读",
+        "reason": "支持人工 seed 的当前快照定位、固定证据绑定、解析失败保留 rejected，以及共享 Evidence Trail。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:code_wiki",
+          "section": "understanding_reading"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c15",
+        "label": "模型生成防线与代码 Wiki 限制",
+        "reason": "支持模型生成的范围、预算、引用及 head 防线，并说明代码投影与深链仍有限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "topic:code_wiki",
+          "section": "progress_limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c16",
+        "label": "已验证的现行闭环",
+        "reason": "支持当前知识、助手和 Code Wiki 已交付切片，并限定失败、过期或未生成结果不算完成。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "topic:progress",
+          "section": "verified-slices"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c17",
+        "label": "代码基线与浏览器验证",
+        "reason": "解释全量代码检查和使用确定性 ACP fixture 的真实服务、数据库与浏览器流程能够证明的范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:quality_validation",
+          "section": "evidence-layers"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c18",
+        "label": "局部支持与能力缺口",
+        "reason": "支持尚无冻结质量数据集的当前状态，以及语义检索、自动重核验、跨文件解析和跨修订续接尚未完成。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "topic:progress",
+          "section": "evidence-levels"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c19",
+        "label": "真实限制与下一步",
+        "reason": "支持真实外部链路尚待验收、单用户 SQLite 与 shared token 边界及多租户能力缺失。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "topic:progress",
+          "section": "remaining-work"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c20",
+        "label": "已被替代的历史结论",
+        "reason": "支持旧 Batch 2 清单、旧环境记录和历史原型只能用于追溯，不能证明当前能力。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "article",
+          "key": "topic:progress",
+          "section": "superseded-history"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c21",
+        "label": "可替换检索的研究取舍",
+        "reason": "解释权威原件留在 omem、检索后端保持可替换及不整体引入完整平台的原因。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "topic:background",
+          "section": "retrieval"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c22",
+        "label": "从离线原型到渐进记忆",
+        "reason": "支持产品由离线交互原型、Batch 2 工程底座向主助手与渐进记忆路线演进的概括。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "topic:background",
+          "section": "evolution"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c23",
+        "label": "用户回答与后续复核",
+        "reason": "支持用户回答先保存为手工原始 Revision，再作为固定材料进入后续分析、复核与证据召回。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:evidence_knowledge",
+          "section": "questions_and_retrieval"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c24",
+        "label": "真实 ACP 检查的证据边界",
+        "reason": "支持窄范围 ACP 冒烟只能证明实际调用和有限内容断言，不能外推为完整会话或外部链路验收。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:quality_validation",
+          "section": "live-evidence"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c25",
+        "label": "人工质量数据集流程",
+        "reason": "说明人工确认、冻结数据集、隔离预测和确定性评分的设计职责，并限定现有材料尚未证明整条路径完整执行。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "topic:quality_validation",
+          "section": "quality-loop"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c26",
+        "label": "关键词检索的隔离与可靠性限制",
+        "reason": "支持当前关键词检索缺少 workspace 强制过滤，并存在候选排序和记忆原文回溯方面的限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "topic:assistant_memory",
+          "section": "feedback_limits"
+        },
+        "quote": ""
+      }
+    ],
+    "questions": [
+      {
+        "question": "下一项垂直切片应优先闭合自动重核验、关键词检索隔离与稳定排序，还是语义检索？",
+        "why": "来源更新后的自动重核验尚未闭环；当前关键词检索缺少可靠的 workspace 过滤并存在排序和证据回溯限制，而 embedding 语义检索也尚未接线。三者分别影响知识新鲜度、安全边界和召回质量。",
+        "nextStep": "收集近期真实失败样本和使用频率，为三个候选项分别定义从输入 Revision、范围约束到固定 Fragment 回查、失败保留及行为测试的端到端验收合同，再据风险和收益排序。",
+        "blocking": false,
+        "citationKeys": [
+          "c18",
+          "c19",
+          "c26"
+        ]
+      },
+      {
+        "question": "真实 ACP 主助手与飞书端到端验收可以使用哪些账号、聊天范围、消息类型和数据留存规则？",
+        "why": "现有浏览器 fixture、窄范围真实模型调用和本地状态机测试不能证明真实图片下载、引用回复、限流、断网恢复及完整消息收发；外部连接和群聊采集还需要明确授权范围。",
+        "nextStep": "确定隔离应用、测试主体、私聊或群聊范围、允许发送的内容、秘密管理、停止方式与留存周期，再分别保存真实退出状态、配置和行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c11",
+          "c17",
+          "c19",
+          "c24"
+        ]
+      },
+      {
+        "question": "团队或多租户使用是否已经成为近期目标？",
+        "why": "当前实现明确处于个人单用户 SQLite 与 shared token 边界，不具备租户级身份、授权、项目可见性、数据隔离和审计；若近期要求团队使用，总体架构和迁移范围都会改变。",
+        "nextStep": "确认目标人数、共享模型、隔离等级、管理员职责与审计要求；在得到决定前，继续把部署及能力陈述限定为单用户。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c19"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476"
+    },
+    {
+      "kind": "article",
+      "key": "topic:background",
+      "digest": "64b28a4bf7e8c3f903b7e5c6285985559ef09217ee362055186b81ba38b4a7d0"
+    },
+    {
+      "kind": "article",
+      "key": "topic:requirements",
+      "digest": "c087a308e96c8ecff048924f521e6c2aee85e1ffad7632e7d036878f7743413e"
+    },
+    {
+      "kind": "article",
+      "key": "topic:architecture",
+      "digest": "414483d09c015a5f0bd70c551da6f4f43eea84660a890aaeafe601d8599f375f"
+    },
+    {
+      "kind": "article",
+      "key": "topic:evidence_knowledge",
+      "digest": "0e611a13fb4d3c9ab29e56b437d14512d5ef57fe2bff33834f3dd4ce49885b70"
+    },
+    {
+      "kind": "article",
+      "key": "topic:agent_governance",
+      "digest": "42f2eac690b8a30b9ce8c8e2eb7a88fbdd94b67cbaa64ab3ddc586dc355e7bc1"
+    },
+    {
+      "kind": "article",
+      "key": "topic:assistant_memory",
+      "digest": "a25ad8eb97109c6c63f8482fb9f925a66954ae514023cd4b7ce0d291a72e5ed5"
+    },
+    {
+      "kind": "article",
+      "key": "topic:inputs_integrations",
+      "digest": "5640f7e34f76c8bb149a155ac831c4e50264f313108f1de8c44cdebd7c0a32ea"
+    },
+    {
+      "kind": "article",
+      "key": "topic:code_wiki",
+      "digest": "1a06e880abb6b269d6a7597c92436290675784b9929b938d1f1e4390f17093a9"
+    },
+    {
+      "kind": "article",
+      "key": "topic:quality_validation",
+      "digest": "56a3843e65905fbdeaa68920d86c3c41c9fd81e3e0de308bf24263054052ce17"
+    },
+    {
+      "kind": "article",
+      "key": "topic:progress",
+      "digest": "013e49e7335c68306e45141eceff6cf809e70258c3ce66bf45a45583ca5ade14"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:26:05.181Z",
+    "trace": {
+      "runId": "62e4033b-a879-4ed1-9d25-e646d02347ab",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5985440fdf7e0ef4a04cfe9e3309bc87b8bc6b0b3d76a3c3a585771fadbc121c",
+      "contextHash": "bf7ac10dbd5dd1831deefcb91505496c86e0c85bc26ee4a094714a094389acd2",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ee0c967793ab0a56ee7816574302c1d339baba73b8d8bccb155c43dcb144872b",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ef0f-1557-7022-a61c-71c82b724061"
+      ],
+      "usage": {
+        "used": 70921,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 139470,
+          "utf8Bytes": 211729,
+          "estimatedTokens": 70577,
+          "budgetedTokens": 88222,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:26:17.701Z",
+    "trace": {
+      "runId": "3d5132f8-12ba-48d9-bebc-9f0abc525970",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "5baced9b460cef1198dfe44eb45f4818894e3adf7c5b1dac051d78c86799ea18",
+      "contextHash": "d53ad49ff14ee62e7894237c13ef1510246698afa210e5e544e4229a4499b8bb",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2822926058bd1e41749bda2cbf12411a59694a65502a01a6205ca49e269612b8",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ef0f-812c-7570-b97d-18bce2753797"
+      ],
+      "usage": {
+        "used": 66877,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 136750,
+          "utf8Bytes": 207719,
+          "estimatedTokens": 69240,
+          "budgetedTokens": 86550,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
