@@ -1,0 +1,359 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:scripts:part-2",
+    "title": "scripts · 模块理解 · 专题 2",
+    "summary": "本专题汇集脚本层的三类显式入口：实时角色与学习流水线冒烟、冻结质量集的标注—运行—评估闭环，以及仓库知识和 Wiki 的同步、生成与发布。它们主要负责组装既有服务、限定运行范围并留下诊断产物，而非另建业务实现。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "live-validation",
+        "title": "实时链路：从角色连通性到持久状态",
+        "body": "实时检查分成两层：角色冒烟通过同一网关依次运行 extractor 与 verifier，并把提案摘要转成复核候选，证明配置、合同与两次**角色运行**能够贯通；此前将其表述为“两次模型调用”的结论已被替代，因为材料没有展示网关内部如何调用模型。该脚本也未把提案数量、复核结论或引用支持性设为通过条件。[[c1]]\n\n更高一层的流水线冒烟从带 provenance 的 Capture 开始，组装记忆、反馈与 LearningPipeline，要求两个作业成功、一个提案自动应用并落成一个任务。[[c2]] 报告还保留请求及实际模型、attempt、任务和通知数量，便于诊断运行结果；不过通知内容、任务字段及请求配置与实际配置是否一致都未纳入硬断言。[[c3]]"
+      },
+      {
+        "key": "quality-loop",
+        "title": "质量闭环：标注、隔离预测与门禁",
+        "body": "质量流程先把 Lark 文档以评估专用 opt-in 导入 dev 数据集，启动卡片会话并轮询投递、事件和失败终态；当前收到首个新增标注事件便成功退出，并不代表整套数据已完成。[[c4]] 冻结后，运行器逐样本创建独立 Store，复用学习流水线，把有效 proposal 映射为结构化预测并逐项原子替换预测文件，从而支持断点续跑并降低样本间状态污染。[[c5]]\n\n最后，评估命令核验冻结清单，记录预测摘要，并以自动应用精确率、语义支持、引用位置、证据覆盖及预测完整性等阈值决定退出码。[[c6]] 但实际语义蕴含算法以及重复、未知 sampleId 的处理位于未提供的 evaluator 中；运行器又会把基础设施或模型链路异常统一写成 `needs_context`，可能把执行失败与业务上的“确实缺少背景”混为一类。"
+      },
+      {
+        "key": "review-publication",
+        "title": "仓库知识：共享管线、受控生成与降级 Wiki",
+        "body": "仓库知识入口把 repo-review 接入共享 KnowledgePipeline：先同步材料与代码、恢复文章，再分析目标；只有无分析失败且未启用 files-only 时，才继续综合模块、主题与总览。imports 上下文最多补充四份材料且各自只开放前 70 行，因此不能据此断言跨文件调用。[[c7]]\n\nWiki 入口默认优先由共享知识重建索引；显式生成必须限定 target，并按模型预算生成理解资产，但发布后仍进入结构化 Wiki 分支，本次运行没有展示这些资产随即回流共享知识链。[[c8]] 人工 seed 则从当前快照解析 locator，以固定材料构造证据并执行严格交叉引用校验；无法解析或校验失败的结果保留为 rejected，不能遮蔽有效结果，也不得冒充模型运行或独立代理复核。[[c9]] 因而原始图与固定材料仍是证据，文章和 Wiki 是派生视图；多文件发布的原子性与中断恢复能力尚未由这些入口证明。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "实时角色提取与复核串联",
+        "reason": "支持脚本经同一网关依次执行 extractor 和 verifier，并将提案摘要转换为复核候选；它只能直接证明两次角色运行的编排。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-role-smoke.ts",
+          "startLine": 22,
+          "endLine": 47
+        },
+        "quote": "const gateway = new RoleRuntimeGateway(\n  new RoleBundleRegistry(),\n  config.agentCwd,\n);\nconst extraction = await gateway.run({\n  roleId: \"extractor\",\n  profile: liveProfile,\n  context,\n});\nconst extractionResult = extraction.result as {\n  proposals: Record<string, unknown>[];\n};\nconst verificationContext = contextMan"
+      },
+      {
+        "key": "c2",
+        "label": "学习流水线端到端断言",
+        "reason": "支持 MemoryService、FeedbackService 与 LearningPipeline 的组装，以及作业成功、提案已应用和任务数量的联合断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-pipeline-smoke.ts",
+          "startLine": 46,
+          "endLine": 68
+        },
+        "quote": "  const memory = new MemoryService(store, { ownerId: \"owner\" });\n  const pipeline = new LearningPipeline({\n    store,\n    memory,\n    feedback: new FeedbackService(store),\n    profile,\n    workspaceRoot: config.agentCwd,\n    workerId: \"live-pipeline-worker\",\n  });\n  const processed = await pipeline.drain(10);\n  await p"
+      },
+      {
+        "key": "c3",
+        "label": "实时流水线诊断报告",
+        "reason": "支持报告记录请求与实际模型配置、作业尝试、提案、任务和通知数量，并说明这些诊断字段并非都属于硬断言。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-pipeline-smoke.ts",
+          "startLine": 69,
+          "endLine": 107
+        },
+        "quote": "  const report = {\n    createdAt: new Date().toISOString(),\n    requestedModel: profile.model ?? null,\n    requestedEffort: profile.effort ?? null,\n    effectiveModels: [...new Set(attempts.map((attempt) => attempt.model))],\n    effectiveEfforts: [...new Set(attempts.map((attempt) => attempt.effort))],\n    capturedRevi"
+      },
+      {
+        "key": "c4",
+        "label": "Lark 标注会话与首事件成功条件",
+        "reason": "支持评估数据集导入、标注会话启动，以及检测到首个新增事件便结束的当前成功边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 52,
+          "endLine": 140
+        },
+        "quote": "try {\n  const imported = importQualityDatasetEval({\n    optIn: QUALITY_EVAL_ONLY,\n    repository: host.quality.repository,\n    document,\n    sourceUri,\n    name: process.env.OMEM_QUALITY_DATASET || \"merchant-center-dev-v1\",\n    split: \"dev\",\n    targetCount: Number(process.env.OMEM_QUALITY_TARGET || 40),\n  });\n  const "
+      },
+      {
+        "key": "c5",
+        "label": "冻结样本的隔离运行与预测持久化",
+        "reason": "支持逐样本使用独立 Store、执行学习流水线、映射 proposal、异常降级并在每项处理后持久化预测。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 63,
+          "endLine": 180
+        },
+        "quote": "try {\n  let processed = 0;\n  for (const sample of frozen.samples) {\n    if (completed.has(sample.id) || processed >= limit) continue;\n    const directory = join(\n      tmpdir(),\n      `omem-quality-run-${datasetId}-${sample.ordinal}-${randomUUID()}`,\n    );\n    const store = new Store(directory);\n    const started = Da"
+      },
+      {
+        "key": "c6",
+        "label": "质量指标与退出门禁",
+        "reason": "支持冻结数据集验证、预测摘要、各项质量阈值，以及任一门禁失败时设置非零退出码。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-evaluate.ts",
+          "startLine": 14,
+          "endLine": 62
+        },
+        "quote": "  const repository = new QualityRepository(store.db);\n  const frozen = repository.verifyFrozen(datasetId);\n  const predictions = JSON.parse(\n    readFileSync(resolve(predictionPath), \"utf8\"),\n  ) as unknown[];\n  if (!Array.isArray(predictions)) throw Error(\"QUALITY_PREDICTIONS_NOT_ARRAY\");\n  const metrics = evaluateQua"
+      },
+      {
+        "key": "c7",
+        "label": "共享知识分析与分层综合",
+        "reason": "支持材料与代码同步、有限 imports 上下文扩充、失败处理，以及仅在完整运行条件满足时生成模块、主题和总览。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-knowledge.ts",
+          "startLine": 39,
+          "endLine": 88
+        },
+        "quote": "  console.log(\"Actual profile:\", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });\n  await runReviewSync(store, root);\n  const coverage = restoreReviewKnowledge(store, root).coverage;\n  await runCodeSync(store, root);\n  console.log(\"Restore:\", restor"
+      },
+      {
+        "key": "c8",
+        "label": "Wiki 的共享知识与显式生成分支",
+        "reason": "支持默认重建共享知识索引、生成模式限定目标并发布理解资产，以及生成后继续进入结构化 Wiki 分支的控制流。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 14,
+          "endLine": 48
+        },
+        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst generate = process.argv.includes(\"--generate\");\nconst targets = process.argv.filter(a => a.startsWith(\"--target=\")).map(a => a.slice(9));\nif (generate && !targets.length) throw new Error(\"Specify --target=<repo-relative file or directory>; generation is "
+      },
+      {
+        "key": "c9",
+        "label": "人工理解 seed 的投影约束",
+        "reason": "支持人工 seed 基于当前快照解析定位、执行严格校验、保留 rejected 结果且不遮蔽有效结果，并禁止冒充模型或独立复核成果。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 1,
+          "endLine": 25
+        },
+        "quote": "/** Curated Code Understanding projection.\n *\n * Committed seed assets live under `.repo-review/knowledge/understandings/`.\n * They are hand-curated, human-readable module notes that cite the graph by\n * stable locators (repo-relative path + qualified symbol name). At sync time\n * this module:\n *\n *   1. builds the fix"
+      }
+    ],
+    "questions": [
+      {
+        "question": "质量标注脚本的成功语义应是“链路收到首个事件”还是“冻结数据集全部标注完成”？",
+        "why": "当前实现收到首个新增事件便退出，而默认目标可包含多条样本；若把该命令用于完整数据集生产，会过早报告成功。",
+        "nextStep": "明确命令定位；若要求完整会话，应依据仓库进度或会话完成终态退出，并分别保留卡片投递和全量完成指标。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "流水线异常是否应继续统一编码为业务预测 `needs_context`？",
+        "why": "基础设施、模型传输或合同失败与模型确实判断“缺少背景”具有不同含义；合并后可能污染质量指标。",
+        "nextStep": "检查 evaluator 的计分合同，并考虑为运行失败增加独立状态，或明确将此类记录从业务指标中剔除。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "显式生成的代码理解资产在何时进入共享 Capture→知识链？",
+        "why": "Wiki 生成分支发布理解资产后继续构建结构化 Wiki，本次运行没有展示重新恢复文章或重建共享知识索引的步骤。",
+        "nextStep": "核对生成资产导入与下次同步流程；若期望即时可见，补充受校验的导入、恢复和索引重建阶段。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c9"
+        ]
+      },
+      {
+        "question": "知识文章、覆盖率、计划和 Wiki 的多文件发布在中断或复制失败时如何保持一致？",
+        "why": "现有脚本展示了分步写入和复制，但没有展示跨文件事务、原子目录切换或失败回滚。",
+        "nextStep": "通过故障注入测试明确可恢复状态和重跑幂等性，再决定采用原子替换、发布清单或版本化目录。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c8"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-pipeline-smoke.ts",
+      "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-role-smoke.ts",
+      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-evaluate.ts",
+      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-run.ts",
+      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-wiki.ts",
+      "digest": "e0c0689831eef638a197005cdea1df5c281b01ef2e5971a5f3e879032689f060"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/live-pipeline-smoke.ts",
+      "digest": "d2b1190d6064e14b26dbd5912633057a1447dea29e0d2c9567742193de6510c5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/live-role-smoke.ts",
+      "digest": "4e23d4d87761203ad1ad16984698d41d16e8b3b36d5167d794b2fa8d3444e8bc"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/quality-evaluate.ts",
+      "digest": "7dde2709c591562f032694d4448ba503b93cafb68497dccd409269cd25a9f179"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "68b732350b9f355694a03f5068685dcbe57e3aa26691c6b88242dc4a16c5c64b"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/quality-run.ts",
+      "digest": "b187f716f128d1c921d8f140f506b603dc25c390cbe7905c4efc2c3f9c3775b7"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "6c9f6ec3e855766057cfe91ce9c39122f15ea4b1525943e8fa2ce4c8bc196a58"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/review-wiki.ts",
+      "digest": "eca546f650942f454d1840fe82f11f19fb97ce85ab4cae6a48861223ad286948"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:55:07.782Z",
+    "trace": {
+      "runId": "1db1cfd4-f224-4acb-8052-684d72c09648",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "6e34cf59da43c199823452732e27b1500bc25f6f751607fa5dd59df2d10b3a9f",
+      "contextHash": "676fbac05744db674dd01c667c694792a26ff8775fea522b12c853bd19c37b9f",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "66d7b9bf2cbce5e3513e98ef59317aa1603eafab57b751e1f7bb0efa9b67aba7",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef2-d708-7cc0-888a-f473fa7326d9"
+      ],
+      "usage": {
+        "used": 54552,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 129015,
+          "utf8Bytes": 147974,
+          "estimatedTokens": 49325,
+          "budgetedTokens": 61657,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:55:19.554Z",
+    "trace": {
+      "runId": "3d14496b-9112-4065-9c37-1e12135038f0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "80e37b476880312df9da0df053dcffb5ba5abac086142ec9e0e3d76d2fd56e2e",
+      "contextHash": "45dded300a26e0a3d02b2dc94ff6a26a321b07716fba9d61e47fbe9412f6499b",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "06e369299fcd4fbfd4b29b6e1fabb8aaffd05645904b757da0ab6427780ce447",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef3-28dc-72a2-8880-719584425237"
+      ],
+      "usage": {
+        "used": 52102,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 125748,
+          "utf8Bytes": 143073,
+          "estimatedTokens": 47691,
+          "budgetedTokens": 59614,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

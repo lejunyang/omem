@@ -1,0 +1,580 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:scripts:part-1",
+    "title": "scripts · 模块理解 · 专题 1",
+    "summary": "scripts 模块连接开发环境编排、确定性浏览器验收与依赖真实外部能力的实时冒烟检查：前者保证 personal/review 服务正确启动和退出，中间层验证真实 UI、API、SQLite 与证据 Trail，后者探测 ACP、学习流程及 Lark 集成；三类脚本的证明边界不可混同。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "responsibility",
+        "title": "职责分层与设计背景",
+        "body": "该模块不是单一运行库，而是三类可执行入口的集合。开发编排层让 personal 与 repo-review 共用端口选择、健康门禁和进程生命周期；极薄的 personal 入口只设置模式，再委托共享编排器。[[c1]][[c2]] review 的 Vite 子进程则绕开个人应用代理配置，严格绑定选定端口并把 `/api` 指向同次启动的 review 后端。[[c3]]\n\n验收层以真实 Vue、API、SQLite 和 Chromium 检查产品行为，但用固定 Agent、知识或外部适配器换取可重复结果。[[c4]][[c5]] 实时层另行接触 Agent CLI、Lark CLI、真实凭据和网络，用来回答“外部集成此刻是否可用”，不能替代确定性回归。"
+      },
+      {
+        "key": "development_flow",
+        "title": "开发启动与生命周期",
+        "body": "共享编排器先校验并探测 API、Web 端口：显式端口占用会失败，默认端口占用则申请系统分配端口；探测后会释放监听，因此再次绑定前仍有竞态。[[c6]] 随后按模式启动不同 API 入口及专用 Vite，把最终端口同时传给后端和代理，并禁止二者相同。[[c7]] API 最多等待约 60 秒健康响应，Web 只要求子进程未提前退出。[[c8]]\n\n任一子进程失败都会触发统一关闭。Windows 使用进程树强制终止，其他平台向独立进程组发送 SIGTERM；关闭有等待上限，但非 Windows 超时后不会升级为 SIGKILL，也没有自动重启。[[c9]] Vite 自身只负责严格端口、代理和信号关闭，不承担健康探测。[[c10]]"
+      },
+      {
+        "key": "acceptance_flow",
+        "title": "确定性浏览器验收",
+        "body": "个人助手浏览器脚本覆盖材料捕获、提案与决策、通知、不可变历史、待办及飞书接入。[[c11]] 失败状态展示、服务重启后的持久化和百层证据链属于另一组边界验收。[[c12]] 其中提案评估与任务完成由脚本直接驱动，ACP 使用协议 fixture，所以结论是产品链路可工作，而不是真实模型已执行。[[c13]]\n\n知识阅读脚本以临时仓库和固定五层知识链验证内联引用、Esc 回退、深链恢复、焦点归还、响应式、显式创建待办及 HTML 原文不执行。[[c14]] Code Wiki 视口脚本检查多视口、Markdown 清洗和可见文本不泄露内部标识；但后续边只取首个可用项，焦点也主要按文本判断，不能扩大为任意跨文件调用或完整无障碍合规。[[c15]][[c16]]"
+      },
+      {
+        "key": "live_integrations",
+        "title": "实时检查、进展与限制",
+        "body": "实时 ACP 检查先探测可选模型，再发起受控算术会话；显式模型不可用时拒绝降级，但 effort 仅写入 profile，探测也没有本地超时。[[c17]] 算术脚本的硬条件只是答案包含 `12`，事件类型和实际配置仅作诊断。[[c18]] 实时学习则串起 extractor、独立 verifier 与 `MemoryService`，要求单提案得到 `auto_apply` 回执，但任务字段尚无行为级断言。[[c19]]\n\nLark 内容脚本只确认固定 Wiki 可转成 Capture 合同。[[c20]] Runtime Host 检查先要求密钥、活动连接并通过待投递安全门，[[c21]] 再完成官方能力探测和主机依赖组装，[[c22]] 最后轮询 `connected` 并清理资源。[[c23]] 它仍未验证真实消息收发、重连或投递完成；显式放行积压投递还可能产生外部副作用。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "个人开发入口说明",
+        "reason": "说明 personal 入口只注入模式并委托共享开发编排器，支持职责分层。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/dev.ts",
+          "section": "delegation"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "个人模式入口实现",
+        "reason": "入口代码直接显示模式赋值与动态导入，是委托关系的固定依据。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev.ts",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "process.env.OMEM_DEV_MODE = \"personal\";\nawait import(\"./dev-review.js\");\nexport {};"
+      },
+      {
+        "key": "c3",
+        "label": "Review 前端配置隔离",
+        "reason": "说明专用 Vite 不读取个人代理配置，并从环境取得 review 前后端端口。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review-vite.ts",
+          "startLine": 1,
+          "endLine": 29
+        },
+        "quote": "/** Vite child for `dev:review`. Spawned by scripts/dev-review.ts as a direct node\n * process so the orchestrator can terminate the whole tree with\n * `taskkill /PID <pid> /T /F` on Windows instead of relying on SIGTERM delivery\n * to a cmd/npx wrapper.\n *\n * It deliberately does NOT read apps/web/vite.config.ts (that "
+      },
+      {
+        "key": "c4",
+        "label": "个人助手浏览器测试装配",
+        "reason": "支持真实 Vue、API、SQLite 与 Chromium 配合确定性外部 fixture 的验收定位。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/browser-smoke.ts",
+          "section": "purpose_setup"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "固定知识链浏览器回归",
+        "reason": "支持临时仓库、固定知识发布和真实浏览器组成不依赖模型的集成测试链。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 14,
+          "endLine": 45
+        },
+        "quote": "const root = mkdtempSync(join(tmpdir(), \"knowledge-browser-\"));\nmkdirSync(join(root, \"apps/server/src\"), { recursive: true });\nwriteFileSync(join(root, \"apps/server/src/a.ts\"), 'import { b } from \"./b.js\";\\nexport function a() { return b(); }\\n');\nwriteFileSync(join(root, \"apps/server/src/b.ts\"), 'import { c } from \"./"
+      },
+      {
+        "key": "c6",
+        "label": "开发端口选择逻辑",
+        "reason": "支持端口范围校验、回环监听探测、显式占用失败和默认端口回退行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-ports.ts",
+          "startLine": 3,
+          "endLine": 23
+        },
+        "quote": "/** Defaults may move; explicit ports fail loudly. The chosen port is passed to\n * both the backend and proxy, so the browser never connects to another API. */\nexport async function selectDevPort(value: string | undefined, fallback: number, label: string): Promise<number> {\n  const port = value === undefined ? fallback"
+      },
+      {
+        "key": "c7",
+        "label": "开发模式启动链",
+        "reason": "支持按模式选择端口和 API 入口、禁止端口相同并传递最终环境变量。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 81,
+          "endLine": 112
+        },
+        "quote": "async function main(): Promise<void> {\n  // Preflight: fail fast with a clear message instead of letting the API/Vite\n  // child die with an opaque EADDRINUSE after a partial boot.\n  try {\n    API_PORT = await selectDevPort(review ? process.env.REVIEW_PORT : process.env.OMEM_PORT, review ? 5180 : 4317, `${label} API`);"
+      },
+      {
+        "key": "c8",
+        "label": "API 就绪门禁与失败传播",
+        "reason": "支持子进程失败传播、API 健康轮询时限以及 Web 没有独立 HTTP 就绪探测的结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/dev-review.ts",
+          "section": "readiness"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c9",
+        "label": "跨平台有界进程关闭",
+        "reason": "直接支持重入保护、Windows 进程树终止、非 Windows 进程组 SIGTERM、等待上限及无强制升级的限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/dev-review.ts",
+          "section": "shutdown"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "Vite 严格端口与信号处理",
+        "reason": "支持 Vite 仅负责本地监听、严格端口、API 代理及收到信号后的关闭。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review-vite.ts",
+          "startLine": 22,
+          "endLine": 40
+        },
+        "quote": "  server: {\n    host: \"127.0.0.1\",\n    port: webPort,\n    // Never silently fall back to another port: if 5181 (or the configured\n    // REVIEW_WEB_PORT) is busy, Vite exits non-zero and the orchestrator\n    // propagates that code instead of printing a URL we are not serving on.\n    strictPort: true,\n    proxy: { \"/ap"
+      },
+      {
+        "key": "c11",
+        "label": "个人助手核心产品流程",
+        "reason": "支持材料、提案、证据、历史版本、待办、决策和飞书接入等核心浏览器验收范围。",
+        "relation": "supports",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/browser-smoke.ts",
+          "section": "core_flows"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "失败、持久化与深证据链验收",
+        "reason": "专门支持多视口和百层证据链、失败状态展示以及重启后数据持久化的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/browser-smoke.ts",
+          "section": "boundaries"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c13",
+        "label": "提案与任务的确定性驱动",
+        "reason": "显示提案经内部接口注入、任务由脚本直接领取并完成，界定其不等于真实 ACP 执行。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 216,
+          "endLine": 251
+        },
+        "quote": "    \"A-U01 real job, applied proposal, notification and evidence flow\",\n    async () => {\n      const job = store.jobs\n        .list()\n        .find((candidate) =>\n          candidate.inputRefs.some(\n            (ref) =>\n              typeof ref === \"object\" &&\n              ref !== null &&\n              (ref as { revi"
+      },
+      {
+        "key": "c14",
+        "label": "知识 Trail 交互断言",
+        "reason": "支持五层阅读、Esc 回退、深链恢复、焦点归还以及响应式和源码安全检查。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 46,
+          "endLine": 90
+        },
+        "quote": "try {\n  const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });\n  const errors: string[] = []; page.on(\"pageerror\", e => errors.push(e.message));\n  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .knowledge-document\").getByRole(\"link\", { name: \"架构说明 ↗\", exa"
+      },
+      {
+        "key": "c15",
+        "label": "Code Wiki 安全与标签检查",
+        "reason": "支持实际挂载 Markdown 组件的恶意输入清洗，以及 Trail 可见文本隐藏内部标识。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "startLine": 174,
+          "endLine": 227
+        },
+        "quote": "  // --- XSS: feed payload through the actually-mounted OmMarkdown component -\n  await check(\"xss: mounted OmMarkdown strips script/handlers/javascript:\", async () => {\n    // Deep-link a fragment trail frame so FragmentFrame's <OmMarkdown> mounts.\n    const s = await api<Array<{ id: string }>>(\"/api/review/search?q=\" "
+      },
+      {
+        "key": "c16",
+        "label": "Code Wiki Trail 验收边界",
+        "reason": "解释边选择器、焦点结果和模型降级检查的实际断言强度，避免扩大测试结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "section": "security_accessibility"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c17",
+        "label": "实时模型能力选择",
+        "reason": "支持 ACP 模型候选探测、选择优先级、显式不可用失败及 effort 未在此处校验的限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 4,
+          "endLine": 35
+        },
+        "quote": "export async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  );\n  const modelOption = probe.configOptions.find(\n    (option) => option.id === \"model\",\n  );\n  if (!modelOption || modelOption.type !== \""
+      },
+      {
+        "key": "c18",
+        "label": "ACP 实时算术判定",
+        "reason": "支持文本事件聚合、答案包含 12 的硬断言，以及模型和事件仅用于诊断输出。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-acp-smoke.ts",
+          "startLine": 19,
+          "endLine": 42
+        },
+        "quote": "  (type, text) => {\n    events.push(type);\n    if (type === \"text\") answer += text;\n  },\n  new AbortController().signal,\n);\nif (!answer.includes(\"12\")) throw Error(\"Unexpected live ACP answer\");\nconst effectiveModel = live.configOptions.find(\n  (option) => option.id === \"model\",\n)?.currentValue;\nconsole.log(\n  JSON.str"
+      },
+      {
+        "key": "c19",
+        "label": "实时学习角色链",
+        "reason": "支持 extractor、verifier、策略评估与回执检查，并显示任务列表只被写入报告。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-learning-smoke.ts",
+          "startLine": 73,
+          "endLine": 128
+        },
+        "quote": "  const extraction = await gateway.run({\n    roleId: \"extractor\",\n    profile,\n    context,\n  });\n  const proposals = (\n    extraction.result as { proposals: Record<string, unknown>[] }\n  ).proposals;\n  if (proposals.length !== 1) throw Error(\"Expected one live proposal\");\n  const proposal = proposals[0]!;\n  const prop"
+      },
+      {
+        "key": "c20",
+        "label": "Lark 内容连接器检查",
+        "reason": "支持固定 Wiki 经 larkInput 读取并由统一 Capture Schema 校验，同时说明结果仅输出诊断摘要。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-connectors-smoke.ts",
+          "startLine": 1,
+          "endLine": 22
+        },
+        "quote": "import { larkInput } from \"../apps/server/src/connectors.js\";\nimport { captureSchema } from \"../packages/contracts/src/index.js\";\nconst input = captureSchema.parse(\n  await larkInput(\n    \"https://bytedance.larkoffice.com/wiki/DwxIwD5RtiF5LFk2MNvc853znmc\",\n  ),\n);\nconsole.log(\n  JSON.stringify(\n    {\n      connector: \""
+      },
+      {
+        "key": "c21",
+        "label": "Lark 主机启动安全门",
+        "reason": "支持密钥要求、积压投递默认阻断、活动连接读取及凭据一致性检查等启动前置条件。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
+          "section": "guards"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c22",
+        "label": "Lark 能力验证与主机组装",
+        "reason": "支持官方能力探测必须无缺项，并说明 Runtime Host 与 Store、记忆服务、onboarding 和密钥存储的组合关系。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
+          "section": "capability"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c23",
+        "label": "Lark 连接判定与清理",
+        "reason": "支持 connected 事件轮询、约九十秒窗口、诊断输出和 finally 中停止主机与关闭 Store。",
+        "relation": "supports",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
+          "section": "assertions"
+        },
+        "quote": ""
+      }
+    ],
+    "questions": [
+      {
+        "question": "实时 ACP 检查是否应把权限事件缺失、requested/effective 模型与推理强度一致性纳入硬断言？",
+        "why": "当前只要求答案包含 12；事件和实际配置虽被收集，却不会因权限请求或配置偏差而失败。",
+        "nextStep": "为事件类型建立允许清单，并根据 ACP 配置合同断言实际模型和 effort；若这些字段只用于诊断，则在脚本名称与运行文档中明确。",
+        "blocking": false,
+        "citationKeys": [
+          "c17",
+          "c18"
+        ]
+      },
+      {
+        "question": "实时学习检查是否应验证最终任务的存在及标题、责任人、截止时间和来源引用？",
+        "why": "现有成功条件停在单提案、复核和 auto_apply 回执，任务列表只是报告内容，尚不能证明提取语义正确落入任务。",
+        "nextStep": "先增加稳定的任务数量与来源引用断言，再为可能受模型措辞影响的字段设计规范化或语义级校验。",
+        "blocking": false,
+        "citationKeys": [
+          "c19"
+        ]
+      },
+      {
+        "question": "允许 Lark 实时主机发送既有积压投递时，应如何隔离或标记外部副作用？",
+        "why": "默认安全门会阻止启动，但显式放行后真实 Runtime Host 可能发送业务通知；现有材料没有证明这些投递处于测试沙箱。",
+        "nextStep": "为实时检查使用专用连接和独立数据目录，或在放行前列出待投递目标并取得明确确认，同时记录实际发送结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c21",
+          "c23"
+        ]
+      },
+      {
+        "question": "Lark 连接器冒烟检查是否需要定义最低有效内容标准？",
+        "why": "Capture Schema 合法并不保证读取到有用内容；标题、版本、part 数量和文本字符数目前没有非空断言。",
+        "nextStep": "依据连接器合同加入非空上游版本、至少一个内容 part 和最低文本规模等不依赖具体文案的断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c20"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/knowledge-browser.ts",
+      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-acp-smoke.ts",
+      "digest": "77bb1bae7fda3921075810520871f00b36bba21f3cbd38dec173f39c18af1afe"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-connectors-smoke.ts",
+      "digest": "56767351dc19db5f9be9f5bae5e33d378d427d8e53d56ee1d024075ea6c38e72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-lark-host-smoke.ts",
+      "digest": "da10fc75972adf6fa64420e3c76a2084abe9b5bc928dbdc330d5085f95a72ad3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-learning-smoke.ts",
+      "digest": "f88a7289400e9f805776100fea75384a55628e822fc9ee11e90a9594dc7b0ac9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-model.ts",
+      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "b4a1da11ea6b290612f9c53f4afd250d96e1037a9a92eca6052c0bf2fc2bdc10"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "6d3b591819bd9638ff323fd7a280db38b33622378c943d2e2956d9beb51a0dc8"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "8f5f2f5be25ab0e0d7f809cd3fabcca2bd9f99e4ca44c53ffc60490b9c2d135d"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "5718f9d41d0587286d8bebde48725c1e6da6098035fe04b4290b9b17287b7d7c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "67bd3528c736d7a8b5b2bf5f488fb7d753fecae11030d664f7d523a2dbd15d76"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/dev.ts",
+      "digest": "b2e47fa2eb8b76da0941f0ecf8f11befaffd6afcdd2408cd29dcdd54494517d6"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/knowledge-browser.ts",
+      "digest": "f78ff691f34cf3f1335136b831e1d3a7ee10da0314781c6d476138223c4c5f78"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/live-acp-smoke.ts",
+      "digest": "ebbb8001dab5770952a350ea15fe689bb456c74ce22ee614764b74263778955c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/live-connectors-smoke.ts",
+      "digest": "f7f5e6ec477cd6fd0c6cf1d1e7a0b0abea47552be57298357ef42c932a034845"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/live-lark-host-smoke.ts",
+      "digest": "b49cbac215abea4b65bf7269eca7f653a83cf7fc517a9bccef5d45017b172cc2"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/live-learning-smoke.ts",
+      "digest": "b48d8b1fb587d020674759ca7f2bd0a4c3c7639bd5b0f7298c4d6687268f0fa2"
+    },
+    {
+      "kind": "article",
+      "key": "omem:scripts/live-model.ts",
+      "digest": "1781c29956ad978bc59d502d175b6fb104174e9924378b8847f1e19d560a99c5"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:53:52.916Z",
+    "trace": {
+      "runId": "68349613-ce21-475f-a574-ec0d818baf62",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "c73bb4dd7d27df336e715e604268af1eec188e5537793fe095dc72111bcb7e25",
+      "contextHash": "531b4af58a99920e244e98f914f6b6183f6728eea60d43c4f640799d903d7143",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3de57326ac26be1f1f7a55a765514553b75b1e05fed484a955c99c03fee587ba",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef1-9940-7271-ab62-17cdae24ec7e"
+      ],
+      "usage": {
+        "used": 62210,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 141081,
+          "utf8Bytes": 165420,
+          "estimatedTokens": 55140,
+          "budgetedTokens": 68925,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:54:10.040Z",
+    "trace": {
+      "runId": "92b844ce-f8bd-4cd1-a995-c5e7d4e30e14",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "f6c8ddbd2cbf7fbac4d94b76bdc801117c728bb486fd4389dc3a436a7c484a0d",
+      "contextHash": "91edc23ca1bada96b6a41258e8ced94d4ba457d1cafd41b1a7df8672af0a5b47",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "137e3d8491070fedea61dcf714987d4d673b5c1d9f6f225a250143fd45aee669",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef2-0480-70c1-8519-9b18d4d7c8e3"
+      ],
+      "usage": {
+        "used": 59148,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 138877,
+          "utf8Bytes": 161988,
+          "estimatedTokens": 53996,
+          "budgetedTokens": 67495,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
