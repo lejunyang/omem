@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+    "title": "Batch 2 隔离复现结果与后续替代关系",
+    "summary": "该文件记录基线 16d3aa6 上、临时 SQLite 且无外部服务写入的十组缺陷复现。它是历史问题证据，不是当前产品状态；后续 status 已记录主体映射、去重冲突、质量指标、取消投递和刷新诚实性等修复。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "scope",
+        "title": "复现范围与主要发现",
+        "body": "复现运行在临时 SQLite 中，不调用外部服务或写入 live 数据，因此结果用于隔离证明旧基线行为，不能视为真实网络集成验收。[[c1]] R1–R4 暴露规则提取混合现状与未来、证据支持只做引文包含、冲突与重复创建仍自动应用，以及低价值未知项打扰用户等问题；R5–R7 又显示真实飞书标识未映射到 canonical owner、原始 Agent 会话未入队、聚合后缺少逐片段 actor 映射。[[c2]]"
+      },
+      {
+        "key": "superseded",
+        "title": "被后续实现替代的结论",
+        "body": "R8–R10 与 R9 分别记录普通私聊被忽略、图片退化为文本、取消后仍发送卡片，以及刷新任务成功却只将记忆失效。[[c3]] 这些是 2026-09-27 基线的反例，不应继续描述为当前行为：后续状态已将 G04–G20 列为通过，并明确区分 fake transport、同数据库重启模拟与真实网络验证；`refresh_dependents` 现在会记录 `needs_review` 后主动报未实现，而不再假报成功。[[c4]] 因而旧结论已被修复状态替代，但仍保留为回归测试的来源。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "隔离复现环境",
+        "reason": "支持复现基线、临时数据库以及未使用外部服务和 live 写入的范围限定。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "{\n  \"baseline\": \"16d3aa6\",\n  \"isolation\": \"Temporary SQLite; no external services or live data writes\",\n  \"results\": ["
+      },
+      {
+        "key": "c2",
+        "label": "R1 至 R7 复现结果",
+        "reason": "支持旧基线在提取、证据评分、冲突去重、主体映射和逐片段来源方面的具体问题。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+          "startLine": 5,
+          "endLine": 53
+        },
+        "quote": "    {\n      \"id\": \"R1\",\n      \"observed\": \"Rule-based sample copies mixed present/future sentence as claim, labels explicit + autoApply=true\",\n      \"usesAI\": false\n    },\n    {\n      \"id\": \"R2\",\n      \"wrongStatementEvidenceSupport\": 1,\n      \"emptyAnswerEvidenceSupport\": 1,\n      \"note\": \"Other metrics fail; this dem"
+      },
+      {
+        "key": "c3",
+        "label": "R8 至 R10 与刷新结果",
+        "reason": "支持旧基线的飞书输入、取消投递及刷新完成状态问题。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+          "startLine": 54,
+          "endLine": 69
+        },
+        "quote": "    {\n      \"id\": \"R8\",\n      \"ordinaryOwnerDM\": \"ignored_not_allowed\",\n      \"imageCapturePartType\": \"text\",\n      \"note\": \"No SDK connection, pairing or outbound delivery was invoked.\"\n    },\n    {\n      \"id\": \"R10\",\n      \"cancelledAnnotationStillSentToFakeAdapter\": 1,\n      \"realNetworkCalls\": 0\n    },\n    {\n      "
+      },
+      {
+        "key": "c4",
+        "label": "当前验收与遗留限制",
+        "reason": "表明相关 G 场景已在后续实现中通过，同时限定 fake transport、重启模拟和重核验未实现等证据等级。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 77,
+          "endLine": 94
+        },
+        "quote": "| G15 | 图片/富文本群消息进入模型 | lark-rich-parts.test.ts · \"post message parses title + paragraph text parts\"、\"image message downloads via fake transport and creates image part with asset\"、\"reply message sets replyTo/quoted provenance on all parts\" | **pass（fake transport 验证）** | `realtime.ts` `buildCaptureParts()` 解析 post 富文本为"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/status.md",
+      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/validation.md",
+      "digest": "5eb15b18beab74b3acb92965d549a00866e74a07934129b495f1eacfd0203b5b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:integrations/traex/hooks.example.json",
+      "digest": "0ce9740fd7d84a9b15fbd12ca8bb9d0490f943747b987ea9d4c4246fe5e61279"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.lock",
+      "digest": "8ea83c4ae93ba830a0045e8b54a64455979ac30a10af73730b5546d379eb90e9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.toml",
+      "digest": "f2f80953f5e21a98762274f91832d3384390ba80aaa52869785489a1f8c94d74"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/knowledge-pipeline.md",
+      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/decisions.md",
+      "digest": "0c9ad65608b280513073e08eb7a7ebf2dba050641f385305f7526cd7a0eb5ad7"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:05:41.326Z",
+    "trace": {
+      "runId": "13ca1481-4530-4536-b4c8-ad75e3c125fd",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "ddf2106406b42ecfaac7dba1cf9e48ac0d4ff33d34ba2793bcd5244a67a1ee93",
+      "contextHash": "fdad3adcf07faa217e8106b3d11882bf065f9534e39545b73bf8c4c673f2a10f",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f633dbb124d5af02e7634607676dba36e279f5d6ad55c7db799ca5ddfa45fbf4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec5-362e-7c20-907e-1753c3f2d913"
+      ],
+      "usage": {
+        "used": 43237,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 63716,
+          "utf8Bytes": 92876,
+          "estimatedTokens": 30959,
+          "budgetedTokens": 38699,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:06:10.894Z",
+    "trace": {
+      "runId": "4df309bb-cc64-43c3-83bf-b49411e91eb4",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "37bee0ec007e22d199c1d9e9d9da4fc3200460f17c7653e3031c92e98be63965",
+      "contextHash": "e24994608a95f1c26a358e3814b5d7b8159e783f1d346c64c39f268cb4dc6043",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c8435882f3cd5c7e1ffd6cc9ebb24e1a45ec3579f7ac0c4ae54bdf04e4c1b9be",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec5-e5fc-7452-89ac-dbb507e626db"
+      ],
+      "usage": {
+        "used": 44572,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 71737,
+          "utf8Bytes": 106928,
+          "estimatedTokens": 35643,
+          "budgetedTokens": 44554,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
