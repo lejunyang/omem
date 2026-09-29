@@ -3,76 +3,75 @@
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
     "title": "知识阅读帧与固定引用解析",
-    "summary": "按帧类型打开知识正文、直接原始材料或固定引用；明确区分直接 source 帧与引用解析后的材料目标，并处理异步竞态、不可用目标和关系说明。",
+    "summary": "按帧类型分派知识正文、直接原始材料或固定引用；直接材料帧与引用解析后的材料目标具有不同的定位参数能力。",
     "category": "implementation",
     "sections": [
       {
         "key": "frame-dispatch",
         "title": "帧解析与直接阅读入口",
-        "body": "组件先把帧 id 解析为 JSON 参数；解析失败时仅退为空对象，尚未主动校验各类帧的必填字段。[[c1]] 模板随后按类型分派：knowledge 帧向正文组件传递文档键以及可选修订、章节；直接 source 帧只传材料键和可选摘要 digest，并继续转发导航与加载事件。[[c3]] 这替代了旧稿中“直接 source 帧传递摘要和行范围”的结论：固定起止行并不来自直接 source 帧。"
+        "body": "组件先将帧 id 解析为 JSON；解析失败时退为空对象。knowledge 帧把文档键及可选修订、章节交给正文组件；直接 source 帧只传材料键与可选 digest，不传行范围。两类入口都会继续转发导航与标题加载事件，因此参数完整性仍主要依赖上游构造。[[c1]]"
       },
       {
         "key": "citation-resolution",
         "title": "固定引用的异步解析",
-        "body": "citation 帧依据文档、修订和引用标识请求详情。帧 id 每次变化都会递增 generation，并清空旧引用与错误；只有当前代次的响应才能写回状态，避免快速切换时旧请求覆盖新内容。成功后还会把引用的人类可读标签通知外层。关系类型在本地映射为“支持论点”“实现依据”等说明。[[c2]]"
+        "body": "citation 帧按文档、修订和引用标识请求详情。帧 id 变化时会递增 `generation` 并清空旧状态，只有当前代次的响应或错误可以写回，从而避免快速切换时旧请求覆盖新内容；成功后把引用标签作为 `loaded` 事件载荷发出。[[c2]]"
       },
       {
-        "key": "availability-and-routing",
-        "title": "引用目标与不可用状态",
-        "body": "引用解析期间显示等待状态，请求失败则显示“引用不可用”。解析成功后，界面展示关系标签和引用理由；目标不可操作或未解析时明确给出不可用原因。可用的文章目标按文档、修订和章节打开；只有 citation 解析得到的材料目标才会把材料键、digest 与固定 startLine/endLine 一并交给原文组件。[[c3]] 该组件负责前端分派和状态表达，不能单独证明服务端对引用稳定性或权限的校验方式。"
+        "key": "availability-routing",
+        "title": "引用说明、可用性与目标路由",
+        "body": "引用解析完成后，界面展示关系的中文标签与引用理由；不可操作或没有解析目标时明确显示原因。文章目标接收键、修订和章节；解析后的材料目标则可额外接收 digest 与固定起止行。因而，行范围属于 citation 解析后的材料定位能力，而不是直接 source 帧的通用参数。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "帧参数解析",
-        "reason": "支持帧 id 的 JSON 解析方式及解析失败时退为空对象的行为，说明当前缺少前置参数校验。",
+        "label": "直接知识与材料帧分派",
+        "reason": "支持帧 JSON 解析，以及 knowledge 帧和直接 source 帧实际传递的参数范围。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
           "startLine": 7,
-          "endLine": 9
+          "endLine": 22
         },
         "quote": "const props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}"
       },
       {
         "key": "c2",
         "label": "引用请求与竞态保护",
-        "reason": "支持 citation 请求参数、代次保护、错误处理、加载通知及关系标签映射的说明。",
+        "reason": "支持 citation 请求参数、代次校验、错误处理及加载标签回传。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
           "startLine": 10,
-          "endLine": 18
+          "endLine": 17
         },
         "quote": "const citation = ref<Citation | null>(null), error = ref(\"\");\nlet generation = 0;\nwatch(() => props.frame.id, async () => {\n  const current = ++generation; citation.value = null; error.value = \"\";\n  if (props.frame.kind !== \"citation\") return;\n  try { const c = await knowledgeApi<Citation>(props.prefix, \"/citation?\" + "
       },
       {
         "key": "c3",
-        "label": "阅读组件分派与引用目标路由",
-        "reason": "支持 knowledge、直接 source 与 citation 解析目标之间的参数差异，并证明固定行范围只传给引用解析后的材料目标。",
+        "label": "引用可用性与解析目标分派",
+        "reason": "支持关系说明、不可用状态，以及文章目标和带行范围材料目标的不同分派。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 20,
+          "startLine": 18,
           "endLine": 30
         },
-        "quote": "<template>\n  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event)\" />\n"
+        "quote": "const relationLabels: Record<string, string> = { supports: \"支持论点\", explains: \"进一步解释\", implements: \"实现依据\", depends_on: \"依赖关系\", calls: \"调用关系 · AI 分析\", contradicts: \"相互矛盾\", background: \"背景依据\", tracks: \"进展依据\" };\n</script>\n<template>\n  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"Stri"
       }
     ],
     "questions": [
       {
-        "question": "帧 id 不是合法 JSON，或缺少 document、revision、citation 等必填字段时，是否应在发起请求前显示专门的参数错误？",
-        "why": "解析失败会得到空对象，而 citation 请求仍可能把缺失字段转换成字符串“undefined”；现有实现只呈现最终请求错误，未定义无效深链的预期体验。未知 kind 也会进入引用展示分支，但不会触发 citation 请求，可能长期停留在解析提示。",
-        "nextStep": "补充非法 JSON、缺字段和未知 kind 的组件测试，并决定由帧构造器保证格式，还是由 KnowledgeFrame 统一校验并展示参数错误。",
+        "question": "帧 id 不是合法 JSON，或缺少 document、revision、citation 等字段时，是否应在发起请求前显示专门的参数错误？",
+        "why": "解析失败会降为空对象，citation 请求还可能把缺失字段转成字符串“undefined”；现有材料未定义无效深链的预期体验。",
+        "nextStep": "补充无效及缺字段帧的组件测试，并决定由路由构造器保证格式，还是由 KnowledgeFrame 主动校验。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c2",
-          "c3"
+          "c2"
         ]
       }
     ]
@@ -86,28 +85,43 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+      "digest": "25fc3c91a561c2e0f39ed27224f02c8ecda0c740198171974497b5c42a7ab463"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
       "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+      "digest": "d10e4fe95d71f27225663cc3081e7c259308ec05b72a400e228f4dde1756d36f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+      "digest": "8642623296154c94e9930ac91046b69f5ef988082489e22c2263e23aafd08985"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:56:39.538Z",
+    "at": "2026-09-29T21:35:12.881Z",
     "trace": {
-      "runId": "a487f611-cf49-4424-8358-f8dd40dd5736",
+      "runId": "37b8e422-2f3c-4d65-9512-c500b959680c",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "31c21b7ab52075f36558aeab37ca899b76557b957fc61d14cc7c62dde75dd4c1",
-      "contextHash": "9967d67af9515bba2de1ae339f6a4f672199106d29bf66cd525c6ce6441d9bb2",
+      "promptHash": "84cc1ff1bb1f014328e5c7702077f1dda72e2d5b21f9f556dfbcaf5257bc89b7",
+      "contextHash": "e9d709e8ac9d54e26cef2afd7d357176ed9d6771bfdb0c1f31af779152f4ceae",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d7f74f96e7c6c8c2e6149def6f949f5a16c08a0e07d7467e2fadb556bae5b4ae",
+      "fingerprint": "422e0b05be95a2e889bbfe188fe0c915ec1694cb40766fff40be8a404f7961a9",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -120,10 +134,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef4-5a63-7222-90b6-7cabce9fafac"
+        "01a0ef17-3b83-77a1-a991-1c7cfebe8637"
       ],
       "usage": {
-        "used": 20427,
+        "used": 32861,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -132,10 +146,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23509,
-          "utf8Bytes": 27690,
-          "estimatedTokens": 9230,
-          "budgetedTokens": 11538,
+          "chars": 48655,
+          "utf8Bytes": 61163,
+          "estimatedTokens": 20388,
+          "budgetedTokens": 25485,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -144,17 +158,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:56:47.162Z",
+    "at": "2026-09-29T21:35:29.405Z",
     "trace": {
-      "runId": "7071911e-2552-4507-8bc1-16e3c81ca88e",
+      "runId": "e33386af-8dd0-444b-a527-2fb826e1cd30",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4f2ecc18f54abd7a19dcf9462b93b0a9b3ba712404508c6433fa4e360b1cf425",
-      "contextHash": "bdc79fbf280a65f454bd531397f26a4b87fcf317de7b8e165303954fcd7b2fd2",
+      "promptHash": "768f3715a631f961ebc7561acf56349fd0c92678a8e08dc5a9032dec2489e49b",
+      "contextHash": "4aae98e56ead896194fb6b2458789e4a0d8d42f4ee3de9fb39d0de2a4196901c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "868e184affab42ca4c35803bea04db93b06800aba6ce1e62dac6c569145c2922",
+      "fingerprint": "bcbd2e1cc61713d665be8daef29874d2bd9e5cb7b68f4e9ca9f31b873ebca5db",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -167,10 +181,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef4-8fc1-7740-8135-f8279c2b6d10"
+        "01a0ef17-dc95-70e0-aa0b-4beab7429d41"
       ],
       "usage": {
-        "used": 18844,
+        "used": 28075,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -179,10 +193,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 20838,
-          "utf8Bytes": 24151,
-          "estimatedTokens": 8051,
-          "budgetedTokens": 10064,
+          "chars": 44806,
+          "utf8Bytes": 54597,
+          "estimatedTokens": 18199,
+          "budgetedTokens": 22749,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
