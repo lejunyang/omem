@@ -1,0 +1,514 @@
+{
+  "version": 1,
+  "document": {
+    "key": "topic:architecture",
+    "title": "总体架构、数据主链与运行边界",
+    "summary": "omem 以统一多模态 Capture 和 Source 与不可变 Revision／固定 Fragment 主链连接持久作业、知识复核、来源与记忆检索、助手及阅读界面；当前实现由 Fastify、共享合同和单用户 SQLite 组成，Code Wiki 是隔离但可追溯的派生视图。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "evidence-mainline",
+        "title": "从 Capture 到固定证据",
+        "body": "手工、文件、Git、Lark、聊天、Hook 与屏幕观察统一进入 Capture；文本、图片、链接及逐部分参与者、时间、转发等来源信息使用同一合同。[[c1]] Store 对事件与内容做幂等判断；内容变化时为 Source 追加 Revision、切换可变的 `head`，并生成固定 Fragment，旧修订仍保留。[[c2]] 因此 Source 是持续演进的材料身份与当前版本入口，不属于不可变对象；不可变的是历史 Revision，Fragment 则充当固定证据锚点。这取代了此前把 Source、Revision、Fragment 一并称为不可变主链的过宽结论。共享合同细节可继续下钻到“采集与证据基础”。[[c3]]\n\n原始捕获会在同一数据库事务中排入声明提取作业；派生材料被排除，防止模型总结自循环成为独立证据。[[c4]] 知识正文和回答只能解释、组织或引用这些证据，不成为新的独立事实来源。"
+      },
+      {
+        "key": "processing-retrieval",
+        "title": "作业、知识与检索如何衔接",
+        "body": "持久 jobs 将语义处理与请求生命周期解耦：worker 以租约领取任务、心跳续期，并提交成功或分类失败；更完整的重试、取消与租约限制可从 jobs 子知识下钻。[[c5]][[c6]] 知识流程先分析原始材料，再独立复核和组织章节；引用贴近论断，错误或过期结果不得覆盖有效知识。[[c7]]\n\n检索端口隔离具体后端，当前关键词实现分别搜索固定来源片段和 active memory。只有来源候选直接返回 Revision／Fragment 定位并可回读原文；记忆候选用于已应用记忆的冲突或复用召回，合同未直接携带固定证据定位。[[c8]][[c9]] 这取代了“全部关键词结果都返回固定证据定位”的过宽结论。"
+      },
+      {
+        "key": "runtime-boundaries",
+        "title": "组合根、派生视图与当前边界",
+        "body": "服务端组合根装配 Fastify、Store、记忆与反馈服务、ACP 模型适配器、关键词检索和 AssistantRuntime；启动时恢复未完成对话并运行提醒、输入聚合，关闭时停止组件并释放存储。[[c10]][[c11]] “一个 API 与 worker 代码库共享领域合同，确定性步骤直接执行、语义判断才调用模型”是架构设计原则，不应仅凭组合根代码视为完整实施证明。[[c12]]\n\nCode Wiki 的知识正文与代码结构图均是统一 Capture→Source／Revision／Fragment 链上的派生视图；隔离 review SQLite 只是输入适配与运行配置。[[c13]] 代码结构和理解类型也是附加读视图，不替代来源、修订、片段及关系，且代码位置仅对生成它的快照有效。[[c14]] 当前 SQLite/shared-token 明确为单用户实现，没有租户强制隔离。[[c15]] 跨文件调用解析和跨修订符号／片段身份续接尚未实现；embedding 检索及所有来源自动重核验也仍未交付。[[c16]][[c17]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "统一多模态采集合同",
+        "reason": "支持各类采集来源、文本图片链接 part 以及逐部分来源信息的架构说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 1,
+          "endLine": 146
+        },
+        "quote": "import { z } from \"zod\";\n// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .ob"
+      },
+      {
+        "key": "c2",
+        "label": "Store 捕获、Source head 与修订流程",
+        "reason": "支持 Source 的创建或复用、可变 head 更新、Revision 追加、固定 Fragment 及来源更新传播，并纠正把 Source 称为不可变对象的旧结论。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 141,
+          "endLine": 302
+        },
+        "quote": "    return this.tx(() => {\n      const producer = input.provenance?.collectorId;\n      const eventId = input.provenance?.eventId;\n      if (producer && eventId) {\n        const receipt = this.db\n          .prepare(\n            `SELECT * FROM capture_receipts\n             WHERE workspace_id='personal' AND producer=? AND"
+      },
+      {
+        "key": "c3",
+        "label": "采集与证据基础",
+        "reason": "提供 Capture、Source、Revision 与 Fragment 关系的共享合同子知识入口，便于逐层下钻。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:packages/contracts/src/index.ts",
+          "section": "capture-evidence"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c4",
+        "label": "派生材料的作业隔离",
+        "reason": "支持原始捕获进入声明提取队列，而派生材料不自循环成为独立证据。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 353,
+          "endLine": 373
+        },
+        "quote": "  private queueCaptureJob(input: CaptureInput, revision: Revision) {\n    // Only derived material (model summaries/reflections) is withheld from the\n    // learning queue: it must not self-loop as independent evidence. Original Agent\n    // sessions are real experience and DO enter extract_claims (G14).\n    if (input.p"
+      },
+      {
+        "key": "c5",
+        "label": "任务租约与执行流程",
+        "reason": "支持 worker 领取任务、心跳续租、调用处理器并分类完成或失败的运行流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/worker.ts",
+          "startLine": 72,
+          "endLine": 134
+        },
+        "quote": "    const controller = new AbortController();\n    this.active.set(lease.id, controller);\n    this.repository.markRunning(lease.id, lease.leaseToken, now());\n    let heartbeat: ReturnType<typeof setInterval> | undefined;\n    const heartbeatMs = this.options.heartbeatMs ?? Math.max(1000, leaseMs / 3);\n    if (heartbeatMs"
+      },
+      {
+        "key": "c6",
+        "label": "持久作业生命周期",
+        "reason": "链接 jobs 子知识中有关入队、租约、重试、取消及当前限制的详细说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:jobs",
+          "section": "lifecycle"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c7",
+        "label": "知识分析、复核与组织规则",
+        "reason": "支持先分析原始材料、独立复核、内联固定引用及失败结果不得覆盖有效知识。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 28,
+          "endLine": 35
+        },
+        "quote": "### 正文知识与 Agent 流程\n\n- 先分析原始材料，再独立复核，最后组织模块/主题/概览。代码、文档、对话、图像的角色使用同一合同和运行时，不能另建 code-only 捕获或事实 authority。\n- 正文的 `[[citation]]` 必须贴近论断，引用有可读名称、理由、关系和固定目标。模型选定位范围，宿主复制精确原文，独立角色核对支持性；位置校验不等于语义核验。\n- 知识、原文、代码 import 的阅读使用 `packages/ui` 的 `useEvidenceTrail` / `OmTrailDrawer`，与个人知识入口共用。不要再把所有引用堆到文章底部。\n- 无法确认的事项保留为有依据的疑问/调查项；用"
+      },
+      {
+        "key": "c8",
+        "label": "来源与记忆候选合同",
+        "reason": "区分来源候选与记忆候选，支持只有来源候选直接携带 Revision 和 Fragment 定位的修正结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 45,
+          "endLine": 87
+        },
+        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string;\n  score: number;\n  "
+      },
+      {
+        "key": "c9",
+        "label": "检索与证据回读",
+        "reason": "链接 retrieval 子知识，说明来源搜索、active memory 搜索及固定证据回读的不同边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:retrieval",
+          "section": "retrieval-flow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "服务端组合根",
+        "reason": "支持 Fastify、Store、领域服务、ACP 模型、关键词检索与 AssistantRuntime 的装配关系。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 44,
+          "endLine": 77
+        },
+        "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
+      },
+      {
+        "key": "c11",
+        "label": "启动恢复与关闭流程",
+        "reason": "支持对话恢复、提醒和输入聚合启动，以及关闭时停止组件和释放存储。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 589,
+          "endLine": 619
+        },
+        "quote": "  const web = resolve(\"apps/web/dist\");\n  if (existsSync(web))\n    await app.register(staticFiles, { root: web, prefix: \"/\" });\n  // G20: recover any pending/running turns from a previous process.\n  await assistant.recoverUnfinishedTurns();\n  const tick = setInterval(() => store.remind(), 30000);\n  tick.unref();\n  let "
+      },
+      {
+        "key": "c12",
+        "label": "模块化单体设计原则",
+        "reason": "支持一个 API 与 worker 代码库共享领域合同，以及确定性步骤和语义模型步骤的设计分工；同时将其限定为设计原则。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/design.md",
+          "startLine": 91,
+          "endLine": 91
+        },
+        "quote": "部署采用模块化单体：一个 API、一个 worker 代码库，数据库和对象存储共用领域契约。采集、治理、检索、交互是逻辑职责，第一版不必拆成四个常驻自治 Agent 或四套微服务。确定性的步骤直接运行程序，只有语义抽取、冲突分析、策略改进等步骤调用模型。"
+      },
+      {
+        "key": "c13",
+        "label": "Code Wiki 的统一派生视图定位",
+        "reason": "支持知识正文、引用与代码结构图同属统一材料链派生视图，并说明 repo-review 只是隔离适配与运行配置。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 16,
+          "endLine": 18
+        },
+        "quote": "## Code Wiki / repo-review 维护规则\n\nCode Wiki 不是独立产品：`knowledge_*` 正文/引用与 `code_*` 结构图都是统一 Capture→Source/Revision/Fragment 链上的派生视图。通用处理使用 `KnowledgePipeline` + `RoleRuntimeGateway` + 现有 jobs；repo-review 只是本仓库输入适配器与隔离运行配置（独立 SQLite、默认 5180 API / 5181 web，端口可变，不起业务 worker）。启动用 `osdk run dev:review`。"
+      },
+      {
+        "key": "c14",
+        "label": "Code Knowledge 附加读视图",
+        "reason": "支持代码结构和理解投影不替代统一来源链，以及代码位置仅在对应快照内有效。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 884,
+          "endLine": 1015
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Code Knowledge domain model (repo-review side projection). See\n// docs/implementation/code-knowledge-design.md. These are plain read/view types;\n// the tables live in the isolated review SQLite side tables and are additive --\n// they neve"
+      },
+      {
+        "key": "c15",
+        "label": "单用户部署边界",
+        "reason": "直接支持当前 SQLite/shared-token 实现是单用户且不存在租户强制隔离。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 8,
+          "endLine": 8
+        },
+        "quote": "- Personal-first, server or local. Preserve team scope in architecture; current SQLite/shared-token implementation is explicitly single-user. Do not pretend tenant enforcement exists."
+      },
+      {
+        "key": "c16",
+        "label": "代码解析与身份续接限制",
+        "reason": "支持跨文件 calls 不解析及跨 Revision 符号、Fragment 身份续接未实现。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 26,
+          "endLine": 26
+        },
+        "quote": "- **边界**：跨文件 calls 不解析（单文件名称级 calls 标 candidate）；跨 revision 符号/fragment 身份续接未实现，代码改完要重新 sync 让 locator 在新 head 重定位。"
+      },
+      {
+        "key": "c17",
+        "label": "尚未交付的检索与重核验能力",
+        "reason": "直接支持精确跨文件类型解析、embedding 检索和所有来源自动重核验尚未完成。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 52,
+          "endLine": 52
+        },
+        "quote": "跨文件调用的精确类型解析、embedding 检索和所有来源的自动重核验尚未完成；不会把这些能力写成已交付。流程、分项提交与验证记录见 [通用知识流程](docs/implementation/knowledge-pipeline.md)，早期问题见 [复审记录](docs/implementation/code-wiki-review-2026-09-29.md)。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "从单用户 SQLite 扩展到团队部署时，身份、租户隔离和数据迁移应采用什么边界？",
+        "why": "现有材料明确说明 shared-token 实现没有租户强制隔离，但没有给出团队场景的授权模型、隔离粒度或迁移计划。",
+        "nextStep": "先确认目标使用人数、共享范围和审计要求，再设计 workspace、principal、授权检查与数据库迁移的最小垂直切片。",
+        "blocking": false,
+        "citationKeys": [
+          "c15"
+        ]
+      },
+      {
+        "question": "下一阶段应优先实现 embedding 检索、跨文件调用解析，还是全来源自动重核验？",
+        "why": "三项能力均明确未完成，但分别改善语义召回、代码理解和证据时效性，现有材料没有给出业务优先级与验收顺序。",
+        "nextStep": "依据近期真实使用中的失败样本建立比较矩阵，为首选能力定义端到端行为测试、资源预算和回退路径。",
+        "blocking": false,
+        "citationKeys": [
+          "c16",
+          "c17"
+        ]
+      },
+      {
+        "question": "普通来源更新与恢复旧版本是否应执行完全一致的派生状态刷新？",
+        "why": "普通捕获会推进来源有效性、使旧记忆依赖失效并排入刷新作业；现有恢复材料只显示复制修订、片段、关系并切换 head。",
+        "nextStep": "对照恢复实现、来源状态和依赖刷新测试，明确恢复后的画像、有效性代次、记忆失效及重建作业合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:README.md",
+      "digest": "78dca587dc82b998a52eee9dee4abee4b04608e50df2564bda82ab28ca8231b4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:AGENTS.md",
+      "digest": "d4f72638286fc89318f409eefe2ff84e4774205f99acf4eeee6067b60c6565a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/knowledge-pipeline.md",
+      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "2a2f7075bdf0d349cba5b68104c83fba9c240ed2c77327ade76af6c94f916fb9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/repository.ts",
+      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/spool.ts",
+      "digest": "6e815455823d4befbba2dcce822d0c1b3e12b4b08f7f86def8945493dabe3039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/design.md",
+      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
+    },
+    {
+      "kind": "article",
+      "key": "module:project:part-2",
+      "digest": "1e2ba08dfa8ffbd7461cf414c3c2feba0a45f5c49073db52bb1d91c91cc2c7fb"
+    },
+    {
+      "kind": "article",
+      "key": "module:contracts",
+      "digest": "5243602fde7393ee5028cad0df502cd21c248e6c58d8debf1fb75478c9be2201"
+    },
+    {
+      "kind": "article",
+      "key": "module:storage",
+      "digest": "96de6f5f3e8524394c70a1576c5fad6691eb1876d62962d2da89f87018e5f042"
+    },
+    {
+      "kind": "article",
+      "key": "module:jobs",
+      "digest": "e6924de17a6bdb526cfb0edc9fdc17e6f0c9f3be2a787db9af96b5e62dc950cb"
+    },
+    {
+      "kind": "article",
+      "key": "module:inputs",
+      "digest": "2716ca854623210eaa2a0a310e39253436c6b63034c7f4286da2e1e283b9270d"
+    },
+    {
+      "kind": "article",
+      "key": "module:retrieval",
+      "digest": "81c6707010cf2fbe8122322b83d5f35499fc36ec83c0d4953feaf21fee4f49bd"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "1544fa628a74d9c56580c9c736113bea319d4890072f3a3afb170fabbd7c7563"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "72444d3f1d8effce45cd95cdde702f9b16753cefb2f6fc517b209683365dccd6"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "7a2e769183d8bb9ad053fdb07120437d9db86d68573bd2a7b86334fc1eb9107e"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/design.md",
+      "digest": "76cd96ce819294f9d58f490e69c9aaf626064589d58a1e58528418beebcf22fe"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:04:16.773Z",
+    "trace": {
+      "runId": "ecf25d37-d73f-40d8-a840-d896e5b0be4a",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "2a4a7b465a2000896cd109d7a814e3104d0106a12b220ad689899cc332e29dd9",
+      "contextHash": "0633013e47e11c3e55922269e744ad003a1a29c8c85ccef213211a4136cccdf4",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2aa211626b4a873778c002cbd98aa61486836fe9cbe3a0ca0014f26f38677bed",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefb-2b50-7da0-97da-967ef7486eb3"
+      ],
+      "usage": {
+        "used": 108618,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 283507,
+          "utf8Bytes": 332413,
+          "estimatedTokens": 110805,
+          "budgetedTokens": 138507,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:04:37.765Z",
+    "trace": {
+      "runId": "febedd91-9494-46e1-9bc2-26112cf18636",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "37fd45a0d15e3fb0f33ef5e32f752fb182a8724e8e1c9738cf1db235da03266d",
+      "contextHash": "c2083f73749260f86055a3d9ecdcf3e5cd4201aaed57632b45c9ef14a1e81100",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b8c5e551551e31150a2b88a392eb2f7824517d51457e91817007de82834943bc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefb-8a10-7ca0-9234-99d5c8741455"
+      ],
+      "usage": {
+        "used": 106298,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 280911,
+          "utf8Bytes": 328889,
+          "estimatedTokens": 109630,
+          "budgetedTokens": 137038,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
