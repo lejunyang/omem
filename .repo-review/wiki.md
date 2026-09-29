@@ -1,6 +1,6 @@
 # omem · 可追溯知识
 
-omem 是以不可变原始证据为基础的个人助手：多类材料进入统一证据链；一般知识经材料分析、独立复核与不可变发布形成派生正文，明确任务和记忆则分别经过服务器意图复核、MemoryService 与 Attention Gate 治理。个人工作区与仓库 Wiki 共用固定引用和递归阅读机制。当前已有可运行闭环，但仍限于单用户 SQLite，语义检索、全面自动重核验、跨修订身份续接及真实外部端到端验收尚未完成。
+omem 是以个人助手为起点、以不可变原始材料为事实基础的渐进记忆系统。它已形成统一采集、固定引用、知识复核、主助手治理和仓库 Wiki 阅读等闭环，但当前仍是单用户 SQLite 实现；语义检索、跨修订身份续接、全面自动重核验及真实外部端到端验收尚未交付。
 
 - [Agent 运行时、角色分工与模型治理](knowledge/articles/427d80e2761bec7fb9333352245e6998b17a2c8f7c22a187904fd37369078271.md)
 - [总体架构、数据主链与运行边界](knowledge/articles/4bc8adb6a65e6b818c804d2af88381e390be0fa9ab0ce0f2bd6c8c8e95b35155.md)
@@ -79,7 +79,7 @@ omem 是以不可变原始证据为基础的个人助手：多类材料进入统
 - [web · 模块理解](knowledge/articles/14774f39872f6fa460a9730fa28549037f0c8d439cbede87fe5445fda85c616f.md)
 - [web · 模块理解 · 专题 1](knowledge/articles/01a1d59970b64ce9a240d80dd8127c069f020520ca789eec175c9af94250ccfc.md)
 - [web · 模块理解 · 专题 2](knowledge/articles/94218fbf87841cfe339659af5d4b326fd0c168331762f84c04923ee3c1b8985b.md)
-- [Web 模块专题 3：可追溯知识阅读与双 API 边界](knowledge/articles/1ed2f14c8dbc2b0e8a369de4de7877707fecf84d98b7996ff88fafb99dec43fa.md)
+- [Web 模块：可追溯知识阅读与本地接口边界](knowledge/articles/1ed2f14c8dbc2b0e8a369de4de7877707fecf84d98b7996ff88fafb99dec43fa.md)
 - [omem 界面实现规范](knowledge/articles/e49aec276581aba4e7a53bedb929445b6623a6d11b18c0dcb6129a4e9a49a6d8.md)
 - [omem 界面设计技能入口配置](knowledge/articles/d8707b6ea240ea7a365fb48257eb3c4c86f1a2ed93cf772eaa9864d6793ce6de.md)
 - [osdk 使用指引与参考索引](knowledge/articles/7ce8453d8e4c645ebf50e5c745860bc047287558587e8bd53aa98aa7da22b0ee.md)
@@ -223,12 +223,12 @@ omem 是以不可变原始证据为基础的个人助手：多类材料进入统
 - [学习任务与提案进度视图](knowledge/articles/399fd81737b1307c33305e67ce2ef86ab650309a1700954702118077d789f8c4.md)
 - [通知、应用回执与投递状态详情](knowledge/articles/0206f824f9b55fa18ed405e3821788e30ac480c0068a252edf51fdfe21fdd20b.md)
 - [仓库评审知识库主应用](knowledge/articles/e694f81e24ca1befefb3b3cf89616921d8d35f97fdadd4ce6166e250e70a5bc4.md)
-- [个人工作区前端 API 合同与请求封装](knowledge/articles/0a7420ea6dea42c3b86142e52c0175b2ffe20bfd56e50f6270725c6e6df2548e.md)
-- [Code Wiki 总容器与证据下探路由](knowledge/articles/c7d146673237fb15547f8534001912445b4b4ef8cb6c32403bc9d240682a5c76.md)
+- [Web 客户端数据合同与请求入口](knowledge/articles/0a7420ea6dea42c3b86142e52c0175b2ffe20bfd56e50f6270725c6e6df2548e.md)
+- [Code Wiki 总览、路由与统一证据 Trail](knowledge/articles/c7d146673237fb15547f8534001912445b4b4ef8cb6c32403bc9d240682a5c76.md)
 - [文件源码、符号与关系详情帧](knowledge/articles/89b7525b56685c701478651b1562da6be3a4cac75930d77f64fe09d0190543a0.md)
 - [评审片段与代码关系追踪帧](knowledge/articles/8d1b3a1eb428fbd9a3582a66205f897d26f2b35fbc2325bda7bd3462fcac02ea.md)
 - [模块理解与文件入口帧](knowledge/articles/9b4dcab1214bbd0cb31ae5cc73e8b4db1ae09fb7b2cff65fc3cb8c82c27a9e26.md)
-- [符号源码范围与双向关系帧](knowledge/articles/d95238a271bbfbff76302eb5a9aefd6d4cd132756b23105aa2174f932426f8b6.md)
+- [固定符号范围与双向关系帧](knowledge/articles/d95238a271bbfbff76302eb5a9aefd6d4cd132756b23105aa2174f932426f8b6.md)
 - [边目标解析与下钻行为测试](knowledge/articles/3894ae0726ccafd9430642c69a8d86667b730dad24b89e6b29248366f7cc87c4.md)
 - [Code Wiki 哈希路由往返测试](knowledge/articles/26398b7710ef1c9301e44488e750272e83419847028c83045e609d94670324c7.md)
 - [人类可读标签与边禁用测试](knowledge/articles/0d47116f37e3f7c65e7bddec0054e1250530013254b6fefc266d809246aa3233.md)
@@ -237,8 +237,8 @@ omem 是以不可变原始证据为基础的个人助手：多类材料进入统
 - [共享 Trail 栈循环与深层导航测试](knowledge/articles/7c27e8faa5f953fb98863b9503b12c831ff6d0a00f891b81aaf2e1477d2ba68b.md)
 - [知识文章正文加载与引用导航组件](knowledge/articles/fa0bd358164e76165b90d6f6a95feba6fc884727dc6e95a96c0cd9ee45c2cf50.md)
 - [知识阅读帧与固定引用解析](knowledge/articles/0103d25c4803b215cdd1a6865c50244b68e3a2fdbcbac0c98feef02bc40a62d2.md)
-- [知识首页、覆盖状态与分析入口](knowledge/articles/cb98ae49e639ca46a724f14b8c3f204b0ccb2ac59342a7813a1e9e0df43d7e1a.md)
-- [知识疑问、补充请求与调查入口](knowledge/articles/f4d91c0fd0d63cdb588890f7447efee2eadb74cc81681d48a0aabe081f7ca228.md)
+- [知识首页、覆盖进度与材料索引](knowledge/articles/cb98ae49e639ca46a724f14b8c3f204b0ccb2ac59342a7813a1e9e0df43d7e1a.md)
+- [知识疑问、用户补充与调查请求](knowledge/articles/f4d91c0fd0d63cdb588890f7447efee2eadb74cc81681d48a0aabe081f7ca228.md)
 - [原始材料读取与证据导航](knowledge/articles/4b9d3ac9d775696f7fdfb11b62922c68aa35ceaa961f0041278a4fd2c84e1a5f.md)
 - [个人知识页与共享证据 Trail 的装配](knowledge/articles/6cfb648275c3208d7f5b2eec871ec8ccf7e97c6c118bb950168912261683ccb2.md)
 - [知识前端 API 与阅读帧合同](knowledge/articles/33dfe1b8fccca485fa3cd0a9725545d24cce53fd88172cadc12f94b78eb24fb2.md)
