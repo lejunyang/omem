@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:docs-contracts",
+    "title": "docs-contracts · 模块理解",
+    "summary": "docs-contracts 规定证据对象、版本、关系、递归阅读、原位问答和可恢复变更的目标语义，使采集、知识组织、阅读交互与写入流程共享可追溯边界；现有材料不足以证明这些合同已全部实现。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "role",
+        "title": "职责与设计背景",
+        "body": "该模块为证据链提供共同语义：Source、Fragment、Memory 等对象维持跨版本的稳定身份，Revision 则固定某一时刻的内容，避免标题、URL 或正文变化破坏引用。片段续接优先依靠上游标识、代码符号与结构邻域；遇到重复或大幅改写时保留候选继任，不擅自认定同一对象。有效时间与系统获知时间也被分开记录，使补录材料不会倒改过去的认知状态。[[c1]][[c2]]"
+      },
+      {
+        "key": "flow",
+        "title": "从证据关系到递归阅读",
+        "body": "关系模型刻意区分“包含、提到、派生、相关”和真正的事实支持：只有经过评估的原子主张支持才能承担证据作用，多跳引用不会自动传递支持，多来源联合证据还必须同时满足权限约束。[[c3]] 阅读侧把引用展开为可进退的帧栈，并保存焦点、路径与循环位置；原位追问由服务端重新读取当前身份可访问的材料，生成引用必须经过目标、定位和版本校验，沉淀后的答案仍需挂回原始证据，不能把回答自身当作新增独立依据。[[c4]]"
+      },
+      {
+        "key": "change-progress",
+        "title": "变更闭环、跨模块关系与当前限制",
+        "body": "写入流程以 ChangeSet 连接策略校验、并发头检查、新修订、关系更新、不可变事件和 outbox，因此它既关联证据存储与知识投影，也关联后续通知或外部执行。恢复不是覆盖旧快照，而是生成补偿变更；若对象已有后续修改，就要求展示差异并重新计算，以保护后来工作。[[c5]] 这些材料能够说明预期合同及模块间边界，但没有给出数据库迁移、公开 API、前端交互或行为测试的实际结果，因此无法据此判断各项能力的完成度。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "稳定对象与不可变修订",
+        "reason": "支持稳定身份负责跨版本追踪、修订负责固定可引用内容，以及关系边具有方向和版本的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 9,
+          "endLine": 16
+        },
+        "quote": "| Source | `tenant_id, source_id, connector_id, external_key, canonical_uri, current_revision_id, acl_policy_id` | URL 可变；ID 不随 URL/标题变化；同 connector/external_key 在 tenant 内唯一 |\n| SourceRevision | `revision_id, source_id, upstream_revision, raw_hash, normalized_hash, object_keys, fetched_at, parser_version, normalizatio"
+      },
+      {
+        "key": "c2",
+        "label": "片段续接与双轴时间",
+        "reason": "支持片段歧义时不强行续接，以及有效时间和获知时间需要分离的设计背景。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 21,
+          "endLine": 23
+        },
+        "quote": "源内容变化后 Fragment 是否延续：优先 upstream block ID/代码 symbol + 文件身份；再结构路径+邻域文本；最后唯一 quote/hash 匹配。存在重复段落或大幅改写时生成新 Fragment 并记录 `possible_successor`，不偷偷选一个。稳定身份解决“追踪同一段”，固定修订解决“打开当时那段”。\n\n时间采用双轴：`valid_from/valid_to` 表示材料声称事实在何时生效，`recorded_from/recorded_to` 表示系统何时获知/修正该说法，区间均为半开。追加修订和事件，派生当前时间视图；未知有效期必须保留 unknown，不能用抓取时间冒充业务生效时间"
+      },
+      {
+        "key": "c3",
+        "label": "证据关系与支持边界",
+        "reason": "支持不同关系类型不能混同为事实证据、支持不可沿引用链自动传递及多来源权限约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 60,
+          "endLine": 73
+        },
+        "quote": "| type | 方向 A→B 的含义 | 可否当事实支持 |\n| --- | --- | --- |\n| contains | A 包含 B | 否，结构关系 |\n| references | A 明确提到了/链接到了 B | 否，仅证明引用存在 |\n| derived_from | A 的内容由 B 提炼/生成 | 否，生成来源不等于结论正确 |\n| supported_by | A 的原子主张受到 B 支持 | 是，但需有效的 EvidenceAssessment |\n| contradicted_by | B 与 A 的主张相冲突 | 作为冲突提示 |\n| supersedes | A 在确定范围/时间取代 B | 不自动跨"
+      },
+      {
+        "key": "c4",
+        "label": "递归阅读与原位问答",
+        "reason": "支持帧栈导航、循环检测、授权上下文重读、引用验证以及答案必须回连原始证据的流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 123,
+          "endLine": 137
+        },
+        "quote": "点击正文引用建立 frame；点击弹窗内引用 push；返回 pop/cursor 回退；面包屑跳至任意已访问位置。分支从当前 cursor 截断前进历史，但旧分支可在最近记录找到。深链 URL 保存 trace ID，服务端按用户会话保存路径；不把整条可无限增长的路径放 querystring。\n\n循环检测依据 `(node_revision_id, selector_id)`；遇环提示回到之前 frame。body 虚拟化，只保留当前正文、邻近摘要与 path；前端缓存 LRU 默认 30 个节点，路径条目不随正文缓存淘汰。每次网络请求有条数/大小/超时上限，不对用户逐步深入次数设产品硬上限。默认最多预取一跳、10 个目标，禁止"
+      },
+      {
+        "key": "c5",
+        "label": "ChangeSet 提交与补偿恢复",
+        "reason": "支持变更事务的组成、状态与事件一致性，以及存在后续修改时必须重算而不能覆盖的恢复语义。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 147,
+          "endLine": 153
+        },
+        "quote": "## 8. ChangeSet 与恢复\n\nChangeSet 包含 `id, actor, trigger, policy_version, read_versions, operations, evidence_refs, risk, expected_heads, before_refs, after_refs, idempotency_key, status`。`proposed` 不等于 `applied`；待判断不写事实变更事件。\n\n提交事务：校验主体与策略 → 锁目标/检查 expected_heads → 写新修订 → 更新 heads/边 → 追加不可变 AppliedEvent → 写 outbox → 提交。事件"
+      }
+    ],
+    "questions": [
+      {
+        "question": "稳定身份、不可变修订、双轴时间和关系类型中，哪些已经落实为数据库约束与可迁移的数据结构？",
+        "why": "材料描述了对象字段和不变量，但没有迁移文件、约束检查或真实数据行为，因而无法区分设计目标与已完成能力。",
+        "nextStep": "将 Source、Fragment、Revision、ReferenceEdge 及时间字段逐项映射到当前 schema、迁移和行为测试，并标记未实现或语义偏差。",
+        "blocking": true,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "Trace Session、原位问答引用验证和 ChangeSet 补偿恢复是否已有可运行的端到端实现？",
+        "why": "材料给出了交互、接口事件和恢复规则，却没有服务端路由、前端行为、并发冲突测试或外部操作边界的实现证据。",
+        "nextStep": "核对 API 类型、运行时代码、界面交互与端到端测试，分别验证帧栈恢复、权限重读、引用核验、事务提交和 REBASE_REQUIRED 分支。",
+        "blocking": true,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/contracts/evidence-model.md",
+      "digest": "4349bdff85f4677a3fe9d290f3a06bc883e4da404461f4c0f2872e16027f72a9"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/contracts/evidence-model.md",
+      "digest": "a8e6326f0bddfe6b77e1547142eda10b1ceac0e239b8a8aa2064e0e2b61f9ff0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:24:58.929Z",
+    "trace": {
+      "runId": "84e207b9-e118-4be2-9b3f-ecee2c96a209",
+      "roleId": "knowledge-writer",
+      "roleVersion": "1",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "6f73830bc06a67960ac759bcd71e5bd86fb94016bfb17e96169a1f967ff98c37",
+      "contextHash": "f5561ce7e87eb121a1869349108983a254ddc4e7c8464008a340173baa85bdad",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7a7eaa1a7c08c344f92712f1f703e769b54ca7622ade8660dd5b694500bf0b9e",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-writer",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed7-4163-7f41-9b1d-8f1ac6aa819a"
+      ],
+      "usage": {
+        "used": 20850,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 18979,
+          "utf8Bytes": 28294,
+          "estimatedTokens": 9432,
+          "budgetedTokens": 11790,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:25:10.162Z",
+    "trace": {
+      "runId": "1601263d-c504-4fd6-95a2-e42ab5659933",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "0d1da312a0de2203fdd4df4ba2e75153a74bb54ef33681a44ebda62854d81d61",
+      "contextHash": "bb6e38b5b79e65ed221a866a7195872529db0ccfbfd0f18edefef248ea8cdd2a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2c10f09975f386f45249098034373c5c6ae4fbc663e69c1b1ff8c1a17fe33a66",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed7-8fe9-7bc1-b866-83579b94bfd5"
+      ],
+      "usage": {
+        "used": 20870,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 20970,
+          "utf8Bytes": 32861,
+          "estimatedTokens": 10954,
+          "budgetedTokens": 13693,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
