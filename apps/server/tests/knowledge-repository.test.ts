@@ -66,6 +66,9 @@ it("restores reviewed knowledge in a fresh DB and preserves question actions", (
   const second = setup(); second.capture(m.text);
   expect(restoreKnowledgeArticles(second.repository, assets).map(r => r.state)).toEqual(["restored"]);
   expect(second.repository.get(m.key)!.revision).toBe(a.revision);
+  writeFileSync(join(assets, "invalid.json"), "broken");
+  expect(restoreKnowledgeArticles(second.repository, assets).find(r => r.file === "invalid.json")!.state).toBe("rejected");
+  expect(second.repository.get(m.key)!.revision).toBe(a.revision);
   const q = second.repository.questions()[0]!;
   const task = second.repository.createTask(q.id);
   expect(second.repository.createTask(q.id)).toBe(task);

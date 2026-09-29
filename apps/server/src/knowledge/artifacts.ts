@@ -31,9 +31,13 @@ export function writeKnowledgeArticle(directory: string, a: KnowledgeArticle) {
 
 export function restoreKnowledgeArticles(repository: KnowledgeRepository, directory: string) {
   if (!existsSync(directory)) return [];
-  const pending = readdirSync(directory).filter(f => f.endsWith(".json")).sort().map(file => ({ file, artifact: JSON.parse(readFileSync(join(directory, file), "utf8")) as KnowledgeArtifact }));
-  const sources = new Map(repository.materials().map(m => [m.key, m.digest]));
   const result: { file: string; state: string; reason: string }[] = [];
+  const pending: { file: string; artifact: KnowledgeArtifact }[] = [];
+  for (const file of readdirSync(directory).filter(f => f.endsWith(".json")).sort()) {
+    try { pending.push({ file, artifact: JSON.parse(readFileSync(join(directory, file), "utf8")) as KnowledgeArtifact }); }
+    catch (error) { result.push({ file, state: "rejected", reason: String(error) }); }
+  }
+  const sources = new Map(repository.materials().map(m => [m.key, m.digest]));
   for (let pass = 0; pending.length && pass < 100; pass++) {
     let progress = false;
     for (let i = pending.length - 1; i >= 0; i--) {

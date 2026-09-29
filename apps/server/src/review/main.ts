@@ -1,3 +1,7 @@
+import { restoreReviewKnowledge } from "./knowledge.js";
+import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "./materials.js";
+import { restoreKnowledgeArticles } from "../knowledge/artifacts.js";
+import { join } from "node:path";
 /** review entry point: run the incremental sync first, then serve the review
  * API on loopback. It never wires up the personal workspace services. */
 import { createReviewStore } from "./store.js";
@@ -15,7 +19,9 @@ const store = createReviewStore(repoRoot);
 try {
   const stats = await runReviewSync(store, repoRoot);
   console.log("repo-review: sync done", stats);
+  const knowledge = restoreReviewKnowledge(store, repoRoot);
   console.log("repo-review: code projection", await runCodeSync(store, repoRoot));
+  console.log("repo-review: knowledge restored", knowledge.restored.reduce((n, r) => { n[r.state] = (n[r.state] ?? 0) + 1; return n; }, {} as Record<string, number>));
 
   // Opt-in model: only REVIEW_CODE_MODEL_CONFIG is read; default is no model.
   const codeUnderstandingModel = loadReviewCodeModelConfig();

@@ -1,3 +1,4 @@
+import { restoreReviewKnowledge, writeReviewKnowledgeIndex } from "../apps/server/src/review/knowledge.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { createReviewStore } from "../apps/server/src/review/store.js";
@@ -20,6 +21,8 @@ mkdirSync(stage, { recursive: true });
 try {
   console.log("capture", await runReviewSync(store, root));
   console.log("projection", await runCodeSync(store, root));
+  const sharedKnowledge = restoreReviewKnowledge(store, root).repository;
+  if (!generate && sharedKnowledge.list().length) { writeReviewKnowledgeIndex(root, sharedKnowledge.list()); console.log("Shared knowledge index rebuilt"); }
   if (generate) {
     const config = loadReviewCodeModelConfig();
     const model = buildUnderstandingModelPort({ ...config, workspaceDir: join(root, ".repo-review/runtime/agent-workspace") });
@@ -34,6 +37,8 @@ try {
       copyFileSync(join(stage, file), join(root, GENERATED_DIR, file));
     }
   }
+  if (!generate && sharedKnowledge.list().length) process.exitCode = 0;
+  else {
   const snapshotId = currentSnapshotId(store)!;
   const files = listFiles(store).filter(f => !f.removed);
   const symbols = symbolsOfSnapshot(store, snapshotId);
@@ -67,4 +72,5 @@ try {
   const destination = join(root, ".repo-review/wiki.md");
   if (!existsSync(destination) || readFileSync(destination, "utf8") !== markdown) copyFileSync(join(stage, "wiki.md"), destination);
   console.log(`Wiki written: ${destination}; ${files.length} files, ${modules.size} modules`);
+  }
 } finally { store.close(); }
