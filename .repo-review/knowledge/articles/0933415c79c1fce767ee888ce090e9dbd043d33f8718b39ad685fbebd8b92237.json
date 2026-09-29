@@ -3,25 +3,25 @@
   "document": {
     "key": "omem:apps/server/src/storage/digest.ts",
     "title": "结构化数据的规范化摘要",
-    "summary": "通过递归排序对象键并过滤 undefined 属性生成规范 JSON，再计算 SHA-256，使普通 JSON 对象不受属性插入顺序影响。",
+    "summary": "递归排序普通对象键并移除对象属性中的 undefined，生成规范 JSON 后计算 SHA-256，使键插入顺序不影响摘要。",
     "category": "implementation",
     "sections": [
       {
         "key": "canonicalization",
-        "title": "规范化与摘要流程",
-        "body": "该模块解决对象属性插入顺序不同导致序列化文本不稳定的问题。`normalize` 保留数组次序并递归处理元素；对非空对象过滤值为 `undefined` 的属性、按键名排序，再递归规范化属性值，其他值原样返回。`canonicalJson` 随后执行 `JSON.stringify`，所以键顺序不同但结构和值相同的普通 JSON 对象可得到相同文本。[[c1]]\n\n`stableDigest` 对该规范文本计算无密钥 SHA-256，并输出十六进制摘要。共享 `Store` 确实导入了此函数，但给定的 Store 片段没有展示调用位置，因而只能确认依赖关系，不能断言它具体用于哪个实体或流程。[[c2]][[c3]]"
+        "title": "规范化规则",
+        "body": "`normalize` 对数组保持原次序并逐项递归；对非空对象读取可枚举项，删除值为 `undefined` 的属性，按键名排序后继续递归；其他值直接返回。随后 `canonicalJson` 调用 `JSON.stringify`，所以键插入顺序不同但结构和值相同的普通 JSON 对象会得到一致文本。[[c1]]"
       },
       {
-        "key": "boundaries",
-        "title": "数据边界与安全语义",
-        "body": "数组顺序被保留，因此元素重排会改变摘要；对象属性中的 `undefined` 被过滤，而数组中的 `undefined` 仍交给 JSON 序列化处理。函数签名接受 `unknown`，但未定义循环引用、Date、Map、Set、BigInt、NaN 等值的规范合同：部分值可能折叠为相同结构，部分则可能抛错。[[c1]]\n\n该函数没有密钥、实体类型标签或域分离。代码只能证明它生成稳定内容摘要，不能证明其适合认证、签名或跨实体防混淆；这些用途需由调用方合同另行限定。[[c2]]"
+        "key": "digest",
+        "title": "摘要用途与输入边界",
+        "body": "`stableDigest` 对规范 JSON 计算无密钥 SHA-256，并输出十六进制字符串，适合作为确定性内容指纹或幂等键的组成部分。此前“共享 Store 明确导入该函数”的调用关系说明已删除，因为所给材料只有该模块本身，不能证明具体调用方或实体用途。[[c2]]\n\n数组重排会改变摘要；对象属性中的 `undefined` 被移除，而数组中的 `undefined` 仍交由 JSON 序列化语义处理。函数签名接受 `unknown`，但没有循环检测，也未为 Date、Map、Set、BigInt、NaN 等特殊值定义独立规范，因此稳定性保证应限于无循环、可序列化的 JSON 型输入。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "递归规范化规则",
-        "reason": "支持数组顺序保留、对象键排序、undefined 属性过滤及非 JSON 值边界的分析。",
+        "label": "递归规范化实现",
+        "reason": "支持数组顺序保留、对象 undefined 属性过滤、键排序和递归处理规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -34,7 +34,7 @@
       {
         "key": "c2",
         "label": "稳定 SHA-256 摘要",
-        "reason": "支持规范 JSON 经无密钥 SHA-256 生成十六进制摘要及其安全语义边界。",
+        "reason": "支持规范 JSON 经 SHA-256 生成十六进制摘要；不延伸推断未提供的调用关系。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -46,23 +46,23 @@
       },
       {
         "key": "c3",
-        "label": "共享 Store 的摘要依赖",
-        "reason": "直接证明共享 Store 导入 stableDigest，同时也表明给定片段未展示具体调用用途。",
-        "relation": "depends_on",
+        "label": "规范化输入边界",
+        "reason": "对象与数组分支及最终 JSON.stringify 支持对 undefined、顺序和非 JSON 值限制的分析。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 20,
-          "endLine": 29
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
         },
-        "quote": "import { migrateDatabase } from \"./storage/migrations.js\";\nimport {\n  ApplicationRepository,\n  type ExternalNotificationPolicy,\n} from \"./storage/repository.js\";\nimport { stableDigest } from \"./storage/digest.js\";\nimport { JobRepository } from \"./jobs/repository.js\";\nimport { InputAggregator } from \"./inputs/aggregator"
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
       }
     ],
     "questions": [
       {
         "question": "`stableDigest` 的公开输入是否保证为无循环的 JSON 型值？",
-        "why": "函数签名接受 unknown，但实现没有循环检测，也未定义 Date、Map、Set、BigInt 等特殊值的规范化合同，可能产生意外碰撞或序列化异常。",
-        "nextStep": "核对所有调用点与持久化 schema；若输入不受严格约束，应收窄类型、增加运行时校验，并定义特殊值和循环引用的失败行为。",
+        "why": "签名接受 unknown，但实现没有循环检测，也没有为 Date、Map、Set、BigInt 等特殊类型定义规范化合同；部分值可能被折叠，部分会抛错。",
+        "nextStep": "核对全部调用点和持久化 schema；若输入不受严格约束，收窄类型或增加运行时校验，并为特殊值与循环引用定义失败行为。",
         "blocking": false,
         "citationKeys": [
           "c1",
@@ -70,13 +70,12 @@
         ]
       },
       {
-        "question": "摘要是否只用于幂等指纹，而非安全认证或外部签名？",
-        "why": "实现使用无密钥 SHA-256，且没有域分离或实体类型标签；给定材料不足以确定跨实体复用所需的安全语义。",
-        "nextStep": "检查存储层完整调用点并记录每类摘要用途；认证场景采用带密钥方案，跨类型复用时增加稳定域前缀。",
+        "question": "该摘要是否只用于幂等指纹，而不用于安全认证、外部签名或跨实体唯一性？",
+        "why": "实现使用无密钥 SHA-256，且没有域分离或实体类型标签；仅凭本模块不能确定调用场景所需的安全语义。",
+        "nextStep": "按调用点记录每类摘要用途；认证场景采用带密钥方案，跨类型复用时加入稳定域前缀。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3"
+          "c2"
         ]
       }
     ]
@@ -84,8 +83,18 @@
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:apps/server/src/review/model-config.ts",
+      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+      "digest": "76e54242857bea9401e4ff4bfe8ec1f1afa7778c1105982d2c175033490186f5"
     },
     {
       "kind": "material",
@@ -101,58 +110,38 @@
       "kind": "material",
       "key": "omem:apps/server/src/storage/digest.ts",
       "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:07:37.023Z",
+    "at": "2026-09-29T20:53:10.392Z",
     "trace": {
-      "runId": "b32610f8-150a-4ffe-a446-f812ffc6f523",
-      "roleId": "code-analyst",
+      "runId": "22fe0654-a6fe-4a89-a6cc-6f8adf2cca01",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6115e15a2b024a5dfd8d2fce252f72e34e6ab242f2bc6161d346960b83201fd1",
-      "contextHash": "068f59e5ebb27dcfe375581a78532e0ca17d1f2b09316fdb46f5ba12faa7aa4d",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5a930740b92105c20e03818ec3655d99bfff542ce718d2795e0e2012ff0eb118",
+      "contextHash": "cd722fc9bb784a572292bf8568ead49f803e7358d7231c63c6eef752f9a78242",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "baf5b4cf34b355b552d64fe343fa2627877295991f1f52b71e9819c5a80312e4",
+      "fingerprint": "1197659933ce559f99fa919fd1077681f17b87a5f19d2b52554b6a20dda34337",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee90-2e59-7fb2-b710-846874711ea8"
+        "01a0eef0-6c80-7c81-8677-40ab3545fc66"
       ],
       "usage": {
-        "used": 48454,
+        "used": 60825,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -161,10 +150,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 105525,
-          "utf8Bytes": 115539,
-          "estimatedTokens": 38513,
-          "budgetedTokens": 48142,
+          "chars": 139256,
+          "utf8Bytes": 150962,
+          "estimatedTokens": 50321,
+          "budgetedTokens": 62902,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -173,17 +162,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:08:02.104Z",
+    "at": "2026-09-29T20:53:41.614Z",
     "trace": {
-      "runId": "004ceffe-f7d2-47ec-8a1d-cf95c52de6ab",
+      "runId": "748e8c21-f235-49c6-9a2b-ed2ea9e889aa",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "7a778c948413ee458a9ac5e533278c5f533999c238114091d5094e50cd9fa149",
-      "contextHash": "43ebd76471e33fe3dfd6ff2c54295fd0ac83278a022fa36eeb3e73f321a39a48",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "29cacb9eee1e71d083868a4edd0d512987af07ff86028a80c3b3991f16848f15",
+      "contextHash": "e1d87e55938a56cf686e6e4bc6341c2a03c2bed7d9c8e0947da278aa37d82dfc",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6038015ec37f5e98a36779cda2a6ae662ec6e0e6f1dbe0a9420bc12dc48ff776",
+      "fingerprint": "f4d99c22e9594680ff5d51125a9d7ec3903fe318b84395346e8d897ac4e38903",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -196,10 +185,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee90-baa4-7be0-bf90-4aeb907bbba1"
+        "01a0eef1-5e68-7c70-a59b-885b6317df01"
       ],
       "usage": {
-        "used": 45821,
+        "used": 58210,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -208,10 +197,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 103718,
-          "utf8Bytes": 111844,
-          "estimatedTokens": 37282,
-          "budgetedTokens": 46603,
+          "chars": 143768,
+          "utf8Bytes": 155672,
+          "estimatedTokens": 51891,
+          "budgetedTokens": 64864,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
