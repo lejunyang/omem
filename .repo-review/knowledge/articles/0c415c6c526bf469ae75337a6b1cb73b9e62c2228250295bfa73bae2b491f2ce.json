@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/live-learning-smoke.ts",
+    "title": "角色提取、复核与记忆应用实时验证",
+    "summary": "在临时 Store 中构造带可信来源信息的任务材料，依次调用 extractor 与 verifier 真实角色，再由 MemoryService 应用策略；脚本硬性验证单提案、复核结果及 auto_apply receipt，并报告任务列表，但不要求任务必然存在或字段语义正确。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "setup",
+        "title": "隔离样本与角色上下文",
+        "body": "脚本要求配置中存在 `traex` profile，经实时能力探测选定模型后，在系统临时目录建立独立 Store。它捕获一条“支付重试方案”文本，并记录 owner、事件时间、时区及 original producer 等 provenance；随后取首个 fragment，构造并校验 extractor 的 context manifest。[[c1]] 这里能够确认的是：脚本向角色提供了固定材料和可信上下文；由于 gateway 同时接收 `agentCwd`，现有材料不能进一步证明 Agent 无法读取工作区或业务数据库。"
+      },
+      {
+        "key": "roles",
+        "title": "提取、独立复核与应用策略",
+        "body": "`RoleRuntimeGateway` 先运行 extractor，脚本断言输出恰好包含一个 proposal，并计算稳定摘要；然后将提案与摘要放入 verifier 的 candidates，以新 job id 发起独立复核，缺少 assessment 即失败。[[c2]]\n\n复核的语义结论、原因码、说明及角色版本被交给 `MemoryService.evaluate`。成功条件仅是策略为 `auto_apply` 且 receipt 存在。[[c3]] 因而该检查证明提案被策略层安全应用，但 `store.tasks()` 只是随后被读取和报告，不能据此断言一定生成了任务。"
+      },
+      {
+        "key": "reporting",
+        "title": "审计输出、清理与覆盖边界",
+        "body": "脚本把 extraction、verification 的结果与 trace、evaluation 以及当前任务列表写入可配置报告路径，并以受限目录和文件权限保存；控制台输出模型、effort、提案数、复核结论、策略、任务数和 receipt。[[c4]] `finally` 会关闭 Store 并删除临时运行目录，因此持久证据主要是外部报告。[[c5]]\n\n覆盖范围限于一个固定措辞、预期高置信的样本。它没有断言任务数量、标题、截止时间、责任人或来源引用，也未覆盖拒绝、需确认、多提案、非法模型输出、重复材料幂等及失败恢复。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "临时捕获与上下文清单",
+        "reason": "支持临时 Store、样本 provenance、固定 fragment 和经 schema 校验的角色上下文构造；同时显示后续 gateway 使用的工作目录来自配置。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-learning-smoke.ts",
+          "startLine": 13,
+          "endLine": 72
+        },
+        "quote": "const config = loadConfig();\nconst base = config.profiles.find((profile) => profile.id === \"traex\");\nif (!base) throw Error(\"TraeX profile is not configured\");\nconst { profile } = await selectLiveProfile(base, config.agentCwd);\nconst directory = mkdtempSync(join(tmpdir(), \"omem-live-learning-\"));\nconst store = new Stor"
+      },
+      {
+        "key": "c2",
+        "label": "提取与独立复核调用",
+        "reason": "支持单提案数量断言、稳定摘要计算、verifier candidates 构造及 assessment 必须存在的流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-learning-smoke.ts",
+          "startLine": 73,
+          "endLine": 103
+        },
+        "quote": "  const extraction = await gateway.run({\n    roleId: \"extractor\",\n    profile,\n    context,\n  });\n  const proposals = (\n    extraction.result as { proposals: Record<string, unknown>[] }\n  ).proposals;\n  if (proposals.length !== 1) throw Error(\"Expected one live proposal\");\n  const proposal = proposals[0]!;\n  const prop"
+      },
+      {
+        "key": "c3",
+        "label": "记忆策略评估与应用断言",
+        "reason": "支持复核信息进入 MemoryService，且脚本硬性成功条件仅为 auto_apply 策略和 receipt 存在。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-learning-smoke.ts",
+          "startLine": 104,
+          "endLine": 113
+        },
+        "quote": "  const memory = new MemoryService(store, { ownerId: \"owner\" });\n  const evaluation = memory.evaluate(proposal, {\n    semantic_verdict: assessment.semantic_verdict,\n    reviewer_version: verification.trace.bundleHash,\n    role_version: `${verification.trace.roleId}@${verification.trace.roleVersion}`,\n    reason_code: a"
+      },
+      {
+        "key": "c4",
+        "label": "实时学习审计报告",
+        "reason": "支持报告包含角色结果、trace、evaluation 与任务列表，以及任务数仅作为控制台报告字段。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-learning-smoke.ts",
+          "startLine": 114,
+          "endLine": 144
+        },
+        "quote": "  const report = {\n    createdAt: new Date().toISOString(),\n    extraction: { result: extraction.result, trace: extraction.trace },\n    verification: { result: verification.result, trace: verification.trace },\n    evaluation,\n    tasks: store.tasks(),\n  };\n  const reportPath = resolve(\n    process.env.OMEM_LIVE_LEARNIN"
+      },
+      {
+        "key": "c5",
+        "label": "临时 Store 清理",
+        "reason": "支持执行结束时关闭 Store 并递归删除临时目录的资源清理行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-learning-smoke.ts",
+          "startLine": 145,
+          "endLine": 148
+        },
+        "quote": "} finally {\n  store.close();\n  rmSync(directory, { recursive: true, force: true });\n}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "是否应对最终任务的存在性、标题、截止时间、责任人和来源引用增加行为级断言？",
+        "why": "当前硬性条件只要求单个提案经复核后得到 auto_apply receipt；任务列表及数量仅被写入报告，没有验证任务必然生成，也没有验证提取语义忠于原文。",
+        "nextStep": "先增加 `store.tasks()` 数量与稳定字段断言；对可能受模型措辞影响的字段设计语义级复核或规范化后断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-acp-smoke.ts",
+      "digest": "77bb1bae7fda3921075810520871f00b36bba21f3cbd38dec173f39c18af1afe"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-connectors-smoke.ts",
+      "digest": "56767351dc19db5f9be9f5bae5e33d378d427d8e53d56ee1d024075ea6c38e72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-lark-host-smoke.ts",
+      "digest": "da10fc75972adf6fa64420e3c76a2084abe9b5bc928dbdc330d5085f95a72ad3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-learning-smoke.ts",
+      "digest": "f88a7289400e9f805776100fea75384a55628e822fc9ee11e90a9594dc7b0ac9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-model.ts",
+      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-pipeline-smoke.ts",
+      "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:29:29.428Z",
+    "trace": {
+      "runId": "a322f935-6e42-4cb8-bd4a-c7bfa47e5bcf",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "3cfc1d515c4e82561fa4ab3a5d531032f95042b17de43368b74d542cb2c7ae0e",
+      "contextHash": "d6c840ec24e1fddd2a19f59ad893be99a75ace8573353330e39e63d97c08457a",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f2030fe1963a9a2b7c4aaea864604d33e6400844eb17eb72f8417a74029711b7",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea4-9024-7880-b02b-6b3ff3f207e4"
+      ],
+      "usage": {
+        "used": 28190,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 47647,
+          "utf8Bytes": 51923,
+          "estimatedTokens": 17308,
+          "budgetedTokens": 21635,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:29:34.958Z",
+    "trace": {
+      "runId": "fa3441dd-8190-4055-9e87-12a21267af3d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "01ea29c21beaaad2a88e6f84a171ec5a013517f81063ce5847f7deadb09d4f25",
+      "contextHash": "405e95a6e700f91fbd2d5ff047e93c7cc4b86505134ff59a16571c623c5f107a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "80d3448ae077b849232b1463cb332babd67d62fd4b1bd4c583a6ca8431add89e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea4-c113-7e53-8bab-9057a322578f"
+      ],
+      "usage": {
+        "used": 26289,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 44743,
+          "utf8Bytes": 47801,
+          "estimatedTokens": 15934,
+          "budgetedTokens": 19918,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

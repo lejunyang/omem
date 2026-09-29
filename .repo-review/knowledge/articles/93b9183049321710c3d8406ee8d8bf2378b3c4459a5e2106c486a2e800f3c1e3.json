@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/browser-smoke.ts",
+    "title": "个人助手端到端浏览器验收脚本",
+    "summary": "以真实 Vue、Fastify API 和临时 SQLite 为主干，配置确定性 ACP fixture，并以直接构造提案、操作任务仓库和飞书适配器的测试装配验证个人助手主要产品流程；它不证明真实 Agent 或外部飞书服务已运行。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "purpose_setup",
+        "title": "问题与测试装配",
+        "body": "该脚本解决“组件或协议测试通过，但真实产品链路仍可能断裂”的问题：它创建临时数据目录，组装真实服务、SQLite Store 和飞书 onboarding，并启动无头 Chromium 收集页面异常。为保证断言稳定，脚本提供注册适配器、能力探测和既有飞书应用提供器等 fixture，后者返回固定应用与凭据；同时在配置中登记 ACP fixture profile。[[c1]] 这些装配隔离了外部系统，但脚本没有据此证明真实模型、Agent CLI 或飞书网络可用。"
+      },
+      {
+        "key": "core_flows",
+        "title": "核心验收流程",
+        "body": "材料保存后，核心提案由 `evaluateTask` 直接注入 `/api/proposals/evaluate`；任务完成状态也由脚本直接 claim、标记运行并 succeed，而非实际启动 ACP Agent。[[c2]] 在此基础上，UI 验证提案自动生效、通知与原证据阅读、循环引用和追问、不可变历史版本、待办状态，以及冲突提案的补背景、拒绝、批准和来源过期处理。[[c3]] 飞书流程覆盖二维码与授权链接、复用固定应用、配对 owner 和启用连接；保密断言仅确认指定 fixture secret 未出现在页面正文及状态响应。[[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "故障、布局与未覆盖行为",
+        "body": "脚本检查桌面、768px 和 390px 的横向溢出、对话框焦点与 Esc 关闭，并构造 100 层证据链确认深层可达且当前正文渲染有界。[[c5]] 它还直接写入模型任务失败和通知投递失败状态、拦截任务接口模拟离线，再重建服务确认材料与待办持久化。[[c6]] 未覆盖真实 ACP 执行、真实飞书注册及通知渠道、并发写入、浏览器矩阵、全部敏感字段枚举和故障自动恢复。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "真实服务与确定性外部适配装配",
+        "reason": "支持脚本使用真实服务与浏览器，并定义注册、能力探测、既有应用及 ACP profile 等确定性 fixture 的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 1,
+          "endLine": 110
+        },
+        "quote": "// Real Vue + API + SQLite test. Fixture Agent is used only to make UI assertions deterministic.\nimport { chromium, expect } from \"@playwright/test\";\nimport { randomBytes } from \"node:crypto\";\nimport { mkdtempSync, rmSync, mkdirSync, writeFileSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resol"
+      },
+      {
+        "key": "c2",
+        "label": "提案注入与任务状态直接驱动",
+        "reason": "支持提案通过内部接口直接评估、任务由脚本直接领取并完成，而非实际调用 ACP Agent 的限定。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 116,
+          "endLine": 188
+        },
+        "quote": "async function evaluateTask(input: {\n  revision: ReturnType<Store[\"revision\"]> extends infer T\n    ? NonNullable<T>\n    : never;\n  proposalId: string;\n  title: string;\n  jobId: string;\n  uncertainties?: string[];\n  targetId?: string;\n  kind?: \"task\" | \"claim\";\n}) {\n  const fragment = input.revision.fragments[0]!;\n  con"
+      },
+      {
+        "key": "c3",
+        "label": "材料、证据与决策流程验收",
+        "reason": "支持从材料捕获到提案、证据 Trail、历史版本、待办和冲突决策状态的产品流程描述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 193,
+          "endLine": 449
+        },
+        "quote": "  await page.goto(base);\n  await check(\"empty real workspace and material capture\", async () => {\n    await expect(\n      page.getByRole(\"heading\", { name: \"让第一份材料，成为有来处的记忆\" }),\n    ).toBeVisible();\n    await page\n      .getByRole(\"button\", { name: \"输入材料\", exact: true })\n      .first()\n      .click();\n    await page.ge"
+      },
+      {
+        "key": "c4",
+        "label": "飞书接入与固定密钥检查",
+        "reason": "支持授权链接、既有应用复用、owner 配对及指定 fixture secret 不出现在页面和状态响应中的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 451,
+          "endLine": 509
+        },
+        "quote": "  await check(\n    \"A-U03 QR, direct authorization link, reusable app and pairing\",\n    async () => {\n      await page\n        .getByRole(\"button\", { name: \"飞书机器人\", exact: true })\n        .click();\n      await expect(\n        page.getByRole(\"heading\", { name: \"飞书机器人\" }),\n      ).toBeVisible();\n      await expect(page.g"
+      },
+      {
+        "key": "c5",
+        "label": "响应式与深证据链验收",
+        "reason": "支持多视口、键盘焦点、移动端全屏对话框和百层证据导航边界的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 512,
+          "endLine": 608
+        },
+        "quote": "  await check(\"page reload and desktop rendering\", async () => {\n    await page.reload();\n    await expect(\n      page.locator(\".source-link\").filter({ hasText: \"发布前的回滚验证\" }),\n    ).toBeVisible();\n    await page\n      .locator(\".source-link\")\n      .filter({ hasText: \"发布前的回滚验证\" })\n      .click();\n    await page.screens"
+      },
+      {
+        "key": "c6",
+        "label": "失败展示与重启持久化",
+        "reason": "支持模型任务失败、通知投递失败、任务接口离线及服务重启后数据仍存在的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 610,
+          "endLine": 703
+        },
+        "quote": "  await check(\n    \"A-U05 offline, model, delivery failure and restart truthfulness\",\n    async () => {\n      const failedJob = store.jobs.enqueue({\n        kind: \"browser_model_unavailable\",\n        inputRefs: [{ revisionId: revision.id }],\n        roleVersion: \"extractor@1\",\n        policyVersion: \"memory-policy@1\",\n"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:29:54.529Z",
+    "trace": {
+      "runId": "115fc223-b7b0-4428-9168-a2fd6cab747f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "81f8c7f9b77cf1d6f3f77be7be5acb26d0b9f7b997fc2e68dc2168349079507e",
+      "contextHash": "9f0aee8ab30aaf7f1a84ed8085cb7648e936d0e24367ff7fdaf92e478b23e253",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3dcf0cc8e5d036a7fba5f590bec1d54f5324c5e8cddeda976bdad279695256a8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea4-bfa0-78d3-b861-73b383949881"
+      ],
+      "usage": {
+        "used": 43374,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 90593,
+          "utf8Bytes": 99178,
+          "estimatedTokens": 33060,
+          "budgetedTokens": 41325,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:30:09.595Z",
+    "trace": {
+      "runId": "6e5208df-6021-4f6a-aa1c-cd5868ecf6f1",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "e4616fd214d6edd4df68c6d522ea87214a6db197c96ac969a9db2e1e0545016b",
+      "contextHash": "d23434bddfd55e51eed66b70c264f90c1356400a15d3d66ca35c34b1f9617a1f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3f7f22a1e38332f943bfec1b575fbfb7e3e72d86bc6a21f316507da637d295cc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea5-2348-7470-a66c-139829ea3d5b"
+      ],
+      "usage": {
+        "used": 40464,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 87841,
+          "utf8Bytes": 94904,
+          "estimatedTokens": 31635,
+          "budgetedTokens": 39544,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

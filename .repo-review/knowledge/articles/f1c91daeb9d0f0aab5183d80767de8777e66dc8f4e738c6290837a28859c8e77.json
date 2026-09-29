@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/code-wiki-viewport.ts",
+    "title": "Code Wiki 视口与证据 Trail 浏览器验收",
+    "summary": "针对运行中的 Code Wiki Web/API，以稳定可见名称穿透真实界面，验证模块知识、源码帧、层栈导航、深链恢复、Markdown 清洗、内部标识隐藏、焦点结果和移动端布局。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "setup_contract",
+        "title": "验收定位与运行前提",
+        "body": "脚本不启动服务或同步数据，而是连接指定 Web 地址，先从代码图确认 `runtime.ts` 与 `memory/service.ts` 存在，再用 Playwright 在 1440、768、390 三种真实模拟视口检查页面无横向溢出。[[c1]] 因而健康的 review API、已同步代码图和模块知识都是前置条件；缺失目标会立即失败，不会自动生成或修复数据。"
+      },
+      {
+        "key": "trail_flow",
+        "title": "模块阅读与层栈流程",
+        "body": "测试先确认 assistant 模块呈现足量知识正文，再从 `runtime.ts` 文件行打开源码帧，检查行号与高亮；随后点击明确命名的同文件 `governCreateTask` 调用边。[[c2]] 返回文件帧后，它仅选择首个未禁用边继续推进，并验证 Esc 弹栈、面包屑跳转和 UI 生成 URL 的刷新恢复。由于后续选择器没有断言边类型或目标，注释中的“import edge”不足以证明特定导入关系，更不能证明任意跨文件调用已解析。"
+      },
+      {
+        "key": "security_accessibility",
+        "title": "安全、标签与可访问性边界",
+        "body": "脚本把恶意 Markdown 注入实际挂载的组件实例，断言脚本、事件属性、危险协议及若干主动内容元素被移除；同时扫描 Trail 可见文字，禁止出现符号、文件、片段内部 ID 或 UUID。[[c3]] 关闭全部后，它只读取当前焦点元素文本并断言其中含 `assistant`，没有核验该元素就是先前的模块卡片或打开 Trail 的文件行，因此只能证明这一较弱的焦点结果。[[c4]] 此外，所谓模型不可用检查仅确认 overview 仍显示“可追溯的知识”，未主动配置模型故障；移动端则验证抽屉宽度超过视口的 95%。未覆盖完整 WCAG、跨浏览器差异、全部 XSS 绕过变体及超长深链上限。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "稳定路径与多视口测试装配",
+        "reason": "支持脚本依赖运行中服务、按稳定路径确认代码图目标，并使用真实视口模拟检查布局的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "startLine": 1,
+          "endLine": 72
+        },
+        "quote": "// Deterministic browser acceptance for the Code Wiki vertical slice.\n//\n// NO hardcoded DB ids / UUIDs. Targets are located by stable names; every frame\n// is reached by clicking through the real UI. At each pushed frame we assert the\n// frame's real rendered content (crumb count / source range / markdown body /\n// no"
+      },
+      {
+        "key": "c2",
+        "label": "源码 Trail 推进与深链恢复",
+        "reason": "支持进入源码、点击明确同文件调用边、沿其他可用边推进，以及弹栈、跳转和刷新恢复的流程描述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "startLine": 74,
+          "endLine": 172
+        },
+        "quote": "  // --- Module: real curated explanation renders, not a stub ----------------\n  await page.setViewportSize({ width: 1440, height: 900 });\n  await page.goto(BASE + \"/#/module/assistant\");\n  await sleep(3000);\n  await check(\"module: curated responsibility text renders, no fetch error\", async () => {\n    await expect(pag"
+      },
+      {
+        "key": "c3",
+        "label": "Markdown 清洗与内部标识隐藏",
+        "reason": "支持实际挂载组件上的恶意 Markdown 清洗断言，以及可见 Trail 文本不展示内部标识的检查。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "startLine": 174,
+          "endLine": 227
+        },
+        "quote": "  // --- XSS: feed payload through the actually-mounted OmMarkdown component -\n  await check(\"xss: mounted OmMarkdown strips script/handlers/javascript:\", async () => {\n    // Deep-link a fragment trail frame so FragmentFrame's <OmMarkdown> mounts.\n    const s = await api<Array<{ id: string }>>(\"/api/review/search?q=\" "
+      },
+      {
+        "key": "c4",
+        "label": "关闭后的焦点文本与移动端抽屉",
+        "reason": "支持关闭全部后仅检查当前焦点元素文本含 assistant，以及 overview 基础内容和移动端抽屉宽度的收窄结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "startLine": 229,
+          "endLine": 273
+        },
+        "quote": "  // --- Focus return: close-all restores focus to the trigger button ----------\n  await check(\"focus: close-all returns focus to the module card trigger\", async () => {\n    await page.goto(BASE + \"/#/overview\");\n    await sleep(2500);\n    await page.keyboard.press(\"Escape\"); await sleep(300); await page.keyboard.press"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:29:54.529Z",
+    "trace": {
+      "runId": "115fc223-b7b0-4428-9168-a2fd6cab747f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "81f8c7f9b77cf1d6f3f77be7be5acb26d0b9f7b997fc2e68dc2168349079507e",
+      "contextHash": "9f0aee8ab30aaf7f1a84ed8085cb7648e936d0e24367ff7fdaf92e478b23e253",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3dcf0cc8e5d036a7fba5f590bec1d54f5324c5e8cddeda976bdad279695256a8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea4-bfa0-78d3-b861-73b383949881"
+      ],
+      "usage": {
+        "used": 43374,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 90593,
+          "utf8Bytes": 99178,
+          "estimatedTokens": 33060,
+          "budgetedTokens": 41325,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:30:09.595Z",
+    "trace": {
+      "runId": "6e5208df-6021-4f6a-aa1c-cd5868ecf6f1",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "e4616fd214d6edd4df68c6d522ea87214a6db197c96ac969a9db2e1e0545016b",
+      "contextHash": "d23434bddfd55e51eed66b70c264f90c1356400a15d3d66ca35c34b1f9617a1f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3f7f22a1e38332f943bfec1b575fbfb7e3e72d86bc6a21f316507da637d295cc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea5-2348-7470-a66c-139829ea3d5b"
+      ],
+      "usage": {
+        "used": 40464,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 87841,
+          "utf8Bytes": 94904,
+          "estimatedTokens": 31635,
+          "budgetedTokens": 39544,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

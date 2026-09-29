@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/dev-review.ts",
+    "title": "个人模式与 Repo Review 的开发进程编排器",
+    "summary": "统一选择并传递 API/Web 端口，启动对应 API 与专用 Vite 子进程，以健康端点作为 API 就绪门禁，并在信号、启动超时或任一子进程退出时成组关闭和传播退出状态。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "mode_boot",
+        "title": "模式选择与启动链路",
+        "body": "编排器以 `OMEM_DEV_MODE` 区分 review 和 personal：前者默认 5180/5181、启动 review API，后者默认 4317/5173、启动个人 API并开启 Node watch。它先调用端口选择器并禁止 API 与 Web 端口相同，再将最终端口注入服务和 Vite 代理环境；两个子进程都由 Node 直接启动。[[c1]] 非 Windows 平台设置独立进程组，以便关闭时向整组发送信号。"
+      },
+      {
+        "key": "readiness",
+        "title": "就绪判定与失败传播",
+        "body": "任一子进程触发 `error` 或 `exit` 都进入统一 shutdown，并依据退出码或信号计算父进程状态。编排器为 API 健康轮询设置 60 秒截止时间，单次 fetch 最多等待 2 秒，每次失败后间隔 500 毫秒；若请求在截止前已开始，在途请求和随后间隔可能使实际返回略超 60 秒。[[c2]] 只有 API 健康后才打印访问地址；Web 没有独立 HTTP 就绪探测，仅要求 Vite 子进程未提前退出。"
+      },
+      {
+        "key": "shutdown",
+        "title": "跨平台关闭与边界条件",
+        "body": "关闭路径有重入保护：Windows 使用 `taskkill /T /F`，其他平台向子进程组发送 SIGTERM。两个 `waitForExit` 并行执行，各自最多约 5 秒，外层另有 6.5 秒竞速兜底。[[c3]] 非 Windows 超时后不会升级为 SIGKILL，编排器也不自动重启子进程；顶层异常日志固定写作 `repo-review`，即使处于 personal 模式也是如此。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "开发模式、端口与子进程启动",
+        "reason": "支持 personal/review 分支、默认端口、入口文件、watch 差异及端口环境传递的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 81,
+          "endLine": 112
+        },
+        "quote": "async function main(): Promise<void> {\n  // Preflight: fail fast with a clear message instead of letting the API/Vite\n  // child die with an opaque EADDRINUSE after a partial boot.\n  try {\n    API_PORT = await selectDevPort(review ? process.env.REVIEW_PORT : process.env.OMEM_PORT, review ? 5180 : 4317, `${label} API`);"
+      },
+      {
+        "key": "c2",
+        "label": "子进程失败与 API 健康门禁",
+        "reason": "支持失败传播、60 秒轮询截止、单次请求超时、轮询间隔和就绪地址输出的精确描述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 114,
+          "endLine": 157
+        },
+        "quote": "  const onChildExit =\n    (which: \"API\" | \"web\") =>\n    (code: number | null, signal: NodeJS.Signals | null) => {\n      console.log(\n        `${label}: ${which} exited code=${code ?? \"-\"} signal=${signal ?? \"-\"}`,\n      );\n      if (shuttingDown) return;\n      const exitCode = code ?? (signal ? 1 : 0);\n      void shutd"
+      },
+      {
+        "key": "c3",
+        "label": "跨平台有界进程树关闭",
+        "reason": "支持重入保护、Windows 与非 Windows 的关闭方式，以及每个子进程等待上限和外层兜底。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 17,
+          "endLine": 75
+        },
+        "quote": "function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {\n  return new Promise((resolve) => {\n    if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return resolve();\n    let done = false;\n    const finish = () => {\n      if (done) return;\n      done = true;\n      c"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:29:54.529Z",
+    "trace": {
+      "runId": "115fc223-b7b0-4428-9168-a2fd6cab747f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "81f8c7f9b77cf1d6f3f77be7be5acb26d0b9f7b997fc2e68dc2168349079507e",
+      "contextHash": "9f0aee8ab30aaf7f1a84ed8085cb7648e936d0e24367ff7fdaf92e478b23e253",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3dcf0cc8e5d036a7fba5f590bec1d54f5324c5e8cddeda976bdad279695256a8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea4-bfa0-78d3-b861-73b383949881"
+      ],
+      "usage": {
+        "used": 43374,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 90593,
+          "utf8Bytes": 99178,
+          "estimatedTokens": 33060,
+          "budgetedTokens": 41325,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:30:09.595Z",
+    "trace": {
+      "runId": "6e5208df-6021-4f6a-aa1c-cd5868ecf6f1",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "e4616fd214d6edd4df68c6d522ea87214a6db197c96ac969a9db2e1e0545016b",
+      "contextHash": "d23434bddfd55e51eed66b70c264f90c1356400a15d3d66ca35c34b1f9617a1f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3f7f22a1e38332f943bfec1b575fbfb7e3e72d86bc6a21f316507da637d295cc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea5-2348-7470-a66c-139829ea3d5b"
+      ],
+      "usage": {
+        "used": 40464,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 87841,
+          "utf8Bytes": 94904,
+          "estimatedTokens": 31635,
+          "budgetedTokens": 39544,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

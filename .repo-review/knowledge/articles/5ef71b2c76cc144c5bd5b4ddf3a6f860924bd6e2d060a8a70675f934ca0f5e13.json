@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/knowledge-browser.ts",
+    "title": "知识阅读 Trail 的真实浏览器回归脚本",
+    "summary": "该脚本在临时仓库和真实 SQLite Store 中构造固定知识链，启动 Review API 与 Vue 页面，并以 Chromium 验证多层引用阅读、深链、焦点、响应式、待办和源码转义。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "fixture",
+        "title": "夹具与被测系统",
+        "body": "脚本创建包含 A→B→C import 的临时仓库及带脚本标签的 HTML 原文，执行 Review 同步、材料捕获和代码同步，再发布 C、B、A、架构、总览五层固定知识并启动 Review 应用。[[c1]] 被测 `Store` 以 SQLite 文件作为单用户持久化基础；构造时创建数据目录和数据库、执行迁移、建立资源目录，并收紧数据库文件权限。[[c2]] 因而测试覆盖材料适配、知识仓库、API 与已构建 Web UI 的集成链路，不依赖模型生成。"
+      },
+      {
+        "key": "assertions",
+        "title": "交互断言",
+        "body": "Chromium 从总览进入 Trail，逐层打开三个模块与固定代码，断言五层面包屑、引用理由和源码内容；Esc 回退一层，刷新后恢复四层深链，关闭全部后将焦点归还入口。[[c3]] 脚本还验证 import 导航、1440/768/390 三种宽度无水平溢出、用户显式创建待办，以及 HTML 材料仅作为转义源码展示。[[c4]]"
+      },
+      {
+        "key": "limits",
+        "title": "覆盖边界",
+        "body": "这是单个无头 Chromium 页面与人工夹具的冒烟回归：它证明所列路径成立且页面没有捕获到错误，但不覆盖其他浏览器、并发页面、真实历史数据库、网络失败或模型生成知识。`finally` 会关闭浏览器和应用并删除临时仓库。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "临时仓库与固定知识链夹具",
+        "reason": "支持临时源码构造、同步、固定知识发布以及 Review 应用启动的集成流程。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 14,
+          "endLine": 45
+        },
+        "quote": "const root = mkdtempSync(join(tmpdir(), \"knowledge-browser-\"));\nmkdirSync(join(root, \"apps/server/src\"), { recursive: true });\nwriteFileSync(join(root, \"apps/server/src/a.ts\"), 'import { b } from \"./b.js\";\\nexport function a() { return b(); }\\n');\nwriteFileSync(join(root, \"apps/server/src/b.ts\"), 'import { c } from \"./"
+      },
+      {
+        "key": "c2",
+        "label": "SQLite Store 构造与迁移",
+        "reason": "支持 Store 的单用户 SQLite 定位，以及构造时创建数据库、执行迁移、建立资源目录和设置文件权限的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 1,
+          "endLine": 54
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
+      },
+      {
+        "key": "c3",
+        "label": "多层 Trail 与深链断言",
+        "reason": "支持逐层阅读、Esc 回退、刷新恢复及关闭后焦点归还等交互结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 46,
+          "endLine": 68
+        },
+        "quote": "try {\n  const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });\n  const errors: string[] = []; page.on(\"pageerror\", e => errors.push(e.message));\n  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .knowledge-document\").getByRole(\"link\", { name: \"架构说明 ↗\", exa"
+      },
+      {
+        "key": "c4",
+        "label": "导航、响应式、待办与源码安全断言",
+        "reason": "支持 import 跳转、多视口无溢出、显式创建待办和 HTML 不执行的测试范围。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 70,
+          "endLine": 91
+        },
+        "quote": "  await page.locator(\".knowledge-card\").filter({ hasText: \"模块 A\" }).first().click();\n  await page.locator(\".om-trail\").getByRole(\"link\", { name: \"A 的实现 ↗\", exact: true }).click();\n  await page.locator(\".om-trail .line-reference\").filter({ hasText: \"b.ts\" }).click();\n  await expect(page.locator(\".om-trail .knowledge-doc"
+      },
+      {
+        "key": "c5",
+        "label": "浏览器测试资源清理",
+        "reason": "说明脚本在 finally 中关闭浏览器、应用并移除临时仓库。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 91,
+          "endLine": 92
+        },
+        "quote": "  expect(errors).toEqual([]);\n} finally { await browser.close(); await app.close(); rmSync(root, { recursive: true, force: true }); }"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/knowledge-browser.ts",
+      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-role-smoke.ts",
+      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-evaluate.ts",
+      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-run.ts",
+      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:07:10.416Z",
+    "trace": {
+      "runId": "909d74c4-68b6-4824-86ea-cdbf1139a264",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "64fcbc183a5d7b69302ec22e7b0c54bb14c11c5ebca69abec64dfd2e1cc804c0",
+      "contextHash": "59116bae71bbf35b69f9df32e9b3b629ff8e056a7f14c030a73a201ab93af3c0",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "cbc06217fae3aba7b083031e5f2dd0cb62f0035859d45d4d4f692461c6f00aaf",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec7-15b8-7422-b631-d1e8f7e28cfc"
+      ],
+      "usage": {
+        "used": 33250,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 68837,
+          "utf8Bytes": 72618,
+          "estimatedTokens": 24206,
+          "budgetedTokens": 30258,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:07:18.764Z",
+    "trace": {
+      "runId": "78e61b16-e4e7-48fd-bc4c-8208541cc957",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "efe97b48f38a80196cd66f679b5eefa680606c261dcf239b3108a614e951bd35",
+      "contextHash": "1fbfacf2dbfcd6e4c2946121e44278816a0aaa696ff0fe2765fc92e9b9442575",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "baea38054f9109d5fac74fa03d85d73cdbf68dbe864c6b776d1e22c565149b2c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec7-41eb-74b2-8f35-b83a7895cb50"
+      ],
+      "usage": {
+        "used": 31916,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 66449,
+          "utf8Bytes": 69470,
+          "estimatedTokens": 23157,
+          "budgetedTokens": 28947,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/dev-ports.ts",
+    "title": "开发端口选择与冲突处理",
+    "summary": "集中校验和探测开发端口：显式端口非法或占用时快速失败，默认端口占用时申请系统临时端口，供 API 与代理共享确定结果。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "selection",
+        "title": "选择流程",
+        "body": "`selectDevPort` 将环境变量或默认值转成整数，拒绝负数、超出 TCP 范围和非整数；随后在 `127.0.0.1` 临时监听目标端口，读取实际分配值后关闭探测服务器。[[c1]] 传入 `0` 时由操作系统分配空闲端口，这也是默认端口冲突后的回退机制。"
+      },
+      {
+        "key": "boundaries",
+        "title": "冲突语义与边界",
+        "body": "只有 `EADDRINUSE` 会被特殊处理：用户显式指定的端口冲突会抛出可操作错误，而默认端口冲突则递归探测端口 `0` 并记录替代值；权限不足等其他错误原样传播。[[c2]] “探测后关闭、子进程稍后再绑定”存在竞态窗口，因此它降低误连风险但不能原子保留端口；是否被调用方再次以 strict-port 方式校验取决于编排模块。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "端口校验与本地监听探测",
+        "reason": "支持输入范围校验、回环地址探测及系统分配端口的流程说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-ports.ts",
+          "startLine": 1,
+          "endLine": 17
+        },
+        "quote": "import { createServer } from \"node:net\";\n\n/** Defaults may move; explicit ports fail loudly. The chosen port is passed to\n * both the backend and proxy, so the browser never connects to another API. */\nexport async function selectDevPort(value: string | undefined, fallback: number, label: string): Promise<number> {\n  c"
+      },
+      {
+        "key": "c2",
+        "label": "占用端口的显式失败与默认回退",
+        "reason": "支持 EADDRINUSE 分支及其他错误传播边界的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-ports.ts",
+          "startLine": 18,
+          "endLine": 24
+        },
+        "quote": "  } catch (error) {\n    if ((error as NodeJS.ErrnoException).code !== \"EADDRINUSE\") throw error;\n    if (value !== undefined) throw new Error(`端口 ${port}（${label}）已被占用；请设置其他端口`);\n    const assigned = await selectDevPort(\"0\", fallback, label);\n    console.log(`${label}: 默认端口 ${port} 已占用，使用 ${assigned}`);\n    return assi"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:28:13.545Z",
+    "trace": {
+      "runId": "624a480a-bdbb-476c-bb88-34b3ac1c7222",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "4e30c8e45c6568c904704e25cf6c4bd29d41d78c0e6b4937a5034c8866063316",
+      "contextHash": "99c033e8447b0ad9c4acea8408e5136373b34985ce9720e38dc0b9c129bc987b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c0a57486a7d6ae325006f45b1e78acb77cde0ac2c9d633928060a6f26714f1e2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-ff7e-70b3-bbfb-5db9a9ad201a"
+      ],
+      "usage": {
+        "used": 40233,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80000,
+          "utf8Bytes": 83367,
+          "estimatedTokens": 27789,
+          "budgetedTokens": 34737,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:28:35.528Z",
+    "trace": {
+      "runId": "59cc2e06-ca37-4201-b450-565c01204c21",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "406f49dd53f97ecf5b936cbd97b1a63b1c98784f9066df3ddabb1e222792912a",
+      "contextHash": "99995f2e2774965b94c5ab40b5781a0fa7aa972dac28b495b1c8196b1558915b",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "314eacf2ab4c471142f027a93656ada4f2f827bea446c5011d327d8bf4d7b973",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-9921-7533-bedc-adb7aac4feee"
+      ],
+      "usage": {
+        "used": 42547,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 91314,
+          "utf8Bytes": 99817,
+          "estimatedTokens": 33273,
+          "budgetedTokens": 41592,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
