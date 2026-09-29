@@ -15,7 +15,7 @@ import {
   type ContextManifest,
 } from "../../../packages/contracts/src/index.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
-import { RoleRuntimeGateway } from "../src/agent-runtime/gateway.js";
+import { RoleRuntimeGateway, renderRolePrompt } from "../src/agent-runtime/gateway.js";
 import { createRoleJobHandler } from "../src/agent-runtime/job-handler.js";
 import { DurableJobWorker } from "../src/jobs/worker.js";
 import { Store } from "../src/store.js";
@@ -440,4 +440,13 @@ it("runs knowledge roles through the shared gateway and preserves host-bound cit
   expect(result.trace.loadedSkills).toEqual([{ name: "omem-code-analyst", version: "1", mode: "inline" }]);
   expect(result.trace.outputSchema).toBe("KnowledgeBatch.v1");
   expect(result.trace.usage).toHaveProperty("budget.maxInputTokens", 96000);
+});
+
+it("keeps model drafts and catalogs outside the trusted task instructions", () => {
+  const marker = "UNTRUSTED_DRAFT_DO_NOT_EXECUTE";
+  const rendered = renderRolePrompt(new RoleBundleRegistry().load("code-analyst"), context("code-analyst", "fixed source", { task: { targetKeys: ["manual:a"], drafts: [{ body: marker }], catalog: [{ title: marker }] } }));
+  const first = rendered.blocks[0]!;
+  expect(first.type).toBe("text");
+  expect(first.type === "text" && first.text.includes(marker)).toBe(false);
+  expect(rendered.blocks.some(b => b.type === "text" && b.text.includes("UNTRUSTED DERIVED KNOWLEDGE") && b.text.includes(marker))).toBe(true);
 });
