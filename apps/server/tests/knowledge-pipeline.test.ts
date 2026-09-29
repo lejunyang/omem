@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.js";
 import { KnowledgeRepository } from "../src/knowledge/repository.js";
-import { KnowledgePipeline } from "../src/knowledge/pipeline.js";
+import { KnowledgePipeline, analystFor } from "../src/knowledge/pipeline.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../src/agent-runtime/gateway.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
@@ -66,4 +66,12 @@ it("resumes a semantic rejection with its exact prior draft and reviewer feedbac
   expect(run.mock.calls[before]![0].roleId).toBe("knowledge-refresher");
   expect(run.mock.calls[before]![0].context.task).toHaveProperty("revisionRequest.previousDrafts");
   expect(repository.list()).toHaveLength(1);
+});
+
+it("distinguishes Lark documents from conversations and recognizes ordinary imported code", () => {
+  const { repository } = setup(); const base = repository.materials()[0]!;
+  expect(analystFor({ ...base, namespace: "lark", path: null })).toBe("material-analyst");
+  expect(analystFor({ ...base, namespace: "lark", path: null, conversationId: "chat-1" })).toBe("conversation-analyst");
+  expect(analystFor({ ...base, namespace: "git", path: null, title: "src/main.ts" })).toBe("code-analyst");
+  expect(analystFor({ ...base, namespace: "file", path: null, title: "main.py" })).toBe("code-analyst");
 });
