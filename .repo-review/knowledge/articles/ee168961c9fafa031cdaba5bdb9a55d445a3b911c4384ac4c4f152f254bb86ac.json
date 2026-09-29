@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/research.md",
+    "title": "自治记忆与检索组件复用研究",
+    "summary": "第一轮研究提出“统一证据与记忆内核 + 可替换检索/学习引擎”，比较记忆、RAG、解析和基础设施路线；文档明确它是研究与早期设计，不代表当前运行代码、实测性能或最终生产选型。",
+    "category": "research",
+    "sections": [
+      {
+        "key": "status-boundary",
+        "title": "研究定位与历史边界",
+        "body": "文档区分新增 MemPalace 研究、已确认方向和早期架构建议，并提醒 WeKnora/Hindsight 的首选不能解释为已完成生产选型。本轮依据资料和源码核验，没有部署候选引擎或复现性能基准，因此其中的推荐属于待 PoC 验证的判断。[[c1]]"
+      },
+      {
+        "key": "core-strategy",
+        "title": "掌握内核、替换外围",
+        "body": "建议由 omem 掌握版本化证据引用、知识变更语义、自治风险治理和结果验证，将文档检索与经历学习交给可替换引擎。WeKnora 与 Hindsight 只是首选 PoC；若片段映射或部署成本不达标，可切换到 Docling/LlamaIndex 与 pgvector 组合，而不改变核心数据模型和 UI。[[c2]]"
+      },
+      {
+        "key": "hard-gates",
+        "title": "选型门槛与未决事实",
+        "body": "评分关注证据映射、二次开发、自治质量、部署成本与迁移维护，但无原文导出、权限不可隔离、删除后仍注入或索引不可重建均属于硬失败。项目真实数据上的解析质量、推理正确率、资源上限与费用仍未证明，不能写成生产保证。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "研究性质与实施状态声明",
+        "reason": "证明本文属于早期研究和设计，并明确没有实际部署候选引擎或复现性能基准。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research.md",
+          "startLine": 3,
+          "endLine": 7
+        },
+        "quote": "新增研究（2026-09-26）：[MemPalace 源码、公开结果复算与接入选择](research/mempalace/README.md)。在 CLI/ACP 优先的阶段，先验证其无生成式 LLM 本地检索 sidecar；不把下文早期 WeKnora/Hindsight 首选解释为已经完成生产选型。\n\n> 实施更新（2026-09-26）：用户已确认个人助理、服务器/本地运行、Vue 和 CLI/ACP 优先。当前已实现能力见 [实施状态](implementation/status.md)，已确认需求见 [决策记录](decisions.md)，视觉规范见 [根 design.md](../design.md)。下文为第一轮架构/原型设计，不等于当前运行代码。\n\n日期：2026-09-26。研究方法：完整读取两份用户提供的文档正文，检查旧库的关键契约和 HTML 原型；通过官方仓库固定 17 个 commit，阅读 README、许可证，并深入检查 WeKnora 的 Go 类型/HTTP handler 与 Hindsight 的 OpenAPI。详见 [核验索引](research/source-index.md) 和 [机器可读来源](research/sources.json)。**本轮是资料和源码核验，没有部署这些引擎，也没有复现其性能基准。**"
+      },
+      {
+        "key": "c2",
+        "label": "统一内核与可替换引擎结论",
+        "reason": "支持附近关于核心治理自持、外围引擎可替换以及通过 PoC 决定生产启用的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research.md",
+          "startLine": 9,
+          "endLine": 13
+        },
+        "quote": "## 1. 结论\n\n推荐 omem 采用“统一证据与记忆内核 + 可替换检索/学习引擎”。WeKnora 是文档检索复用的首选 PoC，Hindsight 是经历巩固的首选 PoC；通过同一套验收再决定生产启用。若 WeKnora 的片段映射与部署成本不达标，切换 Docling/LlamaIndex + pgvector；数据模型与 UI 不改变。\n\n不建议直接 fork 一个完整 RAG 产品，也不建议手写解析器、向量库、图数据库或任务队列。真正需要掌握的是材料和知识之间的版本化引用、知识变更的语义、自治风险策略、结果验证和外部 Agent 协议。"
+      },
+      {
+        "key": "c3",
+        "label": "选型硬门与未解决问题",
+        "reason": "说明加权评分不能补偿硬性失败，并列出尚未由项目数据验证的关键事实。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research.md",
+          "startLine": 97,
+          "endLine": 111
+        },
+        "quote": "## 6. 选型评分与翻转条件\n\n评分不是伪装实测的数字。先给权重，再用同一 PoC 测：证据/版本映射 30%、二次开发边界 25%、自治记忆质量 20%、部署与成本 15%、维护与迁移 10%。任一硬门失败不能靠总分补偿：无原文导出、无法隔离权限、删除后仍能注入、索引不可重建。\n\n| 路线 | 优点 | 代价 | 采用条件 |\n| --- | --- | --- | --- |\n| A：omem + WeKnora + Hindsight | 复用通用能力最多，贴近中文材料与经历学习 | 两个引擎、映射与重复存储成本 | 首选；两者各自通过 PoC；不要求同一周全部上线 |\n| B：omem + Docling/LlamaIndex + pgvector + Hindsight | 内核与锚点更直接，文档组件细粒度 | 需要组装更多检索代码 | WeKnora 锚点/导出/资源开销不达标时切换 |\n| C：直接 fork WeKnora 全栈 | 初期有完整应用 | 领域 schema、前端交互、自治策略与上游冲突 | 不推荐作为主路线 |\n\n对照任务必须来自本项目真实需求：中文术语/错误码，历史与现行制度，跨材料片段链，失败纠正后的再次任务，冲突、撤权、无答案；不以英文单轮问答排行榜决定系统选型。\n\n## 7. 研究仍未解决的事实问题\n\n当前上游源码证明“字段与接口存在”，尚不能证明本项目数据上的解析质量、推理正确率、可部署资源上限和模型费用。P0 要验证：WeKnora 原始结构导出和异步导入的重放；Hindsight 巩固结果的全部证据映射与删除传播；中文切片与精确定位；本地模型是否满足提取/重排；许可证与模型权重的最终组合。不要将这些写成已经通过的生产保证。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "三条候选路线是否已有统一 PoC 数据集、资源预算和通过阈值？",
+        "why": "材料给出评分权重、硬失败条件和真实任务类型，但没有提供已执行的对照结果。",
+        "nextStep": "冻结真实中文任务集、资源预算与逐项阈值，再对候选路线执行同口径评测。",
+        "blocking": true,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "三条候选路线是否已有统一 PoC 数据集、资源预算和明确通过阈值？",
+        "why": "材料给出了评分权重、硬门和任务类型，但明确尚未部署候选引擎或完成项目数据上的对照验证。",
+        "nextStep": "冻结真实任务集、资源预算和逐项阈值，再按同一口径执行评测。",
+        "blocking": true,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/verification.json",
+      "digest": "119cee36eea3c718dfbf9abdea0a39c24ce95ffb7269890c5f8b5dd6c71c4462"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/repo-review/associations.json",
+      "digest": "429b7ef17ce31f34a900c3b61ce7de615ec71072da3d3d274898fb03c0420731"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research.md",
+      "digest": "c375439684084fa36713fd5e621534b010f2b06aca3953daf41590ca43860352"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/integration-readiness.md",
+      "digest": "de753c07b88e5b5cc8b6fcb8f32f99cb980cc1238d2e6ceb2f85eee4af8a6d61"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/README.md",
+      "digest": "652c0c4315e44d157069a326d0d413dbedb9a6b4e276eebe57b6a8fd5d501c40"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:22:00.204Z",
+    "trace": {
+      "runId": "c4b9999f-f3f0-4e3c-b6a7-c8df3c6d66a4",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "e6044b848f715c51c5ffe661de5de5b8a7327b5d0ce517e899c6395d76549dd4",
+      "contextHash": "16f7057369e5c7320aa5b8b38f590bd1c93817cb0b34e9bb124a56a0f3763e69",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9c143cb35e10bdb27b8e5740a2cd71fa556f6eacb5d3d4e3cb94059ef2de9f24",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed53-03a8-76d3-929d-aafc0fd25c9f"
+      ],
+      "usage": {
+        "used": 66100,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99823,
+          "utf8Bytes": 149713,
+          "estimatedTokens": 49905,
+          "budgetedTokens": 62382,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:22:27.698Z",
+    "trace": {
+      "runId": "4e00f027-bdba-4f39-b57d-c142c2c9b8f0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "f69bd3f4dc37fdcf792c28f38580be421cceac35ffaacb308a60669e2e4731de",
+      "contextHash": "892bc80a613d31b2be4d9827d0d358113793d1adeddf79bbbeab0f0e03b24a59",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "45865a8d9a17681a4637bd9da517d8a682db09303f4bfbd65b04180e5517e61a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed54-4f68-7543-aef2-9c7e88bb5a8e"
+      ],
+      "usage": {
+        "used": 56334,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 97306,
+          "utf8Bytes": 146552,
+          "estimatedTokens": 48851,
+          "budgetedTokens": 61064,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/autonomous-learning.md",
+    "title": "自治学习机制：从可观察结果改进后续行动",
+    "summary": "该设计把事实、方法和检索策略学习拆成可验证闭环，并以证据独立性、作用域、权限和预算作为硬边界；完整学习管线仍属于后续实施阶段。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "scope",
+        "title": "学习对象与证据边界",
+        "body": "系统可学习事实、偏好、有效步骤、错误条件和检索路线，但第一版不自动修改模型权重、不把自身文本循环包装成独立证据，也不扩大工具权限或采集范围。失败经历只能先记为 Episode，结合纠正和实际结果后才有资格提炼为 Procedure。[[c1]]"
+      },
+      {
+        "key": "loops",
+        "title": "三类闭环与风险约束",
+        "body": "事实巩固检查主体、时间、范围和冲突；方法学习需经历聚类、正反例、回放或沙箱验证，并限定任务族；检索策略学习针对错配、旧版误用和无答案误答调整路由、过滤与组装。ACL、工具能力、不可逆动作确认和预算上限不能由学习环放宽。[[c2]]"
+      },
+      {
+        "key": "evaluation",
+        "title": "评价、归档与实施状态",
+        "body": "证据可靠性、适用性、有用性和新鲜度分别计量，热度不能冒充真实性。归档只影响默认候选池，不破坏历史引用；发布还需检查来源、版本、冲突、适用范围和评测污染。完整学习管线、沙箱回放及真实效果评估被明确列为服务端 P1b/P2，而非现有能力。[[c3]][[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "学习范围和证据独立性",
+        "reason": "支持可学习内容、禁止自动扩权及 Episode 晋升 Procedure 的条件。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 7,
+          "endLine": 11
+        },
+        "quote": "## 1. 学什么，不学什么\n\n系统可以学习：新的事实、用户表达的偏好、任务中的有效步骤、错误触发条件、什么时候需要查新版本、哪种检索路线适合哪类问题。第一版不自动修改模型权重，不从自己的文字反复生成独立佐证，也不自行扩大工具权限或采集范围。\n\n原始材料、任务经历、模型假设、验证后的记忆必须分开存。一次失败可记录为 Episode；只有结合纠正和实际结果，才有资格提炼为 Procedure。用户的“谢谢”是弱反馈，不等于外部任务已成功；工具返回 200 也不等于业务目标达到。"
+      },
+      {
+        "key": "c2",
+        "label": "三种学习闭环",
+        "reason": "解释事实、方法和检索策略学习流程及不可放宽的外部边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 49,
+          "endLine": 63
+        },
+        "quote": "### 事实巩固\n\n新事实与同主题候选比对 → 检查主体/时间/范围 → 新建、补充、标冲突或 supersede → 生成固定证据 → 自动提交。语义相似但前提不同的条目不合并；相似度只是找到候选。\n\n### 方法学习\n\n失败或成功经历聚类 → 找触发、有效步骤、失败分支 → 生成方法候选 → 构造正例与反例 → 回放/沙箱验证 → 应用到限定任务族 → 检查下一次真实任务表现。方法必须保留适用条件和“不适用”条件，扩 scope 是独立变更。\n\n第一版方法只是上下文建议；导出可执行 Skill 时只允许白名单工具，保持宿主原有授权。任意 shell、生产业务写入不能因为“方法学会了”就自动授权执行。\n\n### 记忆使用策略学习\n\n检索错配/无答案误答/旧版误用 → 归因到 route、query expansion、过滤、rank 或 context packing → 形成少量配置候选 → 固定语料+模型+时间切分样本对照 → 可测改善后小流量启用 → 发现关键回归自动恢复旧策略。\n\n适合自动调整的是路由权重、top-k、候选抑制规则、需要最新版本的条件。ACL、工具 capability、不可逆动作确认和预算上限是外部边界，不由 learning loop 放宽。"
+      },
+      {
+        "key": "c3",
+        "label": "评分与归档规则",
+        "reason": "支持四维评价相互分离以及归档不等于删除。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 65,
+          "endLine": 80
+        },
+        "quote": "## 5. 评分不混在一起\n\n每条记忆有四组字段：\n\n- **Evidence**：引文存在、内容支持度、来源 authority、independence、conflict。决定是否能作为事实使用。\n- **Applicability**：主体、项目、时间、前提。决定适不适用当前任务。\n- **Utility**：曝光后被引用、验证后有用、被纠正的反馈。影响排序与整理优先级。\n- **Freshness**：最后核验、上游变化、有效区间。决定需不需要刷新。\n\n排序可用各项有界加权，但权限/删除/关键失效属于硬过滤。展示热度不是置信百分比。utility 可先用保守贝叶斯计数 `(useful+1)/(verified_uses+2)`，只将经验证使用算入 denominator，未知 outcome 单列；该值是使用效果估计，不叫真实性概率。多次同任务反馈按 query_run+actor 去重。\n\n## 6. 遗忘与归档\n\n热度可按 `utility × exp(-elapsed/half_life)` 衰减以减少上下文占用；法规定义、关键 SOP 和唯一证据不因少用就失真。时间敏感事实按 valid_until/源变化触发复核，稳定定义无需任意 30 天自动作废。\n\n归档只影响默认候选池，历史引用仍可读；按需恢复。高价值但少用的记忆可以固定，跨时间查询可以读历史版本。硬删另走影响预览和授权，清理依赖投影与缓存，不冒充可恢复的“遗忘”。"
+      },
+      {
+        "key": "c4",
+        "label": "发布条件与后续阶段",
+        "reason": "支持候选发布要求和完整学习管线仍属于 P1b/P2 的状态判断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 113,
+          "endLine": 119
+        },
+        "quote": "## 8. 发布与收益判定\n\n候选发布至少检查：来源可回查、与现行版本一致、没有未解决的同域矛盾、适用范围有限、方法测试能重跑、评测样本未被该次学习污染。高影响变更进入例外；低风险普通事实不为了等待长期统计而永久锁在候选态。\n\n学习收益报告显示：本周出现的错误簇、哪些被修复、下次同类任务的表现、错误复发、节省的步骤/token、错误注入、自动恢复次数。不能只报告“新增 100 条记忆”或“使用率上升”。样本少时显示分母与区间，不用单个成功例子宣称普遍提升。\n\n原型“经验与方法”的流程表达上述机制；完整学习管线、沙箱回放与真实效果评估属于服务端 P1b/P2。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "P1b/P2 的完整学习管线、沙箱回放和真实效果评估目前分别完成到什么程度？",
+        "why": "文档把这些能力归为后续服务端阶段，未提供当前代码、运行结果或真实评测证据。",
+        "nextStep": "对照实施状态、任务代码和真实轨迹报告，分别标记已实现、仅 fixture 验证和尚未开始的能力。",
+        "blocking": true,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/README.md",
+      "digest": "fef130ce71d5b8bfb10b69cfdb13ec8426e476ac288715f7e9bda2c236bcb87b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/autonomous-learning.md",
+      "digest": "546b5b475858d3341f3b60ef00c2f39055da442e596a474ceb04146c00f0d15a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/contracts/evidence-model.md",
+      "digest": "4349bdff85f4677a3fe9d290f3a06bc883e4da404461f4c0f2872e16027f72a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/decisions.md",
+      "digest": "0c9ad65608b280513073e08eb7a7ebf2dba050641f385305f7526cd7a0eb5ad7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/design.md",
+      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation.md",
+      "digest": "762fe46e22699ad9cb714e170a9ce4857739ee44d2c8851a99ef6a10d32f1c1a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:06:06.896Z",
+    "trace": {
+      "runId": "5fe6336d-3a65-4eca-87c6-91a0a9c0251c",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "be20c5a22fd4156cfb0a7ec99b61c8291c6a508e31be2709f461b1827127dd6f",
+      "contextHash": "ae490599220d5d6cc8597ec84ba768224763cf1a54822803152b9906e0db0302",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "eec417682b6de07f2263f82a147e4747148af939090b38939bf5e1cfb8de71e8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed44-83a2-7231-a722-5ff9c21f0332"
+      ],
+      "usage": {
+        "used": 62745,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 75056,
+          "utf8Bytes": 131290,
+          "estimatedTokens": 43764,
+          "budgetedTokens": 54705,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:06:22.770Z",
+    "trace": {
+      "runId": "0a5d10af-68b5-4cc8-a551-4901e45921ca",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "4b7c70b8c7d4fd0befa9be26f9516f76b908515222a5c98c569a4fe7033d4702",
+      "contextHash": "d65b3cfcfa880a7e90dd6b4c4625338d7319d3db3d87bd47b0de47053fdbf889",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f923662b5c5c3e2eac850dc8761b0e46be87265ffd2908b1e86727a11e8486ff",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed45-c5f0-7090-b0a4-05b9cb918727"
+      ],
+      "usage": {
+        "used": 48787,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 74003,
+          "utf8Bytes": 129945,
+          "estimatedTokens": 43315,
+          "budgetedTokens": 54144,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

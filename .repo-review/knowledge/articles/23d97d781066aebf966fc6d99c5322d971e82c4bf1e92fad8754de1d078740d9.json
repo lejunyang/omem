@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/repo-review/associations.json",
+    "title": "代码与意图的人工关联种子",
+    "summary": "该文件是 repo-review 中代码符号与需求、决策、研究及测试锚点的人工维护清单，包含 confirmed 与 candidate 状态；它记录治理关系和维护者证据，不等同于对当前代码重新执行测试后的实时证明。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "governance-contract",
+        "title": "人工治理合同",
+        "body": "清单要求关联点名代码路径、符号、需求、决策或研究资料及测试，并禁止用词面相似度将关系自动提升为 confirmed。首项把主助手运行时关联到会话路由、检索注入、任务治理和恢复测试，体现其连接“实现位置—设计意图—验证锚点”的用途。[[c1]]"
+      },
+      {
+        "key": "status-semantics",
+        "title": "状态不等于一律完成",
+        "body": "条目必须逐项按状态理解：来源刷新被标为 candidate，证据说明当前只记录刷新影响后抛出未实现错误，完整 consolidation 重跑仍待实现。因此不能依据文件中大量 confirmed 条目，笼统宣称清单覆盖的所有能力都已完成。[[c2]]"
+      },
+      {
+        "key": "review-sync-link",
+        "title": "与仓库同步的关系",
+        "body": "同步条目描述路径身份、revision 追加、removed/dirty 标记和测试锚点，并声明关系在扫描后由人工清单构建。它提供同步设计的可追踪依据，但仍是维护快照；代码变化后需重新同步，并以实际检查结果确认当前状态。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "关联治理说明与主运行时条目",
+        "reason": "说明 confirmed 关联所需的具体文档和测试锚点，并展示主运行时条目的组织方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/repo-review/associations.json",
+          "startLine": 1,
+          "endLine": 20
+        },
+        "quote": "{\n  \"version\": 1,\n  \"notes\": \"Hand-maintained code↔intent/decision/research/test seed for repo-review. Every entry cites a real requirement id, decision/research doc and test case. Do not add a confirmed entry without a concrete test + doc anchor. Auto word-similarity never promotes to confirmed.\",\n  \"associations\": [\n    {\n      \"codePath\": \"apps/server/src/assistant/runtime.ts\",\n      \"symbol\": \"AssistantRuntime\",\n      \"intent\": \"主助手运行时：会话路由、检索端口注入、create_task 治理、多轮回指、取消/超时 fence\",\n      \"requirementRefs\": [\"G08\", \"G09\", \"G16\", \"G20\"],\n      \"decisionRefs\": [\n        \"docs/implementation/assistant-v3/README.md\",\n        \"docs/implementation/assistant-v3/processing-policy.md\"\n      ],\n      \"researchRefs\": [\"docs/research/integration-readiness.md\"],\n      \"testRefs\": [\n        \"apps/server/tests/assistant-runtime.test.ts::H-G20: ModelUnavailableError marks turn pending for retry\",\n        \"apps/server/tests/assistant-runtime.test.ts::G09: group conversations deny evidence by default\"\n      ],\n      \"status\": \"confirmed\",\n      \"evidence\": \"AssistantRuntime.turn 串起 retrieval→model→governCreateTask，按 visibility policy 注入证据；测试 assistant-runtime 覆盖 G08/G09/G16/G20。\""
+      },
+      {
+        "key": "c2",
+        "label": "来源刷新候选条目",
+        "reason": "支持附近关于 candidate 状态、当前失败行为以及完整重核验尚未实现的限制说明。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/repo-review/associations.json",
+          "startLine": 171,
+          "endLine": 182
+        },
+        "quote": "    {\n      \"codePath\": \"apps/server/src/learning/pipeline.ts\",\n      \"symbol\": \"refreshDependents\",\n      \"intent\": \"G13 来源刷新失效：记录受影响记忆 needs_review；完整重核验按设计 blocked 不谎报完成\",\n      \"requirementRefs\": [\"G13\"],\n      \"decisionRefs\": [\"docs/implementation/batch2/b2-08-learning-verification.md\"],\n      \"researchRefs\": [],\n      \"testRefs\": [\n        \"apps/server/tests/learning-refresh.test.ts\"\n      ],\n      \"status\": \"candidate\",\n      \"evidence\": \"refresh_dependents 当前只 recordSourceRefresh 后抛 NOT_IMPLEMENTED；consolidation 重跑待实现。\""
+      },
+      {
+        "key": "c3",
+        "label": "仓库评审同步关联",
+        "reason": "说明同步的路径身份与版本策略，以及关系由人工关联清单构建这一边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/repo-review/associations.json",
+          "startLine": 289,
+          "endLine": 301
+        },
+        "quote": "    {\n      \"codePath\": \"apps/server/src/review/sync.ts\",\n      \"symbol\": \"runReviewSync\",\n      \"intent\": \"repo-review 增量同步：路径身份 externalId、revision 追加、removed/dirty 标记、Git fixture 测试\",\n      \"requirementRefs\": [\"repo-review\"],\n      \"decisionRefs\": [\"docs/repo-review/associations.json\"],\n      \"researchRefs\": [\"docs/research/source-index.md\"],\n      \"testRefs\": [\n        \"apps/server/tests/review-sync.test.ts::keeps two files with identical content as independent sources\",\n        \"apps/server/tests/review-relations.test.ts\"\n      ],\n      \"status\": \"confirmed\",\n      \"evidence\": \"source identity = omem:<path>；内容哈希只用于变基检测；关系在扫描后由人工关联清单构建。\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "confirmed 条目最近一次通过对应测试和文档锚点重校验的时间是什么？",
+        "why": "材料提供状态与证据描述，但没有记录本次读取时的测试执行时间、仓库提交或退出码。",
+        "nextStep": "在同步产物中记录仓库提交、关联清单摘要和相关测试结果，区分维护声明与实时验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "来源刷新完整重核验何时进入实现范围？",
+        "why": "该能力仍为 candidate，当前行为只记录来源刷新后抛出未实现错误。",
+        "nextStep": "先明确 consolidation 重跑合同、失败恢复与验收测试，再决定排期。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "confirmed 条目最近一次针对当前仓库版本完成文档锚点解析和测试复核的时间是什么？",
+        "why": "材料记录了人工维护的状态、证据说明及测试引用，但未给出最近执行时间、对应提交和退出码。",
+        "nextStep": "在同步或验证产物中记录仓库提交、清单摘要、测试时间和结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/verification.json",
+      "digest": "119cee36eea3c718dfbf9abdea0a39c24ce95ffb7269890c5f8b5dd6c71c4462"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/repo-review/associations.json",
+      "digest": "429b7ef17ce31f34a900c3b61ce7de615ec71072da3d3d274898fb03c0420731"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research.md",
+      "digest": "c375439684084fa36713fd5e621534b010f2b06aca3953daf41590ca43860352"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/integration-readiness.md",
+      "digest": "de753c07b88e5b5cc8b6fcb8f32f99cb980cc1238d2e6ceb2f85eee4af8a6d61"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/README.md",
+      "digest": "652c0c4315e44d157069a326d0d413dbedb9a6b4e276eebe57b6a8fd5d501c40"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:22:00.204Z",
+    "trace": {
+      "runId": "c4b9999f-f3f0-4e3c-b6a7-c8df3c6d66a4",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "e6044b848f715c51c5ffe661de5de5b8a7327b5d0ce517e899c6395d76549dd4",
+      "contextHash": "16f7057369e5c7320aa5b8b38f590bd1c93817cb0b34e9bb124a56a0f3763e69",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9c143cb35e10bdb27b8e5740a2cd71fa556f6eacb5d3d4e3cb94059ef2de9f24",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed53-03a8-76d3-929d-aafc0fd25c9f"
+      ],
+      "usage": {
+        "used": 66100,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99823,
+          "utf8Bytes": 149713,
+          "estimatedTokens": 49905,
+          "budgetedTokens": 62382,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:22:27.698Z",
+    "trace": {
+      "runId": "4e00f027-bdba-4f39-b57d-c142c2c9b8f0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "f69bd3f4dc37fdcf792c28f38580be421cceac35ffaacb308a60669e2e4731de",
+      "contextHash": "892bc80a613d31b2be4d9827d0d358113793d1adeddf79bbbeab0f0e03b24a59",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "45865a8d9a17681a4637bd9da517d8a682db09303f4bfbd65b04180e5517e61a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed54-4f68-7543-aef2-9c7e88bb5a8e"
+      ],
+      "usage": {
+        "used": 56334,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 97306,
+          "utf8Bytes": 146552,
+          "estimatedTokens": 48851,
+          "budgetedTokens": 61064,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
