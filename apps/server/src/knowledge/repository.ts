@@ -89,6 +89,9 @@ export function bindKnowledgeQuotes(document: KnowledgeDocument, materials: Map<
 
 export class KnowledgeRepository {
   constructor(readonly store: Store, private readonly materialProvider = () => currentMaterials(store)) {
+    // CLI generation and the reader may share this WAL database. Wait for a
+    // bounded writer transaction instead of failing immediately with SQLITE_BUSY.
+    store.db.exec("PRAGMA busy_timeout=30000");
     store.db.exec(`CREATE TABLE IF NOT EXISTS knowledge_revisions(
       id TEXT PRIMARY KEY, document_key TEXT NOT NULL, artifact TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS knowledge_heads(document_key TEXT PRIMARY KEY, revision_id TEXT NOT NULL REFERENCES knowledge_revisions(id), current INTEGER NOT NULL DEFAULT 0);

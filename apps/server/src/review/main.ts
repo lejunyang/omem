@@ -16,6 +16,7 @@ const host = "127.0.0.1";
 
 console.log("repo-review: starting incremental sync...");
 const store = createReviewStore(repoRoot);
+createReviewKnowledgeRepository(store);
 try {
   const stats = await runReviewSync(store, repoRoot);
   console.log("repo-review: sync done", stats);
