@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:apps/server/src/review/main.ts",
     "title": "repo-review 服务启动入口",
-    "summary": "在回环地址启动独立评审服务，先同步并恢复固定知识，再更新代码投影；模型为显式可选配置，入口不装配个人工作区服务。",
+    "summary": "在回环地址启动独立评审服务，依次同步仓库关系、恢复知识、更新代码投影，并以显式模型配置构建 API。",
     "category": "workflow",
     "sections": [
       {
         "key": "startup-sequence",
         "title": "同步与恢复顺序",
-        "body": "入口从环境变量或当前进程目录确定仓库根目录，API 默认使用 5180 端口并固定绑定回环地址。创建评审专用存储后，它先执行增量同步，再恢复仓库材料与知识文章，随后更新代码投影并汇总恢复结果；因此启动阶段负责重建已有视图，并未在这里主动触发新的模型分析。[[c1]]"
+        "body": "入口从环境变量或当前目录确定仓库根目录，API 默认监听 5180 且固定绑定回环地址。创建独立评审存储后，启动流程先执行评审增量同步，再恢复仓库材料和知识文章，随后更新代码投影并汇总文章恢复状态；因此启动会恢复既有知识，但这段流程没有触发知识生成。[[c1]]"
       },
       {
         "key": "model-and-server",
-        "title": "隔离边界与服务装配",
-        "body": "该文件明确把 repo-review 定义为独立入口：同步完成后仅在回环地址提供评审 API，不接入个人工作区服务。[[c2]] 代码理解模型采用显式启用方式，未配置时模型端口为 `none`；应用构建器接收存储、仓库根目录、API 端口、默认 5181 的 Web 端口及模型配置，装配完成后才开始监听。[[c3]]"
+        "title": "模型选择与服务装配",
+        "body": "该入口明确只承载评审 API，不接入个人工作区服务。[[c2]] 代码理解模型采用显式可选配置，构建出的模型端口可以为空并记录为 `none`；应用装配接收仓库根目录、API 端口和默认 5181 的 Web 端口，完成后才在回环地址监听。[[c3]]"
       },
       {
         "key": "shutdown",
         "title": "退出与失败处理",
-        "body": "收到 `SIGINT` 或 `SIGTERM` 时，入口异步关闭应用后退出进程；若启动或监听阶段抛错，则关闭底层存储并重新抛出原错误。这两条路径分别处理正常终止与初始化失败，降低数据库连接在异常启动后遗留的风险。[[c4]]"
+        "body": "收到中断或终止信号时，入口先异步关闭应用再退出进程；启动阶段若抛出错误，则关闭存储并继续抛出原错误，避免失败后遗留已打开的数据库连接。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审启动同步与知识恢复流程",
-        "reason": "支持仓库根目录、回环监听参数，以及同步、知识恢复和代码投影的实际先后顺序。",
+        "label": "评审启动同步链路",
+        "reason": "支持仓库根目录、回环端口以及同步、知识恢复和代码投影的实际执行顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -38,9 +38,9 @@
       },
       {
         "key": "c2",
-        "label": "评审入口隔离说明",
-        "reason": "入口注释直接支持 repo-review 仅提供回环评审 API、不会装配个人工作区服务这一边界。",
-        "relation": "explains",
+        "label": "独立评审入口边界",
+        "reason": "直接支持评审入口不装配个人工作区服务的边界声明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/main.ts",
@@ -51,8 +51,8 @@
       },
       {
         "key": "c3",
-        "label": "可选模型与应用配置",
-        "reason": "支持模型仅按评审配置显式启用，以及 API、Web 端口和模型配置传入应用构建器的装配过程。",
+        "label": "模型与应用配置",
+        "reason": "支持模型为显式可选配置，以及 API、Web 端口传入应用构建器后开始监听。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -65,7 +65,7 @@
       {
         "key": "c4",
         "label": "服务关闭与异常清理",
-        "reason": "支持信号触发应用关闭，以及启动失败时关闭存储并继续抛出错误的处理。",
+        "reason": "支持信号关闭应用以及启动失败时关闭存储并重新抛错的行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -107,23 +107,23 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "3daf657af4eb9db8b2365d6c97deae0b6232b561aa6cd2f681fa8d3049fee7ff"
+      "digest": "3918eac125957b90822f9c407a819dd78144e4306668852f6d754380f129a6bc"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:45:04.077Z",
+    "at": "2026-09-29T21:12:30.939Z",
     "trace": {
-      "runId": "77c754c2-0814-4eb1-ad95-0bb78d360cbd",
+      "runId": "a2d1d7d9-3682-484f-8352-ac9a43d618ce",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "daf91b7bded410d1949c2b72abcff1fcfd9bee0a9f9272cd636e51e850d38bfd",
-      "contextHash": "0cc5d557517bdc47f878c2c6cba1e5f16617a77d158503c1f84a7daa87382bf8",
+      "promptHash": "84cf2a514ecbf23f1f3d667d3aaa74e7b91779d72e32d002a54a3ca12d0defa2",
+      "contextHash": "00388204774b99b06706e591a4625d31811d5bd5c6a2edcb98965d70d969737c",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "50b7d4c3ee38dcf7e1180fd502b88acb9e13a480d65d1c950934a9107166e06e",
+      "fingerprint": "43d153891f6f0dcf497c344348c889c7a43da69a070cd59b63828eb49a8fe733",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -136,10 +136,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee9-c9e2-7d41-8a10-12686529925a"
+        "01a0ef02-7dcc-7162-a075-2bae7926b85d"
       ],
       "usage": {
-        "used": 24592,
+        "used": 30867,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -148,10 +148,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 39985,
-          "utf8Bytes": 43268,
-          "estimatedTokens": 14423,
-          "budgetedTokens": 18029,
+          "chars": 47191,
+          "utf8Bytes": 52906,
+          "estimatedTokens": 17636,
+          "budgetedTokens": 22045,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -160,17 +160,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:45:11.905Z",
+    "at": "2026-09-29T21:13:01.836Z",
     "trace": {
-      "runId": "454466a4-0289-4f7a-86ad-ffaf2876293e",
+      "runId": "a7df62da-8ec6-459f-83db-a3f0eb67ca43",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "52c4b832d2a6ecf7f339362ce3f8175bfcc53353e61d8771bcd05ad3b5b0f6e9",
-      "contextHash": "442bf281dcb1c3abbcf6b9521438791582fa677862956730c4953c5dd900550f",
+      "promptHash": "b7f2cfa776311934d77b98cfecdcf54eff2c4d21bd3d1046be9045a4e3b68b2c",
+      "contextHash": "dce6c30c912515b66ef0047583698a984bc6df5d6b1133961e2371eae05e40c0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2c8069094b687267da46ae7859d4e5c7ce73ecbebe4bf93219a1f0ae3397b08a",
+      "fingerprint": "ddfdceaaad782484787eb91ebf09fc66cb6a69f400ac5e6df2311f5badb254bd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -183,10 +183,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee9-f29e-7db1-bf09-89bd1451e4f7"
+        "01a0ef03-13a7-7173-b5a1-9f8bb8cc2599"
       ],
       "usage": {
-        "used": 23599,
+        "used": 31806,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -195,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37986,
-          "utf8Bytes": 40689,
-          "estimatedTokens": 13563,
-          "budgetedTokens": 16954,
+          "chars": 55585,
+          "utf8Bytes": 64193,
+          "estimatedTokens": 21398,
+          "budgetedTokens": 26748,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
