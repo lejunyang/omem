@@ -100,3 +100,17 @@ it("keeps identical external ids from different material carriers distinct", () 
   for (const source of ["file", "manual"] as const) store.capture({ source, externalId: "omem:README.md", title: source, parts: [{ type: "text", text: "Same text, different source identity." }], context: {} });
   expect(repository.materials().map(m => m.key).sort()).toEqual(["manual:omem:README.md", "omem:README.md"]);
 });
+
+it("retires old investigation questions and notifies only for a new knowledge revision", () => {
+  const { repository, store, capture } = setup(); capture("function value() {\n  return 42;\n}");
+  const m = repository.materials()[0]!;
+  const original = artifact(bindKnowledgeQuotes(document(), new Map([[m.key, m]])), [{ kind: "material", key: m.key, digest: m.digest }]);
+  repository.publish(original);
+  const notifications = store.notifications().length;
+  repository.publish(original);
+  expect(store.notifications()).toHaveLength(notifications);
+  const next = structuredClone(original); next.document.questions = [];
+  repository.publish(next);
+  expect(repository.questions()[0]!.state).toBe("superseded");
+  expect(store.notifications()).toHaveLength(notifications + 1);
+});

@@ -117,14 +117,21 @@ export class KnowledgeRepository {
     if (artifact.dependencies.some(d => d.kind === "material" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revision !== d.digest)) throw Error("KNOWLEDGE_INPUT_CHANGED");
     validateKnowledgeDocument(artifact.document, materials, articles);
     const revision = digest(stableDigest(artifact));
+    const existing = this.get(artifact.document.key);
+    if (existing?.revision === revision) return existing;
     this.store.tx(() => {
       this.store.db.prepare("INSERT OR IGNORE INTO knowledge_revisions VALUES(?,?,?,?)").run(revision, artifact.document.key, JSON.stringify(artifact), artifact.generation.at);
       this.store.db.prepare("INSERT INTO knowledge_heads VALUES(?,?,1) ON CONFLICT(document_key) DO UPDATE SET revision_id=excluded.revision_id,current=1").run(artifact.document.key, revision);
       this.store.db.prepare("DELETE FROM knowledge_invalidations WHERE document_key=?").run(artifact.document.key);
+      const liveQuestions = new Set(artifact.document.questions.map(q => digest(artifact.document.key + ":" + q.question)));
+      for (const row of this.store.db.prepare("SELECT id FROM knowledge_questions WHERE document_key=? AND state='open'").all(artifact.document.key) as Row[]) {
+        if (!liveQuestions.has(String(row.id))) this.store.db.prepare("UPDATE knowledge_questions SET state='superseded',updated_at=? WHERE id=?").run(new Date().toISOString(), String(row.id));
+      }
       for (const question of artifact.document.questions) {
         const id = digest(artifact.document.key + ":" + question.question);
-        this.store.db.prepare("INSERT OR IGNORE INTO knowledge_questions(id,document_key,article_revision,body,updated_at) VALUES(?,?,?,?,?)").run(id, artifact.document.key, revision, JSON.stringify(question), new Date().toISOString());
+        this.store.db.prepare("INSERT INTO knowledge_questions(id,document_key,article_revision,body,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET article_revision=excluded.article_revision,body=excluded.body,state=CASE WHEN knowledge_questions.state='superseded' THEN 'open' ELSE knowledge_questions.state END,updated_at=excluded.updated_at").run(id, artifact.document.key, revision, JSON.stringify(question), new Date().toISOString());
       }
+      this.store.record("knowledge", "知识已整理：" + artifact.document.title, null, null, "已保存新的知识正文、固定引用与独立模型复核记录。" );
     });
     this.refresh();
     return this.get(artifact.document.key)!;

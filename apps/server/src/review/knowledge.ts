@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CaptureInput } from "../../../../packages/contracts/src/index.js";
+import { captureSchema, type CaptureInput } from "../../../../packages/contracts/src/index.js";
 import type { Store } from "../store.js";
 import { restoreKnowledgeArticles, writeKnowledgeArticle } from "../knowledge/artifacts.js";
 import { digest, type KnowledgeArticle } from "../knowledge/repository.js";
@@ -10,7 +10,7 @@ export function restoreReviewKnowledge(store: Store, root: string) {
   const notes = join(root, ".repo-review/knowledge/user-notes.json");
   if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, "utf8")) as CaptureInput[]) {
     if (input.source !== "manual" || !input.externalId?.startsWith("knowledge-answer:")) throw Error("Invalid review user note");
-    store.capture(input);
+    store.capture(captureSchema.parse(input));
   }
   const coverage = captureRepositoryMaterials(store, root);
   const repository = createReviewKnowledgeRepository(store);
@@ -18,7 +18,10 @@ export function restoreReviewKnowledge(store: Store, root: string) {
   for (const m of repository.materials().filter(m => m.key.startsWith("manual:knowledge-answer:"))) {
     const id = m.key.slice("manual:knowledge-answer:".length);
     store.db.prepare("UPDATE knowledge_questions SET state='answered',answer_revision=? WHERE id=?").run(m.revisionId, id);
+    const q = store.db.prepare("SELECT document_key FROM knowledge_questions WHERE id=?").get(id) as { document_key: string } | undefined;
+    if (q && !repository.get(q.document_key)?.dependencies.some(d => d.kind === "material" && d.key === m.key && d.digest === m.digest)) store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(q.document_key, "保存的用户补充尚未用于知识重核对");
   }
+  repository.refresh();
   return { coverage, restored, repository };
 }
 
