@@ -2,32 +2,37 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/store.ts",
-    "title": "单用户知识存储核心",
-    "summary": "以 SQLite 事务统一管理捕获、不可变修订、固定片段、资产、变更通知、派生任务和待办，是个人知识与 repo-review 共用的持久化基础。",
-    "category": "architecture",
+    "title": "单用户 SQLite 存储门面与捕获主流程",
+    "summary": "负责单用户数据库生命周期，并编排多模态捕获、不可变修订、来源更新传播、当前版本检索、恢复、通知和旧式待办。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "foundation",
-        "title": "初始化与事务边界",
-        "body": "`Store` 是当前单用户持久化基础：构造时创建受限权限的数据目录和 SQLite 文件，执行数据库迁移，并装配应用、作业、输入聚合、运行时请求和来源画像等仓储。初始化任一步失败都会关闭数据库；`tx` 使用 `BEGIN IMMEDIATE`，成功提交、异常回滚。材料明确将 Postgres 与团队级强制隔离留作以后迁移。[[c1]]"
+        "key": "composition",
+        "title": "定位与事务边界",
+        "body": "Store 是当前单用户 SQLite 基础的聚合入口：它创建私有数据目录和数据库、执行迁移、限制文件权限，并把同一连接交给应用、作业、输入聚合、运行时请求和来源画像服务。由 `tx` 包裹的数据库操作使用 `BEGIN IMMEDIATE`，成功提交、异常回滚；这并不覆盖所有写入，例如图片资产在事务前落盘，读取通知状态也直接更新数据库。团队数据库与租户强制隔离仍是后续能力。[[c1]]"
       },
       {
         "key": "capture",
-        "title": "捕获到不可变证据",
-        "body": "捕获先计算稳定摘要并处理多模态 part。图片限制为 5 MB，校验 Base64 与 PNG/JPEG/WebP 文件签名，以内容哈希存入私有 assets；正文则保存 parts、上下文、来源和上游版本。相同 collector/event 的重复请求复用 receipt，载荷不同则报冲突；同一 source/externalId 且 fingerprint 未变也复用 head。[[c2]]\n\n新内容会插入递增版本的不可变 revision，将文本段落、链接或图片描述拆成最多 2000 个固定 fragment，再更新 source head 与 validity epoch。来源画像失败只记录失败，不阻断捕获；旧 head 的记忆依赖会被标 stale、相关记忆失效，并排队刷新。派生材料不会再次进入 claim 提取队列，避免模型产物自循环为独立证据。[[c3]]"
+        "title": "捕获与更新传播",
+        "body": "捕获先计算稳定摘要。图片必须是可往返编码的非空 Base64，解码后不超过 5 MB，并按 PNG、JPEG 或当前兜底的 WebP 字节签名检查；通过后按内容哈希保存。由于文件写入发生在数据库事务开始前，后续数据库失败可能留下未被修订引用的资产。捕获最多生成 2000 个固定片段。[[c2]] producer 与 eventId 回执提供事件幂等；内容指纹相同也复用当前 head，否则追加不可变 revision。[[c3]]\n\n新修订会容错生成来源画像、切换 head、推进 validity epoch，并在已有来源更新时使旧依赖和相关记忆失效、排入刷新作业。[[c4]] 原始材料进入声明提取队列，而 `producerKind=derived` 被排除，避免派生内容自循环成为独立证据。[[c5]]"
       },
       {
-        "key": "read-write-limits",
-        "title": "读取、恢复与应用边界",
-        "body": "列表和搜索默认只读取各 source 的当前 head；`evidence` 补充引用出边与反向链接。恢复不是把 head 指针倒退，而是复制旧 revision 内容和 fragment 为一个新版本，并在预期 head 不匹配时抛出 `REBASE_REQUIRED`，从而保留完整历史并避免并发覆盖。[[c4]]\n\n待办状态同样采用 expectedVersion 乐观并发检查，并为每次变化写 task revision。变更记录与通知在调用方事务内共同写入；到期提醒依靠唯一键式 `INSERT OR IGNORE` 去重。当前代码多处固定 `workspace_id='personal'`，所以这些能力不能被解释为已完成团队租户隔离。[[c5]]"
+        "key": "retrieval_restore",
+        "title": "检索与恢复边界",
+        "body": "搜索会转义 LIKE 特殊字符，最多返回 50 行，并通过 source head 连接限定当前修订。[[c6]] 恢复要求 expectedHead 同时等于当前 head 和目标变更的 after，随后把旧修订、片段及出边复制为更高版本并切换 head，历史不会被删除。[[c7]] 该路径没有展示普通 capture 所执行的 source_state 更新、画像生成、依赖失效和刷新作业，因此恢复后的派生状态是否应同步仍不能确定。"
+      },
+      {
+        "key": "tasks",
+        "title": "旧式待办与提醒",
+        "body": "`createTask` 校验可选证据后写入当前任务及首个 `task_revisions`；状态切换以 expectedVersion 乐观加锁，并追加下一版修订。到期扫描只处理开放且已经到期的任务，通知去重键包含任务与版本。[[c8]] 这些代码说明了实现意图，但本批材料没有对应数据库行为测试，尚不能确认默认列、双表一致性及提醒去重均已被实际断言。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Store 初始化与事务",
-        "reason": "支持单用户 SQLite 定位、子仓储装配、权限设置和事务回滚行为。",
-        "relation": "explains",
+        "label": "Store 初始化与事务方法",
+        "reason": "支持单用户 SQLite 定位、共享仓储连接和 tx 的提交回滚语义，同时将该语义限定为显式调用 tx 的流程。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
@@ -38,48 +43,87 @@
       },
       {
         "key": "c2",
-        "label": "输入去重与图片验证",
-        "reason": "支持图片安全边界、资产持久化、事件 receipt 和 fingerprint 去重流程。",
+        "label": "图片校验与片段预算",
+        "reason": "支持图片在事务前校验和落盘、内容寻址保存，以及每次捕获最多生成 2000 个片段的边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
           "startLine": 99,
-          "endLine": 193
+          "endLine": 140
         },
         "quote": "  capture(input: CaptureInput) {\n    const payloadDigest = stableDigest(input);\n    const parts: StoredPart[] = input.parts.map((p) => {\n      if (p.type !== \"image\") return p;\n      const bytes = Buffer.from(p.data, \"base64\");\n      if (\n        !bytes.length ||\n        bytes.length > 5_000_000 ||\n        bytes.toStri"
       },
       {
         "key": "c3",
-        "label": "新修订、片段与派生作业",
-        "reason": "说明不可变修订创建、片段预算、画像容错、依赖失效和学习队列边界。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 194,
-          "endLine": 373
-        },
-        "quote": "      const revisionId = id();\n      this.db\n        .prepare(\"INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)\")\n        .run(\n          revisionId,\n          String(source.id),\n          Number(head?.version || 0) + 1,\n          input.title,\n          JSON.stringify(body),\n          fingerprint,\n          head ? String("
-      },
-      {
-        "key": "c4",
-        "label": "证据读取与历史恢复",
-        "reason": "支持当前 head 查询、片段关系读取，以及以新 revision 恢复和并发校验的描述。",
+        "label": "捕获幂等与不可变修订",
+        "reason": "支持事件回执冲突检查、相同内容复用，以及新 revision 和 fragment 的追加流程。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
-          "startLine": 375,
-          "endLine": 557
+          "startLine": 141,
+          "endLine": 220
         },
-        "quote": "  list() {\n    return (\n      this.db\n        .prepare(\n          \"SELECT r.*,s.namespace,s.external_id FROM revisions r JOIN sources s ON s.head=r.id ORDER BY r.created_at DESC\",\n        )\n        .all() as Row[]\n    ).map((r) => ({\n      id: r.id,\n      title: r.title,\n      source: r.namespace,\n      externalId: r.e"
+        "quote": "    return this.tx(() => {\n      const producer = input.provenance?.collectorId;\n      const eventId = input.provenance?.eventId;\n      if (producer && eventId) {\n        const receipt = this.db\n          .prepare(\n            `SELECT * FROM capture_receipts\n             WHERE workspace_id='personal' AND producer=? AND"
+      },
+      {
+        "key": "c4",
+        "label": "来源状态与更新传播",
+        "reason": "支持画像容错、head 与有效性代次更新、旧记忆依赖失效及刷新作业入队。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 221,
+          "endLine": 302
+        },
+        "quote": "      // V3-03: lightweight deterministic navigation profile. Best-effort: a\n      // profiling failure records a failed row but never blocks the source.\n      try {\n        this.profiles.persistForRevision(revisionId);\n      } catch (profileError) {\n        this.profiles.recordFailure(revisionId, profileError);\n      "
       },
       {
         "key": "c5",
-        "label": "待办版本控制与提醒",
-        "reason": "支持 personal workspace、乐观并发、待办修订和到期通知去重的边界说明。",
-        "relation": "tracks",
+        "label": "声明提取队列边界",
+        "reason": "支持派生材料不进入声明提取队列，而其他捕获携带来源有效性代次排队。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 353,
+          "endLine": 373
+        },
+        "quote": "  private queueCaptureJob(input: CaptureInput, revision: Revision) {\n    // Only derived material (model summaries/reflections) is withheld from the\n    // learning queue: it must not self-loop as independent evidence. Original Agent\n    // sessions are real experience and DO enter extract_claims (G14).\n    if (input.p"
+      },
+      {
+        "key": "c6",
+        "label": "当前版本搜索",
+        "reason": "证明搜索转义 LIKE 通配符、通过 source head 限定当前修订并设置 50 行上限。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 469,
+          "endLine": 477
+        },
+        "quote": "  search(query: string) {\n    if (!query.trim()) return [];\n    const escaped = query.replace(/[!%_]/g, \"!$&\");\n    return this.db\n      .prepare(\n        \"SELECT f.id,f.text,r.title,r.version FROM fragments f JOIN revisions r ON f.revision_id=r.id JOIN sources s ON s.head=r.id WHERE f.text LIKE ? ESCAPE '!' OR r.title"
+      },
+      {
+        "key": "c7",
+        "label": "新修订式恢复",
+        "reason": "支持恢复的并发前置条件、旧内容复制、出边重映射，并显示该路径只直接更新 sources.head。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 493,
+          "endLine": 557
+        },
+        "quote": "  restore(changeId: string, expectedHead: string) {\n    return this.tx(() => {\n      const c = this.db\n        .prepare(\"SELECT * FROM changes WHERE id=?\")\n        .get(changeId) as Row | undefined;\n      if (!c?.before_id || !c.after_id)\n        throw Error(\"Change has no restorable predecessor\");\n      const old = th"
+      },
+      {
+        "key": "c8",
+        "label": "待办版本与到期提醒",
+        "reason": "支持首个任务修订、状态乐观锁、后续修订及按任务版本生成去重提醒的实现说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
@@ -91,37 +135,36 @@
     ],
     "questions": [
       {
-        "question": "搜索 SQL 中标题匹配是否可能绕过当前 head 限制？",
-        "why": "查询条件写成 `JOIN ... ON s.head=r.id WHERE f.text LIKE ? OR r.title LIKE ?`；按 SQL 优先级，JOIN 条件仍独立生效，因此从所示文本看不会绕过，但缺少针对历史标题命中的直接测试。",
-        "nextStep": "增加包含旧 revision 独有标题与正文的搜索测试，明确只返回当前 head 的合同。",
+        "question": "恢复新修订后，source_state、validity_epoch、来源画像、旧记忆依赖失效和刷新作业是否应与普通 capture 更新保持一致？",
+        "why": "普通 capture 明确维护这些派生状态，而 restore 仅复制修订、片段和出边、更新 sources.head 并记录变化；材料没有说明这种差异是否是有意边界。",
+        "nextStep": "检查 restore 的行为测试和下游读取约定；若没有独立协调层，明确恢复边界或复用普通来源更新传播流程。",
         "blocking": false,
         "citationKeys": [
-          "c4"
+          "c4",
+          "c7"
         ]
       },
       {
-        "question": "恢复后是否应同步更新 source_state、失效记忆依赖并生成刷新作业？",
-        "why": "`restore` 更新 sources.head 并记录变更，但所示实现没有复用 capture 中的 source_state 与依赖失效步骤，可能使恢复后的派生状态落后。",
-        "nextStep": "检查迁移约束和恢复相关测试；若恢复等价于 source 更新，应在同一事务补齐 validity epoch、依赖失效与刷新排队。",
+        "question": "旧式 createTask 路径是否已有数据库行为测试覆盖默认列与 task_revisions 的一致性？",
+        "why": "实现依赖 tasks 的默认列并显式创建首个 task_revisions，但本批材料没有对应行为测试。",
+        "nextStep": "补充 Store 待办测试材料，核对创建、状态更新、提醒去重以及 tasks 与 task_revisions 的实际数据库结果。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4"
+          "c8"
+        ]
+      },
+      {
+        "question": "旧式 createTask 路径是否已有数据库行为测试覆盖默认列、task_revisions 一致性和提醒去重？",
+        "why": "apps/server/src/store.ts 第 650–768 行展示了实现，但本批材料没有相应行为测试。",
+        "nextStep": "补充 Store 待办测试，核对创建、状态更新、任务双表一致性以及同一任务版本的提醒去重。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
         ]
       }
     ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/model-config.ts",
-      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
@@ -130,64 +173,59 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/code-knowledge.test.ts",
-      "digest": "29a65a8f1bd576d834805a51472730d78f9e377ad25be6f238ccd713d714f82c"
+      "digest": "cb96bd023356e4fee4a129e29c9a3b295a3a83428e5c2c7cc5c7b5e1b4616688"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
-      "digest": "080b9a8cf254faa5200964aae5ac6570ad259da40f76b728aaaeb76d1ad271fc"
+      "digest": "aeb1e454f5fe809dbfb9574bf9746feedb4997b631e6dab73a50c9e78897b089"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-model.ts",
-      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+      "key": "omem:apps/server/tests/code-understanding-model.test.ts",
+      "digest": "ac88b469c5dccac99e5b7535cce1a6ec584abd604338938bfdb07c09340e632a"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/requests.ts",
-      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+      "key": "omem:apps/server/tests/code-understanding.test.ts",
+      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/source-profile/service.ts",
-      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+      "key": "omem:apps/server/tests/connectors.test.ts",
+      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:38:45.477Z",
+    "at": "2026-09-29T20:55:06.515Z",
     "trace": {
-      "runId": "8a09d7fd-94fe-4de5-9607-0ac8104db458",
-      "roleId": "code-analyst",
+      "runId": "24cd43e9-8a54-41ca-9957-7fad5073eb84",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "9a507744af57a73b0881cdbd89dbc36965b4650ae9495204509d99ec4cf44827",
-      "contextHash": "23d6ac5973fe0aae1bed0c08e81f75a7cb18c5dab1c991bae41f41bd2db1f04d",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "85ce609414b9577750a13a8e92ae63323038b4c6298d729cf7b36273a3038c7e",
+      "contextHash": "276954053a59e3ae6ad3a8ff234b9e73f1f9ad61b4fa7907ca94cb35e57fed64",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "60b0242fb140955b4432e3e82b1fd5f6436cb6fbd08bae5de7218abaabe6f589",
+      "fingerprint": "a33e6712b2037d58b2f0942ed0297ffd6b39b6854e074a752f077375c16636a8",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeac-554d-7a32-a033-eddd00d45664"
+        "01a0eef2-af1f-7e51-bc10-8d21e58b56ac"
       ],
       "usage": {
-        "used": 54901,
+        "used": 52714,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -196,10 +234,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 127485,
-          "utf8Bytes": 129589,
-          "estimatedTokens": 43197,
-          "budgetedTokens": 53997,
+          "chars": 119913,
+          "utf8Bytes": 129183,
+          "estimatedTokens": 43061,
+          "budgetedTokens": 53827,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -208,17 +246,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:39:21.776Z",
+    "at": "2026-09-29T20:55:25.330Z",
     "trace": {
-      "runId": "db6762eb-9b82-4fd9-a4d7-74bf7483fb6f",
+      "runId": "d2d86519-4db6-460e-ba8a-ac89a72b1240",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9ab7e24b843b4322e0be86d33199775afa3df3110b6c883122f40f4c970c826a",
-      "contextHash": "5f66afbb890745a78763f79f441d17ef1b64bfb6da55221fbb5e0a66fc2c7dc4",
+      "promptHash": "5cec07e23fe2b171e147d43fa8608e3d7c737682ef3419cb7113cb0a9fac80ee",
+      "contextHash": "2890cdf698e064c89c4025a1d8470bb8da7cfb817728a270f5bc03172e5241d4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f18348371f0f0d0b682f940c86ef62ab64c744cf5444933d44694f274b78c898",
+      "fingerprint": "ae9a716a100a6592f8b674680aa0be570904d37728a29cdbb6e067432aa1c4c4",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -231,10 +269,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eead-3d43-7da2-b739-0918004810e5"
+        "01a0eef3-2423-7990-aa37-d8f0aaa301f7"
       ],
       "usage": {
-        "used": 59067,
+        "used": 48496,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -243,10 +281,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 146517,
-          "utf8Bytes": 156633,
-          "estimatedTokens": 52211,
-          "budgetedTokens": 65264,
+          "chars": 115515,
+          "utf8Bytes": 122961,
+          "estimatedTokens": 40987,
+          "budgetedTokens": 51234,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

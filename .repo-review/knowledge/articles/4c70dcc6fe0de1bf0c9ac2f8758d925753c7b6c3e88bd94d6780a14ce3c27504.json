@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:apps/server/src/source-profile/service.ts",
     "title": "来源修订的规则化内容画像",
-    "summary": "从固定修订及其片段派生结构、语言、话语类型、主题、时间提示和覆盖缺口，并以可重新生成的导航元数据写入 SQLite。",
+    "summary": "从固定 revision 的片段派生结构、语言、话语类型、主题、时间提示和覆盖缺口，并把可重建画像按 generation 写入 SQLite。",
     "category": "implementation",
     "sections": [
       {
-        "key": "profile-lifecycle",
-        "title": "画像生命周期与失败隔离",
-        "body": "该服务为已经捕获的来源修订生成派生画像，包括载体类型、标题结构、主题候选、话语段、时间提示、链接和证据片段。`latest` 按 generation 读取最新记录；`persistForRevision` 从 revisions 与 fragments 读取固定修订，执行规则分析，递增代次后写入数据库。[[c1]]\n\n画像被视为辅助导航而非原始证据。分析失败时，`recordFailure` 尝试写入 failed 行；若失败记录本身也无法插入，异常会被吞掉，从而保持来源可读。材料只展示服务内部行为，未展示调用方事务、重试或补建流程，因此不能确定画像与原始捕获是否原子一致。[[c2]]"
+        "key": "lifecycle",
+        "title": "画像生命周期与容错",
+        "body": "该服务把画像作为固定 revision 上的派生导航数据。`latest` 按 generation 读取最近一代；`persistForRevision` 查询 revision 与有序 fragments，执行规则分析、递增 generation 后写库。[[c1]] 画像失败不应阻断原始证据：`recordFailure` 尽力插入 failed 行，连失败记录自身的写入异常也会被吞掉，使来源仍可读取。[[c2]]"
       },
       {
-        "key": "analysis-flow",
-        "title": "结构识别与话语分类",
-        "body": "话语分类先识别图片占位和短噪声，再优先把代码、SQL、命令等识别为示例，随后判断问题、约束、定义、计划、历史和指令；同时以关键词推断时态及是否指称上文。[[c3]]\n\n结构分析只有在某个片段的整个 trimmed 文本恰好匹配单行 Markdown 标题时，才把它作为标题节点并跳过话语分类；若标题与正文同处一个片段，正则不会匹配，该片段会作为普通话语处理。普通片段继承最近标题，图片、表格样式和超长内容会记录覆盖缺口并使状态变为 partial。[[c4]]"
+        "key": "analysis",
+        "title": "结构与话语分析",
+        "body": "标题识别要求整个 trimmed fragment 完整匹配一行 Markdown 标题；只有这种片段才进入标题栈并跳过话语分类。此前“只要片段以标题开头即可识别”的结论已被替代：标题后同片段仍带正文时不会匹配，会整体作为普通话语段处理。[[c3]]\n\n普通片段继承最近父标题，再分类为定义、主张、约束、历史、计划、问题、指令、示例或噪声。代码、SQL、TODO 和 shell 命令优先归为示例，避免把材料命令误当执行指令；规则还提取时态和段内指称。[[c4]]"
       },
       {
-        "key": "derived-fields",
-        "title": "主题、语言与外部关联",
-        "body": "主题候选由标题文本和去停用词后的高频词合并产生；语言只依据中英文字符数量阈值判断。项目候选仅读取 context 中的 application、conversationId 和 runId，显式链接也只从 parts 中带 url 的对象提取。最终 `evidenceRefs` 覆盖全部输入片段，表示画像可追溯，但并不代表这些启发式结论经过人工验证。[[c5]]"
+        "key": "coverage",
+        "title": "主题、语言与覆盖限制",
+        "body": "图片占位、表格样式及超长片段形成 coverage gap，并令画像状态变为 partial。主题候选合并标题与高频词，语言只按中英文字符阈值判断；项目候选仅读取少数 context 字段，显式链接只从带 `url` 的 parts 提取。所有 fragment ID 写入 evidenceRefs，表示可追溯而非人工确认。[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "画像读取与代次持久化",
-        "reason": "支持从固定修订及有序片段分析画像、递增 generation 并写入数据库的生命周期。",
+        "reason": "支持从固定修订及有序片段分析、递增 generation 并写库的生命周期。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -38,21 +38,34 @@
       },
       {
         "key": "c2",
-        "label": "画像失败记录",
-        "reason": "支持画像失败采用尽力记录、失败记录异常不影响来源可读的容错边界。",
+        "label": "画像失败隔离",
+        "reason": "支持失败元数据尽力写入以及画像异常不影响来源可读性的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
           "startLine": 168,
-          "endLine": 190
+          "endLine": 189
         },
         "quote": "  recordFailure(revisionId: string, error: unknown): void {\n    const message =\n      error instanceof Error ? error.message : String(error ?? \"unknown\");\n    try {\n      this.db\n        .prepare(\n          `INSERT INTO source_profiles(\n             source_revision_id,profile_generation,profiler_version,carrier_type,\n "
       },
       {
         "key": "c3",
-        "label": "规则化话语分类",
-        "reason": "支持代码材料优先、时态与上文指称检测，以及问题、约束等话语类别的判断顺序。",
+        "label": "完整片段标题匹配",
+        "reason": "正则的首尾锚点及分析循环共同证明只有整个 trimmed 片段为标题时才建立标题节点。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 251,
+          "endLine": 283
+        },
+        "quote": "export function analyze(input: {\n  title: string;\n  body: {\n    context?: Record<string, unknown>;\n    parts?: unknown[];\n  };\n  fragments: { id: string; ordinal: number; text: string }[];\n}): SourceProfile {\n  const fragments = input.fragments;\n  const hasHeading = fragments.some((f) => HEADING.test(f.text.trim()));\n "
+      },
+      {
+        "key": "c4",
+        "label": "话语分类规则",
+        "reason": "支持代码材料优先、时态与指称识别，以及各话语类型的规则分类。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -63,37 +76,24 @@
         "quote": "function classify(text: string): Classified {\n  const t = text.trim();\n  if (/^\\[图片\\]/.test(t))\n    return { kind: \"noise\", tags: [\"image\"], tense: \"unknown\", refParent: false };\n  if (t.length < 4)\n    return { kind: \"noise\", tags: [], tense: \"unknown\", refParent: false };\n\n  const present = /当前|目前|现在|现状|现有/.test(t);\n"
       },
       {
-        "key": "c4",
-        "label": "完整片段标题匹配与覆盖缺口",
-        "reason": "支持标题必须匹配整个 trimmed 片段、标题栈继承、普通话语分析和覆盖缺口生成的说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 251,
-          "endLine": 303
-        },
-        "quote": "export function analyze(input: {\n  title: string;\n  body: {\n    context?: Record<string, unknown>;\n    parts?: unknown[];\n  };\n  fragments: { id: string; ordinal: number; text: string }[];\n}): SourceProfile {\n  const fragments = input.fragments;\n  const hasHeading = fragments.some((f) => HEADING.test(f.text.trim()));\n "
-      },
-      {
         "key": "c5",
-        "label": "派生候选字段",
-        "reason": "支持主题频率、语言阈值、有限 context 字段、parts 链接以及 evidenceRefs 和状态的生成规则。",
+        "label": "主题、语言与覆盖分析",
+        "reason": "支持覆盖缺口、主题频率、语言阈值、项目候选、链接提取和 evidenceRefs 生成。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 305,
+          "startLine": 265,
           "endLine": 372
         },
-        "quote": "  // Topic candidates: heading texts + frequent non-stopword terms.\n  const freq = new Map<string, number>();\n  for (const fragment of fragments)\n    for (const term of tokenize(fragment.text)) {\n      if (STOPWORDS.has(term.toLowerCase()) || term.length < 2) continue;\n      freq.set(term, (freq.get(term) ?? 0) + 1);\n "
+        "quote": "  const titlePath: TitleNode[] = [];\n  const segments: DiscourseSegment[] = [];\n  const coverageGaps: string[] = [];\n  const temporalNotes = new Set<string>();\n  const headingStack: string[] = [];\n\n  for (const fragment of fragments) {\n    const trimmed = fragment.text.trim();\n    const headingMatch = HEADING.exec(trim"
       }
     ],
     "questions": [
       {
-        "question": "画像写入应与原始修订捕获处于同一事务，还是明确接受最终一致？",
-        "why": "服务说明画像失败不应阻断证据捕获，但给定材料没有展示 `persistForRevision` 的调用事务、失败重试或重建入口，无法确定当前一致性保证。",
-        "nextStep": "检查 Store 的实际捕获调用路径和数据库事务范围；若采用最终一致，应提供失败画像的可重建入口并记录运行状态。",
+        "question": "画像写入应与原始 revision 捕获处于同一事务，还是明确接受最终一致？",
+        "why": "服务注释要求画像失败不影响证据，但当前材料没有展示调用方事务、失败后的自动重试或重建入口。",
+        "nextStep": "检查 Store 的捕获调用路径和数据库事务范围；若采用最终一致，为 failed 或缺失画像提供可重复执行的重建操作。",
         "blocking": false,
         "citationKeys": [
           "c1",
@@ -101,12 +101,13 @@
         ]
       },
       {
-        "question": "标题与正文共处同一片段时，是否应拆分并分别分析？",
-        "why": "标题正则要求整个 trimmed 片段仅构成一个标题；标题后带正文的片段不会形成标题节点，实际影响取决于上游分片形态。",
-        "nextStep": "用真实 Markdown 捕获样本验证片段形态，并据此补充测试、调整上游拆分或改为逐行解析标题。",
+        "question": "标题与正文共处同一 fragment 时，是否应拆分并分别分析？",
+        "why": "当前正则要求整个片段只有标题；混合片段不会形成标题节点，正文也只会作为一个整体话语段分类。",
+        "nextStep": "用真实 Markdown 捕获样本核对上游分片形态，再选择调整分片器、逐行解析标题或明确接受这一限制。",
         "blocking": false,
         "citationKeys": [
-          "c4"
+          "c3",
+          "c5"
         ]
       }
     ]
@@ -114,8 +115,18 @@
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:apps/server/src/review/model-config.ts",
+      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+      "digest": "76e54242857bea9401e4ff4bfe8ec1f1afa7778c1105982d2c175033490186f5"
     },
     {
       "kind": "material",
@@ -131,58 +142,38 @@
       "kind": "material",
       "key": "omem:apps/server/src/storage/digest.ts",
       "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:07:37.023Z",
+    "at": "2026-09-29T20:53:10.392Z",
     "trace": {
-      "runId": "b32610f8-150a-4ffe-a446-f812ffc6f523",
-      "roleId": "code-analyst",
+      "runId": "22fe0654-a6fe-4a89-a6cc-6f8adf2cca01",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6115e15a2b024a5dfd8d2fce252f72e34e6ab242f2bc6161d346960b83201fd1",
-      "contextHash": "068f59e5ebb27dcfe375581a78532e0ca17d1f2b09316fdb46f5ba12faa7aa4d",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5a930740b92105c20e03818ec3655d99bfff542ce718d2795e0e2012ff0eb118",
+      "contextHash": "cd722fc9bb784a572292bf8568ead49f803e7358d7231c63c6eef752f9a78242",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "baf5b4cf34b355b552d64fe343fa2627877295991f1f52b71e9819c5a80312e4",
+      "fingerprint": "1197659933ce559f99fa919fd1077681f17b87a5f19d2b52554b6a20dda34337",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee90-2e59-7fb2-b710-846874711ea8"
+        "01a0eef0-6c80-7c81-8677-40ab3545fc66"
       ],
       "usage": {
-        "used": 48454,
+        "used": 60825,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -191,10 +182,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 105525,
-          "utf8Bytes": 115539,
-          "estimatedTokens": 38513,
-          "budgetedTokens": 48142,
+          "chars": 139256,
+          "utf8Bytes": 150962,
+          "estimatedTokens": 50321,
+          "budgetedTokens": 62902,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -203,17 +194,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:08:02.104Z",
+    "at": "2026-09-29T20:53:41.614Z",
     "trace": {
-      "runId": "004ceffe-f7d2-47ec-8a1d-cf95c52de6ab",
+      "runId": "748e8c21-f235-49c6-9a2b-ed2ea9e889aa",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "7a778c948413ee458a9ac5e533278c5f533999c238114091d5094e50cd9fa149",
-      "contextHash": "43ebd76471e33fe3dfd6ff2c54295fd0ac83278a022fa36eeb3e73f321a39a48",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "29cacb9eee1e71d083868a4edd0d512987af07ff86028a80c3b3991f16848f15",
+      "contextHash": "e1d87e55938a56cf686e6e4bc6341c2a03c2bed7d9c8e0947da278aa37d82dfc",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6038015ec37f5e98a36779cda2a6ae662ec6e0e6f1dbe0a9420bc12dc48ff776",
+      "fingerprint": "f4d99c22e9594680ff5d51125a9d7ec3903fe318b84395346e8d897ac4e38903",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -226,10 +217,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee90-baa4-7be0-bf90-4aeb907bbba1"
+        "01a0eef1-5e68-7c70-a59b-885b6317df01"
       ],
       "usage": {
-        "used": 45821,
+        "used": 58210,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -238,10 +229,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 103718,
-          "utf8Bytes": 111844,
-          "estimatedTokens": 37282,
-          "budgetedTokens": 46603,
+          "chars": 143768,
+          "utf8Bytes": 155672,
+          "estimatedTokens": 51891,
+          "budgetedTokens": 64864,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
