@@ -1,3 +1,4 @@
+import { knowledgeEvidenceCandidates } from "../knowledge/retrieval.js";
 import type { DatabaseSync } from "node:sqlite";
 import type {
   ProvenanceRef,
@@ -76,6 +77,10 @@ export class KeywordRetrieval implements RetrievalPort {
         }
         best.set(id, current);
       }
+    }
+    for (const row of knowledgeEvidenceCandidates(this.db, terms)) {
+      const id = String(row.fragment_id);
+      if (!best.has(id)) best.set(id, { row, score: 2, matched: new Set() });
     }
     return [...best.values()]
       .sort((a, b) => b.score - a.score)
