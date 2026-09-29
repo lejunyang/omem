@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-29T20:01:05.538823+00:00",
+  "implementationCommit": "72ae4708ef238e7b67053cec97dbe5901d539d39",
+  "scope": "Implementation verification. Knowledge corpus generation and coverage are recorded separately; this is not a claim that every external integration was tested.",
+  "workingTree": "Pre-existing apps/web/package.json formatting, osdk.lock receipt changes and frozen SQLite shm changes were preserved; generated knowledge assets were not treated as original test evidence.",
+  "checks": [
+    {
+      "command": "osdk deps --frozen",
+      "exitCode": 0,
+      "scope": "Application dependencies; no application dependencies were changed during this work."
+    },
+    {
+      "command": "osdk run --no-deps check",
+      "exitCode": 0,
+      "testFiles": 55,
+      "tests": 330,
+      "includes": [
+        "TypeScript and Vue typecheck",
+        "full Vitest suite",
+        "server and web build"
+      ]
+    },
+    {
+      "command": "pnpm exec tsx scripts/knowledge-browser.ts",
+      "exitCode": 0,
+      "evidence": "Real Vue/API/SQLite, fixture knowledge, inline chapter/module/source chain, import links, reasons, Esc, deep links, focus, 1440/768/390, explicit tasks, escaped HTML source"
+    },
+    {
+      "command": "osdk run --no-deps browser",
+      "exitCode": 0,
+      "evidence": "Personal assistant flows including capture, evidence, learning, decisions, notifications, mobile, 100-node chain and failure/restart truthfulness; fixture transport"
+    },
+    {
+      "command": "osdk run dev:review + scripts/code-wiki-viewport.ts",
+      "exitCode": 0,
+      "evidence": "Repository material mirror served by the actual dev orchestrator; three viewports, highlighting, structural trail, XSS and focus"
+    },
+    {
+      "command": "knowledge-verifier live calibration",
+      "model": "gpt-5.6-sol",
+      "result": "Supported statement 42 accepted; contradictory statement 43 needs_revision",
+      "scope": "Small synthetic live check; not proof of universal semantic correctness"
+    }
+  ],
+  "remainingLimits": [
+    "No embedding retrieval",
+    "No cross-file type-aware call resolution",
+    "No new external screen observer or global hook installation",
+    "No live Lark/WebSocket acceptance in this task",
+    "Single-user SQLite/shared-token architecture; no tenant isolation claim",
+    "Independent model review is not human acceptance"
+  ]
+}
