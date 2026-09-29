@@ -2,47 +2,47 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-    "title": "SQLite 并发写入等待测试",
-    "summary": "通过独立子进程持有真实 SQLite 写锁，验证知识存储会等待锁释放并完成捕获，而不是丢失操作。",
+    "title": "知识存储的 SQLite 并发写事务测试",
+    "summary": "通过子进程建立真实 SQLite 写事务，验证父进程随后完成存储初始化、知识仓库创建和材料捕获且数据未丢失；测试未单独证明捕获调用本身等待锁释放。",
     "category": "tests",
     "sections": [
       {
         "key": "lock-fixture",
-        "title": "真实并发写锁场景",
-        "body": "测试先初始化数据库，再启动独立 Node 子进程，以 `BEGIN IMMEDIATE` 持有 SQLite 写锁约 250 毫秒。主测试等待子进程明确报告锁已建立后，才创建存储和知识仓库并执行手动材料捕获，因此覆盖的是实际进程间锁竞争，而非模拟异常。[[c1]]"
+        "title": "真实并发事务场景",
+        "body": "测试先创建并关闭初始存储，再启动独立 Node 子进程，对同一数据库执行 `BEGIN IMMEDIATE`；子进程发出就绪信号后延迟约 250 毫秒提交。[[c1]] 父进程收到信号后才依次创建 `Store`、`KnowledgeRepository` 并执行捕获，因此测试确实覆盖了并发写事务已经出现后的完整操作序列。"
       },
       {
-        "key": "outcome",
-        "title": "完成条件与清理",
-        "body": "断言要求捕获结果中的 fragment 保留完整固定文本，同时持锁子进程必须以状态码 0 正常退出，证明写操作等待后成功而未丢失。无论测试结果如何，清理逻辑都会终止仍存活的子进程、关闭存储并删除临时目录。[[c2]]"
+        "key": "observed-result",
+        "title": "最终行为与可证明边界",
+        "body": "测试断言捕获结果中的片段文本与输入一致，并确认持锁子进程正常退出；这证明在该并发场景下，存储初始化及随后捕获最终成功，材料没有静默丢失。[[c2]] 但代码没有断言执行 `store.capture` 时写锁仍然存在，也未测量捕获耗时，因此此前“锁持有期间发起捕获”及“捕获会等待锁释放”的结论被替代。可能发生等待的位置还包括 `Store` 或知识仓库初始化，现有测试无法进一步区分。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "并发写锁测试装置",
-        "reason": "支持子进程持有真实 SQLite 即时事务写锁以及主进程随后执行捕获的流程。",
+        "label": "并发写事务测试装置",
+        "reason": "支持初始数据库创建、独立进程开启真实写事务，以及父进程等待就绪信号后继续操作的场景。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
           "startLine": 9,
-          "endLine": 18
+          "endLine": 17
         },
         "quote": "it(\"waits for a real concurrent writer instead of losing a knowledge operation\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-busy-\"));\n  const initial = new Store(dir); initial.close();\n  let store: Store | undefined;\n  const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", \"import {D"
       },
       {
         "key": "c2",
-        "label": "等待结果与资源清理",
-        "reason": "支持捕获内容、子进程退出状态以及测试结束时资源清理的断言。",
+        "label": "捕获结果与进程退出断言",
+        "reason": "支持材料捕获最终返回完整文本且持锁子进程正常退出，同时显示测试没有记录捕获开始时的锁状态或等待时长。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-          "startLine": 19,
+          "startLine": 18,
           "endLine": 21
         },
-        "quote": "    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material remains available.\");\n    expect(await exited).toBe(0);\n  } finally { if (child.exitCode === null) child.kill(); store?.close(); rmSync(dir, { recursive: true, force: true }); }"
+        "quote": "    const result = store.capture({ source: \"manual\", externalId: \"waited\", title: \"Concurrent capture\", parts: [{ type: \"text\", text: \"Fixed material remains available.\" }], context: {} });\n    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material remains available.\");\n    expect(await exited).toBe(0);\n  } fi"
       }
     ],
     "questions": []
@@ -76,23 +76,23 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "3daf657af4eb9db8b2365d6c97deae0b6232b561aa6cd2f681fa8d3049fee7ff"
+      "digest": "3918eac125957b90822f9c407a819dd78144e4306668852f6d754380f129a6bc"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:44:29.397Z",
+    "at": "2026-09-29T21:13:20.279Z",
     "trace": {
-      "runId": "6569a68b-6ba2-4089-be9d-adee179faab1",
+      "runId": "fd8e98a9-69f3-4cee-bce9-09e6ab2e6be2",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "776b7b3be0ed1f8922ea654d0fa1c4025565137d558354f6d87ab481c6e5a169",
-      "contextHash": "c085d39e51f73fe0691345f3ff79858641696c76cfa4e0aaef5da094d0cfef37",
+      "promptHash": "8ab2038bf5d7ebdcf77d3b63b95ae567e89353b910b29757b5773f418a705cf4",
+      "contextHash": "fd8df7f186013d63d87b62b22d02746b7aa95f847cf690154ad3a14c640c0fed",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "78e6afd671bb4c28e89a1947e909aa757468175c3162345716f3430c3a0696a2",
+      "fingerprint": "718140a53c6ab816fdfdf58a234d90a50ed008108458375cd73c537bdbc11916",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -105,10 +105,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee8-c508-7e83-ab2d-8229141021c9"
+        "01a0ef03-8f45-7dd1-8ac0-a85003b2ef6f"
       ],
       "usage": {
-        "used": 29595,
+        "used": 26968,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -117,10 +117,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 43380,
-          "utf8Bytes": 47983,
-          "estimatedTokens": 15995,
-          "budgetedTokens": 19994,
+          "chars": 44833,
+          "utf8Bytes": 49443,
+          "estimatedTokens": 16481,
+          "budgetedTokens": 20602,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -129,17 +129,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:44:52.804Z",
+    "at": "2026-09-29T21:13:34.321Z",
     "trace": {
-      "runId": "2df91236-7d83-4a92-b272-a66f15eac344",
+      "runId": "90c634e3-38ec-4ffe-a60f-db0662dd66b3",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9f29228a190b37c09db7829eea1e485c56b77df360c7345048870791f0d74bcb",
-      "contextHash": "2e7002d22379dfe8e5039efb9ba6e0bd772352cf3a02dcd569ae2c67ef922549",
+      "promptHash": "951df85f40e4d7b0019a2b075d3699dc306e710c0ef60eb9866bb02a7b6d7173",
+      "contextHash": "898845ea907fb351e6e28739756e1d393d57f9eae5cca21ce4012a2dfb9365e6",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "208d8661b0c1129b0dd5d6102c0c630ba050761de6452b205e7776a56483b87f",
+      "fingerprint": "fe4d261241c34a0482aed848d058707e957f9e3690533fa9be5d892c4c4a08b5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -152,10 +152,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee9-6b38-7472-aaa4-c0fff44c26fc"
+        "01a0ef03-d548-7fa0-a4f8-8612ab40cde1"
       ],
       "usage": {
-        "used": 30214,
+        "used": 25514,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -164,10 +164,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 51488,
-          "utf8Bytes": 59994,
-          "estimatedTokens": 19998,
-          "budgetedTokens": 24998,
+          "chars": 42066,
+          "utf8Bytes": 45968,
+          "estimatedTokens": 15323,
+          "budgetedTokens": 19154,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
