@@ -28,5 +28,11 @@ it("serves fixed inline citations and explicit question actions through the same
     expect(task.json().taskId).toBeTruthy(); expect(store.tasks()).toHaveLength(1);
     const noModel = await app.inject({ method: "POST", url: "/api/knowledge/analyze", payload: { revisionIds: [m.revisionId] } });
     expect(noModel.statusCode).toBe(503);
+    const image = store.capture({ source: "manual", externalId: "diagram", title: "历史图像", parts: [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", label: "原图" }], context: {} });
+    const assetId = (image.revision.parts[0] as { assetId: string }).assetId;
+    store.capture({ source: "manual", externalId: "diagram", title: "新材料", parts: [{ type: "text", text: "图片已被新版本替代" }], context: {} });
+    const historicalImage = await app.inject("/api/knowledge/assets/" + assetId);
+    expect(historicalImage.statusCode).toBe(200);
+    expect(historicalImage.headers["content-type"]).toContain("image/png");
   } finally { await app.close(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

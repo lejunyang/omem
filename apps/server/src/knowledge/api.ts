@@ -31,8 +31,9 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return { ...c, actionable: !!target, unavailableReason: target ? null : "被引用的原始材料版本不可用", current: target?.current ?? false,
       resolved: target ? { kind: "material", key: target.material.key, digest: target.material.digest, title: target.material.title, startLine: c.target.startLine, endLine: c.target.endLine } : null };
   };
-  app.get(prefix + "/articles", async () => ({ articles: repository.list().map(meta), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running, lastRun }));
+  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.list().map(meta), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running, lastRun }; });
   app.get<{ Params: { key: string }; Querystring: { revision?: string } }>(prefix + "/articles/:key", async (req, reply) => {
+    repository.refresh();
     const a = repository.get(req.params.key, req.query.revision);
     if (!a) return reply.code(404).send({ error: "尚未生成这份知识" });
     return { ...meta(a), document: a.document, citations: a.document.citations.map(c => resolveCitation(a, c.key)) };
@@ -64,10 +65,10 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
       images: m.images.map(i => ({ ...i, url: prefix + "/assets/" + i.assetId })), knowledge: knowledge ? meta(knowledge) : null, links };
   });
   app.get<{ Params: { id: string } }>(prefix + "/assets/:id", async (req, reply) => {
-    const image = repository.materials().flatMap(m => m.images).find(i => i.assetId === req.params.id);
-    const bytes = image && input.store.asset(image.assetId);
-    if (!image || !bytes) return reply.code(404).send({ error: "图片不可用" });
-    return reply.type(image.mimeType).send(bytes);
+    const image = input.store.db.prepare("SELECT json_extract(p.value,'$.mimeType') mime FROM revisions r,json_each(r.body,'$.parts') p WHERE json_extract(p.value,'$.type')='image' AND json_extract(p.value,'$.assetId')=? LIMIT 1").get(req.params.id) as { mime: string } | undefined;
+    const bytes = image && input.store.asset(req.params.id);
+    if (!image || !["image/png", "image/jpeg", "image/webp"].includes(image.mime) || !bytes) return reply.code(404).send({ error: "图片不可用" });
+    return reply.type(image.mime).send(bytes);
   });
   app.get(prefix + "/questions", async () => repository.questions());
   app.post<{ Params: { id: string }; Body: { answer: string } }>(prefix + "/questions/:id/answer", async (req, reply) => {
