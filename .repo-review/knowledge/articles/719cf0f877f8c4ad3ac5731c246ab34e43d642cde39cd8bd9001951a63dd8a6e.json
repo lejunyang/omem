@@ -1,0 +1,394 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:agent-runtime:part-7",
+    "title": "agent-runtime · 模块理解 · 专题 7",
+    "summary": "本专题说明 agent-runtime 如何以职责隔离、固定证据、版本化合同和确定性校验组织可追溯知识：verifier 复核证据支持性，visual-analyst 约束图像知识产出，代码理解子系统固定快照并校验角色资产及部分显式引用。当前边界不等于完整运行保证，模型调用、视觉输入、独立复核凭证与持久化拒绝流程仍依赖外部编排。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "role_boundaries",
+        "title": "证据核验与视觉分析的职责拆分",
+        "body": "verifier 不继承提取器推理，而是先复查引文或资产身份，再比较主体、范围、时间、归属、否定、条件和陈述强度；它只评估支持性，无权批准或执行变更。[[c1]] 输出合同又把资产身份判定与语义判定分开，避免“定位有效”被直接当作“论断成立”。[[c2]]\n\nvisual-analyst 面向原始图片组织可见结构、界面或图表，必须区分观察与推断，不虚构不可读文字。[[c3]] 其清单声明无工具、会话不复用、不继承用户技能或 MCP，并输出 `KnowledgeBatch.v1`。[[c4]] 两类角色共享固定材料、结构化输出和显式保留不确定性的原则，但分别承担知识形成与独立支持性复核。"
+      },
+      {
+        "key": "code_understanding_flow",
+        "title": "代码理解如何固定输入并约束输出",
+        "body": "代码理解先把文件、符号、关系边和证据封装为固定快照，并校验重复标识、符号所属文件及边端点。[[c5]] 输出合同区分机械事实与解释，记录职责、边界、流程、风险、未知项、置信度及来源摘要；但“流程步骤”也可携带节点标识。[[c6]]\n\n角色注册器仅加载白名单角色，核对清单身份、输出 Schema、技能名称和制品摘要。[[c7]] 随后的验证器会遍历顶层节点与边引用、证据引用及 claim 内引用，并检查来源封印、模型可用性、行范围和节点预算；因此它约束的是这些已被遍历的显式引用，尚未覆盖 `key_flows[].node_ids`。[[c8]] 验证失败会返回 `failed` 或 `rejected`，供调用方拒绝把未知标识提升进知识图；现有材料没有展示持久化调用方确实执行了这一拒绝策略。"
+      },
+      {
+        "key": "progress_limits",
+        "title": "降级路径、当前进展与限制",
+        "body": "无模型时，代码理解生成确定性 seed：只列出快照中机械可得的符号事实，叙事字段为空、置信度为零，并明确职责、边界与关键流程仍未知。[[c9]] 这提供了诚实的结构骨架，不把模板或 seed 冒充模型理解。\n\n目前可确认的是合同、角色资产加载、摘要封印和部分交叉引用校验已由代码表达；模块自身不调用真实模型，也不能验证自由文本语义。`verified_by_agent` 只受到字段一致性约束，不能证明独立复核真实发生；失败状态也只是验证器返回值，是否阻止持久化仍取决于外部编排。[[c6]][[c8]] 视觉角色同样只声明隔离、预算与输出合同，清单没有说明原图载荷通道或 profile 的视觉能力协商。[[c4]] 这些未知项不阻塞对现有架构边界的总结，但会影响真实视觉任务和可信发布链路的验收。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "独立核验流程与权限边界",
+        "reason": "说明 verifier 必须独立复查证据、比较关键语义维度，并且只评估支持性而不批准或执行变更。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "# omem verifier role v1\n\nIndependently assess proposals against the supplied original evidence and trusted provenance. Do not inherit extractor reasoning. Recheck quote or asset identity, then compare subject, scope, time, attribution, negation, conditions, and intended strength. Preserve conflicts and missing context."
+      },
+      {
+        "key": "c2",
+        "label": "核验结果的双重判定合同",
+        "reason": "支持资产身份判定与语义支持判定分离，并说明各自的结构化状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/verifier/1/output.schema.json",
+          "startLine": 13,
+          "endLine": 34
+        },
+        "quote": "      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"proposal_id\",\n          \"proposal_digest\",\n          \"quote_asset_verdict\",\n          \"semantic_verdict\",\n          \"reason_code\",\n          \"reason\",\n          \"missing_context\"\n        ],\n        \"proper"
+      },
+      {
+        "key": "c3",
+        "label": "视觉观察与推断边界",
+        "reason": "说明视觉角色应描述可见内容、不得虚构不可读文字，并要求引用图片区域。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/skills/omem-visual-analyst/SKILL.md",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "---\nname: omem-visual-analyst\ndescription: 分析图像材料。根据原始图片说明可见结构、界面或图表；区分看见与推断，不虚构不可读文字，引用图片并说明区域。\n---\n\n# 分析图像材料\n\n根据原始图片说明可见结构、界面或图表；区分看见与推断，不虚构不可读文字，引用图片并说明区域。"
+      },
+      {
+        "key": "c4",
+        "label": "视觉角色隔离与预算配置",
+        "reason": "支持 visual-analyst 的角色包、知识输出、无工具策略、会话隔离和预算声明，同时界定清单未描述图像载荷机制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+          "startLine": 2,
+          "endLine": 30
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"visual-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-visual-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"feef67248fed3d15d94d9"
+      },
+      {
+        "key": "c5",
+        "label": "固定代码快照及结构一致性",
+        "reason": "说明快照包含文件、符号、关系边和证据，并校验重复标识、符号归属和边端点。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 49,
+          "endLine": 168
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Input snapshot: the fixed, trusted reference set for one understanding run.\n// Every id the model may cite must exist here, or the validator rejects it.\n// ---------------------------------------------------------------------------\n\nexpor"
+      },
+      {
+        "key": "c6",
+        "label": "代码理解输出与来源封印",
+        "reason": "支持机械事实与解释的区分、领域内容字段、流程节点引用，以及模型和摘要封印设计。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 208,
+          "endLine": 310
+        },
+        "quote": "export const flowStepSchema = z\n  .object({\n    name: z.string().min(1).max(300),\n    description: z.string().max(2000).default(\"\"),\n    node_ids: z.array(z.string().min(1).max(300)).max(50).default([]),\n  })\n  .strict();\n\n// Each claim is explicitly tagged so raw facts (mechanically present in the\n// snapshot) are nev"
+      },
+      {
+        "key": "c7",
+        "label": "受限角色资产加载",
+        "reason": "说明角色白名单、清单一致性、输出 Schema、技能摘要和 bundle 摘要的加载校验。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 412,
+          "endLine": 486
+        },
+        "quote": "export class CodeRoleRegistry {\n  constructor(readonly root: string = resolve(\"packages/agent-runtime/roles\")) {}\n\n  load(roleId: string, version = \"1\"): LoadedCodeRole {\n    if (!CODE_UNDERSTANDING_ROLES.includes(roleId as CodeUnderstandingRole))\n      throw Error(`CODE_ROLE_NOT_ALLOWLISTED: ${roleId}`);\n    if (!/^[a"
+      },
+      {
+        "key": "c8",
+        "label": "确定性交叉引用验证器",
+        "reason": "支持验证器实际检查的来源封印、模型状态、顶层与 claim 引用、选择器和预算，并证明其返回失败状态而非直接实施持久化拒绝。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 489,
+          "endLine": 618
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Deterministic validator. Returns a discriminated result instead of throwing\n// on cross-reference problems, so callers can record status=failed/rejected and\n// never promote a hallucinated id into the knowledge graph.\n// -----------------"
+      },
+      {
+        "key": "c9",
+        "label": "无模型时的诚实降级",
+        "reason": "说明 seed 仅包含机械事实、空叙事、明确未知项和零置信度，不伪造模型理解。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 620,
+          "endLine": 669
+        },
+        "quote": "/**\n * Build a deterministic seed output when no model is available. It lists only\n * mechanically-derived facts (counts, declared files/symbols/edges) and cites\n * nothing the validator cannot check. It never fabricates module narrative.\n */\nexport function buildSeedOutput(args: {\n  bundle: LoadedCodeRole;\n  snapshot:"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`key_flows[].node_ids` 是否应与其他节点引用一样接受确定性交叉引用校验？",
+        "why": "流程步骤允许携带节点标识，但当前验证器只遍历顶层引用和 claim 内引用；未知节点可能进入流程叙述而未被拒绝。",
+        "nextStep": "明确该字段是否具有证据指针语义；若有，将其加入节点存在性和引用预算检查，并补充未知节点拒绝测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c8"
+        ]
+      },
+      {
+        "question": "谁负责为 `verified_by_agent` 提供可验证的独立复核运行凭证？",
+        "why": "当前合同只检查状态、布尔值和复核者标识之间的一致性，不能证明复核者使用了隔离会话、原始证据或独立推理。",
+        "nextStep": "检查调用验证器的编排和持久化流程，定义复核运行标识、输入摘要及角色隔离证据的绑定方式。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c8"
+        ]
+      },
+      {
+        "question": "验证失败结果是否在持久化入口被强制阻止写入或提升？",
+        "why": "本模块只返回带 `failed` 或 `rejected` 状态的结果；注释说明调用方可以据此拒绝提升，但未展示知识图或数据库写入逻辑。",
+        "nextStep": "检查验证器调用方和持久化事务，增加未知引用无法进入有效知识状态的集成测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "visual-analyst 的原始图像通过何种载荷通道传入，并如何在执行前拒绝不支持视觉输入的 profile？",
+        "why": "角色清单声明无工具运行和 `traex` profile，但没有图像附件协议或视觉能力协商字段；这不阻塞当前架构总结，却影响真实视觉任务能否可靠执行。",
+        "nextStep": "核对角色任务封装与模型能力发现流程，并增加真实图片输入、不可读区域和不支持视觉模型的端到端测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "verifier 的 `reason_code` 是否需要受控词表，以及资产身份无效或歧义时应如何映射语义 verdict？",
+        "why": "输出合同仅把 `reason_code` 定义为任意字符串；角色规则禁止无效或歧义证据成为 `supported`，但未规定其余语义状态的确定映射，可能影响统计和自动路由。",
+        "nextStep": "根据消费端处理逻辑制定版本化原因代码和判定映射，并用无效引文、歧义图片及缺失范围样例验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/output.schema.json",
+      "digest": "6ab370d7f0c7af0c0433a7b98677e949fd8c45df348c52020af5aaecd8371670"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
+      "digest": "588a152e46dc50fce04717dcc7ebe386913f8f45da0ae090b735f16dcbce6f23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
+      "digest": "1066d9fa84cc7dacab542e8ff908be35fd27ac116f78aa38fd11f944c3f34227"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
+      "digest": "dab14a5bbcf124b8c2676845e2977bb2a21fa8686310c037b62046a826d23edf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+      "digest": "c8b425766c71d518aefc2d4a3577d4ba6993843610bb4bb24400c2f2d3251e89"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/prompt.md",
+      "digest": "3a5e1432829bfb0b77fdfd57a986d2d0f24b7f3d0656d8617e2c7faed28dff50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/skills/omem-visual-analyst/SKILL.md",
+      "digest": "f3bc7bd10df4298be3c4d9b573f28f11eba1aa7822841e00a869ed90084c1299"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/skills/omem-visual-analyst/agents/openai.yaml",
+      "digest": "75c68e75e0b8b2020663d19f2e4b655459166a7a5645d570e84bbfdb6fd70317"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/output.schema.json",
+      "digest": "6303e4b89d3d9b1293ea6e4ff2ec465f7bb9ea21e89d390a83bb774db1aff7a3"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
+      "digest": "b49c9ffd48255483a91da552d04d06b50f2dc7bc77b7f8a7e374a5ee0f553d7b"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
+      "digest": "0313ac0f038b5906b6e8966da5ac28ed43d9a49135b5d16a506fb8a4e3992617"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
+      "digest": "d610375297dd09686e1be950ccd217af01de71a7f1a6fd3148307f84b3b1079b"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+      "digest": "f0a56a5108b24240be5a2d1ba271fb5f1f3758c5a9be8e8a853a8b0f120c0e9a"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/output.schema.json",
+      "digest": "cfb34b7506d70dd23c25c9631440cc77fe30942aa8704909e8038b38d111d572"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/prompt.md",
+      "digest": "e7027306e4d389eadf1633ae7fa24eed02056e7ed6b07d1fe6fd338e99ae6950"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/skills/omem-visual-analyst/SKILL.md",
+      "digest": "7c3112dd9b092e163a4a78b93d9b05626dbaa410154bd17d8cba2638499366bb"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/skills/omem-visual-analyst/agents/openai.yaml",
+      "digest": "8e0d716a11db780f150005b83732d9cbff3f1571f34d15f0603c5fcaab89a833"
+    },
+    {
+      "kind": "article",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "007c6d193a7578142983bd33ac23c2ddfe1d57fa732d782d8a7356ac18806ed0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:38:11.177Z",
+    "trace": {
+      "runId": "29d1aa31-ea9b-47c8-9042-6714dd6c7e2b",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "1c2f5d492d736beb7edc0b95dabcef4b7ffb8ff88f571e17a4e5e95344ce656c",
+      "contextHash": "97fa21a28ce9969ef310f11a1a99c0b4100cc1425bf2c09c7f6a3bdb331f115b",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "718003f35cda6aca4d1333748d04748017e62918a4bc7595986e297ac7c848e0",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee3-52a9-7f41-bdb0-7669f0b5ba0b"
+      ],
+      "usage": {
+        "used": 46292,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 94371,
+          "utf8Bytes": 118741,
+          "estimatedTokens": 39581,
+          "budgetedTokens": 49477,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:38:20.623Z",
+    "trace": {
+      "runId": "b0505fff-f186-4527-be7c-a38916d2db83",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "cf095ae518f3fb9496bb420eca53aa7273d03203ece43b03268f55d16adbe84e",
+      "contextHash": "134f1a48f9f50b3028d244c28317ce17028a3a55ee196bdc761abae5b182d232",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5aae217eac1bd03376efb454a0275a28c155b07a83097d2b7551676ddd4e2c82",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee3-a5c9-7281-b86c-bfaba01c5a09"
+      ],
+      "usage": {
+        "used": 43526,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 91415,
+          "utf8Bytes": 114239,
+          "estimatedTokens": 38080,
+          "budgetedTokens": 47600,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
