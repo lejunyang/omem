@@ -1,0 +1,393 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:other:part-5",
+    "title": "other · 模块理解 · 专题 5",
+    "summary": "本专题梳理 Store、仓库同步、运行时数据迁移和角色网关之间已被测试确认的协作边界。Store 提供版本化证据与普通片段链接；repo-review 维护文件来源、修订和专用关系；知识角色通过共享网关受能力、会话和输出合同约束。此前关于三类关系已统一连通及普遍失败原子性的结论被收窄，端到端阅读合同、真实 ACP 兼容性和并发故障恢复仍待验证。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "evidence-foundation",
+        "title": "版本化证据基础与已收窄的结论",
+        "body": "Store 对相同捕获进行重试去重，内容变化和恢复都会追加修订，旧片段保持原文；基于陈旧 head 的再次恢复被拒绝。普通片段链接允许循环导航，重复写边保持幂等。[[c1]]\n\n此前“代码关系、正文引用与个人知识已共享同一种证据图”的结论被替代。现有材料只分别证明普通片段链接，以及 repo-review 的 requirement 关系能定位到指定标题片段，尚未证明正文引用、专用评审关系与个人知识链接共用同一存储和阅读合同。[[c2]] 失败安全也不能泛化为所有上层流程的事务保证；目前只能确认图片类型不匹配时不会发布 revision 或通知。[[c3]]"
+      },
+      {
+        "key": "review-sync",
+        "title": "仓库同步、修订与运行时隔离",
+        "body": "仓库适配器以路径区分来源：相同内容的不同文件仍保持独立；文件变化追加修订，旧版退出默认召回，删除来源默认隐藏。[[c4]] 增量同步结合基线、HEAD 与脏工作树；缺失基线会全扫，非 UTF-8 文件局部失败，白名单外的符号链接不会被跟随。[[c5]] 脏树或文件失败时不推进基线，恢复或修复后重新扫描。[[c6]]\n\n运行时数据与旧目录隔离：默认启动忽略损坏旧库；显式种子才复制数据库和同步状态。重复种子不覆盖已有运行时，无旧快照时不创建数据库，复制失败会清除部分目标并保留旧数据。[[c7]]"
+      },
+      {
+        "key": "role-runtime",
+        "title": "知识角色的受控执行流程",
+        "body": "角色网关加载版本化提示与技能，并将角色包摘要、输出合同和实际技能写入作业 attempt；inline/native 技能、模型、reasoning effort 与图片能力均经过校验。[[c8]] 格式错误、输出超限、异常结束或超时不会生成任务或应用回执。不同项目使用独立会话，材料中的工具或权限文字仅作为数据，拒绝后的请求不能迟到转化为业务决定。[[c9]]\n\n知识角色复用同一网关，宿主可在输出校验阶段绑定固定引用；模型草稿与目录被隔离在不可信派生知识区。[[c10]] 这些结论来自本地夹具，尚不能证明所有真实 ACP CLI 都兼容。[[c13]]"
+      },
+      {
+        "key": "verified-boundaries",
+        "title": "已验证关联与剩余边界",
+        "body": "Review API 已测试类别预过滤、跨源同步拒绝、健康信息脱敏和修订 current 标记。[[c11]] requirement 关系能够指向各自需求标题片段，而不是共享概览表。[[c2]] 新数据库即使复用另一数据库留下的干净同步状态，也会因自身缺少来源而重新扫描并补齐文件；该结论由独立重建用例直接支持。[[c14]]\n\n这些协作点不等于三类知识关系已经端到端统一。当前 Store 用例也未验证进程崩溃、并发连接、资产落盘和外部通知。[[c12]] 跨文件调用解析、跨修订符号续接及统一阅读导航在本组材料中均缺少直接验收证据。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "不可变修订与普通片段链接",
+        "reason": "支持捕获去重、历史片段固定、恢复追加新版本，以及循环关系可导航和重复写边幂等。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 40,
+          "endLine": 78
+        },
+        "quote": "describe(\"versioned evidence and transaction outbox\", () => {\n  it(\"deduplicates retries but keeps historical evidence fixed\", () => {\n    const s = setup();\n    const a = s.capture(input());\n    expect(s.capture(input()).duplicate).toBe(true);\n    const b = s.capture(input(\"second\"));\n    expect(b.revision.version).to"
+      },
+      {
+        "key": "c2",
+        "label": "需求关系的精确片段锚点",
+        "reason": "支持 requirement 关系指向各自需求标题片段，同时界定该测试只覆盖一种专用关系锚定行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 573,
+          "endLine": 655
+        },
+        "quote": "  it(\"requirement refs anchor to their own heading fragment, not a shared G01-G20 table\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(\n      root,\n      \"docs/implementation/status.md\",\n      [\n        \"# Status\",\n        \"\",\n        \"## Acceptance overview\",\n        \"| ID | Intent |\",\n        \"|---"
+      },
+      {
+        "key": "c3",
+        "label": "无效图片的发布前拒绝",
+        "reason": "支持图片类型不匹配时不产生 revision 或通知，不能外推为所有失败路径的事务原子性。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 79,
+          "endLine": 97
+        },
+        "quote": "  it(\"rejects image type mismatch before publishing a revision\", () => {\n    const s = setup();\n    expect(() =>\n      s.capture(\n        captureSchema.parse({\n          ...input(),\n          parts: [\n            {\n              type: \"image\",\n              data: Buffer.from(\"not png\").toString(\"base64\"),\n             "
+      },
+      {
+        "key": "c4",
+        "label": "文件来源身份与修订历史",
+        "reason": "支持按路径保持独立来源、内容变化追加修订、旧版退出默认召回及删除来源默认隐藏。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 139,
+          "endLine": 230
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Group 1: stable source identity + revision history.\n// ---------------------------------------------------------------------------\n\ndescribe(\"group 1: source identity and revisions\", () => {\n  it(\"keeps two files with identical content as"
+      },
+      {
+        "key": "c5",
+        "label": "增量快照与异常文件处理",
+        "reason": "支持干净基线零扫描、脏工作树覆盖、缺失基线全扫，以及非 UTF-8 文件和符号链接边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 233,
+          "endLine": 363
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Group 2: incremental / snapshot reliability.\n// ---------------------------------------------------------------------------\n\ndescribe(\"group 2: incremental and snapshot reliability\", () => {\n  it(\"clean worktree at baseline==HEAD scans no"
+      },
+      {
+        "key": "c6",
+        "label": "脏树与失败文件的基线控制",
+        "reason": "支持脏同步和单文件失败不推进基线，并在工作树恢复或文件修复后重新同步。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 527,
+          "endLine": 571
+        },
+        "quote": "  it(\"a dirty sync does not advance the baseline; restoring to HEAD re-scans\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"a\", \"V1_TOKEN\");\n    commitAll(root, \"c1\");\n    const store = setup();\n    await runReviewSync(store, root);\n    expect(readSyncStatus(root).lastSyncCommit).toBe(headCommi"
+      },
+      {
+        "key": "c7",
+        "label": "运行时启动与显式种子迁移",
+        "reason": "支持默认启动与旧库隔离，以及显式复制、幂等、空启动和失败清理行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+          "startLine": 97,
+          "endLine": 178
+        },
+        "quote": "it(\"default startup ignores an unusable legacy database and starts a rebuildable runtime\", () => {\n  const root = makeRepoRoot();\n  const legacy = join(root, \".repo-review/data\");\n  mkdirSync(legacy, { recursive: true });\n  writeFileSync(join(legacy, \"omem.sqlite\"), \"not a sqlite file\");\n  const store = createReviewSto"
+      },
+      {
+        "key": "c8",
+        "label": "角色包、技能与能力协商",
+        "reason": "支持角色配置差异、作业追踪、inline/native 技能校验，以及模型、effort 和图片能力检查。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/role-runtime.test.ts",
+          "startLine": 95,
+          "endLine": 291
+        },
+        "quote": "describe(\"B2-03 versioned role runtime acceptance\", () => {\n  it(\"A-R01 sends distinct role prompts/skills and records effective hashes\", async () => {\n    const runtime = gateway();\n    const extracted = await runtime.run({\n      roleId: \"extractor\",\n      profile: profile(),\n      context: context(\"extractor\"),\n    }"
+      },
+      {
+        "key": "c9",
+        "label": "运行失败与会话权限隔离",
+        "reason": "支持异常输出和超时不应用、跨项目会话隔离、材料命令无工具权限，以及迟到批准被拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/role-runtime.test.ts",
+          "startLine": 293,
+          "endLine": 433
+        },
+        "quote": "  it(\"A-R05 rejects malformed/oversized/non-end outputs and times out without applying\", async () => {\n    const store = new Store(temporary(\"omem-role-failures-\"));\n    try {\n      const runtime = new RoleRuntimeGateway(\n        new RoleBundleRegistry(),\n        temporary(\"omem-role-failure-workspace-\"),\n        store"
+      },
+      {
+        "key": "c10",
+        "label": "知识角色的共享网关合同",
+        "reason": "支持知识角色复用运行网关、宿主绑定固定引用，并将模型草稿与可信任务指令隔离。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/role-runtime.test.ts",
+          "startLine": 436,
+          "endLine": 452
+        },
+        "quote": "it(\"runs knowledge roles through the shared gateway and preserves host-bound citations\", async () => {\n  const result = await gateway().run({ roleId: \"code-analyst\", profile: profile(), context: context(\"code-analyst\", \"fixed evidence\", { task: { targetKeys: [\"manual:a\"] } }),\n    validateOutput: out => { const normali"
+      },
+      {
+        "key": "c11",
+        "label": "检索预过滤与 Review API 安全",
+        "reason": "支持类别过滤、跨源写请求拒绝、健康信息脱敏及修订 current 状态接口。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 369,
+          "endLine": 493
+        },
+        "quote": "describe(\"group 4: retrieval and API safety\", () => {\n  it(\"category filter still returns results when other categories dominate the top-N\", async () => {\n    const root = makeFixtureRepo();\n    for (let i = 0; i < 22; i++) archFile(root, `arch${i}`, \"SHARED_Q\");\n    decisionsFile(root, \"my-decision\", \"decided SHARED_Q"
+      },
+      {
+        "key": "c12",
+        "label": "Store 测试覆盖边界",
+        "reason": "明确现有 Store 用例未覆盖崩溃恢复、并发竞争、资产落盘失败、外部通知和团队隔离。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "section": "coverage-boundary"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c13",
+        "label": "知识网关验证范围",
+        "reason": "说明共享网关结论来自本地夹具测试，不能外推为全部真实 ACP CLI 的兼容性证明。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/role-runtime.test.ts",
+          "section": "knowledge-gateway"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c14",
+        "label": "新数据库按自身内容重建",
+        "reason": "直接支持新数据库不能仅依赖其他数据库留下的干净同步基线，而会重新扫描并补齐自身缺失来源。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 687,
+          "endLine": 699
+        },
+        "quote": "it(\"rebuilds a fresh database even when another database left a clean sync baseline\", async () => {\n  const root = makeFixtureRepo();\n  try {\n    archFile(root, \"first\", \"ONE\"); archFile(root, \"second\", \"TWO\"); commitAll(root, \"fixture\");\n    const original = setup(); const stateDir = join(original.dataDir, \"shared-sta"
+      }
+    ],
+    "questions": [
+      {
+        "question": "代码关系、正文引用与个人知识是否已经通过同一关系模型和阅读合同端到端连通？",
+        "why": "现有证据分别覆盖普通片段链接和 repo-review requirement 关系，没有直接证明正文引用、专用评审关系与个人知识链接共用存储、目标解析和导航结果。",
+        "nextStep": "补充覆盖三类入口、固定 Fragment 目标和统一阅读导航结果的集成测试或实现材料；在此之前保持为架构目标。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "Store 是否需要优先补充进程崩溃、并发写入和资产落盘失败测试？",
+        "why": "当前仅能确认无效图片这一特定路径不会发布 revision 或通知，尚不足以判断同步、知识保存及其他失败路径的整体原子性。",
+        "nextStep": "选择首要故障模型，增加可重复的中断点和双连接测试，并分别检查数据库、通知与资产文件的一致性。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c12"
+        ]
+      },
+      {
+        "question": "是否需要用至少一种真实 ACP CLI 验收角色运行时？",
+        "why": "夹具已覆盖能力协商、会话隔离、超时和输出合同，但真实代理的技能发现、图片输入与结束协议兼容性仍未知。",
+        "nextStep": "选定受支持的 Agent CLI 和模型配置，执行明确标记为 live check 的测试，并记录环境、退出码及不支持的能力。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c9",
+          "c13"
+        ]
+      },
+      {
+        "question": "旧 review 数据的显式导入需要支持并发启动或超大数据库吗？",
+        "why": "现有种子测试覆盖首次复制、重复调用和损坏快照清理，但没有并发调用、进程中断或大数据量复制保证。",
+        "nextStep": "先确定该流程是单进程人工迁移还是启动期并发操作，再决定是否增加锁、原子切换和容量测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+      "digest": "4da0fd6c62ebc6680f8ef9f78780211be16d90afd93a01666bf420473f59bc48"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-sync.test.ts",
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/role-runtime.test.ts",
+      "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/store.test.ts",
+      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+      "digest": "dbe79c0890fac84e6becc98c2a484d2b7105f30d061277f04bd24b4bba4cade5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/tests/review-sync.test.ts",
+      "digest": "ef06e631a6395f6f3f166f17a46a5dfd109fd06938322b46291ed3132857944b"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/tests/role-runtime.test.ts",
+      "digest": "a4d64da37cae0a6ce7de7250347315ddb8bef281767eed1d97a8184c49980346"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/tests/store.test.ts",
+      "digest": "b73db4b07ec4acac224d8554d6feda2870048e1e5411d4401b12c14340b2290f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:00:54.803Z",
+    "trace": {
+      "runId": "2254142a-be86-45f4-ac98-10f09db48341",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "9748247e8070551f9196e99a2c7154cffc540a9f4feaf3c6a0a84ac2cd74492a",
+      "contextHash": "5e1b41e58ca294cc23a3a74f32d7d38fb81590e8ebe541ce6c85ed3653831c58",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b0eb0914e4f18458b5c571356d07b2568b09c54aa2b6ba9cb58f1fe1200a15ef",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef8-1fd0-7d33-a603-253ad0c57476"
+      ],
+      "usage": {
+        "used": 47096,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 101403,
+          "utf8Bytes": 114955,
+          "estimatedTokens": 38319,
+          "budgetedTokens": 47899,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:01:07.244Z",
+    "trace": {
+      "runId": "8d0dcdcc-c308-478c-85ee-c576692d7107",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c5bb226a483cd2e796b40e2f4d1a8d1006a4ad34402f8b00737de3d1c764e340",
+      "contextHash": "f49dedf6bf374b2e6bae83c612b49f4c278b86409bc3c90a86c3de9f3f4e39bc",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "fdae9f3ef218728e0e0f1eb4772aaadbc22e62413d24cb3c24f15bc79ab31851",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef8-74d0-73d1-8f6f-661e59ace2d5"
+      ],
+      "usage": {
+        "used": 44445,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99238,
+          "utf8Bytes": 111720,
+          "estimatedTokens": 37240,
+          "budgetedTokens": 46550,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
