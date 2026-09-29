@@ -1,17 +1,9 @@
-/** Independent, explicit Code Understanding model config for review mode.
- *
- * This is the ONLY place review mode looks for a model. It reads exactly one
- * optional env var: `REVIEW_CODE_MODEL_CONFIG`, which must point at a JSON file.
- * It never reads the personal OMEM agent profiles, user keychains, or any
- * other host config. When the var is unset the review app has no model and
- * serves the raw graph + curated seeds honestly.
- *
- * The JSON file shape matches UnderstandingTransportConfig:
- *   { "transport": "none" | "acp" | "cli" | "http",
- *     "command": "...", "args": [...], "model": "...",
- *     "effort": "...", "timeoutMs": 120000, "endpoint": "..." }
- */
-import { readFileSync } from "node:fs";
+/** Review uses the checked-in config/review-code-model.json as its actual
+ * profile. REVIEW_CODE_MODEL_CONFIG explicitly overrides it; personal profiles
+ * and secrets are never consulted. A missing project profile means no model.
+ * Configuring a profile enables explicit generation, never inference on boot. */
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   buildUnderstandingModelPort,
   CodeModelUnavailableError,
@@ -19,13 +11,19 @@ import {
   type UnderstandingModelPort,
 } from "../code/understanding-model.js";
 
+export function reviewModelConfigPath(): string | undefined {
+  if (process.env.REVIEW_CODE_MODEL_CONFIG) return process.env.REVIEW_CODE_MODEL_CONFIG;
+  const projectConfig = resolve(process.env.REVIEW_REPO_ROOT ?? process.cwd(), "config/review-code-model.json");
+  return existsSync(projectConfig) ? projectConfig : undefined;
+}
+
 const NONE: UnderstandingTransportConfig = { transport: "none" };
 
 /** Load the explicit review model config. Defaults to no model; never throws on
  * missing config — only throws on an explicitly-broken file so the operator
  * notices a typo instead of silently running without a model. */
 export function loadReviewCodeModelConfig(
-  path = process.env.REVIEW_CODE_MODEL_CONFIG,
+  path = reviewModelConfigPath(),
 ): UnderstandingTransportConfig {
   if (!path) return { ...NONE };
   let raw: string;
@@ -66,7 +64,7 @@ export function loadReviewCodeModelConfig(
 
 /** Build the port from the explicit config file (null = no model). */
 export function buildReviewCodeModel(
-  path = process.env.REVIEW_CODE_MODEL_CONFIG,
+  path = reviewModelConfigPath(),
 ): UnderstandingModelPort | null {
   const config = loadReviewCodeModelConfig(path);
   return buildUnderstandingModelPort(config);
