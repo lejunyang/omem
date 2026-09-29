@@ -3,43 +3,48 @@
   "document": {
     "key": "omem:apps/server/src/knowledge/pipeline.ts",
     "title": "知识生成、复核与发布流水线",
-    "summary": "把固定原始材料分派给适合的分析角色，经结构校验、独立语义复核和有限次修订后发布为带依赖与运行追踪的知识文章，并支持失效材料重分析及高层主题综合。",
+    "summary": "把固定材料路由给专门分析角色，通过持久任务执行生成与独立复核，只发布通过复核且依赖未变的知识；同时支持用户回答、失败反馈和分层综合。",
     "category": "workflow",
     "sections": [
       {
-        "key": "roles-context",
-        "title": "角色分派与固定上下文",
-        "body": "流水线按材料形态选择分析角色：含图片的材料交给视觉分析，会话类材料交给对话分析，常见源码扩展名交给代码分析，其余进入通用材料分析。[[c1]] 构造角色上下文时，只把获准的行范围、图片资产和可信捕获元数据送入模型；派生文章会明确标为“非独立证据”，且至少需要一项固定原始材料。[[c2]]"
+        "key": "routing-context",
+        "title": "材料路由与固定上下文",
+        "body": "流水线按材料特征选择角色：含图片的材料交给视觉分析，对话或 hook 交给会话分析，常见代码扩展名交给代码分析，其余由通用材料分析处理。[[c1]] 构造角色上下文时只提供明确选定的行范围和图片资产，并附上来源 Revision、参与者及转发属性；若没有任何固定原始材料则拒绝运行。派生文章会标明其不是独立证据，角色只能引用本次明确提供的材料或文章。[[c2]]"
       },
       {
-        "key": "execution-review",
-        "title": "持久任务、校验与独立复核",
-        "body": "每次角色运行先登记可重试的持久任务，并记录模型、effort、预算、材料摘要、文章修订和角色包哈希；worker 保存输出及完整 trace，停止、失败或等待用户时不会把不完整结果当成功。[[c3]] 输出必须恰好覆盖目标键，引用只能落在提供范围内，并经过引用绑定和文档结构校验。随后独立复核角色逐篇给出结论；只有 accepted 文档才发布，未通过项最多进行后续修订，且不会覆盖已通过目标。[[c4]]"
+        "key": "durable-run",
+        "title": "持久任务与可追踪执行",
+        "body": "每次角色调用先以模型、effort、预算、材料摘要、文章修订和角色包哈希入队；成功任务可复用既有输出，失败、取消或等待用户的任务则要求重试。worker 保存模型实际配置、提示与上下文指纹、token 用量及完整 trace，使生成过程可以复查。[[c3]] 批量输出还必须完整覆盖目标键，并经过引文绑定、结构校验和可见行范围检查。[[c4]]"
+      },
+      {
+        "key": "review-publication",
+        "title": "独立复核与渐进修订",
+        "body": "正文生成后由独立 verifier 逐篇复核；只有 accepted 文档才会组装依赖、生成记录和复核记录并发布。未通过的目标保留上一稿及具体问题，最多进行四轮定向修订，最后一轮要求把仍不确定的内容降为有依据的问题。[[c5]] 已有复核失败记录也会在材料摘要未变时重新提供，避免后续分析遗忘先前纠正。"
       },
       {
         "key": "analysis-synthesis",
-        "title": "增量分析与主题综合",
-        "body": "材料分析只处理当前没有有效文章的目标，按分析角色、数量和输入体积成批并发执行；用户对既有疑问的回答可作为新的原始材料加入后续分析。[[c5]] 主题综合只使用 current 子文章，子项超过十二个时先分段综合；综合发布物会记录所用原始材料摘要和子文章修订作为依赖，仓库发布时再核对这些依赖是否仍与当前输入一致，变化则拒绝发布。[[c6]][[c7]] 若预算容纳，模型获得完整相关来源，否则保留明确的摘录范围。[[c6]]"
+        "title": "增量分析与分层综合",
+        "body": "增量分析跳过已有 current 文章，把同类且规模受控的材料分批并发处理；相关问题已有用户回答时，会将回答 Revision 作为新的原始材料加入。单批失败被记录，不阻断其他批次。[[c6]] 综合流程只采用 current 子文章，数量过多时先分片；上层综述保留对子文章的固定引用，必要时依据预算选择完整来源或有限引文范围。[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "材料分析角色选择",
-        "reason": "说明图片、对话、代码与普通材料如何分派给不同分析角色。",
+        "label": "分析角色选择",
+        "reason": "说明图片、会话、代码和普通材料如何选择对应分析角色。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/pipeline.ts",
           "startLine": 15,
-          "endLine": 18
+          "endLine": 19
         },
         "quote": "export function analystFor(m: KnowledgeMaterial) {\n  if (m.images.length) return \"visual-analyst\";\n  if ([\"chat\", \"hook\"].includes(m.namespace) || (m.namespace === \"lark\" && !!m.conversationId)) return \"conversation-analyst\";\n  return /\\.(?:[cm]?[jt]sx?|vue|css|py|go|rs|sh)$/.test(m.path ?? ([\"file\", \"git\"].includes(m."
       },
       {
         "key": "c2",
         "label": "角色固定上下文构造",
-        "reason": "支持材料按获准范围进入上下文、派生文章不作为独立证据以及原始材料必需条件。",
+        "reason": "支持材料按可见范围切片、图片读取、原始来源元数据和派生文章身份标记。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -52,7 +57,7 @@
       {
         "key": "c3",
         "label": "持久角色任务执行",
-        "reason": "支持任务登记、运行追踪保存、停止与失败状态处理。",
+        "reason": "说明任务入队、结果复用、worker 执行以及运行 trace 的保存。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,21 +69,34 @@
       },
       {
         "key": "c4",
-        "label": "批次校验与独立复核",
-        "reason": "说明目标覆盖、引用范围校验、独立复核、选择性发布和有限次修订。",
+        "label": "知识批次验证",
+        "reason": "支持目标键完整性、引文绑定、文档验证和提供范围限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/pipeline.ts",
           "startLine": 96,
-          "endLine": 142
+          "endLine": 110
         },
         "quote": "  private checkBatch(out: unknown, targets: Target[], offers: Offer[], articles: KnowledgeArticle[]) {\n    const batch = knowledgeBatchSchema.parse(out);\n    if (batch.documents.length !== targets.length || new Set(batch.documents.map(d => d.key)).size !== targets.length || targets.some(t => !batch.documents.some(d => "
       },
       {
         "key": "c5",
-        "label": "材料增量分析",
-        "reason": "说明仅处理没有 current 文章的目标、批处理并发，以及将已保存的用户回答加入后续分析输入。",
+        "label": "生成复核发布循环",
+        "reason": "说明独立复核、仅发布 accepted 文档及失败目标的定向修订机制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/pipeline.ts",
+          "startLine": 113,
+          "endLine": 142
+        },
+        "quote": "  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown) {\n    let repair: unknown = priorFeedback;\n    let remaining = targets;\n    const published: KnowledgeArticle[] = [];\n    for (let attempt = 0; attempt < 4; attempt++) {\n      const wr"
+      },
+      {
+        "key": "c6",
+        "label": "增量材料分析",
+        "reason": "支持 current 文章复用、批处理、并发、用户回答补充和逐批失败隔离。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -89,30 +107,17 @@
         "quote": "  async analyze(materials: KnowledgeMaterial[], supplements: (targets: KnowledgeMaterial[]) => Offer[] = () => []) {\n    const current = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));\n    const pending = materials.filter(m => { const a = current.get(m.key); return !a; });\n    cons"
       },
       {
-        "key": "c6",
-        "label": "多层知识综合",
-        "reason": "支持子文章分段、依赖复用、来源范围汇集，以及预算允许时提供完整材料。",
+        "key": "c7",
+        "label": "分层知识综合",
+        "reason": "说明 current 子文章选择、分片综合、文章引用保留与上下文预算控制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/pipeline.ts",
           "startLine": 201,
-          "endLine": 262
+          "endLine": 267
         },
         "quote": "  async synthesize(target: Target, childKeys: string[]): Promise<KnowledgeArticle[]> {\n    const available = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));\n    const children = [...new Set(childKeys)].map(k => available.get(k)).filter((a): a is KnowledgeArticle => !!a);\n    if (!c"
-      },
-      {
-        "key": "c7",
-        "label": "发布前依赖一致性检查",
-        "reason": "直接支持发布时比较材料摘要与子文章修订、输入已变化则拒绝发布的论断。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 118,
-          "endLine": 122
-        },
-        "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
       }
     ],
     "questions": []
@@ -121,7 +126,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
+      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
     },
     {
       "kind": "material",
@@ -152,17 +157,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:43:09.619Z",
+    "at": "2026-09-29T21:12:40.550Z",
     "trace": {
-      "runId": "1c162def-876f-476c-b06f-abbfc435845f",
+      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "494c9979f2db0ecc085190c41160298621ef662b8ebe3de848ca0c73cf63b2ea",
-      "contextHash": "c06e922f5cfd7c4b65aa5a9e5d5995f9c67c3b62b263ce7e4049e3a6396dd2d0",
+      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
+      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a68c2049877c48a3d48b6adc04a255bebd39828946e66661528d3b5cc4059ac3",
+      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -175,10 +180,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee7-ea38-7131-8d4e-5d00f9fe41c9"
+        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
       ],
       "usage": {
-        "used": 43774,
+        "used": 52878,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -187,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 103508,
-          "utf8Bytes": 108654,
-          "estimatedTokens": 36218,
-          "budgetedTokens": 45273,
+          "chars": 117772,
+          "utf8Bytes": 129037,
+          "estimatedTokens": 43013,
+          "budgetedTokens": 53767,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -199,17 +204,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:43:22.246Z",
+    "at": "2026-09-29T21:13:15.335Z",
     "trace": {
-      "runId": "78cc8721-3918-440e-9574-4dcf44933329",
+      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "25c898c00cbeda6e1739993e1e7dc0aee20f2bc1c3a212846fb001fd9c18f44d",
-      "contextHash": "83cdd3705dc7c4bbba001b8fd6dcd3211e2871a39384cffbba8b6ff6899c2bb1",
+      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
+      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bc24552545cacc3dfff7ac386d253cd516e7a4eedc84edb48741addbe3932413",
+      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -222,10 +227,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee8-3369-7df3-ba7f-c3922bc4deff"
+        "01a0ef03-398c-79f2-a656-9c230614f1a0"
       ],
       "usage": {
-        "used": 41689,
+        "used": 49586,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -234,10 +239,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101735,
-          "utf8Bytes": 106141,
-          "estimatedTokens": 35381,
-          "budgetedTokens": 44227,
+          "chars": 118346,
+          "utf8Bytes": 128851,
+          "estimatedTokens": 42951,
+          "budgetedTokens": 53689,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
