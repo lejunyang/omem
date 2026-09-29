@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/materials.ts",
-    "title": "仓库材料捕获与知识适配",
-    "summary": "把 Git 工作区文件转换为统一、固定摘要的知识材料，隔离派生数据和私密配置，并为分析提供有限的显式链接上下文。",
+    "title": "仓库文件到知识材料的输入适配器",
+    "summary": "枚举候选仓库文件，执行路径、大小和格式检查后增量捕获文本或图像，并为分析阶段提供受限的本地链接上下文。",
     "category": "implementation",
     "sections": [
       {
-        "key": "discovery",
-        "title": "文件发现与排除",
-        "body": "捕获优先通过 `git ls-files` 合并已跟踪和未忽略的未跟踪文件；Git 命令失败时退化为目录遍历，并跳过 `.git`、`.repo-review`、依赖和构建目录。[[c1]] 对每条路径还会排除派生知识、私密环境文件和本地配置；非普通文件、符号链接及解析后越出仓库根目录的目标同样不会捕获。[[c2]]"
+        "key": "discovery-coverage",
+        "title": "候选发现与覆盖记录边界",
+        "body": "适配器优先通过 Git 获得已跟踪及未忽略的新文件；Git 枚举失败时才递归遍历目录，并在遍历阶段直接跳过 `.git`、`.repo-review`、`node_modules` 和 `dist`。[[c1]] 只有已经进入候选路径列表的匹配项，才会因运行目录、依赖、构建结果、私有环境文件或本地配置而产生 `excluded` 记录；普通文件、符号链接、真实路径和 5 MB 预算也在逐项处理时检查。此前“所有此类路径都会明确记录、不会悄然消失”的结论应由这一更窄的覆盖边界替代。[[c2]]"
       },
       {
-        "key": "capture",
-        "title": "增量捕获流程",
-        "body": "普通文件上限为 5 MB，内容先计算 SHA-256；只有摘要或捕获格式变化时才重新写入。PNG、JPEG、WebP 转为 base64 图片 part，其他文件必须能严格按 UTF-8 解码且不能含 NUL，空文本被排除，长文本按 18 万字符分片。[[c3]] 成功结果记录 material key 和摘要，单文件异常则转成 `failed` 覆盖项而不会终止其余路径。"
+        "key": "capture-format",
+        "title": "增量捕获与材料身份",
+        "body": "文件先按原始字节计算 SHA-256，仅当摘要或捕获格式变化时重新捕获。PNG、JPEG、WebP 保存为图像部分；其他文件必须能严格解码为 UTF-8、不得含空字节且不能是空文本，长文本按 180000 个 JavaScript 字符切片。路径生成稳定的 `omem:` 外部标识，捕获后无论是否发生 revision 变化都会返回当前摘要和材料键。[[c3]] 评审知识仓库复用通用仓库，只过滤元数据中已移除或已成为旧别名的来源。[[c4]]"
       },
       {
-        "key": "repository-links",
-        "title": "知识仓库与链接上下文",
-        "body": "评审知识仓库复用通用 `KnowledgeRepository` 和 `currentMaterials`，但过滤被标记删除或作为旧别名的 source，使 repo-review 只改变输入选择而不另建分析 authority。[[c4]] `linkedMaterialOffers` 从 Markdown 本地链接定位最多四个额外材料；锚点可把窗口移到对应标题，单项最多提供 80 行。HTML 还会启发式加入三个同目录资源。这些只作为候选上下文，注释明确不能据此确认材料关系。[[c5]]"
+        "key": "linked-context",
+        "title": "本地链接上下文及启发规则",
+        "body": "上下文选择器解析 Markdown 本地链接，跳过外部协议、自引用、缺失材料和重复项；带标题锚点时尝试定位对应标题，每份最多提供 80 行，总数最多四份。HTML 目标还会无条件追加三个约定资源名作为候选。该函数只扩大模型可见上下文，不建立确认关系，最终含义仍需分析与复核。[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "仓库路径发现",
-        "reason": "支持 Git 枚举优先、失败后目录遍历以及基础目录排除规则。",
+        "label": "Git 枚举与回退遍历",
+        "reason": "支持两种候选发现方式，并明确回退遍历会直接跳过若干目录。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -38,34 +38,34 @@
       },
       {
         "key": "c2",
-        "label": "安全与隐私排除",
-        "reason": "支持运行数据、环境配置、符号链接和越界路径不会作为证据捕获。",
+        "label": "候选路径检查与覆盖状态",
+        "reason": "支持只有进入候选列表的路径才会执行排除、安全和大小检查并生成覆盖记录。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 27,
+          "startLine": 26,
           "endLine": 35
         },
-        "quote": "  const realRoot = realpathSync(repoRoot);\n  for (const path of paths) {\n    if (path.startsWith(\".repo-review/\") || /(^|\\/)(node_modules|dist|\\.git)(\\/|$)/.test(path) || /(^|\\/)\\.env(?!\\.example$)/.test(path) || /\\.local\\.json$/.test(path)) {\n      result.push({ path, state: \"excluded\", reason: path.startsWith(\".repo-"
+        "quote": "  const result: RepositoryCoverage[] = [];\n  const realRoot = realpathSync(repoRoot);\n  for (const path of paths) {\n    if (path.startsWith(\".repo-review/\") || /(^|\\/)(node_modules|dist|\\.git)(\\/|$)/.test(path) || /(^|\\/)\\.env(?!\\.example$)/.test(path) || /\\.local\\.json$/.test(path)) {\n      result.push({ path, state: "
       },
       {
         "key": "c3",
-        "label": "内容分类和增量捕获",
-        "reason": "支持大小预算、摘要比较、图像处理、严格文本解码和分片规则。",
+        "label": "文本与图像捕获",
+        "reason": "支持摘要比较、媒体类型识别、严格文本解码、固定长度切分及稳定材料标识。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 35,
+          "startLine": 36,
           "endLine": 55
         },
-        "quote": "      if (stat.size > 5_000_000) throw Error(\"文件超过 5 MB 输入预算，需单独处理\");\n      const bytes = readFileSync(absolute);\n      const hash = createHash(\"sha256\").update(bytes).digest(\"hex\");\n      const externalId = `omem:${path}`;\n      const previous = store.db.prepare(\"SELECT r.body FROM sources s JOIN revisions r ON s.head"
+        "quote": "      const bytes = readFileSync(absolute);\n      const hash = createHash(\"sha256\").update(bytes).digest(\"hex\");\n      const externalId = `omem:${path}`;\n      const previous = store.db.prepare(\"SELECT r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='file' AND s.external_id=?\").get(externalId) a"
       },
       {
         "key": "c4",
         "label": "评审知识仓库过滤器",
-        "reason": "直接显示适配器复用通用仓库，并排除删除项和旧别名。",
+        "reason": "说明适配器复用通用知识仓库，并排除已移除来源和旧别名。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -77,9 +77,9 @@
       },
       {
         "key": "c5",
-        "label": "显式链接上下文选择",
-        "reason": "支持链接解析、锚点窗口、HTML 启发式、去重与最多四项限制。",
-        "relation": "explains",
+        "label": "本地链接上下文选择",
+        "reason": "支持链接解析、锚点定位、HTML 启发候选、行数范围和最多四份材料的限制。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
@@ -91,32 +91,21 @@
     ],
     "questions": [
       {
-        "question": "Git 枚举失败后的目录遍历是否需要与 `.gitignore` 完全一致的排除语义？",
-        "why": "回退路径只排除少数硬编码目录，可能捕获通常被 Git 忽略的缓存或私密文件；材料未说明这是预期差异还是容错缺口。",
-        "nextStep": "定义回退模式的安全要求，并用被忽略文件、嵌套环境文件和权限错误场景补充测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c2"
-        ]
-      },
-      {
-        "question": "无扩展名或非 UTF-8 的可分析文件应如何处理？",
-        "why": "当前仅三类图片得到二进制支持，其余内容必须严格 UTF-8；失败只记覆盖状态，没有替代提取器。",
-        "nextStep": "根据产品范围决定增加 MIME 检测、编码转换或显式保持失败，并记录用户可操作的处理建议。",
+        "question": "按 JavaScript 字符长度切分文本是否需要避免在 Unicode 代理对或语义边界中间断开？",
+        "why": "当前实现按固定 UTF-16 索引切片，没有展示对补充平面字符、行边界或代码结构的保护，可能影响片段完整性。",
+        "nextStep": "增加包含补充平面字符和超长代码行的捕获测试，再根据下游要求决定按代码点、行或结构边界切分。",
         "blocking": false,
         "citationKeys": [
           "c3"
         ]
       },
       {
-        "question": "Git 枚举失败后的目录遍历是否需要与 `.gitignore` 保持一致的排除语义？",
-        "why": "回退遍历只跳过少数硬编码目录，可能纳入通常被 Git 忽略的缓存或私密文件；材料没有说明这种差异是否符合预期。",
-        "nextStep": "定义回退模式的安全要求，并补充被忽略文件、嵌套环境文件和权限错误场景测试。",
+        "question": "HTML 固定追加相邻资源名的约定是否适用于所有仓库？",
+        "why": "当前规则不解析 HTML 中的实际引用，也没有配置开关，可能提供不存在或与目标无关的候选材料。",
+        "nextStep": "用真实仓库样本评估候选命中率，并考虑只对已识别的静态页面结构启用该约定。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
+          "c5"
         ]
       }
     ]
@@ -130,7 +119,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/main.ts",
-      "digest": "e88f3b118275e4adce3b678c6e607b2da995903805d628ce2060bdf4bc8aea80"
+      "digest": "82eb5847c2e790d30601c56f56510991f1469df01ee9c2cf2321fc0a2324e5b4"
     },
     {
       "kind": "material",
@@ -144,65 +133,45 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+      "digest": "f5e49b50ac988174f6bcc5d099d50228c29a8bc54ab02af13814683eec8bfd1b"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "60ba418153006bb59e5d327ea25fc7e20b4b0b06d4a4ae55ecd7979c6661fa3d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
-      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/artifacts.ts",
-      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "3daf657af4eb9db8b2365d6c97deae0b6232b561aa6cd2f681fa8d3049fee7ff"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:03:39.352Z",
+    "at": "2026-09-29T20:44:29.397Z",
     "trace": {
-      "runId": "70ffcd8d-15d2-4f86-b181-cac14c31a865",
-      "roleId": "code-analyst",
+      "runId": "6569a68b-6ba2-4089-be9d-adee179faab1",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "9859ba992394ba1173ea317a45fe1841954b1e357c38358b356cedeaade3e0d3",
-      "contextHash": "2147ddf7fe4a6e669d9c63308c8a9e2b7dee4494459678ad2b2ee5f95a5129cb",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "776b7b3be0ed1f8922ea654d0fa1c4025565137d558354f6d87ab481c6e5a169",
+      "contextHash": "c085d39e51f73fe0691345f3ff79858641696c76cfa4e0aaef5da094d0cfef37",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "875914a960324409cf3b454417e5fe8ac92df9970d70c69570b860497ed26bf6",
+      "fingerprint": "78e6afd671bb4c28e89a1947e909aa757468175c3162345716f3430c3a0696a2",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-0df3-7b61-aa0a-a4c8b7030c82"
+        "01a0eee8-c508-7e83-ab2d-8229141021c9"
       ],
       "usage": {
-        "used": 36552,
+        "used": 29595,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -211,10 +180,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 62403,
-          "utf8Bytes": 65060,
-          "estimatedTokens": 21687,
-          "budgetedTokens": 27109,
+          "chars": 43380,
+          "utf8Bytes": 47983,
+          "estimatedTokens": 15995,
+          "budgetedTokens": 19994,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -223,17 +192,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:04:02.270Z",
+    "at": "2026-09-29T20:44:52.804Z",
     "trace": {
-      "runId": "facc1a5c-031e-4a88-aa19-b66d72392fa0",
+      "runId": "2df91236-7d83-4a92-b272-a66f15eac344",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "1e016c68b564f5fc83d4f039e2b49da37ac95c5b9980517c860aaf912b14c495",
-      "contextHash": "1a68d53cf3735ad8ddcd2d0ba43ca472fbe2ad2e15f8464619d693cd745595a9",
+      "promptHash": "9f29228a190b37c09db7829eea1e485c56b77df360c7345048870791f0d74bcb",
+      "contextHash": "2e7002d22379dfe8e5039efb9ba6e0bd772352cf3a02dcd569ae2c67ef922549",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1410547631a9f3591b4c02833ddc985685f3ca5643ae030dc316675365dfc8b4",
+      "fingerprint": "208d8661b0c1129b0dd5d6102c0c630ba050761de6452b205e7776a56483b87f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -246,10 +215,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-08ae-73d3-b213-87a05bfb04ce"
+        "01a0eee9-6b38-7472-aaa4-c0fff44c26fc"
       ],
       "usage": {
-        "used": 39789,
+        "used": 30214,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -258,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 82614,
-          "utf8Bytes": 93683,
-          "estimatedTokens": 31228,
-          "budgetedTokens": 39035,
+          "chars": 51488,
+          "utf8Bytes": 59994,
+          "estimatedTokens": 19998,
+          "budgetedTokens": 24998,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
