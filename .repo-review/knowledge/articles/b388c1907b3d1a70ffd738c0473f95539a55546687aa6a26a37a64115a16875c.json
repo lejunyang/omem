@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/prompts/feedback.md",
+    "title": "Feedback Curator 角色起稿",
+    "summary": "规定如何把用户纠正整理成同范围可复用的修订候选，同时限制身份确认、证据关联和策略泛化；文档只描述角色预期行为，没有证明反馈整理器或发布流程已经实现。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "correction-scope",
+        "title": "纠正类型与身份条件",
+        "body": "Feedback Curator 应先区分事实纠正、负责人或时间调整、方法范围调整，以及单纯满意或不满。只有通过可信 actor binding 的本人反馈才能视为用户确认；转述或群内其他参与者的话不能冒充 owner 决策。修订候选还需同时关联被纠正的 proposal 或 revision 与新的纠正证据，并明确停用内容、替代内容及适用范围。[[c1]]"
+      },
+      {
+        "key": "generalization-limit",
+        "title": "验证和泛化限制",
+        "body": "一次“有用”或重复点击不能证明事实正确，也不能形成多个独立成功；任务结果必须有 outcome 或 verification。若新纠正与其他权威证据冲突，应保留分歧并请求背景，而非直接覆盖。角色不得借反馈修改权限、采集范围、预算或自动审批规则；策略变更建议应携带正反例进入离线评测，不能直接发布。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "纠正身份与引用规则",
+        "reason": "支持反馈分类、可信本人确认以及修订必须关联新旧证据和适用范围的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/prompts/feedback.md",
+          "startLine": 3,
+          "endLine": 7
+        },
+        "quote": "目标：把用户纠正转成同 scope 可复用的事实修订/解释约束，并保留来源。按 CorrectionProposal schema 输出。\n\n- 识别是事实纠正、任务负责人/时间调整、方法范围调整还是仅表达满意/不满。\n- 只有通过可信 actor binding 的本人反馈才能作为用户确认；转述和群中其他人的话不能冒充 owner 决策。\n- 引用被纠正的原 proposal/revision 和纠正证据，说明应该停止使用什么、什么内容替代它、适用范围是什么。"
+      },
+      {
+        "key": "c2",
+        "label": "反馈泛化与权限限制",
+        "reason": "说明正面反馈不等于事实验证，冲突必须保留，策略改变只能进入评测而不能直接发布。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/prompts/feedback.md",
+          "startLine": 8,
+          "endLine": 10
+        },
+        "quote": "- 一次“有用”不能证明事实为真；重复点击不算多个独立成功；任务结果要有对应 outcome/verification。\n- 新纠正与其他权威证据冲突时保留分歧并请求背景，不能把所有纠正都无条件泛化为全局规则。\n- 不修改角色权限、采集范围、预算或自动审批规则。提出使用策略修改时附上正例与反例，交给离线评测，不直接发布。"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/common.md",
+      "digest": "c7ebefebac3198b8bfea9350de23c4d3900f4dc27e9698e8ad4a6a97eef8da1d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/extractor.md",
+      "digest": "d26c23513bd5d918948bc3dea72f0c2477e634eb81c7733f5e3fb2d642a2a93a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/feedback.md",
+      "digest": "0b1ba84234f48a435dc8f18a918dec264da619afeff522a583bcce7245cdc1df"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/planner.md",
+      "digest": "0d957b615a992a67168bd72e3da9e87d391f37927421444ac9ec4bb3d73954a3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/verifier.md",
+      "digest": "23dd1556eb669bc862300f9824de548c918405f9f199eeb282ce93931f127ed5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/quality-evaluation.md",
+      "digest": "a529c13d290caebb495f38cf0d29f4e8fc18ec26dd8eb83904a53f765556dbb2"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:08:01.867Z",
+    "trace": {
+      "runId": "ad9ea8ad-7132-4273-acd5-065d8c99a0e3",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "b0050245fa36f1c9af28b33a9acb8d226068353b17d4f79d4fbe739d38a7bc71",
+      "contextHash": "bf89522c247579e84df0cb9f6399d72522b2522097283079a4da45f3f4c98aa1",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9b0f86931b5dd447296be714ef34ba5083f255ccfffdc87ea04ea818d332fa67",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed46-e666-7e41-ab3b-5a5572809544"
+      ],
+      "usage": {
+        "used": 31262,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 31056,
+          "utf8Bytes": 49574,
+          "estimatedTokens": 16525,
+          "budgetedTokens": 20657,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:08:13.604Z",
+    "trace": {
+      "runId": "5e3e0986-db1d-43b0-9f44-fa373113e580",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "934969524bc0a52263cc060470cc1d5a32740ff36e3c0fbe116bae0d47c58543",
+      "contextHash": "08d89884cf8864fcf6527cd847fabffb805b58417e51179d03cc819ba04a3602",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "be767e20bbe0903a35da4e386ccdac099a448704d946a0169ebeb16689665594",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed47-84c5-7fa1-8b99-b2f2c2274e5e"
+      ],
+      "usage": {
+        "used": 24932,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28629,
+          "utf8Bytes": 46885,
+          "estimatedTokens": 15629,
+          "budgetedTokens": 19537,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+    "title": "飞书应用注册配置示例",
+    "summary": "用于扫码创建 omem 独立飞书应用的声明式配置，集中描述应用用途、租户与用户权限、事件订阅及卡片回调。它表达的是申请范围，不等同于平台实际授权、用户 OAuth 状态或相关业务功能已经实现。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "用途与权限结构",
+        "body": "该文件采用仅创建模式，并给出面向用户的应用名称与用途；配置主体分为租户权限、用户权限、事件订阅和回调。[[c1]] 租户权限覆盖消息与群聊、文档、云盘、知识库等能力，并进一步预留表格、日历、任务、会议、语音和文档智能相关权限。[[c2]][[c3]] 用户权限清单包含离线访问，以及文档、云盘、知识库、表格、日历和搜索等能力。[[c4]] 这些条目只是平台权限申请：真正以用户身份调用仍需完成用户 OAuth，并同时满足目标级授权、后续功能实现和业务确认，不能由清单本身推断已经可用。[[c7]]"
+      },
+      {
+        "key": "events_limits",
+        "title": "订阅入口与能力边界",
+        "body": "注册配置订阅消息接收与更新、机器人或成员进出群、表情反应、文档评论和会议活动，并声明卡片动作回调。[[c5]] 配套说明把该长期复用 profile 统计为 113 个租户权限、80 个用户权限、12 个租户事件、1 个用户事件和 1 个回调；这一统计描述注册档案规模，而不是实现功能清单。[[c6]] 平台灰度或企业策略还可能使确认页忽略部分申请项，因此后端需要回读并核验实际能力；缺项只能引导管理员处理或再次授权，不能绕过审批。[[c7]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "创建模式与应用用途",
+        "reason": "支持该配置使用仅创建模式，并声明应用名称、用途及权限配置入口。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+          "startLine": 1,
+          "endLine": 11
+        },
+        "quote": "{\n  \"createOnly\": true,\n  \"source\": \"omem\",\n  \"appPreset\": {\n    \"name\": \"{user}的 omem 助理\",\n    \"desc\": \"在加入的群聊中记录工作材料，并为文档、日历、会议、任务和 owner 通知提供可复用的个人助理能力。\"\n  },\n  \"addons\": {\n    \"preset\": false,\n    \"scopes\": {\n      \"tenant\": ["
+      },
+      {
+        "key": "c2",
+        "label": "消息、文档与知识能力权限",
+        "reason": "支持租户权限覆盖消息、群聊、文档、云盘和知识库等能力。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+          "startLine": 12,
+          "endLine": 85
+        },
+        "quote": "        \"im:message\",\n        \"im:message:send_as_bot\",\n        \"im:message:update\",\n        \"im:message.p2p_msg:readonly\",\n        \"im:message.group_at_msg:readonly\",\n        \"im:message.group_at_msg.include_bot:readonly\",\n        \"im:message.group_msg\",\n        \"im:message.group_msg.include_bot:read\",\n        \"im:res"
+      },
+      {
+        "key": "c3",
+        "label": "表格、日历、任务与会议权限",
+        "reason": "支持租户权限进一步包含表格、演示、日历、任务、会议、语音及文档智能能力。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+          "startLine": 86,
+          "endLine": 124
+        },
+        "quote": "        \"base:app:create\",\n        \"board:whiteboard:node:create\",\n        \"board:whiteboard:node:delete\",\n        \"board:whiteboard:node:read\",\n        \"board:whiteboard:node:update\",\n        \"sheets:spreadsheet.meta:read\",\n        \"sheets:spreadsheet.meta:write_only\",\n        \"sheets:spreadsheet:create\",\n        \"she"
+      },
+      {
+        "key": "c4",
+        "label": "用户授权权限清单",
+        "reason": "支持用户权限清单包含离线访问及文档、云盘、知识库、表格、日历和搜索能力；该引用仅证明清单内容。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+          "startLine": 126,
+          "endLine": 206
+        },
+        "quote": "      \"user\": [\n        \"offline_access\",\n        \"contact:contact.base:readonly\",\n        \"contact:user.employee_id:readonly\",\n        \"docs:component\",\n        \"docs:document.comment:create\",\n        \"docs:document.comment:read\",\n        \"docs:document.comment:update\",\n        \"docs:document.comment:write_only\",\n    "
+      },
+      {
+        "key": "c5",
+        "label": "事件订阅与卡片回调",
+        "reason": "列明配置申请的租户事件、用户事件以及卡片动作回调。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+          "startLine": 209,
+          "endLine": 234
+        },
+        "quote": "    \"events\": {\n      \"items\": {\n        \"tenant\": [\n          \"im.message.receive_v1\",\n          \"im.message.updated_v1\",\n          \"im.chat.member.bot.added_v1\",\n          \"im.chat.member.bot.deleted_v1\",\n          \"im.chat.member.user.added_v1\",\n          \"im.chat.member.user.deleted_v1\",\n          \"im.message.react"
+      },
+      {
+        "key": "c6",
+        "label": "默认权限档案规模与背景",
+        "reason": "支持当前注册档案的权限、事件和回调数量，并说明宽范围配置源于长期复用与能力预留。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 67,
+          "endLine": 69
+        },
+        "quote": "`LarkConnection` 保存 app_id、secret_ref、domain、状态、实际核验过的 capability profile、binding_version 和 owner/targets。secret store 独立加密，master key 来自环境/系统密钥存储且不与密文同库备份；恢复/轮换要验证旧连接停用。App Secret 不进入模型上下文，模型不负责决定发送目标。\n\n为避免这个长期复用的 App 日后反复改权限，默认 profile 参考 botmux `src/setup/lark-scopes.json`（revision `597ffb1`，文件 SHA-256 `0b610a53ccd1"
+      },
+      {
+        "key": "c7",
+        "label": "用户 OAuth 与平台授权边界",
+        "reason": "支持预留权限不等于功能可用，具体调用仍依赖用户 OAuth、目标授权和业务确认，同时说明平台灰度、企业策略及管理员审批限制。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 86,
+          "endLine": 90
+        },
+        "quote": "| 用户身份预留        | 对应 docs/drive/wiki/sheets/slides/calendar 的 user scopes + `offline_access`，真正调用前仍需用户 OAuth                                |\n\n默认 profile 仍明确排除高扩散或组织管理能力：批量/系统消息、建群删群、成员增删、群主代操作、文档权限转移/成员授权写、日历 ACL 写/删、知识库成员管理和空间设置写。预留 scope 只让平台声明能力；具体工具调用仍需 omem 后续功能、用户身份 OAuth、目标级授权和业务确认。机器人应用权限与现有 lark-cli user toke"
+      }
+    ],
+    "questions": [
+      {
+        "question": "113 个租户权限与 80 个用户权限应长期作为默认注册档案保留，还是按当前已实现功能拆成最小权限档位？",
+        "why": "材料把当前范围描述为面向长期复用的预留 profile，同时明确具体调用仍依赖后续功能、用户 OAuth、目标级授权和业务确认；现有材料不足以确定长期默认档位，较宽范围也可能增加用户理解与管理员审批成本。",
+        "nextStep": "逐项建立“当前必需、近期预留、远期预留”清单，并结合 capability probe、已实现功能和管理员审批成本确定默认及可选扩展档位。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c6",
+          "c7"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+      "digest": "57bc4a176d955ccc50999a1f201a7f90503677ad386f7d38576a952b6e4759c9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.json",
+      "digest": "8890a9d0f200ba397121b9fec766ba53b6a330d9775b8612eb0624ca43a5f6c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+      "digest": "027697a5645460da98414ac5fa2dc6f2ba96e2499b11773cdaa3e70d37e228d6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/role-manifest.json",
+      "digest": "abae1bc06427eb3ed2851a902789db91012e0c48278976d3f79bfa99ac325be6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/lark.md",
+      "digest": "1da226a09ebddf5725d3a814635078e3c821ad84255a25e1282fe227487d4cfb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/plan.md",
+      "digest": "48730bfe90bc4ccf1f05145061765fe65615cbe3f048416dc8044a7f8cd53b7e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:19:29.760Z",
+    "trace": {
+      "runId": "7ff52dbe-48bb-4fdf-aef1-44dc19097ba0",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "a20f9dd92cc7616d0b754069086e7c42217422b300b5437dd5184c9fef30e062",
+      "contextHash": "125813dd7be57232b6b63b2f883018fabbb47ecc675cf14a8967297ee0015a17",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7e06f1182ae11e7d61f38793008aa9d471e1602cc0738ef7596407608d3512fb",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9b-5f4c-7271-bc1e-a57b7db9f4f0"
+      ],
+      "usage": {
+        "used": 34652,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 62702,
+          "utf8Bytes": 80804,
+          "estimatedTokens": 26935,
+          "budgetedTokens": 33669,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:19:37.266Z",
+    "trace": {
+      "runId": "280ebc9e-07c7-4ac3-9183-1184f37451c3",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "3518931bedd0e8ff6c0a2d37c397660faf4bc0b9a1bdb788a4fda2df58a75924",
+      "contextHash": "7363792d0049a15e1320affaba526b8a30abd0a065b5962d3efcef9ff59767e6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "02081fb4ff4d1e84251c8fada6b7602ea0a410162b47480b5634fc4c73e9b640",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9b-9b86-7f52-8688-57409975bb44"
+      ],
+      "usage": {
+        "used": 32879,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 60195,
+          "utf8Bytes": 77473,
+          "estimatedTokens": 25825,
+          "budgetedTokens": 32282,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

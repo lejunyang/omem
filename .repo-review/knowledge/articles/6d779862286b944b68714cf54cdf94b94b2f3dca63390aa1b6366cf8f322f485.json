@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+    "title": "B2-07 产品流程与浏览器验证",
+    "summary": "记录学习、决策、通知和飞书机器人四组 Vue 流程的真实 API、SQLite 与浏览器验收，同时区分确定性输入、真实平台证据及 B2-07 时点的历史缺口。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "product-flows",
+        "title": "产品流程实现事实",
+        "body": "B2-07 实现学习任务/提案、待判断、通知详情及飞书机器人四组 Vue 流程，并补充结构化 proposal、decision、notification 与 Lark status DTO。页面直接读取 Fastify API 和 SQLite，不使用前端 mock 或失败后的假成功。浏览器验收覆盖真实领域策略和持久 receipt，但 verifier assessment 是确定性测试输入，只证明状态呈现和 repository 转换，不证明自动 worker 或新模型调用。[[c1]]"
+      },
+      {
+        "key": "acceptance",
+        "title": "交互、持久化与故障呈现",
+        "body": "验收覆盖材料录入到提案应用、决策 diff 与策略依据、过期批准冲突、飞书授权及配对状态机，以及 1440、768、390 三档视口。移动端 dialog、焦点、Esc、深层引用渲染、模型不可用、通知失败、API 离线和 Store 重建恢复均有确定性验证。[[c2]] 最终记录显示 79 项服务测试、类型检查、生产构建和 12/12 组浏览器检查通过。[[c3]]"
+      },
+      {
+        "key": "historical-boundary",
+        "title": "历史边界与后续关系",
+        "body": "在 B2-07 时点，自动 capture→extractor→verifier 编排与生产 Lark host 装配仍列入 B2-08；飞书 UI 采用注入 adapter，也不是新一次平台 live。[[c4]] 后续 B2-08 材料则明确记录 learning worker 与生产 Lark 组件的装配，因此前述缺口只能描述 B2-07 提交时点，不能用来否定后续实现。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "B2-07 范围与证据等级",
+        "reason": "支持四组 Vue 流程、真实数据源以及确定性 assessment 不等于自动 worker 或模型实测的区分。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+          "startLine": 5,
+          "endLine": 9
+        },
+        "quote": "## 范围与证据等级\n\n本轮实现学习任务/提案、待判断、通知详情和飞书机器人四组 Vue 产品流程，并为页面补充结构化 proposal/decision/notification/Lark status DTO。所有页面读取真实 Fastify API 与 SQLite 状态；没有前端 mock 数据或失败时的假成功 fallback。\n\n浏览器验收使用真实 Chromium、Fastify、SQLite、领域策略和持久 receipt。提案的 verifier assessment 是明确标注的确定性测试输入，job 完成由测试通过正式 repository 状态转换驱动；它们验证产品状态呈现，不证明自动 worker 或新一次真实模型调用。飞书部分使用注入的 registration/capability adapter 和隔离 secret store，验证 QR、完整链接、状态机和 pairing UI；不把它计为新的平台 live。真实应用授权、WebSocket、通知、Card callback 与群消息结果沿用 [B2-06 独立记录](b2-06-verification.md)。"
+      },
+      {
+        "key": "c2",
+        "label": "B2-07 编号验收结果",
+        "reason": "支持真实 UI 覆盖的业务状态、响应式交互、故障呈现及持久化恢复。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+          "startLine": 18,
+          "endLine": 24
+        },
+        "quote": "| ID | 结果 | 实际观察 | 证据限制 |\n| --- | --- | --- | --- |\n| A-U01 | pass | 浏览器录入材料；SQLite 同事务产生 job；HTTP evaluate 产生并自动应用 task proposal；学习页显示真实 succeeded/applied；通知详情显示 application receipt、pending delivery 与可打开的固定原证据 | assessment 为确定性输入，未启动真实 extractor/verifier worker |\n| A-U02 | pass | 四个真实 decision 展示 operation/kind/impact/body diff、策略原因和依据；补背景、拒绝、确认分别落独立 request receipt；source head 更新后的批准返回冲突并显示 stale，按钮消失 | 未再次点击真实飞书卡片；卡片 live 已在 B2-06 验证 |\n| A-U03 | pass | 已有应用入口明确区分增量授权与直接导入；授权状态同时显示本地 QR 和 `target=_blank` 完整链接；botmux App ID 不返回 secret；流程按 awaiting_scan→checking→awaiting_pair→active，失败/取消可重新配置 | 平台 registration/probe 为注入 adapter；没有再次创建或修改真实应用 |\n| A-U04 | pass | 1440、768、390 三种视口均无页面横向溢出；390 dialog 全屏；Tab 焦点留在原生 modal，Esc 关闭；100 个持久引用节点逐层进入时只渲染当前正文 | Chromium 145 headless；未覆盖其他浏览器/读屏器人工验收 |\n| A-U05 | pass | 注入 model unavailable 后 job 明确 failed；delivery failed 显示 attempt/error；单个 API 离线时既有材料仍留在页面；关闭并重建 Fastify/Store 后原件与两个已生效 task 仍可读 | 离线/模型/通知为确定性故障注入，不是外部供应商真实故障 |"
+      },
+      {
+        "key": "c3",
+        "label": "B2-07 全量回归结果",
+        "reason": "直接支持79项服务测试、类型检查、构建及12组浏览器检查通过的结论。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+          "startLine": 37,
+          "endLine": 40
+        },
+        "quote": "- `osdk deps --frozen --force`: exit 0；按 package-lock 安装 229 个 package，audit 0 vulnerability。\n- `osdk run check`: exit 0；13 个测试文件、79 项服务测试通过，TypeScript/Vue typecheck 和生产构建通过。\n- `osdk run browser`: exit 0；12/12 组浏览器检查通过，`docs/implementation/browser-verification.json` 的 errors 为空。\n- 本轮没有调用 ACP/模型；因此不存在验证时选择 Astra 的情况，产品也没有硬编码排除 Astra。"
+      },
+      {
+        "key": "c4",
+        "label": "B2-07 时点未覆盖项",
+        "reason": "支持自动 worker、生产 Lark 装配和新一次平台实测在 B2-07 时点尚未完成的历史边界。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+          "startLine": 42,
+          "endLine": 47
+        },
+        "quote": "## 未通过/未覆盖\n\n- A-U01～A-U05 没有未通过项。\n- 自动 capture→extractor→verifier worker 编排属于 B2-08，当前 job 仍会如实停在 queued，页面不会伪装完成。\n- 默认 `main.ts` 缺少 Lark master key、真实 capability probe 与 host 组件时不启用外部连接；页面/API 流程已完成，但生产装配属于 B2-08。\n- 本轮没有重新扫码或改动真实应用；A-U03 是产品流程 pass，不是新的 live platform pass。"
+      },
+      {
+        "key": "c5",
+        "label": "B2-08 后续装配范围",
+        "reason": "支持 learning worker 与生产 Lark Host 后续已进入实现范围，避免把 B2-07 的历史缺口误写成当前状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-08-learning-verification.md",
+          "startLine": 7,
+          "endLine": 17
+        },
+        "quote": "- `learning.enabled=true` 时，Fastify 生命周期启动单消费者持久 worker。\n- capture 原子创建的 `extract_claims` job 调用版本化 extractor role；结构化 ProposalBatch 与公开 trace 写入 `role_outputs`。\n- 有 proposal 时创建持久 `verify_proposals` 子 job；verifier 使用全新 Agent session，并读取相同固定 evidence 与规范化 proposal digest。\n- 只有 assessment 覆盖全部 proposal 且 digest 一致，才进入 `MemoryService.evaluate()`；Agent 没有 task/memory/notification 写权限。\n- proposal ID 与 origin 由 worker 依据 job、候选序号和内容规范化，重复 verifier 执行由 application receipt 去重。\n- stale source 在 Agent 调用前拒绝；优雅停机中断记为 transient retry，不冒充用户取消。\n- 修复 ACP readable stream 在 cancel/end 竞态下二次 close 的未处理异常。\n- `lark.enabled=true` 时生产服务装配官方 registration、公开 OpenAPI capability probe、botmux existing-app provider、WebSocket connection supervisor、delivery worker 与 card worker；外部连接默认关闭且要求 `OMEM_SECRET_KEY`。\n- capability probe 实际回读 app scope、callback 与 bot identity；公开 API 不提供事件清单，因此事件只在 WebSocket 真实收到后追加为 runtime-verified，requested config 不冒充 actual。\n- schema v9 为 delivery intent 增加 `aggregation_mode`、`aggregate_after`、`superseded_by` 与 `delivery_intent_changes`；普通通知支持即时、短窗、定时三种策略，decision 卡保持即时。\n- schema v10 增加本地 quality dataset/sample/annotation session/event；飞书标注卡完全走项目自己的 outbox 与 WebSocket callback，不使用 botmux ask。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "是否需要补充非 Chromium 浏览器和读屏器的人工可访问性验收？",
+        "why": "现有响应式、焦点与键盘结果来自 Chromium 145 headless，材料明确未覆盖其他浏览器及读屏器。",
+        "nextStep": "选择目标浏览器和读屏器组合，建立人工检查表并记录问题、修复和复验结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+      "digest": "26af6f2d950c0c59bc07bd5b7ce884d8c00f6259d7e132ca12665bd204c8e223"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+      "digest": "0a545b5b1d1e4a705fc685d81fa08509c19d649853d41ebd2ca0f55eb0180a0a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-08-learning-verification.md",
+      "digest": "ff4cabe1b059ab28c23ab9ae1ee819bc541c085a521f1a652c9232512b6bb7a0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/document-validation.md",
+      "digest": "91236b7fd3a97d9674477f4aea4577b7123cec103d93a3d35b26a7284e5a9283"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/README.md",
+      "digest": "f8efba9b92044cbdc73ea43212ade6660f72efe82a277617869563464c591dd9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/context.json",
+      "digest": "98881c0a291e6bdd1c8be46eb299c346cd3b1c23ed7259c260254cd4486de72a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:05:15.179Z",
+    "trace": {
+      "runId": "40c9479a-0216-4e41-8a45-a7a373d2cda1",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "25849f3cc13c314d98bac9018276e0e5949d8061cbeb2ef205e6d26b45fc3457",
+      "contextHash": "684af6447f3c837dc9006a9e01875bdaed02cb9f475028636cc5b6abc629bf8c",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c4a3475b8f668cee98138decc16bdb069c2843bf8eaebde1ed8c5fad28ec63f6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed43-f7c9-7151-bd98-98fd788075d3"
+      ],
+      "usage": {
+        "used": 42302,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49726,
+          "utf8Bytes": 73618,
+          "estimatedTokens": 24540,
+          "budgetedTokens": 30675,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:05:31.745Z",
+    "trace": {
+      "runId": "48b1edae-6e23-460d-a1d5-5d97c5773364",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "1b367ca6a43e4110a0965cdadeaee6d7a76a895e7346b71391d25016f8688269",
+      "contextHash": "944191251d24fcaf44d8afed5a49240755f88a7445edaf5ac0c73844a56222b7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e00b8297140a0e90b464405c5763bc9db1346d7b69edb26d9f32dd6abd2d48ce",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed44-fc7a-7dd0-95db-6686598e81fa"
+      ],
+      "usage": {
+        "used": 32959,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49307,
+          "utf8Bytes": 72791,
+          "estimatedTokens": 24264,
+          "budgetedTokens": 30330,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

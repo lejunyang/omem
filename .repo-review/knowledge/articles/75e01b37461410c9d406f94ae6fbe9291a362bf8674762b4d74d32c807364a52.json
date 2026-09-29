@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/code-knowledge-design.md",
+    "title": "Code Knowledge 领域模型与首个纵向切片设计",
+    "summary": "历史设计提案，规划在权威证据链上增加可重建的代码类型投影、TS/Vue 确定性解析、结构边和派生理解。设计项不能当作当前实现事实。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "positioning",
+        "title": "定位与事实边界",
+        "body": "文档明确自称历史设计，并用“事实／设计／未实现”区分提案时的状态；当前能力应以后续复审与状态记录为准。[[c1]]"
+      },
+      {
+        "key": "model",
+        "title": "领域模型与生命周期",
+        "body": "方案规划仓库、快照、文件、符号、结构边和派生理解，且不替换既有 Source、Revision、Fragment；符号仍锚定不可变 fragment。[[c2]] 结构边区分 parser、seed、llm 来源及 confirmed、candidate、stale、missing 状态。[[c3]] 端点无法解析时保留 missing，快照、文件或 seed 变化时翻 stale，不静默删除。[[c4]]"
+      },
+      {
+        "key": "delivery",
+        "title": "解析选择与阶段交付",
+        "body": "PoC 选择已安装的 TypeScript Compiler API 与 Vue SFC 编译器进行单文件确定性解析；跨文件类型感知调用、SCIP 和多语言解析明确未实现。[[c5]] 交付被拆为存储、API、Web、派生理解及助手/Lark 阶段；Stage 5 在该设计中仍是后续。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "历史设计声明",
+        "reason": "支持本文是历史提案且设计项不能视作当前实现。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "# Code Knowledge 领域模型与第一纵向切片设计\n\n> 历史设计提案，描述提案时的基线；当前已实现范围与缺口以 [复审记录](code-wiki-review-2026-09-29.md) 和 [status.md](status.md) 为准。\n> 本文只新增本文件；不修改 `apps/server`、`packages`、`package.json`、`pnpm-workspace.yaml`、`osdk.toml`。\n> 标注约定：\n> - 【事实】= 已存在于当前代码库（HEAD `46d808a`），可被 grep/测试复核；\n> - 【设计】= 本文提出、尚未实现的方案；\n> - 【未实现】= 明确记录为缺口、不在本切片范围内。"
+      },
+      {
+        "key": "c2",
+        "label": "领域模型叠加原则",
+        "reason": "支持代码领域对象是既有证据链上的叠加模型。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 82,
+          "endLine": 86
+        },
+        "quote": "## 3. 领域模型\n\n【设计】命名如下（可调整）：`CodeRepository / CodeSnapshot / CodeFile / CodeSymbol / CodeEdge / CodeUnderstanding`。\n它们**不替换**既有 `sources/revisions/fragments`，而是叠加在其上：\n`CodeFile` ≈ 一个 `sources` 行的代码侧投影；`CodeSymbol` 通过 `fragment_id` 锚定不可变证据。"
+      },
+      {
+        "key": "c3",
+        "label": "结构边状态与来源",
+        "reason": "支持 CodeEdge 的端点、生命周期状态和 parser、seed、llm 来源区分。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 154,
+          "endLine": 167
+        },
+        "quote": "### 3.5 CodeEdge（typed 结构化边）\n\n【设计】这是本模型相对 `review_relations` 的增量：**代码结构边**与**评审意图边**分开存。\n\n| 字段 | 类型 | 说明 |\n| --- | --- | --- |\n| `edge_id` | TEXT PK | `cedge_<sha1(seed)[:24]>`，seed = 规范化后的端点+kind |\n| `snapshot_id` | TEXT FK | 在哪次解析中产生 |\n| `edge_kind` | TEXT | 见下表 |\n| `from_symbol_id` / `from_file_id` | TEXT | 端点之一（符号优先，否则文件） |\n| `to_symbol_id` / `to_file_id` | TEXT | 另一端 |\n| `status` | TEXT | `confirmed / candidate / stale / missing` |\n| `origin` | TEXT | `parser / seed / llm`（确定性解析 / 手维护 seed / 模型派生） |\n| `evidence` | TEXT NULL | 引用说明或 fragment id 列表（JSON） |"
+      },
+      {
+        "key": "c4",
+        "label": "锚定与失效生命周期",
+        "reason": "支持 fragment 固定、无法解析保留 missing，以及变化后翻 stale 而非删除。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 214,
+          "endLine": 239
+        },
+        "quote": "### 3.7 固定 range / fragment 关联\n\n【设计】现状 fragment 由正则边界切分；解析器产出精确 range 后：\n\n1. 解析器按 `range_start.line` 找到该文件 head revision 中 ordinal 最匹配的 fragment，\n   把 `symbol.fragment_id` 指向那个**不可变 fragment id**；\n2. range（line/col）存在 `CodeSymbol` 上，仅当前 snapshot 有效；\n3. 读取侧：展示 range → 但引用、关系、检索一律用 `fragment_id`（与 `review_relations` 一致）；\n4. 文件内容变更 → 新 revision → 旧 `fragment_id` 随旧 revision 冻结，\n   锚在其上的边按 §4 翻 stale，下一次 sync 在新 head 上重定位。\n【未实现】跨 revision 的 fragment 身份续接（与 AGENTS.md 记录的限制一致）。\n\n---\n\n## 4. 生命周期与双向/版本失效\n\n【设计】`status ∈ confirmed / candidate / stale / missing` 语义对齐现有 `review_relations`：\n\n- `confirmed`：parser 确定性产出（imports/exports/defines/range）或 seed 显式登记且两端都解析成功；\n- `candidate`：LLM/启发式提出、尚未人工确认的边；\n- `missing`：seed 要求的端点解析不到（代码未入库/符号未定位）——**保留可见**，不静默丢弃；\n- `stale`：以下任一发生即翻 stale（只翻转，不删除）：\n  1. 文件 head snapshot 推进（content_hash 变），边锚在旧 fragment；\n  2. 文件被删（`removed=1`）或 rename；\n  3. seed 从 `associations.json` 移除；\n  4. `CodeUnderstanding.input_hash` 变化 → 旧行 `stale`，新行 `supersedes_id` 指向旧行。"
+      },
+      {
+        "key": "c5",
+        "label": "确定性解析选择",
+        "reason": "支持 TS/Vue PoC 的工具选择、单文件范围及跨文件与多语言限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 366,
+          "endLine": 391
+        },
+        "quote": "## 8. 确定性解析最小组合评估与 PoC 选择\n\n【设计】评估维度：是否零新依赖、离线确定性、能否产出精确 range、TS+Vue 覆盖。\n\n| 方案 | 现状 | 精确 range | TS | Vue SFC | 增量/跨文件类型 | 结论 |\n| --- | --- | --- | --- | --- | --- | --- |\n| **TS Compiler API**（`typescript.createSourceFile`） | 【事实】已装（devDep） | ✅ node.getStart/getEnd | ✅ | ❌（需另接） | AST-only 无类型；建 program 才有跨文件解析 | **PoC 首选** |\n| ts-morph | 未安装 | ✅ | ✅ | ❌ | 封装更友好但新依赖、体积大 | 暂缓 |\n| **@vue/compiler-sfc** | 【事实】已装（vue 依赖） | ✅ block 起止 | ❌ | ✅ | 模板 bindings 需额外分析 | **PoC 首选（配 TS）** |\n| Tree-sitter | 未安装（native 绑定） | ✅ | ✅ | 需 grammar | 多语言/增量强 | 暂缓（新 native 依赖） |\n| SCIP / indexer | 未安装（外部工具链） | ✅ | ✅ | 需 SCIP 索引器 | 跨仓跨语言最强 | 暂缓 |\n\n【设计】**首个 TS/Vue PoC 选择**：TS Compiler API（单文件 AST，不建 program）+\n`@vue/compiler-sfc`（parse 出 script/template/style block）+ 轻量正则补 imports/routes/tests。\n理由：零新 pnpm 依赖、离线、确定性、与现有 `tsx` 运行时一致。\n\nPoC 解析范围（第一切片）：\n\n- TS：`import/export` 语句（imports/exports）、顶层 `function/class/const/interface/type/enum`\n  声明（defines + range）、同文件内同名调用（calls，名称级、标 candidate）；\n- Vue：`.vue` → `vue_component` 符号；`<script setup>` 里 `defineProps/defineEmits` 轻量提取；\n  模板里组件标签 → `uses_component`（轻量，candidate）；\n- 路由：`app.(get|post|put|delete|patch)(...)` 正则 → `route` 符号（PoC 正则，标注 origin=parser 但 kind=route）；\n- 测试：复用现有 `TEST_BOUNDARY`（`it/test/describe`）→ `test_of`。\n\n【未实现】跨文件类型感知 calls、完整 SCIP 跨仓索引、Tree-sitter 多语言。"
+      },
+      {
+        "key": "c6",
+        "label": "阶段化交付计划",
+        "reason": "支持各层被规划为分阶段交付，且助手、检索与 Lark 通路当时仍未实现。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 441,
+          "endLine": 470
+        },
+        "quote": "## 12. 第一纵向切片：assistant → memory → retrieval → Lark → web\n\n【设计】按阶段打开，每阶段独立可验收、可独立提交（对齐 AGENTS.md \"每个完成的功能切片\n及时提交\"）。注意：完整 `assistant→memory→Lark` 通路在本切片**只到 web + 只读 API**；\nLark/assistant 接入列为后续阶段，避免一次性大改。\n\n### Stage 0（本文档）\n- 交付：本设计文档；验收：文档入库、事实点可被 grep 复核、无生产代码改动。\n\n### Stage 1 — 确定性解析与存储（后端，无 UI/无 LLM）\n- 新增 `apps/server/src/code-knowledge/{store.ts,parse.ts,sync}.ts`（设计，非本文创建）；\n- TS/Vue 解析器产出 code_files/code_symbols/code_edges（imports/exports/defines/routes/tests/components）；\n- 幂等 sync、dirty/removed/rename 失效、既有表行数不变；\n- 测试：`apps/server/tests/code-knowledge-*.test.ts`。\n\n### Stage 2 — 只读 API\n- `/api/review/code/*`（§6）；复用既有 loopback 鉴权；\n- 测试：API 级（fastify inject）。\n\n### Stage 3 — web 视图\n- `ReviewApp.vue` 增加符号/边面板；`review-api.ts` 加类型；\n- 浏览器验证：`osdk run dev:review` 访问 5181，人工/Playwright 冒烟。\n\n### Stage 4 — 派生理解（确定性 profiler 先，LLM 后）\n- 确定性 CodeUnderstanding（无模型）；随后可选 `code-explainer` 角色；\n- 模型不可用降级（§10）。\n\n### Stage 5 — assistant → retrieval → Lark（后续，不在本切片）\n- retrieval port 暴露 code 边；助手引用代码片段；stale/缺失边生成治理卡片走既有\n  proposal→policy→decision→Lark delivery 环。【未实现】"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/research-sources.json",
+      "digest": "d45da3364f493df70f3cf617dc0cf06cf6aa1547425ba9d615c510f11eec3cd2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/browser-verification.json",
+      "digest": "1bb4e5292e112dfabc083287bd958422c0d4a3aa28d1de68756235e6cf993beb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-knowledge-design.md",
+      "digest": "333454e6d0bf89cc86a7d0cd1b619904c686ff98ecc60d308ec055c06b1d93e0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-prototype-gap.md",
+      "digest": "1d1257f66a641a52e4313357458fbb3c801620536926b79c1a1268aeb6642dce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-ui-design.md",
+      "digest": "976ba48c6b2ccf271dd3b3231778ecc1b434c85c85a4fb0151f5fa66216f20db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:15:35.717Z",
+    "trace": {
+      "runId": "eb44d4e0-a6f2-4117-b766-04d13f8f9a51",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "36fc71672f7bd652e1f0799be4f6cf5f2b56983abb0a9193e273ce875a26e977",
+      "contextHash": "162fa073a1a5a2c7663af04926ad94e02ff8aeba53f50806fb971c37cda2da0f",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b806c7a38efc03ed60a727274567993c4791d30698614a945c5ce5abd591a5d3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4c-f2e5-73c0-8090-bf3a88a5009a"
+      ],
+      "usage": {
+        "used": 87583,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 132899,
+          "utf8Bytes": 185439,
+          "estimatedTokens": 61813,
+          "budgetedTokens": 77267,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:15:52.253Z",
+    "trace": {
+      "runId": "391b6c16-1aa5-479a-aca4-5fa191955d9f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "0c658d9d8375303386fa0c950acb8c40cb2e70fcba6eb2fcdf2fbd13baabb112",
+      "contextHash": "935a51abd9c2df578d05d09c5a7308339c6c2a362e30faf54f82ee765cbe5978",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "56ef889cdd915696999b5dbc904104e969c513fd6dee32a5a88a45998b26cb65",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4e-72cd-73e3-919b-8a39545ea84a"
+      ],
+      "usage": {
+        "used": 71142,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 132332,
+          "utf8Bytes": 185489,
+          "estimatedTokens": 61830,
+          "budgetedTokens": 77288,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

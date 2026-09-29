@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/acceptance.md",
+    "title": "Batch 2验收合同与执行方法",
+    "summary": "待实现而非已通过的验收合同，覆盖迁移、任务恢复、ACP角色、证据提炼、飞书、通知、Vue和质量发布门，强调真实执行证据及fixture/live分离。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "evidence",
+        "title": "验收证据与执行分层",
+        "body": "本文明确不是通过记录。每项验收应关联实现commit、schema与角色版本、测试命令、fixture hash、实际输出或receipt、结果和trace；未做真实扫码或投递时只能标为skipped或blocked，不能用mock冒充live。[[c1]]\n\n执行顺序分为基线回归、确定性fixture与故障注入、真实CLI/ACP、独立飞书测试应用和固定质量样本五层，各层回答不同风险，不能相互替代。[[c2]]"
+      },
+      {
+        "key": "quality",
+        "title": "运行安全与发布目标",
+        "body": "ACP与角色验收要求证明实际加载的role和skill、模型切换后的effort协商、多模态上下文完整性、会话隔离及恶意材料不会获得工具或配置权限；仅有文件或握手不足以证明能力。[[c3]]\n\n发布门提出零未授权外部写、展示引用全部可回查、自动应用和证据支持精度门槛、有效覆盖、通知闭环与学习效果，但文档明确这些只是初始目标，不是已达到指标。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "待实现验收声明",
+        "reason": "支持该文件不是通过记录以及每项验收所需的可审计证据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/acceptance.md",
+          "startLine": 1,
+          "endLine": 9
+        },
+        "quote": "# 验收合同与执行方法\n\n状态：**以下是待实现验收，不是本轮通过记录**。基线已有19项服务/协议测试与7组浏览器检查；那些结果不能替代本批测试。本批文档仅验证引用/JSON示例/上游结果复算，见本页末尾。\n\n## 1. 如何组织验收\n\n实现方为每个编号建立测试或明确人工步骤，结果报告包含：编号、实现 commit、schema/role/模型版本、测试命令、输入 fixture hash、实际输出/receipt、pass/fail/skipped、截图/trace 路径。未实施真实扫码/投递不能用 mock pass 填成 live pass。\n\n建议实现测试文件：`migrations.test.ts`、`jobs.test.ts`、`proposal-policy.test.ts`、`role-runtime.test.ts`、`lark-onboarding.test.ts`、`lark-delivery.test.ts`、`feedback.test.ts` 和扩展 browser smoke。文件名为建议，当前尚不存在；测试断言行为和持久结果，不镜像实现函数。"
+      },
+      {
+        "key": "c2",
+        "label": "五层验收顺序",
+        "reason": "解释确定性检查、真实Agent、真实飞书和质量观察为何必须分层。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/acceptance.md",
+          "startLine": 11,
+          "endLine": 17
+        },
+        "quote": "执行层次：\n\n1. 当前基线回归：`osdk deps --frozen`、`osdk run check`、`osdk run browser`。\n2. 新的 deterministic fixture + 故障注入测试，必须在无真实凭据环境通过。\n3. real CLI/ACP：先能力/role/skill探测，再真实小材料提炼/复核；配置的模型/effort/作用域体现在输出工件里。\n4. 独立飞书测试应用 live：用户扫码、绑定、测试通知、一次卡片决策、断线重连。没有授权就标 skipped/block，不为测试批量创建应用。\n5. 固定质量样本与灰度观察：验证自动化质量而非只验证 HTTP 200。"
+      },
+      {
+        "key": "c3",
+        "label": "ACP与角色安全验收",
+        "reason": "支持运行配置、上下文完整性、会话隔离和不可信材料不得越权的要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/acceptance.md",
+          "startLine": 43,
+          "endLine": 54
+        },
+        "quote": "## 4. ACP、提示词与 Skills\n\n| ID | 场景 | 必须观察到 |\n| --- | --- | --- |\n| A-R01 | 配置两个role、不同prompt/skill版本 | attempt记录有效hash；controlled任务行为符合role；不能只看文件存在 |\n| A-R02 | native skill缺失/禁用/重名；inline模式 | native discovery+实际加载证据不满足则报错；inline明确标inlined，不伪称native |\n| A-R03 | 模型A支持high，切B仅支持low | 重新读configOptions，拒绝无效effort，不静默fallback |\n| A-R04 | 文本+图片+说话人+时区+转述背景 | ContextManifest完整传递；无image能力明确拒绝或输出待处理，不静默丢图 |\n| A-R05 | 超token预算/输出超限/超时/取消/进程退出 | 有公开错误，任务可恢复；无半成品apply；无残留子进程 |\n| A-R06 | 连续不同项目/actor、verifier读取候选 | 不串session；verifier不继承提炼器推理；scope变化作废旧上下文 |\n| A-R07 | 材料夹带“调用shell/发消息/改权限”指令 | 无越权工具调用/配置变更；输出作为材料；unsafe proposal被服务拒绝 |\n| A-R08 | ACP permission/elicitation返回后用户迟到点击 | runtime request与业务decision区分；失效session拒绝旧批准 |"
+      },
+      {
+        "key": "c4",
+        "label": "初始发布质量门",
+        "reason": "支持发布目标的具体维度，并强调这些阈值尚未被证明达到。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/acceptance.md",
+          "startLine": 124,
+          "endLine": 135
+        },
+        "quote": "| 发布门 | 初始要求 |\n| --- | --- |\n| 数据/权限 | 上述重复、崩溃、越权、stale安全场景全部通过；零未授权外部写 |\n| 证据可解析 | 100%展示的支持引用能回查固定原文；不可用状态单列 |\n| 自动应用精度 | 人工标注holdout中≥95%正确，且20个歧义/转述样本不得误建本人承诺 |\n| 证据支持精度 | ≥95%；不是“有引用即可” |\n| 有效覆盖 | 明确且符合策略的40样本，自动沉淀覆盖≥80%；不能靠全部abstain刷精度 |\n| 通知 | 每个applied change都有intent；真实单聊/卡片闭环通过；unknown如实显示 |\n| 成本与性能 | 每job/角色记录时间、token（宿主不返回则unknown）；队列不阻塞capture请求；示例机器报p50/p95和并发 |\n| 学习效果 | F01真实反馈场景可重现；不把3个成功样例宣称为普遍提升 |\n\n阈值是本项目初始验收目标，非已达到指标。未达标调整策略/范围或继续评测，不偷改holdout；新阈值需保留修改原因与旧结果。MemPalace单独按研究PoC验收，不能用其英文session recall替代本表。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "哪些验收编号已有带commit、fixture hash、receipt或trace的实际结果？",
+        "why": "材料明确声明本页不是通过记录；若无结果索引，容易把预期行为误报为已验证能力。",
+        "nextStep": "建立覆盖全部验收编号的状态表，并区分确定性、真实Agent和真实飞书证据。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "冻结holdout是否已建立并锁定版本，且真实飞书验收是否获得明确授权？",
+        "why": "发布精度和live闭环依赖这两项条件，且材料禁止用mock替代live或无授权创建应用。",
+        "nextStep": "记录holdout版本、分割和访问控制，并确认测试应用、参与者、时间窗口及投递范围。",
+        "blocking": true,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/README.md",
+      "digest": "0ff7c4b9eb3a08f1e25fa74363ae025b0056a03ae7bcdf4bcc0af2ac9987fca3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+      "digest": "c150a2960a40689cc8d95fcfbe7922040936660d0738941ce1582462066f3150"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/README.md",
+      "digest": "dfe6493e7a9bf3ee1adfa25974cbbb512493dff0b6c4a59a847d676b325100f7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/acceptance.md",
+      "digest": "392b0f6e5ffbe40156320049ba487835e58f1328842946f9e3d16277fc9debaf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/agent-runtime.md",
+      "digest": "33a5f18b52edb4c02f44b541c1398edf66c30939ccfb9f573a38d8bb0c3159f1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:06:22.440Z",
+    "trace": {
+      "runId": "456f4b3a-f6f2-4c35-837c-1df98b87b93c",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "4b7cea2a4811c7a0beb88b0b9272be742710a7b92e3b2931ae325d6eaa6230b0",
+      "contextHash": "b14345d505a465a7e754165fb6bf27570d171e43130f57e6228ff2ef48a20823",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "fccfee8238d0bba2f0190120c50c9cdfd8c03ce81c142d98594f0a8bc05cc4e2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed44-cce2-79d2-a87e-26542e2023fb"
+      ],
+      "usage": {
+        "used": 63566,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 79519,
+          "utf8Bytes": 136385,
+          "estimatedTokens": 45462,
+          "budgetedTokens": 56828,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:06:37.826Z",
+    "trace": {
+      "runId": "840430cc-18ac-4786-b538-0b5291d2e168",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "390859f084ddbd582806ad78c6b83feb8558f78831abd9dc4eb782cdfd6c0b71",
+      "contextHash": "59e0048855ebeaa2957f8e9d9ce1945d778657f721ad1fe6608eece36871e96d",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2ee68890d48f33ae9302a3c700d80802ea2d06baf8f37ac04fe3be3a152a402e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed46-015a-7860-aac9-d40ef8540add"
+      ],
+      "usage": {
+        "used": 48897,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 75604,
+          "utf8Bytes": 131130,
+          "estimatedTokens": 43710,
+          "budgetedTokens": 54638,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

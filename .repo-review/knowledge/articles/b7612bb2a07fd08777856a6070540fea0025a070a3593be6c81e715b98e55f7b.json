@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/lark.md",
+    "title": "飞书独立机器人接入与可靠投递",
+    "summary": "记录独立飞书应用从扫码注册、密钥保存、账号配对到 WebSocket 收件、通知投递和卡片决策的设计与实现状态，并明确实际授权、幂等投递和回调竞态的边界。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "onboarding",
+        "title": "独立应用与安全绑定",
+        "body": "文档推荐 omem 使用独立企业自建应用，不复用 botmux 的隐式会话或另一应用的 open_id；新建优先走官方 registerApp()，已有应用可经明确选择后导入凭据并再次探测能力。[[c1]] 完整流程将“创建应用”和“绑定 owner”分开：扫码取得凭据后先加密保存和核验，再经同一应用内的一次性 pairing code、飞书事件及 Web 确认固定 owner 与通知目标。[[c2]] 配对码要求高熵、短时有效、只存哈希且一次消费，避免把转发的二维码或短验证码当作充分身份凭据。[[c3]]"
+      },
+      {
+        "key": "runtime_delivery",
+        "title": "运行时、投递与回调",
+        "body": "状态文档记载，消息运行时已由连接管理、持久 inbox、outbox worker 和卡片动作服务组成，并已接入服务生命周期；外部集成默认关闭，只有显式启用且具备密钥时启动。[[c4]] 投递以业务 intent 为核心，同一次重试保持 provider UUID；超时超过去重窗口且无法对账时必须保留 unknown，不能宣称 exactly-once。[[c5]] 卡片回调只应快速持久化并 ACK，之后异步校验 app、tenant、operator、消息归属、nonce、digest 和 expected versions，以 CAS 保证竞态下最多一次业务效果。[[c6]]"
+      },
+      {
+        "key": "status",
+        "title": "已记录验收与剩余限制",
+        "body": "文档称注册、密钥、配对、绑定以及消息连接和回调核心已经实现，并记载 2026-09-27 通过独立测试应用完成权限回读、WebSocket、私聊配对、主动通知、卡片回调和入群消息验证；这些是材料中的进展陈述，不是本次分析独立复验。[[c7]] API 已覆盖 onboarding、取消、配对、确认、状态和已有应用复用，但测试发送、断开连接及设置界面尚未提供。[[c8]] 文档/日历/会议事件尚未逐项触发，断网恢复、移群、密钥轮换和发送故障也仍主要依赖故障注入。[[c9]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "独立应用与复用路径",
+        "reason": "支持采用独立应用、官方扫码注册和显式复用已有 app 的设计。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 5,
+          "endLine": 18
+        },
+        "quote": "## 1. 是否需要新的机器人，是否照 botmux 做\n\n**推荐给 omem 单独配置一个企业自建应用机器人**，拥有自己的 App ID/Secret、事件连接和通知 owner。可选择绑定用户已有的专用应用；不应默认挪用当前 botmux 会话机器人的凭据或复用另一个应用下的 open_id。\n\n体验可以像 botmux：点“连接飞书”→创建/已有应用→扫码授权→验证并绑定→立即可收通知/发指令。但实现优先使用飞书当前官方 `registerApp()`，不复制整个 botmux daemon、会话调度和后台网页登录自动化。\n\n已核对 botmux 源码 revision `597ffb10172ea9ac2b50b7550"
+      },
+      {
+        "key": "c2",
+        "label": "扫码创建与绑定时序",
+        "reason": "支持凭据接收、能力检查、WebSocket、配对和首次通知分阶段完成的流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 30,
+          "endLine": 53
+        },
+        "quote": "## 3. 创建绑定完整流程\n\n```mermaid\nsequenceDiagram\n participant U as 用户/omem Web\n participant O as omem 后端\n participant L as 飞书注册服务\n participant B as 新应用机器人\n U->>O: 选择新建，预览名称/权限/用途\n O->>L: registerApp(createOnly, addons, appPreset)\n L-->>O: verification URL + expiry\n O-->>U: URL + QR + 状态\n U->>L: 扫码并确认创建/授权\n L-->>O: app creden"
+      },
+      {
+        "key": "c3",
+        "label": "绑定身份与配对规则",
+        "reason": "支持应用相关 open_id、实际联系验证及高熵一次性配对码要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 57,
+          "endLine": 63
+        },
+        "quote": "### 绑定规则\n\n- binding identity 为 `(tenant_brand, tenant_key若可得, app_id, owner_open_id)`，通知目标为同一 app 上核验的 p2p/group chat_id。open_id 视为应用相关 ID；不要复制当前对话另一 bot 的用户 open_id。\n- 即使注册返回 user_info，也需对该新应用做实际联系验证；字段可能缺失，不能推测 owner。推荐始终使用一次性 pairing code + Web 回读确认，统一新建/已有应用路径。\n- pairing code 使用至少128-bit随机量、5分钟有效期、存 hash、一次消费、失败限流；"
+      },
+      {
+        "key": "c4",
+        "label": "飞书运行时组件与启用条件",
+        "reason": "支持运行时组件职责、服务生命周期接入和默认关闭条件的实现状态说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 92,
+          "endLine": 98
+        },
+        "quote": "## 5. 消息、连接与通知投递\n\n使用官方 Node SDK 的 Client + WSClient。企业自建应用支持 WebSocket 接收消息与新版 card.action.trigger，不需要给事件接收配置公网回调 URL；HTTP API 负责发送/更新。不能由此推断 Web 详情页也能被用户手机访问：详情链接仍需可访问且鉴权的 HTTPS 地址，或先在卡片里展示必要信息。禁止把 `127.0.0.1` 详情链接发给远程用户当可用入口。\n\n`LarkConnectionManager` 负责 connection lease、pairing 消息路由、WS 状态和失效连接关闭；`LarkEventInbox` 负责事件"
+      },
+      {
+        "key": "c5",
+        "label": "通知幂等与未知状态",
+        "reason": "支持同 UUID 重试、投递状态及无法对账时不得承诺恰好一次的限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 100,
+          "endLine": 106
+        },
+        "quote": "DeliveryIntent 在业务提交同事务创建，sender 从队列取；通知内容包含修改前后摘要、原因、影响、固定 evidence refs、change/decision ID。模板确定性渲染，无需让 LLM 生成收件人或控制卡片动作。即时/短窗合并/定时摘要可配置；每个 change 都有可追溯 delivery 映射，不能只展示批次最后一条。\n\n官方 `POST /open-apis/im/v1/messages` 支持 `uuid` 去重，窗口为1小时。同一 intent 的重试保持同一个 uuid，不要每次生成新的。投递状态为 queued/sending/delivered/retry_wait/unknown/f"
+      },
+      {
+        "key": "c6",
+        "label": "卡片回调与竞态控制",
+        "reason": "支持快速持久化、身份与版本校验以及 CAS 最多一次业务效果。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 108,
+          "endLine": 116
+        },
+        "quote": "## 6. 回调与具体决策\n\nSDK 官方长连接要求回调在约3秒内处理，回调处理器只做身份校验、nonce检查、**持久写 event_inbox/decision command**，然后快速 ACK；耗时核验/应用异步完成并更新卡片。不能先回“批准成功”再尝试写数据库。\n\n回调校验：实际接收的 app/tenant、operator 必须匹配 binding owner；message_id/chat_id 属于该条投递；action nonce/digest/expiry/expected_versions 与存储一致。action.value 是不可信输入，不允许携带任意命令、目标URL、收件人或新的 proposal bo"
+      },
+      {
+        "key": "c7",
+        "label": "真实测试应用验证记录",
+        "reason": "追踪文档声明的实现范围、验证日期及尚未逐项触发的事件类别。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# 飞书：独立机器人、扫码创建与绑定、可靠通知\n\n状态：B2-05 注册/密钥/配对/绑定和 B2-06 消息连接、投递、回调核心已实现。2026-09-27 在用户明确授权下用独立测试应用完成扫码更新、权限回读、WebSocket、私聊 pairing、主动通知、Card 2.0 callback 和入群消息 live 验证；仍未逐项触发文档/日历/会议事件。实现使用官方 SDK `registerApp()`、`WSClient` 和 `Client`，不假设能无需用户授权静默创建。"
+      },
+      {
+        "key": "c8",
+        "label": "飞书 API 完成与缺口",
+        "reason": "支持已经提供的 onboarding API 以及测试、断连和设置 UI 尚缺失的说明。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 118,
+          "endLine": 122
+        },
+        "quote": "## 7. 新 API 与验收\n\n已实现 `POST /api/integrations/lark/onboarding`、`GET .../:id`、`POST .../:id/cancel`、`POST .../:id/pairing-code`、`POST /api/integrations/lark/bindings/confirm`、`GET /api/integrations/lark/status`；另有 `GET .../reusable-apps` 与 `POST .../existing` 支持手工或 botmux app_id 复用。请求必须是 owner 操作；注册状态同时返回可直接打开的 `verifica"
+      },
+      {
+        "key": "c9",
+        "label": "本地故障测试与 live 验收边界",
+        "reason": "支持已覆盖的确定性测试、真实验收项目和仍未进行 live 验证的故障场景。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 122,
+          "endLine": 124
+        },
+        "quote": "A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。\n\nA-L08～14/A-N01～05 的本地故障测试已覆盖 lease、重连状态、事件去重/身份、Card 2.0 callback 校验、DB 写失败重投、stale/竞态、移群停用、SQLite 重启、同 UUID 重试、`unknow"
+      }
+    ],
+    "questions": [
+      {
+        "question": "何时补齐文档、日历和会议订阅事件的逐项 live 验证？",
+        "why": "注册 profile 预留了这些能力，但材料明确说尚未逐项触发；请求配置、权限回读和真实事件到达是不同层次的证据。",
+        "nextStep": "用独立测试应用为每类事件建立最小触发用例，记录平台回读权限、实际 event type、inbox receipt 和处理结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c9"
+        ]
+      },
+      {
+        "question": "测试发送、disconnect 与 B2-07 设置界面应按什么顺序补齐？",
+        "why": "核心后端组件已经记录为可装配，但缺少这些用户操作入口会影响连接验证、停用和配置维护的完整闭环。",
+        "nextStep": "先明确最小可用管理流程和危险操作确认，再为对应 API、UI 与连接停用行为制定验收。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+      "digest": "57bc4a176d955ccc50999a1f201a7f90503677ad386f7d38576a952b6e4759c9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.json",
+      "digest": "8890a9d0f200ba397121b9fec766ba53b6a330d9775b8612eb0624ca43a5f6c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+      "digest": "027697a5645460da98414ac5fa2dc6f2ba96e2499b11773cdaa3e70d37e228d6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/role-manifest.json",
+      "digest": "abae1bc06427eb3ed2851a902789db91012e0c48278976d3f79bfa99ac325be6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/lark.md",
+      "digest": "1da226a09ebddf5725d3a814635078e3c821ad84255a25e1282fe227487d4cfb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/plan.md",
+      "digest": "48730bfe90bc4ccf1f05145061765fe65615cbe3f048416dc8044a7f8cd53b7e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:18:08.778Z",
+    "trace": {
+      "runId": "85f1cc15-7e36-493e-ae81-fac6f7369306",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "7ed8740c3520419fff325854592eacede7a7fb5ea8efcfc67f19c09542aa4c0e",
+      "contextHash": "60dbc284d522a199ea3624ec20468144fd8bf7c858ab9b87f2ae24ab572ae1b3",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8cdd0feedc56fe5e7627df4daad8b8c483a9f3750ff94c338324fd337172fbb2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee99-7a72-7933-a8c5-86efc2d8207b"
+      ],
+      "usage": {
+        "used": 37353,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 57975,
+          "utf8Bytes": 73081,
+          "estimatedTokens": 24361,
+          "budgetedTokens": 30452,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:18:33.620Z",
+    "trace": {
+      "runId": "020fb6f8-18e4-492e-ae26-f6fd87329126",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "576dd9ed9cce77a72fb63676a144785c3f02ed6eeb18811fce7098d24a88ffc9",
+      "contextHash": "b69ed1a10d35a0b717b7d5bab4d1073fce4257b54a4f6540589696afc6c4268e",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "05fa0bdbadd66fd0a071cb96ee2a78e6533fd9837739280f9c96f98fcd3aa980",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9a-5e6e-7b20-8ed2-ee5305935116"
+      ],
+      "usage": {
+        "used": 42661,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 79313,
+          "utf8Bytes": 108263,
+          "estimatedTokens": 36088,
+          "budgetedTokens": 45110,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

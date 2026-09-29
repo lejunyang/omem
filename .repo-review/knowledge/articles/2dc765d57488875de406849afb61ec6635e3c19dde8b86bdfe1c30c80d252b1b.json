@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/research-sources.json",
+    "title": "第二批研究来源清单",
+    "summary": "固定 MemPalace、Lark SDK 与飞书资料的版本和文件摘要，用于复核研究取材范围；清单本身不证明相关方案已被 omem 采用或实现。",
+    "category": "research",
+    "sections": [
+      {
+        "key": "baseline",
+        "title": "版本化研究基线",
+        "body": "清单记录了 2026-09-26 的检查日期，以及 MemPalace 的仓库、提交、分支和许可证，因此可重现当时的研究基线。[[c1]] Lark SDK 也单独固定了提交 SHA 与源码包版本 1.74.0。[[c2]]"
+      },
+      {
+        "key": "coverage",
+        "title": "覆盖范围与证据边界",
+        "body": "所列文件涵盖嵌入、对话抽取与知识图谱[[c3]]，也包含后端和 MCP 读写工具[[c4]]；另有基准结果与说明[[c5]]、Lark 应用接入、消息发送及回调资料[[c6]]。这些条目以 URL、SHA-256 和字节数标识，可用于检查研究输入完整性，但不能据此推断 omem 已实现或采用对应能力。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "MemPalace 研究版本基线",
+        "reason": "支持检查日期、上游提交、分支与许可证均已固定的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/research-sources.json",
+          "startLine": 1,
+          "endLine": 15
+        },
+        "quote": "{\n  \"checked_on\": \"2026-09-26\",\n  \"mempalace\": {\n    \"repo\": \"mempalace/mempalace\",\n    \"sha\": \"8c4865f70c49b6346c53474a9e5684c5f17d3fa9\",\n    \"branch\": \"develop\",\n    \"date\": \"2026-09-24T22:41:45Z\",\n    \"license\": {\n      \"key\": \"mit\",\n      \"name\": \"MIT License\",\n      \"spdx_id\": \"MIT\",\n      \"url\": \"https://api.github.com/licenses/mit\",\n      \"node_id\": \"MDc6TGljZW5zZTEz\"\n    },\n    \"archived\": false"
+      },
+      {
+        "key": "c2",
+        "label": "Lark SDK 固定版本",
+        "reason": "直接支持 Lark SDK 的提交 SHA 和源码包版本已被清单固定。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/research-sources.json",
+          "startLine": 17,
+          "endLine": 19
+        },
+        "quote": "  \"lark_sdk\": {\n    \"sha\": \"394c83092395a51402ee408b751d7f9fb05f5518\",\n    \"package_version_in_source\": \"1.74.0\""
+      },
+      {
+        "key": "c3",
+        "label": "嵌入与知识抽取资料",
+        "reason": "支持清单包含嵌入、对话抽取和知识图谱源码及校验信息。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/research-sources.json",
+          "startLine": 82,
+          "endLine": 104
+        },
+        "quote": "    {\n      \"path\": \"mempalace/embedding.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/embedding.py\",\n      \"sha256\": \"20e61faae6a0a622be3df46983adef40e9f9c4b20dd510d676a69ee74e88a45c\",\n      \"bytes\": 40959\n    },\n    {\n      \"path\": \"mempalace/convo_miner.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/convo_miner.py\",\n      \"sha256\": \"d0d08fa7e120fa1176f6d612fe5430a2a11106f8e202ba66d16f9f5ea8607ffe\",\n      \"bytes\": 50675\n    },\n    {\n      \"path\": \"mempalace/general_extractor.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/general_extractor.py\",\n      \"sha256\": \"d88db33d8c0ecd95db7db79ef1ee2596cf9c11a662447c02e91f0844fab1067c\",\n      \"bytes\": 15339\n    },\n    {\n      \"path\": \"mempalace/knowledge_graph.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/knowledge_graph.py\",\n      \"sha256\": \"c80be47dca8c31685a0d7b5b5d8e5cf0ec32a9c6b19ef0aab8bab1907c9a91cc\",\n      \"bytes\": 40033"
+      },
+      {
+        "key": "c4",
+        "label": "后端与 MCP 工具资料",
+        "reason": "支持研究范围包括后端实现以及 MCP 读写工具。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/research-sources.json",
+          "startLine": 118,
+          "endLine": 140
+        },
+        "quote": "    {\n      \"path\": \"mempalace/backends/base.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/backends/base.py\",\n      \"sha256\": \"416ddedcbe11e9182640065b304922c21d8127b6bc97968961daa7dcee90a970\",\n      \"bytes\": 36002\n    },\n    {\n      \"path\": \"mempalace/backends/sqlite_exact.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/backends/sqlite_exact.py\",\n      \"sha256\": \"2e998ffad07cf8c7f472b12f786a72e1bfa83e6b0d1eb29e56c73df9e5f3e400\",\n      \"bytes\": 80605\n    },\n    {\n      \"path\": \"mempalace/mcp_server/tools_read.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/mcp_server/tools_read.py\",\n      \"sha256\": \"dace9d1e0a36af7d659888f02f073cf4556fed9c3c48b18ff66cdff031801750\",\n      \"bytes\": 37318\n    },\n    {\n      \"path\": \"mempalace/mcp_server/tools_write.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/mempalace/mcp_server/tools_write.py\",\n      \"sha256\": \"3f92367c7aef1546299caacb9dc99b32838ff363356c7722eaa8b8fe0b193042\",\n      \"bytes\": 56580"
+      },
+      {
+        "key": "c5",
+        "label": "基准测试资料",
+        "reason": "支持清单纳入基准结果、混合模式说明和评测程序。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/research-sources.json",
+          "startLine": 172,
+          "endLine": 206
+        },
+        "quote": "    {\n      \"path\": \"benchmarks/results_mempal_raw_session_20260414_1629.jsonl\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/benchmarks/results_mempal_raw_session_20260414_1629.jsonl\",\n      \"sha256\": \"2b71b5e514279c28443736561e2ac453045520b0f8832ff092e8a6143965e5d1\",\n      \"bytes\": 13113499\n    },\n    {\n      \"path\": \"benchmarks/README.md\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/benchmarks/README.md\",\n      \"sha256\": \"08458c7195fcaf49c5809e7883ed1848ab1e2b0af77d321bea5036125bf7ab2d\",\n      \"bytes\": 4212\n    },\n    {\n      \"path\": \"benchmarks/HYBRID_MODE.md\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/benchmarks/HYBRID_MODE.md\",\n      \"sha256\": \"cfeda809c24ebafe3416d37a26ad203e8b256736ea05661ac2ae926909fbe401\",\n      \"bytes\": 25543\n    },\n    {\n      \"path\": \"benchmarks/results_mempal_hybrid_v4_held_out_session_20260414_1634.jsonl\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/benchmarks/results_mempal_hybrid_v4_held_out_session_20260414_1634.jsonl\",\n      \"sha256\": \"5f5849e8facdbdec673967dfbd9dd288323983ae824ca787ffa89110dd1b588d\",\n      \"bytes\": 11796774\n    },\n    {\n      \"path\": \"benchmarks/BENCHMARKS.md\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/benchmarks/BENCHMARKS.md\",\n      \"sha256\": \"dca5b5890715bd7ce0bc25e939a7cdc680d0da1ec5b6e1d641d5ebb6c6aba1c2\",\n      \"bytes\": 38195\n    },\n    {\n      \"path\": \"benchmarks/longmemeval_bench.py\",\n      \"url\": \"https://github.com/mempalace/mempalace/blob/8c4865f70c49b6346c53474a9e5684c5f17d3fa9/benchmarks/longmemeval_bench.py\",\n      \"sha256\": \"c4b4ba3da9e2d7e0e3f27bc93918877fe5f46e202be9ff98b1e90c7e0124628d\",\n      \"bytes\": 121144"
+      },
+      {
+        "key": "c6",
+        "label": "Lark 接入与回调资料",
+        "reason": "支持清单覆盖应用创建、概览、消息发送、事件订阅和卡片回调。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/research-sources.json",
+          "startLine": 214,
+          "endLine": 242
+        },
+        "quote": "    {\n      \"path\": \"lark-scan-to-create-an-app-in-one-click-nodejs.txt\",\n      \"url\": \"https://open.larkoffice.com/document/mcp_open_tools/integrating-agents-with-feishu/scan-to-create-an-app-in-one-click-nodejs.md\",\n      \"sha256\": \"7fa7a795be68d0f3c1f7310efcc09daab2c7c76e5eefc4a2e9e46576c9083065\",\n      \"bytes\": 8919\n    },\n    {\n      \"path\": \"lark-overview.txt\",\n      \"url\": \"https://open.larkoffice.com/document/mcp_open_tools/integrating-agents-with-feishu/overview.md\",\n      \"sha256\": \"f34b307eb2e4a5e0a5947e7c9753b0ee6c337ec460995e4da621f7c2afaa1688\",\n      \"bytes\": 9169\n    },\n    {\n      \"path\": \"lark-message-send.md\",\n      \"url\": \"https://open.feishu.cn/document/server-docs/im-v1/message/create.md\",\n      \"sha256\": \"23875d7fd3c9d25124f540a40f6b5976cc1314ac0512ea7332a71c0465fb4a08\",\n      \"bytes\": 33256\n    },\n    {\n      \"path\": \"lark-ws-callback.md\",\n      \"url\": \"https://open.feishu.cn/document/event-subscription-guide/callback-subscription/step-1-choose-a-subscription-mode/configure-callback-request-address.md\",\n      \"sha256\": \"51c7def61d0c825daf56d6b10bcf5e5cacb6fb3833b7542f7e8750a78817a735\",\n      \"bytes\": 13990\n    },\n    {\n      \"path\": \"lark-card-trigger.md\",\n      \"url\": \"https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/card-callback-communication.md\",\n      \"sha256\": \"fbf624330f526bb7e90844e898bf573f5323d8b74756ddadfd848cb2b4c7afba\",\n      \"bytes\": 21278"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/research-sources.json",
+      "digest": "d45da3364f493df70f3cf617dc0cf06cf6aa1547425ba9d615c510f11eec3cd2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/browser-verification.json",
+      "digest": "1bb4e5292e112dfabc083287bd958422c0d4a3aa28d1de68756235e6cf993beb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-knowledge-design.md",
+      "digest": "333454e6d0bf89cc86a7d0cd1b619904c686ff98ecc60d308ec055c06b1d93e0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-prototype-gap.md",
+      "digest": "1d1257f66a641a52e4313357458fbb3c801620536926b79c1a1268aeb6642dce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-ui-design.md",
+      "digest": "976ba48c6b2ccf271dd3b3231778ecc1b434c85c85a4fb0151f5fa66216f20db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:15:35.717Z",
+    "trace": {
+      "runId": "eb44d4e0-a6f2-4117-b766-04d13f8f9a51",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "36fc71672f7bd652e1f0799be4f6cf5f2b56983abb0a9193e273ce875a26e977",
+      "contextHash": "162fa073a1a5a2c7663af04926ad94e02ff8aeba53f50806fb971c37cda2da0f",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b806c7a38efc03ed60a727274567993c4791d30698614a945c5ce5abd591a5d3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4c-f2e5-73c0-8090-bf3a88a5009a"
+      ],
+      "usage": {
+        "used": 87583,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 132899,
+          "utf8Bytes": 185439,
+          "estimatedTokens": 61813,
+          "budgetedTokens": 77267,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:15:52.253Z",
+    "trace": {
+      "runId": "391b6c16-1aa5-479a-aca4-5fa191955d9f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "0c658d9d8375303386fa0c950acb8c40cb2e70fcba6eb2fcdf2fbd13baabb112",
+      "contextHash": "935a51abd9c2df578d05d09c5a7308339c6c2a362e30faf54f82ee765cbe5978",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "56ef889cdd915696999b5dbc904104e969c513fd6dee32a5a88a45998b26cb65",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4e-72cd-73e3-919b-8a39545ea84a"
+      ],
+      "usage": {
+        "used": 71142,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 132332,
+          "utf8Bytes": 185489,
+          "estimatedTokens": 61830,
+          "budgetedTokens": 77288,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
