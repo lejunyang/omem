@@ -22,8 +22,10 @@ function setup(reject = false, changeDuringRun = false) {
     count++;
     if (changeDuringRun && count === 1) capture("The release has changed.");
     const key = String((input.context.task!.targetKeys as string[])[0]);
+    const sourceKey = key.startsWith("module:") ? String((input.context.task!.allowedMaterials as {key:string}[])[0]!.key) : key;
+    const sourceLine = key.startsWith("module:") ? 2 : 1;
     let result: unknown = input.roleId === "knowledge-verifier" ? { schema_version: 1, verdicts: [{ documentKey: key, verdict: reject ? "needs_revision" : "accepted", issues: reject ? ["The interpretation is unsupported"] : [], questions: [] }] } : {
-      schema_version: 1, documents: [{ key, title: "Evidence behavior", summary: "A derived explanation", category: "background", sections: [{ key: "behavior", title: "Behavior", body: reject ? "An unsupported extrapolation.[[c1]]" : "The release preserves evidence.[[c1]]" }], citations: [{ key: "c1", label: "Original statement", reason: "The original states this constraint.", relation: "supports", target: { kind: "material", key, startLine: 1, endLine: 1 }, quote: "" }], questions: [] }],
+      schema_version: 1, documents: [{ key, title: "Evidence behavior", summary: "A derived explanation", category: "background", sections: [{ key: "behavior", title: "Behavior", body: reject ? "An unsupported extrapolation.[[c1]]" : key.startsWith("module:") ? "Additional context is documented.[[c1]]" : "The release preserves evidence.[[c1]]" }], citations: [{ key: "c1", label: "Original statement", reason: "The original states this constraint.", relation: "supports", target: { kind: "material", key: sourceKey, startLine: sourceLine, endLine: sourceLine }, quote: "" }], questions: [] }],
     };
     const normalized = input.validateOutput?.(result); if (normalized !== undefined) result = normalized;
     const bundle = registry.load(input.roleId);
@@ -31,7 +33,7 @@ function setup(reject = false, changeDuringRun = false) {
   });
   const profile = profileSchema.parse({ id: "traex", name: "Fixture", command: "unused", transport: "acp" });
   const pipeline = new KnowledgePipeline(repository, gateway, profile, { concurrency: 1 });
-  return { store, repository, pipeline, run, captured, accept: () => { reject = false; } };
+  return { store, repository, pipeline, run, captured, capture, accept: () => { reject = false; } };
 }
 
 it("publishes only after independent review and reuses durable outputs after projection loss", async () => {
@@ -74,4 +76,13 @@ it("distinguishes Lark documents from conversations and recognizes ordinary impo
   expect(analystFor({ ...base, namespace: "lark", path: null, conversationId: "chat-1" })).toBe("conversation-analyst");
   expect(analystFor({ ...base, namespace: "git", path: null, title: "src/main.ts" })).toBe("code-analyst");
   expect(analystFor({ ...base, namespace: "file", path: null, title: "main.py" })).toBe("code-analyst");
+});
+
+it("provides full fixed source to synthesis when it fits, enabling a new supported line citation", async () => {
+  const { repository, pipeline, capture } = setup();
+  capture("The release uses fixed evidence.\nThe next line supplies additional context.");
+  expect((await pipeline.analyze(repository.materials())).failures).toEqual([]);
+  const result = await pipeline.synthesize({ key: "module:example", title: "Example module" }, ["manual:example"]);
+  expect(result[0]!.document.citations[0]!.target.startLine).toBe(2);
+  expect(result[0]!.document.citations[0]!.quote).toBe("The next line supplies additional context.");
 });
