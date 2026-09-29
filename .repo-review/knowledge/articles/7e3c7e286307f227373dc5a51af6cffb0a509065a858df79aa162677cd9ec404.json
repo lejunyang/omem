@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/tweaks-panel.jsx",
+    "title": "原型参数调节面板与宿主通信协议",
+    "summary": "提供 React 调节状态钩子、可拖动浮层和一组统一表单控件，通过跨窗口消息把参数变更交给宿主持久化，同时向页面内其他监听者广播即时变化。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "state-and-protocol",
+        "title": "状态来源与宿主协议",
+        "body": "该模块解决多个原型重复实现参数面板和宿主通信的问题。`useTweaks` 以传入默认值初始化本地状态，既接受单键更新也接受对象批量更新；变更会立即合并到 React 状态，向父窗口发送持久化消息，并在当前窗口派发 `tweakchange` 事件供同页组件同步。[[c1]]\n\n持久化存在严格边界：默认对象必须位于宿主可重写的 HTML 标记区内，并保持合法 JSON；如果移到外部脚本、删除标记或使用表达式，界面仍可能变化，但编辑不会落盘。[[c2]] 消息发送和接收均使用通配来源，材料没有展示来源或消息结构校验。"
+      },
+      {
+        "key": "panel-lifecycle",
+        "title": "面板生命周期与拖动约束",
+        "body": "浮层先注册 `message` 监听器，再宣布自身可用，以免宿主过早发送激活消息。宿主的激活和停用消息控制可见性；用户点击关闭时，本地先隐藏并通知宿主，使工具栏状态保持一致。[[c3]]\n\n面板位置以距右、距下偏移保存。打开、视口变化或根元素尺寸变化时，`clampToViewport` 把位置限制在安全边距内；拖动期间在窗口注册移动和释放监听，释放后清理。[[c4]] 若环境没有 `ResizeObserver`，代码只退回监听窗口 `resize`，因此根元素发生非窗口尺寸变化时可能无法立即重新夹紧。"
+      },
+      {
+        "key": "control-behavior",
+        "title": "控件策略与边界条件",
+        "body": "控件层统一封装滑块、开关、单选、下拉、文本、数字、颜色和按钮。短且不超过三个选项时，单选采用可拖动分段控件；标签过长或选项过多时自动退化为下拉框，并尝试把字符串值映射回原始数字或布尔值。[[c5]] 数字控件支持横向拖拽、步长吸附、小数精度处理和上下限夹取。[[c6]]\n\n颜色控件优先展示策划好的单色或调色板选项，无选项时才使用原生颜色输入；选中比较不区分十六进制大小写，勾选颜色依据相对亮度近似选择。[[c7]] 最终所有工具挂到 `window`，说明它面向直接由 HTML/Babel 装载的原型，而非标准模块导出；材料中没有相应自动化测试。[[c8]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "调节状态与双通道通知",
+        "reason": "支持本地状态合并、父窗口持久化消息以及同窗口变更事件的核心流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 177,
+          "endLine": 195
+        },
+        "quote": "// ── useTweaks ───────────────────────────────────────────────────────────────\n// Single source of truth for tweak values. setTweak persists via the host\n// (miaoda:tweaks:set-keys → host rewrites the EDITMODE block on disk).\nfunction useTweaks(defaults) {\n  const [values, setValues] = React.useState(defaults);\n  // A"
+      },
+      {
+        "key": "c2",
+        "label": "可持久化默认值约束",
+        "reason": "支持默认对象必须保留在 HTML 标记区且保持合法 JSON 的关键边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 14,
+          "endLine": 30
+        },
+        "quote": "// Usage (in an HTML file that loads React + Babel):\n//\n//   const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{\n//     \"primaryColor\": \"#D97757\",\n//     \"palette\": [\"#D97757\", \"#29261b\", \"#f6f4ef\"],\n//     \"fontSize\": 16,\n//     \"density\": \"regular\",\n//     \"dark\": false\n//   }/*EDITMODE-END*/;\n//\n//   TWEAK_DEFAULTS must live"
+      },
+      {
+        "key": "c3",
+        "label": "宿主激活与关闭握手",
+        "reason": "支持监听器注册顺序、激活停用消息以及关闭时通知宿主的生命周期说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 197,
+          "endLine": 250
+        },
+        "quote": "// ── TweaksPanel ─────────────────────────────────────────────────────────────\n// Floating shell. Registers the protocol listener BEFORE announcing\n// availability — if the announce ran first, the host's activate could land\n// before our handler exists and the toolbar toggle would silently no-op.\n// The close button p"
+      },
+      {
+        "key": "c4",
+        "label": "拖动与视口夹紧",
+        "reason": "支持面板在打开、尺寸变化和拖动过程中保持在视口安全范围内的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 204,
+          "endLine": 292
+        },
+        "quote": "function TweaksPanel({ title = 'Tweaks', children }) {\n  const [open, setOpen] = React.useState(false);\n  const dragRef = React.useRef(null);\n  const offsetRef = React.useRef({ x: 16, y: 16 });\n  const PAD = 16;\n\n  const clampToViewport = React.useCallback(() => {\n    const panel = dragRef.current;\n    if (!panel) retu"
+      },
+      {
+        "key": "c5",
+        "label": "分段单选的自动降级",
+        "reason": "支持短选项使用分段控件、长选项退化为下拉框并保留原值类型的策略。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 339,
+          "endLine": 409
+        },
+        "quote": "function TweakRadio({ label, value, options, onChange }) {\n  const trackRef = React.useRef(null);\n  const [dragging, setDragging] = React.useState(false);\n  // The active value is read by pointer-move handlers attached for the lifetime\n  // of a drag — ref it so a stale closure doesn't fire onChange for every move.\n  c"
+      },
+      {
+        "key": "c6",
+        "label": "数字拖拽与范围处理",
+        "reason": "支持数字控件的步长吸附、精度计算和上下限夹取行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 434,
+          "endLine": 466
+        },
+        "quote": "function TweakNumber({ label, value, min, max, step = 1, unit = '', onChange }) {\n  const clamp = (n) => {\n    if (min != null && n < min) return min;\n    if (max != null && n > max) return max;\n    return n;\n  };\n  const startRef = React.useRef({ x: 0, val: 0 });\n  const onScrubStart = (e) => {\n    e.preventDefault();"
+      },
+      {
+        "key": "c7",
+        "label": "策划式颜色与调色板选择",
+        "reason": "支持颜色控件的原生回退、调色板展示、大小写无关比较和勾选对比度处理。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 468,
+          "endLine": 535
+        },
+        "quote": "// Relative-luminance contrast pick — checkmarks drawn over a swatch need to\n// read on both #111 and #fafafa without per-option configuration. Hex input\n// only (#rgb / #rrggbb); named or rgb()/hsl() colors fall through to \"light\".\nfunction __twkIsLight(hex) {\n  const h = String(hex).replace('#', '');\n  const x = h.le"
+      },
+      {
+        "key": "c8",
+        "label": "全局导出与覆盖层标记",
+        "reason": "支持该实现通过 window 暴露工具并声明为视口覆盖层的集成方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/tweaks-panel.jsx",
+          "startLine": 537,
+          "endLine": 551
+        },
+        "quote": "function TweakButton({ label, onClick, secondary = false }) {\n  return (\n    <button type=\"button\" className={secondary ? 'twk-btn secondary' : 'twk-btn'}\n            onClick={onClick}>{label}</button>\n  );\n}\n\n// Opt out of DCViewport's transform so position:fixed works against the viewport.\nTweaksPanel.dcOverlay = tru"
+      }
+    ],
+    "questions": [
+      {
+        "question": "跨窗口消息是否只会运行在可信且隔离的宿主环境中？",
+        "why": "发送使用 `'*'`，接收方只检查消息类型，没有验证 `origin`、`source` 或负载结构；若页面可嵌入不可信父窗口，可能发生未授权激活或参数写入。",
+        "nextStep": "明确嵌入边界；若并非完全可信环境，应限制目标来源并校验消息来源、允许的键和值类型。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "是否需要为调节控件补充键盘、触屏和协议自动化测试？",
+        "why": "材料实现了鼠标拖动、指针拖动、类型恢复及消息握手，但没有提供测试文件；键盘操作、触摸取消、卸载时拖动监听清理和宿主消息异常均未被证明。",
+        "nextStep": "为状态钩子和消息协议添加组件测试，并在浏览器中覆盖键盘、触屏、长标签降级及视口缩放场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5",
+          "c8"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/smoke.mjs",
+      "digest": "d720ba9d0168f6974e900cbe4fe5a2ece652f8eec8fe68497cc9902bc84ee702"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/styles.css",
+      "digest": "c3f02f7ba444bfe662577f604931c38372a76d9500d7cb270b4678131709992b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/tweaks-panel.jsx",
+      "digest": "b77bf1ccfdb9d8459080d4465294899738f48dea68c7e8640b4a976c1b8e4290"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:20:28.327Z",
+    "trace": {
+      "runId": "fe0b21db-396e-47f5-970d-2bcec7c1358c",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "a1cbbd40b547f3f9ffbccadaa555fe47e72ca0b89e76a7d7bbd6afa0c4f43e69",
+      "contextHash": "b456c1e5916b489cf4f1963b659189e997b76d576157f4e9204b4ddb0ed155ca",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6a5bcb6f738f2db0a29348a1318753d3238af17c036b6955ea62b03430e209a3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9b-b933-7a00-a64d-7fefe27c2a2b"
+      ],
+      "usage": {
+        "used": 52024,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 95899,
+          "utf8Bytes": 99597,
+          "estimatedTokens": 33199,
+          "budgetedTokens": 41499,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:20:53.163Z",
+    "trace": {
+      "runId": "e6f431d8-1dc6-461a-bb74-746967c4d65f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "912932824d677c3e8cf41b21852ae646486f0611d28e56a7ad783536723cf3b9",
+      "contextHash": "1799b2ff498a40cb78f90d732a92cc95c2cf0a60d4a370e53cc944429218c51d",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "89d96e60657d0c8f446acf788b4b34b5812b3f5fb7089759f190c5ca648f46fc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9c-7f9a-7900-9414-ad0d72a5507d"
+      ],
+      "usage": {
+        "used": 55843,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 111891,
+          "utf8Bytes": 123453,
+          "estimatedTokens": 41151,
+          "budgetedTokens": 51439,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

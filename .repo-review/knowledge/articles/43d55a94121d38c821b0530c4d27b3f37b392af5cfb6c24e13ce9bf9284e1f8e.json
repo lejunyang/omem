@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+    "title": "交互原型第三方许可声明",
+    "summary": "文件记录 React、ReactDOM 与随 ReactDOM 打包的 Scheduler 所适用的 MIT 许可文本，并说明 Tweaks UI 改编自已安装的 lark-apps creative-design starter；它提供归属和许可背景，但未给出后者的独立许可条款。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "react_license",
+        "title": "React 相关组件许可",
+        "body": "声明覆盖 React 18.3.1、ReactDOM 18.3.1，以及由 ReactDOM 打包的 Scheduler，并标明 MIT License 与 Facebook 及其关联方版权。[[c1]] 许可允许使用、复制、修改、合并、发布、分发、再许可和销售，但要求在软件全部或重要部分保留版权与许可声明。[[c2]]"
+      },
+      {
+        "key": "warranty",
+        "title": "责任与保证边界",
+        "body": "MIT 文本规定软件按“原样”提供，不承诺适销性、特定用途适用性或不侵权；作者及版权方通常不承担因软件或其使用产生的索赔和损害责任。[[c3]] 这是第三方组件的许可免责声明，不能据此推断 omem 自身的功能质量或服务承诺。"
+      },
+      {
+        "key": "tweaks",
+        "title": "Tweaks UI 来源记录",
+        "body": "文件另记载 Tweaks UI 改编自已安装的 lark-apps creative-design starter。[[c4]] README 说明原型只使用其风格面板，并移除了未用的建议聊天 addon、增加了 React import。[[c5]] 然而现有材料没有列出该 starter 的版本、版权主体或许可证全文，因此只能确认来源，尚不足以完成再分发合规判断。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "React 组件与版权归属",
+        "reason": "支持受声明覆盖的组件、版本、Scheduler 打包关系及版权主体。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "React 18.3.1 / ReactDOM 18.3.1 / Scheduler (bundled by ReactDOM)\n\nMIT License\n\nCopyright (c) Facebook, Inc. and its affiliates."
+      },
+      {
+        "key": "c2",
+        "label": "MIT 授权及保留条件",
+        "reason": "说明许可授予的主要权利及必须保留版权和许可声明的条件。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+          "startLine": 7,
+          "endLine": 15
+        },
+        "quote": "Permission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software."
+      },
+      {
+        "key": "c3",
+        "label": "MIT 免责声明",
+        "reason": "支持软件无保证提供以及作者和版权方责任受限的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+          "startLine": 17,
+          "endLine": 23
+        },
+        "quote": "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+      },
+      {
+        "key": "c4",
+        "label": "Tweaks UI 来源",
+        "reason": "支持 Tweaks UI 来自 lark-apps creative-design starter 改编的来源陈述。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+          "startLine": 25,
+          "endLine": 25
+        },
+        "quote": "Tweaks UI: adapted from the installed lark-apps creative-design starter."
+      },
+      {
+        "key": "c5",
+        "label": "风格面板使用与调整",
+        "reason": "补充 Tweaks UI 在原型中的实际使用范围及 README 声明的局部修改。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 30,
+          "endLine": 30
+        },
+        "quote": "`tweaks-panel.jsx` 来自本机 lark-apps creative-design starter，已去掉未使用的建议聊天 addon，并增加 React import；本原型仅使用其风格面板。React/ReactDOM 的 MIT 通知见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "lark-apps creative-design starter 的具体版本、版权主体和适用许可证是什么？",
+        "why": "当前材料只记录 Tweaks UI 的改编来源与使用范围，没有足以判断再分发条件的许可证信息。",
+        "nextStep": "核对该 starter 安装包的版本和许可证元数据，并按其要求补充第三方声明，或确认无需额外许可文本。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/.gitignore",
+      "digest": "ab072b5ed5d4c38dfbfe825096622076208516775272b714a77244854225779d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/README.md",
+      "digest": "81a869cff3e3b202e0f60f84da90d94d3f91cb5526941c551699d9b76485266e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/THIRD_PARTY_NOTICES.txt",
+      "digest": "f5617b5a98527a2370b6b3c6a2f1dbc040e0f281615ff3ab9dbd81b465e5c251"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:12:09.170Z",
+    "trace": {
+      "runId": "d930c308-78d2-45ed-b53d-7432c1cc001a",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "0a4fb544d5f68222cf9060aed3623461f6ddc45288cecbffad64a0b4e42439f7",
+      "contextHash": "9e6d2dc863142f0ac0eeb34b078df1d7ae962a3c0896a8e82213a845d5e6f2fc",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "20319020826858d31daa438740066500d6481ffffa2c569edd188d96e51ed01e",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4a-e0b7-7cf2-bd87-2c1a962e8966"
+      ],
+      "usage": {
+        "used": 24396,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22259,
+          "utf8Bytes": 32117,
+          "estimatedTokens": 10706,
+          "budgetedTokens": 13383,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:12:18.871Z",
+    "trace": {
+      "runId": "40e64481-4b14-40b1-a8c3-ee6443cf5aba",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "d47421dbebdb0aeea9f16404c272de499d2ba90b9f6c7ea6a9129502048d5209",
+      "contextHash": "2e37e9fd38f23b0e09e4374d4450ff7fd90cbee2033edb95d570bc806533d24c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "4feb03a61db733610a87bcf62a6c504267d759a2dbb08f0822080cf2a26f8b34",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4b-4c31-7c53-bbc3-6bb3a718af6f"
+      ],
+      "usage": {
+        "used": 19666,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 18955,
+          "utf8Bytes": 27285,
+          "estimatedTokens": 9095,
+          "budgetedTokens": 11369,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
