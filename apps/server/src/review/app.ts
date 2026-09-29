@@ -114,7 +114,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       return reply.code(403).send({ error: "Local host required" });
     if (req.headers.origin) {
       const origin = String(req.headers.origin).replace(/\/$/, "");
-      if (!allowedOrigins.has(origin))
+      if (!allowedOrigins.has(origin) && origin !== "http://" + req.headers.host)
         return reply.code(403).send({ error: "Cross-origin request rejected" });
     }
   });

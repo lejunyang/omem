@@ -1,4 +1,4 @@
-﻿/** Minimal hash router for the review Code Wiki. No vue-router: the app state
+/** Minimal hash router for the review Code Wiki. No vue-router: the app state
  * is a small discriminated view plus an optional trail stack encoded as hash
  * segments. Parsing is defensive — a corrupt hash falls back to overview. */
 import type { TrailFrame, TrailFrameKind } from "./trail";
@@ -7,6 +7,7 @@ import { MAX_TRAIL } from "./trail";
 export type WikiView =
   | { name: "overview" }
   | { name: "graph" }
+  | { name: "structure" }
   | { name: "module"; module: string }
   | { name: "file"; fileId: string; line?: number };
 
@@ -50,6 +51,7 @@ export function parseHash(hash: string): WikiRoute {
   const head = parts[0];
 
   if (head === "overview") return { view: { name: "overview" }, trail };
+  if (head === "structure") return { view: { name: "structure" }, trail };
   if (head === "graph") return { view: { name: "graph" }, trail };
   if (head === "module" && parts[1])
     return { view: { name: "module", module: decode(parts[1]) }, trail };
@@ -65,7 +67,8 @@ export function parseHash(hash: string): WikiRoute {
 export function writeHash(route: WikiRoute): string {
   const v = route.view;
   let base = "#/overview";
-  if (v.name === "graph") base = "#/graph";
+  if (v.name === "structure") base = "#/structure";
+  else if (v.name === "graph") base = "#/graph";
   else if (v.name === "module") base = "#/module/" + encodeURIComponent(v.module);
   else if (v.name === "file")
     base =

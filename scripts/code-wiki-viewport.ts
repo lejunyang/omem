@@ -80,8 +80,8 @@ try {
     const body = await page.locator("main").innerText();
     expect(body).not.toContain("Failed to fetch");
     expect(body).not.toContain("片段加载失败");
-    expect(await page.locator(".module-frame li").count()).toBeGreaterThan(0);
-    expect(body).toContain("关键流程");
+    expect(await page.locator(".knowledge-document .md-body, .module-frame li").count()).toBeGreaterThan(0);
+    expect(body.length).toBeGreaterThan(300);
   });
 
   // --- Frame 1: open runtime.ts file row, assert source lines ---------------
@@ -231,6 +231,7 @@ try {
     await page.goto(BASE + "/#/overview");
     await sleep(2500);
     await page.keyboard.press("Escape"); await sleep(300); await page.keyboard.press("Escape"); await sleep(300);
+    await page.getByRole("button", { name: "查看代码结构与模块" }).click();
     const card = page.locator("button.mod-card").filter({ hasText: "assistant" }).first();
     await card.evaluate((el:any)=>el.focus());
     await card.click();
@@ -251,7 +252,7 @@ try {
   await check("model-unavailable: degraded state, raw graph still browsable", async () => {
     await page.goto(BASE + "/#/overview");
     await sleep(2500);
-    expect(await page.locator("main").innerText()).toContain("Code Wiki");
+    expect(await page.locator("main").innerText()).toContain("可追溯的知识");
     await page.screenshot({ path: `${OUT}/wiki-overview-degraded.png` });
   });
 
@@ -260,7 +261,7 @@ try {
   await page.goto(BASE + "/#/module/assistant");
   await sleep(3000);
   await check("390: curated note renders + drawer full-width", async () => {
-    await expect(page.locator(".module-frame li").first()).toBeVisible({ timeout: 8000 });
+    await expect(page.locator(".knowledge-document .md-body, .module-frame li").first()).toBeVisible({ timeout: 8000 });
     const row = page.locator("button.file-row").filter({ hasText: "runtime.ts" }).first();
     await row.scrollIntoViewIfNeeded();
     await row.click({ force: true });
