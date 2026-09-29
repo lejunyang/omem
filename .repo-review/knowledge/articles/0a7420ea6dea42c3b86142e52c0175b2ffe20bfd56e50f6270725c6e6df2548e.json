@@ -2,88 +2,114 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/api.ts",
-    "title": "个人工作区前端 API 合同与请求封装",
-    "summary": "集中定义个人工作区前端使用的数据形状，并提供带会话令牌、JSON 编解码和统一错误处理的通用请求函数。",
+    "title": "Web 客户端数据合同与请求入口",
+    "summary": "集中定义个人知识、运行作业、提案决策、通知与飞书接入的数据形状，并提供统一的 JSON 请求封装；该封装只负责发送 Bearer Authorization 请求头，不足以证明后端鉴权效果。",
     "category": "implementation",
     "sections": [
       {
-        "key": "responsibility",
-        "title": "解决的问题与合同范围",
-        "body": "该文件是个人工作区前端的轻量 API 边界：一部分类型直接复用共享合同中的 Revision、Fragment、Change 与 RunEvent，另一部分在前端补充 Source、Evidence、Task、运行任务、提案审批、通知投递和飞书接入等响应形状。[[c1]] 这些声明主要提供静态约束，本身不执行校验；例如 Proposal 明确记录证据、疑点、策略结论与评估结果，Decision 则表达待审批到过期或失效的状态变化。[[c2]]"
+        "key": "domain-contracts",
+        "title": "核心领域合同",
+        "body": "该文件是 Web 端共享的数据合同入口，并复用 contracts 包中的修订、片段、变更与运行事件类型。`Evidence` 把片段、修订、出向关系和反向关系组合为证据视图；任务则记录标题、详情、期限、关联证据、完成状态与版本，通知记录变更消息及已读时间。类型只能证明这些数据如何组织，不能单独证明片段身份固定或修订不可变。[[c1]]\n\n`Profile` 描述传输方式、可选模型与 effort 以及上下文上限；`Run` 保存运行状态、事件和可选回答。`Job` 进一步记录输入引用、角色及策略版本、排队到取消的状态、重试代次、结果引用和错误，并可附各次尝试使用的模型、effort 与时间。这里将其保守表述为运行和后台作业记录，不把类型定义等同于实际调度保证。[[c2]]"
       },
       {
-        "key": "request-flow",
-        "title": "请求流程与认证",
-        "body": "`headers` 从 `sessionStorage` 读取个人工作区令牌，存在时生成 Bearer Authorization；`api` 根据是否传入 body 默认选择 GET 或 POST，统一请求 `/api` 前缀，并以 JSON 发送和解析。响应非成功状态时，它优先抛出服务端 `error`，否则使用通用中文错误。[[c3]] 因而调用方得到的是已解析的泛型结果，而认证、序列化和基本错误转换被收敛在一处。"
+        "key": "proposal-flow",
+        "title": "提案、决策与通知追踪",
+        "body": "提案区分创建、更新和替代，携带作用域、材料证据、不确定项、来源摘要及策略结果；策略结果可为自动应用、等待决策或拒绝。`assessments` 保存引文或资产判定、语义判定、评估版本与原因，但这些字段本身不能证明评估角色相互独立。[[c3]]\n\n决策记录提案摘要、预期版本、操作者、有效期、请求标识、动作和处理时间，并覆盖待处理、批准、拒绝、请求上下文、过期与陈旧状态；它证明信息被记录，不证明执行层必然校验这些字段。通知详情还可关联变更前后实体、投递尝试、聚合方式、回执及证据列表，用于呈现变更及投递结果。[[c4]]"
       },
       {
-        "key": "limits",
-        "title": "边界与模块关系",
-        "body": "该封装假定响应体始终可解析为 JSON，未处理空响应、非 JSON 错误页、超时、取消、重试或并发去重；泛型 `T` 也不会带来运行时验证。[[c3]] 与 Code Wiki 使用的评审接口不同：评审客户端材料明确说明其 loopback 浏览面不发送 Authorization，因此不能把这里的令牌策略直接套到 `/api/review/*`。[[c4]]"
+        "key": "integration-request",
+        "title": "飞书接入与统一请求",
+        "body": "飞书相关合同覆盖所需权限、事件和回调，以及新建或复用应用时的二维码、验证地址、配对候选、能力缺口、连接标识和版本，体现接入过程包含多个可观察状态，而非单一开关。[[c5]]\n\n统一请求函数从会话存储读取令牌；存在令牌时附加 Bearer `Authorization` 请求头，同时设置 JSON 内容类型。无请求体默认使用 GET，有请求体默认使用 POST 并序列化为 JSON。此前把这一行为称为“鉴权”超出了客户端材料，现明确为发送请求头，是否验证和授权取决于后端。函数还会在检查 HTTP 成功状态前直接解析 JSON，因此空响应或非 JSON 错误可能先抛出解析异常，无法进入服务端 `error` 或“请求失败”的兜底路径。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "共享合同导入与基础数据类型",
-        "reason": "支持该文件复用共享合同并补充前端响应类型的说明。",
-        "relation": "explains",
+        "label": "证据、任务与通知类型",
+        "reason": "支持证据由片段、修订和双向关系组成，以及任务、通知所记录的字段；同时限定这里只能确认数据组合。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/api.ts",
           "startLine": 1,
-          "endLine": 30
+          "endLine": 47
         },
         "quote": "import type {\n  Revision,\n  Fragment,\n  Change,\n  RunEvent,\n} from \"../../../packages/contracts/src/index\";\nexport type { Revision, Fragment, Change };\nexport type Source = {\n  id: string;\n  title: string;\n  source: string;\n  version: number;\n  sourceId: string;\n  externalId: string;\n  createdAt: string;\n};\nexport type"
       },
       {
         "key": "c2",
-        "label": "提案与决策状态合同",
-        "reason": "支持提案证据、策略评估以及审批状态建模的论断。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 101,
-          "endLine": 157
-        },
-        "quote": "export type ProposalEvidence = {\n  fragment_revision_id: string;\n  source_revision_id: string;\n  exact_quote?: string;\n  asset_hash?: string;\n};\nexport type Proposal = {\n  id: string;\n  kind: \"task\" | \"claim\" | \"episode\" | \"procedure\";\n  operation: \"create\" | \"update\" | \"supersede\";\n  targetId: string | null;\n  body: R"
-      },
-      {
-        "key": "c3",
-        "label": "通用请求封装",
-        "reason": "说明令牌来源、默认方法、JSON 编解码和错误处理流程及其限制。",
+        "label": "运行与后台作业记录",
+        "reason": "支持配置档、运行状态、事件，以及作业状态机、版本、尝试、模型和错误信息等描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/api.ts",
-          "startLine": 240,
-          "endLine": 257
+          "startLine": 48,
+          "endLine": 100
         },
-        "quote": "export function headers(): Record<string, string> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n): Promise<T> {\n  const r = await fetch("
+        "quote": "export type Profile = {\n  id: string;\n  name: string;\n  transport: string;\n  model?: string;\n  effort?: string;\n  maxContextChars: number;\n};\nexport type Run = {\n  id: string;\n  state: \"running\" | \"done\" | \"error\" | \"cancelled\";\n  events: RunEvent[];\n  answerId?: string;\n};\nexport type JobAttempt = {\n  id: string;\n  at"
+      },
+      {
+        "key": "c3",
+        "label": "提案与评估记录",
+        "reason": "支持提案操作、证据、不确定项、策略结果和 assessments 评估字段的说明，同时不把字段存在扩大为独立性保证。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 101,
+          "endLine": 137
+        },
+        "quote": "export type ProposalEvidence = {\n  fragment_revision_id: string;\n  source_revision_id: string;\n  exact_quote?: string;\n  asset_hash?: string;\n};\nexport type Proposal = {\n  id: string;\n  kind: \"task\" | \"claim\" | \"episode\" | \"procedure\";\n  operation: \"create\" | \"update\" | \"supersede\";\n  targetId: string | null;\n  body: R"
       },
       {
         "key": "c4",
-        "label": "评审 API 的认证边界",
-        "reason": "证明 repo-review 客户端与个人工作区 API 的认证策略不同。",
-        "relation": "depends_on",
+        "label": "人工决策与通知详情合同",
+        "reason": "支持决策状态及其记录字段，并说明通知详情能够追踪投递、回执和关联证据；不据此推断执行层校验。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/review-api.ts",
-          "startLine": 1,
-          "endLine": 4
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 138,
+          "endLine": 186
         },
-        "quote": "/** Client for the repo-review knowledge-base API (/api/review/*). This surface is\n * read/browse/sync only, bound to loopback, and has no token gating, so unlike the\n * personal workspace api.ts it sends no Authorization header. Shapes mirror\n * apps/server/src/review/app.ts exactly. */"
+        "quote": "export type Decision = {\n  id: string;\n  proposalDigest: string;\n  expectedVersions: Record<string, unknown>;\n  actorId: string;\n  expiresAt: string;\n  state:\n    | \"pending\"\n    | \"approved\"\n    | \"rejected\"\n    | \"context_requested\"\n    | \"expired\"\n    | \"stale\";\n  requestId: string | null;\n  action: string | null;\n "
+      },
+      {
+        "key": "c5",
+        "label": "飞书接入数据结构",
+        "reason": "说明应用配置、连接、扫码验证、配对、能力缺口和版本等接入状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 187,
+          "endLine": 239
+        },
+        "quote": "export type LarkRequestedConfig = {\n  source: string;\n  appPreset: { name: string; desc: string; avatar?: string | string[] };\n  addons: {\n    preset: boolean;\n    scopes: { tenant: string[]; user: string[] };\n    events: { items: { tenant: string[]; user: string[] } };\n    callbacks: { items: string[] };\n  };\n};\nexpor"
+      },
+      {
+        "key": "c6",
+        "label": "统一 API 请求函数",
+        "reason": "支持附加 Bearer Authorization 请求头、默认方法、JSON 序列化，以及先解析响应再检查状态的实际行为；不证明后端完成鉴权。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 240,
+          "endLine": 256
+        },
+        "quote": "export function headers(): Record<string, string> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n): Promise<T> {\n  const r = await fetch("
       }
     ],
     "questions": [
       {
-        "question": "服务端是否保证所有 `/api` 响应（包括错误和无内容响应）都包含合法 JSON？",
-        "why": "当前实现无条件调用 `r.json()`；若服务端返回 204 或代理生成 HTML 错误页，实际异常会掩盖服务端状态与通用错误信息。",
-        "nextStep": "核对服务端路由的响应约定，并补充空响应、非 JSON 错误及网络失败的行为测试；若不能保证，再决定是否增强解析分支。",
+        "question": "后端错误响应是否始终保证为 JSON？",
+        "why": "统一请求函数在检查 HTTP 状态前调用 JSON 解析；若响应为空或由网关返回非 JSON 内容，解析异常会先抛出，无法使用响应中的 `error` 或“请求失败”兜底。",
+        "nextStep": "核对后端错误响应合同；若不保证 JSON，为空响应和非 JSON 响应增加解析降级及相应行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c3"
+          "c6"
         ]
       }
     ]
@@ -118,58 +144,38 @@
       "kind": "material",
       "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
       "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/review-api.ts",
-      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:14:13.079Z",
+    "at": "2026-09-29T21:37:44.148Z",
     "trace": {
-      "runId": "0de67419-eddd-4973-b845-63b94489af0e",
-      "roleId": "code-analyst",
+      "runId": "f1ecce59-f580-4ac0-8eab-8359807ba700",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "fb22c7cb9a2863263490e8c9a42b9d235044e8259e7bfa766b5c486042c78221",
-      "contextHash": "0a976200683bffd3980c1a43331093323817ed1972275354110300cfc8fe455e",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "f2e2302420c5309075c827661e2bbc4039eb28db5f27af3ee164f8e73fb44bbc",
+      "contextHash": "d4ee520d4416adae2e442a2cd59cc1f5d74ff6ed1e4174620f7da8f61733d1ab",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "679dcec9f3431b60528835f33f863c96162440c77df79be89a0ac8595d7599d4",
+      "fingerprint": "f8129852b5046c7188bba2f27a0b68aa06c092b28dd2fcd05998f51d560ca488",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee95-eaa9-78f2-8a13-bcab229dc57b"
+        "01a0ef19-e5f9-7061-a835-245bc90839af"
       ],
       "usage": {
-        "used": 47153,
+        "used": 39244,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -178,10 +184,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 94884,
-          "utf8Bytes": 98615,
-          "estimatedTokens": 32872,
-          "budgetedTokens": 41090,
+          "chars": 80486,
+          "utf8Bytes": 85990,
+          "estimatedTokens": 28664,
+          "budgetedTokens": 35830,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -190,17 +196,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:14:40.052Z",
+    "at": "2026-09-29T21:37:51.408Z",
     "trace": {
-      "runId": "5b21408f-477b-4b7c-8268-13750b77f825",
+      "runId": "b65c907c-c62b-4cb9-a09f-27591d28daa6",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "54481bf1bf98bea20ba0c5a20a05fd3d0305a7aa0d197f41af71ae0232e85c4f",
-      "contextHash": "45831a42c0bcfbcc16eb467d09c16a0b3da3a5611edcf8f79d589271469e5e7a",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "f2359c6b68da6987dd7ecc8fb3a184a427d231e850aed27248412f2e8b18f0c6",
+      "contextHash": "51126d13b76fa203d169f09d013350853f28ed44d452944840529861914de0c3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9622dd411719c6e24239714c90f04f6e97e7251a9f9726f05f79679517f2442c",
+      "fingerprint": "0710856e9267349d4a1968795841f50f05e8b4b3ced0353052d566ad333ec7de",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -213,10 +219,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee96-c607-7fe3-a53e-ee9ef87db453"
+        "01a0ef1a-2bac-7800-9418-171fece64fee"
       ],
       "usage": {
-        "used": 50908,
+        "used": 37281,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -225,10 +231,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 113285,
-          "utf8Bytes": 125002,
-          "estimatedTokens": 41668,
-          "budgetedTokens": 52085,
+          "chars": 77917,
+          "utf8Bytes": 82973,
+          "estimatedTokens": 27658,
+          "budgetedTokens": 34573,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
