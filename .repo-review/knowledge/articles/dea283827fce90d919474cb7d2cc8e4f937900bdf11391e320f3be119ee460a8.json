@@ -1,0 +1,674 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:other",
+    "title": "other · 模块理解",
+    "summary": "该模块汇集服务器的通用可信运行能力：以不可变证据和单用户 SQLite 为底座，连接受控 Agent、助手会话、知识学习、仓库评审及 Lark 输入。现有实现已覆盖持久作业、能力协商、独立复核和历史追溯，但团队隔离、依赖自动复核、真实外部服务兼容性及跨修订代码身份仍未闭环。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "responsibility",
+        "title": "职责与基础边界",
+        "body": "该模块提供多条业务链共用的可信底座：采集事务创建不可变修订和固定片段、更新来源版本，并只把非派生材料送入学习队列，避免模型总结成为自证材料。[[c1]][[c2]] `Store` 同时装配应用、作业、输入聚合和来源画像，但明确只是单用户 SQLite 基础，不能据此宣称已有团队租户隔离。"
+      },
+      {
+        "key": "main-flows",
+        "title": "主要运行流程",
+        "body": "Agent 子进程过滤敏感环境并以无 shell 方式启动，超时或取消会终止进程。[[c3]] 协议总输出和回答长度另有独立上限，权限及补充输入默认拒绝；[[c4]] 模型、推理强度、上下文窗口与图片能力则在会话发现后校验。[[c5]] 这替代了旧稿用单一引用覆盖全部 Agent 边界的结论。助手只接受 ACP profile，并裁剪历史与证据、要求结构化回答；只有明确任务意图才允许写入任务。[[c6]][[c7]] 学习链通过独立提取、核验和持久回执完成应用，Code Wiki 保存可回读的不可变快照，Lark 富消息也转换为统一采集分片。[[c8]][[c9]][[c10]]"
+      },
+      {
+        "key": "relationships",
+        "title": "知识、代码与关系的协作",
+        "body": "正文知识只有在独立复核接受且输入未变化时发布；材料换头会使依赖知识失效，但旧版本仍可固定读取，派生正文只引导召回原始证据。[[c11]] 仓库 association seed 生成独立意图片段及显式关系，支持多引用、幂等、缺失保留、失效和双向查询，不按同名文件猜测关联。[[c12]] 此前“三类关系已通过统一阅读合同端到端连通”的结论已被替代：现有材料只分别证明知识依赖、普通片段链接和 repo-review 专用关系。[[c13]]"
+      },
+      {
+        "key": "progress-limits",
+        "title": "可靠性进展与限制",
+        "body": "已验证采集与作业同事务、重启恢复、竞争领取和过期租约拒绝提交；[[c14]] 分类失败分别限制重试并脱敏错误，[[c15]] 应用后崩溃重放也不会重复任务、通知或投递意图。[[c16]] 群聊默认不暴露证据，注入策略后仅允许群范围材料；[[c17]] 会话修正只进入原会话，不泄漏到其他会话。[[c18]] 这修正了旧稿以群聊测试同时支持修正作用域的错误。\n\n来源更新会使旧知识退出活跃检索，但自动复核仍以未实现失败并记录待复核状态。[[c19]] 角色测试大量依赖明确标注为非生产模型的协议替身，因此不能证明真实 Agent CLI 的认证、图片和取消兼容性。[[c20]] 跨文件调用、跨修订符号续接、真实 Lark 服务端幂等及团队级授权也仍缺直接验收。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "单用户存储基础",
+        "reason": "支持 Store 的组件装配、SQLite 单用户定位及团队级约束尚待迁移。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 1,
+          "endLine": 67
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
+      },
+      {
+        "key": "c2",
+        "label": "采集修订与学习队列",
+        "reason": "支持回执幂等、不可变修订、来源换头、依赖失效及派生材料不进入学习队列。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 141,
+          "endLine": 373
+        },
+        "quote": "    return this.tx(() => {\n      const producer = input.provenance?.collectorId;\n      const eventId = input.provenance?.eventId;\n      if (producer && eventId) {\n        const receipt = this.db\n          .prepare(\n            `SELECT * FROM capture_receipts\n             WHERE workspace_id='personal' AND producer=? AND"
+      },
+      {
+        "key": "c3",
+        "label": "Agent 子进程生命周期",
+        "reason": "支持敏感环境过滤、无 shell 启动、超时和取消终止等进程边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 32,
+          "endLine": 141
+        },
+        "quote": "const env = () =>\n  Object.fromEntries(\n    Object.entries(process.env).filter(\n      ([key]) =>\n        !key.startsWith(\"BOTMUX_\") &&\n        ![\"OMEM_TOKEN\", \"CLAUDECODE\"].includes(key),\n    ),\n  );\nfunction stop(child: ChildProcessWithoutNullStreams) {\n  if (child.exitCode !== null) return;\n  try {\n    if (process.pl"
+      },
+      {
+        "key": "c4",
+        "label": "ACP 输出与权限限制",
+        "reason": "支持协议输出预算、回答字符上限，以及权限和补充输入请求默认拒绝。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 151,
+          "endLine": 231
+        },
+        "quote": "    let inputClosed = false;\n    const input = new ReadableStream<Uint8Array>({\n      start(controller) {\n        let total = 0;\n        child.stdout.on(\"data\", (chunk: Buffer) => {\n          if (inputClosed) return;\n          total += chunk.length;\n          if (total > 32_000_000) {\n            rejectExit(new Error(\""
+      },
+      {
+        "key": "c5",
+        "label": "模型能力协商",
+        "reason": "支持模型与推理强度校验、上下文窗口检查、图片能力检查及结束状态校验。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 301,
+          "endLine": 339
+        },
+        "quote": "    let configOptions = session.configOptions || [];\n    for (const [key, value] of [\n      [\"model\", profile.model],\n      [\"reasoning_effort\", profile.effort],\n    ] as const) {\n      if (!value) continue;\n      const option = configOptions.find(\n        (o) =>\n          o.id === key ||\n          (key === \"model\"\n   "
+      },
+      {
+        "key": "c6",
+        "label": "助手 ACP 适配器",
+        "reason": "支持 ACP 专用路由、历史和证据裁剪、结构化回答、取消传播及输出解析。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 42,
+          "endLine": 158
+        },
+        "quote": "    // G: reject when no profile configured.\n    if (!this.deps.profile)\n      throw new ModelUnavailableError(\"no assistant agent profile configured\");\n    const profile = this.deps.profile;\n\n    // G: reject CLI transports — do NOT pipe a codex CLI through ACP.\n    if (profile.transport !== \"acp\")\n      throw new Mod"
+      },
+      {
+        "key": "c7",
+        "label": "任务意图与零写入治理",
+        "reason": "验证明确指派可创建任务、咨询拒绝模型擅自写入，以及模型不可用时不伪造答案。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 98,
+          "endLine": 236
+        },
+        "quote": "describe(\"detectTaskIntent (unit)\", () => {\n  it(\"identifies explicit assignment intents\", () => {\n    expect(detectTaskIntent(\"帮我记一下：周五下午3点和张三开会\").explicit).toBe(true);\n    expect(detectTaskIntent(\"提醒我明天交报告\").explicit).toBe(true);\n    expect(detectTaskIntent(\"创建一个任务\").explicit).toBe(true);\n    expect(detectTaskIntent("
+      },
+      {
+        "key": "c8",
+        "label": "受控学习流水线",
+        "reason": "验证独立提取和核验、持久应用回执、顺序重启续跑及重复处理去重。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 65,
+          "endLine": 212
+        },
+        "quote": "describe(\"B2-08 controlled learning pipeline\", () => {\n  it(\"runs capture through independent extractor/verifier sessions and atomic application\", async () => {\n    const directory = temporary(\"omem-learning-app-\");\n    const built = await buildApp({\n      dataDir: directory,\n      agentCwd: join(directory, \"agent\"),\n "
+      },
+      {
+        "key": "c9",
+        "label": "代码快照生命周期",
+        "reason": "验证显式当前快照、历史快照可读和源码按指定快照固定返回。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+          "startLine": 60,
+          "endLine": 159
+        },
+        "quote": "describe(\"code snapshot lifecycle: explicit head pointer + immutable snapshots\", () => {\n  it(\"A->B(dirty)->A: reused snapshot becomes head; B stays readable; /source pinned per snapshot\", async () => {\n    const root = makeRepo();\n    w(root, \"apps/server/src/a.ts\", V1);\n    commit(root, \"v1\");\n    const dir = mkdtemp"
+      },
+      {
+        "key": "c10",
+        "label": "Lark 富消息统一分片",
+        "reason": "验证富文本、图片和回复关系进入统一采集分片，并保存图片资产。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 112,
+          "endLine": 227
+        },
+        "quote": "describe(\"H-G15 Lark rich messages adapt to unified parts\", () => {\n  it(\"parses a post (rich text) into title + paragraph text parts\", async () => {\n    const { store } = setup();\n    const inbox = new LarkEventInbox(store);\n    const ev = groupEvent({\n      eventId: \"evt-post\",\n      messageId: \"om_post\",\n      messa"
+      },
+      {
+        "key": "c11",
+        "label": "知识复核与失效流程",
+        "reason": "支持独立复核发布、输入变化失效、旧版本保留及派生知识仅引导原始证据召回。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:other:part-3",
+          "section": "knowledge-jobs"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "仓库关系同步与查询",
+        "reason": "验证逐 seed 意图片段、多引用建边、幂等、缺失关系、失效及双向查询。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 207,
+          "endLine": 410
+        },
+        "quote": "describe(\"repo-review relations\", () => {\n  it(\"generates a per-seed intent index; implements points at it, not the G01-G20 table\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    const res = await runReviewSync(store, root);\n    expect(res.relations).to"
+      },
+      {
+        "key": "c13",
+        "label": "关系统一结论的边界",
+        "reason": "明确现有证据不足以证明正文引用、代码关系与个人知识已共用完整阅读合同。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "module:other:part-5",
+          "section": "evidence-foundation"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c14",
+        "label": "持久作业与租约",
+        "reason": "验证事务入队、重启恢复、竞争 worker 单次领取及过期 fencing token 被拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 52,
+          "endLine": 205
+        },
+        "quote": "describe(\"B2-02 durable job acceptance\", () => {\n  it(\"A-J01 commits capture and queued work before a worker exists, then resumes after restart\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-jobs-restart-\"));\n    const first = setup(directory);\n    const input = {\n      source: \"manual\",\n      e"
+      },
+      {
+        "key": "c15",
+        "label": "分类重试与错误脱敏",
+        "reason": "直接支持临时失败、坏输出和认证失败采用不同重试上限，并避免敏感令牌写入错误。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 207,
+          "endLine": 250
+        },
+        "quote": "  it(\"A-J04 bounds transient and bad-output retries while stopping auth retries\", async () => {\n    const store = setup();\n    const transient = enqueue(store, \"transient\");\n    const badOutput = enqueue(store, \"bad-output\");\n    const auth = enqueue(store, \"auth\");\n    const calls = { transient: 0, bad: 0, auth: 0 };\n"
+      },
+      {
+        "key": "c16",
+        "label": "应用后崩溃的幂等重放",
+        "reason": "直接验证业务应用后崩溃再重放时，任务、回执、通知和投递意图均不重复。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/jobs.test.ts",
+          "startLine": 325,
+          "endLine": 375
+        },
+        "quote": "  it(\"A-J06 replays a post-application crash without duplicate business effects\", async () => {\n    const store = setup();\n    const job = enqueue(store, \"crash-after-application\");\n    let executions = 0;\n    const worker = new DurableJobWorker(\n      store.jobs,\n      \"crash-worker\",\n      {\n        \"crash-after-appl"
+      },
+      {
+        "key": "c17",
+        "label": "群聊证据隔离",
+        "reason": "验证群聊默认无证据，注入策略后只暴露当前群材料且私人证据不泄漏。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 238,
+          "endLine": 311
+        },
+        "quote": "  it(\"G09: group conversations deny evidence by default when no policy is injected\", async () => {\n    const { store } = setup();\n    captureSource(store, \"群项目文档\", \"群内公开说明。\");\n    const model: AssistantModelPort = {\n      generate: async (input) => ({\n        answer: `evidence=${input.evidence.length}`,\n        citatio"
+      },
+      {
+        "key": "c18",
+        "label": "会话修正作用域",
+        "reason": "直接验证修正进入原会话的可信上下文，同时不会泄漏到另一会话。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 519,
+          "endLine": 544
+        },
+        "quote": "  it(\"H-G16: correction in same scope reaches model; different scope does not leak\", async () => {\n    const { store } = setup();\n    const feedback = new FeedbackService(store);\n    const seen: string[] = [];\n    const model: AssistantModelPort = {\n      generate: async (input) => {\n        seen.push(input.trustedCont"
+      },
+      {
+        "key": "c19",
+        "label": "依赖刷新尚未实现",
+        "reason": "验证刷新任务失败并记录待复核对象，支持自动重新核验尚未闭环的结论。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-refresh.test.ts",
+          "startLine": 152,
+          "endLine": 245
+        },
+        "quote": "describe(\"P0: refresh_dependents does not claim a successful re-verification\", () => {\n  it(\"fails the job NOT_IMPLEMENTED and records needs_review for affected memories\", async () => {\n    const directory = temporary(\"omem-refresh-job-\");\n    const store = new Store(directory);\n    try {\n      const v1 = store.capture"
+      },
+      {
+        "key": "c20",
+        "label": "非生产 ACP 协议替身",
+        "reason": "材料明确声明其为确定性测试替身，因此不能作为真实外部 Agent CLI 兼容性证明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+          "startLine": 1,
+          "endLine": 53
+        },
+        "quote": "// Deterministic ACP protocol fixture for role-runtime tests. It is never a production model.\nimport readline from \"node:readline\";\n\nconst args = new Set(process.argv.slice(2));\nconst send = (value) => process.stdout.write(JSON.stringify(value) + \"\\n\");\nconst sessionId = `role-session-${process.pid}`;\nlet model = \"alph"
+      }
+    ],
+    "questions": [
+      {
+        "question": "来源更新后的依赖知识应在何种条件下重新激活、替换或转入用户决策？",
+        "why": "当前实现只会使旧知识失效并记录待复核，尚未定义重新核验成功、证据不足或冲突时的完整状态迁移。",
+        "nextStep": "定义依赖刷新状态机、并发版本和通知规则，并补充从待复核到重新激活、替换或持续失效的端到端测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c19"
+        ]
+      },
+      {
+        "question": "代码关系、正文引用与个人知识何时完成统一阅读合同的端到端验收？",
+        "why": "现有材料分别验证知识依赖和仓库专用关系，尚未直接证明三类入口共用目标解析、失效展示和阅读导航。",
+        "nextStep": "建立同时包含原始片段、正文引用与代码关系的集成夹具，验证固定目标、缺失或过期状态及统一导航。",
+        "blocking": false,
+        "citationKeys": [
+          "c11",
+          "c12",
+          "c13"
+        ]
+      },
+      {
+        "question": "应选择哪些真实 ACP Agent CLI 作为生产兼容性基线？",
+        "why": "当前协议替身覆盖部分能力协商和异常场景，却不能证明真实 CLI 的认证、技能发现、图片输入、结束协议与取消行为。",
+        "nextStep": "选定至少一种受支持 CLI，执行明确标记的 live check，并记录版本、登录条件、能力、退出码和取消结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5",
+          "c20"
+        ]
+      },
+      {
+        "question": "团队部署前采用何种租户授权、数据库和跨主机租约边界？",
+        "why": "当前 Store 明确是单用户 SQLite，已有竞争测试只覆盖共享 SQLite，不能证明跨租户隔离或分布式互斥。",
+        "nextStep": "先确定团队身份与授权模型，再设计数据库迁移、跨租户过滤、租约时钟和双进程或跨主机验收。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c14"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+      "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/attention-gate.test.ts",
+      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+      "digest": "d04e8dca741772db0fd43565fb9fd906fb69a09070a5581161a3dcbf0da24140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-artifacts.test.ts",
+      "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+      "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
+      "digest": "87f1cf57fca10d4cb0a5db8b64e0713611d0a304054c4ffc973bad34c7eb7132"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-budget.test.ts",
+      "digest": "2d0812ca8592b2a3702ce8ee0f6cf4568af9356037cb64be6e731d0a949c9fb3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/connectors.test.ts",
+      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge.test.ts",
+      "digest": "cb96bd023356e4fee4a129e29c9a3b295a3a83428e5c2c7cc5c7b5e1b4616688"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+      "digest": "aeb1e454f5fe809dbfb9574bf9746feedb4997b631e6dab73a50c9e78897b089"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-model.test.ts",
+      "digest": "ac88b469c5dccac99e5b7535cce1a6ec584abd604338938bfdb07c09340e632a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding.test.ts",
+      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-router.test.ts",
+      "digest": "144324f39424c41784fc75b806c9c40903a95f86834901704c76df286c2fddb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/contracts.test.ts",
+      "digest": "9f63b6d6abf1711b55883b4324c154a7b0aa3929a92c79cb54c0f5d5dcf88a3f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+      "digest": "5c03480e00216e0a3bf25e65281ef68fd3bdc0293273cb9c843452046505d381"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/inputs.test.ts",
+      "digest": "724912caf7ff6c35aff905bbad784c410d9874e72d8223c57c063d2d716ecbec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/jobs.test.ts",
+      "digest": "78c38d182c888dfb374df4597a667f368867b28528fa2e31bb78d34271f1077d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+      "digest": "3daf657af4eb9db8b2365d6c97deae0b6232b561aa6cd2f681fa8d3049fee7ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
+      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+      "digest": "c527d049388fa485c086e91af83054f6983c0dd9bdc338f6cc60643f46042600"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-realtime.test.ts",
+      "digest": "8c9f2eeca9a0ad0586572c2ac64d5b5f35a631f2f6199f10ba0db0474c680508"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery.test.ts",
+      "digest": "77aa882e9476a521c31857548c2d3cb7631b859867d375aa56c4c08157938ca9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/migrations.test.ts",
+      "digest": "bc5b4990d965d39d896c285d9548ca5b428a32b4149cf58e4713876379c78430"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+      "digest": "ccc264f5b3eb1f8c6062722ced2d70a544efb31e3fc38d81fdc823d41afa252e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/proposal-policy.test.ts",
+      "digest": "19c9fe2b49e81db587a4f3b3e6e956c9e99151c9decd8c4943a5fef2b9bc7d57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/learning-refresh.test.ts",
+      "digest": "fe2dad4b8162d09a09f981b6307cfca63749a5b369e315629ab44c31b6be3d20"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+      "digest": "7785c4def39404faf04f4ecf85bca9fecef6413e7b247cbfb011f4b8aefe9e9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
+      "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+      "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-relations.test.ts",
+      "digest": "712eb29abc8429b4ff8597d6054b37333d4d91d701542465465e2fa5cf449602"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-migration.test.ts",
+      "digest": "aac9e5aded456d6287dfceaf8b674320541bf0aa19f1636e28c5135649096fee"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/store.test.ts",
+      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-sync.test.ts",
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+      "digest": "4da0fd6c62ebc6680f8ef9f78780211be16d90afd93a01666bf420473f59bc48"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/role-runtime.test.ts",
+      "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
+    },
+    {
+      "kind": "article",
+      "key": "module:other:part-1",
+      "digest": "2b524367657e4bf75b8b2d45eb4cfb45a2728982af27e3aec827ad5e580aae51"
+    },
+    {
+      "kind": "article",
+      "key": "module:other:part-2",
+      "digest": "e0ad762513b085c0e928baf93e64607b0c61c1836698f22c443dcc3b0d852cdd"
+    },
+    {
+      "kind": "article",
+      "key": "module:other:part-3",
+      "digest": "69ce75fb5ecd2120f9e21af48942a8562d0bd984135d41649a4f010d2cd5984b"
+    },
+    {
+      "kind": "article",
+      "key": "module:other:part-4",
+      "digest": "047c4400a301152dd7f0e7705de840f34a097acd14f2b2ec84595e990afe1599"
+    },
+    {
+      "kind": "article",
+      "key": "module:other:part-5",
+      "digest": "bed8e77b9922b606de3f990a3991e04d0563c29100980888b5bb946fd47814fe"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:05:00.892Z",
+    "trace": {
+      "runId": "f8c54325-48ae-47fc-8a15-a084c93bf316",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "b1972f9e8efb7e0345832af9f8ce9e3ed271eae8622d4cc73044bb46622dafe8",
+      "contextHash": "d24df2d1fec4774ae27b9f579f91529df07ce9688bb037e32056a063f63881b2",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f067c9ba590af7e5e5ed9d5829f13facaf937157a062c8a1c91739a96a8d1d41",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefb-b84d-7a42-ba6c-b29030b8e1d0"
+      ],
+      "usage": {
+        "used": 155076,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 224000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 457311,
+          "utf8Bytes": 487365,
+          "estimatedTokens": 162455,
+          "budgetedTokens": 203069,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:05:14.452Z",
+    "trace": {
+      "runId": "52cf80ef-c962-4bde-a75a-0db990b51167",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "59fdf6939311f7cc4102fbb66fe8a5d27fcbb251a7675b06d744e8ba55a96e37",
+      "contextHash": "459fc460876a6999cfea8c3abf411509eed88a7965672aa96935a718856eba08",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "582ea91a1e25fd04202f5368bfac075f7f65062b41c9c99ed246123e585ee94b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefc-35f1-7013-bf0b-27c302777f1d"
+      ],
+      "usage": {
+        "used": 151613,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 224000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 456351,
+          "utf8Bytes": 484916,
+          "estimatedTokens": 161639,
+          "budgetedTokens": 202049,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
