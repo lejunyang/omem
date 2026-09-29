@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/inputs/spool.ts",
+    "title": "Hook 捕获暂存队列",
+    "summary": "以本地文件队列承接带来源事件标识的捕获输入，通过稳定摘要、原子写入、容量限制和严格回执校验，实现可重放且避免静默丢失的投递。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose-and-enqueue",
+        "title": "用途与入队流程",
+        "body": "`HookSpool` 解决外部 Hook 已到达、下游捕获服务却暂不可用时的可靠暂存问题。记录保留生产者、事件标识、完整捕获输入、内容摘要和创建时间；目录与记录分别限制为 `0700`、`0600`。文件名由生产者和事件标识的稳定摘要确定，因此同一事件重复到达时可直接返回原记录；若事件标识相同而负载摘要不同，则明确报冲突，避免覆盖证据。写入先落随机临时文件并 `fsync`，再重命名和同步目录，以降低半写文件风险。[[c1]] [[c2]]"
+      },
+      {
+        "key": "capacity-and-flush",
+        "title": "容量、保留期与投递边界",
+        "body": "入队前会统计 JSON 记录数量与字节数，默认上限为 1000 条和 50 MB；超限只追加受大小约束的告警并抛出专用容量错误，不会淘汰旧记录。保留期默认七天，但超期记录也只是产生告警，并不会自动删除。[[c3]] 刷新按创建时间顺序、受 `limit` 限制地串行发送；只有回执中的生产者、事件标识和负载摘要全部吻合才删除文件。任一发送或校验失败都会记录结果并停止本轮，因此后续事件不会越过失败项。该实现没有并发消费者锁，材料也未展示损坏 JSON 的隔离恢复。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "暂存记录与安全目录",
+        "reason": "说明暂存记录保存的幂等字段、捕获内容以及目录权限初始化。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 20,
+          "endLine": 63
+        },
+        "quote": "export type SpoolRecord = {\n  schemaVersion: 1;\n  id: string;\n  producer: string;\n  eventId: string;\n  payloadDigest: string;\n  capture: CaptureInput;\n  createdAt: string;\n};\n\nexport type CaptureAcknowledgement = {\n  receipt: {\n    producer: string;\n    eventId: string;\n    payloadDigest: string;\n    revisionId: string"
+      },
+      {
+        "key": "c2",
+        "label": "幂等入队与原子写入",
+        "reason": "支持稳定键、负载冲突检测以及临时文件同步后重命名的写入流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 69,
+          "endLine": 171
+        },
+        "quote": "  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord, \"producer\" | \"eventId\">) {\n    return join(\n      this.directory,\n      this.key(record.producer, record.eventId) + \".json\",\n    );\n  }\n\n  private syncDirectory() {\n    try {\n"
+      },
+      {
+        "key": "c3",
+        "label": "容量与保留期处理",
+        "reason": "说明默认容量阈值、超限告警，以及超期记录仅告警而不清理。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 139,
+          "endLine": 194
+        },
+        "quote": "    const pending = jsonFiles(this.directory);\n    const currentBytes = pending.reduce(\n      (total, name) => total + statSync(join(this.directory, name)).size,\n      0,\n    );\n    const record: SpoolRecord = {\n      schemaVersion: 1,\n      id: randomUUID(),\n      producer,\n      eventId,\n      payloadDigest,\n      ca"
+      },
+      {
+        "key": "c4",
+        "label": "顺序刷新与回执校验",
+        "reason": "支持刷新时严格匹配回执、成功后删除、失败即停止的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 197,
+          "endLine": 229
+        },
+        "quote": "  async flush(\n    sender: (capture: CaptureInput) => Promise<CaptureAcknowledgement>,\n    limit = 10,\n  ) {\n    const outcomes: {\n      eventId: string;\n      delivered: boolean;\n      error?: string;\n    }[] = [];\n    for (const record of this.pending().slice(0, Math.max(0, limit))) {\n      try {\n        const respon"
+      }
+    ],
+    "questions": [
+      {
+        "question": "是否需要支持多个进程同时刷新同一暂存目录？",
+        "why": "当前材料展示了原子文件写入，但 `pending` 与 `flush` 没有租约、锁或原子认领；并发刷新可能重复发送同一记录。",
+        "nextStep": "确认部署是否保证单消费者；若不能保证，应增加文件级认领或持久化租约并补充并发行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/spool.ts",
+      "digest": "6e815455823d4befbba2dcce822d0c1b3e12b4b08f7f86def8945493dabe3039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:02:57.660Z",
+    "trace": {
+      "runId": "ec3fa096-0572-4505-a992-47476943d2a1",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "a2696527429647c187b3591f37dcc98e8ad608d3041cec373b5a288135bb8434",
+      "contextHash": "3c776bcf4bbd1bec19c86a6f371b055183e1b4ed31b390c4b5e3b268e0d1779f",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ba8d3be75f9a06dfef532b2659db8b8d92d39428dc8ad76ee82f876acb3eca6c",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8b-8922-7e71-b421-cad69e0e87c6"
+      ],
+      "usage": {
+        "used": 53060,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 124747,
+          "utf8Bytes": 126777,
+          "estimatedTokens": 42259,
+          "budgetedTokens": 52824,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:03:20.578Z",
+    "trace": {
+      "runId": "23485087-b5df-45e8-861d-0cb045629f50",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "1847da482fd5d690995b733ed881cd60e38d43c8196e877f43d5d8b625e0effc",
+      "contextHash": "45f2a90fe5d73dbc316f3ab8ddaebe4be24a3791d25686b41311c65940bc423d",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e6429997986280da9acdd9a80162a7e46801e3800afd65991fcbbfa224e36fe1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-775a-7790-bfbc-2b7aa491dd1a"
+      ],
+      "usage": {
+        "used": 56578,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143646,
+          "utf8Bytes": 154634,
+          "estimatedTokens": 51545,
+          "budgetedTokens": 64432,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

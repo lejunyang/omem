@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/quality/lark-annotations.ts",
+    "title": "Lark 人工质量标注会话",
+    "summary": "通过持久化投递意图发送逐条标注卡片，并对回调的会话、操作者、消息、有效期、标签摘要和 nonce 做联合校验后原子推进数据集。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "session-delivery",
+        "title": "会话启动与卡片投递",
+        "body": "服务把质量仓库中的下一条 pending 样本渲染为 Lark 卡片，展示原文、草稿处置、提炼对象和四项人工判断，并提供确认、不提炼、需修改、稍后处理四种动作。按钮携带协议版本、session/sample、nonce、label digest 和过期时间。[[c1]]\n\n启动时若同一数据集已有 active 会话，默认返回重复结果；显式 resend 会轮换 nonce，并新增 change 与 delivery intent。新会话必须找到 personal workspace 中 active 的 owner p2p target，随后在同一事务内创建 session、变更记录、待发送意图及关联表行。[[c2]] 该模块本身不直接发送网络请求，而是把卡片载荷交给投递意图链路。取消会话时只原子撤销尚未发送或等待重试的意图，已发送及正在发送的历史不会被伪装成已召回。[[c3]]"
+      },
+      {
+        "key": "callback-validation",
+        "title": "回调校验与状态推进",
+        "body": "回调仅接受 `card.action.trigger`，先通过事件 inbox 持久化和去重。动作必须符合严格 schema，随后联合检查 active session、当前 sample、绑定 owner、chat、message、app、有效期、label digest，以及经 constant-time 比较验证的 nonce hash；任一不符都会把 inbox 标为 failed 并返回无效提示。[[c4]]\n\n合法动作在事务内调用仓库落标签、写 annotation event、将 inbox 标为 processed、取得下一条 pending 样本，并轮换 nonce、推进 session；无下一项时转为 completed。[[c5]] 边界上，`needs_edit` 只改变状态，卡片没有直接编辑标签的表单；后续修改依赖仓库的 revise 能力或其他界面。材料也未给出 Lark API 投递成功、重复回调窗口及并发点击的测试断言。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "质量标注卡片协议",
+        "reason": "支持卡片展示内容、四种操作及按钮所携带安全字段的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 42,
+          "endLine": 128
+        },
+        "quote": "  private card(\n    sessionId: string,\n    sample: QualitySample,\n    nonce: string,\n    expiresAt: string,\n  ) {\n    const progress = this.repository.progress(sample.datasetId);\n    const total = Object.values(progress).reduce(\n      (sum, count) => sum + Number(count),\n      0,\n    );\n    const reviewed = total - Num"
+      },
+      {
+        "key": "c2",
+        "label": "标注会话创建与重发",
+        "reason": "说明 active 会话去重、重发行为、owner target 选择和投递意图持久化。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 180,
+          "endLine": 352
+        },
+        "quote": "  start(datasetId: string, appId?: string, options: { resend?: boolean } = {}) {\n    const existing = this.store.db\n      .prepare(\n        `SELECT s.*,b.binding_version FROM quality_annotation_sessions s\n         JOIN lark_bindings b ON b.id=s.binding_id\n         WHERE s.dataset_id=? AND s.state='active'\n         ORDE"
+      },
+      {
+        "key": "c3",
+        "label": "取消与未发送意图撤销",
+        "reason": "解释取消只撤销 pending/retry_wait 投递，保留已发送和在途历史。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 151,
+          "endLine": 177
+        },
+        "quote": "  cancel(sessionId: string) {\n    const at = new Date().toISOString();\n    this.store.tx(() => {\n      const changed = this.store.db\n        .prepare(\n          `UPDATE quality_annotation_sessions SET state='cancelled',updated_at=?\n           WHERE id=? AND state='active'`,\n        )\n        .run(at, sessionId);\n      "
+      },
+      {
+        "key": "c4",
+        "label": "Lark 回调联合校验",
+        "reason": "支持事件去重以及操作者、消息、有效期、摘要和 nonce 的完整校验链。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 355,
+          "endLine": 394
+        },
+        "quote": "  handle(event: LarkInboundEvent) {\n    if (event.kind !== \"card.action.trigger\")\n      throw Error(\"QUALITY_CARD_EVENT_REQUIRED\");\n    const receipt = this.inbox.persist(event);\n    if (receipt.duplicate && receipt.state !== \"received\")\n      return {\n        accepted: true,\n        duplicate: true,\n        toast: { t"
+      },
+      {
+        "key": "c5",
+        "label": "标注事务与下一样本推进",
+        "reason": "说明落标签、事件审计、inbox 完成和会话状态更新在同一事务中发生。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 395,
+          "endLine": 458
+        },
+        "quote": "    const nextNonce = randomBytes(24).toString(\"base64url\");\n    const at = new Date().toISOString();\n    let next: QualitySample | null = null;\n    this.store.tx(() => {\n      this.repository.label({\n        sampleId: sample.id,\n        action: action.action,\n        reviewerOpenId: event.senderOpenId!,\n        expect"
+      }
+    ],
+    "questions": [
+      {
+        "question": "“需要修改”后的具体编辑入口由哪个模块提供？",
+        "why": "卡片只能把样本置为 needs_edit，当前材料没有展示编辑后的 label 如何提交，也无法确认是否会自动回到 pending。",
+        "nextStep": "定位调用 `QualityRepository.revise` 的 API 或 UI，并验证 expectedLabelDigest 冲突及再次标注流程。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "3ae1285f4f529258e0273949da1660869c2d121290c605a53d9c0ea2a5bf44a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "82040e6bf9053694fce5e0fba676574f3e95fcf309d9076f297fa674697efd2d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:36:22.914Z",
+    "trace": {
+      "runId": "b24a508b-9e49-4030-a33d-9b29aeeb18c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d6d9a86c5eafafc99edd87107f6c137aeb9b9b0a70faded4d19ccb17c259fb08",
+      "contextHash": "775cf64b377935696b9e2041fe922cc7fb3a70584a2e0881cf89d345ba10501f",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "14feaa8c6d4a0069dad959ba68382169acc8dc67a5f41fee01beef01e423ed38",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaa-213d-7d13-98e6-3838885b25f1"
+      ],
+      "usage": {
+        "used": 48481,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104046,
+          "utf8Bytes": 106725,
+          "estimatedTokens": 35575,
+          "budgetedTokens": 44469,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:36:50.583Z",
+    "trace": {
+      "runId": "afa11d9e-b028-47d8-baa8-0f33d508c8b6",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "23ea58bf4c39249e897ea17eb8257be8a67d56838fff53295c4ed9de4ef6bda3",
+      "contextHash": "5fc04761f2d28bfbb15cb839ae410658ccb196bac67e758908bb49e833e8c4e7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04c039dc6f97233cd2e75bca2c35775b51c16fdbda7244f0b64c73cbbfe27cd0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeab-107d-7e81-8977-b6d2f434d03a"
+      ],
+      "usage": {
+        "used": 52686,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 126336,
+          "utf8Bytes": 137353,
+          "estimatedTokens": 45785,
+          "budgetedTokens": 57232,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

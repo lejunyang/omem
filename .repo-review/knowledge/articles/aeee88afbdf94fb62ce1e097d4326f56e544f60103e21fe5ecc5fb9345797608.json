@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/runs.ts",
+    "title": "受约束的 Agent 问答运行管理器",
+    "summary": "管理内存中的 Agent 问答任务，固定证据上下文、限制并发与输入输出预算，调度 ACP 或 CLI，并把成功回答作为派生证据保存和回链。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "validation-and-context",
+        "title": "启动校验与固定上下文",
+        "body": "`Runs` 在内存中维护运行状态、事件、取消控制器与回答修订标识，同时最多允许两个任务运行；累计达到一百条记录时只淘汰一个非运行任务。启动时必须找到配置档案，并允许问题覆盖模型和 effort。焦点与上下文标识去重后逐一解析为证据；选区必须真实包含在首个固定片段中，文本总量也不得超过档案预算。[[c1]]\n\n发送给 Agent 的材料包含证据标识、标题、版本、是否当前及原文，并要求只能引用这些标识。图片从相关修订的 parts 收集、按资源标识去重，总字节数上限为一千万；只要存在图片就必须使用 ACP，禁止静默退化成纯文本。[[c2]]"
+      },
+      {
+        "key": "execution-and-storage",
+        "title": "执行、事件与结果归档",
+        "body": "任务依档案 transport 调用 ACP 或 CLI，共用取消信号和事件回调。事件累计超过 25 万字符会中止；文本事件拼成最终答案，权限事件还会写入 attention 记录。取消、关闭及执行异常都转成终态事件，空答案也视为错误。[[c3]]\n\n成功回答通过 `Store.capture` 保存为 agent 来源，provenance 明确标记机器人身份和 derived 生产类型；随后将回答的每个片段链接到全部输入证据。完成事件特别提醒“提供材料引用不等于结论已验证”，说明此处建立的是来源关系，而不是自动确认论断可信度。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "运行容量与证据校验",
+        "reason": "支持并发限制、档案选择、证据解析、选区固定性及文本上下文预算的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/runs.ts",
+          "startLine": 39,
+          "endLine": 85
+        },
+        "quote": "  start(input: z.infer<typeof questionSchema>) {\n    if (\n      [...this.runs.values()].filter((r) => r.state === \"running\").length >= 2\n    )\n      throw Error(\"Two runs are already active\");\n    if (this.runs.size >= 100) {\n      for (const [id, r] of this.runs) {\n        if (r.state !== \"running\") {\n          this.r"
+      },
+      {
+        "key": "c2",
+        "label": "Agent 输入与图片边界",
+        "reason": "支持固定材料提示、图片去重与总量限制，以及图片仅允许 ACP transport 的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/runs.ts",
+          "startLine": 86,
+          "endLine": 109
+        },
+        "quote": "    const text = `${profile.instructions}\\n引用只能使用下面列出的 evidenceId。结论不足时说明不足。\\n<materials>${evidenceText}</materials>\\n选区：${JSON.stringify(input.selection || \"\")}\\n问题：${input.question}`;\n    const blocks: ContentBlock[] = [{ type: \"text\", text }];\n    let imageBytes = 0;\n    // Pictures belong to the fixed source revisi"
+      },
+      {
+        "key": "c3",
+        "label": "调度和事件预算",
+        "reason": "说明 ACP/CLI 分支、共享取消信号、输出预算和权限注意事项记录。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/runs.ts",
+          "startLine": 117,
+          "endLine": 158
+        },
+        "quote": "    let answer = \"\";\n    let eventChars = 0;\n    const emit = (type: \"status\" | \"text\" | \"permission\", text: string) => {\n      if (run.controller.signal.aborted) return;\n      eventChars += text.length;\n      if (eventChars > 250000) {\n        run.controller.abort();\n        throw Error(\"Answer output budget exceeded\""
+      },
+      {
+        "key": "c4",
+        "label": "回答保存与证据回链",
+        "reason": "支持成功回答作为派生捕获保存、链接输入证据并产生完成或错误事件的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/runs.ts",
+          "startLine": 159,
+          "endLine": 196
+        },
+        "quote": "        const saved = this.store.capture({\n          source: \"agent\",\n          externalId: \"answer:\" + run.id,\n          title: input.question.slice(0, 100),\n          parts: [{ type: \"text\", text: answer }],\n          context: { runId: run.id, event: \"answer\" },\n          provenance: {\n            collectorId: \"omem-"
+      }
+    ],
+    "questions": [
+      {
+        "question": "调用方是否已在提交问题前校验所选 model 与 effort 确实受目标 Agent 档案支持？",
+        "why": "本材料只显示输入值直接覆盖档案默认值，没有展示能力发现或拒绝不支持设置的逻辑；相关校验可能位于未提供的 agents/config 模块。",
+        "nextStep": "检查档案构建和 ACP/CLI 调用实现，确认能力校验位置；若不存在，在启动 Agent 前返回明确的设置错误。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "已完成运行是否需要持久化或提供更完整的淘汰策略？",
+        "why": "运行状态和事件仅保存在 Map 中，达到容量时一次只删除一个非运行任务；进程重启后的查询语义和长期事件保留策略从材料中无法确定。",
+        "nextStep": "结合 API 使用方和产品保留要求，决定内存态是否是明确边界，或将运行元数据迁入存储层。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/runs.ts",
+      "digest": "71feea2619b8263142f4285ed0a5a3e9798af8c7daf4881b6c1af41802566fa6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:06:28.892Z",
+    "trace": {
+      "runId": "331b42d2-f637-4555-8278-0df16877bbec",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "3a4a727c1159db490a6ae572156e115595d2b51919cd5e75afb803ce77962206",
+      "contextHash": "7d53b0f13ba1517b47fca7080c1249223278bbdaace69b7c877bef283614d79a",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f9d358cde52a5d9159873683001446ba5bf41c3727764ea442928bd5b4a60336",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8e-f5ba-7483-b227-1ea0cd0462d4"
+      ],
+      "usage": {
+        "used": 43616,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 92152,
+          "utf8Bytes": 94662,
+          "estimatedTokens": 31554,
+          "budgetedTokens": 39443,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:07:01.039Z",
+    "trace": {
+      "runId": "6f9591d4-01fc-47a5-b6f5-f5f14bd2558d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "545f9a4409a2e80c352294e840f2754186e0893396487558add1515702feba71",
+      "contextHash": "562adc5da7ff883efea033479af164a4bfb191c63b39d744b3c2bc01574b2eea",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2f0ae16e887c0784db9c28b9432bd4a29862ae2da90117c716d8e4fcb36e5322",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8f-b0db-7f30-bef3-0e7d7e2fa422"
+      ],
+      "usage": {
+        "used": 47188,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104615,
+          "utf8Bytes": 113973,
+          "estimatedTokens": 37991,
+          "budgetedTokens": 47489,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

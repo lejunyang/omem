@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/conversation/router.ts",
+    "title": "会话身份与轮次状态持久化路由",
+    "summary": "以主体、渠道、聊天和线程确定会话，把每轮输入先持久化再执行，并提供去重、状态迁移、取消、结果与发件箱关联及重启恢复查询。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "identity",
+        "title": "会话身份与可见性",
+        "body": "路由器拥有会话和轮次的 SQLite 持久化。会话键由 workspace、principal、channel、chat 和 thread 共同决定；chat ID 不被当作项目身份。新会话默认落在 personal workspace，并保存 private/group 可见性，为上层限制证据范围提供状态，但本文件本身没有执行证据授权。[[c1]] `open` 先按完整键查找，存在则复用，否则创建 UUID 会话，因此线程差异会形成不同会话。[[c2]]"
+      },
+      {
+        "key": "turn-lifecycle",
+        "title": "先入队、再执行与幂等",
+        "body": "轮次在模型或工具执行前以 pending 状态写入。若有外部 transport event ID，轮次 ID 由稳定摘要生成；重复投递返回已有记录并标记 duplicate，避免再次执行或重复回复。[[c3]] 状态可依次改为 running、done、failed、pending 或 cancelled；完成时同时保存结果、证据、工具动作和可选 outbox ID，取消则不写回复正文或绑定发件箱。错误字符串在失败或重试状态下被截为 500 字符。[[c4]]"
+      },
+      {
+        "key": "recovery",
+        "title": "查询与恢复边界",
+        "body": "路由器可按序返回会话全部轮次，也可扫描仍为 pending/running 的记录，供重启后恢复。[[c5]] 不过状态保存在 JSON 文本列中，未完成查询通过 `LIKE` 匹配序列化片段，而不是结构化状态列；其可靠性依赖本模块固定的 JSON 序列化形式。`nextOrdinal` 的“读最大值再加一”和插入在此处未显示显式事务，并发写入时是否由数据库唯一约束兜底，材料无法确定。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "会话键与可见性设计",
+        "reason": "支持会话身份组成、项目身份不从聊天推断及可见性边界说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 67,
+          "endLine": 77
+        },
+        "quote": "/**\n * Owns conversation identity and persistence. The conversation key is\n * principal + channel + chat + thread; project identity is never inferred from\n * chat_id. A conversation may be private (p2p with the bound owner / web) or\n * group (@-mentioned in a group), which bounds evidence visibility.\n *\n * Turns are en"
+      },
+      {
+        "key": "c2",
+        "label": "打开或创建会话",
+        "reason": "说明完整会话键查询、personal 默认 workspace 与新会话创建流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 81,
+          "endLine": 122
+        },
+        "quote": "  open(input: {\n    principalId: string;\n    channel: AssistantChannel;\n    chatId: string;\n    threadId?: string | null;\n    visibility: Visibility;\n    workspaceId?: string;\n  }): Conversation {\n    const workspaceId = input.workspaceId ?? \"personal\";\n    const threadId = input.threadId ?? \"\";\n    const existing = th"
+      },
+      {
+        "key": "c3",
+        "label": "轮次入队与事件幂等",
+        "reason": "支持外部事件摘要生成轮次 ID、重复投递复用已有记录及 pending 初始状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 146,
+          "endLine": 193
+        },
+        "quote": "  /**\n   * Persist a pending turn before any model call. When `transportEventId` is\n   * provided the turn id is derived from it, so re-delivering the same event\n   * returns the already-persisted turn (`duplicate: true`) instead of running\n   * a second turn or issuing a second reply.\n   */\n  enqueueTurn(input: {\n    "
+      },
+      {
+        "key": "c4",
+        "label": "轮次完成、失败与取消",
+        "reason": "说明状态更新、结果字段、发件箱关联及取消不产生回复的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 220,
+          "endLine": 283
+        },
+        "quote": "  private patchRefs(turnId: string, patch: Partial<TurnMessageRefs>) {\n    const turn = this.turn(turnId);\n    if (!turn) return;\n    const refs: TurnMessageRefs = { ...turn.inputMessageRefs, ...patch };\n    this.db\n      .prepare(\"UPDATE conversation_turns SET input_message_refs=? WHERE id=?\")\n      .run(JSON.stringif"
+      },
+      {
+        "key": "c5",
+        "label": "未完成轮次恢复查询",
+        "reason": "支持按 JSON 状态寻找 pending/running 轮次以供恢复的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 286,
+          "endLine": 317
+        },
+        "quote": "  turn(turnId: string): ConversationTurn | null {\n    const row = this.db\n      .prepare(\"SELECT * FROM conversation_turns WHERE id=?\")\n      .get(turnId) as Row | undefined;\n    return row ? this.rowToTurn(row) : null;\n  }\n\n  turns(conversationId: string): ConversationTurn[] {\n    return (\n      this.db\n        .prepa"
+      }
+    ],
+    "questions": [
+      {
+        "question": "并发入队时 ordinal 是否有数据库唯一约束或上层串行化保障？",
+        "why": "本文件通过查询最大 ordinal 后加一，相关读取与插入未显示在同一显式事务中，无法确认并发冲突处理。",
+        "nextStep": "检查 conversation_turns 的迁移定义和调用方调度方式，并增加同一会话并发 enqueue 的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/hook-forward.ts",
+      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:02:31.928Z",
+    "trace": {
+      "runId": "fdb98094-d0c7-4b1e-ae2d-db638b282086",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d84a1436781fa1c16f1df33365d0860899e3cc6a036fc18ba536de28eab03fb6",
+      "contextHash": "1c90f6fdc966562afb6c99d3d9b281a94ee9dda2ca0860e1e0a75d4bc58ebbf7",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "89b7cbc1272879850193c7a4bcc95bef69d0f2dedd3466645f5d1b7a6e2817b0",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8b-3732-7771-9f59-588e53b88a4a"
+      ],
+      "usage": {
+        "used": 49305,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 109552,
+          "utf8Bytes": 111371,
+          "estimatedTokens": 37124,
+          "budgetedTokens": 46405,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:03:06.007Z",
+    "trace": {
+      "runId": "2e79240a-b27c-4d75-a9fd-7d4e931f7733",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "966e003fb7ece1ade11c6d46b806a7c1690b2ed3e6976c11797c2fdd3f0c12ad",
+      "contextHash": "a2e3bc93ffba599c3474dade47c44bc7fcdffc700d0cfb8c74b2c2ea81a34306",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8d7c95d3769504330976d1cd6eea40d75f72e3677ddd474428cfe75030320144",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-149d-7042-a7c2-8d49d3851bff"
+      ],
+      "usage": {
+        "used": 53392,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 129085,
+          "utf8Bytes": 139068,
+          "estimatedTokens": 46356,
+          "budgetedTokens": 57945,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

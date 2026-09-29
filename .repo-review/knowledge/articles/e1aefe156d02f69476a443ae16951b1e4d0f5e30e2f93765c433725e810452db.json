@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/retrieval/port.ts",
+    "title": "统一检索端口与证据回读合同",
+    "summary": "定义来源与记忆两类搜索、固定证据回读及健康检查。只有来源候选直接携带 Revision 和 Fragment 定位；记忆候选尚未在本接口中建立回到原始证据的映射。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "后端替换目标与保证边界",
+        "body": "端口旨在隔离调用方与具体检索后端，使当前 SQLite 关键词实现未来可替换为其他服务。文件头注释提出所有结果都应回到不可变 Fragment 的设计目标，[[c1]] 但现有类型只对 `SourceCandidate` 落实该保证：它同时携带来源 Revision 和 Fragment 标识；`MemoryCandidate` 只有记忆标识、分数、摘要、种类、状态和 provenance。[[c3]] 因而不能把“所有候选均可直接回读原证据”视为当前合同已经实现的事实。"
+      },
+      {
+        "key": "scope",
+        "title": "范围与项目信任边界",
+        "body": "查询可表达项目、主题或工作区范围，并附带时间和数量限制。项目过滤具有强制信任条件：应用、会话和运行标识只描述捕获场景，不能推导真实项目关系；若项目关联未经确认，调用方必须传空项目且标记不可信，端口也必须执行工作区级召回。[[c2]]"
+      },
+      {
+        "key": "operations",
+        "title": "核心操作与未定义语义",
+        "body": "接口分别搜索原始来源与已应用记忆，并提供按 Revision、可选 Fragment 回读证据以及后端健康检查。[[c4]] `readEvidence` 的参数并不能直接接受仅含 memory id 的记忆候选；记忆如何解析为 Revision／Fragment 需要接口外的步骤，而本文件没有规定该步骤。合同也未定义 score 的范围、跨后端可比性、同分稳定顺序、时间格式校验或故障传播方式。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "检索端口设计目标",
+        "reason": "说明后端可替换及回到不可变证据的总体设计意图，同时为现有类型保证的边界提供背景。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
+      },
+      {
+        "key": "c2",
+        "label": "项目范围信任规则",
+        "reason": "支持不得从上下文载体推断项目、未确认时必须工作区级召回的要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 17,
+          "endLine": 37
+        },
+        "quote": "/**\n * A project relationship is never inferred from context carriers like\n * `application` / `conversationId` / `runId`. Those only describe where a capture\n * happened. A real project link is a separate ContextLink record that carries its\n * own source evidence, candidate confidence and a confirmed flag. Until such a"
+      },
+      {
+        "key": "c3",
+        "label": "来源与记忆候选结构",
+        "reason": "证明只有来源候选含 sourceRevisionId 和 fragmentId，而记忆候选没有固定证据定位字段。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 45,
+          "endLine": 63
+        },
+        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string;\n  score: number;\n  "
+      },
+      {
+        "key": "c4",
+        "label": "统一检索接口操作",
+        "reason": "支持两类搜索、证据回读和健康检查的接口说明，并显示回读所需参数。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 77,
+          "endLine": 87
+        },
+        "quote": "export interface RetrievalPort {\n  /** Keyword/vector search over imported source fragments. */\n  searchSources(query: SearchQuery): SourceCandidate[];\n  /** Search over already-applied memories (for conflict / reuse recall). */\n  searchMemories(query: SearchQuery): MemoryCandidate[];\n  /** Read back the immutable frag"
+      }
+    ],
+    "questions": [
+      {
+        "question": "记忆候选应通过哪个明确步骤或字段解析到原始 Revision 与 Fragment？",
+        "why": "当前 MemoryCandidate 不含固定证据定位，而 readEvidence 需要 revisionId；若上层直接把记忆摘要当作证据，会突破不可变原材料边界。",
+        "nextStep": "检查记忆检索实现及其调用方；若已有映射则在合同中显式建模，否则增加受可见性约束的证据解析操作。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "不同检索后端返回的 score 是否需要统一归一化和稳定排序规则？",
+        "why": "合同只声明数值分数，没有给出范围、可比性或同分顺序；更换后端后，上层若直接比较分数可能产生行为漂移。",
+        "nextStep": "检查具体检索实现与调用方的排序、阈值测试，再决定是否把分数语义写入端口合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:02:36.799Z",
+    "trace": {
+      "runId": "49822329-169d-49ad-8e82-d6eecbcb5c28",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "45aa2d1f19edf2ffe960e9c184bc7ee1276fabdb56eaa9ab69bce46916dee964",
+      "contextHash": "55b0dae57ce1c4abc832c348a0686b0a92a991e8fcf67f9cbdc7a9e20420a2ce",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "14d44d53f0e2f4009906adf54675e2e5a2ec31dbf0f991f5844b76e7e52137b5",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-278f-7111-8c7f-4d1751de806e"
+      ],
+      "usage": {
+        "used": 49106,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107721,
+          "utf8Bytes": 111250,
+          "estimatedTokens": 37084,
+          "budgetedTokens": 46355,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:04.623Z",
+    "trace": {
+      "runId": "4cc09060-8d0a-4db0-9d4e-fe8d9f9a4154",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "efef20365539701918b2ee9a723be13f20fdf6155088887c28990c1986735a6b",
+      "contextHash": "2c80f8928dc8cd41ef83e7288423e9b6fb6f7503f58ae9e73875080fde2748c5",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b6836392138fe6c7192aa7f57b51c712948a1637c68029d328cf4290261a31c4",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-1528-78c1-8a7b-597d1a982f6c"
+      ],
+      "usage": {
+        "used": 51037,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 124639,
+          "utf8Bytes": 134658,
+          "estimatedTokens": 44886,
+          "budgetedTokens": 56108,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

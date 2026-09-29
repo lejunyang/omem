@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/code/parse.ts",
+    "title": "离线 TypeScript 与 Vue 结构解析器",
+    "summary": "以 TypeScript AST、Vue SFC 解析器和保守正则提取单文件符号、导入、名称级调用、路由、测试及组件使用，并返回可绑定固定证据片段的位置。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "pipeline",
+        "title": "解析流程与产物",
+        "body": "解析器是确定性离线前端：TypeScript/JavaScript 通过 Compiler AST 提取函数、类及方法、接口、类型、枚举、变量、导入和调用；位置统一为 1 基行、0 基列，签名只保留首行并限制长度。[[c1]] 调用只记录标识符或属性访问的末级名称及当前函数上下文，不建立 TypeScript `Program`，因此结果只是后续解析线索，不能证明跨文件或重载后的真实调用目标。[[c2]]"
+      },
+      {
+        "key": "vue_regex",
+        "title": "Vue、正则提取与失败边界",
+        "body": "Vue 文件先由 SFC 解析器拆块，优先分析 `script setup`，并按脚本块起始行校正位置；同时创建覆盖整个文件的组件符号，从模板中收集大写开头的组件标签。SFC 有解析错误时直接返回空结构而不抛出。[[c3]] Fastify 路由与 `it/test` 名称由保守正则识别，只覆盖固定调用形态和字符串字面量；非 TS/JS/Vue 文件虽能识别语言，但不会产生结构结果。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "AST 符号提取",
+        "reason": "支持 AST 提取的符号种类、位置和签名处理流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 58,
+          "endLine": 165
+        },
+        "quote": "function posOf(sf: ts.SourceFile, node: ts.Node): CodeRange {\n  const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));\n  return { line: line + 1, col: character };\n}\nfunction endOf(sf: ts.SourceFile, node: ts.Node): CodeRange {\n  const { line, character } = sf.getLineAndCharacterOfPosition(nod"
+      },
+      {
+        "key": "c2",
+        "label": "名称级调用收集",
+        "reason": "说明调用仅记录简单名称和函数上下文，不能作为跨文件调用证明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 167,
+          "endLine": 195
+        },
+        "quote": "      case ts.SyntaxKind.CallExpression: {\n        const ce = node as ts.CallExpression;\n        let callee = \"\";\n        if (ts.isIdentifier(ce.expression)) callee = ce.expression.text;\n        else if (ts.isPropertyAccessExpression(ce.expression)) callee = ce.expression.name.text;\n        if (callee && /^[A-Za-z_$][A"
+      },
+      {
+        "key": "c3",
+        "label": "Vue SFC 解析",
+        "reason": "支持 Vue 错误回退、脚本行偏移、组件符号和模板组件提取的描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 236,
+          "endLine": 285
+        },
+        "quote": "export function parseFile(path: string, source: string): ParsedFile {\n  const language = extLanguage(path);\n  const base = path.split(\"/\").pop() ?? path;\n\n  if (language === \"vue\") {\n    const { descriptor, errors } = parseVue(source, { filename: path });\n    if (errors.length) {\n      return {\n        language,\n      "
+      },
+      {
+        "key": "c4",
+        "label": "路由、测试与语言边界",
+        "reason": "支持正则提取范围及非脚本文件返回空结构的边界说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 198,
+          "endLine": 233
+        },
+        "quote": "function extractRoutes(source: string): ParsedRoute[] {\n  const re =\n    /\\b(?:app|fastify|server|router)\\s*\\.\\s*(get|post|put|delete|patch|all)\\s*\\(\\s*(['\"`])([^'\"`\\n]+?)\\2/g;\n  const out: ParsedRoute[] = [];\n  let m: RegExpExecArray | null;\n  while ((m = re.exec(source))) {\n    const upto = source.slice(0, m.index);\n"
+      }
+    ],
+    "questions": [
+      {
+        "question": "解析器对嵌套函数中的 `callerQName` 是否满足预期？",
+        "why": "当前实现使用单个可变上下文名，并在递归访问函数后清空；材料没有测试证明多层嵌套、类方法或箭头函数调用能绑定到正确调用者。",
+        "nextStep": "补充解析器测试材料，重点断言嵌套函数、类方法、箭头函数、别名导入及同名符号的调用归属。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "解析器对嵌套函数中的 callerQName 是否满足预期？",
+        "why": "当前实现使用单个可变上下文名，并在递归访问函数后清空；材料没有测试证明多层嵌套、类方法或箭头函数调用能绑定到正确调用者。",
+        "nextStep": "补充解析器测试材料，重点断言嵌套函数、类方法、箭头函数、别名导入及同名符号的调用归属。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/dto.ts",
+      "digest": "0213903ededa1ffee899a545cac340492ca4230ca75a5b8ef4ed02eef69949e7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-text.ts",
+      "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:16.345Z",
+    "trace": {
+      "runId": "ca7c0b44-91d3-4f80-8b00-26df100987c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "124f8180216c194cf0a6895ab1e580217a0c3419aec79d61c3795b7b551c5198",
+      "contextHash": "07f079f349d9104873e0aff0ccd837d3619a742dbe971432605a204d18dbcb76",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1997a5a56b21869cb8cbc6952a9344d19ab6b628881d9cd50863f57faf787b49",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-3b7e-78e2-bd5c-b8bc74b3640d"
+      ],
+      "usage": {
+        "used": 48287,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 106728,
+          "utf8Bytes": 108508,
+          "estimatedTokens": 36170,
+          "budgetedTokens": 45213,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:00:38.772Z",
+    "trace": {
+      "runId": "d85a36ca-53db-4ab0-8f61-b1c8611fdc12",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0da3bc2848cefaa76d2504f0a76608daed996d9b11719bd30eef7f108aa9d6f5",
+      "contextHash": "e9c64129710b9d68e7be687d12e3fbf0ce8ca49a941080f24cf1becd13b75fee",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f1884943311b65b4033ae967e6e3279c7026b2b3cf9895538b3daea1b5666b7b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8a-0143-7d61-8fbb-6402e447c94a"
+      ],
+      "usage": {
+        "used": 51652,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 123899,
+          "utf8Bytes": 132144,
+          "estimatedTokens": 44048,
+          "budgetedTokens": 55060,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

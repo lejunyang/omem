@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+    "title": "角色运行的作业适配器",
+    "summary": "把标准耐久作业处理器调用转换为角色网关运行，并将成功结果及运行证据提交给作业仓储。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "flow",
+        "title": "作业到角色运行",
+        "body": "工厂注入固定角色、profile、作业仓储、可选托管工具以及按作业 ID 构造上下文的函数，返回标准 `JobHandler`。执行时先获取上下文，再把 worker 给出的取消信号和租约对应信息传给角色网关；领取、心跳和重试并不由这个适配器实现。[[c1]][[c2]]"
+      },
+      {
+        "key": "persistence",
+        "title": "结果提交与错误边界",
+        "body": "网关成功后，处理器要求 trace 至少包含一个会话，并选取最后一个会话，以兼容输出修复产生多个会话的情况。随后以作业 ID 和 lease token 调用 `saveRoleOutput`，提交结构化结果、模型配置、各类摘要、指纹、usage 与完整 trace，最后向 worker 返回结果引用和用量。材料只能证明这里进行了一次保存调用，不能证明仓储内部具有事务原子性。[[c3]] 该函数没有捕获上下文构造、网关或保存错误，因此这些错误会向调用方传播；具体分类、重试或失败落库策略不由本文件证明。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "角色作业适配流程",
+        "reason": "支持上下文构造、角色网关调用、取消信号和托管工具的传递。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+          "startLine": 9,
+          "endLine": 27
+        },
+        "quote": "export function createRoleJobHandler(input: {\n  gateway: RoleRuntimeGateway;\n  jobs: JobRepository;\n  roleId: ContextManifest[\"role_id\"];\n  roleVersion?: string;\n  profile: AgentProfile;\n  context: (jobId: string) => ContextManifest | Promise<ContextManifest>;\n  managedTools?: ManagedTool[];\n}): JobHandler {\n  return a"
+      },
+      {
+        "key": "c2",
+        "label": "标准作业处理器合同",
+        "reason": "说明适配器遵循的作业租约、取消信号及返回值签名。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/worker.ts",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "export type JobHandlerResult = {\n  resultRef?: string | null;\n  usage?: Record<string, unknown>;\n};\n\nexport type JobHandler = (\n  job: JobLease,\n  signal: AbortSignal,\n) => Promise<JobHandlerResult>;"
+      },
+      {
+        "key": "c3",
+        "label": "角色输出保存调用",
+        "reason": "支持末次会话选择、租约绑定的保存参数和结果引用返回，同时限定不能据此推断仓储原子性。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+          "startLine": 28,
+          "endLine": 49
+        },
+        "quote": "    const sessionId = run.trace.sessionIds.at(-1);\n    if (!sessionId) throw Error(\"ROLE_SESSION_ID_MISSING\");\n    const output = input.jobs.saveRoleOutput({\n      jobId: job.id,\n      leaseToken: job.leaseToken,\n      model: run.trace.effectiveModel,\n      effort: run.trace.effectiveEffort,\n      promptHash: run.trace"
+      },
+      {
+        "key": "c4",
+        "label": "处理器未捕获运行错误",
+        "reason": "完整函数体没有 catch，支持错误向调用方传播，但不扩张为未展示的 worker 失败策略。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+          "startLine": 18,
+          "endLine": 50
+        },
+        "quote": "  return async (job, signal) => {\n    const context = await input.context(job.id);\n    const run = await input.gateway.run({\n      roleId: input.roleId,\n      roleVersion: input.roleVersion,\n      profile: input.profile,\n      context,\n      signal,\n      managedTools: input.managedTools,\n    });\n    const sessionId = "
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/budget.ts",
+      "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+      "digest": "e04ec19837c91b28dbbf28cbcda5bb6f6989dbc2b58c5c24ddaca4d006ea9a05"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:02:26.775Z",
+    "trace": {
+      "runId": "4812f6e1-0853-45df-a7e1-4ca9eaf3a0ce",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "dc540cbd2b3ef1b8a6209c85f21c3ff6a9ab0d7d01bce6faeed7590a95a64c59",
+      "contextHash": "ee41cbe0e14f218db1947aadc31e6340082c22afa742a56843529fae0550ceb9",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bfd7fed1519419aace7823cebffd320690e5852e8c2297ac6f93e0d4888ced56",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-272a-7701-a62e-29f4c8af74e2"
+      ],
+      "usage": {
+        "used": 43518,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 87261,
+          "utf8Bytes": 92577,
+          "estimatedTokens": 30859,
+          "budgetedTokens": 38574,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:02:34.315Z",
+    "trace": {
+      "runId": "124e5740-63b9-49a8-a7a5-23e8326b9035",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "48b5790258f9277cdb1421061c5e255b40f6cf201d7ffd1a48bd8f7b5841ece5",
+      "contextHash": "4a3fc51f70cd2c5eec6aff34f42aef421230244d18150c3bcffd3e93902f6afe",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "61858947d8660017c799604abcbec2d39c4e0e6a64a753fbe7da9f92cef7c5ad",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-ed60-7f11-a0b0-d5e3524acdee"
+      ],
+      "usage": {
+        "used": 41814,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 96849,
+          "utf8Bytes": 105895,
+          "estimatedTokens": 35299,
+          "budgetedTokens": 44124,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

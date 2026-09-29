@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/storage/repository.ts",
+    "title": "记忆与任务的原子应用仓储",
+    "summary": "将记忆或任务应用为带版本的当前态与不可变修订，并在同一事务中记录变化、通知、投递意图和幂等回执；仓储本身不验证提案是否获批。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "职责与事务主线",
+        "body": "`ApplicationRepository`解决知识变更只生效一次并留下可追踪结果的问题。公共提交流程开启即时事务，先按 applicationId 或“提案摘要+代次”查回执；相同请求直接返回重复结果，不同请求复用幂等键则报冲突。首次执行会创建实体、变化、站内通知和调用方指定渠道的投递意图。[[c1]] 随后写入应用回执、构造返回值并执行 `after` 钩子；这些步骤都位于同一事务闭包内，因此回执写入或钩子抛错都会触发整体回滚。[[c2]]"
+      },
+      {
+        "key": "entity_versions",
+        "title": "记忆与任务版本化",
+        "body": "记忆更新限定同一 workspace，禁止改变 kind，并要求 expectedVersion 命中当前版本；每次应用追加 `memory_revisions`，再以版本条件推进 head。格式完整的来源证据还会写入 `memory_dependencies`，供来源更新后判断失效。[[c3]]\n\n任务同样使用 expectedVersion 乐观锁，同时更新 `tasks` 当前态并追加 `task_revisions`；截止时间会规范为 ISO 时间。[[c4]] 两条入口均直接接收应用对象，未读取 proposals 或 decisions，故这里只能说明“应用变更”，不能据此断言输入已经批准。"
+      },
+      {
+        "key": "delivery",
+        "title": "通知投递与边界",
+        "body": "仓储会筛选 workspace 下连接、绑定和 owner_notification 目标均为 active 的飞书目标，生成裁剪后的卡片并写入待投递意图；标题限 100 字、正文限 8000 字，序列化超过 30,000 字节会令事务失败。应用回执和 `after` 钩子在这些飞书意图之后执行。[[c2]]\n\n外部排程支持即时、窗口延迟和按时区每日定时，若当天时刻已过则滚到次日。[[c5]] 本文件只持久化 intent，没有领取、发送、重试或聚合执行代码，因此不能确认完整投递语义。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "幂等事务与基础通知",
+        "reason": "支持事务开启、幂等回执查重，以及实体、变化、站内通知和调用方指定渠道意图的创建流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 176,
+          "endLine": 293
+        },
+        "quote": "  private transaction<T>(work: () => T): T {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      throw error;\n    }\n  }\n\n  private existingReceipt(\n    metadata: ApplicationMetadata,\n  "
+      },
+      {
+        "key": "c2",
+        "label": "飞书意图、应用回执与事务钩子",
+        "reason": "支持飞书目标筛选、载荷限制、应用回执写入、返回值构造及 after 钩子仍处于事务中的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 294,
+          "endLine": 397
+        },
+        "quote": "      const larkTargets = this.db\n        .prepare(\n          `SELECT t.chat_id,t.binding_version,b.id AS binding_id\n           FROM lark_targets t JOIN lark_bindings b\n             ON b.connection_id=t.connection_id\n            AND b.binding_version=t.binding_version\n           JOIN lark_connections c ON c.id=t.connec"
+      },
+      {
+        "key": "c3",
+        "label": "记忆版本与来源依赖",
+        "reason": "说明记忆类型约束、乐观锁、不可变修订、head 推进及有效来源证据依赖的写入。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 400,
+          "endLine": 527
+        },
+        "quote": "  applyMemory(\n    input: MemoryApplication,\n    hooks: ApplicationHooks = {},\n  ): ApplicationReceipt {\n    const requestDigest = digest(input);\n    return this.commitApplication(\n      input.metadata,\n      requestDigest,\n      \"memory\",\n      () => {\n        const date = timestamp();\n        const status = input.mem"
+      },
+      {
+        "key": "c4",
+        "label": "任务当前态与修订",
+        "reason": "支持任务乐观锁、当前行更新、截止时间规范化和追加任务修订的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 530,
+          "endLine": 642
+        },
+        "quote": "  applyTask(\n    input: TaskApplication,\n    hooks: ApplicationHooks = {},\n  ): ApplicationReceipt {\n    const requestDigest = digest(input);\n    return this.commitApplication(\n      input.metadata,\n      requestDigest,\n      \"task\",\n      () => {\n        const date = timestamp();\n        const dueAt = input.task.dueAt"
+      },
+      {
+        "key": "c5",
+        "label": "外部通知时间策略",
+        "reason": "说明即时、窗口和按时区定时三种排程模式，以及错过当天时刻后的次日滚动。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 125,
+          "endLine": 157
+        },
+        "quote": "export function externalDeliveryTiming(\n  createdAt: string,\n  policy: ExternalNotificationPolicy = defaultNotificationPolicy,\n) {\n  const created = new Date(createdAt);\n  if (policy.mode === \"instant\")\n    return { mode: policy.mode, after: created.toISOString() };\n  if (policy.mode === \"window\")\n    return {\n      mo"
+      }
+    ],
+    "questions": [
+      {
+        "question": "外部投递意图由哪个 worker 领取、发送并执行重试或聚合？",
+        "why": "本文件只创建 delivery_intents，无法从提供材料确认发送器、租约恢复、失败分类、provider UUID 幂等和聚合窗口是否完整实现。",
+        "nextStep": "提供投递 worker 及其行为测试材料，核对领取、发送、状态迁移、失败恢复和聚合执行。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "“批准后才可调用应用仓储”的约束由哪一层执行？",
+        "why": "当前仓储的公共流程及记忆、任务入口均未读取 proposals、decisions 或审批状态，不能独立保证输入已经批准。",
+        "nextStep": "补充调用 ApplicationRepository 的编排或策略代码；若不存在该约束，应明确它只是通用应用仓储。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "2a2f7075bdf0d349cba5b68104c83fba9c240ed2c77327ade76af6c94f916fb9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/repository.ts",
+      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:09:26.415Z",
+    "trace": {
+      "runId": "2a4d1586-dcd7-4261-9733-15d13ee00b8b",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "bfc7e4d74464f846e66909ae435276c97fc9424b564fea8a7c770147676596f4",
+      "contextHash": "7a4a3973f3db83fec8c98a04ddc3126af5208ed75ba9e6dcd83dc713b7a6795e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b2875a4d8ae0e0cb819911b454cb0aaaafa9314f13eef9c05ac8ce080400d9c8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee91-f862-7f01-b353-60c5b30d2083"
+      ],
+      "usage": {
+        "used": 54112,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 137545,
+          "utf8Bytes": 145479,
+          "estimatedTokens": 48493,
+          "budgetedTokens": 60617,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:09:48.533Z",
+    "trace": {
+      "runId": "bd997216-1084-4e6b-9172-88f1354821b7",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "ea477bfbe00c08258f86eb87d8df8e4afef90b835980f54ee86913592e07cbd1",
+      "contextHash": "248ce63518d799273961325451ebccd8605a3b7a04b4c780b91e528d46e44b67",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "30e7015d7c78eca729fee1c3ebe938d8ad4830604bd22c7b15514caf4470e89f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee92-664b-76f0-b03d-dcfe29da40b7"
+      ],
+      "usage": {
+        "used": 51497,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 134754,
+          "utf8Bytes": 140682,
+          "estimatedTokens": 46894,
+          "budgetedTokens": 58618,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

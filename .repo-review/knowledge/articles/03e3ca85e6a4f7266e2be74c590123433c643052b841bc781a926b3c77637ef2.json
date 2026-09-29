@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/code/budget.ts",
+    "title": "代码理解生成预算的兼容出口",
+    "summary": "将通用 Agent Runtime 的令牌估算、生成预算函数及类型重新导出，使代码理解模块复用统一预算合同；本文件自身不实现预算算法。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "作用与实现边界",
+        "body": "该文件是代码理解命名空间中的兼容出口，只把 `estimateTokens`、`generationBudget` 和 `GenerationBudget` 从通用 Agent Runtime 重新导出。它解决的是依赖入口统一与类型复用问题，自身没有令牌估算、默认预算、超限处理或截断算法；这些行为由未提供的上游模块决定。[[c1]]"
+      },
+      {
+        "key": "model_relationship",
+        "title": "与模型适配层的关系",
+        "body": "代码理解模型端口允许请求携带生成预算和估算输入令牌数，使调用方可以把统一预算交给具体 transport。[[c2]] ACP 分支会读取预算，将最大输出令牌乘以 3 转为字符上限，并继续把预算作为上下文约束传给 `acp`；没有预算时使用固定字符上限。[[c3]] 相比之下，CLI 与 HTTP 的 `run` 实现只解构提示词和取消信号，没有在该适配层消费预算参数。[[c4]] 因而本文件只统一能力入口，不保证各 transport 对预算具有相同执行语义。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "预算能力重新导出",
+        "reason": "支持该文件仅转发通用预算函数和类型、自身不包含算法实现的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/budget.ts",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "export { estimateTokens, generationBudget, type GenerationBudget } from \"../agent-runtime/budget.js\";"
+      },
+      {
+        "key": "c2",
+        "label": "模型请求预算合同",
+        "reason": "说明统一模型端口允许请求携带生成预算及估算输入令牌数。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 41,
+          "endLine": 50
+        },
+        "quote": "export type UnderstandingModelReply = { text: string; model: string };\n\nexport type UnderstandingModelPort = {\n  readonly transport: string;\n  run(req: {\n    prompt: string;\n    signal: AbortSignal;\n    budget?: GenerationBudget & { estimatedInputTokens: number };\n  }): Promise<UnderstandingModelReply>;\n};"
+      },
+      {
+        "key": "c3",
+        "label": "ACP 预算传递",
+        "reason": "支持 ACP 分支读取预算、换算输出字符上限并传入上下文预算的流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 88,
+          "endLine": 105
+        },
+        "quote": "  if (config.transport === \"acp\") {\n    const profile = makeProfile(config, \"acp\");\n    return {\n      transport: \"acp\",\n      run: async ({ prompt, signal, budget }) => {\n        let text = \"\";\n        const emit: Emit = (type, chunk) => {\n          if (type === \"text\") text += chunk;\n        };\n        await acp(\n   "
+      },
+      {
+        "key": "c4",
+        "label": "CLI 与 HTTP 请求实现",
+        "reason": "支持 CLI 和 HTTP 的运行函数没有解构或使用请求预算参数这一适配层边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 110,
+          "endLine": 156
+        },
+        "quote": "  if (config.transport === \"cli\") {\n    const profile = makeProfile(config, \"codex-cli\");\n    return {\n      transport: \"cli\",\n      run: async ({ prompt, signal }) => {\n        let text = \"\";\n        const emit: Emit = (type, chunk) => {\n          if (type === \"text\") text += chunk;\n        };\n        await cli(profil"
+      }
+    ],
+    "questions": [
+      {
+        "question": "令牌估算方式、默认预算以及超限时的具体策略是什么？",
+        "why": "当前材料中的该文件只有重新导出，未提供上游 Agent Runtime 的预算实现，无法确认估算精度、默认值或超限行为。",
+        "nextStep": "提供 `agent-runtime/budget.ts` 及相关测试后，再补充算法和边界条件说明。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/dto.ts",
+      "digest": "0213903ededa1ffee899a545cac340492ca4230ca75a5b8ef4ed02eef69949e7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-text.ts",
+      "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:02:57.096Z",
+    "trace": {
+      "runId": "e8a2c270-c833-4bc5-be68-1ef48a024647",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "fdb2619462b5d75abd0f95cdb78de8bf970926a08bf74fa56c779fbc3a4993fa",
+      "contextHash": "b5ef0c6846f34bd0d17d15e85668d188aa110c801a562be88cd94ed302cbcb31",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a0574dbf3e3ab30320e232a03eee69724fd03201004c652b6069ae82516ff53e",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8b-ee2d-7fb1-9efc-90b5f5d72f64"
+      ],
+      "usage": {
+        "used": 52515,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121464,
+          "utf8Bytes": 129578,
+          "estimatedTokens": 43193,
+          "budgetedTokens": 53992,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:03:16.125Z",
+    "trace": {
+      "runId": "68bf02e5-6c11-43f3-b2a9-cf57fd6b5c3f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "b17cfdec71f26c6e4bee69afe29de644f89fb33051d7283454f304b71bce0639",
+      "contextHash": "d3aa4a4ff3c0ffa1ab353fe96d01f4f0278b18637d14a1b7ceb0c2e20903866c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8d309ca4de5db771f1e9e1a136d3cf7d32f618bf97f644ca16022748e6e2503b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-7537-7582-9438-c5361d11d3b2"
+      ],
+      "usage": {
+        "used": 49401,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 119723,
+          "utf8Bytes": 125909,
+          "estimatedTokens": 41970,
+          "budgetedTokens": 52463,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

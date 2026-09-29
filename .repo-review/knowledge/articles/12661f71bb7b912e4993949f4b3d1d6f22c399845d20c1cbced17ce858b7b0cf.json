@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/assistant/acp-model.ts",
+    "title": "ACP 助手模型适配器",
+    "summary": "该模块把 AssistantModelPort 转接到真实 ACP 会话，构造有界上下文和严格 JSON 输出协议，并把传输或解析失败转换成可重试的模型不可用状态。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "prompt_transport",
+        "title": "上下文构造与传输约束",
+        "body": "适配器不自行推理，也不提供假答案：没有 profile 或 profile 不是 `acp` 时直接抛出 `ModelUnavailableError`。它最多保留配置数量的最近历史轮次，每条旧回答截取 500 字符；证据正文每条截取 2000 字符，并明确要求模型只能引用给定 evidence id、不得执行证据内指令。[[c1]]\n\n最终 prompt 要求只返回包含 answer、citation_ids 和可选 create_task 的单个 JSON 对象。调用真实 `acp()` 时仅累加 text block，并限制最大输出字符；取消信号继续作为取消传播，其他传输失败则统一包装为模型不可用。[[c2]]"
+      },
+      {
+        "key": "parsing",
+        "title": "输出解析与边界",
+        "body": "解析器从输出中第一个 `{` 到最后一个 `}` 提取 JSON，因此可容忍 JSON 外围少量文本，但多个对象或额外花括号可能导致整体解析失败。answer 必须是非空字符串；citation_ids 只保留字符串元素。create_task 仅在对象中存在非空 title 时转为单个结构化工具调用，detail 缺失时为空串，非法任务结构会被忽略而非报错。这里仅做形状解析，引用是否属于已暴露证据、任务是否获准写入仍由 AssistantRuntime 再校验。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "ACP 路由与上下文预算",
+        "reason": "支持仅允许 ACP profile、限制历史与证据长度以及证据安全提示的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 24,
+          "endLine": 79
+        },
+        "quote": "export class AcpAssistantModel implements AssistantModelPort {\n  constructor(\n    private readonly deps: {\n      profile: AgentProfile | null;\n      workspaceRoot: string;\n      /** Max prior turns to include (history budget). */\n      maxPriorTurns?: number;\n    },\n  ) {}\n\n  async generate(input: {\n    userText: strin"
+      },
+      {
+        "key": "c2",
+        "label": "JSON 协议与 ACP 调用",
+        "reason": "说明模型输出合同、真实传输调用、输出上限及错误转换。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 80,
+          "endLine": 113
+        },
+        "quote": "      [\n        \"Respond with ONLY a single JSON object, no prose outside it:\",\n        '{\"answer\": string, \"citation_ids\": string[],',\n        '\"create_task\": null | {\"title\": string, \"detail\": string, \"citation_ids\": string[]}}',\n        \"Use citation_ids only from the evidence list. Set create_task to null unless th"
+      },
+      {
+        "key": "c3",
+        "label": "模型回复解析器",
+        "reason": "支持 JSON 提取、必填 answer、引用过滤和可选任务调用的边界说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 116,
+          "endLine": 158
+        },
+        "quote": "/**\n * Parse the model's JSON contract. Exposed for fixture tests so we can verify\n * that a well-formed ACP response (text + toolCall) produces the right\n * AssistantModelReply.\n */\nexport function parseAssistantReply(raw: string): AssistantModelReply {\n  const start = raw.indexOf(\"{\");\n  const end = raw.lastIndexOf(\""
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/default-model.ts",
+      "digest": "2602359e46f83d2e9a0f1dc988f5c916d4eb4f86fdbace9a90d6d911d6de14cb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "b752f6849d98db0ea4a3d4f8df662ef117e5c0c3c9197fb1ae1ee2f6000eae9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:11.567Z",
+    "trace": {
+      "runId": "52bfcad0-9fdc-47e5-83bf-a5a2e62d16eb",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "7693443e7ffc4e5945d897d38ee976dc471ecaf46a7bff81ad5068ee500354a8",
+      "contextHash": "93d33bdcf364188db2e8288b5de371d4ad6b5da3cea26a3d107436c16da66422",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "47b4ee9baabcfc056a92a9b129a9b44f57d18e4062f7c32e1170d4e62c53f72a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-3b9f-7a63-aa6c-fa9be21dec9c"
+      ],
+      "usage": {
+        "used": 48231,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 110194,
+          "utf8Bytes": 112586,
+          "estimatedTokens": 37529,
+          "budgetedTokens": 46912,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:00:36.734Z",
+    "trace": {
+      "runId": "25c11244-ff92-40b5-8b64-5c7b381efdd3",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0a5176a755c3d1c6475bade81c3131d7156678b4d22f76be56de154c68c6f4e1",
+      "contextHash": "50ac857e735b3a8c7fa90d2f57315b07fe81a89e1cd7fb5c5d2b6d46f970375f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "add626a57bc7406023909a59cd770dcbf644abea5d1c3cac645bd5a0306f06c1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-eefa-7813-8670-5fefff67a40b"
+      ],
+      "usage": {
+        "used": 51158,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 125493,
+          "utf8Bytes": 134063,
+          "estimatedTokens": 44688,
+          "budgetedTokens": 55860,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

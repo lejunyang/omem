@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/knowledge/repository.ts",
+    "title": "知识材料、修订与失效管理仓库",
+    "summary": "把原始修订转换为可分析材料，严格校验正文内联引用，以内容寻址修订发布知识，并在原始材料或派生依赖变化后传播失效状态。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "material-boundary",
+        "title": "原始材料边界",
+        "body": "仓库从固定 Revision 重建文本、链接与图片，并结合正文、图片及来源属性计算稳定摘要。标为 derived 的修订会被排除，因此派生知识不能作为新的独立证据循环进入分析；当前材料列表只读取各 Source 的 head。[[c1]]"
+      },
+      {
+        "key": "validation-publication",
+        "title": "引用校验与内容寻址发布",
+        "body": "文档校验要求章节键和引用键唯一、每节含内联引用、每项引用实际出现在叙述中，并检查文章章节或材料行范围。模型选择定位范围后，宿主从固定材料复制短引文，避免依赖模型转录源码。[[c2]] 发布前会重新核对依赖摘要，再以完整 artifact 计算修订号并事务化切换 head；仍存在的问题被写入或重新打开，正文中消失的开放问题则标记为已替代。[[c3]]"
+      },
+      {
+        "key": "refresh-answer",
+        "title": "依赖失效与用户回答",
+        "body": "刷新过程比较当前材料摘要和派生文章修订，并把失效沿文章依赖逐层传播；它只调整知识 head 的 current 状态，历史修订仍被保留。[[c4]] 用户回答会保存为 manual 原始修订，问题改为已回答，对应文章被标记失效并刷新；问题也可显式转换为待办。[[c5]] 后续分析命中该文档时，流水线会读取 answerRevision，将回答作为固定补充材料加入 offers 后重新写作和复核。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "原始修订材料化",
+        "reason": "支持排除派生修订、构造材料摘要以及只读取当前 Source head 的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 11,
+          "endLine": 39
+        },
+        "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
+      },
+      {
+        "key": "c2",
+        "label": "知识文档与引文校验",
+        "reason": "支持内联引用完整性、目标范围检查和宿主绑定精确引文的规则。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 41,
+          "endLine": 87
+        },
+        "quote": "/** Validate the exact source/derived distinction and every inline reference.\n * Semantic correctness is checked separately by an independent model role. */\nexport function validateKnowledgeDocument(document: KnowledgeDocument, materials: Map<string, KnowledgeMaterial>, articles: Map<string, KnowledgeArticle>, offered?"
+      },
+      {
+        "key": "c3",
+        "label": "知识修订发布事务",
+        "reason": "支持依赖复核、内容寻址修订、head 更新及开放问题替代流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 115,
+          "endLine": 139
+        },
+        "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
+      },
+      {
+        "key": "c4",
+        "label": "知识依赖失效传播",
+        "reason": "支持材料或文章依赖变化会逐层取消 current 状态的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 141,
+          "endLine": 154
+        },
+        "quote": "  /** Refresh checks content identity, including dependencies on derived pages. */\n  refresh() {\n    const materials = new Map(this.materials().map(m => [m.key, m.digest]));\n    const articles = this.list();\n    const articleMap = new Map(articles.map(a => [a.document.key, a]));\n    const bad = new Set((this.store.db.p"
+      },
+      {
+        "key": "c5",
+        "label": "问题回答与待办转换",
+        "reason": "支持回答被捕获为原始修订、文章失效刷新以及问题转为待办的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 166,
+          "endLine": 185
+        },
+        "quote": "  questions() { return (this.store.db.prepare(\"SELECT * FROM knowledge_questions ORDER BY updated_at DESC\").all() as Row[]).map(r => ({ id: String(r.id), documentKey: String(r.document_key), ...JSON.parse(String(r.body)), state: String(r.state), taskId: r.task_id, answerRevision: r.answer_revision })); }\n\n  answer(id: "
+      },
+      {
+        "key": "c6",
+        "label": "回答进入后续分析",
+        "reason": "支持已回答问题的修订被材料化，并在分析对应文档时加入固定材料 offers。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/pipeline.ts",
+          "startLine": 161,
+          "endLine": 181
+        },
+        "quote": "  async analyze(materials: KnowledgeMaterial[], supplements: (targets: KnowledgeMaterial[]) => Offer[] = () => []) {\n    const current = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));\n    const pending = materials.filter(m => { const a = current.get(m.key); return !a; });\n    cons"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:03:34.369Z",
+    "trace": {
+      "runId": "26a23edd-4fa9-4a05-a739-5a623208952d",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "a1ec3da0fe2ad2a8a367009ef4b6e8a36b4bb378745ff3f3b9184513c31c76a7",
+      "contextHash": "37928c0c3dcc05ce74a15ef56d1d275a439524ca882aa30372bbc359cfbe387a",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "049f9a490b98ac353d5faaea9d1cdfb28ba54a80b25987379da303566d7aa8d3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-83e1-70e2-9cb0-58752e34b05e"
+      ],
+      "usage": {
+        "used": 49260,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 116883,
+          "utf8Bytes": 123517,
+          "estimatedTokens": 41173,
+          "budgetedTokens": 51467,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:53.499Z",
+    "trace": {
+      "runId": "25cfe2c6-41fa-48bb-a47c-7703d61bfa96",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "9f2c5dccf4ceccf398c8fab4a5fb63a9ba26dd3f18518f4e721d25ddcc4dc55c",
+      "contextHash": "2898ab12fd2dd6a83a3a5ca791f1beea07297cc0a811aa3621a9a07eb74bc8df",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "760abeafee3338bcce7809cfa4eace51ebc4d95f7878a590386ef31dd4816a32",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-f527-7351-a12d-1beebbce55dd"
+      ],
+      "usage": {
+        "used": 46574,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 114631,
+          "utf8Bytes": 120189,
+          "estimatedTokens": 40063,
+          "budgetedTokens": 50079,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

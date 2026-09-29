@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/cli.ts",
+    "title": "捕获与 ACP 探测命令行入口",
+    "summary": "该模块把文件、Git、Lark、Hook 和原始 Capture 输入转换为服务端捕获请求，并提供直接 ACP profile 探测；它是薄客户端，不承担持久化。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "dispatch",
+        "title": "命令分派与数据路径",
+        "body": "CLI 从本地配置推导服务地址，也允许 `OMEM_URL` 覆盖；`send` 统一发送 JSON POST，并在配置 token 时附带 Bearer 认证。`capture` 从指定 JSON 文件或 stdin 读取；`file`、`git`、`lark` 和 `hook` 先调用对应 connector 生成 CaptureInput，再用共享 captureSchema 校验，最终都提交到 `/api/captures`。[[c1]]\n\n`probe` 是例外：它不经过 HTTP，而是从本地 profile 配置中选择目标并直接调用 `acp()`。因此 probe 验证的是当前进程的 Agent transport 条件，不等同于服务端 API 或完整助手回合可用性。[[c2]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "输出与失败边界",
+        "body": "缺失必要参数会立即报错；Git 未给 ref 时默认 HEAD，probe 未给 profile 时默认查找 `traex`。未知命令打印帮助并以成功状态退出。成功结果通常格式化输出到 stdout，但 hook 特意保持 stdout 为空，避免其输出被宿主误当成指令；异常写 stderr 并设置退出码 1。[[c3]]\n\nCLI 自身没有重试、超时或响应结构校验，除 captureSchema 外的路径、文件大小和 Git ref 安全边界由 connector 实现；服务端认证、持久化和领域规则则由目标 API 承担。[[c1]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "HTTP 发送与捕获命令",
+        "reason": "支持服务地址、认证头、输入读取、connector 转换及统一捕获 API 的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 6,
+          "endLine": 56
+        },
+        "quote": "const [command, ...args] = process.argv.slice(2);\nconst config = loadConfig();\nconst base = process.env.OMEM_URL || `http://127.0.0.1:${config.port}`;\nconst stdin = async () => {\n  const chunks = [];\n  for await (const c of process.stdin) chunks.push(c);\n  return Buffer.concat(chunks).toString();\n};\nconst send = async "
+      },
+      {
+        "key": "c2",
+        "label": "本地 ACP profile 探测",
+        "reason": "说明 probe 直接读取本地 profile 并调用 ACP，而非请求服务端。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 57,
+          "endLine": 66
+        },
+        "quote": "  } else if (command === \"probe\") {\n    const p = config.profiles.find((p) => p.id === (args[0] || \"traex\"));\n    if (!p) throw Error(\"Profile not found\");\n    result = await acp(\n      p,\n      config.agentCwd,\n      null,\n      () => {},\n      new AbortController().signal,\n    );"
+      },
+      {
+        "key": "c3",
+        "label": "帮助、Hook 静默与退出码",
+        "reason": "支持未知命令、hook stdout 约束以及异常退出行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 67,
+          "endLine": 77
+        },
+        "quote": "  } else {\n    console.log(\n      \"omem CLI: capture [json-file] | file <path> | git <repo> <file> [ref] | lark <url> | hook < stdin | probe [profile]\",\n    );\n    process.exit(0);\n  }\n  // Hook stdout must remain empty so it cannot accidentally become host instructions.\n  if (command !== \"hook\") console.log(JSON.strin"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/default-model.ts",
+      "digest": "2602359e46f83d2e9a0f1dc988f5c916d4eb4f86fdbace9a90d6d911d6de14cb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "b752f6849d98db0ea4a3d4f8df662ef117e5c0c3c9197fb1ae1ee2f6000eae9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:11.567Z",
+    "trace": {
+      "runId": "52bfcad0-9fdc-47e5-83bf-a5a2e62d16eb",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "7693443e7ffc4e5945d897d38ee976dc471ecaf46a7bff81ad5068ee500354a8",
+      "contextHash": "93d33bdcf364188db2e8288b5de371d4ad6b5da3cea26a3d107436c16da66422",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "47b4ee9baabcfc056a92a9b129a9b44f57d18e4062f7c32e1170d4e62c53f72a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-3b9f-7a63-aa6c-fa9be21dec9c"
+      ],
+      "usage": {
+        "used": 48231,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 110194,
+          "utf8Bytes": 112586,
+          "estimatedTokens": 37529,
+          "budgetedTokens": 46912,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:00:36.734Z",
+    "trace": {
+      "runId": "25c11244-ff92-40b5-8b64-5c7b381efdd3",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0a5176a755c3d1c6475bade81c3131d7156678b4d22f76be56de154c68c6f4e1",
+      "contextHash": "50ac857e735b3a8c7fa90d2f57315b07fe81a89e1cd7fb5c5d2b6d46f970375f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "add626a57bc7406023909a59cd770dcbf644abea5d1c3cac645bd5a0306f06c1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-eefa-7813-8670-5fefff67a40b"
+      ],
+      "usage": {
+        "used": 51158,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 125493,
+          "utf8Bytes": 134063,
+          "estimatedTokens": 44688,
+          "budgetedTokens": 55860,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

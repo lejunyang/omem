@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/hook-forward.ts",
+    "title": "不阻塞宿主的 Hook 转发入口",
+    "summary": "从标准输入接收受限 Hook JSON，经字段白名单转换后交给 HookSpool，并以短超时请求捕获 API；失败仅写标准错误且不向宿主抛出。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "input-profile",
+        "title": "输入预算与捕获档案",
+        "body": "该入口是显式启用的 Hook 传输适配器，不调用模型，也不写标准输出。它累计 stdin 数据并设置 300000 字节上限；环境变量选择的字段必须属于默认 Hook 白名单，字符预算则必须是 1000 至 200000 的整数。通过检查后，JSON 才会交给 `hookInput` 转成统一捕获对象。[[c1]]"
+      },
+      {
+        "key": "delivery",
+        "title": "Spool 调用与短时投递",
+        "body": "捕获对象会先传给 `HookSpool.enqueue`，随后调用 `flush`；回调向 `/api/captures` 发送 POST，可选附带 Bearer token，并用 1500 ms 超时限制网络等待，非成功 HTTP 状态会抛错。调用点向 `flush` 传入第三个参数 `3`，但本材料没有给出该参数合同，不能断言它代表重试次数。[[c2]] 若结果含未送达项，代码只写 stderr；顶层异常同样被捕获并报告“queued or rejected”，不会继续抛给宿主。至于 enqueue 是否已可靠落盘、失败项是否保留以及如何退避或去重，需由 spool 实现证明。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Hook 输入限制与档案构造",
+        "reason": "支持 stdin 字节预算、字段白名单、字符预算以及调用统一 Hook 转换器的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/hook-forward.ts",
+          "startLine": 1,
+          "endLine": 38
+        },
+        "quote": "/** Opt-in hook transport. No model invocation and no stdout; failures never block the host. */\nimport { resolve, join } from \"node:path\";\nimport {\n  defaultHookCaptureProfile,\n  hookInput,\n  type HookCaptureField,\n} from \"./connectors.js\";\nimport { HookSpool, type CaptureAcknowledgement } from \"./inputs/spool.js\";\ncon"
+      },
+      {
+        "key": "c2",
+        "label": "Spool 调用与捕获 API 请求",
+        "reason": "说明 enqueue、flush 调用事实以及目标 API、认证头、请求超时和响应处理；不推断未提供的 spool 合同。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/hook-forward.ts",
+          "startLine": 39,
+          "endLine": 63
+        },
+        "quote": "  const spool = new HookSpool(\n    resolve(\n      process.env.OMEM_HOOK_SPOOL ||\n        join(process.env.OMEM_DATA_DIR || \".omem\", \"hook-spool\"),\n    ),\n  );\n  spool.enqueue(body);\n  const outcomes = await spool.flush(async (capture) => {\n    const response = await fetch(\n      (process.env.OMEM_URL || \"http://127.0.0"
+      },
+      {
+        "key": "c3",
+        "label": "失败不阻塞宿主",
+        "reason": "支持未送达结果与顶层异常仅写标准错误、宿主继续运行的边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/hook-forward.ts",
+          "startLine": 64,
+          "endLine": 71
+        },
+        "quote": "  if (outcomes.some((outcome) => !outcome.delivered))\n    console.error(\"omem hook capture queued for retry; host continues\");\n} catch (error) {\n  const reason = error instanceof Error ? error.message : \"unavailable\";\n  console.error(\n    `omem hook capture queued or rejected (${reason}); host continues`,\n  );\n}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "HookSpool 的第三个 `flush` 参数、持久化和未送达保留语义分别是什么？",
+        "why": "当前材料只有 enqueue、flush 调用和日志文案，没有 HookSpool 的实现或类型合同，无法确认参数 `3` 是否代表尝试上限，也无法确认崩溃恢复、确认删除及重试行为。",
+        "nextStep": "核验 spool 模块及其测试，再据实际实现判断磁盘持久化、未送达保留、去重和退避语义。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/hook-forward.ts",
+      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:03:44.906Z",
+    "trace": {
+      "runId": "9b2d598c-db07-4cd7-bd70-53cca1eb54d0",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "a2b9fb20f3f9a715f896ae5868edb594e84a50e04b7d4033eaacb1b1c0a91268",
+      "contextHash": "e526999fbc3b715e3a5236cd0611fee1a491f2111bde08481c2b7fce2ab7ed07",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6d17f4acbcdabfb789ac9de01ad2832a1c371f8bed167003131140201186aa19",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-9a12-7043-a6ca-754b0e060662"
+      ],
+      "usage": {
+        "used": 53699,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 125918,
+          "utf8Bytes": 135551,
+          "estimatedTokens": 45184,
+          "budgetedTokens": 56480,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:04:08.395Z",
+    "trace": {
+      "runId": "bcf4efa2-6f6b-4b27-a5d0-ca68e92af5d8",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "199c3e1cb5d0882d9439cac5f2d7715e530280eb956b154516bc64ea135ce42f",
+      "contextHash": "1378a99b72efb25b7f17a4e08385e6b3896b8bf30f9a125aee3da58691a8ab49",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c3c05206433a67a65bf94d82f4f83aa46d7a9ea77d62e784a8458fdd5d9dde93",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8d-30b1-7760-9447-a1a4d34f2665"
+      ],
+      "usage": {
+        "used": 49906,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121336,
+          "utf8Bytes": 128437,
+          "estimatedTokens": 42813,
+          "budgetedTokens": 53517,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

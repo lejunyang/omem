@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+    "title": "角色资产包加载与隔离工作区",
+    "summary": "从版本化目录加载并验证角色清单、提示、输出合同和技能资产，计算稳定摘要，并为 native 技能准备按运行隔离的工作目录。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "loading",
+        "title": "加载与完整性验证",
+        "body": "注册表先用白名单限制角色和版本名称，再读取清单、提示模板及输出 schema。清单身份必须与请求一致，schema 标识须匹配声明；技能名称不能重复，`SKILL.md` 的名称与整个技能目录摘要也必须符合清单。通过验证后，规范化的清单、提示、schema 和技能内容共同形成 `bundleHash`。[[c1]][[c2]]"
+      },
+      {
+        "key": "filesystem",
+        "title": "路径与摘要边界",
+        "body": "普通资产经解析后必须仍位于包根目录，目标存在且被读取的路径本身不是符号链接；技能目录遍历也会拒绝其中发现的符号链接目录项。代码没有单独对 `skillDirectory` 根节点执行 `lstat`，因此不能据此断言技能根目录为符号链接时一定被拒绝。[[c3]] 目录摘要按相对路径排序，并统一路径分隔符和 CRLF 换行，以减少不同平台检出的摘要差异。[[c4]]"
+      },
+      {
+        "key": "workspace",
+        "title": "运行工作区与传输限制",
+        "body": "工作区路径由包摘要和运行 ID 构成，创建时请求使用 `0o700`；若目录已存在，这里的递归 `mkdir` 并不证明权限会被重新收紧。只有 `native` 技能会复制到工作区，已有目标文件内容不一致时拒绝覆盖；native 技能要求 ACP，CLI profile 会失败。[[c5]] 网关在模型调用前准备该目录，并把实际技能集合纳入运行摘要。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "角色清单与输出合同校验",
+        "reason": "支持角色标识、清单身份、提示模板和输出 schema 的加载及一致性检查。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+          "startLine": 105,
+          "endLine": 131
+        },
+        "quote": "export class RoleBundleRegistry {\n  constructor(readonly root = resolve(\"packages/agent-runtime/roles\")) {}\n\n  load(roleId: string, version = \"1\"): RoleBundle {\n    if (!/^[a-z0-9-]+$/.test(roleId) || !/^[a-zA-Z0-9._-]+$/.test(version))\n      throw Error(\"ROLE_ID_OR_VERSION_INVALID\");\n    const directory = resolve(this"
+      },
+      {
+        "key": "c2",
+        "label": "技能验证与包摘要",
+        "reason": "支持技能去重、frontmatter 名称、目录摘要验证和 bundleHash 构成。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+          "startLine": 132,
+          "endLine": 167
+        },
+        "quote": "    const names = new Set<string>();\n    const skills = manifest.skill_bundles.map((entry) => {\n      if (names.has(entry.canonical_name)) throw Error(\"ROLE_SKILL_DUPLICATE\");\n      names.add(entry.canonical_name);\n      const skillDirectory = resolve(directory, \"skills\", entry.canonical_name);\n      if (!inside(direct"
+      },
+      {
+        "key": "c3",
+        "label": "资产路径与符号链接检查",
+        "reason": "支持普通文件的真实路径边界检查及递归遍历中对符号链接目录项的拒绝，同时界定未显式检查技能根节点的限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+          "startLine": 41,
+          "endLine": 67
+        },
+        "quote": "const inside = (root: string, candidate: string) => {\n  const path = relative(root, candidate);\n  return path === \"\" || (!path.startsWith(\"..\") && !isAbsolute(path));\n};\n\nfunction safeFile(root: string, path: string) {\n  const candidate = resolve(root, path);\n  if (!inside(resolve(root), candidate) || !existsSync(candi"
+      },
+      {
+        "key": "c4",
+        "label": "跨平台目录摘要",
+        "reason": "支持文件排序、相对路径分隔符统一和 CRLF 到 LF 的规范化。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+          "startLine": 68,
+          "endLine": 90
+        },
+        "quote": "  return result.sort((left, right) =>\n    relative(root, left).localeCompare(relative(root, right)),\n  );\n}\n\nexport function directoryDigest(directory: string) {\n  const hash = createHash(\"sha256\");\n  for (const path of files(directory)) {\n    // Normalize the relative path to forward slashes so the digest does not\n   "
+      },
+      {
+        "key": "c5",
+        "label": "隔离工作区准备",
+        "reason": "支持工作区布局、创建时的权限参数、native 技能复制、内容冲突检查及 ACP 限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+          "startLine": 92,
+          "endLine": 191
+        },
+        "quote": "function copyVerifiedDirectory(source: string, destination: string) {\n  for (const path of files(source)) {\n    const target = join(destination, relative(source, path));\n    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });\n    if (existsSync(target)) {\n      if (!readFileSync(target).equals(readFileSync(pa"
+      },
+      {
+        "key": "c6",
+        "label": "网关装配角色工作区",
+        "reason": "说明网关如何计算技能摘要并在运行前调用工作区准备逻辑。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+          "startLine": 273,
+          "endLine": 294
+        },
+        "quote": "    const nativeSkills = bundle.skills.filter(\n      (skill) => skill.load_mode === \"native\",\n    );\n    const loadedSkills = bundle.skills.map((skill) => ({\n      name: skill.canonical_name,\n      version: skill.version,\n      mode: skill.load_mode,\n    }));\n    const skillHash = stableDigest(loadedSkills);\n    const "
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/budget.ts",
+      "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+      "digest": "e04ec19837c91b28dbbf28cbcda5bb6f6989dbc2b58c5c24ddaca4d006ea9a05"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:02:26.775Z",
+    "trace": {
+      "runId": "4812f6e1-0853-45df-a7e1-4ca9eaf3a0ce",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "dc540cbd2b3ef1b8a6209c85f21c3ff6a9ab0d7d01bce6faeed7590a95a64c59",
+      "contextHash": "ee41cbe0e14f218db1947aadc31e6340082c22afa742a56843529fae0550ceb9",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bfd7fed1519419aace7823cebffd320690e5852e8c2297ac6f93e0d4888ced56",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-272a-7701-a62e-29f4c8af74e2"
+      ],
+      "usage": {
+        "used": 43518,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 87261,
+          "utf8Bytes": 92577,
+          "estimatedTokens": 30859,
+          "budgetedTokens": 38574,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:02:34.315Z",
+    "trace": {
+      "runId": "124e5740-63b9-49a8-a7a5-23e8326b9035",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "48b5790258f9277cdb1421061c5e255b40f6cf201d7ffd1a48bd8f7b5841ece5",
+      "contextHash": "4a3fc51f70cd2c5eec6aff34f42aef421230244d18150c3bcffd3e93902f6afe",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "61858947d8660017c799604abcbec2d39c4e0e6a64a753fbe7da9f92cef7c5ad",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-ed60-7f11-a0b0-d5e3524acdee"
+      ],
+      "usage": {
+        "used": 41814,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 96849,
+          "utf8Bytes": 105895,
+          "estimatedTokens": 35299,
+          "budgetedTokens": 44124,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

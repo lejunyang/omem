@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/review/model-config.ts",
+    "title": "评审代码模型配置入口",
+    "summary": "为 repo-review 从项目级 JSON 显式装配代码理解模型；默认无模型，区分“未配置”与“配置损坏”，并避免读取个人配置或在启动时隐式推理。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "配置边界与默认行为",
+        "body": "该模块负责为评审环境选择项目级模型配置：优先使用 `REVIEW_CODE_MODEL_CONFIG` 指定的文件，否则查找评审仓库中的 `config/review-code-model.json`；两者都不存在时进入无模型状态。它不借用个人 Agent profile 或秘密，配置存在也只代表显式生成可用，不会在启动时自动推理。[[c1]]\n\n职责与代码理解模型端口保持分离：本模块定位并解析配置，底层端口才适配 ACP、CLI 或显式 HTTP 服务。端口本身也声明不会自行读取环境凭据、个人秘密或主动发起推理。[[c2]]"
+      },
+      {
+        "key": "flow",
+        "title": "加载、校验与失败方式",
+        "body": "加载器同步读取 UTF-8 JSON。没有配置路径时返回 `transport: \"none\"`；明确指定的文件不可读、JSON 无效或 transport 不属于 `none/acp/cli/http` 时，则抛出 `CodeModelUnavailableError`，让部署和拼写错误保持可见。预算、命令、参数、model、effort、超时与 endpoint 等已知字段随后被原样整理。[[c3]]\n\n`buildReviewCodeModel` 把整理后的配置交给 `buildUnderstandingModelPort`，构建结果允许为空，因此人工 seed 和原始代码图不依赖模型。已提供的下游实现还能确认 ACP、CLI 配置必须包含非空 `command`；当前材料不足以进一步断言 HTTP endpoint 校验、模型能力发现或 effort 兼容性检查。[[c4]][[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "评审模型配置约束",
+        "reason": "支持项目配置优先、缺省无模型、不得读取个人配置以及不会在启动时自动推理的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/model-config.ts",
+          "startLine": 1,
+          "endLine": 17
+        },
+        "quote": "/** Review uses the checked-in config/review-code-model.json as its actual\n * profile. REVIEW_CODE_MODEL_CONFIG explicitly overrides it; personal profiles\n * and secrets are never consulted. A missing project profile means no model.\n * Configuring a profile enables explicit generation, never inference on boot. */\nimpor"
+      },
+      {
+        "key": "c2",
+        "label": "代码理解模型端口边界",
+        "reason": "说明底层端口只适配显式选择的传输，不自行读取秘密或执行推理。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/** Configurable Code Understanding model port.\n *\n * Review mode has NO hard-wired model: by default `available` is false and only\n * curated seed projections are served. A model runs only when the host passes\n * an explicit `UnderstandingTransportConfig` into the review app. This module\n * performs NO inference, read"
+      },
+      {
+        "key": "c3",
+        "label": "配置解析与错误处理",
+        "reason": "支持缺省返回、文件读取、JSON 解析、transport 枚举校验及字段铺开的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/model-config.ts",
+          "startLine": 20,
+          "endLine": 62
+        },
+        "quote": "const NONE: UnderstandingTransportConfig = { transport: \"none\" };\n\n/** Load the explicit review model config. Defaults to no model; never throws on\n * missing config — only throws on an explicitly-broken file so the operator\n * notices a typo instead of silently running without a model. */\nexport function loadReviewCod"
+      },
+      {
+        "key": "c4",
+        "label": "模型端口构建入口",
+        "reason": "证明解析后的项目配置被交给代码理解端口，并且构建结果允许为空。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/model-config.ts",
+          "startLine": 65,
+          "endLine": 70
+        },
+        "quote": "/** Build the port from the explicit config file (null = no model). */\nexport function buildReviewCodeModel(\n  path = reviewModelConfigPath(),\n): UnderstandingModelPort | null {\n  const config = loadReviewCodeModelConfig(path);\n  return buildUnderstandingModelPort(config);"
+      },
+      {
+        "key": "c5",
+        "label": "ACP 与 CLI 命令要求",
+        "reason": "支持下游对 ACP、CLI 的非空 command 字段进行检查；该引用不扩展为 HTTP endpoint 或能力发现结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 52,
+          "endLine": 70
+        },
+        "quote": "function requireField(config: UnderstandingTransportConfig, field: string) {\n  const v = (config as Record<string, unknown>)[field];\n  if (typeof v !== \"string\" || !v.trim())\n    throw new CodeModelUnavailableError(\n      `${config.transport} transport requires explicit \"${field}\"`,\n    );\n}\n\nfunction makeProfile(\n  co"
+      }
+    ],
+    "questions": [
+      {
+        "question": "项目配置中的 model 与 effort 是否会在执行生成前通过 ACP 能力发现进行兼容性校验？",
+        "why": "现有材料只证明 transport 枚举校验、ACP/CLI 的 command 要求，以及 model、effort 被传给下游；尚不能确认能力发现、不支持设置的拒绝时点和预算 trace 行为。",
+        "nextStep": "检查代码理解端口第 70 行之后的实现及评审生成装配代码，并补充不支持 model 或 effort 的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/model-config.ts",
+      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge.test.ts",
+      "digest": "29a65a8f1bd576d834805a51472730d78f9e377ad25be6f238ccd713d714f82c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+      "digest": "080b9a8cf254faa5200964aae5ac6570ad259da40f76b728aaaeb76d1ad271fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:39:58.791Z",
+    "trace": {
+      "runId": "837aeac7-56f2-4329-bb2b-5ae0b32a9834",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5937ccc32ca4c15aa20f58f39abc219daede6d1c71479c86610c6fdbe91e377f",
+      "contextHash": "86ff11ddea420035a76d21675aa3252ad41c1d931bd16bb1818e8263ee063e74",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d2154fe453fca29ae8777e13b723a810a4e253b717fcc7ec3b428522fe04af68",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-cc05-7821-91c4-69791e3b0b88"
+      ],
+      "usage": {
+        "used": 58626,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143240,
+          "utf8Bytes": 152492,
+          "estimatedTokens": 50831,
+          "budgetedTokens": 63539,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:40:18.436Z",
+    "trace": {
+      "runId": "a6c353ee-5836-458f-affe-eafb06d6c593",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "dcf9cabc904ebdab9213cf910d085321fcd657fc946e6817d845f698639d04fa",
+      "contextHash": "042f3b461e4d344378ac79addb8172f8e45231bf837f8ef7820d21e1b4a2741c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "dd8ecc1e6e58fa107056910508403bf6ca45ec863e8b0acd3a74693d686a1a16",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-5b8b-7993-824a-f02534a719d5"
+      ],
+      "usage": {
+        "used": 54831,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 139398,
+          "utf8Bytes": 146288,
+          "estimatedTokens": 48763,
+          "budgetedTokens": 60954,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

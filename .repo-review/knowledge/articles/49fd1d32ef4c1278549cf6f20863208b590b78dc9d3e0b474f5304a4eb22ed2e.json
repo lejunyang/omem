@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/quality/repository.ts",
+    "title": "质量数据集与样本状态仓库",
+    "summary": "定义质量样本和标签合同，管理数据集创建、样本去重、人工处置、标签修订、冻结及冻结后完整性复核。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "contracts-lifecycle",
+        "title": "数据合同与数据集生命周期",
+        "body": "仓库用严格 schema 约束样本来源、类别、正文和 provenance，并约束标签处置、对象类型、证据、自动应用及禁止副作用。`extract` 必须至少有一个对象，非 extract 标签不得 `autoApply`，从入口阻止自相矛盾的标注。[[c1]]\n\n数据集以 name、split、source digest 判重；新增样本只允许在 draft 或 labeling 状态。每个 input 与草稿 label 都计算摘要，样本通过 `INSERT OR IGNORE` 写入，并在事务末把 draft 数据集推进到 labeling；失败会回滚整批。[[c2]] 查询接口提供数据集汇总、顺序样本、下一 pending 项和按状态进度，供 Lark 标注服务构建会话与卡片。[[c3]]"
+      },
+      {
+        "key": "review-freeze",
+        "title": "人工处置、并发保护与冻结",
+        "body": "`label` 只接受 pending 样本，并用 expected label digest 检查调用者看到的草稿仍为最新版。confirm 直接固化 draft；abstain 生成无对象、禁止自动应用的确认标签；skip 与 needs_edit 不产生 confirmed label。更新语句再次同时限制 pending 状态与摘要，形成乐观并发保护。[[c4]]\n\n`revise` 允许 pending、needs_edit、skipped 样本修改草稿，重新计算摘要并清除审核人和审核时间，使其回到 pending；已 confirmed 的样本不可改。[[c5]] 数据集只有在样本数恰好等于 target count 且全部 confirmed 时才能冻结。冻结摘要覆盖每项 ordinal、input digest 与 confirmed label digest，`verifyFrozen` 会重算并拒绝任何不一致。[[c6]] 代码未显示数据库唯一索引，`INSERT OR IGNORE` 的实际去重粒度仍需迁移定义佐证。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "质量样本与标签 schema",
+        "reason": "支持输入类别、标签对象及 extract/autoApply 交叉约束的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 8,
+          "endLine": 74
+        },
+        "quote": "export const qualitySampleInputSchema = z\n  .object({\n    source: z\n      .object({\n        uri: z.string().min(1).max(2000),\n        documentId: z.string().min(1).max(500),\n        revisionId: z.string().min(1).max(500),\n        fragmentId: z.string().min(1).max(500),\n        section: z.string().min(1).max(500),\n     "
+      },
+      {
+        "key": "c2",
+        "label": "数据集创建与样本批量写入",
+        "reason": "说明数据集判重、可写状态、摘要计算、事务提交和回滚。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 118,
+          "endLine": 215
+        },
+        "quote": "  createDataset(input: {\n    name: string;\n    split: \"dev\" | \"holdout\";\n    sourceUri: string;\n    sourceRevisionId?: string | null;\n    sourceDigest: string;\n    targetCount: number;\n  }) {\n    const existing = this.db\n      .prepare(\n        `SELECT id FROM quality_datasets\n         WHERE name=? AND split=? AND sour"
+      },
+      {
+        "key": "c3",
+        "label": "样本查询与进度接口",
+        "reason": "支持仓库向标注服务提供顺序样本、下一待处理项和状态计数的关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 217,
+          "endLine": 276
+        },
+        "quote": "  datasets() {\n    return this.db\n      .prepare(\n        `SELECT d.id,d.name,d.split,d.state,d.source_uri AS sourceUri,\n           d.source_revision_id AS sourceRevisionId,d.source_digest AS sourceDigest,\n           d.target_count AS targetCount,d.manifest_digest AS manifestDigest,\n           d.created_at AS createdAt"
+      },
+      {
+        "key": "c4",
+        "label": "人工标签状态转换",
+        "reason": "解释四种动作的确认标签、目标状态和乐观并发检查。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 278,
+          "endLine": 326
+        },
+        "quote": "  label(input: {\n    sampleId: string;\n    action: \"confirm\" | \"abstain\" | \"needs_edit\" | \"skip\";\n    reviewerOpenId: string;\n    expectedLabelDigest: string;\n  }) {\n    const sample = this.sample(input.sampleId);\n    if (!sample) throw Error(\"QUALITY_SAMPLE_NOT_FOUND\");\n    if (sample.state !== \"pending\")\n      throw "
+      },
+      {
+        "key": "c5",
+        "label": "草稿标签修订",
+        "reason": "支持可修订状态、摘要轮换及恢复 pending 的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 328,
+          "endLine": 356
+        },
+        "quote": "  revise(input: {\n    sampleId: string;\n    expectedLabelDigest: string;\n    label: QualityLabel;\n  }) {\n    const sample = this.sample(input.sampleId);\n    if (!sample) throw Error(\"QUALITY_SAMPLE_NOT_FOUND\");\n    if (![\"pending\", \"needs_edit\", \"skipped\"].includes(sample.state))\n      throw Error(\"QUALITY_SAMPLE_ALREA"
+      },
+      {
+        "key": "c6",
+        "label": "冻结与完整性校验",
+        "reason": "说明完全确认前置条件、manifest digest 内容及冻结后复核。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 358,
+          "endLine": 401
+        },
+        "quote": "  freeze(datasetId: string) {\n    const dataset = this.db\n      .prepare(\"SELECT * FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    const samples = this.samples(datasetId);\n    if (\n      samples.length !== Number(dataset.target"
+      }
+    ],
+    "questions": [
+      {
+        "question": "质量样本的 `INSERT OR IGNORE` 依赖哪些数据库唯一约束？",
+        "why": "仓库计算 input digest，但提供的文件没有表结构；无法确定重复是按数据集与 input、ordinal，还是其他组合被忽略。",
+        "nextStep": "核对质量表迁移及相应测试，确认重复导入不会留下 ordinal 空洞或错误吞掉非重复数据。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "3ae1285f4f529258e0273949da1660869c2d121290c605a53d9c0ea2a5bf44a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "82040e6bf9053694fce5e0fba676574f3e95fcf309d9076f297fa674697efd2d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:36:22.914Z",
+    "trace": {
+      "runId": "b24a508b-9e49-4030-a33d-9b29aeeb18c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d6d9a86c5eafafc99edd87107f6c137aeb9b9b0a70faded4d19ccb17c259fb08",
+      "contextHash": "775cf64b377935696b9e2041fe922cc7fb3a70584a2e0881cf89d345ba10501f",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "14feaa8c6d4a0069dad959ba68382169acc8dc67a5f41fee01beef01e423ed38",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaa-213d-7d13-98e6-3838885b25f1"
+      ],
+      "usage": {
+        "used": 48481,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104046,
+          "utf8Bytes": 106725,
+          "estimatedTokens": 35575,
+          "budgetedTokens": 44469,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:36:50.583Z",
+    "trace": {
+      "runId": "afa11d9e-b028-47d8-baa8-0f33d508c8b6",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "23ea58bf4c39249e897ea17eb8257be8a67d56838fff53295c4ed9de4ef6bda3",
+      "contextHash": "5fc04761f2d28bfbb15cb839ae410658ccb196bac67e758908bb49e833e8c4e7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04c039dc6f97233cd2e75bca2c35775b51c16fdbda7244f0b64c73cbbfe27cd0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeab-107d-7e81-8977-b6d2f434d03a"
+      ],
+      "usage": {
+        "used": 52686,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 126336,
+          "utf8Bytes": 137353,
+          "estimatedTokens": 45785,
+          "budgetedTokens": 57232,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

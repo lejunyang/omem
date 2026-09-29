@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/learning/refresh.ts",
+    "title": "来源更新影响范围记录",
+    "summary": "记录来源 revision 更新波及的记忆及审计状态，但明确不执行重新复核，也不允许调用方把记录影响范围误报为刷新成功。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "blast-radius",
+        "title": "解决的问题与执行流程",
+        "body": "该模块为来源更新提供可审计的“爆炸半径”记录。调用方必须提供首个 input ref 的 `sourceId` 与新 `revisionId`，旧 revision 可缺省；随后通过 `memory_dependencies` 与当前 head memory revision 的连接，找出依赖该来源的全部记忆。[[c1]] 查询结果会写入 `refresh_records`，保存 workspace、旧/新 revision、受影响数量和 ID 列表；有受影响项时状态为 `needs_review`，空集合则为 `no_effect`。[[c2]]"
+      },
+      {
+        "key": "honest-boundary",
+        "title": "边界与管线关系",
+        "body": "这里不负责让记忆失效：注释明确说明确定性失效已发生在捕获流程中，关键词检索也只返回 active memory；本函数只补充刷新审计记录。更重要的是，它没有重新运行 verifier，也没有把任何记忆标成已复核，因此返回值始终是 `blocked/not_implemented`，即使影响数量为零也不能解释为“完成了复核”。[[c3]]\n\n`LearningPipeline.refreshDependents` 直接调用本函数，然后依据返回的数量和 ID 抛出配置类 `JobExecutionError`，确保作业不会伪装成功。[[c4]] 材料没有并发、重复调用或事务边界的实现，也未提供测试文件；因此无法从现有代码确认重复 refresh job 是否会生成多条预期的审计记录。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "依赖记忆查询",
+        "reason": "支持参数约束及通过依赖表计算受影响记忆集合的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/refresh.ts",
+          "startLine": 33,
+          "endLine": 52
+        },
+        "quote": "export function recordSourceRefresh(\n  db: DatabaseSync,\n  workspaceId: string,\n  inputRefs: SourceRefreshInputRef[],\n): SourceRefreshResult {\n  const ref = inputRefs[0];\n  if (!ref || typeof ref.sourceId !== \"string\" || typeof ref.revisionId !== \"string\")\n    throw new Error(\"REFRESH_MISSING_SOURCE_REF\");\n  const sour"
+      },
+      {
+        "key": "c2",
+        "label": "刷新审计记录写入",
+        "reason": "说明 needs_review、no_effect 的选择及 refresh_records 的持久化字段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/refresh.ts",
+          "startLine": 53,
+          "endLine": 73
+        },
+        "quote": "  // Record the invalidation honestly. There is no verified re-review here:\n  // affected memories need review; an empty blast radius is simply no_effect.\n  const recordStatus = affectedMemoryIds.length\n    ? \"needs_review\"\n    : \"no_effect\";\n  db.prepare(\n    `INSERT INTO refresh_records(\n       id,workspace_id,source"
+      },
+      {
+        "key": "c3",
+        "label": "未重新复核的明确边界",
+        "reason": "支持该函数只记录影响范围且始终返回 blocked/not_implemented 的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/refresh.ts",
+          "startLine": 25,
+          "endLine": 31
+        },
+        "quote": "/**\n * F8: record the real blast radius of a source revision update. The deterministic\n * invalidation already happened in store.capture (dependencies -> stale, memories\n * -> invalidated, and KeywordRetrieval only recalls active rows). This writes an\n * auditable refresh_records row, but it does NOT re-verify or \"revi"
+      },
+      {
+        "key": "c4",
+        "label": "学习管线的失败处理",
+        "reason": "证明调用方记录影响范围后会主动失败，避免报告刷新成功。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "startLine": 126,
+          "endLine": 145
+        },
+        "quote": "  private async refreshDependents(job: JobLease): Promise<never> {\n    const result = recordSourceRefresh(\n      this.input.store.db,\n      job.workspaceId,\n      job.inputRefs as {\n        sourceId?: string;\n        previousRevisionId?: string;\n        revisionId?: string;\n      }[],\n    );\n    // Re-verification of t"
+      }
+    ],
+    "questions": [
+      {
+        "question": "重复处理同一 source revision 更新时，是否要求 refresh_records 幂等？",
+        "why": "当前函数每次调用都生成新 UUID 并插入记录，材料中没有唯一键、去重语义或对应测试。",
+        "nextStep": "结合刷新作业的重试契约检查迁移和测试，决定审计记录应保留每次尝试，还是按作业或 revision 对去重。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "3ae1285f4f529258e0273949da1660869c2d121290c605a53d9c0ea2a5bf44a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "82040e6bf9053694fce5e0fba676574f3e95fcf309d9076f297fa674697efd2d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:36:22.914Z",
+    "trace": {
+      "runId": "b24a508b-9e49-4030-a33d-9b29aeeb18c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d6d9a86c5eafafc99edd87107f6c137aeb9b9b0a70faded4d19ccb17c259fb08",
+      "contextHash": "775cf64b377935696b9e2041fe922cc7fb3a70584a2e0881cf89d345ba10501f",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "14feaa8c6d4a0069dad959ba68382169acc8dc67a5f41fee01beef01e423ed38",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaa-213d-7d13-98e6-3838885b25f1"
+      ],
+      "usage": {
+        "used": 48481,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104046,
+          "utf8Bytes": 106725,
+          "estimatedTokens": 35575,
+          "budgetedTokens": 44469,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:36:50.583Z",
+    "trace": {
+      "runId": "afa11d9e-b028-47d8-baa8-0f33d508c8b6",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "23ea58bf4c39249e897ea17eb8257be8a67d56838fff53295c4ed9de4ef6bda3",
+      "contextHash": "5fc04761f2d28bfbb15cb839ae410658ccb196bac67e758908bb49e833e8c4e7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04c039dc6f97233cd2e75bca2c35775b51c16fdbda7244f0b64c73cbbfe27cd0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeab-107d-7e81-8977-b6d2f434d03a"
+      ],
+      "usage": {
+        "used": 52686,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 126336,
+          "utf8Bytes": 137353,
+          "estimatedTokens": 45785,
+          "budgetedTokens": 57232,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

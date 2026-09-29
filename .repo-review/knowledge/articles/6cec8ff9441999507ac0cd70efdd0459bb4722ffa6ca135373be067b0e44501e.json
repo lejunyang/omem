@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/code/artifacts.ts",
+    "title": "代码理解产物的导出、重绑定与恢复",
+    "summary": "该模块将当前成功的模型代码理解导出为可版本化 JSON，并在新快照中按稳定 locator 重绑定、校验和恢复，同时将变化或不可信产物标记为 stale/rejected。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "export",
+        "title": "导出条件与依赖清单",
+        "body": "生成产物是派生知识：JSON 保存生成 provenance，Markdown 仅是可读投影，两者都不应作为独立证据重新摄取。导出只接受当前 snapshot 上状态成功、非 seed、非 stale 的模型结果；目标涉及的源文件正文和规则证据摘录分别计算哈希，组成精确依赖清单。[[c1]]\n\n输出还收集 claims、key flows 和显式引用涉及的节点，把内部 symbol id 同路径、qualifiedName、kind locator 一起保存；若引用节点在当前快照不存在则导出失败。文件名由 targetId 哈希生成，写入指定 destination，而常量默认目录指向版本化 generated 知识目录。[[c2]]"
+      },
+      {
+        "key": "restore",
+        "title": "恢复校验与失效处理",
+        "body": "恢复逐个读取 JSON：版本、模型 provenance、seed/verified 标志不符会 rejected；当前依赖清单 digest 与产物不一致则标记 stale，不覆盖为成功。节点只能在目标范围内按 path、qualifiedName、kind 重新解析，任一 locator 缺失都会拒绝。[[c3]]\n\n重绑定后仅替换当前 input digest 与节点引用，保留原模型输出及原生成摘要，再运行 `validateCodeUnderstanding` 做整体合同校验。数据库已有同快照、目标和生成时间的有效记录时幂等返回 restored；否则事务写入 understanding 与 node/evidence refs，并明确记录“已校验来源与引用、未独立语义复核”。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "派生产物与依赖清单",
+        "reason": "支持产物不是独立证据，以及按捕获源码和规则摘录精确计算依赖哈希的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 1,
+          "endLine": 37
+        },
+        "quote": "/** Portable derived knowledge. JSON keeps generation provenance; Markdown is a\n * readable projection. Neither is re-ingested as independent source evidence. */\nimport { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { createHash } from \"node:"
+      },
+      {
+        "key": "c2",
+        "label": "当前模型结果导出",
+        "reason": "说明导出资格、引用节点收集、locator 保存、缺失节点失败及文件写入。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 38,
+          "endLine": 60
+        },
+        "quote": "export function exportGeneratedUnderstanding(store: Store, repoRoot: string, id: string, destination: string): string {\n  const detail = understandingDetail(store, id);\n  const snapId = currentSnapshotId(store);\n  if (!detail || !snapId || detail.status !== \"generated\" || detail.seed || detail.stale || detail.snapshot_"
+      },
+      {
+        "key": "c3",
+        "label": "产物 provenance、摘要与 locator 校验",
+        "reason": "支持 stale/rejected 分类，以及目标范围内稳定 locator 重解析的流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 63,
+          "endLine": 86
+        },
+        "quote": "export function restoreGeneratedUnderstandings(store: Store, repoRoot: string) {\n  const dir = join(repoRoot, GENERATED_DIR);\n  const report: { file: string; status: \"restored\" | \"stale\" | \"rejected\"; reason?: string }[] = [];\n  const snapId = currentSnapshotId(store);\n  if (!snapId || !existsSync(dir)) return report;\n"
+      },
+      {
+        "key": "c4",
+        "label": "重绑定、验证与事务恢复",
+        "reason": "说明保留原生成信息、执行完整验证、幂等检查和引用表写入。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 87,
+          "endLine": 118
+        },
+        "quote": "      // Rebind only checked references/digest. Original model output and original\n      // generation digest remain in the committed artifact, never overwritten.\n      const output: CodeUnderstandingOutput = {\n        ...artifact.output, input_digest: inputDigest,\n        referenced_node_ids: mapped(artifact.output.re"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/default-model.ts",
+      "digest": "2602359e46f83d2e9a0f1dc988f5c916d4eb4f86fdbace9a90d6d911d6de14cb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "b752f6849d98db0ea4a3d4f8df662ef117e5c0c3c9197fb1ae1ee2f6000eae9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:11.567Z",
+    "trace": {
+      "runId": "52bfcad0-9fdc-47e5-83bf-a5a2e62d16eb",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "7693443e7ffc4e5945d897d38ee976dc471ecaf46a7bff81ad5068ee500354a8",
+      "contextHash": "93d33bdcf364188db2e8288b5de371d4ad6b5da3cea26a3d107436c16da66422",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "47b4ee9baabcfc056a92a9b129a9b44f57d18e4062f7c32e1170d4e62c53f72a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-3b9f-7a63-aa6c-fa9be21dec9c"
+      ],
+      "usage": {
+        "used": 48231,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 110194,
+          "utf8Bytes": 112586,
+          "estimatedTokens": 37529,
+          "budgetedTokens": 46912,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:00:36.734Z",
+    "trace": {
+      "runId": "25c11244-ff92-40b5-8b64-5c7b381efdd3",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0a5176a755c3d1c6475bade81c3131d7156678b4d22f76be56de154c68c6f4e1",
+      "contextHash": "50ac857e735b3a8c7fa90d2f57315b07fe81a89e1cd7fb5c5d2b6d46f970375f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "add626a57bc7406023909a59cd770dcbf644abea5d1c3cac645bd5a0306f06c1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-eefa-7813-8670-5fefff67a40b"
+      ],
+      "usage": {
+        "used": 51158,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 125493,
+          "utf8Bytes": 134063,
+          "estimatedTokens": 44688,
+          "budgetedTokens": 55860,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
