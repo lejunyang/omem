@@ -3,43 +3,43 @@
   "document": {
     "key": "omem:apps/server/src/knowledge/repository.ts",
     "title": "知识材料、修订与失效管理仓库",
-    "summary": "把原始修订转换为可分析材料，严格校验正文内联引用，以内容寻址修订发布知识，并在原始材料或派生依赖变化后传播失效状态。",
+    "summary": "从非派生 Revision 构造固定知识材料，验证正文内联引用，按内容生成不可变文章修订并维护 current head；依赖变化和用户回答会使相关知识失效，供后续分析纳入回答并重新核对。",
     "category": "implementation",
     "sections": [
       {
-        "key": "material-boundary",
-        "title": "原始材料边界",
-        "body": "仓库从固定 Revision 重建文本、链接与图片，并结合正文、图片及来源属性计算稳定摘要。标为 derived 的修订会被排除，因此派生知识不能作为新的独立证据循环进入分析；当前材料列表只读取各 Source 的 head。[[c1]]"
+        "key": "materials-validation",
+        "title": "固定材料与引用合同",
+        "body": "仓库从 Revision 的文本、链接和图片部件构造材料，并把正文、图片、作者及转发属性纳入摘要；明确标记为 derived 的 Revision 不会成为原始材料。[[c1]] 文档校验要求章节键和引用键唯一、每节至少包含一处内联引用、每项引用都实际出现在正文中，并核验材料行范围或文章章节目标。宿主再按模型选定的范围复制精确短引文，避免要求模型复写长代码。[[c2]]"
       },
       {
-        "key": "validation-publication",
-        "title": "引用校验与内容寻址发布",
-        "body": "文档校验要求章节键和引用键唯一、每节含内联引用、每项引用实际出现在叙述中，并检查文章章节或材料行范围。模型选择定位范围后，宿主从固定材料复制短引文，避免依赖模型转录源码。[[c2]] 发布前会重新核对依赖摘要，再以完整 artifact 计算修订号并事务化切换 head；仍存在的问题被写入或重新打开，正文中消失的开放问题则标记为已替代。[[c3]]"
+        "key": "publication",
+        "title": "不可变发布与问题演进",
+        "body": "发布前会重新核对材料摘要和依赖文章修订，输入变化时拒绝发布；文章内容与生成、复核记录共同决定修订哈希，相同修订直接复用，否则插入不可变 revision 并原子切换 current head。[[c3]] 新正文中的问题会新增或更新；此前处于 `superseded` 且再次出现的问题会重开。只有仍为 `open`、但已从新正文移除的问题才会被标记为 `superseded`；已经是 `answered` 或 `task` 的问题不受这段淘汰逻辑影响。[[c4]]"
       },
       {
-        "key": "refresh-answer",
+        "key": "invalidation-answer",
         "title": "依赖失效与用户回答",
-        "body": "刷新过程比较当前材料摘要和派生文章修订，并把失效沿文章依赖逐层传播；它只调整知识 head 的 current 状态，历史修订仍被保留。[[c4]] 用户回答会保存为 manual 原始修订，问题改为已回答，对应文章被标记失效并刷新；问题也可显式转换为待办。[[c5]] 后续分析命中该文档时，流水线会读取 answerRevision，将回答作为固定补充材料加入 offers 后重新写作和复核。[[c6]]"
+        "body": "刷新会比较 current 材料摘要及派生文章修订，并沿文章依赖递归传播失效；历史修订仍被保留，但失效文章的 head 不再标为 current。[[c5]] 用户回答疑问时，答案先作为带来源元数据的手工捕获保存，问题改为 `answered`，对应文章登记失效原因并触发刷新。[[c6]] 该操作本身不创建复核任务；后续分析运行时才会把关联的回答 Revision 作为原始材料加入输入并重新核对。[[c7]] 用户也可另行把问题转换为现有任务系统中的待办，此时问题状态变为 `task`。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "原始修订材料化",
-        "reason": "支持排除派生修订、构造材料摘要以及只读取当前 Source head 的说明。",
+        "label": "Revision 转固定材料",
+        "reason": "说明派生 Revision 的排除条件，以及文本、链接、图片和来源属性如何组成固定材料及摘要。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
           "startLine": 11,
-          "endLine": 39
+          "endLine": 33
         },
         "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
       },
       {
         "key": "c2",
-        "label": "知识文档与引文校验",
-        "reason": "支持内联引用完整性、目标范围检查和宿主绑定精确引文的规则。",
+        "label": "正文引用验证与引文绑定",
+        "reason": "支持内联引用、引用目标和行范围的验证规则，以及由宿主从固定材料复制精确引文的机制。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -51,48 +51,61 @@
       },
       {
         "key": "c3",
-        "label": "知识修订发布事务",
-        "reason": "支持依赖复核、内容寻址修订、head 更新及开放问题替代流程。",
+        "label": "发布前依赖核对与不可变修订",
+        "reason": "支持发布前检查输入身份、计算修订哈希、复用相同修订以及事务性切换文章 head。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 115,
-          "endLine": 139
+          "startLine": 118,
+          "endLine": 129
         },
         "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
       },
       {
         "key": "c4",
-        "label": "知识依赖失效传播",
-        "reason": "支持材料或文章依赖变化会逐层取消 current 状态的论断。",
+        "label": "开放问题的替代与重开",
+        "reason": "精确说明只有已移除的 open 问题会变为 superseded，并说明 superseded 问题再次出现时会重开。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 141,
-          "endLine": 154
+          "startLine": 130,
+          "endLine": 136
+        },
+        "quote": "      const liveQuestions = new Set(artifact.document.questions.map(q => digest(artifact.document.key + \":\" + q.question)));\n      for (const row of this.store.db.prepare(\"SELECT id FROM knowledge_questions WHERE document_key=? AND state='open'\").all(artifact.document.key) as Row[]) {\n        if (!liveQuestions.has(Str"
+      },
+      {
+        "key": "c5",
+        "label": "依赖失效传播",
+        "reason": "说明材料或子文章身份变化如何使文章失效，并沿派生文章依赖继续传播。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 144,
+          "endLine": 157
         },
         "quote": "  /** Refresh checks content identity, including dependencies on derived pages. */\n  refresh() {\n    const materials = new Map(this.materials().map(m => [m.key, m.digest]));\n    const articles = this.list();\n    const articleMap = new Map(articles.map(a => [a.document.key, a]));\n    const bad = new Set((this.store.db.p"
       },
       {
-        "key": "c5",
-        "label": "问题回答与待办转换",
-        "reason": "支持回答被捕获为原始修订、文章失效刷新以及问题转为待办的流程。",
+        "key": "c6",
+        "label": "回答保存与待办创建",
+        "reason": "说明用户回答被保存为原始捕获、问题转为 answered 并使文章失效，以及显式创建待办时状态转为 task。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 166,
-          "endLine": 185
+          "startLine": 169,
+          "endLine": 188
         },
         "quote": "  questions() { return (this.store.db.prepare(\"SELECT * FROM knowledge_questions ORDER BY updated_at DESC\").all() as Row[]).map(r => ({ id: String(r.id), documentKey: String(r.document_key), ...JSON.parse(String(r.body)), state: String(r.state), taskId: r.task_id, answerRevision: r.answer_revision })); }\n\n  answer(id: "
       },
       {
-        "key": "c6",
-        "label": "回答进入后续分析",
-        "reason": "支持已回答问题的修订被材料化，并在分析对应文档时加入固定材料 offers。",
-        "relation": "implements",
+        "key": "c7",
+        "label": "后续分析纳入用户回答",
+        "reason": "说明知识分析仅在后续运行时读取问题关联的回答 Revision，并把它作为固定材料加入复核输入。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/pipeline.ts",
@@ -108,12 +121,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     },
     {
       "kind": "material",
@@ -134,42 +147,22 @@
       "kind": "material",
       "key": "omem:apps/server/src/review/associations.ts",
       "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:03:34.369Z",
+    "at": "2026-09-29T20:43:35.071Z",
     "trace": {
-      "runId": "26a23edd-4fa9-4a05-a739-5a623208952d",
+      "runId": "b4e72dba-2316-496f-87ef-bd3c68a0bfbf",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "a1ec3da0fe2ad2a8a367009ef4b6e8a36b4bb378745ff3f3b9184513c31c76a7",
-      "contextHash": "37928c0c3dcc05ce74a15ef56d1d275a439524ca882aa30372bbc359cfbe387a",
+      "promptHash": "eb5903274f89a0a9fce5469481d820f4982dbabeb8855b00fab15385fdbf0790",
+      "contextHash": "350426a0a10c3775fa585ea945804e773e3499983fccda470be55be9d877c505",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "049f9a490b98ac353d5faaea9d1cdfb28ba54a80b25987379da303566d7aa8d3",
+      "fingerprint": "da4500d714ee7556cbbbc7a80afc8650b0657f3fde822bc76379898b8bea0d88",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -182,10 +175,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-83e1-70e2-9cb0-58752e34b05e"
+        "01a0eee8-6559-7cc3-9ce7-d9dce624b230"
       ],
       "usage": {
-        "used": 49260,
+        "used": 41345,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -194,10 +187,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 116883,
-          "utf8Bytes": 123517,
-          "estimatedTokens": 41173,
-          "budgetedTokens": 51467,
+          "chars": 99475,
+          "utf8Bytes": 102979,
+          "estimatedTokens": 34327,
+          "budgetedTokens": 42909,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -206,17 +199,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:03:53.499Z",
+    "at": "2026-09-29T20:43:46.653Z",
     "trace": {
-      "runId": "25cfe2c6-41fa-48bb-a47c-7703d61bfa96",
+      "runId": "e0a22c6b-fb01-4e2f-8165-e565b4767f8b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9f2c5dccf4ceccf398c8fab4a5fb63a9ba26dd3f18518f4e721d25ddcc4dc55c",
-      "contextHash": "2898ab12fd2dd6a83a3a5ca791f1beea07297cc0a811aa3621a9a07eb74bc8df",
+      "promptHash": "9c1497291eb33e32abf4054f99142d485f29afe31045b5893c623eb7e9d07041",
+      "contextHash": "955b95737ce87f813f591c53b5a1159af8d5fd363ec9305e9435b2fe4a5cc8aa",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "760abeafee3338bcce7809cfa4eace51ebc4d95f7878a590386ef31dd4816a32",
+      "fingerprint": "5e95d31ef2ee23c1686902b334a65daf0c8f4aaaf7dbf1069032c12244defad0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -229,10 +222,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-f527-7351-a12d-1beebbce55dd"
+        "01a0eee8-96e1-7062-9154-d14a3928e70a"
       ],
       "usage": {
-        "used": 46574,
+        "used": 40003,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -241,10 +234,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 114631,
-          "utf8Bytes": 120189,
-          "estimatedTokens": 40063,
-          "budgetedTokens": 50079,
+          "chars": 97598,
+          "utf8Bytes": 100504,
+          "estimatedTokens": 33502,
+          "budgetedTokens": 41878,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

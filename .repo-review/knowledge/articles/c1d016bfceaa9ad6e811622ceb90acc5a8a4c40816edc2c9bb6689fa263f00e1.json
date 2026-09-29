@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:apps/server/src/knowledge/retrieval.ts",
     "title": "派生知识引导的原始证据召回",
-    "summary": "从当前知识正文的关键词命中出发，核验整篇文章的依赖后沿引用链回溯原始固定 Fragment；实现具有入口级数量保护、九层文章访问范围与逐引用容错，但不保证结果严格不超过三十项。",
+    "summary": "在 current 知识文章中匹配查询词，再沿经过依赖摘要校验的引用链定位固定原始 Fragment；派生正文只提供导航，不作为返回证据。",
     "category": "implementation",
     "sections": [
       {
         "key": "entry",
         "title": "检索入口与候选文章",
-        "body": "该实现把派生正文仅作为检索导航，返回候选始终是原始固定 Fragment，后续仍需应用助手可见性规则。[[c1]] 查询词为空或知识表不存在时返回空；否则在 current head 的文章投影中执行转义后的 `LIKE` 匹配，SQL 最多取三十篇候选文章，并在单次调用内缓存材料来源与子文章。[[c2]]"
+        "body": "该实现把派生正文限定为检索导航，返回候选仍是固定原始 Fragment，后续还需执行助手可见性规则。[[c1]] 查询词为空或知识表不存在时直接返回空；否则只查询 current head，并对转义后的 LIKE 条件先取最多三十篇文章，同时缓存材料来源和子文章读取。[[c2]]"
       },
       {
         "key": "verification",
         "title": "依赖核验与引用回溯",
-        "body": "每篇文章开始遍历前，会重建材料内容摘要并核对子文章当前修订；任一依赖缺失或摘要、修订不符，都会终止整篇文章的证据输出，而非只跳过该依赖。校验通过后，顶层仅遍历命中章节正文里实际出现的引用键；子文章则递归处理其全部引用。材料引用必须含非空精确引文，且该引文仍能在当前来源的某个 Fragment 中定位，最终返回该 Fragment 及其修订、来源和作者信息。[[c3]]"
+        "body": "进入一篇文章后，会先核对其全部材料摘要和子文章修订；任一材料来源不存在或摘要变化，都会终止整篇文章的证据输出。[[c3]] 顶层匹配覆盖文章标题、摘要、章节标题和正文，并只从命中章节正文实际出现的引用键开始；子文章引用则继续递归。材料引文为空或无法在当前 Fragment 中精确定位时，才只跳过该条引用路径。[[c3]][[c4]]"
       },
       {
         "key": "limits",
-        "title": "命中范围、边界与容错",
-        "body": "顶层命中范围包括文章标题、摘要以及章节标题或正文；命中的章节再从正文提取引用键，无效文章投影不会中断其他候选的处理。[[c4]] 递归从 `depth=0` 开始、仅在大于八时停止，因此可访问九个文章层级，等价于最多八次子文章跳转。`output.size >= 30` 只在进入一次文章遍历时检查；同一遍历的引用循环仍可能继续加入多个 Fragment，所以此前“输出最多三十项”的硬上限结论已被替代。空引文或无法定位引文时只跳过该条材料引用；此前将“来源不存在”一概描述为逐路径跳过也已被替代，因为依赖来源缺失会先使整篇文章停止输出。[[c3]]"
+        "title": "深度、数量与容错边界",
+        "body": "深度从顶层零开始，仅在大于八时停止，因此可访问深度零至八的九个文章层级，即最多八次子文章跳转。输出数量检查只发生在每次进入 `visit` 时；一次已经开始的引用循环仍可能继续加入多个 Fragment，所以三十不是严格结果上限。[[c3]] 文章和 Fragment 分别去重；单篇投影解析失败不会中断其他文章，但当前定位依赖保存的精确短引文仍存在，不提供语义匹配或跨修订位置续接。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "派生正文的检索边界",
-        "reason": "支持派生知识仅引导检索、返回对象仍为原始固定 Fragment，并保留后续可见性检查的论断。",
+        "reason": "支持派生知识只负责引导、候选仍回到固定原始 Fragment。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,8 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "当前文章筛选与缓存",
-        "reason": "支持空查询处理、current head 限定、转义关键词匹配、候选文章 SQL 限量及调用内缓存。",
+        "label": "current 文章初筛",
+        "reason": "说明空查询处理、current head 约束、LIKE 转义、初始三十篇限制和缓存。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -51,8 +51,8 @@
       },
       {
         "key": "c3",
-        "label": "依赖校验与引用链遍历",
-        "reason": "支持整篇文章的依赖校验、递归深度计数、入口级结果数量检查，以及材料引文定位和逐引用跳过行为。",
+        "label": "引用链遍历与证据定位",
+        "reason": "支持准确说明深度计数、入口数量检查、整篇依赖核验和单条材料引用跳过条件。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,8 +64,8 @@
       },
       {
         "key": "c4",
-        "label": "章节命中与失败隔离",
-        "reason": "支持文章标题、摘要、章节标题和正文的命中范围，以及从章节正文提取引用键和解析失败隔离。",
+        "label": "命中范围与解析隔离",
+        "reason": "说明文章标题、摘要、章节标题和正文均参与匹配，并支持无效投影的失败隔离。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -82,12 +82,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     },
     {
       "kind": "material",
@@ -108,42 +108,22 @@
       "kind": "material",
       "key": "omem:apps/server/src/review/associations.ts",
       "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:41.336Z",
+    "at": "2026-09-29T20:42:11.442Z",
     "trace": {
-      "runId": "c579d76e-218d-4658-bd39-20761c50de16",
+      "runId": "19f1cc3d-aeab-4e8b-95a1-6d9b28b7f49e",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9deb3a8efc0ebbc8ab4dde1310add4997cd4af97f3d301452a0890108e9f5515",
-      "contextHash": "a7a6ff0ab508efcde0cf34efa680b30f69123bbf3565043efcdb75bf5e9044da",
+      "promptHash": "3faa7ae6948f908c5aaac700c95b7f236a19b7a28c019b26c6583abd3513dcd1",
+      "contextHash": "8c033ea230913fdef360df1a6bbf879191858933d9340ab615825fa6a0be6b38",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5b1517d3dec1b5a4b4542f38780fbb98bb9c72ff8021811eb63ad644f4c55dd8",
+      "fingerprint": "2b261dfce5c2253ad38d5a4bb126ad01bf58e9472cc2909b07a84f3c25c7aaa6",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -156,10 +136,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-bb40-76a3-bf33-dfcaaf35f8b0"
+        "01a0eee6-9620-7950-87af-71dd25a6b0da"
       ],
       "usage": {
-        "used": 44239,
+        "used": 50720,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -168,10 +148,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107632,
-          "utf8Bytes": 111350,
-          "estimatedTokens": 37117,
-          "budgetedTokens": 46397,
+          "chars": 112514,
+          "utf8Bytes": 121843,
+          "estimatedTokens": 40615,
+          "budgetedTokens": 50769,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -180,17 +160,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:04:56.356Z",
+    "at": "2026-09-29T20:42:50.313Z",
     "trace": {
-      "runId": "8dcd72bf-e4fe-4058-9a15-4185d6410297",
+      "runId": "78bc7188-8b06-4f46-99e8-e0947f3391f6",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "55e9c314114a69f1f51e9561d2d83d7503e60b67866ac1f478c7f9eb3c451595",
-      "contextHash": "89990b0ec7f78cafbe2d64002c199c81e6a02621482fd1f45f3a4f4d5247a64e",
+      "promptHash": "ea237eb6467eb7fec2d9f5d98e5b3ff093b87ff42ba7cc3ea87c0fc98e535a56",
+      "contextHash": "bc812c553b123381ba6f02c41040180cd8e5d5eb679b399dc68b48f5970e96f4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "12db57471bce1589fd5aeec90053ba2020d2db7f2f681af0385262d839541766",
+      "fingerprint": "895775610d3b5f273163afeb87ab1544f7629fa74a5e663d1238dbd37d74a73d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,10 +183,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-fc8b-7830-abeb-8b939e12e114"
+        "01a0eee7-51be-79c3-8713-e5c854e81d2b"
       ],
       "usage": {
-        "used": 42764,
+        "used": 49184,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -215,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 104522,
-          "utf8Bytes": 107252,
-          "estimatedTokens": 35751,
-          "budgetedTokens": 44689,
+          "chars": 116095,
+          "utf8Bytes": 126070,
+          "estimatedTokens": 42024,
+          "budgetedTokens": 52530,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
