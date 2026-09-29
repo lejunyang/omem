@@ -403,3 +403,15 @@ describe("F: G17 evaluateBatch wired into the real verify path", () => {
     }
   });
 });
+
+it("leaves knowledge-role work for the knowledge worker", async () => {
+  const directory = temporary("omem-learning-kind-isolation-");
+  const store = new Store(directory);
+  const p = pipeline(store, join(directory, "agents"));
+  try {
+    const { job } = store.jobs.enqueue({ kind: "knowledge:code-analyst", inputRefs: ["fixed-material"], roleVersion: "1", policyVersion: "knowledge@1" });
+    expect(await p.drain()).toBe(0);
+    expect(store.jobs.get(job.id)?.state).toBe("queued");
+    expect(store.jobs.attempts(job.id)).toHaveLength(0);
+  } finally { await p.stop(); store.close(); }
+});

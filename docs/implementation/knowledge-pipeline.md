@@ -47,3 +47,7 @@ extractor/verifier/planner/feedback-curator 与早期四个代码角色的实际
 个人“知识整理”和仓库“仓库知识”使用同一组阅读组件；代码结构视图作为补充入口。正文中的引用带可读名称，打开后先展示引用理由，再进入固定知识章节或原始材料；代码 import 行旁也能进入目标模块知识。帧栈行为已集中到 `packages/ui/useEvidenceTrail`，知识、材料与旧代码视图使用同一 dialog 合同，支持逐层返回、循环跳回、滚动与焦点恢复以及深链。
 
 验证：完整 `osdk run check` 通过；`knowledge-browser.ts` 用真实 Vue/API/SQLite 验证正文→章节→三个模块→固定代码的五层链、理由、import 跳转、Esc、深链、焦点、1440/768/390 和显式待办；规定的 `dev:review` + `code-wiki-viewport.ts`（本仓库材料镜像）及个人 `osdk run browser` 均通过。fixture 知识与真实模型产物在验证记录中保持区分。
+
+## 已修正：个人学习与知识整理并存
+
+个人学习 worker 同样限定只领取 extract_claims / verify_proposals / refresh_dependents，避免它把知识角色任务误判为未知任务。两种流程共用一张持久任务表，互不抢占。验证：学习与知识流程 8 用例通过。
