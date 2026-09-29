@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/agents.ts",
+    "title": "Agent CLI 与 ACP 传输适配",
+    "summary": "负责启动外部 Agent、协商 ACP 能力和模型设置、实施只读与拒绝授权边界、流式收集输出，并为传统 CLI 提供受限兼容路径。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "process",
+        "title": "进程生命周期与环境边界",
+        "body": "适配器以非 shell 子进程启动 profile 指定命令，过滤部分宿主敏感环境变量，并在支持的平台创建独立进程组。取消、超时或结束时先发送终止信号，必要时升级强制终止；ACP 路径还等待子进程关闭，以降低工作目录仍被占用的竞态。目录创建时请求 `0o700`，但不代表既有目录权限一定被修改。[[c1]][[c2]]"
+      },
+      {
+        "key": "acp",
+        "title": "ACP 能力协商与安全策略",
+        "body": "ACP 初始化声明不提供文件读写或终端能力，新会话只接收宿主指定的 MCP 服务。请求的模型和推理强度必须出现在会话配置选项中，否则拒绝；若模型元数据提供上下文窗口，还会校验输入、输出和预留总量。native 技能须在命令发现更新中出现，图片也要求 Agent 明示支持。[[c3]][[c4]]"
+      },
+      {
+        "key": "requests",
+        "title": "权限、补充输入与输出流",
+        "body": "Agent 的权限请求会先交给宿主回调记录，再统一返回 cancelled；补充输入请求同样记录后 decline，因此后台任务不会静默获权或等待交互。只有文本消息块进入最终输出，thought 不在此路径收集；工具调用仅作为状态通知。字符和 ACP 线协议总量分别设有限制，越界会停止子进程。[[c5]]"
+      },
+      {
+        "key": "cli",
+        "title": "CLI 兼容路径及限制",
+        "body": "CLI 参数强制无工具、只读沙箱或不询问权限、临时会话，并按 profile 传递模型和推理强度。输出按不同提供方的 JSON 事件提取 Agent 文本；非零退出、畸形 JSON、提供方错误、没有有效消息或超过字节上限都视为失败。该路径只处理文本，也没有 ACP 的能力发现、托管工具与运行时请求合同。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "子进程启动与停止",
+        "reason": "支持环境过滤、非 shell 启动、进程组、目录创建参数及分阶段终止策略。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 32,
+          "endLine": 68
+        },
+        "quote": "const env = () =>\n  Object.fromEntries(\n    Object.entries(process.env).filter(\n      ([key]) =>\n        !key.startsWith(\"BOTMUX_\") &&\n        ![\"OMEM_TOKEN\", \"CLAUDECODE\"].includes(key),\n    ),\n  );\nfunction stop(child: ChildProcessWithoutNullStreams) {\n  if (child.exitCode !== null) return;\n  try {\n    if (process.pl"
+      },
+      {
+        "key": "c2",
+        "label": "ACP 清理与进程关闭等待",
+        "reason": "支持取消监听清理、终止进程并等待关闭事件释放工作目录。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 340,
+          "endLine": 375
+        },
+        "quote": "      // The agent's prompt has completed. Clear the global timeout now so\n      // session teardown (closeSession) doesn't race it under parallel load —\n      // otherwise a slow prompt leaves no budget for the 1s closeSession race,\n      // turning a clean success into a spurious \"Agent timed out\".\n      clearTimeout"
+      },
+      {
+        "key": "c3",
+        "label": "模型上下文预算发现",
+        "reason": "支持从当前模型选项元数据读取上下文窗口并校验输入、输出和预留总量。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 70,
+          "endLine": 83
+        },
+        "quote": "export function optionValues(option: SessionConfigOption) {\n  if (option.type !== \"select\") return [];\n  return option.options.flatMap((o) => (\"options\" in o ? o.options : [o]));\n}\nexport function assertContextBudget(configOptions: SessionConfigOption[], budget: NonNullable<AcpOptions[\"contextBudget\"]>): number | null "
+      },
+      {
+        "key": "c4",
+        "label": "ACP 初始化与会话配置",
+        "reason": "支持只读能力声明、技能发现、模型和推理强度合法值校验、图片能力检查及提示调用。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 259,
+          "endLine": 339
+        },
+        "quote": "    const initialized = await Promise.race([\n      connection.initialize({\n        protocolVersion: 1,\n        clientCapabilities: {\n          fs: { readTextFile: false, writeTextFile: false },\n          terminal: false,\n        },\n        clientInfo: { name: \"omem\", version: \"0.1.0\" },\n      }),\n      exited,\n    ]);\n"
+      },
+      {
+        "key": "c5",
+        "label": "运行时请求和消息流处理",
+        "reason": "支持权限取消、补充输入拒绝、文本输出收集、工具状态通知以及输出字符限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 180,
+          "endLine": 255
+        },
+        "quote": "    const stream = ndJsonStream(output, input);\n    connection = new ClientSideConnection(\n      () => ({\n        requestPermission: async (request) => {\n          await options.onRuntimeRequest?.({\n            kind: \"permission\",\n            sessionId: sessionId || request.sessionId,\n            turnId: request.toolCa"
+      },
+      {
+        "key": "c6",
+        "label": "CLI 参数与协议解析",
+        "reason": "支持 CLI 的只读和无工具参数、模型设置、JSON 事件解析、字节限制及失败条件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 377,
+          "endLine": 498
+        },
+        "quote": "export function cliArgs(profile: AgentProfile) {\n  const { model, effort } = profile;\n  if (profile.transport === \"claude-cli\")\n    return [\n      ...profile.args,\n      \"--print\",\n      \"--output-format\",\n      \"stream-json\",\n      \"--verbose\",\n      \"--tools\",\n      \"\",\n      \"--permission-mode\",\n      \"dontAsk\",\n   "
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/budget.ts",
+      "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+      "digest": "e04ec19837c91b28dbbf28cbcda5bb6f6989dbc2b58c5c24ddaca4d006ea9a05"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:02:26.775Z",
+    "trace": {
+      "runId": "4812f6e1-0853-45df-a7e1-4ca9eaf3a0ce",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "dc540cbd2b3ef1b8a6209c85f21c3ff6a9ab0d7d01bce6faeed7590a95a64c59",
+      "contextHash": "ee41cbe0e14f218db1947aadc31e6340082c22afa742a56843529fae0550ceb9",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bfd7fed1519419aace7823cebffd320690e5852e8c2297ac6f93e0d4888ced56",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-272a-7701-a62e-29f4c8af74e2"
+      ],
+      "usage": {
+        "used": 43518,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 87261,
+          "utf8Bytes": 92577,
+          "estimatedTokens": 30859,
+          "budgetedTokens": 38574,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:02:34.315Z",
+    "trace": {
+      "runId": "124e5740-63b9-49a8-a7a5-23e8326b9035",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "48b5790258f9277cdb1421061c5e255b40f6cf201d7ffd1a48bd8f7b5841ece5",
+      "contextHash": "4a3fc51f70cd2c5eec6aff34f42aef421230244d18150c3bcffd3e93902f6afe",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "61858947d8660017c799604abcbec2d39c4e0e6a64a753fbe7da9f92cef7c5ad",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-ed60-7f11-a0b0-d5e3524acdee"
+      ],
+      "usage": {
+        "used": 41814,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 96849,
+          "utf8Bytes": 105895,
+          "estimatedTokens": 35299,
+          "budgetedTokens": 44124,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

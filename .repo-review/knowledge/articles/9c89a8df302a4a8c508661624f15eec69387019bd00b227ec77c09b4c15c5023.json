@@ -1,0 +1,253 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+    "title": "Lark 决策卡片动作处理",
+    "summary": "把 Lark 卡片回调转化为经过身份、版本和摘要校验的一次性决策命令，并通过租约、有限重试与结果卡片更新完成异步执行。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "validation-and-consumption",
+        "title": "回调校验与一次性消费",
+        "body": "服务只接受 `card.action.trigger`，先把事件持久化到收件箱以处理平台重投，再严格解析协议版本、动作、随机数、提案摘要、有效期和预期版本摘要。[[c1]] 随后在事务中联查卡片动作、决策、绑定和连接，核对应用、操作者、聊天、消息、摘要、随机数哈希、版本摘要及有效期；验证通过后以条件更新消费动作、创建异步命令并完成收件事件，从而避免同一卡片动作被重复执行。[[c2]]"
+      },
+      {
+        "key": "worker-flow",
+        "title": "租约执行与模块关系",
+        "body": "工作器认领已排队、待重试或租约过期的命令，生成新租约令牌并递增尝试次数。它调用 `MemoryService.decide`，以 `lark-card:` 前缀的请求标识支持业务幂等；之后从密钥存储取出凭据，通过消息适配器更新原卡片，成功后才把命令记为已处理。[[c3]] 因而本服务直接连接实时事件收件箱、记忆决策、加密密钥存储和 Lark 投递适配器。"
+      },
+      {
+        "key": "failure-boundaries",
+        "title": "失败分类与边界",
+        "body": "命令收尾必须匹配当前租约令牌，待重试状态采用最高 60 秒的指数退避。陈旧决策、已解决、摘要或操作者不匹配被视为终局业务错误，并尝试把数据库中的当前决策状态写回卡片。[[c4]] 重试最多发生到第五次之前：已分类的 `LarkDeliveryError` 仅在限流或结果不明确时重试，但所有未分类异常也会重试；鉴权错误则禁用关联目标并把连接标记失败。错误文本会遮蔽已知密钥和常见令牌格式、移除换行并截断。[[c5]] 由于业务决策先于卡片更新，后者持续失败时界面可能落后于真实业务状态。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "卡片回调协议与收件去重",
+        "reason": "支持回调类型限制、严格字段解析以及先持久化事件以处理重复投递的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 13,
+          "endLine": 150
+        },
+        "quote": "const callbackValueSchema = z\n  .object({\n    protocol: z.literal(\"omem.decision.v1\"),\n    cardActionId: z.string().uuid(),\n    action: z.enum([\"approve\", \"reject\", \"request_context\"]),\n    nonce: z.string().min(32).max(200),\n    proposalDigest: z.string().regex(/^[a-f0-9]{64}$/),\n    expiresAt: z.string().datetime({ o"
+      },
+      {
+        "key": "c2",
+        "label": "上下文核验与动作消费",
+        "reason": "支持联合校验连接、绑定、操作者、消息、摘要和有效期，并在事务中一次性消费动作和创建命令。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 152,
+          "endLine": 237
+        },
+        "quote": "    return this.store.tx(() => {\n      const row = this.store.db\n        .prepare(\n          `SELECT a.*,d.expected_versions,d.owner_binding,d.state AS decision_state,\n             d.request_id,b.state AS binding_state,c.app_id,c.state AS connection_state\n           FROM lark_card_actions a\n           JOIN decisions d "
+      },
+      {
+        "key": "c3",
+        "label": "命令认领与决策执行",
+        "reason": "说明租约认领、记忆决策调用、密钥读取、卡片更新及成功收尾的执行顺序。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 240,
+          "endLine": 382
+        },
+        "quote": "  private claim(now = new Date(), leaseMs = 60_000): CardCommandLease | null {\n    const at = now.toISOString();\n    return this.store.tx(() => {\n      const row = this.store.db\n        .prepare(\n          `SELECT q.*,a.decision_id,a.proposal_digest,a.operator_open_id,a.message_id,\n             a.binding_id,d.owner_bin"
+      },
+      {
+        "key": "c4",
+        "label": "租约收尾与终局业务错误",
+        "reason": "支持租约令牌保护、指数退避以及终局业务错误发生后回写当前决策状态的流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 301,
+          "endLine": 415
+        },
+        "quote": "  private finish(\n    lease: CardCommandLease,\n    state: \"processed\" | \"failed\" | \"retry_wait\",\n    result: unknown,\n    error: string | null,\n    now: Date,\n  ) {\n    return this.store.tx(() => {\n      const changed = this.store.db\n        .prepare(\n          `UPDATE lark_card_commands SET state=?,result_json=?,error"
+      },
+      {
+        "key": "c5",
+        "label": "重试分类和鉴权失效处理",
+        "reason": "准确支持未分类异常也可重试、已分类错误仅重试限流或不明确结果，以及鉴权失败禁用绑定的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 416,
+          "endLine": 459
+        },
+        "quote": "        } catch (updateError) {\n          const updateMessage = safeError(\n            updateError,\n            attemptedSecret ? [attemptedSecret] : [],\n          );\n          const retry =\n            lease.attempt < 5 &&\n            (!(updateError instanceof LarkDeliveryError) ||\n              [\"rate_limit\", \"ambigu"
+      }
+    ],
+    "questions": [
+      {
+        "question": "卡片命令在业务决策已成功、但卡片更新持续失败并耗尽重试后，用户应通过什么渠道获知真实决策结果？",
+        "why": "执行顺序是先提交记忆决策，再更新卡片；后者失败不会回滚已经成功的业务决策，因此卡片可能永久显示旧状态。",
+        "nextStep": "明确补偿与可观测性要求，并为“决策成功、卡片更新失败至重试耗尽”增加端到端断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/spool.ts",
+      "digest": "6e815455823d4befbba2dcce822d0c1b3e12b4b08f7f86def8945493dabe3039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:03:57.430Z",
+    "trace": {
+      "runId": "f528c3eb-b5d9-44c3-b09a-63690c421392",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "62d518af11fb07d40e1b6a081c3e98a7872e0090445d9518c4ae652ceebe0aa2",
+      "contextHash": "0e3a950f6d5e7b7eedbf7b5c4533b459f9a63cdd9ef4690dd825571c199e3428",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8f9c65b4c3b7f4a26176ee2fa0c44bef9160fda4322323e26fcf71cd97ce8041",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-d22e-73e1-a0f6-0d93ee3f2a11"
+      ],
+      "usage": {
+        "used": 57789,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 141179,
+          "utf8Bytes": 151779,
+          "estimatedTokens": 50593,
+          "budgetedTokens": 63242,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:04:20.335Z",
+    "trace": {
+      "runId": "db2bd2cf-039b-4019-847f-eb0ec4527aef",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "a74d1aac9ddabd6c3cf2d61bb94f55eb7a6d9ca8a7ad334ad21ee223c3db427c",
+      "contextHash": "fb105883296b55d35e4ca156265976a715b1860e87ab25167478e7f97e35fcbc",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "564dfbd8ea03dfca01d0709f576728934b7fe93f498ac9ef2289273958a7d388",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8d-60fb-7581-99c8-656cb43e00a4"
+      ],
+      "usage": {
+        "used": 53977,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 137293,
+          "utf8Bytes": 145803,
+          "estimatedTokens": 48601,
+          "budgetedTokens": 60752,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

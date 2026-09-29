@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/quality/import.ts",
+    "title": "仅供评测的质量样本导入器",
+    "summary": "把显式指定的文档规则切分为人工标注草稿数据集；它刻意与正常捕获和学习链路隔离，生成标签只可作为研究标注起点。",
+    "category": "research",
+    "sections": [
+      {
+        "key": "eval-boundary",
+        "title": "用途与隔离边界",
+        "body": "该文件解决的是质量研究数据集的冷启动，而不是生产知识提炼。文件声明这些 helper 只供显式触发的人工标注 harness 使用，HTTP capture、CLI 导入、inputs ingest 和学习管线都不得调用；普通材料仍应进入不可变 source revision 与 fragment。规则生成的 `explicit/claim`、逐字 evidence 和 `autoApply=true` 只是待人工判断的草稿，不能泄漏到生产捕获。[[c1]] 入口还要求调用者传入字面量 `EVAL_ONLY_RESEARCH`，错误 opt-in 会立即失败。[[c2]]"
+      },
+      {
+        "key": "sampling-flow",
+        "title": "切分、排序与落库流程",
+        "body": "样本构建只合并文本 part，将 Markdown/HTML 表达清理为纯文本，并用标题维护 section。白板、网格、表格和图片块被跳过；长行按中文标点拆句，只保留 24–500 字的文本，再以 section 与正文摘要去重并产生稳定 fragment 标识。[[c3]] 每个候选都生成 claim 草稿，并根据“必须、限制、不支持”等规则词、否定表达和数字加权；候选按分数降序、原文顺序次序截取。达不到目标数量会报错，而不是静默生成较小数据集。[[c4]]\n\n导入阶段根据整份文档和来源信息计算 source digest，经 `QualityRepository.createDataset` 建数据集，再批量添加样本。这里未处理非文本 part 的质量样本，也没有模型判断；准确性、限定完整性和是否可自动沉淀仍交给人工标注。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "评测专用边界声明",
+        "reason": "支持该导入器与普通捕获、学习管线隔离及草稿标签不得用于生产的说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c2",
+        "label": "显式研究 opt-in",
+        "reason": "说明只有指定字面量才能执行质量数据集导入。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 156,
+          "endLine": 175
+        },
+        "quote": "/** Eval-only: materialize a rule-split draft dataset for human annotation.\n *  Guarded by {@link QUALITY_EVAL_ONLY}: the ordinary capture/import pipeline\n *  does not create quality datasets or annotation samples. */\nexport function importQualityDatasetEval(input: {\n  optIn: typeof QUALITY_EVAL_ONLY;\n  repository: Qua"
+      },
+      {
+        "key": "c3",
+        "label": "文档清理与候选切分",
+        "reason": "支持文本 part 合并、特殊块跳过、句长限制及摘要去重流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 30,
+          "endLine": 105
+        },
+        "quote": "const plainText = (value: string) =>\n  value\n    .replace(/!\\[([^\\]]*)\\]\\([^)]*\\)/g, \"$1\")\n    .replace(/\\[([^\\]]+)\\]\\([^)]*\\)/g, \"$1\")\n    .replace(/<[^>]+>/g, \" \")\n    .replace(/[*_~`>#]/g, \"\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n\n/** Eval-only: split a research document into draft annotation samples.\n *  Never im"
+      },
+      {
+        "key": "c4",
+        "label": "草稿标签评分与数量约束",
+        "reason": "解释规则标签、候选评分排序及样本不足时失败的行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 106,
+          "endLine": 153
+        },
+        "quote": "      const ruleMatches = text.match(\n        /只能|仅能|最多|必须|不能|不支持|需要|允许|优先|限制|条件|规则/g,\n      );\n      candidates.push({\n        input,\n        draftLabel: qualityLabelSchema.parse({\n          disposition: \"extract\",\n          objects: [\n            {\n              kind: \"claim\",\n              statement: text,\n         "
+      },
+      {
+        "key": "c5",
+        "label": "质量仓库落库调用",
+        "reason": "说明数据集创建和样本批量写入依赖 QualityRepository。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 172,
+          "endLine": 186
+        },
+        "quote": "  const generated = documentQualityEvalSamples(\n    input.document,\n    input.sourceUri,\n    input.targetCount,\n  );\n  const dataset = input.repository.createDataset({\n    name: input.name,\n    split: input.split,\n    sourceUri: input.sourceUri,\n    sourceRevisionId: input.document.upstreamVersion ?? null,\n    sourceDi"
+      }
+    ],
+    "questions": [
+      {
+        "question": "被跳过的图片、表格和白板材料是否计划通过独立评测集覆盖？",
+        "why": "当前候选器明确跳过这些结构，只处理文本 part，因此现有数据集不能衡量多模态或结构化材料的提炼质量。",
+        "nextStep": "若这些输入属于质量评测范围，应设计保留原始定位与人工标签的独立样本构造器，不应复用当前纯文本规则切分结果冒充覆盖。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "3ae1285f4f529258e0273949da1660869c2d121290c605a53d9c0ea2a5bf44a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "82040e6bf9053694fce5e0fba676574f3e95fcf309d9076f297fa674697efd2d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:36:22.914Z",
+    "trace": {
+      "runId": "b24a508b-9e49-4030-a33d-9b29aeeb18c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d6d9a86c5eafafc99edd87107f6c137aeb9b9b0a70faded4d19ccb17c259fb08",
+      "contextHash": "775cf64b377935696b9e2041fe922cc7fb3a70584a2e0881cf89d345ba10501f",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "14feaa8c6d4a0069dad959ba68382169acc8dc67a5f41fee01beef01e423ed38",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaa-213d-7d13-98e6-3838885b25f1"
+      ],
+      "usage": {
+        "used": 48481,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104046,
+          "utf8Bytes": 106725,
+          "estimatedTokens": 35575,
+          "budgetedTokens": 44469,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:36:50.583Z",
+    "trace": {
+      "runId": "afa11d9e-b028-47d8-baa8-0f33d508c8b6",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "23ea58bf4c39249e897ea17eb8257be8a67d56838fff53295c4ed9de4ef6bda3",
+      "contextHash": "5fc04761f2d28bfbb15cb839ae410658ccb196bac67e758908bb49e833e8c4e7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04c039dc6f97233cd2e75bca2c35775b51c16fdbda7244f0b64c73cbbfe27cd0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeab-107d-7e81-8977-b6d2f434d03a"
+      ],
+      "usage": {
+        "used": 52686,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 126336,
+          "utf8Bytes": 137353,
+          "estimatedTokens": 45785,
+          "budgetedTokens": 57232,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

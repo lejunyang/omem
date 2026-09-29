@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/review/app.ts",
+    "title": "仓库评审模式的本地 HTTP 应用",
+    "summary": "构建隔离的 repo-review API，提供知识、来源、关系、搜索和代码图读取，并通过显式同步或模型生成请求更新派生视图；默认仅本地访问且模型端口为关闭状态。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "boundary-security",
+        "title": "运行边界与访问控制",
+        "body": "评审应用复用隔离 Store 上的记忆和关键词检索，但不启动助手运行时、Lark、学习或通知 worker，也不承载业务状态。无令牌时仅接受回环 Host 与允许的本地 Origin；配置 `REVIEW_TOKEN` 后，评审 API 改由 Bearer token 门控。[[c1]] 构建阶段注册知识路由、关系表和代码服务；代码理解模型端口默认关闭，仅在调用方显式传入配置时创建。[[c2]]"
+      },
+      {
+        "key": "evidence-search",
+        "title": "固定证据读取与评审搜索",
+        "body": "来源、Revision 和 Fragment 接口提供当前材料目录及固定证据详情；Fragment 响应同时返回所属 Revision、上下文和 provenance，关系接口可按 Fragment 或代码路径查询评审关系。[[c3]] 搜索在同一 SQL 中完成当前 head、类别和 removed 条件过滤，再按命中词长度累计分数并截取前二十项，避免目标类别结果被其他类别的高排名命中挤掉。[[c4]]"
+      },
+      {
+        "key": "sync-code",
+        "title": "显式同步与代码图读取",
+        "body": "通用同步入口以 `syncing` 和 `codeSyncing` 互斥，调用时依次刷新评审材料、恢复已发布知识并重建代码快照。[[c5]] 独立代码同步入口使用相同的双向互斥和执行顺序，但返回代码同步结果。[[c9]] 代码读取面暴露仓库、快照、模块、文件、符号、边和图；源码区间严格来自快照绑定的固定文本，缺少绑定或越界时明确报错，而不会退回实时工作树。[[c6]]"
+      },
+      {
+        "key": "model-generation",
+        "title": "理解结果与模型生成边界",
+        "body": "理解列表和详情公开状态、置信度、seed、复核者、过期标记、模型及引用等元数据。[[c7]] 生成入口是显式 opt-in：没有模型端口时返回不可用；传输或校验失败只记录失败或拒绝结果，不提升为当前理解，成功时才返回生成结果及详情。[[c8]] 因此原始代码图和人工 seed 可在无模型条件下使用，模型输出则保留独立状态与追踪信息。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "评审应用边界与安全说明",
+        "reason": "支持隔离运行、不承载业务 worker，以及回环或令牌访问控制的总体说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 5,
+          "endLine": 13
+        },
+        "quote": "/** review knowledge-base HTTP surface. It reuses MemoryService /\n * KeywordRetrieval against the isolated review Store and registers only the\n * read/browse/sync routes a code-review workflow needs. No AssistantRuntime,\n * Lark host, learning pipeline, notification workers or business token gating:\n * the app binds lo"
+      },
+      {
+        "key": "c2",
+        "label": "评审应用初始化",
+        "reason": "支持知识路由、隔离服务和默认关闭的理解模型端口如何建立。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 73,
+          "endLine": 92
+        },
+        "quote": "export async function buildReviewApp(deps: ReviewAppDeps) {\n  const { store, repoRoot } = deps;\n  const allowedOrigins = new Set([deps.port ?? 5180, deps.webPort ?? 5181].flatMap(\n    (port) => [`http://127.0.0.1:${port}`, `http://localhost:${port}`],\n  ));\n  ensureReviewMetaTable(store);\n  ensureReviewRelationsTable(s"
+      },
+      {
+        "key": "c3",
+        "label": "固定 Fragment 与关系接口",
+        "reason": "支持 Fragment 证据详情及其评审关系查询的描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 221,
+          "endLine": 274
+        },
+        "quote": "  app.get<{ Params: { id: string } }>(\n    P + \"/revisions/:id\",\n    async (req, reply) =>\n      store.revision(req.params.id) ??\n      reply.code(404).send({ error: \"Revision not found\" }),\n  );\n\n  app.get<{ Params: { id: string } }>(\n    P + \"/fragments/:id\",\n    async (req, reply) => {\n      const evidence = store.e"
+      },
+      {
+        "key": "c4",
+        "label": "评审材料搜索实现",
+        "reason": "支持过滤在 SQL 内执行、评分与结果截断的具体行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 286,
+          "endLine": 383
+        },
+        "quote": "  // ---------------------------------------------------------------------\n  // Search: category / current / removed are filtered in SQL (JOINed onto the\n  // same query that matches fragments), never after a fixed top-N pull. This\n  // guarantees a low-ranked hit inside a requested category is still returned\n  // even"
+      },
+      {
+        "key": "c5",
+        "label": "通用评审同步入口",
+        "reason": "支持通用同步入口的双标志互斥，以及材料刷新、知识恢复、代码快照重建的执行顺序。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 385,
+          "endLine": 402
+        },
+        "quote": "  app.get(P + \"/sync/status\", async () => ({\n    ...readSyncStatus(repoRoot),\n    running: syncing,\n    lastResult: lastSync,\n  }));\n\n  app.post(P + \"/sync\", async (_req, reply) => {\n    if (syncing || codeSyncing) return reply.code(409).send({ error: \"Sync already running\" });\n    syncing = true;\n    try {\n      lastS"
+      },
+      {
+        "key": "c6",
+        "label": "代码图与快照源码接口",
+        "reason": "支持代码结构读取面以及源码严格来自快照固定绑定。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 412,
+          "endLine": 577
+        },
+        "quote": "  // ---------------------------------------------------------------------\n  // Code Knowledge read surface (deterministic graph; no model required).\n  // ---------------------------------------------------------------------\n  const CP = P + \"/code\";\n\n  app.get(CP + \"/repositories\", async () => code.listRepositories())"
+      },
+      {
+        "key": "c7",
+        "label": "代码理解读取接口",
+        "reason": "支持理解列表与详情所暴露的状态、来源、复核和引用元数据。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 579,
+          "endLine": 643
+        },
+        "quote": "  // Read-only Code Understanding surface. Curated seeds are projected onto the\n  // head graph; there is no generation endpoint here (no production model).\n  app.get<{ Querystring: { all?: string } }>(CP + \"/understandings\", async (req) => {\n    const rows = listUnderstandings(store, { all: req.query.all === \"true\" })"
+      },
+      {
+        "key": "c8",
+        "label": "显式代码理解生成",
+        "reason": "支持无模型时拒绝生成、失败不晋升以及成功返回详情的边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 645,
+          "endLine": 670
+        },
+        "quote": "  // Explicit, opt-in generation entry point. Without a configured port this is\n  // a 503; the raw graph and curated seeds remain usable. Any transport/validation\n  // failure records a failed/rejected row and never promotes it to current.\n  app.post<{ Body: { targetId?: string; timeoutMs?: number } }>(\n    CP + \"/und"
+      },
+      {
+        "key": "c9",
+        "label": "独立代码同步入口",
+        "reason": "支持代码同步端点与通用同步互斥，并展示其材料刷新、知识恢复和代码重建顺序。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 673,
+          "endLine": 684
+        },
+        "quote": "  app.post(CP + \"/sync\", async (_req, reply) => {\n    if (codeSyncing || syncing) return reply.code(409).send({ error: \"Code sync already running\" });\n    codeSyncing = true;\n    try {\n      lastSync = await runReviewSync(store, repoRoot);\n      restoreReviewKnowledge(store, repoRoot);\n      lastCodeSync = await code.s"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:03:34.369Z",
+    "trace": {
+      "runId": "26a23edd-4fa9-4a05-a739-5a623208952d",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "a1ec3da0fe2ad2a8a367009ef4b6e8a36b4bb378745ff3f3b9184513c31c76a7",
+      "contextHash": "37928c0c3dcc05ce74a15ef56d1d275a439524ca882aa30372bbc359cfbe387a",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "049f9a490b98ac353d5faaea9d1cdfb28ba54a80b25987379da303566d7aa8d3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-83e1-70e2-9cb0-58752e34b05e"
+      ],
+      "usage": {
+        "used": 49260,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 116883,
+          "utf8Bytes": 123517,
+          "estimatedTokens": 41173,
+          "budgetedTokens": 51467,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:53.499Z",
+    "trace": {
+      "runId": "25cfe2c6-41fa-48bb-a47c-7703d61bfa96",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "9f2c5dccf4ceccf398c8fab4a5fb63a9ba26dd3f18518f4e721d25ddcc4dc55c",
+      "contextHash": "2898ab12fd2dd6a83a3a5ca791f1beea07297cc0a811aa3621a9a07eb74bc8df",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "760abeafee3338bcce7809cfa4eace51ebc4d95f7878a590386ef31dd4816a32",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-f527-7351-a12d-1beebbce55dd"
+      ],
+      "usage": {
+        "used": 46574,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 114631,
+          "utf8Bytes": 120189,
+          "estimatedTokens": 40063,
+          "budgetedTokens": 50079,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

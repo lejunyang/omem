@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/knowledge/retrieval.ts",
+    "title": "派生知识引导的原始证据召回",
+    "summary": "从当前知识正文的关键词命中出发，核验整篇文章的依赖后沿引用链回溯原始固定 Fragment；实现具有入口级数量保护、九层文章访问范围与逐引用容错，但不保证结果严格不超过三十项。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "entry",
+        "title": "检索入口与候选文章",
+        "body": "该实现把派生正文仅作为检索导航，返回候选始终是原始固定 Fragment，后续仍需应用助手可见性规则。[[c1]] 查询词为空或知识表不存在时返回空；否则在 current head 的文章投影中执行转义后的 `LIKE` 匹配，SQL 最多取三十篇候选文章，并在单次调用内缓存材料来源与子文章。[[c2]]"
+      },
+      {
+        "key": "verification",
+        "title": "依赖核验与引用回溯",
+        "body": "每篇文章开始遍历前，会重建材料内容摘要并核对子文章当前修订；任一依赖缺失或摘要、修订不符，都会终止整篇文章的证据输出，而非只跳过该依赖。校验通过后，顶层仅遍历命中章节正文里实际出现的引用键；子文章则递归处理其全部引用。材料引用必须含非空精确引文，且该引文仍能在当前来源的某个 Fragment 中定位，最终返回该 Fragment 及其修订、来源和作者信息。[[c3]]"
+      },
+      {
+        "key": "limits",
+        "title": "命中范围、边界与容错",
+        "body": "顶层命中范围包括文章标题、摘要以及章节标题或正文；命中的章节再从正文提取引用键，无效文章投影不会中断其他候选的处理。[[c4]] 递归从 `depth=0` 开始、仅在大于八时停止，因此可访问九个文章层级，等价于最多八次子文章跳转。`output.size >= 30` 只在进入一次文章遍历时检查；同一遍历的引用循环仍可能继续加入多个 Fragment，所以此前“输出最多三十项”的硬上限结论已被替代。空引文或无法定位引文时只跳过该条材料引用；此前将“来源不存在”一概描述为逐路径跳过也已被替代，因为依赖来源缺失会先使整篇文章停止输出。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "派生正文的检索边界",
+        "reason": "支持派生知识仅引导检索、返回对象仍为原始固定 Fragment，并保留后续可见性检查的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "/** Derived prose can guide retrieval, but the returned candidates are always\n * original fixed fragments. Assistant visibility rules still run afterwards. */\nimport type { DatabaseSync } from \"node:sqlite\";\nimport type { KnowledgeArtifact } from \"../../../../packages/contracts/src/knowledge.js\";\nimport { stableDigest "
+      },
+      {
+        "key": "c2",
+        "label": "当前文章筛选与缓存",
+        "reason": "支持空查询处理、current head 限定、转义关键词匹配、候选文章 SQL 限量及调用内缓存。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 8,
+          "endLine": 31
+        },
+        "quote": "export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): Row[] {\n  if (!terms.length || !db.prepare(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_heads'\").get()) return [];\n  const rows = db.prepare(`SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON"
+      },
+      {
+        "key": "c3",
+        "label": "依赖校验与引用链遍历",
+        "reason": "支持整篇文章的依赖校验、递归深度计数、入口级结果数量检查，以及材料引文定位和逐引用跳过行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 33,
+          "endLine": 47
+        },
+        "quote": "  const seen = new Set<string>(), output = new Map<string, Row>();\n  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || seen.has(a.document.key) || output.size >= 30) return;\n    seen.add(a.document.key);\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?"
+      },
+      {
+        "key": "c4",
+        "label": "章节命中与失败隔离",
+        "reason": "支持文章标题、摘要、章节标题和正文的命中范围，以及从章节正文提取引用键和解析失败隔离。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 49,
+          "endLine": 57
+        },
+        "quote": "  for (const row of rows) {\n    try {\n      const a = JSON.parse(String(row.artifact)) as KnowledgeArtifact;\n      const titleHit = terms.some(t => (a.document.title + a.document.summary).toLowerCase().includes(t));\n      const sections = a.document.sections.filter(s => titleHit || terms.some(t => (s.title + s.body).to"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:04:41.336Z",
+    "trace": {
+      "runId": "c579d76e-218d-4658-bd39-20761c50de16",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "9deb3a8efc0ebbc8ab4dde1310add4997cd4af97f3d301452a0890108e9f5515",
+      "contextHash": "a7a6ff0ab508efcde0cf34efa680b30f69123bbf3565043efcdb75bf5e9044da",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5b1517d3dec1b5a4b4542f38780fbb98bb9c72ff8021811eb63ad644f4c55dd8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-bb40-76a3-bf33-dfcaaf35f8b0"
+      ],
+      "usage": {
+        "used": 44239,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107632,
+          "utf8Bytes": 111350,
+          "estimatedTokens": 37117,
+          "budgetedTokens": 46397,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:56.356Z",
+    "trace": {
+      "runId": "8dcd72bf-e4fe-4058-9a15-4185d6410297",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "55e9c314114a69f1f51e9561d2d83d7503e60b67866ac1f478c7f9eb3c451595",
+      "contextHash": "89990b0ec7f78cafbe2d64002c199c81e6a02621482fd1f45f3a4f4d5247a64e",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "12db57471bce1589fd5aeec90053ba2020d2db7f2f681af0385262d839541766",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-fc8b-7830-abeb-8b939e12e114"
+      ],
+      "usage": {
+        "used": 42764,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104522,
+          "utf8Bytes": 107252,
+          "estimatedTokens": 35751,
+          "budgetedTokens": 44689,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

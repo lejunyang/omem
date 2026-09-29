@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/review/store.ts",
+    "title": "Repo-review 隔离存储与关系索引",
+    "summary": "在共享 Store 之上建立隔离的评审运行库，维护路径稳定身份、遗留数据迁移，以及代码到需求、决策、研究和测试的可追溯关系。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "isolation-migration",
+        "title": "隔离运行库与身份迁移",
+        "body": "repo-review 将数据库和资产放在 `.repo-review/runtime/data`，与个人工作区分离，但继续复用通用 `Store` 的 SQLite、捕获和事务基础。默认启动直接使用运行库；只有 `REVIEW_IMPORT_LEGACY=1` 时才调用旧快照播种，因此历史 `.repo-review/data` 不是日常启动依赖。[[c1]][[c2]]\n\n评审文件以 `omem:<仓库相对路径>` 作为稳定外部身份，使内容更新形成同一 source 的新 revision，而相同字节的不同路径保持独立。遗留内容哈希源迁移会按最新 revision 记录的路径分组，保留或选择当前路径源，并将其他旧行摘除 head、登记为历史别名；revision 和 fragment 不被删除。[[c3]]"
+      },
+      {
+        "key": "relations",
+        "title": "关系写入与双向读取",
+        "body": "关系表保存 `implements`、`requires`、`decided_by`、`researched_by`、`tested_by` 与 `candidate_for` 等前向边，反向展示名在查询时派生。边 ID 由 seed identity 确定，重复同步通过 upsert 更新同一行。若有效 association ID 集合非空，已不在集合中的旧 seed 边会被标记 stale；集合为空时函数直接返回，不能把“全部旧边失效”视为已实现。[[c4]]\n\n读取 fragment 时合并出边和入边，并以左连接保留 unresolved 的 missing 关系。若另一端不再属于 source head 或已被移除，有效展示状态会变为 stale；默认隐藏 stale，历史查询可显式包含。按代码路径的查询还会展开“代码 → intent → 需求、决策、研究、测试”链。[[c5]]"
+      },
+      {
+        "key": "lifecycle-limits",
+        "title": "生命周期与汇总限制",
+        "body": "同步可按 source 检查关系两端是否仍位于当前 head、对端 source 是否已移除，并把失效关系改为 stale，而不是删除历史行；空字符串表示的未解析端点会被保留。[[c6]]\n\n当前状态类型包含 stale，但关系汇总只公开 confirmed、candidate、missing 三个桶，循环会把 stale 与其他非前两类状态计入 missing。这会混淆“目标无法解析”和“历史关系已失效”，属于仍需确认或修正的展示语义。[[c7]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "评审运行库创建入口",
+        "reason": "直接支持默认使用隔离运行库，并且仅在显式环境开关开启时导入遗留历史。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 100,
+          "endLine": 108
+        },
+        "quote": "/** Build a Store bound to `.repo-review/runtime/data`: its own omem.sqlite and\n * assets dir, fully separate from the personal workspace under `.omem/`. On first\n * boot the runtime is seeded from the tracked legacy snapshot (see\n * {@link ensureReviewRuntimeSeeded}). */\nexport function createReviewStore(repoRoot: str"
+      },
+      {
+        "key": "c2",
+        "label": "通用 SQLite Store",
+        "reason": "证明评审存储复用单用户 SQLite Store、数据库迁移、资产目录和事务能力。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 1,
+          "endLine": 80
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
+      },
+      {
+        "key": "c3",
+        "label": "遗留源路径身份迁移",
+        "reason": "支持按最新 revision 的文件路径分组、选择当前源、保留 revision 与 fragment 并记录历史别名的迁移流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 229,
+          "endLine": 365
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// One-time migration: legacy sources keyed by content-hash external id are\n// re-pointed at their path identity (derived from the head revision's context).\n// Revisions and fragments stay attached to the same source row; nothing is\n// delet"
+      },
+      {
+        "key": "c4",
+        "label": "确定性关系写入与 seed 移除处理",
+        "reason": "支持关系类型、确定性 ID、幂等 upsert，并明确有效 ID 集合为空时不会执行旧 seed 失效。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 367,
+          "endLine": 503
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Review relations: hand-maintained, bidirectional code↔intent↔decision↔\n// research↔test links. Forward relation types are stored; the inverse direction\n// is derived at query time (e.g. implements → implemented_by). Rows are\n// upserted f"
+      },
+      {
+        "key": "c5",
+        "label": "关系视图与路径链查询",
+        "reason": "支持双向关系读取、missing 保留、有效 stale 判定、默认过滤和代码路径链式展开。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 506,
+          "endLine": 750
+        },
+        "quote": "/** One relation as returned to the API. `direction` is \"outgoing\" when the\n * queried fragment is the source, \"incoming\" when it is the target (and\n * relationType is then the inverse display name). For unresolved (missing)\n * links the other-side fields are null.\n *\n * `status` is the stored row; `relationStatus` is "
+      },
+      {
+        "key": "c6",
+        "label": "关系生命周期失效检查",
+        "reason": "说明 source head 变化、删除和两端存活检查如何将旧关系标为 stale，同时保留未解析空端点。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 753,
+          "endLine": 844
+        },
+        "quote": "/** Mark relations touching a source as stale (without deleting them) so that\n * links built against superseded fragments stop reading as live. Called by sync\n * before rebuild: a head bump, a seed removal, a deleted target or a replaced\n * head leaves old relation rows pointed at non-current fragments. We flip them to"
+      },
+      {
+        "key": "c7",
+        "label": "关系状态汇总",
+        "reason": "证明汇总 DTO 未单列 stale，且实现会把 confirmed、candidate 之外的状态累计到 missing。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 847,
+          "endLine": 872
+        },
+        "quote": "/** Counts for GET /associations: total relation rows plus per-status buckets. */\nexport function relationsSummary(store: Store): {\n  total: number;\n  confirmed: number;\n  candidate: number;\n  missing: number;\n  byType: Record<string, number>;\n} {\n  ensureReviewRelationsTable(store);\n  const rows = store.db\n    .prepar"
+      }
+    ],
+    "questions": [
+      {
+        "question": "当 associations seed 集合为空时，历史 seed 关系是否应全部变为 stale？",
+        "why": "`invalidateRemovedSeeds` 在有效 ID 集合为空时直接返回，因此当前函数不会失效最后一批旧边；这既可能是防误清空保护，也可能使已删除 seed 残留。",
+        "nextStep": "核对同步调用方对空清单的定义；若空清单是权威状态，增加显式全量失效分支和回归测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "关系汇总是否应单独报告 stale 数量？",
+        "why": "关系状态包含 stale，但当前汇总把所有非 confirmed、candidate 状态计入 missing，无法区分无法解析与历史失效。",
+        "nextStep": "核对 API 合同和界面文案；若需要区分，扩展汇总 DTO 并分别断言 missing 与 stale。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/model-config.ts",
+      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-knowledge.test.ts",
+      "digest": "29a65a8f1bd576d834805a51472730d78f9e377ad25be6f238ccd713d714f82c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+      "digest": "080b9a8cf254faa5200964aae5ac6570ad259da40f76b728aaaeb76d1ad271fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:39:58.791Z",
+    "trace": {
+      "runId": "837aeac7-56f2-4329-bb2b-5ae0b32a9834",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5937ccc32ca4c15aa20f58f39abc219daede6d1c71479c86610c6fdbe91e377f",
+      "contextHash": "86ff11ddea420035a76d21675aa3252ad41c1d931bd16bb1818e8263ee063e74",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d2154fe453fca29ae8777e13b723a810a4e253b717fcc7ec3b428522fe04af68",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eead-cc05-7821-91c4-69791e3b0b88"
+      ],
+      "usage": {
+        "used": 58626,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 143240,
+          "utf8Bytes": 152492,
+          "estimatedTokens": 50831,
+          "budgetedTokens": 63539,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:40:18.436Z",
+    "trace": {
+      "runId": "a6c353ee-5836-458f-affe-eafb06d6c593",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "dcf9cabc904ebdab9213cf910d085321fcd657fc946e6817d845f698639d04fa",
+      "contextHash": "042f3b461e4d344378ac79addb8172f8e45231bf837f8ef7820d21e1b4a2741c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "dd8ecc1e6e58fa107056910508403bf6ca45ec863e8b0acd3a74693d686a1a16",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeae-5b8b-7993-824a-f02534a719d5"
+      ],
+      "usage": {
+        "used": 54831,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 139398,
+          "utf8Bytes": 146288,
+          "estimatedTokens": 48763,
+          "budgetedTokens": 60954,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

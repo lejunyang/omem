@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/inputs/aggregator.ts",
+    "title": "聊天与屏幕事件的有界聚合器",
+    "summary": "把带稳定来源事件 ID 的聊天或屏幕捕获保存为 pending 事件，再按流、静默窗口、最大时长和数量组成可追溯批次并提交捕获。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "ingest",
+        "title": "事件接收、流划分与幂等",
+        "body": "聚合器只接受 chat 与 screen：聊天必须提供 conversationId，屏幕按应用和窗口标题形成流键。输入还必须携带 collectorId 与 eventId；在固定的 personal workspace 中，相同 producer 和 eventId 若完整 payload 摘要一致则返回 duplicate，不一致则报冲突。新事件在 `BEGIN IMMEDIATE` 事务内保存 envelope、摘要和时间，并保持 pending。[[c1]]"
+      },
+      {
+        "key": "batching",
+        "title": "就绪窗口与内容去重",
+        "body": "流在最后接收时间早于或等于默认 15 秒静默线、最早事件早于或等于默认 5 分钟窗口线，或事件数达到默认 50 时就绪；单次选择上限被夹在 1 至 500。[[c2]] 事件按接收时间排序，以“内容摘要 + actorId”去重：同一 actor 的重复内容不重复贡献 parts，不同 actor 的相同文本仍保留。批次最多含 50 个 parts；首个独立事件自身超限会直接失败。[[c3]]"
+      },
+      {
+        "key": "envelope-flush",
+        "title": "身份合并、迟到标记与提交边界",
+        "body": "合并时每个 part 保留来源身份、观察时间和事件标记。顶层 actor 是否稳定只比较 `actorId`、`actorType`、`actorVerifiedBy` 三项；若三项各自一致，其他顶层身份字段会从最后事件继承，因此不能声称所有身份字段都参与了一致性判断。事件时间小于或等于上一批末端时会记录 `lateForBatchId`。[[c4]] flush 在批次事务前调用外部 capture，之后才复核事件仍为 pending、写入批次并将事件改为 batched；若复核报 `INPUT_BATCH_CHANGED`，该事务不能自动回滚先前 capture 的外部效果。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "流键、事件身份与入库事务",
+        "reason": "支持允许的聚合来源、必需来源身份、重复检测、冲突处理和 pending 入库流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 24,
+          "endLine": 104
+        },
+        "quote": "export class InputAggregator {\n  constructor(private readonly db: DatabaseSync) {}\n\n  private transaction<T>(work: () => T): T {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      thro"
+      },
+      {
+        "key": "c2",
+        "label": "批次就绪条件",
+        "reason": "说明静默窗口、最大等待时间、事件数量阈值和单批事件数量上限。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 124,
+          "endLine": 143
+        },
+        "quote": "  private readyStreams(options: AggregationOptions) {\n    const now = options.now ?? new Date();\n    const quietCutoff = iso(\n      new Date(now.getTime() - (options.quietMs ?? 15_000)),\n    );\n    const windowCutoff = iso(\n      new Date(now.getTime() - (options.maxWindowMs ?? 300_000)),\n    );\n    const maxEvents = M"
+      },
+      {
+        "key": "c3",
+        "label": "按说话者去重与 parts 预算",
+        "reason": "支持同一 actor 重复内容去重、不同 actor 保留以及 50 parts 限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 145,
+          "endLine": 179
+        },
+        "quote": "  private selectBatchEvents(stream: Row, maxEvents: number) {\n    const candidates = this.db\n      .prepare(\n        `SELECT * FROM input_events\n         WHERE workspace_id=? AND source=? AND stream_key=? AND state='pending'\n         ORDER BY received_at,id LIMIT ?`,\n      )\n      .all(\n        String(stream.workspace_"
+      },
+      {
+        "key": "c4",
+        "label": "批次身份和迟到事件表达",
+        "reason": "说明 part 级来源、实际参与顶层 actor 稳定性比较的三个字段、其他字段的继承方式及小于等于边界的迟到关联。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 181,
+          "endLine": 317
+        },
+        "quote": "  private envelopeFor(stream: Row, events: Row[]) {\n    const parsed = events.map((event) =>\n      captureSchema.parse(JSON.parse(String(event.envelope))),\n    );\n    const unique = new Set<string>();\n    const parts: CaptureInput[\"parts\"] = [];\n    for (let index = 0; index < parsed.length; index++) {\n      const sour"
+      },
+      {
+        "key": "c5",
+        "label": "捕获结果与批次状态提交",
+        "reason": "支持 capture 调用发生在批次事务之前，以及 pending 状态复核、批次写入和事件状态更新的顺序。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 320,
+          "endLine": 403
+        },
+        "quote": "  flushReady(\n    capture: (input: CaptureInput) => CaptureResult,\n    options: AggregationOptions = {},\n  ) {\n    const maxEvents = Math.max(1, Math.min(options.maxEvents ?? 50, 500));\n    const results: {\n      batchId: string;\n      revisionId: string;\n      jobId: string | null;\n      eventIds: string[];\n      late"
+      }
+    ],
+    "questions": [
+      {
+        "question": "capture 成功但批次事务因 `INPUT_BATCH_CHANGED` 回滚时，如何处理已经创建的 revision 或 job？",
+        "why": "capture 回调在批次写事务之前执行；后续 pending 状态复核失败不会由该事务回滚 capture 的外部效果，材料未显示补偿机制。",
+        "nextStep": "检查 capture 回调的幂等规则和 revision 身份生成方式，并增加并发 flush 或失败注入测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "批次顶层 actor 的稳定性判断是否应同时比较外部 ID、principal ID 和 binding version？",
+        "why": "当前判断只比较 actorId、actorType 和 actorVerifiedBy，却会在判定稳定后从最后一个事件继承其他身份字段，可能扩大来源归属。",
+        "nextStep": "根据身份绑定合同决定补充比较字段，或明确规定这些字段可安全从最后事件继承。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/hook-forward.ts",
+      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:03:44.906Z",
+    "trace": {
+      "runId": "9b2d598c-db07-4cd7-bd70-53cca1eb54d0",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "a2b9fb20f3f9a715f896ae5868edb594e84a50e04b7d4033eaacb1b1c0a91268",
+      "contextHash": "e526999fbc3b715e3a5236cd0611fee1a491f2111bde08481c2b7fce2ab7ed07",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6d17f4acbcdabfb789ac9de01ad2832a1c371f8bed167003131140201186aa19",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-9a12-7043-a6ca-754b0e060662"
+      ],
+      "usage": {
+        "used": 53699,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 125918,
+          "utf8Bytes": 135551,
+          "estimatedTokens": 45184,
+          "budgetedTokens": 56480,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:04:08.395Z",
+    "trace": {
+      "runId": "bcf4efa2-6f6b-4b27-a5d0-ca68e92af5d8",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "199c3e1cb5d0882d9439cac5f2d7715e530280eb956b154516bc64ea135ce42f",
+      "contextHash": "1378a99b72efb25b7f17a4e08385e6b3896b8bf30f9a125aee3da58691a8ab49",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c3c05206433a67a65bf94d82f4f83aa46d7a9ea77d62e784a8458fdd5d9dde93",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8d-30b1-7760-9447-a1a4d34f2665"
+      ],
+      "usage": {
+        "used": 49906,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121336,
+          "utf8Bytes": 128437,
+          "estimatedTokens": 42813,
+          "budgetedTokens": 53517,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,285 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+    "title": "Lark 应用接入与配对状态机",
+    "summary": "编排新建或导入应用、扫码注册、密钥保存、能力探测和 owner 配对，以版本化连接与绑定激活个人工作区的 Lark 集成。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "registration",
+        "title": "注册、导入与状态记录",
+        "body": "服务把 onboarding 主记录及状态事件写入 SQLite，工作区固定为 `personal`。新建流程通过注册适配器启动并等待二维码或注册完成；二维码必须是 HTTPS，活跃控制器和完成 Promise 仅保存在进程内 Map。既有应用既可从注入的 Botmux 提供器取凭据，也可直接提交密钥。[[c1]] 注册异常会映射为拒绝、过期、取消或失败；若取消后注册器才返回凭据，则不激活连接，而是记录需人工核查。[[c2]]"
+      },
+      {
+        "key": "capability-versioning",
+        "title": "凭据版本与能力探测",
+        "body": "凭据校验后先写入加密密钥存储，再创建或复用连接，并新增状态为 `checking` 的连接版本；事务建档失败会移除刚写入的密钥。[[c3]] 随后能力探测器实测请求配置：缺失能力会使候选失败，否则进入等待配对；既有活动版本在候选探测失败时仍保持活动。若探测成功返回后事务发现 onboarding 已取消，候选版本会失败且新密钥被移除。[[c4]] 但若探测在取消后抛错，异常分支未重新检查取消状态，也未移除密钥，并可能把 onboarding 从 `cancelled` 改成 `failed`，构成取消竞态边界。"
+      },
+      {
+        "key": "pairing-and-activation",
+        "title": "配对、换绑与激活边界",
+        "body": "配对码由 24 字节随机值生成，数据库只保存哈希，默认五分钟有效；签发新码会消费旧码，无效尝试达到五次也会消费当前码。接收事件还校验应用、有效期以及候选操作者和聊天的一致性。[[c5]] 最终确认要求预期 open ID 匹配，并在一个事务内替代旧绑定、取消旧卡片和待发通知、禁用旧目标、切换活动连接版本，再创建 owner 通知与决策目标。群聊还会直接新增 `capture_enabled=1` 的群监控目标。[[c6]] 因而确认配对不仅绑定身份，也会改变既有投递状态和群聊捕获范围。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "接入启动与既有应用导入",
+        "reason": "说明 personal 工作区记录、异步注册生命周期、进程内活动状态，以及 Botmux 或直接凭据导入路径。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 24,
+          "endLine": 164
+        },
+        "quote": "export class LarkOnboardingService {\n  private readonly active = new Map<\n    string,\n    { controller: AbortController; completion: Promise<void> }\n  >();\n\n  constructor(\n    private readonly db: DatabaseSync,\n    private readonly secrets: EncryptedSecretStore,\n    private readonly registration: LarkRegistrationAdapte"
+      },
+      {
+        "key": "c2",
+        "label": "注册失败与迟到凭据",
+        "reason": "支持注册异常状态映射，以及取消后迟到凭据只记录人工核查而不继续激活的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 167,
+          "endLine": 283
+        },
+        "quote": "  private async runRegistration(\n    onboardingId: string,\n    input: StartInput,\n    controller: AbortController,\n    qrReady: () => void,\n  ) {\n    try {\n      const credentials = await this.registration.register({\n        createOnly: input.mode === \"new\",\n        appId: input.mode === \"existing\" ? input.appId : unde"
+      },
+      {
+        "key": "c3",
+        "label": "连接版本和密钥落库",
+        "reason": "说明密钥存储、连接复用、新候选版本创建，以及建档事务失败时移除密钥。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 284,
+          "endLine": 364
+        },
+        "quote": "    this.transition(\n      onboardingId,\n      \"credentials_received\",\n      { appId: credentials.clientId },\n      {\n        external_app_id: credentials.clientId,\n        user_info: JSON.stringify(credentials.userInfo ?? {}),\n      },\n    );\n    const secretRef = this.secrets.put({\n      appId: credentials.clientId,\n"
+      },
+      {
+        "key": "c4",
+        "label": "能力探测与取消竞态",
+        "reason": "支持探测失败处理、缺失能力判定、成功返回后的取消清理，并揭示探测抛错分支未检查取消状态。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 365,
+          "endLine": 457
+        },
+        "quote": "    let checked;\n    try {\n      checked = await this.capabilities.probe(\n        { appId: credentials.clientId, clientSecret: credentials.clientSecret },\n        input.config,\n      );\n    } catch (error) {\n      const message =\n        error instanceof Error ? error.message : \"capability probe failed\";\n      this.tra"
+      },
+      {
+        "key": "c5",
+        "label": "配对码签发与接收",
+        "reason": "说明配对码哈希、有效期、旧码消费、错误尝试上限和候选身份绑定。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 569,
+          "endLine": 662
+        },
+        "quote": "  issuePairingCode(onboardingId: string, ttlMs = 300_000) {\n    const onboarding = this.status(onboardingId);\n    if (onboarding.status !== \"awaiting_pair\" || !onboarding.connectionId)\n      throw Error(\"LARK_ONBOARDING_NOT_READY_FOR_PAIRING\");\n    const code = randomBytes(24).toString(\"base64url\");\n    const id = rand"
+      },
+      {
+        "key": "c6",
+        "label": "确认配对与绑定切换",
+        "reason": "支持旧绑定及待处理任务取消、新版本激活、目标创建，以及群聊默认开启捕获的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 665,
+          "endLine": 817
+        },
+        "quote": "  confirmPairing(value: unknown) {\n    const input = larkPairingConfirmSchema.parse(value);\n    return this.transaction(() => {\n      const pairing = this.db\n        .prepare(\n          `SELECT p.*,c.workspace_id,c.app_id,c.active_version\n           FROM lark_pairing_codes p JOIN lark_connections c\n             ON c.id"
+      }
+    ],
+    "questions": [
+      {
+        "question": "群聊配对确认时是否应由用户单独确认开启 `group_monitoring` 捕获？",
+        "why": "确认配对不仅激活 owner 通知和决策目标，还会对群聊创建启用捕获的监控目标，属于捕获范围变化；材料未显示额外同意步骤。",
+        "nextStep": "核对产品交互与隐私要求；如配对不等同于同意群监控，应增加显式选项、默认关闭及审计记录。",
+        "blocking": true,
+        "citationKeys": [
+          "c6"
+        ]
+      },
+      {
+        "question": "服务重启后如何处理仍处于扫码注册过程的 onboarding？",
+        "why": "活动注册控制器和 completion 只保存在进程内 Map；数据库虽保存状态，但材料未展示重启恢复、超时清理或重新挂接注册会话的机制。",
+        "nextStep": "定义重启语义：自动标记过期、允许重新发起，或由注册适配器恢复；随后覆盖 `awaiting_scan` 状态下重启的测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "取消与能力探测异常并发时，是否必须保持 `cancelled` 状态并删除候选密钥？",
+        "why": "探测成功后的分支会检查取消并清理密钥，但探测抛错分支没有相同保护，可能把已取消流程改为失败并遗留候选密钥。",
+        "nextStep": "在探测异常事务中先检查当前状态；若已取消，则保持取消状态、标记候选版本失败并移除对应密钥，同时增加竞态测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/spool.ts",
+      "digest": "6e815455823d4befbba2dcce822d0c1b3e12b4b08f7f86def8945493dabe3039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:03:57.430Z",
+    "trace": {
+      "runId": "f528c3eb-b5d9-44c3-b09a-63690c421392",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "62d518af11fb07d40e1b6a081c3e98a7872e0090445d9518c4ae652ceebe0aa2",
+      "contextHash": "0e3a950f6d5e7b7eedbf7b5c4533b459f9a63cdd9ef4690dd825571c199e3428",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8f9c65b4c3b7f4a26176ee2fa0c44bef9160fda4322323e26fcf71cd97ce8041",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-d22e-73e1-a0f6-0d93ee3f2a11"
+      ],
+      "usage": {
+        "used": 57789,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 141179,
+          "utf8Bytes": 151779,
+          "estimatedTokens": 50593,
+          "budgetedTokens": 63242,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:04:20.335Z",
+    "trace": {
+      "runId": "db2bd2cf-039b-4019-847f-eb0ec4527aef",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "a74d1aac9ddabd6c3cf2d61bb94f55eb7a6d9ca8a7ad334ad21ee223c3db427c",
+      "contextHash": "fb105883296b55d35e4ca156265976a715b1860e87ab25167478e7f97e35fcbc",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "564dfbd8ea03dfca01d0709f576728934b7fe93f498ac9ef2289273958a7d388",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8d-60fb-7581-99c8-656cb43e00a4"
+      ],
+      "usage": {
+        "used": 53977,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 137293,
+          "utf8Bytes": 145803,
+          "estimatedTokens": 48601,
+          "budgetedTokens": 60752,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

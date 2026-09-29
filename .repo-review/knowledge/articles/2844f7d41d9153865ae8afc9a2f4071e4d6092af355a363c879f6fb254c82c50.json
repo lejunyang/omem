@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/config.ts",
+    "title": "服务端运行配置的解析与默认值",
+    "summary": "集中校验代理档案、通知、学习、飞书及捕获根目录配置，并结合环境变量生成数据目录、监听地址和认证令牌等运行参数。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "schema",
+        "title": "配置合同与约束",
+        "body": "配置至少要求一个代理 profile，并为通知、学习和飞书集成提供默认值。外部通知支持即时、窗口和定时模式；窗口长度、轮询间隔、本地时间均有边界，时区还会用 `Intl.DateTimeFormat` 验证为有效 IANA 名称。根配置以及 `notifications.external`、`learning`、`lark` 对象使用 `strict()` 拒绝未知字段；`notifications` 对象本身没有调用 `strict()`，不能把相同行为泛化到它。[[c1]]"
+      },
+      {
+        "key": "loading",
+        "title": "加载顺序与运行派生值",
+        "body": "加载时优先读取 `OMEM_CONFIG` 指向的文件，否则尝试默认本地文件，并在其不存在时回退到示例配置；JSON 随即经过 schema 解析，profile ID 还要通过额外的唯一性检查。[[c2]] 数据目录来自 `OMEM_DATA_DIR` 或 `.omem`，启动时以私有权限递归创建；代理工作目录、令牌、监听主机和端口则由目录或环境变量派生。端口仅经 `Number` 转换，本文件没有验证其有限性、整数性或合法端口范围。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "配置模式、默认值与严格对象",
+        "reason": "支持通知、学习、飞书和时区的约束，并可准确区分哪些对象调用了 strict。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 5,
+          "endLine": 73
+        },
+        "quote": "const timezoneSchema = z\n  .string()\n  .min(1)\n  .max(100)\n  .refine((timezone) => {\n    try {\n      new Intl.DateTimeFormat(\"en\", { timeZone: timezone });\n      return true;\n    } catch {\n      return false;\n    }\n  }, \"invalid IANA timezone\");\nconst schema = z\n  .object({\n    profiles: z.array(profileSchema).min(1),\n"
+      },
+      {
+        "key": "c2",
+        "label": "配置文件选择与档案去重",
+        "reason": "说明配置文件回退顺序、schema 解析以及 profile ID 唯一性检查。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 93,
+          "endLine": 104
+        },
+        "quote": "export function loadConfig() {\n  const file = resolve(process.env.OMEM_CONFIG || \"omem.local.json\");\n  const config = schema.parse(\n    JSON.parse(\n      readFileSync(\n        existsSync(file) ? file : resolve(\"config/omem.example.json\"),\n        \"utf8\",\n      ),\n    ),\n  );\n  if (new Set(config.profiles.map((p) => p.i"
+      },
+      {
+        "key": "c3",
+        "label": "运行环境派生配置",
+        "reason": "支持数据目录创建以及工作目录、令牌、监听地址和端口的环境变量来源与当前校验边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 105,
+          "endLine": 114
+        },
+        "quote": "  const dataDir = resolve(process.env.OMEM_DATA_DIR || \".omem\");\n  mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n  return {\n    ...config,\n    dataDir,\n    agentCwd: join(dataDir, \"agent-workspace\"),\n    token: process.env.OMEM_TOKEN,\n    host: process.env.OMEM_HOST || \"127.0.0.1\",\n    port: Number(process.env."
+      }
+    ],
+    "questions": [
+      {
+        "question": "是否应为 `OMEM_PORT` 增加有限整数和端口范围校验？",
+        "why": "当前配置代码仅执行 `Number` 转换，不能在配置层拒绝 NaN、非整数、负数或超出端口范围的值。",
+        "nextStep": "结合实际监听入口的错误处理，决定是否把 host、port 纳入运行配置的 Zod 校验。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "是否应为 `OMEM_PORT` 增加有限整数和合法端口范围校验？",
+        "why": "当前配置仅执行 `Number` 转换，无法在配置层拒绝 NaN、非整数、负数或超出端口范围的值。",
+        "nextStep": "结合实际监听入口的错误处理，决定是否将 host、port 纳入运行配置的 Zod 校验。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/hook-forward.ts",
+      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:03:44.906Z",
+    "trace": {
+      "runId": "9b2d598c-db07-4cd7-bd70-53cca1eb54d0",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "a2b9fb20f3f9a715f896ae5868edb594e84a50e04b7d4033eaacb1b1c0a91268",
+      "contextHash": "e526999fbc3b715e3a5236cd0611fee1a491f2111bde08481c2b7fce2ab7ed07",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6d17f4acbcdabfb789ac9de01ad2832a1c371f8bed167003131140201186aa19",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-9a12-7043-a6ca-754b0e060662"
+      ],
+      "usage": {
+        "used": 53699,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 125918,
+          "utf8Bytes": 135551,
+          "estimatedTokens": 45184,
+          "budgetedTokens": 56480,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:04:08.395Z",
+    "trace": {
+      "runId": "bcf4efa2-6f6b-4b27-a5d0-ca68e92af5d8",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "199c3e1cb5d0882d9439cac5f2d7715e530280eb956b154516bc64ea135ce42f",
+      "contextHash": "1378a99b72efb25b7f17a4e08385e6b3896b8bf30f9a125aee3da58691a8ab49",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c3c05206433a67a65bf94d82f4f83aa46d7a9ea77d62e784a8458fdd5d9dde93",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8d-30b1-7760-9447-a1a4d34f2665"
+      ],
+      "usage": {
+        "used": 49906,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121336,
+          "utf8Bytes": 128437,
+          "estimatedTokens": 42813,
+          "budgetedTokens": 53517,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

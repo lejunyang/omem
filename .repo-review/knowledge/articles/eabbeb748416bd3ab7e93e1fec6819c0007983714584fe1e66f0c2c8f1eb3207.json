@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/review/main.ts",
+    "title": "repo-review 服务启动编排",
+    "summary": "作为隔离评审服务入口，依次同步仓库、恢复知识、建立代码投影、装配可选模型和 HTTP 应用，并仅监听本机回环地址。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "startup",
+        "title": "启动顺序与隔离边界",
+        "body": "入口从环境变量取得仓库根目录和 API 端口，主机固定为 `127.0.0.1`；注释明确该进程不会装配个人工作区服务。[[c1]] 创建评审 Store 后，流程先运行评审增量同步，再恢复评审知识，之后执行代码投影并汇总输出知识恢复状态。这个顺序意味着知识材料建立在同步后的仓库输入上，而代码结构投影在知识恢复之后更新。[[c2]]"
+      },
+      {
+        "key": "model-server",
+        "title": "模型与服务装配",
+        "body": "代码读取评审代码模型配置，同时构建模型端口用于记录实际 transport；随后把 Store、仓库根目录、API/Web 端口和配置传给 `buildReviewApp`，再启动 Fastify 服务。[[c3]] 从本材料只能确认配置对象传入应用，无法确认 `buildReviewCodeModel` 创建的端口是否由应用复用，因为其返回值仅在本文件中用于日志。"
+      },
+      {
+        "key": "shutdown",
+        "title": "关闭与失败处理",
+        "body": "服务监听成功后注册 `SIGINT`、`SIGTERM`，收到信号时先关闭应用再退出。启动过程若抛错则关闭 Store 并继续抛出错误。[[c4]] 材料没有展示 `buildReviewApp` 内部是否负责在正常关停时关闭 Store，也没有展示监听已建立后非信号异常的统一资源回收策略。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "评审入口与网络配置",
+        "reason": "支持服务隔离声明、仓库根目录、端口和回环监听地址。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/main.ts",
+          "startLine": 5,
+          "endLine": 15
+        },
+        "quote": "/** review entry point: run the incremental sync first, then serve the review\n * API on loopback. It never wires up the personal workspace services. */\nimport { createReviewStore } from \"./store.js\";\nimport { runCodeSync } from \"../code/sync.js\";\nimport { runReviewSync } from \"./sync.js\";\nimport { buildReviewApp } from"
+      },
+      {
+        "key": "c2",
+        "label": "同步和知识恢复序列",
+        "reason": "支持启动阶段各步骤的实际执行先后关系。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/main.ts",
+          "startLine": 17,
+          "endLine": 24
+        },
+        "quote": "console.log(\"repo-review: starting incremental sync...\");\nconst store = createReviewStore(repoRoot);\ntry {\n  const stats = await runReviewSync(store, repoRoot);\n  console.log(\"repo-review: sync done\", stats);\n  const knowledge = restoreReviewKnowledge(store, repoRoot);\n  console.log(\"repo-review: code projection\", awai"
+      },
+      {
+        "key": "c3",
+        "label": "模型与应用构建",
+        "reason": "支持可选模型配置、transport 日志及应用参数装配的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/main.ts",
+          "startLine": 26,
+          "endLine": 41
+        },
+        "quote": "  // Opt-in model: only REVIEW_CODE_MODEL_CONFIG is read; default is no model.\n  const codeUnderstandingModel = loadReviewCodeModelConfig();\n  const port_ = buildReviewCodeModel();\n  console.log(\n    \"repo-review: code understanding model =\",\n    port_ ? port_.transport : \"none\",\n  );\n\n  const { app } = await buildRevi"
+      },
+      {
+        "key": "c4",
+        "label": "信号与异常清理",
+        "reason": "直接说明信号关闭应用和启动异常关闭 Store 的行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/main.ts",
+          "startLine": 42,
+          "endLine": 50
+        },
+        "quote": "  console.log(`repo-review: API at http://${host}:${port}`);\n\n  for (const signal of [\"SIGINT\", \"SIGTERM\"] as const)\n    process.on(signal, () => {\n      void app.close().then(() => process.exit(0));\n    });\n} catch (error) {\n  store.close();\n  throw error;"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`buildReviewCodeModel()` 返回的模型端口是否应传入应用，而不只是用于输出 transport？",
+        "why": "入口分别调用配置加载和模型端口构建，但应用参数中只出现 `codeUnderstandingModel`；仅凭本文件无法确认应用是否会再次构建端口。",
+        "nextStep": "检查 model-config 与 buildReviewApp 的实现，确认是否重复构建、遗漏依赖注入或仅有意做启动探测。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "正常信号关停时 Store 由谁关闭？",
+        "why": "信号处理器只显式关闭 app，而 catch 分支才直接关闭 Store；本材料未证明应用关闭钩子承担数据库清理。",
+        "nextStep": "核对 buildReviewApp 的 close hook，并增加信号或 app.close 后数据库资源释放测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "e88f3b118275e4adce3b678c6e607b2da995903805d628ce2060bdf4bc8aea80"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-api.test.ts",
+      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+      "digest": "60ba418153006bb59e5d327ea25fc7e20b4b0b06d4a4ae55ecd7979c6661fa3d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
+      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:03:39.352Z",
+    "trace": {
+      "runId": "70ffcd8d-15d2-4f86-b181-cac14c31a865",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "9859ba992394ba1173ea317a45fe1841954b1e357c38358b356cedeaade3e0d3",
+      "contextHash": "2147ddf7fe4a6e669d9c63308c8a9e2b7dee4494459678ad2b2ee5f95a5129cb",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "875914a960324409cf3b454417e5fe8ac92df9970d70c69570b860497ed26bf6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-0df3-7b61-aa0a-a4c8b7030c82"
+      ],
+      "usage": {
+        "used": 36552,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 62403,
+          "utf8Bytes": 65060,
+          "estimatedTokens": 21687,
+          "budgetedTokens": 27109,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:04:02.270Z",
+    "trace": {
+      "runId": "facc1a5c-031e-4a88-aa19-b66d72392fa0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "1e016c68b564f5fc83d4f039e2b49da37ac95c5b9980517c860aaf912b14c495",
+      "contextHash": "1a68d53cf3735ad8ddcd2d0ba43ca472fbe2ad2e15f8464619d693cd745595a9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1410547631a9f3591b4c02833ddc985685f3ca5643ae030dc316675365dfc8b4",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec4-08ae-73d3-b213-87a05bfb04ce"
+      ],
+      "usage": {
+        "used": 39789,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 82614,
+          "utf8Bytes": 93683,
+          "estimatedTokens": 31228,
+          "budgetedTokens": 39035,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

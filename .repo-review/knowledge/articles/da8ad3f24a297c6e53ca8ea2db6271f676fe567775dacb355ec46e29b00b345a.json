@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/assistant/runtime.ts",
+    "title": "助手回合编排、证据隔离与工具治理",
+    "summary": "该模块是 Web 与 Lark 共用的助手运行时，负责回合持久化、会话内串行化、证据检索与隔离、模型调用、受治理的任务创建、超时取消及崩溃恢复。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "turn_state",
+        "title": "回合状态、取消与恢复",
+        "body": "运行时在模型调用前持久化回合，并按外部事件标识去重；同一会话的新消息会中止旧控制器、取消旧回合，再沿 Promise 链串行执行。[[c1]] 公开取消同步更新回合状态；重试与崩溃恢复会检查真实 application receipt，已提交任务副作用的回合只补齐完成状态，其余未完成回合才重新执行。`shutdown()` 只处理当前进程内的会话映射。[[c2]]\n\n取消信号由 `deriveSignal` 合并外部中止与会话控制器，并设置回合定时器；任一来源触发都会中止合并信号，且已中止的上游信号会立即生效。[[c3]] 模型等待另有 `withTimeout` 通过 `Promise.race` 设置独立拒绝路径，即使模型忽略 abort，也会在时间预算耗尽后结束等待。[[c4]]"
+      },
+      {
+        "key": "context_model",
+        "title": "上下文、检索与模型失败",
+        "body": "执行阶段只回放当前会话近期完成的回合，将本轮检索与上一轮选中证据去重合并，并读取会话范围内的 owner 纠正。模型不可用会把回合退回 pending，取消记为 cancelled；其他模型异常才生成明确的临时不可用答复。[[c5]]\n\n检索优先走注入的 `RetrievalPort`，未注入时才回退到 Store 搜索；检索结果及上一轮工作上下文都经过可见性过滤。没有宿主策略时，仅 private 会话可读，group 默认拒绝全部证据；纠正读取失败则容错为空。[[c6]]"
+      },
+      {
+        "key": "tool_governance",
+        "title": "引用校验与任务写入治理",
+        "body": "模型不能自行授权创建任务。运行时先用确定性中英文模式识别明确交办，咨询问句优先否决弱任务词；工具调用仍须经过 `MemoryService`，并在工具执行前和最终持久化前检查取消状态。最终答复引用也只保留运行时实际提供给模型的 fragment。[[c7]]\n\n明确的 owner 交办若没有已有引用，运行时会尝试把本轮原话捕获为证据，再构造可幂等重放的提案。此前“任一模型引用无法解析就拒绝写入”的结论已被替代：无效引用会被过滤，只有模型指定了引用、当前证据与上一轮上下文均无法解析时，才以 `no_prior_evidence` 拒绝。[[c8]] 有限正则仍可能漏掉未枚举表达，群聊检索也依赖宿主注入真实的来源与范围策略。[[c9]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "回合入队、去重与会话内抢占",
+        "reason": "支持模型调用前持久化、外部事件幂等去重，以及同一会话中新消息取消旧回合并串行执行。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 198,
+          "endLine": 259
+        },
+        "quote": "  async turn(input: {\n    conversationId: string;\n    userText: string;\n    /** External transport event id (e.g. Lark event_id) for idempotent delivery. */\n    transportEventId?: string | null;\n    signal?: AbortSignal;\n  }): Promise<AssistantTurnResult> {\n    const conversation = this.router.get(input.conversationId)"
+      },
+      {
+        "key": "c2",
+        "label": "取消、重试、关闭与崩溃恢复",
+        "reason": "支持公开取消、receipt 幂等检查、pending 重试、进程恢复及 shutdown 的实际处理边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 261,
+          "endLine": 383
+        },
+        "quote": "  /**\n   * Public cancel endpoint: mark a specific turn as cancelled and abort its\n   * in-flight controller if any. Called by the HTTP cancel route and by the\n   * Lark runtime host on shutdown.\n   */\n  cancelTurn(turnId: string) {\n    const turn = this.router.turn(turnId);\n    if (!turn) return false;\n    const entry"
+      },
+      {
+        "key": "c3",
+        "label": "合并取消信号与回合定时器",
+        "reason": "直接支持外部信号、会话控制器和定时器如何共同驱动合并信号，并处理创建时已经中止的情况。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 393,
+          "endLine": 414
+        },
+        "quote": "  private deriveSignal(external: AbortSignal | undefined, controller: AbortController) {\n    const merged = new AbortController();\n    // FENCE: if either upstream signal is ALREADY aborted at creation time,\n    // abort immediately rather than only listening for future events.\n    if (external?.aborted || controller.s"
+      },
+      {
+        "key": "c4",
+        "label": "独立模型等待超时",
+        "reason": "支持模型调用由独立计时器和 Promise.race 约束，并在外部中止时快速拒绝等待。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 576,
+          "endLine": 601
+        },
+        "quote": "  /** Hard timeout: race the model against an independent timer.\n   * The timer reject is NOT cleared by external abort — if the model ignores the\n   * abort signal, the timeout still fires so Promise.race never hangs.\n   * External abort rejects the timeout promise immediately for fast cancel. */\n  private async withT"
+      },
+      {
+        "key": "c5",
+        "label": "上下文组装与模型失败转换",
+        "reason": "支持会话历史、检索证据、上一轮上下文和纠正的组合，并区分取消、模型不可用与普通错误。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 421,
+          "endLine": 492
+        },
+        "quote": "  private async executeTurn(input: {\n    turnId: string;\n    conversation: Conversation;\n    userText: string;\n    transportEventId: string | null;\n    signal: AbortSignal;\n  }) {\n    this.router.startTurn(input.turnId);\n    try {\n      // Prior turns are per-conversation only: a group conversation never replays\n      "
+      },
+      {
+        "key": "c6",
+        "label": "检索、纠正与上一轮证据",
+        "reason": "支持 RetrievalPort 优先、Store 回退、上一轮证据复用、纠正容错和默认可见性策略。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 604,
+          "endLine": 699
+        },
+        "quote": "  private retrieveEvidence(\n    userText: string,\n    conversation: Conversation,\n  ): AssistantEvidence[] {\n    // A: prefer the injected RetrievalPort (project-wide contract). Fall back\n    // to store.search for legacy tests that don't wire a port.\n    let rows: Array<{ id: string; text: string; title: string; versi"
+      },
+      {
+        "key": "c7",
+        "label": "任务意图与写入栅栏",
+        "reason": "支持确定性任务意图判断、MemoryService 治理、取消栅栏以及最终引用白名单。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 494,
+          "endLine": 564
+        },
+        "quote": "      // FENCE: abort check right before governing tools. A slow model that\n      // resolves after the turn was cancelled must not write anything.\n      this.assertNotCancelled(input.signal);\n\n      // 3. Structured, server-enforced tool calls. No prompt-as-permission: every\n      //    create_task goes through Memory"
+      },
+      {
+        "key": "c8",
+        "label": "引用解析与任务提案",
+        "reason": "支持先前上下文回退、指定引用全部不可解析时的拒绝条件，以及直接消息捕获和治理提案流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 701,
+          "endLine": 873
+        },
+        "quote": "  /**\n   * Route a model create_task request through MemoryService governance. The model\n   * cannot self-authorize:\n   *  - only the canonical owner's verified evidence backs an owner task;\n   *  - group-member / forwarded / unverified material is retained as a source lead,\n   *    never applied as an owner task;\n   *"
+      },
+      {
+        "key": "c9",
+        "label": "任务规则与群聊默认拒绝",
+        "reason": "支持任务意图依赖有限模式，并说明未注入可见性策略时群聊证据默认不可见。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 90,
+          "endLine": 158
+        },
+        "quote": "/**\n * Decides whether a fragment is visible inside a given conversation. The server\n * owns this: visibility is based on the canonical principal and the evidence's\n * provenance/scope, never on what the model claims. When no policy is injected,\n * group conversations reveal NO evidence (deny-by-default).\n */\nexport ty"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:03:33.247Z",
+    "trace": {
+      "runId": "4bb94bd3-462b-462f-961c-0da4670f818c",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "bb829a602d65d4aa57203eb92b996ac88021714d5df779c7caf04de8857fb92c",
+      "contextHash": "488d710f588c533004c4809ad9f48ecd641c1cb5452b04df5ecb796271ecc089",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "0c677c51398c5889c5fa2c845c8b416fe3cceb7c3506cd4441af765fe81bbd82",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-99e2-7d20-94d5-fccac093c17f"
+      ],
+      "usage": {
+        "used": 56121,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 142291,
+          "utf8Bytes": 149200,
+          "estimatedTokens": 49734,
+          "budgetedTokens": 62168,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:44.943Z",
+    "trace": {
+      "runId": "9d125c72-8a8d-4c1e-b582-aa5b957822d4",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b697db28dd7b3f2ec0399af68662fd1105ee9b0236161dc7af88d264e3c6c37b",
+      "contextHash": "922cf83894749401b8821e5da6992cdcde66f54fa7f752b17098ef42c6619c1a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04ae06d796a6fc5ed580a8d74d95d287d5dff1a34be51a9cdca5b72a9f9a4250",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-f0f8-7ab1-8602-e2db30b3c6c9"
+      ],
+      "usage": {
+        "used": 53187,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 139593,
+          "utf8Bytes": 145498,
+          "estimatedTokens": 48500,
+          "budgetedTokens": 60625,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

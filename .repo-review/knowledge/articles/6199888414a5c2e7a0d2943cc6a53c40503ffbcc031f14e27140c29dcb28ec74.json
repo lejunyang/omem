@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/connectors.ts",
+    "title": "受限外部来源到统一捕获输入的转换器",
+    "summary": "将本地文本文件、Git 历史文件、飞书文档和 Agent hook 事件安全地转换为统一 CaptureInput，同时限制路径、大小、URL、字段和敏感文本。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "filesystem-git",
+        "title": "文件与 Git 的有界读取",
+        "body": "文件连接器先解析真实路径，并要求它位于显式配置的捕获根目录内，从而同时约束普通路径和符号链接；随后限制为 500 KB、严格 UTF-8 且不含 NUL 的纯文本。[[c1]] Git 连接器复用仓库根目录检查，并分别限制 ref 与仓库内路径；它先把 ref 验证为 commit SHA，再用参数数组调用 `git show`，最终把 SHA 记录为上游版本。材料只证明该文件读取指定提交中的单个路径，没有递归扫描或自动抓取链接。[[c2]]"
+      },
+      {
+        "key": "lark",
+        "title": "飞书文档读取",
+        "body": "飞书入口只接受 HTTPS、无用户名密码、路径形态为 docx/wiki 且主机位于允许域名的 URL。验证后通过 `lark-cli` 请求 Markdown 和引用详情，检查响应成功及正文类型，再把正文、原文链接和可选引用映射作为捕获内容；引用映射只是来源上下文，不被解释为可执行标记或推导链接。[[c3]]"
+      },
+      {
+        "key": "hook",
+        "title": "Hook 字段筛选与来源身份",
+        "body": "Hook 转换要求对象输入，只从 profile 明示的字段中选择会话、轮次、工具、提示、输入输出和错误；未知扩展及隐藏转录不会自动进入捕获。序列化时仅对形如部分 API token 的字符串做替换，并执行字符预算。[[c4]] 事件优先采用显式 ID，否则由会话、调用信息和正文摘要生成稳定身份；结果携带时间、collector 和原始生产者标记，但 actor 保持未知，避免无依据绑定到个人。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "捕获根目录与文本限制",
+        "reason": "支持真实路径约束、文件大小、UTF-8 和二进制文本检查。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 1,
+          "endLine": 34
+        },
+        "quote": "/** Connectors are explicit, bounded reads. URLs in captured text are retained, never\n * automatically crawled. Server filesystem imports require configured roots. */\nimport { readFile, realpath, stat } from \"node:fs/promises\";\nimport { resolve, relative, isAbsolute } from \"node:path\";\nimport { execFile } from \"node:ch"
+      },
+      {
+        "key": "c2",
+        "label": "Git 引用与路径读取",
+        "reason": "说明 Git ref、仓库路径的校验及通过已验证提交读取单文件的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 36,
+          "endLine": 74
+        },
+        "quote": "export async function gitInput(\n  repo: string,\n  path: string,\n  ref: string,\n  roots: string[],\n): Promise<CaptureInput> {\n  const cwd = await allowedPath(repo, roots);\n  if (\n    !/^[a-zA-Z0-9_./-]+$/.test(ref) ||\n    ref.startsWith(\"-\") ||\n    ref.includes(\"..\")\n  )\n    throw Error(\"Invalid git ref\");\n  if (\n    is"
+      },
+      {
+        "key": "c3",
+        "label": "飞书 URL 和 CLI 响应转换",
+        "reason": "支持允许域名、URL 形态、外部 CLI 调用及统一捕获内容的构造。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 76,
+          "endLine": 135
+        },
+        "quote": "export async function larkInput(url: string): Promise<CaptureInput> {\n  const u = new URL(url);\n  if (\n    !/^\\/(docx|wiki)\\/[a-zA-Z0-9]+\\/?$/.test(u.pathname) ||\n    u.protocol !== \"https:\" ||\n    u.username ||\n    u.password\n  )\n    throw Error(\"Expected an HTTPS Lark docx/wiki URL\");\n  if (\n    ![\"larkoffice.com\", \""
+      },
+      {
+        "key": "c4",
+        "label": "Hook 白名单与文本预算",
+        "reason": "说明 hook 仅捕获 profile 明示字段、执行有限脱敏并限制最大字符数。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 137,
+          "endLine": 195
+        },
+        "quote": "export type HookCaptureField =\n  | \"sessionId\"\n  | \"turnId\"\n  | \"toolName\"\n  | \"prompt\"\n  | \"toolInput\"\n  | \"toolResponse\"\n  | \"error\";\n\nexport type HookCaptureProfile = {\n  id: string;\n  fields: readonly HookCaptureField[];\n  maxChars: number;\n};\n\nexport const defaultHookCaptureProfile: HookCaptureProfile = {\n  id: \"t"
+      },
+      {
+        "key": "c5",
+        "label": "Hook 稳定身份与来源元数据",
+        "reason": "支持事件 ID 回退算法、时间规范化和未验证 actor 的 provenance 表达。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 196,
+          "endLine": 238
+        },
+        "quote": "  const explicitEventId = v.event_id ?? v.hook_id ?? v.message_id;\n  const fallbackIdentity = [\n    v.session_id,\n    v.turn_id,\n    v.tool_use_id,\n    v.tool_call_id,\n    v.tool_name,\n    event,\n    createHash(\"sha256\").update(text).digest(\"hex\"),\n  ]\n    .filter((part) => part !== undefined && part !== null && String"
+      }
+    ],
+    "questions": [
+      {
+        "question": "Hook 文本是否还需要覆盖更多秘密格式或结构化字段级脱敏？",
+        "why": "现有替换只匹配两类前缀形式的长字符串，材料不能证明其他令牌、密码或嵌套非字符串秘密均会被清除。",
+        "nextStep": "依据实际 hook 数据分类建立敏感字段清单，并增加结构化删除与多种凭据格式的测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/hook-forward.ts",
+      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/inputs/aggregator.ts",
+      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:02:31.928Z",
+    "trace": {
+      "runId": "fdb98094-d0c7-4b1e-ae2d-db638b282086",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d84a1436781fa1c16f1df33365d0860899e3cc6a036fc18ba536de28eab03fb6",
+      "contextHash": "1c90f6fdc966562afb6c99d3d9b281a94ee9dda2ca0860e1e0a75d4bc58ebbf7",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "89b7cbc1272879850193c7a4bcc95bef69d0f2dedd3466645f5d1b7a6e2817b0",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8b-3732-7771-9f59-588e53b88a4a"
+      ],
+      "usage": {
+        "used": 49305,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 109552,
+          "utf8Bytes": 111371,
+          "estimatedTokens": 37124,
+          "budgetedTokens": 46405,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:03:06.007Z",
+    "trace": {
+      "runId": "2e79240a-b27c-4d75-a9fd-7d4e931f7733",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "966e003fb7ece1ade11c6d46b806a7c1690b2ed3e6976c11797c2fdd3f0c12ad",
+      "contextHash": "a2e3bc93ffba599c3474dade47c44bc7fcdffc700d0cfb8c74b2c2ea81a34306",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8d7c95d3769504330976d1cd6eea40d75f72e3677ddd474428cfe75030320144",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-149d-7042-a7c2-8d49d3851bff"
+      ],
+      "usage": {
+        "used": 53392,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 129085,
+          "utf8Bytes": 139068,
+          "estimatedTokens": 46356,
+          "budgetedTokens": 57945,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,327 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/code/store.ts",
+    "title": "代码知识存储：不可变快照、图投影与理解结果索引",
+    "summary": "该模块在隔离 review SQLite 中维护仓库、快照、文件、符号、边和理解结果；显式 head 区分当前图与历史图，Capture revision 与按快照固定文本共同保障历史源码读取。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "model",
+        "title": "身份、历史与源码事实",
+        "body": "文件、符号、边和快照采用确定性标识；符号标识不含范围，范围与 fragment 归属于具体快照。[[c1]] 符号和边使用包含 snapshot 的复合主键，旧单键表迁移时复制并核对行数，避免 A→B→A 往返覆盖旧状态。[[c2]]\n\n此前“代码图完全不保存文件正文”的结论已被替代：Capture revision 仍是读取首选，但快照文件绑定也保存固定 `content_text`；revision 不可读时回退到该文本副本。[[c3]]"
+      },
+      {
+        "key": "readWrite",
+        "title": "幂等同步、head 与图读取",
+        "body": "同步写路径对仓库、快照、文件、符号和边采用冲突更新；同一快照复用原有 `captured_at`，保留首次捕获时间。[[c4]] 当前状态由仓库的 `current_snapshot_id` 显式切换，不能仅按捕获时间推断，因为工作树回到旧状态时会复用旧快照。[[c5]]\n\n图读取默认使用当前 head：当前图隐藏 removed 文件，指定历史快照则保留该快照绑定的文件；除非显式要求，stale 边会被过滤。[[c6]] 未在本轮重现或触及删除文件的边只在指定快照内标记 stale，不删除其他快照记录。[[c7]]"
+      },
+      {
+        "key": "understanding",
+        "title": "理解结果与接口边界",
+        "body": "确定性 profiler 以明确角色写入结构化结果、unknowns 与证据引用，模型和 effort 留空，不把解析统计伪装成模型理解。[[c8]] 当前仓库标识由函数固定返回 `omem`，因此仍是单仓 PoC，而不是通用多仓隔离实现。[[c9]]\n\n`symbolById` 只按 symbol id 查询，既不限定 snapshot 也不排序；复合主键允许同一符号跨快照存在，因此该接口返回当前 head、历史行还是任意行并无明确合同。[[c10]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "代码图稳定身份规则",
+        "reason": "支持文件、符号、边和快照的确定性标识，以及符号范围属于具体快照。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 7,
+          "endLine": 16
+        },
+        "quote": " * Identity rules (deterministic, content-addressed, idempotent):\n *   file_   = sha1(repo_id + \":\" + repo-relative path)\n *   sym_    = sha1(repo_id + \":\" + path + \":\" + qualifiedName + \":\" + kind)   -- NO range\n *   cedge_  = sha1(normalized endpoint+kind seed)\n *   snap_   = sha1(repo_id + \":\" + commit + \":\" + dirty"
+      },
+      {
+        "key": "c2",
+        "label": "符号与边的历史保留迁移",
+        "reason": "支持复合快照主键、旧表复制核验及防止往返状态覆盖历史记录。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 125,
+          "endLine": 218
+        },
+        "quote": "  // Migration: symbols/edges must be immutable PER SNAPSHOT. The earlier PoC\n  // keyed them by id alone and ON CONFLICT overwrote snapshot_id/range/fragment,\n  // so revisiting an old state (A->B->A) erased that snapshot's rows. We do NOT\n  // drop history: rename the old table, create the composite-schema table, cop"
+      },
+      {
+        "key": "c3",
+        "label": "快照源码副本与回退",
+        "reason": "支持按快照固定源码文本，并在 Capture revision 无法读取时回退到该副本。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 446,
+          "endLine": 498
+        },
+        "quote": "/** Immutable per-snapshot file pin: the review revision that supplied this\n * file's bytes when the snapshot was built. Used to serve fixed historical\n * source text instead of the live working tree. */\nexport function upsertSnapshotFile(\n  store: Store,\n  row: {\n    snapshotId: string;\n    fileId: string;\n    path: s"
+      },
+      {
+        "key": "c4",
+        "label": "仓库、快照与图元素写入",
+        "reason": "支持冲突更新式幂等写入，并直接证明相同快照保留首次 captured_at。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 674,
+          "endLine": 860
+        },
+        "quote": "export function upsertRepository(\n  store: Store,\n  row: { repoId: string; rootPath: string; remote: string | null; defaultBranch: string | null },\n): void {\n  ensureCodeTables(store);\n  const existing = store.db\n    .prepare(\"SELECT created_at FROM code_repositories WHERE repo_id=?\")\n    .get(row.repoId) as { created_"
+      },
+      {
+        "key": "c5",
+        "label": "显式当前快照指针",
+        "reason": "解释为何不能用捕获时间推断 head，以及同步应显式切换当前快照。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 273,
+          "endLine": 284
+        },
+        "quote": "  // Additive migration: explicit head pointer on the repository. We must NOT\n  // infer \"latest\" from captured_at: when the tree returns to a previously\n  // seen state the same snapshot row is reused, but a later snapshot row still\n  // has a more recent captured_at and would wrongly win. The head pointer is\n  // fli"
+      },
+      {
+        "key": "c6",
+        "label": "当前与历史图视图",
+        "reason": "支持当前图隐藏 removed 文件、历史图保留快照文件，并默认过滤 stale 边。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 599,
+          "endLine": 620
+        },
+        "quote": "export function graphView(\n  store: Store,\n  opts: { snapshotId?: string; includeStale?: boolean } = {},\n): { files: CodeFile[]; symbols: CodeSymbol[]; edges: CodeEdge[] } {\n  ensureCodeTables(store);\n  const current = currentSnapshotId(store);\n  const snap = opts.snapshotId ?? current;\n  if (!snap) return { files: [],"
+      },
+      {
+        "key": "c7",
+        "label": "快照内过期边失效",
+        "reason": "支持仅将指定快照中未重现或触及删除文件的边标为 stale。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 863,
+          "endLine": 896
+        },
+        "quote": "/** Flip every edge not produced by this run's parse to stale (removed symbols /\n * deleted imports). Edges touching a removed file are also flipped. Returns the\n * number newly flipped. */\nexport function invalidateStaleEdges(\n  store: Store,\n  liveSeeds: Set<string>,\n  snapshotId: string,\n): number {\n  ensureCodeTabl"
+      },
+      {
+        "key": "c8",
+        "label": "确定性理解记录",
+        "reason": "支持无模型 profiler 的角色、未知项、证据记录和空模型字段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 899,
+          "endLine": 947
+        },
+        "quote": "/** Deterministic profiler understanding written without any model. Records what\n * was actually parsed and explicitly lists unknowns; never fakes a summary. */\nexport function writeDeterministicUnderstanding(\n  store: Store,\n  row: {\n    targetType: \"repository\" | \"file\" | \"symbol\";\n    targetId: string;\n    snapshotI"
+      },
+      {
+        "key": "c9",
+        "label": "固定仓库标识",
+        "reason": "直接支持当前代码使用固定 omem 标识、属于单仓 PoC 的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 40,
+          "endLine": 42
+        },
+        "quote": "export function codeRepositoryId(): string {\n  // PoC: single repo. Stable slug.\n  return \"omem\";"
+      },
+      {
+        "key": "c10",
+        "label": "未限定快照的符号查询",
+        "reason": "支持 symbolById 仅按符号标识查询且没有 snapshot 条件或排序。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 559,
+          "endLine": 571
+        },
+        "quote": "export function symbolsOfSnapshot(store: Store, snapshotId: string): CodeSymbol[] {\n  ensureCodeTables(store);\n  return (store.db\n    .prepare(\"SELECT * FROM code_symbols WHERE snapshot_id=? ORDER BY file_id, range_start\")\n    .all(snapshotId) as Row[]).map(symbolFromRow);\n}\n\nexport function symbolById(store: Store, sy"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`symbolById` 在同一符号存在多个快照行时，应返回当前 head、任意历史行，还是要求调用方显式指定 snapshot？",
+        "why": "复合主键允许同一符号跨快照存在，但现有查询只按 symbol id，返回语义不确定。",
+        "nextStep": "检查调用点；若需要 head 语义则联接 current_snapshot_id，若需要历史语义则增加必填 snapshotId，并添加 A→B→A 回归测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c10"
+        ]
+      },
+      {
+        "question": "旧数据库迁移在复制计数不一致或进程中途退出时，是否由外层事务保证原子回滚？",
+        "why": "材料展示了重命名、建表、复制、计数核对和删除临时表，但 `ensureCodeTables` 内没有显式事务。",
+        "nextStep": "核对 Store 初始化和迁移调用的事务边界，并测试各迁移阶段故障后的再次启动。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:02:41.363Z",
+    "trace": {
+      "runId": "6f7a7582-26da-4243-b6a1-5cf3cc678936",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "b5ee268c357c64da712c092ace85a70d6b3e1d0f68e549981637002aa424d4da",
+      "contextHash": "28a6f72089d19d7bca5267e7ab104563d77522ad69465a7d4bc666bf9c138005",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "4da5dedfd593707dbb8cd35003f07785c13b11aad59020db32de2cd9103400d2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-26c0-7a11-bf9d-7ef9d50a8e6b"
+      ],
+      "usage": {
+        "used": 69276,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 163659,
+          "utf8Bytes": 180578,
+          "estimatedTokens": 60193,
+          "budgetedTokens": 75242,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:10.489Z",
+    "trace": {
+      "runId": "1459a7dc-2d7a-4525-8a3c-cc9fa3bfb191",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "60d85d31478699f0e60bacc76f18e7aa6a7542db87515feb462d8838d2c3d752",
+      "contextHash": "0207e4cd00c20b8d1a5ae7808818cdc4b49cc26864fbca9505c7bcaa51c55468",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "932668a8c0ec2d582371cc4f29155f343cd3f915759c492b2ef176632cf7fb76",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-2630-7c33-83fa-2b67e0cfa5fe"
+      ],
+      "usage": {
+        "used": 62876,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 161047,
+          "utf8Bytes": 174914,
+          "estimatedTokens": 58305,
+          "budgetedTokens": 72882,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

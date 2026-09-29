@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/retrieval/keyword.ts",
+    "title": "SQLite 关键词检索基线",
+    "summary": "以固定 fragment 和 active memory 为对象提供无 embedding 的统一检索端口，支持中英文分词、简易相关度、证据读取及谨慎的项目范围过滤。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "source-search",
+        "title": "来源证据检索流程",
+        "body": "`KeywordRetrieval` 是面向未来检索后端接口的 SQLite 基线，不依赖 embedding 或第三方引擎。`readEvidence` 可按 revision 与可选 fragment 精确读取固定片段；未指定 fragment 时返回 ordinal 最小的一项。[[c1]]\n\n来源搜索把 limit 限制在 1–100，对每个 term 用转义后的 `LIKE` 查询当前 source head 下的 fragment，并按不同命中词累计分数，词越长权重越高；知识正文检索提供的 evidence candidate 也会并入结果。最终按分数排序，返回 snippet、revision、fragment 与 actor/time/source provenance。[[c2]] 当前 fragment 没有持久化的可信项目关联，因此即使查询带项目上下文也不做项目过滤，避免把 application 或 conversationId 错当项目。"
+      },
+      {
+        "key": "memory-tokenization",
+        "title": "记忆范围与分词边界",
+        "body": "记忆搜索只扫描 `status='active'` 的 head revision。只有查询同时携带 `project_id` 且 `project_trusted=true` 时，才排除明确属于其他项目的记忆；没有项目关联的记忆仍在 workspace 可见。正文目前以 JSON 字符串做大小写无关包含匹配，分数仅按命中的 term 长度累积，limit 被限制为 1–50。[[c3]]\n\n分词保留 ASCII 单词；中文串既保留完整短语，也生成重叠二元组，同时过滤“这个、我们、可以”等高召回停用二元组。snippet 取第一个命中附近的定长窗口，没有命中时截取开头。[[c4]] 这是一种可解释但粗糙的基线：没有词频归一化、语义相似度或跨 revision 身份续接；`LIKE` 每词最多取 200 行，也可能使高频词结果被提前截断。材料未提供排序稳定性、转义字符或中英混合查询的测试。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "关键词后端与证据读取",
+        "reason": "支持无向量基线定位及按 revision/fragment 读取固定证据的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 15,
+          "endLine": 50
+        },
+        "quote": "/**\n * Keyword baseline over the fixed fragments and applied memories. It intentionally\n * avoids embedding/third-party engines (V3-03 scope) while keeping the same surface a\n * future MemPalace sidecar will implement. CJK queries are matched as substrings, so\n * multi-Chinese-term queries score by how many distinct te"
+      },
+      {
+        "key": "c2",
+        "label": "来源 fragment 搜索与评分",
+        "reason": "说明逐词检索、去重计分、知识证据合并、排序和 provenance 输出。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 52,
+          "endLine": 117
+        },
+        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const best = new Map<\n      string,\n      { row: Row; score: number; matched: Set<string> }\n    >();\n    for (const term"
+      },
+      {
+        "key": "c3",
+        "label": "Active memory 检索与项目过滤",
+        "reason": "支持只召回 active memory，并仅在可信项目条件下执行排除过滤的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 119,
+          "endLine": 171
+        },
+        "quote": "  searchMemories(query: SearchQuery): MemoryCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 10, 50));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const rows = this.db\n      .prepare(\n        `SELECT m.id, m.kind, m.status, m.scope, mr.body, mr.created_at\n         FR"
+      },
+      {
+        "key": "c4",
+        "label": "中英文分词与摘要窗口",
+        "reason": "解释 ASCII term、中文完整串与二元组、停用词及 snippet 生成规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 183,
+          "endLine": 233
+        },
+        "quote": "/**\n * Split a query into matchable terms: whitespace/punctuation chunks; ASCII words.\n * For CJK runs of length >= 2, also emit overlapping 2-gram substrings so that\n * short follow-up queries like \"按这个\" or \"刚才说的\" match fragments that\n * contain individual character pairs, instead of requiring the whole phrase.\n */\nex"
+      }
+    ],
+    "questions": [
+      {
+        "question": "每词查询的 200 行截断是否需要确定性排序或分页？",
+        "why": "SQL 使用 `LIMIT 200` 但没有 `ORDER BY`；高频词超过上限时，候选集合和最终排名可能依赖 SQLite 的返回顺序。",
+        "nextStep": "用大规模高频词 fixture 验证可重复性，并根据目标决定加入稳定排序、扩大候选池或改用索引检索。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "关键词基线的项目范围是否将在可信 ContextLink 落库后收紧？",
+        "why": "当前来源 fragment 完全不做项目过滤，这是缺少可信关联时的刻意边界，而非租户隔离能力。",
+        "nextStep": "实现 ContextLink 后补充确认关联的 join 与 workspace/project 行为测试，同时保留未知项目的明确退化策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "3ae1285f4f529258e0273949da1660869c2d121290c605a53d9c0ea2a5bf44a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "82040e6bf9053694fce5e0fba676574f3e95fcf309d9076f297fa674697efd2d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:36:22.914Z",
+    "trace": {
+      "runId": "b24a508b-9e49-4030-a33d-9b29aeeb18c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "d6d9a86c5eafafc99edd87107f6c137aeb9b9b0a70faded4d19ccb17c259fb08",
+      "contextHash": "775cf64b377935696b9e2041fe922cc7fb3a70584a2e0881cf89d345ba10501f",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "14feaa8c6d4a0069dad959ba68382169acc8dc67a5f41fee01beef01e423ed38",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeaa-213d-7d13-98e6-3838885b25f1"
+      ],
+      "usage": {
+        "used": 48481,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104046,
+          "utf8Bytes": 106725,
+          "estimatedTokens": 35575,
+          "budgetedTokens": 44469,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:36:50.583Z",
+    "trace": {
+      "runId": "afa11d9e-b028-47d8-baa8-0f33d508c8b6",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "23ea58bf4c39249e897ea17eb8257be8a67d56838fff53295c4ed9de4ef6bda3",
+      "contextHash": "5fc04761f2d28bfbb15cb839ae410658ccb196bac67e758908bb49e833e8c4e7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04c039dc6f97233cd2e75bca2c35775b51c16fdbda7244f0b64c73cbbfe27cd0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeab-107d-7e81-8977-b6d2f434d03a"
+      ],
+      "usage": {
+        "used": 52686,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 126336,
+          "utf8Bytes": 137353,
+          "estimatedTokens": 45785,
+          "budgetedTokens": 57232,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

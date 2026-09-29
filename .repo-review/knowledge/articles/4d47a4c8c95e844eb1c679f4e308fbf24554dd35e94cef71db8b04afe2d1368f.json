@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/knowledge/artifacts.ts",
+    "title": "知识文章导出与恢复",
+    "summary": "该模块把已复核知识导出为稳定命名的 JSON 与 Markdown，并按依赖恢复文章；JSON 解析失败仅返回 rejected，而进入 pending 后处理出的状态才写入导入状态表。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "render",
+        "title": "Markdown 投影",
+        "body": "`articleMarkdown` 把正文内联引用转换为链接：文章目标使用文档 key 摘要命名的 Markdown 和可选章节锚点，仓库材料链接到源文件行，其他材料退化到证据锚点。引用定义缺失时显示“引用不可用”。输出还标注生成与独立复核模型，并提醒模型解释仍可被原始证据纠正。[[c1]]"
+      },
+      {
+        "key": "write",
+        "title": "稳定命名与幂等写出",
+        "body": "发布时创建目标目录，从文章对象排除运行态的 `current` 与 `revision`，再用文档 key 摘要作为稳定文件名，同时生成 JSON 与 Markdown。文件不存在或内容变化时才写盘，可减少无意义改写。[[c2]] 两个文件仍是顺序、分别写入；实现没有事务、临时文件重命名或目录切换来保证二者原子成对可见。"
+      },
+      {
+        "key": "restore",
+        "title": "依赖有序恢复与状态边界",
+        "body": "恢复先读取排序后的 JSON。这里需要区分两类 rejected：JSON 解析失败的文件直接加入返回结果，从未进入 pending，也不会写入 `knowledge_imports`。[[c3]] 可解析条目才进入最多 100 轮的 pending 处理；文章依赖未就绪时等待，其余条目校验版本、accepted 复核、生成与复核来源、文档结构和固定依赖。来源变化记为 stale，合法且内容变化的条目才发布。pending 内得出的 restored、stale 或校验 rejected 会写入导入状态表。[[c4]]\n\n循环停止后仍未解决依赖的条目只以 missing 加入本次返回，不持久化导入状态；最后刷新 current 标记。[[c5]] 因而先前“所有 rejected 和 missing 都会持久化”以及笼统的“所有已处理条目状态均持久化”结论，均被上述范围限定所替代。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "文章 Markdown 渲染",
+        "reason": "支持内联引用替换、目标链接、章节锚点、不可用提示及生成和复核来源说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "startLine": 8,
+          "endLine": 18
+        },
+        "quote": "export function articleMarkdown(a: KnowledgeArticle) {\n  const links = new Map(a.document.citations.map(c => [c.key, c]));\n  const body = a.document.sections.map(section => {\n    const text = section.body.replace(/\\[\\[([a-zA-Z][a-zA-Z0-9_-]*)\\]\\]/g, (_, id: string) => {\n      const c = links.get(id); if (!c) return \"（引"
+      },
+      {
+        "key": "c2",
+        "label": "知识文件写出",
+        "reason": "支持稳定文件名、JSON 与 Markdown 双输出，以及仅在内容变化时分别写盘。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "startLine": 21,
+          "endLine": 29
+        },
+        "quote": "export function writeKnowledgeArticle(directory: string, a: KnowledgeArticle) {\n  mkdirSync(directory, { recursive: true });\n  const { current, revision, ...artifact } = a;\n  const name = digest(a.document.key);\n  const outputs = [[`${name}.json`, JSON.stringify(artifact, null, 2) + \"\\n\"], [`${name}.md`, articleMarkdow"
+      },
+      {
+        "key": "c3",
+        "label": "JSON 读取与解析失败",
+        "reason": "直接支持解析失败文件只加入 rejected 返回结果、未进入 pending 的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "startLine": 32,
+          "endLine": 39
+        },
+        "quote": "export function restoreKnowledgeArticles(repository: KnowledgeRepository, directory: string) {\n  if (!existsSync(directory)) return [];\n  const result: { file: string; state: string; reason: string }[] = [];\n  const pending: { file: string; artifact: KnowledgeArtifact }[] = [];\n  for (const file of readdirSync(director"
+      },
+      {
+        "key": "c4",
+        "label": "Pending 校验与状态持久化",
+        "reason": "支持依赖等待、来源校验、stale/rejected/restored 判定，并证明进入 pending 后移除的条目会写入 knowledge_imports。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "startLine": 40,
+          "endLine": 56
+        },
+        "quote": "  const sources = new Map(repository.materials().map(m => [m.key, m.digest]));\n  for (let pass = 0; pending.length && pass < 100; pass++) {\n    let progress = false;\n    for (let i = pending.length - 1; i >= 0; i--) {\n      const { file, artifact } = pending[i]!;\n      if (artifact.dependencies?.some(d => d.kind === \"a"
+      },
+      {
+        "key": "c5",
+        "label": "未解依赖与最终刷新",
+        "reason": "支持剩余 pending 仅追加 missing 返回结果而不写入状态表，随后刷新仓库。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "startLine": 56,
+          "endLine": 59
+        },
+        "quote": "    if (!progress) break;\n  }\n  for (const { file } of pending) result.push({ file, state: \"missing\", reason: \"引用的子知识尚不可用\" });\n  repository.refresh(); return result;"
+      }
+    ],
+    "questions": [
+      {
+        "question": "JSON 与 Markdown 是否要求对外始终成对、原子可见？",
+        "why": "两个文件顺序、分别写入，异常中断可能留下不同版本；材料没有说明消费方是否要求强一致。",
+        "nextStep": "确认发布目录的读取方式；若要求强一致，评估临时文件加原子重命名或完整目录切换。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "JSON 解析 rejected 与未解依赖 missing 是否需要持久化到 knowledge_imports？",
+        "why": "两类状态当前都只存在于本次返回；只有进入 pending 并完成校验的 restored、stale 或 rejected 会写入状态表。",
+        "nextStep": "确认 knowledge_imports 是否承担跨进程诊断职责；若需要，补充两类状态写入及后续状态迁移测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:02:41.363Z",
+    "trace": {
+      "runId": "6f7a7582-26da-4243-b6a1-5cf3cc678936",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "b5ee268c357c64da712c092ace85a70d6b3e1d0f68e549981637002aa424d4da",
+      "contextHash": "28a6f72089d19d7bca5267e7ab104563d77522ad69465a7d4bc666bf9c138005",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "4da5dedfd593707dbb8cd35003f07785c13b11aad59020db32de2cd9103400d2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec2-26c0-7a11-bf9d-7ef9d50a8e6b"
+      ],
+      "usage": {
+        "used": 69276,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 163659,
+          "utf8Bytes": 180578,
+          "estimatedTokens": 60193,
+          "budgetedTokens": 75242,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:10.489Z",
+    "trace": {
+      "runId": "1459a7dc-2d7a-4525-8a3c-cc9fa3bfb191",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "60d85d31478699f0e60bacc76f18e7aa6a7542db87515feb462d8838d2c3d752",
+      "contextHash": "0207e4cd00c20b8d1a5ae7808818cdc4b49cc26864fbca9505c7bcaa51c55468",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "932668a8c0ec2d582371cc4f29155f343cd3f915759c492b2ef176632cf7fb76",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-2630-7c33-83fa-2b67e0cfa5fe"
+      ],
+      "usage": {
+        "used": 62876,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 161047,
+          "utf8Bytes": 174914,
+          "estimatedTokens": 58305,
+          "budgetedTokens": 72882,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

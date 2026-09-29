@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/code/dto.ts",
+    "title": "代码图的人类可读 DTO 投影",
+    "summary": "在保留内部动作键的同时，为快照、文件、符号和边补充稳定的人类展示字段、引用标签、深链及不可操作原因，隔离数据库实体与界面文案。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "projection",
+        "title": "投影职责",
+        "body": "该模块面向前端投影代码图实体：原始对象通过展开保留 `fileId`、`symbolId`、端点等路由所需字段，另外增加 `displayTitle`、`displayPath`、`citationLabel`、`actionable` 和 `reason`，避免把内部 ID 当作可见标签。快照以短提交号展示；无提交时区分脏工作树与无提交状态。[[c1]] 文件标题取路径末段，但完整路径仍用于展示位置与引用。[[c2]]"
+      },
+      {
+        "key": "symbols_edges",
+        "title": "符号、边与失效状态",
+        "body": "符号标题对 route/test 使用名称，其余使用限定名；若有关联文件，源码深链会携带声明起止行，否则退回符号接口。[[c3]] 边标题把端点的人类标签与关系词组合起来，`confirmed` 和 `candidate` 可操作，`missing`、`stale` 则给出明确原因并禁止动作。未知边类型会直接显示原始 kind，因此新增关系不会丢失，但可能缺少友好翻译。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "DTO 展示字段约定",
+        "reason": "支持保留内部动作键、同时增加人类可读字段且不显示内部 ID 的核心职责。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "startLine": 1,
+          "endLine": 15
+        },
+        "quote": "/** User-facing DTO projection. The code_* tables are a rebuildable typed view over\n * the authoritative Capture->Source/Revision/Fragment chain. We SPREAD the original\n * row so every internal action key (fileId/name/kind/range/endpoints/...) stays for\n * the UI, and ADD human display* fields on top. IDs are never ren"
+      },
+      {
+        "key": "c2",
+        "label": "文件 DTO",
+        "reason": "支持文件标题、路径、版本、可操作状态和深链的投影方式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "startLine": 35,
+          "endLine": 51
+        },
+        "quote": "export function fileDTO(f: CodeFile, snap?: CodeSnapshot | null) {\n  const base = f.path.split(\"/\").pop() ?? f.path;\n  return {\n    ...f,\n    type: \"file\",\n    symbolName: null,\n    displayTitle: base,\n    displayPath: f.path,\n    summary: `${f.language} · ${f.sizeBytes} bytes`,\n    version: snap ? shortCommit(snap.com"
+      },
+      {
+        "key": "c3",
+        "label": "符号 DTO",
+        "reason": "说明符号的人类标签、源码范围链接与无文件时的回退链接。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "startLine": 54,
+          "endLine": 75
+        },
+        "quote": "export function symbolDTO(sym: CodeSymbol, file?: CodeFile | null) {\n  const label =\n    sym.kind === \"route\" || sym.kind === \"test\" ? sym.name : sym.qualifiedName;\n  const range = sym.rangeStart\n    ? `:${sym.rangeStart.line}${sym.rangeStart.col ? \":\" + sym.rangeStart.col : \"\"}`\n    : \"\";\n  return {\n    ...sym,\n    ty"
+      },
+      {
+        "key": "c4",
+        "label": "边 DTO 与状态原因",
+        "reason": "支持边关系文案、可操作状态及 missing/stale 原因的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "startLine": 78,
+          "endLine": 114
+        },
+        "quote": "const EDGE_LABEL: Record<string, string> = {\n  defines: \"defines\",\n  imports: \"imports\",\n  exports: \"exports\",\n  module_of: \"in module\",\n  calls: \"calls\",\n  route: \"exposes route\",\n  test_of: \"tests\",\n  vue_component: \"is component\",\n  uses_component: \"uses component\",\n};\n\nexport function edgeReason(status: string): st"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/dto.ts",
+      "digest": "0213903ededa1ffee899a545cac340492ca4230ca75a5b8ef4ed02eef69949e7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-text.ts",
+      "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:00:16.345Z",
+    "trace": {
+      "runId": "ca7c0b44-91d3-4f80-8b00-26df100987c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "124f8180216c194cf0a6895ab1e580217a0c3419aec79d61c3795b7b551c5198",
+      "contextHash": "07f079f349d9104873e0aff0ccd837d3619a742dbe971432605a204d18dbcb76",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1997a5a56b21869cb8cbc6952a9344d19ab6b628881d9cd50863f57faf787b49",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee89-3b7e-78e2-bd5c-b8bc74b3640d"
+      ],
+      "usage": {
+        "used": 48287,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 106728,
+          "utf8Bytes": 108508,
+          "estimatedTokens": 36170,
+          "budgetedTokens": 45213,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:00:38.772Z",
+    "trace": {
+      "runId": "d85a36ca-53db-4ab0-8f61-b1c8611fdc12",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0da3bc2848cefaa76d2504f0a76608daed996d9b11719bd30eef7f108aa9d6f5",
+      "contextHash": "e9c64129710b9d68e7be687d12e3fbf0ce8ca49a941080f24cf1becd13b75fee",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f1884943311b65b4033ae967e6e3279c7026b2b3cf9895538b3daea1b5666b7b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8a-0143-7d61-8fbb-6402e447c94a"
+      ],
+      "usage": {
+        "used": 51652,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 123899,
+          "utf8Bytes": 132144,
+          "estimatedTokens": 44048,
+          "budgetedTokens": 55060,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,236 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+    "title": "omem Lark 默认能力配置",
+    "summary": "该文件定义经过合同校验的个人助理应用预设，集中声明租户与用户权限、事件订阅及卡片回调；申请范围不等同于平台实际授权、已实现功能或已经完成最小权限审计。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "profile_purpose",
+        "title": "配置定位与声明边界",
+        "body": "该文件不是事件处理器，而是在模块加载时经 schema 解析的默认申请档案。文件头称其面向个人助理，预留文档、日历、会议、任务和富内容能力，并声明排除批量消息、聊天成员变更及权限或 ACL 管理。[[c1]] 这只是设计层面的范围说明，实际申请边界仍须以下方权限清单为准。"
+      },
+      {
+        "key": "permissions_events",
+        "title": "实际权限与事件范围",
+        "body": "租户权限覆盖消息读写与撤回、文档和富内容操作、日历事件、任务、会议机器人及 AI 能力，也包含文档权限设置读取、成员查询和日历 ACL 读取。[[c2]] 用户权限同样包含权限成员查询、权限设置读取、日历 ACL 读取，并额外包含文档权限申请。[[c3]] 因此，当前集合确实涉及权限或 ACL 的读取及权限申请，与文件头宽泛的“排除权限或 ACL 管理”表述存在边界歧义；但材料不能证明它具备成员、权限设置或 ACL 的修改能力。\n\n事件侧订阅消息接收和更新、群成员变化、消息反应、文档评论与会议事件，并开启卡片动作回调。[[c4]] 这些清单只能证明默认配置会申请相应能力，不能证明平台已经授权、后端存在对应调用点，或权限范围已经完成最小化审计。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "默认个人助理档案声明",
+        "reason": "说明默认配置的来源、展示信息，以及文件头声明的能力范围和排除目标。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+          "startLine": 3,
+          "endLine": 17
+        },
+        "quote": "/**\n * Reusable personal-assistant profile derived from botmux source revision\n * 597ffb10172ea9ac2b50b75507d52a8cf5fb0cd7. It reserves document, calendar,\n * meeting, task and rich-content capabilities while excluding bulk messaging,\n * chat ownership/membership mutation and permission/ACL administration.\n */\nexport c"
+      },
+      {
+        "key": "c2",
+        "label": "租户权限范围",
+        "reason": "支持租户档案包含消息、内容、日历、任务、会议与 AI 能力，同时包含文档权限信息和日历 ACL 的读取权限。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+          "startLine": 18,
+          "endLine": 132
+        },
+        "quote": "      tenant: [\n        \"im:message\",\n        \"im:message:send_as_bot\",\n        \"im:message:update\",\n        \"im:message.p2p_msg:readonly\",\n        \"im:message.group_at_msg:readonly\",\n        \"im:message.group_at_msg.include_bot:readonly\",\n        \"im:message.group_msg\",\n        \"im:message.group_msg.include_bot:read\","
+      },
+      {
+        "key": "c3",
+        "label": "用户权限范围",
+        "reason": "支持用户档案包含文档权限成员申请与查询、权限设置读取、日历 ACL 读取及搜索等申请项，但不证明具备权限修改能力。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+          "startLine": 133,
+          "endLine": 214
+        },
+        "quote": "      user: [\n        \"offline_access\",\n        \"contact:contact.base:readonly\",\n        \"contact:user.employee_id:readonly\",\n        \"docs:component\",\n        \"docs:document.comment:create\",\n        \"docs:document.comment:read\",\n        \"docs:document.comment:update\",\n        \"docs:document.comment:write_only\",\n      "
+      },
+      {
+        "key": "c4",
+        "label": "事件订阅与卡片回调",
+        "reason": "支持租户和用户事件订阅范围，以及交互卡片动作回调的配置事实。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+          "startLine": 216,
+          "endLine": 235
+        },
+        "quote": "    events: {\n      items: {\n        tenant: [\n          \"im.message.receive_v1\",\n          \"im.message.updated_v1\",\n          \"im.chat.member.bot.added_v1\",\n          \"im.chat.member.bot.deleted_v1\",\n          \"im.chat.member.user.added_v1\",\n          \"im.chat.member.user.deleted_v1\",\n          \"im.message.reaction.cr"
+      }
+    ],
+    "questions": [
+      {
+        "question": "这组默认权限是否已经按当前可执行功能完成最小权限审计？",
+        "why": "材料证明默认配置申请了大量消息、内容写入、会议机器人、AI、权限读取、ACL 读取及权限申请能力，但没有证明每项都有当前业务调用点；权限相关条目与文件头的宽泛排除声明也存在边界歧义。",
+        "nextStep": "将每项权限映射到现有调用点或明确的近期功能；无法映射的权限评估移出默认档案、改为可选，或收窄文件头注释。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:03:33.247Z",
+    "trace": {
+      "runId": "4bb94bd3-462b-462f-961c-0da4670f818c",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "bb829a602d65d4aa57203eb92b996ac88021714d5df779c7caf04de8857fb92c",
+      "contextHash": "488d710f588c533004c4809ad9f48ecd641c1cb5452b04df5ecb796271ecc089",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "0c677c51398c5889c5fa2c845c8b416fe3cceb7c3506cd4441af765fe81bbd82",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-99e2-7d20-94d5-fccac093c17f"
+      ],
+      "usage": {
+        "used": 56121,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 142291,
+          "utf8Bytes": 149200,
+          "estimatedTokens": 49734,
+          "budgetedTokens": 62168,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:03:44.943Z",
+    "trace": {
+      "runId": "9d125c72-8a8d-4c1e-b582-aa5b957822d4",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b697db28dd7b3f2ec0399af68662fd1105ee9b0236161dc7af88d264e3c6c37b",
+      "contextHash": "922cf83894749401b8821e5da6992cdcde66f54fa7f752b17098ef42c6619c1a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04ae06d796a6fc5ed580a8d74d95d287d5dff1a34be51a9cdca5b72a9f9a4250",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec3-f0f8-7ab1-8602-e2db30b3c6c9"
+      ],
+      "usage": {
+        "used": 53187,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 139593,
+          "utf8Bytes": 145498,
+          "estimatedTokens": 48500,
+          "budgetedTokens": 60625,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

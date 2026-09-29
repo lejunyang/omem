@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+    "title": "飞书实时事件接入、路由与可靠交付",
+    "summary": "将飞书 WebSocket 事件规范化并持久化，按配对、助手回复、群聊采集和卡片动作分流，并以幂等收件箱、事务性发件箱及连接租约降低重复处理和崩溃丢消息风险。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "event_flow",
+        "title": "事件接入与业务分流",
+        "body": "模块把 SDK 的多种事件形态归一为统一结构：缺少事件 ID 时对负载计算稳定摘要，时间戳兼容秒与毫秒，消息正文则尝试从 JSON 提取。官方适配器注册消息、群成员变化和卡片动作处理器，并在连接失败后定期尝试恢复。[[c1]]\n\n事件先按应用与事件 ID 写入收件箱；同 ID、同摘要视为重投，同 ID、不同摘要报冲突。机器人进退群会启停群采集目标；普通消息还会检查有效连接、绑定身份及是否为机器人自身消息。绑定所有者的私聊或群内提及进入助手路径，其余获准群消息被转换为统一 Capture parts 后交给输入聚合器。[[c2]]"
+      },
+      {
+        "key": "reply_delivery",
+        "title": "助手回复与崩溃恢复",
+        "body": "助手返回后，取消的 turn 不投递；并发重投遇到仍在运行的 turn 时不确认收件箱，也不重复入队。已存在发件箱记录的完成 turn 直接确认；若 turn 已完成但发件箱缺失，则进入恢复入队路径。回复必须先持久化，再将收件箱标为已处理，使入队失败时仍可依赖飞书重投。[[c3]]\n\n发件箱创建会在一个数据库事务内写入 change、delivery intent、关联表，并把 intent 关联回会话 turn。provider UUID 优先由频道、会话和 turn 共同生成，因此同一 turn 重投复用标识，而不同 turn 即使回复文字相同也得到独立投递；回复卡片正文截断为 8000 字符。[[c4]]"
+      },
+      {
+        "key": "connection_boundaries",
+        "title": "连接、媒体与解析边界",
+        "body": "连接管理器以数据库租约限制同一连接的活动实例，从加密存储读取凭据，并在记录错误前替换凭据和常见令牌；心跳还会核对连接版本，版本变化、租约失败或连接失效都会停止当前实例。[[c5]]\n\n图片仅在存在 image key、消息 ID 和媒体端口时下载，否则退化为占位文本；富文本只处理标题、文本、链接、@ 与图片占位，其他节点被忽略。该文件仅规定媒体下载端口及调用方式，不能据此确认生产下载实现的大小、超时、鉴权或 MIME 校验。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "事件规范化与 WebSocket 适配",
+        "reason": "支持事件字段归一、处理器注册、连接状态回调和失败后周期性恢复的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 96,
+          "endLine": 219
+        },
+        "quote": "export const normalizeLarkEvent = (\n  appId: string,\n  kind: LarkInboundEvent[\"kind\"],\n  data: any,\n): LarkInboundEvent => ({\n  appId,\n  eventId:\n    safeString(data?.header?.event_id) ||\n    safeString(data?.event_id) ||\n    stableDigest({ kind, data }),\n  kind,\n  eventTime: eventDate(\n    data?.header?.create_time ||"
+      },
+      {
+        "key": "c2",
+        "label": "收件箱幂等与消息路由",
+        "reason": "支持事件去重、群目标维护、身份判断、助手分流及群消息采集流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 337,
+          "endLine": 657
+        },
+        "quote": "  persist(event: LarkInboundEvent) {\n    const connection = this.store.db\n      .prepare(\n        `SELECT id,COALESCE(active_version,(\n           SELECT MAX(version) FROM lark_connection_versions\n           WHERE connection_id=lark_connections.id AND state='awaiting_pair'\n         )) AS connection_version\n         FROM"
+      },
+      {
+        "key": "c3",
+        "label": "回复重投与入队顺序",
+        "reason": "支持取消、并发重投、既有发件箱和崩溃恢复分支，以及先持久化回复再确认收件箱的顺序。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 550,
+          "endLine": 600
+        },
+        "quote": "      // A superseded/cancelled turn has no reply body and must not be delivered.\n      if (routed.status === \"cancelled\") {\n        this.finish(receipt.id, \"processed\");\n        return { ...receipt, outcome: \"interrupted\", turnId: routed.turnId };\n      }\n      const status = routed.status ?? \"done\";\n      const inFli"
+      },
+      {
+        "key": "c4",
+        "label": "事务性回复发件箱",
+        "reason": "支持确定性 provider UUID、不同 turn 独立发送，以及在同一事务中创建投递记录并关联会话 turn。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 814,
+          "endLine": 883
+        },
+        "quote": "  private enqueueAssistantReply(\n    connection: Row,\n    chatId: string,\n    replyText: string,\n    turnId?: string,\n  ): string {\n    const at = new Date().toISOString();\n    const changeId = randomUUID();\n    const card = {\n      schema: \"2.0\",\n      config: { width_mode: \"default\" },\n      body: { elements: [{ tag:"
+      },
+      {
+        "key": "c5",
+        "label": "连接租约与版本心跳",
+        "reason": "支持连接独占、凭据读取、错误脱敏、版本检查和失效停止流程。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 894,
+          "endLine": 1019
+        },
+        "quote": "export class LarkConnectionManager {\n  private handle?: { close: () => void };\n  private heartbeat?: ReturnType<typeof setInterval>;\n  private token?: string;\n\n  constructor(\n    private readonly db: DatabaseSync,\n    private readonly leases: LarkConnectionLeaseRepository,\n    private readonly secrets: EncryptedSecretS"
+      },
+      {
+        "key": "c6",
+        "label": "媒体端口与 Capture parts 转换",
+        "reason": "支持图片下载的前置条件、占位降级、逐 part 来源信息以及富文本节点解析范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 719,
+          "endLine": 811
+        },
+        "quote": "  /**\n   * H-G15: adapt a raw Lark message into unified capture parts. Text messages stay a\n   * single text part; post (rich text) splits title + paragraphs into separate text\n   * parts; image messages are downloaded through the media port and stored as an\n   * asset-backed image part; a reply/quote carries replyTo p"
+      }
+    ],
+    "questions": [
+      {
+        "question": "生产环境的图片下载端口由哪个模块实现，并如何限制下载大小、超时和 MIME 欺骗？",
+        "why": "当前材料只展示下载接口与调用点，无法确认网络实现及资源安全边界。",
+        "nextStep": "检查 LarkMediaPort 的生产实现及相关行为测试，验证大小上限、超时、鉴权和内容类型校验。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:04:16.823Z",
+    "trace": {
+      "runId": "25229168-08b0-42b2-98de-6901cfc38455",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "c735595c94c823bc7896b073b788c85142fa8db9d7d5bed9da6b56b7cb32ccee",
+      "contextHash": "d8acb76e355f2e0feff0c8e00bb336c15afe6b0675b635a965d05118f17cfe5c",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5b63349191d205390f47e40aebfb48a5bbd2850a772a082b0b38bd71f05a9e10",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8d-2fa7-77e3-99a5-c5f675847b69"
+      ],
+      "usage": {
+        "used": 56187,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 138923,
+          "utf8Bytes": 146653,
+          "estimatedTokens": 48885,
+          "budgetedTokens": 61107,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:04:38.856Z",
+    "trace": {
+      "runId": "5be0c1b1-a3ad-4195-82a9-939d4bd72636",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "bd3f03dccbb3b250d83d8f15b1363467012a657f0bf8ee423fbfe56bdabd6120",
+      "contextHash": "2cf9ab867ba0cf0c530046e8bd5f627bb004b94886b65120a1f0d82d305aac07",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f07de0ad7eda1d0e6cf2b044de3073ecca4bf295dc6fccec301c5c6148aa3966",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8d-aefe-7681-b4cb-9a42d54d6ffd"
+      ],
+      "usage": {
+        "used": 53686,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 137307,
+          "utf8Bytes": 144043,
+          "estimatedTokens": 48015,
+          "budgetedTokens": 60019,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

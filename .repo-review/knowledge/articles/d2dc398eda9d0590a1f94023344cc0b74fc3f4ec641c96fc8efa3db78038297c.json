@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+    "title": "飞书凭据加密文件存储",
+    "summary": "使用环境提供的 32 字节主密钥，以 AES-256-GCM 将飞书应用凭据写入受限权限文件，并提供引用校验、原子落盘、读取解密、删除及配对码 HMAC。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "key_and_storage",
+        "title": "密钥与落盘流程",
+        "body": "存储接受 32 字节 Buffer，或把字符串按 64 位十六进制/ Base64 解码；长度不符立即拒绝。环境构造要求 `OMEM_SECRET_KEY`，秘密目录创建为 `0700`。对外只暴露形如 `lark:<UUID>` 的引用，路径函数严格校验引用格式，避免任意路径拼接。[[c1]]\n\n写入时生成 12 字节随机 IV，以 AES-256-GCM 加密包含 appId 和 clientSecret 的 JSON，并保存版本、算法、IV、认证标签和密文。数据先以独占模式写入 `0600` 临时文件并 fsync，再重命名为正式文件、修正权限并尝试同步目录，从而缩小部分写入或崩溃造成损坏的窗口。[[c2]]"
+      },
+      {
+        "key": "read_remove_hash",
+        "title": "读取、删除与配对码摘要",
+        "body": "读取只接受版本 1 和 AES-256-GCM，使用保存的 IV 与认证标签解密；密文、标签或密钥错误会由 GCM 校验导致失败，而不是返回未经认证的明文。删除操作仅在文件存在时 unlink，并再次尝试同步目录。[[c3]]\n\n配对码不直接存储，而是用同一主密钥做 HMAC-SHA256，并加入固定、带空字节结尾的领域分隔前缀，避免与其他用途的摘要混用。材料未展示密钥轮换、旧格式迁移或秘密文件枚举，因此这些能力不能据此认定已实现。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "主密钥与秘密引用约束",
+        "reason": "支持密钥格式、环境变量要求、目录权限及引用路径校验的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 22,
+          "endLine": 57
+        },
+        "quote": "type SecretPayload = { appId: string; clientSecret: string };\n\nfunction parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexp"
+      },
+      {
+        "key": "c2",
+        "label": "认证加密与原子写入",
+        "reason": "支持 AES-256-GCM 数据格式、临时文件、fsync、重命名和文件权限流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 72,
+          "endLine": 100
+        },
+        "quote": "  put(secret: SecretPayload) {\n    const reference = `lark:${randomUUID()}`;\n    const path = this.path(reference);\n    const temporary = join(this.directory, `.secret-${randomUUID()}`);\n    const iv = randomBytes(12);\n    const cipher = createCipheriv(\"aes-256-gcm\", this.key, iv);\n    const encrypted = Buffer.concat(["
+      },
+      {
+        "key": "c3",
+        "label": "秘密读取与删除",
+        "reason": "支持格式校验、认证解密及删除后的目录同步行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 102,
+          "endLine": 132
+        },
+        "quote": "  get(reference: string): SecretPayload {\n    const stored = JSON.parse(readFileSync(this.path(reference), \"utf8\")) as {\n      version: number;\n      algorithm: string;\n      iv: string;\n      tag: string;\n      ciphertext: string;\n    };\n    if (stored.version !== 1 || stored.algorithm !== \"aes-256-gcm\")\n      throw E"
+      },
+      {
+        "key": "c4",
+        "label": "配对码 HMAC",
+        "reason": "支持配对码使用带领域分隔前缀的 HMAC-SHA256 生成摘要。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 134,
+          "endLine": 139
+        },
+        "quote": "  hashPairingCode(code: string) {\n    return createHmac(\"sha256\", this.key)\n      .update(\"omem-lark-pairing-v1\\0\")\n      .update(code)\n      .digest(\"hex\");\n  }"
+      }
+    ],
+    "questions": [
+      {
+        "question": "主密钥轮换时，已有秘密文件如何继续解密或迁移？",
+        "why": "文件格式含版本但没有 key ID，构造器也只接受单一密钥；直接更换环境密钥将使旧凭据无法读取。",
+        "nextStep": "确认部署是否明确禁止原地轮换；若需要轮换，设计带 key ID 的格式和原子重加密流程。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/worker.ts",
+      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:03:23.499Z",
+    "trace": {
+      "runId": "8e64f403-ee9d-422b-88a3-822456ee06d0",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "99de9d383536dd9ee0f53294bf948bb0ae78091b353a0b455acb77dce6da0d61",
+      "contextHash": "d2f969fd897c8d9c14d605a61f38e833e62239f2063735a2ed3fd1ccff4ddb3b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "facf0164520ebabc99bddee80c272866bd5d23afd6432d94fc150b3582d489df",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8b-f8b0-7f43-bb43-2189b3846830"
+      ],
+      "usage": {
+        "used": 53846,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 127587,
+          "utf8Bytes": 129449,
+          "estimatedTokens": 43150,
+          "budgetedTokens": 53938,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:03:44.671Z",
+    "trace": {
+      "runId": "ee4b4da7-3d0c-48cd-9c5d-a8c5a4552a15",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "abb4a15fe37af0017b47718a1916fec1bab6920c91268d83ec4c8e93f3b6616a",
+      "contextHash": "3a31d73934e40ca581e63bec669d79ecfbc5105cf99e73b6abfd98ac96929601",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "222dce97e10e86233ccfc4af78e1a430658e88c0306d23cd5036a2014d003648",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee8c-dc69-7453-9eb7-0b40c0051a4f"
+      ],
+      "usage": {
+        "used": 56756,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 145062,
+          "utf8Bytes": 155016,
+          "estimatedTokens": 51672,
+          "budgetedTokens": 64590,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
