@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/status.md",
+    "title": "omem 当前实现状态与能力边界",
+    "summary": "当前实现已覆盖通用知识流程、个人助手、代码知识投影与共用证据阅读，但真实外部集成、语义检索、跨版本身份续接和下游自动重核验仍有限。文档内较早的测试数字、固定端口和无真实模型记录已被顶部的新复审结果替代。",
+    "category": "progress",
+    "sections": [
+      {
+        "key": "current",
+        "title": "当前交付基线",
+        "body": "当前能力应以页面顶部和通用知识流程为准：正文与固定引用合同、八类知识角色、持久分析及独立复核、仓库全材料适配、个人知识入口、问题与待办、知识引导的原始证据召回均已接入；失败、过期或未生成项不计为完成。[[c1]] 2026-09-29 的最新复审中，依赖安装与完整检查通过，浏览器覆盖个人阅读、递归证据、通知和多视口；隔离 review 实例也验证了代码高亮、引用栈、深链、XSS 与焦点行为。[[c2]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "证据等级与剩余限制",
+        "body": "Code Wiki 是统一 Capture→Source/Revision/Fragment 证据链上的代码投影，而非独立事实系统；真实模型说明仍是派生资料，且未经过独立语义核验。跨文件调用、跨 revision 的符号与片段身份续接、embedding 检索及 `refresh_dependents` 完整重核验尚未交付。[[c3]] 页面后半的 Batch 2 清单被明确标记为历史记录，其中部分能力已由 v3 重构；旧测试计数、固定端口及“本机无 traecli”等结论不得覆盖顶部的新状态，但失败历史仍应保留用于追溯。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "当前新增能力说明",
+        "reason": "支持当前知识流程的已接入范围，以及未通过、过期或未生成材料不计完成的口径。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "> **当前新增能力以本段与 [通用知识流程](knowledge-pipeline.md) 为准。** 已接入共用正文/引用合同、八种知识角色、持久分析与独立复核、仓库全材料适配、个人知识入口、正文多层引用、问题/待办、知识引导原始证据召回。所有实现按功能分项提交。全仓 AI 处理与章节生成的逐文件结果见 `.repo-review/knowledge/coverage.json`；没有把未通过、过期或未生成的材料算作完成。下方 Code Wiki 200 文件/6 份说明等统计保留为此前切片的历史记录。\n\n> 本轮后续：实际 Agent 配置改为 `config/review-code-model.json`，生成及 revie"
+      },
+      {
+        "key": "c2",
+        "label": "最新本机复审结果",
+        "reason": "支持依赖、完整检查、浏览器和隔离 review 实例的最新验证结论。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 7,
+          "endLine": 14
+        },
+        "quote": "## 本轮复审验证（Linux / 2026-09-29）\n\n- `osdk deps --frozen` exit 0；完整 `osdk run check` 已通过（51 个测试文件 / 312 用例，含 typecheck + build）。\n- `osdk run browser` exit 0：个人阅读、递归证据、学习任务、当前 AttentionGate 的跨源 claim 决策、通知、768/390、100 层固定证据、失败与重启诚实性。修复初始化导航竞态；旧的“未知转述自动提请用户判断”fixture 已改为当前策略认可的 active claim 跨源冲突。\n- 最终 `dev:review` 实例自动重建，实际端"
+      },
+      {
+        "key": "c3",
+        "label": "Code Wiki 定位与限制",
+        "reason": "说明代码知识投影的证据链定位，并支持模型核验、跨文件调用、语义检索和重核验方面的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 32,
+          "endLine": 43
+        },
+        "quote": "## Code Wiki（通用代码知识纵向切片）实测\n\n> 定位：Code Wiki 不是独立产品，是同一 Capture→Source/Revision/Fragment→Relation/Retrieval 证据链在代码域上的确定性 typed projection；repo-review 只是隔离 dev 配置/视图（5180 API + 5181 web、独立 SQLite、不起业务 worker）。以下数字为 2026-09-29 对运行中 `osdk run dev:review` 实例的实测（`/api/review/*` 直接查询），非设计目标。\n\n- **确定性代码图（无模型）**：TS Compiler AST（"
+      },
+      {
+        "key": "c4",
+        "label": "历史实现记录声明",
+        "reason": "支持 Batch 2 内容仅供追溯、不能作为当前交付清单的判断。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 99,
+          "endLine": 108
+        },
+        "quote": "## 历史实现记录（Batch 2）\n\n> **以下为历史记录，当前产品行为以本页「当前状态」与 assistant-v3 为准。** Batch 2 是 v3 之前的实现包；其中部分能力已被 v3 重构替代（如 quality dataset 守卫、provenance、检索端口），保留此处仅用于追溯，不作为当前已交付清单。\n\n### Batch 2 进度概览\n\n- **B2-01**：Proposal/ProposalBatch/AssessmentBatch/CorrectionProposal v1 严格合同、capture provenance、任务 CAS、SQLite v1→v2 事务迁移与回滚校验。A-M01～A-M"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`refresh_dependents` 的 extractor 与 verifier 重跑何时进入可验收实现？",
+        "why": "当前任务只记录受影响记忆并主动以未实现失败结束，因此来源变化后尚不能自动完成下游知识重核验。",
+        "nextStep": "实现 consolidation 重核验任务后，补充来源变更、失败不覆盖有效知识及恢复幂等的行为测试和真实退出码。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/status.md",
+      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/validation.md",
+      "digest": "5eb15b18beab74b3acb92965d549a00866e74a07934129b495f1eacfd0203b5b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:integrations/traex/hooks.example.json",
+      "digest": "0ce9740fd7d84a9b15fbd12ca8bb9d0490f943747b987ea9d4c4246fe5e61279"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.lock",
+      "digest": "8ea83c4ae93ba830a0045e8b54a64455979ac30a10af73730b5546d379eb90e9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.toml",
+      "digest": "f2f80953f5e21a98762274f91832d3384390ba80aaa52869785489a1f8c94d74"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/knowledge-pipeline.md",
+      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/decisions.md",
+      "digest": "0c9ad65608b280513073e08eb7a7ebf2dba050641f385305f7526cd7a0eb5ad7"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:05:41.326Z",
+    "trace": {
+      "runId": "13ca1481-4530-4536-b4c8-ad75e3c125fd",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "ddf2106406b42ecfaac7dba1cf9e48ac0d4ff33d34ba2793bcd5244a67a1ee93",
+      "contextHash": "fdad3adcf07faa217e8106b3d11882bf065f9534e39545b73bf8c4c673f2a10f",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f633dbb124d5af02e7634607676dba36e279f5d6ad55c7db799ca5ddfa45fbf4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec5-362e-7c20-907e-1753c3f2d913"
+      ],
+      "usage": {
+        "used": 43237,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 63716,
+          "utf8Bytes": 92876,
+          "estimatedTokens": 30959,
+          "budgetedTokens": 38699,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:06:10.894Z",
+    "trace": {
+      "runId": "4df309bb-cc64-43c3-83bf-b49411e91eb4",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "37bee0ec007e22d199c1d9e9d9da4fc3200460f17c7653e3031c92e98be63965",
+      "contextHash": "e24994608a95f1c26a358e3814b5d7b8159e783f1d346c64c39f268cb4dc6043",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c8435882f3cd5c7e1ffd6cc9ebb24e1a45ec3579f7ac0c4ae54bdf04e4c1b9be",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec5-e5fc-7452-89ac-dbb507e626db"
+      ],
+      "usage": {
+        "used": 44572,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 71737,
+          "utf8Bytes": 106928,
+          "estimatedTokens": 35643,
+          "budgetedTokens": 44554,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

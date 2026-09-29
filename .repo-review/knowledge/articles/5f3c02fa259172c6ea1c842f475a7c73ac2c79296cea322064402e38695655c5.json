@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/examples/context.json",
+    "title": "Extractor 上下文合同样例",
+    "summary": "展示个人工作区中的可信采集元数据和一条不可信自然语言材料，用于 extractor 合同中的时间、身份、revision 映射及缺省上下文测试。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "trusted-context",
+        "title": "可信采集元数据",
+        "body": "样例合同版本为 1，任务角色是 extractor。可信上下文把范围设为 personal 工作区和 payments 项目，owner 为所有者；观察时间是 2026-09-22 08:00 UTC，时区为 Asia/Shanghai。actor binding 声明 owner 身份由 authenticated capture receipt 验证，来源为 manual、非转发且生产者为 original。[[c1]]"
+      },
+      {
+        "key": "material",
+        "title": "不可信材料与可提炼信息",
+        "body": "materials 仅含一个 fragment/source revision 对及一句自然语言：“我负责在本周五18:00前补齐支付重试方案，先核对现有接口。”它可作为任务候选及相对时间解析的材料依据。[[c2]] 不过正文中的“我负责”不能单独建立可信身份，fixture 中的 revision 名称也只是别名；身份应来自认证 receipt，测试 harness 应把别名映射到真实 revision。[[c3]]"
+      },
+      {
+        "key": "empty-context",
+        "title": "缺省关联状态",
+        "body": "`related_memories` 与 `confirmed_corrections` 均为空，直接表示该 fixture 没有提供相关记忆或已确认纠正。[[c4]] 这一状态只描述本次输入，不能据此推断系统是否支持这些能力，也不能单独推导材料之外的后续验证流程。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "可信采集上下文字段",
+        "reason": "支持工作区、项目、观察时间、时区、认证身份和来源属性的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/context.json",
+          "startLine": 1,
+          "endLine": 18
+        },
+        "quote": "{\n  \"schema_version\": 1,\n  \"job_id\": \"fixture-job-1\",\n  \"role_id\": \"extractor\",\n  \"trusted_context\": {\n    \"workspace_id\": \"personal\",\n    \"project_id\": \"payments\",\n    \"owner_id\": \"owner\",\n    \"observed_at\": \"2026-09-22T08:00:00Z\",\n    \"timezone\": \"Asia/Shanghai\",\n    \"actor_binding\": {\n      \"id\": \"owner\",\n      \"verified_by\": \"authenticated_capture_receipt\"\n    },\n    \"source_kind\": \"manual\",\n    \"is_forwarded\": false,\n    \"producer_kind\": \"original\"\n  },"
+      },
+      {
+        "key": "c2",
+        "label": "支付重试任务材料",
+        "reason": "支持材料文本、revision locator 以及可从自然语言提炼任务候选和相对截止时间的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/context.json",
+          "startLine": 19,
+          "endLine": 25
+        },
+        "quote": "  \"materials\": [\n    {\n      \"fragment_revision_id\": \"fixture-fragment-1\",\n      \"source_revision_id\": \"fixture-source-r1\",\n      \"text\": \"我负责在本周五18:00前补齐支付重试方案，先核对现有接口。\"\n    }\n  ],"
+      },
+      {
+        "key": "c3",
+        "label": "身份与 revision 映射合同",
+        "reason": "支持正文自报不能建立身份，以及 fixture alias 必须映射为真实 SourceRevision 与 FragmentRevision 的限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/README.md",
+          "startLine": 3,
+          "endLine": 5
+        },
+        "quote": "这些文件是 batch2 待实现合同，均为虚构验收数据；不能直接调用现有 API 或填入当前严格 omem.local.json。\n\n- context.json：可信采集上下文 + 不可信材料。fixture alias 由测试 harness 映射为真实的 SourceRevision/FragmentRevision；身份元信息由认证 receipt 生成，不接受客户端正文自报。"
+      },
+      {
+        "key": "c4",
+        "label": "空关联记忆与纠正集合",
+        "reason": "直接支持该 fixture 未提供相关记忆或已确认纠正的状态，且不扩展推断额外流程。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/context.json",
+          "startLine": 26,
+          "endLine": 27
+        },
+        "quote": "  \"related_memories\": [],\n  \"confirmed_corrections\": []"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+      "digest": "26af6f2d950c0c59bc07bd5b7ce884d8c00f6259d7e132ca12665bd204c8e223"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+      "digest": "0a545b5b1d1e4a705fc685d81fa08509c19d649853d41ebd2ca0f55eb0180a0a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-08-learning-verification.md",
+      "digest": "ff4cabe1b059ab28c23ab9ae1ee819bc541c085a521f1a652c9232512b6bb7a0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/document-validation.md",
+      "digest": "91236b7fd3a97d9674477f4aea4577b7123cec103d93a3d35b26a7284e5a9283"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/README.md",
+      "digest": "f8efba9b92044cbdc73ea43212ade6660f72efe82a277617869563464c591dd9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/context.json",
+      "digest": "98881c0a291e6bdd1c8be46eb299c346cd3b1c23ed7259c260254cd4486de72a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:05:15.179Z",
+    "trace": {
+      "runId": "40c9479a-0216-4e41-8a45-a7a373d2cda1",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "25849f3cc13c314d98bac9018276e0e5949d8061cbeb2ef205e6d26b45fc3457",
+      "contextHash": "684af6447f3c837dc9006a9e01875bdaed02cb9f475028636cc5b6abc629bf8c",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c4a3475b8f668cee98138decc16bdb069c2843bf8eaebde1ed8c5fad28ec63f6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed43-f7c9-7151-bd98-98fd788075d3"
+      ],
+      "usage": {
+        "used": 42302,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49726,
+          "utf8Bytes": 73618,
+          "estimatedTokens": 24540,
+          "budgetedTokens": 30675,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:05:31.745Z",
+    "trace": {
+      "runId": "48b1edae-6e23-460d-a1d5-5d97c5773364",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "1b367ca6a43e4110a0965cdadeaee6d7a76a895e7346b71391d25016f8688269",
+      "contextHash": "944191251d24fcaf44d8afed5a49240755f88a7445edaf5ac0c73844a56222b7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e00b8297140a0e90b464405c5763bc9db1346d7b69edb26d9f32dd6abd2d48ce",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed44-fc7a-7dd0-95db-6686598e81fa"
+      ],
+      "usage": {
+        "used": 32959,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49307,
+          "utf8Bytes": 72791,
+          "estimatedTokens": 24264,
+          "budgetedTokens": 30330,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+    "title": "Proposal v1 草案 Schema",
+    "summary": "以 JSON Schema 约束任务、主张、经历和方法四类提案，统一证据、作用域、来源与乐观并发字段，并针对更新或替代操作要求目标及预期版本。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "common_contract",
+        "title": "公共合同与证据",
+        "body": "该文件自称“Proposal v1 draft”，要求提案携带版本、ID、种类、操作、作用域、正文、证据、不确定性、理由、预期版本及来源，并拒绝顶层未知字段。[[c1]] 证据至少一项，可为带精确引文和 Unicode 选择器的文本证据，也可为绑定资源哈希、推断标记、可选归一化区域及观察描述的图片证据。[[c2]] 这是合同草案本身，不能据此断言所有生产入口都已采用或完整验证它。"
+      },
+      {
+        "key": "typed_bodies",
+        "title": "分类正文与并发约束",
+        "body": "Schema 按 kind 收紧正文：task 要求标题、负责人、截止时间、原始日期表达和下一步；claim 保存陈述、归因及有效期；episode 保存触发、动作、核验引用和结果；procedure 则要求前置条件、步骤、验证、反例及不适用范围。[[c3]] 当操作为 update 或 supersede 时，必须提供非空 target_id，且 expected_versions 至少包含一项，用于阻止对过期目标的无条件覆盖。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "提案公共必填字段",
+        "reason": "支持 Schema 的草案性质、顶层必填字段及禁止未知属性的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+          "startLine": 1,
+          "endLine": 20
+        },
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"https://omem.invalid/contracts/Proposal.v1\",\n  \"title\": \"Proposal v1 draft\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",\n    \"proposal_id\",\n    \"kind\",\n    \"operation\",\n    \"scope\",\n    \"body\",\n    \"e"
+      },
+      {
+        "key": "c2",
+        "label": "文本与图片证据分支",
+        "reason": "支持两类证据结构及其固定修订、哈希、区域和观察约束。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+          "startLine": 73,
+          "endLine": 194
+        },
+        "quote": "    \"evidence\": {\n      \"type\": \"array\",\n      \"minItems\": 1,\n      \"items\": {\n        \"oneOf\": [\n          {\n            \"type\": \"object\",\n            \"additionalProperties\": false,\n            \"required\": [\n              \"fragment_revision_id\",\n              \"source_revision_id\",\n              \"exact_quote\",\n        "
+      },
+      {
+        "key": "c3",
+        "label": "分类正文约束",
+        "reason": "支持任务、主张、经历和方法各自采用不同必填正文的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+          "startLine": 240,
+          "endLine": 470
+        },
+        "quote": "  \"allOf\": [\n    {\n      \"if\": {\n        \"properties\": {\n          \"kind\": {\n            \"const\": \"task\"\n          }\n        }\n      },\n      \"then\": {\n        \"properties\": {\n          \"body\": {\n            \"type\": \"object\",\n            \"additionalProperties\": false,\n            \"required\": [\n              \"title\",\n  "
+      },
+      {
+        "key": "c4",
+        "label": "更新与替代前置条件",
+        "reason": "说明更新或替代操作必须指定目标并携带至少一个预期版本。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+          "startLine": 472,
+          "endLine": 498
+        },
+        "quote": "    {\n      \"if\": {\n        \"properties\": {\n          \"operation\": {\n            \"enum\": [\n              \"update\",\n              \"supersede\"\n            ]\n          }\n        }\n      },\n      \"then\": {\n        \"required\": [\n          \"target_id\"\n        ],\n        \"properties\": {\n          \"target_id\": {\n            \"t"
+      }
+    ],
+    "questions": [
+      {
+        "question": "Proposal v1 何时从 draft 固化为受版本兼容承诺保护的正式合同？",
+        "why": "Schema 标题仍标为 draft，但计划要求前后端合同由统一 contracts 包提供；若生产数据已经持久化，后续收紧字段会涉及迁移与兼容策略。",
+        "nextStep": "确认当前运行时采用的 Schema 来源，记录已落库版本，并定义 draft 到正式 v1 的兼容、迁移和弃用规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c4"
+        ]
+      },
+      {
+        "question": "文本 selector 是否需要在 Schema 层直接约束 end 大于 start？",
+        "why": "当前仅分别限制 start≥0、end≥1，无法仅靠该 Schema 排除倒置或空区间，实际正确性依赖额外验证器。",
+        "nextStep": "明确该不变量由应用验证还是自定义 Schema 关键字承担，并加入 start=end、end<start 及 Unicode 多码点测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "Proposal v1 何时从 draft 固化为受兼容承诺保护的正式合同？",
+        "why": "Schema 标题仍为 draft；如果该结构已用于持久化数据，后续字段收紧会涉及兼容和迁移。",
+        "nextStep": "确认运行时采用的 Schema 来源及已落库版本，并定义 draft 到正式 v1 的迁移、兼容和弃用规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c4"
+        ]
+      },
+      {
+        "question": "文本 selector 的 end > start 不变量由哪一层验证？",
+        "why": "当前 Schema 只分别约束 start≥0、end≥1，不能排除空区间或倒置区间。",
+        "nextStep": "明确由应用验证器还是扩展 Schema 约束该不变量，并覆盖 start=end、end<start 和 Unicode 多码点测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+      "digest": "57bc4a176d955ccc50999a1f201a7f90503677ad386f7d38576a952b6e4759c9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.json",
+      "digest": "8890a9d0f200ba397121b9fec766ba53b6a330d9775b8612eb0624ca43a5f6c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+      "digest": "027697a5645460da98414ac5fa2dc6f2ba96e2499b11773cdaa3e70d37e228d6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/role-manifest.json",
+      "digest": "abae1bc06427eb3ed2851a902789db91012e0c48278976d3f79bfa99ac325be6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/lark.md",
+      "digest": "1da226a09ebddf5725d3a814635078e3c821ad84255a25e1282fe227487d4cfb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/plan.md",
+      "digest": "48730bfe90bc4ccf1f05145061765fe65615cbe3f048416dc8044a7f8cd53b7e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:18:08.778Z",
+    "trace": {
+      "runId": "85f1cc15-7e36-493e-ae81-fac6f7369306",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "7ed8740c3520419fff325854592eacede7a7fb5ea8efcfc67f19c09542aa4c0e",
+      "contextHash": "60dbc284d522a199ea3624ec20468144fd8bf7c858ab9b87f2ae24ab572ae1b3",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8cdd0feedc56fe5e7627df4daad8b8c483a9f3750ff94c338324fd337172fbb2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee99-7a72-7933-a8c5-86efc2d8207b"
+      ],
+      "usage": {
+        "used": 37353,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 57975,
+          "utf8Bytes": 73081,
+          "estimatedTokens": 24361,
+          "budgetedTokens": 30452,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:18:33.620Z",
+    "trace": {
+      "runId": "020fb6f8-18e4-492e-ae26-f6fd87329126",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "576dd9ed9cce77a72fb63676a144785c3f02ed6eeb18811fce7098d24a88ffc9",
+      "contextHash": "b69ed1a10d35a0b717b7d5bab4d1073fce4257b54a4f6540589696afc6c4268e",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "05fa0bdbadd66fd0a071cb96ee2a78e6533fd9837739280f9c96f98fcd3aa980",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9a-5e6e-7b20-8ed2-ee5305935116"
+      ],
+      "usage": {
+        "used": 42661,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 79313,
+          "utf8Bytes": 108263,
+          "estimatedTokens": 36088,
+          "budgetedTokens": 45110,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

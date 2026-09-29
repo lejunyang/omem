@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+    "title": "Worker处理、分类与用户注意力策略",
+    "summary": "一份待实现的后台处理政策，定义多维分类、W0–W4渐进处理、交互类型、Attention Gate以及检索基础设施的职责边界。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "pipeline",
+        "title": "多维分类与渐进处理",
+        "body": "输入需分别记录载体、领域、话语行为、证据地位、时间、项目和与用户的关系，并保存provenance、版本、置信理由及unknown。低置信不阻断保存与搜索，代码TODO、历史问题或屏幕观察也不能自动解释为本人指令。[[c1]]\n\n处理从W0保真收录、W1可检索化、W2场景理解，推进到W3有目的提炼和W4巩固维护；新句子本身不是深度提炼理由，触发应来自真实任务、明确整理请求、来源变化或复用价值。[[c2]]"
+      },
+      {
+        "key": "attention",
+        "title": "交互与Attention Gate",
+        "body": "澄清用于缺少执行参数，授权用于高影响或范围变化，权限内完成的正式变化直接通知，质量标注则必须独立opt-in。一次逻辑ChangeSet对应一条清楚通知，后台切片和向量更新不制造额外打扰。[[c3]]\n\nworker不能直接发确认卡；只有问题与当前任务相关、确需owner选择、已完成可行补证且能解释后果时，才创建AttentionCase。[[c4]] MemPalace只位于统一RetrievalPort之后，不能解决说话人、任务归属或提问价值判断，并须映射回固定片段ID。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "分类维度与低置信处理",
+        "reason": "解释多维分类、来源身份区分及unknown不触发默认提问。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+          "startLine": 9,
+          "endLine": 21
+        },
+        "quote": "| 维度 | 示例 | 取得方式/用途 |\n| --- | --- | --- |\n| 来源/载体 | Lark文档、Git、群消息、会话、屏幕、音视频、链接 | connector确定；决定解析与权限 |\n| 内容领域 | 业务概念、接口设计、组织流程、运行故障、个人安排 | 段落多标签，可为unknown；用于检索，不当authority |\n| 话语行为 | 定义、来源声称、约束、历史记录、未来计划、问题、指令、示例、转述、噪声 | 规则+轻量语义分类，保留相邻条件 |\n| 证据地位 | 原始记录、本人指令、他人陈述、派生摘要、OCR推断、已验证结果 | 来源链和验证决定，不由LLM自报可信 |\n| 时间 | 发生、采集、有效、历史、计划/假设 | 原时刻与时区保留，未知不猜；不可用采集时间代替全部时间 |\n| 场景/项目 | 某项目、某需求、某次故障；候选关联 | 明确repo/文档归属/会话上下文优先；不能用Browser/chatId冒充项目 |\n| 与用户的关系 | 正在处理、本人承诺、可能相关、仅背景 | 主助手当前任务和身份映射决定处理优先级 |\n\n数据源Source是“从哪里持续读取”的对象；正文里出现URL只是source reference/candidate。代码是材料类型；代码中的TODO不自动成为你的待办。问题可以是他人的历史问题，也可以是当前owner向助手提问，必须区分。\n\n分类输出保存 provenance、版本、置信/理由、unknown和候选分布。低置信标签不阻断保存或基本搜索，不向用户发“这属于哪个分类”的默认问题。只有分类关系到当前权限/执行或用户主动整理时才需要明确选择。"
+      },
+      {
+        "key": "c2",
+        "label": "W0至W4处理矩阵",
+        "reason": "支持渐进处理阶段、阶段产物和进入W3的价值触发条件。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+          "startLine": 23,
+          "endLine": 33
+        },
+        "quote": "## 2. 分阶段处理矩阵\n\n| 阶段 | 确定性处理 | AI处理 | 产物 | 是否联系用户 |\n| --- | --- | --- | --- | --- |\n| W0 收录 | 类型、编码、大小、重复event、hash、时间、权限、逐消息身份、结构/附件抓取 | 通常不用 | EvidenceEnvelope/原件版本 | 主动导入可给一次接收回执；不逐片段问 |\n| W1 可检索化 | 按标题/表格/代码符号/消息边界切片，原生链接/AST关系，词/向量索引 | 可选文档级概览、多标签/语言/实体候选 | SourceProfile/Index/引用边 | 自动；unknown保留 |\n| W2 场景理解 | 结合当前任务、回复链、会话顺序、主体和时间 | 恢复讨论段落、区分计划/要求/问题、查相关记忆 | WorkingEpisode/任务或知识线索 | 默认不问；交AttentionGate |\n| W3 有目的提炼 | 原件与相关知识召回、版本/引用验证 | 原子主张、例外条件、方法/事项、冲突说明 | 有证据的知识/事项提案 | 普通自动；实际决策才问 |\n| W4 巩固维护 | 等价/重复索引、失效源影响、使用/纠正事件统计 | 合并主题、组织Wiki、抽象方法、发现跨源关联 | 可回滚ChangeSet/专题视图 | 重要变化通知；大范围改动预览 |\n\n进入W3的触发不是“有新句子”。优先触发：用户明确要求记住/组织、当前问题确实用到该信息、当前事项需要更新、来源变更影响现行知识、多个独立经历呈现可复用模式。单个权威材料中的明确规则也可按项目配置提炼，无需等多次使用，但不把整个文档都一口气晋升为正式事实。"
+      },
+      {
+        "key": "c3",
+        "label": "四类用户交互",
+        "reason": "支持澄清、授权、通知、质量标注的语义区分和通知聚合。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+          "startLine": 57,
+          "endLine": 66
+        },
+        "quote": "## 4. 确认、澄清、通知、标注是四回事\n\n| 类型 | 含义 | 例子 | 处理 |\n| --- | --- | --- | --- |\n| 澄清 | 当前请求缺一个影响执行的参数 | “周五”指哪一周/哪个时区 | 主助手问一个具体问题，可保持当前会话 |\n| 授权/确认 | 将执行高影响、范围变化或已有事实替换 | 合并多个专题会改变引用/权限 | 展示diff/范围，绑定版本后执行 |\n| 变化通知 | 已在授权范围内完成正式变更 | 新增待办、修订现行方法 | 及时告知做了什么，不再要求批准 |\n| 质量标注 | 帮开发团队建立评测标签 | 给模型输出打分 | 独立研发模式、明确opt-in和时间预算，不混入日常助理 |\n\n保留用户“每次正式记忆/事项变更都通知”的要求。一次逻辑ChangeSet对应一条清楚的通知并列出变更明细；切片、embedding更新、分类分数等是后台维护记录，不借技术事件制造几十次打扰。通知可以即时显示，也可按用户配置汇总；汇总不丢任何正式变更。"
+      },
+      {
+        "key": "c4",
+        "label": "Attention Gate创建条件",
+        "reason": "解释worker输出何时可以升级为用户可见问题，以及不满足条件时的内部处置。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+          "startLine": 68,
+          "endLine": 79
+        },
+        "quote": "## 5. Attention Gate：worker不能直接发确认卡\n\nworker输出 `Observation/Proposal/ResearchNeed` 后，确定性策略可自动应用低风险变更；其余进入内部队列。只有下面条件同时满足才创建用户可见AttentionCase：\n\n1. 与当前任务、已知承诺或明确个人偏好有关，或影响既有重要知识。\n2. 确实存在需要owner选择/授权的信息；不是解析失败、系统没写分类器、证据根本不足这类机器自己的工作。\n3. 已完成允许范围内的补证，或等待将错过有意义的时间窗口。\n4. 能说明“为什么现在需要问、选项是什么、回答后会怎样、暂不回答如何处理”。\n\n不满足时可 `retain_source`、`defer_until_use`、`fetch_context`、`keep_attributed_claim`、`mark_conflict`、`ignore_noise`。这些都可审计，不等于删除材料。语义insufficient不是生成确认卡的充分条件。\n\nAttentionCase字段：topic/entity、linked_task、reason_now、evidence_refs、attempted_resolution、question、options/effects、risk、expected_versions、expiry/default_action、dedupe_key。主助手合并同一问题，支持用户自然语言补充；选择内容影响proposal时生成新digest重新核验。"
+      },
+      {
+        "key": "c5",
+        "label": "MemPalace职责边界",
+        "reason": "支持MemPalace不能替代身份、任务归属和提问策略，并须映射固定片段ID。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+          "startLine": 112,
+          "endLine": 118
+        },
+        "quote": "## 8. MemPalace 放在哪一层\n\n先加统一 `RetrievalPort`，支持source/evidence/knowledge混合候选回查；当前关键词是baseline。MemPalace独立PoC负责本地embedding/词检索、按scope找材料和渐进上下文，可排在全量知识提炼之前。\n\n但它不会自动解决：谁在说话、是否给owner交办、这条疑问值不值得问人、何时允许更新正式知识。其高层按正文去重也可能合并不同来源，必须经过omem固定片段ID映射。参见 [专项研究](../../research/mempalace/README.md)，仍用中文数据、固定top-k/预算、原件可回查和断网测试决策；本轮不下载模型或安装引擎。\n\n先让来源可检索，可以立即支持主助手回答并积累真实query/use反馈；然后再决定哪些原文值得提炼成长期知识。这样深度整理有目标，也更容易建立有用的关联。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "普通自动应用、大范围改动和高影响操作的具体阈值及项目级覆盖规则是什么？",
+        "why": "政策给出了原则和场景，但没有可执行默认阈值，无法确定ChangeSet应自动提交、预览还是请求授权。",
+        "nextStep": "在版本化策略配置中定义影响计算、默认阈值、项目覆盖和迁移规则，并用边界测试固定行为。",
+        "blocking": true,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/README.md",
+      "digest": "0ff7c4b9eb3a08f1e25fa74363ae025b0056a03ae7bcdf4bcc0af2ac9987fca3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/processing-policy.md",
+      "digest": "c150a2960a40689cc8d95fcfbe7922040936660d0738941ce1582462066f3150"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/README.md",
+      "digest": "dfe6493e7a9bf3ee1adfa25974cbbb512493dff0b6c4a59a847d676b325100f7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/acceptance.md",
+      "digest": "392b0f6e5ffbe40156320049ba487835e58f1328842946f9e3d16277fc9debaf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/agent-runtime.md",
+      "digest": "33a5f18b52edb4c02f44b541c1398edf66c30939ccfb9f573a38d8bb0c3159f1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:06:22.440Z",
+    "trace": {
+      "runId": "456f4b3a-f6f2-4c35-837c-1df98b87b93c",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "4b7cea2a4811c7a0beb88b0b9272be742710a7b92e3b2931ae325d6eaa6230b0",
+      "contextHash": "b14345d505a465a7e754165fb6bf27570d171e43130f57e6228ff2ef48a20823",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "fccfee8238d0bba2f0190120c50c9cdfd8c03ce81c142d98594f0a8bc05cc4e2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed44-cce2-79d2-a87e-26542e2023fb"
+      ],
+      "usage": {
+        "used": 63566,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 79519,
+          "utf8Bytes": 136385,
+          "estimatedTokens": 45462,
+          "budgetedTokens": 56828,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:06:37.826Z",
+    "trace": {
+      "runId": "840430cc-18ac-4786-b538-0b5291d2e168",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "390859f084ddbd582806ad78c6b83feb8558f78831abd9dc4eb782cdfd6c0b71",
+      "contextHash": "59e0048855ebeaa2957f8e9d9ce1945d778657f721ad1fe6608eece36871e96d",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2ee68890d48f33ae9302a3c700d80802ea2d06baf8f37ac04fe3be3a152a402e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed46-015a-7860-aac9-d40ef8540add"
+      ],
+      "usage": {
+        "used": 48897,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 75604,
+          "utf8Bytes": 131130,
+          "estimatedTokens": 43710,
+          "budgetedTokens": 54638,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

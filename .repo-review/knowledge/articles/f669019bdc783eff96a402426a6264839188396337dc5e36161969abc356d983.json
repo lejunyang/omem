@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/prompts/verifier.md",
+    "title": "Verifier 角色起稿",
+    "summary": "规定验证角色应在独立上下文中比对候选、原始证据、可信来源信息和现行知识，输出语义评估而非审批；材料没有证明验证器、确定性检查或最终应用策略已经实现。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "assessment-method",
+        "title": "独立评估方法",
+        "body": "Verifier 不采信提炼器自报的 confidence，而是在全新任务上下文中使用候选、原始证据、可信 provenance、相关现行知识和确定性检查结果。每项候选应判为 supported、contradicted、insufficient 或 needs_scope，并核对主体、事实、适用范围、否定、条件、例外和时间限定是否一致。它还必须区分本人明确承诺、可信指派、他人建议与引述，并检查 owner 和时间解释是否唯一。[[c1]]"
+      },
+      {
+        "key": "failure-and-approval",
+        "title": "证据失败与审批边界",
+        "body": "多个片段联合支持结论时必须全部存在且可用；同范围矛盾和后续纠正也不能因候选较新而被覆盖。图片不可读、OCR 错误、工具尝试、相关性或单例，都不能被提升为已验证语义、完成结果、因果或全局方法。[[c2]] 确定性引文失败时不得判 supported；Verifier 只能给出语义意见和 missing_context，最终应用仍依赖服务端的策略、版本与作用域校验。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "验证输入与主体判定",
+        "reason": "支持验证器使用独立输入、输出四类判定，并区分本人承诺、可信指派、他人建议和引述。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/prompts/verifier.md",
+          "startLine": 3,
+          "endLine": 10
+        },
+        "quote": "目标：判断候选与其证据的关系；不要信任提炼器的自报 confidence。使用全新任务上下文，按 AssessmentBatch schema 输出。\n\n输入只有候选、原始证据、可信 provenance、相关现行知识和确定性检查结果；不需要提炼器的自由推理。\n\n逐条返回 `supported | contradicted | insufficient | needs_scope` 及简短证据理由：\n\n- 支持的是同一主体、同一事实/事项与相同适用范围吗？是否遗漏否定、条件、例外或时间限定？\n- 是本人明确承诺、可信指派、他人建议，还是引述中的句子？任务 owner 与时间解释是否唯一？"
+      },
+      {
+        "key": "c2",
+        "label": "联合证据与错误推断检查",
+        "reason": "支持联合证据完整性、冲突保留、图片可读性，以及不得从尝试、相关性或单例作过度推断的要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/prompts/verifier.md",
+          "startLine": 11,
+          "endLine": 14
+        },
+        "quote": "- 多个片段联合才能支持结论时，是否全部存在且可用？仅有其中一条不能判全部支持。\n- 是否存在同 scope 的现行矛盾或后来的纠正？不能以候选时间更晚就默认更权威。\n- 图片所见能否支持该语义？OCR 误识别、不可读区域不能假装已经验证。\n- 是否从工具尝试推出完成结果、从相关性推出因果、从单个案例泛化成全局方法？"
+      },
+      {
+        "key": "c3",
+        "label": "引文失败与应用边界",
+        "reason": "支持确定性引文失败不得判为 supported，并说明语义评估不能替代服务端最终应用校验。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/prompts/verifier.md",
+          "startLine": 16,
+          "endLine": 16
+        },
+        "quote": "确定性引文失败时不得判 supported。你不能批准应用，只给语义意见与 missing_context；最终执行取决于服务端策略、版本和作用域校验。"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/common.md",
+      "digest": "c7ebefebac3198b8bfea9350de23c4d3900f4dc27e9698e8ad4a6a97eef8da1d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/extractor.md",
+      "digest": "d26c23513bd5d918948bc3dea72f0c2477e634eb81c7733f5e3fb2d642a2a93a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/feedback.md",
+      "digest": "0b1ba84234f48a435dc8f18a918dec264da619afeff522a583bcce7245cdc1df"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/planner.md",
+      "digest": "0d957b615a992a67168bd72e3da9e87d391f37927421444ac9ec4bb3d73954a3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/verifier.md",
+      "digest": "23dd1556eb669bc862300f9824de548c918405f9f199eeb282ce93931f127ed5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/quality-evaluation.md",
+      "digest": "a529c13d290caebb495f38cf0d29f4e8fc18ec26dd8eb83904a53f765556dbb2"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:08:01.867Z",
+    "trace": {
+      "runId": "ad9ea8ad-7132-4273-acd5-065d8c99a0e3",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "b0050245fa36f1c9af28b33a9acb8d226068353b17d4f79d4fbe739d38a7bc71",
+      "contextHash": "bf89522c247579e84df0cb9f6399d72522b2522097283079a4da45f3f4c98aa1",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9b0f86931b5dd447296be714ef34ba5083f255ccfffdc87ea04ea818d332fa67",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed46-e666-7e41-ab3b-5a5572809544"
+      ],
+      "usage": {
+        "used": 31262,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 31056,
+          "utf8Bytes": 49574,
+          "estimatedTokens": 16525,
+          "budgetedTokens": 20657,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:08:13.604Z",
+    "trace": {
+      "runId": "5e3e0986-db1d-43b0-9f44-fa373113e580",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "934969524bc0a52263cc060470cc1d5a32740ff36e3c0fbe116bae0d47c58543",
+      "contextHash": "08d89884cf8864fcf6527cd847fabffb805b58417e51179d03cc819ba04a3602",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "be767e20bbe0903a35da4e386ccdac099a448704d946a0169ebeb16689665594",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed47-84c5-7fa1-8b99-b2f2c2274e5e"
+      ],
+      "usage": {
+        "used": 24932,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28629,
+          "utf8Bytes": 46885,
+          "estimatedTokens": 15629,
+          "budgetedTokens": 19537,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/browser-verification.json",
+    "title": "浏览器验证记录",
+    "summary": "记录真实 Fastify 与 SQLite 后端上的主要浏览器流程、响应式布局和失败状态检查；Agent 使用确定性 ACP 协议 fixture，不能替代真实外部模型或 CLI 的端到端检查。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "coverage",
+        "title": "已记录的行为覆盖",
+        "body": "检查范围包括空工作区捕获、提案与证据流、递归引用及环路、不可变旧版本、决策差异、授权配对、刷新持久化、768px 与 390px 布局，以及 100 个持久证据节点下的有界渲染。[[c1]]"
+      },
+      {
+        "key": "boundary",
+        "title": "验证强度与边界",
+        "body": "记录的错误数组为空，后端为真实 Fastify + SQLite；但 Agent 明确是确定性 ACP 协议 fixture。因此该记录支持夹具路径上的浏览器行为，不证明真实模型、登录状态或外部 CLI 均可用。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "浏览器检查清单",
+        "reason": "支持核心流程、响应式布局和规模场景均被纳入检查。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/browser-verification.json",
+          "startLine": 4,
+          "endLine": 16
+        },
+        "quote": "  \"checks\": [\n    \"empty real workspace and material capture\",\n    \"A-U01 real job, applied proposal, notification and evidence flow\",\n    \"recursive evidence, cycle and return focus\",\n    \"version update and immutable prior revision\",\n    \"task creation and persistent change notifications\",\n    \"A-U02 decision diff, evidence, receipts and stale state\",\n    \"A-U03 QR, direct authorization link, reusable app and pairing\",\n    \"page reload and desktop rendering\",\n    \"A-U04 768px layout and keyboard focus\",\n    \"390px mobile viewport and full-screen dialog\",\n    \"100 persisted evidence nodes and bounded current rendering\",\n    \"A-U05 offline, model, delivery failure and restart truthfulness\""
+      },
+      {
+        "key": "c2",
+        "label": "验证环境说明",
+        "reason": "界定无错误结果、真实后端和确定性协议 fixture 之间的证据边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/browser-verification.json",
+          "startLine": 18,
+          "endLine": 20
+        },
+        "quote": "  \"errors\": [],\n  \"agent\": \"deterministic ACP protocol fixture\",\n  \"backend\": \"real Fastify + SQLite\""
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/research-sources.json",
+      "digest": "d45da3364f493df70f3cf617dc0cf06cf6aa1547425ba9d615c510f11eec3cd2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/browser-verification.json",
+      "digest": "1bb4e5292e112dfabc083287bd958422c0d4a3aa28d1de68756235e6cf993beb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-knowledge-design.md",
+      "digest": "333454e6d0bf89cc86a7d0cd1b619904c686ff98ecc60d308ec055c06b1d93e0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-prototype-gap.md",
+      "digest": "1d1257f66a641a52e4313357458fbb3c801620536926b79c1a1268aeb6642dce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-ui-design.md",
+      "digest": "976ba48c6b2ccf271dd3b3231778ecc1b434c85c85a4fb0151f5fa66216f20db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:15:35.717Z",
+    "trace": {
+      "runId": "eb44d4e0-a6f2-4117-b766-04d13f8f9a51",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "36fc71672f7bd652e1f0799be4f6cf5f2b56983abb0a9193e273ce875a26e977",
+      "contextHash": "162fa073a1a5a2c7663af04926ad94e02ff8aeba53f50806fb971c37cda2da0f",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b806c7a38efc03ed60a727274567993c4791d30698614a945c5ce5abd591a5d3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4c-f2e5-73c0-8090-bf3a88a5009a"
+      ],
+      "usage": {
+        "used": 87583,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 132899,
+          "utf8Bytes": 185439,
+          "estimatedTokens": 61813,
+          "budgetedTokens": 77267,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:15:52.253Z",
+    "trace": {
+      "runId": "391b6c16-1aa5-479a-aca4-5fa191955d9f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "0c658d9d8375303386fa0c950acb8c40cb2e70fcba6eb2fcdf2fbd13baabb112",
+      "contextHash": "935a51abd9c2df578d05d09c5a7308339c6c2a362e30faf54f82ee765cbe5978",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "56ef889cdd915696999b5dbc904104e969c513fd6dee32a5a88a45998b26cb65",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed4e-72cd-73e3-919b-8a39545ea84a"
+      ],
+      "usage": {
+        "used": 71142,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 132332,
+          "utf8Bytes": 185489,
+          "estimatedTokens": 61830,
+          "budgetedTokens": 77288,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

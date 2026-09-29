@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+    "title": "B2-06 飞书实时连接与通知验证",
+    "summary": "记录飞书连接租约、事件收件箱、通知发件箱与决策卡回调的确定性及真实平台验证，并明确全量回归结果、默认装配条件和仍未覆盖的真实场景。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "scope",
+        "title": "实现范围与证据层级",
+        "body": "本轮覆盖飞书 WebSocket 连接租约、事件 inbox、owner notification outbox 与 Card 2.0 决策回调。确定性测试使用官方 SDK adapter 边界、真实 SQLite 重启及注入 transport；在用户授权下，还对隔离的真实飞书应用完成凭据、权限、握手、配对、主动通知、卡片点击和群消息采集验证。真实标识与凭据未提交到仓库，因此仓库内可重复测试与外部平台实测属于两层不同证据。[[c1]]"
+      },
+      {
+        "key": "results",
+        "title": "核心行为与回归结果",
+        "body": "编号验收确认连接租约互斥、事件持久化与去重、回调重放及竞态防护、错误操作者和摘要拒绝、stale approval 阻断，以及通知恢复、供应商 UUID 复用和认证失败停用。短窗与定时聚合由 B2-08 补齐，但真实定时等待发送仍未执行。[[c2]] 最终全量检查明确为 13 个测试文件、79 项测试通过，TypeScript/Vue 类型检查、生产构建及 7/7 组浏览器检查均成功。[[c3]]"
+      },
+      {
+        "key": "limits",
+        "title": "限制与后续关联",
+        "body": "真实平台证据仍未覆盖断网、移群、secret 轮换、三秒回调时限、平台去重窗口及等待窗口后的定时摘要。外部连接组件虽已实现为显式装配组件，但当时默认服务缺少 master key、真实 capability probe 或 host 配置时不会启动；文档中的 B2-07 UI 缺口是该提交时点的历史状态，不能直接当作当前能力结论。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "B2-06 范围与证据等级",
+        "reason": "支持实现范围、确定性测试方法、真实平台验证以及凭据隔离方式的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+          "startLine": 5,
+          "endLine": 14
+        },
+        "quote": "## 范围与证据等级\n\n本轮实现飞书 WebSocket 连接租约与 event inbox、owner notification outbox、Card 2.0 决策 callback。确定性测试使用官方 Node SDK adapter 边界、真实 SQLite 文件/重启和注入 transport。随后用户显式授权创建并更新一套真实飞书测试应用，完成凭据、权限、WebSocket、同应用 pairing、主动通知、卡片 callback 和群消息采集验证。真实 app/open_id/chat_id/message_id 只保存在忽略提交且权限为 600 的 `.omem/verification` 与隔离 `.omem/live-lark` 中；仓库仅记录 app_id 的 SHA-256 指纹 `2819b9b757d55256c59dd2ce0513e7226e85f71b03ac939fd3ae81f69e7e114c`。\n\n固定测试源文件 SHA-256：\n\n- `lark-delivery.test.ts`: `957b4a8068b0ce22750bf38a356f53ed6bf271f9971d2400ffad6ec25de92d10`\n- `lark-realtime.test.ts`: `bb2719abbe80c09c22f7706a9684bbdd03fcbb4c0f9bb940be145ada4a8623d3`\n\n测试动态生成 app/chat/message/event ID、加密 key、nonce 和临时 SQLite，不把任何真实凭据或消息写入仓库。"
+      },
+      {
+        "key": "c2",
+        "label": "B2-06 编号验收结果",
+        "reason": "支持连接、回调、通知与聚合语义的确定性结果，并揭示各真实平台项目的 pass、partial 或 skipped 状态。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+          "startLine": 20,
+          "endLine": 30
+        },
+        "quote": "| A-L08 | pass | 两 worker 只有一个取得 connection lease；连接/reconnecting/connected 事件入库；SDK callback context 归一化；pairing 消息路由 | partial：真实 WS 握手成功，未注入真实断网 |\n| A-L09 | pass | bot-added 后监控 target 立即 active；复用应用已有群由首条消息补建 active target；event_id 去重、同 ID 冲突拒绝；自消息忽略；其他 bot 身份、事件时间和乱序更新保留 | pass：真实私聊 pairing 事件和测试群消息均进入 inbox，群 target 为 active/capture=1 |\n| A-L10 | pass | 同 callback 重放复用一条 command；不同按钮竞态被拒；与 Web 决策竞态只有一个业务结果，卡片按实际状态更新 | pass：真实 Card 2.0 点击后 decision=approved，卡片已更新 |\n| A-L11 | pass | 错 operator/chat/message/nonce/proposal digest/expiry/expected-version digest 全部拒绝，零 command/业务效果 | skipped |\n| A-L12 | pass | callback 先写 event inbox + command 再返回 ACK；注入 DB INSERT 失败时不返回成功，原事件可重投 | skipped：未测平台 3 秒时限 |\n| A-L13 | pass | source head 改变后 queued approval 变 stale，零 task 副作用，结果卡显示需重新查看 | skipped |\n| A-L14 | pass | 移群事件停用该群全部 target/capture；认证失败停用 connection；旧 binding intent 不转发 | partial：真实入群自动激活通过，未执行真实移群/secret 轮换 |\n| A-N01 | pass | application 与 intent 已提交后重开 SQLite，sender 继续发送且 task 不重复 | partial：真实 owner notification 及批准后的变更通知均 delivered；真实进程崩溃仍仅故障注入 |\n| A-N02 | pass | 响应丢失在一小时内沿用同 provider UUID；超窗不再发送并记 `unknown` | skipped：未验证平台去重窗口 |\n| A-N03 | pass | 429 使用 Retry-After、有界 attempt；401/auth 停用 connection/targets；落库错误脱敏 | skipped |\n| A-N04 | pass（B2-08 补齐） | 即时模式保留 5 个独立 intent；短窗模式把 5 个 change 合为一次发送并保留 5 条映射；定时模式按 IANA 时区计算下一发送边界 | 本轮为确定性时间/SQLite/adapter 测试，未等待一次真实定时摘要 |"
+      },
+      {
+        "key": "c3",
+        "label": "B2-06 全量回归结果",
+        "reason": "直接支持79项测试、类型检查、生产构建和7组浏览器检查通过的结论。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+          "startLine": 59,
+          "endLine": 59
+        },
+        "quote": "最终结果：`osdk deps --frozen` exit 0（npm up to date）；`osdk run check` exit 0（13 个测试文件、79 项测试通过，TypeScript/Vue 类型检查和生产构建通过）；`osdk run browser` exit 0（7/7 组浏览器检查通过）。本任务没有调用 ACP，也没有使用或排除任何产品模型；此前用户要求的“验证时不用 Astra”不需要通过写死模型限制来实现。"
+      },
+      {
+        "key": "c4",
+        "label": "B2-06 剩余限制",
+        "reason": "支持外部组件的默认启动条件、当时尚缺 B2-07 UI 的历史状态和真实定时摘要未验证的限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+          "startLine": 61,
+          "endLine": 65
+        },
+        "quote": "## 剩余限制\n\n- `LarkConnectionManager`、delivery worker 和 card worker 是显式装配组件；默认 `main.ts` 在缺少 master key、真实 capability probe 与 host 配置时不启动外部连接。\n- 当前没有 B2-07 的连接设置、群监控状态、投递状态和 decision UI，也没有 `POST .../test` / disconnect API。\n- 短窗合并与定时外发摘要已在 B2-08 补齐并通过确定性验收；尚未等待一次真实定时摘要。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "是否需要补做真实断网、移群、secret 轮换及等待窗口后的摘要发送验证？",
+        "why": "材料把这些外部平台场景明确标为 partial、skipped 或尚未执行；现有确定性测试不能证明真实平台行为已经通过。",
+        "nextStep": "确定优先级和可接受的平台副作用后，为所选场景建立隔离测试步骤并保存平台结果、receipt 与时间信息。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-06-verification.md",
+      "digest": "26af6f2d950c0c59bc07bd5b7ce884d8c00f6259d7e132ca12665bd204c8e223"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-07-verification.md",
+      "digest": "0a545b5b1d1e4a705fc685d81fa08509c19d649853d41ebd2ca0f55eb0180a0a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-08-learning-verification.md",
+      "digest": "ff4cabe1b059ab28c23ab9ae1ee819bc541c085a521f1a652c9232512b6bb7a0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/document-validation.md",
+      "digest": "91236b7fd3a97d9674477f4aea4577b7123cec103d93a3d35b26a7284e5a9283"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/README.md",
+      "digest": "f8efba9b92044cbdc73ea43212ade6660f72efe82a277617869563464c591dd9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/context.json",
+      "digest": "98881c0a291e6bdd1c8be46eb299c346cd3b1c23ed7259c260254cd4486de72a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:05:15.179Z",
+    "trace": {
+      "runId": "40c9479a-0216-4e41-8a45-a7a373d2cda1",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "25849f3cc13c314d98bac9018276e0e5949d8061cbeb2ef205e6d26b45fc3457",
+      "contextHash": "684af6447f3c837dc9006a9e01875bdaed02cb9f475028636cc5b6abc629bf8c",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c4a3475b8f668cee98138decc16bdb069c2843bf8eaebde1ed8c5fad28ec63f6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed43-f7c9-7151-bd98-98fd788075d3"
+      ],
+      "usage": {
+        "used": 42302,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49726,
+          "utf8Bytes": 73618,
+          "estimatedTokens": 24540,
+          "budgetedTokens": 30675,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:05:31.745Z",
+    "trace": {
+      "runId": "48b1edae-6e23-460d-a1d5-5d97c5773364",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "1b367ca6a43e4110a0965cdadeaee6d7a76a895e7346b71391d25016f8688269",
+      "contextHash": "944191251d24fcaf44d8afed5a49240755f88a7445edaf5ac0c73844a56222b7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e00b8297140a0e90b464405c5763bc9db1346d7b69edb26d9f32dd6abd2d48ce",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed44-fc7a-7dd0-95db-6686598e81fa"
+      ],
+      "usage": {
+        "used": 32959,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 49307,
+          "utf8Bytes": 72791,
+          "estimatedTokens": 24264,
+          "budgetedTokens": 30330,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

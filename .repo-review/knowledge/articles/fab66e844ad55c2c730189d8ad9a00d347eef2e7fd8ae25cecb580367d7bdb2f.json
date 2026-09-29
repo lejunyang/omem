@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/plan.md",
+    "title": "批次二：从材料到可治理记忆的实施方案",
+    "summary": "描述持久提炼、证据核验、自动应用、用户决策、来源刷新和反馈学习的目标架构，并记录批次二的实现进展。状态摘要与飞书专项材料对通知聚合完成度存在口径差异，不能据计划性描述推断全部能力已落地。",
+    "category": "progress",
+    "sections": [
+      {
+        "key": "scope_flow",
+        "title": "进展口径与端到端流程",
+        "body": "状态摘要称 B2-01～07 已实现，B2-08 已接入受控学习 worker、生产飞书 host 和 A-N04 通知聚合，但 40/120 质量集及其余发布门仍未完成。[[c1]] 飞书专项记录却限定 A-N04 仅通过逐条即时投递，短窗合并与定时外发摘要仍待实现；因此“聚合已接入”不能解释为完整聚合能力可用。[[c2]] 方案目标流程是捕获原件后由持久 worker 调用角色化 CLI/ACP 提炼，经合同、引文、版本和语义核验，再按风险自动应用、请求补证或终结，并将反馈送回后续处理。[[c3]]"
+      },
+      {
+        "key": "governance",
+        "title": "可靠执行与证据治理",
+        "body": "任务以短事务租约认领，LLM 与网络调用不占用数据库事务；迟到结果提交还需核验租约、generation、取消状态和输入修订，避免旧 worker 覆盖新状态。[[c4]] 提案必须经过严格 Schema、固定修订精确引文、图片来源、独立语义支持、冲突和时间解析检查；模型自报置信度不能跳过这些门。[[c5]] 自动应用还要求身份、范围、证据和副作用均明确，并在同一事务内完成 CAS、不可变修订、变更记录、通知和投递意图。[[c6]]"
+      },
+      {
+        "key": "limits_learning",
+        "title": "刷新、学习与现阶段边界",
+        "body": "来源更新以 revision 和 validity epoch 驱动：旧引用保留固定快照，依赖刷新完成前，陈旧结果也应标记待复核或从现行检索排除。[[c7]] 用户纠正作为带来源的新输入，只在同主体、同范围召回；策略学习先走 offline/shadow，模型不能自行调整 ACL、预算或自动审批条件。[[c8]] 当前所有实体虽保留 workspace_id，但实现仍只有一个已认证 owner，不能据此宣称已有逐人 ACL；屏幕监听、自动改代码和外部业务写入也仍是后续范围。[[c9]][[c10]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "批次二状态摘要",
+        "reason": "支持文档记录的已实现、已接入及质量集和发布门待完成状态。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# 核心实施方案：从材料到可治理的记忆\n\n状态：B2-01～B2-07 已实现；B2-08 的受控学习 worker 主链、生产飞书 host 和 A-N04 通知聚合已接入，主链通过真实 ACP 小样本，40/120 质量集与剩余发布门仍待完成。B2-06 已完成独立应用的真实 WebSocket/通知/卡片/群消息验收。接口继续使用现有 `/api` 前缀，避免混入第一轮蓝图中的 `/v1`。工作项与验收编号见 [交接入口](README.md) 和 [acceptance.md](acceptance.md)。"
+      },
+      {
+        "key": "c2",
+        "label": "通知聚合实际完成度",
+        "reason": "指出 A-N04 目前仅逐条即时投递通过，直接限定并纠正“通知聚合已接入”的可能误读。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/lark.md",
+          "startLine": 122,
+          "endLine": 124
+        },
+        "quote": "A-L01～07 已用注入的官方 SDK adapter 边界、真实 SQLite 和真实加密文件完成确定性验收；测试没有发起外部注册。`LarkOnboardingService` 只有同时获得 32-byte 环境 master key、registration adapter 和真实 capability probe 才应挂到 HTTP host，避免在无法回读权限时先创建应用再误报可用。\n\nA-L08～14/A-N01～05 的本地故障测试已覆盖 lease、重连状态、事件去重/身份、Card 2.0 callback 校验、DB 写失败重投、stale/竞态、移群停用、SQLite 重启、同 UUID 重试、`unknow"
+      },
+      {
+        "key": "c3",
+        "label": "材料到反馈的数据流",
+        "reason": "解释捕获、提炼、验证、策略分流、应用、通知和反馈之间的端到端关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 11,
+          "endLine": 27
+        },
+        "quote": "## 2. 端到端数据流\n\n```mermaid\nflowchart LR\n C[文本/图片/链接/会话事件] --> T[事务：原件版本 + 提炼任务]\n T --> W[持久 worker：聚合与选取上下文]\n W --> M[角色化 CLI/ACP 提炼]\n M --> V[Schema/引文/版本校验 + 语义复核]\n V --> P{应用策略}\n P -->|明确且低风险| A[事务：记忆/事项 + 变更 + outbox]\n P -->|歧义/背景不足/大范围| D[具体决策与补证]\n P -->|无价值/重复| X[终结记录]\n D --> A\n A --> N[应用内通知 + 飞书投递]\n N --> F[纠正/有用"
+      },
+      {
+        "key": "c4",
+        "label": "租约与迟到提交保护",
+        "reason": "支持短事务认领、外部调用不持锁以及结果提交需重新校验的可靠性要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 50,
+          "endLine": 58
+        },
+        "quote": "## 4. 任务状态机与可靠性\n\n`queued → leased/running → succeeded | skipped | awaiting_decision | retry_wait | failed | cancelled`。\n\nSQLite 用短 `BEGIN IMMEDIATE` 事务认领一个到期 job，生成随机 lease_token 并更新 attempt；**LLM/网络调用不持有数据库事务**。初始一个认知 worker、一个投递 worker，之后并发可配。租约要有 heartbeat，推荐 60秒租约、20秒续租，模型超时另配；worker 崩溃后由其他进程回收过期租约。\n\n结果提交必须同时校验 lea"
+      },
+      {
+        "key": "c5",
+        "label": "提案证据验证门",
+        "reason": "支持 Schema、精确引文、图片、语义、冲突和时间解析等多层核验要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 72,
+          "endLine": 85
+        },
+        "quote": "## 6. 提炼与证据核验\n\n提炼输出 `observations/proposals/abstentions`。种类先做 claim、episode、task；procedure 可以生成候选，但未通过方法回放/反例门不能自动成为可执行 Skill。\n\n字段和样例见 [examples/proposal.json](examples/proposal.json)。`confidence` 是解释性特征，不当校准概率；需要独立保存来源强度、背景完整度、引文匹配、语义支持、冲突和影响范围。模型自报分数不能跳过任何必需门槛。\n\n确定性验证：\n\n1. schema 严格，拒绝未知操作/超长内容、虚构目标 ID 和任意代码片段作为执行指令。"
+      },
+      {
+        "key": "c6",
+        "label": "自动应用与事务顺序",
+        "reason": "支持多条件自动应用、CAS、不可变修订、通知、投递意图和幂等提交的设计。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 87,
+          "endLine": 102
+        },
+        "quote": "## 7. 自动应用与用户决策\n\n| 类别 | 自动动作 | 等待/拒绝条件 |\n| --- | --- | --- |\n| 明确本人事项 | 创建/补充 task，并通知 | 说话人/承担关系/截止时间冲突；只是一段引用/建议 |\n| 文档有支持的新事实 | 生成限定来源与范围的 ClaimRevision | 权威性未知则记“来源声称”；不能自动升级为全局事实 |\n| 经历/观察 | 自动保存可观察事件与 unknown/partial outcome | 不从“工具成功”推出任务整体成功 |\n| 同权威来源版本修正 | 范围一致且证据齐全时 supersede | 覆盖不同来源的既有结论、背景不全、冲突未解 |\n| 方法候选 "
+      },
+      {
+        "key": "c7",
+        "label": "来源更新与固定快照",
+        "reason": "支持 revision 级依赖、有效性 epoch、陈旧结果处理及旧快照不可修改的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 106,
+          "endLine": 110
+        },
+        "quote": "## 8. 来源更新与自学习闭环\n\n本批先做 revision 级依赖：生成记忆时登记支持来源 revision 与 validity_epoch；source head 更新同事务增加 epoch 并入队 refresh_dependents。后台逐项判定是否仍支持；在完成前普通现行检索应基于支持集合 epoch 把陈旧结果标待复核/排除，不能等待全图传播后才生效。\n\n旧引用仍打开固定 snapshot。跨 revision 精细 Fragment 续接另行做；不能修改旧 fragment.text 达到“刷新”。暂不沿 related_to 扩散失效，只沿 supported_by/derived_from/depends_on"
+      },
+      {
+        "key": "c8",
+        "label": "反馈与受控策略学习",
+        "reason": "支持纠正作为新输入、限制召回范围及 offline/shadow 学习的权限边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 112,
+          "endLine": 114
+        },
+        "quote": "反馈分三类：纠正事实、调整任务/范围、评价本次结果。反馈带身份、原修订和证据，是新的输入，不直接修改 policy 自身。先在**同主体/同范围**的后续提炼中召回已确认纠正，阻止重复错误；“谢谢/点击/模型自评成功”只记弱反馈。自己生成的答案与摘要标为 derived，不能循环喂自己增加独立证据数。\n\n策略学习先 offline/shadow：固定任务集比较候选策略，再小范围启用/恢复。模型无权改 ACL、权限边界、预算上限或自身自动审批条件。此批最低验收是用户修正后相似输入正确体现修正，不能拿“新增记忆数”当学习收益。"
+      },
+      {
+        "key": "c9",
+        "label": "单一认证用户边界",
+        "reason": "直接支持 workspace 字段仅为未来迁移预留、当前不具备逐人访问控制的限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 48,
+          "endLine": 48
+        },
+        "quote": "当前 tasks.version 要加入对外响应和更新前置条件；不能只有 status patch 没有 expected version。所有新增实体保留 workspace_id，为未来团队迁移留位置；当前仅一个已认证 owner，不宣称已有逐人 ACL。"
+      },
+      {
+        "key": "c10",
+        "label": "批次范围之外的能力",
+        "reason": "支持屏幕捕获、自动改代码和外部业务系统操作仍属于后续工作的说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/plan.md",
+          "startLine": 7,
+          "endLine": 9
+        },
+        "quote": "当前 `Runs` 把运行状态放内存，回答直接 capture 为 agent 材料；`Store.record()` 为每个变更写应用内通知；没有持久 job、正式 Claim、Proposal、外部投递或决策合同。`captureSchema.context` 只有应用/会话等少量字段；来源身份/说话人/观察时间不能完整传入模型。当前回答提供过的全部材料被连为 references，不能视作 supported_by。\n\n本批新增持久工作流、角色运行包、Claim/Episode/TaskProposal、证据判定、自动应用、用户决策、反馈，以及独立飞书机器人接入。捕获实际屏幕/全群监听、自动改代码和操作外部业务系统仍是独立后续"
+      }
+    ],
+    "questions": [
+      {
+        "question": "40/120 质量集的样本分层、通过阈值、失败处置和剩余发布门分别是什么？",
+        "why": "状态摘要只说明质量集与发布门尚未完成，所给材料没有样本构成、评分方法、当前通过数或责任人，因而无法判断主链距离可发布状态的实际差距。",
+        "nextStep": "关联验收材料中的编号，补充样本来源、预期结果、评分规则、当前通过数、失败处置及每个发布门的负责人。",
+        "blocking": true,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "A-N04“通知聚合已接入”应精确标记为代码接线、逐条投递，还是包含短窗合并与定时摘要？",
+        "why": "计划摘要称通知聚合已接入，而飞书专项材料明确记录短窗合并和定时外发摘要尚未实现，两份进展口径直接不一致。",
+        "nextStep": "以当前行为测试和运行配置为准，分别标注代码接线、逐条投递、短窗合并、定时摘要、确定性验收和 live 验收状态，并统一两份文档。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "A-N04“通知聚合已接入”应精确标记为代码接线、逐条即时投递，还是包含短窗合并与定时摘要？",
+        "why": "计划摘要称通知聚合已接入，而飞书专项材料明确说明当前只完成逐条即时投递，短窗合并和定时外发摘要仍待实现；草稿已如实保留这一口径差异。",
+        "nextStep": "以行为测试和运行配置为准，分别标注代码接线、逐条投递、短窗合并、定时摘要、确定性验收和 live 验收状态，并统一两份文档。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+      "digest": "57bc4a176d955ccc50999a1f201a7f90503677ad386f7d38576a952b6e4759c9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.json",
+      "digest": "8890a9d0f200ba397121b9fec766ba53b6a330d9775b8612eb0624ca43a5f6c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+      "digest": "027697a5645460da98414ac5fa2dc6f2ba96e2499b11773cdaa3e70d37e228d6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/role-manifest.json",
+      "digest": "abae1bc06427eb3ed2851a902789db91012e0c48278976d3f79bfa99ac325be6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/lark.md",
+      "digest": "1da226a09ebddf5725d3a814635078e3c821ad84255a25e1282fe227487d4cfb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/plan.md",
+      "digest": "48730bfe90bc4ccf1f05145061765fe65615cbe3f048416dc8044a7f8cd53b7e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:18:59.823Z",
+    "trace": {
+      "runId": "b169e98c-1131-4fb2-a3c7-28fcef80acab",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "34cefcf7ac2467b0f4d73fb24c907346bb84badc399e9aad135de0fbbe9b00e1",
+      "contextHash": "b67112b806464fc973118646ebf3767ec1b3f7c543d645faed66a28a95009c9d",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "16186fd86c7a55530aa44db8d0133c432922ca576242a93e85fce40aa012468b",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9a-c0ed-79a2-9aae-fef55ff9983c"
+      ],
+      "usage": {
+        "used": 38641,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 67787,
+          "utf8Bytes": 90779,
+          "estimatedTokens": 30260,
+          "budgetedTokens": 37825,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:19:14.432Z",
+    "trace": {
+      "runId": "15fb7cb7-99f9-4489-9303-0de066a48f90",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "195a1126269beb8dc27471c61411d49ba18d7624e94e954d44cc7b7dc94905d6",
+      "contextHash": "3195605894ceb6b9333b5e96194537d38bcb14ac7557256253dc2bbd90908544",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e86553e2243d27948a2516d2568cbcd210c904b119d7dcf12db594e4aa6ee057",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9b-262d-7aa2-a31e-0a32dd42d787"
+      ],
+      "usage": {
+        "used": 36367,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 66808,
+          "utf8Bytes": 89424,
+          "estimatedTokens": 29808,
+          "budgetedTokens": 37260,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

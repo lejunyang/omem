@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/examples/proposal.json",
+    "title": "任务提案合同示例",
+    "summary": "展示提炼器如何把一段有明确负责人、期限和下一步的材料转换为结构化任务提案，并保留固定证据、作用域、并发版本及派生来源信息。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "proposal_shape",
+        "title": "任务提案内容",
+        "body": "示例提案采用版本 1 合同，操作为创建任务，作用域限定在个人工作区、payments 项目和 owner 主体。任务正文同时保存规范化截止时间与原始时间表达，并给出下一步动作，使后续验证既能使用绝对时间，也能回看提炼依据。[[c1]] 这是一份 fixture 数据，展示期望形状，不单独证明生产提炼、校验或应用流程已经运行。"
+      },
+      {
+        "key": "evidence_origin",
+        "title": "证据与派生来源",
+        "body": "提案引用固定 fragment/source revision，并保存原文、Unicode code point 半开区间选择器；这让系统能够确定性检查引文确实存在于指定修订。[[c2]] 示例还记录空的不确定项、生成理由、预期版本集合，以及 job 和角色包来源，并明确 producer 为 derived，意味着提案是由材料推导出的候选结果，而不是新增的独立证据。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "任务范围与正文示例",
+        "reason": "支持创建操作、个人作用域、负责人、截止时间和下一步等字段说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/proposal.json",
+          "startLine": 1,
+          "endLine": 17
+        },
+        "quote": "{\n  \"schema_version\": 1,\n  \"proposal_id\": \"fixture-proposal-1\",\n  \"kind\": \"task\",\n  \"operation\": \"create\",\n  \"scope\": {\n    \"workspace_id\": \"personal\",\n    \"project_id\": \"payments\",\n    \"subject_id\": \"owner\"\n  },\n  \"body\": {\n    \"title\": \"补齐支付重试方案\",\n    \"owner_id\": \"owner\",\n    \"due_at\": \"2026-09-25T10:00:00Z\",\n    \"du"
+      },
+      {
+        "key": "c2",
+        "label": "固定修订引文",
+        "reason": "支持证据绑定修订、精确原文和 Unicode 选择范围的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/proposal.json",
+          "startLine": 18,
+          "endLine": 29
+        },
+        "quote": "  \"evidence\": [\n    {\n      \"fragment_revision_id\": \"fixture-fragment-1\",\n      \"source_revision_id\": \"fixture-source-r1\",\n      \"exact_quote\": \"我负责在本周五18:00前补齐支付重试方案，先核对现有接口。\",\n      \"selector\": {\n        \"start\": 0,\n        \"end\": 30,\n        \"unit\": \"unicode_codepoint\"\n      }\n    }\n  ],"
+      },
+      {
+        "key": "c3",
+        "label": "不确定性与派生来源",
+        "reason": "说明示例如何记录判断理由、并发版本和派生任务来源。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/examples/proposal.json",
+          "startLine": 30,
+          "endLine": 37
+        },
+        "quote": "  \"uncertainties\": [],\n  \"reason\": \"已验证为本人在已知项目中明确承诺，时间可按观察时刻和时区解析。\",\n  \"expected_versions\": {},\n  \"origin\": {\n    \"job_id\": \"fixture-job-1\",\n    \"role_bundle\": \"extractor@1\",\n    \"producer_kind\": \"derived\"\n  }"
+      }
+    ],
+    "questions": [
+      {
+        "question": "示例中的 due_at 与“本周五18:00前”是否基于某个明确的 observed_at 和时区解析？",
+        "why": "样例给出了绝对时间和自然语言表达，但没有携带观察时间或时区；实施方案要求日期只有在上下文可唯一解析时才能转换。",
+        "nextStep": "在 fixture 说明或 proposal 来源上下文中补充 observed_at、timezone 和解析依据，并增加跨时区或缺失时间时转入不确定项的测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "示例中的 due_at 是基于哪个 observed_at 和时区把“本周五18:00前”解析出来的？",
+        "why": "样例保存了绝对时间和自然语言表达，却没有携带观察时间、时区或解析依据；仅凭该文件无法复算日期。",
+        "nextStep": "在 fixture 说明或来源上下文中补充 observed_at、timezone 和解析依据，并增加缺少时间背景或跨时区时转入 uncertainties 的测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/lark-registration.json",
+      "digest": "57bc4a176d955ccc50999a1f201a7f90503677ad386f7d38576a952b6e4759c9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.json",
+      "digest": "8890a9d0f200ba397121b9fec766ba53b6a330d9775b8612eb0624ca43a5f6c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/proposal.schema.json",
+      "digest": "027697a5645460da98414ac5fa2dc6f2ba96e2499b11773cdaa3e70d37e228d6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/examples/role-manifest.json",
+      "digest": "abae1bc06427eb3ed2851a902789db91012e0c48278976d3f79bfa99ac325be6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/lark.md",
+      "digest": "1da226a09ebddf5725d3a814635078e3c821ad84255a25e1282fe227487d4cfb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/plan.md",
+      "digest": "48730bfe90bc4ccf1f05145061765fe65615cbe3f048416dc8044a7f8cd53b7e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:18:08.778Z",
+    "trace": {
+      "runId": "85f1cc15-7e36-493e-ae81-fac6f7369306",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "7ed8740c3520419fff325854592eacede7a7fb5ea8efcfc67f19c09542aa4c0e",
+      "contextHash": "60dbc284d522a199ea3624ec20468144fd8bf7c858ab9b87f2ae24ab572ae1b3",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8cdd0feedc56fe5e7627df4daad8b8c483a9f3750ff94c338324fd337172fbb2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee99-7a72-7933-a8c5-86efc2d8207b"
+      ],
+      "usage": {
+        "used": 37353,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 57975,
+          "utf8Bytes": 73081,
+          "estimatedTokens": 24361,
+          "budgetedTokens": 30452,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:18:33.620Z",
+    "trace": {
+      "runId": "020fb6f8-18e4-492e-ae26-f6fd87329126",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "576dd9ed9cce77a72fb63676a144785c3f02ed6eeb18811fce7098d24a88ffc9",
+      "contextHash": "b69ed1a10d35a0b717b7d5bab4d1073fce4257b54a4f6540589696afc6c4268e",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "05fa0bdbadd66fd0a071cb96ee2a78e6533fd9837739280f9c96f98fcd3aa980",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9a-5e6e-7b20-8ed2-ee5305935116"
+      ],
+      "usage": {
+        "used": 42661,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 79313,
+          "utf8Bytes": 108263,
+          "estimatedTokens": 36088,
+          "budgetedTokens": 45110,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

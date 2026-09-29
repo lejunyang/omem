@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/batch2/prompts/planner.md",
+    "title": "Planner 角色起稿",
+    "summary": "定义基于已有事项和证据生成下一步建议的规划角色，强调状态核验、步骤可验证性和执行权限隔离；输出计划不等于动作已执行，也不能据此推断存在受管理执行器。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "planning-contract",
+        "title": "计划合同与步骤结构",
+        "body": "Planner 的产物是 PlanProposal，而不是实际动作。它必须区分目标、完成状态、前提、依赖和阻塞；未知状态应生成核对步骤，不能标记为已完成。允许提出收集背景、起草文档、拆解任务、建议提醒和请求决策等动作，每一步都需关联输入证据、预期产物、验证方法、owner 决策需求与停止条件。没有受管理 executor 时，这些内容仍只是建议。[[c1]]"
+      },
+      {
+        "key": "authority-and-time",
+        "title": "权限、适用性与时间",
+        "body": "外发消息、改代码、上线或修改数据只能形成明确的 action proposal，“主动推进”不能扩大权限。已验证方法可以优先复用，但必须保留原有前提和例外，跨项目或生产环境时重新确认适用性。提醒只适用于时间明确的事项，并需注明时区和依据；文档明确指出，生成计划不表示计划已经执行，结果只会进入后续 job 或 decision 合同。[[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "规划步骤合同",
+        "reason": "支持计划不执行动作、未知状态须核验，以及每个步骤需要证据、产物和验证方式的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/prompts/planner.md",
+          "startLine": 3,
+          "endLine": 7
+        },
+        "quote": "目标：基于已记录的事项和证据提出可推进的下一步，按 PlanProposal schema 输出，不执行动作。\n\n- 区分目标、已完成状态、前提、依赖和阻塞。对未知状态给出核对步骤，不能标记“已经完成”。\n- 允许建议的动作类型：gather_context、draft_document、break_down_task、suggest_reminder、request_decision。没有受管理 executor 的动作仅为建议。\n- 每个步骤标明输入 evidence refs、预期产物、如何验证、是否需 owner 决策、何时停止。"
+      },
+      {
+        "key": "c2",
+        "label": "规划权限和执行边界",
+        "reason": "支持外部动作不得擅自执行、方法适用性需复核、提醒不能虚构日期及计划输出不代表已执行。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/prompts/planner.md",
+          "startLine": 8,
+          "endLine": 12
+        },
+        "quote": "- 外发消息、改代码、上线、数据修改等只生成明确 action proposal，不能以“主动推进”扩展权限。\n- 优先复用已验证方法，并保留原方法的前提和例外；不同项目/生产环境需要重新确认适用性。\n- 只在时间明确时建议提醒；说明时区和依据，不给无截止日期事项凭空加日期。\n\n完成输出不代表计划已经执行；结果只进入后续 job/decision 合同。"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/common.md",
+      "digest": "c7ebefebac3198b8bfea9350de23c4d3900f4dc27e9698e8ad4a6a97eef8da1d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/extractor.md",
+      "digest": "d26c23513bd5d918948bc3dea72f0c2477e634eb81c7733f5e3fb2d642a2a93a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/feedback.md",
+      "digest": "0b1ba84234f48a435dc8f18a918dec264da619afeff522a583bcce7245cdc1df"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/planner.md",
+      "digest": "0d957b615a992a67168bd72e3da9e87d391f37927421444ac9ec4bb3d73954a3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/prompts/verifier.md",
+      "digest": "23dd1556eb669bc862300f9824de548c918405f9f199eeb282ce93931f127ed5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/quality-evaluation.md",
+      "digest": "a529c13d290caebb495f38cf0d29f4e8fc18ec26dd8eb83904a53f765556dbb2"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:08:01.867Z",
+    "trace": {
+      "runId": "ad9ea8ad-7132-4273-acd5-065d8c99a0e3",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "b0050245fa36f1c9af28b33a9acb8d226068353b17d4f79d4fbe739d38a7bc71",
+      "contextHash": "bf89522c247579e84df0cb9f6399d72522b2522097283079a4da45f3f4c98aa1",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9b0f86931b5dd447296be714ef34ba5083f255ccfffdc87ea04ea818d332fa67",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed46-e666-7e41-ab3b-5a5572809544"
+      ],
+      "usage": {
+        "used": 31262,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 31056,
+          "utf8Bytes": 49574,
+          "estimatedTokens": 16525,
+          "budgetedTokens": 20657,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:08:13.604Z",
+    "trace": {
+      "runId": "5e3e0986-db1d-43b0-9f44-fa373113e580",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "934969524bc0a52263cc060470cc1d5a32740ff36e3c0fbe116bae0d47c58543",
+      "contextHash": "08d89884cf8864fcf6527cd847fabffb805b58417e51179d03cc819ba04a3602",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "be767e20bbe0903a35da4e386ccdac099a448704d946a0169ebeb16689665594",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed47-84c5-7fa1-8b99-b2f2c2274e5e"
+      ],
+      "usage": {
+        "used": 24932,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28629,
+          "utf8Bytes": 46885,
+          "estimatedTokens": 15629,
+          "budgetedTokens": 19537,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
