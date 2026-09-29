@@ -1,0 +1,494 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:web:part-2",
+    "title": "web · 模块理解 · 专题 2",
+    "summary": "Web 模块把代码结构、模块知识、源码与原始证据组织为同一阅读路径，并借助共享 Trail 实现跨层下探、回退与深链；核心流程已有单元测试支撑，但失效目标、超长深链及刷新后的附加状态恢复仍待补齐。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "role",
+        "title": "职责与设计背景",
+        "body": "这一专题关注 Web 端的可追溯阅读：Code Wiki 容器装载快照、代码图和模块理解，将概览、依赖图、模块与文件视图组织为入口。[[c1]] 模块、文件、符号、片段和知识证据统一表示为 Trail 帧，由共享抽屉承担回退、循环识别及阅读历史，而非让各详情页分别维护导航。[[c2]]"
+      },
+      {
+        "key": "flow",
+        "title": "从结构到证据的工作流程",
+        "body": "用户从模块进入文件，再沿符号大纲、调用边或规则关联继续下探。容器把文件、符号和片段事件转换为 Trail 帧；符号缺少所属文件时会从代码图补全，并采用人读标题。[[c3]] 边解析区分同文件符号、跨文件目标与不可解析目标：同文件符号仍打开独立范围帧，外部或缺失目标不产生导航。[[c4]] 知识正文也只有在引用标记为可操作时才生成包含文档、版本和引用键的帧，使派生正文能够回到固定证据。[[c5]]"
+      },
+      {
+        "key": "relations",
+        "title": "跨模块关系与可信展示",
+        "body": "模块桶首先由 contracts 中的共享路径规则确定，Web、UI、contracts、服务端子目录等获得稳定归类。[[c6]] Web 侧纯函数随后统计文件与符号，并聚合两端均可解析的跨模块 import；同模块、外部或缺失目标不会形成模块依赖。[[c7]] 模块说明另按所有文件覆盖范围选择最长、最具体且未过期的理解记录。[[c8]] 展示层则优先采用 DTO 的标题、路径与原因字段，并为旧 missing/stale 状态提供人读回退，避免内部标识成为可见文本。[[c9]] 模块帧目前可下探符号和文件，但 evidence 仍为静态行，已删除文件仍会发出下探事件。[[c10]]"
+      },
+      {
+        "key": "progress_limits",
+        "title": "验证进展与现有限制",
+        "body": "内存 Trail 测试确认十二层栈不会沿用旧的八层截断，并覆盖五层压栈、循环定位及数组切片模拟回退。[[c11]] 独立的 hash 测试才负责证明损坏路径回退概览，以及五层 Trail 写入后可按 kind 与 id 恢复。[[c12]] 刷新恢复时，路由仅重建 kind、id 和以 id 暂代的标题，并按 200 层预算切片；它没有持久化帧的 line 或 scroll。[[c13]] 容器随后只会重新计算人读标题，因此标题可在运行时修正，而行号和滚动位置会丢失，替代此前“这些状态均会重建”的结论。[[c14]] 此外，片段帧尚未展示其他关系，完全无法解析的关系也可能看似可点击却没有反馈。[[c15]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Code Wiki 页面职责",
+        "reason": "概括容器对主视图、代码图和模块理解装载的编排职责，支持对 Web 阅读入口的定位。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "section": "role"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "共享 Trail 帧合同",
+        "reason": "说明 Trail 覆盖模块、文件、符号、片段和知识证据，并定义阅读恢复所需的帧字段。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 1,
+          "endLine": 30
+        },
+        "quote": "/** Shared trail-stack types. A trail is a controlled, single floating drawer\n * that lets the user drill from a module -> file -> symbol -> decision -> test\n * and back. Frames are plain serializable records so the whole stack can be\n * round-tripped through location.hash for deep-link refresh. */\n\nexport type TrailFr"
+      },
+      {
+        "key": "c3",
+        "label": "统一下探转换",
+        "reason": "证明文件、符号和片段事件如何补全目标信息并压入共享 Trail。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 185,
+          "endLine": 216
+        },
+        "quote": "function onDrill(target: {\n  type: \"file\";\n  fileId: string;\n  line?: number;\n} | {\n  type: \"symbol\";\n  fileId: string;\n  symbolId: string;\n  line?: number;\n} | { type: \"fragment\"; fragmentId: string; title?: string }) {\n  if (target.type === \"file\") {\n    const f = graph.value?.files.find((x) => x.fileId === target.fi"
+      },
+      {
+        "key": "c4",
+        "label": "边解析与下探合同",
+        "reason": "解释同文件符号、跨文件目标和缺失目标采用不同导航结果，支持流程边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "section": "navigation-and-labels"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "知识引用导航门槛",
+        "reason": "证明只有可操作引用才会生成包含文档、版本和引用键的导航帧。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 20,
+          "endLine": 23
+        },
+        "quote": "function cite(key: string) {\n  const c = article.value?.citations.find(c => c.key === key);\n  if (!c?.actionable || !article.value) return;\n  emit(\"navigate\", { kind: \"citation\", id: JSON.stringify({ document: props.documentKey, revision: article.value.revision, citation: key }), title: c.label });"
+      },
+      {
+        "key": "c6",
+        "label": "共享模块路径归类",
+        "reason": "支持 Web、UI、contracts、服务端目录和兜底路径形成稳定模块桶的论断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/code-modules.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/** Shared repository-path grouping for the Wiki index and Vue reader. */\nexport function moduleForPath(path: string): string {\n  if (path.startsWith(\"apps/web/\")) return \"web\";\n  if (path.startsWith(\"packages/ui/\")) return \"ui\";\n  if (path.startsWith(\"packages/contracts/\")) return \"contracts\";\n  if (path.startsWith(\"p"
+      },
+      {
+        "key": "c7",
+        "label": "模块节点与依赖聚合",
+        "reason": "证明已删除文件过滤、文件与符号计数，以及跨模块 import 的聚合和排除条件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 56,
+          "endLine": 114
+        },
+        "quote": "/** Aggregate files+symbols+edges into module nodes and inter-module edges.\n * Only confirmed in-repo `imports` edges with a resolved toFileId count as\n * module dependencies; missing (external package) imports are dropped here and\n * shown per-file instead. */\nexport function aggregateGraph(\n  files: CodeFile[],\n  sym"
+      },
+      {
+        "key": "c8",
+        "label": "最具体模块理解匹配",
+        "reason": "支持候选状态过滤、检查模块全部文件及最长目录前缀优先的选择流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 149,
+          "endLine": 182
+        },
+        "quote": "/** Pick the curated module-architect understanding that best describes a module\n * bucket. The curated `targetId` is a repo directory (e.g.\n * `apps/server/src/memory`); we match it by longest prefix against the module's\n * files, preferring the current (non-stale, non-rejected) row. Pure. */\nexport function matchModu"
+      },
+      {
+        "key": "c9",
+        "label": "人读标签与边状态测试",
+        "reason": "验证 DTO 展示字段优先、可读回退，以及 actionable、missing、stale 的原因和禁用规则。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/labels.test.ts",
+          "startLine": 10,
+          "endLine": 41
+        },
+        "quote": "describe(\"human label resolution (DTO-first, never leaks id)\", () => {\n  it(\"fileLabel prefers DTO displayTitle, then basename, never fileId\", () => {\n    expect(fileLabel({ displayTitle: \"runtime.ts\", path: \"apps/server/src/assistant/runtime.ts\" })).toBe(\"runtime.ts\");\n    expect(fileLabel({ path: \"apps/server/src/ass"
+      },
+      {
+        "key": "c10",
+        "label": "模块证据与文件入口",
+        "reason": "证明符号引用可点击、evidence 引用保持静态，并且已删除文件仍保留点击入口。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+          "startLine": 131,
+          "endLine": 166
+        },
+        "quote": "      <OmPanel title=\"证据引用（可下探）\" class=\"stack\">\n        <div v-if=\"nodeRefs.length || evidenceRefs.length\">\n          <button\n            v-for=\"r in nodeRefs\"\n            :key=\"'n' + r.id\"\n            class=\"ref-row\"\n            @click=\"openNodeRef(r)\"\n          >\n            <OmBadge tone=\"neutral\">符号</OmBadge>\n     "
+      },
+      {
+        "key": "c11",
+        "label": "Trail 内存栈测试",
+        "reason": "仅支持长链不截断、五层压栈、循环定位及切片模拟回退，不将其误作 hash 往返证据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/trail.test.ts",
+          "startLine": 21,
+          "endLine": 43
+        },
+        "quote": "  it(\"pushFrame keeps long chains (no silent truncation at 8)\", () => {\n    let stack: TrailFrame[] = [];\n    for (let i = 0; i < 12; i++) stack = pushFrame(stack, fr(\"file\", \"f\" + i));\n    expect(stack).toHaveLength(12);\n    expect(stack[0].id).toBe(\"f0\"); // oldest kept, not dropped at depth 8\n  });\n\n  it(\"supports a"
+      },
+      {
+        "key": "c12",
+        "label": "Hash 回退与五层往返测试",
+        "reason": "直接验证损坏 hash 回退概览，以及五层 Trail 写入、解析后的身份和顺序保持。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/hashroute.test.ts",
+          "startLine": 36,
+          "endLine": 53
+        },
+        "quote": "  it(\"falls back on corrupt hash\", () => {\n    expect(parseHash(\"#/totally/bogus\").view.name).toBe(\"overview\");\n  });\n  it(\"round-trips a 5-level drill trail\", () => {\n    const route = {\n      view: { name: \"graph\" as const },\n      trail: [\n        { kind: \"module\" as const, id: \"assistant\", title: \"assistant\" },\n   "
+      },
+      {
+        "key": "c13",
+        "label": "Hash 帧恢复与长度预算",
+        "reason": "证明 Trail 恢复只构造 kind、id 和临时标题，并按 MAX_TRAIL 限制序列化栈。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 33,
+          "endLine": 45
+        },
+        "quote": "  // Pull off a trailing /trail/<kind>/<id>/... suffix, then parse the view.\n  let trail: TrailFrame[] = [];\n  const trailIdx = raw.indexOf(\"/trail/\");\n  if (trailIdx >= 0) {\n    const trailRaw = raw.slice(trailIdx + \"/trail/\".length).split(\"?\")[0];\n    const tparts = trailRaw.split(\"/\");\n    for (let i = 0; i + 1 < tp"
+      },
+      {
+        "key": "c14",
+        "label": "恢复后的标题修正",
+        "reason": "证明容器恢复 Trail 后仅调用标题修正并设置当前帧，没有重建 line 或 scroll。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 246,
+          "endLine": 250
+        },
+        "quote": "  if (route.trail.length) {\n    trail.value = route.trail;\n    retitleTrail();\n    trailCurrent.value = Math.min(route.trail.length - 1, trail.value.length - 1);\n    trailOpen.value = true;"
+      },
+      {
+        "key": "c15",
+        "label": "片段关系的失效边界",
+        "reason": "指出其他关系未渲染、无法解析的关系仍可能表现为可点击，支持当前限制判断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "section": "boundaries"
+        },
+        "quote": ""
+      }
+    ],
+    "questions": [
+      {
+        "question": "超过 200 层的 Trail 深链应如何提示，并应持久化哪些帧附加状态？",
+        "why": "内存栈可以继续增长，但 hash 会按预算截取；当前序列化只保存 kind 与 id，刷新后文件或符号帧的行号和滚动位置会丢失，也未见明确的截断通知。",
+        "nextStep": "确定 URL 预算触发时的提示文案及 line、scroll 的持久化范围，并增加第 200/201 层和刷新恢复的单元测试与浏览器测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c11",
+          "c12",
+          "c13",
+          "c14"
+        ]
+      },
+      {
+        "question": "evidence 引用、已删除文件和无法解析的片段关系是否都应遵循统一的 actionable/reason 合同？",
+        "why": "模块 evidence 当前不可下探，已删除文件仍可点击；片段关系在目标文件和片段均无法解析时也缺少明确反馈，三处失效行为不一致。",
+        "nextStep": "确定这些对象的可操作性合同，为静态 evidence、removed 文件及 missing 关系补充禁用状态、人读原因和组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c9",
+          "c10",
+          "c15"
+        ]
+      },
+      {
+        "question": "evidence 引用、已删除文件和无法解析的片段关系是否应统一遵循 actionable/reason 合同？",
+        "why": "模块 evidence 当前是静态行；ModuleFrame 对传入的 removed 文件仍保留点击处理；FragmentFrame 的关系目标若既不能解析为文件也没有 fragmentId，点击不会产生导航且没有原因反馈。",
+        "nextStep": "确定三类对象的可操作性合同，并为静态 evidence、removed 文件和 missing 关系补充禁用状态、人读原因及组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c9",
+          "c10",
+          "c15"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+      "digest": "6bf08120dbba105389b257dbc604f8501fd6b0717ba2bd055340e8fd165e2565"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+      "digest": "085ceb881ef2506da6bc0d4c20fd17b636a650f2276dd2c6d4f5f9dfb1d360f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+      "digest": "89b59531ff437aff27e5ef45f8f284f311ce13d221e97ef219867ed21f7106bb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+      "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/edges.test.ts",
+      "digest": "ac821d09b7a452c0e7980d0550ce86b1acc40ae35426d04181af8648da592a64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/hashroute.test.ts",
+      "digest": "60e03ce773e4ed7a31283d2b18d0ea8fe25aee5c65a02747968bfbaa0d9e5eed"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/labels.test.ts",
+      "digest": "e0233aafe5e3c76f3c4747320928755890b0da6a89d6c99103ec039f7e174f7a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.test.ts",
+      "digest": "d040287ff32ac0368675b3c0986a3dca8b05ff9983e9e204f369c1eec38578a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/trail.test.ts",
+      "digest": "b958b8427d678dc236cf158f43c7fdac27c8393004bfb55dccd0a3ea7c41a3cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+      "digest": "814d69fae1955f5e52b01bce1c88aed2ef21547f7b7c782cbc2246edff6fb1d5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+      "digest": "fadbd2c56d55b21ae60e4ca56937ee73381fc86719967f033289f3133dffb188"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+      "digest": "cc075846871d03831b20b9f0eadaeca87913895cb8bc49749ec2efdf888bd183"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+      "digest": "8872348f9b43071fc3d59ab10a39401f36497921acd14b3285fa68b20d7575f9"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+      "digest": "12590533add3f23d9ecd071201e9e071cee064b909064b1d5ad0eadc0acb62f5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/edges.test.ts",
+      "digest": "e47521571f11af38ab2acd5811f0d82f8929854521c2cdf3cee6a8f496ea3b4c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/hashroute.test.ts",
+      "digest": "c21e64b12e1825f6f6584f8e19b4bee814ce280c0dcb2460d159e5112dd31698"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/labels.test.ts",
+      "digest": "80ac0d4432fe6e3c4d46783f5a97cd5e6db21762424b67ea6d232f27a0a8daa8"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/modules.test.ts",
+      "digest": "3a7900daae8353fb86ff27fd03411b35822110031688de621fe6eae6f220d679"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "897f45f23af97d1f83dba92267c788c650659b222af563ac048e14105cd551c0"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/codewiki/trail.test.ts",
+      "digest": "249a8732688062c1c0eaa61bba60c9d77c09fc222d9595bd26d01eb33f615b69"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "e93d16b68ebb10bc83065c14de922a607c422fe9b7d81fceed87cf3662b1f889"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:42:04.383Z",
+    "trace": {
+      "runId": "f10484a1-2538-4d2e-bddc-eb13d0f5db6c",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "e693e1f3f2c33288158f100209f44063b3c3575bda4112be3a6f6020da0db0d8",
+      "contextHash": "9401608c3f4778c7bad994e57b225ce830869833e49959775f7a94312e6f694d",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "fba5e85891f9274a3d802fa642e3209900d0af0c7169b54f0ecabd83696336bd",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee6-ce35-7b01-926b-2bf356eb7331"
+      ],
+      "usage": {
+        "used": 71787,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 169289,
+          "utf8Bytes": 193924,
+          "estimatedTokens": 64642,
+          "budgetedTokens": 80803,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:42:21.956Z",
+    "trace": {
+      "runId": "c5f283e9-aa97-4219-b773-fdeff50e5c43",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c1137eb1a665f5dc58d7c46545c23c33ffbfc6d43cc58f7c77465b4b0c8e82aa",
+      "contextHash": "83f8f45dcf7f0bdcee43e0c7b2da80b5059e0045d2e5580f3338ca058af912ff",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "215c9624beb8f7886610bf32c2c5aa76aa1fcad44d9e2bbebe4df3dbacc734dc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eee7-34af-71e3-abf0-18e4a045c8e2"
+      ],
+      "usage": {
+        "used": 69850,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 168728,
+          "utf8Bytes": 192273,
+          "estimatedTokens": 64091,
+          "budgetedTokens": 80114,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
