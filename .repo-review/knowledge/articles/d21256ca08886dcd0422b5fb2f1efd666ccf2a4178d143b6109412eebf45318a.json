@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/review-wiki.ts",
+    "title": "仓库 Wiki 恢复、生成与降级构建入口",
+    "summary": "脚本先同步固定材料与代码投影；默认优先由共享知识重建索引，显式生成则按目标调用模型、发布理解资产，并继续构建结构化 Markdown Wiki。降级路径选择理解记录时以模型结果优先、同类结果取较新者。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "modes-and-scope",
+        "title": "模式选择与同步前置",
+        "body": "脚本支持默认恢复和显式生成两种模式。使用 `--generate` 时必须至少提供一个 `--target`，以限制生成范围；两种模式都会先执行评审材料同步和代码投影，再恢复共享知识仓库。默认模式若已有共享知识，便直接重建统一知识索引，不进入旧式结构 Wiki 分支。[[c1]]"
+      },
+      {
+        "key": "generation-flow",
+        "title": "理解生成与资产发布",
+        "body": "生成模式从评审模型配置创建隔离的模型端口，并把超时、输入输出 token 上限及上下文预留预算传给每个目标。任一目标失败都会中止；成功结果先导出到运行时暂存区，再复制到 generated 资产目录。[[c2]] 生成完成后仍会进入结构化 Wiki 分支，而不会在本次运行中重建共享知识索引；现有材料未说明生成资产如何进入统一知识链。[[c3]]"
+      },
+      {
+        "key": "fallback-wiki",
+        "title": "结构化 Wiki 的选择与呈现",
+        "body": "降级构建读取当前快照、未移除文件和符号，并按仓库路径归入模块。[[c4]] 对同一目标，脚本先按 `Number(seed)` 升序、再按生成时间降序排序，随后仅展示首条；结合页面以 `note.seed` 区分人工整理与模型结果的逻辑，当前实现表现为假值模型结果优先、同类取较新。此前“人工 seed 优先”的结论被此结论替代。[[c5]] 人工内容和模型内容均带有未完成独立语义复核的来源提示；内部符号标识会转换为限定名，代码引用则拼接文件路径与起始行。理解存储的约束也明确人工 seed 不得声称模型或独立代理验证。[[c6]] 最终 Markdown 仅在内容变化时复制到目标位置，并在结束时关闭存储。[[c7]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "运行模式、同步与共享知识分支",
+        "reason": "支持显式生成的目标约束、同步前置步骤，以及默认模式优先重建共享知识索引的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 14,
+          "endLine": 25
+        },
+        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst generate = process.argv.includes(\"--generate\");\nconst targets = process.argv.filter(a => a.startsWith(\"--target=\")).map(a => a.slice(9));\nif (generate && !targets.length) throw new Error(\"Specify --target=<repo-relative file or directory>; generation is "
+      },
+      {
+        "key": "c2",
+        "label": "模型理解生成与发布流程",
+        "reason": "支持模型端口创建、预算参数传递、失败终止和成功资产复制的流程描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 26,
+          "endLine": 38
+        },
+        "quote": "  if (generate) {\n    const config = loadReviewCodeModelConfig();\n    const model = buildUnderstandingModelPort({ ...config, workspaceDir: join(root, \".repo-review/runtime/agent-workspace\") });\n    if (!model) throw new Error(\"Set REVIEW_CODE_MODEL_CONFIG before requesting generation\");\n    for (const targetId of targe"
+      },
+      {
+        "key": "c3",
+        "label": "生成后的结构 Wiki 分支",
+        "reason": "支持生成模式不会采用共享知识提前分支，而会继续进入结构化 Wiki 构建的论断。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 39,
+          "endLine": 46
+        },
+        "quote": "  }\n  if (!generate && sharedKnowledge.list().length) process.exitCode = 0;\n  else {\n  const snapshotId = currentSnapshotId(store)!;\n  const files = listFiles(store).filter(f => !f.removed);\n  const symbols = symbolsOfSnapshot(store, snapshotId);\n  const symbolById = new Map(symbols.map(s => [s.symbolId, s]));\n  const "
+      },
+      {
+        "key": "c4",
+        "label": "当前快照与模块分组",
+        "reason": "支持降级构建依赖当前快照、有效文件、符号映射和路径模块分组。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 42,
+          "endLine": 50
+        },
+        "quote": "  const snapshotId = currentSnapshotId(store)!;\n  const files = listFiles(store).filter(f => !f.removed);\n  const symbols = symbolsOfSnapshot(store, snapshotId);\n  const symbolById = new Map(symbols.map(s => [s.symbolId, s]));\n  const fileById = new Map(files.map(f => [f.fileId, f]));\n  const modules = new Map<string, "
+      },
+      {
+        "key": "c5",
+        "label": "理解记录排序与去重",
+        "reason": "直接支持模型结果优先、同类按生成时间取较新且每个目标仅展示一条的修正结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 51,
+          "endLine": 62
+        },
+        "quote": "  const current = listUnderstandings(store);\n  for (const [name, group] of [...modules].sort(([a], [b]) => a.localeCompare(b))) {\n    lines.push(\"\", `## ${name}`, \"\");\n    const notes = current.filter(row => group.some(f => f.path === row.target_id || f.path.startsWith(String(row.target_id).replace(/\\/$/, \"\") + \"/\")));"
+      },
+      {
+        "key": "c6",
+        "label": "人工 seed 的验证边界",
+        "reason": "说明人工 seed 被强制标记为 seed，且不得宣称模型运行或独立代理验证，为页面来源提示提供背景。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 17,
+          "endLine": 25
+        },
+        "quote": " * No production model is ever called: modelAvailable is always false, so the\n * validator forces seed=true / model=null / verified_by_agent=false. The\n * curator identity lives in the curated_* columns and the seed file, NOT in the\n * strict output (which forbids claiming a model ran or that a seed was\n * independentl"
+      },
+      {
+        "key": "c7",
+        "label": "Wiki 写入与存储关闭",
+        "reason": "支持仅在内容变化时发布 Wiki，并保证最终关闭存储的边界。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 70,
+          "endLine": 76
+        },
+        "quote": "  const markdown = lines.join(\"\\n\") + \"\\n\";\n  writeFileSync(join(stage, \"wiki.md\"), markdown);\n  const destination = join(root, \".repo-review/wiki.md\");\n  if (!existsSync(destination) || readFileSync(destination, \"utf8\") !== markdown) copyFileSync(join(stage, \"wiki.md\"), destination);\n  console.log(`Wiki written: ${des"
+      }
+    ],
+    "questions": [
+      {
+        "question": "显式 `--generate` 成功后为何继续构建结构化 Wiki，而不是重建共享知识索引？",
+        "why": "生成分支发布理解资产后必然进入降级路径，但材料没有交代这些资产何时被导入共享 Capture→知识链，也无法判断这是兼容设计还是过渡行为。",
+        "nextStep": "核对命令调用方、生成资产导入流程和集成测试；若生成结果应立即进入共享知识，补充导入、恢复及索引重建步骤。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "`listUnderstandings` 返回的 `seed` 是否始终为布尔值或规范化的 0/1？",
+        "why": "当前排序依赖 `Number(seed)`，而展示逻辑依赖其真值；现有材料说明人工结果应为 seed，但未提供查询返回类型或数据库值域。若返回字符串形式的布尔值，排序可能偏离“模型结果优先”的注释。",
+        "nextStep": "检查理解记录 DTO、数据库字段与排序测试，并覆盖人工和模型记录并存时的选择结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "源码链接对含空格、非 ASCII 路径、缺失范围和不同 Markdown 渲染器是否均可用？",
+        "why": "链接由相对文件路径和 `#L行号` 直接拼接，未展示路径转义或目标平台兼容性验证；缺失起始范围时固定回退到第一行。",
+        "nextStep": "增加特殊路径与缺失范围的输出测试，并在实际浏览器或代码托管渲染器中验证跳转。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-wiki.ts",
+      "digest": "e0c0689831eef638a197005cdea1df5c281b01ef2e5971a5f3e879032689f060"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:38.696Z",
+    "trace": {
+      "runId": "17600904-06bd-4ce7-ac22-7bf0a8041a14",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "37a0b41b920073c4d4b2e274000cf2c03a73d5ba60505299d6ea2cb89992dcac",
+      "contextHash": "82469269bbbef6c3bab4310880a1a8a330d54276793aeaf21e88485a714adc6b",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a1a9b0a880c610ac959915d40e117385b806727c5823ecf51fe58d3872b51c58",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-7507-7b00-a374-d67ef776107a"
+      ],
+      "usage": {
+        "used": 24159,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 32725,
+          "utf8Bytes": 38268,
+          "estimatedTokens": 12756,
+          "budgetedTokens": 15945,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:06:52.283Z",
+    "trace": {
+      "runId": "bd023e83-279d-4563-84e3-998ada263137",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "60ca721bf33e8f412ef1e3247b581486595cde54f9cd493236113be2b30556db",
+      "contextHash": "c46d16d840f7200e164a2f2cbc8f147b4f9742b7cdf8d9717342d140ff8e218a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9fc47b69405cc43843902d0303c73012395d608fafd67ccfe07ddbd86b96b8c3",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-c664-74e1-af78-77c2d1c5c91e"
+      ],
+      "usage": {
+        "used": 22084,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 29737,
+          "utf8Bytes": 33677,
+          "estimatedTokens": 11226,
+          "budgetedTokens": 14033,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

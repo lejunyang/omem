@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/quality-lark-annotate.ts",
+    "title": "Lark 质量数据集的实时人工标注入口",
+    "summary": "该脚本导入 Lark 文档为仅评估用途的开发集，启动加密凭据支持的 Lark 标注运行时，等待卡片送达及首个标注事件，并明确处理投递失败、超时和资源清理。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "configuration",
+        "title": "输入与运行配置",
+        "body": "命令要求提供 Lark 文档 URL，并从环境变量或密钥文件取得加密存储密钥；可选应用 ID 必须符合 `cli_` 前缀格式。随后读取 Lark 文档，打开数据 Store，构造加密 Secret Store、官方注册与能力探测、已有应用提供器以及轮询间隔为 500 毫秒的运行主机。[[c1]]"
+      },
+      {
+        "key": "session",
+        "title": "数据导入与标注会话",
+        "body": "文档以 `QUALITY_EVAL_ONLY` 明确选择评估用途，导入为 `dev` split；数据集名称和目标样本数可由环境变量调整。脚本记录既有标注事件数量，启动指定数据集的会话与运行主机，并可通过配置要求重发卡片。[[c2]] 这条链路面向真实 Lark 交互，不是离线 fixture。"
+      },
+      {
+        "key": "waiting",
+        "title": "等待、失败与清理",
+        "body": "循环读取会话状态；首次取得消息 ID 时报告卡片已发送，发现新增标注事件后输出数据集进度并成功结束。[[c3]] 若最近投递进入失败、未知或取消状态，脚本携带最近错误抛错；未送达或超过等待期限也会失败。无论结果如何，最终都会停止运行主机并关闭 Store。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Lark 输入、密钥与运行主机配置",
+        "reason": "支持文档 URL、密钥、应用 ID 校验，以及 Store、加密秘密和 Lark 运行主机的初始化。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 19,
+          "endLine": 50
+        },
+        "quote": "const sourceUri = process.argv[2] || process.env.OMEM_QUALITY_SOURCE;\nif (!sourceUri) throw Error(\"Usage: quality-lark-annotate <Lark document URL>\");\nconst dataDir = resolve(process.env.OMEM_DATA_DIR || \".omem\");\nconst key = process.env.OMEM_SECRET_KEY\n  ? process.env.OMEM_SECRET_KEY\n  : process.env.OMEM_LARK_KEY_FILE"
+      },
+      {
+        "key": "c2",
+        "label": "评估数据导入与会话启动",
+        "reason": "支持仅评估导入、dev split、样本目标、重发选项和运行主机启动流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 52,
+          "endLine": 75
+        },
+        "quote": "try {\n  const imported = importQualityDatasetEval({\n    optIn: QUALITY_EVAL_ONLY,\n    repository: host.quality.repository,\n    document,\n    sourceUri,\n    name: process.env.OMEM_QUALITY_DATASET || \"merchant-center-dev-v1\",\n    split: \"dev\",\n    targetCount: Number(process.env.OMEM_QUALITY_TARGET || 40),\n  });\n  const "
+      },
+      {
+        "key": "c3",
+        "label": "卡片送达与标注事件检测",
+        "reason": "支持卡片发送状态、首个新增标注事件和标注进度的输出逻辑。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 76,
+          "endLine": 124
+        },
+        "quote": "  while (Date.now() < deadline) {\n    const row = store.db\n      .prepare(\n        `SELECT state,message_id AS messageId,current_sample_id AS currentSampleId\n         FROM quality_annotation_sessions WHERE id=?`,\n      )\n      .get(session.id) as\n      | {\n          state: string;\n          messageId: string | null;\n  "
+      },
+      {
+        "key": "c4",
+        "label": "投递失败、超时与资源清理",
+        "reason": "支持失败状态判断、未投递和等待超时错误，以及最终停止主机和关闭 Store。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 125,
+          "endLine": 144
+        },
+        "quote": "    const delivery = store.db\n      .prepare(\n        `SELECT state,last_error AS lastError FROM delivery_intents\n         WHERE annotation_session_id=? ORDER BY created_at DESC LIMIT 1`,\n      )\n      .get(session.id) as\n      | { state: string; lastError: string | null }\n      | undefined;\n    if (delivery && [\"faile"
+      }
+    ],
+    "questions": [
+      {
+        "question": "收到首个标注事件后，是否应继续运行直到整个数据集完成？",
+        "why": "当前脚本检测到事件总数增加便退出，因此只验证卡片投递与至少一次交互，没有证明全部样本完成标注。",
+        "nextStep": "明确该命令是连通性冒烟还是完整标注会话；若要求完整标注，应以数据集进度或会话终态作为结束条件。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/knowledge-browser.ts",
+      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-role-smoke.ts",
+      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-evaluate.ts",
+      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-run.ts",
+      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:37.183Z",
+    "trace": {
+      "runId": "08159a2c-09f4-4c5f-af53-18d681072950",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "560e0dafdece563379ca36d9f827db981aecf29010ed6bc287681ea260c2aabe",
+      "contextHash": "a0386111362f9910f6f6e097f2c8c27a197e97c1848e23f7d41e359787490d54",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d435b80c27c9bf1088a8d21522e860b207fa1cb6ac151fa7db2dcb89b080799b",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-132c-7d61-ab05-7f429116a569"
+      ],
+      "usage": {
+        "used": 40617,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 76094,
+          "utf8Bytes": 83293,
+          "estimatedTokens": 27765,
+          "budgetedTokens": 34707,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:06:58.706Z",
+    "trace": {
+      "runId": "309630fc-fe68-47fd-989d-d0bee97924a8",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "f530586ec0566c1350092d0d3b25618eccf22b070166f09429c21cddf3bab6fb",
+      "contextHash": "36bf10a5b67323f29fc6afa29691164466834c655ab7c1fbe69102e6fd9e1466",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9f7535e6b759bcafcb3c4fa2830a721846ca0774086343ceb4c44d1d206964aa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-c1b6-7753-9e21-feaa8d40754e"
+      ],
+      "usage": {
+        "used": 40054,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 84512,
+          "utf8Bytes": 94799,
+          "estimatedTokens": 31600,
+          "budgetedTokens": 39500,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

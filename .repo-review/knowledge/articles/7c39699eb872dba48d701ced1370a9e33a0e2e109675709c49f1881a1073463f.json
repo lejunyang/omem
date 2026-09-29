@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/live-model.ts",
+    "title": "实时检查的 ACP 模型选择器",
+    "summary": "先通过空会话探测 ACP 暴露的模型选项，再按环境覆盖、基础 profile 或当前默认值确定模型；显式请求不可用时拒绝降级，并把可选 effort 传入实时 profile。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "probe",
+        "title": "能力探测与必要条件",
+        "body": "`selectLiveProfile` 接收基础 AgentProfile 和工作目录，首先以空输入、空事件处理器调用 `acp`，把返回会话作为能力探针。它要求 ACP 暴露 id 为 `model` 且类型为 `select` 的配置项，再通过共享的 `optionValues` 展开候选值；如果模型不可选择，函数直接失败。[[c1]] 这种做法让多个 live smoke 复用同一套实际能力发现逻辑，而不是假定某个本地模型必然存在。"
+      },
+      {
+        "key": "selection",
+        "title": "选择优先级与失败边界",
+        "body": "模型选择顺序是：若设置 `OMEM_LIVE_MODEL`，只接受候选列表中的精确匹配；否则优先采用基础 profile 已配置且仍可用的模型，再退到 ACP 当前值或首个候选。最终没有模型会报错，显式请求未匹配也会报错，因此不会静默改用别的模型。[[c2]]\n\n返回值同时保留原始 probe，并复制基础 profile、覆盖选定模型，把 `OMEM_LIVE_EFFORT` 原样写入 effort。[[c3]] 但本文件没有像模型一样核验 effort 是否为 ACP 支持值；是否由后续 `acp` 校验，需要其余实现证据，当前材料不足以确认。"
+      },
+      {
+        "key": "limits",
+        "title": "适用范围",
+        "body": "该辅助函数只负责实时脚本的模型 profile 组装，不执行具体学习或问答断言。探测本身会启动真实 ACP 会话，因此依赖外部 Agent CLI、工作目录和环境配置；AbortSignal 也未设置超时，若下游不结束，本文件没有独立的超时保护。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "ACP 模型能力探测",
+        "reason": "支持空会话探测、select 类型要求及候选模型展开过程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 1,
+          "endLine": 19
+        },
+        "quote": "import type { AgentProfile } from \"../packages/contracts/src/index.js\";\nimport { acp, optionValues } from \"../apps/server/src/agents.js\";\n\nexport async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  "
+      },
+      {
+        "key": "c2",
+        "label": "实时模型选择优先级",
+        "reason": "支持环境覆盖、基础配置、ACP 默认值的优先顺序及显式请求失败策略。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 20,
+          "endLine": 28
+        },
+        "quote": "  const requestedModel = process.env.OMEM_LIVE_MODEL;\n  const model = requestedModel\n    ? availableModels.find((candidate) => candidate === requestedModel)\n    : base.model && availableModels.includes(base.model)\n      ? base.model\n      : modelOption.currentValue || availableModels[0];\n  if (!model) throw Error(\"No A"
+      },
+      {
+        "key": "c3",
+        "label": "选定 profile 返回值",
+        "reason": "支持保留 probe、覆盖 model 并传入环境 effort 的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 29,
+          "endLine": 36
+        },
+        "quote": "  return {\n    probe,\n    profile: {\n      ...base,\n      model,\n      effort: process.env.OMEM_LIVE_EFFORT,\n    } satisfies AgentProfile,\n  };"
+      },
+      {
+        "key": "c4",
+        "label": "无超时的探测调用",
+        "reason": "支持探测使用新 AbortSignal 但本文件未设置超时的边界分析。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 4,
+          "endLine": 11
+        },
+        "quote": "export async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  );"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`OMEM_LIVE_EFFORT` 是否应像模型一样在本函数内根据 ACP 配置选项做显式支持性校验？",
+        "why": "模型会从 ACP 候选中选择并拒绝不可用值，而 effort 只是从环境直接写入 profile；仅凭本材料无法确认下游是否拒绝不支持的值。",
+        "nextStep": "检查 ACP 调用对 reasoning_effort 的校验合同；若下游不会严格拒绝，则在选择器中探测并验证候选 effort。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-acp-smoke.ts",
+      "digest": "77bb1bae7fda3921075810520871f00b36bba21f3cbd38dec173f39c18af1afe"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-connectors-smoke.ts",
+      "digest": "56767351dc19db5f9be9f5bae5e33d378d427d8e53d56ee1d024075ea6c38e72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-lark-host-smoke.ts",
+      "digest": "da10fc75972adf6fa64420e3c76a2084abe9b5bc928dbdc330d5085f95a72ad3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-learning-smoke.ts",
+      "digest": "f88a7289400e9f805776100fea75384a55628e822fc9ee11e90a9594dc7b0ac9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-model.ts",
+      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-pipeline-smoke.ts",
+      "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:28:47.480Z",
+    "trace": {
+      "runId": "2123580b-2d7e-4b1e-97fc-83f59db5349f",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "b9a8ac8e56fa85230244de54a03ac0c16b8cd000f66c577241cd41197c90a5d3",
+      "contextHash": "63979c2e4296b1ebcd9eda5826f00ede54d26465ebe74d2c21a701fdb603a571",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "79e83ee8547c0b8a9db1230852edd362ece5e1fe27b9d918c7fd9ed6ae2e874a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-4b6f-7f51-aae2-fee504968ba5"
+      ],
+      "usage": {
+        "used": 31129,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 43457,
+          "utf8Bytes": 45461,
+          "estimatedTokens": 15154,
+          "budgetedTokens": 18943,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:29:16.286Z",
+    "trace": {
+      "runId": "7d181020-4f6c-41d0-bfd8-c4620b5caea1",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "711df273712ba84692a4f05f84cc855f851cbc3b9ebeb62b76fbf890e291c676",
+      "contextHash": "c677c030f3469f41c9535021c919516c766bdce66c6107a299ede985f5f1c8cf",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f2c5d8d9398f8ea44754585a10a865a39dfce7aea45a64a32b9895226d8a7ed2",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea4-1dbe-75f1-8694-a6e87c823229"
+      ],
+      "usage": {
+        "used": 34664,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 61184,
+          "utf8Bytes": 71202,
+          "estimatedTokens": 23734,
+          "budgetedTokens": 29668,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

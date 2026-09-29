@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/dev.ts",
+    "title": "个人开发模式入口",
+    "summary": "极薄的兼容入口：先标记 personal 模式，再加载共享开发编排器，使个人应用复用 review 编排器的端口、生命周期与健康检查能力。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "delegation",
+        "title": "模式注入与职责委托",
+        "body": "该文件唯一的运行职责是把 `OMEM_DEV_MODE` 强制设为 `personal`，然后动态导入共享的 `dev-review` 编排模块；空导出用于保持模块语义。[[c1]] 因此它本身不启动服务器、不选择端口也不处理信号，实际行为完全取决于被导入模块读取该环境值后的 personal 分支。"
+      },
+      {
+        "key": "boundary",
+        "title": "覆盖与边界",
+        "body": "赋值是无条件的，所以通过此入口启动时，调用者预先设置的其他模式会被覆盖；这与专门的 review 启动路径形成明确分工。[[c2]] 从现有四行只能确认模式切换和模块加载，无法单独证明包脚本如何调用它，也没有针对该入口的直接断言材料。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "个人模式入口委托",
+        "reason": "支持入口设置 personal 模式并动态加载共享编排器的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev.ts",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "process.env.OMEM_DEV_MODE = \"personal\";\nawait import(\"./dev-review.js\");\nexport {};"
+      },
+      {
+        "key": "c2",
+        "label": "无条件 personal 模式覆盖",
+        "reason": "支持此入口会覆盖既有 OMEM_DEV_MODE 值这一边界判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev.ts",
+          "startLine": 1,
+          "endLine": 2
+        },
+        "quote": "process.env.OMEM_DEV_MODE = \"personal\";\nawait import(\"./dev-review.js\");"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:28:13.545Z",
+    "trace": {
+      "runId": "624a480a-bdbb-476c-bb88-34b3ac1c7222",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "4e30c8e45c6568c904704e25cf6c4bd29d41d78c0e6b4937a5034c8866063316",
+      "contextHash": "99c033e8447b0ad9c4acea8408e5136373b34985ce9720e38dc0b9c129bc987b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c0a57486a7d6ae325006f45b1e78acb77cde0ac2c9d633928060a6f26714f1e2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-ff7e-70b3-bbfb-5db9a9ad201a"
+      ],
+      "usage": {
+        "used": 40233,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80000,
+          "utf8Bytes": 83367,
+          "estimatedTokens": 27789,
+          "budgetedTokens": 34737,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:28:35.528Z",
+    "trace": {
+      "runId": "59cc2e06-ca37-4201-b450-565c01204c21",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "406f49dd53f97ecf5b936cbd97b1a63b1c98784f9066df3ddabb1e222792912a",
+      "contextHash": "99995f2e2774965b94c5ab40b5781a0fa7aa972dac28b495b1c8196b1558915b",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "314eacf2ab4c471142f027a93656ada4f2f827bea446c5011d327d8bf4d7b973",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-9921-7533-bedc-adb7aac4feee"
+      ],
+      "usage": {
+        "used": 42547,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 91314,
+          "utf8Bytes": 99817,
+          "estimatedTokens": 33273,
+          "budgetedTokens": 41592,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

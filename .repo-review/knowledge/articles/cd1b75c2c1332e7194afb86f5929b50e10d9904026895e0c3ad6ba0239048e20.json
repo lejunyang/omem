@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/dev-review-vite.ts",
+    "title": "Repo Review 专用 Vite 子进程",
+    "summary": "为 review 开发模式创建独立 Vite 服务，绕开个人应用代理配置，严格绑定选定 Web 端口并把 API 请求代理到同次编排选定的 review 后端。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "isolation",
+        "title": "配置隔离",
+        "body": "该脚本刻意不读取共享的 `apps/web/vite.config.ts`，因为其中 `/api` 指向个人后端；它以 `configFile: false`、Web 根目录和 Vue 插件构造 review 专用服务，并从环境变量读取 Web/API 端口。[[c1]] 因而同一前端源码可以连接隔离的 review 后端，而无需修改个人开发配置。"
+      },
+      {
+        "key": "lifecycle",
+        "title": "端口和生命周期边界",
+        "body": "Vite 只监听 `127.0.0.1`，`strictPort` 保证端口占用时非零退出，避免控制台宣告与实际监听地址不一致；`/api` 被代理到明确的本地 API 端口。启动后输出解析出的地址，收到 SIGINT 或 SIGTERM 时关闭 Vite 再退出。[[c2]] 本文件不校验端口数字范围、不探测 API 健康，也没有独立重启逻辑，这些职责由上层编排器承担。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Review Vite 配置隔离",
+        "reason": "支持绕过个人代理配置并通过环境变量建立 review 专用前后端连接的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review-vite.ts",
+          "startLine": 1,
+          "endLine": 21
+        },
+        "quote": "/** Vite child for `dev:review`. Spawned by scripts/dev-review.ts as a direct node\n * process so the orchestrator can terminate the whole tree with\n * `taskkill /PID <pid> /T /F` on Windows instead of relying on SIGTERM delivery\n * to a cmd/npx wrapper.\n *\n * It deliberately does NOT read apps/web/vite.config.ts (that "
+      },
+      {
+        "key": "c2",
+        "label": "严格端口、代理与信号退出",
+        "reason": "支持监听范围、strictPort、API 代理和优雅关闭行为的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review-vite.ts",
+          "startLine": 22,
+          "endLine": 40
+        },
+        "quote": "  server: {\n    host: \"127.0.0.1\",\n    port: webPort,\n    // Never silently fall back to another port: if 5181 (or the configured\n    // REVIEW_WEB_PORT) is busy, Vite exits non-zero and the orchestrator\n    // propagates that code instead of printing a URL we are not serving on.\n    strictPort: true,\n    proxy: { \"/ap"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/code-wiki-viewport.ts",
+      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-ports.ts",
+      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review-vite.ts",
+      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/dev.ts",
+      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:28:13.545Z",
+    "trace": {
+      "runId": "624a480a-bdbb-476c-bb88-34b3ac1c7222",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "4e30c8e45c6568c904704e25cf6c4bd29d41d78c0e6b4937a5034c8866063316",
+      "contextHash": "99c033e8447b0ad9c4acea8408e5136373b34985ce9720e38dc0b9c129bc987b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c0a57486a7d6ae325006f45b1e78acb77cde0ac2c9d633928060a6f26714f1e2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-ff7e-70b3-bbfb-5db9a9ad201a"
+      ],
+      "usage": {
+        "used": 40233,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80000,
+          "utf8Bytes": 83367,
+          "estimatedTokens": 27789,
+          "budgetedTokens": 34737,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:28:35.528Z",
+    "trace": {
+      "runId": "59cc2e06-ca37-4201-b450-565c01204c21",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "406f49dd53f97ecf5b936cbd97b1a63b1c98784f9066df3ddabb1e222792912a",
+      "contextHash": "99995f2e2774965b94c5ab40b5781a0fa7aa972dac28b495b1c8196b1558915b",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "314eacf2ab4c471142f027a93656ada4f2f827bea446c5011d327d8bf4d7b973",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-9921-7533-bedc-adb7aac4feee"
+      ],
+      "usage": {
+        "used": 42547,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 91314,
+          "utf8Bytes": 99817,
+          "estimatedTokens": 33273,
+          "budgetedTokens": 41592,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

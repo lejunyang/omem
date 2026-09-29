@@ -1,0 +1,258 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/quality-run.ts",
+    "title": "冻结质量集的隔离实时预测运行器",
+    "summary": "该脚本对冻结数据集逐样本创建隔离 Store，调用真实学习管线生成规范化预测，记录耗时与 token 使用，并以原子替换和逐样本持久化支持断点续跑。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "setup",
+        "title": "冻结集、模型与断点状态",
+        "body": "命令要求冻结数据集标识，验证其 manifest，并从应用配置选择可用的 `traex` 实时 profile。预测文件若已存在，每项必须通过 schema 解析；已有 sampleId 会被视为完成，单次处理数量由环境变量限制且至少为 1。[[c1]] 这使运行可以从已有合法结果续接。"
+      },
+      {
+        "key": "isolation",
+        "title": "逐样本隔离执行",
+        "body": "每个未完成样本都获得独立临时 Store，输入文本、来源位置和 provenance 被捕获后交给 `LearningPipeline`；管线排空并停止，再从内存提案中选取已应用、待决定或已批准状态。[[c2]] 每个样本使用不同 worker 标识和数据目录，避免样本之间共享运行状态。"
+      },
+      {
+        "key": "prediction",
+        "title": "预测映射与故障降级",
+        "body": "存在提案时 disposition 为 `extract`，否则为 `abstain`；对象保留 kind、可读陈述、证据引文，并为 task 附带 owner 与截止信息。脚本汇总任务尝试中的输入、输出 token 和耗时。[[c3]] 若某样本失败，则写入 `needs_context`、空对象、非自动应用及截断错误消息；随后关闭并删除该样本临时目录。[[c4]]"
+      },
+      {
+        "key": "persistence",
+        "title": "持久化与边界",
+        "body": "每处理一个样本就把完整预测数组写入随机临时文件，再重命名到目标并强制 `0600`，从而减少中断造成的半写文件风险。[[c5]] 目录仅在创建时请求 `0700`。最终输出完成数并关闭源 Store；失败样本也会占据 sampleId，因此后续续跑默认不会自动重试。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "冻结数据集与续跑初始化",
+        "reason": "支持数据集冻结校验、实时 profile 选择、已有预测 schema 校验和运行数量限制。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 27,
+          "endLine": 49
+        },
+        "quote": "const datasetId = process.argv[2] || process.env.OMEM_QUALITY_DATASET_ID;\nif (!datasetId) throw Error(\"Usage: quality-run <frozen-dataset-id>\");\nconst config = loadConfig();\nconst sourceStore = new Store(config.dataDir);\nconst repository = new QualityRepository(sourceStore.db);\nconst frozen = repository.verifyFrozen(da"
+      },
+      {
+        "key": "c2",
+        "label": "隔离捕获与学习管线",
+        "reason": "支持逐样本临时 Store、输入 provenance 捕获、学习管线执行和提案状态筛选。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 63,
+          "endLine": 116
+        },
+        "quote": "try {\n  let processed = 0;\n  for (const sample of frozen.samples) {\n    if (completed.has(sample.id) || processed >= limit) continue;\n    const directory = join(\n      tmpdir(),\n      `omem-quality-run-${datasetId}-${sample.ordinal}-${randomUUID()}`,\n    );\n    const store = new Store(directory);\n    const started = Da"
+      },
+      {
+        "key": "c3",
+        "label": "规范化预测与用量统计",
+        "reason": "支持提案到预测对象的映射、自动应用判定，以及耗时和 token 用量记录。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 117,
+          "endLine": 156
+        },
+        "quote": "      const numericUsage = (key: string) => {\n        const values = attempts.flatMap((attempt) => {\n          const value = attempt.usage[key];\n          return typeof value === \"number\" ? [value] : [];\n        });\n        return values.length\n          ? values.reduce((sum, value) => sum + value, 0)\n          : null;"
+      },
+      {
+        "key": "c4",
+        "label": "样本失败降级与隔离清理",
+        "reason": "支持异常样本写入 needs_context 结果，并说明临时 Store 总会关闭和删除。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 157,
+          "endLine": 178
+        },
+        "quote": "    } catch (error) {\n      predictions.push(\n        qualityPredictionSchema.parse({\n          sampleId: sample.id,\n          prediction: {\n            disposition: \"needs_context\",\n            objects: [],\n            autoApply: false,\n            forbiddenEffects: [],\n            notes: \"Runner failed before a valid"
+      },
+      {
+        "key": "c5",
+        "label": "预测文件原子替换",
+        "reason": "支持以随机临时文件、重命名和强制文件权限实现逐批持久化。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 51,
+          "endLine": 61
+        },
+        "quote": "const statement = (body: Record<string, unknown>) =>\n  String(body.title ?? body.statement ?? body.trigger ?? JSON.stringify(body));\nconst persist = () => {\n  mkdirSync(dirname(output), { recursive: true, mode: 0o700 });\n  const temporary = `${output}.${randomUUID()}.tmp`;\n  writeFileSync(temporary, JSON.stringify(pred"
+      }
+    ],
+    "questions": [
+      {
+        "question": "失败并写成 `needs_context` 的样本应如何显式重试？",
+        "why": "续跑逻辑只按 sampleId 判断完成，而异常结果同样被持久化；当前没有展示忽略错误记录或选择性重跑的开关。",
+        "nextStep": "定义失败样本重试策略，例如启动时过滤带 error 的旧预测，或增加明确的重试参数。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:scripts/knowledge-browser.ts",
+      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-role-smoke.ts",
+      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-evaluate.ts",
+      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/quality-run.ts",
+      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:37.183Z",
+    "trace": {
+      "runId": "08159a2c-09f4-4c5f-af53-18d681072950",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "560e0dafdece563379ca36d9f827db981aecf29010ed6bc287681ea260c2aabe",
+      "contextHash": "a0386111362f9910f6f6e097f2c8c27a197e97c1848e23f7d41e359787490d54",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d435b80c27c9bf1088a8d21522e860b207fa1cb6ac151fa7db2dcb89b080799b",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-132c-7d61-ab05-7f429116a569"
+      ],
+      "usage": {
+        "used": 40617,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 76094,
+          "utf8Bytes": 83293,
+          "estimatedTokens": 27765,
+          "budgetedTokens": 34707,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:06:58.706Z",
+    "trace": {
+      "runId": "309630fc-fe68-47fd-989d-d0bee97924a8",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "f530586ec0566c1350092d0d3b25618eccf22b070166f09429c21cddf3bab6fb",
+      "contextHash": "36bf10a5b67323f29fc6afa29691164466834c655ab7c1fbe69102e6fd9e1466",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9f7535e6b759bcafcb3c4fa2830a721846ca0774086343ceb4c44d1d206964aa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-c1b6-7753-9e21-feaa8d40754e"
+      ],
+      "usage": {
+        "used": 40054,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 84512,
+          "utf8Bytes": 94799,
+          "estimatedTokens": 31600,
+          "budgetedTokens": 39500,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
