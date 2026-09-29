@@ -14,6 +14,7 @@
  * so a symbol that disappears after an edit simply keeps its old snapshot_id and
  * is filtered out of the current head view. Edges not re-produced by the latest
  * parse, or touching a removed file, are flipped to stale (never deleted). */
+import { revisionText } from "../source-text.js";
 import { createHash } from "node:crypto";
 import type { Store } from "../store.js";
 import type {
@@ -30,7 +31,7 @@ import type {
   CodeUnderstanding,
 } from "../../../../packages/contracts/src/index.js";
 
-export const PARSER_VERSION = "ts-ast@1+vue-sfc@1+regex@1";
+export const PARSER_VERSION = "ts-ast@1+vue-sfc@1+regex@1+capture@2";
 
 function sha1(s: string): string {
   return createHash("sha1").update(s).digest("hex");
@@ -69,7 +70,7 @@ export function snapshotIdFor(
   const sorted = [...contentHashList].sort().join(",");
   return (
     "snap_" +
-    sha1(`${repoId}:${commit ?? "none"}:${dirty ? 1 : 0}:${sorted}`).slice(0, 24)
+    sha1(`${PARSER_VERSION}:${repoId}:${commit ?? "none"}:${dirty ? 1 : 0}:${sorted}`).slice(0, 24)
   );
 }
 
@@ -186,6 +187,13 @@ export function ensureCodeTables(store: Store): void {
     updated_at TEXT NOT NULL,
     PRIMARY KEY (edge_id, snapshot_id)
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS code_snapshot_sources(
+    snapshot_id TEXT NOT NULL REFERENCES code_snapshots(snapshot_id),
+    path TEXT NOT NULL,
+    revision_id TEXT NOT NULL REFERENCES revisions(id),
+    content_hash TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id,path)
+  )`);
   db.exec(`CREATE TABLE IF NOT EXISTS code_snapshot_files(
     snapshot_id TEXT NOT NULL REFERENCES code_snapshots(snapshot_id),
     file_id TEXT NOT NULL REFERENCES code_files(file_id),
@@ -251,6 +259,7 @@ export function ensureCodeTables(store: Store): void {
   const addCu = (col: string, ddl: string) => {
     if (!cuCols.includes(col)) db.exec(`ALTER TABLE code_understandings ADD COLUMN ${ddl}`);
   };
+  addCu("generation_budget", "generation_budget TEXT");
   addCu("schema_digest", "schema_digest TEXT");
   addCu("seed", "seed INTEGER NOT NULL DEFAULT 0");
   addCu("verified_by_agent", "verified_by_agent INTEGER NOT NULL DEFAULT 0");
@@ -445,7 +454,7 @@ export function upsertSnapshotFile(
     path: string;
     reviewRevisionId: string | null;
     contentHash: string | null;
-    contentText: string;
+    contentText: string | null;
   },
 ): void {
   ensureCodeTables(store);
@@ -453,9 +462,7 @@ export function upsertSnapshotFile(
     .prepare(
       `INSERT INTO code_snapshot_files(snapshot_id,file_id,path,review_revision_id,content_hash,content_text)
        VALUES(?,?,?,?,?,?)
-       ON CONFLICT(snapshot_id,file_id) DO UPDATE SET
-         review_revision_id=excluded.review_revision_id, content_hash=excluded.content_hash,
-         content_text=excluded.content_text`,
+       ON CONFLICT(snapshot_id,file_id) DO NOTHING`,
     )
     .run(row.snapshotId, row.fileId, row.path, row.reviewRevisionId, row.contentHash, row.contentText);
 }
@@ -487,7 +494,7 @@ export function snapshotFileBinding(
   return {
     reviewRevisionId: row.review_revision_id ?? null,
     contentHash: row.content_hash ?? null,
-    contentText: row.content_text ?? null,
+    contentText: (row.review_revision_id ? revisionText(store, row.review_revision_id) : null) ?? row.content_text ?? null,
   };
 }
 
@@ -938,4 +945,9 @@ export function writeDeterministicUnderstanding(
       ts,
       null,
     );
+}
+
+export function snapshotSourceText(store: Store, snapshotId: string, path: string): string | null {
+  const row = store.db.prepare("SELECT revision_id FROM code_snapshot_sources WHERE snapshot_id=? AND path=?").get(snapshotId, path) as { revision_id: string } | undefined;
+  return row ? revisionText(store, row.revision_id) : snapshotFileBinding(store, snapshotId, fileIdFor(codeRepositoryId(), path))?.contentText ?? null;
 }

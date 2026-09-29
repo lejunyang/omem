@@ -1,4 +1,4 @@
-﻿/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,
+/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,
  * and projects them onto the isolated review SQLite side tables. It does NOT
  * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection
  * over already-captured fragments; fragment_id is filled by locating the head
@@ -12,13 +12,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  readFileSync,
-  readdirSync,
-  lstatSync,
-} from "node:fs";
-import { join, relative, sep, dirname } from "node:path";
+import { posix } from "node:path";
+import { revisionText } from "../source-text.js";
 import type { Store } from "../store.js";
 import type {
   CodeKnowledgePort,
@@ -52,6 +47,7 @@ import {
   upsertEdge,
   writeDeterministicUnderstanding,
 } from "./store.js";
+import { restoreGeneratedUnderstandings } from "./artifacts.js";
 import { projectCuratedSeeds } from "./understanding-store.js";
 import { parseFile, type ParsedFile } from "./parse.js";
 import {
@@ -61,37 +57,6 @@ import {
 } from "../review/store.js";
 
 const execFileAsync = promisify(execFile);
-
-const CODE_ROOTS = ["apps", "packages", "scripts"];
-const EXCLUDED = new Set(["node_modules", "dist", ".git", ".repo-review", "coverage"]);
-const MAX_BYTES = 500_000;
-
-function walk(dir: string, root: string, out: string[]): void {
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const e of entries) {
-    const abs = join(dir, e.name);
-    const rel = relative(root, abs).split(sep).join("/");
-    if (e.isSymbolicLink()) continue;
-    if (e.isDirectory()) {
-      if (EXCLUDED.has(e.name)) continue;
-      walk(abs, root, out);
-    } else if (e.isFile()) {
-      out.push(rel);
-    }
-  }
-}
-
-function isCodeFile(rel: string): boolean {
-  if (rel.includes("/node_modules/") || rel.includes("/dist/")) return false;
-  if (rel.endsWith(".local.json")) return false;
-  if (rel.startsWith("apps/server/tests/fixtures/")) return false;
-  return /\.(ts|tsx|vue|mjs|js|json|toml|md)$/.test(rel);
-}
 
 async function git(args: string[], root: string): Promise<string | null> {
   try {
@@ -109,57 +74,13 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-/** Resolve a TS/Vue import specifier relative from `fromPath` to a repo-relative
- * path, when it points at an in-repo module. Returns null for bare packages. */
-function resolveImport(fromPath: string, specifier: string): string | null {
-  if (!specifier.startsWith(".")) return null; // bare package import
-  const base = dirname(fromPath);
-  let target = join(base, specifier).split(sep).join("/");
-  // Strip .js/.mjs extension to find the TS source; try common extensions.
-  const candidates = [target];
-  for (const ext of [".ts", ".tsx", ".vue", "/index.ts", ".mjs", ".js"]) {
-    if (target.endsWith(".js") || target.endsWith(".mjs")) {
-      candidates.push(target.replace(/\.(m?js)$/, ext === ".js" ? ".js" : ext));
-    } else {
-      candidates.push(target + ext);
-    }
-  }
-  for (const c of candidates) {
-    const normalized = c.split(sep).join("/");
-    if (existsSync(join(repoRootGuard, normalized))) return normalized;
-  }
-  return null;
+/** Resolve only within the captured file set, without consulting live disk. */
+function resolveImport(fromPath: string, specifier: string, known: Set<string>): string | null {
+  if (!specifier.startsWith(".")) return null;
+  const target = posix.join(posix.dirname(fromPath), specifier);
+  const base = target.replace(/\.(m?js)$/, "");
+  return [target, ...[".ts", ".tsx", ".vue", "/index.ts", ".mjs", ".js"].map(ext => base + ext)].find(p => known.has(p)) ?? null;
 }
-
-// set by runCodeSync before resolution (avoids threading repoRoot everywhere)
-let repoRootGuard = "";
-
-/** Resolve the review revision that supplied `path`'s bytes at this snapshot,
- * plus the fragment whose text contains `declText` (fallback: first fragment).
- * Both are pinned to the snapshot so historical source/ranges survive later
- * review head moves. Returns revisionId=null when never captured. */
-function bindFragment(
-  store: Store,
-  path: string,
-  declText: string | null,
-): { fragmentId: string | null; revisionId: string | null } {
-  const sid = sourceIdForExternalId(store, EXTERNAL_ID_PREFIX + path);
-  if (!sid) return { fragmentId: null, revisionId: null };
-  const head = (store.db
-    .prepare("SELECT head FROM sources WHERE id=?")
-    .get(sid) as { head: string | null } | undefined)?.head;
-  if (!head) return { fragmentId: null, revisionId: null };
-  const revId = String(head);
-  const frags = store.fragments(revId);
-  if (!frags.length) return { fragmentId: null, revisionId: revId };
-  if (declText) {
-    const needle = declText.trim().slice(0, 60);
-    const hit = frags.find((f) => f.text.includes(needle));
-    if (hit) return { fragmentId: hit.id, revisionId: revId };
-  }
-  return { fragmentId: frags[0]!.id, revisionId: revId };
-}
-
 
 type BoundFile = { revisionId: string | null; frags: { id: string; text: string }[] };
 
@@ -180,7 +101,7 @@ function pickFragment(bf: BoundFile, declText: string | null): string | null {
     const hit = bf.frags.find((f) => f.text.includes(needle));
     if (hit) return hit.id;
   }
-  return bf.frags[0]!.id;
+  return null;
 }
 
 export class CodeKnowledgeService implements CodeKnowledgePort {
@@ -234,7 +155,6 @@ export async function runCodeSync(
 ): Promise<CodeKnowledgeSyncResult> {
   ensureCodeTables(store);
   ensureReviewMetaTable(store);
-  repoRootGuard = repoRoot;
 
   const repoId = codeRepositoryId();
   const commit = await git(["rev-parse", "HEAD"], repoRoot);
@@ -247,47 +167,23 @@ export async function runCodeSync(
     defaultBranch: branch || null,
   });
 
-  // Gather code files currently on disk.
-  const rels: string[] = [];
-  for (const root of CODE_ROOTS) {
-    const abs = join(repoRoot, root);
-    if (existsSync(abs)) walk(abs, repoRoot, rels);
-  }
-  const codePaths = rels.filter(isCodeFile).sort();
-
-  // Read + hash + parse every file on disk.
-  type FileRec = {
-    path: string;
-    text: string;
-    hash: string;
-    size: number;
-    parsed: ParsedFile;
-  };
+  // The Capture chain owns the bytes. Code analysis reads its immutable head
+  // revisions and never pairs live filesystem text with an older fragment.
+  const captured = store.db.prepare(`SELECT r.id, s.external_id
+    FROM sources s JOIN revisions r ON r.id=s.head
+    LEFT JOIN review_source_meta m ON m.source_id=s.id
+    WHERE s.namespace='file' AND s.external_id LIKE 'omem:%'
+      AND COALESCE(m.removed,0)=0 ORDER BY s.external_id`).all() as { id: string; external_id: string }[];
+  type FileRec = { path: string; text: string; hash: string; size: number; parsed: ParsedFile };
   const files: FileRec[] = [];
-  for (const path of codePaths) {
-    const abs = join(repoRoot, path);
-    let st: { size: number };
-    try {
-      st = lstatSync(abs);
-    } catch {
-      continue;
-    }
-    if (st.size > MAX_BYTES) continue;
-    let text: string;
-    try {
-      text = readFileSync(abs, "utf8");
-    } catch {
-      continue;
-    }
-    if (!text.trim()) continue;
-    files.push({
-      path,
-      text,
-      hash: sha256(text),
-      size: st.size,
-      parsed: parseFile(path, text),
-    });
+  for (const row of captured) {
+    const path = row.external_id.slice(EXTERNAL_ID_PREFIX.length);
+    if (!/^(apps|packages|scripts)\//.test(path) || !/\.(ts|tsx|vue|mjs|js|json|toml|md)$/.test(path)) continue;
+    const text = revisionText(store, row.id);
+    if (text === null || !text.trim()) continue;
+    files.push({ path, text, hash: sha256(text), size: Buffer.byteLength(text), parsed: parseFile(path, text) });
   }
+  const knownPaths = new Set(files.map(f => f.path));
 
   // Snapshot identity: repo + commit + dirty + sorted hashes.
   const status = await git(["status", "--porcelain"], repoRoot);
@@ -296,7 +192,7 @@ export async function runCodeSync(
     repoId,
     commit,
     dirty,
-    files.map((f) => f.hash),
+    captured.map(row => `${row.external_id}:${sha256(revisionText(store, row.id) ?? "")}`),
   );
   const existing = getSnapshot(store, snapId);
 
@@ -322,6 +218,12 @@ export async function runCodeSync(
   const liveSeeds = new Set<string>();
 
   store.tx(() => {
+    for (const row of captured) {
+      const path = row.external_id.slice(EXTERNAL_ID_PREFIX.length);
+      const text = revisionText(store, row.id);
+      if (text === null) continue;
+      store.db.prepare("INSERT OR IGNORE INTO code_snapshot_sources VALUES(?,?,?,?)").run(snapId, path, row.id, sha256(text));
+    }
     for (const f of files) {
       const fileId = fileIdFor(repoId, f.path);
       const bf = bindFile(store, f.path);
@@ -342,7 +244,7 @@ export async function runCodeSync(
         path: f.path,
         reviewRevisionId: bf.revisionId,
         contentHash: f.hash,
-        contentText: f.text,
+        contentText: null,
       });
 
       // 1) Symbols.
@@ -388,8 +290,8 @@ export async function runCodeSync(
 
       // 2) Imports.
       for (const imp of f.parsed.imports) {
-        const target = resolveImport(f.path, imp.specifier);
-        const toFile = target ? pathToFileId.get(target) ?? fileIdFor(repoId, target) : null;
+        const target = resolveImport(f.path, imp.specifier, knownPaths);
+        const toFile = target ? pathToFileId.get(target) ?? null : null;
         const seed = `imports|${f.path}|${imp.specifier}`;
         liveSeeds.add(seed);
         upsertEdge(store, {
@@ -565,7 +467,10 @@ export async function runCodeSync(
   // Explicit head pointer: do NOT trust captured_at ordering.
   setCurrentSnapshot(store, repoId, snapId);
 
+  store.db.prepare("UPDATE code_understandings SET stale=1 WHERE source='model-generated' AND snapshot_id<>?").run(snapId);
   projectCuratedSeeds(store, repoRoot, snapId);
+  const restored = restoreGeneratedUnderstandings(store, repoRoot);
+  for (const row of restored) if (row.status !== "restored") console.warn(`Wiki ${row.status}: ${row.file}: ${row.reason}`);
 
   return {
     snapshotId: snapId,

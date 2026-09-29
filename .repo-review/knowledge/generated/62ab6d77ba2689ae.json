@@ -1,0 +1,827 @@
+{
+  "version": 1,
+  "targetId": "apps/server/src/code/sync.ts",
+  "output": {
+    "schema_version": 1,
+    "result_id": "cu_model_a049d3bbf07eb30fcf11",
+    "role": "module-architect",
+    "status": "generated",
+    "module_responsibilities": [
+      "将 Capture 链中当前 head revision 的受支持文件确定性解析为代码文件、符号、关系和文件级理解，并写入隔离的 Code Knowledge 投影表。",
+      "根据仓库标识、Git 提交、工作区脏状态及已捕获 revision 的排序内容哈希生成快照身份，使相同输入复用快照，并在每次同步时重新协调当前投影。",
+      "提供 CodeKnowledgePort 的查询与同步门面，向调用方暴露仓库、快照、文件、符号、边、图和理解查询。",
+      "把符号声明尽力绑定到 Capture head revision 的既有 fragment，而不从实时文件系统读取或保存文件正文。",
+      "同步结束后处理消失文件、陈旧边、陈旧模型理解、curated seed 投影和已生成理解恢复。"
+    ],
+    "boundaries": [
+      "上游数据边界是 Store 中 namespace 为 file、external_id 以 omem: 开头且未标记 removed 的 Capture head revisions；源码字节通过 revisionText 读取。",
+      "Git 仅提供 commit、remote、branch 和 dirty 元数据；Git 命令失败被折叠为 null，不会阻止同步。",
+      "语法分析委托给 parseFile；本模块负责筛选输入、建立稳定标识、解析有限的文件关系并持久化投影。",
+      "持久化边界由 code/store.ts、review/store.ts、understanding-store.ts 和 artifacts.ts 提供的函数及 Store 数据库承担。",
+      "导入解析只在本次已捕获文件集合内处理相对路径；非相对导入或无法命中的路径不会访问实时磁盘。",
+      "本模块不承担 AssistantRuntime、Lark 集成或 MemoryService 的运行职责；快照中相关规则只能说明相邻系统，不能证明这些系统参与代码同步。"
+    ],
+    "key_flows": [
+      {
+        "name": "查询门面",
+        "description": "CodeKnowledgeService 将当前快照、仓库、快照列表、文件、符号、关系、图和理解查询直接委托给存储层；sync 方法进入完整同步流程。",
+        "node_ids": [
+          "sym_f8061a29421d2d2c2b781f4d",
+          "sym_ff29efa0c0adf8cc9fa67478",
+          "sym_3f870aa5b4dbbf1e481aacbb",
+          "sym_3a66d88691c6a96713108928",
+          "sym_c7e5368163c774ab86d28e37",
+          "sym_d556f962d3e30cd3dfa3fac3",
+          "sym_387b26600b79aa08c05c0a93",
+          "sym_bc2a2ae093767b590408f7e3",
+          "sym_4c606104dd63d5f2a705a7c2",
+          "sym_b67588e44086b79f4f7619ca",
+          "sym_271a6354e290422870206663",
+          "sym_2199b058d26b39fc979d270a"
+        ]
+      },
+      {
+        "name": "捕获输入装载与解析",
+        "description": "runCodeSync 初始化表和仓库记录，从 Capture head revisions 查询未移除文件，筛选 apps、packages、scripts 下的支持扩展名，读取不可变 revision 文本，计算哈希、大小并调用 parseFile。",
+        "node_ids": [
+          "sym_e39316cd6975992814a46a33",
+          "sym_e355213c84e4e72924b177e9",
+          "sym_a0484da2496d8b369612d637",
+          "sym_9c55d1582025d325f176d75b",
+          "sym_56aab0e85bc941ff88011399",
+          "sym_df062932869df7d8df6e01b4",
+          "sym_412c8f0c0811245a8004c83c"
+        ]
+      },
+      {
+        "name": "快照识别与复用",
+        "description": "同步读取 Git 元数据，以仓库、commit、dirty 和捕获 revision 的排序内容哈希生成 snapId；已有同 id 快照被标记为 reused，但仍继续执行投影协调。",
+        "node_ids": [
+          "sym_226f0160040dbb1198b1b327",
+          "sym_1abc2e0c89bc4dc024a6035a",
+          "sym_93523d7cf95f0b0eccb47b26",
+          "sym_82b4cf2913bf197cb22251b8",
+          "sym_64a7267fbeeb93d1e728fa7f",
+          "sym_c35f12ba1c53ae7f09f87c1a",
+          "sym_c1196b941a80ae83393ac41a",
+          "sym_4d3d70d6a225520533fff370",
+          "sym_257ffc0c3dd202081b17dc21"
+        ]
+      },
+      {
+        "name": "文件、符号与 fragment 投影",
+        "description": "事务中记录 snapshot-source 绑定，upsert 文件及 snapshot-file；每个解析符号获得稳定 id，并用声明行前 60 个字符在该文件 head revision 的 fragments 中寻找包含匹配，以填充 fragmentId。",
+        "node_ids": [
+          "sym_4fbedc38e61c9bf37e04cc14",
+          "sym_041ad23d2075e4cf957b2b02",
+          "sym_7583d52c58a661cb9dadadfe",
+          "sym_3d6d9565c27acd6364b6816c",
+          "sym_8629a79e03eae331bd37401b",
+          "sym_53f5f44c8cd1891f5b123841",
+          "sym_bb4343515e46849ec942adda",
+          "sym_5b40e71c6e53df4fb1475661",
+          "sym_09b8171605d4a31e913245d4"
+        ]
+      },
+      {
+        "name": "关系和派生节点投影",
+        "description": "模块生成 confirmed 的 defines、可解析相对导入对应的 confirmed imports、不可解析导入对应的 missing imports、同文件名称级 candidate calls、confirmed route、confirmed test_of，以及未解析目标的 candidate uses_component。",
+        "node_ids": [
+          "sym_3c274b550b93c2de3aacf817",
+          "sym_08fad5bcd96275a568bbdafa",
+          "sym_a71e9a9367bf385e4c58ffed",
+          "sym_8c766e124435aade9f83b340",
+          "sym_b32d5f884889de9c927fa571",
+          "sym_4739175fe8e092e74790318c",
+          "sym_ad12e89dfd2e05f24e3db3d4",
+          "sym_c5804480009a3c6e1cba6993",
+          "sym_fb0a81b439f6f5222c16501c",
+          "sym_cbac75d5169f7d1e43a86d52",
+          "sym_530b4803e916ac9116864fe3"
+        ]
+      },
+      {
+        "name": "失效、当前指针与恢复",
+        "description": "事务内将未出现在当前解析集合中的既有文件标记 removed；事务后根据 liveSeeds 失效旧边，将已移除文件及非当前快照的模型理解标记 stale，设置显式当前快照，再投影 curated seeds 并恢复生成理解。",
+        "node_ids": [
+          "sym_a757a393a3072a5527dae95a",
+          "sym_6a8e287138d2272f0ae83627",
+          "sym_57786e854a4b888d9826a634",
+          "sym_12b7d77eafc956ae38c7ef40",
+          "sym_531d7e4ec576c42e10b131f3"
+        ]
+      }
+    ],
+    "entry_points": [
+      "CodeKnowledgeService 构造器接收 Store 与 repoRoot，建立查询和同步门面。",
+      "CodeKnowledgeService.sync 是端口级异步同步入口，但当前忽略 only 选项并总是调用完整 runCodeSync。",
+      "runCodeSync 是可直接调用的导出函数，接收 Store 与仓库根目录并返回 CodeKnowledgeSyncResult。",
+      "CodeKnowledgeService 的各查询方法是只读入口，分别读取当前快照、仓库、快照、文件、符号、边、图和理解。"
+    ],
+    "exit_points": [
+      "主要持久化出口是 Code Knowledge 和 review 元数据表中的仓库、快照、snapshot-source、文件、snapshot-file、符号、边及理解记录。",
+      "当前快照通过显式 head 指针写入，不依赖 captured_at 排序。",
+      "curated seeds 与磁盘中的生成理解恢复是同步尾部的扩展出口；恢复失败或跳过通过 console.warn 报告。",
+      "函数返回 snapshotId、fileCount、当前快照 symbolCount、非 stale edgeCount、staleEdgeCount 和 reused。"
+    ],
+    "risks_and_limits": [
+      "sync 的 only 参数没有生效，因此调用方无法依靠该参数执行局部同步。",
+      "Git 调用捕获所有错误并返回 null；Git 不可用、超时或命令失败不会显式传播，且 status 为 null 时 dirty 会成为 false。",
+      "fragment 绑定采用声明行截断后的文本包含匹配；重复文本、格式差异或空声明可能导致错误匹配或 fragmentId 为空。",
+      "导入解析仅支持相对 specifier 和有限扩展候选，不解析包导入、路径别名或完整模块解析规则。",
+      "调用关系只按同文件名称映射，无法解析跨文件调用、类型、重载或可靠作用域，因此被标记为 candidate。",
+      "Vue 组件使用关系不解析目标节点，只生成 candidate 边。",
+      "消失文件统一标记 removed，movedTo 始终为 null，因此不提供移动检测或跨 revision 身份续接。",
+      "快照的 changedCount 总是等于当前 files.length 且 partial 固定为 false，不能表达真实增量变化数量或局部扫描。",
+      "核心 upsert 位于事务中，但 stale 边处理、理解失效、当前指针、seed 投影和 artifact 恢复位于该事务之后；若尾部阶段失败，整体同步可能留下部分完成状态。",
+      "实现遵循从不可变 Capture revision 读取正文的边界；但仅凭该文件无法验证上游 Capture 数据是否完整、fragment 是否稳定，或所有存储函数是否具备预期约束。"
+    ],
+    "claims": [
+      {
+        "text": "runCodeSync 从 Capture head revisions 读取文件内容并解析，不以实时文件正文作为代码分析输入。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_e39316cd6975992814a46a33",
+          "sym_a0484da2496d8b369612d637",
+          "sym_edb3e64cb3c8dfc29bd6bb43"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_78a3e494d45c9afc23ab9750",
+          "ev_0388fecdaf3967e333aaa1ed"
+        ]
+      },
+      {
+        "text": "快照身份由仓库、Git commit、dirty 状态和捕获 revision 内容哈希共同决定，相同身份通过 existing 判断为复用。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_e355213c84e4e72924b177e9",
+          "sym_1abc2e0c89bc4dc024a6035a",
+          "sym_c35f12ba1c53ae7f09f87c1a",
+          "sym_c1196b941a80ae83393ac41a",
+          "sym_4d3d70d6a225520533fff370",
+          "sym_257ffc0c3dd202081b17dc21"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "即使复用既有快照，函数仍执行文件、符号、边、理解和当前快照指针的协调。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_e39316cd6975992814a46a33",
+          "sym_257ffc0c3dd202081b17dc21",
+          "sym_12b7d77eafc956ae38c7ef40"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "符号 fragmentId 通过当前 Capture head fragments 与声明行前 60 个字符的包含匹配得到，匹配不到时为 null。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_4fbedc38e61c9bf37e04cc14",
+          "sym_7583d52c58a661cb9dadadfe",
+          "sym_3d6d9565c27acd6364b6816c",
+          "sym_8629a79e03eae331bd37401b",
+          "sym_09b8171605d4a31e913245d4"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_78a3e494d45c9afc23ab9750"
+        ]
+      },
+      {
+        "text": "resolveImport 不处理非相对导入，并且只在 knownPaths 中尝试原路径及有限扩展或 index.ts 候选。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_3c274b550b93c2de3aacf817",
+          "sym_71eb849ed95e4256af55b5d6",
+          "sym_412c8f0c0811245a8004c83c",
+          "sym_08fad5bcd96275a568bbdafa",
+          "sym_a71e9a9367bf385e4c58ffed"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "调用边仅在 localQNames 中找到被调名称时产生，并固定标记为 candidate，表明实现不提供跨文件或类型级调用解析。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_8c766e124435aade9f83b340",
+          "sym_b32d5f884889de9c927fa571",
+          "sym_4739175fe8e092e74790318c"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "路由和测试被投影为额外符号及 confirmed 边；Vue 模板组件使用只形成 target 为空的 candidate 边。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_ad12e89dfd2e05f24e3db3d4",
+          "sym_c5804480009a3c6e1cba6993",
+          "sym_fb0a81b439f6f5222c16501c",
+          "sym_cbac75d5169f7d1e43a86d52",
+          "sym_530b4803e916ac9116864fe3"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "文件级确定性理解只记录 language、symbolCount 和 importCount，并明确列出调用解析局限。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_e39316cd6975992814a46a33"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "当前集合中缺失的既有文件被标记 removed，随后相关文件理解被标记 stale，旧边通过 liveSeeds 失效。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_a757a393a3072a5527dae95a",
+          "sym_6a8e287138d2272f0ae83627",
+          "sym_57786e854a4b888d9826a634",
+          "sym_12b7d77eafc956ae38c7ef40"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "模型生成理解不是同步的必要前置条件；本模块先完成确定性投影，随后仅失效旧模型结果、投影 curated seeds 并尝试恢复生成 artifacts。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_e39316cd6975992814a46a33",
+          "sym_531d7e4ec576c42e10b131f3"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_96517101bd9407d1dcf83229",
+          "ev_cee502f7c47f20b2d1b01095"
+        ]
+      },
+      {
+        "text": "CodeKnowledgeService.sync 接受 only 选项但未读取其内容，因此当前行为是完整同步。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_2199b058d26b39fc979d270a",
+          "sym_e39316cd6975992814a46a33"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "Git 辅助函数吞掉执行错误并返回 null；因此 Git 元数据失败会降级而非中止同步。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_8dfbbdcb8b8f30af9bba565c",
+          "sym_226f0160040dbb1198b1b327",
+          "sym_1abc2e0c89bc4dc024a6035a",
+          "sym_93523d7cf95f0b0eccb47b26",
+          "sym_82b4cf2913bf197cb22251b8",
+          "sym_64a7267fbeeb93d1e728fa7f",
+          "sym_c35f12ba1c53ae7f09f87c1a"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "CodeKnowledgeService 的查询方法主要是存储层薄封装，而 runCodeSync 承担写入和协调职责。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_f8061a29421d2d2c2b781f4d",
+          "sym_ff29efa0c0adf8cc9fa67478",
+          "sym_c7e5368163c774ab86d28e37",
+          "sym_4c606104dd63d5f2a705a7c2",
+          "sym_b67588e44086b79f4f7619ca",
+          "sym_271a6354e290422870206663",
+          "sym_e39316cd6975992814a46a33"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "快照结束阶段显式设置当前快照，并返回文件、符号、非 stale 边、失效边及复用状态的汇总。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_e39316cd6975992814a46a33",
+          "sym_12b7d77eafc956ae38c7ef40",
+          "sym_257ffc0c3dd202081b17dc21"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      }
+    ],
+    "referenced_node_ids": [
+      "sym_8dfbbdcb8b8f30af9bba565c",
+      "sym_226f0160040dbb1198b1b327",
+      "sym_df062932869df7d8df6e01b4",
+      "sym_3c274b550b93c2de3aacf817",
+      "sym_08fad5bcd96275a568bbdafa",
+      "sym_71eb849ed95e4256af55b5d6",
+      "sym_041ad23d2075e4cf957b2b02",
+      "sym_4fbedc38e61c9bf37e04cc14",
+      "sym_5b40e71c6e53df4fb1475661",
+      "sym_7583d52c58a661cb9dadadfe",
+      "sym_3d6d9565c27acd6364b6816c",
+      "sym_8629a79e03eae331bd37401b",
+      "sym_f8061a29421d2d2c2b781f4d",
+      "sym_ff29efa0c0adf8cc9fa67478",
+      "sym_3f870aa5b4dbbf1e481aacbb",
+      "sym_3a66d88691c6a96713108928",
+      "sym_c7e5368163c774ab86d28e37",
+      "sym_d556f962d3e30cd3dfa3fac3",
+      "sym_387b26600b79aa08c05c0a93",
+      "sym_bc2a2ae093767b590408f7e3",
+      "sym_4c606104dd63d5f2a705a7c2",
+      "sym_b67588e44086b79f4f7619ca",
+      "sym_271a6354e290422870206663",
+      "sym_2199b058d26b39fc979d270a",
+      "sym_e39316cd6975992814a46a33",
+      "sym_e355213c84e4e72924b177e9",
+      "sym_1abc2e0c89bc4dc024a6035a",
+      "sym_93523d7cf95f0b0eccb47b26",
+      "sym_82b4cf2913bf197cb22251b8",
+      "sym_a0484da2496d8b369612d637",
+      "sym_9c55d1582025d325f176d75b",
+      "sym_56aab0e85bc941ff88011399",
+      "sym_edb3e64cb3c8dfc29bd6bb43",
+      "sym_412c8f0c0811245a8004c83c",
+      "sym_64a7267fbeeb93d1e728fa7f",
+      "sym_c35f12ba1c53ae7f09f87c1a",
+      "sym_c1196b941a80ae83393ac41a",
+      "sym_4d3d70d6a225520533fff370",
+      "sym_257ffc0c3dd202081b17dc21",
+      "sym_a757a393a3072a5527dae95a",
+      "sym_53f5f44c8cd1891f5b123841",
+      "sym_bb4343515e46849ec942adda",
+      "sym_8c766e124435aade9f83b340",
+      "sym_09b8171605d4a31e913245d4",
+      "sym_4739175fe8e092e74790318c",
+      "sym_530b4803e916ac9116864fe3",
+      "sym_a71e9a9367bf385e4c58ffed",
+      "sym_b32d5f884889de9c927fa571",
+      "sym_c5804480009a3c6e1cba6993",
+      "sym_ad12e89dfd2e05f24e3db3d4",
+      "sym_fb0a81b439f6f5222c16501c",
+      "sym_cbac75d5169f7d1e43a86d52",
+      "sym_6a8e287138d2272f0ae83627",
+      "sym_57786e854a4b888d9826a634",
+      "sym_12b7d77eafc956ae38c7ef40",
+      "sym_531d7e4ec576c42e10b131f3"
+    ],
+    "referenced_edge_ids": [],
+    "evidence_refs": [
+      {
+        "evidence_id": "ev_78a3e494d45c9afc23ab9750",
+        "selector": null,
+        "note": "规则要求不可变 revision 和固定 fragment ID；本模块通过 Capture head revision 读取正文并尝试绑定既有 fragment。"
+      },
+      {
+        "evidence_id": "ev_0388fecdaf3967e333aaa1ed",
+        "selector": null,
+        "note": "规则界定 Capture 数据是输入材料而非工具指令，并要求运行时数据库及原始材料不入 Git；本模块把 Capture revision 当作待解析数据。"
+      },
+      {
+        "evidence_id": "ev_96517101bd9407d1dcf83229",
+        "selector": null,
+        "note": "规则声明本地 LLM 不应成为必需依赖；本同步流程的确定性解析与投影不调用模型。"
+      },
+      {
+        "evidence_id": "ev_cee502f7c47f20b2d1b01095",
+        "selector": null,
+        "note": "该规则再次确认本地模型与 embedding 权重是可选能力，而非当前代码同步的运行前提。"
+      }
+    ],
+    "unknowns": [
+      "快照未提供 code/store.ts 的实现，无法确认各 upsert、失效和查询函数的数据库约束、事务语义及并发行为。",
+      "快照未提供 parseFile 实现，无法验证符号、导入、调用、路由、测试和 Vue 组件抽取的完整语法覆盖范围。",
+      "快照未提供 snapshotIdFor、fileIdFor、symbolIdFor 的实现，无法验证稳定标识的具体编码、碰撞策略或跨版本兼容性。",
+      "无法仅凭该文件确认 code_snapshot_sources 表约束以及 INSERT OR IGNORE 在复用快照时是否可能保留与预期不同的既有行。",
+      "无法确认 projectCuratedSeeds 与 restoreGeneratedUnderstandings 的校验、覆盖和失败原子性。",
+      "无法确认上游 review sync 如何创建 fragments，以及文本包含匹配在真实 fragment 切分策略下的成功率。",
+      "没有提供关系边节点，因此不能引用调用图来证明本模块在服务器路由或应用启动过程中的实际装配位置。",
+      "无法从当前快照判断 runCodeSync 是否存在并发调用，以及并发同步时 current snapshot 指针和 stale 状态是否安全。"
+    ],
+    "confidence": 0.96,
+    "model": "gpt-5.6-sol",
+    "prompt_digest": "78fbe594305367b9e5d4fffb5d8f52f2329f20ad866e711b026eb7db93fcf76e",
+    "schema_digest": "3d0e2d49fcb37c99ccab411258db1be51cd05d10a1ea46b62b4ea7329a1bcb97",
+    "input_digest": "8316fad644b55750380e501640f286279e6040e9cded51265a2c48a767ad3bf3",
+    "generated_at": "2026-09-29T10:56:56.345Z",
+    "seed": false,
+    "verified_by_agent": false,
+    "verified_by": null
+  },
+  "dependencies": [
+    {
+      "path": "apps/server/src/code/sync.ts",
+      "hash": "0bb64d3348d84486836fee4dda2d5b6cb15a5c25b4e82db0f4ecf5a18f5caaf2"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_0388fecdaf3967e333aaa1ed",
+      "hash": "566157281f1eba5a92466be65972a0be43ae79eaa48f41504b43d0b08d8f2212"
+    },
+    {
+      "path": "apps/server/src/memory/service.ts",
+      "evidenceId": "ev_08c918beae79d0ff6d8753bb",
+      "hash": "c742db6ff7e140a4ffa65261460c797f9263ae38e97461c95a60795923d8b711"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_191ffe6babed08cfd03d3674",
+      "hash": "b37b3b708e2a45d6035638faf73b67bab9285efe1c7a0969b3cfbc62b7678320"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/realtime.ts",
+      "evidenceId": "ev_21a21a16333d6de9432af75e",
+      "hash": "232b0bc92b041b23355baf4cb50303c5176cbc5dc362f2ad082f73cf39851e65"
+    },
+    {
+      "path": "apps/web/src/ReviewApp.vue",
+      "evidenceId": "ev_306d08b85430d662bc61be3b",
+      "hash": "abfc5be51936f9e4acf046a107449b6a8f12d4fea365ec9a07e65cbb25c71182"
+    },
+    {
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "evidenceId": "ev_41df1edd1a87b50584344891",
+      "hash": "ddb1a7f770944e90c1f18a8eb634d11edd9c73949c50d5871b848341dbe12968"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/runtime.ts",
+      "evidenceId": "ev_567d2287da2d57f2f4323cb7",
+      "hash": "4bb671cc650db73da2e6d50acd0a66a068e76b0870ed0b0c78de47b4476598f2"
+    },
+    {
+      "path": "apps/server/src/review/app.ts",
+      "evidenceId": "ev_5d2b2cd77fb56196fda42bba",
+      "hash": "1ae498b97af2bc8c2960db28d40a3e673654225526cda9ff509d93f632036a37"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_78a3e494d45c9afc23ab9750",
+      "hash": "03414de6d6aa448fe82ab586ebb8d4fede44f074a1c90d7e36b986a2ea24e7e0"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_96517101bd9407d1dcf83229",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_9769617ddfedce1cdacbef66",
+      "hash": "cdc442cfdacbf4b36a0776202b4816d5683f5cff23cc80b320b752f45f2fba02"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_bb43e5a99316a8eb9b39b608",
+      "hash": "1a0cbb903b83bfa28e22f44d70f291b129c7766170fbd483d880d0201df87e3f"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_cee502f7c47f20b2d1b01095",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sym_041ad23d2075e4cf957b2b02",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "BoundFile",
+      "kind": "type"
+    },
+    {
+      "id": "sym_08fad5bcd96275a568bbdafa",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "target",
+      "kind": "const"
+    },
+    {
+      "id": "sym_09b8171605d4a31e913245d4",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "declLine",
+      "kind": "const"
+    },
+    {
+      "id": "sym_12b7d77eafc956ae38c7ef40",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "stale",
+      "kind": "const"
+    },
+    {
+      "id": "sym_1abc2e0c89bc4dc024a6035a",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "commit",
+      "kind": "const"
+    },
+    {
+      "id": "sym_2199b058d26b39fc979d270a",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.sync",
+      "kind": "method"
+    },
+    {
+      "id": "sym_226f0160040dbb1198b1b327",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "git",
+      "kind": "function"
+    },
+    {
+      "id": "sym_257ffc0c3dd202081b17dc21",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "reused",
+      "kind": "const"
+    },
+    {
+      "id": "sym_271a6354e290422870206663",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.understandingOf",
+      "kind": "method"
+    },
+    {
+      "id": "sym_387b26600b79aa08c05c0a93",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.symbolsOfFile",
+      "kind": "method"
+    },
+    {
+      "id": "sym_3a66d88691c6a96713108928",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.listSnapshots",
+      "kind": "method"
+    },
+    {
+      "id": "sym_3c274b550b93c2de3aacf817",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "resolveImport",
+      "kind": "function"
+    },
+    {
+      "id": "sym_3d6d9565c27acd6364b6816c",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "needle",
+      "kind": "const"
+    },
+    {
+      "id": "sym_3f870aa5b4dbbf1e481aacbb",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.listRepositories",
+      "kind": "method"
+    },
+    {
+      "id": "sym_412c8f0c0811245a8004c83c",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "knownPaths",
+      "kind": "const"
+    },
+    {
+      "id": "sym_4739175fe8e092e74790318c",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "toSym",
+      "kind": "const"
+    },
+    {
+      "id": "sym_4c606104dd63d5f2a705a7c2",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.edgesOf",
+      "kind": "method"
+    },
+    {
+      "id": "sym_4d3d70d6a225520533fff370",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "existing",
+      "kind": "const"
+    },
+    {
+      "id": "sym_4fbedc38e61c9bf37e04cc14",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "bindFile",
+      "kind": "function"
+    },
+    {
+      "id": "sym_530b4803e916ac9116864fe3",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "seed",
+      "kind": "const"
+    },
+    {
+      "id": "sym_531d7e4ec576c42e10b131f3",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "restored",
+      "kind": "const"
+    },
+    {
+      "id": "sym_53f5f44c8cd1891f5b123841",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "fileId",
+      "kind": "const"
+    },
+    {
+      "id": "sym_56aab0e85bc941ff88011399",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "files",
+      "kind": "const"
+    },
+    {
+      "id": "sym_57786e854a4b888d9826a634",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "existingRows",
+      "kind": "const"
+    },
+    {
+      "id": "sym_5b40e71c6e53df4fb1475661",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "sid",
+      "kind": "const"
+    },
+    {
+      "id": "sym_64a7267fbeeb93d1e728fa7f",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "status",
+      "kind": "const"
+    },
+    {
+      "id": "sym_6a8e287138d2272f0ae83627",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "known",
+      "kind": "const"
+    },
+    {
+      "id": "sym_71eb849ed95e4256af55b5d6",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "base",
+      "kind": "const"
+    },
+    {
+      "id": "sym_7583d52c58a661cb9dadadfe",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "pickFragment",
+      "kind": "function"
+    },
+    {
+      "id": "sym_82b4cf2913bf197cb22251b8",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "branch",
+      "kind": "const"
+    },
+    {
+      "id": "sym_8629a79e03eae331bd37401b",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "hit",
+      "kind": "const"
+    },
+    {
+      "id": "sym_8c766e124435aade9f83b340",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "localQNames",
+      "kind": "const"
+    },
+    {
+      "id": "sym_8dfbbdcb8b8f30af9bba565c",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "execFileAsync",
+      "kind": "const"
+    },
+    {
+      "id": "sym_93523d7cf95f0b0eccb47b26",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "remote",
+      "kind": "const"
+    },
+    {
+      "id": "sym_9c55d1582025d325f176d75b",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "FileRec",
+      "kind": "type"
+    },
+    {
+      "id": "sym_a0484da2496d8b369612d637",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "captured",
+      "kind": "const"
+    },
+    {
+      "id": "sym_a71e9a9367bf385e4c58ffed",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "toFile",
+      "kind": "const"
+    },
+    {
+      "id": "sym_a757a393a3072a5527dae95a",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "liveSeeds",
+      "kind": "const"
+    },
+    {
+      "id": "sym_ad12e89dfd2e05f24e3db3d4",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "rid",
+      "kind": "const"
+    },
+    {
+      "id": "sym_b32d5f884889de9c927fa571",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "fromSym",
+      "kind": "const"
+    },
+    {
+      "id": "sym_b67588e44086b79f4f7619ca",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.graph",
+      "kind": "method"
+    },
+    {
+      "id": "sym_bb4343515e46849ec942adda",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "bf",
+      "kind": "const"
+    },
+    {
+      "id": "sym_bc2a2ae093767b590408f7e3",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.symbolsOfSnapshot",
+      "kind": "method"
+    },
+    {
+      "id": "sym_c1196b941a80ae83393ac41a",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "snapId",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c35f12ba1c53ae7f09f87c1a",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "dirty",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c5804480009a3c6e1cba6993",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "qname",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c7e5368163c774ab86d28e37",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.listFiles",
+      "kind": "method"
+    },
+    {
+      "id": "sym_cbac75d5169f7d1e43a86d52",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "compSym",
+      "kind": "const"
+    },
+    {
+      "id": "sym_d556f962d3e30cd3dfa3fac3",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.fileById",
+      "kind": "method"
+    },
+    {
+      "id": "sym_df062932869df7d8df6e01b4",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "sha256",
+      "kind": "function"
+    },
+    {
+      "id": "sym_e355213c84e4e72924b177e9",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "repoId",
+      "kind": "const"
+    },
+    {
+      "id": "sym_e39316cd6975992814a46a33",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "runCodeSync",
+      "kind": "function"
+    },
+    {
+      "id": "sym_edb3e64cb3c8dfc29bd6bb43",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "text",
+      "kind": "const"
+    },
+    {
+      "id": "sym_f8061a29421d2d2c2b781f4d",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService",
+      "kind": "class"
+    },
+    {
+      "id": "sym_fb0a81b439f6f5222c16501c",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "tid",
+      "kind": "const"
+    },
+    {
+      "id": "sym_ff29efa0c0adf8cc9fa67478",
+      "path": "apps/server/src/code/sync.ts",
+      "qualifiedName": "CodeKnowledgeService.currentSnapshot",
+      "kind": "method"
+    }
+  ]
+}

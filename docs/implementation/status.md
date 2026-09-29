@@ -1,4 +1,16 @@
-> 2026-09-29 本机复审更新：开发启动已共用进程管理和动态端口选择，显式端口冲突失败；根 tsconfig 修复编辑器 Node 项目识别。共享 CodeViewer / Markdown 使用可被 Vite 打包的语言导入、完整文本语法解析和中性色高亮。验证：`osdk run check` exit 0（49 文件 / 309 用例 + typecheck/build）；实际新端口 27585/33685 上的 `code-wiki-viewport.ts` exit 0，包含高亮关键词样式、1440/768/390、引用栈与 XSS。下文旧的“端口固定/本机没有 traecli”是此前环境记录。
+> 2026-09-29 Linux 本机复审：见 [方案与实现复审](code-wiki-review-2026-09-29.md)。Code Wiki 已改为从精确 Capture 文本派生；启动自动完成材料/代码/版本化知识恢复；开发端口可配置且默认冲突自动选择；共享语法高亮与符号源行号已修复。仓库 Wiki 入口为 [`.repo-review/wiki.md`](../../.repo-review/wiki.md)，更新命令 `osdk run review:build`。本机 traecli 0.207.1 的 GPT-5.6-Sol 已真实生成模块说明，默认启动仍不调用模型。下文较早的“本机无 traecli”“没有模型 live”“固定端口”记录属于先前环境，不代表此次状态。当前预算示例 96000 输入 / 24000 输出 / 16000 Agent 预留，完整提示词按 UTF-8 bytes/3 + 25% 余量估算，另检查模型声明窗口。
+
+## 本轮复审验证（Linux / 2026-09-29）
+
+- `osdk deps --frozen` exit 0；完整 `osdk run check` 已通过（51 个测试文件 / 312 用例，含 typecheck + build）。
+- `osdk run browser` exit 0：个人阅读、递归证据、学习任务、当前 AttentionGate 的跨源 claim 决策、通知、768/390、100 层固定证据、失败与重启诚实性。修复初始化导航竞态；旧的“未知转述自动提请用户判断”fixture 已改为当前策略认可的 active claim 跨源冲突。
+- 最终 `dev:review` 实例自动重建，实际端口 26003/32395；`scripts/code-wiki-viewport.ts` exit 0，1440/768/390、真实高亮样式、模型说明、引用栈与深链、XSS、焦点通过。默认用户端口被占用时选择新端口，原有服务不被终止。
+- 6 份真实 `gpt-5.6-sol` 说明：检索、助手 runtime、MemoryService、代码投影、仓库材料同步、共享代码阅读器。均 `seed=false / verified_by_agent=false`，6 份人工 seed 仍独立保留。当前 Wiki 目录覆盖 200 文件、20 模块；模型说明仅覆盖明确列出的目标范围。
+- MemoryService 按扩大后的预算成功：完整提示词 110183 字符、111585 UTF-8 字节，估计 37195 tokens，加 25% 余量后计 46494；本次上限 96000 输入 / 24000 输出 / 16000 Agent 预留。先前输入/输出超限记录保留为失败；不把估算当实际计费 tokens。
+- 全新临时 SQLite 重建实测 exit 0：捕获 237 份材料、投影 200 文件，恢复 6 份真实模型说明 + 6 份人工 seed；未复制旧 runtime、未调用模型。
+- 当前真实模型结果不等于独立语义核验；跨文件调用、embedding、统一跨输入渠道的代码角色 worker 和下游重核验仍未交付，详见复审记录。
+
+
 
 # 实现状态
 

@@ -6,20 +6,8 @@ import type { CodeUnderstandingListItem } from "../review-api";
 
 /** Map a repo-relative path to a stable module bucket id. The required modules
  * (assistant / memory / retrieval / lark / web) all resolve here. */
-export function moduleForPath(path: string): string {
-  if (path.startsWith("apps/web/")) return "web";
-  if (path.startsWith("packages/ui/")) return "ui";
-  if (path.startsWith("packages/contracts/")) return "contracts";
-  if (path.startsWith("packages/agent-runtime/")) return "agent-runtime";
-  if (path.startsWith("apps/server/src/integrations/lark/")) return "lark";
-  if (path.startsWith("apps/server/src/")) {
-    const parts = path.split("/");
-    if (parts.length <= 4) return "server-root";
-    return parts[3];
-  }
-  if (path.startsWith("scripts/")) return "scripts";
-  return "other";
-}
+import { moduleForPath } from "../../../../packages/contracts/src/code-modules";
+export { moduleForPath };
 
 export const MODULE_LABELS: Record<string, string> = {
   assistant: "assistant",
@@ -169,7 +157,7 @@ export function matchModuleUnderstanding(
   const candidates = items.filter(
     (it) =>
       it.targetType === "module" &&
-      it.source === "curated-seed" &&
+      (it.source === "curated-seed" || it.source === "model-generated") &&
       !it.stale &&
       (it.status === "seed" || it.status === "generated" || it.status === "verified"),
   );
@@ -181,6 +169,7 @@ export function matchModuleUnderstanding(
   const paths = mod.files.map((f) => f.path);
   let best: CodeUnderstandingListItem | null = null;
   let bestLen = -1;
+  candidates.sort((a, b) => Number(a.seed) - Number(b.seed) || b.generatedAt.localeCompare(a.generatedAt));
   for (const it of candidates) {
     const prefix = it.targetId.replace(/\/$/, "");
     const covers = paths.some((p) => p === prefix || p.startsWith(prefix + "/"));

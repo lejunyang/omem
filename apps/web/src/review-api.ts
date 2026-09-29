@@ -475,6 +475,7 @@ export type CodeUnderstandingDetail = {
   curatedBy: string | null;
   curatedAt: string | null;
   curatedNote: string | null;
+  model: string | null;
   generatedAt: string;
   supersedesId: string | null;
   unknowns: string[];

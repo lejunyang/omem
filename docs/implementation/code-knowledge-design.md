@@ -1,6 +1,6 @@
 # Code Knowledge 领域模型与第一纵向切片设计
 
-> 状态：**设计文档，未实现任何生产代码**。
+> 历史设计提案，描述提案时的基线；当前已实现范围与缺口以 [复审记录](code-wiki-review-2026-09-29.md) 和 [status.md](status.md) 为准。
 > 本文只新增本文件；不修改 `apps/server`、`packages`、`package.json`、`pnpm-workspace.yaml`、`osdk.toml`。
 > 标注约定：
 > - 【事实】= 已存在于当前代码库（HEAD `46d808a`），可被 grep/测试复核；

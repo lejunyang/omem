@@ -12,7 +12,7 @@ const LABEL: Record<Kind, string> = {
   candidate: "候选 · 未登记",
   stale: "已过期",
   error: "加载失败",
-  seed: "人工 curated",
+  seed: "人工整理",
 };
 </script>
 
@@ -48,7 +48,7 @@ const LABEL: Record<Kind, string> = {
 .seed .tag {
   color: var(--om-ink);
   background: var(--om-panel);
-  border-left: 3px solid #6b8dd6;
+  border-left: 3px solid var(--om-secondary);
 }
 .candidate .tag {
   color: var(--om-warning);

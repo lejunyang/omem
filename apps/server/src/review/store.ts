@@ -8,7 +8,7 @@
  * one-time migration that rewrites legacy content-hash external ids into stable
  * `omem:<repo-relative-path>` identities. The side table lives in the review's own
  * SQLite so the shared business Store is never altered. */
-import { existsSync, mkdirSync, writeFileSync, copyFileSync, cpSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, cpSync, rmSync, mkdtempSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, sep as pathSep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -64,17 +64,22 @@ export function ensureReviewRuntimeSeeded(repoRoot: string): void {
   mkdirSync(runtimeData, { recursive: true });
   mkdirSync(reviewStateDir(repoRoot), { recursive: true });
 
+  const scratch = mkdtempSync(join(reviewStateDir(repoRoot), "seed-copy-"));
+  const scratchDb = join(scratch, "omem.sqlite");
+  for (const suffix of ["", "-wal", "-shm"]) {
+    if (existsSync(legacyDb + suffix)) copyFileSync(legacyDb + suffix, scratchDb + suffix);
+  }
   let src: DatabaseSync | null = null;
   try {
-    src = new DatabaseSync(legacyDb, { readOnly: true });
+    src = new DatabaseSync(scratchDb);
     // VACUUM INTO reads a consistent snapshot; the destination must not exist.
     // SQLite SQL literals use forward slashes on all platforms.
-    src.exec(`VACUUM INTO '${runtimeDb.split(pathSep).join("/")}'`);
+    src.exec(`VACUUM INTO '${runtimeDb.split(pathSep).join("/").replace(/'/g, "''")}'`);
   } catch (err) {
     try { rmSync(runtimeDb, { force: true }); } catch { /* ignore */ }
     throw err;
   } finally {
-    try { src?.close(); } catch { /* ignore */ }
+    try { src?.close(); } finally { rmSync(scratch, { recursive: true, force: true }); }
   }
 
   // Project sync state + migration marker so incremental sync resumes from the

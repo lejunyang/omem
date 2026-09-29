@@ -1,0 +1,426 @@
+{
+  "version": 1,
+  "targetId": "packages/ui/src/components/OmCodeViewer.vue",
+  "output": {
+    "schema_version": 1,
+    "result_id": "cu_model_977cae543c53aaf9b481",
+    "role": "module-architect",
+    "status": "generated",
+    "module_responsibilities": [
+      "将传入的源码文本按行展示，并提供带稳定行号的数据锚点。",
+      "异步生成整份源码的语法高亮结果；高亮失败或尚未完成时使用转义后的原始文本。",
+      "根据指定行号或范围呈现命中状态、锚点闪烁和范围提示。",
+      "在锚点变化后滚动到对应行，并在用户点击属于某个范围的代码行时发出导航事件。"
+    ],
+    "boundaries": [
+      "输入边界是组件属性：源码、语言、起始行号、锚点行、额外高亮行和范围标记。",
+      "语法处理委托给外部的 highlightCode、highlightedLines 和 escapeCode；本模块只管理异步结果及渲染状态。",
+      "导航边界是 navigate 事件；本模块仅输出被点击的行号，不负责路由、文件解析或符号解析。",
+      "DOM 交互局限于组件根元素内按 data-line 查找目标行并滚动。"
+    ],
+    "key_flows": [
+      {
+        "name": "源码分行与编号",
+        "description": "源码按换行符拆分，显示行号由可选起始行号加零基索引计算；每一行同时获得对应的 data-line 锚点。",
+        "node_ids": [
+          "sym_01c201677d9c1247e28d3db9",
+          "sym_42dd688ca85c631d727274df",
+          "sym_8175d072ece0cac122af612b"
+        ]
+      },
+      {
+        "name": "异步语法高亮",
+        "description": "源码或语言变化时清空旧结果并进入加载状态，异步高亮整份文本后按行保存 HTML；代际计数阻止较旧请求覆盖较新的结果，失败时保留空高亮映射。",
+        "node_ids": [
+          "sym_a33c1e5287e0c742f24d0b4f",
+          "sym_465aa69a68b66ee038254750",
+          "sym_244c0c890ab31c11f3034b22",
+          "sym_221038836ba50e21bcf44db0",
+          "sym_c6ac9897a95727d259838bd5"
+        ]
+      },
+      {
+        "name": "锚点定位与反馈",
+        "description": "锚点行变化且值有效时，组件等待 DOM 更新，开启三秒闪烁状态，在根元素内查找对应 data-line 行并将其滚动到视口中央。",
+        "node_ids": [
+          "sym_01c201677d9c1247e28d3db9",
+          "sym_5629766a83d3a269b99c7001",
+          "sym_4e8fa38f7052ea38f2119f5d",
+          "sym_7812b56896f0b2602de55abc"
+        ]
+      },
+      {
+        "name": "范围命中与行导航",
+        "description": "组件以首个覆盖当前行的范围作为命中范围；只有点击命中范围的代码单元格时才发出包含行号的 navigate 事件。",
+        "node_ids": [
+          "sym_54a64ddac06833f9ccb18714",
+          "sym_1d2ea6a243ed5a9959def9f2",
+          "sym_c8626fb655f5f72456cab7a7",
+          "sym_4273370b222d51f28688a4fa",
+          "sym_0408a5ba529d6d1de87692f3"
+        ]
+      }
+    ],
+    "entry_points": [
+      "组件属性 code、language、startLine、anchorLine、highlightLines 和 ranges。",
+      "用户对代码单元格的点击。",
+      "code、language 或 anchorLine 的响应式变化。"
+    ],
+    "exit_points": [
+      "渲染带行号、语法高亮、命中背景、闪烁反馈和加载提示的源码表格。",
+      "调用目标行元素的 scrollIntoView。",
+      "对命中范围的行发出 navigate 事件，载荷仅包含 line。"
+    ],
+    "risks_and_limits": [
+      "范围查找对每一行使用顺序 find；范围较多或文件较大时，渲染成本可能随行数与范围数的乘积增长。",
+      "重叠范围只采用数组中的首个匹配项，组件没有冲突合并或优先级规则。",
+      "navigate 类型允许 filePath 和 symbol，但当前点击流程只提供 line，跨文件或符号导航必须由上层补充。",
+      "锚点值为 0 时会被视为无效；组件实际行号通常从 1 开始，但未显式校验 startLine。",
+      "闪烁复位计时器未被记录或取消；锚点快速变化时，较早的计时器可能提前清除较新的闪烁状态。",
+      "语法高亮异常被静默降级为空映射，没有向上层暴露错误原因。",
+      "代码单元格使用 v-html，因此安全性依赖外部高亮函数返回可信或已转义的 HTML；当前快照未提供该函数的实现合同。",
+      "范围的 id 和 kind 在当前组件逻辑中未参与渲染或导航。"
+    ],
+    "claims": [
+      {
+        "text": "组件的核心职责是展示按行编号的源码，并用 startLine 控制首行编号。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_01c201677d9c1247e28d3db9",
+          "sym_42dd688ca85c631d727274df",
+          "sym_8175d072ece0cac122af612b"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "源码或语言变化会触发异步高亮，未指定语言时默认按 typescript 处理。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_01c201677d9c1247e28d3db9",
+          "sym_c6ac9897a95727d259838bd5"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "generation 与 current 构成代际检查，使过期的异步高亮结果不能覆盖最新状态。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_244c0c890ab31c11f3034b22",
+          "sym_221038836ba50e21bcf44db0",
+          "sym_a33c1e5287e0c742f24d0b4f",
+          "sym_465aa69a68b66ee038254750"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "高亮失败时组件清空当前代际的高亮映射，并结束当前代际的加载状态。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_a33c1e5287e0c742f24d0b4f",
+          "sym_465aa69a68b66ee038254750",
+          "sym_221038836ba50e21bcf44db0"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "显式高亮行和锚点行都会被判定为命中行。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_01c201677d9c1247e28d3db9",
+          "sym_23819f6a2f9f17c4872ea31b"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "锚点变化后，组件在自身根节点中查找对应 data-line 元素，并尝试将它滚动到中央。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_01c201677d9c1247e28d3db9",
+          "sym_5629766a83d3a269b99c7001",
+          "sym_7812b56896f0b2602de55abc"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "范围匹配采用第一个满足 start 小于等于行号且 end 大于等于行号的范围。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_54a64ddac06833f9ccb18714",
+          "sym_1d2ea6a243ed5a9959def9f2"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "点击代码行只有在该行属于某个范围时才会触发导航，且当前载荷仅含行号。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_0408a5ba529d6d1de87692f3",
+          "sym_1d2ea6a243ed5a9959def9f2",
+          "sym_c8626fb655f5f72456cab7a7",
+          "sym_4273370b222d51f28688a4fa"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "该模块负责源码查看和局部导航意图输出，不负责决定目标文件、目标符号或应用级路由。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_0408a5ba529d6d1de87692f3",
+          "sym_c8626fb655f5f72456cab7a7"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "快速连续更换锚点可能产生计时器竞争，因为 flashed 的三秒复位没有与特定锚点或代际绑定。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_4e8fa38f7052ea38f2119f5d"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "范围数量较多时，逐行执行线性范围查找可能成为渲染性能限制。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_42dd688ca85c631d727274df",
+          "sym_1d2ea6a243ed5a9959def9f2"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "CodeRangeMark 的 id 与 kind 虽属于输入合同，但当前快照中的范围查询和点击导航没有使用它们。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_54a64ddac06833f9ccb18714",
+          "sym_1d2ea6a243ed5a9959def9f2",
+          "sym_c8626fb655f5f72456cab7a7"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      }
+    ],
+    "referenced_node_ids": [
+      "sym_54a64ddac06833f9ccb18714",
+      "sym_01c201677d9c1247e28d3db9",
+      "sym_0408a5ba529d6d1de87692f3",
+      "sym_a33c1e5287e0c742f24d0b4f",
+      "sym_465aa69a68b66ee038254750",
+      "sym_5629766a83d3a269b99c7001",
+      "sym_4e8fa38f7052ea38f2119f5d",
+      "sym_42dd688ca85c631d727274df",
+      "sym_8175d072ece0cac122af612b",
+      "sym_244c0c890ab31c11f3034b22",
+      "sym_221038836ba50e21bcf44db0",
+      "sym_c6ac9897a95727d259838bd5",
+      "sym_7812b56896f0b2602de55abc",
+      "sym_23819f6a2f9f17c4872ea31b",
+      "sym_1d2ea6a243ed5a9959def9f2",
+      "sym_c8626fb655f5f72456cab7a7",
+      "sym_4273370b222d51f28688a4fa"
+    ],
+    "referenced_edge_ids": [],
+    "evidence_refs": [],
+    "unknowns": [
+      "快照未提供 ../highlight 的实现，无法确认高亮 HTML 的转义与安全保证。",
+      "快照未提供父组件，无法确认 navigate 事件如何转换为文件、符号或路由导航。",
+      "快照未提供范围数据生产方，无法确认 ranges 是否可能重叠、乱序或包含无效行号。",
+      "快照未提供组件测试，无法确认超大文件、快速属性切换和卸载后的计时器行为。",
+      "所列规则和文档证据涉及助手运行时、检索、Lark、存储及 review 应用边界，与该源码查看组件没有可验证的直接关系，因此未用于架构结论。"
+    ],
+    "confidence": 0.96,
+    "model": "gpt-5.6-sol",
+    "prompt_digest": "78fbe594305367b9e5d4fffb5d8f52f2329f20ad866e711b026eb7db93fcf76e",
+    "schema_digest": "3d0e2d49fcb37c99ccab411258db1be51cd05d10a1ea46b62b4ea7329a1bcb97",
+    "input_digest": "8316fad644b55750380e501640f286279e6040e9cded51265a2c48a767ad3bf3",
+    "generated_at": "2026-09-29T10:58:44.056Z",
+    "seed": false,
+    "verified_by_agent": false,
+    "verified_by": null
+  },
+  "dependencies": [
+    {
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "hash": "572e0a80dff78525cc783f2d6612a63c0e522ef19657b6585f140fd24218dfa6"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_0388fecdaf3967e333aaa1ed",
+      "hash": "566157281f1eba5a92466be65972a0be43ae79eaa48f41504b43d0b08d8f2212"
+    },
+    {
+      "path": "apps/server/src/memory/service.ts",
+      "evidenceId": "ev_08c918beae79d0ff6d8753bb",
+      "hash": "c742db6ff7e140a4ffa65261460c797f9263ae38e97461c95a60795923d8b711"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_191ffe6babed08cfd03d3674",
+      "hash": "b37b3b708e2a45d6035638faf73b67bab9285efe1c7a0969b3cfbc62b7678320"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/realtime.ts",
+      "evidenceId": "ev_21a21a16333d6de9432af75e",
+      "hash": "232b0bc92b041b23355baf4cb50303c5176cbc5dc362f2ad082f73cf39851e65"
+    },
+    {
+      "path": "apps/web/src/ReviewApp.vue",
+      "evidenceId": "ev_306d08b85430d662bc61be3b",
+      "hash": "abfc5be51936f9e4acf046a107449b6a8f12d4fea365ec9a07e65cbb25c71182"
+    },
+    {
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "evidenceId": "ev_41df1edd1a87b50584344891",
+      "hash": "ddb1a7f770944e90c1f18a8eb634d11edd9c73949c50d5871b848341dbe12968"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/runtime.ts",
+      "evidenceId": "ev_567d2287da2d57f2f4323cb7",
+      "hash": "4bb671cc650db73da2e6d50acd0a66a068e76b0870ed0b0c78de47b4476598f2"
+    },
+    {
+      "path": "apps/server/src/review/app.ts",
+      "evidenceId": "ev_5d2b2cd77fb56196fda42bba",
+      "hash": "1ae498b97af2bc8c2960db28d40a3e673654225526cda9ff509d93f632036a37"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_78a3e494d45c9afc23ab9750",
+      "hash": "03414de6d6aa448fe82ab586ebb8d4fede44f074a1c90d7e36b986a2ea24e7e0"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_96517101bd9407d1dcf83229",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_9769617ddfedce1cdacbef66",
+      "hash": "cdc442cfdacbf4b36a0776202b4816d5683f5cff23cc80b320b752f45f2fba02"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_bb43e5a99316a8eb9b39b608",
+      "hash": "1a0cbb903b83bfa28e22f44d70f291b129c7766170fbd483d880d0201df87e3f"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_cee502f7c47f20b2d1b01095",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sym_01c201677d9c1247e28d3db9",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "props",
+      "kind": "const"
+    },
+    {
+      "id": "sym_0408a5ba529d6d1de87692f3",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "emit",
+      "kind": "const"
+    },
+    {
+      "id": "sym_1d2ea6a243ed5a9959def9f2",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "rangeForLine",
+      "kind": "function"
+    },
+    {
+      "id": "sym_221038836ba50e21bcf44db0",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "current",
+      "kind": "const"
+    },
+    {
+      "id": "sym_23819f6a2f9f17c4872ea31b",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "isHighlighted",
+      "kind": "function"
+    },
+    {
+      "id": "sym_244c0c890ab31c11f3034b22",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "generation",
+      "kind": "const"
+    },
+    {
+      "id": "sym_4273370b222d51f28688a4fa",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "r",
+      "kind": "const"
+    },
+    {
+      "id": "sym_42dd688ca85c631d727274df",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "lines",
+      "kind": "function"
+    },
+    {
+      "id": "sym_465aa69a68b66ee038254750",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "loading",
+      "kind": "const"
+    },
+    {
+      "id": "sym_4e8fa38f7052ea38f2119f5d",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "flashed",
+      "kind": "const"
+    },
+    {
+      "id": "sym_54a64ddac06833f9ccb18714",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "CodeRangeMark",
+      "kind": "type"
+    },
+    {
+      "id": "sym_5629766a83d3a269b99c7001",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "root",
+      "kind": "const"
+    },
+    {
+      "id": "sym_7812b56896f0b2602de55abc",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "el",
+      "kind": "const"
+    },
+    {
+      "id": "sym_8175d072ece0cac122af612b",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "lineNumber",
+      "kind": "function"
+    },
+    {
+      "id": "sym_a33c1e5287e0c742f24d0b4f",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "hl",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c6ac9897a95727d259838bd5",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "rows",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c8626fb655f5f72456cab7a7",
+      "path": "packages/ui/src/components/OmCodeViewer.vue",
+      "qualifiedName": "onLineClick",
+      "kind": "function"
+    }
+  ]
+}

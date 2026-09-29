@@ -32,6 +32,7 @@ class BrowserRegistration implements LarkRegistrationAdapter {
     );
   }
 }
+const ownerProvenance = { collectorId: "browser-fixture", actorId: "owner", actorType: "owner" as const, actorVerifiedBy: "authenticated-test", sourceUri: null, eventId: null, eventAt: "2026-09-29T00:00:00Z", timezone: "Asia/Shanghai", quoted: false, forwarded: false, producerKind: "original" as const };
 const larkAppId = "cli_browserfixture";
 const existingApps: ExistingLarkAppProvider = {
   list: () => [
@@ -120,6 +121,8 @@ async function evaluateTask(input: {
   title: string;
   jobId: string;
   uncertainties?: string[];
+  targetId?: string;
+  kind?: "task" | "claim";
 }) {
   const fragment = input.revision.fragments[0]!;
   const text = fragment.text;
@@ -130,14 +133,15 @@ async function evaluateTask(input: {
       proposal: {
         schema_version: 1,
         proposal_id: input.proposalId,
-        kind: "task",
-        operation: "create",
+        kind: input.kind ?? "task",
+        operation: input.targetId ? "supersede" : "create",
+        ...(input.targetId ? { target_id: input.targetId } : {}),
         scope: {
           workspace_id: "personal",
           project_id: "browser-acceptance",
           subject_id: "owner",
         },
-        body: {
+        body: input.kind === "claim" ? { statement: input.title, attribution: "authenticated owner evidence", valid_from: null, valid_to: null } : {
           title: input.title,
           owner_id: "owner",
           due_at: null,
@@ -158,7 +162,7 @@ async function evaluateTask(input: {
         ],
         uncertainties: input.uncertainties || [],
         reason: `从固定原文形成：${input.title}`,
-        expected_versions: {},
+        expected_versions: input.targetId ? { [input.targetId]: 1 } : {},
         origin: {
           job_id: input.jobId,
           role_bundle: "extractor@1",
@@ -180,6 +184,7 @@ async function evaluateTask(input: {
     policy: string;
     proposalDigest: string;
     decisionId?: string;
+    receipt?: { entityId: string };
   };
 }
 const out = resolve("docs/implementation/screenshots");
@@ -359,33 +364,27 @@ try {
         "批准明确的复核事项",
         "过期来源上的旧提案",
       ].entries()) {
+        // Current policy asks for decisions on conflicting active commitments;
+        // forwarded unknown-owner statements are retained as source, not cards.
+        const baseline = store.capture({ source: "manual", externalId: `decision-baseline-${index}`, title: `原事项：${title}`, provenance: ownerProvenance, parts: [{ type: "text", text: `原事项：${title}` }], context: {} });
+        const applied = await evaluateTask({ revision: baseline.revision, proposalId: `baseline-proposal-${index}`, title: `原事项：${title}`, kind: "claim", jobId: baseline.job!.id });
+        expect(applied.policy).toBe("auto_apply");
         const externalId = `decision-source-${index}`;
         const captured = store.capture({
           source: "manual",
           externalId,
           title,
-          parts: [{ type: "text", text: `转述内容：${title}` }],
+          parts: [{ type: "text", text: `变更内容：${title}` }],
+          provenance: ownerProvenance,
           context: {},
-          provenance: {
-            collectorId: "browser-decision",
-            actorId: null,
-            actorType: "unknown",
-            actorVerifiedBy: null,
-            sourceUri: null,
-            eventId: `browser-decision-${index}`,
-            eventAt: new Date().toISOString(),
-            timezone: "Asia/Shanghai",
-            quoted: true,
-            forwarded: true,
-            producerKind: "original",
-          },
         });
         const result = await evaluateTask({
           revision: captured.revision,
           proposalId: `browser-decision-proposal-${index}`,
           title,
           jobId: captured.job!.id,
-          uncertainties: ["identity_ambiguous"],
+          targetId: applied.receipt!.entityId,
+          kind: "claim",
         });
         expect(result.policy).toBe("awaiting_decision");
         pending.push({
@@ -436,7 +435,7 @@ try {
         .click();
       await expect(approvePanel).toContainText("已确认");
       expect(
-        store.tasks().some((task) => task.title === pending[2]!.title),
+        Boolean(store.db.prepare("SELECT 1 FROM memories m JOIN memory_revisions r ON m.head_revision_id=r.id WHERE json_extract(r.body,'$.statement')=?").get(pending[2]!.title)),
       ).toBe(true);
 
       const stalePanel = page.locator(".om-panel").filter({

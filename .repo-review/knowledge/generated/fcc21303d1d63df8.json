@@ -1,0 +1,629 @@
+{
+  "version": 1,
+  "targetId": "apps/server/src/retrieval/keyword.ts",
+  "output": {
+    "schema_version": 1,
+    "result_id": "cu_model_4d5c8f0ee16c77291b1c",
+    "role": "module-architect",
+    "status": "generated",
+    "module_responsibilities": [
+      "实现 RetrievalPort 的 SQLite 关键词检索基线，为固定证据片段和已应用记忆提供健康检查、证据读取、来源检索与记忆检索。",
+      "将中英文查询拆分为可匹配词项，对中文连续文本额外生成去除常见停用组合的二元组，并据命中词项长度计算相关性分数。",
+      "把数据库记录映射为带摘要、来源修订标识和来源信息的候选结果；该模块只读取检索数据，不负责模型调用、记忆写入或外部集成。"
+    ],
+    "boundaries": [
+      "上游边界是 RetrievalPort 合同及其 SearchQuery、RetrievalHealth、EvidenceFragment、SourceCandidate、MemoryCandidate 等数据类型；KeywordRetrieval 通过构造函数接收 DatabaseSync。",
+      "下游边界是 SQLite 中的 fragments、revisions、sources、memories 和 memory_revisions 表；模块直接执行同步 SQL 查询。",
+      "与助手运行时的边界是只读证据检索：AssistantRuntime 声明负责上下文组装并通过 RetrievalPort 获取可见证据，而模型端口独立注入。",
+      "与 MemoryService 的边界是只读取 active 记忆及其头修订，不执行治理动作或记忆变更。",
+      "与未来语义检索的边界是维持同一检索接口，但当前实现刻意不依赖嵌入模型或第三方检索引擎。",
+      "来源检索当前没有可信项目关联可供过滤，因此返回工作区范围结果；记忆检索仅在查询明确携带可信项目标记、且记忆自身声明不同项目时排除该记忆。"
+    ],
+    "key_flows": [
+      {
+        "name": "读取固定证据",
+        "description": "调用方提供修订标识，并可选提供片段标识；实现按修订与片段精确查询，未指定片段时按 ordinal 读取首个片段，随后映射为 EvidenceFragment，无记录时返回 null。",
+        "node_ids": [
+          "sym_70c416be3a9c911501137690",
+          "sym_db0edda46865e2ecc4a8b7ae"
+        ]
+      },
+      {
+        "name": "检索来源片段",
+        "description": "查询先被分词并限制返回数量；每个词项通过转义后的 LIKE 子串查询当前 source head 所连接的修订片段，每个片段按不同命中词项累计长度权重，最终按分数降序截断并生成摘要与来源信息。",
+        "node_ids": [
+          "sym_f7ee725741c32425346888e3",
+          "sym_e1ae1eee27c171311f08b5ab",
+          "sym_e68bc14149036771bfb600f2",
+          "sym_2954c1e13a28457bc120fdd7",
+          "sym_b48e55f3d014d209ee9821b0"
+        ]
+      },
+      {
+        "name": "检索已激活记忆",
+        "description": "实现读取 active 记忆及其头修订，安全解析 scope，在可信项目条件成立时应用项目排除规则，再把记忆正文序列化后做不区分大小写的词项包含匹配，排序、截断并映射为 MemoryCandidate。",
+        "node_ids": [
+          "sym_d891fe1140fbd195104d86ef",
+          "sym_2e314faec1b5b50380b22ca6",
+          "sym_48be2d10949ccb8492594983",
+          "sym_a0eb1c48b1e569aa56452cb0",
+          "sym_fc438665ffffb4652b79c6a1",
+          "sym_aa9afd76da6f05d1fa6edf4f"
+        ]
+      },
+      {
+        "name": "中英文查询分词",
+        "description": "输入按空白与常见中英文标点切块；ASCII 词转为小写并去重，中文连续串保留全文，同时生成相邻二元组并过滤常见停用二元组。",
+        "node_ids": [
+          "sym_ba0ebac44ff65e532e26b5d9",
+          "sym_620d3430fe6cb8f4165fc407",
+          "sym_e2180d247cf7fb572f4f4c70",
+          "sym_c026b1363c48827f1335f04e",
+          "sym_6248e889d0b0fa5f639c7c18",
+          "sym_ef5f3b81cf0ee444ceccef86"
+        ]
+      },
+      {
+        "name": "生成命中摘要",
+        "description": "正文先压平空白，再寻找分词结果中的首个可见命中；命中时截取其附近文本并在前方被截断时添加省略号，未命中时返回开头固定窗口。",
+        "node_ids": [
+          "sym_b48e55f3d014d209ee9821b0",
+          "sym_56acc30e7e9163bbb40925e1",
+          "sym_00ce039c9580935ce683ac66",
+          "sym_cedbeba1e788dd68d65bc25f"
+        ]
+      }
+    ],
+    "entry_points": [
+      "KeywordRetrieval.constructor：注入同步 SQLite 数据库连接。",
+      "KeywordRetrieval.health：报告关键词后端可用状态和后端标识。",
+      "KeywordRetrieval.readEvidence：按修订和可选片段读取证据。",
+      "KeywordRetrieval.searchSources：搜索来源片段并返回排序后的候选。",
+      "KeywordRetrieval.searchMemories：搜索已激活记忆并返回排序后的候选。",
+      "tokenize：对外导出的查询分词函数。"
+    ],
+    "exit_points": [
+      "health 返回 available=true、backend=sqlite-like-keyword@1 的 RetrievalHealth。",
+      "readEvidence 返回 EvidenceFragment 或 null。",
+      "searchSources 返回带 sourceRevisionId、fragmentId、摘要、分数及 actor/time/source 来源信息的 SourceCandidate 数组。",
+      "searchMemories 返回带 kind、status、摘要、分数及固定 memory 来源信息的 MemoryCandidate 数组。",
+      "所有持久化读取均通过注入的 DatabaseSync 执行；模块中没有写数据库的出口。"
+    ],
+    "risks_and_limits": [
+      "来源检索没有应用项目过滤，因为片段上尚无持久化且可信的项目关联；在多项目工作区中可能返回跨项目候选。",
+      "每个来源词项的 SQL 查询最多读取 200 行，最终全局排序之前已经发生单词项截断，可能遗漏本应进入高分组合的片段。",
+      "关键词方案只做子串匹配和启发式长度计分，不提供语义相似度、嵌入召回或重排能力。",
+      "来源 SQL 只连接 sources.head 对应的修订，因此 searchSources 面向当前来源头；readEvidence 则可按给定 revisionId 读取固定修订，两者覆盖范围不同。",
+      "记忆项目过滤仅排除具有字符串 project_id 且与可信查询项目不同的记忆；无项目关联、scope 无法解析或项目字段非字符串的记忆仍保持工作区可见。",
+      "记忆正文通过 JSON.stringify 转成检索文本，匹配可能覆盖结构键和序列化标点，摘要也可能呈现序列化 JSON，而不是专门的人类可读正文。",
+      "分数只统计每个不同词项一次；多个候选同分时没有显式次级排序规则。",
+      "health 固定报告可用，代码中没有执行数据库探测，因此它表达的是后端实现已配置，而非数据库查询已经成功验证。",
+      "中文二元组停用表是固定枚举，未覆盖的高频组合仍可能扩大召回，命中全文词项与二元组也可能同时累计分数。",
+      "快照没有给出 RetrievalPort 的完整定义、数据库模式约束、调用方传入 project_trusted 的建立过程或实际运行测试，因此这些合同与运行保证无法进一步确认。"
+    ],
+    "claims": [
+      {
+        "text": "KeywordRetrieval 实现 RetrievalPort，并通过构造函数持有注入的 DatabaseSync。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_c4d0b999e80d536a1fa4835c",
+          "sym_6c3119e2df155753a846398e"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "该后端健康检查固定返回可用，并使用 sqlite-like-keyword@1 作为后端标识。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_6a1d21cc3545ae337ed17d14"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "readEvidence 在指定 fragmentId 时按片段与修订联合查询，否则按 ordinal 读取修订的首个片段；无结果时返回 null。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_70c416be3a9c911501137690",
+          "sym_db0edda46865e2ecc4a8b7ae"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_78a3e494d45c9afc23ab9750"
+        ]
+      },
+      {
+        "text": "searchSources 将请求上限约束到 1 至 100，空分词结果直接返回空数组，并按不同命中词项累计分数。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_f7ee725741c32425346888e3",
+          "sym_e68bc14149036771bfb600f2",
+          "sym_63d6e210ca785b6047b2f2cf"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "来源检索使用转义百分号、下划线和感叹号后的 LIKE 子串模式，并连接 fragments、revisions 与 sources.head，每个词项最多取 200 行。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_e1ae1eee27c171311f08b5ab",
+          "sym_2954c1e13a28457bc120fdd7"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "来源候选按词项长度赋予一至四分，并在排序后生成片段标识、修订标识、摘要以及 actor、修订时间和 namespace 来源信息。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_f7ee725741c32425346888e3",
+          "sym_e8746ed6e456cee8a0ff03cd",
+          "sym_b48e55f3d014d209ee9821b0"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "searchSources 没有使用 query.project_id 过滤片段；从实现注释可知这是因为当前缺少片段到可信项目关联的持久化连接。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_f7ee725741c32425346888e3"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "searchMemories 将返回上限约束到 1 至 50，只读取 status 为 active 的记忆及其头修订。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_d891fe1140fbd195104d86ef",
+          "sym_2e314faec1b5b50380b22ca6",
+          "sym_48be2d10949ccb8492594983"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "记忆检索只有在查询项目标识存在、project_trusted 为真、记忆 scope 中 project_id 为字符串且二者不同时，才排除该记忆。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_d891fe1140fbd195104d86ef",
+          "sym_a0eb1c48b1e569aa56452cb0",
+          "sym_aa9afd76da6f05d1fa6edf4f"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "记忆匹配对序列化后的 body 执行不区分大小写的子串判断，命中词项按长度获得一分或两分。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_d891fe1140fbd195104d86ef",
+          "sym_fc438665ffffb4652b79c6a1",
+          "sym_1ca556b3cc5fec8a924b45f0",
+          "sym_7a61acc0b28b77fe02b5fdaf"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "tokenize 对 ASCII 词执行小写化与去重，对中文连续串同时保留全文和相邻二元组，并通过 STOP_BIGRAMS 排除一组常见中文组合。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_ba0ebac44ff65e532e26b5d9",
+          "sym_620d3430fe6cb8f4165fc407",
+          "sym_e2180d247cf7fb572f4f4c70",
+          "sym_c026b1363c48827f1335f04e",
+          "sym_6248e889d0b0fa5f639c7c18",
+          "sym_ef5f3b81cf0ee444ceccef86"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_41df1edd1a87b50584344891"
+        ]
+      },
+      {
+        "text": "snippetFor 压平正文空白，围绕分词结果中的首个命中位置截取窗口；没有命中时返回正文开头的固定长度窗口。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_b48e55f3d014d209ee9821b0",
+          "sym_56acc30e7e9163bbb40925e1",
+          "sym_00ce039c9580935ce683ac66",
+          "sym_cedbeba1e788dd68d65bc25f"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "该模块是无需本地模型的关键词基线；这与当前不强制本地 LLM、仅在未来语义检索阶段可加入本地嵌入或重排权重的规则一致。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_c4d0b999e80d536a1fa4835c"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_96517101bd9407d1dcf83229",
+          "ev_cee502f7c47f20b2d1b01095"
+        ]
+      },
+      {
+        "text": "在助手整体架构中，该模块承担 RetrievalPort 的只读检索适配职责，而上下文组装、模型调用协调、治理执行和回合持久化属于 AssistantRuntime 或其邻接服务。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_c4d0b999e80d536a1fa4835c"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_bb43e5a99316a8eb9b39b608",
+          "ev_08c918beae79d0ff6d8753bb"
+        ]
+      },
+      {
+        "text": "模块把捕获正文仅作为可检索字符串处理，没有把其中内容解释为工具指令。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_e1ae1eee27c171311f08b5ab",
+          "sym_d891fe1140fbd195104d86ef"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_0388fecdaf3967e333aaa1ed"
+        ]
+      },
+      {
+        "text": "来源检索的逐词项 200 行上限发生在跨词项聚合之前，因此数据库返回顺序可能影响哪些候选有机会参与最终计分。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_e1ae1eee27c171311f08b5ab",
+          "sym_f7ee725741c32425346888e3"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "health 没有查询数据库，因此其 available=true 不能单独证明底层表存在或实际检索可成功执行。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_6a1d21cc3545ae337ed17d14"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      }
+    ],
+    "referenced_node_ids": [
+      "sym_c4d0b999e80d536a1fa4835c",
+      "sym_6c3119e2df155753a846398e",
+      "sym_6a1d21cc3545ae337ed17d14",
+      "sym_70c416be3a9c911501137690",
+      "sym_f7ee725741c32425346888e3",
+      "sym_e1ae1eee27c171311f08b5ab",
+      "sym_d891fe1140fbd195104d86ef",
+      "sym_db0edda46865e2ecc4a8b7ae",
+      "sym_2e314faec1b5b50380b22ca6",
+      "sym_e68bc14149036771bfb600f2",
+      "sym_48be2d10949ccb8492594983",
+      "sym_e8746ed6e456cee8a0ff03cd",
+      "sym_63d6e210ca785b6047b2f2cf",
+      "sym_2954c1e13a28457bc120fdd7",
+      "sym_7a61acc0b28b77fe02b5fdaf",
+      "sym_a0eb1c48b1e569aa56452cb0",
+      "sym_fc438665ffffb4652b79c6a1",
+      "sym_1ca556b3cc5fec8a924b45f0",
+      "sym_aa9afd76da6f05d1fa6edf4f",
+      "sym_ba0ebac44ff65e532e26b5d9",
+      "sym_620d3430fe6cb8f4165fc407",
+      "sym_e2180d247cf7fb572f4f4c70",
+      "sym_c026b1363c48827f1335f04e",
+      "sym_6248e889d0b0fa5f639c7c18",
+      "sym_ef5f3b81cf0ee444ceccef86",
+      "sym_b48e55f3d014d209ee9821b0",
+      "sym_56acc30e7e9163bbb40925e1",
+      "sym_00ce039c9580935ce683ac66",
+      "sym_cedbeba1e788dd68d65bc25f"
+    ],
+    "referenced_edge_ids": [],
+    "evidence_refs": [
+      {
+        "evidence_id": "ev_bb43e5a99316a8eb9b39b608",
+        "selector": null,
+        "note": "声明 AssistantRuntime 通过 RetrievalPort 执行只读、可见性过滤的证据检索，并承担相邻的上下文、治理和持久化职责。"
+      },
+      {
+        "evidence_id": "ev_96517101bd9407d1dcf83229",
+        "selector": null,
+        "note": "规定本地 LLM 不应成为必需依赖，语义检索阶段才可增加本地嵌入或重排权重。"
+      },
+      {
+        "evidence_id": "ev_41df1edd1a87b50584344891",
+        "selector": null,
+        "note": "提供 tokenize 的实际实现，支持中英文词项、中文全文词项和过滤后的二元组。"
+      },
+      {
+        "evidence_id": "ev_cee502f7c47f20b2d1b01095",
+        "selector": null,
+        "note": "再次限定本地嵌入和重排能力为后续语义检索的可选项。"
+      },
+      {
+        "evidence_id": "ev_0388fecdaf3967e333aaa1ed",
+        "selector": null,
+        "note": "规定捕获数据不是工具指令，为检索正文的数据边界提供依据。"
+      },
+      {
+        "evidence_id": "ev_08c918beae79d0ff6d8753bb",
+        "selector": null,
+        "note": "显示 MemoryService 是独立服务，支持将本模块界定为记忆只读检索端。"
+      },
+      {
+        "evidence_id": "ev_78a3e494d45c9afc23ab9750",
+        "selector": null,
+        "note": "规定修订不可变且片段标识固定，与按 revisionId 和 fragmentId 读取证据的入口一致。"
+      }
+    ],
+    "unknowns": [
+      "快照未提供 RetrievalPort、SearchQuery 和各候选 DTO 的完整定义，无法确认接口层面的全部可见性前置条件与字段不变量。",
+      "快照未提供数据库建表语句、索引、排序规则或 SQLite LIKE 配置，无法确认查询性能及所有 Unicode 大小写行为。",
+      "快照未说明 project_trusted 由哪个组件建立、如何验证，也未展示未来 ContextLink 表的具体合同。",
+      "快照未包含该模块的单元测试或运行结果，无法确认边界输入、同分排序及异常传播的已验证行为。",
+      "快照未展示 KeywordRetrieval 的实例化位置，无法确认生产环境数据库生命周期、错误处理方式和具体调用频率。",
+      "快照未说明 source head 之外的历史修订是否应由 searchSources 检索；只能确认当前 SQL 不会从该路径召回它们。"
+    ],
+    "confidence": 0.96,
+    "model": "gpt-5.6-sol",
+    "prompt_digest": "78fbe594305367b9e5d4fffb5d8f52f2329f20ad866e711b026eb7db93fcf76e",
+    "schema_digest": "3d0e2d49fcb37c99ccab411258db1be51cd05d10a1ea46b62b4ea7329a1bcb97",
+    "input_digest": "ae9c3164b07ebed2d22c0070b1e909b0a97ae29eb1709613c333b232ca7a748b",
+    "generated_at": "2026-09-29T10:54:17.615Z",
+    "seed": false,
+    "verified_by_agent": false,
+    "verified_by": null
+  },
+  "dependencies": [
+    {
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "hash": "4b6c522edef48c6b6e9ff8442cce91bc1d29c8f7ab6ac9ee5e90e3b424e504e3"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_0388fecdaf3967e333aaa1ed",
+      "hash": "566157281f1eba5a92466be65972a0be43ae79eaa48f41504b43d0b08d8f2212"
+    },
+    {
+      "path": "apps/server/src/memory/service.ts",
+      "evidenceId": "ev_08c918beae79d0ff6d8753bb",
+      "hash": "c742db6ff7e140a4ffa65261460c797f9263ae38e97461c95a60795923d8b711"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_191ffe6babed08cfd03d3674",
+      "hash": "b37b3b708e2a45d6035638faf73b67bab9285efe1c7a0969b3cfbc62b7678320"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/realtime.ts",
+      "evidenceId": "ev_21a21a16333d6de9432af75e",
+      "hash": "232b0bc92b041b23355baf4cb50303c5176cbc5dc362f2ad082f73cf39851e65"
+    },
+    {
+      "path": "apps/web/src/ReviewApp.vue",
+      "evidenceId": "ev_306d08b85430d662bc61be3b",
+      "hash": "abfc5be51936f9e4acf046a107449b6a8f12d4fea365ec9a07e65cbb25c71182"
+    },
+    {
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "evidenceId": "ev_41df1edd1a87b50584344891",
+      "hash": "ddb1a7f770944e90c1f18a8eb634d11edd9c73949c50d5871b848341dbe12968"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/runtime.ts",
+      "evidenceId": "ev_567d2287da2d57f2f4323cb7",
+      "hash": "4bb671cc650db73da2e6d50acd0a66a068e76b0870ed0b0c78de47b4476598f2"
+    },
+    {
+      "path": "apps/server/src/review/app.ts",
+      "evidenceId": "ev_5d2b2cd77fb56196fda42bba",
+      "hash": "1ae498b97af2bc8c2960db28d40a3e673654225526cda9ff509d93f632036a37"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_78a3e494d45c9afc23ab9750",
+      "hash": "03414de6d6aa448fe82ab586ebb8d4fede44f074a1c90d7e36b986a2ea24e7e0"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_96517101bd9407d1dcf83229",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_9769617ddfedce1cdacbef66",
+      "hash": "cdc442cfdacbf4b36a0776202b4816d5683f5cff23cc80b320b752f45f2fba02"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_bb43e5a99316a8eb9b39b608",
+      "hash": "1a0cbb903b83bfa28e22f44d70f291b129c7766170fbd483d880d0201df87e3f"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_cee502f7c47f20b2d1b01095",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sym_00ce039c9580935ce683ac66",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "hit",
+      "kind": "const"
+    },
+    {
+      "id": "sym_1ca556b3cc5fec8a924b45f0",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "score",
+      "kind": "const"
+    },
+    {
+      "id": "sym_2954c1e13a28457bc120fdd7",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "escaped",
+      "kind": "const"
+    },
+    {
+      "id": "sym_2e314faec1b5b50380b22ca6",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "limit",
+      "kind": "const"
+    },
+    {
+      "id": "sym_48be2d10949ccb8492594983",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "rows",
+      "kind": "const"
+    },
+    {
+      "id": "sym_56acc30e7e9163bbb40925e1",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "flat",
+      "kind": "const"
+    },
+    {
+      "id": "sym_620d3430fe6cb8f4165fc407",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "ascii",
+      "kind": "const"
+    },
+    {
+      "id": "sym_6248e889d0b0fa5f639c7c18",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "gram",
+      "kind": "const"
+    },
+    {
+      "id": "sym_63d6e210ca785b6047b2f2cf",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "current",
+      "kind": "const"
+    },
+    {
+      "id": "sym_6a1d21cc3545ae337ed17d14",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "KeywordRetrieval.health",
+      "kind": "method"
+    },
+    {
+      "id": "sym_6c3119e2df155753a846398e",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "KeywordRetrieval.constructor",
+      "kind": "method"
+    },
+    {
+      "id": "sym_70c416be3a9c911501137690",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "KeywordRetrieval.readEvidence",
+      "kind": "method"
+    },
+    {
+      "id": "sym_7a61acc0b28b77fe02b5fdaf",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "scored",
+      "kind": "const"
+    },
+    {
+      "id": "sym_a0eb1c48b1e569aa56452cb0",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "scope",
+      "kind": "const"
+    },
+    {
+      "id": "sym_aa9afd76da6f05d1fa6edf4f",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "safeJson",
+      "kind": "function"
+    },
+    {
+      "id": "sym_b48e55f3d014d209ee9821b0",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "snippetFor",
+      "kind": "function"
+    },
+    {
+      "id": "sym_ba0ebac44ff65e532e26b5d9",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "tokenize",
+      "kind": "function"
+    },
+    {
+      "id": "sym_c026b1363c48827f1335f04e",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "cleaned",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c4d0b999e80d536a1fa4835c",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "KeywordRetrieval",
+      "kind": "class"
+    },
+    {
+      "id": "sym_cedbeba1e788dd68d65bc25f",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "start",
+      "kind": "const"
+    },
+    {
+      "id": "sym_d891fe1140fbd195104d86ef",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "KeywordRetrieval.searchMemories",
+      "kind": "method"
+    },
+    {
+      "id": "sym_db0edda46865e2ecc4a8b7ae",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "row",
+      "kind": "const"
+    },
+    {
+      "id": "sym_e1ae1eee27c171311f08b5ab",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "KeywordRetrieval.searchFragmentsForTerm",
+      "kind": "method"
+    },
+    {
+      "id": "sym_e2180d247cf7fb572f4f4c70",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "cjk",
+      "kind": "const"
+    },
+    {
+      "id": "sym_e68bc14149036771bfb600f2",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "best",
+      "kind": "const"
+    },
+    {
+      "id": "sym_e8746ed6e456cee8a0ff03cd",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "id",
+      "kind": "const"
+    },
+    {
+      "id": "sym_ef5f3b81cf0ee444ceccef86",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "STOP_BIGRAMS",
+      "kind": "const"
+    },
+    {
+      "id": "sym_f7ee725741c32425346888e3",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "KeywordRetrieval.searchSources",
+      "kind": "method"
+    },
+    {
+      "id": "sym_fc438665ffffb4652b79c6a1",
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "qualifiedName": "bodyText",
+      "kind": "const"
+    }
+  ]
+}

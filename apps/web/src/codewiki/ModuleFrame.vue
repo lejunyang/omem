@@ -64,25 +64,26 @@ function confLabel(c: number | null | undefined): string {
     <h2>{{ moduleLabel(mod.id) }}</h2>
     <p class="muted">{{ mod.fileCount }} 个文件 · {{ mod.symbolCount }} 个解析符号</p>
 
-    <div v-if="loading" class="muted">正在读取人工 curated 说明…</div>
+    <div v-if="loading" class="muted">正在读取模块说明…</div>
 
     <OmEmpty
       v-else-if="!detail || !out"
-      title="该模块暂无人工 curated 说明"
-      description="此模块尚未在 .repo-review/knowledge/understandings 登记 hand-curated 模块笔记；下面只有确定性解析出的文件清单。"
+      title="该模块暂无已保存的说明"
+      description="可先浏览文件和原始证据；生成或整理说明后会显示在这里。"
     />
 
     <template v-else>
+      <p class="muted">说明范围：{{ detail.targetId }}</p>
       <OmStatusLine
-        kind="seed"
-        :source-note="detail.curatedNote || '人工 curated 模块笔记（非模型生成）'"
+        :kind="detail.seed ? 'seed' : 'derived'"
+        :source-note="detail.seed ? '人工整理的模块说明' : '模型派生说明 · 未经独立语义复核'"
       />
       <div class="row badges">
         <OmBadge :tone="detail.seed ? 'neutral' : 'success'">
-          {{ detail.seed ? "seed" : detail.status }}
+          {{ detail.seed ? "人工整理" : "模型生成" }}
         </OmBadge>
-        <OmBadge tone="warning" v-if="detail.stale">stale</OmBadge>
-        <OmBadge>confidence {{ confLabel(detail.confidence) }}</OmBadge>
+        <OmBadge tone="warning" v-if="detail.stale">已过期</OmBadge>
+        <OmBadge v-if="!detail.seed && detail.model">{{ detail.model }}</OmBadge>
         <OmBadge v-if="detail.curatedBy">by {{ detail.curatedBy }}</OmBadge>
       </div>
 
@@ -116,7 +117,7 @@ function confLabel(c: number | null | undefined): string {
         <li v-for="(r, i) in out!.risks_and_limits" :key="i">{{ r }}</li>
       </OmPanel>
 
-      <OmPanel title="未决问题 / unknowns" class="stack">
+      <OmPanel title="未决问题" class="stack">
         <li v-for="(u, i) in detail.unknowns" :key="i">{{ u }}</li>
       </OmPanel>
 

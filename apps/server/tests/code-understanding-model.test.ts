@@ -115,7 +115,7 @@ describe("code understanding model port / generation", () => {
     const gen = await app.inject({
       method: "POST",
       url: "/api/review/code/understandings/generate",
-      payload: { targetId: "apps/server/src/alpha" },
+      payload: { targetId: "apps/server/src/alpha.ts" },
     });
     expect(gen.statusCode).toBe(503);
 
@@ -160,7 +160,7 @@ describe("code understanding model port / generation", () => {
     const gen = await app.inject({
       method: "POST",
       url: "/api/review/code/understandings/generate",
-      payload: { targetId: "apps/server/src/alpha" },
+      payload: { targetId: "apps/server/src/alpha.ts" },
     });
     expect(gen.statusCode).toBe(200);
     const json = gen.json();
@@ -186,7 +186,7 @@ describe("code understanding model port / generation", () => {
     const gen = await app.inject({
       method: "POST",
       url: "/api/review/code/understandings/generate",
-      payload: { targetId: "apps/server/src/alpha" },
+      payload: { targetId: "apps/server/src/alpha.ts" },
     });
     expect(gen.statusCode).toBe(502);
     // no model-generated current row
@@ -212,7 +212,7 @@ describe("code understanding model port / generation", () => {
     const gen = await app.inject({
       method: "POST",
       url: "/api/review/code/understandings/generate",
-      payload: { targetId: "apps/server/src/alpha" },
+      payload: { targetId: "apps/server/src/alpha.ts" },
     });
     expect(gen.statusCode).toBe(422);
     expect(gen.json().errors.join(" ")).toMatch(/UNKNOWN_NODE_REFS/);
@@ -235,7 +235,7 @@ describe("code understanding model port / generation", () => {
     const gen = await app.inject({
       method: "POST",
       url: "/api/review/code/understandings/generate",
-      payload: { targetId: "apps/server/src/alpha", timeoutMs: 300 },
+      payload: { targetId: "apps/server/src/alpha.ts", timeoutMs: 300 },
     });
     expect(gen.statusCode).toBe(502);
     expect(listUnderstandings(store).filter((r) => String(r.source) === "model-generated").length).toBe(0);
