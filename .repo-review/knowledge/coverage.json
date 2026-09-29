@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "checkedAt": "2026-09-29T21:46:39.233Z",
+  "checkedAt": "2026-09-29T21:51:07.296Z",
   "profile": "config/review-code-model.json",
   "model": "gpt-5.6-sol",
   "files": [
@@ -5621,7 +5621,25 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/verification.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/verification/code-seeds-verification.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/verification/reader-1440.png",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/verification/reader-390.png",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"

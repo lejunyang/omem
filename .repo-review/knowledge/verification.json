@@ -1,0 +1,168 @@
+{
+  "version": 2,
+  "recordedAt": "2026-09-29T21:50:58.703206+00:00",
+  "implementationCommit": "291415acfe7cbe54f69bad996e8ab7ecfd3b4f51",
+  "scope": "Final implementation and committed knowledge acceptance. Independent model review is not human acceptance or proof of every external integration.",
+  "workingTree": "All task implementation and reviewed knowledge assets were committed by functional slice. The pre-existing frozen .repo-review/data/omem.sqlite-shm modification was preserved and excluded from commits. No push was performed.",
+  "checks": [
+    {
+      "command": "osdk deps --frozen",
+      "exitCode": 0,
+      "scope": "Application dependencies; no application dependencies were changed during this work."
+    },
+    {
+      "command": "osdk run --no-deps check",
+      "exitCode": 0,
+      "testFiles": 56,
+      "tests": 335,
+      "includes": [
+        "TypeScript and Vue typecheck",
+        "full Vitest suite",
+        "server and web build"
+      ]
+    },
+    {
+      "command": "pnpm exec tsx scripts/knowledge-browser.ts",
+      "exitCode": 0,
+      "evidence": "Real Vue/API/SQLite, fixture knowledge, inline chapter/module/source chain, import links, reasons, Esc, deep links, focus, 1440/768/390, explicit tasks, escaped HTML source"
+    },
+    {
+      "command": "osdk run --no-deps browser",
+      "exitCode": 0,
+      "evidence": "Personal assistant flows including capture, evidence, learning, decisions, notifications, mobile, 100-node chain and failure/restart truthfulness; fixture transport"
+    },
+    {
+      "command": "osdk run dev:review + scripts/code-wiki-viewport.ts",
+      "exitCode": 0,
+      "evidence": "Repository material mirror served by the actual dev orchestrator; three viewports, highlighting, structural trail, XSS and focus"
+    },
+    {
+      "command": "knowledge-verifier live calibration",
+      "model": "gpt-5.6-sol",
+      "result": "Supported statement 42 accepted; contradictory statement 43 needs_revision",
+      "scope": "Small synthetic live check; not proof of universal semantic correctness"
+    },
+    {
+      "command": "targeted review sync database identity regression",
+      "exitCode": 0,
+      "tests": 40,
+      "scope": "Fresh or partially populated runtime must not reuse another database’s clean sync baseline."
+    },
+    {
+      "command": "knowledge hierarchy context regression",
+      "exitCode": 0,
+      "tests": 14,
+      "scope": "Reviewed chapters retain child references and bounded original context, independent review and transitive invalidation."
+    },
+    {
+      "command": "live 390px topic picker",
+      "exitCode": 0,
+      "scope": "Native labeled topic selection changes actual articles; overview heading remains within first viewport; no horizontal overflow."
+    }
+  ],
+  "remainingLimits": [
+    "No embedding retrieval",
+    "No cross-file type-aware call resolution",
+    "No new external screen observer or global hook installation",
+    "No live Lark/WebSocket acceptance in this task",
+    "Single-user SQLite/shared-token architecture; no tenant isolation claim",
+    "Independent model review is not human acceptance"
+  ],
+  "knowledgeCommit": "936bbab91604715a6172c9fae089ea37df93fcec",
+  "coverage": {
+    "materials": 375,
+    "articles": 450,
+    "citations": 2707,
+    "articleCitations": 121,
+    "openQuestions": 749
+  },
+  "coldRestore": {
+    "input": "git archive of knowledgeCommit, excluding .repo-review/data; no runtime existed before boot",
+    "command": "osdk run --no-deps dev:review, REVIEW_REPO_ROOT pointing to archive, API/web ports assigned dynamically",
+    "articlesRestored": 450,
+    "expectedArticles": 450,
+    "generatedModelRuns": 0,
+    "oldDataPresent": false,
+    "manualSyncRequired": false
+  },
+  "generatedCorpusBrowser": {
+    "exitCode": 0,
+    "materials": 375,
+    "currentArticles": 450,
+    "topics": [
+      "Agent 运行时、角色分工与模型治理",
+      "总体架构、数据主链与运行边界",
+      "主助手、会话、检索与受治理记忆",
+      "问题背景、研究取舍与历史演进",
+      "代码知识投影与仓库评审",
+      "证据、知识生成与递归阅读",
+      "统一输入、外部接入与可靠投递",
+      "系统概览与能力边界",
+      "当前实现进展、已知限制与未决问题",
+      "验证体系、质量评测与证据强度",
+      "现行产品原则、信任边界与工程约束"
+    ],
+    "trail": [
+      {
+        "label": "已验证的当前功能切片",
+        "key": "topic:progress"
+      },
+      {
+        "label": "历史审查与当前回归",
+        "key": "module:docs-reviews"
+      },
+      {
+        "label": "复现脚本的用途与夹具边界",
+        "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts"
+      },
+      {
+        "label": "审计说明与临时 Store 创建",
+        "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts"
+      }
+    ],
+    "checks": [
+      "all materials and required topics current",
+      "actual generated narrative to fixed highlighted code",
+      "citation reasons",
+      "full trail URL reload",
+      "Escape",
+      "1440/768/390 no overflow",
+      "no browser or highlighting error"
+    ]
+  },
+  "codeViewportBrowser": {
+    "exitCode": 0,
+    "command": "scripts/code-wiki-viewport.ts against the actual dev server",
+    "scope": "Source highlighting, five-frame structural trail, Escape, crumb jumps, deep links, XSS, no raw routing ids, focus restoration, model unavailable fallback, 1440/768/390"
+  },
+  "mobileTopicBrowser": {
+    "exitCode": 0,
+    "scope": "Visible native label, actual topic changes, overview heading within first viewport and no horizontal overflow at 390px"
+  },
+  "generationBudget": {
+    "config": "config/review-code-model.json",
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "maxInputTokens": 192000,
+    "maxOutputTokens": 24000,
+    "contextReserveTokens": 16000,
+    "estimate": "UTF-8 bytes / 3, plus 25% headroom; current model context window checked through ACP",
+    "hierarchy": "Upper-level chapters retain fixed child references and bounded original context; descendants are not flattened into each prompt."
+  },
+  "logs": {
+    "frozenDeps": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680",
+    "fullCheck": "c1073e8748175352daf7aa9e85d9df5e8dfefd91ac310cbb17f61506157cd9c8",
+    "personalBrowser": "aaa0cb3c1df4dd2ea0ae92bfd5c55f4be6ed4047670046535b0f18f9f804093a",
+    "sharedReaderBrowser": "c0b1af45384535bd49846a0170d387932f063c091c1eb5ef0857399c3069a131",
+    "coldDev": "4c927effa8542a49d596adb0572a3430e5028335f7dccc19757672ecbf358075",
+    "generatedBrowser": "9ec4bf6bea45954a4d1dd20d15252b3f2b3aafe563e4e9d026da79951b723f9c",
+    "mobileBrowser": "e313c5d27a46e0a8f24da2844c709f58dd5b99207449135bfa0c92d18236f3df",
+    "codeViewport": "dd1bc3d630b0ad77577e58ff43f59edc55f4ac0627610d1c258ff2215e701952"
+  },
+  "screenshots": [
+    "verification/reader-390.png",
+    "verification/reader-1440.png"
+  ],
+  "temporaryEnvironment": "Owned review servers stopped and archive directories removed; existing user services were not stopped.",
+  "visualReview": "Desktop and 390px screenshots inspected; mobile topic selector leaves the knowledge overview in the first viewport."
+}
