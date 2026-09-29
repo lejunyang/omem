@@ -1,3 +1,7 @@
+import { restoreReviewKnowledge, saveReviewAnswerMaterials, publishReviewArticle } from "./knowledge.js";
+import { registerKnowledgeRoutes } from "../knowledge/api.js";
+import { createReviewKnowledgeRepository } from "./materials.js";
+import { profileSchema } from "../../../../packages/contracts/src/index.js";
 /** review knowledge-base HTTP surface. It reuses MemoryService /
  * KeywordRetrieval against the isolated review Store and registers only the
  * read/browse/sync routes a code-review workflow needs. No AssistantRuntime,
@@ -83,6 +87,9 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   let lastCodeSync: Awaited<ReturnType<typeof code.sync>> | null = null;
   const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
   const P = REVIEW_API_PREFIX;
+  registerKnowledgeRoutes(app, { store, prefix: P + "/knowledge", workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"), repository: createReviewKnowledgeRepository(store),
+    profile: deps.codeUnderstandingModel?.transport === "acp" ? profileSchema.parse({ id: "traex", name: "Knowledge", transport: "acp", command: deps.codeUnderstandingModel.command, args: deps.codeUnderstandingModel.args ?? [], model: deps.codeUnderstandingModel.model, effort: deps.codeUnderstandingModel.effort, timeoutMs: deps.codeUnderstandingModel.timeoutMs }) : undefined,
+    budget: deps.codeUnderstandingModel, onAnswer: () => saveReviewAnswerMaterials(store, repoRoot), onPublish: article => publishReviewArticle(repoRoot, article) });
 
   const reviewToken = process.env.REVIEW_TOKEN || "";
 
@@ -386,6 +393,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     syncing = true;
     try {
       lastSync = await runReviewSync(store, repoRoot);
+      restoreReviewKnowledge(store, repoRoot);
       lastCodeSync = await code.sync();
       return lastSync;
     } finally {
@@ -667,6 +675,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     codeSyncing = true;
     try {
       lastSync = await runReviewSync(store, repoRoot);
+      restoreReviewKnowledge(store, repoRoot);
       lastCodeSync = await code.sync();
       return lastCodeSync;
     } finally {
