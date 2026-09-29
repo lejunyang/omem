@@ -1,0 +1,502 @@
+{
+  "version": 1,
+  "document": {
+    "key": "topic:background",
+    "title": "问题背景、研究取舍与历史演进",
+    "summary": "omem 从可核对的不可变证据出发，坚持本地优先与可替换检索，并在早期采用 Agent CLI/ACP 作为模型接入方向；产品由离线原型、Batch 2 工程底座演进到主助手与渐进记忆。研究建议、历史方案和演示均不等同于当前实现。",
+    "category": "background",
+    "sections": [
+      {
+        "key": "why",
+        "title": "为何以证据与本地边界为起点",
+        "body": "omem 要让结论在材料更新后仍可回到当时原文，因此材料按不可变 revision 切片，引用固定 fragment；目前跨 revision 身份续接尚未实现，会留下历史断点。[[c1]] 未来续接的验收原则是误接率低于门槛，匹配失败时宁可保留为历史版本，也不错误连接证据。[[c14]] 渐进记忆把 Evidence、派生索引、工作上下文和正式知识视为并存层次，中间摘要始终是 derived，不成为新的独立证据。[[c2]]\n\n本地优先服务于隐私和可运维性，不要求 SaaS，模型端点可以在本机。早期材料明确选择个人助理、服务器或本地运行、Vue 与 CLI/ACP 优先；这是一项接入方向，而不是外部模型已经验证可用的证明。[[c15]] 工程上模型只产生结构化建议，权限、并发、证据版本和事实提交仍由领域服务掌握，fixture 与真实 CLI/ACP 验证必须分级记录。[[c3]]"
+      },
+      {
+        "key": "retrieval",
+        "title": "为何检索能力必须可替换",
+        "body": "早期研究提出“统一证据与记忆内核 + 可替换检索/学习引擎”：核心数据模型和阅读界面不随 WeKnora、Hindsight 或其他后端更换，系统自持版本引用、变更语义、自治风险与结果验证。[[c4]] 后续薄适配器方案把权威原件留在 omem，sidecar 仅保存可重建投影；搜索返回候选后再回查固定原件、有效性和范围，移除后端时仍可降级到关键词检索。[[c5]]\n\n完整平台常重复数据库、UI 与模型编排，生成的 Wiki 散文若没有 fragment 回链也可能被误当证据。因此研究倾向复用 SCIP、Tree-sitter、repo-map 等协议或算法，而非整体引入平台。[[c6]] 早期 WeKnora、Hindsight 首选只是待 PoC 验证的历史建议，不能表述为已完成生产选型。[[c7]]"
+      },
+      {
+        "key": "evolution",
+        "title": "从离线原型到渐进记忆",
+        "body": "第一阶段主要是研究与离线交互验证：固定提交下核验资料、许可证和部分源码，但没有部署候选引擎或复现性能基准。[[c7]] 单文件原型演示递归引用、版本比较、局部追问和异常来源，却未连接真实模型、数据库、数据源或后台任务。[[c8]] 相关子知识可用于下钻证据阅读流程，但只能作为交互思想和历史验证记录。[[c9]]\n\nBatch 2 随后形成合同、持久任务、角色运行时、飞书与 Vue 等工程底座；专项审查认为其仍不能作为个人超级助理验收，且“尽早提炼 claim、遇到不确定就询问”的路径造成过度打扰。[[c10]] 这一旧结论已被 v3 路线替代：保留数据、事务、任务、ACP、飞书和 UI 基础设施，改由主助手先理解目的，以使用、任务或变化触发整理，只在真实选择或高影响动作上询问。[[c11]][[c12]]"
+      },
+      {
+        "key": "progress-limits",
+        "title": "当前进展与解释边界",
+        "body": "当前状态记录了主助手路由、持久 turn、关键词检索、治理门控、输入保真与本地测试，ACP 适配器也已连接实际传输；但语义检索、跨版本 fragment 续接和 MemPalace sidecar仍未完成，真实 ACP 主助手及真实飞书 WebSocket 端到端也尚未 live 验证。[[c13]]\n\n因此，研究材料回答“为何这样设计”，原型展示“希望怎样交互”，Batch 2 与 v3说明“策略怎样演变”；只有状态页及相应验证工件能说明当前能力。检索路线还必须在冻结的脱敏中文语料上同口径比较，并通过候选回查、更新过滤、断网运行和索引可重建等硬门，才能从研究优先级转为采用决定。[[c16]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "不可变引用与本地优先约束",
+        "reason": "支持固定 revision、固定 fragment、跨版本身份续接缺口、关键词检索现状及本地模型边界。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 5,
+          "endLine": 11
+        },
+        "quote": "评估对象对齐 omem 当前约束（见 [implementation/status.md](../implementation/status.md) 与仓库 AGENTS.md）：\n\n- TypeScript + Vue 3 UI、Fastify API、SQLite 单用户；依赖由 osdk 管理（node 24，python 3.12 可选，本机未装 Docker）。\n- **固定 revision + 固定 fragment ID**：材料按不可变版本切片，引用锚在具体 fragment 上；repo-review 当前关系锚在 head revision 的 fragment 上，**跨 revision fragment "
+      },
+      {
+        "key": "c2",
+        "label": "主助手与渐进记忆的信息分层",
+        "reason": "链接相关子知识，解释原件、派生索引、工作上下文与正式知识为何并存。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/implementation/assistant-v3/README.md",
+          "section": "flow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c3",
+        "label": "Batch 2 的模型与交付边界",
+        "reason": "支持模型只产结构化建议、领域服务负责治理，以及 fixture 与真实 CLI/ACP 验证分级。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/README.md",
+          "startLine": 40,
+          "endLine": 47
+        },
+        "quote": "## 交付标准\n\n- 沿用 Node/SQLite 的个人模式；不引入必需 Docker、本地生成式 LLM 或完整组织平台。\n- 主线必须能从 capture 一路走到通知和反馈，不把所有候选锁在人工队列。\n- 模型只产生结构化建议，领域服务负责权限、并发、证据/版本校验和事实提交。\n- 每次普通自动应用都有完整变更与通知记录；需要人的决定必须绑定到具体 diff/版本。\n- 飞书官方注册能力优先；botmux 是可选渠道适配器，不复制其会话管理/CLI 调度平台。\n- 先通过 fixture/故障测试，再跑真实 CLI/ACP 和独立测试机器人验证；两类结果分别列明。"
+      },
+      {
+        "key": "c4",
+        "label": "自治记忆与检索组件复用研究",
+        "reason": "链接早期研究子知识，解释统一证据内核与可替换检索、学习引擎的总体取舍。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/research.md",
+          "section": "core-strategy"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "检索 sidecar 的薄适配器方案",
+        "reason": "支持权威原件留在 omem、候选回查、关键词降级和索引 generation 回退。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 77,
+          "endLine": 90
+        },
+        "quote": "## 6. 薄适配器方案\n\n```text\nomem SourceRevision / FragmentRevision（权威）\n  → 投影 outbox（幂等键、generation）\n  → 独立 Python worker（MemPalace/可替换后端）\n  → search 返回 candidate_id / rank / evidence mapping / truncation\n  → omem 回查固定原件、有效性和 scope\n  → Context Packet → TraeX/Codex/Claude ACP/CLI\n```\n\nomem 定义 `index(batch)`、`search(query,scop"
+      },
+      {
+        "key": "c6",
+        "label": "代码知识组件复用决策",
+        "reason": "支持复用协议与算法而不整体引入完整平台，并说明缺少固定证据回链的风险。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 13,
+          "endLine": 20
+        },
+        "quote": "## 0. 一页结论\n\n| 结论 | 内容 |\n| --- | --- |\n| 可直接复用的**组件/协议**（不引入平台） | ① **SCIP protobuf 数据模型**（per-snapshot 的 def/reference/moniker）作为 omem 代码索引的落盘格式参考；② **Tree-sitter**（Node 绑定）做 TS/Vue 结构化 outline 与语法感知切片；③ **Aider repo-map 算法**（tree-sitter tags + def/ref 二部图 + PageRank + token 预算）作为 RetrievalPort 的候选上下文组装器；④ 本地 embedding"
+      },
+      {
+        "key": "c7",
+        "label": "早期研究与 CLI/ACP 方向的事实边界",
+        "reason": "支持 CLI/ACP 优先的阶段性方向，并证明研究未部署候选引擎或复现性能基准。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research.md",
+          "startLine": 3,
+          "endLine": 7
+        },
+        "quote": "新增研究（2026-09-26）：[MemPalace 源码、公开结果复算与接入选择](research/mempalace/README.md)。在 CLI/ACP 优先的阶段，先验证其无生成式 LLM 本地检索 sidecar；不把下文早期 WeKnora/Hindsight 首选解释为已经完成生产选型。\n\n> 实施更新（2026-09-26）：用户已确认个人助理、服务器/本地运行、Vue 和 CLI/ACP 优先。当前已实现能力见 [实施状态](implementation/status.md)，已确认需求见 [决策记录](decisions.md)，视觉规范见 [根 design.md](../design.md)。下文为第"
+      },
+      {
+        "key": "c8",
+        "label": "离线原型的非生产限制",
+        "reason": "支持原型未连接真实模型、数据源、数据库、记忆引擎或后台任务。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/prototype/README.md",
+          "startLine": 18,
+          "endLine": 18
+        },
+        "quote": "此原型未连接 LLM、真实数据源、数据库或记忆引擎。问答使用确定性示例模板，范围选择只演示上下文/引用变化；学习和同步动作不会启动真实后台任务。恢复操作只改变演示历史，不修改正文中的静态知识 fixture。完整策略、权限和副作用语义见技术方案。"
+      },
+      {
+        "key": "c9",
+        "label": "可追溯知识交互的离线原型",
+        "reason": "链接原型子知识，供读者下钻其递归证据阅读、问答和历史演示流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:docs-prototype",
+          "section": "workflow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "Batch 2 审查结论",
+        "reason": "支持工程底座已有实现但尚不能作为个人超级助理验收，以及旧提炼确认策略需要调整。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+          "startLine": 1,
+          "endLine": 15
+        },
+        "quote": "# Batch 2 实现审查与产品偏差\n\n审查日期：2026-09-27；基线：`16d3aa6`。审查重点是提炼质量、确认打扰、输入语义和飞书主入口，不是完整安全/性能审计。本轮不恢复被用户叫停的飞书标注、不重启业务 worker、不发送测试卡片、不修改运行库。\n\n**结论：工程底座有真实实现，但目前不能作为“个人超级助理”验收。** 迁移、租约、幂等、角色包、事件收发和回调有测试支撑；价值判断、上下文保真、知识召回和主 Agent 入口仍有明显缺口。原来的产品方案也把“尽早提炼成 claim，再让用户判断”放得过重，需要调整，不能只更换模型或继续优化卡片文案。\n\n新的目标设计见 [assistant-v3](../../impl"
+      },
+      {
+        "key": "c11",
+        "label": "Batch 2 历史状态与目标更替",
+        "reason": "链接实施历史子知识，说明旧逐句确认路径已被 v3 替换，历史完成度不能替代当前代码证据。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/implementation/batch2/README.md",
+          "section": "status"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "入口与策略层的调整方向",
+        "reason": "支持保留基础设施、重做主助手入口与整理触发策略，并只就真实选择询问用户。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+          "startLine": 109,
+          "endLine": 125
+        },
+        "quote": "## 5. 可以保留的工作\n\n保留现有SQLite迁移、固定原件/片段、job lease/fencing、事务application receipt/outbox、role bundle校验、Lark secret/binding/事件/投递基础设施、Vue证据阅读组件。这些不是废代码。\n\n重做的是**入口与策略层**：主助手先理解用户目的；worker先保证材料可用和上下文保真；深度知识整理由使用/任务/变更触发；只有与真实选择有关的问题才由主助手提出。不要为了让旧的90个测试继续绿而保留“任何不确定就问人”的错误预期，应修改这些预期并增加本报告反例。\n\n## 6. 复查方式\n\n```bash\nosdk run typechec"
+      },
+      {
+        "key": "c13",
+        "label": "当前能力与剩余缺口",
+        "reason": "支持当前主助手、关键词检索和治理进展，同时限定语义检索、跨版本身份、sidecar及真实外部端到端验证尚未完成。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 45,
+          "endLine": 55
+        },
+        "quote": "## 能力矩阵\n\n| 能力域 | 代码已实现 | 本地测试通过 | 真实 ACP 验证 | 真实飞书验证 | 剩余缺口 |\n| --- | --- | --- | --- | --- | --- |\n| 主助手对话 | 会话路由/turn 持久化与幂等排队（同 transport_event_id 不重复建 turn/task）、RetrievalPort 注入（Web+飞书均接 KeywordRetrieval 中文 2-gram 召回）、create_task 经 MemoryService + detectTaskIntent 意图门控（咨询类零写入）、多轮回指（priorWorkingContext 携带前轮 selecte"
+      },
+      {
+        "key": "c14",
+        "label": "跨版本续接的保守验收原则",
+        "reason": "直接支持跨 revision 匹配失败时保留历史版本、宁可断开不可错接的治理选择。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "startLine": 285,
+          "endLine": 287
+        },
+        "quote": "1. **P1 Tree-sitter outline（TS+Vue）**：osdk 加 node 依赖，对本仓库 `.ts/.vue` 抽函数/类/import；以 `docs/repo-review/associations.json` 的 23 个 seed 里点名的 codePath+symbol 为金标准，测抽出的 symbol 命中率与误报。门：命中 seed symbol ≥ 阈值且无崩溃。\n2. **P2 SCIP 风格 occurrence 表**：参考 scip.proto 的 Document/Occurrence/SymbolInformation 字段，在 HEAD snapshot 上落一张 SQLite"
+      },
+      {
+        "key": "c15",
+        "label": "CLI/ACP 优先的阶段性选择",
+        "reason": "直接支持个人助理、服务器或本地运行、Vue 与 CLI/ACP 优先是已确认的早期方向。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research.md",
+          "startLine": 3,
+          "endLine": 5
+        },
+        "quote": "新增研究（2026-09-26）：[MemPalace 源码、公开结果复算与接入选择](research/mempalace/README.md)。在 CLI/ACP 优先的阶段，先验证其无生成式 LLM 本地检索 sidecar；不把下文早期 WeKnora/Hindsight 首选解释为已经完成生产选型。\n\n> 实施更新（2026-09-26）：用户已确认个人助理、服务器/本地运行、Vue 和 CLI/ACP 优先。当前已实现能力见 [实施状态](implementation/status.md)，已确认需求见 [决策记录](decisions.md)，视觉规范见 [根 design.md](../design.md)。下文为第"
+      },
+      {
+        "key": "c16",
+        "label": "本地检索 PoC 的明确决策门",
+        "reason": "支持冻结中文语料的同口径比较，以及证据映射、更新过滤、离线、可控性和可重建运维等硬门。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 92,
+          "endLine": 108
+        },
+        "quote": "## 7. PoC 与明确的决策门\n\n同一份本地脱敏中文语料和冻结问题集测试三条路线：A 当前关键词 baseline；B MemPalace 默认 vector/hybrid，再单列 union；C 同样 embedding+BM25 的薄组合。不要混用模型、切片、top-k/上下文预算后只比较最终最好分数。\n\n先用 30 材料/20 轨迹/60 问题查正确性，再扩到 10k/100k 片段查资源。问题覆盖专名、错误码、时间变更、跨片段全证据、无答案和同名不同来源；中文英文混排单列。参数开发集与 holdout 按项目/时间隔开。\n\n| 硬门 | 验收 |\n| --- | --- |\n| 证据映射 | 展示的每条候选100%能回查"
+      }
+    ],
+    "questions": [
+      {
+        "question": "可替换检索路线应在什么条件下从关键词基线推进到本地语义检索或 MemPalace sidecar？",
+        "why": "材料已经规定候选须能回查固定片段、更新或撤回后可过滤、预热后断网运行且索引可重建，但尚无冻结中文任务集上的已执行对照结果，也没有最终资源预算。",
+        "nextStep": "冻结脱敏中文语料、问题集、资源预算与关键词基线，获得配置及权重下载授权后，以相同切片、top-k和上下文预算比较候选路线。",
+        "blocking": false,
+        "citationKeys": [
+          "c13",
+          "c16"
+        ]
+      },
+      {
+        "question": "何时具备执行真实 ACP 主助手和真实飞书端到端验收的授权环境？",
+        "why": "当前代码和本地 fixture 已覆盖适配器及主要流程，但材料明确真实 ACP 主助手对话与真实飞书 WebSocket 收发尚未完成，不能外推为线上可用。",
+        "nextStep": "确认可用的 Agent CLI、模型与 effort 配置、飞书测试应用、消息范围和数据留存规则，再分别记录真实对话、取消、恢复、图片与引用链路的 live 结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c13"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/sources.json",
+      "digest": "90144f1679a62dc92950551b3bcc64b73030a8c02a5df52eb0c8b9e02e68aa6d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/source-index.md",
+      "digest": "ba5bfc1066f3738d6ac7289284824efcd395ffa1e3001e4d0bd040b13ae28ab3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/integration-readiness.md",
+      "digest": "de753c07b88e5b5cc8b6fcb8f32f99cb980cc1238d2e6ceb2f85eee4af8a6d61"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/README.md",
+      "digest": "652c0c4315e44d157069a326d0d413dbedb9a6b4e276eebe57b6a8fd5d501c40"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/audit_artifacts.py",
+      "digest": "a4c1a184fbdbd222ed6392041032d7cc0ce5501bc38dd317f9c6d8e6f24812fb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research.md",
+      "digest": "c375439684084fa36713fd5e621534b010f2b06aca3953daf41590ca43860352"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/README.md",
+      "digest": "81a869cff3e3b202e0f60f84da90d94d3f91cb5526941c551699d9b76485266e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/index.html",
+      "digest": "63c428fc0ed5bcabaafe6f44737cf209b36644d5dd0dd69c3b6bbba51b492730"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/styles.css",
+      "digest": "c3f02f7ba444bfe662577f604931c38372a76d9500d7cb270b4678131709992b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/data.js",
+      "digest": "8d41ea8966b884ea81c9356546e94938fa4562452971e9d0f23609893affc1ec"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/app.jsx",
+      "digest": "3463c1c480ab929a16f0be14f47a817ec6729c09d221429243628708aafba731"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/build.mjs",
+      "digest": "faa46761eaf99cdc7bd3ef5e9f013f18d386176844ac8c4ac5261db2b8149470"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/smoke.mjs",
+      "digest": "d720ba9d0168f6974e900cbe4fe5a2ece652f8eec8fe68497cc9902bc84ee702"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/verification.json",
+      "digest": "119cee36eea3c718dfbf9abdea0a39c24ce95ffb7269890c5f8b5dd6c71c4462"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/tweaks-panel.jsx",
+      "digest": "b77bf1ccfdb9d8459080d4465294899738f48dea68c7e8640b4a976c1b8e4290"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/README.md",
+      "digest": "dfe6493e7a9bf3ee1adfa25974cbbb512493dff0b6c4a59a847d676b325100f7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/assistant-v3/README.md",
+      "digest": "0ff7c4b9eb3a08f1e25fa74363ae025b0056a03ae7bcdf4bcc0af2ac9987fca3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+      "digest": "cfd6fbb55cf43fc62dc6b6c103b588e8e0a7984e9f6889cbfd6094ba26ce774d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+      "digest": "dad072d11a1f1a7f32c54f927009881d3cba35143ca37da23ef2f519521de793"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/status.md",
+      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-research",
+      "digest": "10a38be23f98dfed77c3e23ba1bdea619dc6eb63aca69d21fd2655ff8a5868b3"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research.md",
+      "digest": "0e597b829581045330cb2071aae7c29dd1b191ec8e4e7fd3763de44d8be31350"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "ed543377bb837354d6dd18f8b05736b5892c29d6f45699589c5542e03060a8d9"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-prototype",
+      "digest": "bb1ee636dcda648f554045d420118a646d0b3b623b641567085a683dc310ce57"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/batch2/README.md",
+      "digest": "7dd3bc45a54c9001f4454d3ea6045fbd441924949e0f08529d93171f24ae5c51"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/assistant-v3/README.md",
+      "digest": "22f8353b808f99bd8a4ef08d2fb1825fc86806b89c77db2442b9e3c31d8e0b6f"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-reviews",
+      "digest": "aa45293f25a3b7548dce9d59d89a6a4f1c5742b327ffa617e87938048395618e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:02:53.822Z",
+    "trace": {
+      "runId": "10ff0710-9f11-4c1d-9e9a-b65097e87ace",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "628f1d39b3018ec290a98f0ffd327063a67e158089d635755d86dfed5cf971c2",
+      "contextHash": "82c38181fdbf9d3413d9622dad769ded87b8e2ad35f0988b466ae5e7770766b3",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "df57cd4bb864e30a7a58f866d3bdf4cfa8a8a434c4e569e07e284819dc2cf54e",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef9-d82f-71d1-a0d6-d469d2740d82"
+      ],
+      "usage": {
+        "used": 80255,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 163960,
+          "utf8Bytes": 223493,
+          "estimatedTokens": 74498,
+          "budgetedTokens": 93123,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:03:05.515Z",
+    "trace": {
+      "runId": "0db5344e-9aac-45a1-9c2f-ca7509198398",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "dfe9c7494edd2120c2347f615cbd1e09996c38ac4cf542c20aa617cdaabdc094",
+      "contextHash": "4e21efc74d6c001a27329adf30a56b334eeea62ad501679847eb9d6bfd976e23",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a1983f269d755ded083d65cd4cde5bfb5807fb6db0d5a9ac135cf2def8e27906",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eefa-4629-7af0-b7d1-9bc708515742"
+      ],
+      "usage": {
+        "used": 77403,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 162524,
+          "utf8Bytes": 221461,
+          "estimatedTokens": 73821,
+          "budgetedTokens": 92277,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
