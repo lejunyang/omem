@@ -2,7 +2,8 @@
  * common knowledge pipeline and accepts any captured source, not file paths. */
 import { execFileSync } from "node:child_process";
 import { lstatSync, readFileSync, realpathSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, posix } from "node:path";
+import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 import type { CaptureInput } from "../../../../packages/contracts/src/index.js";
 import { ensureReviewMetaTable } from "./store.js";
 import type { Store } from "../store.js";
@@ -62,4 +63,29 @@ export function createReviewKnowledgeRepository(store: Store) {
     const removed = new Set((store.db.prepare("SELECT source_id FROM review_source_meta WHERE removed=1 OR legacy_alias_of IS NOT NULL").all() as { source_id: string }[]).map(r => r.source_id));
     return currentMaterials(store).filter(m => !removed.has(m.sourceId));
   });
+}
+
+/** Select explicit local document links as context, not as confirmed relations.
+ * Models still decide what the material means and the verifier checks support. */
+export function linkedMaterialOffers(all: KnowledgeMaterial[], targets: KnowledgeMaterial[]) {
+  const byPath = new Map(all.filter(m => m.path).map(m => [m.path!, m]));
+  const selected = new Map<string, { material: KnowledgeMaterial; ranges: { start: number; end: number }[] }>();
+  for (const target of targets) {
+    if (!target.path) continue;
+    const references = [...target.text.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)].map(m => m[1]!);
+    if (target.path.endsWith(".html")) references.push("./build.mjs", "./app.jsx", "./styles.css");
+    for (const ref of references) {
+      if (/^(?:[a-z]+:|\/\/)/i.test(ref)) continue;
+      const [file, anchor] = ref.split("#");
+      const path = posix.normalize(posix.join(posix.dirname(target.path), file || posix.basename(target.path)));
+      const material = byPath.get(path);
+      if (!material || targets.some(t => t.key === material.key) || selected.has(material.key)) continue;
+      const lines = material.text.split("\n");
+      const slug = (text: string) => text.replace(/^#+\s*/, "").trim().toLowerCase().replace(/\s+/g, "-").replace(/[^\p{L}\p{N}_-]/gu, "");
+      let start = 1;
+      if (anchor) { let decoded = anchor; try { decoded = decodeURIComponent(anchor); } catch {} const index = lines.findIndex(line => /^#+\s/.test(line) && slug(line) === decoded); if (index >= 0) start = index + 1; }
+      selected.set(material.key, { material, ranges: [{ start, end: Math.min(material.lineCount, start + 79) }] });
+    }
+  }
+  return [...selected.values()].slice(0, 4);
 }

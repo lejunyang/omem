@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.js";
-import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "../src/review/materials.js";
+import { captureRepositoryMaterials, createReviewKnowledgeRepository, linkedMaterialOffers } from "../src/review/materials.js";
 import { restoreReviewKnowledge, saveReviewAnswerMaterials } from "../src/review/knowledge.js";
 
 it("captures source, deployment configuration and image materials without importing runtime or private config", () => {
@@ -11,7 +11,7 @@ it("captures source, deployment configuration and image materials without import
   const store = new Store(join(root, ".repo-review/runtime/db"));
   try {
     mkdirSync(join(root, "deploy"), { recursive: true });
-    writeFileSync(join(root, "README.md"), "# Purpose\n\nFixed evidence matters.\n");
+    writeFileSync(join(root, "README.md"), "# Purpose\n\nFixed evidence matters. [部署](deploy/service.example)\n");
     writeFileSync(join(root, "deploy/service.example"), "[Service]\nExecStart=node main.js\n");
     writeFileSync(join(root, ".env"), "PRIVATE_FIXTURE=not-captured");
     writeFileSync(join(root, "diagram.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", "base64"));
@@ -19,6 +19,7 @@ it("captures source, deployment configuration and image materials without import
     expect(first.filter(r => r.state === "captured").map(r => r.path).sort()).toEqual(["README.md", "deploy/service.example", "diagram.png"]);
     const repository = createReviewKnowledgeRepository(store);
     expect(repository.materials().find(m => m.path === "diagram.png")!.images).toHaveLength(1);
+    expect(linkedMaterialOffers(repository.materials(), [repository.materials().find(m => m.path === "README.md")!])[0]!.material.path).toBe("deploy/service.example");
     const versions = store.db.prepare("SELECT count(*) n FROM revisions").get();
     captureRepositoryMaterials(store, root);
     expect(store.db.prepare("SELECT count(*) n FROM revisions").get()).toEqual(versions);

@@ -10,7 +10,7 @@ import { RuntimeRequestRepository } from "../apps/server/src/agent-runtime/reque
 import { KnowledgeRepository, digest } from "../apps/server/src/knowledge/repository.js";
 import { KnowledgePipeline } from "../apps/server/src/knowledge/pipeline.js";
 import { restoreKnowledgeArticles, writeKnowledgeArticle } from "../apps/server/src/knowledge/artifacts.js";
-import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "../apps/server/src/review/materials.js";
+import { captureRepositoryMaterials, createReviewKnowledgeRepository, linkedMaterialOffers } from "../apps/server/src/review/materials.js";
 import { createReviewStore } from "../apps/server/src/review/store.js";
 import { runReviewSync } from "../apps/server/src/review/sync.js";
 import { runCodeSync } from "../apps/server/src/code/sync.js";
@@ -55,7 +55,7 @@ try {
         if (edge.edgeKind === "imports" && edge.toFileId) { const f = byFile.get(edge.toFileId); if (f) extra.add(`omem:${f.path}`); }
       }
     }
-    return [...extra].filter(k => !targets.some(t => t.key === k)).slice(0, 4).map(k => byKey.get(k)).filter(m => !!m).map(material => ({ material, ranges: [{ start: 1, end: Math.min(material.lineCount, 70) }] }));
+    return [...linkedMaterialOffers(allMaterials, targets), ...[...extra].filter(k => !targets.some(t => t.key === k)).slice(0, 4).map(k => byKey.get(k)).filter(m => !!m).map(material => ({ material, ranges: [{ start: 1, end: Math.min(material.lineCount, 70) }] }))];
   });
   const recordCoverage = () => {
     const known = new Map(repository.list().map(a => [a.document.key, a]));
