@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+    "title": "OmStatusLine：内容来源层级状态提示",
+    "summary": "该组件用统一标签区分原始证据、派生说明、候选推断、过期内容、加载失败和人工整理，刻意不承担关系边状态展示。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "semantic-role",
+        "title": "语义职责",
+        "body": "组件解决知识阅读中“内容从何而来、可信层级如何”的即时辨识问题。它接受六种封闭状态，并将其映射为中文标签；可选 `sourceNote` 用于补充来源说明。根元素采用 `role=\"note\"`，所以状态是正文旁的解释性信息，而不是可操作控件。[[c1]] 文件注释明确将它与关系状态徽章分开：这里表达内容的来源层级，关系边自身的确认状态应由其他组件承担。"
+      },
+      {
+        "key": "visual-boundary",
+        "title": "视觉编码与边界",
+        "body": "所有状态共享紧凑边框标签，派生说明和人工整理用不同左边框强调；候选使用警示色，过期内容带删除线，错误使用危险色背景，原始证据则保持基础样式。附加来源文字使用弱化颜色。[[c2]]\n\n组件没有默认分支：TypeScript 调用方只能传已声明状态，但若运行时收到异常值，标签可能为空且没有回退。颜色和部分背景值依赖外部主题变量或固定色值；材料没有显示图标、屏幕阅读器专用文本、状态切换逻辑或测试，因此不能确认仅凭颜色之外的可辨识性是否经过验证。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "来源层级类型与可见标签",
+        "reason": "支持组件区分六种内容来源状态、显示来源补充信息且不承担关系状态的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+          "startLine": 1,
+          "endLine": 24
+        },
+        "quote": "<script setup lang=\"ts\">\n/** A small prefix tag that distinguishes the PROVENANCE LAYER of a block of\n * content (raw evidence vs derived explanation vs candidate guess vs stale vs\n * load error). This is intentionally NOT a relation-status badge: edge status\n * stays on OmBadge. See docs/implementation/code-wiki-ui-de"
+      },
+      {
+        "key": "c2",
+        "label": "状态标签视觉编码",
+        "reason": "支持不同来源层级通过边框、警示色、删除线和错误色表现的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+          "startLine": 26,
+          "endLine": 69
+        },
+        "quote": "<style scoped>\n.om-status-line {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  margin: 0 0 6px;\n}\n.tag {\n  font-size: 11px;\n  letter-spacing: 0.04em;\n  border: 1px solid var(--om-line);\n  border-radius: 4px;\n  padding: 1px 6px;\n  color: var(--om-secondary);\n  background: var(--om-soft);\n  white-space: nowrap;\n}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "来源状态的视觉和语义差异是否经过无障碍测试？",
+        "why": "候选、过期和错误状态主要依靠样式区分，虽然标签文字不同，但材料未提供对比度、屏幕阅读器或高对比模式测试。",
+        "nextStep": "补充各 kind 的可见文本断言，并在浏览器检查颜色对比度和高对比模式表现。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmPanel.vue",
+      "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmShell.vue",
+      "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+      "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
+      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:26:55.969Z",
+    "trace": {
+      "runId": "f0a2b923-fe64-4f46-a375-0c579799d0c5",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "efd3d1ff303420d53087badd2f464bf3aa8af87cfd54c30ed58bf02f24e5b8d2",
+      "contextHash": "7757dfeebda306a48c1622bc127ad757355a97b2adcedddbc067054f1a5e145a",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a55b61e8eae72a7843c32cbe28f2f184d2d2358e900c2034101338d8e48a648c",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea1-9483-76f2-b00c-f39d11d9b12f"
+      ],
+      "usage": {
+        "used": 34567,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 51248,
+          "utf8Bytes": 53271,
+          "estimatedTokens": 17757,
+          "budgetedTokens": 22197,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:20.220Z",
+    "trace": {
+      "runId": "6633981a-2593-4850-bc67-603ea31b227a",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "0c4ed297379bac8b72fd264a7dfc8b50245b813d8943880f8519c6281265990e",
+      "contextHash": "afef2621b0f791d244cfd43f8ab6aa704d541379ab6ae6a336528fdb10b4d141",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "eabebc66d564f07fe2b3e0059765d8da27b4fac7ead33b03960fea24900c6e4d",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-69a8-73c1-8014-650a56b0797e"
+      ],
+      "usage": {
+        "used": 37890,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 66460,
+          "utf8Bytes": 76474,
+          "estimatedTokens": 25492,
+          "budgetedTokens": 31865,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

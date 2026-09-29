@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmButton.vue",
+    "title": "通用按钮组件",
+    "summary": "提供统一的按钮外观、原生类型与加载禁用行为，是对话框等上层界面的基础交互控件。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "作用与接口",
+        "body": "组件把原生按钮封装为 primary、secondary、ghost 三种视觉变体；默认使用 secondary，并把 HTML 类型默认设为 button，降低按钮位于表单中时意外提交的风险。调用方仍可显式选择 submit，并通过默认插槽提供按钮内容。[[c1]] 基础样式统一最小高度、间距、边框和颜色，primary 与 ghost 仅覆盖部分视觉属性，因此它主要承担共享设计原语，而不包含具体业务动作。[[c2]]"
+      },
+      {
+        "key": "state",
+        "title": "状态流程与边界",
+        "body": "loading 为真时，组件设置 disabled 与 aria-busy，并在插槽内容前显示一个对辅助技术隐藏的“◌”占位字符；显式 disabled 或 loading 任一成立都会阻止交互。[[c3]] 材料没有为该字符定义旋转动画，也没有自动生成状态文案或可访问名称；这些仍依赖插槽文字或调用方传入的 aria-label。组件也不支持 reset 类型。OmDialog 的关闭操作复用了 ghost 按钮和图标，表明按钮合同被上层弹窗交互直接依赖。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "按钮属性与默认值",
+        "reason": "支持按钮变体、加载与禁用属性，以及默认使用 button、允许显式 submit 的接口说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmButton.vue",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "<script setup lang=\"ts\">\nwithDefaults(\n  defineProps<{\n    variant?: \"primary\" | \"secondary\" | \"ghost\";\n    loading?: boolean;\n    disabled?: boolean;\n    type?: \"button\" | \"submit\";\n  }>(),\n  { variant: \"secondary\", type: \"button\" },\n);"
+      },
+      {
+        "key": "c2",
+        "label": "按钮基础与变体样式",
+        "reason": "支持组件统一基础尺寸和颜色，并通过 primary、ghost 类覆盖视觉表现的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmButton.vue",
+          "startLine": 23,
+          "endLine": 51
+        },
+        "quote": "<style scoped>\n.om-button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 8px 14px;\n  border-radius: 6px;\n  border: 1px solid var(--om-line);\n  background: var(--om-panel);\n  color: var(--om-ink);\n  font-size: 13px;\n}\n.om-button:hover {\n  background"
+      },
+      {
+        "key": "c3",
+        "label": "加载与禁用渲染",
+        "reason": "说明 loading 如何联动 disabled、aria-busy，并渲染无动画定义的占位字符。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmButton.vue",
+          "startLine": 12,
+          "endLine": 21
+        },
+        "quote": "<template>\n  <button\n    :type=\"type\"\n    class=\"om-button\"\n    :class=\"variant\"\n    :disabled=\"disabled || loading\"\n    :aria-busy=\"loading\"\n  >\n    <span v-if=\"loading\" aria-hidden=\"true\">◌</span><slot />\n  </button>"
+      },
+      {
+        "key": "c4",
+        "label": "对话框关闭按钮",
+        "reason": "证明上层 OmDialog 使用 ghost 变体的 OmButton 承载关闭全部操作，并由调用方提供可访问名称。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmDialog.vue",
+          "startLine": 43,
+          "endLine": 52
+        },
+        "quote": "    <div class=\"dialog-inner\">\n      <header>\n        <div>\n          <small v-if=\"depth\">证据路径 · 第 {{ depth }} 层</small>\n          <h2 id=\"om-dialog-title\">{{ title }}</h2>\n        </div>\n        <OmButton variant=\"ghost\" aria-label=\"关闭全部\" @click=\"emit('close')\"\n          ><OmIcon name=\"close\"\n        /></OmButton>\n   "
+      }
+    ],
+    "questions": [
+      {
+        "question": "loading 状态是否应保留可见文字，并增加真正的进度动画或状态文案？",
+        "why": "现有实现仅增加“◌”字符、disabled 和 aria-busy；材料中没有动画、组件测试或产品规范证明这些反馈已满足视觉与无障碍预期。",
+        "nextStep": "补充按钮组件测试与无障碍验收标准，覆盖 loading、disabled、submit 和仅图标按钮，再据此决定进度反馈形式。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "loading 状态是否需要在保留现有插槽文字的基础上，增加真正的进度动画或更明确的状态文案？",
+        "why": "当前实现会继续渲染插槽内容，同时增加“◌”、disabled 和 aria-busy；材料没有动画、组件测试或产品规范，无法确认这些反馈是否满足视觉与无障碍预期。原草稿问题中“是否应保留可见文字”容易让人误以为当前实现会隐藏文字。",
+        "nextStep": "补充按钮组件测试与无障碍验收标准，覆盖 loading、disabled、submit 和仅图标按钮，再决定是否增加动画或状态文案。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCitation.vue",
+      "digest": "39a341b80f8588122a83e872e3442cf37918772f48b495b5a26290ef596c0963"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+      "digest": "0af2854bc826cd4d491bbc41aeec9e3fbf73e21454e58aab12442b456298b927"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmDialog.vue",
+      "digest": "4c6e911f2c8623ff81e0ed0bcbce94e720686ce88b1e727549d4dd046c757aca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmEmpty.vue",
+      "digest": "838919dc7d112217a2f091d1f1926a75f125c8a351e602db6da5b9cdb24f3461"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:27:23.180Z",
+    "trace": {
+      "runId": "2cc0a708-59d6-43a2-b54a-3e96be892893",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "274dfd52ac875deac1afd627380e31317dea9dda7679f2953abe76f031581284",
+      "contextHash": "002d0b569b2a4db996f9b39b24cec0de66bbc6577f980bfd6194553cbdf43705",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c6f44a71cfc6b90a88dc707a4fb33b803b95c04f6751d3e3a0235f7c00baf62f",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-9027-7130-92ab-39f149324084"
+      ],
+      "usage": {
+        "used": 25341,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33736,
+          "utf8Bytes": 38704,
+          "estimatedTokens": 12902,
+          "budgetedTokens": 16128,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:33.844Z",
+    "trace": {
+      "runId": "92043a0a-81f7-45df-8ca6-b129dcab93ea",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "4cf429ce6de9f9ee777eee88a23aa6a938e4bab1f9c649df72a7cb8718765784",
+      "contextHash": "d2095fcc53cbf97a69c21635cbebdc8c5ac0897924cf301e50dc8a6b53b352f1",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6a0fe08611ace553c62394d47053bd0ddb74ea75b051724f66fc3ac7c4767d72",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-d3fb-7003-8aa9-9dc8165bfcbe"
+      ],
+      "usage": {
+        "used": 23343,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 30689,
+          "utf8Bytes": 34421,
+          "estimatedTokens": 11474,
+          "budgetedTokens": 14343,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

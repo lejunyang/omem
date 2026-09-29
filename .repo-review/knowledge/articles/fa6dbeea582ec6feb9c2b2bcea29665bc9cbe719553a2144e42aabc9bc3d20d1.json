@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+    "title": "OmRelationGraph：确定性模块依赖图",
+    "summary": "该组件把模块及聚合导入关系绘制为稳定的分层 SVG，并暴露节点、边选择事件。其布局可复现，但循环依赖、missing 边呈现和边标签键盘行为存在明确限制，当前材料未包含组件测试。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "model-layout",
+        "title": "数据合同与布局流程",
+        "body": "组件解决模块架构关系的可视化问题：节点保存展示名称及文件、符号计数，边记录导入方、被导入方、聚合数量、证据和确认状态，并分别向容器发出节点或边选择事件。[[c1]]\n\n布局先建立“模块 → 仓内依赖模块”的邻接表；missing 边以及任一端点不在模块集合中的边不会参与分层。模块按标识固定排序后，以“无依赖为第 0 层、其余为依赖最大层加一”的规则迭代，随后按层和层内行号生成固定坐标及画布尺寸，因而相同输入不会产生力导向式漂移。[[c2]] 迭代最多 12 轮，所以循环依赖或很深的链只能得到有界计算结果，不能视为严格的最长路径层级。"
+      },
+      {
+        "key": "render-interaction",
+        "title": "绘制、交互与边界",
+        "body": "边在两个已有节点之间绘制为贝塞尔曲线；candidate 与 stale 使用不同虚线，其他状态落入 confirmed 样式。通用路径在找不到任一端点时返回空字符串，中点则回退到原点。[[c3]] 模板仍遍历全部边并绘制数量标签：鼠标点击标签发出边选择；节点支持鼠标及 Enter/空格选择，并以加粗描边表示当前项。[[c4]]\n\nmissing 边需要区分两种情况：它虽不参与依赖分层，但所有已声明模块仍会获得坐标，因此两端都存在时仍会画出普通曲线，并因样式默认分支显示为 confirmed；只有端点未声明时路径才为空、标签落在原点。当前实现没有文件注释所称的外部“断裂短线”。此外，边标签的键盘事件复用了节点处理器，Enter/空格会把边标识作为节点标识发出，与鼠标选择边不一致。提供的材料中没有测试文件，无法证明循环、missing 边或键盘等价行为已被断言。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "关系图数据与事件合同",
+        "reason": "支持节点、边字段含义以及组件对外节点选择和边选择事件的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+          "startLine": 14,
+          "endLine": 39
+        },
+        "quote": "export type GraphModule = {\n  id: string;\n  label: string;\n  fileCount: number;\n  symbolCount: number;\n};\n\nexport type GraphEdge = {\n  id: string;\n  from: string; // importer module id (right/higher layer)\n  to: string; // imported module id (left/lower layer)\n  count: number;\n  status: \"confirmed\" | \"candidate\" | \"mis"
+      },
+      {
+        "key": "c2",
+        "label": "确定性分层与坐标计算",
+        "reason": "支持 missing 边过滤、固定排序、十二轮迭代、分桶定位及所有模块获得坐标的流程与限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+          "startLine": 48,
+          "endLine": 105
+        },
+        "quote": "/** layer(m) = 0 for modules that import nothing in-repo; else 1 + max layer of\n * their imports. Deterministic. */\nconst layout = computed(() => {\n  const byId = new Map(props.modules.map((m) => [m.id, m]));\n  // adjacency: module -> modules it imports\n  const imports = new Map<string, Set<string>>();\n  for (const e o"
+      },
+      {
+        "key": "c3",
+        "label": "边路径、状态样式与键盘处理",
+        "reason": "支持贝塞尔路径、中点回退、missing 状态落入 confirmed 默认样式，以及节点键盘处理器行为的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+          "startLine": 107,
+          "endLine": 138
+        },
+        "quote": "function edgePath(e: GraphEdge): string {\n  const a = layout.value.positions.get(e.from);\n  const b = layout.value.positions.get(e.to);\n  if (!a || !b) return \"\";\n  // from (right side of importer) to (left side of imported)\n  const x1 = a.x;\n  const y1 = a.y + BOX_H / 2;\n  const x2 = b.x + BOX_W;\n  const y2 = b.y + BO"
+      },
+      {
+        "key": "c4",
+        "label": "SVG 边与节点事件绑定",
+        "reason": "支持数量标签渲染、边标签鼠标和键盘事件差异、节点选择及选中状态绑定的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+          "startLine": 141,
+          "endLine": 172
+        },
+        "quote": "<template>\n  <svg\n    class=\"om-relation-graph\"\n    :viewBox=\"`0 0 ${layout.width} ${layout.height}`\"\n    role=\"group\"\n    aria-label=\"模块依赖图\"\n  >\n    <defs>\n      <pattern id=\"hatch\" width=\"6\" height=\"6\" patternTransform=\"rotate(45)\" patternUnits=\"userSpaceOnUse\">\n        <line x1=\"0\" y1=\"0\" x2=\"0\" y2=\"6\" stroke=\"#bbb\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "边标签按 Enter 或空格时发出节点选择事件，是有意设计还是键盘交互缺陷？",
+        "why": "鼠标点击边标签会发出边选择事件，键盘操作却调用节点处理器并传入边标识，两种输入方式的语义不一致。",
+        "nextStep": "确认预期后拆分边专用键盘处理器，并增加鼠标与键盘行为等价的组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "missing 关系在两个端点都存在和至少一个端点缺失时，分别应如何呈现？",
+        "why": "当前实现没有注释描述的断裂短线：两端存在时显示为 confirmed 普通曲线，端点缺失时路径为空且数量标签位于原点。",
+        "nextStep": "明确两类 missing 边的可视规则，再实现专用路径和样式，并用 SVG 结构及事件断言覆盖两种输入。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "missing 关系在两个端点都存在和至少一个端点缺失时，预期分别如何呈现？",
+        "why": "源码注释宣称 missing 使用外部断裂短线，但实际实现中，两端存在的 missing 边会进入 confirmed 样式，端点缺失时路径为空且标签回退至原点；草稿对此描述与材料一致，但预期规则无法由实现本身确定。",
+        "nextStep": "明确两类 missing 边的产品规则，再补充专用路径、样式及 SVG 结构与交互测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmPanel.vue",
+      "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmShell.vue",
+      "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+      "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
+      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmIcon.vue",
+      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmButton.vue",
+      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:27:42.617Z",
+    "trace": {
+      "runId": "9470113b-84bc-40ed-98cf-9e65f87c19d8",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "8ac23c766fced360932bc7cd007c433754209fe810a07ccadd64c4094c0777c5",
+      "contextHash": "821e43b02cb505c6b62e7382f36a85b703851eda32cd7ef1524fa7b3564244c9",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8b2cf6d5c3bd831a433b84efc9ce8da405bdb4403f3a9d4a2bf46614de62b212",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-cb94-7140-9a7c-d99863137bbd"
+      ],
+      "usage": {
+        "used": 32268,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 54888,
+          "utf8Bytes": 59369,
+          "estimatedTokens": 19790,
+          "budgetedTokens": 24738,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:27:53.529Z",
+    "trace": {
+      "runId": "a52e42ac-02ca-441b-be8e-3fd7f0d4cf70",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "d7dc5bda5f853214d0de4557164f7ed9ff85b12937db8c459b8984bbe9ae3358",
+      "contextHash": "8b9d4c3158102322b9dff25cfaa427ad8c6b2fd0214cd0423c3e78c423237887",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "aea47f5bce3e0b584fdce29c5872f0d69a865ca5de42e803465b1b00750e1daa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-1fce-7e43-9e00-bba84f54a1e9"
+      ],
+      "usage": {
+        "used": 30723,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 52146,
+          "utf8Bytes": 55711,
+          "estimatedTokens": 18571,
+          "budgetedTokens": 23214,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

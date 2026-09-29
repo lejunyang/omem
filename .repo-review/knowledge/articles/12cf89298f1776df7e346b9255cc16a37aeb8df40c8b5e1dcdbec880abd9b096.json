@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/OmHashRoute.ts",
+    "title": "Code Wiki 的轻量 Hash 路由与 Trail 深链",
+    "summary": "该模块以轻量 Hash 格式表示 Code Wiki 的概览、结构、关系图、模块和文件视图，并附带可刷新恢复的 trail 栈。解析采用防御性回退；文件行号与 trail 可以同时往返。URL 仅保存帧的 kind/id，且序列化深度受预算限制。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "views",
+        "title": "视图模型与防御性解析",
+        "body": "路由模型覆盖概览、结构、关系图、模块与文件视图；文件视图还可携带行号，trail 则作为独立帧数组返回。解析器会先移除 Hash 前缀，空值回退到概览；URI 解码失败时保留原段。[[c1]] 对于无法识别的主路由，解析器同样回退到概览；若主路由头恰为 `trail`，则落到关系图。[[c2]] 这种实现不依赖完整路由框架，适合状态集合较小的 Code Wiki，同时避免损坏深链使页面失去可用入口。"
+      },
+      {
+        "key": "roundtrip",
+        "title": "行号与 Trail 的组合往返",
+        "body": "文件路由写入时先形成 `#/file/<文件>?line=<行号>`，再追加 `/trail/<kind>/<id>...`。[[c3]] 解析并不会把查询串混入文件标识：它先在完整字符串中提取行号，随后按 `/trail/` 分离帧后缀，再通过 `split(\"?\")[0]` 从主路由移除查询串，最后才切分文件路径。[[c2]] 因而文件标识、行号和 trail 可以从该格式共同恢复；此前关于三者无法可靠往返的结论已被替代。"
+      },
+      {
+        "key": "trail",
+        "title": "Trail 编码、恢复与信息边界",
+        "body": "trail 以 kind/id 成对编码，每段均进行 URI 编码；解析时按相邻两段恢复帧，并暂用 id 作为标题。读写两端只持久化前 `MAX_TRAIL` 帧。[[c2]] 共享定义将该常量说明为 URL 长度预算，实际渲染栈并不受此上限约束，超限应由调用方明确提示。[[c4]] 同时，Hash 不保存标题、滚动位置以及 fileId、symbolId 等附加字段，刷新后的完整展示信息仍需由上层根据 kind/id 重新加载。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Hash 视图模型与基础解析回退",
+        "reason": "支持路由支持的视图种类、文件行号结构、URI 解码失败时的保留策略以及空 Hash 回退到概览的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 1,
+          "endLine": 29
+        },
+        "quote": "/** Minimal hash router for the review Code Wiki. No vue-router: the app state\n * is a small discriminated view plus an optional trail stack encoded as hash\n * segments. Parsing is defensive — a corrupt hash falls back to overview. */\nimport type { TrailFrame, TrailFrameKind } from \"./trail\";\nimport { MAX_TRAIL } from "
+      },
+      {
+        "key": "c2",
+        "label": "行号、Trail 与主路由解析流程",
+        "reason": "支持行号提取、trail 分离、查询串移除、帧恢复，以及未知路由回退到概览和单独 trail 路由落到关系图的行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 30,
+          "endLine": 64
+        },
+        "quote": "  const lineMatch = raw.match(/[?&]line=(\\d+)/);\n  const queryLine = lineMatch ? Number(lineMatch[1]) : undefined;\n\n  // Pull off a trailing /trail/<kind>/<id>/... suffix, then parse the view.\n  let trail: TrailFrame[] = [];\n  const trailIdx = raw.indexOf(\"/trail/\");\n  if (trailIdx >= 0) {\n    const trailRaw = raw.slic"
+      },
+      {
+        "key": "c3",
+        "label": "文件路由与 Trail 写入顺序",
+        "reason": "支持文件行号查询串先进入基础路由、随后追加 trail 后缀的实际序列化格式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 67,
+          "endLine": 85
+        },
+        "quote": "export function writeHash(route: WikiRoute): string {\n  const v = route.view;\n  let base = \"#/overview\";\n  if (v.name === \"structure\") base = \"#/structure\";\n  else if (v.name === \"graph\") base = \"#/graph\";\n  else if (v.name === \"module\") base = \"#/module/\" + encodeURIComponent(v.module);\n  else if (v.name === \"file\")\n "
+      },
+      {
+        "key": "c4",
+        "label": "共享 Trail 数据与 URL 预算",
+        "reason": "说明帧的完整字段范围、kind/id 序列化方式，以及 MAX_TRAIL 仅限制深链 URL 而非渲染栈。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 16,
+          "endLine": 52
+        },
+        "quote": "export type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown in the drawer header / breadcrumb. */\n  title: string;\n  /** Where to scroll back to when this frame is popped. Managed by the drawer. */\n  scroll?: number;\n  /** Free-form refs the pare"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmBadge.vue",
+      "digest": "21bbd9ccfbf48a0add0d4cf96e9a8e345c6b7c634b0585a692cb5cc1a01f2909"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:07:44.984Z",
+    "trace": {
+      "runId": "5449e9f5-3761-41c9-b0a4-e0dfb1be5827",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "156529f39bb112eafb01170913b92a3b7ef7a57369f1048efa9084b90927b55c",
+      "contextHash": "9144380c24023c67b4e7f761c3a98cc58c8c76622b41fbb0fe1b3c31177c73ee",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "84f6bcf94424b9b59856d97418b0b056668ec22561431a5745c64872a8106982",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec7-9f4d-7a00-b132-c35300885e49"
+      ],
+      "usage": {
+        "used": 42378,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 93149,
+          "utf8Bytes": 96479,
+          "estimatedTokens": 32160,
+          "budgetedTokens": 40200,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:07:56.286Z",
+    "trace": {
+      "runId": "5498b072-ba8a-4f48-9336-ce7dbea2b47e",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b5ec1a36b1e4543487702d24df6485bcc20fa4f850995605b74072adb62fbb7e",
+      "contextHash": "5138ee1bc77d7e13f8398bfc176d00f4f266c0ae8e451337aed1801b00a1acee",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "8049a06055441406e5fe3565e61544792b10afeae5a3a226baa56b19d61c9a15",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec7-c830-70c3-855c-50cc8eecefe6"
+      ],
+      "usage": {
+        "used": 41124,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 90653,
+          "utf8Bytes": 93199,
+          "estimatedTokens": 31067,
+          "budgetedTokens": 38834,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

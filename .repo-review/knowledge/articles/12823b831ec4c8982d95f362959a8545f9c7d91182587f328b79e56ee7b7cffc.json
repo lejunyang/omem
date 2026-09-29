@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/ui/src/highlight.test.ts",
+    "title": "代码高亮行为测试",
+    "summary": "验证 TypeScript 多行语法状态、按行拆分结果以及已知和未知语言下的 HTML 转义安全性；尚未覆盖全部语言别名、并发加载和复杂嵌套标签。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "tested-behavior",
+        "title": "断言覆盖的行为",
+        "body": "测试先把包含跨行注释与 TypeScript 声明的源码交给 `highlightCode`，再用 `highlightedLines` 拆成编号行；它断言结果正好有三行，第二行仍处于注释样式，第三行能识别关键字。这证明拆行没有丢失跨行 lexer 样式状态，并覆盖了高亮与逐行展示的组合路径。[[c1]]\n\n另一用例分别传入 `ts` 和未知语言，并以形似 `<img onerror>` 的文本检查输出：两条路径都不得保留真实 `<img` 标签，且必须出现转义后的尖括号。因此测试同时约束了 highlight.js 已知语言输出和未知语言降级分支的基本注入防护。[[c2]]"
+      },
+      {
+        "key": "coverage-boundary",
+        "title": "覆盖边界",
+        "body": "这些断言关注结果片段而非完整 HTML，因此允许高亮库调整无关的标签结构；但它没有验证空输入、大小写语言名、所有别名、XML 所需的多语言加载、并发注册，或不平衡 span 输入的拆行行为。测试也没有挂载真实代码查看器，不能证明行号、复制、滚动或 CSS 主题在浏览器中的表现。当前证据仅能支持两个独立测试用例所列的行为边界。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "跨行注释与关键字测试",
+        "reason": "支持多行注释状态在拆行为编号行后仍被保留，以及 TypeScript 关键字被识别的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.test.ts",
+          "startLine": 4,
+          "endLine": 9
+        },
+        "quote": "it(\"highlights TypeScript and preserves multiline comments in numbered rows\", async () => {\n  const lines = highlightedLines(await highlightCode(\"/* start\\ncontinued */\\nexport const value = 1;\", \"ts\"));\n  expect(lines).toHaveLength(3);\n  expect(lines[1]).toContain('<span class=\"hljs-comment\">continued */</span>');\n  e"
+      },
+      {
+        "key": "c2",
+        "label": "已知与未知语言转义测试",
+        "reason": "支持两类语言输入都不会把恶意标记作为真实 HTML 输出的安全断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.test.ts",
+          "startLine": 11,
+          "endLine": 17
+        },
+        "quote": "it(\"escapes markup for known and unknown languages\", async () => {\n  for (const language of [\"ts\", \"unknown\"]) {\n    const html = await highlightCode('<img src=x onerror=\"alert(1)\">', language);\n    expect(html).not.toContain(\"<img\");\n    expect(html).toContain(\"&lt;\");\n  }\n});"
+      },
+      {
+        "key": "c3",
+        "label": "当前测试文件范围",
+        "reason": "用完整测试范围说明现有材料只包含两个用例，从而界定尚未覆盖的行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.test.ts",
+          "startLine": 1,
+          "endLine": 17
+        },
+        "quote": "import { expect, it } from \"vitest\";\nimport { highlightCode, highlightedLines } from \"./highlight\";\n\nit(\"highlights TypeScript and preserves multiline comments in numbered rows\", async () => {\n  const lines = highlightedLines(await highlightCode(\"/* start\\ncontinued */\\nexport const value = 1;\", \"ts\"));\n  expect(lines)"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.test.ts",
+      "digest": "e28c86210be9b50f634470deb2febca4ebba15c398236484c9eeded020ab5033"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/highlight.ts",
+      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/index.ts",
+      "digest": "e33d8712c3cd93e2ea519cdd60dbec8c2407918313f14927d6e4b0cc7e61d84d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/tokens.css",
+      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
+      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:27:51.594Z",
+    "trace": {
+      "runId": "9af3944a-51e6-48c4-bf07-e7883435c24a",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "c42e424fd058724183a612182dc84a6b9f1ad2753e5a33fbeff9c1c421cc6d08",
+      "contextHash": "8a9c4954245ff99e94b298752afd19b2859345a98137d1254fcbb236575cef9e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1e997f740ee0e6c150f13c64aa1a4a617b39e1cdcbba9c5c80513376ae10d2fd",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea2-898a-7fe3-82c3-33f92cd20624"
+      ],
+      "usage": {
+        "used": 23800,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 21857,
+          "utf8Bytes": 23621,
+          "estimatedTokens": 7874,
+          "budgetedTokens": 9843,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:28:09.152Z",
+    "trace": {
+      "runId": "d47b5ccf-6c92-458e-958c-8009346e47f6",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "40fd35eb46d08050a3dfcbc2b3636c208175e4acc6b3062173c27870200e8c9b",
+      "contextHash": "3cf64dff645c5f0aa455a97ae6dc4ce7dce108d784ec0a16a0485b89452b242e",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f9f3910fd4ea94c92c29a5706c7af585855b6634ef8c83b432dd1559ca1ae915",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea3-42f2-7540-99b6-a0c549aa8f7e"
+      ],
+      "usage": {
+        "used": 26356,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 37389,
+          "utf8Bytes": 46011,
+          "estimatedTokens": 15337,
+          "budgetedTokens": 19172,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
