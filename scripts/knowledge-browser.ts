@@ -7,7 +7,7 @@ import { Store } from "../apps/server/src/store.js";
 import { runReviewSync } from "../apps/server/src/review/sync.js";
 import { runCodeSync } from "../apps/server/src/code/sync.js";
 import { buildReviewApp } from "../apps/server/src/review/app.js";
-import { createReviewKnowledgeRepository } from "../apps/server/src/review/materials.js";
+import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "../apps/server/src/review/materials.js";
 import { bindKnowledgeQuotes } from "../apps/server/src/knowledge/repository.js";
 import type { KnowledgeDocument, KnowledgeArtifact } from "../packages/contracts/src/knowledge.js";
 
@@ -16,8 +16,9 @@ mkdirSync(join(root, "apps/server/src"), { recursive: true });
 writeFileSync(join(root, "apps/server/src/a.ts"), 'import { b } from "./b.js";\nexport function a() { return b(); }\n');
 writeFileSync(join(root, "apps/server/src/b.ts"), 'import { c } from "./c.js";\nexport function b() { return c(); }\n');
 writeFileSync(join(root, "apps/server/src/c.ts"), 'export function c() { return 42; }\n');
+writeFileSync(join(root, "apps/server/src/prototype.html"), "<script>window.__sourceExecuted = true;</script>\n");
 const store = new Store(join(root, ".repo-review/runtime/data"));
-await runReviewSync(store, root); await runCodeSync(store, root);
+await runReviewSync(store, root); captureRepositoryMaterials(store, root); await runCodeSync(store, root);
 const repository = createReviewKnowledgeRepository(store);
 const materials = new Map(repository.materials().map(m => [m.key, m]));
 function publish(key: string, title: string, target: string, kind: "material" | "article", label: string, long = false) {
@@ -83,5 +84,9 @@ try {
   await expect(questions).toContainText("已加入待办");
   expect(store.tasks()).toHaveLength(1);
   console.log("PASS unresolved knowledge becomes an explicit user-created task");
+  await page.goto(base + "/#/overview/trail/source/" + encodeURIComponent(JSON.stringify({ key: "omem:apps/server/src/prototype.html" })));
+  await expect(page.locator(".om-trail .om-code-view")).toContainText("window.__sourceExecuted = true");
+  expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__sourceExecuted)).toBeUndefined();
+  console.log("PASS HTML material remains escaped original source");
   expect(errors).toEqual([]);
 } finally { await browser.close(); await app.close(); rmSync(root, { recursive: true, force: true }); }
