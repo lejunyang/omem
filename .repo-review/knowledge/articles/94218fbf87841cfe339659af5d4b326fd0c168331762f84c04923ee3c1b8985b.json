@@ -3,99 +3,44 @@
   "document": {
     "key": "module:web:part-2",
     "title": "web · 模块理解 · 专题 2",
-    "summary": "Web 模块把代码结构、模块知识、源码与原始证据组织为同一阅读路径，并借助共享 Trail 实现跨层下探、回退与深链；核心流程已有单元测试支撑，但失效目标、超长深链及刷新后的附加状态恢复仍待补齐。",
+    "summary": "Web 模块把知识正文、确定性代码结构与仓库原文组织成统一阅读体验：以模块和文件为入口，通过共享 Trail 下探符号、关系与材料，并用哈希保存阅读路径。",
     "category": "architecture",
     "sections": [
       {
-        "key": "role",
-        "title": "职责与设计背景",
-        "body": "这一专题关注 Web 端的可追溯阅读：Code Wiki 容器装载快照、代码图和模块理解，将概览、依赖图、模块与文件视图组织为入口。[[c1]] 模块、文件、符号、片段和知识证据统一表示为 Trail 帧，由共享抽屉承担回退、循环识别及阅读历史，而非让各详情页分别维护导航。[[c2]]"
+        "key": "role-and-structure",
+        "title": "职责与内容分层",
+        "body": "这一专题负责分层呈现已保存知识、解析器结构和仓库原文。容器并行读取快照、代码图与模块理解；理解列表失败可局部降级，显式同步后重新装载。[[c1]] 路径合同把 Web、共享 UI、contracts、agent-runtime 等归入稳定模块；聚合层排除已删除文件，累计符号，并合并两端可解析的跨模块 import。[[c2]][[c3]]\n\n模块页在知识文章、加载态、空态和结构化说明之间互斥选择，但文件入口始终保留。[[c4]] 因而知识负责解释背景，计数、文件、符号和源码仍是可核查的事实入口。"
       },
       {
-        "key": "flow",
-        "title": "从结构到证据的工作流程",
-        "body": "用户从模块进入文件，再沿符号大纲、调用边或规则关联继续下探。容器把文件、符号和片段事件转换为 Trail 帧；符号缺少所属文件时会从代码图补全，并采用人读标题。[[c3]] 边解析区分同文件符号、跨文件目标与不可解析目标：同文件符号仍打开独立范围帧，外部或缺失目标不产生导航。[[c4]] 知识正文也只有在引用标记为可操作时才生成包含文档、版本和引用键的帧，使派生正文能够回到固定证据。[[c5]]"
+        "key": "evidence-flow",
+        "title": "从概览到证据的阅读流程",
+        "body": "用户可从模块进入文件；文件帧加载不可变源码、符号、关系与确定性说明，并用可操作状态和原因约束下探。[[c5]] 符号帧校验当前图对象，读取固定范围前后约六行的源码窗口。[[c6]]\n\n符号列表同时收集当前符号作为起点或终点的边，[[c7]] 但下探函数只解析关系的目标端。[[c8]] 因此旧有“入向、出向都会走向另一端”的结论已被替代：入向边可能再次指回当前符号，而非来源端。符号关联片段时可进入规则原文；片段帧按正反关系分组，优先把代码路径解析回文件，否则尝试进入另一片段。[[c9]]"
       },
       {
-        "key": "relations",
-        "title": "跨模块关系与可信展示",
-        "body": "模块桶首先由 contracts 中的共享路径规则确定，Web、UI、contracts、服务端子目录等获得稳定归类。[[c6]] Web 侧纯函数随后统计文件与符号，并聚合两端均可解析的跨模块 import；同模块、外部或缺失目标不会形成模块依赖。[[c7]] 模块说明另按所有文件覆盖范围选择最长、最具体且未过期的理解记录。[[c8]] 展示层则优先采用 DTO 的标题、路径与原因字段，并为旧 missing/stale 状态提供人读回退，避免内部标识成为可见文本。[[c9]] 模块帧目前可下探符号和文件，但 evidence 仍为静态行，已删除文件仍会发出下探事件。[[c10]]"
-      },
-      {
-        "key": "progress_limits",
-        "title": "验证进展与现有限制",
-        "body": "内存 Trail 测试确认十二层栈不会沿用旧的八层截断，并覆盖五层压栈、循环定位及数组切片模拟回退。[[c11]] 独立的 hash 测试才负责证明损坏路径回退概览，以及五层 Trail 写入后可按 kind 与 id 恢复。[[c12]] 刷新恢复时，路由仅重建 kind、id 和以 id 暂代的标题，并按 200 层预算切片；它没有持久化帧的 line 或 scroll。[[c13]] 容器随后只会重新计算人读标题，因此标题可在运行时修正，而行号和滚动位置会丢失，替代此前“这些状态均会重建”的结论。[[c14]] 此外，片段帧尚未展示其他关系，完全无法解析的关系也可能看似可点击却没有反馈。[[c15]]"
+        "key": "shared-trail-and-limits",
+        "title": "共享 Trail、深链与当前限制",
+        "body": "知识、模块、文件、符号和片段共用同一 Trail 抽屉；代码对象失效时，对应帧仍可恢复身份，但内容组件可能不渲染。[[c10]] 内存栈按 `kind + id` 识别循环且不截断，`MAX_TRAIL=200` 只定义为 URL 预算。[[c11]] 共享哈希解析与写出都会按预算截取，[[c12]] 页面实际却手工写出完整栈，因此刷新后可能只恢复前 200 层。[[c13]]\n\n关系界面仍不统一：模块 evidence 只是静态文本，[[c4]] 片段关系在没有可解析文件或片段时会静默停留；[[c9]] 文件帧只显示可下探边前 60 条和其他边前 20 条，[[c5]] 符号帧也只显示前 60 条，且没有截断提示。[[c14]] 这些限制与失效帧缺少 missing/stale 空态共同构成当前待完善边界。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Code Wiki 页面职责",
-        "reason": "概括容器对主视图、代码图和模块理解装载的编排职责，支持对 Web 阅读入口的定位。",
-        "relation": "explains",
+        "label": "快照、代码图与模块理解装载",
+        "reason": "支持三类数据并行读取、理解列表失败局部降级，以及显式同步后重新装载。",
+        "relation": "implements",
         "target": {
-          "kind": "article",
+          "kind": "material",
           "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-          "section": "role"
+          "startLine": 120,
+          "endLine": 145
         },
-        "quote": ""
+        "quote": "async function loadAll() {\n  loading.value = true;\n  loadError.value = \"\";\n  try {\n    const [snap, g, ul] = await Promise.all([codeCurrentSnapshot(), codeGraph(), codeUnderstandingsList().catch(() => ({ model: { available: false }, count: 0, items: [] }))]);\n    snapshot.value = snap;\n    graph.value = g;\n    underIte"
       },
       {
         "key": "c2",
-        "label": "共享 Trail 帧合同",
-        "reason": "说明 Trail 覆盖模块、文件、符号、片段和知识证据，并定义阅读恢复所需的帧字段。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/trail.ts",
-          "startLine": 1,
-          "endLine": 30
-        },
-        "quote": "/** Shared trail-stack types. A trail is a controlled, single floating drawer\n * that lets the user drill from a module -> file -> symbol -> decision -> test\n * and back. Frames are plain serializable records so the whole stack can be\n * round-tripped through location.hash for deep-link refresh. */\n\nexport type TrailFr"
-      },
-      {
-        "key": "c3",
-        "label": "统一下探转换",
-        "reason": "证明文件、符号和片段事件如何补全目标信息并压入共享 Trail。",
+        "label": "共享仓库路径归类规则",
+        "reason": "支持 Web、共享 UI、contracts、agent-runtime、Lark、服务端目录、脚本及兜底模块的具体映射。",
         "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-          "startLine": 185,
-          "endLine": 216
-        },
-        "quote": "function onDrill(target: {\n  type: \"file\";\n  fileId: string;\n  line?: number;\n} | {\n  type: \"symbol\";\n  fileId: string;\n  symbolId: string;\n  line?: number;\n} | { type: \"fragment\"; fragmentId: string; title?: string }) {\n  if (target.type === \"file\") {\n    const f = graph.value?.files.find((x) => x.fileId === target.fi"
-      },
-      {
-        "key": "c4",
-        "label": "边解析与下探合同",
-        "reason": "解释同文件符号、跨文件目标和缺失目标采用不同导航结果，支持流程边界。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/web/src/codewiki/modules.ts",
-          "section": "navigation-and-labels"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c5",
-        "label": "知识引用导航门槛",
-        "reason": "证明只有可操作引用才会生成包含文档、版本和引用键的导航帧。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-          "startLine": 20,
-          "endLine": 23
-        },
-        "quote": "function cite(key: string) {\n  const c = article.value?.citations.find(c => c.key === key);\n  if (!c?.actionable || !article.value) return;\n  emit(\"navigate\", { kind: \"citation\", id: JSON.stringify({ document: props.documentKey, revision: article.value.revision, citation: key }), title: c.label });"
-      },
-      {
-        "key": "c6",
-        "label": "共享模块路径归类",
-        "reason": "支持 Web、UI、contracts、服务端目录和兜底路径形成稳定模块桶的论断。",
-        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:packages/contracts/src/code-modules.ts",
@@ -105,155 +50,204 @@
         "quote": "/** Shared repository-path grouping for the Wiki index and Vue reader. */\nexport function moduleForPath(path: string): string {\n  if (path.startsWith(\"apps/web/\")) return \"web\";\n  if (path.startsWith(\"packages/ui/\")) return \"ui\";\n  if (path.startsWith(\"packages/contracts/\")) return \"contracts\";\n  if (path.startsWith(\"p"
       },
       {
-        "key": "c7",
+        "key": "c3",
         "label": "模块节点与依赖聚合",
-        "reason": "证明已删除文件过滤、文件与符号计数，以及跨模块 import 的聚合和排除条件。",
+        "reason": "支持已删除文件过滤、模块文件与符号计数，以及跨模块 import 边的聚合条件。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/modules.ts",
           "startLine": 56,
-          "endLine": 114
+          "endLine": 115
         },
         "quote": "/** Aggregate files+symbols+edges into module nodes and inter-module edges.\n * Only confirmed in-repo `imports` edges with a resolved toFileId count as\n * module dependencies; missing (external package) imports are dropped here and\n * shown per-file instead. */\nexport function aggregateGraph(\n  files: CodeFile[],\n  sym"
       },
       {
-        "key": "c8",
-        "label": "最具体模块理解匹配",
-        "reason": "支持候选状态过滤、检查模块全部文件及最长目录前缀优先的选择流程。",
+        "key": "c4",
+        "label": "模块说明、证据与文件入口",
+        "reason": "支持模块说明的互斥展示、稳定文件入口，并证明 evidence 引用当前仅为静态行。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/codewiki/modules.ts",
-          "startLine": 149,
-          "endLine": 182
+          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+          "startLine": 68,
+          "endLine": 167
         },
-        "quote": "/** Pick the curated module-architect understanding that best describes a module\n * bucket. The curated `targetId` is a repo directory (e.g.\n * `apps/server/src/memory`); we match it by longest prefix against the module's\n * files, preferring the current (non-stale, non-rejected) row. Pure. */\nexport function matchModu"
+        "quote": "<template>\n  <div class=\"module-frame\">\n    <h2>{{ moduleLabel(mod.id) }}</h2>\n    <p class=\"muted\">{{ mod.fileCount }} 个文件 · {{ mod.symbolCount }} 个解析符号</p>\n\n    <KnowledgeDocument v-if=\"knowledge\" prefix=\"/api/review/knowledge\" :document-key=\"knowledge.key\" :revision=\"knowledge.revision\" @navigate=\"emit('knowledge', "
+      },
+      {
+        "key": "c5",
+        "label": "文件源码与关系列表",
+        "reason": "支持不可变源码、关系可操作状态与原因，并证明可下探边和其他边分别切片为 60 条与 20 条。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+          "startLine": 216,
+          "endLine": 281
+        },
+        "quote": "    <template v-else-if=\"!loadError\">\n      <OmPanel v-if=\"understanding\" title=\"派生说明（确定性解析）\" class=\"stack\">\n        <OmStatusLine kind=\"derived\" sourceNote=\"来自解析器，非模型摘要\" />\n        <p class=\"muted\">\n          语言 {{ parsedUnderstanding().language ?? \"?\" }} · {{ parsedUnderstanding().symbolCount ?? symbols.length }} 个符号"
+      },
+      {
+        "key": "c6",
+        "label": "符号上下文源码读取",
+        "reason": "支持符号和文件校验、总行数探测、上下文窗口计算、源码切片及关系降级读取。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+          "startLine": 55,
+          "endLine": 82
+        },
+        "quote": "async function load() {\n  loading.value = true;\n  loadError.value = \"\";\n  try {\n    if (!symbol.value || !file.value) throw Error(\"符号不在当前代码图中\");\n    const s = symbol.value;\n    const f = file.value;\n    // Fetch a window around the symbol (a few lines of context above/below).\n    const start = Math.max(1, (s.rangeStart"
+      },
+      {
+        "key": "c7",
+        "label": "触及当前符号的边筛选",
+        "reason": "支持符号帧同时收集当前符号作为起点或终点的关系，并标记入向或出向。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+          "startLine": 97,
+          "endLine": 113
+        },
+        "quote": "/** Edges that touch this symbol on either side. */\nconst myEdges = computed(() =>\n  edges.value.filter(\n    (e) => e.fromSymbolId === props.symbolId || e.toSymbolId === props.symbolId,\n  ),\n);\n\nfunction drillEdge(e: CodeEdge) {\n  const self = symbol.value?.fileId ?? \"\";\n  const t = edgeDrillTarget(e, props.fileMap, pr"
+      },
+      {
+        "key": "c8",
+        "label": "关系下探仅解析目标端",
+        "reason": "说明下探函数只检查关系的目标符号与目标文件，支持入向边可能指回当前符号的限制判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 184,
+          "endLine": 212
+        },
+        "quote": "/** Resolve an edge to a drill target. Same-file symbol edges DO drill (to a\n * symbol/range frame) rather than being swallowed; only truly external /\n * unresolved targets are non-navigable. */\nexport type EdgeDrill =\n  | { kind: \"file\"; fileId: string; line?: number }\n  | { kind: \"symbol\"; fileId: string; symbolId: s"
       },
       {
         "key": "c9",
-        "label": "人读标签与边状态测试",
-        "reason": "验证 DTO 展示字段优先、可读回退，以及 actionable、missing、stale 的原因和禁用规则。",
-        "relation": "supports",
+        "label": "片段关系分组与下探",
+        "reason": "支持正反关系分组、代码路径优先解析、片段后备导航，也证明无可解析目标时没有反馈分支。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/codewiki/labels.test.ts",
-          "startLine": 10,
-          "endLine": 41
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 53,
+          "endLine": 90
         },
-        "quote": "describe(\"human label resolution (DTO-first, never leaks id)\", () => {\n  it(\"fileLabel prefers DTO displayTitle, then basename, never fileId\", () => {\n    expect(fileLabel({ displayTitle: \"runtime.ts\", path: \"apps/server/src/assistant/runtime.ts\" })).toBe(\"runtime.ts\");\n    expect(fileLabel({ path: \"apps/server/src/ass"
+        "quote": "function reverseRelations() {\n  return relations.value.filter((r) => REVERSE.has(r.relationType));\n}\nfunction forwardRelations() {\n  return relations.value.filter((r) => POSITIVE.has(r.relationType));\n}\nfunction otherRelations() {\n  return relations.value.filter((r) => !REVERSE.has(r.relationType) && !POSITIVE.has(r.re"
       },
       {
         "key": "c10",
-        "label": "模块证据与文件入口",
-        "reason": "证明符号引用可点击、evidence 引用保持静态，并且已删除文件仍保留点击入口。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 131,
-          "endLine": 166
-        },
-        "quote": "      <OmPanel title=\"证据引用（可下探）\" class=\"stack\">\n        <div v-if=\"nodeRefs.length || evidenceRefs.length\">\n          <button\n            v-for=\"r in nodeRefs\"\n            :key=\"'n' + r.id\"\n            class=\"ref-row\"\n            @click=\"openNodeRef(r)\"\n          >\n            <OmBadge tone=\"neutral\">符号</OmBadge>\n     "
-      },
-      {
-        "key": "c11",
-        "label": "Trail 内存栈测试",
-        "reason": "仅支持长链不截断、五层压栈、循环定位及切片模拟回退，不将其误作 hash 往返证据。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/trail.test.ts",
-          "startLine": 21,
-          "endLine": 43
-        },
-        "quote": "  it(\"pushFrame keeps long chains (no silent truncation at 8)\", () => {\n    let stack: TrailFrame[] = [];\n    for (let i = 0; i < 12; i++) stack = pushFrame(stack, fr(\"file\", \"f\" + i));\n    expect(stack).toHaveLength(12);\n    expect(stack[0].id).toBe(\"f0\"); // oldest kept, not dropped at depth 8\n  });\n\n  it(\"supports a"
-      },
-      {
-        "key": "c12",
-        "label": "Hash 回退与五层往返测试",
-        "reason": "直接验证损坏 hash 回退概览，以及五层 Trail 写入、解析后的身份和顺序保持。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/hashroute.test.ts",
-          "startLine": 36,
-          "endLine": 53
-        },
-        "quote": "  it(\"falls back on corrupt hash\", () => {\n    expect(parseHash(\"#/totally/bogus\").view.name).toBe(\"overview\");\n  });\n  it(\"round-trips a 5-level drill trail\", () => {\n    const route = {\n      view: { name: \"graph\" as const },\n      trail: [\n        { kind: \"module\" as const, id: \"assistant\", title: \"assistant\" },\n   "
-      },
-      {
-        "key": "c13",
-        "label": "Hash 帧恢复与长度预算",
-        "reason": "证明 Trail 恢复只构造 kind、id 和临时标题，并按 MAX_TRAIL 限制序列化栈。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/OmHashRoute.ts",
-          "startLine": 33,
-          "endLine": 45
-        },
-        "quote": "  // Pull off a trailing /trail/<kind>/<id>/... suffix, then parse the view.\n  let trail: TrailFrame[] = [];\n  const trailIdx = raw.indexOf(\"/trail/\");\n  if (trailIdx >= 0) {\n    const trailRaw = raw.slice(trailIdx + \"/trail/\".length).split(\"?\")[0];\n    const tparts = trailRaw.split(\"/\");\n    for (let i = 0; i + 1 < tp"
-      },
-      {
-        "key": "c14",
-        "label": "恢复后的标题修正",
-        "reason": "证明容器恢复 Trail 后仅调用标题修正并设置当前帧，没有重建 line 或 scroll。",
+        "label": "统一证据抽屉与条件渲染",
+        "reason": "支持同一抽屉承载知识、模块、文件、符号和片段，并说明代码帧依赖当前图解析后才渲染。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-          "startLine": 246,
-          "endLine": 250
+          "startLine": 371,
+          "endLine": 416
         },
-        "quote": "  if (route.trail.length) {\n    trail.value = route.trail;\n    retitleTrail();\n    trailCurrent.value = Math.min(route.trail.length - 1, trail.value.length - 1);\n    trailOpen.value = true;"
+        "quote": "    <!-- trail drawer -->\n    <OmTrailDrawer\n      :open=\"trailOpen\"\n      :frames=\"trail\"\n      :current=\"trailCurrent\"\n      :loop-at=\"loopAt\"\n      :return-focus-to=\"trailTrigger\"\n      @close=\"closeTrail\"\n      @back=\"backTrail\"\n      @jump=\"jumpTrail\"\n      @dismiss-loop=\"dismissLoop\"\n    >\n      <KnowledgeFrame v"
       },
       {
-        "key": "c15",
-        "label": "片段关系的失效边界",
-        "reason": "指出其他关系未渲染、无法解析的关系仍可能表现为可点击，支持当前限制判断。",
-        "relation": "tracks",
+        "key": "c11",
+        "label": "Trail 身份与 URL 深度预算",
+        "reason": "支持联合身份循环检测、完整追加内存栈，并说明最大深度只针对 URL 持久化。",
+        "relation": "explains",
         "target": {
-          "kind": "article",
-          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
-          "section": "boundaries"
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 37,
+          "endLine": 52
         },
-        "quote": ""
+        "quote": "/** Max trail depth we persist into the URL. The renderer itself is unbounded\n * (matches the prototype's 100-level chain); this budget only bounds the\n * serialized deep-link so a path cannot grow an infinitely long URL. A generous\n * ceiling means real chains never hit it; if they do, the caller surfaces an\n * explic"
+      },
+      {
+        "key": "c12",
+        "label": "共享哈希解析与写出",
+        "reason": "支持防御性路由恢复，并证明共享解析器和写出函数均按 MAX_TRAIL 限制序列化栈。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 27,
+          "endLine": 85
+        },
+        "quote": "export function parseHash(hash: string): WikiRoute {\n  let raw = hash.replace(/^#\\/?/, \"\");\n  if (!raw) return { view: { name: \"overview\" }, trail: [] };\n  const lineMatch = raw.match(/[?&]line=(\\d+)/);\n  const queryLine = lineMatch ? Number(lineMatch[1]) : undefined;\n\n  // Pull off a trailing /trail/<kind>/<id>/... su"
+      },
+      {
+        "key": "c13",
+        "label": "页面实际哈希写出流程",
+        "reason": "证明 Code Wiki 当前手工序列化完整 Trail，没有调用共享 writeHash，与共享深度预算形成不一致。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 218,
+          "endLine": 233
+        },
+        "quote": "// ---- hash routing ----\nfunction syncHash() {\n  if (restoring) return;\n  let url: string;\n  if (view.value === \"overview\") url = \"#/overview\";\n  else if (view.value === \"structure\") url = \"#/structure\";\n  else if (view.value === \"graph\") url = \"#/graph\";\n  else if (view.value === \"module\") url = \"#/module/\" + encodeU"
+      },
+      {
+        "key": "c14",
+        "label": "符号关系列表上限",
+        "reason": "直接支持符号边标题显示总数、实际只渲染前 60 条且没有截断提示的结论。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+          "startLine": 165,
+          "endLine": 179
+        },
+        "quote": "      <h4>符号边 <small>{{ myEdges.length }}</small></h4>\n      <p class=\"muted small\">调用 / 被调用 / 测试 / 规则双向可走；同文件符号也打开范围帧。</p>\n      <button\n        v-for=\"e in myEdges.slice(0, 60)\"\n        :key=\"e.edgeId\"\n        class=\"edge-row\"\n        :class=\"{ disabled: !edgeResolvable(e) }\"\n        :disabled=\"!edgeResolvable(e)\"\n  "
       }
     ],
     "questions": [
       {
-        "question": "超过 200 层的 Trail 深链应如何提示，并应持久化哪些帧附加状态？",
-        "why": "内存栈可以继续增长，但 hash 会按预算截取；当前序列化只保存 kind 与 id，刷新后文件或符号帧的行号和滚动位置会丢失，也未见明确的截断通知。",
-        "nextStep": "确定 URL 预算触发时的提示文案及 line、scroll 的持久化范围，并增加第 200/201 层和刷新恢复的单元测试与浏览器测试。",
+        "question": "超过 200 层时，应以共享哈希写出的截取行为为准，还是保留页面当前写出的完整栈？",
+        "why": "共享 parseHash 与 writeHash 均截取到 MAX_TRAIL，而 Code Wiki 手工写出完整内存栈，刷新前后的栈可能不一致。",
+        "nextStep": "统一页面与共享路由的写出合同，增加第 200、201 层的解析、写出和页面集成测试，并提供明确提示。",
         "blocking": false,
         "citationKeys": [
           "c11",
           "c12",
-          "c13",
+          "c13"
+        ]
+      },
+      {
+        "question": "同步后 Trail 中的模块、文件或符号已删除或重命名时，抽屉应如何展示？",
+        "why": "路由身份仍可恢复，但相应组件只有在当前代码图能解析对象时才渲染，内容区可能为空。",
+        "nextStep": "定义统一的 missing/stale 帧空态和人类可读原因，保留返回、跳转与关闭能力，并增加失效深链浏览器测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c12"
+        ]
+      },
+      {
+        "question": "符号帧的入向边是否应解析并下探到来源符号或来源文件？",
+        "why": "列表收集当前符号位于任一端的边，但 edgeDrillTarget 只解析目标端；当前符号位于目标端时，点击可能再次指回当前符号。",
+        "nextStep": "明确双向导航合同；若要求真正反向下探，为关系解析增加方向参数或来源端解析，并补充入向边行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c8"
+        ]
+      },
+      {
+        "question": "模块 evidence、片段关系以及文件和符号关系列表是否应统一采用 actionable/reason 与截断提示合同？",
+        "why": "模块 evidence 为静态文本，片段关系可能没有导航反馈，文件和符号列表超过切片上限时也没有明确提示。",
+        "nextStep": "设计共享关系行和大列表交互，并覆盖 missing、candidate、stale、无目标及超过上限的组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c9",
           "c14"
-        ]
-      },
-      {
-        "question": "evidence 引用、已删除文件和无法解析的片段关系是否都应遵循统一的 actionable/reason 合同？",
-        "why": "模块 evidence 当前不可下探，已删除文件仍可点击；片段关系在目标文件和片段均无法解析时也缺少明确反馈，三处失效行为不一致。",
-        "nextStep": "确定这些对象的可操作性合同，为静态 evidence、removed 文件及 missing 关系补充禁用状态、人读原因和组件测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c9",
-          "c10",
-          "c15"
-        ]
-      },
-      {
-        "question": "evidence 引用、已删除文件和无法解析的片段关系是否应统一遵循 actionable/reason 合同？",
-        "why": "模块 evidence 当前是静态行；ModuleFrame 对传入的 removed 文件仍保留点击处理；FragmentFrame 的关系目标若既不能解析为文件也没有 fragmentId，点击不会产生导航且没有原因反馈。",
-        "nextStep": "确定三类对象的可操作性合同，并为静态 evidence、removed 文件和 missing 关系补充禁用状态、人读原因及组件测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c9",
-          "c10",
-          "c15"
         ]
       }
     ]
@@ -337,27 +331,27 @@
     {
       "kind": "article",
       "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-      "digest": "814d69fae1955f5e52b01bce1c88aed2ef21547f7b7c782cbc2246edff6fb1d5"
+      "digest": "50491a87aa3a8371903c136ca58717425c32c09f38d6ffe7a5afd5ad6411c9ff"
     },
     {
       "kind": "article",
       "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-      "digest": "fadbd2c56d55b21ae60e4ca56937ee73381fc86719967f033289f3133dffb188"
+      "digest": "1a79da0655e93c538e4d9dea448168b867f6e3c820dfc2843c6b7f76abf2a72e"
     },
     {
       "kind": "article",
       "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
-      "digest": "cc075846871d03831b20b9f0eadaeca87913895cb8bc49749ec2efdf888bd183"
+      "digest": "91b26198e7632b327bb91ce415b87a104b56f71357a61fe7e9b8d1fd0488d381"
     },
     {
       "kind": "article",
       "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-      "digest": "8872348f9b43071fc3d59ab10a39401f36497921acd14b3285fa68b20d7575f9"
+      "digest": "e92237463fc590dda3d3a9ef9d4493966af512411e7ecba8766be46d6e6db712"
     },
     {
       "kind": "article",
       "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
-      "digest": "12590533add3f23d9ecd071201e9e071cee064b909064b1d5ad0eadc0acb62f5"
+      "digest": "60e9cc83ca9b296996be686ac2d32813b23c732d861f6d5a4b01da6fc8c624ce"
     },
     {
       "kind": "article",
@@ -398,17 +392,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:42:04.383Z",
+    "at": "2026-09-29T21:44:00.534Z",
     "trace": {
-      "runId": "f10484a1-2538-4d2e-bddc-eb13d0f5db6c",
+      "runId": "58479732-f412-4c63-8756-375b6cf66c9a",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "e693e1f3f2c33288158f100209f44063b3c3575bda4112be3a6f6020da0db0d8",
-      "contextHash": "9401608c3f4778c7bad994e57b225ce830869833e49959775f7a94312e6f694d",
+      "promptHash": "1a9c99fa53b0d474a71336e945a39a3c983af8ca17c4539fca19e4a1793b2f64",
+      "contextHash": "964e38c161c6364a2b89471dfb3a08568d42e921b2143f3274b2c5c09997512a",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fba5e85891f9274a3d802fa642e3209900d0af0c7169b54f0ecabd83696336bd",
+      "fingerprint": "ac63993c3d11461793ba7d23e82840dfa1db170ee42792632641f33d6b9b8154",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -421,10 +415,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee6-ce35-7b01-926b-2bf356eb7331"
+        "01a0ef1f-8f97-7411-afea-4bc6106f2a77"
       ],
       "usage": {
-        "used": 71787,
+        "used": 73270,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -433,10 +427,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 169289,
-          "utf8Bytes": 193924,
-          "estimatedTokens": 64642,
-          "budgetedTokens": 80803,
+          "chars": 173967,
+          "utf8Bytes": 200084,
+          "estimatedTokens": 66695,
+          "budgetedTokens": 83369,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -445,17 +439,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:42:21.956Z",
+    "at": "2026-09-29T21:44:17.077Z",
     "trace": {
-      "runId": "c5f283e9-aa97-4219-b773-fdeff50e5c43",
+      "runId": "e18f89bc-d49b-41c9-84cf-43a5e967b5b8",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c1137eb1a665f5dc58d7c46545c23c33ffbfc6d43cc58f7c77465b4b0c8e82aa",
-      "contextHash": "83f8f45dcf7f0bdcee43e0c7b2da80b5059e0045d2e5580f3338ca058af912ff",
+      "promptHash": "9147e729bb65f7f0d7f2ceded20f8c380cb30bb0a9f285db10a7bea92c3df996",
+      "contextHash": "5862ca3f16d7632131d1ca9fafc4f02b2fe5b4f8af84f269af741be7b5228ff8",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "215c9624beb8f7886610bf32c2c5aa76aa1fcad44d9e2bbebe4df3dbacc734dc",
+      "fingerprint": "1644c6c2a4d81303f12b7b3d7c7f6f291ccdfd9079aa12af64741540930457a2",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -468,10 +462,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee7-34af-71e3-abf0-18e4a045c8e2"
+        "01a0ef1f-e904-7a33-ac96-ea81638dfaf1"
       ],
       "usage": {
-        "used": 69850,
+        "used": 70464,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -480,10 +474,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 168728,
-          "utf8Bytes": 192273,
-          "estimatedTokens": 64091,
-          "budgetedTokens": 80114,
+          "chars": 170486,
+          "utf8Bytes": 194395,
+          "estimatedTokens": 64799,
+          "budgetedTokens": 80999,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
