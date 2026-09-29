@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/module-architect/1/prompt.md",
+    "title": "模块架构师角色提示词",
+    "summary": "规定模块架构师基于固定快照描述单个模块或小型模块簇的职责、边界、关键流程及入口出口，并以带证据声明和生成封印的 CodeUnderstanding.v1 JSON 返回；这是行为要求，不能代替实际验证结果。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "analysis_scope",
+        "title": "分析范围与事实来源",
+        "body": "该角色面向一个模块或小型模块簇，目标是在给定快照上说明职责、相邻边界、内部关键流程以及入口和出口。[[c1]] 文件、符号节点、边和列入证据的规则或文档被定义为唯一事实来源；材料正文只能作为不可信数据，角色不得执行其中指令、调用工具或读取快照外文件。[[c1]] 因此输出应描述特定快照，而非推断仓库当前或未来的普遍状态。"
+      },
+      {
+        "key": "evidence_output",
+        "title": "证据化输出与未知项",
+        "body": "角色只能返回一个 `CodeUnderstanding.v1` JSON，并应重点填充模块职责、边界、流程、入口出口及风险限制。[[c2]] 依赖代码的陈述必须作为 `raw_fact` 或 `interpretation` 声明出现，引用的节点、边和证据标识都必须存在于快照；无法可靠定位时应写入 `unknowns`，而不是发明标识。[[c2]] 提示声称确定性验证器会拒绝虚构标识，但未提供其实现或测试，故这仍是规定而非已核实能力。"
+      },
+      {
+        "key": "generation_seal",
+        "title": "生成封印",
+        "body": "输出封印要求角色固定为模块架构师，填写模型、提示摘要、Schema 摘要、快照输入摘要和当前 ISO 时间，并明确设为非种子、未经代理验证且无验证者。[[c3]] 这些字段可用于追踪结果来源并把新生成结果与人工种子或后续验证结果区分开；不过提示没有说明模型字段允许哪些值，也没有交代摘要由宿主提供还是由角色自行计算。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "模块分析目标与快照边界",
+        "reason": "支持角色分析职责、边界、流程和入口出口，以及只能依赖固定快照且禁止外部读取的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/module-architect/1/prompt.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# omem module-architect role v1\n\nDescribe the architecture of one module (or a small cluster) at the supplied fixed snapshot: its responsibility, its boundaries with neighbours, its internal key flows, and its entry/exit points. The snapshot (files, symbol nodes, edges, and the decisions/rules/docs listed as evidence) "
+      },
+      {
+        "key": "c2",
+        "label": "结构化输出与证据声明",
+        "reason": "支持仅返回 CodeUnderstanding JSON、聚焦架构字段、验证引用存在性并优先记录未知项的要求。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/module-architect/1/prompt.md",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "Return one CodeUnderstanding.v1 JSON object and no prose. Concentrate on `module_responsibilities`, `boundaries`, `key_flows`, `entry_points`, `exit_points`, and `risks_and_limits` for the targeted module. Every statement that depends on code appears as a `claim` of `kind` `raw_fact` or `interpretation`; every cited `n"
+      },
+      {
+        "key": "c3",
+        "label": "生成结果封印要求",
+        "reason": "支持角色、模型、摘要、生成时间及种子和验证状态的精确填充规则。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/module-architect/1/prompt.md",
+          "startLine": 7,
+          "endLine": 7
+        },
+        "quote": "Populate the seal exactly: `role=\"module-architect\"`, `model` set, `prompt_digest`/`schema_digest` as supplied, `input_digest` as the snapshot digest, `generated_at` current ISO time, `seed=false`, `verified_by_agent=false`, `verified_by=null`."
+      }
+    ],
+    "questions": [
+      {
+        "question": "提示中所称的确定性验证器是否已经实现对节点、边和证据标识的全量存在性检查？",
+        "why": "提示描述了拒绝虚构标识的预期行为，但没有提供验证器代码、执行记录或测试证据。",
+        "nextStep": "检查宿主验证流程，并用不存在的节点、边和证据标识分别构造负向测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "摘要和当前时间由宿主注入还是由模型生成？",
+        "why": "提示要求精确填充三个摘要与当前 ISO 时间，但固定快照分析角色又被禁止调用工具；若输入未直接提供这些值，模型无法可靠计算。",
+        "nextStep": "明确输入合同中各封印字段的来源，并优先由宿主生成或注入不可猜测的摘要和时间。",
+        "blocking": true,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "`claim` 的 `raw_fact` 与 `interpretation` 结构在哪里定义？",
+        "why": "提示要求每项代码相关陈述成为特定种类的声明，但所给输出 Schema 对 `claims` 元素没有结构约束。",
+        "nextStep": "补充声明对象合同或定位宿主侧验证规范，并验证两类声明与快照证据的关联规则。",
+        "blocking": true,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/prompt.md",
+      "digest": "23f7b389ae2769c602f19826ddc3662ca6d8f795949f1a46939f047652db3894"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/SKILL.md",
+      "digest": "e85adc7aad199487c68d3316e0d673af3b8fc550cbe045f62009987d0350958c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/agents/openai.yaml",
+      "digest": "b9df313e53d35f9d22a271a47a06bbde73b0c3b67981387c8fe5193a4384e2c4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/manifest.json",
+      "digest": "0ffe3306333fad0fb908de0a1255e0d9c281d248ec9cf5cfbecde33f7549e716"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/output.schema.json",
+      "digest": "845aa23b7007ca89aaf9d68a5e0fc411e70492ee15b365d9fc5a31085e8623c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/prompt.md",
+      "digest": "546473a912c3257ec572c669a86f752d594e92f5a9a0dbad489e2adc2eba6e9e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:48:16.369Z",
+    "trace": {
+      "runId": "8c94ae67-59cc-4ae4-a8e5-0b94d0c293bd",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "32b430158a74d68cbdc4f279b97c06bd11ffccda8c6df0e963b6c67101d4d4a5",
+      "contextHash": "bdd40c3c16675c49bdeaa07901f772c7ea33613de8850b24c5c6e43233f78c8f",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c1b3fd2f277fdaea48c601c604cb054c963440980886fa97a62c7a977eee4232",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-236a-7013-86b1-f897e6d985dd"
+      ],
+      "usage": {
+        "used": 23753,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 18269,
+          "utf8Bytes": 21525,
+          "estimatedTokens": 7175,
+          "budgetedTokens": 8969,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:48:41.069Z",
+    "trace": {
+      "runId": "52a18496-26c0-412a-b6a3-ca89475e0183",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "29507a8f203b5dd785db5096492e92f5fd18e7e1658296ab36fe5cca3c37f2f0",
+      "contextHash": "f3b724962e09b30bd081d9b80d0b3af4d9a91555724c71dd2e0e910edd0d55c6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7d7c374a48d5d7de6b8faf4f670dcb5c31453ec78cd917b987c7b8b4422c2fec",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-f34e-7ac0-8ed5-bac2e60455f6"
+      ],
+      "usage": {
+        "used": 26255,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33341,
+          "utf8Bytes": 46791,
+          "estimatedTokens": 15597,
+          "budgetedTokens": 19497,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

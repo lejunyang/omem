@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+    "title": "KnowledgeBatch.v1 输出结构合同",
+    "summary": "该 JSON Schema 定义代码分析角色输出的批次、文档、章节、引用与问题结构，通过必填字段、枚举、长度、正则和额外属性限制约束结果形态。它是格式合同，不足以证明宿主已执行语义复核或交叉引用校验。",
+    "category": "requirements",
+    "sections": [
+      {
+        "key": "batch-document",
+        "title": "批次、文档与章节边界",
+        "body": "根对象把 `schema_version` 固定为 1，`documents` 数量限定为 1 至 16；文档分类覆盖架构、进展、实现、测试、配置、研究和对话等知识视图。[[c1]] 每个文档必须包含 key、标题、摘要、分类、章节、引用和问题，并禁止未声明字段；根对象也只允许版本和文档列表。[[c5]]\n\n章节数量为 1 至 20，章节 key 使用受限标识符格式，标题和正文均有长度上限，且章节对象禁止额外属性。[[c2]] 这些约束提供稳定的机器接口，但只能验证形状，不能证明内容真实、完整或与材料一致。"
+      },
+      {
+        "key": "evidence-contract",
+        "title": "引用合同与证据定位",
+        "body": "每份文档至少包含一个引用。引用关系只能取预定义枚举，目标限于材料或文章，并可记录材料行号或文章章节；`quote` 必须存在，约定由宿主根据固定范围抽取原文。[[c3]]\n\n因此该合同能表达“论断指向何处”，却不能单独判断选定行段是否真正支持附近论断，也不能证明宿主已完成原文复制和独立语义复核。"
+      },
+      {
+        "key": "uncertainty",
+        "title": "问题与未决事项",
+        "body": "`questions` 最多二十项，每项必须包含问题、原因、下一步、阻塞状态和关联引用键，使不确定性能够显式进入后续工作流。[[c4]] 不过 `citationKeys` 在 schema 中只是字符串数组，没有声明其值必须匹配同一文档中的 citation key；目标覆盖、正文标记与引用使用情况也需要宿主另行校验。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "批次规模与文档属性",
+        "reason": "支持根版本、文档数量、基础字段定义及分类枚举的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+          "startLine": 1,
+          "endLine": 47
+        },
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties"
+      },
+      {
+        "key": "c2",
+        "label": "章节结构约束",
+        "reason": "支持章节数量、键格式、正文长度、必填字段和禁止额外属性的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+          "startLine": 48,
+          "endLine": 76
+        },
+        "quote": "          \"sections\": {\n            \"minItems\": 1,\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,59}$\"\n     "
+      },
+      {
+        "key": "c3",
+        "label": "引用对象与目标定位",
+        "reason": "支持引用数量、关系枚举、目标类型、定位字段、必填项及空 quote 约定的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+          "startLine": 78,
+          "endLine": 164
+        },
+        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+      },
+      {
+        "key": "c4",
+        "label": "待确认问题结构",
+        "reason": "支持问题条目的数量、字段类型及必填项要求，并表明 citationKeys 仅被定义为字符串数组。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+          "startLine": 166,
+          "endLine": 206
+        },
+        "quote": "          \"questions\": {\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"question\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1,\n                  \"maxLength\": 1000\n                }"
+      },
+      {
+        "key": "c5",
+        "label": "文档与根对象必填约束",
+        "reason": "直接支持每个文档的七个必填字段、文档禁止额外属性，以及根对象必填字段和额外属性限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+          "startLine": 209,
+          "endLine": 227
+        },
+        "quote": "        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalProperties\":"
+      }
+    ],
+    "questions": [
+      {
+        "question": "宿主是否另外校验 document.key 覆盖目标、正文引用标记存在，以及 citationKeys 指向真实引用？",
+        "why": "当前 schema 规定了字段形状和局部类型，但没有表达这些跨字段、跨集合的语义一致性要求。",
+        "nextStep": "检查宿主输出后处理与独立复核逻辑，并为目标缺失、悬空引用、未使用引用和错误正文标记增加失败测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+      "digest": "7cde63e2dcf6d7d5820002f3736794672245ca6ec134029de2104771ec4f8849"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/prompt.md",
+      "digest": "9180045624754f89e283095f5c576c757d2e2c635d46bb13036f8e03ebf3ef42"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/SKILL.md",
+      "digest": "0dba74dc50b689ee1649b649b0b5ac5b8c12a720dbff228d3df39b253510d45f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
+      "digest": "256abc8de3ce26865ff75c63133cbffe6d43473b38dd79d130c4531122481aa1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
+      "digest": "026d42bd86eb84d28aa08dc7c839dc4deedbb8bee2f7c241704d376e508d3de9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:23:12.244Z",
+    "trace": {
+      "runId": "9b24cfe9-00b3-4921-8f47-879c0e87a125",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "5717ed0c5b682e571cf91bbc51c0c30d282af45b55e643ebd6e04b9657b426a9",
+      "contextHash": "e3a4595aa6a462f78c91dc188b480f2ae23019624db6c788028c9873693d60d8",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "67a35eceb8a5c79b63f2f4c0aaefb19c11a49cae599331365fa2dd558b646af3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9e-a54a-7710-b9c7-4301c765e5e3"
+      ],
+      "usage": {
+        "used": 23996,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 29433,
+          "utf8Bytes": 36231,
+          "estimatedTokens": 12077,
+          "budgetedTokens": 15097,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:23:22.260Z",
+    "trace": {
+      "runId": "44df62ad-c4b1-4ea9-8243-3112946969c0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "008edf4f25bbf33c86d0bb339233635e04ffa60fbb452d1df625c8a6e95fef6f",
+      "contextHash": "0b78a8b983888b766b45adea0be5ae584b1c5fc67aa84c5b544e6157a5f03b7f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "228db17f5bf2045b48e0c76572fc3db5a829df0f5c9cb308e6028fa352bd4f3c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9f-0036-7251-9123-283fb28ac5a7"
+      ],
+      "usage": {
+        "used": 21982,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28661,
+          "utf8Bytes": 35205,
+          "estimatedTokens": 11735,
+          "budgetedTokens": 14669,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

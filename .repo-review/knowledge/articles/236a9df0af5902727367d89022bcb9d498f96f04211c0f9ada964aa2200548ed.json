@@ -1,0 +1,197 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
+    "title": "反馈整理角色清单：隔离策略、输出合同与预算",
+    "summary": "该清单声明 feedback-curator v1 的角色标识、提示词与内联技能绑定，输出采用 `CorrectionProposal.v1`。配置禁止工具、禁用会话复用及用户技能/MCP 继承，并设置上下文、输出和修复尝试预算；这些是静态运行配置，不是实际隔离效果的证明。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "role-binding",
+        "title": "角色、技能与输出绑定",
+        "body": "清单把角色标识为 `feedback-curator`、版本设为 1，并引用 `traex` profile 与 `prompt.md`。其内联技能包为 `omem-feedback-curation`，带固定版本和制品摘要；输出合同声明为 `CorrectionProposal.v1`。[[c1]] 这些字段描述宿主应如何装配角色，但材料未展示摘要核验、技能内容或装配成功记录。"
+      },
+      {
+        "key": "isolation-budget",
+        "title": "工具隔离、会话策略与预算",
+        "body": "工具策略为 none 且允许工具列表为空；会话从不复用，也不继承用户技能或 MCP。预算上限为 96,000 个上下文 token、24,000 个输出 token，并允许最多两次修复尝试。[[c2]] 这体现了把反馈整理限制为纯结构化推导的设计意图，但不能单凭清单断言运行时确实拒绝工具或严格执行预算。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "反馈整理角色装配信息",
+        "reason": "支持角色版本、profile、提示词、内联技能制品与输出合同之间的配置关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
+          "startLine": 2,
+          "endLine": 17
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"feedback-curator\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-feedback-curation\",\n      \"version\": \"feedback-1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"33a62f0"
+      },
+      {
+        "key": "c2",
+        "label": "角色隔离与预算配置",
+        "reason": "支持无工具、无会话复用、无用户扩展继承及 token/修复预算的静态配置论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
+          "startLine": 18,
+          "endLine": 30
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },\n  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "清单中的技能制品摘要是否由运行时强制校验，摘要不匹配时如何处理？",
+        "why": "材料给出了固定摘要，却没有说明验证过程和失败语义；这关系到实际加载内容是否与声明一致。",
+        "nextStep": "检查角色包加载器和摘要不匹配测试，确认其拒绝、告警或降级行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "工具禁用、会话隔离和预算上限是否有真实运行测试覆盖？",
+        "why": "清单只能证明期望配置，无法证明底层 Agent CLI/ACP 对所有后端都执行相同限制。",
+        "nextStep": "运行或审阅集成测试，验证工具请求被拒绝、上下文不继承且超限输出进入受控修复或失败路径。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
+      "digest": "8360aadfcdad2fb2f7f55a87fb069e9d35353b2c2eb6d6e965579c855f4c9b57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
+      "digest": "2270241f396ff675d0d702907dfed9465c7f9078b9ece6ff532611cfaea37140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
+      "digest": "1d51df6a2bf8a9efa743b139e36df5e37ba0eb7b79790635ff73cde54cbd7bb6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
+      "digest": "5a382d0ffad0f254164f51864bc530bc556a6231af09107d4194ec5feecf4039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+      "digest": "1fbb87e87e40252797492748cf8809f1a435df9e6db7546360f4b028f8c7b83e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
+      "digest": "986867580df9cfc41b753de7e718bba3e1c6d2fe55a25f86e17ae6da8b57ec8f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:46:52.956Z",
+    "trace": {
+      "runId": "b3e5ebb9-937c-47af-b51c-27975e731aa0",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "45d80c47306fa40772a2beea53b4869f3a0c7cea41c14f47683be2496c351c05",
+      "contextHash": "5af7dbc4645f7a96a96508b8943fe9158bf854159afa44ac3fa0c6177f5f9f09",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "92a84f389485d1e1a3999d57c480361df01eac264085e99663ec506e60988e16",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-0aa3-7c33-8a24-575c2462578f"
+      ],
+      "usage": {
+        "used": 21331,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 17071,
+          "utf8Bytes": 18691,
+          "estimatedTokens": 6231,
+          "budgetedTokens": 7789,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:47:06.872Z",
+    "trace": {
+      "runId": "07c35bf7-55c9-49b8-9acc-4219908aaf45",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "08bdef014dcfc514e247672efda5c33a74b8acc092a37b3a77b1b373f03d8cda",
+      "contextHash": "bd9124667ded09be016e3a9db6dd23112c8b7bee3efe8fb7fd7ee657116971d0",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e227ae103c81dd60c9ad3a83f3953eb7cc151ec36e2f9129b6908676c120ce82",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-aea0-74b0-a4e0-8f10b624efb4"
+      ],
+      "usage": {
+        "used": 22302,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 26150,
+          "utf8Bytes": 33998,
+          "estimatedTokens": 11333,
+          "budgetedTokens": 14167,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

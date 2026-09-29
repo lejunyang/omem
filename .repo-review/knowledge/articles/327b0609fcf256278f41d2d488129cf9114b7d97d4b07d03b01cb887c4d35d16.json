@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
+    "title": "代码分析技能的 OpenAI 界面元数据",
+    "summary": "该 YAML 为技能提供人类可见名称、简短英文描述和默认调用提示，作用是帮助支持该界面的宿主展示并触发技能；它不包含分析规则本身，也不能证明特定模型或运行时已接入。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "interface-metadata",
+        "title": "展示信息",
+        "body": "配置在 `interface` 下给出中文展示名“分析代码材料”，并用英文短描述概括从固定证据构建关联知识的目标。[[c1]] 这属于界面和发现层元数据，便于用户识别技能，但未规定输出 schema、证据范围或错误处理。"
+      },
+      {
+        "key": "default-invocation",
+        "title": "默认调用方式及限制",
+        "body": "默认提示要求使用 `$omem-code-analyst` 处理提供的固定材料，说明宿主预期通过技能名触发配套规则。[[c2]] 具体分析纪律仍位于技能正文和角色提示中；当前材料没有说明该 YAML 由哪个客户端读取，也没有模型、effort、权限或兼容版本配置，因此不能推断实际调用链已经可用。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "代码分析技能界面名称与简介",
+        "reason": "支持该文件提供中文展示名和固定证据知识构建简介的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "interface:\n  display_name: \"分析代码材料\"\n  short_description: \"Build linked knowledge from fixed evidence\""
+      },
+      {
+        "key": "c2",
+        "label": "代码分析技能默认提示",
+        "reason": "支持默认通过技能名处理固定材料的调用意图。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
+          "startLine": 4,
+          "endLine": 4
+        },
+        "quote": "  default_prompt: \"Use $omem-code-analyst to process the supplied fixed materials.\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "哪个宿主或客户端消费此界面配置，且是否校验 `$omem-code-analyst` 已安装并与清单摘要一致？",
+        "why": "材料只提供展示与默认提示字段，没有加载路径、兼容性约束或失败行为。",
+        "nextStep": "检查技能注册和客户端适配实现，并用缺失技能、摘要不匹配及正常加载场景做行为验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+      "digest": "7cde63e2dcf6d7d5820002f3736794672245ca6ec134029de2104771ec4f8849"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/prompt.md",
+      "digest": "9180045624754f89e283095f5c576c757d2e2c635d46bb13036f8e03ebf3ef42"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/SKILL.md",
+      "digest": "0dba74dc50b689ee1649b649b0b5ac5b8c12a720dbff228d3df39b253510d45f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
+      "digest": "256abc8de3ce26865ff75c63133cbffe6d43473b38dd79d130c4531122481aa1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
+      "digest": "026d42bd86eb84d28aa08dc7c839dc4deedbb8bee2f7c241704d376e508d3de9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:22:26.933Z",
+    "trace": {
+      "runId": "2dae6280-d281-40d3-af1b-02e002f8d8e9",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "bcb8541a7f6fc2cdbb575d798a581f9523ab7535977581925a94d76bdee85b05",
+      "contextHash": "e914d9f0fb9aa22ea767291dddb8dd8784ff150790a2e29f4d6f8187837a1108",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7c71724d4ab4cb582ac52eb65355b8fbd6e24e12bf33abaea0e480d3b33c8cf6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9d-9dd8-7e12-988a-d6a5c86af3e3"
+      ],
+      "usage": {
+        "used": 23933,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 23398,
+          "utf8Bytes": 26794,
+          "estimatedTokens": 8932,
+          "budgetedTokens": 11165,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:22:48.588Z",
+    "trace": {
+      "runId": "9083d0e8-b11d-4286-90c3-49ca5e08599e",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "7daa4d5698d09092120e391017e114579006747e7c86a30fbe6d6f73b5ab1b33",
+      "contextHash": "f5f8fd419f904017378abed6c167b98b79194908870d882bbff60a6bebaa5456",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "90717e3b7ac70531fab628197404dbdfc14dc56a72eb8a77775437d1f0d20418",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9e-4eaf-7263-af09-e38259a1522f"
+      ],
+      "usage": {
+        "used": 25937,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 35666,
+          "utf8Bytes": 47936,
+          "estimatedTokens": 15979,
+          "budgetedTokens": 19974,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

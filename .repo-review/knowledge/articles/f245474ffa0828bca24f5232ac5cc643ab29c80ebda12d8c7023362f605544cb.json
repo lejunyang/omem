@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/agents/openai.yaml",
+    "title": "反馈整理技能的 OpenAI 界面元数据",
+    "summary": "提供反馈整理技能在代理界面中的展示名称、简短说明和默认提示；仅描述入口文案，不证明技能加载、提案校验或纠正流程已经运行。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "interface_metadata",
+        "title": "界面标识",
+        "body": "该配置把技能显示为“omem Feedback Curation”，并用简短说明将其定位为把有作用域的所有者纠正转成可复用约束。[[c1]] 这些字段主要服务于技能发现与界面表达，没有给出权限、输入合同或输出 schema 的具体约束。"
+      },
+      {
+        "key": "default_invocation",
+        "title": "默认调用提示",
+        "body": "默认提示要求使用 `omem-feedback-curation` 来整理一项有范围限制的纠正。[[c2]] 这只是建议的调用文本：材料未展示宿主如何解析技能引用，也未说明是否自动注入可信参与者绑定或目标修订，因此不能把该提示视为执行保障。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "反馈整理界面名称与说明",
+        "reason": "支持该 YAML 仅配置展示名称和面向用户的简短能力说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/agents/openai.yaml",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "interface:\n  display_name: \"omem Feedback Curation\"\n  short_description: \"Turn scoped owner corrections into reusable constraints\""
+      },
+      {
+        "key": "c2",
+        "label": "反馈整理默认提示",
+        "reason": "支持默认入口通过技能名请求整理有作用域的纠正。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/agents/openai.yaml",
+          "startLine": 4,
+          "endLine": 4
+        },
+        "quote": "  default_prompt: \"Use $omem-feedback-curation to curate a scoped correction.\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "该界面配置由哪个运行时组件加载，默认提示中的技能引用失败时如何呈现？",
+        "why": "当前材料只有五行展示配置，缺少加载路径、错误处理和端到端验证，无法判断它是否已接入实际代理入口。",
+        "nextStep": "查阅技能注册与代理启动实现，并以实际入口验证显示名称、默认提示和技能解析结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/SKILL.md",
+      "digest": "17a72da2e7939a4aa24ef5999539bccf29485c5e976c1cabf0f159e23b8ab88d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/skills/omem-feedback-curation/agents/openai.yaml",
+      "digest": "643869290ef1d25177dd0ab88d69d4272dd2b50be3630a168d87332240b161df"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/manifest.json",
+      "digest": "3f647bae16f9c6ab67e0da8f7f28ed24abf4f0fdf7a20da54f49da297966be87"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/output.schema.json",
+      "digest": "e79b69480df9d929d9da3680a861a0b693d7a2f4eb1e2e1345e34d6e858ce595"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/prompt.md",
+      "digest": "03a99bbac3aa70981f33863997e9efca6d9addf20b89ecf1ff5112fbd7589118"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/SKILL.md",
+      "digest": "8fc03c84b4b4e8449ae040d489e11043eee3473a638caf4e0a2a506b4f0a4512"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:47:25.016Z",
+    "trace": {
+      "runId": "e5ee1328-ff1c-476d-94b1-6024afc2da63",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "f0d1faaada2bdaef1a015102cdc1273cc68641efbb283e6c6bd805d0ee88842c",
+      "contextHash": "c3d36ddfc80ec4a8d8e93d87147be37124c7afcae7c06681897f61c1dc2f1ff6",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2d30d056e755edc739171f30a0dd2b4fefc4a5ab19370a71a01b065d87507041",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-85b2-7f33-a4ea-3224a07e11b7"
+      ],
+      "usage": {
+        "used": 21996,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 17010,
+          "utf8Bytes": 19406,
+          "estimatedTokens": 6469,
+          "budgetedTokens": 8087,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:47:49.012Z",
+    "trace": {
+      "runId": "6d3d25ed-f799-4bfa-9a17-d97c2ef4a2d5",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "d3afdc80300d2abfbf56f52ed24fc55de135864736ec4d605df4f0ff8270b409",
+      "contextHash": "482aec7930cc6416c3ae91195f553b55af21c8d89b4bba9f426d3f9d8506f7eb",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "63e0b4236d62414904ae1815d4aa444047740035997440a29010e2b599781ba9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-2b0c-7c60-bee1-3c4c02ce3691"
+      ],
+      "usage": {
+        "used": 23344,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28751,
+          "utf8Bytes": 37933,
+          "estimatedTokens": 12645,
+          "budgetedTokens": 15807,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

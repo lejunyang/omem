@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
+    "title": "反馈整理角色提示词：认证反馈到纠正候选",
+    "summary": "该提示词要求把经过认证的所有者反馈转换为绑定原目标与证据的纠正候选，并区分不同反馈强度和语义类别。它禁止把重复反馈或生成摘要提升为独立权威，也禁止直接应用纠正或修改权限、采集范围、预算及自动批准规则。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "feedback-classification",
+        "title": "反馈分类与权威来源",
+        "body": "角色接收经过认证的所有者反馈，并将其整理为关联原始目标和证据的纠正候选。处理时需要区分强纠正、任务调整、范围约束、较弱的有用性信号和结果证据；重复反馈与生成摘要不能脱离原始材料成为新的独立权威。[[c1]] 该规则旨在避免派生内容因重复出现而被错误强化。"
+      },
+      {
+        "key": "output-and-guardrails",
+        "title": "输出边界与受保护策略",
+        "body": "角色只能返回一个 `CorrectionProposal.v1` JSON 对象，并须把纠正限制在给定范围内、保留未解决冲突。它不得修改权限、采集范围、预算或自动批准规则，也不得直接应用纠正。[[c2]] 因而其定位是提出受证据约束的纠正候选，而非执行变更；材料未说明认证反馈如何进入角色或候选如何复核。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "认证反馈的分类与权威限制",
+        "reason": "支持反馈须绑定原目标和证据、区分多类信号并禁止派生摘要成为独立权威。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
+          "startLine": 3,
+          "endLine": 3
+        },
+        "quote": "Turn authenticated owner feedback into a correction candidate tied to the original target and evidence. Separate strong corrections, task adjustments, scope constraints, weak usefulness signals, and outcome evidence. Never let repeated feedback or generated summaries become independent authority."
+      },
+      {
+        "key": "c2",
+        "label": "纠正候选的输出与权限边界",
+        "reason": "支持仅输出纠正候选、保持范围和冲突，并禁止应用纠正或修改受保护策略。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "Return one CorrectionProposal.v1 JSON object and no prose. Keep corrections within the supplied scope, preserve unresolved conflicts, and never change permissions, capture scope, budgets, or auto-approval rules. Do not apply the correction."
+      }
+    ],
+    "questions": [
+      {
+        "question": "“经过认证的所有者反馈”在进入角色前由什么身份绑定证据确认？",
+        "why": "提示词依赖认证所有者这一前提，但材料没有提供 actor 绑定字段、认证方式或转发反馈的处理规则。",
+        "nextStep": "检查调用该角色的可信上下文和入口校验，确认 owner 身份、原目标与反馈证据如何绑定。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "强纠正、任务调整、范围约束、弱有用性信号和结果证据如何映射到单一 `CorrectionProposal.v1`？",
+        "why": "提示词要求区分类别，但所给输出 schema 没有显式类别字段，可能导致信息只隐含在 reason 或 replacement 中。",
+        "nextStep": "核对技能包和宿主消费逻辑，确认是否存在结构化映射；若无，应决定扩展合同还是明确编码规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
+      "digest": "8360aadfcdad2fb2f7f55a87fb069e9d35353b2c2eb6d6e965579c855f4c9b57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
+      "digest": "2270241f396ff675d0d702907dfed9465c7f9078b9ece6ff532611cfaea37140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
+      "digest": "1d51df6a2bf8a9efa743b139e36df5e37ba0eb7b79790635ff73cde54cbd7bb6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
+      "digest": "5a382d0ffad0f254164f51864bc530bc556a6231af09107d4194ec5feecf4039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+      "digest": "1fbb87e87e40252797492748cf8809f1a435df9e6db7546360f4b028f8c7b83e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
+      "digest": "986867580df9cfc41b753de7e718bba3e1c6d2fe55a25f86e17ae6da8b57ec8f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:46:52.956Z",
+    "trace": {
+      "runId": "b3e5ebb9-937c-47af-b51c-27975e731aa0",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "45d80c47306fa40772a2beea53b4869f3a0c7cea41c14f47683be2496c351c05",
+      "contextHash": "5af7dbc4645f7a96a96508b8943fe9158bf854159afa44ac3fa0c6177f5f9f09",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "92a84f389485d1e1a3999d57c480361df01eac264085e99663ec506e60988e16",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-0aa3-7c33-8a24-575c2462578f"
+      ],
+      "usage": {
+        "used": 21331,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 17071,
+          "utf8Bytes": 18691,
+          "estimatedTokens": 6231,
+          "budgetedTokens": 7789,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:47:06.872Z",
+    "trace": {
+      "runId": "07c35bf7-55c9-49b8-9acc-4219908aaf45",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "08bdef014dcfc514e247672efda5c33a74b8acc092a37b3a77b1b373f03d8cda",
+      "contextHash": "bd9124667ded09be016e3a9db6dd23112c8b7bee3efe8fb7fd7ee657116971d0",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e227ae103c81dd60c9ad3a83f3953eb7cc151ec36e2f9129b6908676c120ce82",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-aea0-74b0-a4e0-8f10b624efb4"
+      ],
+      "usage": {
+        "used": 22302,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 26150,
+          "utf8Bytes": 33998,
+          "estimatedTokens": 11333,
+          "budgetedTokens": 14167,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

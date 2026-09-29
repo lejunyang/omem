@@ -1,0 +1,238 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/output.schema.json",
+    "title": "代码理解输出模式",
+    "summary": "定义 CodeUnderstanding.v1 的顶层结构、角色与状态范围，以及职责、引用、置信度和溯源字段；模式能约束整体形状，但复杂数组元素与生成时间仍依赖未确认的补充验证。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "contract",
+        "title": "顶层合同与状态空间",
+        "body": "该文件以 JSON Schema 2020-12 定义 `CodeUnderstanding.v1`。输出必须是对象，不允许额外顶层属性，并要求结果身份、角色、状态、职责、边界、流程、声明、引用、未知项、置信度及 provenance 字段全部存在。[[c1]]\n\n角色枚举覆盖仓库画像、模块架构、符号解释和关系核验，状态允许 `seed`、`generated`、`verified`、`failed` 与 `rejected`。[[c2]] 这些约束描述统一结果容器的合法形状，但不表示各角色会以相同粒度填写所有字段，也不能单独证明状态转换已由运行时实施。"
+      },
+      {
+        "key": "validation",
+        "title": "字段校验强度与限制",
+        "body": "职责、边界、入口、出口及风险集合被规定为字符串数组，而 `key_flows` 与 `claims` 只被声明为数组。[[c4]] 引用节点、引用边和未知项同样要求字符串元素；置信度限定在 0 到 1，模型与验证者可为空，三个摘要须为 64 位小写十六进制字符串。[[c3]] 因此模式可以拦截缺失字段、非法枚举值、越界置信度和明显错误的摘要格式。\n\n不过，`key_flows`、`claims` 与 `evidence_refs` 没有元素结构，`generated_at` 也只要求字符串。[[c4]] 符号解释角色则进一步要求声明区分 `raw_fact` 与 `interpretation`、引用固定快照中真实存在的标识，并填写当前 ISO 时间。[[c5]] 这些语义和格式要求是否由宿主验证器补足，现有材料无法确认。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "CodeUnderstanding 顶层必填字段",
+        "reason": "支持输出禁止额外顶层属性，并要求职责、流程、声明、引用、未知项和溯源信息等字段齐备的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/output.schema.json",
+          "startLine": 1,
+          "endLine": 31
+        },
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"https://omem.invalid/contracts/CodeUnderstanding.v1\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",\n    \"result_id\",\n    \"role\",\n    \"status\",\n    \"module_responsibilities\",\n    \"boundaries\",\n    \"key_f"
+      },
+      {
+        "key": "c2",
+        "label": "角色与结果状态枚举",
+        "reason": "支持合同允许的四类角色和五种结果状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/output.schema.json",
+          "startLine": 33,
+          "endLine": 45
+        },
+        "quote": "    \"schema_version\": { \"const\": 1 },\n    \"result_id\": { \"type\": \"string\", \"minLength\": 1 },\n    \"role\": {\n      \"enum\": [\n        \"repo-profiler\",\n        \"module-architect\",\n        \"symbol-explainer\",\n        \"relation-verifier\"\n      ]\n    },\n    \"status\": {\n      \"enum\": [\"seed\", \"generated\", \"verified\", \"failed\","
+      },
+      {
+        "key": "c3",
+        "label": "引用、置信度与溯源字段约束",
+        "reason": "支持引用标识与未知项采用字符串元素、置信度范围、可空字段及摘要格式的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/output.schema.json",
+          "startLine": 53,
+          "endLine": 65
+        },
+        "quote": "    \"referenced_node_ids\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"referenced_edge_ids\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"evidence_refs\": { \"type\": \"array\" },\n    \"unknowns\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"confidence\": { \"type\": \"number\", \"minimum\": 0, "
+      },
+      {
+        "key": "c4",
+        "label": "职责、流程与生成时间定义",
+        "reason": "支持职责、边界、入口、出口和风险字段的字符串元素约束，也支持复杂数组缺少元素模式及生成时间仅为字符串的限制分析。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/output.schema.json",
+          "startLine": 46,
+          "endLine": 62
+        },
+        "quote": "    \"module_responsibilities\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"boundaries\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"key_flows\": { \"type\": \"array\" },\n    \"entry_points\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"exit_points\": { \"type\": \"array\", \"items\": { \"type\": "
+      },
+      {
+        "key": "c5",
+        "label": "符号解释角色的声明与时间要求",
+        "reason": "支持角色要求区分事实与解释、引用真实快照标识并填写当前 ISO 时间，说明角色要求强于静态模式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/prompt.md",
+          "startLine": 5,
+          "endLine": 7
+        },
+        "quote": "Return one CodeUnderstanding.v1 JSON object and no prose. Use `claims` to explain each targeted symbol: `raw_fact` for its declared signature/range and edges that exist, `interpretation` for behaviour you infer. Cite the symbol's own `node_id` and the `edge_id`s you rely on; every cited id MUST exist in the snapshot. A"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`claims`、`key_flows` 和 `evidence_refs` 的元素结构是否由未提供的补充合同或宿主验证器定义？",
+        "why": "静态模式仅将这些字段声明为数组，而角色材料还要求声明区分事实与解释、引用固定快照中的真实标识；现有材料不能确认是否存在额外运行时校验。",
+        "nextStep": "检查补充模式或宿主验证器；若不存在，再决定是否增加元素结构以及合法、非法输入和引用存在性测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "`generated_at` 的 ISO 时间要求由宿主验证器实施，还是应加入 JSON Schema？",
+        "why": "模式只要求该字段为字符串，而符号解释角色要求填写当前 ISO 时间；现有材料不能确认该差异是否由运行时补足。",
+        "nextStep": "确认宿主校验和已有数据兼容性，再选择加入 `format: date-time` 或实现并测试等价的宿主验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/repo-profiler/1/prompt.md",
+      "digest": "4a28fa82fe425e462ba1ee2014625334748a7a57dae5b06daf8a7134f7a559a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/repo-profiler/1/skills/omem-code-repo-profiler/SKILL.md",
+      "digest": "8cb9b1528e4c9a65eadafa49a848b813848ddd908baeceea2505eeaddcc1c108"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/manifest.json",
+      "digest": "d5dc7338d165d2e9a12e2f83e7fa3a6297d5cf9dabe45cfdfa7b5a208c11e091"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/output.schema.json",
+      "digest": "845aa23b7007ca89aaf9d68a5e0fc411e70492ee15b365d9fc5a31085e8623c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/prompt.md",
+      "digest": "4da54d182d158dd1c12944babdc16fe8f1519cdbba22219e6bb8a145c5193f77"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/symbol-explainer/1/skills/omem-code-symbol-explainer/SKILL.md",
+      "digest": "6bbd4ef1e7d91df320455bff5099adfd4325b8984445cbee7125f9cc985356b6"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:50:45.874Z",
+    "trace": {
+      "runId": "47186d6f-b74e-4dff-b7d9-a69126c274e0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "f651f9558b1ebbd87f1fd6a964e38b099f571ea233e1729bf9b6ab6f830e4384",
+      "contextHash": "c73ee09cf8e5343c458bc275940a6a19dfdae7774deb057c7f47cc38735602ef",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1aef7ef1e7241a5caaf160ab522ea94ef3c8b8ab85699f57b69a1cddeaeda2ab",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb8-07e2-7f60-80ef-e2152c6f8bd4"
+      ],
+      "usage": {
+        "used": 21127,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 24418,
+          "utf8Bytes": 28720,
+          "estimatedTokens": 9574,
+          "budgetedTokens": 11968,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:50:54.322Z",
+    "trace": {
+      "runId": "0083ca1d-de24-4c0d-8b70-ccb1826060af",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "bc7c72292899b991dadd466973cb0a30959fa7716817bc9dfd5569c58860bf15",
+      "contextHash": "ff27abff19c03926a4b7347c12238e97a668f51de312701cbf649d7d81d4def7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "daacb925a759be6c9708b8a4000e757dcd8f5b102b1e3bf6d89b8eab53f8b03e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb8-3b60-7ef3-9ac8-a47224e23a10"
+      ],
+      "usage": {
+        "used": 19008,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 20986,
+          "utf8Bytes": 23934,
+          "estimatedTokens": 7978,
+          "budgetedTokens": 9973,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

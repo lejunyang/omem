@@ -1,0 +1,197 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/agents/openai.yaml",
+    "title": "材料分析技能的 OpenAI 界面配置",
+    "summary": "提供技能在 OpenAI 代理界面中的展示名称、英文短描述和默认调用提示；它是展示及启动配置，不包含模型、预算、输出模式或运行成功证据。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "interface_metadata",
+        "title": "界面元数据",
+        "body": "该 YAML 仅定义一个 `interface` 配置块：面向用户的展示名为“分析文档材料”，英文短描述强调从固定证据构建相互链接的知识。[[c1]] 展示名与材料分析技能的中文职责相符，而短描述突出证据固定性和知识关联，但没有进一步说明“linked knowledge”的数据结构。"
+      },
+      {
+        "key": "default_invocation",
+        "title": "默认调用方式与限制",
+        "body": "默认提示要求使用材料分析技能处理已提供的固定材料，表明该配置的作用是为代理入口预填技能调用语句。[[c2]] 文件没有指定模型、推理强度、上下文预算、JSON 强制模式或错误处理，因此不能仅凭此配置断言 OpenAI 代理会正确加载技能、满足输出合同或拒绝越界读取。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "界面名称与简述",
+        "reason": "支持该配置提供中文展示名及固定证据知识构建短描述的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/agents/openai.yaml",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "interface:\n  display_name: \"分析文档材料\"\n  short_description: \"Build linked knowledge from fixed evidence\""
+      },
+      {
+        "key": "c2",
+        "label": "默认技能调用提示",
+        "reason": "支持该文件通过默认提示引导代理使用材料分析技能处理给定材料的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/agents/openai.yaml",
+          "startLine": 4,
+          "endLine": 4
+        },
+        "quote": "  default_prompt: \"Use $omem-material-analyst to process the supplied fixed materials.\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "英文短描述是否有意保留，还是应与中文展示名和角色输出语言统一？",
+        "why": "配置同时使用中文展示名和英文短描述，材料没有说明这是产品本地化策略还是尚未统一的文案。",
+        "nextStep": "由界面语言策略负责人确认目标语言，并在需要时补充本地化字段或文案测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "代理装配层是否会强制 JSON 输出并加载正确版本的技能？",
+        "why": "默认提示只引用技能名，当前文件没有版本锁定、输出格式或加载验证信息。",
+        "nextStep": "检查代理注册和技能解析流程，并用一次集成测试确认技能版本及结构化输出。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/prompt.md",
+      "digest": "23f7b389ae2769c602f19826ddc3662ca6d8f795949f1a46939f047652db3894"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/SKILL.md",
+      "digest": "e85adc7aad199487c68d3316e0d673af3b8fc550cbe045f62009987d0350958c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/skills/omem-material-analyst/agents/openai.yaml",
+      "digest": "b9df313e53d35f9d22a271a47a06bbde73b0c3b67981387c8fe5193a4384e2c4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/manifest.json",
+      "digest": "0ffe3306333fad0fb908de0a1255e0d9c281d248ec9cf5cfbecde33f7549e716"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/output.schema.json",
+      "digest": "845aa23b7007ca89aaf9d68a5e0fc411e70492ee15b365d9fc5a31085e8623c0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/prompt.md",
+      "digest": "546473a912c3257ec572c669a86f752d594e92f5a9a0dbad489e2adc2eba6e9e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:48:16.369Z",
+    "trace": {
+      "runId": "8c94ae67-59cc-4ae4-a8e5-0b94d0c293bd",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "32b430158a74d68cbdc4f279b97c06bd11ffccda8c6df0e963b6c67101d4d4a5",
+      "contextHash": "bdd40c3c16675c49bdeaa07901f772c7ea33613de8850b24c5c6e43233f78c8f",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c1b3fd2f277fdaea48c601c604cb054c963440980886fa97a62c7a977eee4232",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-236a-7013-86b1-f897e6d985dd"
+      ],
+      "usage": {
+        "used": 23753,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 18269,
+          "utf8Bytes": 21525,
+          "estimatedTokens": 7175,
+          "budgetedTokens": 8969,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:48:41.069Z",
+    "trace": {
+      "runId": "52a18496-26c0-412a-b6a3-ca89475e0183",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "29507a8f203b5dd785db5096492e92f5fd18e7e1658296ab36fe5cca3c37f2f0",
+      "contextHash": "f3b724962e09b30bd081d9b80d0b3af4d9a91555724c71dd2e0e910edd0d55c6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7d7c374a48d5d7de6b8faf4f670dcb5c31453ec78cd917b987c7b8b4422c2fec",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-f34e-7ac0-8ed5-bac2e60455f6"
+      ],
+      "usage": {
+        "used": 26255,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33341,
+          "utf8Bytes": 46791,
+          "estimatedTokens": 15597,
+          "budgetedTokens": 19497,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

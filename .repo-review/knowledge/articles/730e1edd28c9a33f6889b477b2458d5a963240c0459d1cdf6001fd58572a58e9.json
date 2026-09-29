@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
+    "title": "材料分析角色的 KnowledgeBatch 输出合同",
+    "summary": "该文件定义 material-analyst 的 KnowledgeBatch.v1 输出形状：一个批次包含带章节、引用和问题的知识文档。与 knowledge-writer 对应文件逐段比较可见，两者当前采用相同的字段结构、约束与 Schema 标识；但静态合同本身不能证明运行时已实施跨字段语义校验，也不能证明两份文件由单一来源生成或持续同步。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "batch_contract",
+        "title": "批次与知识文档结构",
+        "body": "该 Schema 将顶层版本固定为 1，并要求 `documents` 包含 1–16 个文档。每个文档具有键、标题、摘要、受限分类和 1–20 个章节；章节必须提供键、标题和正文，且不接受未声明属性。[[c1]] 文档还必须同时包含引用和问题，顶层只允许 `schema_version` 与 `documents`，Schema 标识为 `KnowledgeBatch.v1`。[[c3]]\n\n对照 knowledge-writer 的合同，其批次、文档和章节约束相同，文档与顶层必填项及最终 Schema 标识也一致。[[c4]][[c6]] 这只能说明两份给定文件在当前材料中的静态结构一致，不能据此断言二者由生成流程自动同步，或相关运行时功能已经实现。"
+      },
+      {
+        "key": "provenance_contract",
+        "title": "证据定位、未决问题与校验边界",
+        "body": "引用条目要求人读标签、理由、限定关系、目标和 `quote`；目标可指向材料或文章，并可携带材料行范围或文章章节。`quote` 的描述约定由宿主从固定行范围提取原文。问题条目则记录问题、原因、下一步、阻塞状态和关联引用键。[[c2]] knowledge-writer 的对应区段具有同样的引用目标、关系枚举、宿主抽取约定和问题结构，进一步支持两份合同当前一致的判断。[[c5]]\n\n不过，JSON Schema 主要约束单个字段与对象形状：它不能单独保证任务目标全部覆盖、正文实际使用每个引用、材料行号落在授权范围内，或 `citationKeys` 均指向真实引用。是否已有宿主验证器、修复流程和端到端测试补足这些跨字段规则，仍需检查实现证据。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "材料分析合同的批次与章节定义",
+        "reason": "支持附近关于版本、文档数量、文档基本属性、分类枚举、章节数量及章节必填字段的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
+          "startLine": 5,
+          "endLine": 77
+        },
+        "quote": "    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLen"
+      },
+      {
+        "key": "c2",
+        "label": "材料分析合同的引用与问题定义",
+        "reason": "支持附近关于引用字段、关系枚举、目标定位、原文抽取约定以及未决问题结构的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
+          "startLine": 78,
+          "endLine": 206
+        },
+        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+      },
+      {
+        "key": "c3",
+        "label": "材料分析合同的必填项与标识",
+        "reason": "支持附近关于文档必填字段、顶层必填字段、额外属性限制和 KnowledgeBatch.v1 标识的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
+          "startLine": 208,
+          "endLine": 227
+        },
+        "quote": "        },\n        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalP"
+      },
+      {
+        "key": "c4",
+        "label": "知识撰写合同的批次与章节定义",
+        "reason": "作为跨文件比较的另一侧证据，支持 knowledge-writer 当前具有相同批次、文档属性和章节约束的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+          "startLine": 5,
+          "endLine": 77
+        },
+        "quote": "    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLen"
+      },
+      {
+        "key": "c5",
+        "label": "知识撰写合同的引用与问题定义",
+        "reason": "作为跨文件比较的另一侧证据，支持 knowledge-writer 当前具有相同引用、目标定位、原文抽取和问题结构的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+          "startLine": 78,
+          "endLine": 206
+        },
+        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+      },
+      {
+        "key": "c6",
+        "label": "知识撰写合同的必填项与标识",
+        "reason": "支持跨文件比较中关于 knowledge-writer 文档必填项、顶层约束及 KnowledgeBatch.v1 标识一致的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+          "startLine": 208,
+          "endLine": 227
+        },
+        "quote": "        },\n        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalP"
+      }
+    ],
+    "questions": [
+      {
+        "question": "material-analyst 运行时是否实现了 Schema 无法表达的跨字段语义校验？",
+        "why": "静态合同能约束字段形状，却不能证明所有目标均被覆盖、每个引用在正文出现、材料行号属于授权范围，或 citationKeys 指向真实引用。",
+        "nextStep": "检查宿主验证器、修复流程及相关端到端测试，分别验证目标覆盖、正文引用使用、授权范围和引用键完整性。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "material-analyst 与 knowledge-writer 的两份 KnowledgeBatch.v1 Schema 是否由单一来源生成并接受一致性检查？",
+        "why": "双边材料证明两份文件当前在批次、引用、问题、必填项和 Schema 标识上相同，但没有展示生成机制、权威来源或防止后续分叉的同步测试。",
+        "nextStep": "检查构建脚本和测试配置；若目前为复制维护，确定权威定义并增加生成步骤或结构摘要一致性测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3",
+          "c4",
+          "c5",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/prompt.md",
+      "digest": "a139c9318e2687fb85358fbd369d5b7ac7f0dc0fb1369c4261a714d3e1ca324e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/SKILL.md",
+      "digest": "eeb26db50c60090599b6de6aac0804459a184d21afdcad5e07e3dbe49d6b1054"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/agents/openai.yaml",
+      "digest": "00a4929cd148fb583122620865b904f4030ceb4c3d16781a02cb248ffaf148f6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/manifest.json",
+      "digest": "7f61ba46e4f43f27d72c37ab46ea98b2e3206700a2bd3f4a6c3dd19adb3c136f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:25:16.618Z",
+    "trace": {
+      "runId": "bbc5af83-98d6-49c3-865b-c9b1127dcbb3",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "6489833db08bfcb3f7f4d21e87aa4d1097d64e944dfd55c908aa52d4dd9414ae",
+      "contextHash": "38d236a1e278172677e2b1abcd0eac0f3812abcfb16a33e814ecb680d9510015",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ebf1931d1ef88f96c8824d5d5b78a28ba2d0e2437009d2389035017baa9c15c2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea0-a27b-74a2-ae4a-0f626e66f6eb"
+      ],
+      "usage": {
+        "used": 23542,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33694,
+          "utf8Bytes": 39242,
+          "estimatedTokens": 13081,
+          "budgetedTokens": 16352,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:25:26.159Z",
+    "trace": {
+      "runId": "771ce8e9-1ada-4dd3-a1f2-e6dd149771dc",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "094b4edf6095fd832ee46e52763b6ac5770b07fea4a42a43b8b1dc27705793d4",
+      "contextHash": "5ce9940fd6b112381c59373b51fe8c0fa4d78355a9764b8b0a8344b7dc6e52d7",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5f21da17fa4d20ec5345e2c30a4c444017e3f047de247229379f25e07c77f83c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eea0-e597-7da3-a45a-d0004cae567a"
+      ],
+      "usage": {
+        "used": 22173,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 32839,
+          "utf8Bytes": 37989,
+          "estimatedTokens": 12663,
+          "budgetedTokens": 15829,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

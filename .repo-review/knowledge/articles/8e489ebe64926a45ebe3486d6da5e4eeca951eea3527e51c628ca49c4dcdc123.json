@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
+    "title": "对话分析角色运行清单",
+    "summary": "该清单声明第一版对话分析角色及其提示模板、内联技能、输出合同、工具与会话策略和预算。与代码分析清单对照可确认两者共享运行轮廓，但使用不同角色标识、技能名称和制品摘要；清单本身不证明运行时已经强制执行这些配置。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "role-contract",
+        "title": "角色身份与结构化输出",
+        "body": "对话分析清单声明第一版 `conversation-analyst`，使用 `traex` profile、`prompt.md`、第一版内联对话分析技能，并把输出指定为 `KnowledgeBatch.v1`。[[c1]] 代码分析清单声明相同 profile 和输出合同，但角色标识、技能名称及制品摘要不同。[[c2]]\n\n由此只能确认两份配置在结构化输出层面的对称性，以及各自绑定了不同技能制品；现有材料没有给出对话分析的 prompt 或技能正文，不能据此确认参与者识别、转发、回复关系或隐私处理逻辑。"
+      },
+      {
+        "key": "runtime-policy",
+        "title": "隔离策略与预算对照",
+        "body": "对话分析角色禁用工具、不复用会话，也不继承用户技能或 MCP。[[c3]] 代码分析角色声明了相同的工具和会话隔离参数。[[c4]] 两者的上下文、输出及修复预算也分别同为 96000、24000 和 2：对话侧配置如此声明，[[c5]] 代码侧配置提供了对应依据。[[c6]]\n\n这些均是清单中的配置陈述，并非实际执行记录；材料没有证明运行时已强制隔离，也没有提供指标说明统一预算是否适合两类材料。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "对话分析角色与技能配置",
+        "reason": "支持对话角色版本、profile、提示模板、内联技能名称、制品摘要和输出合同的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
+          "startLine": 2,
+          "endLine": 17
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"conversation-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-conversation-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"439c4a6a7"
+      },
+      {
+        "key": "c2",
+        "label": "代码分析角色与技能配置",
+        "reason": "为跨清单比较提供代码分析侧依据，支持共享 profile 和输出合同、但角色与技能制品不同的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+          "startLine": 2,
+          "endLine": 17
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"code-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-code-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"c690e2202b12a946dc9f48f94"
+      },
+      {
+        "key": "c3",
+        "label": "对话分析隔离策略",
+        "reason": "支持对话分析角色无工具、会话不复用且不继承用户扩展能力的配置描述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c4",
+        "label": "代码分析隔离策略",
+        "reason": "为隔离策略的跨角色对照提供代码分析清单中的直接依据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c5",
+        "label": "对话分析运行预算",
+        "reason": "支持对话分析角色的上下文、输出 token 和修复次数上限。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
+          "startLine": 27,
+          "endLine": 30
+        },
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      },
+      {
+        "key": "c6",
+        "label": "代码分析运行预算",
+        "reason": "为两类角色预算相同的比较提供代码分析侧直接依据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+          "startLine": 27,
+          "endLine": 30
+        },
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "对话分析角色如何处理参与者身份、转发内容、引用回复、时间语境和敏感信息？",
+        "why": "当前目标材料仅是运行清单，没有提供对话角色的 prompt、技能正文、测试或执行结果，无法确认领域行为与隐私边界。",
+        "nextStep": "补充并审查对话分析角色的固定 prompt、技能材料和行为测试，重点覆盖身份不明、转发、多轮引用及敏感内容场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "两类分析角色采用相同预算与隔离策略是经过验证的统一默认值，还是尚未按材料类型调优？",
+        "why": "两份清单确实声明相同参数，但没有基准数据、运行指标或配置说明解释该选择。",
+        "nextStep": "收集两类任务的真实上下文长度、输出规模、失败率和修复次数，再决定是否维持统一预算。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+      "digest": "7cde63e2dcf6d7d5820002f3736794672245ca6ec134029de2104771ec4f8849"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/prompt.md",
+      "digest": "9180045624754f89e283095f5c576c757d2e2c635d46bb13036f8e03ebf3ef42"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/SKILL.md",
+      "digest": "0dba74dc50b689ee1649b649b0b5ac5b8c12a720dbff228d3df39b253510d45f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
+      "digest": "256abc8de3ce26865ff75c63133cbffe6d43473b38dd79d130c4531122481aa1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
+      "digest": "026d42bd86eb84d28aa08dc7c839dc4deedbb8bee2f7c241704d376e508d3de9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:23:12.244Z",
+    "trace": {
+      "runId": "9b24cfe9-00b3-4921-8f47-879c0e87a125",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "5717ed0c5b682e571cf91bbc51c0c30d282af45b55e643ebd6e04b9657b426a9",
+      "contextHash": "e3a4595aa6a462f78c91dc188b480f2ae23019624db6c788028c9873693d60d8",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "67a35eceb8a5c79b63f2f4c0aaefb19c11a49cae599331365fa2dd558b646af3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9e-a54a-7710-b9c7-4301c765e5e3"
+      ],
+      "usage": {
+        "used": 23996,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 29433,
+          "utf8Bytes": 36231,
+          "estimatedTokens": 12077,
+          "budgetedTokens": 15097,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:23:22.260Z",
+    "trace": {
+      "runId": "44df62ad-c4b1-4ea9-8243-3112946969c0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "008edf4f25bbf33c86d0bb339233635e04ffa60fbb452d1df625c8a6e95fef6f",
+      "contextHash": "0b78a8b983888b766b45adea0be5ae584b1c5fc67aa84c5b544e6157a5f03b7f",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "228db17f5bf2045b48e0c76572fc3db5a829df0f5c9cb308e6028fa352bd4f3c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9f-0036-7251-9123-283fb28ac5a7"
+      ],
+      "usage": {
+        "used": 21982,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 28661,
+          "utf8Bytes": 35205,
+          "estimatedTokens": 11735,
+          "budgetedTokens": 14669,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

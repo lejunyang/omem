@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/planner/1/manifest.json",
+    "title": "规划角色运行清单",
+    "summary": "清单声明 planner v1 的配置组合：角色档案、内联技能、输出合同、无工具会话隔离和预算。它描述宿主应如何装载角色，但不等同于运行成功或规划能力已通过测试。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "assembly",
+        "title": "角色装配与输出合同",
+        "body": "该清单把角色标识设为 planner、版本设为 1，并引用 `traex` profile 与 `prompt.md`。[[c1]] 它内联装载版本为 `plan-1` 的任务规划技能，同时记录制品摘要；预期输出合同为 PlanProposal.v1。摘要可用于绑定特定技能制品，但材料没有展示宿主如何核验摘要。[[c2]]"
+      },
+      {
+        "key": "isolation",
+        "title": "权限、会话与预算",
+        "body": "工具策略为 `none` 且允许工具列表为空，意味着此角色按配置只能提出计划，不能借助工具执行步骤。[[c3]] 会话不复用，也不继承用户技能或 MCP，体现任务间隔离。预算上限声明为 96,000 个上下文 token、24,000 个输出 token，并允许最多两次修复；这些是配置额度，不是实际消耗或成功率记录。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "规划角色基础身份配置",
+        "reason": "支持角色版本、profile 与提示模板来源的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/planner/1/manifest.json",
+          "startLine": 2,
+          "endLine": 8
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"planner\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],"
+      },
+      {
+        "key": "c2",
+        "label": "内联技能与输出合同配置",
+        "reason": "支持技能版本、装载方式、制品摘要及 PlanProposal.v1 输出声明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/planner/1/manifest.json",
+          "startLine": 9,
+          "endLine": 17
+        },
+        "quote": "  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-task-planning\",\n      \"version\": \"plan-1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"33a0030d26e3ac637de650b9e58f8c89e578e4c5b3c05471c5247f3c6db4bc3c\"\n    }\n  ],\n  \"output_schema\": \"PlanProposal.v1\","
+      },
+      {
+        "key": "c3",
+        "label": "无工具策略",
+        "reason": "支持 planner 配置上不能调用工具执行计划的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/planner/1/manifest.json",
+          "startLine": 18,
+          "endLine": 21
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },"
+      },
+      {
+        "key": "c4",
+        "label": "会话隔离与预算配置",
+        "reason": "支持会话不复用、不继承用户能力以及 token 和修复次数上限的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/planner/1/manifest.json",
+          "startLine": 22,
+          "endLine": 30
+        },
+        "quote": "  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },\n  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "宿主是否会验证技能制品摘要，并拒绝摘要不匹配或不支持的 profile？",
+        "why": "清单给出了摘要和 profile 引用，却没有宿主装载逻辑、失败策略或集成测试，不能从声明推断校验已实施。",
+        "nextStep": "检查角色装载器及其测试，确认摘要校验、profile 解析和失败行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "这些 token 上限与最多两次修复在实际 ACP/模型运行中如何计量和强制？",
+        "why": "材料仅给出静态预算值，没有运行 trace 或越界测试。",
+        "nextStep": "补充预算执行代码、越界用例和包含实际用量的运行 trace。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/module-architect/1/skills/omem-code-module-architect/SKILL.md",
+      "digest": "a0d07ae257d706f7882761188c9875b9978f391c2c8893a0193a4292b7e3c1e2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/planner/1/manifest.json",
+      "digest": "db8af75f443feff42a0e3f262d557a6ddcd03956aca4597ee51c12b4c72689af"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/planner/1/output.schema.json",
+      "digest": "8dd51655946836b1472163ca5d4969ad60cfb64f09ff65133d9ae6a473ffe828"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/planner/1/prompt.md",
+      "digest": "e39bf90e84fabdd27c98b01bfb09b98454fd016b685db880509eb5c0ce56d6b8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/planner/1/skills/omem-task-planning/SKILL.md",
+      "digest": "9e3870c1034dad30f208cb9fd93eb0ff84c34934adad965ade23a4b635336abf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/planner/1/skills/omem-task-planning/agents/openai.yaml",
+      "digest": "711c51d87b4c95da645ad6e57074e4e9cc284db5442e8769a42067df18cdf57e"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:48:14.050Z",
+    "trace": {
+      "runId": "8c5bcffc-f8dd-415d-81b8-9971f19ca45f",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "10368f5b32c18c8763839dcfa7b285655361ebb333116293db5ef633b0bebf6d",
+      "contextHash": "8629e7a58b40f90830f7eecfe4f6434351a42773db8f8e6a9506bdc986d87371",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "73ce6a838bbd8494354066d5b10feb902c1f5dcdbbeb9841d8360d57d41f14c3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-3b85-7b73-aedc-69b1fe8250c7"
+      ],
+      "usage": {
+        "used": 21816,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 17368,
+          "utf8Bytes": 18988,
+          "estimatedTokens": 6330,
+          "budgetedTokens": 7913,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:48:32.648Z",
+    "trace": {
+      "runId": "d72790f3-4c7f-4a4c-9920-c37f7e24f843",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2c6678456fc861f5b59097ced1c89a7061210ca26154ddf7d9c64a4b6f4263d6",
+      "contextHash": "61df24dc2245b858215235f54e5453abd2b17b7052cc4f9223850579f7b9a9f5",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "da1278e929244379989c9b174d0b2c30c9db69e9ba11ea09ff079c00164863dc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb5-ea3a-7c22-aa4b-38dd0d12bc83"
+      ],
+      "usage": {
+        "used": 23703,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 29664,
+          "utf8Bytes": 37404,
+          "estimatedTokens": 12468,
+          "budgetedTokens": 15585,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

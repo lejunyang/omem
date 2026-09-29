@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
+    "title": "证据核验角色 v1 运行清单",
+    "summary": "该清单声明 verifier 的角色包、结构化输出、工具与会话策略及预算；独立核验与证据比较要求来自提示词，清单本身不足以证明运行时已强制执行这些约束。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "role_contract",
+        "title": "角色组成与核验职责",
+        "body": "清单将角色标识为 `verifier` v1，引用 `traex` profile 和 `prompt.md`，以内联方式加载带版本及制品摘要的 `omem-evidence-review` 技能，并声明输出为 `AssessmentBatch.v1`。这些字段描述角色包及预期结构化产物，但没有展示加载器是否校验摘要或输出。[[c1]]\n\n独立判断的要求来自提示词：角色应以提供的原始证据和可信来源信息复核提案，不继承提取者推理，并检查主体、范围、时间、归因、否定、条件与表述强度；它只评估支持性，不负责批准或执行变更。[[c2]]"
+      },
+      {
+        "key": "isolation_budget",
+        "title": "隔离声明与资源预算",
+        "body": "工具策略声明为 `none`、允许列表为空；会话配置声明永不复用，且不继承用户技能与 MCP。[[c3]] 这只能确定配置限制了可调用工具和可继承上下文；此前将其解释为“保证只依据任务证据”的结论由此替代，因为独立依据证据判断是提示词要求，而非这些清单字段本身能够保证的运行效果。[[c2]]\n\n清单还设定 96,000 个上下文 token、24,000 个输出 token及最多两次修复尝试。[[c4]] 这些是声明的预算上限；材料未提供策略执行代码、超限行为或运行记录，不能据此确认运行时已强制落实。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "核验角色、技能与输出配置",
+        "reason": "支持 verifier 的角色版本、profile、提示词、内联技能制品和 AssessmentBatch 输出声明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
+          "startLine": 2,
+          "endLine": 17
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"verifier\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-evidence-review\",\n      \"version\": \"review-1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"1d26700ca953439e4bd"
+      },
+      {
+        "key": "c2",
+        "label": "独立证据核验提示词",
+        "reason": "支持独立复核原始证据、检查语义范围以及只评估支持性而不执行变更的职责说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
+          "startLine": 3,
+          "endLine": 5
+        },
+        "quote": "Independently assess proposals against the supplied original evidence and trusted provenance. Do not inherit extractor reasoning. Recheck quote or asset identity, then compare subject, scope, time, attribution, negation, conditions, and intended strength. Preserve conflicts and missing context.\n\nReturn one AssessmentBa"
+      },
+      {
+        "key": "c3",
+        "label": "工具与会话隔离配置",
+        "reason": "支持无可调用工具、会话不复用以及不继承用户技能和 MCP 的配置事实。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c4",
+        "label": "核验任务预算配置",
+        "reason": "支持上下文、输出 token 与修复尝试次数的配置上限。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
+          "startLine": 27,
+          "endLine": 30
+        },
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+      }
+    ],
+    "questions": [
+      {
+        "question": "运行时是否会强制验证技能制品摘要、工具隔离、会话隔离和 token 预算？",
+        "why": "清单只声明相关策略，提示词只规定角色行为；当前材料没有加载器、执行 trace 或测试结果，不能把配置要求视为已验证的运行事实。",
+        "nextStep": "检查角色清单加载与策略执行代码，并用集成测试或运行 trace 验证摘要不匹配、工具调用、上下文继承和预算超限时的处理。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
+      "digest": "1ec6d9a7e7997db6ff2f98381d8acd1ef976ff9e21201d6c5bb73824d97f9555"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/output.schema.json",
+      "digest": "6ab370d7f0c7af0c0433a7b98677e949fd8c45df348c52020af5aaecd8371670"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
+      "digest": "588a152e46dc50fce04717dcc7ebe386913f8f45da0ae090b735f16dcbce6f23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
+      "digest": "1066d9fa84cc7dacab542e8ff908be35fd27ac116f78aa38fd11f944c3f34227"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
+      "digest": "dab14a5bbcf124b8c2676845e2977bb2a21fa8686310c037b62046a826d23edf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+      "digest": "c8b425766c71d518aefc2d4a3577d4ba6993843610bb4bb24400c2f2d3251e89"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:50:33.450Z",
+    "trace": {
+      "runId": "1741f66b-807a-42a9-b7bc-5929fa4143c0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "ceef0e66be17027159970992bd7b280497a012241177cbdb0d265865a88a9630",
+      "contextHash": "abf23acb200f5df6bc7abd3504c90453ceb67b439059c1ed0b7d40c0cb533126",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1f3d66be2a1f4535d1d821bb14b0e9732d50fae8af593bf875df386cc36f18b0",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb7-bf69-7003-9780-292fef3b8d64"
+      ],
+      "usage": {
+        "used": 21396,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22352,
+          "utf8Bytes": 27456,
+          "estimatedTokens": 9152,
+          "budgetedTokens": 11440,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:50:41.995Z",
+    "trace": {
+      "runId": "7e2e3b60-4d82-4b29-bf72-5f194bb6ebb3",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "02648273572f4b98b058346c82752eb43acebe2b3486030efbb3a21673f8b950",
+      "contextHash": "171497f3db0d6c4175eacd210c4af33cda91b06253bf7717c6c5fff8d314bfdc",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6da32fc1d467062084f4268ad0b6bb230bc6e460cdef6794699b2a092ef4765a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb8-0d26-7cc0-a87a-23d8f299cb5c"
+      ],
+      "usage": {
+        "used": 18958,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 19527,
+          "utf8Bytes": 23353,
+          "estimatedTokens": 7785,
+          "budgetedTokens": 9732,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

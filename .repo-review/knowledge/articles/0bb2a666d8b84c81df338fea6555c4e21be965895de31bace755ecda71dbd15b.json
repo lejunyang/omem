@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
+    "title": "知识刷新技能的 OpenAI 界面配置",
+    "summary": "该文件声明刷新技能在代理界面中的显示名称、英文简介和默认提示语，用于引导代理调用指定技能处理固定材料；它不包含刷新实现或运行证明。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "presentation",
+        "title": "技能展示语义",
+        "body": "界面将技能显示为“更新关联知识”，与刷新角色的职责名称一致。短描述则把任务概括为从固定证据构建关联知识，突出输入证据的固定性与产物之间的关联。[[c1]] 该描述较为通用，没有单独表达保留未受影响知识和标记替代结论等增量语义。"
+      },
+      {
+        "key": "default",
+        "title": "默认调用入口",
+        "body": "默认提示语要求代理使用指定的知识刷新技能处理已提供的固定材料。[[c2]] 这只是界面层的默认调用文本；是否真正加载正确版本、是否采用清单中的无工具策略，以及输出是否通过 KnowledgeBatch 合同，仍需要运行时校验和行为结果才能确认。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "知识刷新界面名称与简介",
+        "reason": "支持技能的用户可见名称及基于固定证据构建关联知识的定位。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "interface:\n  display_name: \"更新关联知识\"\n  short_description: \"Build linked knowledge from fixed evidence\""
+      },
+      {
+        "key": "c2",
+        "label": "知识刷新默认提示语",
+        "reason": "支持代理界面默认调用知识刷新技能处理固定材料的约定。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
+          "startLine": 4,
+          "endLine": 4
+        },
+        "quote": "  default_prompt: \"Use $omem-knowledge-refresher to process the supplied fixed materials.\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "界面短描述是否需要明确体现“增量刷新、保留未受影响知识和标记替代结论”？",
+        "why": "当前短描述与知识规划入口同样采用通用的固定证据表述，不能清楚区分规划新知识与刷新既有知识两种操作。",
+        "nextStep": "由产品或角色维护者确认界面区分需求；若需要，调整短描述并通过代理选择界面检查可辨识性。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "界面短描述是否需要明确体现增量刷新、保留未受影响知识和标记替代结论？",
+        "why": "当前短描述只说明从固定证据构建关联知识，与知识规划入口的描述相同，不能清楚区分两种操作。",
+        "nextStep": "由产品或角色维护者确认区分需求；如需区分，调整短描述并检查代理选择界面的可辨识性。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
+      "digest": "468bbb6b669089c57790cb8ba50178f9d7d9a8ffb6835dd48c18a137f7e25fa1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
+      "digest": "eb5e63bd3b6e3878ed2dffe409bae271e20993ac0baabdf1e4c47bb12cfbb27d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
+      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
+      "digest": "4314f06e1b0e6ba910552b65d93ffce60f1ada2837ed285ca1979b5f9afa1e94"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/SKILL.md",
+      "digest": "7cc6c58913efeb9fd59c189e30c43fe0b266d747e6671e61c977949c27ac9b6f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
+      "digest": "df5592fd59bc200546ba138dee22816073a69783056f7324f74eaeed4938a78f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:23:33.379Z",
+    "trace": {
+      "runId": "199ac603-c8d2-4ddc-bc10-73337bdf68d5",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "92a44dfc33138fc923b2598cd48a9ae406f7f0d6e574498df685e924a54d31b8",
+      "contextHash": "b0debaf029893a97683879e270c7048b66d9ca2187c0ef238335e03e11459f73",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ceeabaf73efe948f941f09bbd9171bdc803d23dc7c20c760f12aecb5da2083e8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9e-90b1-7731-822d-dd67e8eaf1b6"
+      ],
+      "usage": {
+        "used": 23945,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 23174,
+          "utf8Bytes": 26432,
+          "estimatedTokens": 8811,
+          "budgetedTokens": 11014,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:23:51.676Z",
+    "trace": {
+      "runId": "a0545f02-7565-4ac3-b128-7fd7aa2f247e",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "3dfa76d5abf62a96b63d3dc8ec93b66c8f1ed916f9317a6d0013bc2f8b39d31e",
+      "contextHash": "fd5474391e31196a1861373e699d04032e295888896ca4341ab196897ab0dfcb",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "10d76f4f484b9c366f48e2092258328d79d173c527a8e97a131b55db3da713f2",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee9f-53a6-7b11-9a73-0641f6a1c7d7"
+      ],
+      "usage": {
+        "used": 25873,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 36073,
+          "utf8Bytes": 48005,
+          "estimatedTokens": 16002,
+          "budgetedTokens": 20003,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

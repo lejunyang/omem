@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
+    "title": "omem-extract 的 OpenAI 界面元数据",
+    "summary": "该 YAML 为技能声明面向界面的名称、简介和默认提示语，使调用入口能够向用户展示“从固定证据提取有范围的记忆候选”。它只描述适配器元数据，不能证明技能已被发现、载入或成功执行。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "interface-metadata",
+        "title": "展示与默认入口",
+        "body": "配置将界面名称设为“omem Extract”，用简短说明强调从固定证据提取带范围的记忆候选，并通过默认提示语请求使用 `omem-extract` 生成证据绑定的记忆提议。[[c1]] 这与技能正文的定位一致，但材料没有给出加载器、平台兼容性或运行验证，因此只能确认静态配置内容。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "OpenAI 技能界面配置",
+        "reason": "说明技能的展示名称、简短描述和默认提示语。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "interface:\n  display_name: \"omem Extract\"\n  short_description: \"Extract scoped memory candidates from fixed evidence\"\n  default_prompt: \"Use $omem-extract to extract evidence-bound memory proposals.\""
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前 Agent CLI 或 ACP 是否实际读取该 `agents/openai.yaml` 并解析 `$omem-extract`？",
+        "why": "材料只提供静态界面元数据，没有发现日志、集成测试或加载器实现证据。",
+        "nextStep": "查看技能发现流程，并以真实会话验证显示名称、默认提示与技能绑定。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
+      "digest": "8360aadfcdad2fb2f7f55a87fb069e9d35353b2c2eb6d6e965579c855f4c9b57"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
+      "digest": "2270241f396ff675d0d702907dfed9465c7f9078b9ece6ff532611cfaea37140"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
+      "digest": "1d51df6a2bf8a9efa743b139e36df5e37ba0eb7b79790635ff73cde54cbd7bb6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
+      "digest": "5a382d0ffad0f254164f51864bc530bc556a6231af09107d4194ec5feecf4039"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+      "digest": "1fbb87e87e40252797492748cf8809f1a435df9e6db7546360f4b028f8c7b83e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
+      "digest": "986867580df9cfc41b753de7e718bba3e1c6d2fe55a25f86e17ae6da8b57ec8f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:46:52.956Z",
+    "trace": {
+      "runId": "b3e5ebb9-937c-47af-b51c-27975e731aa0",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "45d80c47306fa40772a2beea53b4869f3a0c7cea41c14f47683be2496c351c05",
+      "contextHash": "5af7dbc4645f7a96a96508b8943fe9158bf854159afa44ac3fa0c6177f5f9f09",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "92a84f389485d1e1a3999d57c480361df01eac264085e99663ec506e60988e16",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-0aa3-7c33-8a24-575c2462578f"
+      ],
+      "usage": {
+        "used": 21331,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 17071,
+          "utf8Bytes": 18691,
+          "estimatedTokens": 6231,
+          "budgetedTokens": 7789,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:47:06.872Z",
+    "trace": {
+      "runId": "07c35bf7-55c9-49b8-9acc-4219908aaf45",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "08bdef014dcfc514e247672efda5c33a74b8acc092a37b3a77b1b373f03d8cda",
+      "contextHash": "bd9124667ded09be016e3a9db6dd23112c8b7bee3efe8fb7fd7ee657116971d0",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "e227ae103c81dd60c9ad3a83f3953eb7cc151ec36e2f9129b6908676c120ce82",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb4-aea0-74b0-a4e0-8f10b624efb4"
+      ],
+      "usage": {
+        "used": 22302,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 26150,
+          "utf8Bytes": 33998,
+          "estimatedTokens": 11333,
+          "budgetedTokens": 14167,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
