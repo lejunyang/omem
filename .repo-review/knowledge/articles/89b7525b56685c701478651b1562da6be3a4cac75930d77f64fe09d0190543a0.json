@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:apps/web/src/codewiki/FileFrame.vue",
     "title": "文件源码、符号与关系详情帧",
-    "summary": "并行读取单个文件的原文、符号、关系边和派生说明，提供源码定位及面向可解析目标的证据下探。",
+    "summary": "并行读取单个文件的不可变源码、符号、关系边和派生说明，支持源码定位与面向有效目标的证据下探。",
     "category": "implementation",
     "sections": [
       {
         "key": "loading",
-        "title": "读取与展示流程",
-        "body": "文件帧以文件为边界并行读取完整源码、符号、关系边和确定性理解。符号、边或理解请求失败时降级为空数据，源码请求失败则显示错误并允许重试；文件变化会触发重新加载。[[c1]] 符号经大纲整理后转为源码范围标记，点击精确起始行或大纲项都会发出符号下探事件，使同文件符号也进入独立范围帧。[[c2]]"
+        "title": "读取与源码定位",
+        "body": "文件帧以 fileId 并行读取完整源码、符号、文件边和确定性理解；符号、边或理解失败可降级为空，源码失败则显示错误并允许重试，切换文件会重新装载。[[c1]] 符号经大纲筛选后转成固定范围标记，点击对应源码行或大纲项都会发出 symbol drill。语言高亮识别 Vue、TS、TSX、Markdown 和 JSON，其他后缀当前默认按 TypeScript 处理。[[c2]]"
       },
       {
         "key": "edge-resolution",
-        "title": "关系解析与导航",
-        "body": "每条边通过 `edgeDrillTarget` 结合文件表、符号表和当前文件解析为文件、符号或不可导航目标，并判断入边、出边及生成可读名称。[[c3]] imports、calls、route、test 与需求、决策、调研等关系被归入可下探集合；模板仅在目标可解析且未被 `edgeDisabled` 禁用时允许点击，否则展示不可下探原因，非 confirmed 的可操作边还会显示状态。[[c4]]"
+        "title": "关系解析与交互约束",
+        "body": "每条边通过全局文件、符号映射解析为目标文件、目标符号或不可导航对象，同时判断方向并生成可读标题。[[c3]] 导入、调用、路由、测试及需求、决策、调研等关系进入可下探集合；按钮只有在目标可解析且未被 `edgeDisabled` 禁用时可用，禁用项展示原因，可用但非 confirmed 的项展示候选或过期状态。[[c4]]"
       },
       {
-        "key": "limits",
-        "title": "真实性与展示边界",
-        "body": "派生说明明确标为解析器结果而非模型摘要；未配置模型时直接说明没有 AI 摘要，源码则标记为当前快照的不可变原文。[[c5]] 高亮语言仅显式识别 Vue、TS、TSX、Markdown 和 JSON，其他后缀回退为 TypeScript。[[c6]] 页面只渲染前 60 条导航边和前 20 条其他边，当前模板没有分页、展开入口或截断提示。[[c7]]"
+        "key": "truth-and-limits",
+        "title": "真实性标识与列表上限",
+        "body": "派生说明明确标注来自解析器而非模型；没有模型时显示“未配置模型”，源码则标为当前快照的不可变原文，避免把确定性解析冒充 AI 总结。[[c5]] 模板当前只渲染可下探边前 60 条和其他边前 20 条，虽然标题显示总数，却没有分页、展开或截断提示，因此大文件中未显示的边可能被误认为不存在。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文件数据加载与降级",
-        "reason": "支持源码为必要数据、符号和关系等附属数据可降级，以及文件变化触发重新加载的说明。",
+        "label": "文件数据并行装载",
+        "reason": "支持源码为必需数据、其他数据可降级以及文件变化触发重载的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -38,21 +38,21 @@
       },
       {
         "key": "c2",
-        "label": "符号范围与下探",
-        "reason": "说明符号如何转换为源码范围，并在点击时发出符号帧导航。",
+        "label": "语言选择与符号范围",
+        "reason": "支持未知后缀默认 TypeScript，以及符号范围标记和下探行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-          "startLine": 90,
+          "startLine": 81,
           "endLine": 114
         },
-        "quote": "const anchor = ref<number | undefined>(props.anchorLine);\n\nconst ranges = ref<CodeRangeMark[]>([]);\nwatch(symbols, (syms) => {\n  ranges.value = outlineSymbols(syms).map((s) => ({\n    start: s.rangeStart?.line ?? 0,\n    end: s.rangeEnd?.line ?? s.rangeStart?.line ?? 0,\n    id: s.symbolId,\n    kind: s.kind,\n    title: s."
+        "quote": "function langFor(path: string): string {\n  if (path.endsWith(\".vue\")) return \"vue\";\n  if (path.endsWith(\".ts\")) return \"typescript\";\n  if (path.endsWith(\".tsx\")) return \"tsx\";\n  if (path.endsWith(\".md\")) return \"markdown\";\n  if (path.endsWith(\".json\")) return \"json\";\n  return \"typescript\";\n}\n\nconst anchor = ref<number "
       },
       {
         "key": "c3",
-        "label": "文件关系边解析",
-        "reason": "支持边目标解析、方向判断和目标文件或符号名称补全流程。",
+        "label": "文件关系目标解析",
+        "reason": "说明边目标、方向及可解析状态如何从代码图映射生成。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -64,8 +64,8 @@
       },
       {
         "key": "c4",
-        "label": "关系边交互约束",
-        "reason": "直接证明关系按钮的可解析性与禁用判断、不可操作原因及非确认状态展示。",
+        "label": "关系按钮状态与原因",
+        "reason": "精确支持可解析性、edgeDisabled、状态徽标和不可下探原因的交互约束。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -78,7 +78,7 @@
       {
         "key": "c5",
         "label": "派生说明与原始源码标识",
-        "reason": "支持解析器来源、模型未配置提示以及源码不可变快照标识的论断。",
+        "reason": "支持解析器来源、模型缺失提示和不可变源码边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -90,22 +90,9 @@
       },
       {
         "key": "c6",
-        "label": "源码高亮语言选择",
-        "reason": "证明已识别的文件后缀以及未知后缀回退到 TypeScript 的行为。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-          "startLine": 81,
-          "endLine": 87
-        },
-        "quote": "function langFor(path: string): string {\n  if (path.endsWith(\".vue\")) return \"vue\";\n  if (path.endsWith(\".ts\")) return \"typescript\";\n  if (path.endsWith(\".tsx\")) return \"tsx\";\n  if (path.endsWith(\".md\")) return \"markdown\";\n  if (path.endsWith(\".json\")) return \"json\";\n  return \"typescript\";"
-      },
-      {
-        "key": "c7",
         "label": "关系列表切片上限",
-        "reason": "直接支持导航边最多渲染 60 条、其他边最多渲染 20 条且附近没有更多入口的限制说明。",
-        "relation": "explains",
+        "reason": "精确支持导航边最多渲染 60 条、其他边最多渲染 20 条的结论。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FileFrame.vue",
@@ -118,12 +105,12 @@
     "questions": [
       {
         "question": "关系边超过当前切片上限时，产品是否需要分页、展开或明确的截断提示？",
-        "why": "模板只渲染前 60 条导航边和前 20 条其他边，用户可能把未显示的关系误认为不存在。",
+        "why": "模板只渲染导航边前 60 条和其他边前 20 条，但标题显示总数，用户可能把未显示项误认为不存在。",
         "nextStep": "确认大文件的预期交互，并为超过上限、候选边、缺失边和外部包补充行为断言。",
         "blocking": false,
         "citationKeys": [
           "c4",
-          "c7"
+          "c6"
         ]
       }
     ]
@@ -158,59 +145,38 @@
       "kind": "material",
       "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
       "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/review-api.ts",
-      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:15:26.076Z",
+    "at": "2026-09-29T21:35:26.443Z",
     "trace": {
-      "runId": "80387b87-ccb7-4d9f-afe9-fa096a8d32eb",
-      "roleId": "code-analyst",
+      "runId": "7d8ddacf-8b88-427b-a425-fa3e56e89b3d",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6a98f02cd47cfc814f469fe393d824b8a343b7e74ca4937847e6572424216955",
-      "contextHash": "29c732e11ff61f3beb62697cf3f020cf39152612049dfd420c009bbd9bac3252",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "2ce5899ddec7788628b169f037327499ab734a35f50be94ff8f40c9f568c04b0",
+      "contextHash": "ea170d15b74a4fd8fa824b4d002a080fab08ed8d5a2877e81f5ee3046c80c258",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0a3d7594f77bac349ebd86592359783caae37456733fa35293a90a28f40c460a",
+      "fingerprint": "145bdfb491e0e96ad78d102a85fe3c19552b78948f21e7b2ac8d80ceb5cf0ae5",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee97-3067-7002-96fc-584119a1c4fb",
-        "01a0ee97-9061-7882-bdc1-b28bfabe1413"
+        "01a0ef17-3ae8-7113-977a-fb8df1959a68"
       ],
       "usage": {
-        "used": 46994,
+        "used": 45185,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -219,29 +185,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 102897,
-          "utf8Bytes": 110636,
-          "estimatedTokens": 36879,
-          "budgetedTokens": 46099,
+          "chars": 84425,
+          "utf8Bytes": 91595,
+          "estimatedTokens": 30532,
+          "budgetedTokens": 38165,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 1
+      "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:15:42.251Z",
+    "at": "2026-09-29T21:36:02.593Z",
     "trace": {
-      "runId": "330476ff-b968-4df3-83a5-4231bfe1a8a0",
+      "runId": "d1dbf1a4-1475-4c42-82f9-8681e18c0f5c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "41bf4d5f55060cd8c247b857832299018cefe31e17beebb7cb8381999c3e92ba",
-      "contextHash": "2edc735fbbd3bab80614bbc1c5f5a434e40fd2f9501c56c068a3279d825ba99b",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "3da33f93d09651a60749fd579291f7855732e376c208d49d50ee5c3c1db1656a",
+      "contextHash": "9d07f5e4c10901efeb4f385376f898e2cf8dae276023b0af188599f6e7919133",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0a59923e145e8f04c78ecf1cbfff151f51f6eeba6c33718a54ffd87d46bd541d",
+      "fingerprint": "06f4e4d4fafe377a82433e1e52a6ea8d8f3b8ba024ac1486e3d390b07c27e71a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -254,10 +220,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee97-e2f8-7983-a663-25990a05fac6"
+        "01a0ef18-1101-7683-9b7d-a8754a1b5472"
       ],
       "usage": {
-        "used": 45249,
+        "used": 46959,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -266,10 +232,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101064,
-          "utf8Bytes": 107768,
-          "estimatedTokens": 35923,
-          "budgetedTokens": 44904,
+          "chars": 96241,
+          "utf8Bytes": 107800,
+          "estimatedTokens": 35934,
+          "budgetedTokens": 44918,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

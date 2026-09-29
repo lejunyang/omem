@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
     "title": "模块理解与文件入口帧",
-    "summary": "把知识文章或结构化模块理解、符号证据引用和模块内文件组织为统一阅读入口。",
+    "summary": "在互斥的知识文章或结构化模块说明之下，持续提供按语言分组的模块文件入口和符号证据导航。",
     "category": "implementation",
     "sections": [
       {
         "key": "content",
-        "title": "模块说明的来源与结构",
-        "body": "组件随模块标识请求对应知识文章，同时接收父组件提供的结构化理解详情；模块文件按语言分组，并按每组文件数量排序。[[c1]] 没有知识文章时，结构化详情可展示职责、边界、关键流程、入口、出口、风险、未决问题和引用，并用 seed、stale、model、curatedBy 等字段标识来源与状态。[[c2]]"
+        "title": "两类模块说明",
+        "body": "组件按模块标识尝试读取已保存的知识文章，同时接收父组件提供的结构化理解；模块文件按语言分组，并按组内文件数排序。[[c1]] 当没有文章时，结构化详情才依次展示职责、边界、关键流程、入口、出口、风险、未决问题和引用，并用人工 seed、模型派生、stale、模型名及策展者字段标识来源。[[c2]]"
+      },
+      {
+        "key": "display-priority",
+        "title": "互斥展示与稳定文件入口",
+        "body": "文章、加载提示、空状态和结构化详情位于同一条 `v-if / v-else-if / v-else` 条件链，因此文章存在时不会同时显示结构化详情；这替代了“文章优先但详情仍可能继续显示”的旧结论。[[c3]] 文件列表位于条件链之后，无论上方采用哪种说明路径仍会展示，并直接发出 file drill。[[c4]]"
       },
       {
         "key": "references",
-        "title": "证据与下探关系",
-        "body": "详情引用按 node 与 evidence 分流。符号引用优先通过父级映射解析名称，失败时使用策展备注或“符号”，点击后只上报 symbolId，所属文件由父组件查询全局图补齐。[[c3]] evidence 引用当前仅显示备注，不发出 fragment 下探；文件行则直接发出 fileId，即使文件被标记为已删除也仍保留点击行为。[[c4]]"
-      },
-      {
-        "key": "boundaries",
-        "title": "互斥展示与降级边界",
-        "body": "知识文章、加载状态、空状态和结构化详情位于同一条 `v-if / v-else-if / v-else` 条件链，因此文章存在时不会同时渲染结构化详情；文件列表位于条件链之后，仍会继续显示。文章请求失败被静默忽略，界面随后依据 loading、detail 和 output 选择加载提示、空状态或结构化说明。[[c5]] 材料没有展示已删除文件进入父级文件帧后的失败反馈，因此其最终可读性不能确定。[[c4]]"
+        "title": "引用解析与未完成下探",
+        "body": "详情引用按 node 和 evidence 分流。符号引用优先从 symbolMap 取得名称，其次使用策展备注，避免显示内部标识；点击时只发出 symbolId，所属 fileId 交由父容器从全局图补齐。[[c5]] evidence 引用当前仅为静态行，不会进入 FragmentFrame；已删除文件虽有醒目标记，按钮仍保持可点击，最终读取失败时的体验未在本组件中处理。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "模块知识请求与文件分组",
-        "reason": "支持知识文章随模块切换加载，以及文件按语言分组和按组大小排序的说明。",
+        "label": "知识读取与文件分组",
+        "reason": "支持知识文章异步读取、模块详情输入和文件语言分组流程。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -38,8 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "结构化模块理解主体",
-        "reason": "证明结构化详情的来源状态、职责、边界、流程、入口出口、风险和未决问题等展示内容。",
+        "label": "结构化模块理解",
+        "reason": "说明模块职责、流程、风险及来源和过期状态如何呈现。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -51,21 +51,21 @@
       },
       {
         "key": "c3",
-        "label": "符号引用名称与事件",
-        "reason": "说明内部符号标识如何转换为人类可读名称，以及文件归属由父组件补齐。",
-        "relation": "calls",
+        "label": "模块说明条件分支",
+        "reason": "精确证明知识文章、加载、空状态和结构化详情互斥显示。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 46,
-          "endLine": 60
+          "startLine": 68,
+          "endLine": 82
         },
-        "quote": "/** Node refs are symbol ids (sym_*); evidence refs are fragment ids (ev_*). */\nconst nodeRefs = computed(() => (props.detail?.refs ?? []).filter((r) => r.kind === \"node\"));\nconst evidenceRefs = computed(() => (props.detail?.refs ?? []).filter((r) => r.kind === \"evidence\"));\n\n/** Never show a raw sym_* id. Prefer the r"
+        "quote": "<template>\n  <div class=\"module-frame\">\n    <h2>{{ moduleLabel(mod.id) }}</h2>\n    <p class=\"muted\">{{ mod.fileCount }} 个文件 · {{ mod.symbolCount }} 个解析符号</p>\n\n    <KnowledgeDocument v-if=\"knowledge\" prefix=\"/api/review/knowledge\" :document-key=\"knowledge.key\" :revision=\"knowledge.revision\" @navigate=\"emit('knowledge', "
       },
       {
         "key": "c4",
-        "label": "证据引用和文件入口",
-        "reason": "支持符号引用可点击、证据引用为静态内容，以及已删除文件仍发出文件下探事件的说明。",
+        "label": "引用区与文件入口",
+        "reason": "支持 evidence 静态展示、文件始终位于说明分支之后，以及删除态文件仍可点击。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -77,27 +77,27 @@
       },
       {
         "key": "c5",
-        "label": "文章与结构化详情条件链",
-        "reason": "直接证明知识文章、加载态、空状态和结构化详情互斥，而文件列表位于该条件链之后。",
-        "relation": "explains",
+        "label": "符号引用的人类标签",
+        "reason": "说明内部符号标识如何解析为可读名称并由父组件补齐所属文件。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 68,
-          "endLine": 82
+          "startLine": 46,
+          "endLine": 60
         },
-        "quote": "<template>\n  <div class=\"module-frame\">\n    <h2>{{ moduleLabel(mod.id) }}</h2>\n    <p class=\"muted\">{{ mod.fileCount }} 个文件 · {{ mod.symbolCount }} 个解析符号</p>\n\n    <KnowledgeDocument v-if=\"knowledge\" prefix=\"/api/review/knowledge\" :document-key=\"knowledge.key\" :revision=\"knowledge.revision\" @navigate=\"emit('knowledge', "
+        "quote": "/** Node refs are symbol ids (sym_*); evidence refs are fragment ids (ev_*). */\nconst nodeRefs = computed(() => (props.detail?.refs ?? []).filter((r) => r.kind === \"node\"));\nconst evidenceRefs = computed(() => (props.detail?.refs ?? []).filter((r) => r.kind === \"evidence\"));\n\n/** Never show a raw sym_* id. Prefer the r"
       }
     ],
     "questions": [
       {
-        "question": "模块说明中的 evidence 引用是否应直接进入片段详情，以及已删除文件是否应禁止下探？",
-        "why": "evidence 引用目前是静态行，尽管事件合同支持 fragment；已删除文件只显示徽标，按钮仍会发出下探事件，材料未说明后续读取失败时的用户反馈。",
-        "nextStep": "确认 evidence 与 removed 两类对象的 actionable 合同，并为证据引用、缺失符号、文章加载失败和已删除文件补充组件测试。",
+        "question": "模块说明中的 evidence 引用是否应直接进入 FragmentFrame，以及已删除文件是否应禁止下探？",
+        "why": "evidence 引用当前是静态行，尽管事件合同支持 fragment；已删除文件仍会发出 file drill，材料未说明后续读取失败时的用户反馈。",
+        "nextStep": "确认两类对象的 actionable 合同，并为证据引用、缺失符号、文章加载失败和 removed 文件补充组件测试。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4"
+          "c4",
+          "c5"
         ]
       }
     ]
@@ -132,59 +132,38 @@
       "kind": "material",
       "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
       "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/review-api.ts",
-      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:15:26.076Z",
+    "at": "2026-09-29T21:35:26.443Z",
     "trace": {
-      "runId": "80387b87-ccb7-4d9f-afe9-fa096a8d32eb",
-      "roleId": "code-analyst",
+      "runId": "7d8ddacf-8b88-427b-a425-fa3e56e89b3d",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6a98f02cd47cfc814f469fe393d824b8a343b7e74ca4937847e6572424216955",
-      "contextHash": "29c732e11ff61f3beb62697cf3f020cf39152612049dfd420c009bbd9bac3252",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "2ce5899ddec7788628b169f037327499ab734a35f50be94ff8f40c9f568c04b0",
+      "contextHash": "ea170d15b74a4fd8fa824b4d002a080fab08ed8d5a2877e81f5ee3046c80c258",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0a3d7594f77bac349ebd86592359783caae37456733fa35293a90a28f40c460a",
+      "fingerprint": "145bdfb491e0e96ad78d102a85fe3c19552b78948f21e7b2ac8d80ceb5cf0ae5",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee97-3067-7002-96fc-584119a1c4fb",
-        "01a0ee97-9061-7882-bdc1-b28bfabe1413"
+        "01a0ef17-3ae8-7113-977a-fb8df1959a68"
       ],
       "usage": {
-        "used": 46994,
+        "used": 45185,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -193,29 +172,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 102897,
-          "utf8Bytes": 110636,
-          "estimatedTokens": 36879,
-          "budgetedTokens": 46099,
+          "chars": 84425,
+          "utf8Bytes": 91595,
+          "estimatedTokens": 30532,
+          "budgetedTokens": 38165,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 1
+      "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:15:42.251Z",
+    "at": "2026-09-29T21:36:02.593Z",
     "trace": {
-      "runId": "330476ff-b968-4df3-83a5-4231bfe1a8a0",
+      "runId": "d1dbf1a4-1475-4c42-82f9-8681e18c0f5c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "41bf4d5f55060cd8c247b857832299018cefe31e17beebb7cb8381999c3e92ba",
-      "contextHash": "2edc735fbbd3bab80614bbc1c5f5a434e40fd2f9501c56c068a3279d825ba99b",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "3da33f93d09651a60749fd579291f7855732e376c208d49d50ee5c3c1db1656a",
+      "contextHash": "9d07f5e4c10901efeb4f385376f898e2cf8dae276023b0af188599f6e7919133",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0a59923e145e8f04c78ecf1cbfff151f51f6eeba6c33718a54ffd87d46bd541d",
+      "fingerprint": "06f4e4d4fafe377a82433e1e52a6ea8d8f3b8ba024ac1486e3d390b07c27e71a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -228,10 +207,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee97-e2f8-7983-a663-25990a05fac6"
+        "01a0ef18-1101-7683-9b7d-a8754a1b5472"
       ],
       "usage": {
-        "used": 45249,
+        "used": 46959,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -240,10 +219,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101064,
-          "utf8Bytes": 107768,
-          "estimatedTokens": 35923,
-          "budgetedTokens": 44904,
+          "chars": 96241,
+          "utf8Bytes": 107800,
+          "estimatedTokens": 35934,
+          "budgetedTokens": 44918,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
