@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/main.ts",
+    "title": "Web 应用启动入口",
+    "summary": "负责创建并挂载 Vue 根应用，同时按顺序引入共享设计令牌和应用级样式；它只承担浏览器启动装配，不包含业务状态、路由或错误恢复。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "responsibility",
+        "title": "解决的问题与启动流程",
+        "body": "该文件是 Web 前端的最小启动入口：先从 Vue 引入应用工厂，再选择 `App.vue` 作为根组件，最后创建实例并挂载到页面中的 `#app` 节点。[[c1]] 因此它解决的是“如何把根组件接入浏览器 DOM”这一装配问题，业务界面、状态与交互均由根组件及其下游模块承担。"
+      },
+      {
+        "key": "styles-and-boundaries",
+        "title": "样式关系与边界",
+        "body": "入口先引入 `@omem/ui/tokens.css`，随后引入本应用的 `styles.css`。[[c2]] 从顺序上看，应用样式可以使用共享设计令牌，并可能对前序规则进行层叠覆盖；但材料未给出构建器配置，不能进一步确认 CSS 打包、代码分割或覆盖优先级之外的处理。挂载调用没有显式检查 `#app` 是否存在，也没有安装路由、状态容器或全局异常处理。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Vue 根组件创建与挂载",
+        "reason": "支持该文件以 App.vue 创建 Vue 应用并挂载到 #app 的启动流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/main.ts",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "import { createApp } from \"vue\";\nimport App from \"./App.vue\";\nimport \"@omem/ui/tokens.css\";\nimport \"./styles.css\";\ncreateApp(App).mount(\"#app\");"
+      },
+      {
+        "key": "c2",
+        "label": "共享令牌与应用样式导入",
+        "reason": "说明共享设计令牌先于应用级样式载入，以及入口与样式模块的关系。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/main.ts",
+          "startLine": 2,
+          "endLine": 4
+        },
+        "quote": "import App from \"./App.vue\";\nimport \"@omem/ui/tokens.css\";\nimport \"./styles.css\";"
+      },
+      {
+        "key": "c3",
+        "label": "应用挂载语句",
+        "reason": "支持入口仅直接执行挂载、未在该处呈现挂载节点检查或其他启动设施的边界判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/main.ts",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "createApp(App).mount(\"#app\");"
+      }
+    ],
+    "questions": [
+      {
+        "question": "承载页面是否始终保证存在 id 为 app 的元素？",
+        "why": "入口直接挂载到 #app，提供的材料中没有宿主 HTML，也没有缺失节点时的显式处理。",
+        "nextStep": "核对宿主 HTML 模板或增加一个启动测试，验证挂载节点存在以及缺失时的预期行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/main.ts",
+      "digest": "e28bb90369dd31edb2423c029d0d215f9ef339d91bbfd97cebc5dfeb522c1db5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/styles.css",
+      "digest": "67910ac93e56f8446d578981a1fc76c94dbbc0499ba88e982cbc49cbc033be3a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:43:48.017Z",
+    "trace": {
+      "runId": "f7829b1c-ba0b-4a14-b01d-c517d7a9cac8",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5dc81604ff68704209057ecbeecda95779242e9f6e3edddfe1ad9397d49753c8",
+      "contextHash": "9033340d3de9cc723731f6583868c92981559df795d4aa9586bbbc93121bd2cb",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c03ef6d3d27ea7ca4a0e75d505fb68d71c7d944a4651505572a7d183eb201fb1",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-3921-7cd2-98f0-dd05425307dc"
+      ],
+      "usage": {
+        "used": 27118,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 35356,
+          "utf8Bytes": 37146,
+          "estimatedTokens": 12382,
+          "budgetedTokens": 15478,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:44:11.043Z",
+    "trace": {
+      "runId": "8dace05d-769c-431b-afa0-78ce1d657684",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b90123a0929f3c4971440f4c7cafab00e91ae9bbd46acd04a93ab0f123fa45c0",
+      "contextHash": "f009a6741a03136886a2699a85495aabc2ccb3653eefa8848ebb2396c736a1f6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "224943df608b076faafd625b4968b86f0d6f98c7f56256fae35d3e879b53be7b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-db0e-7291-9d58-87379d09ebfa"
+      ],
+      "usage": {
+        "used": 29790,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 46925,
+          "utf8Bytes": 53911,
+          "estimatedTokens": 17971,
+          "budgetedTokens": 22464,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/vite.config.ts",
+    "title": "Web 前端 Vite 配置",
+    "summary": "该文件配置 Vite 的 Vue 单文件组件支持与本地开发服务器：服务仅监听回环地址，端口可由环境变量覆盖且禁止自动换端口，并将 `/api` 请求代理至可配置的本地后端端口。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决的问题与配置入口",
+        "body": "该文件是 Web 前端的 Vite 配置入口，通过 `defineConfig` 声明配置，并注册 `@vitejs/plugin-vue`，为 Vue 及其单文件组件提供构建处理能力。现有材料没有依赖版本信息，因此不能仅凭该插件确认 Vue 的主版本；也无法判断页面入口、组件结构或生产部署方式。[[c1]]"
+      },
+      {
+        "key": "dev-flow",
+        "title": "本地开发请求流程",
+        "body": "开发服务器绑定 `127.0.0.1`，默认使用 `5173`；设置 `OMEM_WEB_PORT` 时，会将其经 `Number(...)` 转换后作为监听端口。`strictPort: true` 表示目标端口不可用时不自动改用其他端口。浏览器发往 `/api` 的请求则被代理至本机端口 `OMEM_PORT`，未配置时使用 `4317`，构成“浏览器 → Vite 开发服务器 → 本地 API”的开发链路。[[c2]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界条件与模块关系",
+        "body": "该配置建立了 Web 开发服务器与本地 HTTP API 的连接，但材料未提供后端启动或路由代码，无法确认服务归属、接口集合、是否保留 `/api` 前缀，以及是否存在路径重写。监听地址固定为回环地址，默认不直接向局域网开放；此外，非法的 `OMEM_WEB_PORT` 字符串经转换可能得到 `NaN`，本文件没有显式校验或回退策略。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Vite 与 Vue 插件配置",
+        "reason": "支持该文件作为 Vite 配置入口并启用 Vue/Vue 单文件组件处理能力，同时说明材料不足以确认 Vue 主版本。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/vite.config.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "import { defineConfig } from \"vite\";\nimport vue from \"@vitejs/plugin-vue\";\nexport default defineConfig({\n  plugins: [vue()],"
+      },
+      {
+        "key": "c2",
+        "label": "开发服务器与 API 代理",
+        "reason": "解释前端监听地址、端口选择、严格端口策略，以及 `/api` 到本地后端的请求链路。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/vite.config.ts",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "  server: { host: \"127.0.0.1\", port: Number(process.env.OMEM_WEB_PORT || 5173), strictPort: true, proxy: { \"/api\": `http://127.0.0.1:${process.env.OMEM_PORT || 4317}` } },"
+      },
+      {
+        "key": "c3",
+        "label": "本地绑定与环境变量边界",
+        "reason": "支持回环地址限制、两个端口环境变量的使用，以及本文件未显式校验端口值的边界分析。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/vite.config.ts",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "  server: { host: \"127.0.0.1\", port: Number(process.env.OMEM_WEB_PORT || 5173), strictPort: true, proxy: { \"/api\": `http://127.0.0.1:${process.env.OMEM_PORT || 4317}` } },"
+      }
+    ],
+    "questions": [
+      {
+        "question": "哪个后端模块监听 `OMEM_PORT`（默认 4317），它是否要求保留 `/api` 前缀？",
+        "why": "当前材料只证明 Vite 把 `/api` 请求转发到本地端口，没有后端路由源码，无法确认实际服务归属、路径契约或代理是否需要重写。",
+        "nextStep": "补充后端启动配置和路由注册材料，核对监听端口及 `/api` 前缀契约。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      },
+      {
+        "question": "是否需要对 `OMEM_WEB_PORT` 的非法值提供显式校验？",
+        "why": "配置直接调用 `Number(...)`；非数字字符串可能产生 `NaN`，但当前材料未说明预期的错误处理或回退策略。",
+        "nextStep": "结合启动脚本或运行测试确认非法端口值的实际行为，再决定是否增加校验或默认值回退。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/vite.config.ts",
+      "digest": "4fcb2917c4add37f82214643fd7c2b9ccad0f64d44cbf0526cc21aa0c032a2e1"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T12:59:18.622Z",
+    "trace": {
+      "runId": "8abcb6d0-439d-418b-850e-8837c6fbb836",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "58da5b393cb5a55e25a729d689d3e1464c1cc0d68b73ef1a43493c68c905aba5",
+      "promptHash": "dfd4be8df896957aa05acaec08c3f11d58b4165c6f55fcb87d4e16522e6d0804",
+      "contextHash": "5c4aded55f23978d21b673c5d414671112735a297b66f1a5e1e19a1208fb2ad1",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "73d1be966d21aa5baf734442614bced0df554f8121086879204961825e951ea4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed3f-518f-7872-8ab5-7567c822a64b"
+      ],
+      "usage": {
+        "used": 15924,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 9120,
+          "utf8Bytes": 12872,
+          "estimatedTokens": 4291,
+          "budgetedTokens": 5364,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T12:59:24.331Z",
+    "trace": {
+      "runId": "29df9d92-9666-425e-94d0-89da9b5f444f",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "88694f0ce0c94d7e91e94443a58cc87b238aef23343f6ee6d1f01c97f9fcb67e",
+      "contextHash": "1a56794ca5d6e54da232286a432897472b9857b17b4bc1262ce7decd0a6cb3f2",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "30d707a1c0970535601c626ae320743a297f573665312a36d10352ad18516a9c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed3f-8885-76e1-955a-ba239b6f824f"
+      ],
+      "usage": {
+        "used": 14162,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 6540,
+          "utf8Bytes": 9190,
+          "estimatedTokens": 3064,
+          "budgetedTokens": 3830,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

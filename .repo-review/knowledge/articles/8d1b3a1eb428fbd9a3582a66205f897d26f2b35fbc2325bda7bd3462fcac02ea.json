@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+    "title": "评审片段与代码关系追踪帧",
+    "summary": "展示决策、调研或需求片段的原文，并按正向、反向关系连接相关代码或其他证据片段。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "片段读取与关系分类",
+        "body": "该帧同时请求片段详情和关系列表：详情失败会使整帧进入错误态，关系请求失败则退化为空数组。[[c1]] 关系被分为反向的“被实现、被依赖、覆盖测试”、正向的“实现、决策依据、调研依据、测试覆盖、依赖”，以及当前模板未展示的其他关系；状态只区分 confirmed、candidate 与中性色。[[c2]]"
+      },
+      {
+        "key": "drill",
+        "title": "从证据回到代码",
+        "body": "点击关系时优先检查另一端的 filePath，并通过当前代码图的文件表解析到文件帧；找不到代码文件时，才尝试使用 fragmentId 继续进入另一证据片段。[[c3]] 页面把反向关系解释为“这条决策影响了哪些代码”，无登记项时明确提示需要补充关联，而正向关系用于继续追踪该片段所依赖的材料。[[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "原文与失效边界",
+        "body": "片段正文以 Markdown 呈现，并标记为仓库文档不可变原文；可见关系名称经过中文映射，不直接展示枚举值。[[c4]] 不过 `otherRelations` 虽已计算，模板没有消费；关系卡片也未依据是否确实可跳转来禁用，因此 filePath 与 fragmentId 都无法解析时仍可能看似可点击却无响应。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "片段与关系加载",
+        "reason": "支持详情为必需数据、关系列表可降级以及重载行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 26,
+          "endLine": 51
+        },
+        "quote": "const detail = ref<ReviewFragmentDetail | null>(null);\nconst relations = ref<ReviewRelation[]>([]);\nconst loading = ref(true);\nconst loadError = ref(\"\");\n\nconst REVERSE = new Set([\"implemented_by\", \"required_by\", \"tested_for\"]);\nconst POSITIVE = new Set([\"implements\", \"decided_by\", \"researched_by\", \"tested_by\", \"requir"
+      },
+      {
+        "key": "c2",
+        "label": "关系方向分类",
+        "reason": "说明反向、正向及其他关系集合和状态色调规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 31,
+          "endLine": 67
+        },
+        "quote": "const REVERSE = new Set([\"implemented_by\", \"required_by\", \"tested_for\"]);\nconst POSITIVE = new Set([\"implements\", \"decided_by\", \"researched_by\", \"tested_by\", \"requires\"]);\n\nasync function load() {\n  loading.value = true;\n  loadError.value = \"\";\n  try {\n    const [d, r] = await Promise.all([\n      reviewFragment(props.f"
+      },
+      {
+        "key": "c3",
+        "label": "关系目标下探",
+        "reason": "证明关系首先尝试解析代码文件，随后才回退到证据片段。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 79,
+          "endLine": 90
+        },
+        "quote": "function openRelation(r: ReviewRelation) {\n  // If the other side is a code file (implemented_by points at a runtime/test\n  // file), drill into the code file frame — not just another doc fragment.\n  if (r.other?.filePath && props.fileMap) {\n    const cf = fileByPath(props.fileMap, r.other.filePath);\n    if (cf) {\n    "
+      },
+      {
+        "key": "c4",
+        "label": "片段原文和双向关系界面",
+        "reason": "支持原文标识、反向代码追踪、空状态及正向关系展示的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 93,
+          "endLine": 136
+        },
+        "quote": "<template>\n  <div class=\"fragment-frame\">\n    <div v-if=\"loadError\" class=\"error-banner\" role=\"alert\">\n      片段加载失败：{{ loadError }}\n      <OmButton variant=\"ghost\" @click=\"load\">重试</OmButton>\n    </div>\n    <div v-if=\"loading\" class=\"muted\">正在加载片段…</div>\n    <template v-else-if=\"detail\">\n      <small class=\"muted\">{{ d"
+      }
+    ],
+    "questions": [
+      {
+        "question": "无法解析目标以及落入 `otherRelations` 的关系应如何呈现？",
+        "why": "当前计算了其他关系但模板不展示；已展示的关系卡片也没有 actionable 判断，目标缺失时点击可能没有反馈。",
+        "nextStep": "明确缺失关系是否应显示为禁用卡片及人读原因，并补充 missing、candidate、未知关系类型和已删除文件的交互测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+      "digest": "6bf08120dbba105389b257dbc604f8501fd6b0717ba2bd055340e8fd165e2565"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+      "digest": "085ceb881ef2506da6bc0d4c20fd17b636a650f2276dd2c6d4f5f9dfb1d360f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+      "digest": "89b59531ff437aff27e5ef45f8f284f311ce13d221e97ef219867ed21f7106bb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+      "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:14:13.079Z",
+    "trace": {
+      "runId": "0de67419-eddd-4973-b845-63b94489af0e",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "fb22c7cb9a2863263490e8c9a42b9d235044e8259e7bfa766b5c486042c78221",
+      "contextHash": "0a976200683bffd3980c1a43331093323817ed1972275354110300cfc8fe455e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "679dcec9f3431b60528835f33f863c96162440c77df79be89a0ac8595d7599d4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee95-eaa9-78f2-8a13-bcab229dc57b"
+      ],
+      "usage": {
+        "used": 47153,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 94884,
+          "utf8Bytes": 98615,
+          "estimatedTokens": 32872,
+          "budgetedTokens": 41090,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:14:40.052Z",
+    "trace": {
+      "runId": "5b21408f-477b-4b7c-8268-13750b77f825",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "54481bf1bf98bea20ba0c5a20a05fd3d0305a7aa0d197f41af71ae0232e85c4f",
+      "contextHash": "45831a42c0bcfbcc16eb467d09c16a0b3da3a5611edcf8f79d589271469e5e7a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9622dd411719c6e24239714c90f04f6e97e7251a9f9726f05f79679517f2442c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-c607-7fe3-a53e-ee9ef87db453"
+      ],
+      "usage": {
+        "used": 50908,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 113285,
+          "utf8Bytes": 125002,
+          "estimatedTokens": 41668,
+          "budgetedTokens": 52085,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

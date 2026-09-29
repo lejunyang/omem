@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/codewiki/labels.test.ts",
+    "title": "人类可读标签与边禁用测试",
+    "summary": "验证前端优先使用 DTO 展示字段，缺失时仅退化到可读名称，并依据 actionable 或旧状态决定边的原因文本和可用性。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "labels",
+        "title": "避免内部标识泄漏",
+        "body": "文件标签优先采用 `displayTitle`，否则取路径 basename，再缺失时显示“未命名文件”；文件路径优先采用 `displayPath`。符号同样优先 `displayTitle`，再退到 `name`，最后显示“未命名符号”。[[c1]] 这些断言直接保护界面不把 fileId 或 symbolId 当作可见文本。实现只接受展示字段、路径或名称的窄类型输入，fallback 中也没有内部 id。[[c2]] 测试未覆盖仅提供内部 id 的对象，但从函数签名和分支看该 id 不参与输出。"
+      },
+      {
+        "key": "edge_state",
+        "title": "边状态兼容规则",
+        "body": "边的原因文本以 DTO 的 `actionable=false` 和 `reason` 为最高优先级；可操作边返回空原因。对缺少新 DTO 字段的旧数据，则把 missing 映射为“仓库内未解析”、stale 映射为“已过期”。[[c3]] 禁用判断也以显式 actionable 为准，所以 `actionable=true` 即便带 missing 状态仍可点击；只有字段缺失时才按 legacy missing 禁用。实现与该兼容策略一致。[[c4]] 尚未断言 `actionable=false` 且 reason 为空时的“不可解析”默认文案，也未覆盖未知状态。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "文件与符号标签断言",
+        "reason": "支持 DTO 展示字段优先、可读 fallback 以及不显示内部标识的合同。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/labels.test.ts",
+          "startLine": 10,
+          "endLine": 26
+        },
+        "quote": "describe(\"human label resolution (DTO-first, never leaks id)\", () => {\n  it(\"fileLabel prefers DTO displayTitle, then basename, never fileId\", () => {\n    expect(fileLabel({ displayTitle: \"runtime.ts\", path: \"apps/server/src/assistant/runtime.ts\" })).toBe(\"runtime.ts\");\n    expect(fileLabel({ path: \"apps/server/src/ass"
+      },
+      {
+        "key": "c2",
+        "label": "人类标签实现",
+        "reason": "解释文件、路径与符号标签的具体回退次序。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 222,
+          "endLine": 237
+        },
+        "quote": "// ---- Human label resolution (DTO-first; never leaks an internal id) --------\n// Prefer the server DTO display fields; fall back to a readable raw field\n// (basename / name / path). If nothing readable exists, say \"未命名{type}\" —\n// the internal id must NEVER appear as a DOM label.\n\nexport function fileLabel(f: Partial"
+      },
+      {
+        "key": "c3",
+        "label": "边原因与禁用断言",
+        "reason": "支持新 DTO 字段优先和旧状态兼容的行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/labels.test.ts",
+          "startLine": 28,
+          "endLine": 42
+        },
+        "quote": "  it(\"edgeReason uses DTO reason, maps missing/stale, null when actionable\", () => {\n    expect(edgeReason({ actionable: false, reason: \"unresolved target\" })).toBe(\"unresolved target\");\n    expect(edgeReason({ actionable: true, reason: null })).toBeNull();\n    // legacy rows (no DTO fields) still map status\n    expect"
+      },
+      {
+        "key": "c4",
+        "label": "边状态展示实现",
+        "reason": "解释 reason 生成与 disabled 判定的优先级。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 239,
+          "endLine": 251
+        },
+        "quote": "export function edgeReason(e: Partial<Pick<CodeEdge, \"actionable\" | \"reason\" | \"status\">>): string | null {\n  if (e.actionable === false) return e.reason || \"不可解析\";\n  if (e.actionable == null) {\n    if (e.status === \"missing\") return \"仓库内未解析\";\n    if (e.status === \"stale\") return \"已过期\";\n  }\n  return null;\n}\n\nexport fun"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/edges.test.ts",
+      "digest": "ac821d09b7a452c0e7980d0550ce86b1acc40ae35426d04181af8648da592a64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/hashroute.test.ts",
+      "digest": "60e03ce773e4ed7a31283d2b18d0ea8fe25aee5c65a02747968bfbaa0d9e5eed"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/labels.test.ts",
+      "digest": "e0233aafe5e3c76f3c4747320928755890b0da6a89d6c99103ec039f7e174f7a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.test.ts",
+      "digest": "d040287ff32ac0368675b3c0986a3dca8b05ff9983e9e204f369c1eec38578a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/trail.test.ts",
+      "digest": "b958b8427d678dc236cf158f43c7fdac27c8393004bfb55dccd0a3ea7c41a3cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:15:02.548Z",
+    "trace": {
+      "runId": "1d1d1975-faf7-4b46-9207-f7224a9a739d",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "b9d87d4166cea03adb309f8d291a03c22d6cbced59dde7886e5ef17bf10e610e",
+      "contextHash": "1d8fa3006d6e9bba91c87e90e9f58b649cc810e1dc4c6709d6b01ef5fc642e79",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c2ba53fc19fae8f4a158691e19e21026cc8705e3193b94e4b4468c6d4db65921",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-aaed-7cc1-bbf9-0ce080272232"
+      ],
+      "usage": {
+        "used": 33600,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 50776,
+          "utf8Bytes": 52636,
+          "estimatedTokens": 17546,
+          "budgetedTokens": 21933,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:15:27.714Z",
+    "trace": {
+      "runId": "3d407399-5f99-4024-b192-12941130ebc5",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "6cc0ff2c2e0ae979210520b2fc87b0ed4929ae1edbb2a5bad5b868f32f505d59",
+      "contextHash": "16adae9023a33ff62f38c11561204b31e60dfadd083fc795b5a16ad259048097",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ce30de23db8bd5d773b0ffde2aefd883e1c349933da29a757af872865c7b0daa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee97-86ef-77f3-96d6-e3451ae1f518"
+      ],
+      "usage": {
+        "used": 37497,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 70928,
+          "utf8Bytes": 80246,
+          "estimatedTokens": 26749,
+          "budgetedTokens": 33437,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

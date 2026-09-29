@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/styles.css",
+    "title": "Web 应用级布局、阅读状态与响应式样式",
+    "summary": "定义导航、页面内容、片段阅读、表单、错误和通知等应用级视觉规则，并在窄屏下调整布局；它依赖共享设计令牌，但材料未展示对应模板与视觉测试。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "layout-and-navigation",
+        "title": "导航与页面骨架",
+        "body": "样式文件为应用外壳补充具体布局：顶部控制区使用横向弹性布局，搜索输入采用深色背景并限制最大宽度；导航则纵向排列，按钮提供至少 44px 的触控高度，并用深色活动态区分当前位置。[[c1]] 来源链接允许任意位置换行，选中与悬停状态采用浅灰背景，适合展示较长路径。主内容通过固定最大宽度、自动居中和较大内边距形成阅读栏，页顶栏负责标题区分隔和状态信息排列。[[c2]]"
+      },
+      {
+        "key": "reading-and-feedback",
+        "title": "阅读内容与反馈状态",
+        "body": "阅读区以底部分隔线组织片段，聚焦片段加深边线；正文保留换行、允许长文本断行，并使用较宽松的行高。[[c3]] 表单支持纵向字段栈和双列网格，错误横幅使用危险色，Toast 固定在视口底部中央且具有较高层级；摘录区域限制高度并滚动，避免长证据无限撑开页面。[[c4]] 这些规则只负责视觉呈现，是否显示、何时聚焦以及 Toast 生命周期仍需由组件逻辑决定。"
+      },
+      {
+        "key": "responsive-boundaries",
+        "title": "响应式边界与依赖",
+        "body": "文件依赖 `--om-secondary`、`--om-muted`、`--om-line`、`--om-ink` 等共享 CSS 变量，因此需要入口先加载 UI 令牌。[[c5]] 在 1100px 以下页面缩小留白；700px 以下进一步收紧页面和顶栏、隐藏顶栏徽章、压缩控制区与按钮，并把双列表单改成单列。[[c6]] Toast 在手机宽度下固定为 90vw，阅读提示改为顶部对齐。材料没有横向滚动、超窄屏、系统深色模式、减少动画或安全区适配规则，也未提供 HTML 结构，因而无法确认所有选择器当前都有对应元素。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "顶部控制区与导航状态",
+        "reason": "支持顶部控件、导航排列、触控高度以及活动状态的样式说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 1,
+          "endLine": 63
+        },
+        "quote": ".top-controls {\n  display: flex;\n  gap: 16px;\n  align-items: center;\n  justify-content: space-between;\n}\n.top-controls input {\n  width: min(460px, 100%);\n  background: #292929;\n  border-color: #444;\n  color: white;\n  font-size: 13px;\n  min-width: 0;\n}\n.notification-button {\n  color: white !important;\n  white-space: now"
+      },
+      {
+        "key": "c2",
+        "label": "来源链接与页面框架",
+        "reason": "说明长路径换行、来源选中态、页顶栏和居中内容栏的布局。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 64,
+          "endLine": 107
+        },
+        "quote": ".source-link {\n  border: 0;\n  width: 100%;\n  display: flex;\n  flex-direction: column;\n  gap: 5px;\n  min-height: 44px;\n  padding: 10px 12px;\n  background: none;\n  text-align: left;\n  border-radius: 5px;\n  color: var(--om-secondary);\n  overflow-wrap: anywhere;\n}\n.source-link small {\n  font-size: 11px;\n}\n.source-link.sele"
+      },
+      {
+        "key": "c3",
+        "label": "阅读片段样式",
+        "reason": "支持片段分隔、聚焦状态、正文换行和行高设计。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 125,
+          "endLine": 153
+        },
+        "quote": ".reading-note {\n  display: flex;\n  gap: 10px;\n  align-items: center;\n  background: #eee;\n  padding: 17px;\n  border-radius: 6px;\n  font-size: 13px;\n  margin: 26px 0;\n}\n.fragment {\n  padding: 18px 0;\n  border-bottom: 1px solid var(--om-line);\n}\n.fragment.focused {\n  border-bottom-color: #888;\n}\n.fragment > p {\n  font-siz"
+      },
+      {
+        "key": "c4",
+        "label": "表单与反馈组件样式",
+        "reason": "说明双列表单、错误横幅、Toast 和长摘录滚动区域的表现。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 154,
+          "endLine": 203
+        },
+        "quote": ".form {\n  display: flex;\n  flex-direction: column;\n  gap: 18px;\n}\n.form-grid {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 16px;\n}\n.form button[type=\"submit\"] {\n  align-self: flex-start;\n}\n.stack {\n  margin-top: 22px;\n}\n.error-banner {\n  margin: 18px 28px;\n  padding: 14px;\n  background: #fff1f1;\n  border:"
+      },
+      {
+        "key": "c5",
+        "label": "共享设计变量使用",
+        "reason": "支持应用样式依赖共享颜色与边线令牌，而不是完全自包含。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 37,
+          "endLine": 60
+        },
+        "quote": ".navigation button {\n  display: flex;\n  gap: 10px;\n  align-items: center;\n  text-align: left;\n  border: 0;\n  border-radius: 6px;\n  padding: 12px;\n  background: none;\n  color: var(--om-secondary);\n  min-height: 44px;\n  font-size: 13px;\n}\n.navigation button:hover {\n  background: #e7e7e7;\n}\n.navigation button.active {\n  b"
+      },
+      {
+        "key": "c6",
+        "label": "窄屏响应式规则",
+        "reason": "支持 1100px 与 700px 两级断点下的留白、控件、表单及反馈布局变化。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 212,
+          "endLine": 272
+        },
+        "quote": "@media (max-width: 1100px) {\n  .page {\n    padding: 36px 36px;\n  }\n  .page-bar {\n    padding: 0 24px;\n  }\n}\n@media (max-width: 700px) {\n  .page {\n    padding: 27px 20px 40px;\n  }\n  .page h1 {\n    font-size: 27px;\n  }\n  .page-bar {\n    padding: 0 18px;\n    font-size: 11px;\n    gap: 8px;\n  }\n  .page-bar .om-badge {\n    d"
+      }
+    ],
+    "questions": [
+      {
+        "question": "这些应用级选择器目前分别由哪些组件使用，是否存在遗留或无效规则？",
+        "why": "材料只有样式表，没有对应模板；因此不能确认 `.sample-quote`、`.excerpt`、`.form-grid` 等规则是否仍有真实消费方。",
+        "nextStep": "将选择器与 Vue 模板做静态对照，并通过真实页面的浏览器检查确认关键状态和断点。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      },
+      {
+        "question": "产品是否要求深色模式、超窄屏和可访问性偏好适配？",
+        "why": "现有样式包含硬编码深浅颜色与两个宽度断点，但没有展示颜色方案、减少动画或移动安全区等媒体查询。",
+        "nextStep": "依据视觉规范确定支持矩阵，再补充对比度、键盘焦点以及 320px 等视口测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c5",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/main.ts",
+      "digest": "e28bb90369dd31edb2423c029d0d215f9ef339d91bbfd97cebc5dfeb522c1db5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/styles.css",
+      "digest": "67910ac93e56f8446d578981a1fc76c94dbbc0499ba88e982cbc49cbc033be3a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:43:48.017Z",
+    "trace": {
+      "runId": "f7829b1c-ba0b-4a14-b01d-c517d7a9cac8",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5dc81604ff68704209057ecbeecda95779242e9f6e3edddfe1ad9397d49753c8",
+      "contextHash": "9033340d3de9cc723731f6583868c92981559df795d4aa9586bbbc93121bd2cb",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c03ef6d3d27ea7ca4a0e75d505fb68d71c7d944a4651505572a7d183eb201fb1",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-3921-7cd2-98f0-dd05425307dc"
+      ],
+      "usage": {
+        "used": 27118,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 35356,
+          "utf8Bytes": 37146,
+          "estimatedTokens": 12382,
+          "budgetedTokens": 15478,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:44:11.043Z",
+    "trace": {
+      "runId": "8dace05d-769c-431b-afa0-78ce1d657684",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b90123a0929f3c4971440f4c7cafab00e91ae9bbd46acd04a93ab0f123fa45c0",
+      "contextHash": "f009a6741a03136886a2699a85495aabc2ccb3653eefa8848ebb2396c736a1f6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "224943df608b076faafd625b4968b86f0d6f98c7f56256fae35d3e879b53be7b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeb1-db0e-7291-9d58-87379d09ebfa"
+      ],
+      "usage": {
+        "used": 29790,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 46925,
+          "utf8Bytes": 53911,
+          "estimatedTokens": 17971,
+          "budgetedTokens": 22464,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

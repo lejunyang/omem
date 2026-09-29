@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+    "title": "Code Wiki 总容器与证据下探路由",
+    "summary": "组织知识首页、代码快照、模块依赖图和多类详情帧，并统一管理可深链的证据 trail。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "role",
+        "title": "页面职责与数据装载",
+        "body": "该组件是 Code Wiki 垂直切片的编排层：维护 overview、structure、graph、module、file 五种主视图，加载当前快照、代码图和模块说明列表，并把文件、符号建立为映射供详情帧解析。模块节点与边由代码图聚合得到，首屏的三类请求并行执行；模块说明失败会退化为空列表，而快照或代码图失败会进入整体错误状态。[[c1]]"
+      },
+      {
+        "key": "navigation",
+        "title": "下探与深链流程",
+        "body": "文件、符号和证据片段的下探统一转成共享 trail 帧；符号事件即使未携带 fileId，也会通过 symbolMap 补出所属文件后入栈。[[c2]] 主视图和整个帧栈被编码进 URL hash，恢复时先还原页面，再重建 trail、修正人类可读标题并打开抽屉。[[c3]] 抽屉按 frame kind 分派到知识、模块、文件、符号或片段组件，因此各详情页只需发出 drill 事件，不各自维护导航栈。[[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界与降级行为",
+        "body": "恢复标题时会优先使用文件名、符号名或模块标签，缺失实体则显示“文件”“符号”等类别名，避免把内部标识直接暴露给用户。[[c5]] 但 hash 中仍只保存 kind 与 id，部分帧附加的行号不会随 trail 序列化；恢复出的文件或符号若已不在当前图中，相应模板不会渲染详情。当前材料也只展示 `popstate` 监听，未证明手工修改 hash 时会触发恢复。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "代码图并行装载",
+        "reason": "支持组件状态、图聚合以及快照、图和说明列表的加载与降级策略。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 44,
+          "endLine": 133
+        },
+        "quote": "type WikiView = \"overview\" | \"structure\" | \"graph\" | \"module\" | \"file\";\n\nconst view = ref<WikiView>(\"overview\");\nconst snapshot = ref<CodeSnapshot | null>(null);\nconst graph = ref<CodeGraph | null>(null);\nconst loading = ref(true);\nconst loadError = ref(\"\");\nconst syncing = ref(false);\n\nconst selectedModule = ref<strin"
+      },
+      {
+        "key": "c2",
+        "label": "统一下探目标转换",
+        "reason": "说明文件、符号和片段如何解析并压入共享 trail。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 185,
+          "endLine": 216
+        },
+        "quote": "function onDrill(target: {\n  type: \"file\";\n  fileId: string;\n  line?: number;\n} | {\n  type: \"symbol\";\n  fileId: string;\n  symbolId: string;\n  line?: number;\n} | { type: \"fragment\"; fragmentId: string; title?: string }) {\n  if (target.type === \"file\") {\n    const f = graph.value?.files.find((x) => x.fileId === target.fi"
+      },
+      {
+        "key": "c3",
+        "label": "Hash 序列化与恢复",
+        "reason": "支持主视图及 trail 深链的写入、恢复和当前帧定位流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 218,
+          "endLine": 263
+        },
+        "quote": "// ---- hash routing ----\nfunction syncHash() {\n  if (restoring) return;\n  let url: string;\n  if (view.value === \"overview\") url = \"#/overview\";\n  else if (view.value === \"structure\") url = \"#/structure\";\n  else if (view.value === \"graph\") url = \"#/graph\";\n  else if (view.value === \"module\") url = \"#/module/\" + encodeU"
+      },
+      {
+        "key": "c4",
+        "label": "Trail 抽屉的帧分派",
+        "reason": "证明统一抽屉依据帧类型复用知识与各代码详情组件。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 371,
+          "endLine": 416
+        },
+        "quote": "    <!-- trail drawer -->\n    <OmTrailDrawer\n      :open=\"trailOpen\"\n      :frames=\"trail\"\n      :current=\"trailCurrent\"\n      :loop-at=\"loopAt\"\n      :return-focus-to=\"trailTrigger\"\n      @close=\"closeTrail\"\n      @back=\"backTrail\"\n      @jump=\"jumpTrail\"\n      @dismiss-loop=\"dismissLoop\"\n    >\n      <KnowledgeFrame v"
+      },
+      {
+        "key": "c5",
+        "label": "恢复帧的人类标题",
+        "reason": "支持内部标识不直接作为可见标题以及缺失实体的退化标签。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 165,
+          "endLine": 183
+        },
+        "quote": "/** Human label for a restored frame (hash round-trips only kind+id). Never\n * renders a raw id; falls back to a kind label. */\nfunction resolveFrameTitle(f: TrailFrame): string {\n  if (f.kind === \"file\") {\n    const fl = fileMap.value.get(f.fileId || f.id);\n    return fl ? fl.path.split(\"/\").pop() || f.id : \"文件\";\n  }\n"
+      }
+    ],
+    "questions": [
+      {
+        "question": "trail 深链是否应保留文件或符号帧的行号，以及对已删除实体显示明确的 stale/missing 页面？",
+        "why": "现有序列化只写 kind 与 id，而运行时帧可携带 line；恢复后找不到实体时模板条件直接不渲染，材料未显示面向用户的原因说明。",
+        "nextStep": "根据深链合同确认所需字段和失效展示；随后为含行号的多层 trail、缺失文件和缺失符号补充往返测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "trail 深链是否需要保留文件或符号帧的行号，并为已删除实体显示明确的 stale/missing 页面？",
+        "why": "当前 trail 的 hash 序列化只保存 kind 与 id；恢复后找不到文件或符号时，对应详情组件不会渲染。",
+        "nextStep": "确认深链合同，并为带行号的多层 trail、缺失文件和缺失符号补充往返及降级测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+      "digest": "6bf08120dbba105389b257dbc604f8501fd6b0717ba2bd055340e8fd165e2565"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+      "digest": "085ceb881ef2506da6bc0d4c20fd17b636a650f2276dd2c6d4f5f9dfb1d360f4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+      "digest": "89b59531ff437aff27e5ef45f8f284f311ce13d221e97ef219867ed21f7106bb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
+      "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "9cdfbc55527bc52a4d2fb481f4771033acbbe69af09e355277d6b34fbaf88eae"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:14:13.079Z",
+    "trace": {
+      "runId": "0de67419-eddd-4973-b845-63b94489af0e",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "fb22c7cb9a2863263490e8c9a42b9d235044e8259e7bfa766b5c486042c78221",
+      "contextHash": "0a976200683bffd3980c1a43331093323817ed1972275354110300cfc8fe455e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "679dcec9f3431b60528835f33f863c96162440c77df79be89a0ac8595d7599d4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee95-eaa9-78f2-8a13-bcab229dc57b"
+      ],
+      "usage": {
+        "used": 47153,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 94884,
+          "utf8Bytes": 98615,
+          "estimatedTokens": 32872,
+          "budgetedTokens": 41090,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:14:40.052Z",
+    "trace": {
+      "runId": "5b21408f-477b-4b7c-8268-13750b77f825",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "54481bf1bf98bea20ba0c5a20a05fd3d0305a7aa0d197f41af71ae0232e85c4f",
+      "contextHash": "45831a42c0bcfbcc16eb467d09c16a0b3da3a5611edcf8f79d589271469e5e7a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9622dd411719c6e24239714c90f04f6e97e7251a9f9726f05f79679517f2442c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-c607-7fe3-a53e-ee9ef87db453"
+      ],
+      "usage": {
+        "used": 50908,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 113285,
+          "utf8Bytes": 125002,
+          "estimatedTokens": 41668,
+          "budgetedTokens": 52085,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

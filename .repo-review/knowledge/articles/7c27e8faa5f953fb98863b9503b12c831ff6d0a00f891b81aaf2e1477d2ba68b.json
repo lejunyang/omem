@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/codewiki/trail.test.ts",
+    "title": "共享 Trail 栈循环与深层导航测试",
+    "summary": "验证 trail 使用 kind 与 id 联合识别循环，允许超过旧八层限制的导航链，并支持五层钻取与回退场景。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "loop",
+        "title": "循环身份判定",
+        "body": "`findLoop` 的合同是按 `kind + id` 联合身份查找已有帧：不存在返回 -1，任意深度存在则返回索引，相同 id 但不同 kind 不应误判。[[c1]] 共享实现采用 `findIndex` 完成这一精确比较，因此容器可据返回索引决定跳回已有层级，而无需把文件和片段等不同实体混为一谈。[[c2]] 测试没有覆盖栈中出现重复联合身份时选择哪个索引；按实现会返回最早一项。"
+      },
+      {
+        "key": "depth",
+        "title": "深链与回退边界",
+        "body": "测试连续压入 12 个文件帧，确认不会沿用旧的八层静默截断，并以“模块→文件→片段→文件→片段”验证五层链和回到第二层时的循环位置。随后通过数组切片模拟回退，确认剩余栈顶是第二个文件。[[c3]] 共享实现的 `pushFrame` 实际只是返回追加后的新数组，渲染栈不受 `MAX_TRAIL` 限制；常量 200 被描述为 URL 持久化预算。[[c4]] 当前测试未覆盖第 200/201 层、URL 序列化、scroll 恢复，也没有验证真实抽屉的 pop/jump 行为。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "循环检测断言",
+        "reason": "支持无匹配、深层匹配及跨 kind 不混淆的行为合同。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/trail.test.ts",
+          "startLine": 8,
+          "endLine": 20
+        },
+        "quote": "describe(\"trail loop detection\", () => {\n  it(\"returns -1 when no existing frame matches\", () => {\n    const stack = [fr(\"module\", \"assistant\"), fr(\"file\", \"f1\")];\n    expect(findLoop(stack, { kind: \"fragment\", id: \"fr1\" })).toBe(-1);\n  });\n  it(\"finds an existing frame regardless of depth\", () => {\n    const stack = ["
+      },
+      {
+        "key": "c2",
+        "label": "循环检测实现",
+        "reason": "解释联合比较 kind 和 id，并返回首个匹配索引。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 44,
+          "endLine": 47
+        },
+        "quote": "/** Return the existing index of a frame with the same kind+id, or -1. Pure:\n * used by the container to decide whether pushing would loop. */\nexport function findLoop(frames: TrailFrame[], next: Pick<TrailFrame, \"kind\" | \"id\">): number {\n  return frames.findIndex((f) => f.kind === next.kind && f.id === next.id);"
+      },
+      {
+        "key": "c3",
+        "label": "长链与五层导航断言",
+        "reason": "支持超过八层不截断、五层钻取、循环定位及切片回退结果。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/trail.test.ts",
+          "startLine": 21,
+          "endLine": 43
+        },
+        "quote": "  it(\"pushFrame keeps long chains (no silent truncation at 8)\", () => {\n    let stack: TrailFrame[] = [];\n    for (let i = 0; i < 12; i++) stack = pushFrame(stack, fr(\"file\", \"f\" + i));\n    expect(stack).toHaveLength(12);\n    expect(stack[0].id).toBe(\"f0\"); // oldest kept, not dropped at depth 8\n  });\n\n  it(\"supports a"
+      },
+      {
+        "key": "c4",
+        "label": "Trail 深度预算与压栈实现",
+        "reason": "说明 MAX_TRAIL 是 URL 预算，而 pushFrame 本身不截断渲染栈。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 37,
+          "endLine": 52
+        },
+        "quote": "/** Max trail depth we persist into the URL. The renderer itself is unbounded\n * (matches the prototype's 100-level chain); this budget only bounds the\n * serialized deep-link so a path cannot grow an infinitely long URL. A generous\n * ceiling means real chains never hit it; if they do, the caller surfaces an\n * explic"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`pushFrame` 注释中的“bounded to MAX_TRAIL”是否应改为明确说明渲染栈无界？",
+        "why": "函数实现和前置设计注释都表明仅 URL 序列化受预算限制，但紧邻函数的注释称压栈受限，容易误导维护者。",
+        "nextStep": "统一注释，并补充 201 层测试分别验证内存栈保留全部帧、URL 层采取约定的限制与提示。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "pushFrame 注释中的“bounded to MAX_TRAIL”是否应改为明确说明渲染栈不受该常量限制？",
+        "why": "函数实现会无条件追加帧，前置注释也把 MAX_TRAIL 定义为 URL 持久化预算；紧邻 pushFrame 的注释与二者不一致。",
+        "nextStep": "统一注释，并补充超过 200 层的测试，分别验证内存栈完整保留以及 URL 序列化按约定限制并提示。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/edges.test.ts",
+      "digest": "ac821d09b7a452c0e7980d0550ce86b1acc40ae35426d04181af8648da592a64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/hashroute.test.ts",
+      "digest": "60e03ce773e4ed7a31283d2b18d0ea8fe25aee5c65a02747968bfbaa0d9e5eed"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/labels.test.ts",
+      "digest": "e0233aafe5e3c76f3c4747320928755890b0da6a89d6c99103ec039f7e174f7a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.test.ts",
+      "digest": "d040287ff32ac0368675b3c0986a3dca8b05ff9983e9e204f369c1eec38578a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/trail.test.ts",
+      "digest": "b958b8427d678dc236cf158f43c7fdac27c8393004bfb55dccd0a3ea7c41a3cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:15:02.548Z",
+    "trace": {
+      "runId": "1d1d1975-faf7-4b46-9207-f7224a9a739d",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "b9d87d4166cea03adb309f8d291a03c22d6cbced59dde7886e5ef17bf10e610e",
+      "contextHash": "1d8fa3006d6e9bba91c87e90e9f58b649cc810e1dc4c6709d6b01ef5fc642e79",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c2ba53fc19fae8f4a158691e19e21026cc8705e3193b94e4b4468c6d4db65921",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-aaed-7cc1-bbf9-0ce080272232"
+      ],
+      "usage": {
+        "used": 33600,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 50776,
+          "utf8Bytes": 52636,
+          "estimatedTokens": 17546,
+          "budgetedTokens": 21933,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:15:27.714Z",
+    "trace": {
+      "runId": "3d407399-5f99-4024-b192-12941130ebc5",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "6cc0ff2c2e0ae979210520b2fc87b0ed4929ae1edbb2a5bad5b868f32f505d59",
+      "contextHash": "16adae9023a33ff62f38c11561204b31e60dfadd083fc795b5a16ad259048097",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ce30de23db8bd5d773b0ffde2aefd883e1c349933da29a757af872865c7b0daa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee97-86ef-77f3-96d6-e3451ae1f518"
+      ],
+      "usage": {
+        "used": 37497,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 70928,
+          "utf8Bytes": 80246,
+          "estimatedTokens": 26749,
+          "budgetedTokens": 33437,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

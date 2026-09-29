@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/DecisionsView.vue",
+    "title": "待判断提案的审核与提交界面",
+    "summary": "集中呈现需要人工判断的提案，展示状态、影响、证据与不确定性，并携带提案摘要和请求标识提交确认、拒绝或补充背景操作。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决的问题与呈现范围",
+        "body": "该组件把歧义、冲突或影响较大的变化集中为人工审核列表。它接收上层提供的决策集合，将待处理、已确认、已拒绝、过期和来源变化等内部状态翻译为中文；标题依次取提案标题、陈述或种类。[[c1]] 卡片进一步展示有效期、处理回执、提案原因、动作、对象、影响数量、原始内容和不确定项，让用户在判断前看到实际变化范围。[[c2]]"
+      },
+      {
+        "key": "decision-flow",
+        "title": "提交流程、证据与边界",
+        "body": "用户可以确认、拒绝或要求补充背景。提交请求携带动作、当前提案摘要、随机请求标识和决策记录中的执行者标识；成功后发出对应通知并要求父层刷新，失败时上报错误后同样刷新，最终解除忙碌状态。[[c3]] 提案证据通过片段修订标识交给父组件打开；只有 `pending` 状态呈现操作按钮，`stale` 状态明确提示旧判断不可再提交。空列表文案还说明高置信、小范围变化可能已被自动处理，但自动处理机制不在本文件中。[[c4]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "状态与标题映射",
+        "reason": "支持组件输入输出合同、决策状态中文映射和标题回退顺序。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 6,
+          "endLine": 27
+        },
+        "quote": "defineProps<{ decisions: Decision[] }>();\nconst emit = defineEmits<{\n  refresh: [];\n  open: [id: string];\n  error: [text: string];\n  notice: [text: string];\n}>();\nconst busy = ref(\"\");\nconst stateLabel: Record<string, string> = {\n  pending: \"等待你的判断\",\n  approved: \"已确认\",\n  rejected: \"已拒绝\",\n  context_requested: \"已要求补充背景\","
+      },
+      {
+        "key": "c2",
+        "label": "提案变化详情",
+        "reason": "支持有效期、回执、原因、动作、对象、影响数量、原始内容及不确定项的展示说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 85,
+          "endLine": 110
+        },
+        "quote": "        <small\n          >有效至\n          {{ new Date(decision.expiresAt).toLocaleString(\"zh-CN\") }}</small\n        >\n        <small v-if=\"decision.requestId\" class=\"receipt-id\"\n          >处理回执 {{ decision.requestId }}</small\n        >\n      </div>\n      <p>{{ decision.proposal.reason }}</p>\n      <details open>\n        "
+      },
+      {
+        "key": "c3",
+        "label": "决策提交函数",
+        "reason": "支持三类动作及 proposalDigest、requestId、actorId 的提交和成功、失败刷新流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 28,
+          "endLine": 55
+        },
+        "quote": "async function decide(\n  decision: Decision,\n  action: \"approve\" | \"reject\" | \"request_context\",\n) {\n  busy.value = decision.id + action;\n  try {\n    await api(`/decisions/${decision.id}`, {\n      action,\n      proposalDigest: decision.proposalDigest,\n      requestId: crypto.randomUUID(),\n      actorId: decision.actorI"
+      },
+      {
+        "key": "c4",
+        "label": "证据入口与操作限制",
+        "reason": "支持证据跳转、失效提示、仅待处理状态可操作及空列表语义。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 112,
+          "endLine": 146
+        },
+        "quote": "      <div class=\"evidence-list\">\n        <OmCitation\n          v-for=\"(item, index) in decision.proposal.evidence\"\n          :key=\"item.fragment_revision_id\"\n          :label=\"`依据 ${index + 1}${item.exact_quote ? `：${item.exact_quote.slice(0, 36)}` : ''}`\"\n          @open=\"emit('open', item.fragment_revision_id)\"\n    "
+      }
+    ],
+    "questions": [
+      {
+        "question": "服务端是否强制校验 proposalDigest、actorId、requestId 与过期状态，而不只依赖前端隐藏按钮？",
+        "why": "材料只能确认这些字段被提交以及 stale 状态在界面上不可操作，无法证明服务端的并发、防重放和授权规则。",
+        "nextStep": "检查决策端点实现及其并发、过期、重复请求测试，确认旧摘要或伪造执行者会被拒绝。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/DecisionsView.vue",
+      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LarkSetup.vue",
+      "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ReviewApp.vue",
+      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/AssetImage.vue",
+      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:16:37.262Z",
+    "trace": {
+      "runId": "d6aa69c6-5d9b-4efa-8759-4fc06c0f72fb",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "43e04907e63ceac45132d3cb6693ccdf8b2d3b9f42392b3b64dfcb9f7578479b",
+      "contextHash": "fc3c7cd75514abae88d5177381834e52e3531c5c7b4a853e6421dc2a7ba4dbb9",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "839fa807bd510435d3f330acf0dd6d1093bfbe3f159fb8aa7d652f57515ec892",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee97-27c7-7903-9ccf-2a817f6755a1",
+        "01a0ee97-c35e-7b02-b29c-89cb07fa8fbb",
+        "01a0ee98-555c-7bb2-a6bb-c08fcde3c787"
+      ],
+      "usage": {
+        "used": 57830,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 122838,
+          "utf8Bytes": 139688,
+          "estimatedTokens": 46563,
+          "budgetedTokens": 58204,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 2
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:16:55.623Z",
+    "trace": {
+      "runId": "93b21d88-f347-4cb1-93ec-0c9dba8183e9",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "4d5b1811f813ede91e5cfd403803e148f513ef6912e23793f813ba20f7c9646b",
+      "contextHash": "4226dfbebd3003a0b52b664fe48a25d3b964cc23391d60eb7b6559bbd45c1ea2",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "05504554777485c19bc41ab2ac837bbba73c0777dc1afe984094002a78a43aca",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee98-f8c4-7de2-b9a7-95b7eef2030d"
+      ],
+      "usage": {
+        "used": 53078,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 121288,
+          "utf8Bytes": 135480,
+          "estimatedTokens": 45160,
+          "budgetedTokens": 56450,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

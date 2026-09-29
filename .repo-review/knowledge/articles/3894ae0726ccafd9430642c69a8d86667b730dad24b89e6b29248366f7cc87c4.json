@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/codewiki/edges.test.ts",
+    "title": "边目标解析与下钻行为测试",
+    "summary": "验证 Code Wiki 如何把导入、调用和模块理解记录转换为可导航目标，并覆盖同文件符号、跨文件目标、外部依赖及陈旧理解等关键边界。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "测试解决的问题",
+        "body": "该测试为代码关系的“能否点击、点击后打开什么”建立行为合同。`resolveEdgeTarget` 需要把仓库内导入解析到文件，把调用解析到符号所在文件、行号和名称；外部包、缺失目标以及指向当前文件的普通文件边必须不可交互。[[c1]] 这防止关系图把无目标的边伪装成有效链接，也避免文件视图对自身做无意义跳转。实现中该函数优先检查目标文件，其次检查目标符号，并以目标文件是否存在及是否不同于当前文件决定 `resolvable`。[[c2]]"
+      },
+      {
+        "key": "drill",
+        "title": "同文件与跨文件下钻",
+        "body": "更细的 `edgeDrillTarget` 合同区别于一般可解析性：同文件的**符号边**仍应打开符号/范围帧，跨文件符号边则打开文件帧，真正的外部或未解析目标才返回 `none`。测试分别断言同文件符号保留符号标识和第 715 行、跨文件符号进入目标文件、外部包不产生下钻。[[c3]] 这与实现的分支一致：符号目标优先，同文件返回 `symbol`，异文件返回带行号的 `file`；纯文件目标若仍是自身则拒绝。[[c4]]"
+      },
+      {
+        "key": "understanding",
+        "title": "模块理解匹配及覆盖边界",
+        "body": "测试还确认模块说明按目录前缀匹配，并在多个候选中选择最长、最具体的目录；陈旧记录不会被采用。[[c5]] 实现实际允许 `curated-seed` 与 `model-generated` 两类来源，并接收 seed、generated、verified 状态，再以模块内任意文件是否被前缀覆盖来挑选最长目标。[[c6]] 当前测试没有覆盖模型生成记录、被拒绝状态、同长度候选的时间与 seed 排序，也未验证缺少符号对应文件时的下钻结果。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "边解析断言",
+        "reason": "支持导入、调用、缺失目标和同文件目标的可解析性合同。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/edges.test.ts",
+          "startLine": 12,
+          "endLine": 43
+        },
+        "quote": "describe(\"resolveEdgeTarget\", () => {\n  const a = f(\"fA\", \"apps/server/src/assistant/a.ts\");\n  const b = f(\"fB\", \"apps/server/src/memory/b.ts\");\n  const files = new Map([[a.fileId, a], [b.fileId, b]]);\n  const syms = new Map([[s(\"sB\", \"fB\", 12).symbolId, s(\"sB\", \"fB\", 12)]]);\n\n  it(\"resolves an import edge to a target "
+      },
+      {
+        "key": "c2",
+        "label": "边目标解析实现",
+        "reason": "解释目标文件与目标符号的解析顺序及不可导航条件。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 124,
+          "endLine": 147
+        },
+        "quote": "export interface ResolvedTarget {\n  fileId?: string;\n  line?: number;\n  symbolName?: string;\n  resolvable: boolean;\n}\n\nexport function resolveEdgeTarget(\n  edge: CodeEdge,\n  fileMap: Map<string, CodeFile>,\n  symbolMap: Map<string, CodeSymbol>,\n  selfFileId: string,\n): ResolvedTarget {\n  if (edge.toFileId && fileMap.has"
+      },
+      {
+        "key": "c3",
+        "label": "下钻目标断言",
+        "reason": "支持同文件符号、跨文件符号与外部目标的不同下钻结果。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/edges.test.ts",
+          "startLine": 45,
+          "endLine": 75
+        },
+        "quote": "describe(\"edgeDrillTarget\", () => {\n  const a = f(\"fA\", \"apps/server/src/assistant/a.ts\");\n  const b = f(\"fB\", \"apps/server/src/memory/b.ts\");\n  const files = new Map([[a.fileId, a], [b.fileId, b]]);\n  const symA = s(\"sA\", \"fA\", 715);\n  const symB = s(\"sB\", \"fB\", 12);\n  const syms = new Map([[symA.symbolId, symA], [sym"
+      },
+      {
+        "key": "c4",
+        "label": "边下钻实现",
+        "reason": "解释符号帧、文件帧及 none 三种返回路径。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 184,
+          "endLine": 213
+        },
+        "quote": "/** Resolve an edge to a drill target. Same-file symbol edges DO drill (to a\n * symbol/range frame) rather than being swallowed; only truly external /\n * unresolved targets are non-navigable. */\nexport type EdgeDrill =\n  | { kind: \"file\"; fileId: string; line?: number }\n  | { kind: \"symbol\"; fileId: string; symbolId: s"
+      },
+      {
+        "key": "c5",
+        "label": "模块理解匹配断言",
+        "reason": "支持最长目录前缀优先以及忽略陈旧行的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/edges.test.ts",
+          "startLine": 77,
+          "endLine": 104
+        },
+        "quote": "describe(\"matchModuleUnderstanding\", () => {\n  const mem = f(\"fM\", \"apps/server/src/memory/service.ts\");\n  const mod = { files: [mem] };\n  const item = (targetId: string, stale = false): CodeUnderstandingListItem => ({\n    understandingId: \"cu\", targetType: \"module\", targetId, snapshotId: \"sn\",\n    role: \"module-archit"
+      },
+      {
+        "key": "c6",
+        "label": "模块理解选择实现",
+        "reason": "说明候选来源、状态过滤、任意文件覆盖和最长前缀规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 149,
+          "endLine": 182
+        },
+        "quote": "/** Pick the curated module-architect understanding that best describes a module\n * bucket. The curated `targetId` is a repo directory (e.g.\n * `apps/server/src/memory`); we match it by longest prefix against the module's\n * files, preferring the current (non-stale, non-rejected) row. Pure. */\nexport function matchModu"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/edges.test.ts",
+      "digest": "ac821d09b7a452c0e7980d0550ce86b1acc40ae35426d04181af8648da592a64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/hashroute.test.ts",
+      "digest": "60e03ce773e4ed7a31283d2b18d0ea8fe25aee5c65a02747968bfbaa0d9e5eed"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/labels.test.ts",
+      "digest": "e0233aafe5e3c76f3c4747320928755890b0da6a89d6c99103ec039f7e174f7a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.test.ts",
+      "digest": "d040287ff32ac0368675b3c0986a3dca8b05ff9983e9e204f369c1eec38578a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/trail.test.ts",
+      "digest": "b958b8427d678dc236cf158f43c7fdac27c8393004bfb55dccd0a3ea7c41a3cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T19:15:02.548Z",
+    "trace": {
+      "runId": "1d1d1975-faf7-4b46-9207-f7224a9a739d",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "b9d87d4166cea03adb309f8d291a03c22d6cbced59dde7886e5ef17bf10e610e",
+      "contextHash": "1d8fa3006d6e9bba91c87e90e9f58b649cc810e1dc4c6709d6b01ef5fc642e79",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c2ba53fc19fae8f4a158691e19e21026cc8705e3193b94e4b4468c6d4db65921",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee96-aaed-7cc1-bbf9-0ce080272232"
+      ],
+      "usage": {
+        "used": 33600,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 50776,
+          "utf8Bytes": 52636,
+          "estimatedTokens": 17546,
+          "budgetedTokens": 21933,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T19:15:27.714Z",
+    "trace": {
+      "runId": "3d407399-5f99-4024-b192-12941130ebc5",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
+      "promptHash": "6cc0ff2c2e0ae979210520b2fc87b0ed4929ae1edbb2a5bad5b868f32f505d59",
+      "contextHash": "16adae9023a33ff62f38c11561204b31e60dfadd083fc795b5a16ad259048097",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ce30de23db8bd5d773b0ffde2aefd883e1c349933da29a757af872865c7b0daa",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ee97-86ef-77f3-96d6-e3451ae1f518"
+      ],
+      "usage": {
+        "used": 37497,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 70928,
+          "utf8Bytes": 80246,
+          "estimatedTokens": 26749,
+          "budgetedTokens": 33437,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
