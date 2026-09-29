@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:docs-autonomous-learning.md",
+    "title": "docs-autonomous-learning.md · 模块理解",
+    "summary": "该文档定义自治学习的概念边界与验证闭环：系统从事实、任务经历和检索效果中形成候选改进，但始终区分证据、适用性、效用与新鲜度，并禁止学习过程自行扩权。当前材料确认了原型流程，完整服务端管线、沙箱回放和真实效果评估仍待核实。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "职责与设计背景",
+        "body": "本模块回答的不是“模型如何自行训练”，而是个人助手如何从可观察结果中谨慎改善后续行动。它覆盖事实、偏好、有效步骤、错误条件和检索路线，同时明确第一版不修改模型权重、不把自身输出循环包装成独立佐证，也不扩大权限或采集范围。[[c1]][[c2]] 原始材料、任务经历、模型假设和已验证记忆分开保存；一次失败只能先形成 Episode，只有结合纠正与实际结果，才可能晋升为 Procedure。"
+      },
+      {
+        "key": "workflow",
+        "title": "三类闭环如何协作",
+        "body": "事实巩固负责比较同主题候选，并按主体、时间、范围决定新建、补充、冲突或替代；语义相似度仅用于找候选，不能代替前提判断。方法学习从成败经历提炼触发条件、有效步骤和失败分支，经正反例及回放或沙箱验证后，才应用到限定任务族。检索策略学习则把错配、旧版误用等问题归因到路由、扩展、过滤、排序或上下文组装，通过固定样本对照、小流量启用和回归恢复形成闭环。[[c3]] 三者共享同一安全边界：ACL、工具能力、不可逆操作确认和预算上限均不能被学习结果放宽。"
+      },
+      {
+        "key": "evaluation",
+        "title": "评价、归档、进展与限制",
+        "body": "候选不能用单一“置信度”概括：Evidence 决定能否作为事实，Applicability 判断当前是否适用，Utility 衡量经验证的使用效果，Freshness 决定何时复核。热度衰减只减少默认上下文占用；归档不删除历史引用，硬删除仍需独立的影响预览和授权。[[c4]] 发布前还要检查来源可回查、版本一致、同域冲突、有限作用域、测试可重跑及评测污染；收益应观察错误复发、后续任务表现和自动恢复，而非只统计新增记忆数。材料仅确认“经验与方法”原型表达了这套机制，并把完整学习管线、沙箱回放和真实效果评估列为服务端 P1b/P2，因此不能据此宣称这些能力已经落地。[[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "自治学习机制子知识",
+        "reason": "提供本模块的概念组织入口，支持其围绕学习对象、证据边界和验证闭环展开；具体事实仍由相邻的原始材料引用佐证。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/autonomous-learning.md",
+          "section": "scope"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "学习范围与证据边界",
+        "reason": "支持系统允许学习的内容、第一版明确排除的行为，以及 Episode 晋升 Procedure 所需的纠正和实际结果。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 7,
+          "endLine": 11
+        },
+        "quote": "## 1. 学什么，不学什么\n\n系统可以学习：新的事实、用户表达的偏好、任务中的有效步骤、错误触发条件、什么时候需要查新版本、哪种检索路线适合哪类问题。第一版不自动修改模型权重，不从自己的文字反复生成独立佐证，也不自行扩大工具权限或采集范围。\n\n原始材料、任务经历、模型假设、验证后的记忆必须分开存。一次失败可记录为 Episode；只有结合纠正和实际结果，才有资格提炼为 Procedure。用户的“谢谢”是弱反馈，不等于外部任务已成功；工具返回 200 也不等于业务目标达到。"
+      },
+      {
+        "key": "c3",
+        "label": "事实、方法与检索策略闭环",
+        "reason": "支持三类学习流程的步骤、有限作用域要求，以及权限、工具能力、不可逆动作确认和预算不能由学习环放宽。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 49,
+          "endLine": 63
+        },
+        "quote": "### 事实巩固\n\n新事实与同主题候选比对 → 检查主体/时间/范围 → 新建、补充、标冲突或 supersede → 生成固定证据 → 自动提交。语义相似但前提不同的条目不合并；相似度只是找到候选。\n\n### 方法学习\n\n失败或成功经历聚类 → 找触发、有效步骤、失败分支 → 生成方法候选 → 构造正例与反例 → 回放/沙箱验证 → 应用到限定任务族 → 检查下一次真实任务表现。方法必须保留适用条件和“不适用”条件，扩 scope 是独立变更。\n\n第一版方法只是上下文建议；导出可执行 Skill 时只允许白名单工具，保持宿主原有授权。任意 shell、生产业务写入不能因为“方法学会了”就自动授权执行。\n\n### 记忆使用策略学习\n"
+      },
+      {
+        "key": "c4",
+        "label": "四维评分与归档规则",
+        "reason": "支持 Evidence、Applicability、Utility、Freshness 分离评价，以及热度、归档、历史可读性和硬删除之间的区别。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 65,
+          "endLine": 80
+        },
+        "quote": "## 5. 评分不混在一起\n\n每条记忆有四组字段：\n\n- **Evidence**：引文存在、内容支持度、来源 authority、independence、conflict。决定是否能作为事实使用。\n- **Applicability**：主体、项目、时间、前提。决定适不适用当前任务。\n- **Utility**：曝光后被引用、验证后有用、被纠正的反馈。影响排序与整理优先级。\n- **Freshness**：最后核验、上游变化、有效区间。决定需不需要刷新。\n\n排序可用各项有界加权，但权限/删除/关键失效属于硬过滤。展示热度不是置信百分比。utility 可先用保守贝叶斯计数 `(useful+1)/(verified_uses+2"
+      },
+      {
+        "key": "c5",
+        "label": "发布条件与实施阶段",
+        "reason": "支持候选发布和收益判定标准，并限定当前可确认的进展：完整学习管线、沙箱回放与真实效果评估仍被列在 P1b/P2。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/autonomous-learning.md",
+          "startLine": 113,
+          "endLine": 119
+        },
+        "quote": "## 8. 发布与收益判定\n\n候选发布至少检查：来源可回查、与现行版本一致、没有未解决的同域矛盾、适用范围有限、方法测试能重跑、评测样本未被该次学习污染。高影响变更进入例外；低风险普通事实不为了等待长期统计而永久锁在候选态。\n\n学习收益报告显示：本周出现的错误簇、哪些被修复、下次同类任务的表现、错误复发、节省的步骤/token、错误注入、自动恢复次数。不能只报告“新增 100 条记忆”或“使用率上升”。样本少时显示分母与区间，不用单个成功例子宣称普遍提升。\n\n原型“经验与方法”的流程表达上述机制；完整学习管线、沙箱回放与真实效果评估属于服务端 P1b/P2。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "P1b/P2 所列的完整学习管线、沙箱回放和真实效果评估，目前各自处于未实现、局部实现、fixture 验证还是已有真实运行证据的哪一阶段？",
+        "why": "现有材料只给出阶段归属，没有代码、检查结果或运行轨迹，无法进一步区分设计目标与实际能力；这会阻碍对模块实施进展作出准确结论。",
+        "nextStep": "对照实施状态文档、相关任务代码、测试退出结果和真实轨迹报告，分别记录每项能力的实现范围、验证类型与剩余限制。",
+        "blocking": true,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "完整学习管线、沙箱回放和真实效果评估目前分别处于未实现、局部实现、fixture 验证还是已有真实运行证据的哪一阶段？",
+        "why": "材料在 docs/autonomous-learning.md 第119行仅将这些能力归入服务端 P1b/P2，未提供代码、检查结果或运行轨迹；草稿已正确保留该实施状态的不确定性，未将计划表述为已实现。",
+        "nextStep": "对照实施状态文档、相关任务代码、测试退出结果和真实运行轨迹，分别记录各项能力的实现范围、验证类型与剩余限制。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/autonomous-learning.md",
+      "digest": "546b5b475858d3341f3b60ef00c2f39055da442e596a474ceb04146c00f0d15a"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/autonomous-learning.md",
+      "digest": "da6c5f4e7a3a79398e8ba6a4c9be6911c51d59e066253b42790102b5455e3dc8"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:24:39.165Z",
+    "trace": {
+      "runId": "bf0c8789-70b9-44be-8ad0-ee9005999004",
+      "roleId": "knowledge-writer",
+      "roleVersion": "1",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "ea87a4e527106495084620e09814589602d23fc7264957348c75b19474d64f74",
+      "contextHash": "974d654132604074ee116ba01f01a3c8f5248f0513eb10897b434d3f0eda3a6d",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3c31db4504b0f1dc5685cfbdd98f368313047a6e67790d59f054000eeb231519",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-writer",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed6-fa37-7ce1-8ffd-d50bf6fc7b3b"
+      ],
+      "usage": {
+        "used": 19021,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 13379,
+          "utf8Bytes": 21300,
+          "estimatedTokens": 7100,
+          "budgetedTokens": 8875,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:24:49.285Z",
+    "trace": {
+      "runId": "fa297c1d-bf65-446b-8900-f6ac262d5226",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "3a8cff0a8df134633a47df717d9497881ed99c73d3c4622acf412c56c5d99a77",
+      "contextHash": "ff5be9d984d8ea24d9181a3f4679abf1e7579c02116cff9f990a0b695b737080",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ace80751764cdb934a2f5dcc52c70809ce56ef06c789cafe2c2a5d22f1fa83dc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed7-41c0-7b10-997f-8995ab827b48"
+      ],
+      "usage": {
+        "used": 19329,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 14862,
+          "utf8Bytes": 26137,
+          "estimatedTokens": 8713,
+          "budgetedTokens": 10892,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
