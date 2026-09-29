@@ -675,6 +675,8 @@ export const roleIdSchema = z.enum([
   "planner",
   "feedback-curator",
   "answerer",
+  "material-analyst", "code-analyst", "conversation-analyst", "visual-analyst",
+  "knowledge-planner", "knowledge-writer", "knowledge-verifier", "knowledge-refresher",
 ]);
 
 export const roleManifestSchema = z
@@ -711,6 +713,7 @@ export const roleManifestSchema = z
       "PlanProposal.v1",
       "CorrectionProposal.v1",
       "AnswerWithCitations.v1",
+      "KnowledgeBatch.v1", "KnowledgeReview.v1", "KnowledgePlan.v1",
     ]),
     tool_policy: z
       .object({
@@ -748,6 +751,7 @@ export const roleManifestSchema = z
 
 export const contextMaterialSchema = z
   .object({
+    content_scope: z.enum(["fragment", "revision"]).optional(),
     fragment_revision_id: z.string().min(1).max(500),
     source_revision_id: z.string().min(1).max(500),
     text: z.string().max(200_000).optional(),

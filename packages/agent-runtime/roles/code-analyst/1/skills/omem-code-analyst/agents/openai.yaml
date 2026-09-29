@@ -1,0 +1,4 @@
+interface:
+  display_name: "分析代码材料"
+  short_description: "Build linked knowledge from fixed evidence"
+  default_prompt: "Use $omem-code-analyst to process the supplied fixed materials."

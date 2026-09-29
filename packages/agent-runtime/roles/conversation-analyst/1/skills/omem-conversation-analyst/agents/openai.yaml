@@ -1,0 +1,4 @@
+interface:
+  display_name: "整理对话材料"
+  short_description: "Build linked knowledge from fixed evidence"
+  default_prompt: "Use $omem-conversation-analyst to process the supplied fixed materials."

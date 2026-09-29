@@ -1,0 +1,4 @@
+interface:
+  display_name: "更新关联知识"
+  short_description: "Build linked knowledge from fixed evidence"
+  default_prompt: "Use $omem-knowledge-refresher to process the supplied fixed materials."
