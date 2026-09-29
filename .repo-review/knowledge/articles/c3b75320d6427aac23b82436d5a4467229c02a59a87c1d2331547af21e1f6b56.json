@@ -1,0 +1,338 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:docs-reviews",
+    "title": "docs-reviews · 模块理解",
+    "summary": "docs-reviews 保存针对特定代码基线的审查叙事、可执行隔离复现和结果快照，并由当前实现状态文档说明哪些历史缺口已被修复、哪些验证边界仍然存在。它提供可追溯的反例与回归来源，但不是当前产品能力或真实外部集成验收的唯一依据。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "职责与形成背景",
+        "body": "`docs-reviews` 是面向实现偏差的审计记录层：Batch 2 审查以 `16d3aa6` 为基线，关注提炼质量、用户打扰、输入语义和飞书主入口，并明确排除完整安全、性能及真实飞书验收。[[c1]] 子知识将结论组织为“底座可保留、入口与策略需调整”，但该归纳仍来自同一批审查材料，不是新的独立证据。[[c2]]\n\n该模块把“为什么有问题”与“如何复现”分开：README 解释产品及实现偏差，`reproduce.ts` 用临时 SQLite、合成输入和注入判定构造确定性反例，结果 JSON 保存运行观察。脚本声明断言描述历史缺口而非期望行为，并登记所创建的临时 Store。[[c3]] 退出时再逐一关闭 Store、递归清理临时目录。[[c11]]"
+      },
+      {
+        "key": "workflow",
+        "title": "审查与复现如何协作",
+        "body": "典型流程是先根据代码路径和只读数据观察提出问题，再以隔离场景验证领域层行为，最后登记为 R1～R10。旧脚本证明混合现状与规划的句子会直接成为 claim；引文包含即可得到满 evidence support；相反或重复的 create 提案可能全部自动应用，低价值不确定项则生成待决事项。[[c4]] 结果文件用相同编号保存关键输出，使文字结论可回查到具体断言。[[c5]]\n\n这种方式适合产生回归素材，却不能证明模型质量或线上集成：语义判定由夹具注入，消息发送使用假适配器，图片和私聊场景也未连接真实飞书。子知识集中解释了临时数据库、确定性夹具和非真实外部调用的边界。[[c6]]"
+      },
+      {
+        "key": "relations-progress",
+        "title": "与当前实现状态的关系",
+        "body": "审查资料与 `docs/implementation/status.md` 构成“历史反例—当前状态”的关系。后续 G01～G20 已记录为通过，覆盖普通导入不生成逐句标注、逐片段来源保留、身份映射、冲突与重复治理、取消未发卡、质量指标修正和诚实恢复；但 G15 仍是 fake transport，G20 的进程重启仍由同数据库的新 runtime 模拟。[[c7]] 因而 R1～R10 是修复来源和防回归案例，不能直接描述当前产品仍有同样缺陷。\n\n当前能力矩阵显示主助手、关键词检索、知识治理、输入保真、通知及质量评估已有代码与本地测试支撑，但真实 ACP、真实飞书和语义检索的证据等级不同。[[c8]] 模块因此需要同时保存审查结论、复现方法和后续状态，不能用单一“测试通过”数字代替能力判断。"
+      },
+      {
+        "key": "constraints",
+        "title": "使用约束与剩余限制",
+        "body": "历史报告要求保留迁移、不可变原件与片段、租约、事务回执、角色包、飞书基础设施和证据阅读组件，重点重做入口及策略层；旧缺口脚本不能直接并入常规 CI，以免把错误行为固化为长期合同。[[c9]] 合理做法是将仍适用的反例改写成期望行为测试，同时保留原审计文件解释修复缘由。\n\n目前仍缺少真实 ACP 主助手与飞书 WebSocket 的端到端验证、真实飞书图片下载、进程级 kill/restart，以及来源刷新后的完整 extractor/verifier 重核验；刷新任务会明确报告未实现，而非假报完成。[[c10]] 因此本模块能回答某次基线为何有缺口、如何隔离复现及后续测试声称修复了什么，却不能单独证明当前部署、外部服务和真实模型已达到产品验收标准。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "Batch 2 审查范围与证据边界",
+        "reason": "支持审查基线、关注主题、既有检查结果以及未调用真实模型或飞书接口的背景。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+          "startLine": 1,
+          "endLine": 15
+        },
+        "quote": "# Batch 2 实现审查与产品偏差\n\n审查日期：2026-09-27；基线：`16d3aa6`。审查重点是提炼质量、确认打扰、输入语义和飞书主入口，不是完整安全/性能审计。本轮不恢复被用户叫停的飞书标注、不重启业务 worker、不发送测试卡片、不修改运行库。\n\n**结论：工程底座有真实实现，但目前不能作为“个人超级助理”验收。** 迁移、租约、幂等、角色包、事件收发和回调有测试支撑；价值判断、上下文保真、知识召回和主 Agent 入口仍有明显缺口。原来的产品方案也把“尽早提炼成 claim，再让用户判断”放得过重，需要调整，不能只更换模型或继续优化卡片文案。\n\n新的目标设计见 [assistant-v3](../../impl"
+      },
+      {
+        "key": "c2",
+        "label": "审查结论与历史边界",
+        "reason": "引用子知识对审查结论的组织方式；附近同时引用原始 README，避免把派生归纳视为独立事实。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+          "section": "history-and-next"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c3",
+        "label": "隔离复现的声明与资源登记",
+        "reason": "支持脚本面向历史缺口、使用临时 SQLite，并通过 setup 创建和登记临时 Store；不用于证明退出清理行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+          "startLine": 1,
+          "endLine": 38
+        },
+        "quote": "/** Audit reproductions for baseline 16d3aa6. These assertions describe known gaps,\n * not desired product behavior. Uses temporary SQLite only; no Agent/Lark calls. */\nimport assert from \"node:assert/strict\";\nimport { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join } from \"node:pa"
+      },
+      {
+        "key": "c4",
+        "label": "质量与记忆策略反例",
+        "reason": "支持规则提取、证据支持指标、冲突重复提案和低价值待决事项的具体隔离断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+          "startLine": 132,
+          "endLine": 239
+        },
+        "quote": "  const text = \"当前甲系统与乙主体是单一关联关系，未来可能允许多对多绑定。\";\n  const input = captureSchema.parse({\n    source: \"lark\",\n    externalId: \"synthetic\",\n    title: \"Synthetic\",\n    parts: [{ type: \"text\", text }],\n    context: {},\n  });\n  const draft = documentQualityEvalSamples(input, \"https://example.test/source\", 1)\n    .samples[0]!;"
+      },
+      {
+        "key": "c5",
+        "label": "R1 至 R4 结构化结果",
+        "reason": "说明结果快照如何按编号保存规则提取、质量指标、冲突去重和待决策略的观察值。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+          "startLine": 1,
+          "endLine": 31
+        },
+        "quote": "{\n  \"baseline\": \"16d3aa6\",\n  \"isolation\": \"Temporary SQLite; no external services or live data writes\",\n  \"results\": [\n    {\n      \"id\": \"R1\",\n      \"observed\": \"Rule-based sample copies mixed present/future sentence as claim, labels explicit + autoApply=true\",\n      \"usesAI\": false\n    },\n    {\n      \"id\": \"R2\",\n     "
+      },
+      {
+        "key": "c6",
+        "label": "复现脚本的用途与夹具边界",
+        "reason": "引用子知识对临时数据库、注入判定和非真实外部调用边界的归纳。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+          "section": "purpose-and-fixtures"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c7",
+        "label": "G01 至 G20 后续验收状态",
+        "reason": "支持历史反例对应行为已由后续测试覆盖，同时说明图片链路和重启验证的证据等级限制。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 61,
+          "endLine": 84
+        },
+        "quote": "| ID | 场景简述 | 对应测试文件 · 用例名 | 状态 | 证据/断言要点 |\n| --- | --- | --- | --- | --- |\n| G01 | 导入 40 段业务说明，无逐句确认卡 | retrieval-source-profile.test.ts · \"G01: importing a business doc profiles it…asks zero per-sentence confirmations\"；import-quality-isolation.test.ts · \"G01 ordinary import does not create quality annotation work\" | "
+      },
+      {
+        "key": "c8",
+        "label": "当前能力矩阵",
+        "reason": "支持主助手、检索、治理、输入、通知和质量评估的实现进展及真实外部验证缺口。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 45,
+          "endLine": 55
+        },
+        "quote": "## 能力矩阵\n\n| 能力域 | 代码已实现 | 本地测试通过 | 真实 ACP 验证 | 真实飞书验证 | 剩余缺口 |\n| --- | --- | --- | --- | --- | --- |\n| 主助手对话 | 会话路由/turn 持久化与幂等排队（同 transport_event_id 不重复建 turn/task）、RetrievalPort 注入（Web+飞书均接 KeywordRetrieval 中文 2-gram 召回）、create_task 经 MemoryService + detectTaskIntent 意图门控（咨询类零写入）、多轮回指（priorWorkingContext 携带前轮 selecte"
+      },
+      {
+        "key": "c9",
+        "label": "可保留底座与回归转换原则",
+        "reason": "支持保留基础设施、重做入口策略，以及不得让常规 CI 固化旧缺陷的约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+          "startLine": 109,
+          "endLine": 125
+        },
+        "quote": "## 5. 可以保留的工作\n\n保留现有SQLite迁移、固定原件/片段、job lease/fencing、事务application receipt/outbox、role bundle校验、Lark secret/binding/事件/投递基础设施、Vue证据阅读组件。这些不是废代码。\n\n重做的是**入口与策略层**：主助手先理解用户目的；worker先保证材料可用和上下文保真；深度知识整理由使用/任务/变更触发；只有与真实选择有关的问题才由主助手提出。不要为了让旧的90个测试继续绿而保留“任何不确定就问人”的错误预期，应修改这些预期并增加本报告反例。\n\n## 6. 复查方式\n\n```bash\nosdk run typechec"
+      },
+      {
+        "key": "c10",
+        "label": "当前外部验证和重核验限制",
+        "reason": "支持真实 ACP、飞书、进程重启及 refresh_dependents 完整重核验仍未完成的结论。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 86,
+          "endLine": 94
+        },
+        "quote": "## 已知限制与环境问题（2026-09-29 复测）\n\n- **osdk 验证**：`osdk deps --frozen` exit 0；`osdk run check` 连续 2 轮 exit 0（typecheck [tsc + vue-tsc] + 全量 vitest **47 文件 / 306 用例** + tsc/vite build，2026-09-29）。本轮首次 check 的 A-R07 timeout 已由 af77ca6 复现根因并回归稳定（详见「当前状态·测试」）。信任门已由 MainAgent 执行 `osdk --yes trust` 解决。\n- **ACP 子进程清理已根治**：`agents.ts"
+      },
+      {
+        "key": "c11",
+        "label": "临时 Store 关闭与目录清理",
+        "reason": "直接支持脚本在 finally 中关闭所有已登记 Store，并递归删除对应临时目录的断言。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+          "startLine": 462,
+          "endLine": 465
+        },
+        "quote": "} finally {\n  for (const { s, dir } of resources) {\n    s.close();\n    rmSync(dir, { recursive: true, force: true });"
+      }
+    ],
+    "questions": [
+      {
+        "question": "历史 `reproduce.ts` 应继续原样保存，还是将仍有价值的 R1～R10 迁移为当前 G 场景的正式回归测试后归档？",
+        "why": "报告明确旧脚本断言的是缺陷，不能让常规 CI 要求这些行为持续存在；当前状态又记录 G01～G20 已通过，尚缺明确的维护策略来界定审计档案与可执行回归。",
+        "nextStep": "逐项建立 R1～R10 到现有 G 测试的映射；已有等价覆盖的场景保留文档链接并归档旧断言，缺少等价覆盖的场景改写为期望行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c9"
+        ]
+      },
+      {
+        "question": "何时以及在什么授权环境中执行真实 ACP 主助手和真实飞书端到端验收？",
+        "why": "当前生产路径虽已接入适配器，但状态文档明确区分 fixture、fake transport 与 live 验证；没有真实模型配置、飞书应用权限及允许的消息范围，不能把本地通过外推为线上可用。",
+        "nextStep": "确认可用的 Agent CLI、飞书测试应用、私聊或群聊范围和数据留存规则，再分别执行对话、图片下载、回复引用、取消投递及异常恢复的 live 检查。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c10"
+        ]
+      },
+      {
+        "question": "来源更新后的完整重核验应采用何种触发、失败恢复和结果替换合同？",
+        "why": "当前只记录受影响记忆并标记 `needs_review`，完整 extractor 与 verifier 重跑尚未实现；若未定义成功替换和失败保留规则，可能错误覆盖仍有效的知识。",
+        "nextStep": "定义 consolidation job 的输入版本、幂等键、旧结果保留条件、失败状态和通知策略，再增加源修订、并发更新及重核验失败的端到端测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+      "digest": "cfd6fbb55cf43fc62dc6b6c103b588e8e0a7984e9f6889cbfd6094ba26ce774d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+      "digest": "dad072d11a1f1a7f32c54f927009881d3cba35143ca37da23ef2f519521de793"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/status.md",
+      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+      "digest": "08d2b062c78978ac26ad41f0f5654096b5b22207f486a495a85c45652fe5cd1b"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+      "digest": "f554dba71f51eed49b6b6f8d5af383cce56986c315d88308387a23c6dff1987c"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+      "digest": "7315828214a36278e9618d9d2af0964fa797fbb447e918f85f6fb4f5cd799867"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:49:44.604Z",
+    "trace": {
+      "runId": "511dd544-90a0-4d1b-b332-59b5a411b309",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "c5ee62140e3c55c65abd18df8887975349a1e81798ceb3771c5c923d49570a30",
+      "contextHash": "d91c27c055878429419a1663abe21897927238807a80de42320cbf35e3c7529d",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f66f880f3afe2fe5e97f9aa49c3c32e2c77e7aa379cebc79b117a6c25f853491",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeed-e31d-7d80-b82a-3d146c4196fa"
+      ],
+      "usage": {
+        "used": 48936,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 86940,
+          "utf8Bytes": 122262,
+          "estimatedTokens": 40754,
+          "budgetedTokens": 50943,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:49:54.667Z",
+    "trace": {
+      "runId": "57d4ff5e-1af0-43a5-81f7-b141ce4a0759",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "3e7178c164dcd307e87cbb18305c97d472904f7819b40a757a099be383d34b09",
+      "contextHash": "edb473987ad6c81fb972f02a6d28531f1a20c2d9ec473cb57e1e988f7e765fa6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "70fa85b06eb90563e7480f61108eca522cff136d6f848abfad021623f1a2fdcf",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeee-3ac8-7510-b751-f9d225d400a1"
+      ],
+      "usage": {
+        "used": 46153,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 84651,
+          "utf8Bytes": 118866,
+          "estimatedTokens": 39622,
+          "budgetedTokens": 49528,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
