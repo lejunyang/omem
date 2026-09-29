@@ -175,19 +175,19 @@ async function boot() {
       profileId.value = profiles.value[0]?.id || "";
     await refresh();
     if (sources.value[0] && !revision.value)
-      await openRevision(sources.value[0].id);
+      await openRevision(sources.value[0].id, false);
   } catch (e) {
     error.value = String(e);
   }
 }
-async function openRevision(id: string) {
+async function openRevision(id: string, navigate = true) {
+  if (navigate) view.value = "read";
   try {
     revision.value = await api("/revisions/" + id);
     focus.value = revision.value!.fragments[0] || null;
     history.value = await api(
       "/sources/" + revision.value!.sourceId + "/history",
     );
-    view.value = "read";
   } catch (e) {
     error.value = String(e);
   }

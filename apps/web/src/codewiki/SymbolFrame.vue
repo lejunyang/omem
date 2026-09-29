@@ -47,6 +47,7 @@ const file = computed<CodeFile | undefined>(() =>
 
 const source = ref("");
 const totalLines = ref(0);
+const startLine = ref(1);
 const edges = ref<CodeEdge[]>([]);
 const loading = ref(true);
 const loadError = ref("");
@@ -60,12 +61,14 @@ async function load() {
     const f = file.value;
     // Fetch a window around the symbol (a few lines of context above/below).
     const start = Math.max(1, (s.rangeStart?.line ?? 1) - 6);
-    const end = Math.max((s.rangeEnd?.line ?? s.rangeStart?.line ?? 1) + 6, start + 10);
+    const probe = await codeSourceSlice(f.fileId, 1, 1);
+    const end = Math.min(probe.totalLines, Math.max((s.rangeEnd?.line ?? s.rangeStart?.line ?? 1) + 6, start + 10));
     const [slice, ed] = await Promise.all([
       codeSourceSlice(f.fileId, start, end),
       codeEdgesForFile(f.fileId).catch(() => [] as CodeEdge[]),
     ]);
     source.value = slice.text;
+    startLine.value = slice.startLine;
     totalLines.value = slice.totalLines;
     edges.value = ed;
   } catch (e) {
@@ -157,7 +160,7 @@ function openFragment() {
         查看对应决策/规则片段 →
       </OmButton>
 
-      <OmCodeViewer :code="source" language="typescript" :ranges="rangeMark" />
+      <OmCodeViewer :code="source" :start-line="startLine" :language="file?.language || 'typescript'" :ranges="rangeMark" />
 
       <h4>符号边 <small>{{ myEdges.length }}</small></h4>
       <p class="muted small">调用 / 被调用 / 测试 / 规则双向可走；同文件符号也打开范围帧。</p>

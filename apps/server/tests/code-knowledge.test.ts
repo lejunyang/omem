@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   mkdtempSync,
   rmSync,
@@ -248,6 +248,9 @@ describe("code sync lifecycle", () => {
     const s1 = await runCodeSync(store, root);
     // dirty edit
     writeFile(root, "apps/server/src/clean.ts", "export const clean = 999;\n");
+    const unchanged = await runCodeSync(store, root);
+    expect(unchanged.snapshotId).toBe(s1.snapshotId); // disk edits are not evidence until captured
+    await runReviewSync(store, root);
     const s2 = await runCodeSync(store, root);
     expect(s2.snapshotId).not.toBe(s1.snapshotId);
     expect(s2.fileCount).toBeGreaterThan(0);
@@ -295,7 +298,8 @@ describe("real omem repo coverage", () => {
         "apps/server/src/integrations/lark/runtime.ts",
       ],
     });
-    // Full code sync walks the real repo.
+    // Full capture precedes the projection; the graph never scans extra files.
+    await runReviewSync(store, realRepoRoot);
     const res = await runCodeSync(store, realRepoRoot);
     expect(res.fileCount).toBeGreaterThan(50);
     const paths = listFiles(store).map((f) => f.path);

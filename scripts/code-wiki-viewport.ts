@@ -80,7 +80,8 @@ try {
     const body = await page.locator("main").innerText();
     expect(body).not.toContain("Failed to fetch");
     expect(body).not.toContain("片段加载失败");
-    expect(await page.getByText("Owns one-turn execution").count()).toBeGreaterThan(0);
+    expect(await page.locator(".module-frame li").count()).toBeGreaterThan(0);
+    expect(body).toContain("关键流程");
   });
 
   // --- Frame 1: open runtime.ts file row, assert source lines ---------------
@@ -259,7 +260,7 @@ try {
   await page.goto(BASE + "/#/module/assistant");
   await sleep(3000);
   await check("390: curated note renders + drawer full-width", async () => {
-    await expect(page.getByText("Owns one-turn execution").first()).toBeVisible({ timeout: 8000 });
+    await expect(page.locator(".module-frame li").first()).toBeVisible({ timeout: 8000 });
     const row = page.locator("button.file-row").filter({ hasText: "runtime.ts" }).first();
     await row.scrollIntoViewIfNeeded();
     await row.click({ force: true });

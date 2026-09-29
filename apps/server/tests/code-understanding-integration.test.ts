@@ -275,7 +275,7 @@ describe("curated code understandings: schema, projection, staleness", () => {
     const res = await runCodeSync(store, realRepoRoot);
     expect(res.fileCount).toBeGreaterThan(10);
 
-    const rows = listUnderstandings(store);
+    const rows = listUnderstandings(store).filter(r => r.source === "curated-seed");
     const targets = new Set(rows.map((r) => String(r.target_id)));
     // The five required modules are present as current seed understandings.
     expect(targets.has("apps/server/src/assistant")).toBe(true);

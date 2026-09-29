@@ -7,6 +7,7 @@
  * Security: without REVIEW_TOKEN it answers only on loopback Hosts and accepts
  * same-origin browser requests from the local Vite/dev origin; with REVIEW_TOKEN
  * set the token gates every /api route. Absolute host paths are never returned. */
+import { join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import staticFiles from "@fastify/static";
 import { timingSafeEqual } from "node:crypto";
@@ -77,7 +78,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   const code = new CodeKnowledgeService(store, repoRoot);
   // Opt-in model port. Null by default: review mode serves the raw graph and
   // curated seeds honestly and never calls a live LLM.
-  const understandingPort = buildUnderstandingModelPort(deps.codeUnderstandingModel ?? null);
+  const understandingPort = buildUnderstandingModelPort(deps.codeUnderstandingModel ? { ...deps.codeUnderstandingModel, workspaceDir: join(repoRoot, ".repo-review/runtime/agent-workspace") } : null);
   let codeSyncing = false;
   let lastCodeSync: Awaited<ReturnType<typeof code.sync>> | null = null;
   const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
@@ -381,10 +382,11 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   }));
 
   app.post(P + "/sync", async (_req, reply) => {
-    if (syncing) return reply.code(409).send({ error: "Sync already running" });
+    if (syncing || codeSyncing) return reply.code(409).send({ error: "Sync already running" });
     syncing = true;
     try {
       lastSync = await runReviewSync(store, repoRoot);
+      lastCodeSync = await code.sync();
       return lastSync;
     } finally {
       syncing = false;
@@ -610,6 +612,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       verifiedBy: row.verified_by ? String(row.verified_by) : null,
       stale: Number(row.stale) === 1,
       source: String(row.source),
+      model: row.model ? String(row.model) : null,
       curatedBy: row.curated_by ? String(row.curated_by) : null,
       curatedAt: row.curated_at ? String(row.curated_at) : null,
       curatedNote: row.curated_note ? String(row.curated_note) : null,
@@ -646,7 +649,10 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       if (!targetId) return reply.code(400).send({ error: "targetId is required" });
       const result = await generateCodeUnderstanding(store, repoRoot, understandingPort, {
         targetId,
-        timeoutMs: req.body?.timeoutMs,
+        timeoutMs: req.body?.timeoutMs ?? deps.codeUnderstandingModel?.timeoutMs,
+        maxInputTokens: deps.codeUnderstandingModel?.maxInputTokens,
+        maxOutputTokens: deps.codeUnderstandingModel?.maxOutputTokens,
+        contextReserveTokens: deps.codeUnderstandingModel?.contextReserveTokens,
       });
       if (!result.ok)
         return reply
@@ -657,9 +663,10 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   );
 
   app.post(CP + "/sync", async (_req, reply) => {
-    if (codeSyncing) return reply.code(409).send({ error: "Code sync already running" });
+    if (codeSyncing || syncing) return reply.code(409).send({ error: "Code sync already running" });
     codeSyncing = true;
     try {
+      lastSync = await runReviewSync(store, repoRoot);
       lastCodeSync = await code.sync();
       return lastCodeSync;
     } finally {

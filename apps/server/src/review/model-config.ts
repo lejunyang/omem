@@ -52,6 +52,9 @@ export function loadReviewCodeModelConfig(
     );
   return {
     transport,
+    maxInputTokens: object.maxInputTokens,
+    maxOutputTokens: object.maxOutputTokens,
+    contextReserveTokens: object.contextReserveTokens,
     command: object.command,
     args: object.args,
     model: object.model,

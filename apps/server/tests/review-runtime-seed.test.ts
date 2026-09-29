@@ -20,7 +20,7 @@ import {
 
 const roots: string[] = [];
 function makeRepoRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), "omem-review-seed-"));
+  const dir = mkdtempSync(join(tmpdir(), "omem-review-seed-'-"));
   roots.push(dir);
   return dir;
 }

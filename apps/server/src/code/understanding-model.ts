@@ -13,17 +13,20 @@
  * never invent a model id, never claim seed output was model-produced, and never
  * mark a generated row as agent-verified.
  */
+import type { GenerationBudget } from "./budget.js";
+import { join } from "node:path";
 import { acp, cli, type Emit } from "../agents.js";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
 
 /** Thrown when no model is configured or the configured transport cannot run. */
 export class CodeModelUnavailableError extends Error {}
 
-export type UnderstandingTransportConfig = {
+export type UnderstandingTransportConfig = Partial<GenerationBudget> & {
   /** "none" = deliberately no model (default). acp/cli/http are opt-in. */
   transport: "none" | "acp" | "cli" | "http";
   /** acp/cli: executable to spawn. */
   command?: string;
+  workspaceDir?: string;
   /** acp/cli: extra argv. */
   args?: string[];
   /** acp/cli/http: model id to request / echo. Never read from the environment. */
@@ -42,6 +45,7 @@ export type UnderstandingModelPort = {
   run(req: {
     prompt: string;
     signal: AbortSignal;
+    budget?: GenerationBudget & { estimatedInputTokens: number };
   }): Promise<UnderstandingModelReply>;
 };
 
@@ -85,18 +89,18 @@ export function buildUnderstandingModelPort(
     const profile = makeProfile(config, "acp");
     return {
       transport: "acp",
-      run: async ({ prompt, signal }) => {
+      run: async ({ prompt, signal, budget }) => {
         let text = "";
         const emit: Emit = (type, chunk) => {
           if (type === "text") text += chunk;
         };
         await acp(
           profile,
-          process.cwd(),
+          config.workspaceDir ?? join(process.cwd(), ".repo-review/runtime/agent-workspace"),
           [{ type: "text", text: prompt }],
           emit,
           signal,
-          { maxOutputChars: 80_000 },
+          { maxOutputChars: budget ? budget.maxOutputTokens * 3 : 80_000, contextBudget: budget },
         );
         return { text, model: profile.model ?? "acp" };
       },
@@ -112,7 +116,7 @@ export function buildUnderstandingModelPort(
         const emit: Emit = (type, chunk) => {
           if (type === "text") text += chunk;
         };
-        await cli(profile, process.cwd(), prompt, emit, signal);
+        await cli(profile, config.workspaceDir ?? join(process.cwd(), ".repo-review/runtime/agent-workspace"), prompt, emit, signal);
         return { text, model: profile.model ?? "cli" };
       },
     };

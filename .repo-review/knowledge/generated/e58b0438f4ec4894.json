@@ -1,0 +1,841 @@
+{
+  "version": 1,
+  "targetId": "apps/server/src/assistant/runtime.ts",
+  "output": {
+    "schema_version": 1,
+    "result_id": "cu_model_adb2083257655007eef3",
+    "role": "module-architect",
+    "status": "generated",
+    "module_responsibilities": [
+      "作为 Web 与 Lark 共用的主助手运行时，统一编排对话轮次、上下文组装、证据检索、模型调用、受治理的任务创建、结果持久化、取消、重试与崩溃恢复。",
+      "在模型边界外执行可见性、引用、用户意图和写入治理校验，使模型只能基于运行时提供的证据回答，且不能自行取得写权限。",
+      "维护每个会话的串行执行链；新消息会中断同一会话中较早的在途轮次，不同会话则由各自的链独立处理。",
+      "将模型不可用、普通模型错误、取消和超时映射为不同的轮次状态或降级结果。"
+    ],
+    "boundaries": [
+      "上游边界是调用 turn、cancelTurn、retryTurn、recoverUnfinishedTurns 和 shutdown 的 Web、Lark 或宿主生命周期代码；传输层事件标识仅作为投递幂等与任务提案幂等的输入。",
+      "对话状态边界由 ConversationRouter 承担；本模块负责编排 enqueue、start、complete、pending、failed、cancelled 等状态转换。",
+      "模型边界由注入的 AssistantModelPort 隔离；本模块传入会话历史、可见证据、可见性和所有者纠正，并接收自然语言答复、引用及结构化工具请求。",
+      "检索边界优先使用注入的 RetrievalPort，未注入时退回 Store.search；候选项仍需通过 Store.evidence 补全并接受可见性过滤。",
+      "写入边界由 MemoryService.evaluate 执行治理；本模块只在确定性意图检测通过后提交 create_task 提案，并通过 application_receipts 判断任务工具是否已经提交。",
+      "反馈边界由 FeedbackService.recall 提供按会话限定的所有者纠正；读取失败被折叠为空上下文。",
+      "默认可见性策略只允许私聊证据；群聊若未注入基于来源和范围的策略，则拒绝全部证据。"
+    ],
+    "key_flows": [
+      {
+        "name": "新轮次入队与同会话抢占",
+        "description": "turn 先确认会话存在并持久化输入，以 transportEventId 去重；重复投递直接返回已有轮次。非重复输入会中断同一会话的旧控制器、取消其运行中轮次，并把新执行追加到该会话的 Promise 链。",
+        "node_ids": [
+          "sym_87fd735a4facc455e5b0e407",
+          "sym_45357f4e5aaaac0e4c9411a4",
+          "sym_c50e294a38c0ce8477b8903b",
+          "sym_1b5bbaffb9c1c7cd6f57fc39",
+          "sym_2a6febdd9e935c368209f10a",
+          "sym_94e6cb45ce2e41660ec95ddd"
+        ]
+      },
+      {
+        "name": "上下文组装与模型生成",
+        "description": "executeTurn 读取本会话最近的已完成轮次，合并上一轮选中证据与本轮检索证据，读取会话范围内的所有者纠正，然后在合并取消信号和硬超时约束下调用模型。",
+        "node_ids": [
+          "sym_3fef0ce78e11089129d50aa4",
+          "sym_cad57b686c4ce438361e8d7a",
+          "sym_400ccca6110a1517ec256de7",
+          "sym_b0719d6f47ff056f9f1224f3",
+          "sym_63cce2dcce6651a11ba75022",
+          "sym_57220f96f5a8eac4dcbf262c",
+          "sym_cf6b9847e57453645a0e2c00",
+          "sym_dbd05319048f7eda69462bdd",
+          "sym_59ed07a3f01f8b7250c7d4f5"
+        ]
+      },
+      {
+        "name": "证据检索与可见性收口",
+        "description": "检索优先通过 RetrievalPort 获取候选 fragmentId，再从 Store 读取完整 revision 和 fragment；旧调用方可退回 Store.search。无论来源为何，证据都经过统一的可见性判定，群聊默认无证据。",
+        "node_ids": [
+          "sym_400ccca6110a1517ec256de7",
+          "sym_3b7037d3bb457fe27d61445a",
+          "sym_1c51bb64d179cb670f03a81e",
+          "sym_b4091745003b58bbfa431682",
+          "sym_b0ea3c9afdf39bd9c1b9f70e",
+          "sym_34f922f74f8b639658794f15"
+        ]
+      },
+      {
+        "name": "任务工具治理",
+        "description": "运行时先用固定模式判断用户是否明确要求记录或分配任务；咨询型输入会拒绝模型发出的 create_task。通过意图门后，运行时校验引用，必要时把所有者本轮原话捕获为证据，再把提案交给 MemoryService.evaluate，并根据治理回执生成工具动作和面向用户的最终说明。",
+        "node_ids": [
+          "sym_a98938e24ac7ee8fbac5a168",
+          "sym_8af1f712e8a8dfd779e66d4c",
+          "sym_696b9522a4d57915d89b1ac7",
+          "sym_9ffb1f518e2c5a5a0c299e78",
+          "sym_12b4d0add7ca94225314d964",
+          "sym_c2063d8a78dce17ed20cf9cc",
+          "sym_4f92ef8415b224e829fff063",
+          "sym_9a82d651be6e07a8fd8aed84",
+          "sym_2cada9d35c67706cbe6b54ef",
+          "sym_22064126a843c03e7fdb6027"
+        ]
+      },
+      {
+        "name": "引用约束与轮次提交",
+        "description": "模型返回的 citationIds 会被限制在本轮实际提供的证据集合内；只有匹配证据进入 selectedEvidence。最终持久化前再次检查取消信号，随后提交答案、证据、工具动作和降级标记。",
+        "node_ids": [
+          "sym_5a9c5d5d820931c6c418f737",
+          "sym_a37f89f6819015379e9f931f",
+          "sym_9cb9573e2037006cac448091",
+          "sym_4076d110297d39f53a623add",
+          "sym_3fef0ce78e11089129d50aa4"
+        ]
+      },
+      {
+        "name": "重试与崩溃恢复",
+        "description": "retryTurn 只重跑 pending 轮次；recoverUnfinishedTurns 扫描 pending 或 running 轮次。两条路径都会先查询真实 application_receipts：已有提交回执时直接补齐完成状态，否则重新执行轮次。",
+        "node_ids": [
+          "sym_54bd72bede6f8d43e0298617",
+          "sym_32bce85970fe37208866e7e4",
+          "sym_e5ee7ff696fdc10564bb33f5",
+          "sym_5a298f2703813eb3febc9958",
+          "sym_bd93ff1e9a055047cacb55cd"
+        ]
+      },
+      {
+        "name": "取消与关闭",
+        "description": "公开取消入口会中断对应会话的在途控制器并标记指定轮次；shutdown 会中断所有在途控制器，将各会话仍为 running 或 pending 的轮次标记为取消，然后清空内存状态。",
+        "node_ids": [
+          "sym_3b93142ccf33ca6504630bd2",
+          "sym_782f7d2251fc99a1fa3d5244",
+          "sym_45cb88c0755fd63a00c8f10b",
+          "sym_59ed07a3f01f8b7250c7d4f5"
+        ]
+      }
+    ],
+    "entry_points": [
+      "AssistantRuntime 构造函数：注入 Store、AssistantModelPort，以及可选的 MemoryService、FeedbackService、RetrievalPort、可见性策略和预算配置。",
+      "turn：接受会话标识、用户文本、可选传输事件标识和外部取消信号，执行或复用一个轮次。",
+      "cancelTurn：取消指定轮次。",
+      "retryTurn：重试仍处于 pending 的指定轮次。",
+      "recoverUnfinishedTurns：在启动或故障恢复阶段处理未完成轮次。",
+      "shutdown：终止全部在途工作并持久化取消状态。",
+      "detectTaskIntent：供模块外部复用的确定性任务意图判断入口。",
+      "conversations getter：暴露内部 ConversationRouter，供宿主访问会话能力。"
+    ],
+    "exit_points": [
+      "AssistantModelPort.generate：发送受限的历史、证据、可见性和纠正上下文，接收回答、引用和工具请求。",
+      "ConversationRouter：读写会话、轮次、目标、取消、pending、失败和完成状态。",
+      "RetrievalPort.searchSources 或 Store.search：获取证据候选。",
+      "Store.evidence：把 fragmentId 补全为带来源修订的证据。",
+      "FeedbackService.recall：读取当前会话范围内的所有者纠正。",
+      "Store.capture：在明确的直接任务交办缺少当前引用时，保存所有者原话为证据。",
+      "MemoryService.evaluate：对任务创建提案执行服务端治理并返回应用回执。",
+      "Store.db 的 application_receipts 查询：用于重试和恢复阶段识别已经提交的工具写入。"
+    ],
+    "risks_and_limits": [
+      "任务意图判断依赖有限的中英文正则模式；它是确定性安全门，但无法覆盖所有自然语言表达，也可能把含咨询词尾的真实交办判为咨询。",
+      "未注入可见性策略时，群聊证据全部拒绝；这是安全默认值，也意味着群聊回答可能缺少本可用的上下文。",
+      "未注入 RetrievalPort 时仍存在旧式 Store.search 路径，因此实际检索质量和统一检索合同取决于宿主是否完成注入。",
+      "FeedbackService 读取异常和直接证据 capture 异常均被静默吞掉，调用方无法从轮次结果区分没有数据与依赖故障。",
+      "模型明确不可用时轮次保持 pending；其他模型异常则生成固定的中文降级回答并完成轮次，两类失败的恢复语义不同。",
+      "恢复循环捕获重新执行的全部异常并继续，只通过计数返回结果；失败细节不在该返回值中呈现。",
+      "任务提案在有 transportEventId 时具有稳定标识；没有该标识时使用随机 UUID，因此跨调用的提案级幂等依赖 MemoryService 自身的摘要去重。",
+      "上一轮工作上下文只取最近一个包含 selectedEvidence 的已完成轮次，并受可见性重新过滤；更早或未被引用的证据不会进入该通道。",
+      "当前快照只展示运行时与邻接接口的使用点，未提供 ConversationRouter、RetrievalPort、FeedbackService 和 MemoryService.evaluate 的完整实现，无法证明其事务性、并发隔离或底层授权细节。"
+    ],
+    "claims": [
+      {
+        "text": "AssistantRuntime 是 Web 与 Lark 共用的单一主助手编排层，负责上下文、只读检索、受治理工具执行、轮次持久化和降级，并通过注入端口访问模型。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_b3f12bfcc7505145c5ab7edb",
+          "sym_5ead685234bc32830f4a4f69",
+          "sym_cf6b9847e57453645a0e2c00"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_bb43e5a99316a8eb9b39b608",
+          "ev_567d2287da2d57f2f4323cb7"
+        ]
+      },
+      {
+        "text": "turn 在调用模型前先持久化轮次，并用 transportEventId 识别重复投递；同一会话的新输入会中断旧输入并串行追加执行。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_87fd735a4facc455e5b0e407",
+          "sym_45357f4e5aaaac0e4c9411a4",
+          "sym_c50e294a38c0ce8477b8903b",
+          "sym_1b5bbaffb9c1c7cd6f57fc39"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "模型输入只包含当前会话的有限历史、经过可见性过滤的证据、会话可见性以及按会话读取的所有者纠正。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_3fef0ce78e11089129d50aa4",
+          "sym_cad57b686c4ce438361e8d7a",
+          "sym_57220f96f5a8eac4dcbf262c",
+          "sym_eaa78ff48f74cbc9dd01ee76",
+          "sym_cf6b9847e57453645a0e2c00"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_bb43e5a99316a8eb9b39b608"
+        ]
+      },
+      {
+        "text": "检索优先走 RetrievalPort，未注入时退回 Store.search；两条路径都通过 Store.evidence 补全证据并执行统一可见性过滤。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_400ccca6110a1517ec256de7",
+          "sym_3b7037d3bb457fe27d61445a",
+          "sym_1c51bb64d179cb670f03a81e",
+          "sym_b4091745003b58bbfa431682"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_bb43e5a99316a8eb9b39b608"
+        ]
+      },
+      {
+        "text": "默认可见性策略允许私聊证据而拒绝群聊中的全部证据，群聊需要宿主注入实际的来源与范围策略。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_b0ea3c9afdf39bd9c1b9f70e",
+          "sym_b4091745003b58bbfa431682"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "任务创建采用两级约束：先由 detectTaskIntent 判断用户是否明确交办，再由 governCreateTask 把允许的请求提交给 MemoryService；模型自身不能授予写权限。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_a98938e24ac7ee8fbac5a168",
+          "sym_9ffb1f518e2c5a5a0c299e78",
+          "sym_12b4d0add7ca94225314d964",
+          "sym_2cada9d35c67706cbe6b54ef"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_bb43e5a99316a8eb9b39b608",
+          "ev_08c918beae79d0ff6d8753bb"
+        ]
+      },
+      {
+        "text": "咨询或非明确交办输入会拒绝 create_task；若模型答复声称已创建任务，运行时会在最终回答中追加未创建说明。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_a98938e24ac7ee8fbac5a168",
+          "sym_696b9522a4d57915d89b1ac7",
+          "sym_e7ae0d603e5fcb076d565433",
+          "sym_22064126a843c03e7fdb6027"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_0388fecdaf3967e333aaa1ed"
+        ]
+      },
+      {
+        "text": "明确的所有者直接交办若没有当前引用，运行时会尝试将本轮用户原话捕获为 manual 来源，并把生成的 fragment 与 revision 作为任务提案证据。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_a6ae6b37be7d0489464bfc48",
+          "sym_305c21c1bada55f1c6251ce9",
+          "sym_9a82d651be6e07a8fd8aed84",
+          "sym_13015ae64b2211b04eb17f64",
+          "sym_2cada9d35c67706cbe6b54ef"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_0388fecdaf3967e333aaa1ed",
+          "ev_78a3e494d45c9afc23ab9750"
+        ]
+      },
+      {
+        "text": "模型引用会与运行时实际提供的 fragmentId 集合求交，只有通过该约束的证据会作为 selectedEvidence 持久化。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_5a9c5d5d820931c6c418f737",
+          "sym_a37f89f6819015379e9f931f",
+          "sym_9cb9573e2037006cac448091"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_78a3e494d45c9afc23ab9750"
+        ]
+      },
+      {
+        "text": "取消信号由外部信号、内部控制器和轮次超时合并；工具治理前与最终持久化前均设置取消栅栏。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_59ed07a3f01f8b7250c7d4f5",
+          "sym_4076d110297d39f53a623add",
+          "sym_dbd05319048f7eda69462bdd",
+          "sym_3fef0ce78e11089129d50aa4",
+          "sym_45cb88c0755fd63a00c8f10b"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "ModelUnavailableError 会把轮次恢复为 pending 以便稍后重试；取消或超时会把轮次标记为 cancelled；其他模型异常会产生固定降级回答。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_1431a8d650c91aaa9101d7ae",
+          "sym_45cb88c0755fd63a00c8f10b",
+          "sym_36b2abfb72e06f4dd9a85a70",
+          "sym_e890289930184c967aed1784",
+          "sym_3fef0ce78e11089129d50aa4"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_191ffe6babed08cfd03d3674",
+          "ev_96517101bd9407d1dcf83229"
+        ]
+      },
+      {
+        "text": "retryTurn 与 recoverUnfinishedTurns 都以 application_receipts 的真实记录作为已提交判断，而不只依赖轮次内存中的 toolActions。",
+        "kind": "raw_fact",
+        "node_ids": [
+          "sym_e5ee7ff696fdc10564bb33f5",
+          "sym_54bd72bede6f8d43e0298617",
+          "sym_32bce85970fe37208866e7e4",
+          "sym_5a298f2703813eb3febc9958"
+        ],
+        "edge_ids": [],
+        "evidence_ids": []
+      },
+      {
+        "text": "固定正则构成的任务意图检测是安全边界中的启发式组件，因此其语言覆盖率与误判率是该模块的固有限制。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_8af1f712e8a8dfd779e66d4c",
+          "sym_696b9522a4d57915d89b1ac7",
+          "sym_a98938e24ac7ee8fbac5a168"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_0388fecdaf3967e333aaa1ed"
+        ]
+      },
+      {
+        "text": "当前实现遵守本地模型非必需的设计方向：模型通过可配置端口注入，明确不可用时保留输入并允许之后恢复，而不是要求本地模型始终存在。",
+        "kind": "interpretation",
+        "node_ids": [
+          "sym_cf6b9847e57453645a0e2c00",
+          "sym_1431a8d650c91aaa9101d7ae",
+          "sym_54bd72bede6f8d43e0298617",
+          "sym_32bce85970fe37208866e7e4"
+        ],
+        "edge_ids": [],
+        "evidence_ids": [
+          "ev_96517101bd9407d1dcf83229",
+          "ev_cee502f7c47f20b2d1b01095",
+          "ev_191ffe6babed08cfd03d3674"
+        ]
+      }
+    ],
+    "referenced_node_ids": [
+      "sym_34f922f74f8b639658794f15",
+      "sym_1431a8d650c91aaa9101d7ae",
+      "sym_45cb88c0755fd63a00c8f10b",
+      "sym_cf6b9847e57453645a0e2c00",
+      "sym_b0ea3c9afdf39bd9c1b9f70e",
+      "sym_8af1f712e8a8dfd779e66d4c",
+      "sym_696b9522a4d57915d89b1ac7",
+      "sym_a98938e24ac7ee8fbac5a168",
+      "sym_b3f12bfcc7505145c5ab7edb",
+      "sym_5ead685234bc32830f4a4f69",
+      "sym_87fd735a4facc455e5b0e407",
+      "sym_3b93142ccf33ca6504630bd2",
+      "sym_e5ee7ff696fdc10564bb33f5",
+      "sym_54bd72bede6f8d43e0298617",
+      "sym_782f7d2251fc99a1fa3d5244",
+      "sym_32bce85970fe37208866e7e4",
+      "sym_2a6febdd9e935c368209f10a",
+      "sym_59ed07a3f01f8b7250c7d4f5",
+      "sym_4076d110297d39f53a623add",
+      "sym_3fef0ce78e11089129d50aa4",
+      "sym_dbd05319048f7eda69462bdd",
+      "sym_400ccca6110a1517ec256de7",
+      "sym_63cce2dcce6651a11ba75022",
+      "sym_b0719d6f47ff056f9f1224f3",
+      "sym_1c51bb64d179cb670f03a81e",
+      "sym_b4091745003b58bbfa431682",
+      "sym_12b4d0add7ca94225314d964",
+      "sym_94e6cb45ce2e41660ec95ddd",
+      "sym_45357f4e5aaaac0e4c9411a4",
+      "sym_c50e294a38c0ce8477b8903b",
+      "sym_1b5bbaffb9c1c7cd6f57fc39",
+      "sym_cad57b686c4ce438361e8d7a",
+      "sym_57220f96f5a8eac4dcbf262c",
+      "sym_eaa78ff48f74cbc9dd01ee76",
+      "sym_3b7037d3bb457fe27d61445a",
+      "sym_9ffb1f518e2c5a5a0c299e78",
+      "sym_c2063d8a78dce17ed20cf9cc",
+      "sym_4f92ef8415b224e829fff063",
+      "sym_9a82d651be6e07a8fd8aed84",
+      "sym_2cada9d35c67706cbe6b54ef",
+      "sym_22064126a843c03e7fdb6027",
+      "sym_5a9c5d5d820931c6c418f737",
+      "sym_a37f89f6819015379e9f931f",
+      "sym_9cb9573e2037006cac448091",
+      "sym_bd93ff1e9a055047cacb55cd",
+      "sym_e7ae0d603e5fcb076d565433",
+      "sym_a6ae6b37be7d0489464bfc48",
+      "sym_305c21c1bada55f1c6251ce9",
+      "sym_13015ae64b2211b04eb17f64",
+      "sym_36b2abfb72e06f4dd9a85a70",
+      "sym_e890289930184c967aed1784",
+      "sym_5a298f2703813eb3febc9958"
+    ],
+    "referenced_edge_ids": [],
+    "evidence_refs": [
+      {
+        "evidence_id": "ev_bb43e5a99316a8eb9b39b608",
+        "selector": null,
+        "note": "声明 AssistantRuntime 的产品角色、上下文与检索职责、MemoryService 治理边界以及模型端口注入方式。"
+      },
+      {
+        "evidence_id": "ev_191ffe6babed08cfd03d3674",
+        "selector": null,
+        "note": "声明 ModelUnavailableError 所代表的配置或传输不可用场景及诚实降级目标。"
+      },
+      {
+        "evidence_id": "ev_96517101bd9407d1dcf83229",
+        "selector": null,
+        "note": "规定模型应可配置且不应要求本地 LLM。"
+      },
+      {
+        "evidence_id": "ev_cee502f7c47f20b2d1b01095",
+        "selector": null,
+        "note": "再次规定本地模型与本地语义权重均非当前运行时的必需依赖。"
+      },
+      {
+        "evidence_id": "ev_0388fecdaf3967e333aaa1ed",
+        "selector": null,
+        "note": "规定捕获内容是数据而非工具指令，支持运行时在模型之外执行意图和权限治理。"
+      },
+      {
+        "evidence_id": "ev_567d2287da2d57f2f4323cb7",
+        "selector": null,
+        "note": "显示 LarkRuntimeHost 持有可选 AssistantRuntime，证明 Lark 宿主与该模块的邻接关系。"
+      },
+      {
+        "evidence_id": "ev_08c918beae79d0ff6d8753bb",
+        "selector": null,
+        "note": "显示 MemoryService 的服务类与 Store、策略版本、自动应用上限和所有者配置边界。"
+      },
+      {
+        "evidence_id": "ev_78a3e494d45c9afc23ab9750",
+        "selector": null,
+        "note": "规定不可变修订、固定 fragment ID，以及派生答案不得成为独立证据。"
+      }
+    ],
+    "unknowns": [
+      "快照未提供 ConversationRouter 的实现，无法验证轮次状态转换是否位于单一数据库事务内。",
+      "快照未提供 RetrievalPort、Store.search 与 Store.evidence 的完整实现，无法判断排序、召回质量、索引一致性或候选上限之外的行为。",
+      "快照仅展示 MemoryService 类声明和调用点，无法证明 evaluate 的具体策略、事务边界、权限校验及摘要去重算法。",
+      "快照未给出 FeedbackService.recall 的数据模型与授权实现，无法验证 owner-scoped 约束是否由存储层强制。",
+      "快照未提供 AssistantModelPort 的实际 ACP 适配器，无法验证模型和 effort 能力发现、拒绝不支持设置及传输取消的实际效果。",
+      "快照没有测试结果或运行日志，无法确认超时、抢占、崩溃窗口和重复投递路径已通过真实行为验证。",
+      "快照未说明 Web 调用该运行时的具体适配入口，也未展示 HTTP 取消与重试路由。",
+      "提供的检索 tokenize 文档说明关键词切分策略，但无法确认当前注入的 RetrievalPort 必然使用该实现。"
+    ],
+    "confidence": 0.94,
+    "model": "gpt-5.6-sol",
+    "prompt_digest": "78fbe594305367b9e5d4fffb5d8f52f2329f20ad866e711b026eb7db93fcf76e",
+    "schema_digest": "3d0e2d49fcb37c99ccab411258db1be51cd05d10a1ea46b62b4ea7329a1bcb97",
+    "input_digest": "ae9c3164b07ebed2d22c0070b1e909b0a97ae29eb1709613c333b232ca7a748b",
+    "generated_at": "2026-09-29T10:55:03.575Z",
+    "seed": false,
+    "verified_by_agent": false,
+    "verified_by": null
+  },
+  "dependencies": [
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "hash": "e2583180ee84fb6b7161d3a549f8005e2b40578ed18d938b4f853dccd996f7a6"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_0388fecdaf3967e333aaa1ed",
+      "hash": "566157281f1eba5a92466be65972a0be43ae79eaa48f41504b43d0b08d8f2212"
+    },
+    {
+      "path": "apps/server/src/memory/service.ts",
+      "evidenceId": "ev_08c918beae79d0ff6d8753bb",
+      "hash": "c742db6ff7e140a4ffa65261460c797f9263ae38e97461c95a60795923d8b711"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_191ffe6babed08cfd03d3674",
+      "hash": "b37b3b708e2a45d6035638faf73b67bab9285efe1c7a0969b3cfbc62b7678320"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/realtime.ts",
+      "evidenceId": "ev_21a21a16333d6de9432af75e",
+      "hash": "232b0bc92b041b23355baf4cb50303c5176cbc5dc362f2ad082f73cf39851e65"
+    },
+    {
+      "path": "apps/web/src/ReviewApp.vue",
+      "evidenceId": "ev_306d08b85430d662bc61be3b",
+      "hash": "abfc5be51936f9e4acf046a107449b6a8f12d4fea365ec9a07e65cbb25c71182"
+    },
+    {
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "evidenceId": "ev_41df1edd1a87b50584344891",
+      "hash": "ddb1a7f770944e90c1f18a8eb634d11edd9c73949c50d5871b848341dbe12968"
+    },
+    {
+      "path": "apps/server/src/integrations/lark/runtime.ts",
+      "evidenceId": "ev_567d2287da2d57f2f4323cb7",
+      "hash": "4bb671cc650db73da2e6d50acd0a66a068e76b0870ed0b0c78de47b4476598f2"
+    },
+    {
+      "path": "apps/server/src/review/app.ts",
+      "evidenceId": "ev_5d2b2cd77fb56196fda42bba",
+      "hash": "1ae498b97af2bc8c2960db28d40a3e673654225526cda9ff509d93f632036a37"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_78a3e494d45c9afc23ab9750",
+      "hash": "03414de6d6aa448fe82ab586ebb8d4fede44f074a1c90d7e36b986a2ea24e7e0"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_96517101bd9407d1dcf83229",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_9769617ddfedce1cdacbef66",
+      "hash": "cdc442cfdacbf4b36a0776202b4816d5683f5cff23cc80b320b752f45f2fba02"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "evidenceId": "ev_bb43e5a99316a8eb9b39b608",
+      "hash": "1a0cbb903b83bfa28e22f44d70f291b129c7766170fbd483d880d0201df87e3f"
+    },
+    {
+      "path": "AGENTS.md",
+      "evidenceId": "ev_cee502f7c47f20b2d1b01095",
+      "hash": "2da6aa53935d5b3871fccb8a121910c96f9af3e340294f5ab03212ea4b6901fd"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sym_12b4d0add7ca94225314d964",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.governCreateTask",
+      "kind": "method"
+    },
+    {
+      "id": "sym_13015ae64b2211b04eb17f64",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "allEvidence",
+      "kind": "const"
+    },
+    {
+      "id": "sym_1431a8d650c91aaa9101d7ae",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "ModelUnavailableError",
+      "kind": "class"
+    },
+    {
+      "id": "sym_1b5bbaffb9c1c7cd6f57fc39",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "run",
+      "kind": "function"
+    },
+    {
+      "id": "sym_1c51bb64d179cb670f03a81e",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.enrichEvidence",
+      "kind": "method"
+    },
+    {
+      "id": "sym_22064126a843c03e7fdb6027",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "finalAnswer",
+      "kind": "const"
+    },
+    {
+      "id": "sym_2a6febdd9e935c368209f10a",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.cancelInFlightTurn",
+      "kind": "method"
+    },
+    {
+      "id": "sym_2cada9d35c67706cbe6b54ef",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "result",
+      "kind": "const"
+    },
+    {
+      "id": "sym_305c21c1bada55f1c6251ce9",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "extId",
+      "kind": "const"
+    },
+    {
+      "id": "sym_32bce85970fe37208866e7e4",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.recoverUnfinishedTurns",
+      "kind": "method"
+    },
+    {
+      "id": "sym_34f922f74f8b639658794f15",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantEvidence",
+      "kind": "type"
+    },
+    {
+      "id": "sym_36b2abfb72e06f4dd9a85a70",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "unavailable",
+      "kind": "const"
+    },
+    {
+      "id": "sym_3b7037d3bb457fe27d61445a",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "candidates",
+      "kind": "const"
+    },
+    {
+      "id": "sym_3b93142ccf33ca6504630bd2",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.cancelTurn",
+      "kind": "method"
+    },
+    {
+      "id": "sym_3fef0ce78e11089129d50aa4",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.executeTurn",
+      "kind": "method"
+    },
+    {
+      "id": "sym_400ccca6110a1517ec256de7",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.retrieveEvidence",
+      "kind": "method"
+    },
+    {
+      "id": "sym_4076d110297d39f53a623add",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.assertNotCancelled",
+      "kind": "method"
+    },
+    {
+      "id": "sym_45357f4e5aaaac0e4c9411a4",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "enqueued",
+      "kind": "const"
+    },
+    {
+      "id": "sym_45cb88c0755fd63a00c8f10b",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "TurnCancelledError",
+      "kind": "class"
+    },
+    {
+      "id": "sym_4f92ef8415b224e829fff063",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "contextCited",
+      "kind": "const"
+    },
+    {
+      "id": "sym_54bd72bede6f8d43e0298617",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.retryTurn",
+      "kind": "method"
+    },
+    {
+      "id": "sym_57220f96f5a8eac4dcbf262c",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "evidence",
+      "kind": "const"
+    },
+    {
+      "id": "sym_59ed07a3f01f8b7250c7d4f5",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.deriveSignal",
+      "kind": "method"
+    },
+    {
+      "id": "sym_5a298f2703813eb3febc9958",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "row",
+      "kind": "const"
+    },
+    {
+      "id": "sym_5a9c5d5d820931c6c418f737",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "allowed",
+      "kind": "const"
+    },
+    {
+      "id": "sym_5ead685234bc32830f4a4f69",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.constructor",
+      "kind": "method"
+    },
+    {
+      "id": "sym_63cce2dcce6651a11ba75022",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.readScopedCorrections",
+      "kind": "method"
+    },
+    {
+      "id": "sym_696b9522a4d57915d89b1ac7",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "CONSULTATION_PATTERNS",
+      "kind": "const"
+    },
+    {
+      "id": "sym_782f7d2251fc99a1fa3d5244",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.shutdown",
+      "kind": "method"
+    },
+    {
+      "id": "sym_87fd735a4facc455e5b0e407",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.turn",
+      "kind": "method"
+    },
+    {
+      "id": "sym_8af1f712e8a8dfd779e66d4c",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "TASK_INTENT_PATTERNS",
+      "kind": "const"
+    },
+    {
+      "id": "sym_94e6cb45ce2e41660ec95ddd",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.toResult",
+      "kind": "method"
+    },
+    {
+      "id": "sym_9a82d651be6e07a8fd8aed84",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "rev",
+      "kind": "const"
+    },
+    {
+      "id": "sym_9cb9573e2037006cac448091",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "selectedEvidence",
+      "kind": "const"
+    },
+    {
+      "id": "sym_9ffb1f518e2c5a5a0c299e78",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "intent",
+      "kind": "const"
+    },
+    {
+      "id": "sym_a37f89f6819015379e9f931f",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "citationIds",
+      "kind": "const"
+    },
+    {
+      "id": "sym_a6ae6b37be7d0489464bfc48",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "directEvidence",
+      "kind": "const"
+    },
+    {
+      "id": "sym_a98938e24ac7ee8fbac5a168",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "detectTaskIntent",
+      "kind": "function"
+    },
+    {
+      "id": "sym_b0719d6f47ff056f9f1224f3",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.priorWorkingContext",
+      "kind": "method"
+    },
+    {
+      "id": "sym_b0ea3c9afdf39bd9c1b9f70e",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "VisibilityPolicy",
+      "kind": "type"
+    },
+    {
+      "id": "sym_b3f12bfcc7505145c5ab7edb",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime",
+      "kind": "class"
+    },
+    {
+      "id": "sym_b4091745003b58bbfa431682",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.isVisible",
+      "kind": "method"
+    },
+    {
+      "id": "sym_bd93ff1e9a055047cacb55cd",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "unfinished",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c2063d8a78dce17ed20cf9cc",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "cited",
+      "kind": "const"
+    },
+    {
+      "id": "sym_c50e294a38c0ce8477b8903b",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "prior",
+      "kind": "const"
+    },
+    {
+      "id": "sym_cad57b686c4ce438361e8d7a",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "priorTurns",
+      "kind": "const"
+    },
+    {
+      "id": "sym_cf6b9847e57453645a0e2c00",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantModelPort",
+      "kind": "type"
+    },
+    {
+      "id": "sym_dbd05319048f7eda69462bdd",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.withTimeout",
+      "kind": "method"
+    },
+    {
+      "id": "sym_e5ee7ff696fdc10564bb33f5",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "AssistantRuntime.hasCommittedReceipt",
+      "kind": "method"
+    },
+    {
+      "id": "sym_e7ae0d603e5fcb076d565433",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "taskRejectedReason",
+      "kind": "const"
+    },
+    {
+      "id": "sym_e890289930184c967aed1784",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "degraded",
+      "kind": "const"
+    },
+    {
+      "id": "sym_eaa78ff48f74cbc9dd01ee76",
+      "path": "apps/server/src/assistant/runtime.ts",
+      "qualifiedName": "trustedContext",
+      "kind": "const"
+    }
+  ]
+}

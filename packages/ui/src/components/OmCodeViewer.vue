@@ -14,6 +14,7 @@ export type CodeRangeMark = {
 const props = defineProps<{
   code: string;
   language?: string;
+  startLine?: number;
   anchorLine?: number;
   highlightLines?: number[];
   ranges?: CodeRangeMark[];
@@ -29,6 +30,7 @@ const root = ref<HTMLElement>();
 const flashed = ref(false);
 
 const lines = () => props.code.split("\n");
+const lineNumber = (i: number) => (props.startLine ?? 1) + i;
 let generation = 0;
 watch(() => [props.code, props.language] as const, async ([code, language]) => {
   const current = ++generation;
@@ -78,13 +80,13 @@ function onLineClick(n: number) {
         <tr
           v-for="(line, i) in lines()"
           :key="i"
-          :data-line="i + 1"
-          :class="{ hit: isHighlighted(i + 1), flash: flashed && anchorLine === i + 1 }"
+          :data-line="lineNumber(i)"
+          :class="{ hit: isHighlighted(lineNumber(i)), flash: flashed && anchorLine === lineNumber(i) }"
         >
-          <td class="gutter" :title="rangeForLine(i + 1)?.title || ('行 ' + (i + 1))">
-            <span class="ln">{{ i + 1 }}</span>
+          <td class="gutter" :title="rangeForLine(lineNumber(i))?.title || ('行 ' + lineNumber(i))">
+            <span class="ln">{{ lineNumber(i) }}</span>
           </td>
-          <td class="code" @click="onLineClick(i + 1)">
+          <td class="code" @click="onLineClick(lineNumber(i))">
             <code
               v-html="hl[i + 1] !== undefined ? hl[i + 1] : escapeHtml(line)"
             ></code>

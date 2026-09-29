@@ -16,6 +16,8 @@ agents = ["universal", "claude-code"]
 [tasks]
 dev = "pnpm run dev"
 "dev:review" = "pnpm run dev:review"
+"review:build" = "pnpm exec tsx scripts/review-wiki.ts"
+"review:generate" = "pnpm exec tsx scripts/review-wiki.ts --generate"
 build = "pnpm run build"
 test = "pnpm run test"
 typecheck = "pnpm run typecheck"

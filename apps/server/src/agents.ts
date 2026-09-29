@@ -26,6 +26,7 @@ export type AcpOptions = {
   expectedSkills?: string[];
   skillDiscoveryTimeoutMs?: number;
   maxOutputChars?: number;
+  contextBudget?: { estimatedInputTokens: number; maxOutputTokens: number; contextReserveTokens: number };
   onRuntimeRequest?: (request: RuntimeRequestEvent) => void | Promise<void>;
 };
 const env = () =>
@@ -69,6 +70,17 @@ function launch(profile: AgentProfile, args: string[], cwd: string) {
 export function optionValues(option: SessionConfigOption) {
   if (option.type !== "select") return [];
   return option.options.flatMap((o) => ("options" in o ? o.options : [o]));
+}
+export function assertContextBudget(configOptions: SessionConfigOption[], budget: NonNullable<AcpOptions["contextBudget"]>): number | null {
+  const option = configOptions.find(o => o.category === "model" || o.id === "model");
+  if (!option) return null;
+  const selected = optionValues(option).find(o => o.value === option.currentValue);
+  const metadata = selected?._meta as { trae?: { contextWindow?: number } } | undefined;
+  const contextWindow = metadata?.trae?.contextWindow;
+  if (!contextWindow || !Number.isFinite(contextWindow)) return null;
+  const required = budget.estimatedInputTokens + budget.maxOutputTokens + budget.contextReserveTokens;
+  if (required > contextWindow) throw new Error(`Model context budget exceeded: estimated input + output + reserve ${required} > discovered context window ${contextWindow}`);
+  return contextWindow;
 }
 export async function acp(
   profile: AgentProfile,
@@ -312,6 +324,7 @@ export async function acp(
       configOptions = reply.configOptions;
     }
     if (blocks) {
+      if (options.contextBudget) assertContextBudget(configOptions, options.contextBudget);
       if (
         blocks.some((b) => b.type === "image") &&
         !initialized.agentCapabilities?.promptCapabilities?.image

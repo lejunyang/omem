@@ -126,7 +126,8 @@ function isExcluded(rel: string): boolean {
 function classify(rel: string): ReviewCategory | null {
   if (isExcluded(rel)) return null;
   // Tests are implementation evidence: split per test case under "architecture".
-  if (rel.startsWith("apps/") && rel.endsWith(".ts")) return "architecture";
+  if (/^(apps|packages|scripts)\//.test(rel) && /\.(ts|tsx|vue|mjs|js|json|toml|md)$/.test(rel)) return "architecture";
+  if (["osdk.toml", "package.json"].includes(rel)) return "architecture";
   if (rel.startsWith("packages/") && rel.endsWith(".ts")) return "architecture";
   if (
     rel.startsWith("apps/web/") &&
@@ -237,13 +238,13 @@ function splitByBoundary(text: string, boundary: RegExp): string[] {
   const hasContent = () => current.some((l) => l.trim());
   for (const line of lines) {
     if (boundary.test(line) && hasContent()) {
-      fragments.push(current.join("\n").trim());
+      fragments.push(current.join("\n") + "\n");
       current = [line];
     } else {
       current.push(line);
     }
   }
-  if (hasContent()) fragments.push(current.join("\n").trim());
+  if (current.length) fragments.push(current.join("\n"));
   return fragments.filter((f) => f.length > 0);
 }
 
@@ -415,9 +416,9 @@ function headContentHash(store: Store, externalId: string): string | null {
   if (!row) return null;
   try {
     const parsed = JSON.parse(row.body) as {
-      context?: { contentHash?: string };
+      context?: { contentHash?: string; captureFormat?: string };
     };
-    return parsed.context?.contentHash ?? null;
+    return parsed.context?.captureFormat === "verbatim-v1" ? parsed.context.contentHash ?? null : null;
   } catch {
     return null;
   }
@@ -472,11 +473,12 @@ function captureOne(
       : splitMarkdownFragments(text);
   let parts: CaptureInput["parts"];
   if (sections.length > 0 && sections.length <= 1500)
-    parts = sections.map((section) => ({ type: "text" as const, text: section }));
+    parts = sections.flatMap((section) => Array.from({ length: Math.ceil(section.length / 190000) }, (_, i) => ({ type: "text" as const, text: section.slice(i * 190000, (i + 1) * 190000) })));
   else parts = [{ type: "text" as const, text }];
 
   const context: Record<string, unknown> = {
     category,
+    captureFormat: "verbatim-v1",
     filePath: rel,
     gitCommit: snapshot.commit,
     dirty: snapshot.dirty,
@@ -945,8 +947,9 @@ export async function runReviewSync(
     }
 
     const all = collectCandidates(repoRoot);
+    const legacyCapture = store.db.prepare("SELECT 1 FROM revisions r JOIN sources s ON s.head=r.id WHERE s.external_id LIKE 'omem:%' AND json_extract(r.body,'$.context.contentHash') IS NOT NULL AND COALESCE(json_extract(r.body,'$.context.captureFormat'),'') <> 'verbatim-v1' LIMIT 1").get();
 
-    if (fullRescan) {
+    if (fullRescan || legacyCapture) {
       targets = all;
     } else if (prevDirty) {
       targets = all; // last capture was dirty: re-converge to current tree
