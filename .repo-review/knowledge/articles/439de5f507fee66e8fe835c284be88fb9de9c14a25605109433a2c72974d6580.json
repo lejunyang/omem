@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:packages/contracts/src/index.ts",
+    "title": "跨层数据合同与 Code Knowledge 读取端口",
+    "summary": "该文件集中定义采集输入、证据提案、代理运行上下文、集成配置及 Code Knowledge 投影视图，是运行时、存储适配器和 HTTP 层共享的数据边界；它描述数据形状与局部一致性约束，不实现持久化、模型调用或任务编排。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "capture-evidence",
+        "title": "采集与证据基础",
+        "body": "采集合同统一接收文本、图片和 HTTP(S) 链接，并可按 part 保留说话者、事件、时间、回复、转发及原始或派生属性；`Revision` 与 `Fragment` 在这里仅是数据形状，并无只读或存储层不可变保证。[[c1]] 批处理提案携带作用域、文本或图像证据、不确定项和派生来源；更新或取代还要求目标标识与预期版本，表达并发更新前提。[[c2]]"
+      },
+      {
+        "key": "agent-boundary",
+        "title": "代理角色与合同层信任隔离",
+        "body": "角色清单约束 profile、提示模板、技能、输出 schema、工具策略、会话隔离和预算，并禁止无工具角色列出允许工具。上下文清单把 `trusted_context` 与 `materials` 分成不同字段，材料至少包含文本或图片。[[c3]] 这提供合同层面的结构性隔离，但 schema 本身不能证明所有下游执行器都不会把材料内容解释为指令；实际执行安全仍需运行时处理规则和测试支撑。"
+      },
+      {
+        "key": "code-projection",
+        "title": "代码知识附加投影",
+        "body": "代码知识类型覆盖仓库、快照、文件、符号、边和理解结果。位置仅对生成它的 head 快照有效，符号可锚定不可变 review Fragment；边记录 parser、seed 或 LLM 来源及 confirmed、candidate、stale、missing 状态。[[c4]] `CodeKnowledgePort` 暴露当前快照、文件、符号、图、理解结果与同步入口；注释明确它们是隔离 review SQLite 的附加读视图，不替代统一材料链。[[c5]] 文件同时定义了投影状态，但没有给出其与运行时理解输出状态的转换。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "多模态采集与来源结构",
+        "reason": "支持多模态输入、逐 part 来源信息，以及 Revision、Fragment 只是类型形状的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 1,
+          "endLine": 146
+        },
+        "quote": "import { z } from \"zod\";\n// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .ob"
+      },
+      {
+        "key": "c2",
+        "label": "证据提案与并发更新约束",
+        "reason": "支持提案作用域、证据、来源，以及更新和取代操作所需的目标与预期版本。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 202,
+          "endLine": 371
+        },
+        "quote": "// Batch 2 contracts use snake_case because they are persisted and exchanged with\n// independent Agent runtimes. They are versioned separately from the HTTP view models.\nexport const batchTwoScopeSchema = z\n  .object({\n    workspace_id: z.string().min(1).max(300),\n    project_id: z.string().min(1).max(300).nullable(),\n"
+      },
+      {
+        "key": "c3",
+        "label": "角色清单与上下文清单",
+        "reason": "支持角色资产和执行策略约束，并证明可信上下文与材料在合同结构中分离。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 672,
+          "endLine": 831
+        },
+        "quote": "export const roleIdSchema = z.enum([\n  \"extractor\",\n  \"verifier\",\n  \"planner\",\n  \"feedback-curator\",\n  \"answerer\",\n  \"material-analyst\", \"code-analyst\", \"conversation-analyst\", \"visual-analyst\",\n  \"knowledge-planner\", \"knowledge-writer\", \"knowledge-verifier\", \"knowledge-refresher\",\n]);\n\nexport const roleManifestSchema "
+      },
+      {
+        "key": "c4",
+        "label": "代码快照、符号、关系与理解状态",
+        "reason": "支持快照局部位置、Fragment 锚点、边的来源和状态，以及理解投影的状态集合。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 891,
+          "endLine": 1015
+        },
+        "quote": "/** 1-based line, 0-based column. Per-snapshot: valid only on the head revision\n * that produced it; not part of any stable identity. */\nexport type CodeRange = { line: number; col: number };\n\nexport type CodeRepository = {\n  repoId: string;\n  rootPath: string;\n  remote: string | null;\n  defaultBranch: string | null;\n "
+      },
+      {
+        "key": "c5",
+        "label": "Code Knowledge 读取端口",
+        "reason": "支持代码知识是附加投影，并说明 HTTP 层可查询文件、符号、图和理解结果及触发同步。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 884,
+          "endLine": 1046
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Code Knowledge domain model (repo-review side projection). See\n// docs/implementation/code-knowledge-design.md. These are plain read/view types;\n// the tables live in the isolated review SQLite side tables and are additive --\n// they neve"
+      }
+    ],
+    "questions": [
+      {
+        "question": "运行时代码理解结果的 seed、generated、verified、failed 和 rejected 如何映射为投影层的 ok、partial、failed、model_unavailable 与 stale？",
+        "why": "材料展示了两套状态集合，但未定义转换；映射不当可能把未复核或被拒绝的结果呈现为可用理解。",
+        "nextStep": "检查写入 CodeUnderstanding 投影的适配器及状态映射测试，确认无模型、验证失败、独立复核和快照过期分别对应的状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "哪些运行时规则和测试保证材料内容始终按非可信数据处理？",
+        "why": "合同只把可信上下文与材料分字段，无法单独约束所有下游执行器如何拼装提示或处理材料。",
+        "nextStep": "检查角色运行器的上下文序列化、提示边界和指令注入测试，并把保证限定到有覆盖的执行路径。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/OmHashRoute.ts",
+      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/components/OmBadge.vue",
+      "digest": "21bbd9ccfbf48a0add0d4cf96e9a8e345c6b7c634b0585a692cb5cc1a01f2909"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/ui/src/trail.ts",
+      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:06:38.605Z",
+    "trace": {
+      "runId": "8f775037-2343-4840-8586-a8d753fbbe36",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "86d7c50dcd116572075ce6f25e7a1d2a2af771465de3d9948c11b4b212714a2f",
+      "contextHash": "8d4020c8ae65750230ab3c98c820d7d76faeb980615083be5d49a5d0e4916e07",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1f6b7fe9f162f8b7053a4c1087fc6a3397d816e0c2d17822a1347413bce1b890",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-07ab-7630-bf68-a92b525c2a5f"
+      ],
+      "usage": {
+        "used": 48971,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 100207,
+          "utf8Bytes": 106603,
+          "estimatedTokens": 35535,
+          "budgetedTokens": 44419,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:07:03.432Z",
+    "trace": {
+      "runId": "2f8a3e0b-8cac-4dcd-9d9e-b4c0d1db53b9",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "82db61fb03d765d6c9509e7a5ab84b4e39f30b0f826f4ac629644bde2a169bdb",
+      "contextHash": "b675445ba277c957fa6f36e08a2a79c823eefc68c1c4c130e8a59e845aaf6f77",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "a909d0c1343308633be720a6fe8b6a7e3bd757bb472dc8a7b642b7dc9f2ca0cc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eec6-c658-7591-b804-15d65b90c621"
+      ],
+      "usage": {
+        "used": 48602,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 107260,
+          "utf8Bytes": 116860,
+          "estimatedTokens": 38954,
+          "budgetedTokens": 48693,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
