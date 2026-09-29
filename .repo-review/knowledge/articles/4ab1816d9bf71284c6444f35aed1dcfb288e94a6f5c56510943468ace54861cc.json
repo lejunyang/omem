@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:docs-interaction-design.md",
+    "title": "docs/interaction-design.md · 模块理解",
+    "summary": "该文档定义以证据阅读为核心的首轮交互架构，串联知识阅读、引用导航、原位追问、变更治理和边界状态；它属于原型设计资料，不代表相应能力已在运行代码中完成。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "role-and-background",
+        "title": "职责与设计背景",
+        "body": "该模块负责描述个人助理的阅读型交互：界面以目录、纸面阅读区和 AI 侧栏组成，用克制的文字层级突出材料、出处与适用范围，并把引擎等内部细节留在诊断页面。页面覆盖知识、来源、变更、能力和搜索，但实施顺序以不中断阅读主链为先。[[c1]]\n\n它是第一轮架构与原型说明，而非当前运行能力清单；原型中的演示状态不能直接视为正式功能已经交付。[[c2]]"
+      },
+      {
+        "key": "evidence-flow",
+        "title": "证据阅读与追问流程",
+        "body": "核心流程从正文附近的引用进入：用户在同一对话框中逐层查看材料，系统保存各层滚动、页签与草稿；遇到循环时提示并允许跳回，每次读取仍独立检查权限和预算。[[c3]] 片段、上下文、反向引用和版本视图共同帮助核对论断，其中历史引用必须固定，不能被新版本静默替换。[[c4]]\n\n局部追问保持原阅读位置，并将模型范围限制在所选片段、直接依据或用户明确授权的范围。回答只能生成带原始依据的候选，经过后续验证后才可能应用，不能自身成为独立证据。[[c5]]"
+      },
+      {
+        "key": "governance-and-relations",
+        "title": "变更治理及跨模块关系",
+        "body": "该设计把阅读界面与知识变更流程连接起来：常规更新按变更集汇总，恢复通过创建新修订实现；若已有后续编辑则重新合并。冲突、过度泛化及不可逆操作进入例外队列，由用户判断而非超时默认同意。[[c6]] 因而本模块既约束前端呈现，也依赖版本、权限、候选验证和变更记录等后端能力共同落实。"
+      },
+      {
+        "key": "progress-and-limits",
+        "title": "进展、边界与验收限制",
+        "body": "异常状态必须保留可核验性：权限不足不得泄露内容，上游失效只能展示注明时间的授权快照，OCR 定位不可靠时不得伪装成精确证据，模型失败也不能把半成品写成知识。[[c7]] 当前原型只验证了原生对话框和主要键盘路径；WCAG 2.2 AA、完整读屏、对比度审计及移动端触控验收仍待完成。[[c8]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "视觉层级与页面结构",
+        "reason": "支持模块以材料阅读为中心、隐藏内部实现细节，并优先保障阅读主链的定位。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 7,
+          "endLine": 36
+        },
+        "quote": "## 1. 视觉和信息层级\n\n主界面保留暗色顶栏、浅灰目录、接近纸张的阅读区、白色 AI 侧栏。衬线标题建立文档阅读感；正文和导航用清晰的无衬线字体。重点由文字层级、边线和引用样式表达，不用彩色仪表盘争抢注意力。\n\n| Token | 值/原则 |\n| --- | --- |\n| 主文字 / 次文字 | `#202020` / `#606060` |\n| 纸面 / 面板 / 分隔线 | `#fafafa` / `#ffffff` / `#e6e6e6` |\n| 主动作 | `#242424` 背景、白字 |\n| 引用 | 浅灰底、深字、细下划线、上标；hover 加深 |\n| 标题字体 | Noto Serif CJK SC / S"
+      },
+      {
+        "key": "c2",
+        "label": "原型文档的实施状态声明",
+        "reason": "说明本文是首轮架构与原型设计，不能作为当前运行代码已实现相关能力的证据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 1,
+          "endLine": 5
+        },
+        "quote": "# 交互设计：围绕证据阅读，而不是围绕管理配置\n\n> 实施更新（2026-09-26）：用户已确认个人助理、服务器/本地运行、Vue 和 CLI/ACP 优先。当前已实现能力见 [实施状态](implementation/status.md)，已确认需求见 [决策记录](decisions.md)，视觉规范见 [根 design.md](../design.md)。下文为第一轮架构/原型设计，不等于当前运行代码。\n\n版本 v0.1 · 2026-09-26。直接打开 [交互原型](prototype/index.html)。原型参考用户 HTML 的黑白灰、三栏阅读和层叠引用语言，重做产品信息架构；没有复用其中未经验证的公司政策或外"
+      },
+      {
+        "key": "c3",
+        "label": "分层引用导航规则",
+        "reason": "解释引用打开、状态恢复、循环处理以及逐次权限和预算检查的主要流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 38,
+          "endLine": 52
+        },
+        "quote": "## 3. 引用交互是整个系统的核心\n\n### 默认呈现\n\n引用贴着它支持或指向的句子显示，不只放在文章尾部。角标在当前文章内编号；固定引用 ID 和版本在协议里，不展示难读的 UUID。段落下方可显示“已支持”“存在分歧”“依据待更新”；不要一律盖“可信”章。\n\n点击引用打开居中弹窗，背景文章保持原滚动位置。头部展示证据路径、当前层号、材料标题、原文版本与时间；正文优先显示被引用的句子及必要上下文；底部有返回、复制片段链接、就这段追问。\n\n### 层级与返回\n\n弹窗引用打开下一层；同一个 dialog 容器仅切换当前材料，避免无限创建 DOM 和焦点陷阱。上一层用露出标题条表示，路径面包屑保留全部访问历史；每一层保留滚动位置、当前"
+      },
+      {
+        "key": "c4",
+        "label": "四类证据视图",
+        "reason": "支持片段、上下文、反向引用和版本共同构成证据核对界面，并要求固定历史引用。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 54,
+          "endLine": 59
+        },
+        "quote": "### 四个证据视图\n\n- **引用片段**：突出被引用的原文；清楚标识明确引用、提炼、支持、历史等关系。\n- **上下文**：展开原段落/页面附近内容，防止断章取义；大文档按块分页。\n- **谁引用了它**：反向引用列表，显示直接引用者；点入仍可继续导航，遇环提示。\n- **版本**：固定历史版和现行版差异，明确“打开新版本”动作；绝不悄悄用新正文替换旧引用。"
+      },
+      {
+        "key": "c5",
+        "label": "原位追问与候选验证",
+        "reason": "解释追问范围、局部会话隔离及生成回答不得直接成为独立证据的约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 61,
+          "endLine": 69
+        },
+        "quote": "## 4. 追问保持原来的阅读位置\n\n正文右侧问答适合文章问题；弹窗里的“就这段追问”在当前弹窗内展开局部问答，整个路径不关闭。选中原文出现轻量“追问选中内容”；按钮可以在 dialog 的顶层正常点击。键盘/触屏无法方便圈选时，底部就这段追问始终可用。\n\n每个追问显示固定的材料和选区。默认范围为本段+直接依据，可选择当前路径或授权知识库；切换范围不改变焦点原文。长链路径只是导航历史，不自动无限扩充模型输入。\n\n问答内容分流式正文、待核对引用、已解析引用、证据不足说明。回答里的引用可以继续打开；再返回，原问答历史仍在。每个节点的局部会话隔离，防止看 A 时把 B 的草稿和回答误当 A 的依据。\n\n“沉淀为候选”创建带原始 evide"
+      },
+      {
+        "key": "c6",
+        "label": "变更恢复与例外队列",
+        "reason": "支持变更集聚合、以新修订恢复、后续编辑重新合并及高风险事项交由用户判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 71,
+          "endLine": 79
+        },
+        "quote": "## 5. 自动变更和例外\n\n首屏不是一排待审批卡。Agent 完成常规更新后进入变更流，用户能看到触发原因、被改内容、受影响引用和操作主体。变更流默认按 ChangeSet 聚合，不为每个底层片段创建一条噪声通知。\n\n恢复先显示具体 before/after 与影响范围，再执行为新修订；如果后续有人编辑过，则需要重新合并，不提供无条件回退。已物理删除/已外发动作不显示可以完全恢复的承诺。\n\n例外队列按需出现：冲突的两份证据、超范围的泛化建议、批量/不可逆动作。每条都给出 Agent 已尝试的补证、可选动作和当前保持的状态。用户可以暂缓，不因超时自动同意。\n\n通知频率建议：常规整理只写事件，重要源变化合并通知，待判断形成摘要。正式默"
+      },
+      {
+        "key": "c7",
+        "label": "异常与不可靠证据状态",
+        "reason": "支持权限、删除、上游失效、版本更新、定位不可靠及模型失败时的界面边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 81,
+          "endLine": 93
+        },
+        "quote": "## 6. 边界状态与无障碍\n\n| 场景 | 界面回应 | 不能做什么 |\n| --- | --- | --- |\n| 材料首次导入中 | 原件可读，显示正在解析/整理及阶段 | 用空白页掩盖已保存数据 |\n| 原文暂无权限 | 根据存在性权限显示通用不可用或申请访问 | 泄露标题、片段或关联计数 |\n| 已删除 | tombstone 与允许展示的删除时间 | 以缓存还原被删除内容 |\n| 上游暂不可用 | 有权限快照+上次同步时间，重试入口 | 声称快照是最新版本 |\n| 原文更新 | 旧引用固定，显式提示新版本 | 自动跳转导致历史答案无法核对 |\n| 锚点/OCR 不可靠 | 显示无法精确定位，可查看原件 | 高亮近似文本并"
+      },
+      {
+        "key": "c8",
+        "label": "无障碍目标与未完成验证",
+        "reason": "记录已验证的主要键盘路径，并支持完整读屏、对比度和移动端验收仍未完成的判断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/interaction-design.md",
+          "startLine": 95,
+          "endLine": 95
+        },
+        "quote": "键盘 Tab 保留在活动 dialog；Esc 返回一层；关闭全部回到起始元素；所有引用可聚焦。状态含文本，不能只靠颜色。生产目标 WCAG 2.2 AA；原型验证了 native dialog 和主要键盘路径，但尚未做完整读屏、对比度自动审计。移动端引用全屏，右侧问答改抽屉/内嵌区域，点击区域正式版按 ≥44px 验收。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "正式版的默认通知频率及“重要源变化”判定规则如何配置？",
+        "why": "材料只提出常规事件、合并通知和待判断摘要的建议分流，并明确正式默认频率仍由用户确认；该选择会影响通知噪声与遗漏风险。",
+        "nextStep": "确定默认频率、免打扰窗口、合并周期和重要变化阈值，并将其转化为可验证的配置要求。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
+        ]
+      },
+      {
+        "question": "WCAG 2.2 AA 将采用哪些浏览器、读屏器和自动审计基线验收？",
+        "why": "现有依据仅确认原型验证了主要键盘路径，尚不能证明完整读屏、对比度和移动端交互达到生产目标。",
+        "nextStep": "制定支持矩阵，并补充焦点恢复、分层对话框、读屏语义、对比度及触控尺寸的可重复测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/interaction-design.md",
+      "digest": "4a83de70b72a03f14d1f1e41a834e6c64462584fb887792b9fe1b03c0b129497"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/interaction-design.md",
+      "digest": "24c479533044e54a6e086de66159602383c8b3c4b86f7c036729a716dd4f9498"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:26:24.803Z",
+    "trace": {
+      "runId": "a761fd56-35ed-45f1-8466-28ae0ef948b0",
+      "roleId": "knowledge-writer",
+      "roleVersion": "1",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "135e8f2a024b8c9fbace334e24b07b5edd607d0b84cad4b2fadfb86a5359008f",
+      "contextHash": "97f43ab3df90615dbaffce70537ff5e0c366fe165b0f3b3bbca49b112d8b950b",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f261288295d1e85bd8eb14805e840964870706db9bf185ea776d751b2d11321a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-writer",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed8-94dd-77f3-941a-af6ba9049dbe"
+      ],
+      "usage": {
+        "used": 22692,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 20167,
+          "utf8Bytes": 32948,
+          "estimatedTokens": 10983,
+          "budgetedTokens": 13729,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:26:31.918Z",
+    "trace": {
+      "runId": "793ebb0a-97ce-47a7-b19d-1e39a99a3b92",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c4d06038ce6d20472a70d197c4caeafab7e94febec70df51dc084eb014d898c2",
+      "contextHash": "38c616f6db4d7137cfe98d94f0308e04e1d74914623341420212e8576cb405a9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "fb50f1bed8dad28e257648d9ec33b144c2ffd149790a5cc1369cc6dc85e2e7f7",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed8-de65-74b0-85c3-30eda4afed20"
+      ],
+      "usage": {
+        "used": 23821,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 23463,
+          "utf8Bytes": 41261,
+          "estimatedTokens": 13754,
+          "budgetedTokens": 17193,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
