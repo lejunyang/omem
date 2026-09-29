@@ -3,76 +3,81 @@
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
     "title": "知识阅读帧与固定引用解析",
-    "summary": "根据 trail 帧类型呈现知识正文、原始材料或引用目标，并在引用不可用时展示关系、原因和明确的降级状态。",
+    "summary": "按帧类型打开知识正文、直接原始材料或固定引用；明确区分直接 source 帧与引用解析后的材料目标，并处理异步竞态、不可用目标和关系说明。",
     "category": "implementation",
     "sections": [
       {
-        "key": "frame-routing",
-        "title": "帧类型与异步解析",
-        "body": "组件把 knowledge 帧交给正文阅读器，把 source 帧交给材料阅读器；citation 帧则从序列化 id 中取 document、revision 和 citation 参数，请求固定引用。generation 计数避免较早请求晚到后覆盖当前帧，成功时还向上层回报可读标题。[[c1]]"
+        "key": "frame-dispatch",
+        "title": "帧解析与直接阅读入口",
+        "body": "组件先把帧 id 解析为 JSON 参数；解析失败时仅退为空对象，尚未主动校验各类帧的必填字段。[[c1]] 模板随后按类型分派：knowledge 帧向正文组件传递文档键以及可选修订、章节；直接 source 帧只传材料键和可选摘要 digest，并继续转发导航与加载事件。[[c3]] 这替代了旧稿中“直接 source 帧传递摘要和行范围”的结论：固定起止行并不来自直接 source 帧。"
       },
       {
-        "key": "citation-presentation",
-        "title": "引用语义与不可用状态",
-        "body": "引用关系被翻译为“支持论点”“实现依据”等人类可读标签，并与引用理由一起显示。若目标不可操作或无法解析，界面保留该引用并说明不可用原因；可用目标则按 article 或 material 分流，材料阅读器同时接收 digest 和精确行号。[[c2]] 该组件负责单帧内容，不包含帧栈、焦点归还或滚动记忆本身。"
+        "key": "citation-resolution",
+        "title": "固定引用的异步解析",
+        "body": "citation 帧依据文档、修订和引用标识请求详情。帧 id 每次变化都会递增 generation，并清空旧引用与错误；只有当前代次的响应才能写回状态，避免快速切换时旧请求覆盖新内容。成功后还会把引用的人类可读标签通知外层。关系类型在本地映射为“支持论点”“实现依据”等说明。[[c2]]"
+      },
+      {
+        "key": "availability-and-routing",
+        "title": "引用目标与不可用状态",
+        "body": "引用解析期间显示等待状态，请求失败则显示“引用不可用”。解析成功后，界面展示关系标签和引用理由；目标不可操作或未解析时明确给出不可用原因。可用的文章目标按文档、修订和章节打开；只有 citation 解析得到的材料目标才会把材料键、digest 与固定 startLine/endLine 一并交给原文组件。[[c3]] 该组件负责前端分派和状态表达，不能单独证明服务端对引用稳定性或权限的校验方式。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识帧解析与请求防竞态",
-        "reason": "支持按帧类型路由、解析 citation 参数以及用 generation 防止过期响应覆盖当前状态。",
-        "relation": "explains",
+        "label": "帧参数解析",
+        "reason": "支持帧 id 的 JSON 解析方式及解析失败时退为空对象的行为，说明当前缺少前置参数校验。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 1,
-          "endLine": 18
+          "startLine": 7,
+          "endLine": 9
         },
-        "quote": "<script setup lang=\"ts\">\nimport { computed, ref, watch } from \"vue\";\nimport { OmBadge, OmEmpty } from \"@omem/ui\";\nimport KnowledgeDocument from \"./KnowledgeDocument.vue\";\nimport KnowledgeSource from \"./KnowledgeSource.vue\";\nimport { knowledgeApi, type Citation, type KnowledgeFrame } from \"./api\";\nconst props = definePr"
+        "quote": "const props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}"
       },
       {
         "key": "c2",
-        "label": "引用理由与目标渲染",
-        "reason": "支持显示人类可读关系、不可用原因，并将文章或材料目标交给对应阅读器。",
+        "label": "引用请求与竞态保护",
+        "reason": "支持 citation 请求参数、代次保护、错误处理、加载通知及关系标签映射的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 10,
+          "endLine": 18
+        },
+        "quote": "const citation = ref<Citation | null>(null), error = ref(\"\");\nlet generation = 0;\nwatch(() => props.frame.id, async () => {\n  const current = ++generation; citation.value = null; error.value = \"\";\n  if (props.frame.kind !== \"citation\") return;\n  try { const c = await knowledgeApi<Citation>(props.prefix, \"/citation?\" + "
+      },
+      {
+        "key": "c3",
+        "label": "阅读组件分派与引用目标路由",
+        "reason": "支持 knowledge、直接 source 与 citation 解析目标之间的参数差异，并证明固定行范围只传给引用解析后的材料目标。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
           "startLine": 20,
-          "endLine": 34
+          "endLine": 30
         },
         "quote": "<template>\n  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event)\" />\n"
       }
     ],
     "questions": [
       {
-        "question": "快速切换帧时，旧请求虽然不会写入状态，但是否需要主动取消以减少资源消耗？",
-        "why": "generation 只阻止过期结果生效，材料没有显示 AbortController 或其他网络取消机制。",
-        "nextStep": "在高延迟环境做快速导航测试；若存在明显冗余请求，再为知识 API 增加可取消信号。",
+        "question": "帧 id 不是合法 JSON，或缺少 document、revision、citation 等必填字段时，是否应在发起请求前显示专门的参数错误？",
+        "why": "解析失败会得到空对象，而 citation 请求仍可能把缺失字段转换成字符串“undefined”；现有实现只呈现最终请求错误，未定义无效深链的预期体验。未知 kind 也会进入引用展示分支，但不会触发 citation 请求，可能长期停留在解析提示。",
+        "nextStep": "补充非法 JSON、缺字段和未知 kind 的组件测试，并决定由帧构造器保证格式，还是由 KnowledgeFrame 统一校验并展示参数错误。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c1",
+          "c2",
+          "c3"
         ]
       }
     ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
-      "digest": "4da0fd6c62ebc6680f8ef9f78780211be16d90afd93a01666bf420473f59bc48"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-sync.test.ts",
-      "digest": "4ad7197425da98dc5d8d37074bcdbc1081617d0088d775e5f5b13d8aa1bd22f4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/role-runtime.test.ts",
-      "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
-    },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
@@ -87,42 +92,22 @@
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
       "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:36.291Z",
+    "at": "2026-09-29T20:56:39.538Z",
     "trace": {
-      "runId": "6abf8da3-3426-4100-b32c-3d2f607d8325",
+      "runId": "a487f611-cf49-4424-8358-f8dd40dd5736",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "dd49223145fa263f6514dabcc321511dcd160a09f174845b2e5ad222b848c42b",
-      "contextHash": "f6f645b2eddc58e0f7bb1fb06053b3d13f7f93ff914ca9f50d23944491b1482a",
+      "promptHash": "31c21b7ab52075f36558aeab37ca899b76557b957fc61d14cc7c62dde75dd4c1",
+      "contextHash": "9967d67af9515bba2de1ae339f6a4f672199106d29bf66cd525c6ce6441d9bb2",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b0100a4e69f67eaae24cfec12e52370c91173a0d3ee4224bc2af05867f25c2da",
+      "fingerprint": "d7f74f96e7c6c8c2e6149def6f949f5a16c08a0e07d7467e2fadb556bae5b4ae",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -135,10 +120,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-211f-75d0-874c-940896d45237"
+        "01a0eef4-5a63-7222-90b6-7cabce9fafac"
       ],
       "usage": {
-        "used": 47761,
+        "used": 20427,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -147,10 +132,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101196,
-          "utf8Bytes": 105217,
-          "estimatedTokens": 35073,
-          "budgetedTokens": 43842,
+          "chars": 23509,
+          "utf8Bytes": 27690,
+          "estimatedTokens": 9230,
+          "budgetedTokens": 11538,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -159,17 +144,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:05:05.871Z",
+    "at": "2026-09-29T20:56:47.162Z",
     "trace": {
-      "runId": "9e4c7091-3fe1-4a79-875d-7f80f6d5979e",
+      "runId": "7071911e-2552-4507-8bc1-16e3c81ca88e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4e3efc47d9edefef51d6e885ae60a6a3299149c3e0a0b54d1dfae77a658014ac",
-      "contextHash": "d4a9ea49aa55f152c53eed85a2471f1f88a11837ee4a96c600e5b5b8f692b76e",
+      "promptHash": "4f2ecc18f54abd7a19dcf9462b93b0a9b3ba712404508c6433fa4e360b1cf425",
+      "contextHash": "bdc79fbf280a65f454bd531397f26a4b87fcf317de7b8e165303954fcd7b2fd2",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c3866a0fdf865fa95a255f42d4c4e0462486b8578481108b14e5db68c5f5071a",
+      "fingerprint": "868e184affab42ca4c35803bea04db93b06800aba6ce1e62dac6c569145c2922",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -182,10 +167,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-e750-7ea1-a7be-51c0712b2831"
+        "01a0eef4-8fc1-7740-8135-f8279c2b6d10"
       ],
       "usage": {
-        "used": 49986,
+        "used": 18844,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -194,10 +179,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 114038,
-          "utf8Bytes": 123900,
-          "estimatedTokens": 41300,
-          "budgetedTokens": 51625,
+          "chars": 20838,
+          "utf8Bytes": 24151,
+          "estimatedTokens": 8051,
+          "budgetedTokens": 10064,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

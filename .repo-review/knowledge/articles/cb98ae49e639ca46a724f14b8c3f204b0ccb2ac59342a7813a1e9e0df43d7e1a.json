@@ -2,83 +2,90 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-    "title": "可追溯知识首页",
-    "summary": "汇总主题、材料覆盖率、文章检索与显式分析入口，并将正文阅读和待核对问题组织在同一知识主页中。",
+    "title": "知识首页、覆盖状态与分析入口",
+    "summary": "知识首页汇集主题、当前解读和材料覆盖情况，提供筛选、分页式展开与显式分析请求，并定时刷新运行状态。",
     "category": "implementation",
     "sections": [
       {
-        "key": "loading-analysis",
-        "title": "加载、覆盖率与显式分析",
-        "body": "首页同时加载文章、材料和运行状态，以当前文章计算材料覆盖率；只要用户尚未主动选择，存在概览主题时便默认展示它。分析按钮仅提交尚无当前解读的 revision，并在请求成功后进入运行状态；页面每十五秒刷新，卸载时清理定时器。[[c1]]"
+        "key": "loading-and-selection",
+        "title": "加载、轮询与默认主题",
+        "body": "首页从 articles 接口同时读取文章、材料和分析运行状态，并在未发生人工选择时优先选中当前的“概览”主题。组件挂载后立即加载，随后每 15 秒刷新一次，卸载时清除定时器；用户主动点击主题会锁定选择，避免后续刷新重新切回默认概览。请求失败则把异常文本放入页面警告区域。[[c1]]"
       },
       {
-        "key": "reading-index",
+        "key": "coverage-and-analysis",
+        "title": "覆盖统计与显式分析请求",
+        "body": "覆盖数按“材料键存在同键且 current 的文章”计算。仍有未覆盖材料时，界面允许显式请求 analyze，并提交这些材料的 revisionId；请求成功后仅在前端把 running 设为 true，按钮随之禁用，实际分析、复核及持久化是否完成仍要由服务端和后续轮询结果确认。[[c2]]"
+      },
+      {
+        "key": "reading-and-index",
         "title": "主题阅读与知识索引",
-        "body": "界面先展示覆盖率、分析状态和主题导航，再以内嵌正文阅读器打开当前主题。模块与材料区域按标题、键和摘要做客户端过滤，分批显示卡片；卡片区分材料知识、模块知识和主题知识，并提示已复核或来源变化。页面底部接入待核对问题。[[c2]]"
-      },
-      {
-        "key": "current-limitations",
-        "title": "当前交互限制",
-        "body": "筛选只在已经载入浏览器的文章集合中进行，匹配规则是简单的小写子串；轮询间隔固定，也没有在此组件中呈现任务进度明细。[[c1]][[c2]] 因而它适合作为轻量入口，但材料规模很大或分析耗时较长时，仍可能需要服务端搜索、分页和更细的任务状态。"
+        "body": "当前选中文章直接嵌入正文阅读器；没有当前文章时显示等待材料分析与复核的空状态。非 topic 文章组成索引，可按标题、键和摘要的组合文本过滤，初始最多展示 40 篇并逐批扩展；卡片同时标示材料、模块或主题类别，以及“已复核”或“来源变化，待更新”状态。页面底部还挂载全局疑问列表。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识首页状态与分析流程",
-        "reason": "支持文章和材料加载、默认主题、覆盖率计算、显式分析请求及定时刷新行为。",
+        "label": "首页加载与主题选择",
+        "reason": "支持文章和材料加载、概览主题默认选择、人工选择保护以及十五秒轮询生命周期。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-          "startLine": 1,
+          "startLine": 9,
           "endLine": 30
         },
-        "quote": "<script setup lang=\"ts\">\nimport { ref, computed, onMounted, onBeforeUnmount } from \"vue\";\nimport { OmButton, OmEmpty, OmBadge } from \"@omem/ui\";\nimport KnowledgeDocument from \"./KnowledgeDocument.vue\";\nimport KnowledgeQuestions from \"./KnowledgeQuestions.vue\";\nimport { knowledgeApi, knowledgeFrame, type ArticleMeta, ty"
+        "quote": "const articles = ref<ArticleMeta[]>([]), materials = ref<{ key: string; title: string; path: string | null; revisionId: string }[]>([]);\nconst query = ref(\"\"), selected = ref(\"\"), error = ref(\"\"), running = ref(false), limit = ref(40);\nconst selectedByUser = ref(false);\nlet timer: ReturnType<typeof setInterval> | undef"
       },
       {
         "key": "c2",
-        "label": "知识首页阅读与索引界面",
-        "reason": "支持覆盖率展示、主题导航、文章过滤与分页、状态标签以及问题入口的论断。",
+        "label": "覆盖计算与分析请求",
+        "reason": "支持当前解读覆盖数的计算、待处理修订筛选和显式分析 POST 行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 19,
+          "endLine": 27
+        },
+        "quote": "const reviewed = computed(() => materials.value.filter(m => articles.value.some(a => a.key === m.key && a.current)).length);\nasync function load() {\n  try { const result = await knowledgeApi<{ articles: ArticleMeta[]; materials: typeof materials.value; running: boolean }>(props.prefix, \"/articles\"); articles.value = re"
+      },
+      {
+        "key": "c3",
+        "label": "知识主题与索引界面",
+        "reason": "支持主题导航、正文嵌入、文章筛选、分批显示、状态标签和疑问列表的位置。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
           "startLine": 32,
-          "endLine": 49
+          "endLine": 46
         },
         "quote": "<template>\n  <section class=\"knowledge-home\">\n    <header><span class=\"eyebrow\">材料 · 理解 · 证据</span><h1>可追溯的知识</h1><p class=\"muted\">从正文里的引用进入背景、需求、实现与原文；每一层都保留来路。</p></header>\n    <p v-if=\"error\" class=\"error\" role=\"alert\">{{ error }}</p>\n    <div class=\"coverage\"><OmBadge>{{ reviewed }} / {{ materials.length }} 份材料已有当前"
       }
     ],
     "questions": [
       {
-        "question": "文章和材料数量增长后，是否需要把检索、分页与覆盖率计算移到服务端？",
-        "why": "当前实现一次载入集合并在浏览器中过滤、关联和切片，材料未给出规模上限或性能目标。",
-        "nextStep": "用预期最大数据量测量加载体积、筛选延迟和渲染耗时，再确定服务端分页阈值。",
+        "question": "analyze 请求成功但后台未真正开始或随后失败时，首页应如何区分“请求已接受”“正在运行”和“运行失败”？",
+        "why": "当前前端在 POST 返回后直接设置 running=true，而材料没有给出任务标识、失败详情或完成结果的展示合同。",
+        "nextStep": "核对 analyze 路由和任务状态响应，并为接受、运行、失败及完成状态补充行为测试和界面反馈。",
         "blocking": false,
         "citationKeys": [
           "c1",
           "c2"
         ]
+      },
+      {
+        "question": "索引输入框所称的“按标题、路径或摘要查找”是否确实覆盖独立的 path 字段？",
+        "why": "现有过滤表达式连接的是文章 title、key 和 summary；材料未显示 ArticleMeta 是否另有 path，界面文案与实际匹配字段可能不完全一致。",
+        "nextStep": "检查 ArticleMeta 数据合同；若存在独立路径则纳入过滤，否则把占位文案改为实际支持的字段。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
       }
     ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
-      "digest": "4da0fd6c62ebc6680f8ef9f78780211be16d90afd93a01666bf420473f59bc48"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-sync.test.ts",
-      "digest": "4ad7197425da98dc5d8d37074bcdbc1081617d0088d775e5f5b13d8aa1bd22f4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/role-runtime.test.ts",
-      "digest": "b3820f9ed46a261c7ac8ba03cab6da231c0c2562f17405887d5e228e3dc1d531"
-    },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
@@ -93,42 +100,22 @@
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
       "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "a953203b340638bc967ce80589826e566e69305db933e9d48fe4c1996f22d275"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:36.291Z",
+    "at": "2026-09-29T20:56:08.596Z",
     "trace": {
-      "runId": "6abf8da3-3426-4100-b32c-3d2f607d8325",
+      "runId": "f194229c-48ca-464d-990b-d6c4a13cda58",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "dd49223145fa263f6514dabcc321511dcd160a09f174845b2e5ad222b848c42b",
-      "contextHash": "f6f645b2eddc58e0f7bb1fb06053b3d13f7f93ff914ca9f50d23944491b1482a",
+      "promptHash": "6aacca70d299f20bec884ae89039227bdec59f953df70ad668d618e49f469b78",
+      "contextHash": "2239c559e878d49d7c50ea1b25957c8acc89bcce95b35dea1db1f777741c2888",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b0100a4e69f67eaae24cfec12e52370c91173a0d3ee4224bc2af05867f25c2da",
+      "fingerprint": "cbfd6ad22a206830045d3110c53e0f13be007fd7af552bbaa90a889fe09f0eae",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -141,10 +128,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-211f-75d0-874c-940896d45237"
+        "01a0eef3-9a50-7a91-9988-d3f511570e10"
       ],
       "usage": {
-        "used": 47761,
+        "used": 22091,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -153,10 +140,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101196,
-          "utf8Bytes": 105217,
-          "estimatedTokens": 35073,
-          "budgetedTokens": 43842,
+          "chars": 23448,
+          "utf8Bytes": 27584,
+          "estimatedTokens": 9195,
+          "budgetedTokens": 11494,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -165,17 +152,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:05:05.871Z",
+    "at": "2026-09-29T20:56:25.398Z",
     "trace": {
-      "runId": "9e4c7091-3fe1-4a79-875d-7f80f6d5979e",
+      "runId": "347a9700-fabb-4d20-aedc-a1233f48a8e6",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4e3efc47d9edefef51d6e885ae60a6a3299149c3e0a0b54d1dfae77a658014ac",
-      "contextHash": "d4a9ea49aa55f152c53eed85a2471f1f88a11837ee4a96c600e5b5b8f692b76e",
+      "promptHash": "e98b95e315e739b8882dcebb9d145ea173fd4808296b7e40c9b15bdcd0e43f22",
+      "contextHash": "83ad12ba67a848703e0462df5b159fba0de9475e8a7819e157e2805a90e22667",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c3866a0fdf865fa95a255f42d4c4e0462486b8578481108b14e5db68c5f5071a",
+      "fingerprint": "55771a836b56d09e2313c256d8827c037c8075af635d522ccd56f48994529c9b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -188,10 +175,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-e750-7ea1-a7be-51c0712b2831"
+        "01a0eef4-1764-7863-8486-86a65707ac7e"
       ],
       "usage": {
-        "used": 49986,
+        "used": 21864,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -200,10 +187,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 114038,
-          "utf8Bytes": 123900,
-          "estimatedTokens": 41300,
-          "budgetedTokens": 51625,
+          "chars": 26169,
+          "utf8Bytes": 32595,
+          "estimatedTokens": 10865,
+          "budgetedTokens": 13582,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
