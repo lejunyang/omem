@@ -1,0 +1,509 @@
+{
+  "version": 1,
+  "document": {
+    "key": "topic:progress",
+    "title": "当前实现进展、已知限制与未决问题",
+    "summary": "当前基线已形成统一知识处理、主助手治理和 Code Wiki 阅读等可运行闭环，并通过全量检查与浏览器验证。仍未完成的重点包括真实外部链路验收、语义检索、自动重核验、多租户隔离、跨文件调用和跨修订身份续接；Batch 2 清单及旧环境结论仅供追溯。",
+    "category": "progress",
+    "sections": [
+      {
+        "key": "verified-slices",
+        "title": "已实现并有行为验证的闭环",
+        "body": "当前交付包括共用正文与固定引用合同、持久分析和独立复核、个人知识入口、多层证据阅读、问题与待办，以及由知识正文引导回原始 Fragment 的召回；失败、过期或未生成结果不计完成。相关子知识可继续下钻，事实基线仍来自状态页。[[c1]][[c2]]\n\n2026-09-29 的复审中，冻结依赖、完整检查、个人阅读、递归证据、通知、多视口、深层引用栈、XSS 与焦点归还均取得成功结果；全新 SQLite 也能在不复制旧 runtime、不调用模型的情况下恢复材料、代码投影和已提交知识。[[c3]] Web 与飞书生产路径已装配 ACP adapter、关键词检索和限定范围的纠正服务，任务创建受意图识别及 MemoryService 治理，模型不可用时不会伪造回答、引用或任务。[[c4]] 来源更新会建立 `needs_review` 记录，并停止把受影响记忆作为 active evidence。[[c5]]"
+      },
+      {
+        "key": "evidence-levels",
+        "title": "局部支持与证据等级",
+        "body": "Code Wiki 是统一证据链上的代码投影，不是第二套事实权威；子知识说明了它与通用知识流程的关系。[[c6]] 代码图只解析已捕获版本，理解构建与引用校验读取同批固定材料，定位失败不会伪造引用。[[c7]] 可提交 Wiki、真实模型产物和人工 seed 与可重建的 SQLite、索引及临时目录分开管理；默认启动用仓库材料和已提交知识重建视图，不重新调用模型。[[c8]]\n\n确定性代码图和手工关系已形成纵向切片，但模型说明仍是派生资料，结构及引用存在性校验不等于逐句语义支持；跨文件调用、类型解析、跨修订身份续接、embedding 检索及自动重核验仍未完成。[[c9]] 图片链路主要由 fake transport 验证，进程恢复也只是同数据库的新 runtime 模拟，不能直接外推到真实外部环境。[[c10]] 质量侧已经生成40条 dev 草稿，但尚未全部人工确认，live 标注已停止且没有冻结数据集；跨来源 holdout 尚未建立，因此不能宣称质量发布门通过。[[c11]]"
+      },
+      {
+        "key": "superseded-history",
+        "title": "已被替代的历史结论",
+        "body": "2026-09-27 的 Batch 2 审查证明当时已有迁移、租约、幂等和飞书基础设施，同时指出入口、上下文保真、召回及治理策略缺口；其隔离复现使用临时 SQLite、合成输入、注入判定和假适配器。后续子知识已将这些历史反例与新的 G01–G20 回归场景关联。[[c12]] 原报告明确要求修复后把案例改写为正确行为断言，不能让常规 CI 持续要求旧缺陷存在。[[c13]]\n\n状态页后部“无 traecli”“没有模型 live”和“固定端口”等旧环境记录，已被顶部关于真实模型生成、动态端口和恢复验证的新复审结果替代；但真实模型生成仍不等于主助手及飞书全链路验收。[[c14]] Batch 2 清单也被明确标为历史记录，只用于追溯，不能充当当前交付清单。[[c15]] 其中“人工确认正在进行”的旧说法亦被更具体的质量记录所替代：40条草稿已生成，但标注会话已取消。[[c11]]"
+      },
+      {
+        "key": "remaining-work",
+        "title": "真实限制与下一步",
+        "body": "尚未完成的核心能力包括 embedding 语义检索、跨文件调用及类型解析、跨 revision 的符号与 Fragment 身份续接，以及覆盖所有来源的自动重核验。当前 `refresh_dependents` 只记录影响后主动以未实现错误失败，尚无 extractor 与 verifier 的 consolidation 重跑；代码变化后仍需重新同步 locator 到新 head。[[c16]]\n\n部署仍是个人单用户 SQLite 边界，不具备多租户 ACL、分布式事务或 pgvector；对外监听使用的 shared token 也不是团队权限系统。[[c17]][[c18]] 当前 README 只确认启用学习后启动一个受 lease/fencing 保护的单消费者，不据此把更早 Batch 2 的全部拓扑说明当作现行交付结论。[[c19]] 外部集成方面，真实飞书图片下载、reply 引用、断网恢复、真实限流窗口，以及主助手 ACP 与飞书端到端范围仍需独立验收，不能与 fixture、fake transport 或历史 live smoke 混为一谈。[[c20]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "当前进展子知识",
+        "reason": "链接当前基线子知识，供读者下钻理解交付范围；附近同时引用原始状态页，避免把派生归纳当作独立证据。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:docs-implementation:part-4",
+          "section": "baseline"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "当前能力与完成口径",
+        "reason": "支持现行知识能力范围，以及失败、过期或未生成结果不得计为完成。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "> **当前新增能力以本段与 [通用知识流程](knowledge-pipeline.md) 为准。** 已接入共用正文/引用合同、八种知识角色、持久分析与独立复核、仓库全材料适配、个人知识入口、正文多层引用、问题/待办、知识引导原始证据召回。所有实现按功能分项提交。全仓 AI 处理与章节生成的逐文件结果见 `.repo-review/knowledge/coverage.json`；没有把未通过、过期或未生成的材料算作完成。下方 Code Wiki 200 文件/6 份说明等统计保留为此前切片的历史记录。\n\n> 本轮后续：实际 Agent 配置改为 `config/review-code-model.json`，生成及 revie"
+      },
+      {
+        "key": "c3",
+        "label": "最新复审与重建结果",
+        "reason": "支持全量检查、浏览器行为验证、真实模型说明范围及全新 SQLite 无模型恢复结果。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 7,
+          "endLine": 15
+        },
+        "quote": "## 本轮复审验证（Linux / 2026-09-29）\n\n- `osdk deps --frozen` exit 0；完整 `osdk run check` 已通过（51 个测试文件 / 312 用例，含 typecheck + build）。\n- `osdk run browser` exit 0：个人阅读、递归证据、学习任务、当前 AttentionGate 的跨源 claim 决策、通知、768/390、100 层固定证据、失败与重启诚实性。修复初始化导航竞态；旧的“未知转述自动提请用户判断”fixture 已改为当前策略认可的 active claim 跨源冲突。\n- 最终 `dev:review` 实例自动重建，实际端"
+      },
+      {
+        "key": "c4",
+        "label": "主助手生产装配与治理",
+        "reason": "支持 Web 与飞书生产路径接入 ACP、关键词检索和纠正服务，以及任务意图门控、MemoryService 治理和模型异常时的诚实失败。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 29,
+          "endLine": 30
+        },
+        "quote": "- **主助手模型接线**：生产装配 `apps/server/src/app.ts`（Web 路径）和 `apps/server/src/integrations/lark/runtime.ts`（飞书路径）均已 `new AssistantRuntime({ store, model: new AcpAssistantModel({ profile, workspaceRoot }), retrieval: new KeywordRetrieval(store.db), feedback: new FeedbackService(store), ... })` —— **Web 和飞书主助手生产路径均接真实 ACP adapte"
+      },
+      {
+        "key": "c5",
+        "label": "来源更新影响处理",
+        "reason": "支持来源修订建立 needs_review 刷新记录并停止把受影响记忆作为 active evidence。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 73,
+          "endLine": 75
+        },
+        "quote": "| G11 | 冲突→一个有背景的问题 | attention-gate.test.ts · \"G11: a conflict that overwrites existing knowledge becomes one contextual decision, not a JSON blob\" | pass | awaiting_decision 态，decision 带背景/证据/选择 |\n| G12 | 重复/矛盾不新增 active | attention-gate.test.ts · \"G12a: same statement links existing memory\"、\"G12b: opposite claims ke"
+      },
+      {
+        "key": "c6",
+        "label": "Code Wiki 子知识",
+        "reason": "链接 Code Wiki 子知识，解释代码投影与统一证据链的关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:docs-implementation:part-4",
+          "section": "code-wiki"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c7",
+        "label": "固定捕获快照修复",
+        "reason": "支持代码、文档、理解构建和引用校验读取同一固定材料，以及定位失败不伪造引用。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 7,
+          "endLine": 12
+        },
+        "quote": "| 严重度 | 原问题 | 修复与证据 |\n| --- | --- | --- |\n| P1 | Code sync 重新扫描磁盘，正文可能来自新文件，而 fragment 来自旧 Capture；声明定位失败时返回第一片段 | Capture 保留精确文本；代码图只解析已捕获的固定版本。新投影仅保存 revision 引用，历史正文保留兼容。定位失败返回空，不伪造引用。回归验证捕获后修改磁盘不能改变固定代码正文。 |\n| P1 | 理解校验读取当前磁盘上的规则/文档，旧快照可能“验证”新证据 | 快照同时固定代码和文档的 revision；理解构建与引用校验读取同一批固定材料。 |\n| P1 | 首启仅同步普通材料，不同步代码图；"
+      },
+      {
+        "key": "c8",
+        "label": "Wiki 资产与本地缓存边界",
+        "reason": "支持可提交 Wiki、模型产物、人工 seed 与可重建运行库的职责划分，以及默认启动不重新调用模型。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 21,
+          "endLine": 29
+        },
+        "quote": "## 可提交的 Wiki 与本地缓存\n\n- `.repo-review/wiki.md`：本仓库的可读目录与已有模块说明，直接在 Git 中阅读。\n- `.repo-review/knowledge/generated/*.json`：真实模型产物、原始生成时间/模型/input digest、依赖文件 hash，以及 path + qualifiedName + kind 引用定位信息。来源变化后过期，错误 locator 拒绝；恢复不是再次模型调用，也不是语义验证。\n- `.repo-review/knowledge/understandings/*.seed.json`：既有人工说明。仍是 seed，不改造成模型成果。\n- `"
+      },
+      {
+        "key": "c9",
+        "label": "代码知识架构边界",
+        "reason": "支持模型说明未独立语义复核、跨文件调用与类型解析未实现、跨修订身份续接缺失、检索仍为关键词及自动重核验未完成。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 31,
+          "endLine": 37
+        },
+        "quote": "## 仍然存在的架构边界\n\n1. 当前接入范围是本仓库与单用户 SQLite。代码源枚举和关系仍有 review 适配逻辑、默认仓库标识仍为 omem；不能把这次改造说成任意多仓库/多租户均已接入。\n2. 个人助手的自动材料学习与 CodeUnderstanding 角色运行尚未完全统一编排。代码角色有单独的严格输出合同及 registry，复用 ACP 传输；尚未统一进入所有输入渠道的持久任务/复核流水线。后续应接统一材料处理端口，不能再增加第二套 Capture 或 memory authority。\n3. 模型说明是派生资料，结构与引用存在性校验不证明每句解释正确。此次没有独立 verifier 语义复核，也没有把说明作为已验"
+      },
+      {
+        "key": "c10",
+        "label": "行为验证的有限外推",
+        "reason": "支持图片仅由 fake transport 验证、进程级恢复仍为模拟，因此通过项不能直接外推到真实外部环境。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 77,
+          "endLine": 84
+        },
+        "quote": "| G15 | 图片/富文本群消息进入模型 | lark-rich-parts.test.ts · \"post message parses title + paragraph text parts\"、\"image message downloads via fake transport and creates image part with asset\"、\"reply message sets replyTo/quoted provenance on all parts\" | **pass（fake transport 验证）** | `realtime.ts` `buildCaptureParts()` 解析 post 富文本为"
+      },
+      {
+        "key": "c11",
+        "label": "质量数据集当前状态",
+        "reason": "支持40条 dev 草稿已生成但 live 标注停止、尚无冻结数据集，以及跨来源 holdout 仍需更多授权来源。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/batch2/quality-evaluation.md",
+          "startLine": 33,
+          "endLine": 44
+        },
+        "quote": "## 当前 dev 集\n\n- 来源：《抖音商家中心业务分享》\n- 飞书 revision：3709\n- source digest：`63ccbac008ac7b8421572e80eb118c6d54fc60d990e6d3f4db32e78afe82248e`\n- 目标：40 条 dev 样本\n- 初始草稿：从互不重复的正文块生成 claim 建议；它们只是待确认草稿，不是人工真值\n- 当前状态：已生成 40 条改进版 dev 草稿；按 owner 要求停止 live 标注，所有 annotation session 已取消，尚无冻结数据集\n\n项目应用曾通过正式 outbox 向绑定 owner 私聊投递试验卡。首版卡片把整段原"
+      },
+      {
+        "key": "c12",
+        "label": "历史审查与当前回归",
+        "reason": "链接子知识对历史反例与后续 G 场景关系的整理，供读者查看修复脉络。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "module:docs-reviews",
+          "section": "relations-progress"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c13",
+        "label": "历史复现维护原则",
+        "reason": "支持隔离脚本只断言旧基线缺口、修复后应改写为正确行为测试且不得在常规 CI 中固化旧缺陷。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+          "startLine": 115,
+          "endLine": 125
+        },
+        "quote": "## 6. 复查方式\n\n```bash\nosdk run typecheck\nosdk run test\nosdk exec --tool node -- npx tsx docs/reviews/2026-09-27-batch2/reproduce.ts\n```\n\n最后一条只创建临时库和假发送器，使用合成输入，退出清理临时目录。它断言16d3aa6的已知缺口，**不能并入常规CI来要求这些缺口继续存在**；修复时将案例改写为v3中G01～G20的预期行为。修复后的复现脚本断言失败可能说明缺陷已消除，需要按实际输出判定。\n\n本轮文档检查：128个局部文件链接均存在，20个v3场景编号连续唯一，复现结果含10个唯一案例。只提交doc"
+      },
+      {
+        "key": "c14",
+        "label": "被新复审替代的环境结论",
+        "reason": "支持真实模型生成和动态端口等新状态替代无 traecli、无模型 live 和固定端口等旧环境记录。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "> 2026-09-29 Linux 本机复审：见 [方案与实现复审](code-wiki-review-2026-09-29.md)。Code Wiki 已改为从精确 Capture 文本派生；启动自动完成材料/代码/版本化知识恢复；开发端口可配置且默认冲突自动选择；共享语法高亮与符号源行号已修复。仓库 Wiki 入口为 [`.repo-review/wiki.md`](../../.repo-review/wiki.md)，更新命令 `osdk run review:build`。本机 traecli 0.207.1 的 GPT-5.6-Sol 已真实生成模块说明，默认启动仍不调用模型。下文较早的“本机无 traecli”“没有"
+      },
+      {
+        "key": "c15",
+        "label": "Batch 2 历史记录声明",
+        "reason": "直接支持 Batch 2 仅供追溯、不能作为当前已交付清单。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 99,
+          "endLine": 101
+        },
+        "quote": "## 历史实现记录（Batch 2）\n\n> **以下为历史记录，当前产品行为以本页「当前状态」与 assistant-v3 为准。** Batch 2 是 v3 之前的实现包；其中部分能力已被 v3 重构替代（如 quality dataset 守卫、provenance、检索端口），保留此处仅用于追溯，不作为当前已交付清单。"
+      },
+      {
+        "key": "c16",
+        "label": "自动重核验与代码身份缺口",
+        "reason": "支持 refresh_dependents 主动报告未实现，以及跨文件调用、跨修订身份和 embedding 检索仍有缺口。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 86,
+          "endLine": 94
+        },
+        "quote": "## 已知限制与环境问题（2026-09-29 复测）\n\n- **osdk 验证**：`osdk deps --frozen` exit 0；`osdk run check` 连续 2 轮 exit 0（typecheck [tsc + vue-tsc] + 全量 vitest **47 文件 / 306 用例** + tsc/vite build，2026-09-29）。本轮首次 check 的 A-R07 timeout 已由 af77ca6 复现根因并回归稳定（详见「当前状态·测试」）。信任门已由 MainAgent 执行 `osdk --yes trust` 解决。\n- **ACP 子进程清理已根治**：`agents.ts"
+      },
+      {
+        "key": "c17",
+        "label": "单用户 SQLite 实现边界",
+        "reason": "支持当前实现不具备多租户 ACL、分布式事务、pgvector 和跨修订语义身份续接。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 124,
+          "endLine": 128
+        },
+        "quote": "### 明确的实现取舍\n\n- 统一 TypeScript + SQLite 个人单用户实现；**不具备**多租户 ACL、分布式事务、pgvector。team scope 仅保留在架构设想中。\n- 所有原件/回答可追溯，不等于每个 Claim 已由证据验证器证实；正式 supported_by 自动评估未实现。\n- 跨 revision 语义 Fragment 身份续接、精确选区 selector、原生飞书 block 映射、原文刷新依赖自动重核验暂未实现。"
+      },
+      {
+        "key": "c18",
+        "label": "Shared token 部署边界",
+        "reason": "直接支持当前不是多租户服务，单一 shared token 不能视作团队权限系统。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 92,
+          "endLine": 92
+        },
+        "quote": "单用户部署默认仅监听 loopback。公网/局域网监听需设置 `OMEM_HOST` 和强 `OMEM_TOKEN`，所有 `/api/*` 都校验 Bearer；浏览器令牌仅放 sessionStorage。部署到服务器建议用 TLS 反向代理/SSH 隧道。当前不是多租户服务，不把一个 shared token 当团队权限系统。"
+      },
+      {
+        "key": "c19",
+        "label": "现行学习消费者说明",
+        "reason": "支持启用学习后服务启动一个受 lease 与 fencing 保护的单消费者，并说明 extractor、独立 verifier 与 MemoryService 的写入边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 94,
+          "endLine": 96
+        },
+        "quote": "`GET /api/jobs` 与 `GET /api/jobs/:id` 可查看公开状态和 attempt 指纹；取消、重试分别使用 `POST /api/jobs/:id/cancel|retry`，请求必须带 `expectedGeneration` 和幂等 `requestId`。已成功应用的 job 不能靠取消抹掉效果，只返回需要补偿恢复。配置 `learning.enabled=true` 后，服务启动一个受 lease/fencing 保护的单消费者：`extract_claims` 使用 extractor Agent，随后持久化 `verify_proposals` 子任务并用全新 verifier 会话复核，最终"
+      },
+      {
+        "key": "c20",
+        "label": "真实外部集成缺口",
+        "reason": "支持真实飞书图片下载、reply 引用、断网恢复、真实限流窗口和端到端外部链路仍需验收。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 49,
+          "endLine": 55
+        },
+        "quote": "| 主助手对话 | 会话路由/turn 持久化与幂等排队（同 transport_event_id 不重复建 turn/task）、RetrievalPort 注入（Web+飞书均接 KeywordRetrieval 中文 2-gram 召回）、create_task 经 MemoryService + detectTaskIntent 意图门控（咨询类零写入）、多轮回指（priorWorkingContext 携带前轮 selected evidence）、群可见性 deny-by-default + 注入 policy、模型异常诚实失败（ModelUnavailableError→failed turn，不造假）、取消 Turn"
+      }
+    ],
+    "questions": [
+      {
+        "question": "`refresh_dependents` 的 extractor 与 verifier consolidation 重跑采用什么成功替换、失败保留和幂等恢复合同？",
+        "why": "当前任务只记录受影响记忆并明确以未实现错误失败；若没有结果替换与失败保留规则，自动重核验可能覆盖仍有效知识或把失败误记为完成。",
+        "nextStep": "定义输入 revision、幂等键、旧结果保留条件、失败状态与通知策略，再增加来源变化、并发更新、重跑和失败恢复的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c16"
+        ]
+      },
+      {
+        "question": "真实 ACP 主助手和飞书端到端验收允许使用什么账号、聊天范围、消息类型及数据留存规则？",
+        "why": "本地 fixture、fake transport、历史 Host 连接和真实模型生成具有不同证据范围；缺少授权时不能安全验证真实图片下载、reply 引用、消息收发、断网恢复和限流。",
+        "nextStep": "确定隔离应用与测试账号，明确私聊或群聊目标、可发送内容、秘密管理、数据留存和回滚方式，再分别保存 ACP 与飞书 live 行为结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c20"
+        ]
+      },
+      {
+        "question": "质量评测由谁恢复人工标注，并使用哪些授权来源建立独立 holdout？",
+        "why": "40条 dev 草稿尚非完整人工真值，标注会话已停止，跨来源 holdout 尚未建立；这会阻止未来质量发布门通过。",
+        "nextStep": "指定标注负责人和完成标准，登记新增来源的授权、revision、digest、项目与时间隔离维度，全部确认后冻结 manifest 并运行正式评测。",
+        "blocking": false,
+        "citationKeys": [
+          "c11"
+        ]
+      },
+      {
+        "question": "团队使用是否已成为近期目标，需要何种身份、项目和数据隔离强度？",
+        "why": "当前是个人单用户 SQLite 实现，shared token 明确不是团队权限系统；多租户 ACL 和分布式部署会改变身份、数据及运行模型，不能从架构设想直接推定需求。",
+        "nextStep": "由用户确认部署人数、租户边界、管理员模型、项目可见性、审计要求和预期 worker 拓扑，再决定是否规划多租户身份、存储及部署迁移。",
+        "blocking": false,
+        "citationKeys": [
+          "c17",
+          "c18",
+          "c19"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/status.md",
+      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/b2-08-learning-verification.md",
+      "digest": "ff4cabe1b059ab28c23ab9ae1ee819bc541c085a521f1a652c9232512b6bb7a0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/batch2/quality-evaluation.md",
+      "digest": "a529c13d290caebb495f38cf0d29f4e8fc18ec26dd8eb83904a53f765556dbb2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+      "digest": "cfd6fbb55cf43fc62dc6b6c103b588e8e0a7984e9f6889cbfd6094ba26ce774d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduce.ts",
+      "digest": "dad072d11a1f1a7f32c54f927009881d3cba35143ca37da23ef2f519521de793"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
+      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
+    },
+    {
+      "kind": "material",
+      "key": "omem:README.md",
+      "digest": "78dca587dc82b998a52eee9dee4abee4b04608e50df2564bda82ab28ca8231b4"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/status.md",
+      "digest": "84a9462ee8f811a543c56dc73843f1ed697a8d648a1fc78ef85ce8113a10169d"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-implementation:part-4",
+      "digest": "d02db1f3a47073be8282b363a6248e858520d63d541e91e2089513834e151be2"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "093d1ecc580531d6e4f5ac0deed395baf46fa73f70697f0a88c1f90268e4b963"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/batch2/b2-08-learning-verification.md",
+      "digest": "ca2e4cbe11b10b2e62f1dc42a9ad718d0e00688419104d99bbb81246ee454dd4"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/implementation/batch2/quality-evaluation.md",
+      "digest": "396d714ab29ae1f76218e65c54cceb4bb7e12c42cc2edea0edbb386925469329"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/reviews/2026-09-27-batch2/README.md",
+      "digest": "08d2b062c78978ac26ad41f0f5654096b5b22207f486a495a85c45652fe5cd1b"
+    },
+    {
+      "kind": "article",
+      "key": "module:docs-reviews",
+      "digest": "aa45293f25a3b7548dce9d59d89a6a4f1c5742b327ffa617e87938048395618e"
+    },
+    {
+      "kind": "article",
+      "key": "omem:README.md",
+      "digest": "f8a72c66102921110b264b1f0fc7144576359d1bc74a09326aa509cf7545d7ec"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T21:09:22.684Z",
+    "trace": {
+      "runId": "589d14d7-5fc5-412a-8ae4-35bf8a28c68a",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5c42e29ae8683314ebf0aaf0db9f490d6c10e2637671fb7b4f45aef695eca60b",
+      "contextHash": "110940a522592eb7e45341b589bda325ebd54831696002d15f7bd30b46396cb8",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b54339efa260fdf821d5871aa260d6615bba5c25473fba63af00ffa442208e4c",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eeff-ce0c-78c1-899e-9da7c7e5884e"
+      ],
+      "usage": {
+        "used": 79246,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 151014,
+          "utf8Bytes": 230134,
+          "estimatedTokens": 76712,
+          "budgetedTokens": 95890,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T21:09:36.091Z",
+    "trace": {
+      "runId": "4aeb3b03-4b83-40f3-9939-3db699e98278",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "9d37bca1f247e9b5ff43b47597ee1e5ae20bf84526ee8ea3a63a602268bd739c",
+      "contextHash": "939d63f61b0db02f2dda18e484d0c19088335cbcaa87bbcdb161ad25fda379b8",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "856d23933866dae128f972bb680886897f4d052fbcbb5d5f3641dcc4e138685b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ef00-3547-7b20-a55a-79d111b9b223"
+      ],
+      "usage": {
+        "used": 75545,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 147990,
+          "utf8Bytes": 225812,
+          "estimatedTokens": 75271,
+          "budgetedTokens": 94089,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
