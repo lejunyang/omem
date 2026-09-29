@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:apps/server/src/review/associations.ts",
     "title": "人工维护的代码评审关系种子",
-    "summary": "定义并加载代码与需求、决策、研究及测试材料之间的人工关系种子；已登记种子会在同步时转为关系，未登记的词语相似命中不能据此成为 confirmed。",
+    "summary": "定义并加载代码与需求、决策、研究及测试材料之间的人工关系种子；文件缺失视为空集合，格式损坏显式失败，未登记的语义相似命中不得据此成为 confirmed。",
     "category": "configuration",
     "sections": [
       {
         "key": "authority",
-        "title": "关系来源与确认边界",
-        "body": "该文件定义人工维护的关联种子，用于说明代码 Fragment 的实现意图以及需求、决策、研究和测试依据。每个 JSON 条目会在同步时转成评审关系；它并非自动语义匹配器，未登记的词语相似命中不得因此成为 `confirmed`。此处没有排除其他机制产生 candidate、missing 或其他关系。种子文件位于 `docs/repo-review/associations.json`。[[c1]]"
+        "title": "关系来源与权威边界",
+        "body": "关系种子由人工维护，用于说明某个代码 Fragment 实现的意图及其需求、决策、研究和测试依据。JSON 中登记的每条 seed 会在同步时转为关系行；该文件同时明确禁止把未登记的词语相似命中据此提升为 `confirmed`。[[c1]] 这并不排除系统其他部分产生 candidate、missing 或其他关系。种子文件位于仓库的 `docs/repo-review/associations.json`。"
       },
       {
         "key": "shape",
         "title": "种子结构与定位方式",
-        "body": "每条记录以仓库相对 `codePath` 和符号名锚定代码，并保存意图、需求标签、决策／研究／测试引用、关系状态和证据说明。[[c2]] 文档引用既可只写路径，也可写成 `path::anchor`；解析器仅按首个双冒号拆分，未带锚点时返回空 anchor。该函数只做字符串解析，不证明目标已在当前代码图中定位成功。[[c4]]"
+        "body": "每条记录用仓库相对 `codePath` 和符号名锚定代码，并保存意图、需求标签、决策／研究／测试引用、关系状态和证据说明。[[c2]] 文档引用可写为路径或 `path::anchor`；解析器只在第一个双冒号处分割，未带锚点时返回空 anchor，供后续同步定位目标 Fragment。[[c4]]"
       },
       {
         "key": "loading",
         "title": "加载、默认值与失败语义",
-        "body": "种子文件不存在时返回空列表；JSON 损坏、根对象缺少 associations 数组，或条目缺少字符串形式的 codePath 与 symbol 时会抛错，避免坏文件静默清空关系。[[c3]] 可选数组与文本缺失时归为空值；状态只明确保留 candidate 或 missing，其他输入会规范为 confirmed。这里属于最小结构校验，未验证路径、符号、锚点及引用目标是否可解析。[[c3]]"
+        "body": "新检出或测试夹具中若文件不存在，加载结果为空；JSON 解析失败、根对象缺少 associations 数组，或条目缺少字符串形式的 codePath 与 symbol 时会抛错，避免坏文件静默清空关系。[[c3]] 可选数组和文本缺失时归为空值；状态仅明确接受 candidate 或 missing，其他值规范为 confirmed。这里属于最小结构校验，并未验证路径、符号和锚点能否在当前代码图解析。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "人工关系种子的权威说明",
-        "reason": "支持种子人工维护、同步转为关系、禁止语义相似命中自动确认为 confirmed，以及固定文件位置。",
+        "reason": "支持人工维护、seed 同步成关系，以及未登记语义相似命中不得成为 confirmed。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,7 +38,7 @@
       },
       {
         "key": "c2",
-        "label": "关系种子字段",
+        "label": "关系种子字段定义",
         "reason": "说明代码定位、意图、四类引用、状态和证据字段的职责。",
         "relation": "implements",
         "target": {
@@ -65,7 +65,7 @@
       {
         "key": "c4",
         "label": "路径与锚点解析",
-        "reason": "支持 path::anchor 格式、首个分隔符拆分及无锚点结果。",
+        "reason": "支持 path::anchor 引用格式及无锚点时的解析结果。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -79,8 +79,8 @@
     "questions": [
       {
         "question": "种子中的 codePath、symbol 和各类 path::anchor 在同步失败时，具体由哪一层保留 rejected 或 missing 记录？",
-        "why": "本文件只完成最小结构校验和字符串拆分，没有展示定位当前代码图、生成关系行或保留失败解析结果的实现。",
-        "nextStep": "核对关系构建、同步实现及其测试，确认无法解析的定位不会覆盖既有有效关系，并记录可读失败原因。",
+        "why": "本文件只做最小结构校验和字符串拆分，没有展示定位当前代码图、生成关系行或保存失败解析结果的实现。",
+        "nextStep": "核对关系构建、同步实现及其测试，确认未解析定位不会覆盖既有有效关系，并记录可读失败原因。",
         "blocking": false,
         "citationKeys": [
           "c2",
@@ -94,7 +94,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
+      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
     },
     {
       "kind": "material",
@@ -125,17 +125,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:42:11.442Z",
+    "at": "2026-09-29T21:12:40.550Z",
     "trace": {
-      "runId": "19f1cc3d-aeab-4e8b-95a1-6d9b28b7f49e",
+      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "3faa7ae6948f908c5aaac700c95b7f236a19b7a28c019b26c6583abd3513dcd1",
-      "contextHash": "8c033ea230913fdef360df1a6bbf879191858933d9340ab615825fa6a0be6b38",
+      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
+      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2b261dfce5c2253ad38d5a4bb126ad01bf58e9472cc2909b07a84f3c25c7aaa6",
+      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -148,10 +148,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee6-9620-7950-87af-71dd25a6b0da"
+        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
       ],
       "usage": {
-        "used": 50720,
+        "used": 52878,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -160,10 +160,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 112514,
-          "utf8Bytes": 121843,
-          "estimatedTokens": 40615,
-          "budgetedTokens": 50769,
+          "chars": 117772,
+          "utf8Bytes": 129037,
+          "estimatedTokens": 43013,
+          "budgetedTokens": 53767,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -172,17 +172,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:42:50.313Z",
+    "at": "2026-09-29T21:13:15.335Z",
     "trace": {
-      "runId": "78bc7188-8b06-4f46-99e8-e0947f3391f6",
+      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ea237eb6467eb7fec2d9f5d98e5b3ff093b87ff42ba7cc3ea87c0fc98e535a56",
-      "contextHash": "bc812c553b123381ba6f02c41040180cd8e5d5eb679b399dc68b48f5970e96f4",
+      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
+      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "895775610d3b5f273163afeb87ab1544f7629fa74a5e663d1238dbd37d74a73d",
+      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -195,10 +195,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee7-51be-79c3-8713-e5c854e81d2b"
+        "01a0ef03-398c-79f2-a656-9c230614f1a0"
       ],
       "usage": {
-        "used": 49184,
+        "used": 49586,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -207,10 +207,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 116095,
-          "utf8Bytes": 126070,
-          "estimatedTokens": 42024,
-          "budgetedTokens": 52530,
+          "chars": 118346,
+          "utf8Bytes": 128851,
+          "estimatedTokens": 42951,
+          "budgetedTokens": 53689,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -3,35 +3,35 @@
   "document": {
     "key": "omem:apps/server/src/review/app.ts",
     "title": "仓库评审模式的本地 HTTP 应用",
-    "summary": "构建隔离的 repo-review API，提供固定材料、关系、搜索、代码图和理解结果读取；同步与模型生成均由显式请求触发，默认模型端口关闭并以本地访问规则保护接口。",
+    "summary": "构建隔离的 repo-review API，提供知识、来源、关系、搜索和代码图读取；通用与代码同步均由显式端点触发，模型理解生成也必须显式调用。",
     "category": "architecture",
     "sections": [
       {
         "key": "boundary-security",
         "title": "运行边界与访问控制",
-        "body": "评审应用复用隔离 Store 上的记忆与关键词检索，但不启动助手、Lark、学习或通知 worker，也不持有业务状态。无令牌时 API 只接受回环 Host 和允许的本地 Origin；配置令牌后，全部评审 API 由 Bearer token 门控。[[c1]] 构建阶段注册知识路由、关系表和代码服务；理解模型端口默认是空，只有依赖中显式提供模型配置才会创建。[[c2]]"
+        "body": "评审应用复用隔离 Store 上的记忆和关键词检索，但不启动助手运行时、Lark、学习或通知 worker，也不承载业务状态。无令牌时仅接受回环 Host 与允许的本地 Origin；设置 `REVIEW_TOKEN` 后，评审 API 由 Bearer token 门控。[[c1]] 构建时注册知识路由、关系表和代码服务；理解模型端口默认关闭，只在依赖中显式传入模型配置时创建。[[c2]]"
       },
       {
         "key": "evidence-search",
-        "title": "固定证据与评审搜索",
-        "body": "Revision、Fragment 和关系接口提供固定证据、上下文、provenance 以及相关评审关系。[[c3]] 搜索把 current head、类别和 removed 条件放入同一 SQL 查询，再按不同长度的命中词累计分数、排序并取前二十项，避免先做固定 top-N 后过滤而漏掉指定类别中的低排名结果。[[c4]]"
+        "title": "固定证据读取与评审搜索",
+        "body": "来源、Revision 和 Fragment 接口提供当前材料目录及固定证据详情；Fragment 响应包含所属 Revision、上下文和 provenance，关系接口可按 Fragment 或代码路径查询。[[c3]] 搜索把 current head、类别和 removed 条件放在同一 SQL 中过滤，再按命中词长度累计分数并截取前二十项，避免先固定取 top-N 后再过滤。[[c4]]"
       },
       {
         "key": "sync-code",
-        "title": "显式同步与代码快照",
-        "body": "通用同步入口拒绝与任一种同步并发，随后依次刷新评审材料、恢复已发布知识并重建代码快照。[[c5]] 独立代码同步入口具有相同互斥和执行顺序，但返回代码同步结果。[[c9]] 代码读取面提供仓库、快照、文件、符号、边和图；源码区间严格读取快照绑定文本，绑定缺失或范围越界会显式报错，而不会退回实时工作树。[[c6]]"
+        "title": "显式同步与代码图读取",
+        "body": "通用 `POST /sync` 与代码 `POST /code/sync` 分别使用 `syncing`、`codeSyncing` 标志，并互相检查以拒绝并发；两个显式请求都会依次运行评审材料同步、恢复已发布知识和重建代码快照，但返回值不同。[[c5]][[c9]] 代码读取面暴露仓库、快照、模块、文件、符号、边和图。源码区间严格读取快照绑定的固定文本；缺少绑定或越界时明确报错，不回退到实时工作树。[[c6]]"
       },
       {
         "key": "model-generation",
-        "title": "理解结果与模型生成",
-        "body": "理解列表和详情公开状态、置信度、seed、复核者、过期标记、模型与引用等追踪信息。[[c7]] 生成是显式 opt-in：没有模型端口时返回不可用；传输或校验失败只记录失败或拒绝结果，不晋升为 current，成功后才返回生成结果及详情。因此原始代码图和人工 seed 不依赖实时模型。[[c8]]"
+        "title": "理解结果与模型生成边界",
+        "body": "理解列表和详情公开状态、置信度、seed、复核者、过期标记、模型及引用等元数据。[[c7]] 生成入口是显式 opt-in：无模型端口时返回不可用；传输或校验失败只记录失败或拒绝结果，不提升为 current，成功时才返回结果详情。[[c8]] 因而原始代码图和人工 seed 可在无模型条件下使用，模型输出则保留独立状态与追踪信息。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审应用边界与安全规则",
-        "reason": "支持隔离运行、不承载业务 worker，以及回环或令牌访问控制的总体说明。",
+        "label": "评审应用边界与安全说明",
+        "reason": "支持隔离运行、不承载业务 worker，以及回环或令牌访问控制。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -49,15 +49,15 @@
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 73,
+          "startLine": 60,
           "endLine": 92
         },
-        "quote": "export async function buildReviewApp(deps: ReviewAppDeps) {\n  const { store, repoRoot } = deps;\n  const allowedOrigins = new Set([deps.port ?? 5180, deps.webPort ?? 5181].flatMap(\n    (port) => [`http://127.0.0.1:${port}`, `http://localhost:${port}`],\n  ));\n  ensureReviewMetaTable(store);\n  ensureReviewRelationsTable(s"
+        "quote": "export type ReviewAppDeps = {\n  store: Store;\n  repoRoot: string;\n  /** Production build of the Vue app, served when present. Defaults to\n   * `<repoRoot>/apps/web/dist`. */\n  webDistDir?: string;\n  port?: number;\n  webPort?: number;\n  /** Explicit, opt-in model for Code Understanding generation. Defaults to no\n   *  m"
       },
       {
         "key": "c3",
         "label": "固定 Fragment 与关系接口",
-        "reason": "支持 Fragment 证据详情及按 Fragment 或代码路径查询关系的描述。",
+        "reason": "支持 Fragment 证据详情及评审关系查询的描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -69,8 +69,8 @@
       },
       {
         "key": "c4",
-        "label": "评审材料搜索",
-        "reason": "说明过滤在 SQL 内执行、评分排序及二十项截断行为。",
+        "label": "评审材料搜索实现",
+        "reason": "说明 SQL 内过滤、评分和结果截断的具体行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -82,8 +82,8 @@
       },
       {
         "key": "c5",
-        "label": "通用评审同步入口",
-        "reason": "支持通用同步的互斥检查及材料刷新、知识恢复和代码同步顺序。",
+        "label": "通用同步入口",
+        "reason": "支持通用同步的互斥检查及材料、知识和代码快照处理顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -96,7 +96,7 @@
       {
         "key": "c6",
         "label": "代码图与快照源码接口",
-        "reason": "说明代码结构读取面及源码严格来自快照固定绑定。",
+        "reason": "说明代码结构读取面以及源码严格来自快照固定绑定。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -109,7 +109,7 @@
       {
         "key": "c7",
         "label": "代码理解读取接口",
-        "reason": "支持理解列表与详情暴露的状态、来源、复核和引用元数据。",
+        "reason": "支持理解列表与详情所暴露的状态、来源、复核和引用元数据。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -134,8 +134,8 @@
       },
       {
         "key": "c9",
-        "label": "独立代码同步入口",
-        "reason": "补充证明代码同步端点的互斥控制、执行顺序与返回结果。",
+        "label": "代码同步入口",
+        "reason": "补充证明代码同步端点的双向互斥检查及其执行顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -152,7 +152,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
+      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
     },
     {
       "kind": "material",
@@ -183,17 +183,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:42:11.442Z",
+    "at": "2026-09-29T21:12:40.550Z",
     "trace": {
-      "runId": "19f1cc3d-aeab-4e8b-95a1-6d9b28b7f49e",
+      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "3faa7ae6948f908c5aaac700c95b7f236a19b7a28c019b26c6583abd3513dcd1",
-      "contextHash": "8c033ea230913fdef360df1a6bbf879191858933d9340ab615825fa6a0be6b38",
+      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
+      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2b261dfce5c2253ad38d5a4bb126ad01bf58e9472cc2909b07a84f3c25c7aaa6",
+      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -206,10 +206,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee6-9620-7950-87af-71dd25a6b0da"
+        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
       ],
       "usage": {
-        "used": 50720,
+        "used": 52878,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -218,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 112514,
-          "utf8Bytes": 121843,
-          "estimatedTokens": 40615,
-          "budgetedTokens": 50769,
+          "chars": 117772,
+          "utf8Bytes": 129037,
+          "estimatedTokens": 43013,
+          "budgetedTokens": 53767,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -230,17 +230,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:42:50.313Z",
+    "at": "2026-09-29T21:13:15.335Z",
     "trace": {
-      "runId": "78bc7188-8b06-4f46-99e8-e0947f3391f6",
+      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ea237eb6467eb7fec2d9f5d98e5b3ff093b87ff42ba7cc3ea87c0fc98e535a56",
-      "contextHash": "bc812c553b123381ba6f02c41040180cd8e5d5eb679b399dc68b48f5970e96f4",
+      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
+      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "895775610d3b5f273163afeb87ab1544f7629fa74a5e663d1238dbd37d74a73d",
+      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -253,10 +253,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee7-51be-79c3-8713-e5c854e81d2b"
+        "01a0ef03-398c-79f2-a656-9c230614f1a0"
       ],
       "usage": {
-        "used": 49184,
+        "used": 49586,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -265,10 +265,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 116095,
-          "utf8Bytes": 126070,
-          "estimatedTokens": 42024,
-          "budgetedTokens": 52530,
+          "chars": 118346,
+          "utf8Bytes": 128851,
+          "estimatedTokens": 42951,
+          "budgetedTokens": 53689,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
