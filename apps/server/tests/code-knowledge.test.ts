@@ -299,7 +299,7 @@ describe("real omem repo coverage", () => {
       ],
     });
     // Full capture precedes the projection; the graph never scans extra files.
-    await runReviewSync(store, realRepoRoot);
+    await runReviewSync(store, realRepoRoot, { stateDir: join(store.dataDir, "review-state") });
     const res = await runCodeSync(store, realRepoRoot);
     expect(res.fileCount).toBeGreaterThan(50);
     const paths = listFiles(store).map((f) => f.path);

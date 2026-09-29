@@ -683,3 +683,17 @@ describe("group 5: pre-filtering and sync reliability", () => {
     rmSync(root, { recursive: true, force: true });
   });
 });
+
+it("rebuilds a fresh database even when another database left a clean sync baseline", async () => {
+  const root = makeFixtureRepo();
+  try {
+    archFile(root, "first", "ONE"); archFile(root, "second", "TWO"); commitAll(root, "fixture");
+    const original = setup(); const stateDir = join(original.dataDir, "shared-state");
+    await runReviewSync(original, root, { stateDir });
+    const fresh = setup();
+    await runReviewSync(fresh, root, { only: ["apps/server/src/first.ts"] });
+    const synced = await runReviewSync(fresh, root, { stateDir });
+    expect(synced.totalScanned).toBeGreaterThanOrEqual(2);
+    expect(fresh.list().some(r => r.title === "apps/server/src/second.ts")).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
