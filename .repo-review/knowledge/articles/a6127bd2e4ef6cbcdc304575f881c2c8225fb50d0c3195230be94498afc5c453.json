@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/associations.ts",
-    "title": "人工维护的代码—依据关联种子",
-    "summary": "定义并读取代码实现与需求、决策、研究及测试材料之间的人工关联；同步层可据此建立关系，但本模块不执行语义匹配或目标解析。",
+    "title": "人工维护的代码评审关系种子",
+    "summary": "定义并加载代码与需求、决策、研究及测试材料之间的人工关系种子；已登记种子会在同步时转为关系，未登记的词语相似命中不能据此成为 confirmed。",
     "category": "configuration",
     "sections": [
       {
         "key": "authority",
-        "title": "关系来源与用途",
-        "body": "关联种子是代码 Fragment 与意图、决策、研究、测试依据之间的人工维护入口，不是自动语义匹配器。只有 JSON 中明确列出的条目才可在同步时转成评审关系；词面相似但未登记的命中不能成为 confirmed。数据放在仓库内的固定 JSON 文件中，TypeScript 模块负责声明并读取其形状。[[c1]]"
+        "title": "关系来源与确认边界",
+        "body": "该文件定义人工维护的关联种子，用于说明代码 Fragment 的实现意图以及需求、决策、研究和测试依据。每个 JSON 条目会在同步时转成评审关系；它并非自动语义匹配器，未登记的词语相似命中不得因此成为 `confirmed`。此处没有排除其他机制产生 candidate、missing 或其他关系。种子文件位于 `docs/repo-review/associations.json`。[[c1]]"
       },
       {
-        "key": "schema",
-        "title": "种子结构与证据表达",
-        "body": "每条种子用仓库相对代码路径和符号定位实现点，附带意图、需求标签、决策／研究／测试引用、关系状态以及解释实现关系的 evidence。需求引用只是标签，不直接作为 Fragment 目标；其他引用可使用 `path::anchor` 指向目标材料中的具体锚点。[[c2]] 该结构保留了代码定位、关系理由和外部依据的分工，但真正解析到 head 图与 Fragment 的工作不在本文件中。"
+        "key": "shape",
+        "title": "种子结构与定位方式",
+        "body": "每条记录以仓库相对 `codePath` 和符号名锚定代码，并保存意图、需求标签、决策／研究／测试引用、关系状态和证据说明。[[c2]] 文档引用既可只写路径，也可写成 `path::anchor`；解析器仅按首个双冒号拆分，未带锚点时返回空 anchor。该函数只做字符串解析，不证明目标已在当前代码图中定位成功。[[c4]]"
       },
       {
         "key": "loading",
-        "title": "加载、容错与限制",
-        "body": "文件缺失时加载器返回空列表，适用于新检出仓库或测试夹具；JSON 无法解析、根节点缺少 associations，或条目没有字符串形式的 codePath／symbol 时会抛错，避免损坏文件静默清空已有关系。[[c3]] 其余字段采用较宽松的默认值，尤其未知 status 会落为 confirmed；引用拆分也只按首个双冒号机械分割。[[c4]] 因而本层属于最小结构校验，不能替代同步阶段的 locator 解析、状态降级和交叉引用验证。"
+        "title": "加载、默认值与失败语义",
+        "body": "种子文件不存在时返回空列表；JSON 损坏、根对象缺少 associations 数组，或条目缺少字符串形式的 codePath 与 symbol 时会抛错，避免坏文件静默清空关系。[[c3]] 可选数组与文本缺失时归为空值；状态只明确保留 candidate 或 missing，其他输入会规范为 confirmed。这里属于最小结构校验，未验证路径、符号、锚点及引用目标是否可解析。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "人工关联种子的权威边界",
-        "reason": "支持关联必须人工列举、不得由语义相似度自动确认及文件位置的说明。",
+        "label": "人工关系种子的权威说明",
+        "reason": "支持种子人工维护、同步转为关系、禁止语义相似命中自动确认为 confirmed，以及固定文件位置。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,8 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "关联种子数据结构",
-        "reason": "说明代码定位、意图、各类引用、状态和证据字段的职责。",
+        "label": "关系种子字段",
+        "reason": "说明代码定位、意图、四类引用、状态和证据字段的职责。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -51,21 +51,21 @@
       },
       {
         "key": "c3",
-        "label": "关联文件加载与最小校验",
-        "reason": "支持缺失文件返回空、损坏文件抛错及字段默认化的行为。",
+        "label": "关系种子加载与最小校验",
+        "reason": "支持文件缺失、解析失败、必填字段、默认数组和状态规范化行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/associations.ts",
           "startLine": 51,
-          "endLine": 89
+          "endLine": 90
         },
         "quote": "export function associationsPath(repoRoot: string): string {\n  return join(repoRoot, ASSOCIATIONS_DIR, ASSOCIATIONS_FILE);\n}\n\n/** Load and minimally validate the seed associations. Returns an empty list\n * when the file is absent (fresh checkouts / fixtures that supply their own).\n * Throws on malformed JSON so a broke"
       },
       {
         "key": "c4",
-        "label": "关联引用锚点拆分",
-        "reason": "说明 path 与 anchor 仅按首个双冒号进行拆分。",
+        "label": "路径与锚点解析",
+        "reason": "支持 path::anchor 格式、首个分隔符拆分及无锚点结果。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -78,13 +78,14 @@
     ],
     "questions": [
       {
-        "question": "未知或拼写错误的 status 是否应当拒绝加载，而不是默认提升为 confirmed？",
-        "why": "当前加载器仅识别 candidate 和 missing，其他任何值都会变成 confirmed；配置错误可能因此获得比原意更强的关系状态。",
-        "nextStep": "在 associations 文件合同中加入严格枚举校验，并为非法状态补充失败测试；在确定兼容策略前保留现有行为说明。",
+        "question": "种子中的 codePath、symbol 和各类 path::anchor 在同步失败时，具体由哪一层保留 rejected 或 missing 记录？",
+        "why": "本文件只完成最小结构校验和字符串拆分，没有展示定位当前代码图、生成关系行或保留失败解析结果的实现。",
+        "nextStep": "核对关系构建、同步实现及其测试，确认无法解析的定位不会覆盖既有有效关系，并记录可读失败原因。",
         "blocking": false,
         "citationKeys": [
           "c2",
-          "c3"
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -93,12 +94,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     },
     {
       "kind": "material",
@@ -119,42 +120,22 @@
       "kind": "material",
       "key": "omem:apps/server/src/review/associations.ts",
       "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:02:36.799Z",
+    "at": "2026-09-29T20:42:11.442Z",
     "trace": {
-      "runId": "49822329-169d-49ad-8e82-d6eecbcb5c28",
+      "runId": "19f1cc3d-aeab-4e8b-95a1-6d9b28b7f49e",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "45aa2d1f19edf2ffe960e9c184bc7ee1276fabdb56eaa9ab69bce46916dee964",
-      "contextHash": "55b0dae57ce1c4abc832c348a0686b0a92a991e8fcf67f9cbdc7a9e20420a2ce",
+      "promptHash": "3faa7ae6948f908c5aaac700c95b7f236a19b7a28c019b26c6583abd3513dcd1",
+      "contextHash": "8c033ea230913fdef360df1a6bbf879191858933d9340ab615825fa6a0be6b38",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "14d44d53f0e2f4009906adf54675e2e5a2ec31dbf0f991f5844b76e7e52137b5",
+      "fingerprint": "2b261dfce5c2253ad38d5a4bb126ad01bf58e9472cc2909b07a84f3c25c7aaa6",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -167,10 +148,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec2-278f-7111-8c7f-4d1751de806e"
+        "01a0eee6-9620-7950-87af-71dd25a6b0da"
       ],
       "usage": {
-        "used": 49106,
+        "used": 50720,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -179,10 +160,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107721,
-          "utf8Bytes": 111250,
-          "estimatedTokens": 37084,
-          "budgetedTokens": 46355,
+          "chars": 112514,
+          "utf8Bytes": 121843,
+          "estimatedTokens": 40615,
+          "budgetedTokens": 50769,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -191,17 +172,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:03:04.623Z",
+    "at": "2026-09-29T20:42:50.313Z",
     "trace": {
-      "runId": "4cc09060-8d0a-4db0-9d4e-fe8d9f9a4154",
+      "runId": "78bc7188-8b06-4f46-99e8-e0947f3391f6",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "efef20365539701918b2ee9a723be13f20fdf6155088887c28990c1986735a6b",
-      "contextHash": "2c80f8928dc8cd41ef83e7288423e9b6fb6f7503f58ae9e73875080fde2748c5",
+      "promptHash": "ea237eb6467eb7fec2d9f5d98e5b3ff093b87ff42ba7cc3ea87c0fc98e535a56",
+      "contextHash": "bc812c553b123381ba6f02c41040180cd8e5d5eb679b399dc68b48f5970e96f4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b6836392138fe6c7192aa7f57b51c712948a1637c68029d328cf4290261a31c4",
+      "fingerprint": "895775610d3b5f273163afeb87ab1544f7629fa74a5e663d1238dbd37d74a73d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -214,10 +195,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-1528-78c1-8a7b-597d1a982f6c"
+        "01a0eee7-51be-79c3-8713-e5c854e81d2b"
       ],
       "usage": {
-        "used": 51037,
+        "used": 49184,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -226,10 +207,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124639,
-          "utf8Bytes": 134658,
-          "estimatedTokens": 44886,
-          "budgetedTokens": 56108,
+          "chars": 116095,
+          "utf8Bytes": 126070,
+          "estimatedTokens": 42024,
+          "budgetedTokens": 52530,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

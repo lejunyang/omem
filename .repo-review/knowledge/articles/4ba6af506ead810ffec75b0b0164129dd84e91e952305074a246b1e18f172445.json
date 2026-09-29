@@ -3,34 +3,34 @@
   "document": {
     "key": "omem:apps/server/src/review/app.ts",
     "title": "仓库评审模式的本地 HTTP 应用",
-    "summary": "构建隔离的 repo-review API，提供知识、来源、关系、搜索和代码图读取，并通过显式同步或模型生成请求更新派生视图；默认仅本地访问且模型端口为关闭状态。",
+    "summary": "构建隔离的 repo-review API，提供固定材料、关系、搜索、代码图和理解结果读取；同步与模型生成均由显式请求触发，默认模型端口关闭并以本地访问规则保护接口。",
     "category": "architecture",
     "sections": [
       {
         "key": "boundary-security",
         "title": "运行边界与访问控制",
-        "body": "评审应用复用隔离 Store 上的记忆和关键词检索，但不启动助手运行时、Lark、学习或通知 worker，也不承载业务状态。无令牌时仅接受回环 Host 与允许的本地 Origin；配置 `REVIEW_TOKEN` 后，评审 API 改由 Bearer token 门控。[[c1]] 构建阶段注册知识路由、关系表和代码服务；代码理解模型端口默认关闭，仅在调用方显式传入配置时创建。[[c2]]"
+        "body": "评审应用复用隔离 Store 上的记忆与关键词检索，但不启动助手、Lark、学习或通知 worker，也不持有业务状态。无令牌时 API 只接受回环 Host 和允许的本地 Origin；配置令牌后，全部评审 API 由 Bearer token 门控。[[c1]] 构建阶段注册知识路由、关系表和代码服务；理解模型端口默认是空，只有依赖中显式提供模型配置才会创建。[[c2]]"
       },
       {
         "key": "evidence-search",
-        "title": "固定证据读取与评审搜索",
-        "body": "来源、Revision 和 Fragment 接口提供当前材料目录及固定证据详情；Fragment 响应同时返回所属 Revision、上下文和 provenance，关系接口可按 Fragment 或代码路径查询评审关系。[[c3]] 搜索在同一 SQL 中完成当前 head、类别和 removed 条件过滤，再按命中词长度累计分数并截取前二十项，避免目标类别结果被其他类别的高排名命中挤掉。[[c4]]"
+        "title": "固定证据与评审搜索",
+        "body": "Revision、Fragment 和关系接口提供固定证据、上下文、provenance 以及相关评审关系。[[c3]] 搜索把 current head、类别和 removed 条件放入同一 SQL 查询，再按不同长度的命中词累计分数、排序并取前二十项，避免先做固定 top-N 后过滤而漏掉指定类别中的低排名结果。[[c4]]"
       },
       {
         "key": "sync-code",
-        "title": "显式同步与代码图读取",
-        "body": "通用同步入口以 `syncing` 和 `codeSyncing` 互斥，调用时依次刷新评审材料、恢复已发布知识并重建代码快照。[[c5]] 独立代码同步入口使用相同的双向互斥和执行顺序，但返回代码同步结果。[[c9]] 代码读取面暴露仓库、快照、模块、文件、符号、边和图；源码区间严格来自快照绑定的固定文本，缺少绑定或越界时明确报错，而不会退回实时工作树。[[c6]]"
+        "title": "显式同步与代码快照",
+        "body": "通用同步入口拒绝与任一种同步并发，随后依次刷新评审材料、恢复已发布知识并重建代码快照。[[c5]] 独立代码同步入口具有相同互斥和执行顺序，但返回代码同步结果。[[c9]] 代码读取面提供仓库、快照、文件、符号、边和图；源码区间严格读取快照绑定文本，绑定缺失或范围越界会显式报错，而不会退回实时工作树。[[c6]]"
       },
       {
         "key": "model-generation",
-        "title": "理解结果与模型生成边界",
-        "body": "理解列表和详情公开状态、置信度、seed、复核者、过期标记、模型及引用等元数据。[[c7]] 生成入口是显式 opt-in：没有模型端口时返回不可用；传输或校验失败只记录失败或拒绝结果，不提升为当前理解，成功时才返回生成结果及详情。[[c8]] 因此原始代码图和人工 seed 可在无模型条件下使用，模型输出则保留独立状态与追踪信息。"
+        "title": "理解结果与模型生成",
+        "body": "理解列表和详情公开状态、置信度、seed、复核者、过期标记、模型与引用等追踪信息。[[c7]] 生成是显式 opt-in：没有模型端口时返回不可用；传输或校验失败只记录失败或拒绝结果，不晋升为 current，成功后才返回生成结果及详情。因此原始代码图和人工 seed 不依赖实时模型。[[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审应用边界与安全说明",
+        "label": "评审应用边界与安全规则",
         "reason": "支持隔离运行、不承载业务 worker，以及回环或令牌访问控制的总体说明。",
         "relation": "explains",
         "target": {
@@ -44,7 +44,7 @@
       {
         "key": "c2",
         "label": "评审应用初始化",
-        "reason": "支持知识路由、隔离服务和默认关闭的理解模型端口如何建立。",
+        "reason": "说明知识路由、隔离服务和默认关闭的理解模型端口如何建立。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -57,7 +57,7 @@
       {
         "key": "c3",
         "label": "固定 Fragment 与关系接口",
-        "reason": "支持 Fragment 证据详情及其评审关系查询的描述。",
+        "reason": "支持 Fragment 证据详情及按 Fragment 或代码路径查询关系的描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -69,8 +69,8 @@
       },
       {
         "key": "c4",
-        "label": "评审材料搜索实现",
-        "reason": "支持过滤在 SQL 内执行、评分与结果截断的具体行为。",
+        "label": "评审材料搜索",
+        "reason": "说明过滤在 SQL 内执行、评分排序及二十项截断行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -83,7 +83,7 @@
       {
         "key": "c5",
         "label": "通用评审同步入口",
-        "reason": "支持通用同步入口的双标志互斥，以及材料刷新、知识恢复、代码快照重建的执行顺序。",
+        "reason": "支持通用同步的互斥检查及材料刷新、知识恢复和代码同步顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -96,7 +96,7 @@
       {
         "key": "c6",
         "label": "代码图与快照源码接口",
-        "reason": "支持代码结构读取面以及源码严格来自快照固定绑定。",
+        "reason": "说明代码结构读取面及源码严格来自快照固定绑定。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -109,7 +109,7 @@
       {
         "key": "c7",
         "label": "代码理解读取接口",
-        "reason": "支持理解列表与详情所暴露的状态、来源、复核和引用元数据。",
+        "reason": "支持理解列表与详情暴露的状态、来源、复核和引用元数据。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -135,7 +135,7 @@
       {
         "key": "c9",
         "label": "独立代码同步入口",
-        "reason": "支持代码同步端点与通用同步互斥，并展示其材料刷新、知识恢复和代码重建顺序。",
+        "reason": "补充证明代码同步端点的互斥控制、执行顺序与返回结果。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -152,12 +152,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "45072de56fe1eb131f9e4976bad30c5b03e54bff28cac592a1aba65df8fdf68e"
+      "digest": "a90345819ca27763926bd513b4249f220136bb3f464be957d573d5c07cf1c8fa"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "d7f6baaa9233cbd557f1bc4985813b33eded33d89aecf1c0abe0a4b78ffb6959"
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     },
     {
       "kind": "material",
@@ -178,42 +178,22 @@
       "kind": "material",
       "key": "omem:apps/server/src/review/associations.ts",
       "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:03:34.369Z",
+    "at": "2026-09-29T20:42:11.442Z",
     "trace": {
-      "runId": "26a23edd-4fa9-4a05-a739-5a623208952d",
+      "runId": "19f1cc3d-aeab-4e8b-95a1-6d9b28b7f49e",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "a1ec3da0fe2ad2a8a367009ef4b6e8a36b4bb378745ff3f3b9184513c31c76a7",
-      "contextHash": "37928c0c3dcc05ce74a15ef56d1d275a439524ca882aa30372bbc359cfbe387a",
+      "promptHash": "3faa7ae6948f908c5aaac700c95b7f236a19b7a28c019b26c6583abd3513dcd1",
+      "contextHash": "8c033ea230913fdef360df1a6bbf879191858933d9340ab615825fa6a0be6b38",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "049f9a490b98ac353d5faaea9d1cdfb28ba54a80b25987379da303566d7aa8d3",
+      "fingerprint": "2b261dfce5c2253ad38d5a4bb126ad01bf58e9472cc2909b07a84f3c25c7aaa6",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -226,10 +206,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-83e1-70e2-9cb0-58752e34b05e"
+        "01a0eee6-9620-7950-87af-71dd25a6b0da"
       ],
       "usage": {
-        "used": 49260,
+        "used": 50720,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -238,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 116883,
-          "utf8Bytes": 123517,
-          "estimatedTokens": 41173,
-          "budgetedTokens": 51467,
+          "chars": 112514,
+          "utf8Bytes": 121843,
+          "estimatedTokens": 40615,
+          "budgetedTokens": 50769,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -250,17 +230,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:03:53.499Z",
+    "at": "2026-09-29T20:42:50.313Z",
     "trace": {
-      "runId": "25cfe2c6-41fa-48bb-a47c-7703d61bfa96",
+      "runId": "78bc7188-8b06-4f46-99e8-e0947f3391f6",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9f2c5dccf4ceccf398c8fab4a5fb63a9ba26dd3f18518f4e721d25ddcc4dc55c",
-      "contextHash": "2898ab12fd2dd6a83a3a5ca791f1beea07297cc0a811aa3621a9a07eb74bc8df",
+      "promptHash": "ea237eb6467eb7fec2d9f5d98e5b3ff093b87ff42ba7cc3ea87c0fc98e535a56",
+      "contextHash": "bc812c553b123381ba6f02c41040180cd8e5d5eb679b399dc68b48f5970e96f4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "760abeafee3338bcce7809cfa4eace51ebc4d95f7878a590386ef31dd4816a32",
+      "fingerprint": "895775610d3b5f273163afeb87ab1544f7629fa74a5e663d1238dbd37d74a73d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -273,10 +253,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-f527-7351-a12d-1beebbce55dd"
+        "01a0eee7-51be-79c3-8713-e5c854e81d2b"
       ],
       "usage": {
-        "used": 46574,
+        "used": 49184,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -285,10 +265,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 114631,
-          "utf8Bytes": 120189,
-          "estimatedTokens": 40063,
-          "budgetedTokens": 50079,
+          "chars": 116095,
+          "utf8Bytes": 126070,
+          "estimatedTokens": 42024,
+          "budgetedTokens": 52530,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
