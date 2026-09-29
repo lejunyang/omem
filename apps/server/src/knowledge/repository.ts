@@ -21,7 +21,7 @@ export function materialFromRevision(store: Store, revisionId: string): Knowledg
   const images = parts.filter(p => p.type === "image").map(p => ({ assetId: p.assetId!, mimeType: p.mimeType as KnowledgeMaterial["images"][number]["mimeType"], label: p.label ?? r.title }));
   const external = source.external_id ? String(source.external_id) : r.sourceId;
   const material: KnowledgeMaterial = {
-    key: external.startsWith("omem:") ? external : `${r.source}:${external}`,
+    key: r.source === "file" && external.startsWith("omem:") ? external : `${r.source}:${external}`,
     title: r.title, path: typeof context.filePath === "string" ? context.filePath : null,
     sourceId: r.sourceId, revisionId: r.id, namespace: r.source,
     actorId: r.provenance?.actorId, actorVerifiedBy: r.provenance?.actorVerifiedBy, eventAt: r.provenance?.eventAt, quoted: r.provenance?.quoted, forwarded: r.provenance?.forwarded,
