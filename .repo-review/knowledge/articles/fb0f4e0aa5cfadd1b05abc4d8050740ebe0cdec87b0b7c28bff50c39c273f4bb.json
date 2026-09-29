@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:docs-README.md",
+    "title": "docs/README.md · 模块理解",
+    "summary": "该模块是 omem 设计与实施资料的导航入口：交代长期记忆系统的产品方向，指引读者区分当前实现、设计系统与后续交接方案，并明确原型和研究结论的证据边界。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "role",
+        "title": "职责与背景",
+        "body": "`docs/README.md` 的首要职责是建立项目认知入口，而不是罗列已交付功能。它把 omem 定位为支持 Agent 自治、自学习的长期记忆系统，核心机制是可深入阅读的版本化证据引用；当前产品方向则以飞书主 Agent 为第一入口、Web 为后台及第二入口。与此同时，已有 90 项测试只能说明阶段性工程进展，不能直接证明语义质量或助手体验达标。[[c1]]"
+      },
+      {
+        "key": "reading-flow",
+        "title": "阅读与协作流程",
+        "body": "首次阅读应先从本页识别资料层级，再转到“当前实施状态”和项目运行指南核实现有能力；涉及视觉设计时查看根级设计文档。后续 Agent 可从 Batch 2 交接包了解详细方案、ACP 提示词与 Skills、飞书扫码绑定、验收合同及专项调研，但这些内容属于待实现计划，不能据此宣称运行能力已经增加。[[c2]]"
+      },
+      {
+        "key": "relations-limits",
+        "title": "跨材料关系与使用限制",
+        "body": "该页连接产品方向、实施状态、运行方式、设计系统、交接方案和研究材料，作用是帮助读者沿正确证据链继续核验，而非替代各专题正文。公司故事、任务、规范和数值样本均是原型演示，不能当作真实业务政策；开源能力也必须区分资料或源码核验与待 PoC 项，未实测的性能和生产可用性不得被承诺。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "产品方向与长期记忆定位",
+        "reason": "支持该模块对系统目标、版本化证据核心、飞书与 Web 入口关系，以及测试数量不能代表体验达标的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/README.md",
+          "startLine": 3,
+          "endLine": 5
+        },
+        "quote": "最新产品方向（2026-09-27）：[Batch 2 实现审查](reviews/2026-09-27-batch2/README.md)与[飞书主助手 / 渐进记忆 v3](implementation/assistant-v3/README.md)。当前90项测试通过不代表语义与助手体验达标；新设计以飞书主Agent为第一入口，Web为后台和第二入口。\n\n2026-09-26 · 设计提案 v0.1。为 Agent 自治、自学习的长期记忆系统设计；核心是可深入阅读的版本化证据引用。"
+      },
+      {
+        "key": "c2",
+        "label": "实施资料阅读路径与交接边界",
+        "reason": "支持先核对实施状态和运行指南的阅读流程，并说明 Batch 2 交接材料仍是待实现方案。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/README.md",
+          "startLine": 7,
+          "endLine": 9
+        },
+        "quote": "已进入实现：先读 [当前实施状态](implementation/status.md) 和 [项目运行指南](../README.md)。设计系统为 [根 design.md](../design.md)。\n\n下一批由其他 Agent 接手时，从 [batch2 实施交接包](implementation/batch2/README.md) 开始：包含详细方案、ACP 提示词/Skills、飞书扫码创建绑定、验收合同及 [MemPalace 专项调研](research/mempalace/README.md)。这些为待实现方案，不表示当前运行能力已增加。"
+      },
+      {
+        "key": "c3",
+        "label": "原型与未实测能力边界",
+        "reason": "支持原型样本不得视为真实政策、待 PoC 能力不得转述为性能或生产可用性承诺。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/README.md",
+          "startLine": 28,
+          "endLine": 28
+        },
+        "quote": "所有公司故事、任务、规范和数值样本均为原型演示，不能作为真实业务政策引用。开源能力结论区分资料/源码核验与待 PoC 项，不承诺未实测的性能或生产可用性。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前已实现并通过实际验收的能力、入口与限制分别有哪些？",
+        "why": "本模块只提供导航，并明确测试数量不代表语义和助手体验达标；所给材料没有实施状态与运行指南的具体内容，无法据此确认真实能力范围。",
+        "nextStep": "读取当前实施状态和项目运行指南，逐项关联实现、行为测试、入口可用性与剩余限制。",
+        "blocking": true,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "Batch 2 交接方案中的哪些项目已经从计划转为可运行能力？",
+        "why": "材料明确交接包不表示能力已增加，但未提供后续实施记录，因而不能判断扫码绑定、验收合同等事项的最新进展。",
+        "nextStep": "将交接包条目与实施状态、提交记录及真实行为检查逐项对照，并仅把有证据的项目标为已实现。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/README.md",
+      "digest": "fef130ce71d5b8bfb10b69cfdb13ec8426e476ac288715f7e9bda2c236bcb87b"
+    },
+    {
+      "kind": "article",
+      "key": "omem:docs/README.md",
+      "digest": "c6bdc4fe29b6bc1cf37cadef7a03e37b577ffdb8a40c1e3fe6f91bcdde11203d"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:24:32.826Z",
+    "trace": {
+      "runId": "734cdd9c-2e40-4a47-8d4f-4fb6f1ea7290",
+      "roleId": "knowledge-writer",
+      "roleVersion": "1",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "86f3acee7e40e9a2889dd9cea12810a803983feba0c0cd858417fd01689d8707",
+      "contextHash": "4d8ee19c3fac39166405f9a21e7ece68f85abc265365a0c567e8377d5d87dd55",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "ac681c7f7d0449c5a97295bb7c6b11af65e6fc59f79497b3339421d335d15bd6",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-writer",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed6-f7ae-7803-8612-1618cd76b04e"
+      ],
+      "usage": {
+        "used": 16387,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 9765,
+          "utf8Bytes": 13646,
+          "estimatedTokens": 4549,
+          "budgetedTokens": 5687,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:24:38.952Z",
+    "trace": {
+      "runId": "ccecb309-4951-42ec-b8d3-41be001ca4f5",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "13d141c25cee3244bfb3d654fee977f888e6c6e8fd1da825ff16070828ac5722",
+      "contextHash": "dec6b7c88015b6db4be773816501ab8eced56fa4af7e2ce64fb9b17492e3a69e",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "61805c9b60c5928d2c3cf0de50a0f67687f608b555513935c73f0291b48d0914",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eed7-2913-7f51-9cf5-eadaf1ae913f"
+      ],
+      "usage": {
+        "used": 16202,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 10015,
+          "utf8Bytes": 15425,
+          "estimatedTokens": 5142,
+          "budgetedTokens": 6428,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
