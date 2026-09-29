@@ -65,7 +65,7 @@ export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;
 
 export type KnowledgeMaterial = {
   key: string; title: string; path: string | null; sourceId: string; revisionId: string;
-  namespace: string; digest: string; text: string; lineCount: number;
+  namespace: string; actorId?: string | null; actorVerifiedBy?: string | null; eventAt?: string | null; quoted?: boolean; forwarded?: boolean; digest: string; text: string; lineCount: number;
   fragments: { id: string; text: string }[];
   images: { assetId: string; mimeType: "image/png" | "image/jpeg" | "image/webp"; label: string }[];
 };

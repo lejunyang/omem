@@ -1,3 +1,4 @@
+import { registerKnowledgeRoutes } from "./knowledge/api.js";
 import Fastify from "fastify";
 import staticFiles from "@fastify/static";
 import { existsSync } from "node:fs";
@@ -61,6 +62,7 @@ export async function buildApp(
   // the adapter raises ModelUnavailableError and the runtime degrades honestly.
   const assistantProfile =
     config.profiles.find((p) => p.transport === "acp") ?? null;
+  registerKnowledgeRoutes(app, { store, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined });
   const assistantModel = new AcpAssistantModel({
     profile: assistantProfile,
     workspaceRoot: config.agentCwd,
