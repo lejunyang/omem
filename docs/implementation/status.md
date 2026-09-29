@@ -1,3 +1,5 @@
+> **当前新增能力以本段与 [通用知识流程](knowledge-pipeline.md) 为准。** 已接入共用正文/引用合同、八种知识角色、持久分析与独立复核、仓库全材料适配、个人知识入口、正文多层引用、问题/待办、知识引导原始证据召回。所有实现按功能分项提交。全仓 AI 处理与章节生成的逐文件结果见 `.repo-review/knowledge/coverage.json`；没有把未通过、过期或未生成的材料算作完成。下方 Code Wiki 200 文件/6 份说明等统计保留为此前切片的历史记录。
+
 > 本轮后续：实际 Agent 配置改为 `config/review-code-model.json`，生成及 review 服务默认读取它，环境变量仍可覆盖。启动默认直接重建 runtime，不依赖旧 `.repo-review/data/`；旧历史导入改为 `REVIEW_IMPORT_LEGACY=1` 显式选择。后续正文知识管线的进度与验收将另行补充。
 
 > 2026-09-29 Linux 本机复审：见 [方案与实现复审](code-wiki-review-2026-09-29.md)。Code Wiki 已改为从精确 Capture 文本派生；启动自动完成材料/代码/版本化知识恢复；开发端口可配置且默认冲突自动选择；共享语法高亮与符号源行号已修复。仓库 Wiki 入口为 [`.repo-review/wiki.md`](../../.repo-review/wiki.md)，更新命令 `osdk run review:build`。本机 traecli 0.207.1 的 GPT-5.6-Sol 已真实生成模块说明，默认启动仍不调用模型。下文较早的“本机无 traecli”“没有模型 live”“固定端口”记录属于先前环境，不代表此次状态。当前预算示例 96000 输入 / 24000 输出 / 16000 Agent 预留，完整提示词按 UTF-8 bytes/3 + 25% 余量估算，另检查模型声明窗口。
