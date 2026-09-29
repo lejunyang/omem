@@ -33,7 +33,7 @@ function setup(reject = false, changeDuringRun = false) {
   });
   const profile = profileSchema.parse({ id: "traex", name: "Fixture", command: "unused", transport: "acp" });
   const pipeline = new KnowledgePipeline(repository, gateway, profile, { concurrency: 1 });
-  return { store, repository, pipeline, run, captured, capture, accept: () => { reject = false; } };
+  return { store, repository, pipeline, run, captured, capture, accept: () => { reject = false; }, reject: () => { reject = true; } };
 }
 
 it("publishes only after independent review and reuses durable outputs after projection loss", async () => {
@@ -85,4 +85,17 @@ it("provides full fixed source to synthesis when it fits, enabling a new support
   const result = await pipeline.synthesize({ key: "module:example", title: "Example module" }, ["manual:example"]);
   expect(result[0]!.document.citations[0]!.target.startLine).toBe(2);
   expect(result[0]!.document.citations[0]!.quote).toBe("The next line supplies additional context.");
+});
+
+it("resumes rejected synthesized chapters from their matching reviewed draft", async () => {
+  const fixture = setup();
+  fixture.capture("The release uses fixed evidence.\nThe next line supplies additional context.");
+  await fixture.pipeline.analyze(fixture.repository.materials());
+  fixture.reject();
+  await expect(fixture.pipeline.synthesize({ key: "module:example", title: "Example" }, ["manual:example"])).rejects.toThrow("Semantic review");
+  const before = fixture.run.mock.calls.length;
+  fixture.accept();
+  const result = await fixture.pipeline.synthesize({ key: "module:example", title: "Example" }, ["manual:example"]);
+  expect(fixture.run.mock.calls[before]![0].roleId).toBe("knowledge-refresher");
+  expect(result[0]!.current).toBe(true);
 });

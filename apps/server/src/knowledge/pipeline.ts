@@ -249,6 +249,16 @@ export class KnowledgePipeline {
       const text = preview.blocks.map(b => b.type === "text" ? b.text : "").join("\n");
       if (estimateTokens(text).budgetedTokens <= maxInput * 0.8) selected = full;
     } catch { /* Bounded excerpts remain explicit when the whole source is too large. */ }
-    return this.writeAndVerify("knowledge-writer", [target], selected, children);
+    let feedback: unknown;
+    const previous = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
+      WHERE o.output_schema='KnowledgeReview.v1' AND EXISTS(SELECT 1 FROM json_each(o.output_json,'$.verdicts') v WHERE json_extract(v.value,'$.documentKey')=? AND json_extract(v.value,'$.verdict')='needs_revision') ORDER BY o.created_at DESC LIMIT 1`).get(target.key) as { output_json: string; input_refs: string } | undefined;
+    if (previous) {
+      const input = JSON.parse(previous.input_refs)[0];
+      const sameSources = input.materials?.every((m: { key: string; digest: string }) => materials.get(m.key)?.digest === m.digest);
+      const sameArticles = input.articles?.every((a: { key: string; revision: string }) => available.get(a.key)?.revision === a.revision);
+      const draft = input.task?.drafts?.find((d: KnowledgeDocument) => d.key === target.key);
+      if (sameSources && sameArticles && draft) feedback = { previousDrafts: [draft], issues: JSON.parse(previous.output_json).verdicts.filter((v: { documentKey: string }) => v.documentKey === target.key), instruction: "Revise the rejected chapter precisely according to these issues. Preserve supported content and the cited scope; do not replace the chapter with unrelated prose." };
+    }
+    return this.writeAndVerify("knowledge-writer", [target], selected, children, feedback);
   }
 }
