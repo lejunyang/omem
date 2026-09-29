@@ -14,7 +14,7 @@
  * Nothing here touches the network, reads secrets, or starts any worker. */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   readFileSync,
@@ -345,12 +345,12 @@ function readPrevDirty(stateDir: string): boolean {
   }
 }
 
-function persistState(stateDir: string, result: SyncResult, advance: boolean): void {
+function persistState(stateDir: string, result: SyncResult, advance: boolean, databaseId: string): void {
   mkdirSync(stateDir, { recursive: true });
   const { commit, meta } = statePaths(stateDir);
   if (advance && result.lastSyncCommit)
     writeFileSync(commit, result.lastSyncCommit + "\n", "utf8");
-  writeFileSync(meta, JSON.stringify(result, null, 2), "utf8");
+  writeFileSync(meta, JSON.stringify({ ...result, databaseId }, null, 2), "utf8");
 }
 
 export function readSyncStatus(
@@ -841,6 +841,9 @@ export async function runReviewSync(
   options: SyncOptions = {},
 ): Promise<SyncResult> {
   ensureReviewMetaTable(store);
+  store.db.exec("CREATE TABLE IF NOT EXISTS review_runtime_identity(id TEXT PRIMARY KEY)");
+  let databaseId = (store.db.prepare("SELECT id FROM review_runtime_identity LIMIT 1").get() as { id: string } | undefined)?.id;
+  if (!databaseId) { databaseId = randomUUID(); store.db.prepare("INSERT INTO review_runtime_identity VALUES(?)").run(databaseId); }
   const stateDir = options.stateDir ?? reviewStateDir(repoRoot);
   mkdirSync(stateDir, { recursive: true });
   migrateLegacySources(store, stateDir);
@@ -887,7 +890,11 @@ export async function runReviewSync(
 
     const changed = new Map<string, GitChange>();
     const renames = new Map<string, string>();
-    let fullRescan = false;
+    let priorDatabaseId: string | undefined;
+    try { priorDatabaseId = JSON.parse(readFileSync(statePaths(stateDir).meta, "utf8")).databaseId; } catch {}
+    // A copied state file or a rebuilt SQLite database cannot prove this store
+    // already captured the old baseline. Rebuild it instead of skipping sources.
+    let fullRescan = priorDatabaseId !== databaseId;
 
     const status = await git(["status", "--porcelain", "-z"], repoRoot);
     if (!status.ok) {
@@ -1014,6 +1021,6 @@ export async function runReviewSync(
     warnings,
     relations,
   };
-  if (!options.only) persistState(stateDir, result, advanceBaseline);
+  if (!options.only) persistState(stateDir, result, advanceBaseline, databaseId);
   return result;
 }

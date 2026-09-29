@@ -271,7 +271,7 @@ describe("curated code understandings: schema, projection, staleness", () => {
 
   it("projects the committed curated seeds against the real omem repo", { timeout: 60_000 }, async () => {
     const store = setup();
-    await runReviewSync(store, realRepoRoot);
+    await runReviewSync(store, realRepoRoot, { stateDir: join(store.dataDir, "review-state") });
     const res = await runCodeSync(store, realRepoRoot);
     expect(res.fileCount).toBeGreaterThan(10);
 
