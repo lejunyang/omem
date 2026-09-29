@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/research/mempalace/README.md",
+    "title": "MemPalace 本地检索适配研究",
+    "summary": "研究认为 MemPalace 值得作为独立本地检索 sidecar 做 PoC，但固定片段身份、中文召回、离线性和运维仍须验证；已复算的是上游保存结果，不是重新运行检索，更不是 omem 服务指标。",
+    "category": "research",
+    "sections": [
+      {
+        "key": "recommendation-and-scope",
+        "title": "选择与核验边界",
+        "body": "材料建议优先做薄适配器 PoC，让 omem 保持原始证据、治理与任务权威，MemPalace 只维护可重建的候选检索投影。该判断来自固定 develop 快照的源码、文档和保存结果检查；本轮没有安装软件、下载权重或重新运行向量检索。[[c1]]"
+      },
+      {
+        "key": "identity-obstacle",
+        "title": "固定证据身份障碍",
+        "body": "高层添加接口没有任意外部身份字段，且相同目录与正文会生成相同标识，可能把同文不同来源或不同版本错误合并。建议由 Python sidecar 使用公共后端 API 写入自定义投影身份和版本元数据，再由 omem 回查固定原件；不能依赖展示文件名反推证据。[[c2]]"
+      },
+      {
+        "key": "adapter-and-gates",
+        "title": "薄适配器流程与采用门",
+        "body": "权威片段经幂等 outbox 投影到独立 worker，搜索仅返回候选与证据映射，最后由 omem 校验有效性和范围。采用前必须保证候选可回查固定片段、更新撤回可过滤、预热后断网无外部请求、索引可重建，并与同口径关键词及薄组合基线比较质量和成本。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "MemPalace 研究结论与未实测范围",
+        "reason": "支持优先做本地检索 PoC、保持 omem 权威，以及本轮没有安装或重跑检索的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 1,
+          "endLine": 13
+        },
+        "quote": "# MemPalace 调研：本地检索值得复用，但先验证片段身份和中文效果\n\n核验：2026-09-26。默认分支 **develop**，固定 commit `8c4865f70c49b6346c53474a9e5684c5f17d3fa9`，pyproject 自报 `3.10.0`，MIT。这里只证明该快照的接口/实现，不把 develop 当稳定发布版本。证据 URL/内容哈希见 [来源清单](../../implementation/batch2/research-sources.json)。\n\n本轮做了源码/文档检查，并重新汇总仓库公开的 **1,450 条结果记录**；没有安装 MemPalace、下载 embedding 权重或重跑向量检索。结果复算见 [artifact-audit.json](artifact-audit.json)，可复现脚本见 [audit_artifacts.py](audit_artifacts.py)。本轮没有把 omem 原件发送给该项目或其他服务。\n\n## 1. 结论与选择\n\n**优先做 MemPalace 独立本地检索适配器 PoC，不 fork 整个平台，也暂不决定全部自建。** 它的无生成式 LLM 检索路径比需要内部 LLM 的完整记忆平台，更适合 omem“先用 CLI/ACP 处理理解与推理”的阶段。omem 继续掌握固定证据、主张有效性、审批例外、任务与通知；MemPalace 只保存可重建的检索投影，返回候选。\n\n通过 PoC 则直接复用其 Python 搜索/后端能力，用薄适配器补身份和上下文；不通过时借鉴原文保留、两路召回、按需展开等方法，在 omem 自己的数据模型上组合现成 embedding/词检索组件。两条路线都不需要自研向量数据库或重写 embedding 模型。\n\n这项 PoC 与 batch2 的自治主线可以独立推进，不能让等待检索引擎替换阻塞“提炼→验证→通知”。正式选择见第 7 节的硬门和退出条件。"
+      },
+      {
+        "key": "c2",
+        "label": "片段身份与去重风险",
+        "reason": "说明高层接口缺少外部身份、正文去重可能误合并，以及推荐的自定义投影与回查方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 67,
+          "endLine": 75
+        },
+        "quote": "## 5. 直接接入的关键障碍：身份不是只加个 ID 字段\n\nMCP 的 `tool_add_drawer(wing, room, content, source_file, added_by)` **没有任意 metadata/external_id 参数**。其 `make_drawer_id_from_content(wing,room,content)` 会让同 wing/room 的相同正文得到相同 drawer ID；`source_file` 不在这个 ID 配方里。因此两个来源/版本有相同正文时，不能只按返回 ID 一对一绑定 omem 证据。\n\n推荐 PoC 用 Python sidecar + 公共后端 API：自己指定投影 ID `omem:<fragmentRevisionId>`、写 namespace/generation/source_revision/text_hash metadata，再通过 search_memories 读取。需要验证它识别自定义 metadata 与父 chunk/group 的方式；不要直接写 Chroma/SQLite 内部表。\n\n高层 search 可能按 source_file/父组归并，返回 source_file 也可能经过展示清理。为每个固定片段提供单独可映射的虚拟 source identity，或者用低层检索保留 ID 后自行融合；不依赖展示的 basename 还原真实证据。用相同内容不同来源、相同文件不同段、同名不同目录专门验收。\n\n写操作仅由 omem projection worker 执行；提供给回答/提炼 Agent 的 MCP 只读，不把整个 MemPalace 管理/删除/挖掘工具集直接暴露出去。MemPalace 内部 KG/WAL 不能替代 omem 的审批和通知事务。"
+      },
+      {
+        "key": "c3",
+        "label": "适配器流程与决策硬门",
+        "reason": "支持候选投影的端到端流程、降级原则、同口径对照方法及最终采用条件。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/research/mempalace/README.md",
+          "startLine": 77,
+          "endLine": 108
+        },
+        "quote": "## 6. 薄适配器方案\n\n```text\nomem SourceRevision / FragmentRevision（权威）\n  → 投影 outbox（幂等键、generation）\n  → 独立 Python worker（MemPalace/可替换后端）\n  → search 返回 candidate_id / rank / evidence mapping / truncation\n  → omem 回查固定原件、有效性和 scope\n  → Context Packet → TraeX/Codex/Claude ACP/CLI\n```\n\nomem 定义 `index(batch)`、`search(query,scope,k)`、`remove(ids)`、`health()`，Python sidecar 用 NDJSON 或 localhost HTTP；协议显式最大字节/超时/并发。读者进程与写者的锁/快照规则必须遵守上游，不在同 palace 下擅自并发打开多个写运行器。只读候选不会直接改正式事实。\n\n证据仍保存在 omem；移除 sidecar 后原文、引用、已生效主张继续可读，检索降级为现有关键词路径。更换模型创建新索引 generation，对齐同一原件，构建完成后切换，旧 generation 可回退。\n\n## 7. PoC 与明确的决策门\n\n同一份本地脱敏中文语料和冻结问题集测试三条路线：A 当前关键词 baseline；B MemPalace 默认 vector/hybrid，再单列 union；C 同样 embedding+BM25 的薄组合。不要混用模型、切片、top-k/上下文预算后只比较最终最好分数。\n\n先用 30 材料/20 轨迹/60 问题查正确性，再扩到 10k/100k 片段查资源。问题覆盖专名、错误码、时间变更、跨片段全证据、无答案和同名不同来源；中文英文混排单列。参数开发集与 holdout 按项目/时间隔开。\n\n| 硬门 | 验收 |\n| --- | --- |\n| 证据映射 | 展示的每条候选100%能回查固定片段；同文不同源不得误合并 |\n| 修改/删除 | 原件更新/撤回后旧候选可立即被 omem 过滤；侧边索引可以重建 |\n| 离线 | 缓存预热后断网，普通摄入和检索不发外网请求；无 LLM provider 调用 |\n| 可控性 | 不需要 fork 治理核心、侵入私有表或把 source_file basename 当 ID |\n| 运维 | 独立环境可安装、关闭、重建；osdk 能复现 Python/权重，数据不进入依赖目录 |\n\n软门：报告 Evidence Recall@10、All-support Recall@10、MRR、标准 NDCG、候选 token 数、p95、RSS、冷启动/下载、写入吞吐。项目初始目标 p95 检索≤2秒；质量需比 A 改善且无身份/权限回归。资源预算由真实机器测，不承诺“几分钟/几十MB就够”。\n\n**采用规则**：硬门全通过且 B 质量/维护成本优于 C，使用 MemPalace sidecar；若只有高层 ID/去重不适配，先用其公开 BaseCollection 做最小封装再测；若需要持续 fork 大量治理/身份逻辑或中文收益不足，就选 C，并明确记录借鉴/复制代码的 MIT 归属。无论选择哪条，不把上游 R@5 承诺写成 omem 的服务指标。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "PoC 应选择哪种多语言 embedding，并如何锁定权重版本与缓存策略？",
+        "why": "中文效果、模型体积和离线行为尚未实测；模型变化还要求重建索引 generation。",
+        "nextStep": "选定一个多语言候选和一个可比基线，固定 revision、哈希、切片及 top-k 后开展脱敏 holdout。",
+        "blocking": true,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "高层搜索归并后能否稳定保留自定义片段身份和父组关系？",
+        "why": "这是每条候选回查固定证据的前提，而材料明确将 metadata 与归并行为列为待验证风险。",
+        "nextStep": "用同文不同源、同文件不同段和同名不同目录构造身份验收样本，失败时转用较低层公共 API。",
+        "blocking": true,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "PoC 应选择哪种多语言 embedding，并如何锁定权重版本及缓存策略？",
+        "why": "中文效果、模型体积和离线行为尚未实测，更换模型还需要建立新的索引 generation。",
+        "nextStep": "选定多语言候选和可比基线，固定 revision、哈希、切片与 top-k 后进行脱敏 holdout。",
+        "blocking": true,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/prototype/verification.json",
+      "digest": "119cee36eea3c718dfbf9abdea0a39c24ce95ffb7269890c5f8b5dd6c71c4462"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/repo-review/associations.json",
+      "digest": "429b7ef17ce31f34a900c3b61ce7de615ec71072da3d3d274898fb03c0420731"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research.md",
+      "digest": "c375439684084fa36713fd5e621534b010f2b06aca3953daf41590ca43860352"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/code-wiki-landscape.md",
+      "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/integration-readiness.md",
+      "digest": "de753c07b88e5b5cc8b6fcb8f32f99cb980cc1238d2e6ceb2f85eee4af8a6d61"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/research/mempalace/README.md",
+      "digest": "652c0c4315e44d157069a326d0d413dbedb9a6b4e276eebe57b6a8fd5d501c40"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T13:22:00.204Z",
+    "trace": {
+      "runId": "c4b9999f-f3f0-4e3c-b6a7-c8df3c6d66a4",
+      "roleId": "material-analyst",
+      "roleVersion": "1",
+      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
+      "promptHash": "e6044b848f715c51c5ffe661de5de5b8a7327b5d0ce517e899c6395d76549dd4",
+      "contextHash": "16f7057369e5c7320aa5b8b38f590bd1c93817cb0b34e9bb124a56a0f3763e69",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "9c143cb35e10bdb27b8e5740a2cd71fa556f6eacb5d3d4e3cb94059ef2de9f24",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed53-03a8-76d3-929d-aafc0fd25c9f"
+      ],
+      "usage": {
+        "used": 66100,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 99823,
+          "utf8Bytes": 149713,
+          "estimatedTokens": 49905,
+          "budgetedTokens": 62382,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T13:22:27.698Z",
+    "trace": {
+      "runId": "4e00f027-bdba-4f39-b57d-c142c2c9b8f0",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
+      "promptHash": "f69bd3f4dc37fdcf792c28f38580be421cceac35ffaacb308a60669e2e4731de",
+      "contextHash": "892bc80a613d31b2be4d9827d0d358113793d1adeddf79bbbeab0f0e03b24a59",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "45865a8d9a17681a4637bd9da517d8a682db09303f4bfbd65b04180e5517e61a",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0ed54-4f68-7543-aef2-9c7e88bb5a8e"
+      ],
+      "usage": {
+        "used": 56334,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 96000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 97306,
+          "utf8Bytes": 146552,
+          "estimatedTokens": 48851,
+          "budgetedTokens": 61064,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
