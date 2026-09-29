@@ -31,7 +31,7 @@ function internal(path: string) {
       <h2>{{ material.title }}</h2>
       <div class="source-actions"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if="material.knowledge" variant="secondary" @click="emit('navigate', knowledgeFrame(material.key, material.knowledge.title))">阅读这份材料的知识解读 ↗</OmButton></div>
       <p v-if="startLine" class="muted">引用位置：第 {{ startLine }}{{ endLine && endLine !== startLine ? `–${endLine}` : '' }} 行</p>
-      <OmCodeViewer v-if="material.path && /\.(?:[cm]?[jt]sx?|vue|css|py|go|rs|sh|json|yaml|toml)$/.test(material.path)" :code="material.text" :language="material.path.split('.').pop()" :anchor-line="startLine" :links="material.links" @open-reference="reference" />
+      <OmCodeViewer v-if="material.path && !/\.(?:md|markdown)$/.test(material.path)" :code="material.text" :language="material.path.split('.').pop()" :anchor-line="startLine" :links="material.links" @open-reference="reference" />
       <template v-else>
         <blockquote v-if="startLine && endLine">{{ material.text.split('\n').slice(startLine - 1, endLine).join('\n') }}</blockquote>
         <OmMarkdown v-if="material.text" :source="material.text" @navigate-internal="internal" />
