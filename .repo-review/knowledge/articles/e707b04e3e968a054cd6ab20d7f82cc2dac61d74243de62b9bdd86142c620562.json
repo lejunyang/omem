@@ -3,49 +3,36 @@
   "document": {
     "key": "topic:assistant_memory",
     "title": "主助手、会话、检索与受治理记忆",
-    "summary": "Web 与 Lark 共用助手运行时：会话隔离历史，回合先持久化再执行，原始证据经服务器可见性过滤后交给 ACP。助手任务由服务器确认明确意图并提交 MemoryService，不经过学习管线 verifier；学习材料产生的提案才走 extractor、独立 verifier 与整批策略评估。外部事件标识提供去重和有限副作用恢复，但来源更新后的自动重核验仍未实现。",
+    "summary": "Web 与 Lark 共用会话及助手运行时：回合先持久化，再检索证据并调用 ACP；任务写入须经过服务器意图复核和 MemoryService，一般知识还经过 extractor、独立 verifier 与 Attention Gate。当前关键词检索未强制 workspace 隔离，此外仍受群聊策略、无事件标识恢复、证据回溯和来源更新重核验未闭环等限制。",
     "category": "overview",
     "sections": [
       {
-        "key": "conversation_flow",
-        "title": "会话身份与回合生命期",
-        "body": "Web 与 Lark 明确共用同一个主助手运行时，由它统一负责上下文、只读检索、受治理工具、回合持久化与降级。[[c1]] 会话则按 workspace、主体、渠道、聊天和线程共同定位，不能从聊天标识推断项目；详细边界可下钻到《conversation · 模块理解》。[[c2]] 每轮输入在模型调用前先持久化，携带传输事件标识时可复用既有轮次；同一会话的新消息会取消在途回合并串行执行。[[c3]][[c4]]\n\n外部取消、会话控制器与回合定时器会合并成中止信号，工具调用及最终落库前另设取消栅栏，防止迟到结果产生副作用。[[c5]][[c6]] receipt 恢复只对带传输事件标识的回合有效：此前“所有未完成回合都能识别已提交副作用”的结论已被替代，无该标识的 Web 回合不具备同等保证。[[c7]]"
+        "key": "conversation_runtime",
+        "title": "会话身份、持久化与恢复",
+        "body": "Web 与 Lark 会话由 workspace、主体、渠道、聊天和线程共同定位，聊天标识不能推导项目；线程隔离及持久化职责可继续下钻到会话子知识。[[c1]][[c2]] 每轮在模型调用前以 pending 状态落库；外部事件标识用于稳定去重，同一会话的新消息会取消旧回合并沿队列串行接续。[[c3]]\n\n取消信号合并外部中止、会话抢占与回合定时器，模型等待还通过独立竞速超时避免因模型忽略 abort 而永久挂起。[[c4]] 重试和崩溃恢复会查询真实 application receipt，但匹配依赖 transportEventId；带事件标识且已有 receipt 的回合只补齐完成状态，其他未完成回合重新执行。因此，无事件标识的 Web 回合不具备同等级的副作用恢复幂等保证。[[c5]]"
       },
       {
         "key": "retrieval_model",
-        "title": "原始证据检索与模型上下文",
-        "body": "执行阶段只回放当前会话近期已完成历史，并合并本轮检索、上一轮选中证据和会话范围内的确认纠正。检索优先走 `RetrievalPort`，旧测试才回退到 Store；两类证据都重新经过服务器可见性过滤。未注入策略时 private 可读、group 默认拒绝，但这并不证明生产宿主已经装配完整的主体与来源隔离策略。[[c8]] 固定 Fragment 回读、中文二元组和 active memory 搜索可继续下钻到《retrieval · 模块理解》。[[c9]]\n\n生产适配器只接受 ACP profile，限制历史和证据长度，声明材料不是指令，并要求模型返回回答、引用及可选任务请求的 JSON。[[c10]] 确定性模型仅供测试；生产缺少真实模型时必须如实报告不可用。[[c11]]"
+        "title": "证据检索、隔离与模型调用",
+        "body": "助手只回放当前会话近期已完成轮次，并合并本轮召回与上一轮选中证据；两类证据都会再次经过可见性过滤。未注入宿主策略时，private 会话可读而 group 默认拒绝全部证据；上下文和模型失败语义可下钻到助手子知识。[[c6]][[c7]] 检索端口要求结果最终指向固定 Fragment，摘要只是定位线索，不能成为新的独立事实依据。[[c8]]\n\n当前 SQLite 关键词实现按中文完整串、二元组和 ASCII 词累计命中分数，但来源 SQL 与记忆 SQL 均未带 workspace 条件；`SearchQuery` 本身也没有 workspace 标识。来源搜索会跨所有当前 source head 查找，记忆搜索会读取全部 active memory 后至多按可信项目过滤。[[c9]] 因而此前“项目未确认时检索保持 workspace 范围”的结论已被替代：端口只表达了应退化为 workspace-wide recall 的设计要求，现有实现却不能证明或强制 workspace 边界，存在跨 workspace 召回风险。[[c8]][[c9]]\n\nACP 适配器限制历史、证据与输出长度，声明材料中的内容不是指令，并要求模型返回回答、引用和可选任务请求组成的 JSON；未配置 ACP、使用不支持的 CLI transport 或传输失败时会如实报告模型不可用。[[c10]]"
       },
       {
         "key": "governed_memory",
-        "title": "助手任务与学习提案的不同治理路径",
-        "body": "模型只能提出结构化任务请求；服务器先核对明确交办、过滤引用白名单，再提交 `MemoryService`。直接 owner 交办可捕获本轮原话作为证据，并由运行时构造 `assistant-intent-v1` assessment。因此，此前“助手任务也经过独立 verifier”的结论已被替代：该路径直接依赖意图检查和 MemoryService 治理。[[c6]][[c12]]\n\nMemoryService 会精确校验 Fragment 所属 revision、Unicode 引文区间或图片资产，再由 Attention Gate 在自动应用、请求决定、延后、保留来源、忽略噪声和拒绝之间裁决；详细匹配策略可下钻到《memory · 模块理解》。[[c13]][[c14]][[c15]] 提案还保存来源 revision 与有效性纪元快照，应用或人工决定前重新比较当前 head 与 epoch，变化即按陈旧处理。[[c16]][[c17]]\n\n学习材料走另一条链路：extractor 产生提案，独立 verifier 完整覆盖候选并核对摘要，随后整个 ChangeSet 一次性交给批量策略评估；详细流程见《learning · 模块理解》。[[c18]][[c19]]"
+        "title": "任务写入与知识学习的两条治理路径",
+        "body": "助手任务路径不信任模型自行授权：服务器先用确定性规则复核用户是否明确交办，只允许引用实际暴露的片段，并在工具执行和最终持久化前设置取消栅栏。明确 owner 交办可捕获本轮原话作为证据，再将任务提案交给 MemoryService；只有返回任务 receipt 才代表真正创建。[[c11]] 该直接路径使用 `assistant-intent-v1` 评估，不经过学习管线的独立 verifier。\n\n一般捕获知识则由 extractor 产生 proposal，再创建 verifier 作业；verifier 必须完整覆盖候选、核对提案摘要，并将整个 ChangeSet 一次性交给批量策略评估，避免拆分绕过影响预算。流程背景可继续下钻到学习子知识。[[c12]][[c13]] MemoryService 按稳定摘要幂等保存提案，校验精确文本或图片证据，并记录来源 head 与 validity epoch 快照；应用前重新检查新鲜度。[[c14]] Attention Gate 根据证据、语义结论、来源冲突、任务关联及影响范围，在拒绝、忽略、保留来源、延后、请求用户决定和自动应用之间选择，模型不能绕过这些分支。[[c15]]"
       },
       {
-        "key": "progress_limits",
-        "title": "当前进展、替代结论与限制",
-        "body": "现有链路已覆盖会话持久化、事件去重、会话内抢占、关键词召回、ACP 调用、引用白名单、受治理任务创建及有限恢复。关键词来源检索按词面累计分数，但每个 term 最多读取 200 行且截断前没有稳定 SQL 排序；`MemoryCandidate` 也没有原始 Revision 与 Fragment 定位。[[c22]][[c23]]\n\n批量超预算时会把原本可自动应用的提案停放，并建立包含全部摘要的汇总 Attention Case；但决定行锚定代表提案摘要，公开 `decide` 又只按该摘要重建并应用一个提案。[[c20]][[c21]] 因而“批准即可整体应用全部停放提案”尚不能成立。\n\n来源更新后，刷新函数只记录 `needs_review` 或 `no_effect`，处理器随后以未实现错误结束。此前“刷新已完成失效记忆重核验”的结论已被替代：当前尚无自动 extractor/verifier 重核验闭环。[[c24]][[c25]]"
+        "key": "feedback_limits",
+        "title": "反馈约束与未完成闭环",
+        "body": "反馈按身份验证、原始生产者、证据完整性和是否涉及受保护策略分为 confirmed、weak 或 shadow。confirmed 约束目前只在显式调用时改写任务负责人；助手另会读取会话范围内的纠正作为模型上下文，但这不能表述为反馈已经全面接入所有提案治理。[[c16]]\n\n当前限制不止于缺少语义检索：关键词来源查询每词最多读取 200 行且无 SQL 排序，记忆候选也缺少直接回到 Revision、Fragment 的定位字段；更关键的是，现有来源与记忆检索没有 workspace 过滤，尚不能承担 workspace 或租户隔离。[[c9]][[c17]] 群聊的主体、来源和范围授权仍依赖宿主注入完整策略。[[c7]]\n\n来源更新会确定性地使旧依赖失效，并记录受影响记忆范围，但刷新作业随后以未实现错误结束，尚未重新运行 verifier；这一边界可下钻到学习刷新子知识。[[c18]][[c19]] 因此，重新取证、独立重核验、部分失败重试和只允许新 head 结果提交仍未形成闭环。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "统一主助手运行时",
-        "reason": "直接支持 Web 与 Lark 进入同一个 AssistantRuntime，以及该运行时承担的统一职责。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/runtime.ts",
-          "startLine": 160,
-          "endLine": 166
-        },
-        "quote": "/**\n * The single main-assistant runtime. Both Lark and Web go through this class so\n * there is one product surface. It owns context assembly, evidence retrieval\n * (read-only, visibility-filtered via RetrievalPort), low-risk governance tool\n * execution via MemoryService (server-enforced), turn persistence and\n * deg"
-      },
-      {
-        "key": "c2",
-        "label": "会话模块：身份与边界",
-        "reason": "提供相邻子知识入口，解释组合会话键、private/group 状态及持久化职责。",
-        "relation": "explains",
+        "label": "会话身份与线程隔离",
+        "reason": "提供会话组合键、线程隔离和持久化边界的子知识入口。",
+        "relation": "background",
         "target": {
           "kind": "article",
           "key": "module:conversation",
@@ -54,22 +41,22 @@
         "quote": ""
       },
       {
-        "key": "c3",
-        "label": "轮次入队与事件去重",
-        "reason": "支持模型调用前持久化 pending 轮次，以及按传输事件标识复用既有记录。",
-        "relation": "implements",
+        "key": "c2",
+        "label": "会话组合键与创建流程",
+        "reason": "支持会话由 workspace、主体、渠道、聊天和线程共同确定，且聊天标识不代表项目。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/conversation/router.ts",
-          "startLine": 146,
-          "endLine": 193
+          "startLine": 67,
+          "endLine": 122
         },
-        "quote": "  /**\n   * Persist a pending turn before any model call. When `transportEventId` is\n   * provided the turn id is derived from it, so re-delivering the same event\n   * returns the already-persisted turn (`duplicate: true`) instead of running\n   * a second turn or issuing a second reply.\n   */\n  enqueueTurn(input: {\n    "
+        "quote": "/**\n * Owns conversation identity and persistence. The conversation key is\n * principal + channel + chat + thread; project identity is never inferred from\n * chat_id. A conversation may be private (p2p with the bound owner / web) or\n * group (@-mentioned in a group), which bounds evidence visibility.\n *\n * Turns are en"
       },
       {
-        "key": "c4",
-        "label": "会话内抢占与串行执行",
-        "reason": "支持新消息取消在途回合并沿会话执行链串行运行。",
+        "key": "c3",
+        "label": "回合入队、去重与会话抢占",
+        "reason": "支持模型调用前持久化、外部事件幂等去重和同一会话中新消息取消旧回合。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -80,9 +67,9 @@
         "quote": "  async turn(input: {\n    conversationId: string;\n    userText: string;\n    /** External transport event id (e.g. Lark event_id) for idempotent delivery. */\n    transportEventId?: string | null;\n    signal?: AbortSignal;\n  }): Promise<AssistantTurnResult> {\n    const conversation = this.router.get(input.conversationId)"
       },
       {
-        "key": "c5",
-        "label": "合并取消信号与定时器",
-        "reason": "直接支持外部信号、会话控制器和回合定时器如何共同形成中止信号。",
+        "key": "c4",
+        "label": "合并取消信号与独立超时",
+        "reason": "支持外部信号、会话控制器、回合定时器及独立模型等待超时的组合行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -93,35 +80,34 @@
         "quote": "  private deriveSignal(external: AbortSignal | undefined, controller: AbortController) {\n    const merged = new AbortController();\n    // FENCE: if either upstream signal is ALREADY aborted at creation time,\n    // abort immediately rather than only listening for future events.\n    if (external?.aborted || controller.s"
       },
       {
-        "key": "c6",
-        "label": "工具调用与落库取消栅栏",
-        "reason": "支持任务意图检查、MemoryService 治理、引用白名单及副作用前后的取消检查。",
+        "key": "c5",
+        "label": "Receipt 恢复的事件标识限制",
+        "reason": "证明 receipt 查询依赖 transportEventId，并支持据此补齐完成或重新执行的恢复边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/runtime.ts",
-          "startLine": 494,
-          "endLine": 564
+          "startLine": 275,
+          "endLine": 383
         },
-        "quote": "      // FENCE: abort check right before governing tools. A slow model that\n      // resolves after the turn was cancelled must not write anything.\n      this.assertNotCancelled(input.signal);\n\n      // 3. Structured, server-enforced tool calls. No prompt-as-permission: every\n      //    create_task goes through Memory"
+        "quote": "  /**\n   * G20: check the REAL application_receipts table (not in-memory toolActions)\n   * to determine if a tool was already committed. This survives the window where\n   * the receipt was written but turn.toolActions was not yet persisted.\n   */\n  private hasCommittedReceipt(turn: { inputMessageRefs: { transportEventI"
+      },
+      {
+        "key": "c6",
+        "label": "助手上下文与模型失败处理",
+        "reason": "提供当前会话历史、上一轮证据、纠正上下文和模型失败语义的子知识入口。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "module:assistant",
+          "section": "context_and_model"
+        },
+        "quote": ""
       },
       {
         "key": "c7",
-        "label": "取消与有限 receipt 恢复",
-        "reason": "支持取消、重试和重启恢复，并证明 receipt 匹配依赖传输事件标识。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/runtime.ts",
-          "startLine": 261,
-          "endLine": 383
-        },
-        "quote": "  /**\n   * Public cancel endpoint: mark a specific turn as cancelled and abort its\n   * in-flight controller if any. Called by the HTTP cancel route and by the\n   * Lark runtime host on shutdown.\n   */\n  cancelTurn(turnId: string) {\n    const turn = this.router.turn(turnId);\n    if (!turn) return false;\n    const entry"
-      },
-      {
-        "key": "c8",
-        "label": "检索与服务器可见性过滤",
-        "reason": "支持统一检索端口优先、Store 回退、上一轮证据复用及群聊默认拒绝规则。",
+        "label": "检索与可见性过滤",
+        "reason": "支持 RetrievalPort 优先、上一轮证据复用，以及群聊未注入策略时默认拒绝。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -132,21 +118,35 @@
         "quote": "  private retrieveEvidence(\n    userText: string,\n    conversation: Conversation,\n  ): AssistantEvidence[] {\n    // A: prefer the injected RetrievalPort (project-wide contract). Fall back\n    // to store.search for legacy tests that don't wire a port.\n    let rows: Array<{ id: string; text: string; title: string; versi"
       },
       {
-        "key": "c9",
-        "label": "检索模块：流程与回读",
-        "reason": "提供相邻子知识入口，解释固定证据回读、关键词分词与 active memory 搜索。",
+        "key": "c8",
+        "label": "检索端口的证据与范围合同",
+        "reason": "支持固定 Fragment 证据目标及未确认项目时应退化为 workspace 范围的设计要求，同时显示查询合同没有 workspace 标识。",
         "relation": "explains",
         "target": {
-          "kind": "article",
-          "key": "module:retrieval",
-          "section": "retrieval-flow"
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 1,
+          "endLine": 37
         },
-        "quote": ""
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
+      },
+      {
+        "key": "c9",
+        "label": "关键词检索缺少 workspace 过滤",
+        "reason": "直接支持来源 SQL 和 active memory SQL 均没有 workspace 条件，证明当前实现无法强制 workspace 隔离。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 102,
+          "endLine": 144
+        },
+        "quote": "  private searchFragmentsForTerm(term: string): Row[] {\n    const escaped = \"%\" + term.replace(/[!%_]/g, \"!$&\") + \"%\";\n    return this.db\n      .prepare(\n        `SELECT f.id AS fragment_id, f.revision_id, f.text AS fragment_text,\n                r.title, r.created_at AS revision_created_at,\n                s.namespace"
       },
       {
         "key": "c10",
-        "label": "ACP 上下文与输出合同",
-        "reason": "支持 ACP profile 限制、上下文预算、证据非指令约束、JSON 输出协议和传输失败处理。",
+        "label": "ACP 上下文与输出协议",
+        "reason": "支持 ACP transport 限制、上下文预算、材料非指令约束、JSON 输出合同及传输失败处理。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -158,99 +158,22 @@
       },
       {
         "key": "c11",
-        "label": "确定性模型的测试限定",
-        "reason": "证明确定性模型只供测试，生产缺少真实模型时必须如实降级。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/default-model.ts",
-          "startLine": 7,
-          "endLine": 15
-        },
-        "quote": "/**\n * Deterministic stand-in for the real LLM composer. It performs no inference:\n * it surfaces the evidence the runtime already retrieved and cites fragments.\n *\n * This exists ONLY for tests. Production assembly must inject the real\n * `AcpAssistantModel`; when no model is configured the runtime degrades honestly\n "
-      },
-      {
-        "key": "c12",
-        "label": "助手任务的直接治理评估",
-        "reason": "证明助手运行时直接构造意图 assessment 并调用 MemoryService，而非经过学习管线 verifier。",
-        "relation": "implements",
+        "label": "任务意图、引用与治理写入",
+        "reason": "支持明确任务意图复核、直接消息捕获、引用解析、MemoryService 评估和 receipt 成功条件。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/runtime.ts",
-          "startLine": 701,
+          "startLine": 494,
           "endLine": 873
         },
-        "quote": "  /**\n   * Route a model create_task request through MemoryService governance. The model\n   * cannot self-authorize:\n   *  - only the canonical owner's verified evidence backs an owner task;\n   *  - group-member / forwarded / unverified material is retained as a source lead,\n   *    never applied as an owner task;\n   *"
+        "quote": "      // FENCE: abort check right before governing tools. A slow model that\n      // resolves after the turn was cancelled must not write anything.\n      this.assertNotCancelled(input.signal);\n\n      // 3. Structured, server-enforced tool calls. No prompt-as-permission: every\n      //    create_task goes through Memory"
       },
       {
-        "key": "c13",
-        "label": "精确引文与图片资产校验",
-        "reason": "直接支持文本 selector、精确引文、来源 revision 以及图片资产的一致性校验。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 201,
-          "endLine": 252
-        },
-        "quote": "  validateEvidence(proposal: Proposal) {\n    let ambiguous = false;\n    const errors: string[] = [];\n    for (const evidence of proposal.evidence) {\n      const record = this.store.evidence(evidence.fragment_revision_id);\n      if (!record) {\n        errors.push(`missing fragment ${evidence.fragment_revision_id}`);\n   "
-      },
-      {
-        "key": "c14",
-        "label": "Attention Gate 策略分支",
-        "reason": "支持证据错误、冲突、软不确定性、来源保留和自动应用等治理结果。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 704,
-          "endLine": 810
-        },
-        "quote": "  /**\n   * AttentionGate (processing-policy.md §5): deterministic validation failure is\n   * the machine's own job and never becomes an owner question. Only conditions\n   * that genuinely require an owner choice/authorization AND touch current work\n   * or existing important knowledge become `awaiting_decision`. Everyt"
-      },
-      {
-        "key": "c15",
-        "label": "记忆模块：匹配与策略",
-        "reason": "提供相邻子知识入口，供读者下钻同域知识匹配和 Attention Gate 的整体边界。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "module:memory",
-          "section": "matching-and-policy"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c16",
-        "label": "提案来源读取快照",
-        "reason": "支持提案持久化时保存证据来源 revision 与有效性纪元。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 135,
-          "endLine": 198
-        },
-        "quote": "  private persistProposal(proposal: Proposal, impactCount: number) {\n    const digest = stableDigest(proposal);\n    return this.transaction(() => {\n      const byId = this.proposalRow(proposal.proposal_id);\n      if (byId && byId.digest !== digest) throw Error(\"PROPOSAL_ID_CONFLICT\");\n      const byDigest = this.db\n   "
-      },
-      {
-        "key": "c17",
-        "label": "当前来源新鲜度比较",
-        "reason": "支持应用或决定前比较当前 source head、epoch 与提案读取快照。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 255,
-          "endLine": 281
-        },
-        "quote": "  private sourceReads(proposalId: string) {\n    return this.db\n      .prepare(\n        `SELECT r.*,s.head AS current_head,ss.validity_epoch AS current_epoch\n         FROM proposal_source_reads r\n         JOIN sources s ON s.id=r.source_id\n         JOIN source_state ss ON ss.source_id=r.source_id\n         WHERE r.propos"
-      },
-      {
-        "key": "c18",
-        "label": "学习模块：提取与独立复核",
-        "reason": "提供相邻子知识入口，说明 extractor、verifier 与整批策略评估的关系。",
-        "relation": "explains",
+        "key": "c12",
+        "label": "学习管线流程",
+        "reason": "提供 extractor、独立 verifier 与整批策略评估的子知识入口。",
+        "relation": "background",
         "target": {
           "kind": "article",
           "key": "module:learning",
@@ -259,9 +182,9 @@
         "quote": ""
       },
       {
-        "key": "c19",
+        "key": "c13",
         "label": "独立复核与整批评估",
-        "reason": "支持 assessment 完整覆盖、摘要一致性检查及整个 ChangeSet 的批量治理。",
+        "reason": "支持 verifier 完整覆盖候选、核对摘要并把整个 ChangeSet 送入批量治理。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -272,132 +195,174 @@
         "quote": "  private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);\n      const reference = job.inputRefs.find(\n        (value) =>\n          typeof value === \"object\" &&\n          value !== null "
       },
       {
-        "key": "c20",
-        "label": "汇总批量决定的锚定方式",
-        "reason": "证明批量 Attention Case 保存全部提案摘要，但决定行以代表提案摘要作为锚点。",
+        "key": "c14",
+        "label": "提案证据与来源新鲜度",
+        "reason": "支持提案摘要幂等、精确证据校验以及来源 head 和 validity epoch 快照检查。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 1491,
-          "endLine": 1559
+          "startLine": 135,
+          "endLine": 273
         },
-        "quote": "  private createBatchDecision(parked: Proposal[], totalImpact: number): string | undefined {\n    if (!parked.length) return undefined;\n    const representative = parked[0]!;\n    const workspaceId = representative.scope.workspace_id;\n    const proposalDigests = new Set<string>();\n    const evidenceRefs = new Set<string>"
+        "quote": "  private persistProposal(proposal: Proposal, impactCount: number) {\n    const digest = stableDigest(proposal);\n    return this.transaction(() => {\n      const byId = this.proposalRow(proposal.proposal_id);\n      if (byId && byId.digest !== digest) throw Error(\"PROPOSAL_ID_CONFLICT\");\n      const byDigest = this.db\n   "
       },
       {
-        "key": "c21",
-        "label": "公开决定的单提案应用流程",
-        "reason": "证明 decide 按决定绑定的摘要重建一个提案，并在批准时调用单提案 apply。",
+        "key": "c15",
+        "label": "Attention Gate 策略分支",
+        "reason": "支持拒绝、忽略、保留、延后、请求决定和自动应用等治理结果及升级条件。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 1660,
-          "endLine": 1749
+          "startLine": 704,
+          "endLine": 810
         },
-        "quote": "  decide(decisionId: string, input: unknown) {\n    const action = decisionActionSchema.parse(input);\n    const decision = this.db\n      .prepare(\"SELECT * FROM decisions WHERE id=?\")\n      .get(decisionId) as Row | undefined;\n    if (!decision) throw Error(\"DECISION_NOT_FOUND\");\n    if (decision.proposal_digest !== act"
+        "quote": "  /**\n   * AttentionGate (processing-policy.md §5): deterministic validation failure is\n   * the machine's own job and never becomes an owner question. Only conditions\n   * that genuinely require an owner choice/authorization AND touch current work\n   * or existing important knowledge become `awaiting_decision`. Everyt"
       },
       {
-        "key": "c22",
-        "label": "关键词来源评分与截断",
-        "reason": "支持词面累计评分、每词最多读取 200 行及截断前缺少 SQL 排序的限制。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/keyword.ts",
-          "startLine": 52,
-          "endLine": 116
-        },
-        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const best = new Map<\n      string,\n      { row: Row; score: number; matched: Set<string> }\n    >();\n    for (const term"
-      },
-      {
-        "key": "c23",
-        "label": "来源与记忆候选合同",
-        "reason": "展示来源候选包含 Revision 与 Fragment 定位，而记忆候选没有对应字段。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/port.ts",
-          "startLine": 45,
-          "endLine": 86
-        },
-        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string;\n  score: number;\n  "
-      },
-      {
-        "key": "c24",
-        "label": "来源刷新记录状态",
-        "reason": "支持刷新只记录影响范围、区分 needs_review 与 no_effect，并返回 blocked/not_implemented。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/learning/refresh.ts",
-          "startLine": 25,
-          "endLine": 80
-        },
-        "quote": "/**\n * F8: record the real blast radius of a source revision update. The deterministic\n * invalidation already happened in store.capture (dependencies -> stale, memories\n * -> invalidated, and KeywordRetrieval only recalls active rows). This writes an\n * auditable refresh_records row, but it does NOT re-verify or \"revi"
-      },
-      {
-        "key": "c25",
-        "label": "刷新作业尚未重核验",
-        "reason": "证明刷新处理器记录范围后抛出未实现错误，不能报告重新复核成功。",
+        "key": "c16",
+        "label": "反馈可信度与有限改写",
+        "reason": "支持反馈幂等、强度分级，以及 confirmed 约束目前仅改写任务负责人的能力边界。",
         "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 1869,
+          "endLine": 1990
+        },
+        "quote": "export class FeedbackService {\n  constructor(private readonly store: Store) {}\n\n  record(value: unknown) {\n    const input = feedbackInputSchema.parse(value);\n    const payloadDigest = stableDigest(input);\n    return this.store.tx(() => {\n      const existing = this.store.db\n        .prepare(\n          \"SELECT * FROM f"
+      },
+      {
+        "key": "c17",
+        "label": "检索实现限制",
+        "reason": "提供无序候选截断、项目范围和记忆候选原文回溯缺口的子知识入口。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "module:retrieval",
+          "section": "trust-progress-limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c18",
+        "label": "来源刷新限制",
+        "reason": "提供来源更新只记录影响范围、尚未完成自动重核验的子知识入口。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "module:learning",
+          "section": "runtime-progress-limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c19",
+        "label": "重新复核尚未实现",
+        "reason": "证明刷新作业记录影响范围后仍抛出未实现错误，不能报告为已经完成 verifier 重核验。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/learning/pipeline.ts",
           "startLine": 126,
-          "endLine": 145
+          "endLine": 146
         },
         "quote": "  private async refreshDependents(job: JobLease): Promise<never> {\n    const result = recordSourceRefresh(\n      this.input.store.db,\n      job.workspaceId,\n      job.inputRefs as {\n        sourceId?: string;\n        previousRevisionId?: string;\n        revisionId?: string;\n      }[],\n    );\n    // Re-verification of t"
       }
     ],
     "questions": [
       {
-        "question": "群聊的完整证据可见性策略由哪个生产宿主注入，并如何验证主体、来源和范围不会跨会话泄漏？",
-        "why": "现有材料只证明未注入策略时 group 默认拒绝，没有展示 Web 与 Lark 生产装配中的策略提供方及完整隔离测试。",
-        "nextStep": "检查 Web 与 Lark 的运行时装配点，并补充 private、group、跨主体和跨会话的行为测试。",
+        "question": "关键词检索应如何取得并强制执行 workspace 标识？",
+        "why": "端口要求项目未确认时退化到 workspace-wide recall，但 SearchQuery 没有 workspaceId，当前来源和记忆 SQL 也没有 workspace 条件，存在跨 workspace 召回风险。",
+        "nextStep": "为 SearchQuery 或检索实例增加可信 workspace 边界，在来源与记忆查询中强制过滤，并补充跨 workspace 行为测试后再宣称 workspace 范围召回。",
         "blocking": false,
         "citationKeys": [
-          "c8"
+          "c8",
+          "c9",
+          "c17"
         ]
       },
       {
-        "question": "无传输事件标识的 Web 回合应如何获得可恢复的副作用幂等保证？",
-        "why": "receipt 恢复依赖 transportEventId 派生的提案标识；无事件标识时提案使用随机标识，重新执行无法稳定匹配此前提交。",
-        "nextStep": "定义稳定的 Web 幂等键或持久化回合到提案的直接关联，并测试 receipt 已提交但回合尚未完成的恢复窗口。",
+        "question": "群聊生产环境应由哪个宿主注入基于主体、来源和范围的完整可见性策略？",
+        "why": "现有材料只证明未注入策略时群聊证据全部拒绝，尚未证明 Web 与 Lark 群聊具有一致、完整的授权策略。",
+        "nextStep": "确认运行时装配位置，并增加私聊、群聊、跨会话及转发材料的端到端可见性测试。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c12"
+          "c2",
+          "c7"
         ]
       },
       {
-        "question": "批量 Attention Case 获批后是否要求原子应用全部停放提案？",
-        "why": "汇总决定虽然保存全部提案摘要，但决定行锚定代表提案；当前公开 decide 只按该锚定摘要重建并应用单个提案，未展示整批执行路径。",
-        "nextStep": "确定整体批准、逐条审阅和部分失败合同，再实现批量决定执行器及数据库级原子性测试。",
+        "question": "无 transportEventId 的 Web 回合是否需要与 Lark 事件相同等级的副作用恢复幂等保证？",
+        "why": "application receipt 通过外部事件标识匹配助手任务提案；没有该标识时 receipt 检查恒为否，未完成回合可能重新执行。",
+        "nextStep": "为 Web 请求定义稳定幂等键，或持久化独立的回合—提案关联，并测试 receipt 提交后崩溃的窗口。",
         "blocking": false,
         "citationKeys": [
-          "c20",
-          "c21"
+          "c3",
+          "c5",
+          "c11"
         ]
       },
       {
-        "question": "来源更新后的自动重核验何时接入 extractor、verifier 与 MemoryService？",
-        "why": "当前刷新只记录影响范围，管线随后以未实现错误结束，无法自动恢复失效记忆。",
-        "nextStep": "设计携带 revision 与 validity epoch 的重核验作业，并定义重试、部分失败和陈旧结果拒绝规则。",
+        "question": "是否应先补齐关键词检索的 workspace 隔离、稳定排序与记忆候选原文回溯，再引入语义检索？",
+        "why": "当前问题首先影响安全边界、结果可重复性和引用可靠性；语义后端若沿用不完整合同，也会继承这些缺口。",
+        "nextStep": "先增加跨 workspace、高频词和记忆证据回溯测试，再定义后端统一的范围、排序及固定证据解析合同。",
         "blocking": false,
         "citationKeys": [
-          "c24",
-          "c25"
+          "c8",
+          "c9",
+          "c17"
         ]
       },
       {
-        "question": "无传输事件标识的回合应如何获得可恢复的副作用幂等保证？",
-        "why": "当前 application receipt 匹配依赖 transportEventId；缺少该标识时任务提案使用随机标识，重试或崩溃恢复无法据此识别先前已提交的副作用。",
-        "nextStep": "定义稳定的 Web 幂等键或持久化回合与提案的直接关联，并测试 receipt 已提交但回合尚未完成的恢复窗口。",
+        "question": "来源更新后的自动重核验应如何限定范围并防止旧结果覆盖新 head？",
+        "why": "当前刷新只记录受影响记忆并以未实现错误结束，没有 verifier 重跑、部分失败重试或基于新鲜度的条件提交协议。",
+        "nextStep": "设计以新 revision 和 validity epoch 为前提的重取证、独立复核及条件提交流程，并覆盖重试和旧结果晚到场景。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c12"
+          "c14",
+          "c18",
+          "c19"
+        ]
+      },
+      {
+        "question": "confirmed 反馈约束应在主提案管线的哪个阶段统一应用，并如何处理冲突与撤销？",
+        "why": "现有实现具备约束召回和任务负责人改写能力，但没有证明所有提案都经过统一约束应用，也未定义多个约束的优先级和失效语义。",
+        "nextStep": "明确约束生命周期、优先级和接入点，并增加冲突约束、撤销及重复应用的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c16"
+        ]
+      },
+      {
+        "question": "群聊生产环境由哪个宿主注入完整的证据可见性策略？",
+        "why": "材料只证明没有注入策略时 group 会话默认拒绝全部证据，未证明 Web 与 Lark 的生产装配已提供基于主体、来源和范围的一致策略。",
+        "nextStep": "核对运行时装配位置，并增加私聊、群聊、跨会话和转发材料的端到端可见性测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c7"
+        ]
+      },
+      {
+        "question": "无 transportEventId 的回合是否需要与外部事件回合相同等级的副作用恢复幂等保证？",
+        "why": "application receipt 的恢复匹配依赖 transportEventId；缺少该标识时，未完成回合可能重新执行任务路径。",
+        "nextStep": "为 Web 请求定义稳定幂等键，或持久化独立的回合—提案关联，并测试 receipt 提交后崩溃的窗口。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c5",
+          "c11"
+        ]
+      },
+      {
+        "question": "confirmed 反馈约束应如何处理优先级、冲突与撤销？",
+        "why": "学习管线会显式调用有限的任务负责人改写，但材料未定义多个约束的优先级、撤销和失效语义，也未证明其他提案入口统一应用约束。",
+        "nextStep": "明确约束生命周期和各入口的接入合同，并增加冲突约束、撤销及重复应用测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c16"
         ]
       }
     ]
@@ -471,7 +436,7 @@
     {
       "kind": "article",
       "key": "module:retrieval",
-      "digest": "81c6707010cf2fbe8122322b83d5f35499fc36ec83c0d4953feaf21fee4f49bd"
+      "digest": "2def8685d595eb0bdb3ca0b3c21446c7d09aeff24e2cc2ee59ef27f0860d8f4b"
     },
     {
       "kind": "article",
@@ -502,17 +467,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:06:22.549Z",
+    "at": "2026-09-29T21:19:54.059Z",
     "trace": {
-      "runId": "ab18346d-6c32-42a7-a606-bfa03a5aa7fb",
+      "runId": "7e468ec7-4956-43de-88bc-03f45222b443",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "92ca9023f479160fe599e3d707410e913ec90dd8c38dfa3b4d514957b0713f55",
-      "contextHash": "b0f86b05642d0796157426fb754b7315d36a1caefd5ef4050b079d413085162a",
+      "promptHash": "0c398c27838ae0b2cb35b0d07bd6e50e041a17ea7f5550ffcc0c3c2d3b9ac827",
+      "contextHash": "b6080087e821d50811d2e3b6c01f8dc0b8ed4b87e97a6b26836e728f32aa83c8",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3fdbe34b5e84a4819ddba78848a17133f5e32a9613693fa51271487eec315362",
+      "fingerprint": "e9c60f07f730b2dc6095062a864931d048891e5bc3ca1b0269220a4098d45daa",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -525,10 +490,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eefc-fe21-7bd1-b2c2-147994be3cab"
+        "01a0ef09-5447-7652-aaca-d8a306901b88"
       ],
       "usage": {
-        "used": 102463,
+        "used": 102804,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -537,10 +502,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 285367,
-          "utf8Bytes": 322663,
-          "estimatedTokens": 107555,
-          "budgetedTokens": 134444,
+          "chars": 285805,
+          "utf8Bytes": 323548,
+          "estimatedTokens": 107850,
+          "budgetedTokens": 134813,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -549,17 +514,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:06:43.680Z",
+    "at": "2026-09-29T21:20:10.221Z",
     "trace": {
-      "runId": "deec37ce-4d0d-4d46-b878-ade27ade2f2b",
+      "runId": "35a0c3c3-454e-44bb-b68c-725822359e8b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "3c57201080758459ec488dcfae38c8e0679518ad28871f4db9ab42ab38b8b39a",
-      "contextHash": "b2d386188ecca04841cda67caafa88d10a1e3becceab6c540749bef3b5a2720c",
+      "promptHash": "e61ed4a4b470f6b3bbc28680599175c3883c38fc39ea9fc8343fadbe667bd7f8",
+      "contextHash": "21687d8b1e7e9ec4bf41f592a743c88affcd5cc09e1b4ddf60b8014938448e02",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6bd46b12c00fd1565c360e6f7468d6ce501a8ad93c48bc26f81ec160e39b33a8",
+      "fingerprint": "7bc947d3fb94acd044424c49fb9ed9748bfd39ce2827c8f7bfe742ac3143b451",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -572,10 +537,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eefd-74db-7501-acf1-d27967250a80"
+        "01a0ef09-d6c1-7e20-9ba4-326ad85cf50c"
       ],
       "usage": {
-        "used": 98836,
+        "used": 97785,
         "size": 760000,
         "cost": null,
         "budget": {
@@ -584,10 +549,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 282643,
-          "utf8Bytes": 317773,
-          "estimatedTokens": 105925,
-          "budgetedTokens": 132407,
+          "chars": 279463,
+          "utf8Bytes": 315436,
+          "estimatedTokens": 105146,
+          "budgetedTokens": 131433,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
