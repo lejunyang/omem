@@ -1,0 +1,330 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:retrieval",
+    "title": "retrieval · 模块理解",
+    "summary": "retrieval 模块以统一端口隔离调用方与检索后端，当前提供 SQLite 关键词基线，覆盖固定来源片段、active memory 与证据回读；项目范围坚持确认后才收紧，但评分合同、超限排序及记忆到原始证据的映射仍待明确。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "role-and-boundary",
+        "title": "作用与设计背景",
+        "body": "retrieval 位于知识流水线、助手工具与具体搜索技术之间。调用方依赖统一端口，当前使用 SQLite 关键词实现，未来可替换为向量或侧车后端；设计目标是让上层回到不可变 Fragment 引用原文，而非把摘要或排序结果当作事实。[[c1]]\n\n模块区分来源与记忆两类候选：来源候选直接携带 Revision、Fragment 和 provenance，可用于固定证据回读；记忆候选表示已应用知识，服务冲突检查与复用，但其类型没有直接给出原始 Revision/Fragment。[[c2]]"
+      },
+      {
+        "key": "retrieval-flow",
+        "title": "检索与回读如何工作",
+        "body": "来源检索将查询分成去重 term，逐词搜索当前 source head 下的片段；同一片段按不同命中词累积分数，长词权重更高，并合并知识正文产生的证据候选，随后按分数截取，返回摘要、固定定位与 provenance。[[c3]] `readEvidence` 可按 Revision 与 Fragment 精确读取；未给 Fragment 时取 ordinal 最小的片段。[[c4]]\n\n分词保留小写 ASCII 词；中文既保留完整串，也生成重叠二元组，并过滤常见高召回二元词。[[c5]] 记忆检索只扫描 active head revision，在序列化正文中做包含匹配并按命中词计分。[[c6]] 该基线无需本地模型且易解释，但没有语义相似度或词频归一化。"
+      },
+      {
+        "key": "scope-progress-limits",
+        "title": "范围约束、进展与限制",
+        "body": "项目范围遵循“确认后才收紧”：应用名、会话号和运行号只是捕获上下文，不能推断为项目；没有已确认 ContextLink 时，调用方必须传入不可信项目状态，后端保持工作区级召回。[[c7]] 来源 Fragment 目前没有持久化的可信项目关联，因此不执行项目过滤；记忆搜索则仅在项目标识可信、且记忆明确属于另一项目时排除该记忆，无项目关联的记忆仍可见。[[c8]][[c9]] 这避免未知关联导致漏召回，但不等同于租户隔离。\n\n当前已具备统一端口、固定证据回读、中英文词面召回和 active memory 搜索。仍有限制：每个来源 term 最多读取 200 行且 SQL 未规定行序；端口也未约束 score 范围、跨后端可比性或同分顺序，并且没有说明记忆候选如何稳定追溯到原始证据。[[c10]][[c11]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "统一检索端口设计",
+        "reason": "支持模块隔离具体检索后端、允许未来替换实现，并要求上层引用不可变证据的架构作用。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
+      },
+      {
+        "key": "c2",
+        "label": "来源与记忆候选合同",
+        "reason": "支持两类候选字段的区别，以及只有来源候选直接携带 Revision 与 Fragment 定位。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 45,
+          "endLine": 70
+        },
+        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string;\n  score: number;\n  "
+      },
+      {
+        "key": "c3",
+        "label": "来源搜索、评分与结果组装",
+        "reason": "支持逐词检索、去重计分、知识证据合并、分数排序及 provenance 输出流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 52,
+          "endLine": 99
+        },
+        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const best = new Map<\n      string,\n      { row: Row; score: number; matched: Set<string> }\n    >();\n    for (const term"
+      },
+      {
+        "key": "c4",
+        "label": "固定证据回读",
+        "reason": "支持按 Revision 与可选 Fragment 读取证据，以及未指定 Fragment 时按 ordinal 选择首项。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 28,
+          "endLine": 50
+        },
+        "quote": "  readEvidence(\n    revisionId: string,\n    fragmentId?: string,\n  ): EvidenceFragment | null {\n    const row = fragmentId\n      ? (this.db\n          .prepare(\n            \"SELECT * FROM fragments WHERE id=? AND revision_id=?\",\n          )\n          .get(fragmentId, revisionId) as Row | undefined)\n      : (this.db\n    "
+      },
+      {
+        "key": "c5",
+        "label": "中英文查询分词",
+        "reason": "支持查询 term 去重、ASCII 小写化、中文完整串与二元组生成及停用二元词过滤。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 183,
+          "endLine": 223
+        },
+        "quote": "/**\n * Split a query into matchable terms: whitespace/punctuation chunks; ASCII words.\n * For CJK runs of length >= 2, also emit overlapping 2-gram substrings so that\n * short follow-up queries like \"按这个\" or \"刚才说的\" match fragments that\n * contain individual character pairs, instead of requiring the whole phrase.\n */\nex"
+      },
+      {
+        "key": "c6",
+        "label": "Active memory 检索",
+        "reason": "支持只扫描 active memory head、执行正文包含匹配并按命中 term 累积分数的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 119,
+          "endLine": 171
+        },
+        "quote": "  searchMemories(query: SearchQuery): MemoryCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 10, 50));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const rows = this.db\n      .prepare(\n        `SELECT m.id, m.kind, m.status, m.scope, mr.body, mr.created_at\n         FR"
+      },
+      {
+        "key": "c7",
+        "label": "项目关系信任合同",
+        "reason": "支持不得从捕获上下文推断项目，以及项目关联未确认时必须保持工作区级召回。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 17,
+          "endLine": 36
+        },
+        "quote": "/**\n * A project relationship is never inferred from context carriers like\n * `application` / `conversationId` / `runId`. Those only describe where a capture\n * happened. A real project link is a separate ContextLink record that carries its\n * own source evidence, candidate confidence and a confirmed flag. Until such a"
+      },
+      {
+        "key": "c8",
+        "label": "来源检索的项目边界",
+        "reason": "支持来源 Fragment 尚无可信项目关联，因此当前不做项目过滤的实现边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 60,
+          "endLine": 67
+        },
+        "quote": "    for (const term of terms) {\n      const rows = this.searchFragmentsForTerm(term);\n      for (const row of rows) {\n        // Project filtering is intentionally NOT applied here: there is no persisted\n        // trusted project association (ContextLink) on fragments yet, and context\n        // carriers (application/"
+      },
+      {
+        "key": "c9",
+        "label": "记忆检索的可信项目过滤",
+        "reason": "支持仅在项目标识可信且记忆明确属于其他项目时排除，并保留无项目关联记忆。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 133,
+          "endLine": 144
+        },
+        "quote": "      const scope = safeJson(String(row.scope));\n      // Only filter by project when project_id is a confirmed/trusted link. A\n      // conversationId/application is not a project, so an unknown or untrusted\n      // project_id must not exclude workspace memories. Memories without a project\n      // association are al"
+      },
+      {
+        "key": "c10",
+        "label": "来源候选截断与排序",
+        "reason": "支持每词查询最多返回 200 行、SQL 未声明行序，以及最终仅按分数排序的限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 85,
+          "endLine": 116
+        },
+        "quote": "    return [...best.values()]\n      .sort((a, b) => b.score - a.score)\n      .slice(0, limit)\n      .map(({ row, score }) => ({\n        id: String(row.fragment_id),\n        score,\n        snippet: snippetFor(String(row.fragment_text), query),\n        sourceRevisionId: String(row.revision_id),\n        fragmentId: String"
+      },
+      {
+        "key": "c11",
+        "label": "端口操作与未定义语义",
+        "reason": "支持端口只声明候选分数和证据读取参数，未规定跨后端评分语义，也未提供记忆到固定证据的转换关系。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 45,
+          "endLine": 87
+        },
+        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string;\n  score: number;\n  "
+      }
+    ],
+    "questions": [
+      {
+        "question": "不同检索后端的 score 是否需要统一范围、归一化方式和同分稳定排序？",
+        "why": "端口只声明数值 score；当前关键词实现按词长累计并只按分数排序，无法据此保证跨后端可比性或同分顺序。",
+        "nextStep": "检查调用方是否跨候选类型或后端直接比较分数，再补充端口级评分、排序合同及行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c11"
+        ]
+      },
+      {
+        "question": "MemoryCandidate 应通过什么稳定关系追溯到支撑该记忆的原始 Revision 与 Fragment？",
+        "why": "记忆候选类型没有固定证据定位，而 readEvidence 需要 revisionId 与可选 fragmentId；提供的材料没有展示转换路径。",
+        "nextStep": "核对记忆存储结构与调用方是否已有证据关联；若没有，在候选合同或独立解析接口中补充定位。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c11"
+        ]
+      },
+      {
+        "question": "高频词超过每词 200 条候选时，应采用稳定排序、分页还是索引检索？",
+        "why": "来源查询使用 LIMIT 200 但没有 ORDER BY，超限后的候选集合及最终结果稳定性未获保证。",
+        "nextStep": "增加超过 200 条匹配记录的 fixture，验证重复执行结果，并依据规模目标选择稳定排序、分页或索引。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
+        ]
+      },
+      {
+        "question": "可信 ContextLink 落库后，来源 Fragment 的项目范围应如何连接和继承？",
+        "why": "当前实现明确保持工作区级来源召回，但 confirmed join 的数据连接、继承和未知关联退化规则尚未实现或说明。",
+        "nextStep": "设计 ContextLink 到 Revision/Fragment 的连接规则，并补充可信、未确认和无关联三类范围测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c8"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "a9d9c19667c3f4ddfce5a23b81c43927b4be82dbf81f1f971979df85a6aa0156"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "25587c4f01c84fb36f07b7918fde1f1d726733690de2a36b95c4f9e0cbc43038"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:57:43.064Z",
+    "trace": {
+      "runId": "d5539874-0568-4dac-aaf3-c6616b70d17c",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "a541015227d7d5b262df07470ad6fb574cba1d7936628868d097528d8fb8ee3d",
+      "contextHash": "e333278c862f5c6d3443c230633e644b2f607dbd70f2aa1f38c33fbda87c1c64",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "470980a2ef6d48ea4d2d8f0d1b506cfcebcd0259c5e086347453bae463b08ed2",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef5-3ec5-7e72-b9b7-93c8bf0060c1"
+      ],
+      "usage": {
+        "used": 25706,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 34826,
+          "utf8Bytes": 44277,
+          "estimatedTokens": 14759,
+          "budgetedTokens": 18449,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:57:54.952Z",
+    "trace": {
+      "runId": "7e4be651-2d2b-40cd-87d8-70c0d3837004",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "012133d33e17eb28af40a884f03aab7d2c6cd3558832dd420e4155cf80464e0b",
+      "contextHash": "411f10f2936c76ef6c43148c2254ab58e0d646ecad25fda82ef2b9ae1aaf7cce",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3d3ba63ded61f7a784f458fc3170f393568e70fc6c22593a29089ffc186f4ca9",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eef5-8764-7530-ae00-953eb601ae37"
+      ],
+      "usage": {
+        "used": 23687,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 33122,
+          "utf8Bytes": 40622,
+          "estimatedTokens": 13541,
+          "budgetedTokens": 16927,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
