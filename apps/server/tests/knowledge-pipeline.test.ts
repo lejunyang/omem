@@ -99,3 +99,19 @@ it("resumes rejected synthesized chapters from their matching reviewed draft", a
   expect(fixture.run.mock.calls[before]![0].roleId).toBe("knowledge-refresher");
   expect(result[0]!.current).toBe(true);
 });
+
+it("composes reviewed chapters without flattening descendant originals and preserves invalidation", async () => {
+  const { repository, pipeline, capture, run } = setup();
+  capture("The release uses fixed evidence.\nAdditional context is documented.\n" + "Background line.\n".repeat(80) + "DEEP_SOURCE_TAIL");
+  await pipeline.analyze(repository.materials());
+  await pipeline.synthesize({ key: "module:example", title: "Example" }, ["manual:example"]);
+  const before = run.mock.calls.length;
+  const [overview] = await pipeline.synthesize({ key: "module:overview", title: "Overview" }, ["module:example"]);
+  const context = run.mock.calls[before]![0].context;
+  expect(context.materials.map(m => m.text).join("\n")).not.toContain("DEEP_SOURCE_TAIL");
+  expect(context.task!.articles).toEqual([expect.objectContaining({ key: "module:example", provenance: "derived knowledge, not independent evidence" })]);
+  expect(overview!.dependencies).toContainEqual(expect.objectContaining({ kind: "article", key: "module:example" }));
+  expect(run.mock.calls[before + 1]![0].roleId).toBe("knowledge-verifier");
+  capture("The source changed."); repository.refresh();
+  expect(repository.get("module:overview")!.current).toBe(false);
+});

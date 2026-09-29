@@ -213,9 +213,14 @@ export class KnowledgePipeline {
     }
     const existing = available.get(target.key);
     if (existing && existing.dependencies.filter(d => d.kind === "article").length === children.length && children.every(a => existing.dependencies.some(d => d.kind === "article" && d.key === a.document.key && d.digest === a.revision))) return [existing];
+    // Composing already-reviewed chapters is a different reading level from
+    // interpreting file knowledge. Keep their fixed article references instead
+    // of flattening every descendant source back into the parent prompt.
+    const composingChapters = children.every(child => child.dependencies.some(d => d.kind === "article"));
+    if (composingChapters) target = { ...target, purpose: `${target.purpose ?? ""} 这是已复核子章节的上层综述。使用正文内联 article 引用提供下钻入口，按子章节所支持的范围概括；它们不是新的独立事实证据。原始材料只提供有限背景，完整依据沿固定子章节引用回查。` };
     const materials = new Map(this.repository.materials().map(m => [m.key, m]));
     const offers = new Map<string, Offer>();
-    for (const child of children) for (const c of child.document.citations) if (c.target.kind === "material") {
+    if (!composingChapters) for (const child of children) for (const c of child.document.citations) if (c.target.kind === "material") {
       const m = materials.get(c.target.key); if (!m) continue;
       const offer = offers.get(m.key) ?? { material: m, ranges: [] };
       const start = c.target.startLine ?? 1, end = c.target.endLine ?? 1;
@@ -247,7 +252,7 @@ export class KnowledgePipeline {
       const bundle = { ...base, manifest: { ...base.manifest, budget: { ...base.manifest.budget, max_context_tokens: maxInput } } };
       const preview = renderRolePrompt(bundle, this.context("knowledge-writer", "context-budget-preview", full, children, { targetKeys: [target.key], targets: [target] }));
       const text = preview.blocks.map(b => b.type === "text" ? b.text : "").join("\n");
-      if (estimateTokens(text).budgetedTokens <= maxInput * 0.8) selected = full;
+      if (!composingChapters && estimateTokens(text).budgetedTokens <= maxInput * 0.8) selected = full;
     } catch { /* Bounded excerpts remain explicit when the whole source is too large. */ }
     let feedback: unknown;
     const previous = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
