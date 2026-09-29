@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "document": {
+    "key": "module:conversation",
+    "title": "conversation · 模块理解",
+    "summary": "conversation 模块负责确定会话身份，并将每轮交互持久化为可恢复、可去重的状态记录；它衔接渠道事件、模型执行、证据选择、工具动作与回复发件箱，但不在本模块内完成证据授权、恢复调度或消息投递。",
+    "category": "architecture",
+    "sections": [
+      {
+        "key": "identity",
+        "title": "职责与会话边界",
+        "body": "该模块是会话身份与持久化边界。会话由 workspace、主体、渠道、聊天及线程共同定位，不能从聊天标识推断项目身份；private/group 可见性随会话保存，为后续限制证据范围提供上下文，但材料未证明这里直接执行授权过滤。[[c1]] 打开会话时，缺省 workspace 为 `personal`，空线程被统一处理；系统按完整组合键复用记录，否则创建新会话，因此同一聊天中的不同线程可以保持独立上下文。[[c2]]"
+      },
+      {
+        "key": "lifecycle",
+        "title": "先持久化、再执行",
+        "body": "轮次在模型调用前先以 `pending` 状态写入，使崩溃或重启后仍有可检查记录。若携带传输事件标识，系统以其稳定摘要生成轮次标识；再次投递同一事件会复用已有记录并标记重复，从入口抑制二次执行和重复回复。[[c3]] 执行状态可转为 `running`、`done`、`failed`、重新 `pending` 或 `cancelled`。完成时保存结果、证据、工具动作和可选发件箱关联；取消会更新状态并记录原因，但不写回复正文或绑定发件箱。[[c4]] 这替代了旧稿中“取消只改变状态”的不完整结论。"
+      },
+      {
+        "key": "recovery-limits",
+        "title": "恢复能力与实现限制",
+        "body": "模块能够按 ordinal 返回某个会话的全部轮次，并跨会话找出仍为 `pending` 或 `running` 的记录，为重启恢复提供候选集合。[[c5]] 不过状态嵌在 JSON 文本中，未完成查询依赖 `LIKE` 匹配固定序列化片段；材料也只展示先检查轮次、计算下一 ordinal、再插入的过程，未显示事务、唯一约束或并发冲突处理。[[c3]] 因而并发入队、恢复任务的原子领取，以及会话可见性如何传递到证据检索，仍需结合数据库定义和调用方确认。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "会话身份与可见性边界",
+        "reason": "支持会话组合键、禁止从聊天标识推断项目身份，以及 private/group 可见性用于限定证据范围的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 67,
+          "endLine": 76
+        },
+        "quote": "/**\n * Owns conversation identity and persistence. The conversation key is\n * principal + channel + chat + thread; project identity is never inferred from\n * chat_id. A conversation may be private (p2p with the bound owner / web) or\n * group (@-mentioned in a group), which bounds evidence visibility.\n *\n * Turns are en"
+      },
+      {
+        "key": "c2",
+        "label": "会话打开与创建流程",
+        "reason": "支持 personal 默认 workspace、线程归一化，以及按完整组合键复用或创建会话的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 81,
+          "endLine": 122
+        },
+        "quote": "  open(input: {\n    principalId: string;\n    channel: AssistantChannel;\n    chatId: string;\n    threadId?: string | null;\n    visibility: Visibility;\n    workspaceId?: string;\n  }): Conversation {\n    const workspaceId = input.workspaceId ?? \"personal\";\n    const threadId = input.threadId ?? \"\";\n    const existing = th"
+      },
+      {
+        "key": "c3",
+        "label": "轮次入队与事件去重",
+        "reason": "支持模型调用前持久化 pending 轮次、由事件标识生成稳定轮次标识、重复投递复用记录，并揭示 ordinal 计算与插入流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 146,
+          "endLine": 193
+        },
+        "quote": "  /**\n   * Persist a pending turn before any model call. When `transportEventId` is\n   * provided the turn id is derived from it, so re-delivering the same event\n   * returns the already-persisted turn (`duplicate: true`) instead of running\n   * a second turn or issuing a second reply.\n   */\n  enqueueTurn(input: {\n    "
+      },
+      {
+        "key": "c4",
+        "label": "轮次状态与取消语义",
+        "reason": "支持运行、完成、失败、重试和取消等状态变化，并确认取消会记录原因但不会写回复正文或关联发件箱。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 220,
+          "endLine": 283
+        },
+        "quote": "  private patchRefs(turnId: string, patch: Partial<TurnMessageRefs>) {\n    const turn = this.turn(turnId);\n    if (!turn) return;\n    const refs: TurnMessageRefs = { ...turn.inputMessageRefs, ...patch };\n    this.db\n      .prepare(\"UPDATE conversation_turns SET input_message_refs=? WHERE id=?\")\n      .run(JSON.stringif"
+      },
+      {
+        "key": "c5",
+        "label": "轮次查询与重启恢复",
+        "reason": "支持按 ordinal 读取会话轮次、查找未完成轮次，并揭示恢复查询依赖 JSON 文本匹配的实现限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 286,
+          "endLine": 317
+        },
+        "quote": "  turn(turnId: string): ConversationTurn | null {\n    const row = this.db\n      .prepare(\"SELECT * FROM conversation_turns WHERE id=?\")\n      .get(turnId) as Row | undefined;\n    return row ? this.rowToTurn(row) : null;\n  }\n\n  turns(conversationId: string): ConversationTurn[] {\n    return (\n      this.db\n        .prepa"
+      }
+    ],
+    "questions": [
+      {
+        "question": "同一会话发生并发入队，或同一 transportEventId 被并发投递时，如何保证 ordinal 与轮次去重不发生竞态？",
+        "why": "材料展示先查询既有轮次、计算下一 ordinal、再插入，但没有显示事务边界、数据库唯一约束或冲突重试；这会影响轮次顺序和事件幂等的并发可靠性。",
+        "nextStep": "检查 conversation_turns 的迁移定义和 enqueueTurn 调用方，并补充同一会话并发写入及同一事件并发投递的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "重启后由哪个组件领取 unfinishedTurns，如何避免多个执行者重复恢复同一轮次？",
+        "why": "当前材料只证明本模块能查询 pending/running 记录并更新状态，没有说明恢复调度、原子领取或执行幂等边界。",
+        "nextStep": "检查服务启动流程和模型执行 worker，确认领取协议、状态转换原子性及重复恢复测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "保存的会话 visibility 在证据检索路径中如何被强制执行？",
+        "why": "材料说明可见性用于限定证据范围，并证明该字段在创建会话时被保存，但没有展示实际的证据访问过滤。",
+        "nextStep": "沿会话调用链检查证据检索与权限过滤模块，并验证 private/group 会话不会读取越界材料。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "e188d2e4c522681e697d35b3e654d8002102f30f107988d7ee2be2d117fa717b"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-29T20:15:35.783Z",
+    "trace": {
+      "runId": "12634033-cbad-4621-ba14-fd48df1d602b",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "0cb3da738614c6562cb49bb6f79c0499ac7e8cecba8114acb6936861caf6c185",
+      "contextHash": "e482656301a94ca1bc2cb48ea6c9cb74d1104acc2eff773e393de4369a9377b5",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2d7d458dbf562d740092acec9934e8c31ef4bbdbe498005c079777b853f59cd4",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eece-c2ed-7ab3-b46a-f990263a44b9"
+      ],
+      "usage": {
+        "used": 21946,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 26160,
+          "utf8Bytes": 32578,
+          "estimatedTokens": 10860,
+          "budgetedTokens": 13575,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-29T20:15:46.435Z",
+    "trace": {
+      "runId": "0ea4b388-d362-4614-9c69-b343ea7aa18c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2abf4604be1cdf6c0790326cef9311bb5c715dc6b5d1e1570902547f21c30542",
+      "contextHash": "c9cbae72faecba84303516a8f7aab5810373451f53d5788408f59ef035446cf6",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "39dbf8bf491ed9fbe8eed395922315a077198d7f8924320de91753d3ed7e8b21",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0eece-f75e-75d2-9015-08511b08a60b"
+      ],
+      "usage": {
+        "used": 20088,
+        "size": 760000,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 22897,
+          "utf8Bytes": 27786,
+          "estimatedTokens": 9262,
+          "budgetedTokens": 11578,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
