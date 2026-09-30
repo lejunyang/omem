@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { KeywordRetrieval, ORIGINAL } from "./keyword.js";
 import type { EmbeddingModel } from "./embedding.js";
 import type { SearchQuery, SourceCandidate } from "./port.js";
+import { rankEvidence } from "./ranking.js";
 
 type Fragment = { id: string; revision_id: string; text: string; title: string; created_at: string; namespace: string; actor: string | null };
 const CURRENT = `FROM fragments f JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id WHERE ${ORIGINAL}`;
@@ -79,8 +80,8 @@ export class SemanticRetrieval extends KeywordRetrieval {
 
   /** Separate async hook keeps synchronous lexical callers compatible. */
   async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {
-    const lexical = super.searchSources({ ...query, limit: 100 });
-    if (!query.text.trim() || !this.model) return lexical.slice(0, query.limit ?? 20);
+    const lexical = super.searchSources({ ...query, sourceWeight: undefined, diversify: false, limit: 100 });
+    if (!query.text.trim() || !this.model) return rankEvidence(lexical,query);
     try {
       const [raw] = await this.model.embed([query.text.slice(0, 400)], "query");
       const vector = normalize(raw!);
@@ -88,6 +89,7 @@ export class SemanticRetrieval extends KeywordRetrieval {
         JOIN fragments f ON f.id=e.fragment_id JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
         WHERE e.model_id=? AND ${ORIGINAL}`).all(this.model.id) as (Fragment & { vector: Uint8Array; start_offset: number; end_offset: number })[];
       const dense = new Map<string, SourceCandidate>();
+      const vectors = new Map<string, Float32Array>();
       for (const row of rows) {
         if (query.visible && !query.visible(row.id)) continue;
         if (query.timeRange?.from && Date.parse(row.created_at) < Date.parse(query.timeRange.from)) continue;
@@ -96,6 +98,7 @@ export class SemanticRetrieval extends KeywordRetrieval {
         if (stored.length !== vector.length) throw Error("Embedding dimensions changed without a new model identity");
         const score = vector.reduce((sum,v,i) => sum + v * stored[i]!, 0);
         if ((dense.get(row.id)?.score ?? -Infinity) >= score) continue;
+        vectors.set(row.id,stored);
         dense.set(row.id, { id: row.id, fragmentId: row.id, sourceRevisionId: row.revision_id, score,
           snippet: row.text.slice(row.start_offset, row.end_offset), routes: ["semantic"],
           provenance: { actor: row.actor, time: row.created_at, source: row.namespace } });
@@ -107,8 +110,8 @@ export class SemanticRetrieval extends KeywordRetrieval {
           fused.set(hit.id, { ...hit, score: (prior?.score ?? 0) + 1/(60+rank+1), routes: [...new Set([...(prior?.routes ?? []),...hit.routes ?? []])] });
         });
       }
-      return [...fused.values()].sort((a,b) => b.score-a.score || a.id.localeCompare(b.id)).slice(0,Math.max(1,Math.min(query.limit ?? 20,100)));
-    } catch (error) { this.error = String(error); return lexical.slice(0,query.limit ?? 20); }
+      return rankEvidence([...fused.values()],query,vectors);
+    } catch (error) { this.error = String(error); return rankEvidence(lexical,query); }
   }
 
   async close() {

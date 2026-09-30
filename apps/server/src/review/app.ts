@@ -1,6 +1,7 @@
 import { restoreReviewKnowledge, saveReviewAnswerMaterials, publishReviewArticle } from "./knowledge.js";
 import { registerKnowledgeRoutes } from "../knowledge/api.js";
 import { createReviewKnowledgeRepository } from "./materials.js";
+import { loadReviewSearchPolicy } from "./search-policy.js";
 import { profileSchema } from "../../../../packages/contracts/src/index.js";
 /** review knowledge-base HTTP surface. It reuses MemoryService /
  * KeywordRetrieval against the isolated review Store and registers only the
@@ -287,6 +288,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   });
 
   // The same evidence retrieval as the personal assistant; filters run before top-N.
+  const searchWeight = loadReviewSearchPolicy(repoRoot);
   const reviewSearch = async (q: string, opts: { category?: string; includeRemoved?: boolean }) => {
     const eligible = store.db.prepare(`SELECT f.id,r.title,r.version,f.text,
       json_extract(r.body,'$.context.category') AS category,
@@ -297,7 +299,8 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
         AND (? IS NULL OR json_extract(r.body,'$.context.category')=?)`).all(
           opts.includeRemoved ? 1 : 0, opts.category ?? null, opts.category ?? null) as Row[];
     const byId = new Map(eligible.map(row => [String(row.id),row]));
-    const query = { text: q, limit: 20, visible: (id: string) => byId.has(id) };
+    const query = { text: q, limit: 20, visible: (id: string) => byId.has(id),
+      sourceWeight: (id: string) => searchWeight(String(byId.get(id)?.filePath ?? byId.get(id)?.title ?? ""),q,opts.category) };
     const hits = retrieval.searchSourcesAsync ? await retrieval.searchSourcesAsync(query) : retrieval.searchSources(query);
     return hits.map(hit => ({ ...byId.get(hit.id)!, id: hit.fragmentId, score: hit.score, snippet: hit.snippet, routes: hit.routes }));
   };

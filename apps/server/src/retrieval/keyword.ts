@@ -1,4 +1,5 @@
 import { knowledgeEvidenceCandidates } from "../knowledge/retrieval.js";
+import { rankEvidence } from "./ranking.js";
 import type { DatabaseSync } from "node:sqlite";
 import type {
   ProvenanceRef,
@@ -94,6 +95,7 @@ export class KeywordRetrieval implements RetrievalPort {
       }
     }
     const branches: [string, Row[]][] = [
+      ["code-symbol", this.exactSymbols(query.text)],
       ["fulltext", fts],
       ["short-keyword", [...lexical.values()].sort((a,b) => b.score-a.score).map(v => v.row)],
       ["memory", memoryRows],
@@ -109,14 +111,28 @@ export class KeywordRetrieval implements RetrievalPort {
         hit.score += 1 / (60 + rank + 1); hit.routes.push(route); fused.set(id, hit);
       });
     }
-    return [...fused.values()].sort((a,b) => b.score-a.score || String(a.row.fragment_id).localeCompare(String(b.row.fragment_id)))
-      .slice(0, limit).map(({ row, score, routes }) => ({
+    return rankEvidence([...fused.values()].map(({ row, score, routes }) => ({
         id: String(row.fragment_id), score, routes,
         snippet: snippetFor(String(row.fragment_text), query),
         sourceRevisionId: String(row.revision_id), fragmentId: String(row.fragment_id),
         provenance: { actor: row.actor_id ? String(row.actor_id) : null,
           time: String(row.revision_created_at), source: String(row.namespace) },
-      }));
+      })), { ...query, limit });
+  }
+
+  private exactSymbols(query: string): Row[] {
+    // Optional AST projection: never create a separate code evidence store.
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='code_symbols'").get()) return [];
+    const names = [...new Set((query.match(/[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g) ?? [])
+      .filter(name => name.length >= 3 && (/[A-Z_$\.]/.test(name) || query.trim() === name)).map(name => name.toLowerCase()))];
+    if (!names.length) return [];
+    const placeholders = names.map(() => "?").join(",");
+    return this.db.prepare(`SELECT DISTINCT ${SOURCE_COLUMNS} FROM code_symbols cs
+      JOIN code_files cf ON cf.file_id=cs.file_id AND cf.removed=0
+      JOIN code_repositories cr ON cr.repo_id=cf.repo_id AND cr.current_snapshot_id=cs.snapshot_id
+      JOIN fragments f ON f.id=cs.fragment_id JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
+      WHERE ${ORIGINAL} AND (lower(cs.name) IN (${placeholders}) OR lower(cs.qualified_name) IN (${placeholders}))
+      ORDER BY f.id`).all(...names,...names) as Row[];
   }
 
   private searchFragmentsForTerm(term: string): Row[] {

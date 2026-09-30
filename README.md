@@ -32,7 +32,9 @@ osdk run retrieval:index -- --review
 
 个人配置 `retrieval.enabled` 开启，`osdkModel` 默认 `memory-zh`；示例配置已开启，已有 `omem.local.json` 保持原样。仓库配置为 `config/retrieval.json`，可用 `REVIEW_RETRIEVAL_CONFIG` 覆盖。未下载模型时保持全文检索，health 中报告 degraded；安装后重启服务。应用只读取 osdk 校验过的固定快照，不自行下载。向量按权重、tokenizer 和处理版本隔离，SQLite 索引可重建。
 
-当前是面向个人库的精确余弦计算，没有 ANN 或 reranker。四条中文同义问法的真实模型验证全部命中首位，词法基线均未命中；这是小样本连通性验证，不是全面召回率评估。英文和代码标识符仍依赖全文检索与模型补搜，不把中文小模型当通用最优选择。选型依据：[BGE 官方模型说明](https://huggingface.co/BAAI/bge-small-zh-v1.5)、[ONNX 转换版本](https://huggingface.co/Xenova/bge-small-zh-v1.5)。
+函数名、类名或限定名会匹配已有 AST 的当前符号定义，并返回固定原始 Fragment；没有 AST 时保留普通检索。混合召回后使用 [MMR](https://www.elastic.co/search-labs/blog/maximum-marginal-relevance-diversify-results) 平衡相关性与重复度，优先为互补证据留位置；不会删除重复原件。仓库的 `config/review-search.json` 可以调节历史方案、原型和镜像 skill 目录的权重；明确查询历史、指定路径或分类时取消目录降权。这只影响仓库搜索，不把目录规则套到个人材料。
+
+当前是面向个人库的精确余弦计算，没有 ANN 或 cross-encoder reranker。四条中文同义问法的真实模型验证全部命中首位，词法基线均未命中；这是小样本连通性验证，不是全面召回率评估。英文和代码标识符仍依赖全文检索与模型补搜，不把中文小模型当通用最优选择。选型依据：[BGE 官方模型说明](https://huggingface.co/BAAI/bge-small-zh-v1.5)、[ONNX 转换版本](https://huggingface.co/Xenova/bge-small-zh-v1.5)。
 
 ## 知识整理与本仓库 Wiki
 
