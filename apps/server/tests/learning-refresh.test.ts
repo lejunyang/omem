@@ -149,8 +149,8 @@ describe("P0: context manifest per-fragment provenance reaches the model", () =>
   });
 });
 
-describe("P0: refresh_dependents does not claim a successful re-verification", () => {
-  it("fails the job NOT_IMPLEMENTED and records needs_review for affected memories", async () => {
+describe("source refresh dispatch and honest abstention", () => {
+  it("reuses the capture extraction job and retains needs_review when new evidence does not support a repair", async () => {
     const directory = temporary("omem-refresh-job-");
     const store = new Store(directory);
     try {
@@ -218,7 +218,8 @@ describe("P0: refresh_dependents does not claim a successful re-verification", (
         workspaceRoot: join(directory, "agent"),
         pollMs: 20,
       });
-      // Drain queued work; the refresh job must reach a non-succeeded terminal state.
+      // The dispatcher succeeds at queuing. Model abstention keeps the memory
+      // invalidated and the refresh record unresolved.
       for (let i = 0; i < 10; i++) {
         const r = await pipe.processOne();
         if (!r.processed) break;
@@ -226,9 +227,9 @@ describe("P0: refresh_dependents does not claim a successful re-verification", (
       await pipe.stop();
 
       const refreshJob = store.jobs.get(refreshJobRow.id)!;
-      expect(refreshJob.state).not.toBe("succeeded");
-      expect(refreshJob.state).toBe("failed");
-      expect(refreshJob.lastError).toContain("NOT_IMPLEMENTED");
+      expect(refreshJob.state).toBe("succeeded");
+      expect(refreshJob.lastError).toBeNull();
+      expect(store.jobs.list().filter(j => j.kind === "extract_claims")).toHaveLength(2);
 
       const row = store.db
         .prepare(
@@ -246,4 +247,30 @@ describe("P0: refresh_dependents does not claim a successful re-verification", (
       store.close();
     }
   });
+});
+
+
+it("updates the same invalidated memory only after independent source re-verification", async () => {
+  const directory = temporary("omem-refresh-applied-");
+  const store = new Store(directory);
+  const pipe = new LearningPipeline({ store, memory: new MemoryService(store), feedback: new FeedbackService(store),
+    profile: profile(), workspaceRoot: join(directory, "agent"), pollMs: 20 });
+  const captureFact = (text: string) => store.capture({ source: "manual", externalId: "refresh-fact", title: "Retry setting",
+    parts: [{ type: "text", text }], provenance: provenance(text) });
+  try {
+    const old = captureFact("REFRESH_FACT retry limit is 3");
+    await pipe.drain(5);
+    const before = store.db.prepare("SELECT id,version FROM memories WHERE status='active'").get() as { id: string; version: number };
+    expect(before).toBeTruthy();
+    const next = captureFact("REFRESH_FACT retry limit is 5");
+    expect((store.db.prepare("SELECT status FROM memories WHERE id=?").get(before.id) as { status: string }).status).toBe("invalidated");
+    await pipe.drain(8);
+    const after = store.db.prepare("SELECT m.id,m.version,m.status,r.body FROM memories m JOIN memory_revisions r ON r.id=m.head_revision_id").all();
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ id: before.id, version: 2, status: "active" });
+    expect(String(after[0]!.body)).toContain("limit is 5");
+    expect(store.revision(old.revision.id)!.fragments[0]!.text).toContain("limit is 3");
+    expect(store.db.prepare("SELECT status FROM refresh_records WHERE new_revision_id=?").get(next.revision.id)).toMatchObject({ status: "applied" });
+    expect(store.jobs.list().filter(j => j.kind === "verify_proposals")).toHaveLength(2);
+  } finally { await pipe.stop(); store.close(); }
 });

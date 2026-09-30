@@ -1,18 +1,73 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://omem.invalid/contracts/AssessmentBatch.v1",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "job_id", "role_id", "assessments"],
   "properties": {
-    "schema_version": { "const": 1 },
-    "job_id": { "type": "string", "minLength": 1 },
-    "role_id": { "const": "verifier" },
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "role_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
     "assessments": {
+      "maxItems": 100,
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
+        "properties": {
+          "proposal_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "proposal_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "quote_asset_verdict": {
+            "type": "string",
+            "enum": [
+              "valid",
+              "invalid",
+              "ambiguous"
+            ]
+          },
+          "semantic_verdict": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "contradicted",
+              "insufficient",
+              "needs_scope"
+            ]
+          },
+          "reason_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "missing_context": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          }
+        },
         "required": [
           "proposal_id",
           "proposal_digest",
@@ -22,18 +77,16 @@
           "reason",
           "missing_context"
         ],
-        "properties": {
-          "proposal_id": { "type": "string" },
-          "proposal_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "quote_asset_verdict": { "enum": ["valid", "invalid", "ambiguous"] },
-          "semantic_verdict": {
-            "enum": ["supported", "contradicted", "insufficient", "needs_scope"]
-          },
-          "reason_code": { "type": "string" },
-          "reason": { "type": "string" },
-          "missing_context": { "type": "array", "items": { "type": "string" } }
-        }
+        "additionalProperties": false
       }
     }
-  }
+  },
+  "required": [
+    "schema_version",
+    "job_id",
+    "role_id",
+    "assessments"
+  ],
+  "additionalProperties": false,
+  "$id": "https://omem.invalid/contracts/AssessmentBatch.v1"
 }

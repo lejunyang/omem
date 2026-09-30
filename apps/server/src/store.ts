@@ -1,3 +1,4 @@
+import { recordSourceRefresh } from "./learning/refresh.js";
 /** SQLite is the single-user foundation. Immutable revisions, changes and notification
  * outbox are committed together. Postgres/team enforcement remains a later migration. */
 import { DatabaseSync } from "node:sqlite";
@@ -256,6 +257,7 @@ export class Store {
              )`,
           )
           .run(now(), String(source.id));
+        recordSourceRefresh(this.db, "personal", [{ sourceId: String(source.id), previousRevisionId: String(head.id), revisionId }]);
         this.jobs.enqueueInCurrentTransaction({
           kind: "refresh_dependents",
           inputRefs: [

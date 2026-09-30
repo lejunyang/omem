@@ -236,8 +236,8 @@ describe("Batch-2 AttentionGate and on-demand knowledge consolidation", () => {
         producerKind: "original",
       },
     });
-    // The refresh step records the real blast radius but does NOT re-verify: it
-    // reports blocked/not_implemented and must never claim "reviewed".
+    // Invalidation alone records the blast radius; it must not claim a review
+    // before the extractor and independent verifier have run.
     const recorded = recordSourceRefresh(store.db, "personal", [
       {
         sourceId: source.sourceId,
@@ -246,8 +246,7 @@ describe("Batch-2 AttentionGate and on-demand knowledge consolidation", () => {
       },
     ]);
     expect(recorded).toMatchObject({
-      status: "blocked",
-      reason: "not_implemented",
+      status: "needs_review",
       affectedCount: 1,
     });
     expect(recorded.affectedMemoryIds).toContain(memoryId);

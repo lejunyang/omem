@@ -1,3 +1,5 @@
+> **2026-10-01 来源更新闭环**：`refresh_dependents` 不再是 NOT_IMPLEMENTED 占位。Capture 同事务记录失效范围，调度复用已有 extractor job，独立 verifier 后由 MemoryService 原子更新同一记忆；失败/缺证据维持 `needs_review`，只有全部受影响记忆真正应用才记 `applied`。`/api/memory-refreshes` 提供状态和结果。模型 schema 从宿主 Zod 合同生成，修正原先 body 空定义及把可空元数据误当事实歧义的问题。全量 `osdk run check` exit 0（56 文件 / 341 用例 + typecheck/build）；真实 **traex / gpt-5.6-sol / medium** 验证“3 次→5 次”同 ID 第二版、旧原文保留、五个 jobs 全部成功。报告为忽略提交的 `.omem/verification/live-refresh.json`。周期全库巡检、跨来源冲突自动修订和学习卡仍未实现。下文旧的 NOT_IMPLEMENTED 说明保留作历史记录。
+
 > **2026-10-01 日常助手闭环**：补搜一次（最多三个查询）、现有事项上下文、用户时区、带时间创建/改期/完成/重新打开，以及由真实回执生成的动作回复。`osdk run check` 通过：56 文件 / 340 用例 + typecheck/build。`scripts/live-assistant-smoke.ts` 用真实 **traex / gpt-5.6-sol / medium** 验证了中文召回英文原文及创建→改期→完成（隔离数据库、合成材料，无外部发送）。一次性到期站内提醒仍复用已有轮询；独立日程、重复提醒、外部到期投递及取消状态未实现。
 
 > **2026-10-01 新进展**：统一检索已接 SQLite FTS5/BM25 + 中文短词 + 活跃记忆原证据 + 知识正文引用的 RRF 融合。跨段引用返回涉及的原片段；时间过滤按采集时间执行；助手旧轮次证据重新检查 source head。以下旧记录中的“只有 LIKE”“本机无 CLI”已经过时。全量 `osdk run check` 通过（56 文件 / 338 用例，含 build），`osdk deps --frozen` 通过。真实 `traex acp` + `gpt-5.6-sol` / `medium` 已完成能力校验与问答；这次仅证明 ACP 连通，不代替生成知识或主助手端到端验收。检索仍没有向量、语义重排和历史时点查询。
