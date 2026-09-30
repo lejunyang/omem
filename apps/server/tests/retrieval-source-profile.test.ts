@@ -110,7 +110,7 @@ describe("V3-03 unified retrieval port and lightweight source profile", () => {
     expect(store.notifications().length).toBe(1);
     expect(retrieval.health()).toEqual({
       available: true,
-      backend: "sqlite-like-keyword@1",
+      backend: "sqlite-fts5-rrf@2",
     });
   });
 
@@ -262,4 +262,38 @@ describe("V3-03 unified retrieval port and lightweight source profile", () => {
     // Original evidence is still fully readable.
     expect(store.fragments(revision.id).length).toBeGreaterThan(0);
   });
+});
+
+
+it("fuses active memory routes with original evidence and filters before the result limit", () => {
+  const store = setup();
+  const { revision } = capture(store, "route", "实测记录", "错误码 E42 表示供应商没有回应。");
+  store.applications.applyMemory({
+    metadata: { workspaceId: "personal", applicationId: "recall-alias", proposalDigest: "alias",
+      generation: 1, title: "记住故障别名", details: "fixture",
+      delivery: { channelBindingVersion: 1, channel: "in_app", target: "notification-center" } },
+    memory: { kind: "claim", scope: { workspace_id: "personal" }, body: { statement: "Aurora timeout" },
+      evidenceSet: [{ source_revision_id: revision.id, fragment_revision_id: revision.fragments[0]!.id }] },
+  });
+  const retrieval = new KeywordRetrieval(store.db);
+  const hit = retrieval.searchSources({ text: "Aurora" });
+  expect(hit.map(h => h.fragmentId)).toEqual([revision.fragments[0]!.id]);
+  expect(hit[0]!.routes).toContain("memory");
+  expect(hit[0]!.snippet).toContain("E42");
+  expect(retrieval.searchSources({ text: "Aurora", visible: () => false })).toEqual([]);
+  expect(retrieval.searchSources({ text: "Aurora", timeRange: { to: "2000-01-01" } })).toEqual([]);
+  capture(store, "route", "实测记录", "新版错误码不再有该含义。");
+  expect(retrieval.searchSources({ text: "Aurora" })).toEqual([]);
+});
+
+it("indexes capture and restore, matches short Chinese and title, and excludes derived answers", () => {
+  const store = setup();
+  const original = capture(store, "fts", "CircuitBreaker", "熔断机制限制持续失败。").revision;
+  const retrieval = new KeywordRetrieval(store.db);
+  expect(retrieval.searchSources({ text: "CircuitBreaker" })[0]!.fragmentId).toBe(original.fragments[0]!.id);
+  expect(retrieval.searchSources({ text: "熔断" })).toHaveLength(1);
+  store.capture({ source: "manual", externalId: "derived", title: "答案", parts: [{ type: "text", text: "ImaginaryEvidence" }], context: { derived: true } });
+  expect(retrieval.searchSources({ text: "ImaginaryEvidence" })).toEqual([]);
+  for (let i=0; i<25; i++) capture(store, `hidden-${i}`, "CircuitBreaker", "私密 CircuitBreaker");
+  expect(retrieval.searchSources({ text: "CircuitBreaker", limit: 1, visible: id => id === original.fragments[0]!.id }).map(h => h.fragmentId)).toEqual([original.fragments[0]!.id]);
 });

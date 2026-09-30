@@ -12,17 +12,17 @@ import type {
 
 type Row = Record<string, unknown>;
 
-/**
- * Keyword baseline over the fixed fragments and applied memories. It intentionally
- * avoids embedding/third-party engines (V3-03 scope) while keeping the same surface a
- * future MemPalace sidecar will implement. CJK queries are matched as substrings, so
- * multi-Chinese-term queries score by how many distinct terms hit.
- */
+const ORIGINAL = "COALESCE(json_extract(r.body, '$.provenance.producerKind'),'original') != 'derived' AND COALESCE(json_extract(r.body, '$.context.derived'),0) != 1";
+const SOURCE_COLUMNS = `f.id AS fragment_id,f.revision_id,f.text AS fragment_text,
+  r.title,r.created_at AS revision_created_at,s.namespace,
+  json_extract(r.body, '$.provenance.actorId') AS actor_id`;
+
+/** Indexed lexical + memory + knowledge retrieval, always returning original evidence. */
 export class KeywordRetrieval implements RetrievalPort {
   constructor(private readonly db: DatabaseSync) {}
 
   health(): RetrievalHealth {
-    return { available: true, backend: "sqlite-like-keyword@1" };
+    return { available: true, backend: "sqlite-fts5-rrf@2" };
   }
 
   readEvidence(
@@ -53,67 +53,78 @@ export class KeywordRetrieval implements RetrievalPort {
     const limit = Math.max(1, Math.min(query.limit ?? 20, 100));
     const terms = tokenize(query.text);
     if (!terms.length) return [];
-    const best = new Map<
-      string,
-      { row: Row; score: number; matched: Set<string> }
-    >();
-    for (const term of terms) {
-      const rows = this.searchFragmentsForTerm(term);
-      for (const row of rows) {
-        // Project filtering is intentionally NOT applied here: there is no persisted
-        // trusted project association (ContextLink) on fragments yet, and context
-        // carriers (application/conversationId/runId) must never be promoted to a
-        // project. When project_id is unknown or untrusted we return workspace-wide
-        // results. A future ContextLink table will gate this on a confirmed join.
-        const id = String(row.fragment_id);
-        const current =
-          best.get(id) ?? { row, score: 0, matched: new Set<string>() };
-        if (!current.matched.has(term)) {
-          current.matched.add(term);
-          // Longer terms are more specific → higher score. Full CJK runs (>=3)
-          // score more than 2-grams; ASCII words >=4 chars score more.
-          current.score +=
-            term.length >= 4 ? 4 : term.length >= 3 ? 3 : term.length >= 2 ? 2 : 1;
-        }
-        best.set(id, current);
+    const eligible = (row: Row) => {
+      const time = Date.parse(String(row.revision_created_at));
+      if (query.timeRange?.from && time < Date.parse(query.timeRange.from)) return false;
+      if (query.timeRange?.to && time > Date.parse(query.timeRange.to)) return false;
+      return !query.visible || query.visible(String(row.fragment_id));
+    };
+    const lexical = new Map<string, { row: Row; score: number }>();
+    // Trigram MATCH covers long Chinese terms and exact code/path substrings.
+    // Two-character Chinese terms keep their LIKE path: FTS5 cannot match them.
+    const long = terms.filter(t => Array.from(t).length >= 3);
+    const fts = long.length ? this.db.prepare(`
+      SELECT ${SOURCE_COLUMNS} FROM fragment_search
+      JOIN fragments f ON f.rowid=fragment_search.rowid
+      JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
+      WHERE fragment_search MATCH ? AND ${ORIGINAL}
+      ORDER BY bm25(fragment_search,1,2),f.id
+    `).all(long.map(t => '"' + t.replaceAll('"', '""') + '"').join(' OR ')) as Row[] : [];
+    for (const term of terms.filter(t => Array.from(t).length < 3)) {
+      for (const row of this.searchFragmentsForTerm(term)) {
+        const id = String(row.fragment_id), hit = lexical.get(id) ?? { row, score: 0 };
+        hit.score += term.length;
+        lexical.set(id, hit);
       }
     }
-    for (const row of knowledgeEvidenceCandidates(this.db, terms)) {
-      const id = String(row.fragment_id);
-      if (!best.has(id)) best.set(id, { row, score: 2, matched: new Set() });
+    // Active memory prose routes back to its evidence; never quote the memory
+    // itself as an additional independent source.
+    const memoryRows: Row[] = [];
+    for (const memory of this.searchMemories({ ...query, limit: 50 })) {
+      const refs = this.db.prepare(`SELECT COALESCE(p.evidence,mr.evidence_set) AS evidence_set FROM memories m
+        JOIN memory_revisions mr ON mr.id=m.head_revision_id
+        LEFT JOIN application_receipts a ON a.entity_type='memory' AND a.entity_id=m.id AND a.entity_version=m.version
+        LEFT JOIN proposals p ON p.id=a.proposal_id WHERE m.id=?`).get(memory.id) as Row;
+      for (const ref of JSON.parse(String(refs.evidence_set)) as { fragment_revision_id?: string; source_revision_id?: string }[]) {
+        if (!ref.fragment_revision_id || !ref.source_revision_id) continue;
+        const row = this.db.prepare(`SELECT ${SOURCE_COLUMNS} FROM fragments f
+          JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
+          WHERE f.id=? AND r.id=? AND ${ORIGINAL}`).get(ref.fragment_revision_id, ref.source_revision_id) as Row | undefined;
+        if (row) memoryRows.push(row);
+      }
     }
-    return [...best.values()]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
-      .map(({ row, score }) => ({
-        id: String(row.fragment_id),
-        score,
+    const branches: [string, Row[]][] = [
+      ["fulltext", fts],
+      ["short-keyword", [...lexical.values()].sort((a,b) => b.score-a.score).map(v => v.row)],
+      ["memory", memoryRows],
+      ["knowledge", knowledgeEvidenceCandidates(this.db, terms)],
+    ];
+    // Reciprocal rank fusion avoids comparing BM25, match counts and derived
+    // prose scores directly. One fragment contributes once per branch.
+    const fused = new Map<string, { row: Row; score: number; routes: string[] }>();
+    for (const [route, rows] of branches) {
+      const unique = [...new Map(rows.filter(eligible).map(r => [String(r.fragment_id), r])).values()].slice(0,100);
+      unique.forEach((row, rank) => {
+        const id = String(row.fragment_id), hit = fused.get(id) ?? { row, score: 0, routes: [] };
+        hit.score += 1 / (60 + rank + 1); hit.routes.push(route); fused.set(id, hit);
+      });
+    }
+    return [...fused.values()].sort((a,b) => b.score-a.score || String(a.row.fragment_id).localeCompare(String(b.row.fragment_id)))
+      .slice(0, limit).map(({ row, score, routes }) => ({
+        id: String(row.fragment_id), score, routes,
         snippet: snippetFor(String(row.fragment_text), query),
-        sourceRevisionId: String(row.revision_id),
-        fragmentId: String(row.fragment_id),
-        provenance: {
-          actor: row.actor_id ? String(row.actor_id) : null,
-          time: String(row.revision_created_at),
-          source: String(row.namespace),
-        } satisfies ProvenanceRef,
+        sourceRevisionId: String(row.revision_id), fragmentId: String(row.fragment_id),
+        provenance: { actor: row.actor_id ? String(row.actor_id) : null,
+          time: String(row.revision_created_at), source: String(row.namespace) },
       }));
   }
 
   private searchFragmentsForTerm(term: string): Row[] {
     const escaped = "%" + term.replace(/[!%_]/g, "!$&") + "%";
-    return this.db
-      .prepare(
-        `SELECT f.id AS fragment_id, f.revision_id, f.text AS fragment_text,
-                r.title, r.created_at AS revision_created_at,
-                s.namespace,
-                json_extract(r.body, '$.provenance.actorId') AS actor_id
-         FROM fragments f
-         JOIN revisions r ON r.id = f.revision_id
-         JOIN sources s ON s.head = r.id
-         WHERE f.text LIKE ? ESCAPE '!'
-         LIMIT 200`,
-      )
-      .all(escaped) as Row[];
+    return this.db.prepare(`SELECT ${SOURCE_COLUMNS} FROM fragments f
+      JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
+      WHERE (f.text LIKE ? ESCAPE '!' OR r.title LIKE ? ESCAPE '!') AND ${ORIGINAL}
+      ORDER BY r.created_at DESC,f.ordinal`).all(escaped,escaped) as Row[];
   }
 
   searchMemories(query: SearchQuery): MemoryCandidate[] {

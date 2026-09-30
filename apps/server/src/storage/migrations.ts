@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 14;
+export const SUPPORTED_SCHEMA_VERSION = 15;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -912,6 +912,21 @@ const memoryRelationAttentionStatements = [
   `CREATE INDEX decisions_dedupe_idx ON decisions(workspace_id, dedupe_key)`,
 ] as const;
 
+// FTS is a rebuildable projection of immutable fragments; triggers cover capture
+// and restore, including writes from another process. Rank with SQLite BM25.
+const retrievalIndexStatements = [
+  `CREATE VIRTUAL TABLE fragment_search USING fts5(text, title, tokenize='trigram')`,
+  `INSERT INTO fragment_search(rowid,text,title)
+   SELECT f.rowid,f.text,r.title FROM fragments f JOIN revisions r ON r.id=f.revision_id`,
+  `CREATE TRIGGER fragment_search_insert AFTER INSERT ON fragments BEGIN
+   INSERT INTO fragment_search(rowid,text,title) VALUES(new.rowid,new.text,(SELECT title FROM revisions WHERE id=new.revision_id)); END`,
+  `CREATE TRIGGER fragment_search_delete AFTER DELETE ON fragments BEGIN
+   DELETE FROM fragment_search WHERE rowid=old.rowid; END`,
+  `CREATE TRIGGER fragment_search_update AFTER UPDATE ON fragments BEGIN
+   DELETE FROM fragment_search WHERE rowid=old.rowid;
+   INSERT INTO fragment_search(rowid,text,title) VALUES(new.rowid,new.text,(SELECT title FROM revisions WHERE id=new.revision_id)); END`,
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -1001,6 +1016,12 @@ const migrations: readonly Migration[] = [
     name: "memory-equivalences-and-attention-case",
     statements: memoryRelationAttentionStatements,
     checksum: checksum(memoryRelationAttentionStatements),
+  },
+  {
+    version: 15,
+    name: "fragment-full-text-retrieval",
+    statements: retrievalIndexStatements,
+    checksum: checksum(retrievalIndexStatements),
   },
 ];
 
