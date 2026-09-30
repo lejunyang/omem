@@ -15,7 +15,7 @@ checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be
 
 [deps.pnpm]
 installer = "pnpm"
-installer_version = "11.28.2"
+installer_version = "11.28.3"
 runtime = "node@24.18.1"
 manifest = "package.json"
 manifest_sha256 = "92a0e297b8c8efa902f03db922a7b594fc7c3f3ab79402fd85eecfc454c76edd"

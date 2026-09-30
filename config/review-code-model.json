@@ -1,6 +1,6 @@
 {
   "transport": "acp",
-  "command": "traecli",
+  "command": "traex",
   "args": [
     "-c",
     "sandbox_mode=\"read-only\"",
