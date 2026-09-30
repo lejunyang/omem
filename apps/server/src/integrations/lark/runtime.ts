@@ -1,3 +1,4 @@
+import type { RetrievalPort } from "../../retrieval/port.js";
 import { randomUUID } from "node:crypto";
 import type { Store } from "../../store.js";
 import { MemoryService, FeedbackService } from "../../memory/service.js";
@@ -56,6 +57,7 @@ export class LarkRuntimeHost {
       realtimeAdapter?: LarkRealtimeAdapter;
       messageAdapter?: LarkMessageAdapter;
       assistantModel?: AssistantModelPort;
+      retrieval?: RetrievalPort;
       media?: LarkMediaPort;
       /** Test seam: invoked after the reply outbox row is committed but before the
        *  inbox event is acked. Throwing here simulates a crash and must leave the
@@ -91,7 +93,7 @@ export class LarkRuntimeHost {
       const chatId = record.revision.context?.conversationId;
       return Boolean(chatId && chatId === conversation.chatId);
     };
-    const assistantRetrieval = new KeywordRetrieval(input.store.db);
+    const assistantRetrieval = input.retrieval ?? new KeywordRetrieval(input.store.db);
     const assistantFeedback = new FeedbackService(input.store);
     this.assistant = input.assistantModel
       ? new AssistantRuntime(input.store, input.assistantModel, {

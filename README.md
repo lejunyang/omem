@@ -17,6 +17,23 @@ osdk run start
 
 浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 与 Vue（默认 4317 / 5173）。默认端口被占用时选择空闲端口，并将实际 API 地址传给前端代理；请打开终端打印的 web URL。可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定端口（显式指定且被占用会报错）。根 `tsconfig.json` 为编辑器提供与服务端检查一致的 Node 类型配置。
 
+## 中文语义检索
+
+可选的本地 BGE-small-zh-v1.5（量化 ONNX，权重约 24 MB）已接入个人助手、飞书助手和仓库搜索。它与全文、记忆及 Wiki 引用召回合并，最终返回当前原始 Fragment。长片段分窗索引，来源更新后自动补建；可见性和时间过滤在结果截断之前执行。
+
+```bash
+osdk model sync memory-zh
+osdk model verify memory-zh --json
+osdk run retrieval:verify
+# 大批量导入后可显式追赶；服务也会后台增量索引
+osdk run retrieval:index
+osdk run retrieval:index -- --review
+```
+
+个人配置 `retrieval.enabled` 开启，`osdkModel` 默认 `memory-zh`；示例配置已开启，已有 `omem.local.json` 保持原样。仓库配置为 `config/retrieval.json`，可用 `REVIEW_RETRIEVAL_CONFIG` 覆盖。未下载模型时保持全文检索，health 中报告 degraded；安装后重启服务。应用只读取 osdk 校验过的固定快照，不自行下载。向量按权重、tokenizer 和处理版本隔离，SQLite 索引可重建。
+
+当前是面向个人库的精确余弦计算，没有 ANN 或 reranker。四条中文同义问法的真实模型验证全部命中首位，词法基线均未命中；这是小样本连通性验证，不是全面召回率评估。英文和代码标识符仍依赖全文检索与模型补搜，不把中文小模型当通用最优选择。选型依据：[BGE 官方模型说明](https://huggingface.co/BAAI/bge-small-zh-v1.5)、[ONNX 转换版本](https://huggingface.co/Xenova/bge-small-zh-v1.5)。
+
 ## 知识整理与本仓库 Wiki
 
 知识处理复用 Capture → Source / Revision / Fragment、现有持久 jobs 和 RoleRuntimeGateway。代码、文档、对话、图像使用专门角色；分析后由独立角色复核，再由 AI 组织模块、架构、背景、需求、进展与概览章节。正文引用直接贴近论断，带名称、理由、固定位置，可逐层进入子知识、原文与代码。代码 AST 用于定位和明确的结构关系，语义说明与关系由模型分析和复核。

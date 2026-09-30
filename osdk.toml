@@ -3,6 +3,8 @@
 node = "24.18.1"
 pnpm = "11"
 
+[models.memory-zh.views]
+
 [deps.pnpm]
 auto = true
 allow_build_from_source = true
@@ -16,6 +18,8 @@ agents = ["universal", "claude-code"]
 [tasks]
 dev = "pnpm run dev"
 "dev:review" = "pnpm run dev:review"
+"retrieval:index" = "pnpm exec tsx scripts/retrieval-index.ts"
+"retrieval:verify" = "pnpm exec tsx scripts/live-retrieval-smoke.ts"
 "review:build" = "pnpm exec tsx scripts/review-wiki.ts"
 "review:analyze" = "pnpm exec tsx scripts/review-knowledge.ts"
 "review:generate" = "pnpm exec tsx scripts/review-knowledge.ts"
@@ -44,3 +48,11 @@ run = "pnpm run quality:lark-annotate"
 run = "pnpm run quality:evaluate"
 [tasks.quality-run]
 run = "pnpm run quality:run"
+
+[models.memory-zh]
+source = "hf:Xenova/bge-small-zh-v1.5@75c43b069aac4d136ba6bc1122f995fedcfd2781"
+include = ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.txt", "onnx/model_quantized.onnx"]
+exclude = []
+kind = "embedding"
+family = "bge"
+derived_from = "BAAI/bge-small-zh-v1.5"

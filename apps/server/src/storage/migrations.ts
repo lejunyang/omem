@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 16;
+export const SUPPORTED_SCHEMA_VERSION = 17;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -945,6 +945,17 @@ const checksum = (statements: readonly string[]) =>
     .update(statements.join("\n-- statement --\n"))
     .digest("hex");
 
+const embeddingStatements = [
+  `CREATE TABLE fragment_embeddings (
+    fragment_id TEXT NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
+    model_id TEXT NOT NULL, part INTEGER NOT NULL, start_offset INTEGER NOT NULL,
+    end_offset INTEGER NOT NULL, vector BLOB NOT NULL,
+    PRIMARY KEY(model_id,fragment_id,part))`,
+  `CREATE TABLE fragment_embedding_heads (
+    fragment_id TEXT NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
+    model_id TEXT NOT NULL, PRIMARY KEY(model_id,fragment_id))`,
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1037,6 +1048,7 @@ const migrations: readonly Migration[] = [
     checksum: checksum(retrievalIndexStatements),
   },
   { version: 16, name: "memory-refresh-outcomes", statements: memoryRefreshStatements, checksum: checksum(memoryRefreshStatements) },
+  { version: 17, name: "fragment-semantic-index", statements: embeddingStatements, checksum: checksum(embeddingStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

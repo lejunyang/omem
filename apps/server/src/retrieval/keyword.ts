@@ -12,7 +12,7 @@ import type {
 
 type Row = Record<string, unknown>;
 
-const ORIGINAL = "COALESCE(json_extract(r.body, '$.provenance.producerKind'),'original') != 'derived' AND COALESCE(json_extract(r.body, '$.context.derived'),0) != 1";
+export const ORIGINAL = "COALESCE(json_extract(r.body, '$.provenance.producerKind'),'original') != 'derived' AND COALESCE(json_extract(r.body, '$.context.derived'),0) != 1";
 const SOURCE_COLUMNS = `f.id AS fragment_id,f.revision_id,f.text AS fragment_text,
   r.title,r.created_at AS revision_created_at,s.namespace,
   json_extract(r.body, '$.provenance.actorId') AS actor_id`;

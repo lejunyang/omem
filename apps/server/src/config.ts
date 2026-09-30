@@ -1,3 +1,4 @@
+import { retrievalConfigSchema } from "./retrieval/factory.js";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { z } from "zod";
@@ -52,6 +53,7 @@ const schema = z
           timezone: "Asia/Shanghai",
         },
       }),
+    retrieval: retrievalConfigSchema.optional(),
     captureRoots: z.array(z.string()).default([]),
     learning: z
       .object({

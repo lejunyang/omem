@@ -81,6 +81,8 @@ export type RetrievalHealth = {
 export interface RetrievalPort {
   /** Keyword/vector search over imported source fragments. */
   searchSources(query: SearchQuery): SourceCandidate[];
+  /** Optional local semantic branch; callers await this when supplied. */
+  searchSourcesAsync?(query: SearchQuery): Promise<SourceCandidate[]>;
   /** Search over already-applied memories (for conflict / reuse recall). */
   searchMemories(query: SearchQuery): MemoryCandidate[];
   /** Read back the immutable fragment the candidates point at. */
