@@ -19,7 +19,7 @@ installer_version = "11.28.2"
 runtime = "node@24.18.1"
 manifest = "package.json"
 manifest_sha256 = "92a0e297b8c8efa902f03db922a7b594fc7c3f3ab79402fd85eecfc454c76edd"
-run = "pnpm.cmd install --frozen-lockfile"
+run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
 [deps.pnpm.native_lock]
@@ -29,9 +29,11 @@ sha256 = "573790b7a0e8fa299120cb75805b1cbea161ad5e8abab18824becc35cb1246ae"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"
-content_hash = "b3-v2:25feab3235fe25a48293e03508e2dfc0f447c3f6dc178f36748ebf7ba1a390b4"
-resolved_commit = "02a2f2b3142ded7d73554aaee629a24966a62313"
+content_hash = "b3-v2:53d69d90eae02ecd9a4194f3fc10020e67f9540ed5e5a2a4d23ee0a080d21592"
+requested_ref = "default"
+resolved_commit = "8a30f0abbaf6dc9668fd6357a0bc0a9d7be97990"
 agents = [
     "universal",
     "claude-code",
 ]
+install_mode = "copy"
