@@ -25,7 +25,27 @@ export type AssistantCreateTaskCall = {
   /** Evidence fragments the task is grounded on; the server re-validates both
    *  visibility and owner provenance before creating anything. */
   citationIds?: string[];
+  dueAt?: string | null;
+  dueExpression?: string | null;
 };
+
+export type AssistantUpdateTaskCall = {
+  tool: "update_task";
+  taskId: string;
+  expectedVersion: number;
+  action: "complete" | "reopen" | "reschedule";
+  dueAt?: string | null;
+  dueExpression?: string | null;
+};
+export type AssistantTask = { id: string; title: string; detail: string; status: string; version: number; dueAt: string | null };
+
+export function validatedDueAt(dueAt: string | null | undefined, expression: string | null | undefined, userText: string) {
+  if (!dueAt) return null;
+  if (!expression?.trim() || !userText.includes(expression.trim()) ||
+    !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(dueAt) || !Number.isFinite(Date.parse(dueAt)))
+    throw Error("INVALID_TASK_TIME: 需要原消息中的时间表达及含时区的明确时间");
+  return new Date(dueAt).toISOString();
+}
 
 export type AssistantModelReply = {
   /** Final natural-language reply shown to the user. */
@@ -34,7 +54,9 @@ export type AssistantModelReply = {
   citationIds: string[];
   /** Structured, server-enforced tool requests. The model cannot grant itself
    *  write permission: every call is re-governed by MemoryService. */
-  toolCalls?: AssistantCreateTaskCall[];
+  toolCalls?: (AssistantCreateTaskCall | AssistantUpdateTaskCall)[];
+  /** At most one additional retrieval round; these are search terms, never facts. */
+  searchQueries?: string[];
 };
 
 /**
@@ -73,6 +95,9 @@ export type AssistantModelPort = {
     visibility: Visibility;
     /** Owner-scoped corrections/constraints the model must respect. */
     trustedContext?: string;
+    tasks?: AssistantTask[];
+    clock?: { now: string; timezone: string };
+    retrievalRound?: number;
     signal?: AbortSignal;
   }): Promise<AssistantModelReply>;
 };
@@ -186,6 +211,7 @@ export class AssistantRuntime {
       turnTimeoutMs?: number;
       /** Max prior turns to feed the model (history budget). */
       maxPriorTurns?: number;
+      timezone?: string;
     } = {},
   ) {
     this.router = new ConversationRouter(store.db);
@@ -448,12 +474,15 @@ export class AssistantRuntime {
       //    from the previous consultation turn (anaphora like "按这个").
       const retrieved = this.retrieveEvidence(input.userText, input.conversation);
       const priorCtx = this.priorWorkingContext(input.conversation);
-      const evidence = [...priorCtx, ...retrieved.filter(
+      let evidence = [...priorCtx, ...retrieved.filter(
         (r) => !priorCtx.some((p) => p.fragmentId === r.fragmentId),
       )];
 
       // 1b. Read owner-scoped corrections from FeedbackService (H-G16).
       const trustedContext = this.readScopedCorrections(input.conversation);
+      const tasks = this.visibleTasks(input.conversation);
+      const clock = { now: new Date().toISOString(), timezone: this.options.timezone ?? "Asia/Shanghai" };
+      const searchQueries: string[] = [];
 
       // 2. Ask the model. Unavailable / cancelled / error never yields a fake answer.
       //    Hard timeout via Promise.race: if the model ignores abort we still
@@ -467,12 +496,22 @@ export class AssistantRuntime {
             priorTurns,
             evidence,
             visibility: input.conversation.visibility,
-            trustedContext,
+            trustedContext, tasks, clock, retrievalRound: 0,
             signal: input.signal,
           }),
           input.signal,
           this.options.turnTimeoutMs ?? 60_000,
         );
+        searchQueries.push(...[...new Set(reply.searchQueries ?? [])].map(q => q.trim().slice(0, 160)).filter(Boolean).slice(0, 3));
+        if (searchQueries.length) {
+          this.assertNotCancelled(input.signal);
+          const extra = searchQueries.flatMap(q => this.retrieveEvidence(q, input.conversation));
+          evidence = [...new Map([...extra, ...evidence].map(e => [e.fragmentId,e])).values()].slice(0, 24);
+          reply = await this.withTimeout(this.model.generate({
+            userText: input.userText, priorTurns, evidence, visibility: input.conversation.visibility,
+            trustedContext, tasks, clock, retrievalRound: 1, signal: input.signal,
+          }), input.signal, this.options.turnTimeoutMs ?? 60_000);
+        }
       } catch (error) {
         if (input.signal.aborted || error instanceof TurnCancelledError) {
           this.router.cancelTurn(input.turnId, "cancelled");
@@ -500,11 +539,18 @@ export class AssistantRuntime {
       //    B: we ALSO check the user's actual intent — consultation questions
       //    must never auto-create tasks even if the model emits one.
       const intent = detectTaskIntent(input.userText);
-      const toolActions: Array<Record<string, unknown>> = [];
+      const toolActions: Array<Record<string, unknown>> = searchQueries.length
+        ? [{ tool: "search", queries: searchQueries, evidenceCount: evidence.length }] : [];
       const createdTaskIds: string[] = [];
       let taskRejectedReason: string | null = null;
       if (!degraded) {
         for (const call of reply.toolCalls ?? []) {
+          if (call.tool === "update_task") {
+            this.assertNotCancelled(input.signal);
+            const action = this.governTaskUpdate(call, input, tasks);
+            toolActions.push(action);
+            continue;
+          }
           if (call.tool !== "create_task") continue;
           if (!intent.explicit) {
             // B: consultation / non-assignment intent → zero write, honest rejection.
@@ -525,20 +571,24 @@ export class AssistantRuntime {
             priorContext: this.priorWorkingContext(input.conversation),
             transportEventId: input.transportEventId,
             userText: input.userText,
+            requestId: input.turnId,
           });
           toolActions.push(governed.action);
           if (governed.taskId) createdTaskIds.push(governed.taskId);
         }
       }
 
-      // B: if the model claimed it created a task but we rejected it, we must NOT
-      // parrot the model's "done" answer. Rewrite the answer honestly.
-      let finalAnswer = reply.answer;
-      if (taskRejectedReason && !createdTaskIds.length) {
-        finalAnswer = `${reply.answer}\n\n（未创建任务：你刚才的输入是咨询/提问，而非明确的任务交办。如需记录，请说"帮我记一下…"或"提醒我…"。）`;
-      } else if (createdTaskIds.length) {
-        finalAnswer = `${reply.answer}\n\n已创建任务：${createdTaskIds.map((id) => `#${id.slice(0, 8)}`).join(", ")}。`;
-      }
+      // Only persisted receipts may claim an action was performed. Discard the
+      // model's speculative success text whenever it requested a mutation.
+      const mutations = toolActions.filter(a => a.tool !== "search");
+      const finalAnswer = mutations.length ? mutations.map(action => {
+        if (action.rejected) return `${action.tool === "create_task" ? "未创建任务" : "未执行事项变更"}：${action.detail ?? action.reason}。`;
+        const task = this.store.tasks().find(t => t.id === action.taskId);
+        if (!task) return "事项变更尚未确认。";
+        const verb = action.tool === "create_task" ? "已创建任务" : action.action === "complete" ? "已完成" : action.action === "reopen" ? "已重新打开" : "已改期";
+        const time = task.dueAt ? `；提醒时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）` : "";
+        return `${verb}：${task.title}${action.action === "complete" ? "" : time}。`;
+      }).join("\n") : reply.answer;
 
       // 4. Only allow citations the runtime actually supplied.
       const allowed = new Set(evidence.map((item) => item.fragmentId));
@@ -637,6 +687,36 @@ export class AssistantRuntime {
       .filter((e) => this.isVisible(conversation, e.fragmentId));
   }
 
+  private visibleTasks(conversation: Conversation): AssistantTask[] {
+    return this.store.tasks().filter(t => conversation.visibility === "private" ||
+      (typeof t.evidenceId === "string" && this.isVisible(conversation, t.evidenceId)))
+      .slice(0, 60).map(t => ({ id: String(t.id), title: String(t.title), detail: String(t.detail),
+        status: String(t.status), version: Number(t.version), dueAt: t.dueAt ? String(t.dueAt) : null }));
+  }
+
+  private governTaskUpdate(call: AssistantUpdateTaskCall,
+    input: { turnId: string; userText: string; conversation: Conversation }, tasks: AssistantTask[]): Record<string, unknown> {
+    const reject = (reason: string) => ({ tool: "update_task", rejected: true, reason });
+    const patterns = { complete: /完成|做完|办完|标.*完成|\bdone\b|\bcomplete\b/i,
+      reopen: /重新打开|还没完成|恢复.*待办|\breopen\b/i, reschedule: /改到|改为|改期|推迟|延后|提前|挪到|\breschedule\b/i };
+    if (!patterns[call.action].test(input.userText) || /怎么|如何|是否|吗[？?]?$/.test(input.userText)) return reject("没有明确的事项变更指令");
+    if (!tasks.some(t => t.id === call.taskId && t.version === call.expectedVersion)) return reject("事项不存在、不可见或已被修改，请重新确认");
+    if (!this.options.memory) return reject("事项服务不可用");
+    try {
+      const dueAt = call.action === "reschedule" ? validatedDueAt(call.dueAt, call.dueExpression, input.userText) : null;
+      if (call.action === "reschedule" && !dueAt) return reject("请给出明确的改期时间");
+      const revision = this.store.capture({ source: "manual", externalId: `turn:${input.turnId}`, title: "事项变更指令",
+        parts: [{ type: "text", text: input.userText }], context: { conversationId: input.conversation.chatId ?? input.conversation.id },
+        provenance: { collectorId: "assistant", actorId: this.options.ownerId ?? "owner", actorType: "owner", actorVerifiedBy: "runtime",
+          sourceUri: null, eventId: input.turnId, eventAt: new Date().toISOString(), timezone: this.options.timezone ?? "Asia/Shanghai",
+          quoted: false, forwarded: false, producerKind: "original" } }).revision;
+      const receipt = this.options.memory.commandTask({ taskId: call.taskId, expectedVersion: call.expectedVersion,
+        action: call.action, dueAt, dueExpression: call.dueExpression ?? null, requestId: input.turnId,
+        evidenceId: revision.fragments[0]!.id });
+      return { tool: "update_task", action: call.action, taskId: receipt.entityId, receiptId: receipt.id };
+    } catch (error) { return reject(error instanceof Error ? error.message : "事项变更失败"); }
+  }
+
   private readScopedCorrections(conversation: Conversation): string {
     if (!this.options.feedback) return "";
     try {
@@ -722,6 +802,7 @@ export class AssistantRuntime {
     priorContext?: AssistantEvidence[];
     transportEventId: string | null;
     userText: string;
+    requestId: string;
   }): { action: Record<string, unknown>; taskId?: string } {
     const ownerId = this.options.ownerId ?? "owner";
     const reject = (reason: string, extra: Record<string, unknown> = {}) => ({
@@ -758,9 +839,9 @@ export class AssistantRuntime {
     // provenance) so the proposal has valid evidence. This is NOT a hardcoded
     // verifier: the fragment is the owner's actual words from this turn.
     let directEvidence: AssistantEvidence[] = [];
-    if (!cited.length) {
+    {
       try {
-        const extId = `turn:${input.conversation.id}:${stableDigest(input.userText).slice(0,12)}`;
+        const extId = `turn:${input.requestId}`;
         const rev = this.store.capture({
           source: "manual",
           externalId: extId,
@@ -775,7 +856,7 @@ export class AssistantRuntime {
             sourceUri: null,
             eventId: input.transportEventId,
             eventAt: new Date().toISOString(),
-            timezone: "Asia/Shanghai",
+            timezone: this.options.timezone ?? "Asia/Shanghai",
             quoted: false,
             forwarded: false,
             producerKind: "original",
@@ -793,14 +874,12 @@ export class AssistantRuntime {
         // capture failure is non-fatal; cited fragments still work
       }
     }
-    const allEvidence = [...directEvidence, ...contextCited];
+    const allEvidence = directEvidence; // the current owner's instruction authorizes the action
     // B: for a direct owner assignment, the userText itself is the trusted
     // original message. We do NOT require pre-existing cited evidence fragments —
     // the owner is directly telling us what to record. But if the model DID cite
     // fragments, we validate them.
-    const proposalId = input.transportEventId
-      ? `assistant-task:${input.transportEventId}:${stableDigest(input.call.title).slice(0, 16)}`
-      : `assistant-task:${randomUUID()}`;
+    const proposalId = `assistant-task:${input.transportEventId ?? input.requestId}:${stableDigest(input.call.title).slice(0,16)}`;
 
     try {
       const result = this.options.memory.evaluate(
@@ -817,8 +896,8 @@ export class AssistantRuntime {
           body: {
             title: input.call.title,
             owner_id: ownerId,
-            due_at: null,
-            due_expression: null,
+            due_at: validatedDueAt(input.call.dueAt, input.call.dueExpression, input.userText),
+            due_expression: input.call.dueExpression ?? null,
             next_step: input.call.detail,
           },
           evidence: allEvidence.map((e) => {

@@ -70,6 +70,18 @@ Batch 2 角色运行包位于 `packages/agent-runtime/roles`。extractor、verif
 
 Agent 进程在 `.omem/agent-workspace` 工作。内置配置采用只读/无工具策略，ACP 权限请求转成通知且拒绝自动执行；这不等于给任意第三方 Agent 提供 OS 安全沙箱。自定义运行器需保留自己的隔离/权限约束。
 
+## 日常使用
+
+主助手现在可以先查询已有事项，再根据明确指令创建带时间的任务、改期、完成或重新打开。时间按用户配置的时区解析，保存原始时间表达；操作回复来自真实数据库回执。未明确时间时会询问，未成功写入不会显示“已安排”。目前提醒使用任务时间并在应用内触发；独立 reminder、重复安排、取消状态与外部到期投递尚未接通。
+
+检索不足时，助手可提出最多三个同义词/跨语言查询，由宿主补搜一次，再根据原片段回答。补搜不增加模型写权限，也不把搜索词当事实。可用合成材料验证整条真实 ACP 流程：
+
+```bash
+OMEM_LIVE_MODEL=gpt-5.6-sol OMEM_LIVE_EFFORT=medium osdk exec --tool node --tool pnpm -- pnpm exec tsx scripts/live-assistant-smoke.ts
+```
+
+该脚本使用隔离临时数据库，验证中文问英文材料、创建带时间事项、改期、完成；报告在 `.omem/verification/live-assistant.json`，不发送外部消息。
+
 ## 材料与接入
 
 ```bash

@@ -73,6 +73,7 @@ export async function buildApp(
     memory,
     feedback,
     retrieval: assistantRetrieval,
+    timezone: config.notifications.external?.timezone,
     turnTimeoutMs: 60_000,
   });
   const learningConfig = config.learning;

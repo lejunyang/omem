@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AssistantRuntime,
   ModelUnavailableError,
@@ -862,4 +862,51 @@ describe("Lark main-assistant entry", () => {
       store.db.prepare("SELECT count(*) AS n FROM delivery_intents").get(),
     ).toEqual({ n: 1 });
   });
+});
+
+it("daily workflow creates with time, reschedules, completes, and suppresses due reminders", async () => {
+  const { store } = setup();
+  const model: AssistantModelPort = { generate: async input => {
+    const t = input.tasks?.[0];
+    if (!t) return { answer: "模型自报成功不得直接展示", citationIds: [], toolCalls: [{ tool: "create_task", title: "英语复习", detail: "词汇",
+      dueAt: "2026-10-02T09:00:00+08:00", dueExpression: "10月2日上午9点" }] };
+    if (input.userText.includes("改到")) return { answer: "改好了", citationIds: [], toolCalls: [{ tool: "update_task", taskId: t.id,
+      expectedVersion: t.version, action: "reschedule", dueAt: "2026-10-03T10:00:00+08:00", dueExpression: "10月3日上午10点" }] };
+    return { answer: "完成了", citationIds: [], toolCalls: [{ tool: "update_task", taskId: t.id, expectedVersion: t.version, action: "complete" }] };
+  } };
+  const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store), timezone: "Asia/Shanghai" });
+  const c = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "daily", visibility: "private" });
+  const create = await runtime.turn({ conversationId: c.id, userText: "提醒我10月2日上午9点英语复习" });
+  expect(create.turn.result).toContain("已创建任务：英语复习");
+  expect(create.turn.result).not.toContain("模型自报");
+  expect(store.tasks()[0]!.dueAt).toBe("2026-10-02T01:00:00.000Z");
+  await runtime.turn({ conversationId: c.id, userText: "改到10月3日上午10点" });
+  expect(store.tasks()[0]!.dueAt).toBe("2026-10-03T02:00:00.000Z");
+  await runtime.turn({ conversationId: c.id, userText: "英语复习已完成" });
+  expect(store.tasks()[0]!.status).toBe("done");
+  expect(store.tasks()[0]!.version).toBe(3);
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2040-01-01T00:00:00Z"));
+  try { store.remind(); } finally { vi.useRealTimers(); }
+  expect(store.notifications().some(n => String(n.title).startsWith("待办到期"))).toBe(false);
+  expect((store.db.prepare("SELECT count(*) AS n FROM application_receipts WHERE entity_type='task'").get() as { n: number }).n).toBe(3);
+});
+
+it("one bounded query expansion retrieves cross-language originals and never executes first-round mutations", async () => {
+  const { store } = setup();
+  const source = captureSource(store, "english", "CircuitBreaker opens after seven failures.");
+  let calls = 0;
+  const model: AssistantModelPort = { generate: async input => {
+    calls++;
+    if (!input.retrievalRound) return { answer: "要再查", citationIds: [], searchQueries: ["CircuitBreaker"],
+      toolCalls: [{ tool: "create_task", title: "不该执行", detail: "" }] };
+    expect(input.evidence.map(e => e.fragmentId)).toContain(source.fragments[0]!.id);
+    return { answer: "七次失败后熔断", citationIds: [source.fragments[0]!.id], searchQueries: ["ignored"] };
+  } };
+  const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store), retrieval: new KeywordRetrieval(store.db) });
+  const c = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "search", visibility: "private" });
+  const result = await runtime.turn({ conversationId: c.id, userText: "熔断阈值是什么" });
+  expect(calls).toBe(2); expect(store.tasks()).toHaveLength(0);
+  expect(result.turn.selectedEvidence).toHaveLength(1);
+  expect(result.turn.toolActions[0]).toMatchObject({ tool: "search", queries: ["CircuitBreaker"] });
 });
