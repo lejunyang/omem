@@ -25,6 +25,14 @@ it("captures source, deployment configuration and image materials without import
     captureRepositoryMaterials(store, root);
     expect(store.db.prepare("SELECT count(*) n FROM revisions").get()).toEqual(versions);
     expect(repository.materials().some(m => m.path === ".env" || m.path === "settings.local.json")).toBe(false);
+    const original = repository.materials().find(m => m.path === "deploy/service.example")!;
+    rmSync(join(root,"deploy/service.example"));
+    captureRepositoryMaterials(store,root);
+    expect(repository.materials().some(m=>m.path==="deploy/service.example")).toBe(false);
+    expect(store.revision(original.revisionId)).not.toBeNull();
+    writeFileSync(join(root,"deploy/service.example"),"[Service]\nExecStart=node main.js\n");
+    captureRepositoryMaterials(store,root);
+    expect(repository.materials().find(m=>m.path==="deploy/service.example")!.revisionId).toBe(original.revisionId);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -54,6 +54,15 @@ export function captureRepositoryMaterials(store: Store, repoRoot: string): Repo
       result.push({ path, state: "captured", materialKey: externalId, digest: hash, reason: "固定材料已保存" });
     } catch (error) { result.push({ path, state: "failed", reason: error instanceof Error ? error.message : String(error) }); }
   }
+  // The general material adapter also owns non-code files (for example JSON).
+  // Reconcile removals here; the code/docs synchronizer cannot see all of them.
+  ensureReviewMetaTable(store);
+  const present = new Set(result.filter(row => row.state === "captured").map(row => row.materialKey));
+  const sources = store.db.prepare("SELECT id,external_id FROM sources WHERE namespace='file' AND external_id LIKE 'omem:%'").all() as {id:string;external_id:string}[];
+  const mark = store.db.prepare(`INSERT INTO review_source_meta(source_id,removed,updated_at) VALUES(?,?,?)
+    ON CONFLICT(source_id) DO UPDATE SET removed=excluded.removed,updated_at=excluded.updated_at
+    WHERE removed != excluded.removed`);
+  for (const source of sources) mark.run(source.id,present.has(source.external_id)?0:1,new Date().toISOString());
   return result;
 }
 
