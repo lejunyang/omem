@@ -2,40 +2,40 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/hook-forward.ts",
-    "title": "不阻塞宿主的 Hook 转发入口",
-    "summary": "从标准输入接收受限 Hook JSON，经字段白名单转换后交给 HookSpool，并以短超时请求捕获 API；失败仅写标准错误且不向宿主抛出。",
+    "title": "非阻塞 Hook 转发入口",
+    "summary": "从标准输入接收受限 Hook 事件，规范化后先写入本地 spool，再以短超时尝试投递到捕获 API；异常和未送达只记录错误，不阻塞宿主。",
     "category": "workflow",
     "sections": [
       {
-        "key": "input-profile",
-        "title": "输入预算与捕获档案",
-        "body": "该入口是显式启用的 Hook 传输适配器，不调用模型，也不写标准输出。它累计 stdin 数据并设置 300000 字节上限；环境变量选择的字段必须属于默认 Hook 白名单，字符预算则必须是 1000 至 200000 的整数。通过检查后，JSON 才会交给 `hookInput` 转成统一捕获对象。[[c1]]"
+        "key": "flow",
+        "title": "输入、规范化与投递",
+        "body": "入口从 stdin 累积 JSON，原始输入超过 300000 字节即拒绝。环境变量只能从默认 Hook 字段白名单中选择字段，字符上限被限制在 1000–200000；随后调用 `hookInput` 完成字段提取、脱敏、事件身份和 provenance 构造。[[c1]]\n\n规范化结果先写入 `HookSpool`，目录可显式配置，否则位于数据目录下。flush 回调向 `/api/captures` 发送 JSON，可选附带 Bearer token，并设置 1500 毫秒超时；仅 HTTP 成功时读取捕获确认。[[c2]]"
       },
       {
-        "key": "delivery",
-        "title": "Spool 调用与短时投递",
-        "body": "捕获对象会先传给 `HookSpool.enqueue`，随后调用 `flush`；回调向 `/api/captures` 发送 POST，可选附带 Bearer token，并用 1500 ms 超时限制网络等待，非成功 HTTP 状态会抛错。调用点向 `flush` 传入第三个参数 `3`，但本材料没有给出该参数合同，不能断言它代表重试次数。[[c2]] 若结果含未送达项，代码只写 stderr；顶层异常同样被捕获并报告“queued or rejected”，不会继续抛给宿主。至于 enqueue 是否已可靠落盘、失败项是否保留以及如何退避或去重，需由 spool 实现证明。[[c3]]"
+        "key": "failure-boundary",
+        "title": "失败语义与模块关系",
+        "body": "存在未送达结果时，入口只向 stderr 报告已排队重试；解析、配置、spool 或网络异常也由顶层 catch 记录，既不写 stdout 协议内容，也不把异常抛回宿主。[[c3]] 先前将 `flush(..., 3)` 解释为“最多处理次数”的结论已撤回：当前材料没有 `HookSpool` 的签名，无法确定该参数表示批量上限、重试次数还是其他约束。[[c2]]\n\n该文件只是可选 transport，不调用模型，也不直接写知识数据库。内容筛选依赖 connector profile；持久化原子性、退避、清理及后续 flush 触发机制依赖未提供的 spool 实现。[[c1]] [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Hook 输入限制与档案构造",
-        "reason": "支持 stdin 字节预算、字段白名单、字符预算以及调用统一 Hook 转换器的流程。",
-        "relation": "implements",
+        "label": "Hook 输入预算与字段配置",
+        "reason": "支持 stdin 大小限制、字段白名单、字符预算和 hookInput 规范化流程。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/hook-forward.ts",
-          "startLine": 1,
+          "startLine": 9,
           "endLine": 38
         },
-        "quote": "/** Opt-in hook transport. No model invocation and no stdout; failures never block the host. */\nimport { resolve, join } from \"node:path\";\nimport {\n  defaultHookCaptureProfile,\n  hookInput,\n  type HookCaptureField,\n} from \"./connectors.js\";\nimport { HookSpool, type CaptureAcknowledgement } from \"./inputs/spool.js\";\ncon"
+        "quote": "const chunks: Buffer[] = [];\nlet bytes = 0;\ntry {\n  for await (const c of process.stdin) {\n    bytes += c.length;\n    if (bytes > 300000) throw Error(\"Capture budget exceeded\");\n    chunks.push(c);\n  }\n  const allowedFields = new Set<HookCaptureField>(\n    defaultHookCaptureProfile.fields,\n  );\n  const requestedFields "
       },
       {
         "key": "c2",
-        "label": "Spool 调用与捕获 API 请求",
-        "reason": "说明 enqueue、flush 调用事实以及目标 API、认证头、请求超时和响应处理；不推断未提供的 spool 合同。",
-        "relation": "calls",
+        "label": "Spool 与捕获 API 投递",
+        "reason": "说明先入 spool、API 地址、鉴权头、请求体、超时及 flush 调用，但不推断第二参数语义。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/hook-forward.ts",
@@ -46,8 +46,8 @@
       },
       {
         "key": "c3",
-        "label": "失败不阻塞宿主",
-        "reason": "支持未送达结果与顶层异常仅写标准错误、宿主继续运行的边界。",
+        "label": "宿主非阻塞失败处理",
+        "reason": "支持未送达或异常只写 stderr、宿主继续运行的行为边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -60,9 +60,9 @@
     ],
     "questions": [
       {
-        "question": "HookSpool 的第三个 `flush` 参数、持久化和未送达保留语义分别是什么？",
-        "why": "当前材料只有 enqueue、flush 调用和日志文案，没有 HookSpool 的实现或类型合同，无法确认参数 `3` 是否代表尝试上限，也无法确认崩溃恢复、确认删除及重试行为。",
-        "nextStep": "核验 spool 模块及其测试，再据实际实现判断磁盘持久化、未送达保留、去重和退避语义。",
+        "question": "HookSpool 的重试触发、持久化原子性和过期清理策略是什么？",
+        "why": "当前材料只展示 enqueue、一次 flush 调用及未送达提示，没有提供 spool 的接口与实现，无法确认数字参数语义，也无法确认进程退出后由谁、何时再次投递。",
+        "nextStep": "核验 apps/server/src/inputs/spool.ts 及启动调用方，并测试网络失败、进程中断、重复确认和过期记录场景。",
         "blocking": false,
         "citationKeys": [
           "c2",
@@ -80,7 +80,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
@@ -115,7 +115,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -126,34 +126,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:03:44.906Z",
+    "at": "2026-09-30T19:18:10.914Z",
     "trace": {
-      "runId": "9b2d598c-db07-4cd7-bd70-53cca1eb54d0",
-      "roleId": "code-analyst",
+      "runId": "79591dfe-8707-4bd6-8fb4-eebb58e057a6",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "a2b9fb20f3f9a715f896ae5868edb594e84a50e04b7d4033eaacb1b1c0a91268",
-      "contextHash": "e526999fbc3b715e3a5236cd0611fee1a491f2111bde08481c2b7fce2ab7ed07",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "875ac26190509463c54f4b2e0581016cc369433c884d6117bc1835fa1a3c8d26",
+      "contextHash": "8e0c650ddf3cd7fae414f132c5bf910aca8a55f6481d48b6992440ff5b6695fe",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6d17f4acbcdabfb789ac9de01ad2832a1c371f8bed167003131140201186aa19",
+      "fingerprint": "33355e1bfdcd99b5139274bc7eb55ff817545542005658274cb8524c5f6bb3b4",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-9a12-7043-a6ca-754b0e060662"
+        "01a0f3bf-f43e-7882-a2ec-1336c55fdb9d"
       ],
       "usage": {
-        "used": 53699,
-        "size": 760000,
+        "used": 66109,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -161,10 +161,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 125918,
-          "utf8Bytes": 135551,
-          "estimatedTokens": 45184,
-          "budgetedTokens": 56480,
+          "chars": 135446,
+          "utf8Bytes": 148147,
+          "estimatedTokens": 49383,
+          "budgetedTokens": 61729,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -173,17 +173,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:04:08.395Z",
+    "at": "2026-09-30T19:18:45.635Z",
     "trace": {
-      "runId": "bcf4efa2-6f6b-4b27-a5d0-ca68e92af5d8",
+      "runId": "8a3bf8bf-f5da-4269-9719-59d1091ea116",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "199c3e1cb5d0882d9439cac5f2d7715e530280eb956b154516bc64ea135ce42f",
-      "contextHash": "1378a99b72efb25b7f17a4e08385e6b3896b8bf30f9a125aee3da58691a8ab49",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "4f298715ec3ddc7d6763375d2944cc78d7d5d37698adc3aa347f2499fb0f48d0",
+      "contextHash": "22e886304543001e276c798ee0cab0e1a2f5a8f54dd563d9ea527021385efb71",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c3c05206433a67a65bf94d82f4f83aa46d7a9ea77d62e784a8458fdd5d9dde93",
+      "fingerprint": "bba85daba6a36c5b14ac91e16f1786d2afd9a56ff73a3547c5eea59eaef3746d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -196,11 +196,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8d-30b1-7760-9447-a1a4d34f2665"
+        "01a0f3c0-d34f-73a1-a93e-ee3c8a573b32"
       ],
       "usage": {
-        "used": 49906,
-        "size": 760000,
+        "used": 60459,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -208,10 +208,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 121336,
-          "utf8Bytes": 128437,
-          "estimatedTokens": 42813,
-          "budgetedTokens": 53517,
+          "chars": 131016,
+          "utf8Bytes": 140643,
+          "estimatedTokens": 46881,
+          "budgetedTokens": 58602,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

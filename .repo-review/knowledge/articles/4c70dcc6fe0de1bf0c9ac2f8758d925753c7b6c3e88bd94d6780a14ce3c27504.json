@@ -2,112 +2,166 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/source-profile/service.ts",
-    "title": "来源修订的规则化内容画像",
-    "summary": "从固定 revision 的片段派生结构、语言、话语类型、主题、时间提示和覆盖缺口，并把可重建画像按 generation 写入 SQLite。",
+    "title": "来源修订的确定性导航画像",
+    "summary": "以规则方式从固定修订及有序片段生成结构、主题、语言、时态和覆盖缺口等导航元数据；画像按来源修订与生成代次存储并可读取最新版，但不是经过独立核验的事实，画像失败也不应阻断原始证据。",
     "category": "implementation",
     "sections": [
       {
-        "key": "lifecycle",
-        "title": "画像生命周期与容错",
-        "body": "该服务把画像作为固定 revision 上的派生导航数据。`latest` 按 generation 读取最近一代；`persistForRevision` 查询 revision 与有序 fragments，执行规则分析、递增 generation 后写库。[[c1]] 画像失败不应阻断原始证据：`recordFailure` 尽力插入 failed 行，连失败记录自身的写入异常也会被吞掉，使来源仍可读取。[[c2]]"
+        "key": "purpose-and-model",
+        "title": "作用与数据定位",
+        "body": "该服务为固定来源修订生成导航画像，记录载体类型、标题路径、话语分类、候选主题、时间提示、显式链接、覆盖缺口和证据片段引用，并区分正常、部分和失败状态。[[c1]] 迁移说明明确画像是可重新派生、可能包含未知项的导航信息，而不是经过独立核验的新事实；画像失败不得阻碍原始证据读取。[[c2]]\n\n画像表以“来源修订 + 生成代次”为复合主键，并为同一修订建立代次倒序索引。[[c3]] 服务的 `latest` 查询与此结构一致，按生成代次降序取第一条。[[c4]] 这替代了此前仅用查询代码同时证明主键和索引结构的不充分论证。"
       },
       {
-        "key": "analysis",
-        "title": "结构与话语分析",
-        "body": "标题识别要求整个 trimmed fragment 完整匹配一行 Markdown 标题；只有这种片段才进入标题栈并跳过话语分类。此前“只要片段以标题开头即可识别”的结论已被替代：标题后同片段仍带正文时不会匹配，会整体作为普通话语段处理。[[c3]]\n\n普通片段继承最近父标题，再分类为定义、主张、约束、历史、计划、问题、指令、示例或噪声。代码、SQL、TODO 和 shell 命令优先归为示例，避免把材料命令误当执行指令；规则还提取时态和段内指称。[[c4]]"
+        "key": "analysis-flow",
+        "title": "分析与持久化流程",
+        "body": "`persistForRevision` 读取指定修订及其按 ordinal 排序的片段；修订不存在时抛错。分析完成后，它读取该修订已有最大代次、递增 generation，并写入完整画像。[[c5]] 分类器先识别图片占位和过短噪声，再按代码形态、问句、约束词、示例词、定义词、未来或历史提示及指令词分类，未命中时归为一般论断。[[c6]] 分析阶段维护 Markdown 标题栈，把正文关联到最近父标题；标题文本与去停用词后的高频词共同形成主题候选。[[c7]]"
       },
       {
-        "key": "coverage",
-        "title": "主题、语言与覆盖限制",
-        "body": "图片占位、表格样式及超长片段形成 coverage gap，并令画像状态变为 partial。主题候选合并标题与高频词，语言只按中英文字符阈值判断；项目候选仅读取少数 context 字段，显式链接只从带 `url` 的 parts 提取。所有 fragment ID 写入 evidenceRefs，表示可追溯而非人工确认。[[c5]]"
+        "key": "boundaries",
+        "title": "识别边界与失败降级",
+        "body": "语言识别只统计汉字区间与拉丁字母，粗略输出中文、英文、混合或未知；项目候选来自正文上下文，显式链接来自带 URL 的内容部件。[[c8]] 图片占位、含竖线的疑似表格及超长片段会登记 coverage gap，使画像成为 `partial`，但当前实现不会理解图片、表格或长文的内部语义。[[c9]]\n\n`recordFailure` 会尝试写入失败画像，并吞掉失败记录自身的数据库异常，以维持画像只是可选导航元数据的边界。[[c10]] 不过材料没有展示生产调用方如何捕获 `persistForRevision` 的异常，因此尚不能确认每条捕获路径都落实了该隔离。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "画像读取与代次持久化",
-        "reason": "支持从固定修订及有序片段分析、递增 generation 并写库的生命周期。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 119,
-          "endLine": 166
-        },
-        "quote": "export class SourceProfileService {\n  constructor(private readonly db: DatabaseSync) {}\n\n  latest(revisionId: string): SourceProfile | null {\n    const row = this.db\n      .prepare(\n        \"SELECT * FROM source_profiles WHERE source_revision_id=? ORDER BY profile_generation DESC LIMIT 1\",\n      )\n      .get(revisionId"
-      },
-      {
-        "key": "c2",
-        "label": "画像失败隔离",
-        "reason": "支持失败元数据尽力写入以及画像异常不影响来源可读性的说明。",
+        "label": "来源画像字段与状态",
+        "reason": "支持画像包含派生导航字段、证据引用以及正常、部分、失败三种状态。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 168,
-          "endLine": 189
+          "startLine": 35,
+          "endLine": 55
         },
-        "quote": "  recordFailure(revisionId: string, error: unknown): void {\n    const message =\n      error instanceof Error ? error.message : String(error ?? \"unknown\");\n    try {\n      this.db\n        .prepare(\n          `INSERT INTO source_profiles(\n             source_revision_id,profile_generation,profiler_version,carrier_type,\n "
+        "quote": "export type SourceProfile = {\n  sourceRevisionId: string;\n  profileGeneration: number;\n  profilerVersion: string;\n  carrierType: \"markdown\" | \"plaintext\";\n  languages: string[];\n  titlePath: TitleNode[];\n  coverageGaps: string[];\n  domainCandidates: string[];\n  topicCandidates: string[];\n  projectCandidates: string[];\n"
+      },
+      {
+        "key": "c2",
+        "label": "画像的派生信息边界",
+        "reason": "支持画像不是已核验事实、允许重新派生且失败不得阻断原始证据读取。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 766,
+          "endLine": 768
+        },
+        "quote": "// V3-03: deterministic, derived navigation profile per source revision. This is NOT a\n// verified fact: it may be re-derived, carries unknowns, and must never block the\n// original evidence from being read when profiling fails."
       },
       {
         "key": "c3",
-        "label": "完整片段标题匹配",
-        "reason": "正则的首尾锚点及分析循环共同证明只有整个 trimmed 片段为标题时才建立标题节点。",
+        "label": "画像表主键与索引",
+        "reason": "直接支持画像以来源修订和生成代次为复合主键，并建立代次倒序索引。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 770,
+          "endLine": 792
+        },
+        "quote": "  `CREATE TABLE source_profiles(\n     source_revision_id TEXT NOT NULL REFERENCES revisions(id),\n     profile_generation INTEGER NOT NULL CHECK(profile_generation >= 1),\n     profiler_version TEXT NOT NULL,\n     carrier_type TEXT NOT NULL,\n     languages TEXT NOT NULL,\n     title_path TEXT NOT NULL,\n     coverage_gaps "
+      },
+      {
+        "key": "c4",
+        "label": "最新版画像查询",
+        "reason": "支持服务按来源修订查询，并按生成代次降序读取第一条画像。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 251,
-          "endLine": 283
+          "startLine": 122,
+          "endLine": 128
         },
-        "quote": "export function analyze(input: {\n  title: string;\n  body: {\n    context?: Record<string, unknown>;\n    parts?: unknown[];\n  };\n  fragments: { id: string; ordinal: number; text: string }[];\n}): SourceProfile {\n  const fragments = input.fragments;\n  const hasHeading = fragments.some((f) => HEADING.test(f.text.trim()));\n "
+        "quote": "  latest(revisionId: string): SourceProfile | null {\n    const row = this.db\n      .prepare(\n        \"SELECT * FROM source_profiles WHERE source_revision_id=? ORDER BY profile_generation DESC LIMIT 1\",\n      )\n      .get(revisionId) as Row | undefined;\n    return row ? fromRow(row) : null;"
       },
       {
-        "key": "c4",
+        "key": "c5",
+        "label": "画像生成与代次持久化",
+        "reason": "支持读取固定修订和有序片段、执行分析、递增生成代次并持久化的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 131,
+          "endLine": 165
+        },
+        "quote": "  /** Synchronous, deterministic, best-effort. Callers wrap this so a profiling\n   *  failure never prevents the original evidence from being captured/read. */\n  persistForRevision(revisionId: string): SourceProfile {\n    const row = this.db\n      .prepare(\"SELECT title,body,created_at FROM revisions WHERE id=?\")\n     "
+      },
+      {
+        "key": "c6",
         "label": "话语分类规则",
-        "reason": "支持代码材料优先、时态与指称识别，以及各话语类型的规则分类。",
+        "reason": "直接支持问题、约束、计划、历史、示例、定义、指令和一般论断等分类规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
           "startLine": 75,
-          "endLine": 117
+          "endLine": 116
         },
         "quote": "function classify(text: string): Classified {\n  const t = text.trim();\n  if (/^\\[图片\\]/.test(t))\n    return { kind: \"noise\", tags: [\"image\"], tense: \"unknown\", refParent: false };\n  if (t.length < 4)\n    return { kind: \"noise\", tags: [], tense: \"unknown\", refParent: false };\n\n  const present = /当前|目前|现在|现状|现有/.test(t);\n"
       },
       {
-        "key": "c5",
-        "label": "主题、语言与覆盖分析",
-        "reason": "支持覆盖缺口、主题频率、语言阈值、项目候选、链接提取和 evidenceRefs 生成。",
+        "key": "c7",
+        "label": "标题关联与主题候选",
+        "reason": "支持标题栈、父标题关联、分类结果写入及标题和高频词共同形成主题候选。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 251,
+          "endLine": 318
+        },
+        "quote": "export function analyze(input: {\n  title: string;\n  body: {\n    context?: Record<string, unknown>;\n    parts?: unknown[];\n  };\n  fragments: { id: string; ordinal: number; text: string }[];\n}): SourceProfile {\n  const fragments = input.fragments;\n  const hasHeading = fragments.some((f) => HEADING.test(f.text.trim()));\n "
+      },
+      {
+        "key": "c8",
+        "label": "语言、项目与链接候选",
+        "reason": "支持语言按汉字和拉丁字母计数粗判，并说明项目候选和显式链接的来源。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 265,
-          "endLine": 372
+          "startLine": 320,
+          "endLine": 350
         },
-        "quote": "  const titlePath: TitleNode[] = [];\n  const segments: DiscourseSegment[] = [];\n  const coverageGaps: string[] = [];\n  const temporalNotes = new Set<string>();\n  const headingStack: string[] = [];\n\n  for (const fragment of fragments) {\n    const trimmed = fragment.text.trim();\n    const headingMatch = HEADING.exec(trim"
+        "quote": "  // Language detection from raw character counts.\n  let cjk = 0;\n  let latin = 0;\n  for (const fragment of fragments)\n    for (const ch of fragment.text) {\n      if (/[一-鿿]/.test(ch)) cjk++;\n      else if (/[A-Za-z]/.test(ch)) latin++;\n    }\n  const languages: string[] =\n    cjk >= 10 && latin >= 10\n      ? [\"zh\", \"en"
+      },
+      {
+        "key": "c9",
+        "label": "覆盖缺口判定",
+        "reason": "支持图片、疑似表格和长片段被登记为覆盖缺口，以及缺口影响画像状态。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 271,
+          "endLine": 303
+        },
+        "quote": "  for (const fragment of fragments) {\n    const trimmed = fragment.text.trim();\n    const headingMatch = HEADING.exec(trimmed);\n    if (headingMatch) {\n      const level = headingMatch[1]!.length;\n      const text = headingMatch[2]!.trim();\n      headingStack.length = Math.min(headingStack.length, level - 1);\n      hea"
+      },
+      {
+        "key": "c10",
+        "label": "画像失败记录与降级",
+        "reason": "支持失败画像写入以及二次写库异常不影响来源可读性的降级设计。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 168,
+          "endLine": 190
+        },
+        "quote": "  recordFailure(revisionId: string, error: unknown): void {\n    const message =\n      error instanceof Error ? error.message : String(error ?? \"unknown\");\n    try {\n      this.db\n        .prepare(\n          `INSERT INTO source_profiles(\n             source_revision_id,profile_generation,profiler_version,carrier_type,\n "
       }
     ],
     "questions": [
       {
-        "question": "画像写入应与原始 revision 捕获处于同一事务，还是明确接受最终一致？",
-        "why": "服务注释要求画像失败不影响证据，但当前材料没有展示调用方事务、失败后的自动重试或重建入口。",
-        "nextStep": "检查 Store 的捕获调用路径和数据库事务范围；若采用最终一致，为 failed 或缺失画像提供可重复执行的重建操作。",
+        "question": "哪些生产调用路径负责捕获画像生成异常并调用 recordFailure？",
+        "why": "服务注释和失败记录实现表明画像失败不应阻断原始证据，但所给材料没有展示 persistForRevision 的调用方及异常处理，无法确认所有捕获路径均落实了该隔离。",
+        "nextStep": "检查捕获流程中 SourceProfileService.persistForRevision 的调用点，并验证异常时修订仍然提交且失败画像可查询。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
-        ]
-      },
-      {
-        "question": "标题与正文共处同一 fragment 时，是否应拆分并分别分析？",
-        "why": "当前正则要求整个片段只有标题；混合片段不会形成标题节点，正文也只会作为一个整体话语段分类。",
-        "nextStep": "用真实 Markdown 捕获样本核对上游分片形态，再选择调整分片器、逐行解析标题或明确接受这一限制。",
-        "blocking": false,
-        "citationKeys": [
-          "c3",
-          "c5"
+          "c10"
         ]
       }
     ]
@@ -115,23 +169,8 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/model-config.ts",
-      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "76e54242857bea9401e4ff4bfe8ec1f1afa7778c1105982d2c175033490186f5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/runs.ts",
-      "digest": "71feea2619b8263142f4285ed0a5a3e9798af8c7daf4881b6c1af41802566fa6"
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
     },
     {
       "kind": "material",
@@ -140,24 +179,44 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "2903273d887300b5407818c616dabb33402bb5657c83886b1eb9b34c6ec68e2e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/storage/digest.ts",
       "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:53:10.392Z",
+    "at": "2026-09-30T20:05:15.510Z",
     "trace": {
-      "runId": "22fe0654-a6fe-4a89-a6cc-6f8adf2cca01",
+      "runId": "f752f5ed-fbd4-4690-9a73-337805339750",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "5a930740b92105c20e03818ec3655d99bfff542ce718d2795e0e2012ff0eb118",
-      "contextHash": "cd722fc9bb784a572292bf8568ead49f803e7358d7231c63c6eef752f9a78242",
+      "promptHash": "1692dd16db6c84eb5df586005c2600d44ca2dda10ba823ca4831b33647e01aa6",
+      "contextHash": "430507faee375da42db404c95544e9399f0d95bcda428df0d1ffa984ff51c5ea",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1197659933ce559f99fa919fd1077681f17b87a5f19d2b52554b6a20dda34337",
+      "fingerprint": "acc29e807cd4fe1363f10dc55c06701319313699530f46223419e0ad40190144",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -170,11 +229,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef0-6c80-7c81-8677-40ab3545fc66"
+        "01a0f3eb-3ca3-72b0-853e-a4195fd9134a"
       ],
       "usage": {
-        "used": 60825,
-        "size": 760000,
+        "used": 59085,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -182,10 +241,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 139256,
-          "utf8Bytes": 150962,
-          "estimatedTokens": 50321,
-          "budgetedTokens": 62902,
+          "chars": 119802,
+          "utf8Bytes": 130560,
+          "estimatedTokens": 43520,
+          "budgetedTokens": 54400,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -194,17 +253,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:53:41.614Z",
+    "at": "2026-09-30T20:05:39.220Z",
     "trace": {
-      "runId": "748e8c21-f235-49c6-9a2b-ed2ea9e889aa",
+      "runId": "639a9bde-b2bb-413c-96e7-8ee56493bad2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "29cacb9eee1e71d083868a4edd0d512987af07ff86028a80c3b3991f16848f15",
-      "contextHash": "e1d87e55938a56cf686e6e4bc6341c2a03c2bed7d9c8e0947da278aa37d82dfc",
+      "promptHash": "5f37b18de08eff2bc0197623d6014f1af5a21014df060fc8ad766b46198e44df",
+      "contextHash": "b81179fa7e5e30e094a2db59af5ef96d32ed6172a3688b9e05838de78bd99a7d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f4d99c22e9594680ff5d51125a9d7ec3903fe318b84395346e8d897ac4e38903",
+      "fingerprint": "89b970c4533161167f73ee60ef0f5e37ad4f7a9c665365aaaadb6382e28c2665",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -217,11 +276,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef1-5e68-7c70-a59b-885b6317df01"
+        "01a0f3eb-edba-7ea3-9ba1-eb0e472bc757"
       ],
       "usage": {
-        "used": 58210,
-        "size": 760000,
+        "used": 53921,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -229,10 +288,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 143768,
-          "utf8Bytes": 155672,
-          "estimatedTokens": 51891,
-          "budgetedTokens": 64864,
+          "chars": 115773,
+          "utf8Bytes": 124649,
+          "estimatedTokens": 41550,
+          "budgetedTokens": 51938,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

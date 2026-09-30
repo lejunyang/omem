@@ -2,36 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/knowledge/pipeline.ts",
-    "title": "知识生成、复核与发布流水线",
-    "summary": "把固定材料路由给专门分析角色，通过持久任务执行生成与独立复核，只发布通过复核且依赖未变的知识；同时支持用户回答、失败反馈和分层综合。",
-    "category": "workflow",
+    "title": "知识生成、复核与分层综合流水线",
+    "summary": "把固定原始材料送入角色化 Agent 作业，严格校验输出和引用范围，经独立复核后发布，并支持按依赖综合上层知识。",
+    "category": "architecture",
     "sections": [
       {
-        "key": "routing-context",
-        "title": "材料路由与固定上下文",
-        "body": "流水线按材料特征选择角色：含图片的材料交给视觉分析，对话或 hook 交给会话分析，常见代码扩展名交给代码分析，其余由通用材料分析处理。[[c1]] 构造角色上下文时只提供明确选定的行范围和图片资产，并附上来源 Revision、参与者及转发属性；若没有任何固定原始材料则拒绝运行。派生文章会标明其不是独立证据，角色只能引用本次明确提供的材料或文章。[[c2]]"
+        "key": "execution",
+        "title": "角色执行与可追踪作业",
+        "body": "流水线先按材料形态选择视觉、会话、代码或通用分析角色；代码判断只依据文件扩展名。[[c1]] 构造上下文时只提供指定行段和图片资产，并携带固定 revision、来源及转发等元数据；超过约 65000 字符的文本块会拆分，没有任何材料则拒绝运行。派生文章会明确标记为非独立证据。[[c2]]\n\n每次角色调用先入持久作业队列，以材料摘要、文章修订、模型、effort、预算和 bundle 哈希形成输入记录。worker 执行网关调用并保存输出及完整 trace；失败、取消或等待用户的旧作业不会被当作成功复用。[[c3]]"
       },
       {
-        "key": "durable-run",
-        "title": "持久任务与可追踪执行",
-        "body": "每次角色调用先以模型、effort、预算、材料摘要、文章修订和角色包哈希入队；成功任务可复用既有输出，失败、取消或等待用户的任务则要求重试。worker 保存模型实际配置、提示与上下文指纹、token 用量及完整 trace，使生成过程可以复查。[[c3]] 批量输出还必须完整覆盖目标键，并经过引文绑定、结构校验和可见行范围检查。[[c4]]"
-      },
-      {
-        "key": "review-publication",
-        "title": "独立复核与渐进修订",
-        "body": "正文生成后由独立 verifier 逐篇复核；只有 accepted 文档才会组装依赖、生成记录和复核记录并发布。未通过的目标保留上一稿及具体问题，最多进行四轮定向修订，最后一轮要求把仍不确定的内容降为有依据的问题。[[c5]] 已有复核失败记录也会在材料摘要未变时重新提供，避免后续分析遗忘先前纠正。"
+        "key": "validation-review",
+        "title": "结构校验、独立复核与发布",
+        "body": "批次必须恰好覆盖全部目标键；宿主按模型选择的行号绑定原文 quote，再验证每节都有内联引用、引用目标已提供且行号位于可见范围。[[c4]] 草稿随后交给独立 verifier。只有 accepted 文档才会合并复核问题、记录全部材料与文章依赖并发布；被拒文档最多修订四轮，最后一轮要求收缩到直接证据，仍不通过则整体报错。[[c5]]"
       },
       {
         "key": "analysis-synthesis",
-        "title": "增量分析与分层综合",
-        "body": "增量分析跳过已有 current 文章，把同类且规模受控的材料分批并发处理；相关问题已有用户回答时，会将回答 Revision 作为新的原始材料加入。单批失败被记录，不阻断其他批次。[[c6]] 综合流程只采用 current 子文章，数量过多时先分片；上层综述保留对子文章的固定引用，必要时依据预算选择完整来源或有限引文范围。[[c7]]"
+        "title": "材料分析与上层综合边界",
+        "body": "`analyze` 跳过已有当前文章，按相同分析角色、最多六份且总文本受限的规则分批并发处理；用户问题答案和补充材料可作为额外原始输入，单批失败会被记录而不阻断其他批次。[[c6]] `synthesize` 只使用当前且已复核的子文章，超过 12 篇会递归拆成中间专题；依赖完全一致时复用已有结果。上层章节优先沿 article 引用保留出处，必要时仅携带有限原始材料；预算估算允许时才扩展为全文。[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "分析角色选择",
-        "reason": "说明图片、会话、代码和普通材料如何选择对应分析角色。",
+        "label": "材料分析角色选择",
+        "reason": "支持按图片、会话来源及代码扩展名选择分析角色的规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -43,8 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "角色固定上下文构造",
-        "reason": "支持材料按可见范围切片、图片读取、原始来源元数据和派生文章身份标记。",
+        "label": "固定材料上下文构造",
+        "reason": "支持文本分块、图片装载、固定修订元数据和派生文章非独立证据标记。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -56,9 +51,9 @@
       },
       {
         "key": "c3",
-        "label": "持久角色任务执行",
-        "reason": "说明任务入队、结果复用、worker 执行以及运行 trace 的保存。",
-        "relation": "implements",
+        "label": "持久角色作业执行",
+        "reason": "支持作业入列、状态复用、网关调用、trace 保存和中断处理流程。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/pipeline.ts",
@@ -69,8 +64,8 @@
       },
       {
         "key": "c4",
-        "label": "知识批次验证",
-        "reason": "支持目标键完整性、引文绑定、文档验证和提供范围限制。",
+        "label": "知识批次和引用校验",
+        "reason": "支持目标完整覆盖、宿主绑定引文及引用不得越过所见材料范围的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -82,8 +77,8 @@
       },
       {
         "key": "c5",
-        "label": "生成复核发布循环",
-        "reason": "说明独立复核、仅发布 accepted 文档及失败目标的定向修订机制。",
+        "label": "写作复核发布循环",
+        "reason": "支持独立 verifier、仅发布 accepted 文档、问题合并和最多四轮修订。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -95,8 +90,8 @@
       },
       {
         "key": "c6",
-        "label": "增量材料分析",
-        "reason": "支持 current 文章复用、批处理、并发、用户回答补充和逐批失败隔离。",
+        "label": "材料分析分批流程",
+        "reason": "支持当前文章复用、分批限制、答案补充、并发执行和失败隔离。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -108,8 +103,8 @@
       },
       {
         "key": "c7",
-        "label": "分层知识综合",
-        "reason": "说明 current 子文章选择、分片综合、文章引用保留与上下文预算控制。",
+        "label": "分层知识综合流程",
+        "reason": "支持仅采用当前子知识、十二篇拆分、依赖复用及受预算约束的原文扩展。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -125,6 +120,16 @@
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
       "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
     },
@@ -136,55 +141,66 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/retrieval.ts",
-      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
+      "digest": "75a226dad659fee68a8933f0db15c14c3cb27335b34f562fd687c4fc4e3e7962"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "7f869f973a9d6d42ce9f9600a4df0bbdb9b5aa80f8a6b395991d94f4c86069c8"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/budget.ts",
+      "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:12:40.550Z",
+    "at": "2026-09-30T19:21:01.519Z",
     "trace": {
-      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
-      "roleId": "knowledge-refresher",
+      "runId": "20dd6ede-6afb-4794-8f94-d8d038d5e691",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
-      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "0740d7df159552203ec2007fa881b1a54c56fd4c8f6965124959b7dca6c87f13",
+      "contextHash": "043922e944e1f32941329d36e31ff0d1aced6fe49984505b8621b5efe061ad02",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
+      "fingerprint": "3dbf0c807d0da91cb21198307fa883f1d449faaaa725893f8150a65892993530",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
+        "01a0f3c1-8933-79b1-8bc0-43718fcb135d",
+        "01a0f3c2-76ee-7ec1-b11c-8a04cbcb8db2"
       ],
       "usage": {
-        "used": 52878,
-        "size": 760000,
+        "used": 55397,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -192,29 +208,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 117772,
-          "utf8Bytes": 129037,
-          "estimatedTokens": 43013,
-          "budgetedTokens": 53767,
+          "chars": 111464,
+          "utf8Bytes": 113913,
+          "estimatedTokens": 37971,
+          "budgetedTokens": 47464,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 0
+      "repairAttempts": 1
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:15.335Z",
+    "at": "2026-09-30T19:21:42.383Z",
     "trace": {
-      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
+      "runId": "43e1d043-1c6f-4a51-aab0-942209f5bce2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
-      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
+      "promptHash": "489bea9c785ce7a3f44f8a51bf8f5b056ae5a743828d859ab256d16a6aa4a48d",
+      "contextHash": "ef46a71cc270357dbf29d9670897e1cdd062239f5012e1abdf7a6401d11001b4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
+      "fingerprint": "d24ae36c8c9af2d97a1ea40c035d72c6961aa6e665240328bf44f6129e36bfc7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -227,11 +243,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef03-398c-79f2-a656-9c230614f1a0"
+        "01a0f3c3-6e3f-7791-ac6c-26a495ceade1"
       ],
       "usage": {
-        "used": 49586,
-        "size": 760000,
+        "used": 59950,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -239,10 +255,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 118346,
-          "utf8Bytes": 128851,
-          "estimatedTokens": 42951,
-          "budgetedTokens": 53689,
+          "chars": 133282,
+          "utf8Bytes": 143629,
+          "estimatedTokens": 47877,
+          "budgetedTokens": 59847,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,66 +2,53 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/jobs/worker.ts",
-    "title": "耐久任务执行器",
-    "summary": "从 JobRepository 领取单个任务，管理运行态、租约心跳、处理器调用、成功或分类失败落库，并将取消和停机信号传递给活跃处理器。",
+    "title": "持久化任务执行器",
+    "summary": "在 JobRepository 的租约状态机之上执行按 kind 分派的处理器，维持心跳并协调取消、停机和失败分类。",
     "category": "implementation",
     "sections": [
       {
         "key": "execution",
-        "title": "单任务执行流程",
-        "body": "`processOne` 先携带 worker ID、任务过滤条件、运行指纹和租约时长向仓储领取任务；无任务时立即返回。若任务类型没有注册处理器，仍先进入 running，再以 config 错误终结，避免任务永久悬挂。[[c1]]\n\n正常路径为任务创建 AbortController、登记活跃映射并标记 running。定时心跳延长租约；心跳失败即中止 signal，提示处理器停止。处理器返回后由仓储在租约校验下保存成功状态、结果引用和 usage。无论成功失败，finally 都清除心跳和活跃记录。[[c2]]"
+        "title": "领取、分派与心跳",
+        "body": "worker 每次只领取一个符合可选 kinds/jobIds 过滤条件的任务，并把当前模型指纹交给仓库创建 attempt。没有注册对应 kind 的处理器时，任务仍会进入 running，再以 config 错误完成失败记录，避免无声卡在队列。正常任务建立 AbortController、标记运行并按默认租期三分之一的间隔续租；心跳失去租约便触发 abort，提示处理器尽快退出。[[c1]]\n\n处理器成功后由仓库校验 token 并提交 resultRef 与 usage。普通异常默认归为 permanent；显式 `JobExecutionError` 可声明失败类型。若信号因 worker 停机而中断，则改记 transient 以便恢复；其他 abort 记 cancelled。收尾若发现租约已失效，只报告 stale，绝不会用旧 worker 的结果覆盖新 owner。[[c2]]"
       },
       {
-        "key": "failure_cancel",
-        "title": "失败分类、取消与停机",
-        "body": "处理器可抛出 `JobExecutionError` 明确 transient、bad-output、auth、config、permanent 或 cancelled；普通异常默认视为 permanent，但若 signal 已中止则视为 cancelled。停机引起的中止会改记 transient，使任务可按仓储策略重试；记录失败时若租约已经失效，则返回 stale 而不覆盖新持有者的状态。[[c3]]\n\n显式取消先调用仓储写入控制状态，仅当结果为 cancelling 时才中止当前进程中的活跃 controller。`stop` 只设置 stopping 并广播 abort，没有等待所有 handler 退出的 Promise；因此处理器必须协作响应 signal，进程关闭顺序也需由上层保证。该文件不并行领取多个任务，调用方若需吞吐量必须并发调用或创建多个 worker。[[c4]]"
+        "key": "cancellation",
+        "title": "协作取消与边界",
+        "body": "外部取消先调用仓库的 generation 与 requestId 幂等控制；只有仓库返回 cancelling 时，worker 才中止当前进程内对应控制器。stop 会标记停机并 abort 所有活动任务，但不等待 handler 真正结束，也不主动停止继续调用 processOne；调用方必须负责停止调度并等待在途 Promise。[[c3]]\n\n该设计依赖 handler 正确监听 AbortSignal。若处理器忽略信号，它可能继续产生外部副作用，最终只能靠租约检查阻止旧结果写回数据库；材料并未证明外部动作本身具备幂等或补偿能力。因此租约提供的是持久化状态所有权，不等同于对任意外部副作用的 exactly-once 保证。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "领取任务与缺失处理器分支",
-        "reason": "支持领取参数、空队列返回以及未注册任务类型按配置错误终结。",
+        "label": "任务领取、处理器分派与心跳",
+        "reason": "支持单任务领取、缺失处理器失败、运行标记及租约心跳的说明。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/jobs/worker.ts",
           "startLine": 47,
-          "endLine": 70
+          "endLine": 86
         },
         "quote": "  async processOne() {\n    const now = this.options.now ?? (() => new Date());\n    const leaseMs = this.options.leaseMs ?? 60_000;\n    const lease = this.repository.claimNext({\n      workerId: this.workerId,\n      kinds: this.options.kinds,\n      jobIds: this.options.jobIds,\n      fingerprint: this.options.fingerprint("
       },
       {
         "key": "c2",
-        "label": "运行、心跳与成功提交",
-        "reason": "支持 AbortController、活跃任务登记、租约心跳、处理器调用和资源清理流程。",
+        "label": "执行结果与失败分类",
+        "reason": "支持成功提交、异常分类、停机中断转瞬时失败以及 stale lease 防覆盖。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/jobs/worker.ts",
-          "startLine": 72,
-          "endLine": 96
+          "startLine": 87,
+          "endLine": 134
         },
-        "quote": "    const controller = new AbortController();\n    this.active.set(lease.id, controller);\n    this.repository.markRunning(lease.id, lease.leaseToken, now());\n    let heartbeat: ReturnType<typeof setInterval> | undefined;\n    const heartbeatMs = this.options.heartbeatMs ?? Math.max(1000, leaseMs / 3);\n    if (heartbeatMs"
+        "quote": "    try {\n      const result = await handler(lease, controller.signal);\n      const job = this.repository.succeed({\n        jobId: lease.id,\n        leaseToken: lease.leaseToken,\n        resultRef: result.resultRef,\n        usage: result.usage,\n        now: now(),\n      });\n      return { processed: true as const, job "
       },
       {
         "key": "c3",
-        "label": "执行异常与过期租约处理",
-        "reason": "支持异常分类、停机转瞬态失败以及失去租约后不覆盖状态的行为。",
+        "label": "取消与停止接口",
+        "reason": "支持先持久化取消意图、再中断本地 handler，以及 stop 仅发送中断信号的边界。",
         "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/jobs/worker.ts",
-          "startLine": 97,
-          "endLine": 134
-        },
-        "quote": "    } catch (error) {\n      const failure =\n        error instanceof JobExecutionError\n          ? error\n          : new JobExecutionError(\n              error instanceof Error ? error.message : \"Job execution failed\",\n              controller.signal.aborted ? \"cancelled\" : \"permanent\",\n            );\n      try {\n     "
-      },
-      {
-        "key": "c4",
-        "label": "取消传播与停止",
-        "reason": "支持控制请求后中止活跃处理器以及 stop 广播取消的边界说明。",
-        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/jobs/worker.ts",
@@ -69,25 +56,29 @@
           "endLine": 151
         },
         "quote": "  cancel(input: {\n    jobId: string;\n    expectedGeneration: number;\n    requestId: string;\n    workspaceId?: string;\n  }) {\n    const result = this.repository.cancel(input);\n    if (result.mode === \"cancelling\") this.active.get(input.jobId)?.abort();\n    return result;\n  }\n\n  stop() {\n    this.stopping = true;\n    for"
+      },
+      {
+        "key": "c4",
+        "label": "仓库租约完成校验",
+        "reason": "支持旧租约不能提交成功结果，说明 worker 对数据库结果所有权的保护范围。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/repository.ts",
+          "startLine": 538,
+          "endLine": 578
+        },
+        "quote": "  succeed(input: {\n    jobId: string;\n    leaseToken: string;\n    resultRef?: string | null;\n    usage?: Record<string, unknown>;\n    now?: Date;\n  }) {\n    const now = input.now ?? new Date();\n    const at = iso(now);\n    return this.transaction(() => {\n      const job = this.db\n        .prepare(\"SELECT * FROM jobs WH"
       }
     ],
     "questions": [
       {
-        "question": "上层在调用 `stop` 后是否等待所有活跃 handler 完成失败落库再退出进程？",
-        "why": "`stop` 本身同步返回且仅发送 abort；若进程立即退出，任务只能依赖租约过期恢复，无法保证及时记录 transient 失败。",
-        "nextStep": "检查 worker 宿主的关闭流程和行为测试，验证是否存在 drain 机制；若没有，可考虑提供可等待的停止接口。",
+        "question": "各任务 handler 是否都在长耗时步骤和外部写操作前检查 AbortSignal，并提供幂等键？",
+        "why": "worker 只能发送 abort；处理器忽略信号时仍可能执行外部副作用，而给定材料不包含具体 handler 实现或相关测试。",
+        "nextStep": "逐个审计 handler，在外部调用前后增加取消检查，并为可重试写操作加入稳定幂等键和行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4"
-        ]
-      },
-      {
-        "question": "上层在调用 stop 后是否等待所有活跃 handler 完成失败落库再退出进程？",
-        "why": "stop 本身同步返回且仅发送 abort；若进程立即退出，任务只能依赖租约过期恢复，无法保证及时记录 transient 失败。",
-        "nextStep": "检查 worker 宿主的关闭流程和行为测试，验证是否存在 drain 机制；若没有，可考虑提供可等待的停止接口。",
-        "blocking": false,
-        "citationKeys": [
+          "c2",
           "c3",
           "c4"
         ]
@@ -108,7 +99,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
     },
     {
       "kind": "material",
@@ -138,7 +129,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -149,17 +140,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:03:23.499Z",
+    "at": "2026-09-30T19:18:26.383Z",
     "trace": {
-      "runId": "8e64f403-ee9d-422b-88a3-822456ee06d0",
+      "runId": "bbeb7d4e-5613-4ff7-8d76-421784436f41",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "99de9d383536dd9ee0f53294bf948bb0ae78091b353a0b455acb77dce6da0d61",
-      "contextHash": "d2f969fd897c8d9c14d605a61f38e833e62239f2063735a2ed3fd1ccff4ddb3b",
+      "promptHash": "46c1b986c7f439273dd567b5e009e3def82a466f56b7ef9a981b4b3e08da15c1",
+      "contextHash": "0184e283a763626818b97ccf1e4d3dc44164c61ff1857336931f4c46d75be462",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "facf0164520ebabc99bddee80c272866bd5d23afd6432d94fc150b3582d489df",
+      "fingerprint": "87cd6a9425db4561e6c16c0e5051946091c663c6a4dd6aae4ed28903dbfcfc97",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -172,11 +163,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8b-f8b0-7f43-bb43-2189b3846830"
+        "01a0f3c0-2142-77f0-9997-ed395dd8b4b3"
       ],
       "usage": {
-        "used": 53846,
-        "size": 760000,
+        "used": 60333,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -184,10 +175,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 127587,
-          "utf8Bytes": 129449,
-          "estimatedTokens": 43150,
-          "budgetedTokens": 53938,
+          "chars": 127866,
+          "utf8Bytes": 129728,
+          "estimatedTokens": 43243,
+          "budgetedTokens": 54054,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -196,17 +187,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:03:44.671Z",
+    "at": "2026-09-30T19:19:03.711Z",
     "trace": {
-      "runId": "ee4b4da7-3d0c-48cd-9c5d-a8c5a4552a15",
+      "runId": "b2387910-d82d-4631-a4b7-28b298ff559e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "abb4a15fe37af0017b47718a1916fec1bab6920c91268d83ec4c8e93f3b6616a",
-      "contextHash": "3a31d73934e40ca581e63bec669d79ecfbc5105cf99e73b6abfd98ac96929601",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b7481b7472dd617ef97d8f5e82432528f9ff2e28ce715d8211dcec454b2a272c",
+      "contextHash": "13c3199544fa0903d42229ff5da72b382999ccf1d74c3e8690f1cf1c14ab5b16",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "222dce97e10e86233ccfc4af78e1a430658e88c0306d23cd5036a2014d003648",
+      "fingerprint": "86275ef5bdc2f4d37228b200c9597df4595806a8933b22bcb6448b203ea3d21e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -219,11 +210,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-dc69-7453-9eb7-0b40c0051a4f"
+        "01a0f3c1-1a94-7b63-9209-6c430958ec71"
       ],
       "usage": {
-        "used": 56756,
-        "size": 760000,
+        "used": 63605,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -231,10 +222,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 145062,
-          "utf8Bytes": 155016,
-          "estimatedTokens": 51672,
-          "budgetedTokens": 64590,
+          "chars": 143896,
+          "utf8Bytes": 153306,
+          "estimatedTokens": 51102,
+          "budgetedTokens": 63878,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

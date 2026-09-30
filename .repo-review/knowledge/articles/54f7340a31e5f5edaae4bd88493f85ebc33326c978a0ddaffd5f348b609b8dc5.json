@@ -2,97 +2,71 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/quality/evaluator.ts",
-    "title": "抽取质量评估器",
-    "summary": "对已确认样本与预测结果进行确定性质量评估，分别衡量引用定位、语义支持、事实槽一致性、必要证据覆盖、任务完成、打扰率和延迟。",
+    "title": "知识抽取质量的确定性评估器",
+    "summary": "对已确认样本与预测结果进行结构化比较，并分别衡量引用定位、语义支持、事实槽、必要证据覆盖、任务完成和不必要打扰。",
     "category": "implementation",
     "sections": [
       {
         "key": "semantic-judges",
-        "title": "确定性语义与事实槽判断",
-        "body": "该模块先用严格 schema 校验预测结构。`judgeSemanticSupport` 不调用模型，而是按共享动词的否定翻转、反义概念、历史时间与当前表述冲突、限制条件丢失及二元词重叠依次判为 contradicted、partial、unsupported 或 supported。[[c1]] `judgeFactSlots` 另行检查陈述中的数字和量化边界是否都能在引文中找到，防止凭空改变数量。[[c2]] 这些都是显式规则基线，词表之外的同义、否定和复杂数值表达不保证正确识别。"
+        "title": "从引用定位分离语义支持",
+        "body": "评估器先以严格 schema 校验预测，再用规则基线判断陈述是否得到引文支持。`judgeSemanticSupport` 依次检查共享动词的否定翻转、概念反义、历史时间与当前有效性的错配、限制条件丢失，以及中文二元片段重叠过低，输出 supported、partial、contradicted 或 unsupported。它明确不是 LLM，因此可重复且易审计，但只能覆盖列出的词根、反义组和限制词。[[c15]] `judgeFactSlots` 另行要求陈述中的数字或量化界限也出现在引文中，避免把“最多五个”改成其他数量。[[c16]]"
       },
       {
         "key": "sample-evaluation",
-        "title": "样本对齐与完成判定",
-        "body": "`evaluateQuality` 只把状态为 confirmed 且带确认标签的样本放入分母，并拒绝同一样本的重复预测；缺失预测会形成失败行。[[c3]] 每个预测对象分别检查引文是否位于原文、陈述是否受引文支持、事实槽是否一致；空对象数组不会因 `every()` 的空真值获得支持分。预期对象覆盖则通过引文包含关系或陈述二元词相似度匹配。[[c4]] 完成判定结合 disposition、预期对象覆盖和“不得矛盾”，但 partial 与 unsupported 并不会直接令 extract 样本失败，这是当前指标口径的重要边界。[[c5]]"
+        "title": "样本级匹配流程",
+        "body": "`evaluateQuality` 只把状态为 confirmed 且有标签的样本纳入分母，并拒绝同一样本的重复预测。缺少预测会记录为失败；有预测时，先比较 disposition、autoApply 和归一化后的对象集合，再逐对象检查引文是否位于输入文本、语义支持和事实槽一致性。空对象数组不会凭借 `every()` 获得虚假的支持分。必要证据覆盖则从期望对象出发，看预测是否以相同引文或足够相近的陈述覆盖它。[[c17]]"
       },
       {
-        "key": "metrics",
-        "title": "聚合指标与模块边界",
-        "body": "返回结果将引用位置、语义支持、事实槽、必要证据覆盖、任务完成和不必要打扰分开统计，并给出自动应用精度、显式样本覆盖、歧义所有者误自动应用数、P50/P95 延迟及逐行失败信息。没有预测对象时，前三类对象级比率返回 `null`，不会虚报满分。[[c6]] 文件依赖 quality repository 提供标签 schema 与样本类型，但所给材料未包含该仓储实现，也没有测试文件，因此无法仅据此确认样本持久化方式、所有规则分支是否已有断言或实际线上阈值。"
+        "key": "metrics-boundaries",
+        "title": "指标输出与边界",
+        "body": "汇总结果把引用位置准确率、语义支持率、事实槽一致率、必要证据召回、任务完成率和不必要打扰率分开，另给出自动应用精度、显式抽取覆盖、模糊/转发样本的所有者误应用数及延迟分位数。没有预测对象时，前三类对象指标返回 null 而不是 1；失败列表保留所有非完全匹配样本。[[c18]] 当前完成度允许 `needs_context` 类期望在“不抽取或不自动应用”时完成，且规则评估没有展示对英文语义、复杂数字表达或跨句推理的覆盖。"
       }
     ],
     "citations": [
       {
-        "key": "c1",
-        "label": "语义支持规则",
-        "reason": "支持语义裁决的规则顺序、四种 verdict 及非模型实现的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 33,
-          "endLine": 182
-        },
-        "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
-      },
-      {
-        "key": "c2",
-        "label": "数字事实槽检查",
-        "reason": "支持陈述新增或改变数量时判为不一致的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 185,
-          "endLine": 196
-        },
-        "quote": "/**\n * Core fact-slot consistency: every number / quantified bound asserted in the\n * statement must also appear in the quote. A statement that introduces a new\n * number or changes a bound (最多五个 -> 最多三个) mismatches.\n */\nexport function judgeFactSlots(statement: string, quote: string): boolean {\n  const quantified = /\\"
-      },
-      {
-        "key": "c3",
-        "label": "预测去重与确认样本筛选",
-        "reason": "支持只评估已确认标签、拒绝重复预测并显式记录缺失预测。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 234,
-          "endLine": 273
-        },
-        "quote": "export function evaluateQuality(\n  samples: QualitySample[],\n  predictionsInput: unknown[],\n) {\n  const predictions = predictionsInput.map((prediction) =>\n    qualityPredictionSchema.parse(prediction),\n  );\n  const bySample = new Map(\n    predictions.map((prediction) => [prediction.sampleId, prediction]),\n  );\n  if (by"
-      },
-      {
-        "key": "c4",
-        "label": "逐对象证据评估",
-        "reason": "支持引用定位、语义与事实槽逐对象计算，以及预期证据覆盖匹配。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 275,
-          "endLine": 300
-        },
-        "quote": "    const actual = prediction.prediction;\n    const exact =\n      actual.disposition === expected.disposition &&\n      actual.autoApply === expected.autoApply &&\n      JSON.stringify(normalizedObjects(actual)) ===\n        JSON.stringify(normalizedObjects(expected));\n    const dispositionMatch = actual.disposition === e"
-      },
-      {
-        "key": "c5",
-        "label": "打扰与完成判定",
-        "reason": "支持不必要打扰和不同 disposition 下任务完成条件的说明。",
+        "key": "c15",
+        "label": "确定性语义支持规则",
+        "reason": "支持语义判定的五类规则、四种结果及非 LLM 的实现边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 302,
-          "endLine": 317
+          "startLine": 33,
+          "endLine": 183
         },
-        "quote": "    // Unnecessary interruption: auto-applied when the label forbade it, OR\n    // asked the user (needs_context) when the label expected autonomous extract.\n    const interruption =\n      (actual.autoApply && !expected.autoApply) ||\n      (actual.disposition === \"needs_context\" &&\n        expected.disposition === \"ext"
+        "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
       },
       {
-        "key": "c6",
-        "label": "质量指标输出",
-        "reason": "支持各类聚合指标、空分母处理、延迟百分位和失败明细的描述。",
-        "relation": "implements",
+        "key": "c16",
+        "label": "核心事实槽一致性",
+        "reason": "支持陈述新增或改变数字、数量界限时判为不一致的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 185,
+          "endLine": 195
+        },
+        "quote": "/**\n * Core fact-slot consistency: every number / quantified bound asserted in the\n * statement must also appear in the quote. A statement that introduces a new\n * number or changes a bound (最多五个 -> 最多三个) mismatches.\n */\nexport function judgeFactSlots(statement: string, quote: string): boolean {\n  const quantified = /\\"
+      },
+      {
+        "key": "c17",
+        "label": "确认样本的逐项评估",
+        "reason": "支持样本筛选、重复预测拒绝、缺失处理、对象级证据判断及必要证据覆盖算法。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 234,
+          "endLine": 335
+        },
+        "quote": "export function evaluateQuality(\n  samples: QualitySample[],\n  predictionsInput: unknown[],\n) {\n  const predictions = predictionsInput.map((prediction) =>\n    qualityPredictionSchema.parse(prediction),\n  );\n  const bySample = new Map(\n    predictions.map((prediction) => [prediction.sampleId, prediction]),\n  );\n  if (by"
+      },
+      {
+        "key": "c18",
+        "label": "质量指标汇总结果",
+        "reason": "支持各项独立指标、空分母返回 null、延迟分位数和失败明细的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/evaluator.ts",
@@ -104,29 +78,53 @@
     ],
     "questions": [
       {
-        "question": "为什么 extract 样本的完成条件只排除 contradicted，而允许 unsupported 或 partial 对象仍计为完成？",
-        "why": "这会使 taskCompletion 与 semanticSupport 的严格程度不同；材料没有说明这是刻意的业务口径还是遗漏。",
-        "nextStep": "核对质量指标定义；若完成要求所有陈述均得到充分支持，应将条件收紧并增加 partial、unsupported 回归用例。",
+        "question": "这些规则基线是否已有覆盖中文同义词、双重否定、跨句限制条件和中文大写金额的测试集？",
+        "why": "实现只展示有限词表、二元片段和特定数量正则，未提供测试文件或样本结果，不能据此断言复杂表达已覆盖。",
+        "nextStep": "检查质量评估测试与已确认样本；按上述语言现象补充行为断言，并分别报告规则覆盖与真实模型效果。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c6"
+          "c15",
+          "c16"
         ]
       },
       {
-        "question": "规则裁决器目前有哪些自动化测试覆盖否定、反义、时间、限制词、数字及空预测分母？",
-        "why": "提供的目标材料是实现文件，没有测试文件，无法确认这些关键边界已被行为断言。",
-        "nextStep": "查阅对应测试文件并逐项映射规则分支，同时补充词表外表达和中英文混合样本。",
+        "question": "`needs_context` 期望的任务完成标准是否应进一步要求实际发起有效澄清？",
+        "why": "当前完成条件对非 extract、非 abstain 的期望采用“未抽取或未自动应用”即可完成，可能无法区分真正询问背景与仅停止处理。",
+        "nextStep": "结合产品对澄清质量的定义，决定是否增加问题具体性、必要性及后续恢复处理等指标。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c6"
+          "c17",
+          "c18"
+        ]
+      },
+      {
+        "question": "规则基线是否已有覆盖中文同义词、双重否定、跨句限制条件和复杂金额表达的确认样本？",
+        "why": "当前材料只展示有限词根、反义组、限制词、二元片段和数量正则，没有提供测试集或效果数据；草稿已明确该能力边界。",
+        "nextStep": "检查质量评估测试与确认样本，并为这些语言现象补充真实行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c15",
+          "c16"
+        ]
+      },
+      {
+        "question": "needs_context 的任务完成标准是否应要求实际提出有效澄清？",
+        "why": "当前 completed 逻辑对 needs_context 期望只要求未抽取或未自动应用，无法区分真正询问背景与单纯停止处理。",
+        "nextStep": "结合产品对澄清质量的定义，决定是否加入问题具体性、必要性和后续恢复处理指标。",
+        "blocking": false,
+        "citationKeys": [
+          "c17",
+          "c18"
         ]
       }
     ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "569529469b9b70c8dd5c3e4fd8a5818fd8192c36a0c8713a68d98c4c92fabd43"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/main.ts",
@@ -135,7 +133,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     },
     {
       "kind": "material",
@@ -144,39 +142,39 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
       "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:05:22.391Z",
+    "at": "2026-09-30T19:21:38.476Z",
     "trace": {
-      "runId": "8d724cb6-49e4-462d-a78a-b580eeacbb36",
+      "runId": "40569594-e5be-4783-924d-ec867c3736f7",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6f350b77b2d0eb91786fa9d5887643cf7a9e63710d1d6bfd37ce75e643047cdc",
-      "contextHash": "2772d5dfeb32649738d6996f8912471ec11ce364dc4f781bdd7a45134dfa1446",
+      "promptHash": "ff984bdd7a2b79bf8336356c96eeb4472209829b14e32d5daa9852085dfbca94",
+      "contextHash": "a67a60e4c0be0cc961b703bad0da8d0a1052cd4cc0518312955b633a355b1e7c",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "035b17beedfa7dda209c93d487f7433ea1c6ea0c0ff5bfa937ccff7020ea77b2",
+      "fingerprint": "9ba0e3f202bd4e3e42d06821b87596269e3cd3aa36b2c3dfb7e73fe4cd81a72e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -189,11 +187,12 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8e-03c5-7931-bf71-750cd557e8f5"
+        "01a0f3c2-12b5-77e0-ba65-98784f57576b",
+        "01a0f3c3-222d-7121-be28-1880e0ec72e6"
       ],
       "usage": {
-        "used": 51577,
-        "size": 760000,
+        "used": 61104,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -201,29 +200,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 126967,
-          "utf8Bytes": 130451,
-          "estimatedTokens": 43484,
-          "budgetedTokens": 54355,
+          "chars": 134510,
+          "utf8Bytes": 138016,
+          "estimatedTokens": 46006,
+          "budgetedTokens": 57508,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 0
+      "repairAttempts": 1
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:05:40.802Z",
+    "at": "2026-09-30T19:22:18.558Z",
     "trace": {
-      "runId": "d6cf617d-fd01-4be3-b48d-18f738f10e1f",
+      "runId": "cf5c9254-33d8-4ec8-be0d-aa8d0f081698",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "6a430dd8d98cb35bd2a5703a938ad09a7ecc013dbb88b612e35f0163263dbd98",
-      "contextHash": "ba97bc532a7495671a0c5792f2a06a58368d3507eb3d05a00d17846ac3ccc724",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "47e4c1e43f0da1a21160677e1a86096e2d4161e48d85ecf551e83e5fe0c6dd7f",
+      "contextHash": "fb77ecee520ee201b17040a44c157c0e302a63b8c68271709a769fa4dfee5b8d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1a6ddb23a49dad508c45dfb97aaee2c4a638b98b9b671def8aa9674d40edc7c0",
+      "fingerprint": "4d63e62fcddd9e6c3810530cb95895737ca73e583e89a9dc638f4495fe16a292",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -236,11 +235,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8e-ade6-7322-9ce1-3bb086d85cda"
+        "01a0f3c3-feb2-7cf0-81da-0235c6c7e335"
       ],
       "usage": {
-        "used": 53600,
-        "size": 760000,
+        "used": 63916,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -248,10 +247,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 139153,
-          "utf8Bytes": 147712,
-          "estimatedTokens": 49238,
-          "budgetedTokens": 61548,
+          "chars": 146766,
+          "utf8Bytes": 156671,
+          "estimatedTokens": 52224,
+          "budgetedTokens": 65280,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

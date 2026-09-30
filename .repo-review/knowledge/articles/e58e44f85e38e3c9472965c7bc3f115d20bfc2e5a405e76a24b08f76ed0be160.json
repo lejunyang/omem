@@ -3,64 +3,69 @@
   "document": {
     "key": "omem:apps/server/src/code/dto.ts",
     "title": "代码图的人类可读 DTO 投影",
-    "summary": "在保留内部动作键的同时，为快照、文件、符号和边补充稳定的人类展示字段、引用标签、深链及不可操作原因，隔离数据库实体与界面文案。",
+    "summary": "把快照、文件、符号和边的内部记录扩展为前端可展示、可深链的 DTO，同时保留内部动作键，并明确表达删除、缺失和过期状态。",
     "category": "implementation",
     "sections": [
       {
         "key": "projection",
-        "title": "投影职责",
-        "body": "该模块面向前端投影代码图实体：原始对象通过展开保留 `fileId`、`symbolId`、端点等路由所需字段，另外增加 `displayTitle`、`displayPath`、`citationLabel`、`actionable` 和 `reason`，避免把内部 ID 当作可见标签。快照以短提交号展示；无提交时区分脏工作树与无提交状态。[[c1]] 文件标题取路径末段，但完整路径仍用于展示位置与引用。[[c2]]"
+        "title": "投影原则",
+        "body": "该模块解决“内部标识可用于路由、却不能直接充当界面文案”的问题。DTO 保留原始行的全部字段，以便前端继续使用文件、符号和边标识执行动作；同时补充 `displayTitle`、`displayPath`、`citationLabel`、`actionable` 与 `reason` 等人类可读字段。删除或不可解析对象不会被悄悄隐藏，而是显式变成不可操作状态。[[c1]]"
       },
       {
-        "key": "symbols_edges",
-        "title": "符号、边与失效状态",
-        "body": "符号标题对 route/test 使用名称，其余使用限定名；若有关联文件，源码深链会携带声明起止行，否则退回符号接口。[[c3]] 边标题把端点的人类标签与关系词组合起来，`confirmed` 和 `candidate` 可操作，`missing`、`stale` 则给出明确原因并禁止动作。未知边类型会直接显示原始 kind，因此新增关系不会丢失，但可能缺少友好翻译。[[c4]]"
+        "key": "nodes",
+        "title": "快照、文件与符号",
+        "body": "快照标题使用缩短后的提交号；无提交时区分脏工作区和无提交状态，并生成 API 与 trail 深链。[[c2]] 文件标题取路径末段，但完整路径仍用于展示和引用；已删除文件保留记录并附带原因。符号通常展示限定名，路由和测试则展示简短名称；若有文件上下文，源码链接会携带声明起止行，否则退回符号详情接口。[[c3]]"
+      },
+      {
+        "key": "edges",
+        "title": "关系展示与边界",
+        "body": "边类型通过固定映射转成人类可读短语，再由两端标签组合标题。`confirmed` 与 `candidate` 均允许交互，`missing` 和 `stale` 则不可操作，并分别说明目标未解析或已被新快照取代。[[c4]] 这里仅负责表现已有状态，不验证边是否真实，也不解析端点；若调用方没有提供标签，界面会显示问号，因此完整可读性依赖上游端点展开。"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "DTO 展示字段约定",
-        "reason": "支持保留内部动作键、同时增加人类可读字段且不显示内部 ID 的核心职责。",
+        "reason": "说明原始动作键与人类可读字段并存，以及缺失或过期对象的处理原则。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/dto.ts",
           "startLine": 1,
-          "endLine": 15
+          "endLine": 5
         },
         "quote": "/** User-facing DTO projection. The code_* tables are a rebuildable typed view over\n * the authoritative Capture->Source/Revision/Fragment chain. We SPREAD the original\n * row so every internal action key (fileId/name/kind/range/endpoints/...) stays for\n * the UI, and ADD human display* fields on top. IDs are never ren"
       },
       {
         "key": "c2",
-        "label": "文件 DTO",
-        "reason": "支持文件标题、路径、版本、可操作状态和深链的投影方式。",
+        "label": "快照 DTO",
+        "reason": "支持提交缩写、快照摘要及深链的生成方式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "startLine": 13,
+          "endLine": 32
+        },
+        "quote": "export function shortCommit(commit: string | null, dirty = false): string {\n  if (commit) return commit.slice(0, 7);\n  return dirty ? \"dirty\" : \"no-commit\";\n}\n\nexport function snapshotMeta(s: CodeSnapshot) {\n  return {\n    ...s,\n    type: \"snapshot\",\n    displayTitle: `@${shortCommit(s.commit, s.dirty)}`,\n    displayPa"
+      },
+      {
+        "key": "c3",
+        "label": "文件与符号 DTO",
+        "reason": "支持文件删除状态、符号显示名称以及源码范围链接的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/dto.ts",
           "startLine": 35,
-          "endLine": 51
+          "endLine": 75
         },
         "quote": "export function fileDTO(f: CodeFile, snap?: CodeSnapshot | null) {\n  const base = f.path.split(\"/\").pop() ?? f.path;\n  return {\n    ...f,\n    type: \"file\",\n    symbolName: null,\n    displayTitle: base,\n    displayPath: f.path,\n    summary: `${f.language} · ${f.sizeBytes} bytes`,\n    version: snap ? shortCommit(snap.com"
       },
       {
-        "key": "c3",
-        "label": "符号 DTO",
-        "reason": "说明符号的人类标签、源码范围链接与无文件时的回退链接。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/dto.ts",
-          "startLine": 54,
-          "endLine": 75
-        },
-        "quote": "export function symbolDTO(sym: CodeSymbol, file?: CodeFile | null) {\n  const label =\n    sym.kind === \"route\" || sym.kind === \"test\" ? sym.name : sym.qualifiedName;\n  const range = sym.rangeStart\n    ? `:${sym.rangeStart.line}${sym.rangeStart.col ? \":\" + sym.rangeStart.col : \"\"}`\n    : \"\";\n  return {\n    ...sym,\n    ty"
-      },
-      {
         "key": "c4",
         "label": "边 DTO 与状态原因",
-        "reason": "支持边关系文案、可操作状态及 missing/stale 原因的论断。",
+        "reason": "支持边标签映射、可操作状态判定和缺失或过期原因。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -117,7 +122,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -128,17 +133,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:00:16.345Z",
+    "at": "2026-09-30T19:13:42.776Z",
     "trace": {
-      "runId": "ca7c0b44-91d3-4f80-8b00-26df100987c5",
+      "runId": "4ce77f62-1667-4abf-870f-cf3c8d98360b",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "124f8180216c194cf0a6895ab1e580217a0c3419aec79d61c3795b7b551c5198",
-      "contextHash": "07f079f349d9104873e0aff0ccd837d3619a742dbe971432605a204d18dbcb76",
+      "promptHash": "780554099280c05dfaaa99791ddf06a589488616fb3ef697669b48426b991c9c",
+      "contextHash": "c3b25520e5f1d70c6f9b8a3b82f4d466adb6c3c3cce4522766a727b7acf8b315",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1997a5a56b21869cb8cbc6952a9344d19ab6b628881d9cd50863f57faf787b49",
+      "fingerprint": "a654284878331a7896106dbe72326bd12f9bfb17eab73dadc326c2b819b4b1ba",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -151,11 +156,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee89-3b7e-78e2-bd5c-b8bc74b3640d"
+        "01a0f3bb-c0c5-7ac0-9e39-8e2c1e0f5e37"
       ],
       "usage": {
-        "used": 48287,
-        "size": 760000,
+        "used": 55525,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -163,10 +168,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 106728,
-          "utf8Bytes": 108508,
-          "estimatedTokens": 36170,
-          "budgetedTokens": 45213,
+          "chars": 106879,
+          "utf8Bytes": 108659,
+          "estimatedTokens": 36220,
+          "budgetedTokens": 45275,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -175,17 +180,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:00:38.772Z",
+    "at": "2026-09-30T19:14:14.582Z",
     "trace": {
-      "runId": "d85a36ca-53db-4ab0-8f61-b1c8611fdc12",
+      "runId": "0432c09b-b61b-4392-a7bd-d15e6482e55f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0da3bc2848cefaa76d2504f0a76608daed996d9b11719bd30eef7f108aa9d6f5",
-      "contextHash": "e9c64129710b9d68e7be687d12e3fbf0ce8ca49a941080f24cf1becd13b75fee",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "5d818e7301ebdcf1d6e61174580d73ed1f8e80ab400c1aaaa4224258cb71ea1c",
+      "contextHash": "beda91acd09fd6ec08f4e60c094450447081d5425bcf8632793e9319d7764c78",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f1884943311b65b4033ae967e6e3279c7026b2b3cf9895538b3daea1b5666b7b",
+      "fingerprint": "fb921ad9970bf2ce9ea61bf7425bdc50e69ee2e389dd2508d802bd58041a85b4",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -198,11 +203,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8a-0143-7d61-8fbb-6402e447c94a"
+        "01a0f3bc-befa-7851-8b1d-877a7462ca90"
       ],
       "usage": {
-        "used": 51652,
-        "size": 760000,
+        "used": 58834,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -210,10 +215,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 123899,
-          "utf8Bytes": 132144,
-          "estimatedTokens": 44048,
-          "budgetedTokens": 55060,
+          "chars": 124881,
+          "utf8Bytes": 134002,
+          "estimatedTokens": 44668,
+          "budgetedTokens": 55835,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,70 +2,52 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/materials.ts",
-    "title": "仓库文件到知识材料的输入适配器",
-    "summary": "枚举仓库候选文件并执行路径、大小和格式检查，将变化后的文本或图像捕获为固定材料，同时提供可见性过滤与有限的链接上下文发现。",
+    "title": "仓库材料捕获与关联上下文适配",
+    "summary": "把仓库文件转换为统一 KnowledgeMaterial，并在安全过滤、内容去重和显式文档链接发现之间建立边界；它只负责输入适配，不承担知识分析或关系确认。",
     "category": "implementation",
     "sections": [
       {
-        "key": "capture-files",
-        "title": "文件发现、过滤与覆盖记录",
-        "body": "适配器优先通过 Git 枚举已跟踪文件及未忽略的新文件；命令失败时改用目录遍历，并直接跳过 Git、评审运行数据、依赖和构建目录，这些被跳过目录不会形成覆盖记录。[[c1]] 只有进入候选路径列表的匹配项才会记录为 `excluded`；其余候选还需满足普通文件、非符号链接、真实路径不越界及 5 MB 输入预算，异常则记为 `failed`。[[c2]]"
+        "key": "capture",
+        "title": "捕获职责与流程",
+        "body": "该模块把仓库视为统一知识流水线的一种输入源，而不是独立的代码知识库。捕获时优先通过 Git 枚举已跟踪与未忽略文件；Git 不可用时退化为目录遍历，并跳过依赖、构建产物和评审运行目录。随后逐文件校验普通文件、符号链接和真实路径，计算 SHA-256；仅当内容摘要或捕获格式变化时调用共享 `Store.capture`，从而让路径身份持续积累修订。[[c1]]\n\n文本按输入上限切片，PNG、JPEG、WebP 以图像部件保存；空文本、二进制文本、超大文件和私有配置会被排除或记录失败，而不会中断其他文件。返回的覆盖结果明确区分 captured、excluded、failed，便于上层展示真实覆盖情况。[[c2]]"
       },
       {
-        "key": "material-format",
-        "title": "内容格式与身份稳定性",
-        "body": "文件字节先计算 SHA-256，仅在摘要或捕获格式变化时重新捕获。PNG、JPEG、WebP 转为图像部分；其他内容必须是有效 UTF-8、不能含空字节，空文件会排除，长文本按 180000 个 JavaScript 字符切分。路径映射为稳定的 `omem:` 外部标识，覆盖结果保留材料键和摘要。[[c3]] 评审知识仓库复用通用仓库，但过滤已移除或旧别名来源。[[c4]]"
-      },
-      {
-        "key": "linked-context",
-        "title": "链接上下文及限制",
-        "body": "链接上下文函数从 Markdown 本地链接寻找材料，跳过外部地址、自引用和重复项；锚点可把范围移到相应标题，每份最多提供 80 行，整体最多四份。[[c5]] HTML 文件还固定追加三个相邻资源名作为候选，这只是分析上下文启发式，不解析 HTML 的真实依赖，也不会建立已确认关系。"
+        "key": "repository",
+        "title": "材料读取与上下文扩展",
+        "body": "`createReviewKnowledgeRepository` 复用通用 `KnowledgeRepository` 和当前材料查询，但过滤已删除来源及旧身份别名，因此评审知识只从当前有效原始材料生成。[[c3]]\n\n`linkedMaterialOffers` 只把 Markdown 本地链接及特定 HTML 配套文件作为候选上下文：它解析相对路径，可按标题锚点定位起始行，每个候选最多提供约 80 行且总数最多四个。这里的链接只是模型可见的上下文，不会自动成为已确认关系；含义仍需分析与独立复核。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Git 枚举与目录遍历回退",
-        "reason": "支持 Git 优先枚举，以及回退遍历直接跳过若干目录而不生成覆盖项。",
+        "label": "仓库文件枚举与增量捕获",
+        "reason": "支持模块通过 Git 或遍历枚举文件，并按路径身份和内容摘要调用共享捕获流程的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
           "startLine": 15,
-          "endLine": 25
+          "endLine": 54
         },
         "quote": "export function captureRepositoryMaterials(store: Store, repoRoot: string): RepositoryCoverage[] {\n  let paths: string[];\n  try { paths = [...new Set(execFileSync(\"git\", [\"ls-files\", \"--cached\", \"--others\", \"--exclude-standard\", \"-z\"], { cwd: repoRoot, encoding: \"utf8\", maxBuffer: 10_000_000, stdio: [\"ignore\", \"pipe\", "
       },
       {
         "key": "c2",
-        "label": "候选路径检查与结果状态",
-        "reason": "支持仅对进入候选列表的路径记录排除，以及普通文件、越界和大小检查。",
+        "label": "文件安全与输入预算",
+        "reason": "支持对私有路径、符号链接、文件大小、编码、空内容及图像类型的边界说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 26,
-          "endLine": 35
+          "startLine": 28,
+          "endLine": 55
         },
-        "quote": "  const result: RepositoryCoverage[] = [];\n  const realRoot = realpathSync(repoRoot);\n  for (const path of paths) {\n    if (path.startsWith(\".repo-review/\") || /(^|\\/)(node_modules|dist|\\.git)(\\/|$)/.test(path) || /(^|\\/)\\.env(?!\\.example$)/.test(path) || /\\.local\\.json$/.test(path)) {\n      result.push({ path, state: "
+        "quote": "  for (const path of paths) {\n    if (path.startsWith(\".repo-review/\") || /(^|\\/)(node_modules|dist|\\.git)(\\/|$)/.test(path) || /(^|\\/)\\.env(?!\\.example$)/.test(path) || /\\.local\\.json$/.test(path)) {\n      result.push({ path, state: \"excluded\", reason: path.startsWith(\".repo-review/\") ? \"派生知识或历史运行数据，不作为新的独立证据\" : \"依赖、构"
       },
       {
         "key": "c3",
-        "label": "文本与图像捕获",
-        "reason": "支持摘要比对、媒体识别、UTF-8 校验、定长文本切片与稳定文件身份。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 36,
-          "endLine": 55
-        },
-        "quote": "      const bytes = readFileSync(absolute);\n      const hash = createHash(\"sha256\").update(bytes).digest(\"hex\");\n      const externalId = `omem:${path}`;\n      const previous = store.db.prepare(\"SELECT r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='file' AND s.external_id=?\").get(externalId) a"
-      },
-      {
-        "key": "c4",
-        "label": "评审知识仓库过滤器",
-        "reason": "支持复用通用知识仓库并排除已移除和旧别名来源。",
+        "label": "评审知识仓库过滤",
+        "reason": "说明评审仓库复用通用知识仓库，同时排除删除来源和旧别名。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -76,10 +58,10 @@
         "quote": "export function createReviewKnowledgeRepository(store: Store) {\n  ensureReviewMetaTable(store);\n  return new KnowledgeRepository(store, () => {\n    const removed = new Set((store.db.prepare(\"SELECT source_id FROM review_source_meta WHERE removed=1 OR legacy_alias_of IS NOT NULL\").all() as { source_id: string }[]).map(r"
       },
       {
-        "key": "c5",
-        "label": "本地链接上下文选择",
-        "reason": "支持 Markdown 链接、HTML 固定候选、锚点范围和最多四份上下文的规则及限制。",
-        "relation": "implements",
+        "key": "c4",
+        "label": "本地文档链接候选上下文",
+        "reason": "支持链接解析、锚点定位、候选数量限制以及链接不等同确认关系的边界。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
@@ -91,21 +73,12 @@
     ],
     "questions": [
       {
-        "question": "按 JavaScript 字符长度切分文本是否需要避免在代理对或语义边界中间断开？",
-        "why": "定长切片使用 UTF-16 索引，没有展示对 Unicode 代理对、行边界或代码结构的保护。",
-        "nextStep": "增加包含补充平面字符和超长代码行的捕获测试，再根据下游要求决定按代码点、行或结构边界切分。",
+        "question": "Git 枚举失败后的递归遍历若遇到无权限目录，是否应继续按单路径失败记录，而不是使整个捕获调用抛错？",
+        "why": "回退遍历中的目录读取没有局部错误处理，而逐文件捕获才有错误隔离；实际权限异常下的整体行为由当前材料无法确认。",
+        "nextStep": "补充针对不可读子目录的行为测试，并据产品期望决定跳过、记录失败或终止。",
         "blocking": false,
         "citationKeys": [
-          "c3"
-        ]
-      },
-      {
-        "question": "HTML 固定追加相邻资源名的约定是否适用于所有仓库？",
-        "why": "该规则不解析 HTML 中的真实引用，也没有配置开关，可能提供不存在或无关的候选材料。",
-        "nextStep": "用真实仓库样本评估命中率，并考虑把该约定限制到已识别的静态页面结构。",
-        "blocking": false,
-        "citationKeys": [
-          "c5"
+          "c1"
         ]
       }
     ]
@@ -113,66 +86,81 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/knowledge.ts",
-      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/main.ts",
-      "digest": "82eb5847c2e790d30601c56f56510991f1469df01ee9c2cf2321fc0a2324e5b4"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/review/materials.ts",
       "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-api.test.ts",
-      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
+      "key": "omem:apps/server/src/review/model-config.ts",
+      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-      "digest": "f5e49b50ac988174f6bcc5d099d50228c29a8bc54ab02af13814683eec8bfd1b"
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "3918eac125957b90822f9c407a819dd78144e4306668852f6d754380f129a6bc"
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/runs.ts",
+      "digest": "71feea2619b8263142f4285ed0a5a3e9798af8c7daf4881b6c1af41802566fa6"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:12:30.939Z",
+    "at": "2026-09-30T19:23:45.931Z",
     "trace": {
-      "runId": "a2d1d7d9-3682-484f-8352-ac9a43d618ce",
-      "roleId": "knowledge-refresher",
+      "runId": "d266968c-608a-4722-9eaa-c1a636732b17",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "84cf2a514ecbf23f1f3d667d3aaa74e7b91779d72e32d002a54a3ca12d0defa2",
-      "contextHash": "00388204774b99b06706e591a4625d31811d5bd5c6a2edcb98965d70d969737c",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "405937458b42135b45c1dffa365faa91b6f3b528d1cebdd33faf8ac06d050e7a",
+      "contextHash": "d1d7a1928c184a606de996e04dbb86e8b3a7751be9639420a7e1dd706b199402",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "43d153891f6f0dcf497c344348c889c7a43da69a070cd59b63828eb49a8fe733",
+      "fingerprint": "b67c9c3c242649a9f34405c1be0352bccacf3addeec733973de838c5d66856fd",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef02-7dcc-7162-a075-2bae7926b85d"
+        "01a0f3c4-f30b-7cd1-90b4-7bc89050ee50"
       ],
       "usage": {
-        "used": 30867,
-        "size": 760000,
+        "used": 61646,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -180,10 +168,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 47191,
-          "utf8Bytes": 52906,
-          "estimatedTokens": 17636,
-          "budgetedTokens": 22045,
+          "chars": 129381,
+          "utf8Bytes": 131677,
+          "estimatedTokens": 43893,
+          "budgetedTokens": 54867,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -192,17 +180,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:01.836Z",
+    "at": "2026-09-30T19:24:21.574Z",
     "trace": {
-      "runId": "a7df62da-8ec6-459f-83db-a3f0eb67ca43",
+      "runId": "bf28869a-42d4-45f6-9416-666075c899e6",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b7f2cfa776311934d77b98cfecdcf54eff2c4d21bd3d1046be9045a4e3b68b2c",
-      "contextHash": "dce6c30c912515b66ef0047583698a984bc6df5d6b1133961e2371eae05e40c0",
+      "promptHash": "2f422f1c639f379f3942ea6972352ac52ffd684ab44fb58b5cb6b8f2a0bbed43",
+      "contextHash": "4299ff84def1fbe0412cb2f468c092935c9741da846fc20dc267ae9c28c1f833",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ddfdceaaad782484787eb91ebf09fc66cb6a69f400ac5e6df2311f5badb254bd",
+      "fingerprint": "6c3fdada9d4e194d56275ffcc1181e1df003d942c6ed528033d19598b11830a3",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -215,11 +203,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef03-13a7-7173-b5a1-9f8bb8cc2599"
+        "01a0f3c5-e339-7563-ad8b-518fee027a54"
       ],
       "usage": {
-        "used": 31806,
-        "size": 760000,
+        "used": 65111,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -227,10 +215,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 55585,
-          "utf8Bytes": 64193,
-          "estimatedTokens": 21398,
-          "budgetedTokens": 26748,
+          "chars": 146875,
+          "utf8Bytes": 157129,
+          "estimatedTokens": 52377,
+          "budgetedTokens": 65472,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

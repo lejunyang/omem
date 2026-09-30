@@ -2,113 +2,142 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/review-knowledge.ts",
-    "title": "仓库知识分析与发布脚本",
-    "summary": "该脚本是仓库评审知识流程的显式入口：同步评审材料与代码图，恢复既有文章，调用共享知识管线分析目标材料并发布覆盖率和索引；只有分析无失败且未启用 files-only 时，才继续生成模块、主题与总览知识。跨文件补充仅提供 imports 目标材料的有限源码，不能证明具体调用关系。",
+    "title": "仓库知识生成、复核与发布流程",
+    "summary": "将 repo-review 捕获材料接入共享 KnowledgePipeline，经配置的 ACP 角色运行时分析并发布文件知识；随后按受影响模块和祖先依赖合成上层文章，维护覆盖记录、知识索引及失败状态。",
     "category": "workflow",
     "sections": [
       {
-        "key": "purpose-and-setup",
-        "title": "职责与运行前提",
-        "body": "脚本把 repo-review 接入共享的 `KnowledgePipeline`，并以显式评审模型配置构造 ACP profile；非 ACP、缺少命令或超出 1–6 的并发值会被拒绝。`--only`、`--target` 不仅筛选路径，还会隐式启用 files-only；运行时目录保存暂存内容，正式文章发布到知识资产目录。信号处理器会请求停止管线，但停止的具体保证不在本材料中。[[c1]]"
+        "key": "runtime-setup",
+        "title": "模型合同与运行时装配",
+        "body": "脚本把仓库评审作为共享材料知识流水线的一个应用入口。它要求 review 模型配置采用 ACP 且包含命令，再由 schema 校验 profile；并发度只能为 1 至 6，选择器支持 `--only`/`--target`，是否合成模块由 `--modules` 与 `--files-only` 控制。[[c1]] KnowledgePipeline 复用 RoleRuntimeGateway、角色 bundle、请求仓库和知识仓库；发布时先写 staging，再复制 JSON 与 Markdown 到知识资产目录。[[c2]]"
       },
       {
-        "key": "analysis-flow",
-        "title": "同步、恢复与上下文补充",
-        "body": "主流程依次同步评审材料、恢复覆盖信息、同步代码结构并载入已有文章，然后从 `omem:` 材料中筛选目标；没有匹配材料时直接失败。[[c2]] 分析阶段会合并已有材料关联，并沿目标文件的 `imports` 边最多补充四个被导入文件，每份只开放第 1 行至最多第 70 行。此前“没有被导入文件源码内容”的结论已被替代：角色能看到有限源码，但这里没有调用关系证据或具体调用点，因此仍不能据此断言跨文件函数调用。[[c3]]"
+        "key": "material-analysis",
+        "title": "材料同步、选择与关联补充",
+        "body": "运行开始后依次执行 review sync、恢复覆盖信息、code sync 和既有知识恢复，再从 `omem:` 材料中按路径选择目标。[[c3]] 分析时会加入已链接材料，并根据代码图中触及目标文件的 imports 边补充至多四个被导入文件，每项只提供前 70 行；这扩大了局部上下文，但不是全库任意搜索。[[c4]] 分析失败会被记录并令进程失败，旧知识是否仍 current 由仓库状态而非控制台文字决定。"
       },
       {
-        "key": "publication-and-limits",
-        "title": "覆盖、综合与发布限制",
-        "body": "分析后会记录 reviewed、stale、pending 或 not-applicable 等覆盖状态；若存在失败，脚本设置非零退出码。模块、主题及总览综合还受另一条件约束：只有**无分析失败且非 files-only**时才执行，因此此前“无失败即生成全局知识”的表述已被替代。[[c4]] 满足条件后，材料先按模块分组综合，再规划主题并生成总览；最后写入索引，并在 `finally` 中停止管线、关闭存储。[[c5]] 当前材料只能确认这些控制流，不能证明分步复制的原子性、重跑幂等性或中断时的一致性。"
+        "key": "composition-and-coverage",
+        "title": "模块合成与祖先重建",
+        "body": "覆盖文件区分被排除、捕获失败以及知识的 reviewed、stale、pending 等状态，并同时保存分析失败和合成失败。[[c5]] 非 files-only 模式按路径分组；只要某组存在未复核子项就跳过模块合成。限定范围更新时，脚本读取既有文章的依赖定位，只重建依赖已更新且所有子项 current 的祖先，并循环传播影响。[[c6]] 全量且无失败时才重新规划主题章节，先合成各主题，再用主题文章合成 overview。"
+      },
+      {
+        "key": "publication-boundary",
+        "title": "发布结果与失败边界",
+        "body": "流程结束前再次记录覆盖；存在合成失败时设置非零退出码，只把仓库中仍为 current 的页面写入 review 知识索引，并输出目标数、当前页面数、开放问题及失败计数。无论结果如何都会停止流水线并关闭 Store。[[c7]] 因此“文件已捕获”“分析已完成”“模块已合成”和“当前索引已发布”是不同状态，局部失败不能被概括为全库知识已刷新。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "模型配置、目标范围与管线初始化",
-        "reason": "支持 ACP 配置校验、并发限制、路径筛选会启用 files-only、暂存与发布目录以及信号停止处理的说明。",
-        "relation": "explains",
+        "label": "评审模型与选择参数",
+        "reason": "支持 ACP 配置要求、profile 校验、并发边界及目标和模块选择规则。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-knowledge.ts",
           "startLine": 20,
-          "endLine": 37
+          "endLine": 29
         },
         "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst config = loadReviewCodeModelConfig();\nif (config.transport !== \"acp\" || !config.command) throw Error(\"Knowledge roles require an explicitly configured ACP profile\");\nconst profile = profileSchema.parse({ id: \"traex\", name: \"Repository knowledge\", transpo"
       },
       {
         "key": "c2",
-        "label": "同步、恢复与目标筛选流程",
-        "reason": "支持评审同步、覆盖恢复、代码同步、已有文章载入以及无匹配材料时失败的流程说明。",
+        "label": "共享知识流水线与资产发布",
+        "reason": "支持 KnowledgePipeline、角色运行时和请求仓库的装配，以及 staging 到知识资产的发布路径。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-knowledge.ts",
+          "startLine": 30,
+          "endLine": 39
+        },
+        "quote": "const store = createReviewStore(root), repository = createReviewKnowledgeRepository(store);\nconst runtime = join(root, \".repo-review/runtime\");\nconst stage = join(runtime, \"knowledge-staging\"), assets = join(root, \".repo-review/knowledge/articles\");\nmkdirSync(stage, { recursive: true }); mkdirSync(assets, { recursive: "
+      },
+      {
+        "key": "c3",
+        "label": "同步、恢复与材料筛选",
+        "reason": "支持运行前同步代码和评审材料、恢复知识，并按 omem 键和路径筛选目标。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-knowledge.ts",
-          "startLine": 39,
-          "endLine": 49
+          "startLine": 40,
+          "endLine": 51
         },
-        "quote": "  console.log(\"Actual profile:\", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });\n  await runReviewSync(store, root);\n  const coverage = restoreReviewKnowledge(store, root).coverage;\n  await runCodeSync(store, root);\n  console.log(\"Restore:\", restor"
+        "quote": "try {\n  console.log(\"Actual profile:\", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });\n  await runReviewSync(store, root);\n  const coverage = restoreReviewKnowledge(store, root).coverage;\n  await runCodeSync(store, root);\n  console.log(\"Restore:\", "
       },
       {
-        "key": "c3",
-        "label": "导入材料的有限上下文扩充",
-        "reason": "支持沿 imports 边补充最多四份被导入材料且每份仅开放前 70 行，并说明该数据不包含具体调用关系证据。",
-        "relation": "depends_on",
+        "key": "c4",
+        "label": "分析关联材料选择",
+        "reason": "支持利用已链接材料和 imports 边补充有限上下文后调用流水线分析。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-knowledge.ts",
-          "startLine": 50,
-          "endLine": 58
+          "startLine": 52,
+          "endLine": 61
         },
         "quote": "  const report = await pipeline.analyze(materials, targets => {\n    const extra = new Set<string>();\n    for (const target of targets) {\n      const file = files.find(f => f.path === target.path);\n      if (file) for (const edge of edgesTouching(store, { fileId: file.fileId })) {\n        if (edge.edgeKind === \"imports\""
       },
       {
-        "key": "c4",
-        "label": "覆盖记录与综合触发条件",
-        "reason": "支持覆盖率写入、失败退出以及综合必须同时满足非 files-only 和无失败两个条件的论断。",
-        "relation": "explains",
+        "key": "c5",
+        "label": "知识覆盖记录",
+        "reason": "支持覆盖文件记录选择范围、知识状态、分析失败与合成失败，并发布到知识目录。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-knowledge.ts",
-          "startLine": 60,
-          "endLine": 70
+          "startLine": 62,
+          "endLine": 72
         },
-        "quote": "  const recordCoverage = () => {\n    const known = new Map(repository.list().map(a => [a.document.key, a]));\n    const output = { version: 1, checkedAt: new Date().toISOString(), profile: reviewModelConfigPath(), model: profile.model,\n      files: coverage.map(row => ({ ...row, knowledge: row.materialKey ? known.get(ro"
+        "quote": "  const compositionFailures: { key: string; error: string }[] = [];\n  const recordCoverage = () => {\n    const known = new Map(repository.list().map(a => [a.document.key, a]));\n    const output = { version: 1, checkedAt: new Date().toISOString(), profile: reviewModelConfigPath(), model: profile.model,\n      selection: "
       },
       {
-        "key": "c5",
-        "label": "分层综合、索引与资源收尾",
-        "reason": "支持模块、主题、总览的生成顺序，以及索引写入和 finally 中资源关闭的说明。",
-        "relation": "explains",
+        "key": "c6",
+        "label": "模块与祖先依赖重建",
+        "reason": "支持未复核子项阻断模块合成、局部更新传播至已有祖先，以及无失败全量运行时的主题规划。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-knowledge.ts",
-          "startLine": 71,
-          "endLine": 88
+          "startLine": 73,
+          "endLine": 119
         },
-        "quote": "    const groups = new Map<string, string[]>();\n    for (const m of materials) {\n      const path = m.path ?? \"\";\n      const group = /^(apps|packages|scripts)\\//.test(path) ? moduleForPath(path) : path.startsWith(\"docs/\") ? \"docs-\" + (path.split(\"/\")[1] ?? \"root\") : \"project\";\n      const keys = groups.get(group) ?? ["
+        "quote": "  if (!filesOnly) {\n    const groups = new Map<string, string[]>();\n    const affectedGroups = new Set(materials.map(m => groupFor(m.path ?? \"\")));\n    for (const m of allMaterials.filter(m => affectedGroups.has(groupFor(m.path ?? \"\")))) {\n      const group = groupFor(m.path ?? \"\");\n      const keys = groups.get(group)"
+      },
+      {
+        "key": "c7",
+        "label": "索引发布与最终状态",
+        "reason": "支持最终覆盖更新、失败退出、仅索引 current 页面、汇总问题和关闭运行时资源。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-knowledge.ts",
+          "startLine": 120,
+          "endLine": 126
+        },
+        "quote": "    recordCoverage();\n  }\n  if (compositionFailures.length) process.exitCode = 1;\n  const pages = repository.list().filter(a => a.current);\n  writeReviewKnowledgeIndex(root, pages);\n  console.log(\"DONE\", { reviewed: materials.filter(m => repository.get(m.key)?.current).length, targetCount: materials.length, currentPage"
       }
     ],
     "questions": [
       {
-        "question": "文章文件、计划文件或覆盖率文件在复制中途失败时，是否允许暂存区、发布目录与数据库出现部分更新？",
-        "why": "脚本采用多次同步写入和复制，但材料没有展示事务、原子替换、失败回滚或重新运行时的幂等保证。",
-        "nextStep": "检查知识产物写入实现及故障注入测试，明确各类资产的发布原子性、恢复方式和重跑行为。",
+        "question": "局部更新时，若已有祖先文章文件损坏或依赖列表不完整，受影响的上层章节如何被识别并显式标 stale？",
+        "why": "当前流程依赖 assets 中既有 JSON 的 article dependencies 来发现祖先；材料未展示文件读取失败、损坏或缺失定位信息时的降级策略。",
+        "nextStep": "增加损坏文章、缺失依赖和中断发布的测试，验证覆盖记录保留旧历史并将无法重建的祖先标为 stale 或失败。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c4",
-          "c5"
+          "c5",
+          "c6"
         ]
       },
       {
-        "question": "SIGINT 或 SIGTERM 到达时，正在执行的 analyze 或 synthesize 是否会可靠终止且停止后不再发布产物？",
-        "why": "信号处理器与 finally 都会调用 `pipeline.stop()`，但当前材料没有展示 stop 的取消、等待及重复调用语义。",
-        "nextStep": "核对 `KnowledgePipeline.stop` 的实现与中断测试，验证运行中任务、数据库连接和半成品文件如何处理。",
+        "question": "从 imports 边补充的前 70 行上下文不足以覆盖关键符号时，角色如何请求更精确的固定材料范围？",
+        "why": "材料显示自动补充范围固定在文件开头且最多四个文件，可能遗漏位于后部的被调用实现。",
+        "nextStep": "检查 linkedMaterialOffers 与角色请求合同，补充针对深行号导入实现的分析案例并记录最终引用范围。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c5"
+          "c4"
         ]
       }
     ]
@@ -116,24 +145,69 @@
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-assistant-smoke.ts",
+      "digest": "717ee10967b49593e5dbb5e764f0863bd1b30aba4aada54bd0b361adfd64896c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-refresh-smoke.ts",
+      "digest": "18d18495727491cd7e1cb6fa8b9ae440269175d9ec4c3ce24e9a944e5aa7de11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-retrieval-smoke.ts",
+      "digest": "7b4c6cdfbc7b93a6883d060595ffde9c5bce21d7ca4d2358244c801293857a91"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/retrieval-index.ts",
+      "digest": "e00fa36bfb6fb2bcdf888653bc52f006be6a7d2527b967783c02c2bf52ee696f"
+    },
+    {
+      "kind": "material",
       "key": "omem:scripts/review-knowledge.ts",
-      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
+      "digest": "183b2bdd497d04202fd81a7e942c574fe56fb71f75b6049b5b456830d3515672"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:47:48.473Z",
+    "at": "2026-09-30T20:06:44.637Z",
     "trace": {
-      "runId": "4e53bc64-1088-4cd7-9d20-f9055692ff14",
+      "runId": "32836daa-c91f-40bc-a055-07cb8a401b03",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "78751bd39eb6e62a65bbc101f52c401de0044b9a111fd6c7c14ade212361ad09",
-      "contextHash": "2f36d43e1d6b72343dced86ac7ace1cd770602068b67e84bec80a613345d7a33",
+      "promptHash": "9fbc6a19edb49918ad30e134f34111f4ec1a733de2643000abd5bb05cf9c58ea",
+      "contextHash": "4d0a6953f3c8d56701648816d4adb237ac17a2117183d456ccbc385a8f6118ba",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ce8ce7e025d9af2c84116bb95b2e2a963f26b951a2f89a03bd1e265f9cb3c157",
+      "fingerprint": "373fbf149d393a5a56ee68643b6bfa3e883fe58908062e61a025424a75ee0d37",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -146,11 +220,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeec-370d-7c71-aba7-84b33d3e4f54"
+        "01a0f3ec-4a83-7c30-98ac-b2ff2f4b589a"
       ],
       "usage": {
-        "used": 19535,
-        "size": 760000,
+        "used": 56841,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -158,10 +232,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 19587,
-          "utf8Bytes": 24416,
-          "estimatedTokens": 8139,
-          "budgetedTokens": 10174,
+          "chars": 104779,
+          "utf8Bytes": 114182,
+          "estimatedTokens": 38061,
+          "budgetedTokens": 47577,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -170,17 +244,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:47:59.785Z",
+    "at": "2026-09-30T20:07:17.512Z",
     "trace": {
-      "runId": "4f8067d8-3f9f-4e20-8fee-5d892d60c467",
+      "runId": "cd5c360d-6e31-436c-97e1-c50bf99e7280",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "75739080c0140f9082d98336d1d2f9f0de4331e3fa49fffb24b16016f17b4a22",
-      "contextHash": "0ddecf3b3daf4a4317a3aae89f549a4883504b27c2d843d0e048b624b9afa65e",
+      "promptHash": "de9a7fdfb89da3a5e1c8c2e12bd2d7578ea91468b9d96b0f49c6d9ed581ea25d",
+      "contextHash": "912127306e9f89455cfe1a2d00d9d1da6d31ce8fba623f03c7203ce1043d6584",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e0ba6ed7e69ae9d306b985aa6ded7fbbec1cd1a6dde09adef5a23474d9fc7967",
+      "fingerprint": "bcfb337843ae7651f08f563729b2637ec3c30eee31bfbdcfb35c448e04bc1084",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -193,11 +267,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeec-7498-7852-9d84-5459d3575709"
+        "01a0f3ed-4a7d-7481-ae91-112f53c809e7"
       ],
       "usage": {
-        "used": 17671,
-        "size": 760000,
+        "used": 56563,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -205,10 +279,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 16349,
-          "utf8Bytes": 19644,
-          "estimatedTokens": 6548,
-          "budgetedTokens": 8185,
+          "chars": 115126,
+          "utf8Bytes": 128677,
+          "estimatedTokens": 42893,
+          "budgetedTokens": 53617,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

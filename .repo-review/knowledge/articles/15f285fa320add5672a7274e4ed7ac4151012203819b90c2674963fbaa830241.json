@@ -2,109 +2,100 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/knowledge.ts",
-    "title": "评审知识的恢复、持久化与索引",
-    "summary": "负责恢复用户回答、仓库材料与已发布文章，更新回答及知识失效状态；另行保存回答材料、将文章发布到运行时和仓库目录，并为当前文章生成 Wiki 索引。",
-    "category": "implementation",
+    "title": "仓库知识资产的恢复、持久化与索引发布",
+    "summary": "连接运行时知识仓库与可提交的 repo-review 资产，恢复用户回答和文章、标记待重核验依赖，并生成知识导航页。",
+    "category": "workflow",
     "sections": [
       {
         "key": "restore",
-        "title": "恢复顺序与回答重核对",
-        "body": "恢复流程先读取 `user-notes.json`，且只接受手工来源、外部标识以知识回答前缀开头的输入；随后捕获仓库材料、创建知识仓库，并从文章目录恢复已有知识。[[c1]] 该知识仓库会排除已移除来源和旧来源别名，因此此前笼统的“带评审过滤规则”结论被替代为这一可验证的具体过滤范围。[[c2]]\n\n恢复出的回答材料会把对应疑问标为已回答；若目标文章的依赖尚未包含该回答的当前摘要，则写入“尚未用于知识重核对”的失效原因。刷新仓库后，函数返回材料覆盖情况、文章恢复结果和仓库实例。[[c3]]"
+        "title": "启动恢复与失效标记",
+        "body": "`restoreReviewKnowledge` 先读取用户回答文件，强制其为 manual 来源且 externalId 使用 knowledge-answer 前缀，再通过 Store 捕获为固定材料。随后捕获仓库材料、恢复文章，并把对应问题标为 answered。若回答材料的 digest 尚未出现在文章依赖中，则写入 invalidation，明确表示“已入库”不等于知识正文已重核验；最后刷新仓库视图。[[c1]]"
       },
       {
         "key": "persist",
-        "title": "回答材料与文章发布",
-        "body": "回答持久化从当前手工来源修订中提取正文、上下文与来源信息，按外部标识排序后写入评审知识目录，供后续启动重新捕获。[[c4]] `publishReviewArticle` 不检查文章是否为当前版本，而是把传入文章分别写入运行时暂存目录和仓库知识文章目录；因此“仅发布当前文章”并非该函数的约束。[[c5]]"
+        "title": "回答与文章持久化",
+        "body": "`saveReviewAnswerMaterials` 从当前 manual 来源中筛选 knowledge-answer，重建 CaptureInput 并写入 `.repo-review/knowledge/user-notes.json`。`publishReviewArticle` 同时写运行时 staging 和可发布 articles 目录，使生成过程与提交资产均有落点。写文件前仅知识目录被显式创建；文章目录是否自动创建取决于被调用的 `writeKnowledgeArticle`，本材料不能进一步确认。[[c2]]"
       },
       {
         "key": "index",
-        "title": "当前文章的 Wiki 索引",
-        "body": "Wiki 索引生成与文章发布是独立步骤：索引函数先筛选 `current` 文章，优先采用概览文章摘要，再把主题文章与模块、材料文章分组生成 Markdown 链接；只有内容变化时才覆写文件。[[c6]] 因而此前“将当前文章发布到知识目录及 Wiki 索引”的合并描述被替代：发布函数负责双目录写入，索引函数仅为当前文章建立入口，且自身不验证这些文章是否已通过独立复核。"
+        "title": "Wiki 索引生成边界",
+        "body": "索引只纳入 `current` 文章，以 `topic:overview` 摘要作为介绍；其他 topic 页面和模块/材料页面分组输出，并以 document key 的 digest 形成链接。内容无变化时不重写 wiki。该函数只负责导航文件，不执行模型分析、独立复核或覆盖率判定；这些能力来自其调用链上的通用知识组件。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审知识恢复入口",
-        "reason": "支持用户回答校验、仓库材料捕获、知识仓库创建与文章恢复的实际执行顺序。",
+        "label": "评审知识恢复流程",
+        "reason": "支持回答捕获、文章恢复、问题状态更新及未消费回答触发失效标记的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 9,
-          "endLine": 17
+          "endLine": 25
         },
         "quote": "export function restoreReviewKnowledge(store: Store, root: string) {\n  const notes = join(root, \".repo-review/knowledge/user-notes.json\");\n  if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, \"utf8\")) as CaptureInput[]) {\n    if (input.source !== \"manual\" || !input.externalId?.startsWith(\"knowled"
       },
       {
         "key": "c2",
-        "label": "评审材料过滤范围",
-        "reason": "具体说明知识仓库排除已移除来源及旧来源别名，支撑对过滤规则的精确定义。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 60,
-          "endLine": 65
-        },
-        "quote": "export function createReviewKnowledgeRepository(store: Store) {\n  ensureReviewMetaTable(store);\n  return new KnowledgeRepository(store, () => {\n    const removed = new Set((store.db.prepare(\"SELECT source_id FROM review_source_meta WHERE removed=1 OR legacy_alias_of IS NOT NULL\").all() as { source_id: string }[]).map(r"
-      },
-      {
-        "key": "c3",
-        "label": "回答状态与知识失效处理",
-        "reason": "支持回答关联疑问、检查文章依赖并在回答尚未用于重核对时记录失效原因。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/knowledge.ts",
-          "startLine": 18,
-          "endLine": 25
-        },
-        "quote": "  for (const m of repository.materials().filter(m => m.key.startsWith(\"manual:knowledge-answer:\"))) {\n    const id = m.key.slice(\"manual:knowledge-answer:\".length);\n    store.db.prepare(\"UPDATE knowledge_questions SET state='answered',answer_revision=? WHERE id=?\").run(m.revisionId, id);\n    const q = store.db.prepare("
-      },
-      {
-        "key": "c4",
-        "label": "用户回答材料保存",
-        "reason": "支持从当前手工修订重建捕获输入，并按稳定顺序写入用户笔记文件。",
+        "label": "回答和文章资产写入",
+        "reason": "说明用户补充与知识文章分别写入哪些评审目录。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 28,
-          "endLine": 33
+          "endLine": 38
         },
         "quote": "export function saveReviewAnswerMaterials(store: Store, root: string) {\n  const rows = store.db.prepare(\"SELECT s.external_id,r.title,r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='manual' AND s.external_id LIKE 'knowledge-answer:%' ORDER BY s.external_id\").all() as { external_id: string; titl"
       },
       {
-        "key": "c5",
-        "label": "评审文章双目录发布",
-        "reason": "支持传入文章无 current 条件地写入运行时暂存目录与仓库文章目录。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/knowledge.ts",
-          "startLine": 35,
-          "endLine": 38
-        },
-        "quote": "export function publishReviewArticle(root: string, article: KnowledgeArticle) {\n  writeKnowledgeArticle(join(root, \".repo-review/runtime/knowledge-staging\"), article);\n  writeKnowledgeArticle(join(root, \".repo-review/knowledge/articles\"), article);\n}"
-      },
-      {
-        "key": "c6",
-        "label": "当前文章 Wiki 索引",
-        "reason": "支持索引只筛选当前文章、组织分组链接，并在内容变化时才写入 Wiki 文件。",
+        "key": "c3",
+        "label": "知识 Wiki 索引生成",
+        "reason": "支持 current 页面筛选、主题分组、摘要和 digest 链接规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 40,
-          "endLine": 44
+          "endLine": 45
         },
         "quote": "export function writeReviewKnowledgeIndex(root: string, articles: KnowledgeArticle[]) {\n  const pages = articles.filter(a => a.current), overview = pages.find(a => a.document.key === \"topic:overview\");\n  const md = [\"# omem · 可追溯知识\", \"\", overview?.document.summary ?? \"仓库材料经 AI 分析与独立复核，正文引用可递归进入相关知识、代码和原始文档。\", \"\", ...pa"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "文章发布目标目录不存在时，`writeKnowledgeArticle` 是否会自行创建目录并保证双写的一致性？",
+        "why": "当前文件只显式创建用户回答目录，文章写入函数的内部实现未包含在材料中。",
+        "nextStep": "检查知识 artifact 写入实现及失败注入测试，确认 staging 成功而发布目录失败时的恢复策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/knowledge.ts",
@@ -113,7 +104,17 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/main.ts",
-      "digest": "82eb5847c2e790d30601c56f56510991f1469df01ee9c2cf2321fc0a2324e5b4"
+      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
     },
     {
       "kind": "material",
@@ -122,51 +123,41 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-api.test.ts",
-      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-      "digest": "f5e49b50ac988174f6bcc5d099d50228c29a8bc54ab02af13814683eec8bfd1b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "3918eac125957b90822f9c407a819dd78144e4306668852f6d754380f129a6bc"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:13:47.850Z",
+    "at": "2026-09-30T19:23:17.669Z",
     "trace": {
-      "runId": "904655e0-055e-45a2-99e1-8653fea259d4",
-      "roleId": "knowledge-refresher",
+      "runId": "32bc7d66-0960-4507-80cf-17737c4e381d",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "6c9d344411f51b03f33eaa75211d8e1a8fbfb0e964c308a121076024864206b6",
-      "contextHash": "d71eba5a418f64ec8f46d6f0e36cf227c8463dee09ada08a10e9f6418f2a53f0",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5b1fa399e7bc0e096163ad7621c6d6cedae5449ab103a6d353dfae9a150e5ca4",
+      "contextHash": "3c896e38a13d7d900157c57cdaeea7f6b32a47ad974299e132ac389ffb142583",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "64bb84e6b710e8e993d5045ddbff57ea7a582903d3a1be51d0864cb8c4e88284",
+      "fingerprint": "f16319e6c3af0d7b77eb2d7755bcca287305890e2afe10df88e9a961aa755612",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef04-0bfb-7983-8974-12a0745641ab"
+        "01a0f3c4-9d14-7323-afcf-e36a972bfc67"
       ],
       "usage": {
-        "used": 25803,
-        "size": 760000,
+        "used": 46720,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -174,10 +165,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 43012,
-          "utf8Bytes": 47018,
-          "estimatedTokens": 15673,
-          "budgetedTokens": 19592,
+          "chars": 80555,
+          "utf8Bytes": 82669,
+          "estimatedTokens": 27557,
+          "budgetedTokens": 34447,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +177,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:58.944Z",
+    "at": "2026-09-30T19:24:13.144Z",
     "trace": {
-      "runId": "00c6ead2-648c-4dfc-92e5-0cb1ede1642d",
+      "runId": "e9553d28-dcce-43c9-a853-c8268b0135ee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "a755e1546ed46953ef6d10d14346220b656e695e6f356ab39f7ac49d20a6f54e",
-      "contextHash": "bf1cdc4dca693bc12bdbe2d5e6bd6d266c9871c1c7c9ed30f07f9eb0751f597e",
+      "promptHash": "f7101426752da5e0bbe0df083bc8011dc216cbd96a2fd1c43b88d891baebeb5c",
+      "contextHash": "03c89395898c13e7271889abec2597803ac48818cbf7249119f9fd6951cc19ae",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c8970e7edff7dc0c9fe49f6900d1503f65488a7723a91d43110175adfaa439dd",
+      "fingerprint": "b652922ee8459b62a440ad55335d34bedd6941a43590a2b38eeb5170513fea5f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,11 +200,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef04-4015-7a42-beef-ceef749dc82a"
+        "01a0f3c5-8213-79a0-99bd-451dafbf8ba5"
       ],
       "usage": {
-        "used": 24520,
-        "size": 760000,
+        "used": 51200,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -221,10 +212,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 40867,
-          "utf8Bytes": 44151,
-          "estimatedTokens": 14717,
-          "budgetedTokens": 18397,
+          "chars": 94682,
+          "utf8Bytes": 103496,
+          "estimatedTokens": 34499,
+          "budgetedTokens": 43124,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

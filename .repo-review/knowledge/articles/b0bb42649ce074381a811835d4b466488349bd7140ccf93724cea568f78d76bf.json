@@ -2,161 +2,90 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/code/understanding-model.ts",
-    "title": "显式配置的代码理解模型适配端口",
-    "summary": "该模块以默认关闭、宿主显式配置的方式适配 ACP、CLI 和 HTTP；当前实现会在缺失真实模型名时写入 transport 占位值，这与文件头的 provenance 声明存在冲突。",
-    "category": "architecture",
+    "title": "可配置的代码理解模型适配端口",
+    "summary": "把显式选择的 ACP、CLI 或 HTTP 传输统一为代码理解模型端口；默认关闭模型，并明确预算传递和模型身份标记在不同传输间的能力差异。",
+    "category": "configuration",
     "sections": [
       {
-        "key": "opt_in",
-        "title": "默认关闭与配置边界",
-        "body": "模块只适配宿主选择的 transport，不自行推理，也不直接读取环境变量、凭据或个人秘密；从本模块实现边界看，它构造新的隔离 profile，不会加载已有或个人 profile。[[c1]][[c2]] 未提供配置或选择 `none` 时返回 `null`；显式配置缺少必填字符串或使用不支持的 transport 时抛出 `CodeModelUnavailableError`，而非静默伪装可用。[[c3]][[c4]]"
+        "key": "boundary",
+        "title": "默认关闭、溯源与身份边界",
+        "body": "该模块只适配既有模型传输，不自行推理，也不读取环境变量、凭据或个人配置；宿主未传配置或选择 `none` 时返回 `null`，显式配置损坏则抛出专用错误。[[c1]] 模型标识并非总能证明实际模型身份：ACP 与 CLI 使用显式 `model`，缺失时分别回退为传输标签 `acp`、`cli`；HTTP 优先采用响应模型名，其次显式配置，二者都缺失时回退为 `http`。这些回退值只能视作传输类型标签，替代此前“模型标识均来自响应或显式配置”的不完整结论。[[c3]][[c4]]"
       },
       {
-        "key": "local_transports",
-        "title": "ACP、CLI 与身份回退",
-        "body": "ACP 和 CLI 由显式配置构造 profile，清空 instructions 与 skills，并透传命令、模型、effort、超时和取消信号。ACP 使用请求预算换算输出字符上限并传递上下文预算，CLI 在此处不消费该预算。[[c5]][[c6]]\n\n两条本地分支都聚合文本增量，但不会主动拒绝空聚合结果。未配置 model 时，它们分别把 `acp`、`cli` 写入 reply 的 model；这些是 transport 占位标签，并非 transport 响应提供的真实模型身份，因而与文件头“模型 ID 仅来自响应或显式配置、绝不虚构”的声明冲突。[[c6]][[c7]]"
+        "key": "acp-cli",
+        "title": "ACP 与 CLI 适配",
+        "body": "ACP 和 CLI 都要求显式命令，并构造成包含模型、effort、参数、固定上下文字符上限和请求超时的统一 Agent profile。[[c2]] ACP 会收集流式文本，并把本次生成预算换算为输出字符限制，同时传入上下文预算；CLI 也收集文本和响应取消信号，但其 `run` 分支没有接收或继续传递请求预算。两者默认工作目录都位于 repo-review 的隔离运行目录。[[c3]]"
       },
       {
-        "key": "http_boundary",
-        "title": "HTTP 校验与 provenance 缺陷",
-        "body": "HTTP 分支向显式 endpoint POST 提示词和可选模型名，并透传取消信号；只有该分支会在非成功状态或响应文本为空时主动转换为模型不可用错误。模型名优先取响应，其次取配置，但两者都缺失时仍回退为 `http`。[[c8]]\n\n因此，先前把该回退同时描述成符合“never invent a model id”的结论已被替代：`acp`、`cli`、`http` 当前都可能只是代码生成的 transport 标签，与文件头 provenance 声明不一致。[[c7]] 此外，本模块只返回文本和 model，没有展示生成结果写入及 `verified_by_agent` 的持久化路径。"
+        "key": "http",
+        "title": "HTTP 协议与失败条件",
+        "body": "HTTP 模式要求明确 endpoint，以 JSON POST 发送 prompt 和可选模型，并透传取消信号。非成功状态、响应缺少非空 `text` 或 `content` 都会抛出不可用错误。[[c4]] 当前请求未携带 `GenerationBudget`，模块内也未实现鉴权头、重试或服务能力发现；因此 HTTP 的上下文和输出限制只能依赖端点自身，不能据此宣称与 ACP 等价。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "模型端口的选择加入边界",
-        "reason": "支持默认无硬编码模型、不自行推理或读取环境变量和凭据，并仅适配宿主明确选择的 transport。",
+        "label": "模型适配器职责边界",
+        "reason": "支持默认不启用模型、不读取秘密、不主动调用以及显式错误不静默降级的设计。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-model.ts",
           "startLine": 1,
-          "endLine": 9
+          "endLine": 22
         },
         "quote": "/** Configurable Code Understanding model port.\n *\n * Review mode has NO hard-wired model: by default `available` is false and only\n * curated seed projections are served. A model runs only when the host passes\n * an explicit `UnderstandingTransportConfig` into the review app. This module\n * performs NO inference, read"
       },
       {
         "key": "c2",
-        "label": "隔离 Agent profile",
-        "reason": "支持模块从传入配置构造新 profile、清空 instructions 和 skills，而非加载现有 profile。",
+        "label": "传输配置与 Agent Profile",
+        "reason": "说明显式命令、模型、effort、超时和固定上下文字符上限如何进入统一 profile。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-model.ts",
-          "startLine": 60,
+          "startLine": 24,
           "endLine": 77
         },
-        "quote": "function makeProfile(\n  config: UnderstandingTransportConfig,\n  transport: AgentProfile[\"transport\"],\n): AgentProfile {\n  requireField(config, \"command\");\n  return {\n    id: \"review-code-understanding\",\n    name: \"review-code-understanding\",\n    transport,\n    command: config.command as string,\n    args: config.args ??"
+        "quote": "export type UnderstandingTransportConfig = Partial<GenerationBudget> & {\n  /** \"none\" = deliberately no model (default). acp/cli/http are opt-in. */\n  transport: \"none\" | \"acp\" | \"cli\" | \"http\";\n  /** acp/cli: executable to spawn. */\n  command?: string;\n  workspaceDir?: string;\n  /** acp/cli: extra argv. */\n  args?: st"
       },
       {
         "key": "c3",
-        "label": "无模型配置分支",
-        "reason": "支持缺少配置或 transport 为 none 时返回 null。",
-        "relation": "implements",
+        "label": "ACP 与 CLI 执行路径",
+        "reason": "支持 ACP 传递生成预算、CLI 未使用请求预算，以及两者在缺少显式模型时返回传输标签的结论。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-model.ts",
           "startLine": 80,
-          "endLine": 86
+          "endLine": 123
         },
         "quote": "/** Build a port, or null when the host deliberately configured no model.\n * Throws CodeModelUnavailableError on an explicitly-broken/unsupported config so\n * the caller surfaces it honestly instead of silently degrading. */\nexport function buildUnderstandingModelPort(\n  config?: UnderstandingTransportConfig | null,\n):"
       },
       {
         "key": "c4",
-        "label": "配置字段与 transport 错误",
-        "reason": "支持必填字符串校验及不支持 transport 时抛出 CodeModelUnavailableError。",
+        "label": "HTTP 模型适配",
+        "reason": "支持 HTTP 请求格式、错误处理、文本提取、未使用请求预算及模型名回退顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-model.ts",
-          "startLine": 21,
-          "endLine": 57
-        },
-        "quote": "/** Thrown when no model is configured or the configured transport cannot run. */\nexport class CodeModelUnavailableError extends Error {}\n\nexport type UnderstandingTransportConfig = Partial<GenerationBudget> & {\n  /** \"none\" = deliberately no model (default). acp/cli/http are opt-in. */\n  transport: \"none\" | \"acp\" | \"c"
-      },
-      {
-        "key": "c5",
-        "label": "Profile 配置映射",
-        "reason": "支持 ACP 与 CLI profile 使用显式命令、模型、effort、超时，并清空附加指令和技能。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-model.ts",
-          "startLine": 60,
-          "endLine": 77
-        },
-        "quote": "function makeProfile(\n  config: UnderstandingTransportConfig,\n  transport: AgentProfile[\"transport\"],\n): AgentProfile {\n  requireField(config, \"command\");\n  return {\n    id: \"review-code-understanding\",\n    name: \"review-code-understanding\",\n    transport,\n    command: config.command as string,\n    args: config.args ??"
-      },
-      {
-        "key": "c6",
-        "label": "ACP 与 CLI 适配实现",
-        "reason": "支持文本聚合、取消信号、ACP 预算传递、CLI 不消费预算，以及缺少模型时的 transport 名称回退。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-model.ts",
-          "startLine": 88,
-          "endLine": 123
-        },
-        "quote": "  if (config.transport === \"acp\") {\n    const profile = makeProfile(config, \"acp\");\n    return {\n      transport: \"acp\",\n      run: async ({ prompt, signal, budget }) => {\n        let text = \"\";\n        const emit: Emit = (type, chunk) => {\n          if (type === \"text\") text += chunk;\n        };\n        await acp(\n   "
-      },
-      {
-        "key": "c7",
-        "label": "模型身份 provenance 声明",
-        "reason": "文件头声明模型身份应来自响应或显式配置；与各分支生成 transport 占位值的实现形成直接冲突。",
-        "relation": "contradicts",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-model.ts",
-          "startLine": 11,
-          "endLine": 14
-        },
-        "quote": " * Provenance discipline: the model id returned to the strict schema comes from\n * the transport response (HTTP body) or the explicit config `model` string. We\n * never invent a model id, never claim seed output was model-produced, and never\n * mark a generated row as agent-verified."
-      },
-      {
-        "key": "c8",
-        "label": "HTTP 请求、响应与模型回退",
-        "reason": "支持 HTTP 专属状态和空文本校验，以及响应模型、配置模型、http 占位值的回退顺序。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-model.ts",
           "startLine": 125,
-          "endLine": 156
+          "endLine": 161
         },
         "quote": "  if (config.transport === \"http\") {\n    requireField(config, \"endpoint\");\n    const endpoint = config.endpoint as string;\n    return {\n      transport: \"http\",\n      run: async ({ prompt, signal }) => {\n        const res = await fetch(endpoint, {\n          method: \"POST\",\n          signal,\n          headers: { \"conten"
       }
     ],
     "questions": [
       {
-        "question": "ACP/CLI transport 是否会在启动前校验所请求的 model 与 effort 能力？",
-        "why": "当前材料只展示配置写入 Agent profile，没有展示底层 transport 的能力发现或拒绝逻辑。",
-        "nextStep": "检查底层 transport 实现与测试，核验能力发现、不支持设置、超时和取消行为。",
+        "question": "CLI 与 HTTP 传输是否也应强制执行 `GenerationBudget` 中的输出和上下文限制？",
+        "why": "统一端口允许接收预算，但当前只有 ACP 分支读取并传递预算；CLI 与 HTTP 的执行函数未接收或使用该参数，三种传输的限制能力并不等价。",
+        "nextStep": "检查底层 CLI 实现和 HTTP 调用方能力；若不能提供等价限制，应拒绝无法满足的预算设置，或在运行记录中明确标注传输能力差异。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c6"
-        ]
-      },
-      {
-        "question": "模型生成结果持久化时是否始终保持 verified_by_agent=false？",
-        "why": "文件头声明了该约束，但端口返回值只有文本和模型名，没有展示数据库写入路径。",
-        "nextStep": "检查消费 UnderstandingModelReply 并写入理解结果的实现与测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c7"
-        ]
-      },
-      {
-        "question": "当响应和显式配置都没有模型 ID 时，`acp`、`cli`、`http` 应是可接受的 transport 标签，还是应拒绝结果？",
-        "why": "当前实现把 transport 名称写进 model 字段，但文件头同时要求该字段来自响应或显式配置，两者不能同时成立。",
-        "nextStep": "明确 model 字段合同：若要求真实模型身份则缺失时抛错；若允许 transport 标签，则拆分或更名字段并修正文档。",
-        "blocking": true,
-        "citationKeys": [
-          "c6",
-          "c7",
-          "c8"
+          "c2",
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -164,8 +93,18 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/dto.ts",
+      "digest": "0213903ededa1ffee899a545cac340492ca4230ca75a5b8ef4ed02eef69949e7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
     },
     {
       "kind": "material",
@@ -174,59 +113,49 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/code/understanding-model.ts",
       "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
-      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/knowledge/api.ts",
-      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/artifacts.ts",
-      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "key": "omem:apps/server/src/source-text.ts",
+      "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/conversation/router.ts",
-      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:02:41.363Z",
+    "at": "2026-09-30T19:14:40.493Z",
     "trace": {
-      "runId": "6f7a7582-26da-4243-b6a1-5cf3cc678936",
+      "runId": "743fc52a-fe45-48b5-ae1d-c2dff3d5a918",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "b5ee268c357c64da712c092ace85a70d6b3e1d0f68e549981637002aa424d4da",
-      "contextHash": "28a6f72089d19d7bca5267e7ab104563d77522ad69465a7d4bc666bf9c138005",
+      "promptHash": "f9a2d1dc14febe38f2cb446da77f1f816dd8adb1ba432876fbc89a110dd5b93e",
+      "contextHash": "4c330f15ed0e8206733db9b556063606567b68f2f089b348db2658f8e644e96f",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4da5dedfd593707dbb8cd35003f07785c13b11aad59020db32de2cd9103400d2",
+      "fingerprint": "0952e93f5913ab7309b397df407735462158df7ed9a598d836f9615609afedc9",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -239,11 +168,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec2-26c0-7a11-bf9d-7ef9d50a8e6b"
+        "01a0f3bd-3b99-78a3-859d-70c752183841"
       ],
       "usage": {
-        "used": 69276,
-        "size": 760000,
+        "used": 54911,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -251,10 +180,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 163659,
-          "utf8Bytes": 180578,
-          "estimatedTokens": 60193,
-          "budgetedTokens": 75242,
+          "chars": 114664,
+          "utf8Bytes": 119790,
+          "estimatedTokens": 39930,
+          "budgetedTokens": 49913,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -263,17 +192,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:03:10.489Z",
+    "at": "2026-09-30T19:15:07.387Z",
     "trace": {
-      "runId": "1459a7dc-2d7a-4525-8a3c-cc9fa3bfb191",
+      "runId": "b3be9eff-922d-4d6b-a633-a11f9ef1849a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "60d85d31478699f0e60bacc76f18e7aa6a7542db87515feb462d8838d2c3d752",
-      "contextHash": "0207e4cd00c20b8d1a5ae7808818cdc4b49cc26864fbca9505c7bcaa51c55468",
+      "promptHash": "7441dd820bcac9c7653cc8a242d339a739030a45947cff94f6d7aef4953ae821",
+      "contextHash": "733c16642e09f5c018a39fcd68b6dcf7ecbf181d60301a2735d15c80b94bd457",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "932668a8c0ec2d582371cc4f29155f343cd3f915759c492b2ef176632cf7fb76",
+      "fingerprint": "6d5fa4ed965b127c701454cd29a4a1ffa6cf6485c55353596b9b4c9fd3232ab4",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -286,11 +215,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-2630-7c33-83fa-2b67e0cfa5fe"
+        "01a0f3bd-9cfd-7990-8fb3-9f207e3043c5"
       ],
       "usage": {
-        "used": 62876,
-        "size": 760000,
+        "used": 53219,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -298,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 161047,
-          "utf8Bytes": 174914,
-          "estimatedTokens": 58305,
-          "budgetedTokens": 72882,
+          "chars": 111363,
+          "utf8Bytes": 115273,
+          "estimatedTokens": 38425,
+          "budgetedTokens": 48032,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -3,143 +3,165 @@
   "document": {
     "key": "topic:code_wiki",
     "title": "代码知识投影与仓库评审",
-    "summary": "Code Wiki 将仓库白名单材料接入通用 Capture 链，在隔离数据库中形成不可变代码快照、确定性结构图、人工证据关系与经严格校验的模块理解，并通过统一 Trail 下探源码及需求、决策、研究和测试证据。",
+    "summary": "Code Wiki 在统一 Capture 材料边界上组织仓库知识、快照化代码结构、人工关系和派生理解，并提供可深链的阅读界面；当前限制集中在关系定位、失败状态、失效深链及模型传输能力差异。",
     "category": "architecture",
     "sections": [
       {
-        "key": "capture_projection",
-        "title": "从通用 Capture 到代码投影",
-        "body": "repo-review 是仓库输入适配器而非独立事实库。扫描器只遍历 `apps`、`packages`、`docs`、`scripts` 和少量根级文件，并排除依赖、构建产物、私有环境及评审运行目录。[[c1]] 被接纳的文件以路径形成 Source 身份，内容变化追加 Revision，再按代码声明、测试或 Markdown 边界形成 Fragment；摘要相同则不重复创建版本。[[c2]][[c3]]\n\nCode Wiki 从 Capture 当前修订读取源码，以提交、工作树状态和内容摘要建立可复用快照。[[c4]][[c5]] 文件、符号和边属于确定性代码投影，显式 head 区分当前图与历史图；历史源码读取快照绑定文本，不回退到实时工作树。此前仅凭路径身份说明捕获范围的论证不完整，现由扫描白名单与排除规则补足。"
+        "key": "purpose",
+        "title": "统一材料边界与快照投影",
+        "body": "Code Wiki 不建立第二套源码事实库：评审知识仓库只接纳当前且未删除、非历史别名的材料，代码侧表则把已经捕获的 Fragment 确定性投影为文件、符号、边和快照，不另存权威文件正文。[[c1]][[c2]] 此处仅能确认知识仓库与代码图共享 Capture 材料边界；旧稿关于“知识文章和问答都已能回到同一固定材料”的更强结论缺少直接材料支持，现已被替代。\n\n评审 Store 与个人工作区隔离，旧历史仅在显式配置时导入。[[c3]] 代码同步读取 Capture 当前 head 的不可变文本，快照身份包含解析器版本、仓库、提交、dirty 状态和排序内容哈希。[[c4]][[c5]] 当前 head 由同步显式切换；源码接口读取指定快照绑定的文本，不回退实时工作树。[[c6]][[c7]]"
       },
       {
-        "key": "relations_understanding",
-        "title": "结构事实、人工关系与模块理解",
-        "body": "解析器确定性地产生声明、导入、路由和测试结构；可解析导入为 confirmed，调用则只在同文件按名称匹配并保持 candidate，不能据此宣称跨文件真实调用。[[c6]] 代码与意图、需求、决策、研究、测试的关系只来自人工维护的 association 清单，词面相似度不得自动晋升为 confirmed。[[c7]] 同步为每条登记项创建派生意图片段，并在当前 head 解析代码和材料端点；无法解析的端点保留为 missing。[[c8]] 删除种子通常会使旧边失效，但有效清单为空时当前失效函数直接返回，因此“清空清单必然令全部旧关系 stale”的结论不成立。[[c19]]\n\n模块知识是代码图之上的派生解释：人工 seed 通过路径、限定名和类型定位符号，证据必须来自固定材料，并经严格合同校验。[[c9]] locator、证据文件或引用提示失效时会保存 rejected 记录，不静默省略，也不覆盖已有有效理解。[[c10]] 因而解析结构、人工关系和人工或模型解释具有不同来源与状态，派生正文不能替代原始 Fragment 成为独立事实证据。"
+        "key": "relations",
+        "title": "人工关系与理解复核",
+        "body": "代码与需求、决策、调研和测试的 confirmed 关系只来自人工 association，词面相似结果不得自动提升。[[c8]] 每条 association 先生成派生意图片段，再形成“代码 implements 意图、意图关联原始依据”的两级链。代码或意图无法定位时，只会写入一条 missing 的 implements 边；若意图缺失，后续下游边不会生成。仅当意图存在而需求、决策、调研或测试材料无法解析时，对应下游边才写为 missing。[[c9]] 这替代了旧稿把所有定位失败统一描述为“相应边均写入 missing”的结论。\n\n关系标识按 seed 确定性生成并幂等更新，读取时还会根据对端是否为当前修订、是否已删除计算有效 stale 状态。[[c10]] 但有效 seed 集合为空时不会失效旧关系。人工模块理解的节点、证据文件或引用别名解析失败会留存 rejected 记录；默认列表只呈现未过期的有效 seed 或 generated 结果。[[c11]][[c12]]"
       },
       {
-        "key": "reading_generation_limits",
-        "title": "统一阅读、显式生成与当前边界",
-        "body": "前端把知识文章、模块、文件、符号和原始片段放入同一 Trail 抽屉，统一处理返回、跳层、关闭、循环提示与焦点归还，并以人类可读标题代替内部标识。[[c11]] 完整帧栈可写入 URL hash；但同步后若目标已删除或改名，帧虽可恢复，内容区仍可能缺少明确的 missing 或 stale 原因。[[c12]]\n\n启动流程只同步材料、恢复知识和重建代码投影，没有模型生成步骤。[[c13]] 评审应用的模型端口默认关闭，只有显式传入配置才创建；生成还必须调用专门的 POST 端点，无模型时返回不可用，失败或拒绝结果不会晋升为 current。[[c14]][[c15]] 生成过程具备目标裁剪、输入输出预算、取消、超时、传输失败和畸形输出隔离。[[c16]] 通过合同校验后，服务端还会拒绝模型未实际看到的引用；若运行期间 head 已移动，也不会把旧快照结果发布为当前理解。[[c20]]\n\n当前仍不是完整程序分析：调用解析只收集简单名称，跨文件 caller/callee 绑定未实现。[[c17]] 仓库标识仍是单仓 PoC；符号虽按稳定定位要素生成标识并保留快照历史，但未限定快照的单符号查询语义不明确，也不构成跨 revision 的语义身份续接。[[c18]]"
+        "key": "reading",
+        "title": "确定性阅读、模型生成与深链",
+        "body": "无模型时仍可读取仓库、快照、文件、符号、边和整图；模型理解属于显式可选能力，未配置模型、校验拒绝或传输失败都不会晋升为当前理解。[[c13]][[c14]]\n\n前端把知识、模块、文件、符号和片段放入同一 Trail 抽屉，共用返回、跳转、循环、关闭和焦点归还；主视图及完整 Trail 栈可序列化到 URL hash 并恢复。[[c15]][[c16]] 但恢复后的模块、文件或符号只有在当前图能解析实体时才渲染。目标删除、重命名或脱离当前快照后，内容区可能为空而没有专门的 missing/stale 原因页。[[c17]]"
+      },
+      {
+        "key": "limits",
+        "title": "尚未收敛的可信度边界",
+        "body": "解析器仅提供单文件 TypeScript AST、Vue SFC 和保守正则，调用关系仍是名称级 candidate。[[c18]] association 的符号定位另行依赖有限声明正则及最早同名 token 回退，普通方法、重载或同名符号可能误绑定。[[c19]] 完整同步中关系重建异常只进入 warnings，随后仍持久化同步结果，因此“同步完成”不等于关系链完整成功。[[c20]]\n\n模型配置层只校验配置文件、JSON 和 transport 类型并透传 model、effort 与预算字段，不能单独证明后端支持该组合。[[c21]] 各传输消费预算的方式也不同：ACP 接收请求预算，CLI 与 HTTP 分支未接收该参数。[[c22]] 生成宿主仍会检查输入、输出、引用范围及运行期间 head 移动；未确认的是各后端是否具有统一的能力发现与提前拒绝。[[c23]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "仓库扫描白名单与排除规则",
-        "reason": "直接支持扫描目录、根级文件白名单、排除目录与可捕获内容类别的范围限定。",
-        "relation": "implements",
+        "label": "评审知识仓库材料过滤",
+        "reason": "支持评审知识仓库只返回当前且未删除、非历史别名的材料。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 94,
-          "endLine": 150
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 60,
+          "endLine": 65
         },
-        "quote": "/** Top-level directories the scanner is allowed to descend into. Keeping this\n * list fixed means node_modules / .git / build output are never walked. */\nconst SCAN_ROOTS = [\"apps\", \"packages\", \"docs\", \"scripts\"];\n\n/** Root-level files explicitly admitted to the read whitelist. */\nconst ROOT_FILES = [\n  \"design.md\",\n "
+        "quote": "export function createReviewKnowledgeRepository(store: Store) {\n  ensureReviewMetaTable(store);\n  return new KnowledgeRepository(store, () => {\n    const removed = new Set((store.db.prepare(\"SELECT source_id FROM review_source_meta WHERE removed=1 OR legacy_alias_of IS NOT NULL\").all() as { source_id: string }[]).map(r"
       },
       {
         "key": "c2",
-        "label": "评审模块的运行与捕获边界",
-        "reason": "解释 repo-review 如何复用通用知识链、使用隔离运行目录和路径型来源身份。",
+        "label": "代码图的 Capture 投影边界",
+        "reason": "支持代码侧表是已捕获片段的确定性投影且不另存权威文件正文。",
         "relation": "explains",
         "target": {
-          "kind": "article",
-          "key": "module:review",
-          "section": "purpose-boundary"
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 1,
+          "endLine": 16
         },
-        "quote": ""
+        "quote": "/** Code Knowledge side tables. These live in the SAME isolated review SQLite as\n * review_source_meta / review_relations 鈥?they are additive, CREATE-IF-NOT-EXISTS\n * only, and never touch sources/revisions/fragments/review_relations rows. The\n * code graph is a deterministic projection over the already-captured fragme"
       },
       {
         "key": "c3",
-        "label": "不可变修订捕获",
-        "reason": "支持路径来源身份、内容摘要去重、分片和快照上下文写入。",
+        "label": "隔离评审运行库",
+        "reason": "支持评审数据与个人工作区隔离以及旧历史仅显式导入。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 460,
-          "endLine": 503
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 100,
+          "endLine": 108
         },
-        "quote": "  const digest = createHash(\"sha256\").update(text).digest(\"hex\");\n  const externalId = EXTERNAL_ID_PREFIX + rel;\n\n  // Idempotency: if the head revision already captured this exact content, do NOT\n  // call capture (which would otherwise fingerprint the changing syncedAt and\n  // mint a duplicate revision). This keeps "
+        "quote": "/** Build a Store bound to `.repo-review/runtime/data`: its own omem.sqlite and\n * assets dir, fully separate from the personal workspace under `.omem/`. On first\n * boot the runtime is seeded from the tracked legacy snapshot (see\n * {@link ensureReviewRuntimeSeeded}). */\nexport function createReviewStore(repoRoot: str"
       },
       {
         "key": "c4",
-        "label": "代码模块的快照职责",
-        "reason": "解释代码视图如何从固定 Capture 修订建立确定性快照和结构图。",
-        "relation": "explains",
+        "label": "Capture 驱动的代码同步",
+        "reason": "支持代码分析读取不可变 head 修订并据此构造快照。",
+        "relation": "depends_on",
         "target": {
-          "kind": "article",
-          "key": "module:code",
-          "section": "purpose"
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 147,
+          "endLine": 216
         },
-        "quote": ""
+        "quote": "  async sync(_opts: { only?: string[] } = {}): Promise<CodeKnowledgeSyncResult> {\n    return runCodeSync(this.store, this.repoRoot);\n  }\n}\n\nexport async function runCodeSync(\n  store: Store,\n  repoRoot: string,\n): Promise<CodeKnowledgeSyncResult> {\n  ensureCodeTables(store);\n  ensureReviewMetaTable(store);\n\n  const rep"
       },
       {
         "key": "c5",
-        "label": "快照创建与复用",
-        "reason": "说明快照身份由提交、脏状态和内容摘要构成，旧状态复用后仍会重新协调当前 head。",
+        "label": "代码快照身份组成",
+        "reason": "支持解析器版本、仓库、提交、dirty 状态及排序内容哈希共同决定快照标识。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 188,
-          "endLine": 218
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 34,
+          "endLine": 74
         },
-        "quote": "  // Snapshot identity: repo + commit + dirty + sorted hashes.\n  const status = await git([\"status\", \"--porcelain\"], repoRoot);\n  const dirty = !!status && status.length > 0;\n  const snapId = snapshotIdFor(\n    repoId,\n    commit,\n    dirty,\n    captured.map(row => `${row.external_id}:${sha256(revisionText(store, row.i"
+        "quote": "export const PARSER_VERSION = \"ts-ast@1+vue-sfc@1+regex@1+capture@2\";\n\nfunction sha1(s: string): string {\n  return createHash(\"sha1\").update(s).digest(\"hex\");\n}\n\nexport function codeRepositoryId(): string {\n  // PoC: single repo. Stable slug.\n  return \"omem\";\n}\n\nexport function fileIdFor(repoId: string, path: string): "
       },
       {
         "key": "c6",
-        "label": "代码图关系投影规则",
-        "reason": "支持区分已解析导入、名称级候选调用、路由、测试和组件候选关系。",
-        "relation": "implements",
+        "label": "显式当前快照指针",
+        "reason": "支持同步显式切换当前 head，不能按捕获时间推断。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 291,
-          "endLine": 415
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 273,
+          "endLine": 284
         },
-        "quote": "      // 2) Imports.\n      for (const imp of f.parsed.imports) {\n        const target = resolveImport(f.path, imp.specifier, knownPaths);\n        const toFile = target ? pathToFileId.get(target) ?? null : null;\n        const seed = `imports|${f.path}|${imp.specifier}`;\n        liveSeeds.add(seed);\n        upsertEdge(st"
+        "quote": "  // Additive migration: explicit head pointer on the repository. We must NOT\n  // infer \"latest\" from captured_at: when the tree returns to a previously\n  // seen state the same snapshot row is reused, but a later snapshot row still\n  // has a more recent captured_at and would wrongly win. The head pointer is\n  // fli"
       },
       {
         "key": "c7",
-        "label": "人工关系治理",
-        "reason": "解释关联清单的人工权威边界，以及 confirmed 对文档和测试锚点的要求。",
-        "relation": "explains",
+        "label": "固定快照源码接口",
+        "reason": "支持源码端点读取快照绑定文本并拒绝回退实时工作树。",
+        "relation": "implements",
         "target": {
-          "kind": "article",
-          "key": "module:docs-repo-review",
-          "section": "purpose-and-governance"
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 397,
+          "endLine": 433
         },
-        "quote": ""
+        "quote": "  // Source range: return the FIXED text the given snapshot pinned for this file\n  // (default: the current head snapshot). We read the review revision bound when\n  // the snapshot was built, never the live working tree, so /source for an old\n  // snapshot returns its historical bytes. Out-of-range → 400.\n  app.get<{\n "
       },
       {
         "key": "c8",
-        "label": "人工种子关系构建",
-        "reason": "支持派生意图索引、当前 head 端点解析以及 confirmed、candidate、missing 状态写入。",
+        "label": "人工关联治理合同",
+        "reason": "支持 confirmed 关系来自人工种子且自动相似匹配不得提升状态。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/associations.ts",
+          "startLine": 1,
+          "endLine": 11
+        },
+        "quote": "/** Human-maintained seed associations between code fragments and the\n * intent / decision / research / test fragments that justify them.\n *\n * This is NOT an automatic semantic matcher: every entry is hand-curated and\n * must cite concrete requirement ids, decision docs, research docs and test\n * cases. The sync step "
+      },
+      {
+        "key": "c9",
+        "label": "两级关系链与缺失分支",
+        "reason": "支持代码或意图缺失只写 missing implements，意图缺失时跳过下游边，而下游材料缺失仅在意图存在时写 missing。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 682,
+          "startLine": 766,
           "endLine": 831
         },
-        "quote": "/** Virtual source holding one curated intent fragment per association. It is a\n * DERIVED index (curated=true, derived=true), never independent raw evidence:\n * each fragment contains only that seed's intent line + requirement ids, so a\n * code fragment's \"implements\" target is never the whole G01-G20 status table. */"
-      },
-      {
-        "key": "c9",
-        "label": "代码理解种子投影",
-        "reason": "解释固定证据、稳定 locator、严格合同及派生理解不改写原始代码图的边界。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/src/code/understanding-store.ts",
-          "section": "projection"
-        },
-        "quote": ""
+        "quote": "  const validAssocIds = new Set<string>();\n  for (const seed of seeds) {\n    const aid = assocSeedId(seed.codePath, seed.symbol);\n    validAssocIds.add(aid);\n    const intent = intentFor(aid);\n\n    const codeHead = headFragments(store, seed.codePath);\n    const codeFrag = codeHead ? matchSymbolFragment(codeHead.fragmen"
       },
       {
         "key": "c10",
-        "label": "定位失败的拒绝记录",
-        "reason": "证明节点 locator、证据或引用提示无法解析时会持久化 rejected 结果。",
+        "label": "关系幂等与有效状态",
+        "reason": "支持确定性关系身份、幂等更新、动态 stale 判定及空 seed 集合不触发失效的限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 430,
+          "endLine": 555
+        },
+        "quote": "/** Deterministic relation id so repeated syncs never mint a duplicate row and\n * ids stay stable across restarts. seedIdentity makes each seed-derived edge\n * unique even when both fragment endpoints are unresolved (missing links). */\nexport function relationId(seedIdentity: string): string {\n  return (\n    \"rel_\" +\n "
+      },
+      {
+        "key": "c11",
+        "label": "人工理解定位失败留痕",
+        "reason": "支持节点、证据文件和证据别名解析失败被持久化为 rejected。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -150,184 +172,210 @@
         "quote": "    // Resolve node locators to concrete symbol ids present in this snapshot.\n    // An unresolvable locator is a hard projection failure (not a silent\n    // drop): the curated seed named a node that no longer exists, so the\n    // result persists as rejected rather than silently citing nothing.\n    const resolutionEr"
       },
       {
-        "key": "c11",
-        "label": "统一证据 Trail",
-        "reason": "解释 Code Wiki 如何用同一抽屉承载知识、模块、文件、符号和片段的逐层阅读。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-          "section": "trail-navigation"
-        },
-        "quote": ""
-      },
-      {
         "key": "c12",
-        "label": "Trail 深链恢复限制",
-        "reason": "支持 URL 恢复依赖当前代码图，以及失效对象可能缺少专门原因反馈的现状。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-          "section": "deep-link"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c13",
-        "label": "评审启动顺序",
-        "reason": "证明启动只执行材料同步、知识恢复和代码投影，没有调用模型生成。",
+        "label": "当前理解列表过滤",
+        "reason": "支持默认列表排除 failed、rejected 和 stale 结果，避免其遮蔽有效理解。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/main.ts",
-          "startLine": 17,
-          "endLine": 25
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 521,
+          "endLine": 543
         },
-        "quote": "console.log(\"repo-review: starting incremental sync...\");\nconst store = createReviewStore(repoRoot);\ncreateReviewKnowledgeRepository(store);\ntry {\n  const stats = await runReviewSync(store, repoRoot);\n  console.log(\"repo-review: sync done\", stats);\n  const knowledge = restoreReviewKnowledge(store, repoRoot);\n  console."
+        "quote": "export function listUnderstandings(\n  store: Store,\n  opts: { all?: boolean } = {},\n): Row[] {\n  ensureCodeTables(store);\n  // Current surface = curated seeds + accepted model runs; the deterministic\n  // repository row (source='parser') lives in the code graph, not here. Failed /\n  // rejected runs are never current a"
+      },
+      {
+        "key": "c13",
+        "label": "确定性代码读取接口",
+        "reason": "支持无模型时仍可浏览快照、文件、符号、边和代码图。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 343,
+          "endLine": 508
+        },
+        "quote": "  // ---------------------------------------------------------------------\n  // Code Knowledge read surface (deterministic graph; no model required).\n  // ---------------------------------------------------------------------\n  const CP = P + \"/code\";\n\n  app.get(CP + \"/repositories\", async () => code.listRepositories())"
       },
       {
         "key": "c14",
-        "label": "默认关闭的评审模型端口",
-        "reason": "直接支持模型默认关闭、只有显式配置才创建端口且默认不调用实时模型。",
+        "label": "显式代码理解生成入口",
+        "reason": "支持模型不可用和生成失败的响应规则，并证明失败不会晋升当前理解。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 60,
-          "endLine": 92
-        },
-        "quote": "export type ReviewAppDeps = {\n  store: Store;\n  repoRoot: string;\n  /** Production build of the Vue app, served when present. Defaults to\n   * `<repoRoot>/apps/web/dist`. */\n  webDistDir?: string;\n  port?: number;\n  webPort?: number;\n  /** Explicit, opt-in model for Code Understanding generation. Defaults to no\n   *  m"
-      },
-      {
-        "key": "c15",
-        "label": "显式代码理解生成端点",
-        "reason": "直接证明生成必须经专门 POST 入口触发，无模型返回不可用且失败结果不晋升。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 645,
-          "endLine": 670
+          "startLine": 576,
+          "endLine": 601
         },
         "quote": "  // Explicit, opt-in generation entry point. Without a configured port this is\n  // a 503; the raw graph and curated seeds remain usable. Any transport/validation\n  // failure records a failed/rejected row and never promotes it to current.\n  app.post<{ Body: { targetId?: string; timeoutMs?: number } }>(\n    CP + \"/und"
       },
       {
-        "key": "c16",
-        "label": "模型生成的预算与失败防线",
-        "reason": "支持目标范围、输入输出预算、取消、超时、传输失败和畸形输出的隔离处理。",
+        "key": "c15",
+        "label": "统一 Trail 抽屉",
+        "reason": "支持多类阅读对象共用返回、跳转、循环、关闭及焦点归还控制。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-store.ts",
-          "startLine": 674,
-          "endLine": 831
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 371,
+          "endLine": 415
         },
-        "quote": "/** Run a model understanding for the current snapshot. Any failure (transport,\n * malformed output, unknown refs, timeout, abort) records a failed/rejected row\n * and NEVER promotes a bad result to current. Provenance fields are sealed here,\n * not by the model. */\nexport async function generateCodeUnderstanding(\n  st"
+        "quote": "    <!-- trail drawer -->\n    <OmTrailDrawer\n      :open=\"trailOpen\"\n      :frames=\"trail\"\n      :current=\"trailCurrent\"\n      :loop-at=\"loopAt\"\n      :return-focus-to=\"trailTrigger\"\n      @close=\"closeTrail\"\n      @back=\"backTrail\"\n      @jump=\"jumpTrail\"\n      @dismiss-loop=\"dismissLoop\"\n    >\n      <KnowledgeFrame v"
+      },
+      {
+        "key": "c16",
+        "label": "Trail 栈的 Hash 恢复",
+        "reason": "支持主视图和完整 Trail 栈写入 URL 并在加载时恢复。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 218,
+          "endLine": 252
+        },
+        "quote": "// ---- hash routing ----\nfunction syncHash() {\n  if (restoring) return;\n  let url: string;\n  if (view.value === \"overview\") url = \"#/overview\";\n  else if (view.value === \"structure\") url = \"#/structure\";\n  else if (view.value === \"graph\") url = \"#/graph\";\n  else if (view.value === \"module\") url = \"#/module/\" + encodeU"
       },
       {
         "key": "c17",
-        "label": "名称级调用解析",
-        "reason": "证明解析器只收集简单被调用名称和有限调用者上下文，不能形成跨文件符号绑定。",
+        "label": "失效 Trail 帧渲染条件",
+        "reason": "支持模块、文件和符号帧依赖当前图解析，说明失效深链的反馈缺口。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 383,
+          "endLine": 415
+        },
+        "quote": "      <KnowledgeFrame v-if=\"currentFrame && ['knowledge', 'citation', 'source'].includes(currentFrame.kind)\" :frame=\"currentFrame\" prefix=\"/api/review/knowledge\" @navigate=\"pushTrail\" @loaded=\"currentFrame.title = $event\" />\n      <template v-else-if=\"currentFrame?.kind === 'module'\">\n        <ModuleFrame\n          v-i"
+      },
+      {
+        "key": "c18",
+        "label": "离线解析能力边界",
+        "reason": "支持单文件 AST、Vue SFC、保守正则和名称级候选调用的限制。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/parse.ts",
-          "startLine": 167,
-          "endLine": 195
+          "startLine": 1,
+          "endLine": 9
         },
-        "quote": "      case ts.SyntaxKind.CallExpression: {\n        const ce = node as ts.CallExpression;\n        let callee = \"\";\n        if (ts.isIdentifier(ce.expression)) callee = ce.expression.text;\n        else if (ts.isPropertyAccessExpression(ce.expression)) callee = ce.expression.name.text;\n        if (callee && /^[A-Za-z_$][A"
-      },
-      {
-        "key": "c18",
-        "label": "代码存储的身份与查询边界",
-        "reason": "说明单仓 PoC、快照历史及按稳定符号标识查询未限定当前快照的限制。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/src/code/store.ts",
-          "section": "understanding"
-        },
-        "quote": ""
+        "quote": "/** Deterministic, offline TS/Vue parser. Zero model beyond the already-declared\n * @vue/compiler-sfc:\n *  - TypeScript Compiler AST (single-file, no Program, no cross-file type\n *    resolution; calls are name-level and marked candidate),\n *  - @vue/compiler-sfc for .vue blocks,\n *  - conservative regex for Fastify ro"
       },
       {
         "key": "c19",
-        "label": "空种子集合的失效行为",
-        "reason": "证明有效 association 集合为空时旧种子关系不会由该函数统一标为 stale。",
-        "relation": "explains",
+        "label": "关联符号定位实现",
+        "reason": "支持有限声明匹配和最早同名 token 回退，说明其尚非可靠 AST locator。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 485,
-          "endLine": 503
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 581,
+          "endLine": 602
         },
-        "quote": "/** After a sync, any seed-derived edge whose assoc id is no longer in the seed\n * list is flipped to stale (never silently kept green). */\nexport function invalidateRemovedSeeds(\n  store: Store,\n  validAssocIds: Set<string>,\n): number {\n  ensureReviewRelationsTable(store);\n  if (validAssocIds.size === 0) return 0;\n  c"
+        "quote": "/** Earliest head fragment whose text defines `symbol`. Prefers real\n * declaration/method lines over bare token occurrences. */\nfunction matchSymbolFragment(\n  fragments: { id: string; ordinal: number; text: string }[],\n  symbol: string,\n): { id: string; text: string } | null {\n  const esc = escapeRegExp(symbol);\n  co"
       },
       {
         "key": "c20",
-        "label": "引用范围与快照移动防线",
-        "reason": "直接支持模型引用必须来自实际展示范围，以及生成期间 head 改变时拒绝发布当前结果。",
+        "label": "关系重建失败语义",
+        "reason": "支持关系构建异常只写入 warnings，随后仍会持久化同步结果。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 997,
+          "endLine": 1025
+        },
+        "quote": "  // Rebuild relations from the hand-maintained seed after scanning. Skipped for\n  // ad-hoc `only` captures (those are partial, fixture-style imports).\n  let relations: RelationBuildStats | undefined;\n  if (!options.only) {\n    try {\n      relations = buildReviewRelations(store, repoRoot);\n    } catch (e) {\n      warn"
+      },
+      {
+        "key": "c21",
+        "label": "评审模型配置边界",
+        "reason": "支持配置层仅验证文件、JSON 和 transport，并透传模型及预算字段。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/model-config.ts",
+          "startLine": 14,
+          "endLine": 70
+        },
+        "quote": "export function reviewModelConfigPath(): string | undefined {\n  if (process.env.REVIEW_CODE_MODEL_CONFIG) return process.env.REVIEW_CODE_MODEL_CONFIG;\n  const projectConfig = resolve(process.env.REVIEW_REPO_ROOT ?? process.cwd(), \"config/review-code-model.json\");\n  return existsSync(projectConfig) ? projectConfig : und"
+      },
+      {
+        "key": "c22",
+        "label": "模型传输预算差异",
+        "reason": "支持 ACP 接收请求预算，而 CLI 与 HTTP 分支未消费该预算参数。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 80,
+          "endLine": 161
+        },
+        "quote": "/** Build a port, or null when the host deliberately configured no model.\n * Throws CodeModelUnavailableError on an explicitly-broken/unsupported config so\n * the caller surfaces it honestly instead of silently degrading. */\nexport function buildUnderstandingModelPort(\n  config?: UnderstandingTransportConfig | null,\n):"
+      },
+      {
+        "key": "c23",
+        "label": "生成宿主的验证栅栏",
+        "reason": "支持输入输出预算、引用范围、取消超时和 head 移动检查，界定未确认能力发现的范围。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-store.ts",
-          "startLine": 834,
-          "endLine": 891
+          "startLine": 741,
+          "endLine": 897
         },
-        "quote": "  // Seal provenance deterministically — the model cannot spoof digests/model.\n  const sealed: CodeUnderstandingOutput = {\n    schema_version: 1,\n    result_id: resultId,\n    role: bundle.manifest.role_id,\n    status: \"generated\",\n    module_responsibilities: strList(narrative.module_responsibilities),\n    boundaries: "
+        "quote": "  // Scope the reference set to the requested module (targetId = repo-relative\n  // path prefix). The model may ONLY cite ids we actually hand it; out-of-scope\n  // citations are rejected after the shared validator passes.\n  const targetPrefix = opts.targetId.replace(/\\/+$/, \"\");\n  const targetFiles = snapshot.files.fi"
       }
     ],
     "questions": [
       {
-        "question": "失效的 Trail 深链应显示怎样的不可操作状态与人类可读原因？",
-        "why": "URL 可以恢复已不存在的模块、文件或符号帧，但当前条件渲染可能留下空内容区，读者无法判断对象是删除、改名还是尚未同步。",
-        "nextStep": "确定 missing 与 stale 的展示合同，为失效帧补充 actionable=false 和可读 reason，并增加同步后恢复旧 hash 的浏览器测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c11",
-          "c12"
-        ]
-      },
-      {
-        "question": "是否计划把名称级候选调用升级为可确认的跨文件符号调用？",
-        "why": "当前调用解析只记录简单名称，同文件命中也保持 candidate，限制了依赖图、流程解释和影响分析的精度。",
-        "nextStep": "若需要升级，先定义基于 TypeScript Program 的模块解析、别名与重载合同，再用跨文件源码夹具验证 caller、callee 和状态提升规则。",
-        "blocking": false,
-        "citationKeys": [
-          "c6",
-          "c17"
-        ]
-      },
-      {
-        "question": "跨快照按稳定符号标识读取时，应默认返回当前 head，还是要求显式提供 snapshotId？",
-        "why": "符号身份可跨快照保持相同，但单符号查询未限定快照；同一标识存在多条历史记录时返回语义不确定，也不能据此声称已实现跨 revision 的语义续接。",
-        "nextStep": "审计符号详情与 Trail 调用点，选定当前态或显式历史态合同，并增加 A→B→A 快照回归测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c4",
-          "c18"
-        ]
-      },
-      {
-        "question": "模型与 effort 是否会在 transport 调用前完成能力发现和兼容性拒绝？",
-        "why": "现有材料证明模型端口默认关闭、生成必须显式触发并受预算、引用范围和快照移动防线约束，但没有展示 ACP、CLI 或 HTTP 对具体 model、effort 支持范围的发现与调用前校验。",
-        "nextStep": "核对各 transport 的能力发现实现及运行 trace，并增加不支持 model、effort 组合在调用前被拒绝的端到端测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c14",
-          "c15",
-          "c16",
-          "c20"
-        ]
-      },
-      {
-        "question": "空的 associations 清单应表示清空全部 seed 派生关系，还是跳过本次移除失效？",
-        "why": "关系构建会传入空的有效 ID 集合，但当前失效函数直接返回；删除最后一条 seed 后，历史关系可能继续保留原状态。",
-        "nextStep": "明确空清单合同，并增加从一条 seed 删除到零条的完整同步测试；若表示清空，则让全部旧 seed 关系转为 stale。",
+        "question": "association 的代码 locator 是否应迁移到现有 AST 代码图，并在重载、同名或无法唯一定位时保存 rejected 或 missing？",
+        "why": "当前 confirmed 关系仍依赖有限正则和最早 token 回退，普通方法、重载及同名符号可能绑定到错误片段。",
+        "nextStep": "用真实仓库中的普通方法、箭头函数、重载和同名符号建立样本，定义唯一命中规则，再比较 AST locator 与现有正则结果。",
         "blocking": false,
         "citationKeys": [
           "c8",
           "c19"
+        ]
+      },
+      {
+        "question": "关系构建失败是否应使同步结果进入 partial 或 failed，并在 API、覆盖记录和界面中独立显示？",
+        "why": "当前异常只追加 warnings，文件失败计数和同步状态仍可能看起来已经完成。",
+        "nextStep": "定义材料捕获成功但关系重建失败的状态合同，补充请求级测试，并让同步页展示关系覆盖与失败原因。",
+        "blocking": false,
+        "citationKeys": [
+          "c20"
+        ]
+      },
+      {
+        "question": "同步后深链目标已删除、重命名或不属于当前快照时，Trail 内容区应展示怎样的 missing/stale 页面？",
+        "why": "路由帧可以从 hash 恢复，但模块、文件和符号组件依赖当前图解析，目标消失时可能只有导航控件。",
+        "nextStep": "确定失效帧的人读原因与可执行动作，例如查看历史快照、返回上层或重新同步，并增加浏览器行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c16",
+          "c17"
+        ]
+      },
+      {
+        "question": "实际模型端口是否会在运行前验证所选 model、effort 和预算均受对应 ACP、CLI 或 HTTP 后端支持？",
+        "why": "配置层仅校验 transport 并透传字段，且各传输消费请求预算的方式不同；现有材料没有展示统一能力发现。",
+        "nextStep": "核对通用 Agent CLI/ACP 能力发现路径，为不支持的 model、effort 或预算组合补充提前拒绝及真实传输测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c21",
+          "c22",
+          "c23"
+        ]
+      },
+      {
+        "question": "全部 association seed 被删除时，旧关系应整体标为 stale，还是作为带版本的历史关系保留？",
+        "why": "当前失效函数在有效 seed 集合为空时直接返回，全部删除与部分删除的行为不一致。",
+        "nextStep": "确定空 seed 集合的产品语义，并覆盖全部删除、部分删除和恢复旧 seed 三类同步测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
         ]
       }
     ]
@@ -335,8 +383,8 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
     },
     {
       "kind": "material",
@@ -345,13 +393,13 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "76e54242857bea9401e4ff4bfe8ec1f1afa7778c1105982d2c175033490186f5"
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/main.ts",
-      "digest": "82eb5847c2e790d30601c56f56510991f1469df01ee9c2cf2321fc0a2324e5b4"
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
     },
     {
       "kind": "material",
@@ -360,8 +408,8 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
     },
     {
       "kind": "material",
@@ -375,13 +423,18 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/sync.ts",
-      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+      "key": "omem:apps/server/src/code/dto.ts",
+      "digest": "0213903ededa1ffee899a545cac340492ca4230ca75a5b8ef4ed02eef69949e7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
     },
     {
       "kind": "material",
@@ -395,13 +448,13 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/artifacts.ts",
-      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-model.ts",
-      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
     },
     {
       "kind": "material",
@@ -421,12 +474,12 @@
     {
       "kind": "article",
       "key": "module:review",
-      "digest": "6a4c27ad798a1ab34edaad05fe6be60a8f5e13e89ca1d3330e2de8aae202c0a3"
+      "digest": "12eac0065764c3f75adcde24db5f8fe51ddb0ca1e7ff7f27b5474e27afcf7361"
     },
     {
       "kind": "article",
       "key": "module:code",
-      "digest": "9a300be84265c483ac6efcd8ee78b8de5a60de53bddef5d7228e934757d57ef5"
+      "digest": "930889a2c4e8cc0011ad1d84992d00925d32bf311b752a3b973c1a4cf3b542d3"
     },
     {
       "kind": "article",
@@ -436,32 +489,32 @@
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/store.ts",
-      "digest": "8f1a973404e98d5ca6cd9c560bdf2bd7d94ca0c0a4c94c411ef9594d83ec600a"
+      "digest": "9e12b9fceb2b1a0307a8136378db756e7d53192850b7d377204124a4ded61ba6"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/sync.ts",
-      "digest": "ca8b9998a95f2f4a624787d73d977bd8a8f8dc88401cb84ae3066e421a334419"
+      "digest": "01ab2566e2c50b12b1165d51ac0b497fb3d1fc3fce905c932466555acb1844fa"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/understanding-store.ts",
-      "digest": "5c17af3734de95256497c2f1a414e9df08510c9919cbb5ae03994f8da5665aff"
+      "digest": "e8a8fd893fe38ae18ea5b4002c31023b7970c9bf465cb84b130d803d2fc78617"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/review/app.ts",
-      "digest": "9d5125c5e0a761c5933284c2607fa4731607002c664347324a3e00111ba1b1f3"
+      "digest": "2cea4be63f79453019742d4328a971d6e67ea3d5dd46fbe8f6f8515b850cb60b"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "5a39ce28a79f487cace41092d5d3abde74feb108335650638673a15371c63f8b"
+      "digest": "ae873e103856d84c8a736459db60f5caeccf808edcc504cd2bf5484205c63dcd"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "f51a35003717c1c9d358fa212a935cc1678567b06a379c78986d610c335a1e16"
+      "digest": "9f34da4cc005ef4e6e89baf454473b3a3ff98573db9625d4c1e34bbc7b473aa7"
     },
     {
       "kind": "article",
@@ -477,17 +530,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:43:29.039Z",
+    "at": "2026-09-30T19:57:29.210Z",
     "trace": {
-      "runId": "68dc3041-3707-440b-aab4-12035f365b21",
+      "runId": "c2314d4b-cfc3-4ca0-bf3d-c895dcf93cb2",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "bef8aa922ef2faf75640a2cf236c0a8e1f5be8cf91146660cc2aed2f23dfe112",
-      "contextHash": "bd21394865af5d16c8019d12f809b38b001a53a81bd3c19ce929c748dfbd3fa5",
+      "promptHash": "66711f54b04fe30f104af627e4f240331dd8eee8da9854b99fce7dc3bd6443bc",
+      "contextHash": "d96d8c8d838a0d46c8dc50051d68ff306f6c62ca7141329b98c71916fda76eef",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3e976ba702a90f5572c8a1217f85f2c87d170cb8df8b690cb593f742418717bb",
+      "fingerprint": "27d04c2beb1e49f52bebe4b61b0dc348e30c86d2fc2293705e568562e994b5a8",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -500,11 +553,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef1e-ff65-7e03-ac4e-2038ff2ff8a0"
+        "01a0f3e4-3ba1-79a2-a6b3-382ea735a64d"
       ],
       "usage": {
-        "used": 114128,
-        "size": 760000,
+        "used": 122537,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -512,10 +565,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 312857,
-          "utf8Bytes": 350422,
-          "estimatedTokens": 116808,
-          "budgetedTokens": 146010,
+          "chars": 318033,
+          "utf8Bytes": 357395,
+          "estimatedTokens": 119132,
+          "budgetedTokens": 148915,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -524,17 +577,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:43:49.303Z",
+    "at": "2026-09-30T19:57:54.183Z",
     "trace": {
-      "runId": "2d23bd5b-f93d-419a-8d72-17f31102e8ff",
+      "runId": "715d87bb-cfc2-4c46-8978-06ad352506b3",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "46fae0d1c20e3dcf5e26e6a06f80bfe1e91bcde062c32697a60d74fe64ad4758",
-      "contextHash": "97a9f61f152db580493a5e4b72bfcc38fc8519c02735ab31569109cf405a857f",
+      "promptHash": "b4ee9ea36103174e51c8123e0b6e31a0b7c8c1df21acaa46be9324a2993337c6",
+      "contextHash": "8c247e62aee1cf47305c85ba36960fc188683ed453525b534a56715696cd8b41",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5e51a2adf033f99c91956ef2cf619e77d690161957ba641308cd90e2a6ebee76",
+      "fingerprint": "f845b236f07c6290d9c7dc1780df19e8ef58b80c80f65c8172af60ec4ac75889",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -547,11 +600,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef1f-6e95-7153-a139-07add9e7102b"
+        "01a0f3e4-d066-7313-8e2b-33cb3221b012"
       ],
       "usage": {
-        "used": 111121,
-        "size": 760000,
+        "used": 118208,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -559,10 +612,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 310532,
-          "utf8Bytes": 346965,
-          "estimatedTokens": 115655,
-          "budgetedTokens": 144569,
+          "chars": 313509,
+          "utf8Bytes": 350133,
+          "estimatedTokens": 116711,
+          "budgetedTokens": 145889,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

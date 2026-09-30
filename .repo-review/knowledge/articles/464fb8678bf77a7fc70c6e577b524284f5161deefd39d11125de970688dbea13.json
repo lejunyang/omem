@@ -2,104 +2,99 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/app.ts",
-    "title": "服务端应用装配与 HTTP 接口边界",
-    "summary": "该模块是服务端组合根：创建 Fastify 与核心领域服务，注册捕获、检索、任务、记忆、质量、Lark、Agent 运行及助手接口，并统一管理访问控制和进程生命周期。",
+    "title": "服务端应用装配与 HTTP 边界",
+    "summary": "构建并连接存储、检索、助手、知识、学习与飞书运行时，集中定义 API、安全边界、后台循环和资源释放。此前由单一生命周期片段支撑全部路由的概括已被分段引用替代。",
     "category": "architecture",
     "sections": [
       {
-        "key": "assembly_security",
-        "title": "服务装配与访问边界",
-        "body": "`buildApp` 创建 Fastify、SQLite Store、运行记录、记忆与反馈服务，并把关键词检索和 ACP 模型适配器注入助手运行时；生产路径只选取 ACP profile，未配置或传输不可用时由模型层如实降级。[[c1]]\n\n非回环监听在启动时强制要求 token。对所有 `/api/` 请求，有 token 时比较 Bearer 凭据且使用定时安全比较；无 token 时同时校验 Host 和可选 Origin 必须为回环地址。统一错误处理把版本或陈旧状态冲突映射为 409、并发 probe 映射为 429，其余校验及应用错误返回 400。[[c2]]"
+        "key": "assembly",
+        "title": "应用装配与模块关系",
+        "body": "`buildApp` 是服务端组合根：非回环地址未配置令牌时拒绝启动，随后创建 Fastify、SQLite Store、运行记录、记忆与反馈服务，注册知识路由，并以可用 ACP profile 装配检索和主助手。学习流水线与飞书服务按配置启用；飞书初始化失败会先关闭存储再抛出错误。[[c1]]\n\n该文件负责连接能力而非承载各领域算法。健康接口集中报告 SQLite、personal 模式、检索、通知、学习和飞书运行状态，使调用方能够区分服务存活与可选子系统是否启用。[[c2]]"
       },
       {
-        "key": "route_surface",
-        "title": "领域接口与可信入口",
-        "body": "前半部分路由承接健康检查、手工及文件/Git/Lark/hook 捕获、输入聚合、来源版本与证据查询、关系和搜索、资产读取、变更恢复、通知、任务与作业，以及运行请求、提案、决策、记忆和反馈。多数写入先通过共享合同或局部 Zod schema 校验，再委托 Store、MemoryService 等领域对象。[[c3]]\n\n后半部分提供质量数据集和 Lark 标注会话、Lark onboarding 与绑定、Agent profile 查询/probe，以及通用 agent run。Lark 或学习组件未配置时，相应接口不会伪装可用，而是明确报错或走基础仓储能力。[[c4]]\n\nWeb 助手入口禁止调用方伪造 Lark 渠道、群可见性或 principal，服务端固定创建 owner、web、private 会话；发送、查询、取消和重试回合均交给同一 `AssistantRuntime`。[[c5]]"
-      },
-      {
-        "key": "lifecycle_limits",
-        "title": "启动、恢复与关闭",
-        "body": "应用在返回前恢复遗留的 pending/running 助手回合，再启动提醒、输入聚合以及可选学习和 Lark worker；静态前端仅在构建目录存在时挂载。关闭钩子会停止定时器和助手，等待可选服务及 Runs 结束，最后关闭 Store。[[c6]]\n\n该文件主要定义 HTTP 与生命周期边界，不实现连接器的路径安全、记忆治理或模型协议细节；这些行为由被注入模块负责。当前健康响应明确声明 `personal` 与 SQLite，因此这里不能据此推断多租户隔离已经实现。[[c3]]"
+        "key": "http-lifecycle",
+        "title": "HTTP 边界、路由与生命周期",
+        "body": "所有 `/api/` 请求先经过统一安全钩子：配置令牌时以定时安全比较校验 Bearer token；无令牌时仅接受本机 Host 和本机 Origin。输入、冲突与并发探测错误也在此统一映射为 HTTP 状态。[[c3]]\n\n捕获、connector、原文与证据、搜索、变更恢复、通知、任务、作业和运行时请求集中暴露在前半段路由；记忆提案、反馈、质量标注、飞书接入、profile 探测和普通运行则由后续路由承接。[[c4]][[c5]] 这组分段依据替代了此前仅凭助手与生命周期代码概括全部路由的结论。\n\nWeb 助手会话由服务端固定为 owner、web 和 private，拒绝客户端伪造飞书频道或群可见性。启动时恢复未完成轮次并启动提醒、输入聚合、学习及飞书循环；关闭时中止助手并依次释放后台服务、运行、检索和数据库资源。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "核心服务与助手装配",
-        "reason": "支持 Fastify、Store、记忆服务、ACP 模型、关键词检索及 AssistantRuntime 的组合关系。",
-        "relation": "explains",
+        "label": "应用依赖装配",
+        "reason": "支持组合根创建存储、知识路由、检索、ACP 助手以及可选学习和飞书运行时的论述。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
           "startLine": 44,
-          "endLine": 77
+          "endLine": 129
         },
         "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
       },
       {
         "key": "c2",
-        "label": "API 请求鉴权与错误映射",
-        "reason": "直接支持 Bearer token 的安全比较、无 token 时的 Host/Origin 回环限制及 HTTP 错误码映射。",
+        "label": "健康状态汇总",
+        "reason": "支持健康接口公开当前存储模式及检索、学习、飞书运行状态的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 179,
+          "endLine": 197
+        },
+        "quote": "  app.get(\"/api/health\", async () => ({\n    status: \"ok\",\n    storage: \"sqlite\",\n    mode: \"personal\",\n    retrieval: assistantRetrieval.health(),\n    notificationMode: config.notifications.mode,\n    learning: learning?.status() ?? {\n      running: false,\n      processed: 0,\n      lastError: null,\n    },\n    lark: lark"
+      },
+      {
+        "key": "c3",
+        "label": "API 安全与错误映射",
+        "reason": "支持令牌、本机来源限制和统一错误状态码边界的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 126,
-          "endLine": 170
+          "startLine": 134,
+          "endLine": 178
         },
         "quote": "  app.addHook(\"onRequest\", async (req, reply) => {\n    if (!req.url.startsWith(\"/api/\")) return;\n    if (config.token) {\n      const candidate = String(req.headers.authorization || \"\").replace(\n        /^Bearer /,\n        \"\",\n      );\n      const a = Buffer.from(candidate),\n        b = Buffer.from(config.token);\n      "
       },
       {
-        "key": "c3",
-        "label": "捕获、证据、任务与记忆路由",
-        "reason": "支持健康状态以及捕获、检索、恢复、通知、任务、作业、提案、记忆和反馈等接口范围，也表明当前运行模式为 personal。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 171,
-          "endLine": 394
-        },
-        "quote": "  app.get(\"/api/health\", async () => ({\n    status: \"ok\",\n    storage: \"sqlite\",\n    mode: \"personal\",\n    notificationMode: config.notifications.mode,\n    learning: learning?.status() ?? {\n      running: false,\n      processed: 0,\n      lastError: null,\n    },\n    lark: larkRuntime?.status() ?? {\n      running: false,"
-      },
-      {
         "key": "c4",
-        "label": "质量、Lark 与 Agent 运行路由",
-        "reason": "支持质量标注、Lark 集成、profile probe 和通用 run 接口及其可选组件边界。",
-        "relation": "explains",
+        "label": "捕获、证据与任务路由",
+        "reason": "直接覆盖捕获、connector、证据、搜索、通知、任务、作业及运行时请求等前半段 API，修正旧稿引用覆盖不足。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 395,
-          "endLine": 524
+          "startLine": 198,
+          "endLine": 343
         },
-        "quote": "  app.get(\"/api/quality/datasets\", async () => quality.datasets());\n  app.get<{ Params: { id: string } }>(\n    \"/api/quality/datasets/:id/samples\",\n    async (req) => quality.samples(req.params.id),\n  );\n  app.post<{ Params: { id: string } }>(\n    \"/api/quality/samples/:id/revise\",\n    async (req) => {\n      const body"
+        "quote": "  app.get(\"/api/sources\", async () => store.list());\n  app.post(\"/api/captures\", async (req) =>\n    store.capture(captureSchema.parse(req.body)),\n  );\n  app.post(\"/api/connectors/file\", async (req) => {\n    const b = z.object({ path: str }).parse(req.body);\n    return store.capture(\n      captureSchema.parse(await file"
       },
       {
         "key": "c5",
-        "label": "Web 助手会话接口",
-        "reason": "支持 Web 身份与可见性由服务端固定，以及回合发送、查询、取消和重试均委托 AssistantRuntime。",
+        "label": "记忆、质量与集成路由",
+        "reason": "直接覆盖记忆、反馈、质量、飞书接入、profile 探测和运行管理等后半段 API。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 344,
+          "endLine": 533
+        },
+        "quote": "  app.get(\"/api/proposals\", async () => memory.proposals());\n  app.get<{ Params: { id: string } }>(\n    \"/api/proposals/:id\",\n    async (req, reply) =>\n      memory.proposal(req.params.id) ??\n      reply.code(404).send({ error: \"Proposal not found\" }),\n  );\n  app.post(\"/api/proposals/evaluate\", async (req) => {\n    con"
+      },
+      {
+        "key": "c6",
+        "label": "助手路由与进程生命周期",
+        "reason": "支持 Web 会话身份约束、轮次操作、未完成轮次恢复、后台循环及关闭清理流程。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 525,
-          "endLine": 587
+          "startLine": 534,
+          "endLine": 640
         },
         "quote": "  app.post(\"/api/assistant/conversations\", async (req) => {\n    const body = z\n      .object({\n        chatId: z.string().min(1).max(200),\n        threadId: z.string().max(200).nullish(),\n        // C: web callers cannot assert a Lark channel, group visibility, or choose\n        // the principal. The server owns these;"
-      },
-      {
-        "key": "c6",
-        "label": "应用启动恢复与资源清理",
-        "reason": "支持静态资源挂载、未完成回合恢复、周期任务启动以及关闭时的资源释放顺序。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 589,
-          "endLine": 619
-        },
-        "quote": "  const web = resolve(\"apps/web/dist\");\n  if (existsSync(web))\n    await app.register(staticFiles, { root: web, prefix: \"/\" });\n  // G20: recover any pending/running turns from a previous process.\n  await assistant.recoverUnfinishedTurns();\n  const tick = setInterval(() => store.remind(), 30000);\n  tick.unref();\n  let "
       }
     ],
     "questions": []
@@ -108,12 +103,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
     },
     {
       "kind": "material",
@@ -123,7 +118,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
     },
     {
       "kind": "material",
@@ -143,7 +138,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -159,34 +154,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:01:07.567Z",
+    "at": "2026-09-30T20:05:27.602Z",
     "trace": {
-      "runId": "5939a5d9-2fb1-4fd2-92ad-27795a7fa07d",
-      "roleId": "code-analyst",
+      "runId": "63ddaf9b-ed21-48fb-b8bc-ecf82acea82e",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "af3f9f040078a733636075aa96a85858b9c2cc0f1ffb6280afe370ee5f53acec",
-      "contextHash": "3f6476e233186a00266e0386fa59db72da4c4012f7c5063e9c7d3b28bea97c65",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "8f665af77f822806976ec69d457a278e019300403133e4ca301442fb4644f993",
+      "contextHash": "2e81f20b3208704306b47d726cd3c7fc23b0bc5c098a16db723147a792223950",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "77845a0d1b99feb988eebfd79b0a3bd69a3ee02df598a2b1535687832a4a6ae4",
+      "fingerprint": "5b2bf36801c127adf6b6703b924bd05e7b3c4e221918e91f7ccedd193aa9d16a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8a-51d6-7a13-bf1b-41e257fad897"
+        "01a0f3eb-3ca5-7922-a4bf-cc0ad37b30af"
       ],
       "usage": {
-        "used": 49732,
-        "size": 760000,
+        "used": 59433,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -194,10 +189,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 118435,
-          "utf8Bytes": 124685,
-          "estimatedTokens": 41562,
-          "budgetedTokens": 51953,
+          "chars": 124533,
+          "utf8Bytes": 128483,
+          "estimatedTokens": 42828,
+          "budgetedTokens": 53535,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -206,17 +201,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:01:23.465Z",
+    "at": "2026-09-30T20:05:52.827Z",
     "trace": {
-      "runId": "9e7e8782-5c7c-44f6-9d09-ecc2dff3f098",
+      "runId": "a7eced54-1981-4cf8-8c1a-56d01a988454",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "3fdcaae498529938bd9fe35ccbc9d76d030eaa9b826416c85c37df46416b73aa",
-      "contextHash": "255280d8eee90fce267206b31dd67e7a8ba1e609a02f63c86c068633a05b3ac9",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "02404342034fb3b525a467f02e3f95405377e081f66a2371e756633610be94e6",
+      "contextHash": "b68f47ccfdf205d686590d5eecd768e8e572c82d5deb42c2c94661a8c106b88a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9f12072989f83ae55b45e682e691f1cddefe81efc261d9f8a60294b40a807ca5",
+      "fingerprint": "1f58cac56e69fb61f0e61d45d16b245f5ef94d0c8ccd1c5cfd1469c34500526f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -229,11 +224,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8a-c95d-7cc2-890d-e6ba0d8d7a18"
+        "01a0f3ec-2635-7ea0-bf90-d1d2243a4a16"
       ],
       "usage": {
-        "used": 47735,
-        "size": 760000,
+        "used": 60331,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -241,10 +236,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 118261,
-          "utf8Bytes": 124127,
-          "estimatedTokens": 41376,
-          "budgetedTokens": 51720,
+          "chars": 137176,
+          "utf8Bytes": 146360,
+          "estimatedTokens": 48787,
+          "budgetedTokens": 60984,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

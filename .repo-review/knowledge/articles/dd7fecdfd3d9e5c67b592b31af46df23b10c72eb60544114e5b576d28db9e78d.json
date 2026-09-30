@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/live-assistant-smoke.ts",
+    "title": "真实 ACP 助理现场冒烟验证",
+    "summary": "在临时数据库和合成材料上调用选定的真实 ACP 模型，验证跨语言事实召回以及任务创建、改期、完成；报告写入配置数据目录，但不发送外部消息或写入用户数据库。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "live-boundary",
+        "title": "现场验证边界与装配",
+        "body": "脚本声明只使用合成材料，但会发起真实 ACP 调用；它创建临时 Store，选择 live profile，并强制模型为 `gpt-5.6-sol`。[[c1]] 随后捕获一条英文熔断器事实，将 AcpAssistantModel、KeywordRetrieval、MemoryService 和时区配置装入 AssistantRuntime，所有对话都在临时私有 web 会话中执行。[[c2]]"
+      },
+      {
+        "key": "recall-and-tasks",
+        "title": "跨语言召回与任务生命周期",
+        "body": "中文提问必须选中原英文 fragment，回复还需包含连续失败次数 7 和冷却 41 秒。之后脚本以自然语言创建带明确时间的英语复习任务，断言北京时间被规范化为 UTC；再改期并标记完成，直接检查持久化任务的到期时间和状态。[[c3]] 这验证了真实模型参与下的端到端主路径，而不是仅验证模型输出文本。"
+      },
+      {
+        "key": "report-and-limits",
+        "title": "报告与未覆盖范围",
+        "body": "每轮输入、答案、工具动作和选中证据都会进入报告；失败设置非零退出码，最终报告写到配置数据目录的 verification 子目录，并关闭、删除临时 Store。[[c4]] 材料没有覆盖模型不可用后的重试、群聊权限、重复事件、取消栅栏、提醒实际投递或真实外部消息，因此这些能力仍需其他测试证明。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "真实模型与临时环境",
+        "reason": "支持脚本使用合成数据、真实 ACP 调用、临时 Store，并限定实际模型。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-assistant-smoke.ts",
+          "startLine": 13,
+          "endLine": 22
+        },
+        "quote": "// Synthetic materials only. Real ACP calls, no external messages or user DB writes.\nconst config = loadConfig();\nconst dir = mkdtempSync(join(tmpdir(), \"omem-live-assistant-\"));\nconst store = new Store(dir);\nconst report: Record<string, unknown> = { startedAt: new Date().toISOString(), steps: [] };\ntry {\n  const base "
+      },
+      {
+        "key": "c2",
+        "label": "助理运行时现场装配",
+        "reason": "支持英文材料捕获以及 ACP 模型、记忆、关键词检索和时区的运行时装配。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-assistant-smoke.ts",
+          "startLine": 23,
+          "endLine": 35
+        },
+        "quote": "  const revision = store.capture({ source: \"manual\", externalId: \"synthetic:breaker\", title: \"CircuitBreaker design\",\n    parts: [{ type: \"text\", text: \"The CircuitBreaker opens after exactly seven consecutive failures. Its cooldown is 41 seconds.\" }] }).revision;\n  const runtime = new AssistantRuntime(store, new AcpAs"
+      },
+      {
+        "key": "c3",
+        "label": "召回与任务行为断言",
+        "reason": "支持跨语言证据命中、事实值检查及任务创建、改期和完成的持久化断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-assistant-smoke.ts",
+          "startLine": 36,
+          "endLine": 46
+        },
+        "quote": "  const recalled = await turn(\"之前记录的熔断器连续失败几次会打开，冷却多久？\");\n  assert.ok(JSON.stringify(recalled.turn.selectedEvidence).includes(revision.fragments[0]!.id), \"Must cite original English source\");\n  assert.match(recalled.turn.result, /7|七|seven/i); assert.match(recalled.turn.result, /41|四十一/);\n  await turn(\"帮我记一下：2030年10月2日"
+      },
+      {
+        "key": "c4",
+        "label": "现场报告与清理",
+        "reason": "支持失败退出、验证报告落盘以及临时资源清理行为。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-assistant-smoke.ts",
+          "startLine": 47,
+          "endLine": 54
+        },
+        "quote": "} catch (error) {\n  report.status = \"failed\"; report.error = String(error); process.exitCode = 1;\n} finally {\n  report.finishedAt = new Date().toISOString();\n  const output = join(config.dataDir, \"verification\"); mkdirSync(output, { recursive: true });\n  writeFileSync(join(output, \"live-assistant.json\"), JSON.stringify"
+      }
+    ],
+    "questions": [
+      {
+        "question": "现场报告是否需要记录 ACP 命令版本、完整模型配置摘要和运行 trace 标识，以便结果可重复审计？",
+        "why": "当前材料只明确写入模型、effort、步骤和结果，未显示 ACP 客户端版本或 trace 定位信息。",
+        "nextStep": "检查 selectLiveProfile 与 AcpAssistantModel 的报告合同，并在现场产物中增加不含秘密的版本和 trace 字段。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-assistant-smoke.ts",
+      "digest": "717ee10967b49593e5dbb5e764f0863bd1b30aba4aada54bd0b361adfd64896c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-refresh-smoke.ts",
+      "digest": "18d18495727491cd7e1cb6fa8b9ae440269175d9ec4c3ce24e9a944e5aa7de11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-retrieval-smoke.ts",
+      "digest": "7b4c6cdfbc7b93a6883d060595ffde9c5bce21d7ca4d2358244c801293857a91"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/retrieval-index.ts",
+      "digest": "e00fa36bfb6fb2bcdf888653bc52f006be6a7d2527b967783c02c2bf52ee696f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "183b2bdd497d04202fd81a7e942c574fe56fb71f75b6049b5b456830d3515672"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-30T20:06:44.637Z",
+    "trace": {
+      "runId": "32836daa-c91f-40bc-a055-07cb8a401b03",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "9fbc6a19edb49918ad30e134f34111f4ec1a733de2643000abd5bb05cf9c58ea",
+      "contextHash": "4d0a6953f3c8d56701648816d4adb237ac17a2117183d456ccbc385a8f6118ba",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "373fbf149d393a5a56ee68643b6bfa3e883fe58908062e61a025424a75ee0d37",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3ec-4a83-7c30-98ac-b2ff2f4b589a"
+      ],
+      "usage": {
+        "used": 56841,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104779,
+          "utf8Bytes": 114182,
+          "estimatedTokens": 38061,
+          "budgetedTokens": 47577,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-30T20:07:17.512Z",
+    "trace": {
+      "runId": "cd5c360d-6e31-436c-97e1-c50bf99e7280",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "de9a7fdfb89da3a5e1c8c2e12bd2d7578ea91468b9d96b0f49c6d9ed581ea25d",
+      "contextHash": "912127306e9f89455cfe1a2d00d9d1da6d31ce8fba623f03c7203ce1043d6584",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bcfb337843ae7651f08f563729b2637ec3c30eee31bfbdcfb35c448e04bc1084",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3ed-4a7d-7481-ae91-112f53c809e7"
+      ],
+      "usage": {
+        "used": 56563,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 115126,
+          "utf8Bytes": 128677,
+          "estimatedTokens": 42893,
+          "budgetedTokens": 53617,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

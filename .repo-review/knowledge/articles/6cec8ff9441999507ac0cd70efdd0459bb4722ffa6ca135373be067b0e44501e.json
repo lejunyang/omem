@@ -2,26 +2,26 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/code/artifacts.ts",
-    "title": "代码理解产物的导出、重绑定与恢复",
-    "summary": "该模块将当前成功的模型代码理解导出为可版本化 JSON，并在新快照中按稳定 locator 重绑定、校验和恢复，同时将变化或不可信产物标记为 stale/rejected。",
+    "title": "代码理解产物的导出与安全恢复",
+    "summary": "将当前成功的模型代码理解导出为可版本化 JSON，并在新快照中按稳定定位符重绑定、校验和恢复；产物始终是派生视图而非独立证据。",
     "category": "implementation",
     "sections": [
       {
         "key": "export",
-        "title": "导出条件与依赖清单",
-        "body": "生成产物是派生知识：JSON 保存生成 provenance，Markdown 仅是可读投影，两者都不应作为独立证据重新摄取。导出只接受当前 snapshot 上状态成功、非 seed、非 stale 的模型结果；目标涉及的源文件正文和规则证据摘录分别计算哈希，组成精确依赖清单。[[c1]]\n\n输出还收集 claims、key flows 和显式引用涉及的节点，把内部 symbol id 同路径、qualifiedName、kind locator 一起保存；若引用节点在当前快照不存在则导出失败。文件名由 targetId 哈希生成，写入指定 destination，而常量默认目录指向版本化 generated 知识目录。[[c2]]"
+        "title": "产物结构与导出条件",
+        "body": "代码理解产物保存目标、依赖摘要、被引用节点定位符、模型输出和可选预算；JSON 保留生成来源，Markdown 仅是可读投影，两者都不会作为独立原始证据重新摄取。依赖清单对目标范围内已捕获源码及规则证据分别计算哈希，使内容变化能够令旧产物失效。[[c1]]\n\n导出只接受当前快照中成功、非 seed、非 stale 的模型结果。输出涉及的每个节点都必须能在当前符号图中解析，并以路径、qualified name 和 kind 写入可迁移定位符；不满足条件时立即拒绝导出。[[c2]]"
       },
       {
         "key": "restore",
-        "title": "恢复校验与失效处理",
-        "body": "恢复逐个读取 JSON：版本、模型 provenance、seed/verified 标志不符会 rejected；当前依赖清单 digest 与产物不一致则标记 stale，不覆盖为成功。节点只能在目标范围内按 path、qualifiedName、kind 重新解析，任一 locator 缺失都会拒绝。[[c3]]\n\n重绑定后仅替换当前 input digest 与节点引用，保留原模型输出及原生成摘要，再运行 `validateCodeUnderstanding` 做整体合同校验。数据库已有同快照、目标和生成时间的有效记录时幂等返回 restored；否则事务写入 understanding 与 node/evidence refs，并明确记录“已校验来源与引用、未独立语义复核”。[[c4]]"
+        "title": "恢复、重绑定与失效处理",
+        "body": "恢复时逐个读取版本化 JSON，先检查模型来源真实性：seed、缺少模型标记或冒充独立验证的产物会被拒绝。依赖摘要不一致时标为 stale 并保留原因，而不是覆盖当前知识；节点路径越界或定位符无法解析同样进入 rejected。[[c3]]\n\n通过检查后，旧节点 id 才会映射到当前快照符号，并重新执行 `CodeUnderstanding` 合同校验。恢复记录保留原模型输出与原生成摘要，只更新当前引用绑定和输入摘要；写入的 curated note 还明确说明“引用校验通过但未进行独立语义复核”，防止把结构恢复误称为完整复核。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "派生产物与依赖清单",
-        "reason": "支持产物不是独立证据，以及按捕获源码和规则摘录精确计算依赖哈希的说明。",
+        "reason": "支持产物不是独立证据、记录依赖和节点，并按源码及规则证据计算内容哈希。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -34,7 +34,7 @@
       {
         "key": "c2",
         "label": "当前模型结果导出",
-        "reason": "说明导出资格、引用节点收集、locator 保存、缺失节点失败及文件写入。",
+        "reason": "支持仅导出当前成功模型结果、收集引用节点定位符并生成版本化 JSON 文件。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -46,9 +46,9 @@
       },
       {
         "key": "c3",
-        "label": "产物 provenance、摘要与 locator 校验",
-        "reason": "支持 stale/rejected 分类，以及目标范围内稳定 locator 重解析的流程。",
-        "relation": "explains",
+        "label": "恢复前来源与依赖检查",
+        "reason": "支持拒绝不合法模型来源、将依赖变化标为 stale，并限制定位符目标范围。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
@@ -59,8 +59,8 @@
       },
       {
         "key": "c4",
-        "label": "重绑定、验证与事务恢复",
-        "reason": "说明保留原生成信息、执行完整验证、幂等检查和引用表写入。",
+        "label": "节点重绑定与合同校验",
+        "reason": "支持重映射当前节点、重新校验理解合同、保留原生成信息并注明尚未独立语义复核。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -77,12 +77,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
     },
     {
       "kind": "material",
@@ -92,7 +92,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
     },
     {
       "kind": "material",
@@ -112,7 +112,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -128,34 +128,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:00:11.567Z",
+    "at": "2026-09-30T20:05:27.602Z",
     "trace": {
-      "runId": "52bfcad0-9fdc-47e5-83bf-a5a2e62d16eb",
-      "roleId": "code-analyst",
+      "runId": "63ddaf9b-ed21-48fb-b8bc-ecf82acea82e",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "7693443e7ffc4e5945d897d38ee976dc471ecaf46a7bff81ad5068ee500354a8",
-      "contextHash": "93d33bdcf364188db2e8288b5de371d4ad6b5da3cea26a3d107436c16da66422",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "8f665af77f822806976ec69d457a278e019300403133e4ca301442fb4644f993",
+      "contextHash": "2e81f20b3208704306b47d726cd3c7fc23b0bc5c098a16db723147a792223950",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "47b4ee9baabcfc056a92a9b129a9b44f57d18e4062f7c32e1170d4e62c53f72a",
+      "fingerprint": "5b2bf36801c127adf6b6703b924bd05e7b3c4e221918e91f7ccedd193aa9d16a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee89-3b9f-7a63-aa6c-fa9be21dec9c"
+        "01a0f3eb-3ca5-7922-a4bf-cc0ad37b30af"
       ],
       "usage": {
-        "used": 48231,
-        "size": 760000,
+        "used": 59433,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -163,10 +163,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 110194,
-          "utf8Bytes": 112586,
-          "estimatedTokens": 37529,
-          "budgetedTokens": 46912,
+          "chars": 124533,
+          "utf8Bytes": 128483,
+          "estimatedTokens": 42828,
+          "budgetedTokens": 53535,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -175,17 +175,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:00:36.734Z",
+    "at": "2026-09-30T20:05:52.827Z",
     "trace": {
-      "runId": "25c11244-ff92-40b5-8b64-5c7b381efdd3",
+      "runId": "a7eced54-1981-4cf8-8c1a-56d01a988454",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0a5176a755c3d1c6475bade81c3131d7156678b4d22f76be56de154c68c6f4e1",
-      "contextHash": "50ac857e735b3a8c7fa90d2f57315b07fe81a89e1cd7fb5c5d2b6d46f970375f",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "02404342034fb3b525a467f02e3f95405377e081f66a2371e756633610be94e6",
+      "contextHash": "b68f47ccfdf205d686590d5eecd768e8e572c82d5deb42c2c94661a8c106b88a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "add626a57bc7406023909a59cd770dcbf644abea5d1c3cac645bd5a0306f06c1",
+      "fingerprint": "1f58cac56e69fb61f0e61d45d16b245f5ef94d0c8ccd1c5cfd1469c34500526f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -198,11 +198,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee89-eefa-7813-8670-5fefff67a40b"
+        "01a0f3ec-2635-7ea0-bf90-d1d2243a4a16"
       ],
       "usage": {
-        "used": 51158,
-        "size": 760000,
+        "used": 60331,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -210,10 +210,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 125493,
-          "utf8Bytes": 134063,
-          "estimatedTokens": 44688,
-          "budgetedTokens": 55860,
+          "chars": 137176,
+          "utf8Bytes": 146360,
+          "estimatedTokens": 48787,
+          "budgetedTokens": 60984,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

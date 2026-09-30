@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/retrieval/semantic.ts",
+    "title": "SQLite 本地语义检索与词法融合",
+    "summary": "在关键词检索之上增量构建本地向量索引，以精确余弦和 RRF 融合改善中文语义召回，并在模型或索引异常时回退词法结果。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "indexing",
+        "title": "增量索引流程",
+        "body": "`SemanticRetrieval` 继承关键词实现，只索引当前 source head 上的非派生片段。后台 `start` 周期调用 `indexBatch`，同一时间复用一个工作 Promise，正常时每秒追赶、出错后延迟 30 秒。每个长片段按 400 字窗口、320 字步长重叠切分，分批生成 passage 向量；全部向量准备好后才在事务中写入分片及 head 标记，从而避免半成品被视为已索引。[[c1]]"
+      },
+      {
+        "key": "search",
+        "title": "查询、融合与降级",
+        "body": "查询先取最多 100 条词法候选；空查询或模型尚未加载时直接返回词法结果。模型可用后生成 query 向量，对同一片段的多个窗口取最高余弦分数，并在扫描过程中执行可见性和捕获时间过滤。词法与稠密分支通过基于排名的倒数分数融合，合并 `routes` 后稳定排序；嵌入或维度异常会记录健康错误并退回词法召回。[[c2]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界条件与依赖",
+        "body": "窗口函数至少产生一个窗口，覆盖空文本；向量必须非空、有限且范数非零。读取旧向量时若维度与当前查询向量不同会明确报错，要求模型身份变化时建立新索引。该类依赖 `EmbeddingModel` 提供身份、query/passage 嵌入和关闭能力，也依赖 `KeywordRetrieval` 作为兼容基线；代码采用全量精确余弦，适用前提是个人 SQLite 资料规模。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "语义索引调度与事务写入",
+        "reason": "支持后台追赶、重叠窗口、批量嵌入和原子写入的流程说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 34,
+          "endLine": 77
+        },
+        "quote": "  /** Automatic catch-up includes subsequent captures, without blocking a query on indexing. */\n  start() {\n    const tick = async () => {\n      if (this.stopped) return;\n      try { await this.indexBatch(); } catch (error) { this.error = String(error); }\n      if (!this.stopped) { this.timer = setTimeout(tick, this.er"
+      },
+      {
+        "key": "c2",
+        "label": "语义与词法融合搜索",
+        "reason": "支持过滤、最高窗口得分、RRF 融合及异常降级行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 80,
+          "endLine": 111
+        },
+        "quote": "  /** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const lexical = super.searchSources({ ...query, limit: 100 });\n    if (!query.text.trim() || !this.model) return lexical.slice(0, query.limit ?? 20);\n    try {\n    "
+      },
+      {
+        "key": "c3",
+        "label": "窗口与向量校验",
+        "reason": "说明切窗边界和非法向量的显式失败条件。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 122,
+          "endLine": 135
+        },
+        "quote": "export function embeddingWindows(text: string) {\n  const windows: { start: number; end: number }[] = [];\n  for (let start = 0; start < Math.max(1,text.length); start += 320) {\n    windows.push({ start, end: Math.min(text.length,start+400) });\n    if (start + 400 >= text.length) break;\n  }\n  return windows;\n}\nfunction n"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-30T19:23:17.669Z",
+    "trace": {
+      "runId": "32bc7d66-0960-4507-80cf-17737c4e381d",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5b1fa399e7bc0e096163ad7621c6d6cedae5449ab103a6d353dfae9a150e5ca4",
+      "contextHash": "3c896e38a13d7d900157c57cdaeea7f6b32a47ad974299e132ac389ffb142583",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f16319e6c3af0d7b77eb2d7755bcca287305890e2afe10df88e9a961aa755612",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3c4-9d14-7323-afcf-e36a972bfc67"
+      ],
+      "usage": {
+        "used": 46720,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80555,
+          "utf8Bytes": 82669,
+          "estimatedTokens": 27557,
+          "budgetedTokens": 34447,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-30T19:24:13.144Z",
+    "trace": {
+      "runId": "e9553d28-dcce-43c9-a853-c8268b0135ee",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "f7101426752da5e0bbe0df083bc8011dc216cbd96a2fd1c43b88d891baebeb5c",
+      "contextHash": "03c89395898c13e7271889abec2597803ac48818cbf7249119f9fd6951cc19ae",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b652922ee8459b62a440ad55335d34bedd6941a43590a2b38eeb5170513fea5f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3c5-8213-79a0-99bd-451dafbf8ba5"
+      ],
+      "usage": {
+        "used": 51200,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 94682,
+          "utf8Bytes": 103496,
+          "estimatedTokens": 34499,
+          "budgetedTokens": 43124,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

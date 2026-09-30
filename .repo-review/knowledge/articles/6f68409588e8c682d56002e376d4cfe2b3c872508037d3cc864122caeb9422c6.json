@@ -2,31 +2,36 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-    "title": "飞书实时事件接入、路由与可靠交付",
-    "summary": "将飞书 WebSocket 事件规范化并持久化，按配对、助手回复、群聊采集和卡片动作分流，并以幂等收件箱、事务性发件箱及连接租约降低重复处理和崩溃丢消息风险。",
+    "title": "飞书实时事件接入、去重与路由",
+    "summary": "实现飞书 WebSocket 事件标准化、连接租约、收件箱幂等、私聊配对、群消息捕获与助手回复 outbox；助手仅接受绑定所有者的消息，普通群消息会自动建立监控目标，图片下载异常的最终处理策略仍待明确。",
     "category": "implementation",
     "sections": [
       {
-        "key": "event_flow",
-        "title": "事件接入与业务分流",
-        "body": "模块把 SDK 的多种事件形态归一为统一结构：缺少事件 ID 时对负载计算稳定摘要，时间戳兼容秒与毫秒，消息正文则尝试从 JSON 提取。官方适配器注册消息、群成员变化和卡片动作处理器，并在连接失败后定期尝试恢复。[[c1]]\n\n事件先按应用与事件 ID 写入收件箱；同 ID、同摘要视为重投，同 ID、不同摘要报冲突。机器人进退群会启停群采集目标；普通消息还会检查有效连接、绑定身份及是否为机器人自身消息。绑定所有者的私聊或群内提及进入助手路径，其余获准群消息被转换为统一 Capture parts 后交给输入聚合器。[[c2]]"
+        "key": "connection",
+        "title": "事件入口与连接生命周期",
+        "body": "模块将消息、机器人入退群和卡片动作等 WebSocket 回调归一为统一事件，提取发送者、会话、消息类型、回复关系和时间；平台缺少事件 ID 时，以载荷摘要生成稳定标识。适配器按租户品牌选择飞书或 Lark 域名，记录连接状态，并在连接失败后周期性尝试恢复。[[c1]]\n\n多进程消费通过数据库租约互斥：只有空闲或已过期租约可被抢占，后续心跳和释放都必须携带原租约令牌。[[c2]] 连接管理器取得租约后读取加密凭据并启动适配器；错误入库前会清除当前密钥及常见令牌形态。心跳还会核对连接是否仍启用且版本未变化，配置换版、停用或心跳异常都会关闭旧连接并释放租约。[[c7]]"
       },
       {
-        "key": "reply_delivery",
-        "title": "助手回复与崩溃恢复",
-        "body": "助手返回后，取消的 turn 不投递；并发重投遇到仍在运行的 turn 时不确认收件箱，也不重复入队。已存在发件箱记录的完成 turn 直接确认；若 turn 已完成但发件箱缺失，则进入恢复入队路径。回复必须先持久化，再将收件箱标为已处理，使入队失败时仍可依赖飞书重投。[[c3]]\n\n发件箱创建会在一个数据库事务内写入 change、delivery intent、关联表，并把 intent 关联回会话 turn。provider UUID 优先由频道、会话和 turn 共同生成，因此同一 turn 重投复用标识，而不同 turn 即使回复文字相同也得到独立投递；回复卡片正文截断为 8000 字符。[[c4]]"
+        "key": "routing",
+        "title": "幂等准入、自动群监控与配对",
+        "body": "事件先按应用与事件 ID 写入收件箱；重复事件复用原记录，而同一标识对应不同载荷摘要时拒绝处理。机器人入群会启用群监控，退群则停用。助手准入同时要求发送者是当前绑定所有者：私聊可直接进入助手，群聊还必须明确提及机器人，不能由任意群成员仅凭提及触发。助手回复先写入 outbox 并关联 turn，之后才把 inbox 标为已处理，以便崩溃重投时恢复且避免重复投递。[[c3]]\n\n未进入助手路径的普通群消息会先以 `INSERT OR IGNORE` 自动建立启用中的监控目标，再查询该目标并捕获消息；因此捕获并不只消费预先配置的群。捕获保留外部身份、绑定版本、事件时间和引用关系，只有发送者匹配绑定所有者时才写入规范化 owner 身份。[[c3]] 私聊中的 32 位配对码另走配对流程：仅接收消息、完整发送者与会话信息以及规定格式的代码才交给配对接收器，并将成功或拒绝结果完成入箱。[[c4]]"
       },
       {
-        "key": "connection_boundaries",
-        "title": "连接、媒体与解析边界",
-        "body": "连接管理器以数据库租约限制同一连接的活动实例，从加密存储读取凭据，并在记录错误前替换凭据和常见令牌；心跳还会核对连接版本，版本变化、租约失败或连接失效都会停止当前实例。[[c5]]\n\n图片仅在存在 image key、消息 ID 和媒体端口时下载，否则退化为占位文本；富文本只处理标题、文本、链接、@ 与图片占位，其他节点被忽略。该文件仅规定媒体下载端口及调用方式，不能据此确认生产下载实现的大小、超时、鉴权或 MIME 校验。[[c6]]"
+        "key": "capture-delivery",
+        "title": "捕获部件与可靠回复",
+        "body": "文本消息形成单一文本部件，富文本会把标题和段落拆成多个部件，并保留链接、提及、内嵌图片占位及逐部件来源信息。图片在同时具备 image key、媒体端口和 message ID 时下载为资源型图片；缺少任一下载条件时才降级为“[图片消息]”。这替代了此前“任何图片下载失败都会自动降级”的过宽结论：实际下载调用抛错时，本函数并未捕获。[[c5]]\n\n助手回复以事务创建变更、delivery intent，并在同一事务中把 outbox 关联到 turn；同一 turn 使用确定性的提供方 UUID，使事件重投可复用既有投递，而不同 turn 即使回复文本相同也仍会分别发送。[[c6]]"
+      },
+      {
+        "key": "limits",
+        "title": "当前限制与待确认行为",
+        "body": "连接与事件层已有租约、幂等 inbox 和事务型 outbox，但媒体下载异常不在部件转换函数内处理；异常会沿调用链抛出，材料没有说明平台重投次数、永久失败状态或最终占位降级策略。[[c5]] 因此，现阶段只能确认“下载条件缺失时降级”，不能声称“下载失败均可安全完成捕获”。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "事件规范化与 WebSocket 适配",
-        "reason": "支持事件字段归一、处理器注册、连接状态回调和失败后周期性恢复的说明。",
+        "label": "实时事件归一化与 WebSocket 适配",
+        "reason": "支持事件字段标准化、回调注册、租户域名选择、连接状态记录及失败后恢复的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,8 +43,21 @@
       },
       {
         "key": "c2",
+        "label": "连接租约仓库",
+        "reason": "支持租约抢占、带令牌心跳以及释放机制的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 223,
+          "endLine": 279
+        },
+        "quote": "export class LarkConnectionLeaseRepository {\n  constructor(private readonly db: DatabaseSync) {}\n\n  claim(\n    connectionId: string,\n    owner: string,\n    now = new Date(),\n    leaseMs = 60_000,\n  ) {\n    const token = randomUUID();\n    const at = now.toISOString();\n    const result = this.db\n      .prepare(\n        `"
+      },
+      {
+        "key": "c3",
         "label": "收件箱幂等与消息路由",
-        "reason": "支持事件去重、群目标维护、身份判断、助手分流及群消息采集流程。",
+        "reason": "支持收件箱去重、绑定所有者准入、助手回复先入 outbox 后确认 inbox、普通群消息自动建立监控目标及捕获来源信息的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -50,66 +68,66 @@
         "quote": "  persist(event: LarkInboundEvent) {\n    const connection = this.store.db\n      .prepare(\n        `SELECT id,COALESCE(active_version,(\n           SELECT MAX(version) FROM lark_connection_versions\n           WHERE connection_id=lark_connections.id AND state='awaiting_pair'\n         )) AS connection_version\n         FROM"
       },
       {
-        "key": "c3",
-        "label": "回复重投与入队顺序",
-        "reason": "支持取消、并发重投、既有发件箱和崩溃恢复分支，以及先持久化回复再确认收件箱的顺序。",
+        "key": "c4",
+        "label": "私聊配对处理",
+        "reason": "支持配对消息的类型、会话、身份和代码格式校验，以及成功与拒绝结果处理的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-          "startLine": 550,
-          "endLine": 600
+          "startLine": 660,
+          "endLine": 707
         },
-        "quote": "      // A superseded/cancelled turn has no reply body and must not be delivered.\n      if (routed.status === \"cancelled\") {\n        this.finish(receipt.id, \"processed\");\n        return { ...receipt, outcome: \"interrupted\", turnId: routed.turnId };\n      }\n      const status = routed.status ?? \"done\";\n      const inFli"
+        "quote": "  processPairing(\n    event: LarkInboundEvent,\n    receiver: {\n      receivePairing: (input: {\n        appId: string;\n        code: string;\n        senderOpenId: string;\n        chatId: string;\n        chatType: \"p2p\";\n      }) => unknown;\n    },\n  ) {\n    const receipt = this.persist(event);\n    if (receipt.duplicate "
       },
       {
-        "key": "c4",
-        "label": "事务性回复发件箱",
-        "reason": "支持确定性 provider UUID、不同 turn 独立发送，以及在同一事务中创建投递记录并关联会话 turn。",
+        "key": "c5",
+        "label": "捕获部件转换与图片下载",
+        "reason": "支持文本、富文本、图片部件及逐部件来源信息的转换规则，并表明仅缺少下载条件时显式降级、下载异常未在此捕获。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 719,
+          "endLine": 812
+        },
+        "quote": "  /**\n   * H-G15: adapt a raw Lark message into unified capture parts. Text messages stay a\n   * single text part; post (rich text) splits title + paragraphs into separate text\n   * parts; image messages are downloaded through the media port and stored as an\n   * asset-backed image part; a reply/quote carries replyTo p"
+      },
+      {
+        "key": "c6",
+        "label": "助手回复事务型 outbox",
+        "reason": "支持回复变更与投递意图的事务创建、turn 关联和确定性提供方 UUID 的幂等设计。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/realtime.ts",
           "startLine": 814,
-          "endLine": 883
+          "endLine": 884
         },
         "quote": "  private enqueueAssistantReply(\n    connection: Row,\n    chatId: string,\n    replyText: string,\n    turnId?: string,\n  ): string {\n    const at = new Date().toISOString();\n    const changeId = randomUUID();\n    const card = {\n      schema: \"2.0\",\n      config: { width_mode: \"default\" },\n      body: { elements: [{ tag:"
       },
       {
-        "key": "c5",
-        "label": "连接租约与版本心跳",
-        "reason": "支持连接独占、凭据读取、错误脱敏、版本检查和失效停止流程。",
-        "relation": "depends_on",
+        "key": "c7",
+        "label": "连接管理器与版本守护",
+        "reason": "支持加密凭据读取、错误脱敏、事件分流，以及连接版本变化、停用或租约心跳异常时停止旧连接的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-          "startLine": 894,
-          "endLine": 1019
+          "startLine": 924,
+          "endLine": 1018
         },
-        "quote": "export class LarkConnectionManager {\n  private handle?: { close: () => void };\n  private heartbeat?: ReturnType<typeof setInterval>;\n  private token?: string;\n\n  constructor(\n    private readonly db: DatabaseSync,\n    private readonly leases: LarkConnectionLeaseRepository,\n    private readonly secrets: EncryptedSecretS"
-      },
-      {
-        "key": "c6",
-        "label": "媒体端口与 Capture parts 转换",
-        "reason": "支持图片下载的前置条件、占位降级、逐 part 来源信息以及富文本节点解析范围。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-          "startLine": 719,
-          "endLine": 811
-        },
-        "quote": "  /**\n   * H-G15: adapt a raw Lark message into unified capture parts. Text messages stay a\n   * single text part; post (rich text) splits title + paragraphs into separate text\n   * parts; image messages are downloaded through the media port and stored as an\n   * asset-backed image part; a reply/quote carries replyTo p"
+        "quote": "  start(connectionId: string, now = new Date(), leaseMs = 60_000) {\n    const token = this.leases.claim(connectionId, this.workerId, now, leaseMs);\n    if (!token) return false;\n    const row = this.db\n      .prepare(\n        `SELECT c.app_id,c.tenant_brand,v.version AS connection_version,\n           v.secret_ref FROM "
       }
     ],
     "questions": [
       {
-        "question": "生产环境的图片下载端口由哪个模块实现，并如何限制下载大小、超时和 MIME 欺骗？",
-        "why": "当前材料只展示下载接口与调用点，无法确认网络实现及资源安全边界。",
-        "nextStep": "检查 LarkMediaPort 的生产实现及相关行为测试，验证大小上限、超时、鉴权和内容类型校验。",
+        "question": "图片资源下载调用抛错时，事件应保持 received 等待平台重投，还是转为占位文本并完成处理？",
+        "why": "图片具备下载条件时会直接等待媒体端口返回；该调用抛出的异常在当前处理路径中没有被捕获，材料也未定义重试上限、永久失败状态或最终降级方式。",
+        "nextStep": "补充媒体下载异常、重复投递和永久错误的行为测试，并明确 inbox 状态、重试上限及最终占位降级策略。",
         "blocking": false,
         "citationKeys": [
-          "c6"
+          "c5"
         ]
       }
     ]
@@ -128,7 +146,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
     },
     {
       "kind": "material",
@@ -158,7 +176,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -169,34 +187,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:04:16.823Z",
+    "at": "2026-09-30T19:20:47.566Z",
     "trace": {
-      "runId": "25229168-08b0-42b2-98de-6901cfc38455",
-      "roleId": "code-analyst",
+      "runId": "4678d7a8-c5f7-41d9-97cd-926f21bbcb49",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c735595c94c823bc7896b073b788c85142fa8db9d7d5bed9da6b56b7cb32ccee",
-      "contextHash": "d8acb76e355f2e0feff0c8e00bb336c15afe6b0675b635a965d05118f17cfe5c",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "4d3052bb7a58e06970f410e49c9d44b3ccc1666d8086d823012c46718d466edf",
+      "contextHash": "5dbf469a118414ad26bf6c7ee7dd332f1c21387bad995b31919af84171419abf",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5b63349191d205390f47e40aebfb48a5bbd2850a772a082b0b38bd71f05a9e10",
+      "fingerprint": "a06a1a7de4f944a17a5f38d7f612bda9e9ce235bea9c9d6145e231184af3057a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8d-2fa7-77e3-99a5-c5f675847b69"
+        "01a0f3c2-cd85-79e1-9c21-a09c95d647a5"
       ],
       "usage": {
-        "used": 56187,
-        "size": 760000,
+        "used": 58694,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -204,10 +222,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 138923,
-          "utf8Bytes": 146653,
-          "estimatedTokens": 48885,
-          "budgetedTokens": 61107,
+          "chars": 131836,
+          "utf8Bytes": 136648,
+          "estimatedTokens": 45550,
+          "budgetedTokens": 56938,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -216,17 +234,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:04:38.856Z",
+    "at": "2026-09-30T19:21:06.038Z",
     "trace": {
-      "runId": "5be0c1b1-a3ad-4195-82a9-939d4bd72636",
+      "runId": "e58eedd5-1283-495c-bf62-f144e02a3a5d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "bd3f03dccbb3b250d83d8f15b1363467012a657f0bf8ee423fbfe56bdabd6120",
-      "contextHash": "2cf9ab867ba0cf0c530046e8bd5f627bb004b94886b65120a1f0d82d305aac07",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "9f7b3a34b903dbc0c636c9e9c0179b456f0c3109ad496773b437b4bb9cbb3be7",
+      "contextHash": "732a1eea1b44a761573ffe1e2c90e662f3d5d488b22fa00ca25f7a4b51e1508b",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f07de0ad7eda1d0e6cf2b044de3073ecca4bf295dc6fccec301c5c6148aa3966",
+      "fingerprint": "56bbd7f2ae589270678305212030aa32ea241bf05a88e8ba21a959883f30956f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -239,11 +257,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8d-aefe-7681-b4cb-9a42d54d6ffd"
+        "01a0f3c3-3a29-7422-8796-ab274fa75003"
       ],
       "usage": {
-        "used": 53686,
-        "size": 760000,
+        "used": 57029,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -251,10 +269,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 137307,
-          "utf8Bytes": 144043,
-          "estimatedTokens": 48015,
-          "budgetedTokens": 60019,
+          "chars": 130665,
+          "utf8Bytes": 134819,
+          "estimatedTokens": 44940,
+          "budgetedTokens": 56175,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

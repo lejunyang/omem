@@ -1,19 +1,20 @@
-# Lark 人工质量标注会话
+# Lark 人工质量标注会话服务
 
-通过持久化投递意图发送逐条标注卡片，并对回调的会话、操作者、消息、有效期、标签摘要和 nonce 做联合校验后原子推进数据集。
+通过 Lark 卡片串行呈现质量样本，验证绑定 owner 的操作并原子更新样本、事件收件箱和会话进度，同时以投递意图承接外部发送。
 
 来源：gpt-5.6-sol 分析，gpt-5.6-sol 独立复核；模型解释仍可被原始证据纠正。
 
-<a id="session-delivery"></a>
-## 会话启动与卡片投递
+<a id="presentation"></a>
+## 卡片与标注动作
 
-服务把质量仓库中的下一条 pending 样本渲染为 Lark 卡片，展示原文、草稿处置、提炼对象和四项人工判断，并提供确认、不提炼、需修改、稍后处理四种动作。按钮携带协议版本、session/sample、nonce、label digest 和过期时间。[质量标注卡片协议 ↗](../../../apps/server/src/quality/lark-annotations.ts#L42 "支持卡片展示内容、四种操作及按钮所携带安全字段的说明。")
+服务以仓储中的当前样本和进度生成交互卡片，展示原始材料、建议标签及四项人工判断，并提供确认、不提炼、需要修改和稍后处理四种动作。每个按钮携带会话、样本、随机 nonce、标签摘要和过期时间，形成后续校验所需的上下文。[标注卡片和动作载荷 ↗](../../../apps/server/src/quality/lark-annotations.ts#L42 "支持卡片展示内容、四种按钮以及防重放字段的说明。") 完成全部待处理样本后，返回汇总卡片而不是继续出题。[完成状态卡片 ↗](../../../apps/server/src/quality/lark-annotations.ts#L131 "说明没有下一条样本时展示标注结果汇总。")
 
-启动时若同一数据集已有 active 会话，默认返回重复结果；显式 resend 会轮换 nonce，并新增 change 与 delivery intent。新会话必须找到 personal workspace 中 active 的 owner p2p target，随后在同一事务内创建 session、变更记录、待发送意图及关联表行。[标注会话创建与重发 ↗](../../../apps/server/src/quality/lark-annotations.ts#L180 "说明 active 会话去重、重发行为、owner target 选择和投递意图持久化。") 该模块本身不直接发送网络请求，而是把卡片载荷交给投递意图链路。取消会话时只原子撤销尚未发送或等待重试的意图，已发送及正在发送的历史不会被伪装成已召回。[取消与未发送意图撤销 ↗](../../../apps/server/src/quality/lark-annotations.ts#L151 "解释取消只撤销 pending/retry_wait 投递，保留已发送和在途历史。")
+<a id="session"></a>
+## 会话启动、重发与取消
 
-<a id="callback-validation"></a>
-## 回调校验与状态推进
+启动时先查同一数据集的活跃会话：默认幂等返回；显式重发则轮换 nonce、清空消息标识，并在事务中新增 change 与待发送的 delivery intent。[活跃会话幂等与重发 ↗](../../../apps/server/src/quality/lark-annotations.ts#L180 "支持默认避免重复会话、显式重发轮换凭据并创建投递意图的流程。") 新会话要求存在个人空间、点对点、owner 通知用途且连接和绑定均活跃的 Lark 目标，然后原子写入会话、变更记录和投递意图。[新会话和 owner 目标选择 ↗](../../../apps/server/src/quality/lark-annotations.ts#L265 "说明新会话的目标约束及事务内创建会话和投递意图。") 取消只撤销尚未发送或等待重试的意图；已经发送以及正在发送的网络请求不会被伪装成已撤回。[取消会话的投递边界 ↗](../../../apps/server/src/quality/lark-annotations.ts#L151 "支持取消仅影响未发送意图、无法撤回在途或已送达消息的限制。")
 
-回调仅接受 `card.action.trigger`，先通过事件 inbox 持久化和去重。动作必须符合严格 schema，随后联合检查 active session、当前 sample、绑定 owner、chat、message、app、有效期、label digest，以及经 constant-time 比较验证的 nonce hash；任一不符都会把 inbox 标为 failed 并返回无效提示。[Lark 回调联合校验 ↗](../../../apps/server/src/quality/lark-annotations.ts#L355 "支持事件去重以及操作者、消息、有效期、摘要和 nonce 的完整校验链。")
+<a id="verification"></a>
+## 回调验证与状态推进
 
-合法动作在事务内调用仓库落标签、写 annotation event、将 inbox 标为 processed、取得下一条 pending 样本，并轮换 nonce、推进 session；无下一项时转为 completed。[标注事务与下一样本推进 ↗](../../../apps/server/src/quality/lark-annotations.ts#L395 "说明落标签、事件审计、inbox 完成和会话状态更新在同一事务中发生。") 边界上，`needs_edit` 只改变状态，卡片没有直接编辑标签的表单；后续修改依赖仓库的 revise 能力或其他界面。材料也未给出 Lark API 投递成功、重复回调窗口及并发点击的测试断言。
+回调先持久化到事件收件箱并识别重复事件，再严格解析协议。只有会话仍活跃、样本正是当前项、操作者/会话/消息/应用均匹配、未过期、标签摘要一致且 nonce 哈希安全相等时才接受。[卡片回调身份与时效校验 ↗](../../../apps/server/src/quality/lark-annotations.ts#L355 "支持事件去重、协议解析以及会话、操作者、消息、摘要、nonce 的联合验证。") 接受后在同一事务中标记样本、记录标注事件、完成 inbox 项并选择下一条；会话随之保持活跃或转为完成，响应卡片也同步推进。[标注事务与下一样本推进 ↗](../../../apps/server/src/quality/lark-annotations.ts#L395 "说明样本标注、审计事件、收件箱和会话状态在一次事务中推进。") 由此可见它依赖 Lark 实时事件、加密密钥服务、质量仓储和通用投递表，但材料没有证明外部发送一定成功。

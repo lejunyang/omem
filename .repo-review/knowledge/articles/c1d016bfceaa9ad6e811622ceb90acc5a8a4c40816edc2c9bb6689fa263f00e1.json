@@ -2,76 +2,71 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/knowledge/retrieval.ts",
-    "title": "派生知识引导的原始证据召回",
-    "summary": "在 current 知识文章中匹配查询词，再沿通过摘要核验的引用链定位原始固定 Fragment；派生正文只负责导航，不作为返回证据。",
+    "title": "由派生知识回溯原始证据的检索桥接",
+    "summary": "用当前知识正文命中查询，再沿固定引用递归回到原始修订片段，使派生解释只充当召回导航。",
     "category": "implementation",
     "sections": [
       {
-        "key": "entry",
-        "title": "检索入口与候选文章",
-        "body": "该实现把派生正文限定为检索导航，最终候选仍是原始固定 Fragment，之后还需执行助手可见性规则。[[c1]] 查询词为空或知识表不存在时返回空；否则只检索 current head，以转义后的 LIKE 条件匹配文章投影，SQL 最多先取三十篇，并为来源与子文章建立本次调用缓存。[[c2]]"
+        "key": "candidate-flow",
+        "title": "召回与证据回溯",
+        "body": "入口在无检索词或尚未建立知识表时直接返回空结果；否则只从 `current=1` 的知识 head 中用转义后的 SQL LIKE 查找最多 30 篇候选。[[c1]] 对命中的标题、摘要或章节，函数提取正文中的引用键并递归访问。文章引用可限定到指定章节，再继续沿该章节使用的引用下钻；材料引用则重新装配当前 source head 的文本与图片摘要，确认依赖摘要、行区间和绑定 quote 均仍匹配后，才把与证据字符区间重叠的固定 fragment 加入结果。[[c2]]"
       },
       {
-        "key": "verification",
-        "title": "依赖核验与引用回溯",
-        "body": "遍历一篇文章前会核对其全部材料摘要及子文章修订；任何依赖缺失或不一致都会终止整篇文章的证据输出。[[c3]] 顶层只处理命中章节正文里实际出现的引用键；引用子文章时递归遍历其引用。材料引用要求非空精确引文仍能在当前来源的某个 Fragment 中找到，随后返回固定 Fragment 及 Revision、来源和作者信息；空引文或无法定位的引文仅跳过该条引用。[[c3]][[c4]]"
-      },
-      {
-        "key": "limits",
-        "title": "深度、数量与失败边界",
-        "body": "递归从顶层 `depth=0` 开始，在 `depth>8` 时停止，因此最多访问 depth 0 至 8 的九个文章层级，也就是最多八次子文章跳转。入口还会在 `output.size>=30` 时拒绝新的 visit，但单次已进入的引用循环可继续加入多个 Fragment，所以三十并非严格结果上限。[[c3]] 顶层匹配标题、摘要、章节标题或章节正文；知识投影解析失败不会中断其他文章的召回。[[c4]] 实现依赖精确引文，没有语义匹配或跨修订位置续接。"
+        "key": "safety-limits",
+        "title": "边界、去重与失败隔离",
+        "body": "递归深度限制为 8，输出最多 100 个片段，并用“文章键+引用键”去重，避免循环引用反复遍历。任何文章的材料摘要或子文章 revision 不匹配时，整篇派生路径被跳过；派生 source、空 quote、越界行号和无法映射到文本坐标的图片占位也不会产生候选。[[c3]] 顶层逐篇解析 artifact 时吞掉异常，因此损坏的知识投影不会中断原始证据检索。最终返回的是 fragments 表中的原始片段及修订、标题、namespace、actor 等元数据，而不是知识文章正文。[[c4]]\n\n该实现负责候选回溯，不在本文件中执行最终可见性过滤或排序；注释明确说明助手侧可见性规则仍需后续运行。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "派生正文的检索边界",
-        "reason": "支持派生知识仅用于导航、返回项仍为原始固定 Fragment。",
-        "relation": "explains",
+        "label": "当前知识的文本候选查询",
+        "reason": "支持空输入处理、知识表检测、仅查询当前 head 和候选数量限制。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
           "startLine": 1,
-          "endLine": 5
+          "endLine": 13
         },
         "quote": "/** Derived prose can guide retrieval, but the returned candidates are always\n * original fixed fragments. Assistant visibility rules still run afterwards. */\nimport type { DatabaseSync } from \"node:sqlite\";\nimport type { KnowledgeArtifact } from \"../../../../packages/contracts/src/knowledge.js\";\nimport { stableDigest "
       },
       {
         "key": "c2",
-        "label": "当前文章筛选与缓存",
-        "reason": "支持空查询处理、current head 限制、LIKE 转义、SQL 初始上限和缓存。",
+        "label": "文章与材料引用递归",
+        "reason": "支持从命中章节沿文章引用下钻，并按固定材料 quote 定位原始 fragment。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
-          "startLine": 8,
-          "endLine": 31
+          "startLine": 34,
+          "endLine": 68
         },
-        "quote": "export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): Row[] {\n  if (!terms.length || !db.prepare(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_heads'\").get()) return [];\n  const rows = db.prepare(`SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON"
+        "quote": "  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || output.size >= 100) return;\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) return;\n    for (const c of a.document.citations.filter(c => !keys "
       },
       {
         "key": "c3",
-        "label": "知识引用链回溯",
-        "reason": "说明依赖整体核验、实际深度判定、非硬性数量检查及 Fragment 定位。",
+        "label": "依赖校验与遍历上限",
+        "reason": "支持摘要不匹配即停止、深度与输出上限、引用访问去重等安全边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
           "startLine": 33,
-          "endLine": 47
+          "endLine": 56
         },
-        "quote": "  const seen = new Set<string>(), output = new Map<string, Row>();\n  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || seen.has(a.document.key) || output.size >= 30) return;\n    seen.add(a.document.key);\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?"
+        "quote": "  const seen = new Set<string>(), output = new Map<string, Row>();\n  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || output.size >= 100) return;\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) "
       },
       {
         "key": "c4",
-        "label": "命中章节筛选与失败隔离",
-        "reason": "支持标题、摘要、章节标题和正文匹配，以及无效投影的失败隔离。",
+        "label": "命中章节选择与异常隔离",
+        "reason": "支持只遍历命中章节的引用、忽略损坏投影并返回去重后的原始候选。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
-          "startLine": 49,
-          "endLine": 57
+          "startLine": 71,
+          "endLine": 80
         },
         "quote": "  for (const row of rows) {\n    try {\n      const a = JSON.parse(String(row.artifact)) as KnowledgeArtifact;\n      const titleHit = terms.some(t => (a.document.title + a.document.summary).toLowerCase().includes(t));\n      const sections = a.document.sections.filter(s => titleHit || terms.some(t => (s.title + s.body).to"
       }
@@ -79,6 +74,16 @@
     "questions": []
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/pipeline.ts",
@@ -92,55 +97,66 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/retrieval.ts",
-      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
+      "digest": "75a226dad659fee68a8933f0db15c14c3cb27335b34f562fd687c4fc4e3e7962"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "7f869f973a9d6d42ce9f9600a4df0bbdb9b5aa80f8a6b395991d94f4c86069c8"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/budget.ts",
+      "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:12:40.550Z",
+    "at": "2026-09-30T19:21:01.519Z",
     "trace": {
-      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
-      "roleId": "knowledge-refresher",
+      "runId": "20dd6ede-6afb-4794-8f94-d8d038d5e691",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
-      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "0740d7df159552203ec2007fa881b1a54c56fd4c8f6965124959b7dca6c87f13",
+      "contextHash": "043922e944e1f32941329d36e31ff0d1aced6fe49984505b8621b5efe061ad02",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
+      "fingerprint": "3dbf0c807d0da91cb21198307fa883f1d449faaaa725893f8150a65892993530",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
+        "01a0f3c1-8933-79b1-8bc0-43718fcb135d",
+        "01a0f3c2-76ee-7ec1-b11c-8a04cbcb8db2"
       ],
       "usage": {
-        "used": 52878,
-        "size": 760000,
+        "used": 55397,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -148,29 +164,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 117772,
-          "utf8Bytes": 129037,
-          "estimatedTokens": 43013,
-          "budgetedTokens": 53767,
+          "chars": 111464,
+          "utf8Bytes": 113913,
+          "estimatedTokens": 37971,
+          "budgetedTokens": 47464,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 0
+      "repairAttempts": 1
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:15.335Z",
+    "at": "2026-09-30T19:21:42.383Z",
     "trace": {
-      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
+      "runId": "43e1d043-1c6f-4a51-aab0-942209f5bce2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
-      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
+      "promptHash": "489bea9c785ce7a3f44f8a51bf8f5b056ae5a743828d859ab256d16a6aa4a48d",
+      "contextHash": "ef46a71cc270357dbf29d9670897e1cdd062239f5012e1abdf7a6401d11001b4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
+      "fingerprint": "d24ae36c8c9af2d97a1ea40c035d72c6961aa6e665240328bf44f6129e36bfc7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -183,11 +199,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef03-398c-79f2-a656-9c230614f1a0"
+        "01a0f3c3-6e3f-7791-ac6c-26a495ceade1"
       ],
       "usage": {
-        "used": 49586,
-        "size": 760000,
+        "used": 59950,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -195,10 +211,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 118346,
-          "utf8Bytes": 128851,
-          "estimatedTokens": 42951,
-          "budgetedTokens": 53689,
+          "chars": 133282,
+          "utf8Bytes": 143629,
+          "estimatedTokens": 47877,
+          "budgetedTokens": 59847,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

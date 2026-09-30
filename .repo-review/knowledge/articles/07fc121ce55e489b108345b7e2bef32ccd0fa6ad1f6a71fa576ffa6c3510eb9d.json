@@ -3,52 +3,39 @@
   "document": {
     "key": "omem:apps/server/src/integrations/lark/registration.ts",
     "title": "飞书应用注册与能力核验",
-    "summary": "封装飞书设备码注册流程，为注册轮询的临时网络故障提供有限重试，并通过公开 OpenAPI 核验权限、回调和机器人身份；事件订阅改由实时投递确认。",
+    "summary": "封装飞书应用设备注册并维持同一设备码下的有限网络重试；通过 OpenAPI 核对权限、回调和机器人身份，同时把事件订阅留给运行时投递验证。",
     "category": "implementation",
     "sections": [
       {
         "key": "registration",
-        "title": "注册流程与轮询续命",
-        "body": "注册适配器把内部配置映射到飞书 SDK，包括仅创建模式、已有应用 ID、预设、附加能力、取消信号以及二维码和状态回调，最后转换客户端凭据与可选用户信息。[[c1]]\n\n为避免一次网络错误终止设备码流程，模块在共享 HTTP 实例上安装一次响应拦截器。它只重试注册路径上的 5xx 或指定传输错误，检查取消信号，最多重试五次并采用封顶的指数退避；复用原请求可维持同一设备码。拦截器由模块级标志控制，只安装一次。[[c2]]"
+        "title": "设备注册与有限重试",
+        "body": "注册适配器把内部创建模式、既有应用 ID、预设及附加能力映射给飞书 SDK，并将二维码和轮询状态转换为稳定回调。为避免一次临时网络故障终止设备码流程，它只拦截注册路径上的 5xx 与指定传输错误，沿用原请求和同一 device code 做指数退避；取消信号、非目标接口、非瞬时错误或超过次数的请求会直接拒绝。[[c1]]"
       },
       {
         "key": "capability",
-        "title": "能力探测与保守失败",
-        "body": "能力探测先用应用凭据换取租户令牌，再并行读取机器人和应用信息，从返回数据整理 scopes、callbacks 与机器人 open ID，并与请求配置求差集。公开应用接口不暴露事件订阅列表，因此结果中的 events 为空，事件能力改由首个匹配的 WebSocket 投递在运行时确认。[[c3]]\n\n若调用方未装配真实探针，拒绝型实现返回 `live_capability_probe_not_configured`，而不会把请求的附加能力当成已经授权。这使激活流程在缺少租户侧实证时保守失败。[[c4]]"
+        "title": "能力探测与封闭失败",
+        "body": "能力探测先从固定的 `open.feishu.cn` 获取 tenant access token，再并行查询机器人和应用信息，整理实际 scopes、callbacks 与 bot open ID，并与请求配置比较。公共应用接口不暴露事件订阅列表，因此 events 保持为空，事件能力必须由配对期间真实收到的 WebSocket 投递补证。[[c2]]\n\n若调用方没有配置真实探针，拒绝型实现返回明确缺失项，不会把请求中的 addons 当成已生效能力。[[c3]] 实时消息处理确实会从当前连接版本的 capability profile 读取 botOpenId 以过滤机器人自发消息，但所给材料没有展示探测结果写入该字段的持久化链路；因此不再断言二者已经确定接通。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "官方注册适配器",
-        "reason": "支持注册参数、取消信号、二维码与状态回调的映射，以及凭据结果转换。",
+        "label": "注册轮询重试与 SDK 映射",
+        "reason": "支持注册参数转换、二维码和状态回调，以及仅对目标注册请求的瞬时失败进行有限重试。",
         "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/registration.ts",
-          "startLine": 73,
-          "endLine": 104
-        },
-        "quote": "export class OfficialLarkRegistrationAdapter\n  implements LarkRegistrationAdapter\n{\n  constructor(private readonly sdkRegister: typeof registerApp = registerApp) {\n    installLarkRegistrationRetry();\n  }\n\n  async register(request: LarkRegistrationRequest) {\n    const result = await this.sdkRegister({\n      createOnly: "
-      },
-      {
-        "key": "c2",
-        "label": "注册轮询重试拦截器",
-        "reason": "支持保持原轮询请求、限定可重试错误、检查取消状态、重试上限和指数退避行为。",
-        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/registration.ts",
           "startLine": 29,
-          "endLine": 70
+          "endLine": 103
         },
         "quote": "const registrationPath = \"/oauth/v1/app/registration\";\nconst retryMarker = \"__omemRegistrationRetry\";\nlet registrationRetryInstalled = false;\n\n/** Keep the same RFC 8628 device_code alive across transient poll failures.\n * The upstream SDK treats one network error as terminal; retrying its Axios\n * request here preserv"
       },
       {
-        "key": "c3",
-        "label": "公开接口能力探测",
-        "reason": "支持公开应用接口不提供事件列表、运行时确认事件能力，以及令牌、权限、回调和机器人身份探测流程。",
-        "relation": "implements",
+        "key": "c2",
+        "label": "OpenAPI 能力探测",
+        "reason": "支持 token 获取、应用与机器人信息查询、缺失权限比较，以及事件订阅只能由运行时投递验证的边界。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/registration.ts",
@@ -58,9 +45,9 @@
         "quote": "/** Public OpenAPI capability probe. Event subscriptions are confirmed by the\n * first matching WebSocket delivery (pairing requires im.message.receive_v1),\n * because the public application endpoint does not expose the event list. */\nexport class OfficialLarkCapabilityProbe implements LarkCapabilityProbe {\n  construct"
       },
       {
-        "key": "c4",
-        "label": "拒绝型能力探针",
-        "reason": "支持未配置真实能力探针时明确返回缺失项并拒绝乐观激活。",
+        "key": "c3",
+        "label": "未配置探针时拒绝激活",
+        "reason": "支持缺少真实能力探针时返回封闭失败结果，而非信任请求配置。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -69,16 +56,39 @@
           "endLine": 242
         },
         "quote": "export interface LarkCapabilityProbe {\n  probe(\n    credentials: { appId: string; clientSecret: string },\n    requested: LarkRequestedConfig,\n  ): Promise<LarkCapabilityResult>;\n}\n\n/** Live capability checks depend on tenant/admin state and are wired by B2-05 callers.\n * Refuse activation when no real probe is configur"
+      },
+      {
+        "key": "c4",
+        "label": "实时路由读取机器人身份",
+        "reason": "说明实时消息处理会读取 capability profile 中的 botOpenId，但该片段本身不能证明探测结果如何写入该字段。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 503,
+          "endLine": 522
+        },
+        "quote": "    const connection = this.store.db\n      .prepare(\n        `SELECT c.id,v.capability_profile,b.id AS binding_id,b.binding_version,b.owner_open_id AS binding_owner_open_id\n         FROM lark_connections c\n         JOIN lark_connection_versions v ON v.connection_id=c.id\n           AND v.version=c.active_version\n       "
       }
     ],
     "questions": [
       {
-        "question": "全局 HTTP 拦截器是否可能影响同进程内其他飞书注册调用的重试策略？",
-        "why": "拦截器安装在共享实例上并由模块级布尔值控制，但材料未展示多实例、并发注册或不同重试上限并存时的预期。",
-        "nextStep": "查看注册适配器测试和服务器装配方式，确认全局一次安装是有意约束，必要时增加并发及不同 maxRetries 的测试。",
+        "question": "国际版 Lark 租户的能力探测是否也应切换到对应开放平台域名？",
+        "why": "注册结果可以携带 tenantBrand，但当前能力探测把基地址固定为 open.feishu.cn；材料未展示国际版场景是否会注入其他 request 实现或由调用方切换域名。",
+        "nextStep": "检查能力探针的构造与调用路径，并增加 Feishu、Lark 两类租户的端点断言。",
         "blocking": false,
         "citationKeys": [
           "c2"
+        ]
+      },
+      {
+        "question": "能力探测得到的 botOpenId 是否确定写入实时连接读取的 capability_profile？",
+        "why": "探针会返回 botOpenId，实时路由也会读取该字段，但当前材料没有展示 onboarding 或连接版本持久化如何把前者写入后者。",
+        "nextStep": "补充 onboarding 或连接版本写入实现的固定材料与引用；若不存在该链路，则继续把两者视为尚未确认接通。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
         ]
       }
     ]
@@ -97,7 +107,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
     },
     {
       "kind": "material",
@@ -127,7 +137,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -138,34 +148,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:04:16.823Z",
+    "at": "2026-09-30T19:19:41.933Z",
     "trace": {
-      "runId": "25229168-08b0-42b2-98de-6901cfc38455",
-      "roleId": "code-analyst",
+      "runId": "f13c1c0a-0651-4440-9c08-01f63c663811",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c735595c94c823bc7896b073b788c85142fa8db9d7d5bed9da6b56b7cb32ccee",
-      "contextHash": "d8acb76e355f2e0feff0c8e00bb336c15afe6b0675b635a965d05118f17cfe5c",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "68140354ac835bfeb4fb710d755aaa5757056b9937d43d6469480763c53c11ca",
+      "contextHash": "41aa7ef27f80ddc71f038bb81c13e72b9885d77e246cb425c268efdb18bef8e2",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5b63349191d205390f47e40aebfb48a5bbd2850a772a082b0b38bd71f05a9e10",
+      "fingerprint": "3e3e090fa3b6e4cbca79e38a63075ca0dabe7c28391d33a949cfc5497fac347c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8d-2fa7-77e3-99a5-c5f675847b69"
+        "01a0f3c1-a29d-7b02-9738-f8212a0e1520"
       ],
       "usage": {
-        "used": 56187,
-        "size": 760000,
+        "used": 62553,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -173,10 +183,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 138923,
-          "utf8Bytes": 146653,
-          "estimatedTokens": 48885,
-          "budgetedTokens": 61107,
+          "chars": 138201,
+          "utf8Bytes": 145603,
+          "estimatedTokens": 48535,
+          "budgetedTokens": 60669,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -185,17 +195,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:04:38.856Z",
+    "at": "2026-09-30T19:20:20.280Z",
     "trace": {
-      "runId": "5be0c1b1-a3ad-4195-82a9-939d4bd72636",
+      "runId": "6784b0db-3a48-46ce-b667-59804936a9e4",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "bd3f03dccbb3b250d83d8f15b1363467012a657f0bf8ee423fbfe56bdabd6120",
-      "contextHash": "2cf9ab867ba0cf0c530046e8bd5f627bb004b94886b65120a1f0d82d305aac07",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2c50e6afadc2c99cbd28b18fbf231521fd7e77fdc05803dad5795a916e80ce80",
+      "contextHash": "52fe86b5d413ae3c76e5fe4ca9afdda8f9d1abe8c94e0fb6fe6023c7ca5c703b",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f07de0ad7eda1d0e6cf2b044de3073ecca4bf295dc6fccec301c5c6148aa3966",
+      "fingerprint": "431cc3ddea0558ca2f5bd7d70cc254ddfeaf94b63558b483a9bfb417c8afdafd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -208,11 +218,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8d-aefe-7681-b4cb-9a42d54d6ffd"
+        "01a0f3c2-3857-75b2-b21d-0f7f2ab7368c"
       ],
       "usage": {
-        "used": 53686,
-        "size": 760000,
+        "used": 60824,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -220,10 +230,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 137307,
-          "utf8Bytes": 144043,
-          "estimatedTokens": 48015,
-          "budgetedTokens": 60019,
+          "chars": 134937,
+          "utf8Bytes": 141077,
+          "estimatedTokens": 47026,
+          "budgetedTokens": 58783,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
