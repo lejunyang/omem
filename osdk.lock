@@ -13,19 +13,67 @@ url = "https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz"
 file_name = "node-v24.18.1-linux-x64.tar.gz"
 checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
 
+[models.memory-zh]
+provider = "huggingface"
+repository = "Xenova/bge-small-zh-v1.5"
+requested_revision = "75c43b069aac4d136ba6bc1122f995fedcfd2781"
+revision = "75c43b069aac4d136ba6bc1122f995fedcfd2781"
+endpoint = "https://huggingface.co"
+kind = "embedding"
+family = "bge"
+derived_from = "BAAI/bge-small-zh-v1.5"
+include = [
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "vocab.txt",
+    "onnx/model_quantized.onnx",
+]
+
+[[models.memory-zh.files]]
+path = "config.json"
+size = 716
+sha256 = "d4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f"
+
+[[models.memory-zh.files]]
+path = "onnx/model_quantized.onnx"
+size = 24010842
+sha256 = "15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc"
+
+[[models.memory-zh.files]]
+path = "special_tokens_map.json"
+size = 125
+sha256 = "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
+
+[[models.memory-zh.files]]
+path = "tokenizer.json"
+size = 439125
+sha256 = "48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26"
+
+[[models.memory-zh.files]]
+path = "tokenizer_config.json"
+size = 367
+sha256 = "e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a"
+
+[[models.memory-zh.files]]
+path = "vocab.txt"
+size = 109540
+sha256 = "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c"
+
 [deps.pnpm]
 installer = "pnpm"
 installer_version = "11.28.3"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "92a0e297b8c8efa902f03db922a7b594fc7c3f3ab79402fd85eecfc454c76edd"
+manifest_sha256 = "88b7678585cab2664e50c7382ec92aa4c77e4e9ba085f84b74d629594f9bb6e2"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
 [deps.pnpm.native_lock]
 kind = "pnpm-lock"
 path = "pnpm-lock.yaml"
-sha256 = "573790b7a0e8fa299120cb75805b1cbea161ad5e8abab18824becc35cb1246ae"
+sha256 = "6bade774792472d990cbb6595c952395d6b4f409ea0053d0481bb26416ed05bf"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

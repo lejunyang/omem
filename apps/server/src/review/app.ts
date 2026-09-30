@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Store } from "../store.js";
 import { MemoryService } from "../memory/service.js";
-import { KeywordRetrieval, tokenize } from "../retrieval/keyword.js";
+import { createRetrieval, type RetrievalConfig } from "../retrieval/factory.js";
 import {
   categoryName,
   readSyncStatus,
@@ -68,6 +68,7 @@ export type ReviewAppDeps = {
   /** Explicit, opt-in model for Code Understanding generation. Defaults to no
    *  model: the review app never reads secrets or calls a live LLM by default. */
   codeUnderstandingModel?: UnderstandingTransportConfig;
+  retrievalConfig?: RetrievalConfig;
 };
 
 export async function buildReviewApp(deps: ReviewAppDeps) {
@@ -78,7 +79,8 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   ensureReviewMetaTable(store);
   ensureReviewRelationsTable(store);
   const memory = new MemoryService(store);
-  const retrieval = new KeywordRetrieval(store.db);
+  const retrievalService = createRetrieval(store.db, deps.retrievalConfig, repoRoot);
+  const retrieval = retrievalService.retrieval;
   const code = new CodeKnowledgeService(store, repoRoot);
   // Opt-in model port. Null by default: review mode serves the raw graph and
   // curated seeds honestly and never calls a live LLM.
@@ -164,6 +166,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       lastSyncCommit: status.lastSyncCommit,
       sourceCount,
       fragmentCount,
+      retrieval: retrieval.health(),
     };
   });
 
@@ -283,92 +286,20 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     return { seedCount, ...relationsSummary(store) };
   });
 
-  // ---------------------------------------------------------------------
-  // Search: category / current / removed are filtered in SQL (JOINed onto the
-  // same query that matches fragments), never after a fixed top-N pull. This
-  // guarantees a low-ranked hit inside a requested category is still returned
-  // even when hundreds of higher-ranked hits live in other categories — the
-  // KeywordRetrieval per-term LIMIT 200 / caller top-N cannot starve it.
-  // ---------------------------------------------------------------------
-  const snippetFor = (text: string, query: string, radius = 80): string => {
-    const flat = text.replace(/\s+/g, " ").trim();
-    const terms = tokenize(query);
-    const hit = terms
-      .map((t) => flat.toLowerCase().indexOf(t.toLowerCase()))
-      .find((i) => i >= 0);
-    if (hit === undefined) return flat.slice(0, radius * 2);
-    const start = Math.max(0, hit - radius);
-    return (start > 0 ? "…" : "") + flat.slice(start, start + radius * 2);
-  };
-
-  type SearchHit = {
-    id: string;
-    score: number;
-    snippet: string;
-    text: string;
-    title: string;
-    version: number;
-    category: string | null;
-    filePath: string | null;
-  };
-
-  const reviewSearch = (
-    q: string,
-    opts: { category?: string; includeRemoved?: boolean },
-  ): SearchHit[] => {
-    const terms = tokenize(q);
-    if (!terms.length) return [];
-    const best = new Map<
-      string,
-      { row: Row; score: number; matched: Set<string> }
-    >();
-    for (const term of terms) {
-      const escaped = "%" + term.replace(/[!%_]/g, "!$&") + "%";
-      const where: string[] = ["f.text LIKE ? ESCAPE '!'"];
-      const params: string[] = [escaped];
-      if (!opts.includeRemoved)
-        where.push("(m.removed IS NULL OR m.removed = 0)");
-      if (opts.category) {
-        where.push("json_extract(r.body,'$.context.category') = ?");
-        params.push(opts.category);
-      }
-      // s.head = r.id pins us to the current/head revision, so old revisions
-      // are excluded without an extra predicate.
-      const sql = `SELECT f.id AS fragment_id, f.revision_id, f.text AS fragment_text,
-                      r.title AS title, r.version AS version,
-                      json_extract(r.body,'$.context.category') AS category,
-                      json_extract(r.body,'$.context.filePath') AS filePath
-                   FROM fragments f
-                   JOIN revisions r ON r.id = f.revision_id
-                   JOIN sources s ON s.head = r.id
-                   LEFT JOIN review_source_meta m ON m.source_id = s.id
-                   WHERE ${where.join(" AND ")}`;
-      const rows = store.db.prepare(sql).all(...params) as Row[];
-      for (const row of rows) {
-        const id = String(row.fragment_id);
-        const cur =
-          best.get(id) ?? { row, score: 0, matched: new Set<string>() };
-        if (!cur.matched.has(term)) {
-          cur.matched.add(term);
-          cur.score +=
-            term.length >= 4 ? 4 : term.length >= 3 ? 3 : term.length >= 2 ? 2 : 1;
-        }
-        best.set(id, cur);
-      }
-    }
-    return [...best.values()]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20)
-      .map(({ row, score }) => ({
-        id: String(row.fragment_id),
-        score,
-        snippet: snippetFor(String(row.fragment_text), q),
-        text: String(row.fragment_text),
-        title: String(row.title),
-        version: Number(row.version),
-        category: row.category != null ? String(row.category) : null,
-        filePath: row.filePath != null ? String(row.filePath) : null,
-      }));
+  // The same evidence retrieval as the personal assistant; filters run before top-N.
+  const reviewSearch = async (q: string, opts: { category?: string; includeRemoved?: boolean }) => {
+    const eligible = store.db.prepare(`SELECT f.id,r.title,r.version,f.text,
+      json_extract(r.body,'$.context.category') AS category,
+      json_extract(r.body,'$.context.filePath') AS filePath
+      FROM fragments f JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
+      LEFT JOIN review_source_meta m ON m.source_id=s.id
+      WHERE (?=1 OR m.removed IS NULL OR m.removed=0)
+        AND (? IS NULL OR json_extract(r.body,'$.context.category')=?)`).all(
+          opts.includeRemoved ? 1 : 0, opts.category ?? null, opts.category ?? null) as Row[];
+    const byId = new Map(eligible.map(row => [String(row.id),row]));
+    const query = { text: q, limit: 20, visible: (id: string) => byId.has(id) };
+    const hits = retrieval.searchSourcesAsync ? await retrieval.searchSourcesAsync(query) : retrieval.searchSources(query);
+    return hits.map(hit => ({ ...byId.get(hit.id)!, id: hit.fragmentId, score: hit.score, snippet: hit.snippet, routes: hit.routes }));
   };
 
   app.get<{
@@ -688,6 +619,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     await app.register(staticFiles, { root: web, prefix: "/" });
 
   app.addHook("onClose", async () => {
+    await retrievalService.close();
     store.close();
   });
 

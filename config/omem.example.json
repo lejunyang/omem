@@ -1,4 +1,5 @@
 {
+  "retrieval": { "enabled": true, "osdkModel": "memory-zh" },
   "profiles": [
     {
       "id": "traex",

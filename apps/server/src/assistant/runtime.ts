@@ -472,7 +472,7 @@ export class AssistantRuntime {
       // 1. Read-only retrieval via RetrievalPort, then visibility filtering.
       //    G08: also merge prior turn working context so the model sees fragments
       //    from the previous consultation turn (anaphora like "按这个").
-      const retrieved = this.retrieveEvidence(input.userText, input.conversation);
+      const retrieved = await this.retrieveEvidence(input.userText, input.conversation);
       const priorCtx = this.priorWorkingContext(input.conversation);
       let evidence = [...priorCtx, ...retrieved.filter(
         (r) => !priorCtx.some((p) => p.fragmentId === r.fragmentId),
@@ -505,7 +505,7 @@ export class AssistantRuntime {
         searchQueries.push(...[...new Set(reply.searchQueries ?? [])].map(q => q.trim().slice(0, 160)).filter(Boolean).slice(0, 3));
         if (searchQueries.length) {
           this.assertNotCancelled(input.signal);
-          const extra = searchQueries.flatMap(q => this.retrieveEvidence(q, input.conversation));
+          const extra = (await Promise.all(searchQueries.map(q => this.retrieveEvidence(q, input.conversation)))).flat();
           evidence = [...new Map([...extra, ...evidence].map(e => [e.fragmentId,e])).values()].slice(0, 24);
           reply = await this.withTimeout(this.model.generate({
             userText: input.userText, priorTurns, evidence, visibility: input.conversation.visibility,
@@ -651,17 +651,17 @@ export class AssistantRuntime {
     }
   }
 
-  private retrieveEvidence(
+  private async retrieveEvidence(
     userText: string,
     conversation: Conversation,
-  ): AssistantEvidence[] {
+  ): Promise<AssistantEvidence[]> {
     // A: prefer the injected RetrievalPort (project-wide contract). Fall back
     // to store.search for legacy tests that don't wire a port.
     let rows: Array<{ id: string; text: string; title: string; version?: number }> =
       [];
     if (this.options.retrieval) {
       const candidates: SourceCandidate[] =
-        this.options.retrieval.searchSources({
+        await (this.options.retrieval.searchSourcesAsync?.bind(this.options.retrieval) ?? this.options.retrieval.searchSources.bind(this.options.retrieval))({
           text: userText,
           limit: 20,
           visible: fragmentId => this.isVisible(conversation, fragmentId),

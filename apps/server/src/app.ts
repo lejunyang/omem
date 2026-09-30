@@ -38,7 +38,7 @@ import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js"
 import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
 import { AssistantRuntime } from "./assistant/runtime.js";
 import { AcpAssistantModel } from "./assistant/acp-model.js";
-import { KeywordRetrieval } from "./retrieval/keyword.js";
+import { createRetrieval } from "./retrieval/factory.js";
 import { QualityRepository, qualityLabelSchema } from "./quality/repository.js";
 const str = z.string().min(1).max(2000);
 export async function buildApp(
@@ -72,7 +72,8 @@ export async function buildApp(
     profile: assistantProfile,
     workspaceRoot: config.agentCwd,
   });
-  const assistantRetrieval = new KeywordRetrieval(store.db);
+  const retrievalService = createRetrieval(store.db, config.retrieval);
+  const assistantRetrieval = retrievalService.retrieval;
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",
     memory,
@@ -116,6 +117,7 @@ export async function buildApp(
         onboarding: lark,
         secrets,
         assistantModel,
+        retrieval: assistantRetrieval,
         pollMs: config.lark.pollMs,
       });
     } catch (error) {
@@ -178,6 +180,7 @@ export async function buildApp(
     status: "ok",
     storage: "sqlite",
     mode: "personal",
+    retrieval: assistantRetrieval.health(),
     notificationMode: config.notifications.mode,
     learning: learning?.status() ?? {
       running: false,
@@ -621,6 +624,7 @@ export async function buildApp(
     await learning?.stop();
     await larkRuntime?.stop();
     await runs.close();
+    await retrievalService.close();
     store.close();
   });
   return {

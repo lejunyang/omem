@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { readRetrievalConfig } from "../retrieval/factory.js";
 import { restoreReviewKnowledge } from "./knowledge.js";
 import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "./materials.js";
 import { restoreKnowledgeArticles } from "../knowledge/artifacts.js";
@@ -38,6 +40,8 @@ try {
     port,
     webPort: Number(process.env.REVIEW_WEB_PORT || 5181),
     codeUnderstandingModel,
+    retrievalConfig: process.env.REVIEW_RETRIEVAL_CONFIG || existsSync(join(repoRoot,"config/retrieval.json"))
+      ? readRetrievalConfig(process.env.REVIEW_RETRIEVAL_CONFIG ?? join(repoRoot,"config/retrieval.json")) : undefined,
   });
   await app.listen({ port, host });
   console.log(`repo-review: API at http://${host}:${port}`);
