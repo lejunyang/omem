@@ -4,7 +4,7 @@
       "id": "traex",
       "name": "TraeX · ACP",
       "transport": "acp",
-      "command": "traecli",
+      "command": "traex",
       "args": ["-c", "sandbox_mode=\"read-only\"", "acp", "serve"],
       "skills": [],
       "maxContextChars": 20000,
