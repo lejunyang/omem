@@ -910,3 +910,25 @@ it("one bounded query expansion retrieves cross-language originals and never exe
   expect(result.turn.selectedEvidence).toHaveLength(1);
   expect(result.turn.toolActions[0]).toMatchObject({ tool: "search", queries: ["CircuitBreaker"] });
 });
+
+it("keeps a semantic hit beyond the ACP prefix budget, including the next turn's working context", async () => {
+  const { store } = setup();
+  const text = "背景材料。".repeat(900) + "口腔门诊预约码是72819，周四上午十点就诊。";
+  const original = captureSource(store,"long-evidence",text);
+  expect(original.fragments).toHaveLength(1);
+  const retrieval = new KeywordRetrieval(store.db);
+  let searches = 0;
+  const model: AssistantModelPort = { async generate(input) {
+    expect(input.evidence[0]!.text.length).toBeLessThanOrEqual(2000);
+    expect(input.evidence[0]!.text).toContain("72819");
+    expect(text).toContain(input.evidence[0]!.text);
+    return { answer:"预约码72819",citationIds:[original.fragments[0]!.id],toolCalls:[] };
+  } };
+  const runtime = new AssistantRuntime(store,model,{retrieval:Object.assign(retrieval,{
+    async searchSourcesAsync() { return searches++ ? [] : [{id:original.fragments[0]!.id,fragmentId:original.fragments[0]!.id,
+      sourceRevisionId:original.id,score:1,snippet:"口腔门诊预约码是72819，周四上午十点就诊。",routes:["semantic"],provenance:{actor:null,time:null,source:"manual"}}]; }
+  })});
+  const conversation=runtime.conversations.open({principalId:"owner",channel:"web",chatId:"long-evidence",visibility:"private"});
+  await runtime.turn({conversationId:conversation.id,userText:"查一下看牙的安排"});
+  await runtime.turn({conversationId:conversation.id,userText:"再说一次刚才的预约码"});
+});
