@@ -165,7 +165,7 @@ function isUnsafeLink(abs: string, repoRoot: string): boolean {
   } catch {
     return true;
   }
-  const rel = relative(repoRoot, real).split(sep).join("/");
+  const rel = relative(realpathSync(repoRoot), real).split(sep).join("/");
   return rel.startsWith("..");
 }
 
