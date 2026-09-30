@@ -2,57 +2,62 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/code/sync.ts",
-    "title": "Capture 驱动的代码知识同步流程",
-    "summary": "从固定 Capture head 修订读取源码，生成内容寻址快照，解析并投影文件、符号和多类关系，处理删除与失效后显式切换当前快照并恢复派生理解。",
+    "title": "从 Capture 修订构建代码知识快照",
+    "summary": "同步服务读取已捕获的不可变文件修订，离线解析结构并投影为快照化代码图，生成符号与多类关系，处理删除和过期状态，最后切换当前 head 并恢复派生理解。",
     "category": "workflow",
     "sections": [
       {
-        "key": "input_snapshot",
+        "key": "input-snapshot",
         "title": "输入来源与快照身份",
-        "body": "同步首先读取 Git 提交、远端和分支元数据，但源码字节只来自 `sources.head` 指向的 Capture 修订，不把实时工作树正文与旧片段混用。它仅纳入 `apps`、`packages`、`scripts` 下的指定扩展名文件，空或无法恢复精确正文的修订会跳过。[[c1]] 快照 ID 由仓库、提交、脏状态及排序后的捕获内容哈希决定；相同输入复用快照，但仍执行完整协调并最终更新显式 head。[[c2]]"
+        "body": "同步不直接把工作树正文当作分析事实，而从 `sources.head` 指向的 Capture revision 读取已捕获文本，只纳入指定目录和扩展名；无法取得精确文本或内容为空的材料会跳过。[[c1]] Git 仅提供提交、远端、分支和 dirty 元数据。快照标识组合仓库、提交、dirty 状态及排序后的捕获内容哈希，因此相同输入可复用旧快照，但每次仍会重新对账当前 head。[[c2]]"
       },
       {
         "key": "projection",
-        "title": "图投影主流程",
-        "body": "每个文件先写文件与快照绑定，再为解析符号生成不含范围的稳定 ID，并尝试用声明行短文本定位所属评审 fragment。[[c3]] `defines` 为确认边；相对导入只在本次捕获文件集合内解析，解析不到记为 `missing`；调用只在同文件名称表中匹配，命中后也仅记 `candidate`，没有跨文件调用推断。路由和测试建立符号及确认边，Vue 模板组件使用则保持候选且没有目标节点。[[c4]]"
+        "title": "符号与关系投影",
+        "body": "每个文件先写入文件记录和快照绑定，再将解析符号按稳定限定名生成标识，并尝试用声明行短文本定位其 Capture fragment。[[c3]] 文件到符号的 `defines` 边为 confirmed；相对导入仅在已捕获路径集合内解析，无法解析时保留 missing。调用只在同一文件的名称映射中连边，并明确标为 candidate，源码没有提供跨文件调用解析依据。[[c4]]"
       },
       {
-        "key": "reconcile",
-        "title": "删除、失效与派生知识",
-        "body": "未出现在当前输入的旧文件会标记 removed；随后仅对当前快照中未重现或接触删除文件的边标记 stale，并把删除文件的理解置旧。同步显式设置当前快照，再失效其他快照的模型生成结果、投影 curated seeds，并尝试恢复可移植生成产物。[[c5]] 返回值统计当前快照的文件、符号、非 stale 边以及本轮失效边，并标明快照是否复用。[[c6]]"
+        "key": "special-symbols",
+        "title": "路由、测试与 Vue 线索",
+        "body": "路由和测试被提升为独立符号：路由关系确认其由当前文件暴露；测试边目前指回测试文件自身，并不证明它覆盖某个生产符号。Vue 模板的大写组件标签生成 `uses_component` 候选边，但没有解析到目标组件。[[c5]] 因而这些结构适合导航和后续核验，不应直接等同于经过类型分析或行为测试证实的依赖图。"
+      },
+      {
+        "key": "reconciliation",
+        "title": "删除、过期与后续理解",
+        "body": "本轮未出现的已有文件会标为 removed；未重现或触及删除文件的边在当前快照变成 stale。随后服务显式设置仓库 head，将其他快照的模型生成理解标为过期，投影人工 seed，并恢复可验证的已生成知识产物。[[c6]] 返回值统计当前快照的文件、符号、非过期边和新失效边，并注明快照是否复用；入库成功本身不代表候选关系已被语义确认。"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "Capture 修订输入筛选",
-        "reason": "支持同步只从固定 Capture head 读取正文及文件范围筛选的描述。",
+        "reason": "支持同步只读取捕获链 head revision、筛选路径类型并跳过不可用文本的说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 152,
+          "startLine": 170,
           "endLine": 185
         },
-        "quote": "export async function runCodeSync(\n  store: Store,\n  repoRoot: string,\n): Promise<CodeKnowledgeSyncResult> {\n  ensureCodeTables(store);\n  ensureReviewMetaTable(store);\n\n  const repoId = codeRepositoryId();\n  const commit = await git([\"rev-parse\", \"HEAD\"], repoRoot);\n  const remote = await git([\"remote\", \"get-url\", \"ori"
+        "quote": "  // The Capture chain owns the bytes. Code analysis reads its immutable head\n  // revisions and never pairs live filesystem text with an older fragment.\n  const captured = store.db.prepare(`SELECT r.id, s.external_id\n    FROM sources s JOIN revisions r ON r.id=s.head\n    LEFT JOIN review_source_meta m ON m.source_id=s"
       },
       {
         "key": "c2",
-        "label": "快照创建与复用协调",
-        "reason": "说明快照身份输入、复用检测及复用后仍继续协调。",
+        "label": "快照生成与复用",
+        "reason": "支持快照身份、Git dirty 元数据及复用后仍需对账的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
           "startLine": 188,
-          "endLine": 218
+          "endLine": 216
         },
         "quote": "  // Snapshot identity: repo + commit + dirty + sorted hashes.\n  const status = await git([\"status\", \"--porcelain\"], repoRoot);\n  const dirty = !!status && status.length > 0;\n  const snapId = snapshotIdFor(\n    repoId,\n    commit,\n    dirty,\n    captured.map(row => `${row.external_id}:${sha256(revisionText(store, row.i"
       },
       {
         "key": "c3",
-        "label": "文件、符号与片段绑定",
-        "reason": "支持快照文件写入、稳定符号 ID 及声明片段定位流程。",
+        "label": "文件、快照与符号绑定",
+        "reason": "说明文件记录、固定 revision 绑定、符号标识及片段定位的写入过程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,58 +69,49 @@
       },
       {
         "key": "c4",
-        "label": "关系投影规则",
-        "reason": "支持导入解析、同文件候选调用以及路由测试关系状态的说明。",
+        "label": "定义、导入与调用边",
+        "reason": "支持定义边确认、相对导入缺失状态和单文件调用候选语义。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 291,
-          "endLine": 415
+          "startLine": 272,
+          "endLine": 330
         },
-        "quote": "      // 2) Imports.\n      for (const imp of f.parsed.imports) {\n        const target = resolveImport(f.path, imp.specifier, knownPaths);\n        const toFile = target ? pathToFileId.get(target) ?? null : null;\n        const seed = `imports|${f.path}|${imp.specifier}`;\n        liveSeeds.add(seed);\n        upsertEdge(st"
+        "quote": "      // defines edges.\n      for (const sym of f.parsed.symbols) {\n        const toSym = symbolIdFor(repoId, f.path, sym.qualifiedName, sym.kind);\n        const seed = `defines|${f.path}|${sym.qualifiedName}|${sym.kind}`;\n        liveSeeds.add(seed);\n        upsertEdge(store, {\n          seed,\n          snapshotId: sn"
       },
       {
         "key": "c5",
+        "label": "路由测试和组件关系",
+        "reason": "说明三类特殊结构如何成为符号或边，以及候选和未解析边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 332,
+          "endLine": 417
+        },
+        "quote": "      // 4) Routes.\n      for (const route of f.parsed.routes) {\n        const qname = `${route.method} ${route.path}`;\n        const rid = symbolIdFor(repoId, f.path, qname, \"route\");\n        upsertSymbol(store, {\n          symbolId: rid,\n          fileId,\n          snapshotId: snapId,\n          name: route.path,\n    "
+      },
+      {
+        "key": "c6",
         "label": "同步收尾与理解恢复",
-        "reason": "支持删除文件、边失效、显式 head、curated seed 和生成产物恢复流程。",
+        "reason": "支持删除文件、过期理解、显式 head、seed 投影和知识产物恢复流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
           "startLine": 435,
-          "endLine": 473
-        },
-        "quote": "    // Mark files that disappeared as removed.\n    const known = new Set(files.map((f) => f.path));\n    const existingRows = store.db\n      .prepare(\"SELECT file_id, path FROM code_files\")\n      .all() as { file_id: string; path: string }[];\n    for (const row of existingRows) {\n      if (!known.has(String(row.path)) &"
-      },
-      {
-        "key": "c6",
-        "label": "同步结果统计",
-        "reason": "说明返回统计的口径及快照复用标志。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 475,
           "endLine": 486
         },
-        "quote": "  return {\n    snapshotId: snapId,\n    fileCount: files.length,\n    symbolCount: Number(\n      (store.db.prepare(\"SELECT COUNT(*) AS n FROM code_symbols WHERE snapshot_id=?\").get(snapId) as { n: number }).n,\n    ),\n    edgeCount: Number(\n      (store.db.prepare(\"SELECT COUNT(*) AS n FROM code_edges WHERE snapshot_id=? "
+        "quote": "    // Mark files that disappeared as removed.\n    const known = new Set(files.map((f) => f.path));\n    const existingRows = store.db\n      .prepare(\"SELECT file_id, path FROM code_files\")\n      .all() as { file_id: string; path: string }[];\n    for (const row of existingRows) {\n      if (!known.has(String(row.path)) &"
       }
     ],
     "questions": [
       {
-        "question": "`sync({ only })` 是否计划支持局部同步？",
-        "why": "服务方法接收 `only`，但参数被忽略并总是执行全仓 `runCodeSync`；当前行为与接口形状存在差异。",
-        "nextStep": "确认接口是否应删除 `only`，或定义局部同步对快照身份、删除判定和 stale 边处理的语义后再实现。",
-        "blocking": false,
-        "citationKeys": [
-          "c1"
-        ]
-      },
-      {
-        "question": "sync({ only }) 是否计划支持局部同步？",
-        "why": "服务方法接收 only，但参数被忽略并总是执行全仓 runCodeSync；当前行为与接口形状存在差异。",
-        "nextStep": "确认接口是否应删除 only，或定义局部同步对快照身份、删除判定和 stale 边处理的语义后再实现。",
+        "question": "`CodeKnowledgeService.sync` 的 `only` 参数是否计划支持局部同步？",
+        "why": "公开方法接受 `only`，但当前实现忽略该参数并始终调用全量 `runCodeSync`；调用者可能误以为已限制扫描范围。",
+        "nextStep": "核对接口调用方和产品语义；若暂不支持，应从合同移除或显式返回不支持错误，若需要则定义局部快照与过期边规则。",
         "blocking": false,
         "citationKeys": [
           "c1"
@@ -167,7 +163,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -178,17 +174,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:00:16.345Z",
+    "at": "2026-09-30T19:13:42.776Z",
     "trace": {
-      "runId": "ca7c0b44-91d3-4f80-8b00-26df100987c5",
+      "runId": "4ce77f62-1667-4abf-870f-cf3c8d98360b",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "124f8180216c194cf0a6895ab1e580217a0c3419aec79d61c3795b7b551c5198",
-      "contextHash": "07f079f349d9104873e0aff0ccd837d3619a742dbe971432605a204d18dbcb76",
+      "promptHash": "780554099280c05dfaaa99791ddf06a589488616fb3ef697669b48426b991c9c",
+      "contextHash": "c3b25520e5f1d70c6f9b8a3b82f4d466adb6c3c3cce4522766a727b7acf8b315",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1997a5a56b21869cb8cbc6952a9344d19ab6b628881d9cd50863f57faf787b49",
+      "fingerprint": "a654284878331a7896106dbe72326bd12f9bfb17eab73dadc326c2b819b4b1ba",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -201,11 +197,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee89-3b7e-78e2-bd5c-b8bc74b3640d"
+        "01a0f3bb-c0c5-7ac0-9e39-8e2c1e0f5e37"
       ],
       "usage": {
-        "used": 48287,
-        "size": 760000,
+        "used": 55525,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -213,10 +209,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 106728,
-          "utf8Bytes": 108508,
-          "estimatedTokens": 36170,
-          "budgetedTokens": 45213,
+          "chars": 106879,
+          "utf8Bytes": 108659,
+          "estimatedTokens": 36220,
+          "budgetedTokens": 45275,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -225,17 +221,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:00:38.772Z",
+    "at": "2026-09-30T19:14:14.582Z",
     "trace": {
-      "runId": "d85a36ca-53db-4ab0-8f61-b1c8611fdc12",
+      "runId": "0432c09b-b61b-4392-a7bd-d15e6482e55f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0da3bc2848cefaa76d2504f0a76608daed996d9b11719bd30eef7f108aa9d6f5",
-      "contextHash": "e9c64129710b9d68e7be687d12e3fbf0ce8ca49a941080f24cf1becd13b75fee",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "5d818e7301ebdcf1d6e61174580d73ed1f8e80ab400c1aaaa4224258cb71ea1c",
+      "contextHash": "beda91acd09fd6ec08f4e60c094450447081d5425bcf8632793e9319d7764c78",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f1884943311b65b4033ae967e6e3279c7026b2b3cf9895538b3daea1b5666b7b",
+      "fingerprint": "fb921ad9970bf2ce9ea61bf7425bdc50e69ee2e389dd2508d802bd58041a85b4",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -248,11 +244,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8a-0143-7d61-8fbb-6402e447c94a"
+        "01a0f3bc-befa-7851-8b1d-877a7462ca90"
       ],
       "usage": {
-        "used": 51652,
-        "size": 760000,
+        "used": 58834,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -260,10 +256,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 123899,
-          "utf8Bytes": 132144,
-          "estimatedTokens": 44048,
-          "budgetedTokens": 55060,
+          "chars": 124881,
+          "utf8Bytes": 134002,
+          "estimatedTokens": 44668,
+          "budgetedTokens": 55835,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,65 +2,83 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/quality/repository.ts",
-    "title": "质量数据集与样本状态仓库",
-    "summary": "定义质量样本和标签合同，管理数据集创建、样本去重、人工处置、标签修订、冻结及冻结后完整性复核。",
+    "title": "质量评测数据集仓储",
+    "summary": "定义质量样本和标签合同，并管理数据集从草稿、人工标注到冻结校验的完整 SQLite 生命周期，使用摘要和条件更新防止重复与并发覆盖。",
     "category": "implementation",
     "sections": [
       {
-        "key": "contracts-lifecycle",
-        "title": "数据合同与数据集生命周期",
-        "body": "仓库用严格 schema 约束样本来源、类别、正文和 provenance，并约束标签处置、对象类型、证据、自动应用及禁止副作用。`extract` 必须至少有一个对象，非 extract 标签不得 `autoApply`，从入口阻止自相矛盾的标注。[[c1]]\n\n数据集以 name、split、source digest 判重；新增样本只允许在 draft 或 labeling 状态。每个 input 与草稿 label 都计算摘要，样本通过 `INSERT OR IGNORE` 写入，并在事务末把 draft 数据集推进到 labeling；失败会回滚整批。[[c2]] 查询接口提供数据集汇总、顺序样本、下一 pending 项和按状态进度，供 Lark 标注服务构建会话与卡片。[[c3]]"
+        "key": "contracts",
+        "title": "输入与标签约束",
+        "body": "仓储首先用严格 schema 固定样本来源、类别、正文和来源身份信息；标签则区分提取、放弃和需要上下文，并约束任务、事实、经历、流程四类对象。[[c1]] 交叉校验要求 `extract` 至少有一个对象，同时禁止非提取标签自动应用，避免出现语义矛盾的标注。[[c2]]"
       },
       {
-        "key": "review-freeze",
-        "title": "人工处置、并发保护与冻结",
-        "body": "`label` 只接受 pending 样本，并用 expected label digest 检查调用者看到的草稿仍为最新版。confirm 直接固化 draft；abstain 生成无对象、禁止自动应用的确认标签；skip 与 needs_edit 不产生 confirmed label。更新语句再次同时限制 pending 状态与摘要，形成乐观并发保护。[[c4]]\n\n`revise` 允许 pending、needs_edit、skipped 样本修改草稿，重新计算摘要并清除审核人和审核时间，使其回到 pending；已 confirmed 的样本不可改。[[c5]] 数据集只有在样本数恰好等于 target count 且全部 confirmed 时才能冻结。冻结摘要覆盖每项 ordinal、input digest 与 confirmed label digest，`verifyFrozen` 会重算并拒绝任何不一致。[[c6]] 代码未显示数据库唯一索引，`INSERT OR IGNORE` 的实际去重粒度仍需迁移定义佐证。"
+        "key": "dataset_flow",
+        "title": "数据集与样本写入",
+        "body": "数据集以名称、分组和来源摘要查重；相同来源再次创建会返回既有标识。[[c3]] 加样本只允许草稿或标注中数据集，逐条校验并计算输入、标签摘要，通过 `INSERT OR IGNORE` 去重；整批操作由显式事务保护，成功后把草稿转为 labeling，异常则回滚。[[c4]]"
+      },
+      {
+        "key": "review_integrity",
+        "title": "人工变更与冻结完整性",
+        "body": "标注要求样本仍为 pending 且调用方持有当前标签摘要；确认会固化草稿标签，不提炼会生成明确的 abstain 标签，而修改或跳过保留后续处理状态。SQL 再次以状态和摘要做条件更新，防止检查后并发变化。[[c5]] `revise` 同样采用摘要乐观锁，写入新草稿后清空旧审核信息并重新排队。[[c6]] 只有样本数等于目标数且全部 confirmed 才能冻结；冻结清单摘要覆盖顺序、输入和已确认标签，`verifyFrozen` 会重算并检测篡改。[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "质量样本与标签 schema",
-        "reason": "支持输入类别、标签对象及 extract/autoApply 交叉约束的说明。",
+        "reason": "支持样本来源、类别、来源身份以及标签对象类型的合同描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/repository.ts",
           "startLine": 8,
-          "endLine": 74
+          "endLine": 60
         },
         "quote": "export const qualitySampleInputSchema = z\n  .object({\n    source: z\n      .object({\n        uri: z.string().min(1).max(2000),\n        documentId: z.string().min(1).max(500),\n        revisionId: z.string().min(1).max(500),\n        fragmentId: z.string().min(1).max(500),\n        section: z.string().min(1).max(500),\n     "
       },
       {
         "key": "c2",
-        "label": "数据集创建与样本批量写入",
-        "reason": "说明数据集判重、可写状态、摘要计算、事务提交和回滚。",
+        "label": "标签交叉约束",
+        "reason": "说明提取标签必须有对象且非提取标签不得自动应用。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 61,
+          "endLine": 74
+        },
+        "quote": "  .superRefine((label, context) => {\n    if (label.disposition === \"extract\" && !label.objects.length)\n      context.addIssue({\n        code: \"custom\",\n        path: [\"objects\"],\n        message: \"extract labels require at least one object\",\n      });\n    if (label.disposition !== \"extract\" && label.autoApply)\n      co"
+      },
+      {
+        "key": "c3",
+        "label": "来源摘要级数据集去重",
+        "reason": "支持相同名称、分组和来源摘要复用既有数据集。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/repository.ts",
           "startLine": 118,
-          "endLine": 215
+          "endLine": 153
         },
         "quote": "  createDataset(input: {\n    name: string;\n    split: \"dev\" | \"holdout\";\n    sourceUri: string;\n    sourceRevisionId?: string | null;\n    sourceDigest: string;\n    targetCount: number;\n  }) {\n    const existing = this.db\n      .prepare(\n        `SELECT id FROM quality_datasets\n         WHERE name=? AND split=? AND sour"
       },
       {
-        "key": "c3",
-        "label": "样本查询与进度接口",
-        "reason": "支持仓库向标注服务提供顺序样本、下一待处理项和状态计数的关系。",
-        "relation": "explains",
+        "key": "c4",
+        "label": "事务化样本插入",
+        "reason": "说明状态门禁、稳定摘要、忽略重复和事务回滚行为。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/repository.ts",
-          "startLine": 217,
-          "endLine": 276
+          "startLine": 155,
+          "endLine": 215
         },
-        "quote": "  datasets() {\n    return this.db\n      .prepare(\n        `SELECT d.id,d.name,d.split,d.state,d.source_uri AS sourceUri,\n           d.source_revision_id AS sourceRevisionId,d.source_digest AS sourceDigest,\n           d.target_count AS targetCount,d.manifest_digest AS manifestDigest,\n           d.created_at AS createdAt"
+        "quote": "  addSamples(\n    datasetId: string,\n    samples: { input: QualitySampleInput; draftLabel: QualityLabel }[],\n  ) {\n    const dataset = this.db\n      .prepare(\"SELECT state FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    if (![\""
       },
       {
-        "key": "c4",
-        "label": "人工标签状态转换",
-        "reason": "解释四种动作的确认标签、目标状态和乐观并发检查。",
+        "key": "c5",
+        "label": "样本标注乐观并发控制",
+        "reason": "支持动作到标签及状态的映射，以及基于 pending 状态和摘要的条件更新。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -71,9 +89,9 @@
         "quote": "  label(input: {\n    sampleId: string;\n    action: \"confirm\" | \"abstain\" | \"needs_edit\" | \"skip\";\n    reviewerOpenId: string;\n    expectedLabelDigest: string;\n  }) {\n    const sample = this.sample(input.sampleId);\n    if (!sample) throw Error(\"QUALITY_SAMPLE_NOT_FOUND\");\n    if (sample.state !== \"pending\")\n      throw "
       },
       {
-        "key": "c5",
-        "label": "草稿标签修订",
-        "reason": "支持可修订状态、摘要轮换及恢复 pending 的说明。",
+        "key": "c6",
+        "label": "草稿修订与重新排队",
+        "reason": "说明可修订状态、摘要校验以及清理旧审核结果的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -84,9 +102,9 @@
         "quote": "  revise(input: {\n    sampleId: string;\n    expectedLabelDigest: string;\n    label: QualityLabel;\n  }) {\n    const sample = this.sample(input.sampleId);\n    if (!sample) throw Error(\"QUALITY_SAMPLE_NOT_FOUND\");\n    if (![\"pending\", \"needs_edit\", \"skipped\"].includes(sample.state))\n      throw Error(\"QUALITY_SAMPLE_ALREA"
       },
       {
-        "key": "c6",
-        "label": "冻结与完整性校验",
-        "reason": "说明完全确认前置条件、manifest digest 内容及冻结后复核。",
+        "key": "c7",
+        "label": "冻结清单与完整性复核",
+        "reason": "支持全量确认门槛、manifest 摘要生成和冻结后重算校验。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -97,29 +115,9 @@
         "quote": "  freeze(datasetId: string) {\n    const dataset = this.db\n      .prepare(\"SELECT * FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    const samples = this.samples(datasetId);\n    if (\n      samples.length !== Number(dataset.target"
       }
     ],
-    "questions": [
-      {
-        "question": "质量样本的 `INSERT OR IGNORE` 依赖哪些数据库唯一约束？",
-        "why": "仓库计算 input digest，但提供的文件没有表结构；无法确定重复是按数据集与 input、ordinal，还是其他组合被忽略。",
-        "nextStep": "核对质量表迁移及相应测试，确认重复导入不会留下 ordinal 空洞或错误吞掉非重复数据。",
-        "blocking": false,
-        "citationKeys": [
-          "c2"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/learning/pipeline.ts",
-      "digest": "3ae1285f4f529258e0273949da1660869c2d121290c605a53d9c0ea2a5bf44a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/learning/refresh.ts",
-      "digest": "82040e6bf9053694fce5e0fba676574f3e95fcf309d9076f297fa674697efd2d"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/quality/import.ts",
@@ -137,44 +135,54 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/jobs/worker.ts",
-      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/jobs/repository.ts",
-      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:36:22.914Z",
+    "at": "2026-09-30T19:22:13.917Z",
     "trace": {
-      "runId": "b24a508b-9e49-4030-a33d-9b29aeeb18c5",
+      "runId": "95952240-8704-4c12-a148-01b2eda26b5e",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "d6d9a86c5eafafc99edd87107f6c137aeb9b9b0a70faded4d19ccb17c259fb08",
-      "contextHash": "775cf64b377935696b9e2041fe922cc7fb3a70584a2e0881cf89d345ba10501f",
+      "promptHash": "be6da817367d1a86a7b4b0af9b1c386d9447d8ee7527717dbc46cc361541556f",
+      "contextHash": "09439dfdad4c8480731d6fed0afe9c94afef82bc3d027b88c657593be0373a68",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "14feaa8c6d4a0069dad959ba68382169acc8dc67a5f41fee01beef01e423ed38",
+      "fingerprint": "7c288405af8b8ccc81152ede5119a055caa17bc4e461d640fe3404e55884ad81",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -187,11 +195,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaa-213d-7d13-98e6-3838885b25f1"
+        "01a0f3c3-830a-71d3-a1ce-87178e464c5c"
       ],
       "usage": {
-        "used": 48481,
-        "size": 760000,
+        "used": 48527,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -199,10 +207,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 104046,
-          "utf8Bytes": 106725,
-          "estimatedTokens": 35575,
-          "budgetedTokens": 44469,
+          "chars": 80570,
+          "utf8Bytes": 83287,
+          "estimatedTokens": 27763,
+          "budgetedTokens": 34704,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -211,17 +219,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:36:50.583Z",
+    "at": "2026-09-30T19:22:42.369Z",
     "trace": {
-      "runId": "afa11d9e-b028-47d8-baa8-0f33d508c8b6",
+      "runId": "e81304b4-7d4d-4831-b8fb-5150b92bd223",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "23ea58bf4c39249e897ea17eb8257be8a67d56838fff53295c4ed9de4ef6bda3",
-      "contextHash": "5fc04761f2d28bfbb15cb839ae410658ccb196bac67e758908bb49e833e8c4e7",
+      "promptHash": "2df70fb6611560dc5402454f98ede7b730c378a2f682a833de5fb985fa940fb0",
+      "contextHash": "4afb6779fab199f827bb783826a04463110145109152e9e2d1fd4f9d55de717c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "04c039dc6f97233cd2e75bca2c35775b51c16fdbda7244f0b64c73cbbfe27cd0",
+      "fingerprint": "52f50ed727bdd367ac2337e2f26c7131998f6960fffc72e955273c2beb67854e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -234,11 +242,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeab-107d-7e81-8977-b6d2f434d03a"
+        "01a0f3c4-891f-7572-8e72-098925e922fa"
       ],
       "usage": {
-        "used": 52686,
-        "size": 760000,
+        "used": 51997,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -246,10 +254,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 126336,
-          "utf8Bytes": 137353,
-          "estimatedTokens": 45785,
-          "budgetedTokens": 57232,
+          "chars": 103086,
+          "utf8Bytes": 113787,
+          "estimatedTokens": 37929,
+          "budgetedTokens": 47412,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

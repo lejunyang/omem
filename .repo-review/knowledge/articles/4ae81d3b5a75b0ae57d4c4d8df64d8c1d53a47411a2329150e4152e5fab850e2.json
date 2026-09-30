@@ -2,196 +2,184 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/memory/service.ts",
-    "title": "记忆提案治理与反馈服务",
-    "summary": "围绕提案持久化、证据校验、知识匹配、策略裁决、人工决定和不可变修订应用构成记忆治理主流程，并附带反馈约束的记录与召回。",
-    "category": "implementation",
+    "title": "记忆提案治理、应用与反馈服务",
+    "summary": "将提案持久化、证据校验、知识匹配、影响预算、用户决策和原子应用串成一条治理链，并把可信反馈转成可复用约束。",
+    "category": "architecture",
     "sections": [
       {
-        "key": "proposal-evidence",
-        "title": "提案持久化与证据约束",
-        "body": "`MemoryService` 以 Store 的 SQLite 连接和事务能力为基础。提案先按稳定摘要去重：同一提案 ID 对应不同摘要会报冲突，同工作区相同摘要则复用已有记录；写入时还保存证据读取对应的来源版本与 validity epoch。[[c1]] 证据校验逐条确认 fragment、source revision、精确引文的 Unicode 码点区间，或图片资产是否同时存在于修订和资产存储中，最终给出 valid、invalid 或 ambiguous。[[c2]] 后续应用与决定前会重新比较来源 head 和 epoch，变化即视为陈旧决定。[[c3]]"
+        "key": "evidence-policy",
+        "title": "证据校验与政策分流",
+        "body": "`MemoryService` 不让模型直接写入记忆或任务，而是先按合同解析提案与独立评估，再校验固定证据：文本引用必须匹配指定修订、选择区间和精确内容，图片必须同时存在于修订部件与资产存储中。[[c7]] 随后政策层综合语义结论、不确定性、图片推断、任务所有者身份、模糊时间、跨来源更新及影响量：确定性证据错误或语义矛盾直接拒绝；噪声忽略；非阻塞的不确定性延迟到使用时；图片推断、流程和他人承诺仅保留为来源；只有影响超限，或触及活跃知识/当前任务的跨源冲突，才升级为用户决策。[[c8]]"
       },
       {
-        "key": "matching-policy",
-        "title": "知识匹配与自动治理",
-        "body": "创建 claim 前只召回同工作区、同项目的活跃 claim。规范化陈述完全相同时，共享来源记为重复，独立来源记为等价；只有评估明确标为冲突时，才以实体词重叠、相反谓词极性和有效期重叠选择冲突对象，并返回双方证据链。该方法是确定性启发式，不是完整语义推理。[[c4]] 策略层把无效证据或被语义评估否定的提案拒绝，把噪声忽略；跨源冲突仅在覆盖活跃知识或阻塞当前任务时升级，图片推断、procedure、未验证任务归属等通常只保留或延后。满足条件且未超影响预算时才自动应用。[[c5]]"
+        "key": "matching-application",
+        "title": "既有知识匹配与原子应用",
+        "body": "创建 claim 前会在同一工作区和项目内召回活跃记忆。规范化陈述完全相同且来源重叠时视为重复，不再创建第二条活跃记忆；独立来源得出相同结论时创建新记忆并记录可查询的等价关系；评估指出矛盾时，还要满足有效期重叠、实体词相交和谓词极性相反，才记录争议及双方证据链。该规则是确定性启发式，并非完整语义推理。[[c9]] 真正应用前再次检查来源 head 与 validity epoch，任务和记忆写入统一走 Store 的 application 接口；流程类知识未经所有者批准禁止自动应用。[[c10]]"
       },
       {
-        "key": "application-decisions",
-        "title": "应用、人工决定与批处理",
-        "body": "实际应用通过 Store 的 application 接口生成任务或记忆修订，并在前置钩子检查来源仍为当前版本；procedure 必须得到所有者批准，不能直接自动应用。[[c6]] 需要人工确认时，决定记录绑定提案摘要、操作者、过期时间和预期版本；审批接口校验摘要、身份、幂等 requestId、状态及期限，来源变旧会同时把决定和提案标记为 stale。[[c7]] 批处理先对受影响记忆集合与新实体键集合去重求并集；超过预算时，原本可自动应用的项目全部停放，只创建一个汇总确认，避免把大变更拆成多个低影响操作绕过预算。[[c8]]"
+        "key": "batch-decision",
+        "title": "批量影响预算与决策",
+        "body": "单条更新的影响量包含目标及共享来源的其他活跃记忆；创建操作则按工作区、项目和实体内容生成键。`evaluateBatch` 先对整份 ChangeSet 的受影响记忆与新实体做去重并集，超过自动上限时，把原本可自动应用的提案全部停放，避免逐条以低影响绕过预算，并只创建一个汇总 AttentionCase。[[c11]] 单条决策具有所有者绑定、七天有效期、请求幂等和版本新鲜度检查；批准才调用应用，拒绝或请求背景只更新决策及提案状态。[[c12]]"
       },
       {
         "key": "feedback",
-        "title": "反馈约束与限制",
-        "body": "`FeedbackService` 以工作区、生产者和事件 ID 保证反馈幂等，同键不同载荷会报冲突。只有身份已验证、来源为 original、且全部证据存在的非弱反馈，才可能成为 active confirmed 约束；权限、预算、自动批准等受保护策略始终进入 shadow。[[c9]] 当前自动改写只覆盖 task 的 `task_assignment`：按 scope 召回 confirmed 约束并替换 owner；其他提案类型直接原样返回。[[c10]] 因而反馈不是任意策略自学习机制，也没有从本材料看出冲突约束的排序、撤销或合并规则。"
+        "title": "反馈约束与模块关系",
+        "body": "`FeedbackService` 对反馈事件按工作区、生产者和事件 ID 去重，并用稳定摘要检测同一事件内容冲突。只有身份已验证、来源为 original 且证据均存在的强反馈才可成为 active confirmed 约束；权限、预算、自动批准等受保护策略始终进入 shadow，普通有用性或结果信号保持 weak。当前自动改写仅作用于任务负责人匹配。[[c13]] 应用工厂直接以同一个 Store 构造记忆与反馈服务，说明两者共享数据库、事务和应用收据基础设施。[[c14]]"
       }
     ],
     "citations": [
       {
-        "key": "c1",
-        "label": "提案去重与来源读取快照",
-        "reason": "支持稳定摘要去重、冲突检测及记录来源版本和有效性纪元的流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 135,
-          "endLine": 198
-        },
-        "quote": "  private persistProposal(proposal: Proposal, impactCount: number) {\n    const digest = stableDigest(proposal);\n    return this.transaction(() => {\n      const byId = this.proposalRow(proposal.proposal_id);\n      if (byId && byId.digest !== digest) throw Error(\"PROPOSAL_ID_CONFLICT\");\n      const byDigest = this.db\n   "
-      },
-      {
-        "key": "c2",
-        "label": "确定性证据校验",
-        "reason": "支持文本区间、来源修订及图片资产校验和三态 verdict 的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 201,
-          "endLine": 252
-        },
-        "quote": "  validateEvidence(proposal: Proposal) {\n    let ambiguous = false;\n    const errors: string[] = [];\n    for (const evidence of proposal.evidence) {\n      const record = this.store.evidence(evidence.fragment_revision_id);\n      if (!record) {\n        errors.push(`missing fragment ${evidence.fragment_revision_id}`);\n   "
-      },
-      {
-        "key": "c3",
-        "label": "来源新鲜度检查",
-        "reason": "说明通过 head 与 validity epoch 防止依据过期来源执行决定。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 255,
-          "endLine": 281
-        },
-        "quote": "  private sourceReads(proposalId: string) {\n    return this.db\n      .prepare(\n        `SELECT r.*,s.head AS current_head,ss.validity_epoch AS current_epoch\n         FROM proposal_source_reads r\n         JOIN sources s ON s.id=r.source_id\n         JOIN source_state ss ON ss.source_id=r.source_id\n         WHERE r.propos"
-      },
-      {
-        "key": "c4",
-        "label": "创建 claim 的知识匹配",
-        "reason": "支持同域候选过滤、重复与等价区分，以及冲突候选选择和证据链生成。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 417,
-          "endLine": 535
-        },
-        "quote": "  /**\n   * F5 / Problem 5: before creating a new claim, recall active knowledge IN SCOPE\n   * (same workspace, same project) and decide duplicate / equivalent / conflict.\n   * Conflict association is by entity-term overlap plus opposite predicate polarity —\n   * never by taking the first row in the table — and returns "
-      },
-      {
-        "key": "c5",
-        "label": "AttentionGate 策略",
-        "reason": "支持拒绝、忽略、延后、保留、请求决定与自动应用等治理分支。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 704,
-          "endLine": 810
-        },
-        "quote": "  /**\n   * AttentionGate (processing-policy.md §5): deterministic validation failure is\n   * the machine's own job and never becomes an owner question. Only conditions\n   * that genuinely require an owner choice/authorization AND touch current work\n   * or existing important knowledge become `awaiting_decision`. Everyt"
-      },
-      {
-        "key": "c6",
-        "label": "任务与记忆应用",
-        "reason": "支持通过 Store 应用实体、执行前置新鲜度检查，以及 procedure 的审批限制。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 1141,
-          "endLine": 1243
-        },
-        "quote": "  private apply(\n    proposal: Proposal,\n    proposalDigest: string,\n    decision?: { id: string; requestId: string },\n    approvedByOwner = false,\n  ) {\n    const metadata = {\n      workspaceId: proposal.scope.workspace_id,\n      applicationId: `proposal:${proposalDigest}:1`,\n      proposalId: proposal.proposal_id,\n  "
-      },
-      {
         "key": "c7",
-        "label": "人工决定处理",
-        "reason": "支持决定的摘要、操作者、幂等、过期与陈旧来源校验，以及批准后的应用流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 1660,
-          "endLine": 1749
-        },
-        "quote": "  decide(decisionId: string, input: unknown) {\n    const action = decisionActionSchema.parse(input);\n    const decision = this.db\n      .prepare(\"SELECT * FROM decisions WHERE id=?\")\n      .get(decisionId) as Row | undefined;\n    if (!decision) throw Error(\"DECISION_NOT_FOUND\");\n    if (decision.proposal_digest !== act"
-      },
-      {
-        "key": "c8",
-        "label": "批量影响门控",
-        "reason": "支持按去重并集计算整体影响，并在超预算时统一停放和汇总确认。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 1405,
-          "endLine": 1482
-        },
-        "quote": "  /**\n   * G17 / KnowledgePlan: evaluate a whole ChangeSet in one production pass.\n   *\n   * The total impact is the de-duplicated UNION of:\n   *   - affectedMemoryIds: every active memory an update/supersede touches (target\n   *     plus siblings sharing its sources), and\n   *   - affectedEntities: the new entity each"
-      },
-      {
-        "key": "c9",
-        "label": "反馈可信度分级",
-        "reason": "支持反馈幂等、证据与身份检查，以及 confirmed、weak、shadow 强度划分。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 1869,
-          "endLine": 1954
-        },
-        "quote": "export class FeedbackService {\n  constructor(private readonly store: Store) {}\n\n  record(value: unknown) {\n    const input = feedbackInputSchema.parse(value);\n    const payloadDigest = stableDigest(input);\n    return this.store.tx(() => {\n      const existing = this.store.db\n        .prepare(\n          \"SELECT * FROM f"
-      },
-      {
-        "key": "c10",
-        "label": "确认约束应用",
-        "reason": "支持当前仅对任务所有者分配约束执行自动改写的边界说明。",
+        "label": "提案证据的确定性校验",
+        "reason": "支持文本修订、精确选择区间及图片资产的校验规则，且引用紧邻相关论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/memory/service.ts",
-          "startLine": 1957,
-          "endLine": 1990
+          "startLine": 227,
+          "endLine": 278
         },
-        "quote": "  recall(scope: Proposal[\"scope\"]) {\n    return this.store.db\n      .prepare(\n        `SELECT * FROM feedback_constraints\n         WHERE workspace_id=? AND project_id IS ? AND subject_id IS ?\n           AND active=1 AND strength='confirmed'\n         ORDER BY created_at`,\n      )\n      .all(scope.workspace_id, scope.pro"
+        "quote": "  validateEvidence(proposal: Proposal) {\n    let ambiguous = false;\n    const errors: string[] = [];\n    for (const evidence of proposal.evidence) {\n      const record = this.store.evidence(evidence.fragment_revision_id);\n      if (!record) {\n        errors.push(`missing fragment ${evidence.fragment_revision_id}`);\n   "
+      },
+      {
+        "key": "c8",
+        "label": "AttentionGate 政策分流",
+        "reason": "支持拒绝、忽略、延迟、保留来源、自动应用和升级用户决策的条件。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 730,
+          "endLine": 835
+        },
+        "quote": "  /**\n   * AttentionGate (processing-policy.md §5): deterministic validation failure is\n   * the machine's own job and never becomes an owner question. Only conditions\n   * that genuinely require an owner choice/authorization AND touch current work\n   * or existing important knowledge become `awaiting_decision`. Everyt"
+      },
+      {
+        "key": "c9",
+        "label": "新 claim 的重复、等价与冲突匹配",
+        "reason": "支持作用域过滤、来源重叠、有效期、实体词和极性规则及可追溯冲突链。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 443,
+          "endLine": 560
+        },
+        "quote": "  /**\n   * F5 / Problem 5: before creating a new claim, recall active knowledge IN SCOPE\n   * (same workspace, same project) and decide duplicate / equivalent / conflict.\n   * Conflict association is by entity-term overlap plus opposite predicate polarity —\n   * never by taking the first row in the table — and returns "
+      },
+      {
+        "key": "c10",
+        "label": "应用前新鲜度检查与统一写入",
+        "reason": "支持应用前检查来源读取版本、通过 Store 写任务或记忆，以及流程知识需批准的边界。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 1167,
+          "endLine": 1268
+        },
+        "quote": "  private apply(\n    proposal: Proposal,\n    proposalDigest: string,\n    decision?: { id: string; requestId: string },\n    approvedByOwner = false,\n  ) {\n    const metadata = {\n      workspaceId: proposal.scope.workspace_id,\n      applicationId: `proposal:${proposalDigest}:1`,\n      proposalId: proposal.proposal_id,\n  "
+      },
+      {
+        "key": "c11",
+        "label": "整批去重影响门控",
+        "reason": "支持批量影响由记忆并集和新实体并集组成、超预算时整体停放并汇总提问。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 1431,
+          "endLine": 1508
+        },
+        "quote": "  /**\n   * G17 / KnowledgePlan: evaluate a whole ChangeSet in one production pass.\n   *\n   * The total impact is the de-duplicated UNION of:\n   *   - affectedMemoryIds: every active memory an update/supersede touches (target\n   *     plus siblings sharing its sources), and\n   *   - affectedEntities: the new entity each"
+      },
+      {
+        "key": "c12",
+        "label": "用户决策的版本与幂等处理",
+        "reason": "支持参与者、摘要、请求 ID、过期和来源新鲜度检查，以及批准、拒绝和补背景的状态转换。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 1686,
+          "endLine": 1775
+        },
+        "quote": "  decide(decisionId: string, input: unknown) {\n    const action = decisionActionSchema.parse(input);\n    const decision = this.db\n      .prepare(\"SELECT * FROM decisions WHERE id=?\")\n      .get(decisionId) as Row | undefined;\n    if (!decision) throw Error(\"DECISION_NOT_FOUND\");\n    if (decision.proposal_digest !== act"
+      },
+      {
+        "key": "c13",
+        "label": "反馈强度与任务约束应用",
+        "reason": "支持反馈去重、受保护策略降级、confirmed 条件及当前只改写任务负责人的范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 1895,
+          "endLine": 2016
+        },
+        "quote": "export class FeedbackService {\n  constructor(private readonly store: Store) {}\n\n  record(value: unknown) {\n    const input = feedbackInputSchema.parse(value);\n    const payloadDigest = stableDigest(input);\n    return this.store.tx(() => {\n      const existing = this.store.db\n        .prepare(\n          \"SELECT * FROM f"
+      },
+      {
+        "key": "c14",
+        "label": "应用工厂中的服务装配",
+        "reason": "证明 MemoryService 与 FeedbackService 由同一 Store 构造并接入服务器应用。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 53,
+          "endLine": 59
+        },
+        "quote": "  const app = Fastify({ bodyLimit: 12_000_000, logger: false });\n  const store = new Store(config.dataDir, {\n    externalNotifications: config.notifications.external,\n  });\n  const runs = new Runs(store, config);\n  const memory = new MemoryService(store);\n  const feedback = new FeedbackService(store);"
       }
     ],
     "questions": [
       {
-        "question": "批量确认被批准后，是否应原子应用 attention case 中的全部提案？",
-        "why": "材料展示了批量门控和汇总决定的创建，但公开的 decide 流程按决定锚定的单个 proposal 重建并应用，未展示对 batchProposalDigests 的整体批准执行。",
-        "nextStep": "检查批量决定的路由或后续执行器，并增加“全部成功或全部不应用”的行为测试。",
+        "question": "汇总批量决策被批准后，是否确实会应用所有停放提案，而不只是代表提案？",
+        "why": "批量决策把所有提案摘要放进 attentionCase，但决策行锚定代表提案；通用 `decide` 路径按决策的单个 proposalDigest 重新加载并应用一条提案。现有材料不足以证明另有批量批准执行器。",
+        "nextStep": "检查批量决策 API、回调处理和后续 worker；若没有专用执行路径，应定义整批原子性、逐条失败处理和收据集合。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c8"
+          "c11",
+          "c12"
         ]
       },
       {
-        "question": "冲突匹配的中文二元词和简单否定规则在同义改写、双重否定及多实体陈述上允许怎样的误差？",
-        "why": "当前冲突关联依靠确定性 token 重叠和极性判断，复杂语义可能漏配或误配。",
-        "nextStep": "用真实冲突样本建立精确率与召回率基线，再决定是否扩充规则或引入受控语义评估。",
+        "question": "基于中文二元词和简单否定词的冲突匹配，在同词多义、双重否定或复杂时态下允许多大误差？",
+        "why": "当前规则明确是词项重叠与极性判断，材料没有给出准确率、人工复核阈值或对应测试结果。",
+        "nextStep": "用真实中文冲突、同义改写和无关同词样本评估误报漏报，并据结果决定是否只把匹配作为候选。",
         "blocking": false,
         "citationKeys": [
-          "c4"
+          "c9"
         ]
       },
       {
-        "question": "批量确认被批准后，是否应原子应用 attention case 中记录的全部提案？",
-        "why": "批量门控会创建包含 batchProposalDigests 的汇总决定，但现有 decide 流程只按决定所锚定的单个 proposal_digest 重建并应用代表提案，未展示整批执行路径。",
-        "nextStep": "核对批量决定的路由或执行器，并增加批准后全部成功或全部不应用的行为测试。",
+        "question": "批量决策获批后，是否存在应用全部停放提案的专用执行路径？",
+        "why": "批量 AttentionCase 保存了全部提案摘要，但 decisions 行锚定代表提案；所示 decide 路径只按该 proposalDigest 加载并应用一个提案。草稿已将此保留为未决问题，没有把整体应用表述成已实现事实。",
+        "nextStep": "检查批量决策 API、回调和后续 worker；若无专用执行器，定义整体批准的原子性、逐条失败处理和收据集合。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c8"
+          "c11",
+          "c12"
+        ]
+      },
+      {
+        "question": "中文二元词与简单否定规则的冲突匹配允许多大误差？",
+        "why": "实现采用内容二元词重叠和谓词极性启发式，现有材料没有提供复杂否定、同词多义或时态场景的准确率。",
+        "nextStep": "用真实中文冲突、同义改写和无关同词样本评估误报漏报，再决定匹配结果是否只应作为候选。",
+        "blocking": false,
+        "citationKeys": [
+          "c9"
         ]
       }
     ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "569529469b9b70c8dd5c3e4fd8a5818fd8192c36a0c8713a68d98c4c92fabd43"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/main.ts",
@@ -200,7 +188,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     },
     {
       "kind": "material",
@@ -209,39 +197,39 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
       "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:05:22.391Z",
+    "at": "2026-09-30T19:21:38.476Z",
     "trace": {
-      "runId": "8d724cb6-49e4-462d-a78a-b580eeacbb36",
+      "runId": "40569594-e5be-4783-924d-ec867c3736f7",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6f350b77b2d0eb91786fa9d5887643cf7a9e63710d1d6bfd37ce75e643047cdc",
-      "contextHash": "2772d5dfeb32649738d6996f8912471ec11ce364dc4f781bdd7a45134dfa1446",
+      "promptHash": "ff984bdd7a2b79bf8336356c96eeb4472209829b14e32d5daa9852085dfbca94",
+      "contextHash": "a67a60e4c0be0cc961b703bad0da8d0a1052cd4cc0518312955b633a355b1e7c",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "035b17beedfa7dda209c93d487f7433ea1c6ea0c0ff5bfa937ccff7020ea77b2",
+      "fingerprint": "9ba0e3f202bd4e3e42d06821b87596269e3cd3aa36b2c3dfb7e73fe4cd81a72e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -254,11 +242,12 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8e-03c5-7931-bf71-750cd557e8f5"
+        "01a0f3c2-12b5-77e0-ba65-98784f57576b",
+        "01a0f3c3-222d-7121-be28-1880e0ec72e6"
       ],
       "usage": {
-        "used": 51577,
-        "size": 760000,
+        "used": 61104,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -266,29 +255,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 126967,
-          "utf8Bytes": 130451,
-          "estimatedTokens": 43484,
-          "budgetedTokens": 54355,
+          "chars": 134510,
+          "utf8Bytes": 138016,
+          "estimatedTokens": 46006,
+          "budgetedTokens": 57508,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 0
+      "repairAttempts": 1
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:05:40.802Z",
+    "at": "2026-09-30T19:22:18.558Z",
     "trace": {
-      "runId": "d6cf617d-fd01-4be3-b48d-18f738f10e1f",
+      "runId": "cf5c9254-33d8-4ec8-be0d-aa8d0f081698",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "6a430dd8d98cb35bd2a5703a938ad09a7ecc013dbb88b612e35f0163263dbd98",
-      "contextHash": "ba97bc532a7495671a0c5792f2a06a58368d3507eb3d05a00d17846ac3ccc724",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "47e4c1e43f0da1a21160677e1a86096e2d4161e48d85ecf551e83e5fe0c6dd7f",
+      "contextHash": "fb77ecee520ee201b17040a44c157c0e302a63b8c68271709a769fa4dfee5b8d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1a6ddb23a49dad508c45dfb97aaee2c4a638b98b9b671def8aa9674d40edc7c0",
+      "fingerprint": "4d63e62fcddd9e6c3810530cb95895737ca73e583e89a9dc638f4495fe16a292",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -301,11 +290,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8e-ade6-7322-9ce1-3bb086d85cda"
+        "01a0f3c3-feb2-7cf0-81da-0235c6c7e335"
       ],
       "usage": {
-        "used": 53600,
-        "size": 760000,
+        "used": 63916,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -313,10 +302,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 139153,
-          "utf8Bytes": 147712,
-          "estimatedTokens": 49238,
-          "budgetedTokens": 61548,
+          "chars": 146766,
+          "utf8Bytes": 156671,
+          "estimatedTokens": 52224,
+          "budgetedTokens": 65280,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

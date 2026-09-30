@@ -2,94 +2,67 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/source-text.ts",
-    "title": "固定修订文本读取",
-    "summary": "从 SQLite 按修订标识读取捕获正文，仅接受 verbatim-v1 格式并顺序拼接文本部件；记录不存在或格式不匹配时返回 null，且不会用当前工作树内容重建历史证据。",
+    "title": "固定修订原文读取门卫",
+    "summary": "只从数据库中的固定 Capture 修订恢复逐字文本，并将旧式有损捕获明确视为不可用，避免用当前工作树伪造历史证据。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose",
-        "title": "解决的问题与证据边界",
-        "body": "`revisionText` 用于读取某个固定 Capture 修订中保存的精确文本，服务于需要引用历史证据的场景。它明确把旧式有损捕获视为未命中，并禁止通过读取当前工作树来补造旧修订内容，从而避免文件后续变化导致历史引用与当时证据不一致。[[c1]]"
+        "key": "contract",
+        "title": "读取合同",
+        "body": "`revisionText` 提供一个刻意狭窄的证据读取入口：按 revision id 查询 `revisions.body`，修订不存在即返回 `null`；正文虽存在但未标记 `captureFormat: verbatim-v1` 时同样返回 `null`。这使“没有可证明的逐字原文”成为显式缺失，而不是尝试从别处补齐。[[c1]]"
       },
       {
-        "key": "flow",
-        "title": "核心流程",
-        "body": "函数接收 `Store` 和 `revisionId`，以参数化 SQL 查询 `revisions.body`；找不到记录时直接返回 `null`。命中后解析正文 JSON，仅在 `context.captureFormat` 等于 `verbatim-v1` 时继续，再筛选 `type === \"text\"` 的部件，按原顺序提取 `text`，用空分隔符拼成结果。[[c2]] 查询能力来自 `Store.db`：该字段连接数据目录下的 `omem.sqlite`，并在构造期间完成迁移及相关仓储初始化。[[c3]]"
-      },
-      {
-        "key": "boundaries",
-        "title": "边界条件与模块关系",
-        "body": "“记录不存在”和“捕获格式不支持”都被折叠为 `null`；合法格式但没有文本部件时，`filter`、`map`、`join` 会产生空字符串。若 `body` 不是合法 JSON，或 `body.parts` 缺失、为 `null`、非数组，则解析或 `filter` 调用会抛错；但单个文本部件缺少 `text` 并不必然抛错，映射得到的 `undefined` 通常会被 `join(\"\")` 拼为空串。[[c2]] `revisionText` 不负责数据库生命周期；`Store` 在初始化失败时关闭连接并重抛异常，正常关闭则由 `close` 完成。[[c4]] 所给材料没有调用点和测试，无法确认上层如何解释 `null`，也不能证明畸形数据或图文混合输入已有行为断言。"
+        "key": "flow-and-limits",
+        "title": "拼接流程与限制",
+        "body": "通过格式门槛后，函数仅筛选 `type === \"text\"` 的 parts，并保持原顺序直接拼接，不插入分隔符。图片、链接和其他非文本 part 不进入结果；函数也不验证 parts 的完整结构或捕获摘要。它依赖 `Store` 暴露的 SQLite 连接，而 `Store` 构造时先执行数据库迁移，因此与修订表的持久化结构间存在直接关系。[[c2]] [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "固定修订的证据约束",
-        "reason": "支持函数读取固定 Capture 修订，并明确禁止从当前工作树重建历史证据的设计边界。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/source-text.ts",
-          "startLine": 3,
-          "endLine": 5
-        },
-        "quote": "/** Exact text from a fixed Capture revision. Legacy lossy captures are explicit\n * misses; never reconstruct evidence by reading the current working tree. */\nexport function revisionText(store: Store, revisionId: string): string | null {"
-      },
-      {
-        "key": "c2",
-        "label": "正文查询、格式校验与文本拼接",
-        "reason": "直接支持查询流程、两类 null 返回、文本筛选拼接，以及依据表达式可确定的异常和空值边界。",
+        "label": "固定修订逐字读取",
+        "reason": "支持仅接受 verbatim-v1 且缺失时返回 null 的核心合同。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-text.ts",
-          "startLine": 6,
+          "startLine": 3,
           "endLine": 10
         },
-        "quote": "  const row = store.db.prepare(\"SELECT body FROM revisions WHERE id=?\").get(revisionId) as { body: string } | undefined;\n  if (!row) return null;\n  const body = JSON.parse(row.body);\n  if (body.context?.captureFormat !== \"verbatim-v1\") return null;\n  return body.parts.filter((p: { type: string }) => p.type === \"text\").map((p: { text: string }) => p.text).join(\"\");"
+        "quote": "/** Exact text from a fixed Capture revision. Legacy lossy captures are explicit\n * misses; never reconstruct evidence by reading the current working tree. */\nexport function revisionText(store: Store, revisionId: string): string | null {\n  const row = store.db.prepare(\"SELECT body FROM revisions WHERE id=?\").get(revis"
+      },
+      {
+        "key": "c2",
+        "label": "文本部件拼接",
+        "reason": "支持只拼接文本 part、不补分隔符的边界说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-text.ts",
+          "startLine": 5,
+          "endLine": 10
+        },
+        "quote": "export function revisionText(store: Store, revisionId: string): string | null {\n  const row = store.db.prepare(\"SELECT body FROM revisions WHERE id=?\").get(revisionId) as { body: string } | undefined;\n  if (!row) return null;\n  const body = JSON.parse(row.body);\n  if (body.context?.captureFormat !== \"verbatim-v1\") retu"
       },
       {
         "key": "c3",
-        "label": "Store 的 SQLite 连接与初始化",
-        "reason": "说明 revisionText 依赖的数据库字段、SQLite 文件位置，以及连接后执行的迁移和仓储初始化。",
+        "label": "Store 数据库初始化",
+        "reason": "支持该函数所依赖 Store 数据库会先完成迁移的模块关系。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
-          "startLine": 35,
-          "endLine": 62
+          "startLine": 36,
+          "endLine": 63
         },
-        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase(this.db);\n      mkdirSync(join(dataDir, \"assets\"), { recursive: true, mode: 0o700 });\n      chmodSync(file, 0o600);\n      this.applications = new ApplicationRepository(\n        this.db,\n        options.externalNotifications,\n      );\n      this.jobs = new JobRepository(this.db);\n      this.inputs = new InputAggregator(this.db);\n      this.runtimeRequests = new RuntimeRequestRepository(this.db);\n      this.profiles = new SourceProfileService(this.db);"
-      },
-      {
-        "key": "c4",
-        "label": "数据库连接生命周期",
-        "reason": "支持 Store 在初始化失败时关闭数据库并重抛异常，以及提供正常关闭入口的说明。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 63,
-          "endLine": 69
-        },
-        "quote": "    } catch (error) {\n      this.db.close();\n      throw error;\n    }\n  }\n  close() {\n    this.db.close();"
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       }
     ],
     "questions": [
       {
-        "question": "调用方是否需要区分“修订不存在”和“捕获格式不受支持”？",
-        "why": "当前实现将两者统一返回 `null`，材料未包含调用点或接口响应约定，因此无法判断该折叠是否会影响提示、降级或可观测性。",
-        "nextStep": "检查 `revisionText` 的实际调用点和响应合同，确认是否保留统一未命中，或引入可区分的结果类型。",
-        "blocking": false,
-        "citationKeys": [
-          "c2"
-        ]
-      },
-      {
-        "question": "畸形 JSON、非数组 `parts` 和非字符串 `text` 应当抛错、忽略，还是转为可控未命中？",
-        "why": "当前代码没有运行时结构校验；可以确定 `JSON.parse` 与错误的 `parts` 结构可能抛错，而缺失 `text` 往往被静默拼为空串，但材料未说明持久化层是否保证这些不变量。",
-        "nextStep": "核对修订写入合同与现有测试，并为畸形正文、空文本部件、缺失 `text` 及图文混合修订补充明确的行为断言。",
+        "question": "verbatim-v1 是否保证相邻文本 parts 可无分隔符拼接？",
+        "why": "当前实现直接 join 空字符串；若捕获器把段落边界拆成不同 part，原文边界可能依赖 part 内已包含的换行。",
+        "nextStep": "核对 CaptureInput 到 StoredPart 的写入合同，并增加覆盖多文本 part、非文本 part 与换行保真的行为测试。",
         "blocking": false,
         "citationKeys": [
           "c2"
@@ -100,29 +73,54 @@
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/source-text.ts",
       "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "2903273d887300b5407818c616dabb33402bb5657c83886b1eb9b34c6ec68e2e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/repository.ts",
+      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T12:15:57.355Z",
+    "at": "2026-09-30T19:26:46.189Z",
     "trace": {
-      "runId": "d48f5685-80c0-4b76-a9e7-ca163366152e",
+      "runId": "3ae03a65-493a-4a4c-bdcc-9de5bac4041d",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "58da5b393cb5a55e25a729d689d3e1464c1cc0d68b73ef1a43493c68c905aba5",
-      "promptHash": "a155429e35654fffeafdc6d7ed3ffd75a839662723bd9569ba1cac7abce481a5",
-      "contextHash": "29221fcd4fe64798fce6e2a0c635fa17aa85df14d357047994ff2a3e913efe6c",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5acd409e72fce029a5eec30fe7f1f3b12b5659921f75e057bf5203f25e3027e8",
+      "contextHash": "182fe461b7ce3e505657c5dae6070ddc982bf37adbe6b47c549872f0331b2a49",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "61a7bcd84cc4f5e5872b8e326d7907d0f98480ebbfc918da3182d2fe226c4693",
+      "fingerprint": "dcbe9b5c10be1068188c5b2c3be9308035b765a4dc120d64c2a7d4134271b162",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -135,22 +133,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed17-6612-70a3-b351-f3e3024e6daa"
+        "01a0f3c7-c3ec-7540-b5a7-e4fa4e7d5056"
       ],
       "usage": {
-        "used": 17799,
-        "size": 760000,
+        "used": 55072,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 14350,
-          "utf8Bytes": 18114,
-          "estimatedTokens": 6038,
-          "budgetedTokens": 7548,
+          "chars": 113424,
+          "utf8Bytes": 115612,
+          "estimatedTokens": 38538,
+          "budgetedTokens": 48173,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -159,17 +157,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T12:15:57.355Z",
+    "at": "2026-09-30T19:27:32.591Z",
     "trace": {
-      "runId": "3136f401-c0de-425b-9521-aba175ca2b30",
+      "runId": "91218491-f4bd-48e9-8393-d38e500cb698",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
-      "promptHash": "1ad0a2f9adddc6c1fa405ae538a8d257a582e25b994a86cff2f5507258a278e7",
-      "contextHash": "d9ffa3feb444a49d74b4736915e46cb9b437b3bcc6ad745b1333e9dfd9aeec14",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b0aec3e02793a7d8ec4ae37b7f3df8395427ef09654aa8297da7542bf5f3c9e9",
+      "contextHash": "6600a0042d9d5c0b9361fdd7acc6665400e59c1e994c12f1a81254816ae15237",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "66c28b5a1153aed5a8a90a4635ae704fc86abbfc0780d3d60a573dffcce4e43d",
+      "fingerprint": "ec20a6803934bc7f626cad2c8bac0d9f0d8c75d6fdf735e3805dfd9ed8910535",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -182,22 +180,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed17-a6b7-7ca1-9d03-b300f128789b"
+        "01a0f3c8-b2dd-72c2-8146-ebf450fa077b"
       ],
       "usage": {
-        "used": 16303,
-        "size": 760000,
+        "used": 59774,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 12211,
-          "utf8Bytes": 15193,
-          "estimatedTokens": 5065,
-          "budgetedTokens": 6332,
+          "chars": 131527,
+          "utf8Bytes": 140521,
+          "estimatedTokens": 46841,
+          "budgetedTokens": 58552,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

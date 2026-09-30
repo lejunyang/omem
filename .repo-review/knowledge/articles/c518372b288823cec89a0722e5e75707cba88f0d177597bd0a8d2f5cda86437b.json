@@ -2,58 +2,58 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/cli.ts",
-    "title": "捕获与 ACP 探测命令行入口",
-    "summary": "该模块把文件、Git、Lark、Hook 和原始 Capture 输入转换为服务端捕获请求，并提供直接 ACP profile 探测；它是薄客户端，不承担持久化。",
+    "title": "命令行捕获与 ACP 探测入口",
+    "summary": "提供面向运行中服务的轻量命令行入口，将多种输入规范化后提交捕获 API，并提供独立 ACP profile 探测。",
     "category": "workflow",
     "sections": [
       {
-        "key": "dispatch",
-        "title": "命令分派与数据路径",
-        "body": "CLI 从本地配置推导服务地址，也允许 `OMEM_URL` 覆盖；`send` 统一发送 JSON POST，并在配置 token 时附带 Bearer 认证。`capture` 从指定 JSON 文件或 stdin 读取；`file`、`git`、`lark` 和 `hook` 先调用对应 connector 生成 CaptureInput，再用共享 captureSchema 校验，最终都提交到 `/api/captures`。[[c1]]\n\n`probe` 是例外：它不经过 HTTP，而是从本地 profile 配置中选择目标并直接调用 `acp()`。因此 probe 验证的是当前进程的 Agent transport 条件，不等同于服务端 API 或完整助手回合可用性。[[c2]]"
+        "key": "request-boundary",
+        "title": "服务连接与请求处理",
+        "body": "CLI 从环境或服务配置得到 API 基址，读取可选访问令牌，并通过统一 `send` 方法提交 JSON。非成功响应会把服务端返回体转成错误；顶层捕获异常后写入标准错误并设置非零退出码，因此脚本调用方可以依据真实进程状态判断成功与失败。[[c1]]"
       },
       {
-        "key": "boundaries",
-        "title": "输出与失败边界",
-        "body": "缺失必要参数会立即报错；Git 未给 ref 时默认 HEAD，probe 未给 profile 时默认查找 `traex`。未知命令打印帮助并以成功状态退出。成功结果通常格式化输出到 stdout，但 hook 特意保持 stdout 为空，避免其输出被宿主误当成指令；异常写 stderr 并设置退出码 1。[[c3]]\n\nCLI 自身没有重试、超时或响应结构校验，除 captureSchema 外的路径、文件大小和 Git ref 安全边界由 connector 实现；服务端认证、持久化和领域规则则由目标 API 承担。[[c1]]"
+        "key": "commands",
+        "title": "捕获命令与输出约束",
+        "body": "`capture` 接受文件或标准输入中的完整捕获 JSON；`file`、`git`、`lark` 和 `hook` 先调用相应 connector，再经共享 schema 校验后统一发送到 `/api/captures`。`probe` 不经过 HTTP，而是选取 profile 并直接调用 ACP，用于验证代理配置。[[c2]]\n\n普通命令把结果格式化到标准输出；hook 命令刻意保持 stdout 为空，避免宿主把捕获结果误当成新的指令。参数不足、profile 缺失或任何校验与网络错误都会落入统一失败路径。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "HTTP 发送与捕获命令",
-        "reason": "支持服务地址、认证头、输入读取、connector 转换及统一捕获 API 的说明。",
-        "relation": "calls",
+        "label": "CLI 请求封装",
+        "reason": "支持基址、Bearer token、HTTP 错误处理和统一 JSON 提交行为。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/cli.ts",
           "startLine": 6,
-          "endLine": 56
+          "endLine": 26
         },
         "quote": "const [command, ...args] = process.argv.slice(2);\nconst config = loadConfig();\nconst base = process.env.OMEM_URL || `http://127.0.0.1:${config.port}`;\nconst stdin = async () => {\n  const chunks = [];\n  for await (const c of process.stdin) chunks.push(c);\n  return Buffer.concat(chunks).toString();\n};\nconst send = async "
       },
       {
         "key": "c2",
-        "label": "本地 ACP profile 探测",
-        "reason": "说明 probe 直接读取本地 profile 并调用 ACP，而非请求服务端。",
+        "label": "捕获与探测命令",
+        "reason": "支持各输入命令经 connector 和 schema 后发送捕获 API，以及 probe 直接调用 ACP。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/cli.ts",
-          "startLine": 57,
+          "startLine": 27,
           "endLine": 66
         },
-        "quote": "  } else if (command === \"probe\") {\n    const p = config.profiles.find((p) => p.id === (args[0] || \"traex\"));\n    if (!p) throw Error(\"Profile not found\");\n    result = await acp(\n      p,\n      config.agentCwd,\n      null,\n      () => {},\n      new AbortController().signal,\n    );"
+        "quote": "try {\n  let result: unknown;\n  if (command === \"capture\") {\n    const text = args[0] ? await readFile(args[0], \"utf8\") : await stdin();\n    result = await send(\"/api/captures\", captureSchema.parse(JSON.parse(text)));\n  } else if (command === \"file\") {\n    if (!args[0]) throw Error(\"file requires a path\");\n    result = "
       },
       {
         "key": "c3",
-        "label": "帮助、Hook 静默与退出码",
-        "reason": "支持未知命令、hook stdout 约束以及异常退出行为。",
+        "label": "输出与退出状态",
+        "reason": "支持帮助信息、hook 静默输出以及异常时非零退出码的约束。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/cli.ts",
           "startLine": 67,
-          "endLine": 77
+          "endLine": 78
         },
         "quote": "  } else {\n    console.log(\n      \"omem CLI: capture [json-file] | file <path> | git <repo> <file> [ref] | lark <url> | hook < stdin | probe [profile]\",\n    );\n    process.exit(0);\n  }\n  // Hook stdout must remain empty so it cannot accidentally become host instructions.\n  if (command !== \"hook\") console.log(JSON.strin"
       }
@@ -64,12 +64,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
     },
     {
       "kind": "material",
@@ -79,7 +79,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
+      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
     },
     {
       "kind": "material",
@@ -99,7 +99,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -115,34 +115,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:00:11.567Z",
+    "at": "2026-09-30T20:05:27.602Z",
     "trace": {
-      "runId": "52bfcad0-9fdc-47e5-83bf-a5a2e62d16eb",
-      "roleId": "code-analyst",
+      "runId": "63ddaf9b-ed21-48fb-b8bc-ecf82acea82e",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "7693443e7ffc4e5945d897d38ee976dc471ecaf46a7bff81ad5068ee500354a8",
-      "contextHash": "93d33bdcf364188db2e8288b5de371d4ad6b5da3cea26a3d107436c16da66422",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "8f665af77f822806976ec69d457a278e019300403133e4ca301442fb4644f993",
+      "contextHash": "2e81f20b3208704306b47d726cd3c7fc23b0bc5c098a16db723147a792223950",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "47b4ee9baabcfc056a92a9b129a9b44f57d18e4062f7c32e1170d4e62c53f72a",
+      "fingerprint": "5b2bf36801c127adf6b6703b924bd05e7b3c4e221918e91f7ccedd193aa9d16a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee89-3b9f-7a63-aa6c-fa9be21dec9c"
+        "01a0f3eb-3ca5-7922-a4bf-cc0ad37b30af"
       ],
       "usage": {
-        "used": 48231,
-        "size": 760000,
+        "used": 59433,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -150,10 +150,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 110194,
-          "utf8Bytes": 112586,
-          "estimatedTokens": 37529,
-          "budgetedTokens": 46912,
+          "chars": 124533,
+          "utf8Bytes": 128483,
+          "estimatedTokens": 42828,
+          "budgetedTokens": 53535,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -162,17 +162,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:00:36.734Z",
+    "at": "2026-09-30T20:05:52.827Z",
     "trace": {
-      "runId": "25c11244-ff92-40b5-8b64-5c7b381efdd3",
+      "runId": "a7eced54-1981-4cf8-8c1a-56d01a988454",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0a5176a755c3d1c6475bade81c3131d7156678b4d22f76be56de154c68c6f4e1",
-      "contextHash": "50ac857e735b3a8c7fa90d2f57315b07fe81a89e1cd7fb5c5d2b6d46f970375f",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "02404342034fb3b525a467f02e3f95405377e081f66a2371e756633610be94e6",
+      "contextHash": "b68f47ccfdf205d686590d5eecd768e8e572c82d5deb42c2c94661a8c106b88a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "add626a57bc7406023909a59cd770dcbf644abea5d1c3cac645bd5a0306f06c1",
+      "fingerprint": "1f58cac56e69fb61f0e61d45d16b245f5ef94d0c8ccd1c5cfd1469c34500526f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -185,11 +185,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee89-eefa-7813-8670-5fefff67a40b"
+        "01a0f3ec-2635-7ea0-bf90-d1d2243a4a16"
       ],
       "usage": {
-        "used": 51158,
-        "size": 760000,
+        "used": 60331,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -197,10 +197,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 125493,
-          "utf8Bytes": 134063,
-          "estimatedTokens": 44688,
-          "budgetedTokens": 55860,
+          "chars": 137176,
+          "utf8Bytes": 146360,
+          "estimatedTokens": 48787,
+          "budgetedTokens": 60984,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

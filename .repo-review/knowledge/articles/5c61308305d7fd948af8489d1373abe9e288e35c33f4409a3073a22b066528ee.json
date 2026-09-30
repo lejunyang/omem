@@ -2,26 +2,26 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/main.ts",
-    "title": "服务端进程入口",
-    "summary": "加载配置、构建并监听 Fastify 应用，同时为 SIGINT 与 SIGTERM 提供基础的优雅关闭处理。",
+    "title": "服务进程启动入口",
+    "summary": "加载运行配置、构建 Fastify 应用并开始监听，同时为常见终止信号注册优雅关闭处理。",
     "category": "implementation",
     "sections": [
       {
         "key": "startup",
-        "title": "启动流程与模块关系",
-        "body": "该文件是服务端进程的薄入口：先调用配置模块取得主机、端口等运行参数，再调用应用装配模块的 `buildApp`，最后让返回的 Fastify 实例开始监听。[[c1]] `buildApp` 内部负责创建 Store、运行管理器、记忆服务及反馈服务，因此入口本身不承载业务逻辑，只负责把配置交给应用层并启动进程。[[c2]]"
+        "title": "启动链路",
+        "body": "该文件是服务进程的最薄入口：先调用 `loadConfig` 得到主机、端口及其他运行配置，再把配置交给 `buildApp` 完成应用和依赖组装，最后监听指定地址并输出可访问 URL。[[c4]] `buildApp` 会创建 Fastify、Store、Runs、MemoryService 与 FeedbackService；非回环地址若没有令牌会直接拒绝启动，因此入口本身依赖应用工厂执行安全检查和模块装配。[[c5]]"
       },
       {
         "key": "shutdown",
-        "title": "关闭行为与边界",
-        "body": "进程收到 `SIGINT` 或 `SIGTERM` 时会异步调用 `app.close()`，成功后以状态码 0 退出，可让 Fastify 停止接收请求并执行其关闭流程。[[c3]] 这里没有展示关闭失败的捕获、超时强退或重复信号保护；若 `app.close()` 拒绝，材料不足以确认进程最终如何退出。"
+        "title": "终止处理与边界",
+        "body": "进程收到 `SIGINT` 或 `SIGTERM` 时调用 `app.close()`，待关闭完成后以状态码 0 退出，意图让 Fastify 释放监听器及其生命周期资源。[[c6]] 这里没有为配置加载、构建、监听或关闭失败设置显式恢复逻辑，也没有注册其他终止事件；错误如何记录及退出由顶层运行环境和 Fastify 的 Promise 行为决定。"
       }
     ],
     "citations": [
       {
-        "key": "c1",
-        "label": "入口启动序列",
-        "reason": "支持入口依次加载配置、构建应用并监听指定地址的说明。",
+        "key": "c4",
+        "label": "服务启动入口",
+        "reason": "支持配置加载、应用构建、网络监听和启动日志这一完整入口链路。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -32,22 +32,22 @@
         "quote": "import { buildApp } from \"./app.js\";\nimport { loadConfig } from \"./config.js\";\nconst config = loadConfig();\nconst { app } = await buildApp(config);\nawait app.listen({ port: config.port, host: config.host });\nconsole.log(`omem listening at http://${config.host}:${config.port}`);"
       },
       {
-        "key": "c2",
-        "label": "应用装配初始化",
-        "reason": "说明 buildApp 创建存储与记忆相关服务，支撑入口和应用装配模块的关系。",
+        "key": "c5",
+        "label": "应用工厂的安全检查与服务装配",
+        "reason": "说明 main 调用的应用工厂负责非回环令牌检查，并实例化存储、运行和记忆服务。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
           "startLine": 44,
-          "endLine": 59
+          "endLine": 64
         },
         "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
       },
       {
-        "key": "c3",
-        "label": "进程信号处理",
-        "reason": "支持收到两类终止信号后关闭应用并退出的描述。",
+        "key": "c6",
+        "label": "进程信号关闭逻辑",
+        "reason": "支持 SIGINT、SIGTERM 下等待应用关闭后正常退出的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -60,17 +60,33 @@
     ],
     "questions": [
       {
-        "question": "应用关闭失败或超过预期时间时是否需要记录错误并强制退出？",
-        "why": "当前入口只处理关闭成功的 Promise 分支，材料没有给出失败与超时策略。",
-        "nextStep": "结合运行部署要求检查或补充关闭失败、超时及重复信号测试。",
+        "question": "应用监听或关闭 Promise 失败时，生产环境期望采用何种日志和退出码策略？",
+        "why": "入口只展示成功路径和信号关闭路径，没有显式捕获异常，无法由当前材料确认部署层是否统一处理未捕获拒绝。",
+        "nextStep": "查看进程管理及部署配置，确认是否已有统一错误日志、重启和非零退出策略。",
         "blocking": false,
         "citationKeys": [
-          "c3"
+          "c4",
+          "c6"
+        ]
+      },
+      {
+        "question": "监听或关闭 Promise 失败时，生产环境采用何种日志和退出码策略？",
+        "why": "入口仅包含成功启动和信号关闭路径，没有显式异常处理；当前材料也未说明进程管理层的兜底行为。",
+        "nextStep": "检查部署和进程管理配置，确认未捕获拒绝的日志、退出码与重启策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c6"
         ]
       }
     ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/refresh.ts",
+      "digest": "569529469b9b70c8dd5c3e4fd8a5818fd8192c36a0c8713a68d98c4c92fabd43"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/main.ts",
@@ -79,7 +95,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     },
     {
       "kind": "material",
@@ -88,39 +104,39 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "13c87646d252759f5f318cff97f14e6340c2d2a604f8c912d6b18a162c469e22"
+      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
       "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:05:22.391Z",
+    "at": "2026-09-30T19:21:38.476Z",
     "trace": {
-      "runId": "8d724cb6-49e4-462d-a78a-b580eeacbb36",
+      "runId": "40569594-e5be-4783-924d-ec867c3736f7",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6f350b77b2d0eb91786fa9d5887643cf7a9e63710d1d6bfd37ce75e643047cdc",
-      "contextHash": "2772d5dfeb32649738d6996f8912471ec11ce364dc4f781bdd7a45134dfa1446",
+      "promptHash": "ff984bdd7a2b79bf8336356c96eeb4472209829b14e32d5daa9852085dfbca94",
+      "contextHash": "a67a60e4c0be0cc961b703bad0da8d0a1052cd4cc0518312955b633a355b1e7c",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "035b17beedfa7dda209c93d487f7433ea1c6ea0c0ff5bfa937ccff7020ea77b2",
+      "fingerprint": "9ba0e3f202bd4e3e42d06821b87596269e3cd3aa36b2c3dfb7e73fe4cd81a72e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -133,11 +149,12 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8e-03c5-7931-bf71-750cd557e8f5"
+        "01a0f3c2-12b5-77e0-ba65-98784f57576b",
+        "01a0f3c3-222d-7121-be28-1880e0ec72e6"
       ],
       "usage": {
-        "used": 51577,
-        "size": 760000,
+        "used": 61104,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -145,29 +162,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 126967,
-          "utf8Bytes": 130451,
-          "estimatedTokens": 43484,
-          "budgetedTokens": 54355,
+          "chars": 134510,
+          "utf8Bytes": 138016,
+          "estimatedTokens": 46006,
+          "budgetedTokens": 57508,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 0
+      "repairAttempts": 1
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:05:40.802Z",
+    "at": "2026-09-30T19:22:18.558Z",
     "trace": {
-      "runId": "d6cf617d-fd01-4be3-b48d-18f738f10e1f",
+      "runId": "cf5c9254-33d8-4ec8-be0d-aa8d0f081698",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "6a430dd8d98cb35bd2a5703a938ad09a7ecc013dbb88b612e35f0163263dbd98",
-      "contextHash": "ba97bc532a7495671a0c5792f2a06a58368d3507eb3d05a00d17846ac3ccc724",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "47e4c1e43f0da1a21160677e1a86096e2d4161e48d85ecf551e83e5fe0c6dd7f",
+      "contextHash": "fb77ecee520ee201b17040a44c157c0e302a63b8c68271709a769fa4dfee5b8d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1a6ddb23a49dad508c45dfb97aaee2c4a638b98b9b671def8aa9674d40edc7c0",
+      "fingerprint": "4d63e62fcddd9e6c3810530cb95895737ca73e583e89a9dc638f4495fe16a292",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -180,11 +197,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8e-ade6-7322-9ce1-3bb086d85cda"
+        "01a0f3c3-feb2-7cf0-81da-0235c6c7e335"
       ],
       "usage": {
-        "used": 53600,
-        "size": 760000,
+        "used": 63916,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -192,10 +209,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 139153,
-          "utf8Bytes": 147712,
-          "estimatedTokens": 49238,
-          "budgetedTokens": 61548,
+          "chars": 146766,
+          "utf8Bytes": 156671,
+          "estimatedTokens": 52224,
+          "budgetedTokens": 65280,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

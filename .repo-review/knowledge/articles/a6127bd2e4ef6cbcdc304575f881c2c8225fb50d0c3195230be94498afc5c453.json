@@ -2,71 +2,58 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/associations.ts",
-    "title": "人工维护的代码评审关系种子",
-    "summary": "定义并加载代码与需求、决策、研究及测试材料之间的人工关系种子；文件缺失视为空集合，格式损坏显式失败，未登记的语义相似命中不得据此成为 confirmed。",
+    "title": "人工代码—依据关联种子的加载合同",
+    "summary": "定义并校验人工维护的代码关联文件，使同步层能从明确 locator 构造关系，同时阻止语义相似结果自动升级为 confirmed。",
     "category": "configuration",
     "sections": [
       {
-        "key": "authority",
-        "title": "关系来源与权威边界",
-        "body": "关系种子由人工维护，用于说明某个代码 Fragment 实现的意图及其需求、决策、研究和测试依据。JSON 中登记的每条 seed 会在同步时转为关系行；该文件同时明确禁止把未登记的词语相似命中据此提升为 `confirmed`。[[c1]] 这并不排除系统其他部分产生 candidate、missing 或其他关系。种子文件位于仓库的 `docs/repo-review/associations.json`。"
-      },
-      {
-        "key": "shape",
-        "title": "种子结构与定位方式",
-        "body": "每条记录用仓库相对 `codePath` 和符号名锚定代码，并保存意图、需求标签、决策／研究／测试引用、关系状态和证据说明。[[c2]] 文档引用可写为路径或 `path::anchor`；解析器只在第一个双冒号处分割，未带锚点时返回空 anchor，供后续同步定位目标 Fragment。[[c4]]"
+        "key": "purpose",
+        "title": "关系来源与数据模型",
+        "body": "该模块把 `docs/repo-review/associations.json` 定义为代码与需求、决策、研究、测试依据之间的人工种子来源。每条记录以仓库相对 codePath 和 symbol 定位代码，以 intent、各类 refs、状态及 evidence 描述关系。相似词命中若未写入种子，不得成为 confirmed，因而这里提供的是可审计输入，而非自动语义匹配器。[[c1]]"
       },
       {
         "key": "loading",
-        "title": "加载、默认值与失败语义",
-        "body": "新检出或测试夹具中若文件不存在，加载结果为空；JSON 解析失败、根对象缺少 associations 数组，或条目缺少字符串形式的 codePath 与 symbol 时会抛错，避免坏文件静默清空关系。[[c3]] 可选数组和文本缺失时归为空值；状态仅明确接受 candidate 或 missing，其他值规范为 confirmed。这里属于最小结构校验，并未验证路径、符号和锚点能否在当前代码图解析。[[c3]]"
+        "title": "加载与最小校验",
+        "body": "文件不存在时返回空数组，适配新检出或自带 fixture 的环境；JSON 解析失败、缺少 associations 数组，或条目缺 codePath/symbol 字符串时则抛错，避免损坏配置静默清空已有关系。可选数组和文本会回退为空值；状态仅保留 candidate、missing，其他值统一规范为 confirmed。此处只是最小形状校验，并未验证路径、symbol 或引用锚点真实存在。[[c2]]"
+      },
+      {
+        "key": "refs",
+        "title": "引用定位边界",
+        "body": "引用允许 `path::anchor` 形式；`parseRef` 只按第一个双冒号拆分，未包含分隔符时 anchor 为 null。它不负责搜索材料或判定锚点唯一性，解析后的定位是否能映射到固定片段应由后续同步层处理。材料中没有后续构边实现，因此只能确认该模块输出种子，不能据此断言 unresolved locator 如何持久化。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "人工关系种子的权威说明",
-        "reason": "支持人工维护、seed 同步成关系，以及未登记语义相似命中不得成为 confirmed。",
+        "label": "人工关联种子的设计约束",
+        "reason": "支持种子必须人工维护且相似检索不能自动产生 confirmed 关系的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/associations.ts",
           "startLine": 1,
-          "endLine": 17
+          "endLine": 11
         },
         "quote": "/** Human-maintained seed associations between code fragments and the\n * intent / decision / research / test fragments that justify them.\n *\n * This is NOT an automatic semantic matcher: every entry is hand-curated and\n * must cite concrete requirement ids, decision docs, research docs and test\n * cases. The sync step "
       },
       {
         "key": "c2",
-        "label": "关系种子字段定义",
-        "reason": "说明代码定位、意图、四类引用、状态和证据字段的职责。",
+        "label": "关联文件加载与规范化",
+        "reason": "说明缺失文件、畸形 JSON、必要字段和状态归一化行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/associations.ts",
-          "startLine": 19,
-          "endLine": 49
+          "startLine": 55,
+          "endLine": 89
         },
-        "quote": "/** A ref is a repo-relative path, optionally `path::anchor` where anchor is a\n * substring matched inside the target fragment (a requirement id, a test name,\n * a heading phrase). */\nexport type AssociationRef = string;\n\nexport type AssociationSeed = {\n  /** Code file repo-relative path, e.g. apps/server/src/assistant"
+        "quote": "/** Load and minimally validate the seed associations. Returns an empty list\n * when the file is absent (fresh checkouts / fixtures that supply their own).\n * Throws on malformed JSON so a broken seed never silently drops relations. */\nexport function loadAssociations(repoRoot: string): AssociationSeed[] {\n  const file"
       },
       {
         "key": "c3",
-        "label": "关系种子加载与最小校验",
-        "reason": "支持文件缺失、解析失败、必填字段、默认数组和状态规范化行为。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/associations.ts",
-          "startLine": 51,
-          "endLine": 90
-        },
-        "quote": "export function associationsPath(repoRoot: string): string {\n  return join(repoRoot, ASSOCIATIONS_DIR, ASSOCIATIONS_FILE);\n}\n\n/** Load and minimally validate the seed associations. Returns an empty list\n * when the file is absent (fresh checkouts / fixtures that supply their own).\n * Throws on malformed JSON so a broke"
-      },
-      {
-        "key": "c4",
-        "label": "路径与锚点解析",
-        "reason": "支持 path::anchor 引用格式及无锚点时的解析结果。",
-        "relation": "implements",
+        "label": "路径锚点拆分函数",
+        "reason": "支持 path::anchor 的具体解析规则及其有限职责。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/associations.ts",
@@ -78,14 +65,13 @@
     ],
     "questions": [
       {
-        "question": "种子中的 codePath、symbol 和各类 path::anchor 在同步失败时，具体由哪一层保留 rejected 或 missing 记录？",
-        "why": "本文件只做最小结构校验和字符串拆分，没有展示定位当前代码图、生成关系行或保存失败解析结果的实现。",
-        "nextStep": "核对关系构建、同步实现及其测试，确认未解析定位不会覆盖既有有效关系，并记录可读失败原因。",
+        "question": "关联 locator 解析失败后是否确实保留 rejected 或 missing 历史，而不会覆盖先前有效关系？",
+        "why": "本材料只包含种子读取和字符串拆分，没有提供同步、解析及关系 upsert 的源代码，无法确认失败持久化语义。",
+        "nextStep": "检查消费 `loadAssociations` 的同步实现及其测试，验证路径、symbol、anchor 不可解析时的状态和旧记录保留策略。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3",
-          "c4"
+          "c1",
+          "c3"
         ]
       }
     ]
@@ -93,66 +79,86 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/retrieval.ts",
-      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/associations.ts",
       "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:12:40.550Z",
+    "at": "2026-09-30T19:23:17.669Z",
     "trace": {
-      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
-      "roleId": "knowledge-refresher",
+      "runId": "32bc7d66-0960-4507-80cf-17737c4e381d",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
-      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "5b1fa399e7bc0e096163ad7621c6d6cedae5449ab103a6d353dfae9a150e5ca4",
+      "contextHash": "3c896e38a13d7d900157c57cdaeea7f6b32a47ad974299e132ac389ffb142583",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
+      "fingerprint": "f16319e6c3af0d7b77eb2d7755bcca287305890e2afe10df88e9a961aa755612",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
+        "01a0f3c4-9d14-7323-afcf-e36a972bfc67"
       ],
       "usage": {
-        "used": 52878,
-        "size": 760000,
+        "used": 46720,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -160,10 +166,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 117772,
-          "utf8Bytes": 129037,
-          "estimatedTokens": 43013,
-          "budgetedTokens": 53767,
+          "chars": 80555,
+          "utf8Bytes": 82669,
+          "estimatedTokens": 27557,
+          "budgetedTokens": 34447,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -172,17 +178,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:15.335Z",
+    "at": "2026-09-30T19:24:13.144Z",
     "trace": {
-      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
+      "runId": "e9553d28-dcce-43c9-a853-c8268b0135ee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
-      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
+      "promptHash": "f7101426752da5e0bbe0df083bc8011dc216cbd96a2fd1c43b88d891baebeb5c",
+      "contextHash": "03c89395898c13e7271889abec2597803ac48818cbf7249119f9fd6951cc19ae",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
+      "fingerprint": "b652922ee8459b62a440ad55335d34bedd6941a43590a2b38eeb5170513fea5f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -195,11 +201,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef03-398c-79f2-a656-9c230614f1a0"
+        "01a0f3c5-8213-79a0-99bd-451dafbf8ba5"
       ],
       "usage": {
-        "used": 49586,
-        "size": 760000,
+        "used": 51200,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -207,10 +213,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 118346,
-          "utf8Bytes": 128851,
-          "estimatedTokens": 42951,
-          "budgetedTokens": 53689,
+          "chars": 94682,
+          "utf8Bytes": 103496,
+          "estimatedTokens": 34499,
+          "budgetedTokens": 43124,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

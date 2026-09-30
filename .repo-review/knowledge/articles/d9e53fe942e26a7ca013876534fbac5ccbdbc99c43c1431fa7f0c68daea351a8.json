@@ -2,89 +2,80 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-    "title": "飞书集成运行时宿主",
-    "summary": "统一装配实时连接、卡片动作、通知聚合、消息投递、质量标注和可选助手运行时，并以轮询循环协调连接生命周期与后台出站任务。",
+    "title": "飞书集成运行时编排",
+    "summary": "统一编排实时连接、助手、卡片动作、通知聚合和消息投递，并落实群聊证据隔离与崩溃恢复。",
     "category": "architecture",
     "sections": [
       {
         "key": "composition",
-        "title": "运行时装配与可见性",
-        "body": "宿主以 Store、内存服务、入驻服务和秘密存储为基础，构造投递 worker、通知批处理器、卡片动作服务及质量标注服务；只有提供模型端口时才创建助手运行时，因此飞书采集与投递不强制依赖模型。[[c1]]\n\n助手检索采用关键词检索，并实施服务端可见性策略：私聊可读取证据，群聊只能读取 `conversationId` 与当前 chat ID 相同的证据。打开会话时，thread key 纳入应用 ID 与绑定版本，并校验会话可见性与当前聊天类型一致，以阻断伪造或跨绑定复用。[[c2]]"
+        "title": "组件组装与可见性边界",
+        "body": "运行时宿主是飞书集成的组合根：构造投递 worker、通知批处理器、卡片动作服务和质量标注服务，并按需创建助手运行时。默认检索为关键词检索，也允许注入模型、检索、媒体和消息适配器。群聊可见性策略会逐条读取证据，仅允许当前 chatId 实际采集的材料；私聊则按 private 可见，因此群聊不能看到所有者的私有或其他群证据。[[c1]]\n\n连接同步从数据库读取 active 或 awaiting_pair 项，为每项建立带租约的连接管理器。助手会话键包含 appId 与 bindingVersion，并校验会话可见性；卡片协议属于质量标注时走 quality 服务，否则进入普通卡片队列。[[c2]]"
       },
       {
-        "key": "loop_recovery",
-        "title": "连接同步、循环与恢复",
-        "body": "每次处理先查询 active 或 awaiting-pair 连接，停止已失效管理器，并为新增连接装配租约、实时收件箱、助手钩子和卡片分流。质量协议卡片直接交给质量服务，其他卡片进入通用动作队列；随后依次准备聚合批次、处理卡片和消息投递。[[c3]]\n\n启动时会恢复未完成的助手 turn：已有结果者补记完成，无结果者删除，使同一传输事件重投时可重新执行。主循环捕获并脱敏错误后继续轮询；停止会中止等待、关闭所有连接并停止入驻服务。该恢复逻辑假设进程启动时没有仍在运行的模型调用，不适用于多个共享同一会话表的活跃助手进程。[[c4]]"
+        "key": "loop-recovery",
+        "title": "轮询、恢复与停止",
+        "body": "每轮先同步连接，再准备到期聚合批次，随后在上限内分别处理卡片动作和投递任务；主循环捕获并脱敏错误，按 pollMs 等待，避免一次失败终止整个宿主。状态接口只暴露运行状态、活动连接数、累计处理量和最近错误。[[c3]]\n\n启动前会恢复未完成助手 turn：已有结果者补标完成，无结果者删除，使相同 transport event 重投后能够重新执行；已有 outbox 的投递仍由 delivery worker 接管。停止时先 abort 循环，再关闭全部实时连接和 onboarding，并等待循环退出。该恢复策略假定进程启动时没有仍在执行的旧模型调用。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "飞书运行时组件装配",
-        "reason": "支持投递、批处理、卡片、质量服务及可选助手模型的依赖关系。",
-        "relation": "depends_on",
+        "label": "运行时组件与群聊可见性",
+        "reason": "支持宿主组装各飞书服务、助手依赖以及按会话来源隔离群聊证据的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-          "startLine": 35,
-          "endLine": 105
+          "startLine": 36,
+          "endLine": 107
         },
         "quote": "export class LarkRuntimeHost {\n  private readonly controller = new AbortController();\n  private readonly connections = new Map<string, LarkConnectionManager>();\n  private readonly delivery: LarkDeliveryWorker;\n  private readonly batcher: LarkNotificationBatcher;\n  private readonly cards: LarkCardActionService;\n  readon"
       },
       {
         "key": "c2",
-        "label": "助手可见性与会话命名空间",
-        "reason": "支持群聊证据隔离、绑定版本命名空间和可见性闭合校验。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-          "startLine": 84,
-          "endLine": 170
-        },
-        "quote": "    // Real server-owned visibility: a group conversation may see only evidence\n    // actually collected in that group chat. The owner's private/p2p imports and\n    // anything not sourced from this chat are invisible here.\n    const visibilityPolicy: VisibilityPolicy = ({ conversation, fragmentId }) => {\n      if (co"
-      },
-      {
-        "key": "c3",
-        "label": "连接同步与单轮处理",
-        "reason": "支持连接增删、管理器装配、卡片协议分流以及后台任务处理顺序。",
+        "label": "连接同步与助手路由",
+        "reason": "支持连接管理器创建、会话命名空间、可见性复核及卡片协议分流的说明。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-          "startLine": 108,
-          "endLine": 209
+          "startLine": 110,
+          "endLine": 192
         },
         "quote": "  private activeConnections() {\n    return this.input.store.db\n      .prepare(\n        `SELECT id FROM lark_connections\n         WHERE state IN ('active','awaiting_pair') ORDER BY created_at`,\n      )\n      .all() as Row[];\n  }\n\n  private syncConnections() {\n    const active = new Set(\n      this.activeConnections().ma"
       },
       {
-        "key": "c4",
-        "label": "未完成 turn 恢复与宿主循环",
-        "reason": "支持启动恢复假设、轮询错误处理和停止流程的说明。",
+        "key": "c3",
+        "label": "单轮处理与运行循环",
+        "reason": "支持批处理、卡片和投递的执行顺序，以及错误隔离和状态统计。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-          "startLine": 212,
-          "endLine": 292
+          "startLine": 195,
+          "endLine": 285
+        },
+        "quote": "  async processOnce(limit = 100) {\n    this.syncConnections();\n    const aggregation = this.batcher.prepareDue();\n    let cards = 0;\n    let deliveries = 0;\n    while (cards < limit && (await this.cards.processOne()).processed) cards++;\n    while (deliveries < limit && (await this.delivery.processOne()).processed)\n    "
+      },
+      {
+        "key": "c4",
+        "label": "未完成会话恢复",
+        "reason": "支持启动时区分有结果和无结果 turn 的恢复行为及其假设。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 214,
+          "endLine": 249
         },
         "quote": "  /**\n   * E: recovery worker. At start no model is in flight, so every pending/running\n   * turn left by a previous process is stale. A turn that crashed mid-model (no\n   * result) is removed so a redelivery of the same transport event starts a fresh\n   * turn instead of returning the stale pending record forever. A t"
       }
     ],
     "questions": [
       {
-        "question": "是否保证同一数据库只运行一个会执行 `recoverUnfinishedTurns` 的飞书宿主？",
-        "why": "恢复会直接删除无结果的 pending/running turn；若另一个进程仍在执行模型，该操作可能与活跃工作冲突。",
-        "nextStep": "核对服务器部署拓扑及助手 turn 的跨进程租约设计；若允许多实例，应增加所有权或过期判断。",
-        "blocking": false,
-        "citationKeys": [
-          "c4"
-        ]
-      },
-      {
-        "question": "是否保证同一数据库只运行一个会执行 recoverUnfinishedTurns 的飞书宿主？",
-        "why": "恢复会直接删除无结果的 pending/running turn；若另一个进程仍在执行模型，该操作可能与活跃工作冲突。",
-        "nextStep": "核对服务器部署拓扑及助手 turn 的跨进程租约设计；若允许多实例，应增加所有权或过期判断。",
+        "question": "删除无结果的未完成 turn 时，是否还存在需要清理的关联消息、工具动作或审计记录？",
+        "why": "恢复逻辑直接删除 conversation_turns 行，材料未展示相关表的外键级联规则，也未提供验证孤儿记录的测试。",
+        "nextStep": "核对数据库迁移中的外键约束，并增加带关联记录的崩溃恢复测试。",
         "blocking": false,
         "citationKeys": [
           "c4"
@@ -106,7 +97,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
     },
     {
       "kind": "material",
@@ -136,7 +127,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -147,17 +138,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:03:23.499Z",
+    "at": "2026-09-30T19:18:26.383Z",
     "trace": {
-      "runId": "8e64f403-ee9d-422b-88a3-822456ee06d0",
+      "runId": "bbeb7d4e-5613-4ff7-8d76-421784436f41",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "99de9d383536dd9ee0f53294bf948bb0ae78091b353a0b455acb77dce6da0d61",
-      "contextHash": "d2f969fd897c8d9c14d605a61f38e833e62239f2063735a2ed3fd1ccff4ddb3b",
+      "promptHash": "46c1b986c7f439273dd567b5e009e3def82a466f56b7ef9a981b4b3e08da15c1",
+      "contextHash": "0184e283a763626818b97ccf1e4d3dc44164c61ff1857336931f4c46d75be462",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "facf0164520ebabc99bddee80c272866bd5d23afd6432d94fc150b3582d489df",
+      "fingerprint": "87cd6a9425db4561e6c16c0e5051946091c663c6a4dd6aae4ed28903dbfcfc97",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -170,11 +161,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8b-f8b0-7f43-bb43-2189b3846830"
+        "01a0f3c0-2142-77f0-9997-ed395dd8b4b3"
       ],
       "usage": {
-        "used": 53846,
-        "size": 760000,
+        "used": 60333,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -182,10 +173,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 127587,
-          "utf8Bytes": 129449,
-          "estimatedTokens": 43150,
-          "budgetedTokens": 53938,
+          "chars": 127866,
+          "utf8Bytes": 129728,
+          "estimatedTokens": 43243,
+          "budgetedTokens": 54054,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -194,17 +185,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:03:44.671Z",
+    "at": "2026-09-30T19:19:03.711Z",
     "trace": {
-      "runId": "ee4b4da7-3d0c-48cd-9c5d-a8c5a4552a15",
+      "runId": "b2387910-d82d-4631-a4b7-28b298ff559e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "abb4a15fe37af0017b47718a1916fec1bab6920c91268d83ec4c8e93f3b6616a",
-      "contextHash": "3a31d73934e40ca581e63bec669d79ecfbc5105cf99e73b6abfd98ac96929601",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b7481b7472dd617ef97d8f5e82432528f9ff2e28ce715d8211dcec454b2a272c",
+      "contextHash": "13c3199544fa0903d42229ff5da72b382999ccf1d74c3e8690f1cf1c14ab5b16",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "222dce97e10e86233ccfc4af78e1a430658e88c0306d23cd5036a2014d003648",
+      "fingerprint": "86275ef5bdc2f4d37228b200c9597df4595806a8933b22bcb6448b203ea3d21e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -217,11 +208,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-dc69-7453-9eb7-0b40c0051a4f"
+        "01a0f3c1-1a94-7b63-9209-6c430958ec71"
       ],
       "usage": {
-        "used": 56756,
-        "size": 760000,
+        "used": 63605,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -229,10 +220,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 145062,
-          "utf8Bytes": 155016,
-          "estimatedTokens": 51672,
-          "budgetedTokens": 64590,
+          "chars": 143896,
+          "utf8Bytes": 153306,
+          "estimatedTokens": 51102,
+          "budgetedTokens": 63878,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

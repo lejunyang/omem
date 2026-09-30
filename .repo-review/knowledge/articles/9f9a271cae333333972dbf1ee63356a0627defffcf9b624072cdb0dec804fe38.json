@@ -3,35 +3,74 @@
   "document": {
     "key": "module:quality",
     "title": "quality · 模块理解",
-    "summary": "quality 模块提供一条与生产捕获隔离的评测闭环：从研究文档生成候选样本，经仓库存储和 Lark 人工确认后冻结数据集，再以确定性规则衡量预测的证据定位、语义支持、事实一致性、完成度、打扰和延迟。",
+    "summary": "quality 模块构成与生产捕获隔离的研究评测链：从文档生成候选样本，经 SQLite 仓储和 Lark owner 人工确认形成可冻结基准，再以确定性规则分别评估处置、引用定位、语义支持、事实槽、证据覆盖与打扰情况。",
     "category": "architecture",
     "sections": [
       {
-        "key": "purpose-boundary",
-        "title": "作用与边界",
-        "body": "quality 模块用于回答“知识提炼是否准确、完整且不过度自动化”，而不是直接生成生产知识。它把评测拆成样本合同、人工标注和预测评分，使草稿标签必须经人确认后才进入评测分母。仓库 schema 同时约束来源、材料类别、提炼对象、证据和自动应用；例如 `extract` 必须包含对象，非提炼处置不得自动应用。[[c1]]\n\n研究导入器与普通捕获链路明确隔离：规则切分结果只是人工标注的冷启动草稿，不能流入生产知识；入口还要求显式的评测专用标识。[[c2]] 因此，这套模块评估的是系统行为，不改变 Source/Revision/Fragment 作为原始证据的地位。"
+        "key": "purpose",
+        "title": "职责与隔离边界",
+        "body": "quality 模块服务于知识抽取的研究评测，不是生产知识入口。导入器把研究文档切成默认 `explicit/claim`、`autoApply=true` 的待审草稿；这些结果必须经过人工判断，不能直接视为可靠知识。[[c1]] 被替代的结论是“整个模块均由运行时哨兵强制隔离”：公开切分函数没有哨兵参数，可被直接调用；真正的 `EVAL_ONLY_RESEARCH` 校验只位于落库入口。[[c2]] [[c3]] 因而生产隔离同时依赖入口保护和调用关系约束。"
       },
       {
-        "key": "dataset-lifecycle",
-        "title": "从候选样本到冻结数据集",
-        "body": "评测数据首先从文档的文本 part 中提取候选：清理 Markdown/HTML、按标题保留章节上下文、过滤过短或过长句子，再依据限制词、否定词和数字排序。图片、表格、白板等结构会被跳过，候选不足目标数时直接失败。[[c3]] 生成结果交给仓库创建数据集并批量写入；数据集按名称、分组和来源摘要判重，批量写入在事务内完成。[[c4]]\n\n人工操作把 pending 样本变为 confirmed、needs_edit 或 skipped。提交时以标签摘要做乐观并发检查；需要修改或跳过的样本可由 `revise` 更新草稿并恢复 pending，已确认样本不可再修订。[[c5]] 只有样本数量达到目标且全部确认后才能冻结；冻结摘要覆盖顺序、输入摘要和确认标签摘要，之后可重算校验完整性。[[c6]]"
+        "key": "dataset-flow",
+        "title": "从候选到冻结基准",
+        "body": "仓储以严格 schema 固定样本来源、类别、处置、对象和自动应用语义；提取标签必须包含对象，非提取标签不得自动应用。[[c4]] 数据集按名称、分组与来源摘要复用；批量加样本仅允许草稿或标注中状态，逐条校验并计算摘要，以事务提交或整体回滚。[[c5]] 人工标注还以 pending 状态和标签摘要实施乐观并发控制；修订会清除旧审核结果并重新排队。只有样本达到目标数量且全部确认后才能冻结，清单摘要可重算以检测篡改。[[c6]]"
       },
       {
-        "key": "annotation-workflow",
-        "title": "Lark 人工标注与安全推进",
-        "body": "Lark 服务把下一条待处理样本呈现为卡片，展示原文、草稿对象、自动应用建议以及确认、不提炼、需修改、稍后处理四种动作；按钮携带会话、样本、标签摘要、有效期和一次性 nonce。[[c7]] 启动会话时要求存在个人 workspace 的有效 owner 点对点目标，并把变更和投递意图持久化；取消只撤销尚未发送或等待重试的意图，不篡改已发送或在途历史。[[c8]]\n\n回调处理不仅校验动作结构，还联合核对操作者、会话当前样本、聊天、消息、应用、有效期、标签摘要和 nonce，并先用事件 inbox 去重。[[c9]] 合法动作在同一事务内写入标签、审计事件和 inbox 状态，然后轮换 nonce、推进下一样本或结束会话。这使人工确认链与仓库状态机相连，但“需要修改”后的具体编辑入口并未在这些材料中出现。"
+        "key": "human-review",
+        "title": "Lark 人工复核闭环",
+        "body": "Lark 服务把原文、建议对象、进度和四种人工动作组成卡片；按钮携带会话、样本、标签摘要、nonce 与有效期，没有下一条样本时展示汇总。[[c7]] 启动会话要求活跃的个人 owner 点对点目标；默认避免重复会话，显式重发会轮换凭据并新增投递意图，取消则只撤销尚未发送或等待重试的意图。[[c8]] 回调持久化并去重后，联合核验 owner、聊天、消息、应用、时效、摘要和 nonce，再在事务中记录标注并推进样本。[[c9]] 当前材料仍未展示实际发送成功后如何回写 Lark 消息标识。"
       },
       {
-        "key": "evaluation-progress-limits",
-        "title": "评测方式、现状与限制",
-        "body": "评估器只使用已确认标签，并拒绝同一样本的重复预测；缺失预测保留为失败行。每个预测对象分别检查引文能否在原文定位、陈述是否受引文支持、数字事实槽是否一致，并计算预期对象覆盖。[[c10]] 语义支持采用显式规则而非模型，依次识别共享动词的否定翻转、反义概念、历史时间误作当前状态、限定条件丢失和低文本重叠。[[c11]] 最终输出引用定位、语义支持、事实槽、必要证据覆盖、任务完成、不必要打扰、自动应用精度和延迟等指标；无预测对象时对象级比率为 `null`，避免空答案获得满分。[[c12]]\n\n目前已形成“候选生成—人工确认—冻结—确定性评估”的完整代码路径，但仍有边界：规则词表无法覆盖复杂同义、否定和数值表达；文本导入不衡量图片或表格；而 extract 的完成判定只排除 contradicted，partial 或 unsupported 对象仍可能计为完成。现有材料也未包含数据库迁移、编辑界面或测试文件，不能据此确认唯一约束、端到端投递行为及各规则分支的测试覆盖。"
+        "key": "evaluation",
+        "title": "评估方式与能力限制",
+        "body": "评估器只纳入 confirmed 且有标签的样本，将处置、自动应用和对象集合与预测比较，并分别汇总引用定位、语义支持、事实槽一致性、必要证据覆盖、任务完成、不必要打扰与延迟；空预测对象不会获得虚假的支持分。[[c10]] 语义支持采用可重复的确定性规则，识别否定翻转、反义、历史状态冒充当前、限制条件遗漏及低文本重叠，数字与数量界限另行核对。[[c11]] 这是一条易审计的基线，并非复杂中文推理或真实模型效果的证明。"
       }
     ],
     "citations": [
       {
         "key": "c1",
+        "label": "研究评测导入用途",
+        "reason": "支持该导入器只服务人工研究标注、草稿默认自动应用且不得进入普通捕获流程的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c2",
+        "label": "公开文档切分函数",
+        "reason": "支持公开切分函数签名不包含评测哨兵参数，从而界定其运行时保护范围。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 39,
+          "endLine": 45
+        },
+        "quote": "/** Eval-only: split a research document into draft annotation samples.\n *  Never imported by capture/import/HTTP/CLI/learning code paths. */\nexport function documentQualityEvalSamples(\n  document: CaptureInput,\n  sourceUri: string,\n  limit = 40,\n) {"
+      },
+      {
+        "key": "c3",
+        "label": "评测落库入口保护",
+        "reason": "支持固定评测哨兵由数据集导入入口校验，值不匹配时显式拒绝。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 156,
+          "endLine": 171
+        },
+        "quote": "/** Eval-only: materialize a rule-split draft dataset for human annotation.\n *  Guarded by {@link QUALITY_EVAL_ONLY}: the ordinary capture/import pipeline\n *  does not create quality datasets or annotation samples. */\nexport function importQualityDatasetEval(input: {\n  optIn: typeof QUALITY_EVAL_ONLY;\n  repository: Qua"
+      },
+      {
+        "key": "c4",
         "label": "质量样本与标签合同",
-        "reason": "支持模块以严格 schema 约束样本来源、提炼对象、证据和自动应用一致性的论断。",
+        "reason": "支持样本来源、类别、对象类型及提取和自动应用之间的交叉约束。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -42,35 +81,9 @@
         "quote": "export const qualitySampleInputSchema = z\n  .object({\n    source: z\n      .object({\n        uri: z.string().min(1).max(2000),\n        documentId: z.string().min(1).max(500),\n        revisionId: z.string().min(1).max(500),\n        fragmentId: z.string().min(1).max(500),\n        section: z.string().min(1).max(500),\n     "
       },
       {
-        "key": "c2",
-        "label": "评测专用导入边界",
-        "reason": "支持研究样本生成与普通捕获、导入和学习链路隔离，以及草稿不得进入生产知识的说明。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 1,
-          "endLine": 28
-        },
-        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
-      },
-      {
-        "key": "c3",
-        "label": "文档候选切分规则",
-        "reason": "支持文本清理、结构过滤、长度限制、稳定去重、候选排序及数量不足时报错的流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 30,
-          "endLine": 153
-        },
-        "quote": "const plainText = (value: string) =>\n  value\n    .replace(/!\\[([^\\]]*)\\]\\([^)]*\\)/g, \"$1\")\n    .replace(/\\[([^\\]]+)\\]\\([^)]*\\)/g, \"$1\")\n    .replace(/<[^>]+>/g, \" \")\n    .replace(/[*_~`>#]/g, \"\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n\n/** Eval-only: split a research document into draft annotation samples.\n *  Never im"
-      },
-      {
-        "key": "c4",
-        "label": "数据集创建与批量写入",
-        "reason": "支持数据集判重、可写状态限制、摘要生成和事务式样本写入的说明。",
+        "key": "c5",
+        "label": "数据集复用与事务写入",
+        "reason": "支持数据集按名称、分组和来源摘要查重，以及样本批量写入的状态门禁、去重和事务回滚。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -81,49 +94,36 @@
         "quote": "  createDataset(input: {\n    name: string;\n    split: \"dev\" | \"holdout\";\n    sourceUri: string;\n    sourceRevisionId?: string | null;\n    sourceDigest: string;\n    targetCount: number;\n  }) {\n    const existing = this.db\n      .prepare(\n        `SELECT id FROM quality_datasets\n         WHERE name=? AND split=? AND sour"
       },
       {
-        "key": "c5",
-        "label": "人工处置与草稿修订",
-        "reason": "支持人工动作的状态转换、标签摘要并发检查，以及修订后恢复待处理状态的论断。",
-        "relation": "implements",
+        "key": "c6",
+        "label": "人工标注与冻结完整性",
+        "reason": "支持摘要乐观锁、修订重新排队、全量确认门槛和冻结清单重算校验。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/repository.ts",
           "startLine": 278,
-          "endLine": 356
+          "endLine": 401
         },
         "quote": "  label(input: {\n    sampleId: string;\n    action: \"confirm\" | \"abstain\" | \"needs_edit\" | \"skip\";\n    reviewerOpenId: string;\n    expectedLabelDigest: string;\n  }) {\n    const sample = this.sample(input.sampleId);\n    if (!sample) throw Error(\"QUALITY_SAMPLE_NOT_FOUND\");\n    if (sample.state !== \"pending\")\n      throw "
       },
       {
-        "key": "c6",
-        "label": "数据集冻结与完整性复核",
-        "reason": "支持完全确认的冻结前置条件、清单摘要内容和冻结后重算校验。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/repository.ts",
-          "startLine": 358,
-          "endLine": 401
-        },
-        "quote": "  freeze(datasetId: string) {\n    const dataset = this.db\n      .prepare(\"SELECT * FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    const samples = this.samples(datasetId);\n    if (\n      samples.length !== Number(dataset.target"
-      },
-      {
         "key": "c7",
-        "label": "人工标注卡片",
-        "reason": "支持卡片展示内容、四种人工动作及按钮携带的会话安全字段。",
+        "label": "质量标注卡片",
+        "reason": "支持卡片展示原文、建议对象、进度、四种动作及完成状态汇总。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/lark-annotations.ts",
           "startLine": 42,
-          "endLine": 128
+          "endLine": 149
         },
         "quote": "  private card(\n    sessionId: string,\n    sample: QualitySample,\n    nonce: string,\n    expiresAt: string,\n  ) {\n    const progress = this.repository.progress(sample.datasetId);\n    const total = Object.values(progress).reduce(\n      (sum, count) => sum + Number(count),\n      0,\n    );\n    const reviewed = total - Num"
       },
       {
         "key": "c8",
-        "label": "标注会话与投递意图",
-        "reason": "支持 owner 目标选择、会话和投递意图持久化，以及取消时仅撤销未发送意图的说明。",
-        "relation": "depends_on",
+        "label": "会话启动、重发与取消",
+        "reason": "支持活跃会话幂等、重发凭据轮换、owner 目标选择、投递意图创建及取消边界。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/lark-annotations.ts",
@@ -134,8 +134,8 @@
       },
       {
         "key": "c9",
-        "label": "Lark 回调校验与事务推进",
-        "reason": "支持事件去重、操作者与消息上下文联合校验，以及标注后原子推进下一样本。",
+        "label": "回调验证与状态推进",
+        "reason": "支持事件去重、身份和消息等联合校验，以及事务内记录标注并推进下一样本。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -147,22 +147,22 @@
       },
       {
         "key": "c10",
-        "label": "确认样本与逐对象评估",
-        "reason": "支持只评估已确认样本、记录缺失预测，并逐对象计算证据定位、语义、事实槽和覆盖率。",
-        "relation": "implements",
+        "label": "确认样本评估与指标汇总",
+        "reason": "支持只评估已确认样本，并将引用定位、语义、事实槽、覆盖、完成、打扰和延迟拆分衡量。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/evaluator.ts",
           "startLine": 234,
-          "endLine": 317
+          "endLine": 458
         },
         "quote": "export function evaluateQuality(\n  samples: QualitySample[],\n  predictionsInput: unknown[],\n) {\n  const predictions = predictionsInput.map((prediction) =>\n    qualityPredictionSchema.parse(prediction),\n  );\n  const bySample = new Map(\n    predictions.map((prediction) => [prediction.sampleId, prediction]),\n  );\n  if (by"
       },
       {
         "key": "c11",
-        "label": "确定性语义支持规则",
-        "reason": "支持语义裁决器不是模型，并按否定、反义、时间、限定和文本重叠规则产生四类结论。",
-        "relation": "implements",
+        "label": "确定性语义与事实槽规则",
+        "reason": "支持语义判定的规则类型、四种结果、数字界限检查及非 LLM 的能力边界。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/evaluator.ts",
@@ -170,71 +170,36 @@
           "endLine": 195
         },
         "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
-      },
-      {
-        "key": "c12",
-        "label": "质量指标聚合",
-        "reason": "支持对象级、样本级、自动应用、打扰和延迟指标，以及空分母返回空值的现状说明。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 337,
-          "endLine": 458
-        },
-        "quote": "  const count = (predicate: (row: Row) => boolean) =>\n    rows.filter(predicate).length;\n\n  // --- Per-object evidence aggregates (denominator = predicted objects) ---\n  const objectEvals = rows.flatMap((row) => row.objectEvals);\n  const predictedObjects = objectEvals.length;\n  const located = objectEvals.filter((o) =>"
       }
     ],
     "questions": [
       {
-        "question": "“需要修改”样本由哪个 API 或界面提交新标签，并如何重新进入当前或后续 Lark 标注会话？",
-        "why": "材料只显示卡片把样本置为 needs_edit，以及仓库具备 revise 方法，没有展示两者之间的用户操作入口和会话恢复机制。",
-        "nextStep": "定位调用 QualityRepository.revise 的路由或界面，并验证旧标签摘要冲突、修订后 pending 状态及再次投递行为。",
+        "question": "delivery worker 如何把 Lark 实际返回的 message_id 回写到质量标注会话，并处理发送结果不确定或重试？",
+        "why": "回调要求会话中的 message_id 与事件严格一致，但现有材料只展示投递意图创建、取消边界和回调校验，不能确认端到端投递闭环。",
+        "nextStep": "检查 delivery intent 执行器对 annotation_session_id 的成功回写、幂等键和失败重试逻辑，并用真实 Lark 投递与回调联调验证。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c7",
+          "c8",
           "c9"
         ]
       },
       {
-        "question": "quality_samples 的实际唯一约束是什么，重复批量导入是否可能产生 ordinal 空洞？",
-        "why": "仓库使用 INSERT OR IGNORE 并预先按索引计算 ordinal，但提供材料没有数据库迁移，无法确定忽略写入依据及其对顺序的影响。",
-        "nextStep": "检查质量表迁移和数据库行为测试，确认数据集内 input digest、ordinal 等字段的唯一约束，并增加重复导入断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c4"
-        ]
-      },
-      {
-        "question": "任务完成是否应允许含 partial 或 unsupported 对象的 extract 预测计为完成？",
-        "why": "当前完成条件只拒绝 contradicted，同时模块又把 supported、partial 和 unsupported 分开统计；材料未说明这种宽松口径是否符合产品目标。",
-        "nextStep": "由质量口径负责人确认 completion 的定义；若要求每项陈述均获充分支持，应收紧条件并补充 partial、unsupported 回归样本。",
+        "question": "确定性语义规则是否已有覆盖中文同义改写、双重否定、跨句限制和复杂金额表达的确认样本与效果报告？",
+        "why": "当前实现只能证明有限动词、反义词组、限制词、文本重叠和数量正则的规则行为，不能证明复杂中文场景的实际覆盖率。",
+        "nextStep": "在 dev 与 holdout 数据集中补充这些语言现象，分别报告规则覆盖、真实模型预测和人工复核结果。",
         "blocking": false,
         "citationKeys": [
           "c10",
-          "c12"
+          "c11"
         ]
       },
       {
-        "question": "图片、表格和白板材料将通过什么评测集覆盖？",
-        "why": "样本 schema 包含 image 类别，但当前文档切分器明确跳过图片和结构化块，现有导入路径无法衡量这些材料的提炼质量。",
-        "nextStep": "设计保留原始定位和人工标签的多模态样本构造流程，并与文本数据集分开报告覆盖率。",
+        "question": "needs_context 的任务完成标准是否应要求预测实际提出具体且必要的澄清问题？",
+        "why": "当前非 extract、非 abstain 的完成逻辑主要以未提取或未自动应用为准，可能把单纯停止处理也计为完成。",
+        "nextStep": "明确有效澄清的产品合同，再增加问题具体性、必要性及澄清后恢复处理的行为指标。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
-        ]
-      },
-      {
-        "question": "确定性语义规则和 Lark 并发回调目前有哪些自动化与真实集成测试？",
-        "why": "实现包含否定、反义、时间、限定、数字、空分母、nonce、过期和重复事件等关键边界，但目标材料未提供测试或实测结果。",
-        "nextStep": "核对测试文件，将每个规则分支和回调拒绝条件映射到行为断言，并把真实 Lark 投递检查与协议 fixture 测试分开记录。",
-        "blocking": false,
-        "citationKeys": [
-          "c9",
-          "c11",
-          "c12"
+          "c10"
         ]
       }
     ]
@@ -263,55 +228,55 @@
     {
       "kind": "article",
       "key": "omem:apps/server/src/quality/evaluator.ts",
-      "digest": "604ed30679e02dc58fc6d61c005a1db69b4a0c61e85f476c666e505a9b65c25c"
+      "digest": "84a0e3b4fcdb9d0280d8f57bdd4f5850e30f4cf0b03cbe10b7ddf0d1864f192c"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/quality/import.ts",
-      "digest": "77cca3b8e768a7e58afef4811628199e97f7d7e536305f4b30395ac0a060714a"
+      "digest": "96eb6093c555d5e80229e20bf3b4d1a190b997d94cce49d4ea6088171eee4611"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/quality/lark-annotations.ts",
-      "digest": "c4f1f2b2c1a8aee8f126e6d4421722dddefa6aa54ad169e31fb58256146a32e5"
+      "digest": "66ffaf96c092bc9307e5fa0593a684c37d000a8d57c9d51c3ea4934010a9a23f"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/quality/repository.ts",
-      "digest": "f043e6f1895a96418a5dd952cee1a4407964cdfffcba1675fc9c8c13079948c8"
+      "digest": "ada658d4acfa0284e5a1a19614c4acd9080867511a60924a09dbb52f3ab9d293"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:29:32.955Z",
+    "at": "2026-09-30T20:13:44.808Z",
     "trace": {
-      "runId": "a3554461-0d5a-4295-a573-c2f53e8308e8",
-      "roleId": "knowledge-writer",
+      "runId": "062fbb1b-7ac8-4bd2-a8d6-d2bd1c565d7e",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
-      "promptHash": "db14eb10bd3289039dbd3d18f203fb00766b694b14b91c384a055e9e596ac9a7",
-      "contextHash": "cac3b01c2fd3997704bda48f888438038244212ddba4f713d3b3ef02ddd14fe9",
-      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "4c5a162ae79cfaf061a6baa8b2aabad0d54df5b99c5689258b3376a4c82eef95",
+      "contextHash": "631b49c358627c8dcb28ed8b9c33a4cad8114e103f269f0eeb6aefc5dec46536",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "95680d2461352ff41849c8ad8e7ef01d1424ee4e161dfd96fff4a9b68ce417c4",
+      "fingerprint": "2f39368bdc11c53ae912a935746ddafa691c95403d3e67a971a46bb32862f492",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-writer",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eedb-25d8-7212-84e5-2b5bf48845f7"
+        "01a0f3f3-35c1-79a2-878d-6761d46b98e1"
       ],
       "usage": {
-        "used": 41637,
-        "size": 760000,
+        "used": 50593,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -319,10 +284,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 87575,
-          "utf8Bytes": 96945,
-          "estimatedTokens": 32315,
-          "budgetedTokens": 40394,
+          "chars": 95232,
+          "utf8Bytes": 108747,
+          "estimatedTokens": 36249,
+          "budgetedTokens": 45312,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -331,17 +296,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:29:47.816Z",
+    "at": "2026-09-30T20:14:03.264Z",
     "trace": {
-      "runId": "2322203f-5994-4f75-b13e-7d9df27ffee6",
+      "runId": "96846dc3-7897-4c9c-9d05-ba92fa992447",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "145ca4a687dfd7b74296f851e77ad17e7b0bd3ed644d520af2516fc6d72b160d",
-      "contextHash": "7e5d97f126c2ff4cf57ba2e5edb129fd9b7b620f5251546c5c9e5084c454f398",
+      "promptHash": "630a3a1ea4d2424ce0d0bcfdab82ba9ce79bbd66de004a1bdd16f4d282374246",
+      "contextHash": "116928dd7ed5b7674419f798a80e575416eb1776fd67f268a88c2a691134a1ff",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3306be4f1488820aa8a3bbda00a341d9c5d3d0685ee87c461585902365058541",
+      "fingerprint": "4181ca847af50d75f489f8deecc240f0692a607dc2b9b1b4bd53323d592ca9e6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -354,11 +319,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eedb-bd6a-73a1-a039-b8ea91d72fc1"
+        "01a0f3f3-b1fc-7740-b8e9-c52626787691"
       ],
       "usage": {
-        "used": 42841,
-        "size": 760000,
+        "used": 48941,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -366,10 +331,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 95245,
-          "utf8Bytes": 108497,
-          "estimatedTokens": 36166,
-          "budgetedTokens": 45208,
+          "chars": 95198,
+          "utf8Bytes": 108114,
+          "estimatedTokens": 36038,
+          "budgetedTokens": 45048,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

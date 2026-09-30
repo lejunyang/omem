@@ -1,0 +1,253 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/retrieval/embedding.ts",
+    "title": "中文本地向量模型加载器",
+    "summary": "从 osdk 锁定快照加载 BGE-small-zh-v1.5，逐文件校验后以离线 CPU 量化模式提供查询与材料向量，并把全部关键资产摘要纳入向量身份。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "contract",
+        "title": "模型抽象与快照身份",
+        "body": "模块用 `EmbeddingModel` 统一模型身份、批量向量化和资源关闭，并显式区分 query 与 passage，给上层语义检索留下用途特化入口。[[c1]] 当前实现只接受固定仓库与固定 revision 的 BGE-small-zh-v1.5；模型路径由 `osdk model show` 返回，应用自身不负责下载。[[c2]]"
+      },
+      {
+        "key": "verification",
+        "title": "加载与完整性校验",
+        "body": "加载器枚举配置、分词器、词表和量化 ONNX 文件，把 osdk 清单中的 SHA-256 与本地文件逐项比较；缺少记录或内容不一致都会中止。[[c3]] 校验后才动态载入 Transformers，并关闭远程模型和文件系统缓存，以 `local_files_only`、CPU、q8 和双线程建立特征提取管线，因此运行期不会隐式联网补模型。[[c4]]"
+      },
+      {
+        "key": "embedding",
+        "title": "向量生成与边界",
+        "body": "查询文本会加中文检索指令，材料文本保持原样；两者都使用 CLS pooling 和归一化。模型身份由固定算法/窗口标签及所有关键文件哈希共同组成，可阻止不同权重或分词资产产生的向量被当成同一索引。[[c5]] `close` 会释放 extractor。该文件没有展示截断到“window400”的具体参数，名称表达的窗口策略是否由模型配置或其他层落实仍不能确定。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "向量模型接口",
+        "reason": "支持模型身份、用途区分、批量嵌入和关闭生命周期的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 7,
+          "endLine": 12
+        },
+        "quote": "export interface EmbeddingModel {\n  /** Includes weights, tokenizer, pooling, query instruction and window version. */\n  id: string;\n  embed(texts: string[], purpose: \"query\" | \"passage\"): Promise<number[][]>;\n  close(): Promise<void>;\n}"
+      },
+      {
+        "key": "c2",
+        "label": "osdk 快照解析与版本门禁",
+        "reason": "说明应用通过 osdk 查找快照且只接受锁定的仓库和 revision。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 14,
+          "endLine": 21
+        },
+        "quote": "export const BGE_REVISION = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\";\nconst files = [\"config.json\", \"tokenizer.json\", \"tokenizer_config.json\", \"special_tokens_map.json\", \"vocab.txt\", \"onnx/model_quantized.onnx\"];\n\n/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async func"
+      },
+      {
+        "key": "c3",
+        "label": "关键模型文件校验",
+        "reason": "支持逐文件比较清单摘要、本地内容不符即失败的完整性策略。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 22,
+          "endLine": 28
+        },
+        "quote": "  const hashes: string[] = [];\n  for (const name of files) {\n    const expected = model.files.find(f => f.path === name)?.sha256;\n    const actual = createHash(\"sha256\").update(await readFile(join(model.snapshot_path, name))).digest(\"hex\");\n    if (!expected || actual !== expected) throw Error(`Embedding snapshot check"
+      },
+      {
+        "key": "c4",
+        "label": "离线 CPU 量化加载",
+        "reason": "说明禁止远程模型和缓存、仅从本地快照创建 q8 CPU 管线。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 29,
+          "endLine": 34
+        },
+        "quote": "  const { env, pipeline } = await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCache = false;\n  const extractor = await pipeline(\"feature-extraction\", model.snapshot_path, {\n    local_files_only: true, dtype: \"q8\", device: \"cpu\", session_options: { intraOpNumThreads: 2 },\n  });"
+      },
+      {
+        "key": "c5",
+        "label": "向量身份与查询特化",
+        "reason": "支持文件哈希参与模型身份、查询加指令、CLS 归一化及资源释放的描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 35,
+          "endLine": 44
+        },
+        "quote": "  return {\n    id: \"bge-zh-cls-q8-window400-v1:\" + createHash(\"sha256\").update(hashes.join(\":\" )).digest(\"hex\"),\n    async embed(texts, purpose) {\n      const result = await extractor(texts.map(text => purpose === \"query\" ? \"为这个句子生成表示以用于检索相关文章：\" + text : text), {\n        pooling: \"cls\", normalize: true,\n      });\n     "
+      }
+    ],
+    "questions": [
+      {
+        "question": "`window400` 是否真的由当前加载参数强制实施？",
+        "why": "模型 id 声明了 window400，但可见的 extractor 调用只设置 pooling 和 normalize，材料没有出现显式截断长度，因此无法确认身份名称与实际分词窗口完全一致。",
+        "nextStep": "检查锁定模型的 tokenizer 配置和语义检索调用处是否显式设置 max_length，并补充长文本行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-30T19:22:13.917Z",
+    "trace": {
+      "runId": "95952240-8704-4c12-a148-01b2eda26b5e",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "be6da817367d1a86a7b4b0af9b1c386d9447d8ee7527717dbc46cc361541556f",
+      "contextHash": "09439dfdad4c8480731d6fed0afe9c94afef82bc3d027b88c657593be0373a68",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7c288405af8b8ccc81152ede5119a055caa17bc4e461d640fe3404e55884ad81",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3c3-830a-71d3-a1ce-87178e464c5c"
+      ],
+      "usage": {
+        "used": 48527,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80570,
+          "utf8Bytes": 83287,
+          "estimatedTokens": 27763,
+          "budgetedTokens": 34704,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-30T19:22:42.369Z",
+    "trace": {
+      "runId": "e81304b4-7d4d-4831-b8fb-5150b92bd223",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2df70fb6611560dc5402454f98ede7b730c378a2f682a833de5fb985fa940fb0",
+      "contextHash": "4afb6779fab199f827bb783826a04463110145109152e9e2d1fd4f9d55de717c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "52f50ed727bdd367ac2337e2f26c7131998f6960fffc72e955273c2beb67854e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3c4-891f-7572-8e72-098925e922fa"
+      ],
+      "usage": {
+        "used": 51997,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 103086,
+          "utf8Bytes": 113787,
+          "estimatedTokens": 37929,
+          "budgetedTokens": 47412,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

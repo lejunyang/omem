@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-    "title": "Lark 通知投递管线",
-    "summary": "实现交互卡片的官方发送适配、数据库租约队列、错误分类与有限重试，并支持窗口或定时通知聚合。",
+    "title": "Lark 通知投递、聚合与重试状态机",
+    "summary": "实现 Lark 卡片发送与更新适配、数据库租约队列、错误分类、去重窗口、通知聚合和工作器编排，使外部投递结果可追踪并避免无限重试。",
     "category": "implementation",
     "sections": [
       {
-        "key": "adapter-and-errors",
-        "title": "平台适配与错误语义",
-        "body": "`OfficialLarkMessageAdapter` 根据飞书或 Lark 品牌选择 SDK 域名，以聊天 ID 发送交互卡片，并用调用方提供的 UUID 参与平台去重；更新接口则按消息 ID 修补卡片。响应缺少消息 ID被视为结果不明确。[[c1]] 错误分类把 429 或特定平台码归为限流，401/403 及鉴权码归为认证错误，服务端或网络故障归为不明确，其余归为永久错误；同时遮蔽传入的敏感值。[[c2]]"
+        "key": "adapter_and_errors",
+        "title": "平台适配与错误分类",
+        "body": "官方适配器按飞书或 Lark 品牌选择 SDK 域名，发送 interactive 消息时传入 provider UUID，并可 patch 已有消息；缺少消息编号被视为结果不确定。[[c1]] 异常统一分为限流、认证、永久失败和结果不确定：429 与特定码归为限流，401/403 与鉴权码归为认证失败，服务端或网络故障归为不确定，敏感密钥会从错误文本中替换。[[c2]]"
       },
       {
-        "key": "lease-and-delivery",
-        "title": "租约队列与投递状态",
-        "body": "仓储以 `BEGIN IMMEDIATE` 事务认领到期意图或过期租约，并跳过连接失效、绑定被替代及已非活动状态的标注会话。首次发送超过一小时的平台去重窗口后，若结果仍不明确，就转为 `unknown`，不再盲目重试。[[c3]] 工作器取加密凭据，校验应用标识、负载摘要和 30 KB 卡片上限，再调用适配器；成功时同时落投递回执、卡片消息 ID及标注会话消息 ID。失败最多尝试五次，只有限流或仍在去重窗口内的不明确错误可重试；鉴权失败还会禁用同连接目标并终止其他待发意图。[[c4]]"
+        "key": "lease_state_machine",
+        "title": "租约领取与投递状态",
+        "body": "仓储在 `BEGIN IMMEDIATE` 事务内领取到期意图，先检查一小时去重窗口、连接、绑定和标注会话状态，再把意图改为 sending，写入租约、尝试次数及投递历史。[[c3]] 成功提交必须匹配当前租约令牌，并同步更新意图、投递记录、决策卡消息号和标注会话消息号；失败最多尝试五次，限流可退避，不确定结果仅在代码设定的一小时窗口内重试，认证失败会停用连接相关目标和待投递项。[[c4]]"
       },
       {
         "key": "batching",
-        "title": "通知聚合",
-        "body": "批处理器挑选已到聚合时间的窗口或定时意图，按工作区、绑定、目标和聚合模式分组，并通过映射表汇总去重后的变更。单意图单变更直接转即时发送；多项则生成摘要卡片、重新计算摘要与稳定供应商 UUID，把其余成员取消并指向主意图。[[c5]] 摘要正文和总负载均有限制，但标题与详情采用截断而非分页；超出 30 KB 会回滚整个事务。"
+        "title": "窗口聚合与内容边界",
+        "body": "批处理器按工作区、绑定、目标和聚合模式组合到期意图，并要求每组能映射到具体变更。多个成员被整理成摘要卡，主意图转为即时发送，其余成员取消并指向主意图；聚合卡超过 30 KB 会失败。[[c5]] 工作器发送前还会核对密钥所属应用、载荷稳定摘要和 30 KB 大小限制，再把发送结果交回仓储状态机。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "官方消息发送与更新适配",
-        "reason": "说明平台域选择、交互卡片发送、供应商 UUID 和消息更新行为。",
+        "label": "官方消息适配器",
+        "reason": "支持品牌域名选择、交互卡发送、provider UUID、消息更新及缺少消息编号的处理。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -38,47 +38,47 @@
       },
       {
         "key": "c2",
-        "label": "Lark 错误分类",
-        "reason": "支持限流、鉴权、不明确和永久错误的分类规则及敏感信息遮蔽。",
+        "label": "Lark 异常分类",
+        "reason": "支持限流、认证、结果不确定和永久失败的分类以及敏感信息脱敏。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-          "startLine": 53,
+          "startLine": 56,
           "endLine": 110
         },
-        "quote": "const numberValue = (value: unknown) =>\n  typeof value === \"number\" && Number.isFinite(value) ? value : undefined;\n\nconst classifyLarkError = (error: unknown, sensitive: string[] = []) => {\n  const redact = (value: string) =>\n    sensitive\n      .filter(Boolean)\n      .reduce((result, item) => result.replaceAll(item, \""
+        "quote": "const classifyLarkError = (error: unknown, sensitive: string[] = []) => {\n  const redact = (value: string) =>\n    sensitive\n      .filter(Boolean)\n      .reduce((result, item) => result.replaceAll(item, \"[REDACTED]\"), value);\n  if (error instanceof LarkDeliveryError)\n    return new LarkDeliveryError(\n      redact(error"
       },
       {
         "key": "c3",
-        "label": "投递认领与发送前抑制",
-        "reason": "说明租约认领、去重窗口过期转未知，以及连接、绑定和标注会话状态检查。",
+        "label": "事务领取与发送前门禁",
+        "reason": "支持即时事务领取、去重窗口检查、连接与绑定门禁、标注会话抑制及发送租约创建。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-          "startLine": 190,
+          "startLine": 178,
           "endLine": 350
         },
-        "quote": "  claim(\n    workerId: string,\n    now = new Date(),\n    leaseMs = 60_000,\n  ): DeliveryLease | null {\n    const at = now.toISOString();\n    return this.transaction(() => {\n      while (true) {\n        const row = this.db\n          .prepare(\n            `SELECT i.*,b.connection_id,b.state AS binding_state,\n            "
+        "quote": "  private transaction<T>(work: () => T) {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      throw error;\n    }\n  }\n\n  claim(\n    workerId: string,\n    now = new Date(),\n    leaseMs = "
       },
       {
         "key": "c4",
-        "label": "失败重试与工作器执行",
-        "reason": "支持成功回执写入、失败状态计算、鉴权级联停用及工作器负载校验。",
+        "label": "成功回写与失败处置",
+        "reason": "支持租约保护的成功写回、关联消息号更新、五次上限、去重窗口和认证失败停用。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/delivery.ts",
           "startLine": 353,
-          "endLine": 457
+          "endLine": 456
         },
         "quote": "  delivered(lease: DeliveryLease, messageId: string, now = new Date()) {\n    return this.transaction(() => {\n      const changed = this.db\n        .prepare(\n          `UPDATE delivery_intents SET state='delivered',message_id=?,updated_at=?,\n             lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error"
       },
       {
         "key": "c5",
-        "label": "窗口和定时聚合",
-        "reason": "说明聚合分组、变更映射、摘要卡片生成和成员意图替代。",
+        "label": "窗口聚合与摘要卡",
+        "reason": "支持聚合分组、变更映射、主从意图状态、摘要构造和聚合阶段大小限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -87,15 +87,40 @@
           "endLine": 595
         },
         "quote": "export class LarkNotificationBatcher {\n  constructor(private readonly db: DatabaseSync) {}\n\n  prepareDue(now = new Date()) {\n    const at = now.toISOString();\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const seeds = this.db\n        .prepare(\n          `SELECT * FROM delivery_intents\n           WHERE channel='"
+      },
+      {
+        "key": "c6",
+        "label": "工作器完整性检查",
+        "reason": "支持密钥应用匹配、载荷摘要与大小复核，以及发送结果回写仓储。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+          "startLine": 598,
+          "endLine": 643
+        },
+        "quote": "export class LarkDeliveryWorker {\n  constructor(\n    private readonly repository: LarkDeliveryRepository,\n    private readonly secrets: EncryptedSecretStore,\n    private readonly adapter: LarkMessageAdapter,\n    private readonly workerId: string,\n  ) {}\n\n  async processOne(now = new Date()) {\n    const lease = this.rep"
       }
     ],
     "questions": [
       {
-        "question": "状态为 `unknown` 的投递由谁人工核对或补偿？",
-        "why": "代码在平台去重窗口结束后停止重试以避免重复通知，这是安全边界，但材料没有展示后续对账、告警或人工确认流程。",
-        "nextStep": "定义 `unknown` 状态的运维入口、供应商查询策略和人工重发规则，并覆盖可能重复发送的风险。",
+        "question": "provider UUID 的去重保证是否在飞书与 Lark、不同租户及各类超时错误下都与代码的一小时窗口一致？",
+        "why": "实现依赖 UUID 并在一小时内重试不确定结果，但材料只有客户端逻辑，没有平台协议或真实租户验证来证明该期限与去重语义。",
+        "nextStep": "对照当前官方接口文档，并在飞书与 Lark 真实租户中验证超时、断连和重复 UUID 的行为。",
         "blocking": false,
         "citationKeys": [
+          "c1",
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "provider UUID 在飞书与 Lark 的实际去重期限和超时语义，是否与代码采用的一小时重试窗口一致？",
+        "why": "材料只证明客户端传递稳定 UUID，并在本地将不确定结果限制在一小时内重试；没有平台协议或真实租户结果证明服务端在全部品牌、租户和故障情形下提供相同去重保证。",
+        "nextStep": "对照当前官方接口文档，并分别在飞书和 Lark 真实租户中验证超时、断连及重复 UUID 的行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
           "c3",
           "c4"
         ]
@@ -151,40 +176,40 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:02:57.660Z",
+    "at": "2026-09-30T19:18:23.636Z",
     "trace": {
-      "runId": "ec3fa096-0572-4505-a992-47476943d2a1",
-      "roleId": "code-analyst",
+      "runId": "ca926296-6f48-478c-b9fd-1f45cd1b1b2c",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "a2696527429647c187b3591f37dcc98e8ad608d3041cec373b5a288135bb8434",
-      "contextHash": "3c776bcf4bbd1bec19c86a6f371b055183e1b4ed31b390c4b5e3b268e0d1779f",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "73f8393b2a3266923bfb901322318cc20260eb9b87e557a814a138da8d99d4ea",
+      "contextHash": "60f1aad2512cf1cd2a3ee687639b12928f04439c6fcfd622904e33e74f684914",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ba8d3be75f9a06dfef532b2659db8b8d92d39428dc8ad76ee82f876acb3eca6c",
+      "fingerprint": "553eecd81c0260f129dcbf814e34fe60068148fba4ff9cdbea393193b0d05b8e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8b-8922-7e71-b421-cad69e0e87c6"
+        "01a0f3c0-302d-7140-9a84-3fa43938bb01"
       ],
       "usage": {
-        "used": 53060,
-        "size": 760000,
+        "used": 67029,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -192,10 +217,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124747,
-          "utf8Bytes": 126777,
-          "estimatedTokens": 42259,
-          "budgetedTokens": 52824,
+          "chars": 142897,
+          "utf8Bytes": 155351,
+          "estimatedTokens": 51784,
+          "budgetedTokens": 64730,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -204,17 +229,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:03:20.578Z",
+    "at": "2026-09-30T19:18:56.903Z",
     "trace": {
-      "runId": "23485087-b5df-45e8-861d-0cb045629f50",
+      "runId": "14e7fbf0-0a5c-4321-bab5-11ff05d3f153",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "1847da482fd5d690995b733ed881cd60e38d43c8196e877f43d5d8b625e0effc",
-      "contextHash": "45f2a90fe5d73dbc316f3ab8ddaebe4be24a3791d25686b41311c65940bc423d",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "251330589348a0fb87b75eb7b279d156404e30c763d03cb3625d35b838f8f245",
+      "contextHash": "83fd6fd450d1f0028a4fcd903c8aa7b1e57071fab8e87eeb7f4db85c402747cb",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e6429997986280da9acdd9a80162a7e46801e3800afd65991fcbbfa224e36fe1",
+      "fingerprint": "82d8d648b62c150da18ac8960c42899f3676a6de922305533541197e9a661911",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -227,11 +252,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-775a-7790-bfbc-2b7aa491dd1a"
+        "01a0f3c1-051b-7d91-b044-d7405d2081bf"
       ],
       "usage": {
-        "used": 56578,
-        "size": 760000,
+        "used": 62446,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -239,10 +264,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 143646,
-          "utf8Bytes": 154634,
-          "estimatedTokens": 51545,
-          "budgetedTokens": 64432,
+          "chars": 143307,
+          "utf8Bytes": 152973,
+          "estimatedTokens": 50991,
+          "budgetedTokens": 63739,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

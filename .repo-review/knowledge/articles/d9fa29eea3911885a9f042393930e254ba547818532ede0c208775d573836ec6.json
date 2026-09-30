@@ -2,182 +2,328 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-    "title": "助手运行时治理与恢复测试",
-    "summary": "系统性验证助手从检索、证据可见性和模型生成到受治理任务写入的主流程，并覆盖幂等、超时、取消围栏、模型不可用重试、上下文隔离及 Lark 入口。",
+    "title": "助理运行时与 Lark 入口行为测试",
+    "summary": "隔离测试覆盖事项治理、证据可见性、轮次幂等与取消、检索上下文及 Lark 路由。修订后不再把测试名称视为“无假答案”的行为断言，并分别陈述 pending 状态、零写入与成功重试的实际证据。",
     "category": "tests",
     "sections": [
       {
-        "key": "governed-turn",
-        "title": "受治理的对话写入",
-        "body": "运行时先区分显式任务意图与普通咨询，再把模型的 `create_task` 视为待治理请求。明确 owner 指派可经 MemoryService 创建任务；咨询场景即使模型请求写入，也以 `not_explicit_task_intent` 拒绝并保持零任务。模型不可用会把轮次留为 `pending` 供重试，普通异常则返回诚实降级结果。[[c1]] [[c2]] [[c3]]"
+        "key": "task-governance",
+        "title": "任务写入与证据治理",
+        "body": "测试以临时 Store 和独立加密凭据目录隔离状态。[[c1]] 意图单测区分明确记录、提醒表达与普通咨询。[[c2]] 即使模型在咨询回答中请求 `create_task`，运行时仍拒绝动作并保持任务零写入。[[c3]]\n\n群会话未注入可见性策略时默认看不到证据；测试中显式注入的策略可限制群聊只读取同一会话材料，避免私聊内容泄漏。[[c4]][[c5]] 这些用例证明测试场景中的运行时行为，但没有展示生产入口如何装配或审计该策略。"
       },
       {
-        "key": "visibility-context",
-        "title": "证据可见性与上下文连续性",
-        "body": "群聊未注入策略时默认不给模型证据；注入策略后，仅当前群上下文材料可见，私人内容不会泄漏。关键词检索验证中文短语召回和无关查询不召回，同会话 correction 进入 trustedContext、不同会话隔离。两轮场景会复用首轮证据支撑下一轮任务，而不存在的片段引用不能产生写入。[[c4]] [[c5]] [[c6]]"
+        "key": "turn-resilience",
+        "title": "幂等、取消与有限恢复证据",
+        "body": "相同 transport event id 重放会复用既有轮次且不重复创建任务。[[c6]] 新消息可以中断在途生成，忽略取消信号的模型也会在超时后收敛。[[c7]] 取消后的迟到建任务请求被写入栅栏阻断；正常创建会留下 application receipt，而已经完成的轮次重启后不会进入恢复集合。[[c8]]\n\n`ModelUnavailableError` 用例直接断言轮次保持 `pending`、记录 unavailable 错误且没有任务写入，但没有直接断言 `turn.result` 为空或不含降级答复，因此不能据此声称已证明“不生成假答案”。[[c9]] 模型恢复后可通过 `retryTurn` 创建任务并把原轮次更新为 `done`，由组合测试另行证明。[[c10]] 普通首次模型生成异常会产生明确降级答复并保持零任务写入。[[c11]]"
       },
       {
-        "key": "concurrency-recovery",
-        "title": "并发、取消与恢复",
-        "body": "相同 transport event 只创建一个轮次和任务；同会话新消息会中断旧轮次。即使模型忽略 abort，超时也会使调用收敛；显式取消后，模型迟到返回的 `create_task` 无法越过提交围栏。恢复相关用例验证成功写入后确有 application receipt，且已完成轮次不会被 `recoverUnfinishedTurns` 重跑；它没有构造未完成轮次中 receipt 与 toolActions 冲突的场景，因此不能独立证明恢复判定依据。另一个用例直接证明模型恢复后 `retryTurn` 可把 pending 轮次推进为 done。[[c7]] [[c8]] [[c9]]"
-      },
-      {
-        "key": "lark-entry",
-        "title": "Lark 主助手入口",
-        "body": "确定性 inbox 装配把已绑定 owner 的 P2P 消息路由到 AssistantRuntime，生成回复投递意图并关联回 turn；未绑定发送者被忽略且不产生投递。群聊仅在 owner 提及机器人时进入助手，普通背景消息只采集；重复 event id 不产生第二条回复意图。[[c10]]"
+        "key": "retrieval-and-entry",
+        "title": "检索上下文、Lark 入口与日常流程",
+        "body": "检索测试覆盖中文短语召回与无关查询排除；纠正按会话隔离，上一轮证据可供后续任务引用，不存在的引用会阻止写入。[[c12]][[c13]] 日常流程验证带时区任务的创建、改期、完成和完成后不提醒；另有一次受限查询扩展，首轮模型提出的变更不会执行。[[c18]][[c19]] 长材料测试确认语义命中片段在字符预算内保留，并可进入下一轮工作上下文。[[c20]]\n\n绑定 owner 的私聊会生成回复、创建投递意图并关联 outbox，但测试未确认真实网络送达。[[c14]] 未绑定发送者会得到忽略结果，且不会创建投递意图。[[c15]] 对已配置群目标，只有具体的提及与后台捕获场景得到验证。[[c16]] 重复 Lark 事件不会产生第二条投递意图。[[c17]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "任务意图分类",
-        "reason": "支持明确指派语句与普通咨询语句的基础分类边界。",
+        "label": "隔离测试夹具",
+        "reason": "支持测试使用临时存储和独立加密凭据目录隔离运行状态。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 23,
+          "endLine": 40
+        },
+        "quote": "type Resource = { directory: string; store: Store; secrets: EncryptedSecretStore };\nconst resources: Resource[] = [];\nafterEach(() => {\n  for (const resource of resources.splice(0)) {\n    resource.store.close();\n    rmSync(resource.directory, { recursive: true, force: true });\n  }\n});\n\nconst setup = () => {\n  const dir"
+      },
+      {
+        "key": "c2",
+        "label": "显式任务意图单测",
+        "reason": "支持明确任务表达与普通咨询在意图检测中的区分。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
           "startLine": 98,
-          "endLine": 111
+          "endLine": 110
         },
         "quote": "describe(\"detectTaskIntent (unit)\", () => {\n  it(\"identifies explicit assignment intents\", () => {\n    expect(detectTaskIntent(\"帮我记一下：周五下午3点和张三开会\").explicit).toBe(true);\n    expect(detectTaskIntent(\"提醒我明天交报告\").explicit).toBe(true);\n    expect(detectTaskIntent(\"创建一个任务\").explicit).toBe(true);\n    expect(detectTaskIntent("
       },
       {
-        "key": "c2",
-        "label": "任务写入正反例",
-        "reason": "支持显式 owner 请求可创建任务，而咨询时模型工具请求被治理层拒绝。",
+        "key": "c3",
+        "label": "咨询请求零写入",
+        "reason": "支持咨询输入中的模型建任务请求被拒绝并保持零任务写入。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 113,
+          "startLine": 152,
           "endLine": 192
         },
-        "quote": "describe(\"AssistantRuntime (async, governed)\", () => {\n  it(\"B-positive: explicit owner assignment creates a task through MemoryService with real receipt\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n\n    const model = new ScriptedModel([\n      {\n     "
-      },
-      {
-        "key": "c3",
-        "label": "模型失败语义",
-        "reason": "支持模型不可用保持 pending、普通异常诚实降级，且两者均不创建任务。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 194,
-          "endLine": 236
-        },
-        "quote": "  it(\"H-G20: ModelUnavailableError marks turn pending for retry, not degraded, no fake answer\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const model: AssistantModelPort = {\n      generate: async () => {\n        throw new ModelUnavailableError(\"n"
+        "quote": "  it(\"B-negative: pure consultation (no explicit intent) creates ZERO tasks even if model emits create_task\", async () => {\n    const { store } = setup();\n    const revision = captureSource(store, \"接口说明\", \"GET /v1/items 列表查询接口。\");\n    const fragmentId = revision.fragments[0]!.id;\n    const memory = new MemoryService(st"
       },
       {
         "key": "c4",
-        "label": "群聊证据隔离",
-        "reason": "支持群聊默认无证据以及注入策略后私人材料不会进入群聊结果。",
+        "label": "群聊默认证据拒绝",
+        "reason": "支持未注入可见性策略时群会话不获得证据。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
           "startLine": 238,
-          "endLine": 311
+          "endLine": 265
         },
         "quote": "  it(\"G09: group conversations deny evidence by default when no policy is injected\", async () => {\n    const { store } = setup();\n    captureSource(store, \"群项目文档\", \"群内公开说明。\");\n    const model: AssistantModelPort = {\n      generate: async (input) => ({\n        answer: `evidence=${input.evidence.length}`,\n        citatio"
       },
       {
         "key": "c5",
-        "label": "检索与修正作用域",
-        "reason": "支持中文短语召回、无关查询不召回，以及 correction 仅进入同一会话作用域。",
+        "label": "群聊证据范围策略",
+        "reason": "支持测试中显式策略按群会话上下文过滤证据并隔离私聊材料。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 466,
-          "endLine": 544
+          "startLine": 267,
+          "endLine": 310
         },
-        "quote": "  it(\"A: RetrievalPort Chinese follow-up recall — short phrase via 2-grams recalls the imported fragment\", async () => {\n    const { store } = setup();\n    captureSource(store, \"会议纪要\", \"周五下午3点和张三开会讨论接口设计。\");\n    const retrieval = new KeywordRetrieval(store.db);\n    const seenFragments: string[] = [];\n    const model: A"
+        "quote": "  it(\"G09: injected policy hides private evidence in group; p2p history does not leak\", async () => {\n    const { store } = setup();\n    const privateRev = captureSource(store, \"私人笔记\", \"密钥 super-secret-123。\");\n    const publicRev = captureSource(store, \"群项目文档\", \"群内公开说明。\", {\n      context: { conversationId: \"oc_group\" }"
       },
       {
         "key": "c6",
-        "label": "两轮证据复用",
-        "reason": "支持首轮检索证据进入第二轮工作上下文，以及伪造片段引用时保持零写入。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 547,
-          "endLine": 596
-        },
-        "quote": "  it(\"G08: two-turn anaphora — Turn1 consults, Turn2 reuses Turn1 evidence for task\", async () => {\n    const { store } = setup();\n    captureSource(store, \"接口文档\", \"接口说明：GET /v1/items 返回分页列表。\");\n    const retrieval = new KeywordRetrieval(store.db);\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    "
-      },
-      {
-        "key": "c7",
-        "label": "幂等与新消息取消",
-        "reason": "支持 transport event 幂等，以及新轮次中断旧轮次而不产生旧任务。",
+        "label": "传输事件幂等",
+        "reason": "支持相同 transport event id 不会创建第二个轮次或任务。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
           "startLine": 362,
-          "endLine": 439
+          "endLine": 400
         },
         "quote": "  it(\"idempotency: same transport_event_id does not create a second turn or task\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const model = new ScriptedModel([\n      {\n        answer: \"ok\",\n        citationIds: [],\n        toolCalls: [\n          {"
       },
       {
-        "key": "c8",
-        "label": "超时与取消提交围栏",
-        "reason": "支持忽略 abort 的挂起模型仍会超时收敛，以及迟到工具请求无法越过取消围栏。",
+        "key": "c7",
+        "label": "新消息中断与模型超时",
+        "reason": "支持新轮次中断旧轮次，以及挂起且忽略信号的模型受超时约束。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 441,
+          "startLine": 402,
           "endLine": 464
         },
-        "quote": "  it(\"D: withTimeout rejects a hung model that ignores abort — no hang\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    // Model NEVER resolves and NEVER listens to signal — worst case.\n    const hungModel: AssistantModelPort = {\n      generate: async"
+        "quote": "  it(\"cancellation: a newer message interrupts the in-flight turn without a task\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    let release!: (v: AssistantModelReply) => void;\n    let generation = 0;\n    const waiters: (() => void)[] = [];\n    const"
       },
       {
-        "key": "c9",
-        "label": "Receipt 存在性与重试恢复",
-        "reason": "支持成功任务写入后存在 receipt、完成轮次不会重跑，以及模型恢复后 retryTurn 成功；该范围未直接构造 receipt 与 toolActions 冲突的未完成轮次。",
+        "key": "c8",
+        "label": "取消栅栏与正常收据检查",
+        "reason": "支持取消后迟到任务写入被阻断、正常完成存在真实收据，以及已完成轮次不会被恢复。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
           "startLine": 598,
-          "endLine": 679
+          "endLine": 650
         },
         "quote": "  it(\"G20: cancel fence — model resolves late with create_task after cancel, zero writes\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    let release!: (r: AssistantModelReply) => void;\n    let generationStarted = () => {};\n    const model: AssistantM"
       },
       {
-        "key": "c10",
-        "label": "Lark 入口路由",
-        "reason": "支持绑定 owner、群聊提及、背景采集、未绑定发送者隔离和重复事件幂等行为。",
+        "key": "c9",
+        "label": "模型不可用的待处理状态",
+        "reason": "支持模型不可用时轮次为 pending、记录错误且任务保持零写入；该范围未直接断言轮次结果内容。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 748,
+          "startLine": 194,
+          "endLine": 214
+        },
+        "quote": "  it(\"H-G20: ModelUnavailableError marks turn pending for retry, not degraded, no fake answer\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const model: AssistantModelPort = {\n      generate: async () => {\n        throw new ModelUnavailableError(\"n"
+      },
+      {
+        "key": "c10",
+        "label": "待处理轮次成功重试",
+        "reason": "直接支持模型恢复后 retryTurn 创建任务并把原轮次更新为 done。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 652,
+          "endLine": 679
+        },
+        "quote": "  it(\"G20 combo: model unavailable leaves pending, retrieval works, retryTurn recovers\", async () => {\n    const { store } = setup();\n    captureSource(store, \"docs\", \"接口在 GET /v1/items。\");\n    const retrieval = new KeywordRetrieval(store.db);\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    let m"
+      },
+      {
+        "key": "c11",
+        "label": "模型生成异常的诚实降级",
+        "reason": "支持普通首次模型生成异常返回降级答复并保持任务零写入。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 216,
+          "endLine": 236
+        },
+        "quote": "  it(\"runtime error (non-unavailable) degrades honestly\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const model: AssistantModelPort = {\n      generate: async () => {\n        throw Error(\"boom\");\n      },\n    };\n    const runtime = new AssistantRu"
+      },
+      {
+        "key": "c12",
+        "label": "中文召回与无关查询排除",
+        "reason": "支持中文短语召回和无关查询不召回的行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 466,
+          "endLine": 517
+        },
+        "quote": "  it(\"A: RetrievalPort Chinese follow-up recall — short phrase via 2-grams recalls the imported fragment\", async () => {\n    const { store } = setup();\n    captureSource(store, \"会议纪要\", \"周五下午3点和张三开会讨论接口设计。\");\n    const retrieval = new KeywordRetrieval(store.db);\n    const seenFragments: string[] = [];\n    const model: A"
+      },
+      {
+        "key": "c13",
+        "label": "纠正隔离与跨轮证据",
+        "reason": "支持纠正的会话作用域、上一轮证据复用及不存在引用导致零写入。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 519,
+          "endLine": 596
+        },
+        "quote": "  it(\"H-G16: correction in same scope reaches model; different scope does not leak\", async () => {\n    const { store } = setup();\n    const feedback = new FeedbackService(store);\n    const seen: string[] = [];\n    const model: AssistantModelPort = {\n      generate: async (input) => {\n        seen.push(input.trustedCont"
+      },
+      {
+        "key": "c14",
+        "label": "绑定私聊回复入队",
+        "reason": "支持绑定 owner 私聊生成回复、创建投递意图并关联 outbox，但不证明真实送达。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 774,
+          "endLine": 793
+        },
+        "quote": "  it(\"routes bound-owner p2p to the assistant, enqueues a reply and links outbox\", async () => {\n    const { store } = larkSetup();\n    const model: AssistantModelPort = {\n      generate: async () => ({ answer: \"p2p 回复：已收到。\", citationIds: [] }),\n    };\n    const inbox = buildInbox(store, model);\n    const result = awai"
+      },
+      {
+        "key": "c15",
+        "label": "未绑定私聊发送者被忽略",
+        "reason": "直接支持未绑定发送者得到忽略结果并且不创建投递意图。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 796,
+          "endLine": 809
+        },
+        "quote": "  it(\"keeps unbound senders ignored in p2p (security)\", async () => {\n    const { store } = larkSetup();\n    const model: AssistantModelPort = {\n      generate: async () => ({ answer: \"should not happen\", citationIds: [] }),\n    };\n    const inbox = buildInbox(store, model);\n    const result = await inbox.processMessag"
+      },
+      {
+        "key": "c16",
+        "label": "已配置群目标路由",
+        "reason": "支持特定已配置群目标中提及消息进入助理、后台消息进入捕获的限定场景。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 811,
+          "endLine": 845
+        },
+        "quote": "  it(\"routes @-mentioned owner in group, but leaves background messages to capture\", async () => {\n    const { store } = larkSetup();\n    store.db\n      .prepare(\n        `INSERT OR IGNORE INTO lark_targets(id,workspace_id,connection_id,binding_version,chat_id,target_type,purpose,capture_enabled,state,created_at,update"
+      },
+      {
+        "key": "c17",
+        "label": "Lark 重复事件去重",
+        "reason": "支持相同事件重复处理时不会创建第二条投递意图。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 847,
           "endLine": 864
         },
-        "quote": "const buildInbox = (store: Store, model: AssistantModelPort) => {\n  const runtime = new AssistantRuntime(store, model, { ownerId: \"owner\" });\n  return new LarkEventInbox(store, {\n    ownerId: \"owner\",\n    assistant: async (routed) => {\n      const conversation = runtime.conversations.open({\n        principalId: routed."
+        "quote": "  it(\"duplicate delivery of the same event id does not create a second reply\", async () => {\n    const { store } = larkSetup();\n    let count = 0;\n    const model: AssistantModelPort = {\n      generate: async () => {\n        count++;\n        return { answer: `回复 ${count}`, citationIds: [] };\n      },\n    };\n    const i"
+      },
+      {
+        "key": "c18",
+        "label": "日常事项生命周期",
+        "reason": "支持带时区任务的创建、改期、完成、收据计数和完成后抑制提醒。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 867,
+          "endLine": 893
+        },
+        "quote": "it(\"daily workflow creates with time, reschedules, completes, and suppresses due reminders\", async () => {\n  const { store } = setup();\n  const model: AssistantModelPort = { generate: async input => {\n    const t = input.tasks?.[0];\n    if (!t) return { answer: \"模型自报成功不得直接展示\", citationIds: [], toolCalls: [{ tool: \"crea"
+      },
+      {
+        "key": "c19",
+        "label": "一次受限查询扩展",
+        "reason": "支持一次补充检索，并证明首轮模型提出的任务变更不会执行。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 895,
+          "endLine": 912
+        },
+        "quote": "it(\"one bounded query expansion retrieves cross-language originals and never executes first-round mutations\", async () => {\n  const { store } = setup();\n  const source = captureSource(store, \"english\", \"CircuitBreaker opens after seven failures.\");\n  let calls = 0;\n  const model: AssistantModelPort = { generate: async "
+      },
+      {
+        "key": "c20",
+        "label": "长材料语义命中保留",
+        "reason": "支持字符预算内保留长材料尾部命中，并在下一轮继续作为工作上下文使用。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 914,
+          "endLine": 934
+        },
+        "quote": "it(\"keeps a semantic hit beyond the ACP prefix budget, including the next turn's working context\", async () => {\n  const { store } = setup();\n  const text = \"背景材料。\".repeat(900) + \"口腔门诊预约码是72819，周四上午十点就诊。\";\n  const original = captureSource(store,\"long-evidence\",text);\n  expect(original.fragments).toHaveLength(1);\n  cons"
       }
     ],
     "questions": [
       {
-        "question": "群成员材料在用户明确要求创建 owner 任务时的 provenance 拒绝是否已有直接断言？",
-        "why": "现有相关用例的输入“周五交报告是什么”属于咨询，零写入可能仅由意图门禁造成，未隔离验证 owner provenance 校验。",
-        "nextStep": "增加显式“帮我记一下”用例，让模型只引用群成员片段，并断言拒绝原因指向 provenance 或 ownership，而非意图不足。",
+        "question": "群聊可见性策略在生产装配中由哪个组件强制注入，是否存在默认拒绝以外的配置路径？",
+        "why": "现有材料只覆盖无策略时默认拒绝、测试中显式注入策略以及特定群目标路由，没有展示生产启动装配、配置校验或变更审计。",
+        "nextStep": "补充生产入口装配材料或集成测试，确认策略来源、缺失时行为及配置变更记录。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c4"
+          "c4",
+          "c5",
+          "c16"
         ]
       },
       {
-        "question": "恢复流程是否有“未完成轮次已存在 receipt，但 toolActions 与之冲突”的直接测试？",
-        "why": "现有用例只确认成功写入后存在 receipt，且 done 轮次不会进入恢复；这不足以证明恢复时优先依据 receipt。",
-        "nextStep": "构造可被 `unfinishedTurns()` 返回的轮次，同时预置 application receipt 与冲突 toolActions，再断言恢复不重复写入且采用 receipt 所代表的真实结果。",
+        "question": "任务已经应用且轮次完成状态尚未落盘时发生进程崩溃，重启后能否凭 application receipt 避免重复写入？",
+        "why": "现有测试验证正常完成后存在收据、已完成轮次不恢复，以及 pending 轮次可重试，但没有构造应用成功与轮次完成落盘之间的持久化窗口。",
+        "nextStep": "构造任务已写入且收据存在、但轮次仍未完成的数据库状态，重启 AssistantRuntime 并断言恢复过程不重复创建任务。",
         "blocking": false,
         "citationKeys": [
-          "c9"
+          "c8",
+          "c10"
+        ]
+      },
+      {
+        "question": "投递意图入队后，真实飞书发送成功、失败重试和最终送达状态由哪些集成测试覆盖？",
+        "why": "当前 Lark 入口测试只验证 delivery intent、outbox 关联和重复事件去重，不能证明外部网络调用或真实送达。",
+        "nextStep": "补充投递 worker 与飞书适配器的集成材料，并分别验证成功确认、可重试失败和永久失败状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c14",
+          "c17"
+        ]
+      },
+      {
+        "question": "任务已经应用且轮次完成状态尚未落盘时发生进程崩溃，是否有行为测试证明重启恢复不会重复写入？",
+        "why": "运行时代码包含基于 application receipt 的恢复分支，但现有测试只验证正常完成后存在收据、已完成轮次不恢复，以及 pending 轮次可重试，没有构造应用成功与轮次完成落盘之间的持久化窗口。",
+        "nextStep": "构造任务已写入且收据存在、但轮次仍未完成的数据库状态，重启 AssistantRuntime 并断言恢复过程不重复创建任务。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c10"
         ]
       }
     ]
@@ -185,86 +331,66 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/acp-model.test.ts",
-      "digest": "942f2dbe8220d012e8d1ab1427eec8313367c90470848697afc3a98c7f952a10"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/agents.test.ts",
-      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
-      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/app.test.ts",
-      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/attention-gate.test.ts",
-      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+      "key": "omem:apps/server/src/conversation/router.ts",
+      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-09-29T19:08:58.104Z",
+    "effort": "high",
+    "at": "2026-09-30T20:24:17.009Z",
     "trace": {
-      "runId": "ce89aea8-00ae-4b7f-8bb0-e96fcc21bf87",
-      "roleId": "code-analyst",
+      "runId": "20355fc8-541a-4cd3-861d-80c170a1382e",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "bf6677f6740f05519c730680c31b3ce4b87ff58b65ef3d9b1e48854a10c69fb7",
-      "contextHash": "8de262284abc31d113cce776abc01270bd72c2d7b1929609ff39c5bfe9feb04b",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "a8336197c499bc05bcce4381ceba4d4a7b95feb01806e3b8eeeecd0bda0c014e",
+      "contextHash": "eeba3345a824a30c277cb803bd8821463177e0d45d98af24864b53677ba3a326",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3baccbfb4c459ec7d3a3926540ac6c9177d3e0f54d6b64846747b9d2f303fa34",
+      "fingerprint": "b2f69678cafa1ca3ed868a8c8ec9b78ea725ba6e2ab546aa1a7179379988a00d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee91-4666-7411-85e7-8abcb842bd5c"
+        "01a0f3fc-ab74-7d03-8c13-bf8141d155de"
       ],
       "usage": {
-        "used": 61903,
-        "size": 760000,
+        "used": 64920,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -272,10 +398,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 144579,
-          "utf8Bytes": 156807,
-          "estimatedTokens": 52269,
-          "budgetedTokens": 65337,
+          "chars": 138225,
+          "utf8Bytes": 150336,
+          "estimatedTokens": 50112,
+          "budgetedTokens": 62640,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -284,20 +410,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:09:09.429Z",
+    "at": "2026-09-30T20:24:49.168Z",
     "trace": {
-      "runId": "f9c1b448-7451-47e3-9383-cb672e94f364",
+      "runId": "46a685bf-5c30-4164-a706-fcd9e133e19d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "400acf43032375ca4d2e60a9ed5737396e51fa2048e9fbb2f07ffb3e80a9d4eb",
-      "contextHash": "e3d0b84b64d5a840cf56a76ad4aa5302065ad1ace05772ffdfd8b8720523dfbd",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "07d5ada76713068370160fd86a4f23dcee4838c11e3cea7a8e0345c08a0f5132",
+      "contextHash": "68f5c4b66ec941b4e17de786a87445f11b38689988191a5299e95955d5a59125",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "83b4d5e16e54bb86a86dac8dbf877092b8ff4c4346a65091dcd19abfd5a21cb3",
+      "fingerprint": "364b50aebf315a0bf8904ea066712be76e058b057a2340145629b40f7b620d40",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -307,11 +433,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee91-f732-76b2-a67e-d039692178d2"
+        "01a0f3fd-57f8-70b0-8e84-10850acf304a"
       ],
       "usage": {
-        "used": 55822,
-        "size": 760000,
+        "used": 60370,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -319,10 +445,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 141376,
-          "utf8Bytes": 152758,
-          "estimatedTokens": 50920,
-          "budgetedTokens": 63650,
+          "chars": 134623,
+          "utf8Bytes": 145130,
+          "estimatedTokens": 48377,
+          "budgetedTokens": 60472,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,27 +2,27 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-    "title": "飞书凭据加密文件存储",
-    "summary": "使用环境提供的 32 字节主密钥，以 AES-256-GCM 将飞书应用凭据写入受限权限文件，并提供引用校验、原子落盘、读取解密、删除及配对码 HMAC。",
+    "title": "飞书凭据加密存储",
+    "summary": "以环境主密钥和 AES-256-GCM 在本地持久化飞书凭据，提供受限引用、原子写入、认证解密与配对码 HMAC 摘要能力；调用方如何保存配对码尚未由材料证明。",
     "category": "implementation",
     "sections": [
       {
-        "key": "key_and_storage",
-        "title": "密钥与落盘流程",
-        "body": "存储接受 32 字节 Buffer，或把字符串按 64 位十六进制/ Base64 解码；长度不符立即拒绝。环境构造要求 `OMEM_SECRET_KEY`，秘密目录创建为 `0700`。对外只暴露形如 `lark:<UUID>` 的引用，路径函数严格校验引用格式，避免任意路径拼接。[[c1]]\n\n写入时生成 12 字节随机 IV，以 AES-256-GCM 加密包含 appId 和 clientSecret 的 JSON，并保存版本、算法、IV、认证标签和密文。数据先以独占模式写入 `0600` 临时文件并 fsync，再重命名为正式文件、修正权限并尝试同步目录，从而缩小部分写入或崩溃造成损坏的窗口。[[c2]]"
+        "key": "key-and-reference",
+        "title": "密钥与引用约束",
+        "body": "该模块把应用 ID 和 client secret 保存到独立秘密文件，并向调用方返回形如 `lark:<UUID>` 的引用。主密钥可使用 64 位十六进制或 Base64 表示，但解码后必须恰好 32 字节；生产构造要求环境变量存在。目录权限被收紧为仅所有者访问，引用还需通过严格格式校验后才能映射为文件路径，以限制任意路径访问。[[c1]]"
       },
       {
-        "key": "read_remove_hash",
-        "title": "读取、删除与配对码摘要",
-        "body": "读取只接受版本 1 和 AES-256-GCM，使用保存的 IV 与认证标签解密；密文、标签或密钥错误会由 GCM 校验导致失败，而不是返回未经认证的明文。删除操作仅在文件存在时 unlink，并再次尝试同步目录。[[c3]]\n\n配对码不直接存储，而是用同一主密钥做 HMAC-SHA256，并加入固定、带空字节结尾的领域分隔前缀，避免与其他用途的摘要混用。材料未展示密钥轮换、旧格式迁移或秘密文件枚举，因此这些能力不能据此认定已实现。[[c4]]"
+        "key": "persistence",
+        "title": "认证加密与持久化边界",
+        "body": "每次写入生成随机 12 字节 IV，使用 AES-256-GCM 保存格式版本、算法、IV、认证标签和密文。内容先写入独占临时文件并 fsync，再原子重命名、设置 0600 权限并尽力同步目录；读取时检查格式，并由 GCM 认证标签检测错误密钥或内容篡改。删除文件后也会尝试同步目录。[[c2]]\n\n模块另提供带 `omem-lark-pairing-v1` 用途域分隔的 HMAC-SHA256 配对码摘要方法。[[c3]] 这仅证明可生成摘要，不能证明配对流程只保存摘要、更不能据此断言明文码绝不落盘；该限定替代了此前过强的持久化结论。密文虽含格式版本，但接口只持有一个当前主密钥，尚未展示旧密钥回退或轮换事务。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "主密钥与秘密引用约束",
-        "reason": "支持密钥格式、环境变量要求、目录权限及引用路径校验的说明。",
-        "relation": "supports",
+        "label": "主密钥与安全引用",
+        "reason": "支持主密钥长度校验、环境变量要求、秘密目录权限和引用格式限制的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
@@ -33,52 +33,49 @@
       },
       {
         "key": "c2",
-        "label": "认证加密与原子写入",
-        "reason": "支持 AES-256-GCM 数据格式、临时文件、fsync、重命名和文件权限流程。",
+        "label": "AES-GCM 原子持久化",
+        "reason": "支持认证加密、临时文件写入、fsync、原子重命名、格式校验、解密和删除流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-          "startLine": 72,
-          "endLine": 100
+          "startLine": 59,
+          "endLine": 132
         },
-        "quote": "  put(secret: SecretPayload) {\n    const reference = `lark:${randomUUID()}`;\n    const path = this.path(reference);\n    const temporary = join(this.directory, `.secret-${randomUUID()}`);\n    const iv = randomBytes(12);\n    const cipher = createCipheriv(\"aes-256-gcm\", this.key, iv);\n    const encrypted = Buffer.concat(["
+        "quote": "  private syncDirectory() {\n    try {\n      const descriptor = openSync(this.directory, \"r\");\n      try {\n        fsyncSync(descriptor);\n      } finally {\n        closeSync(descriptor);\n      }\n    } catch {\n      // Directory fsync is not available on every supported OS.\n    }\n  }\n\n  put(secret: SecretPayload) {\n    c"
       },
       {
         "key": "c3",
-        "label": "秘密读取与删除",
-        "reason": "支持格式校验、认证解密及删除后的目录同步行为。",
+        "label": "配对码 HMAC 方法",
+        "reason": "支持该模块能够以当前主密钥和用途域分隔生成配对码摘要，但不证明调用方的保存策略。",
         "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-          "startLine": 102,
-          "endLine": 132
-        },
-        "quote": "  get(reference: string): SecretPayload {\n    const stored = JSON.parse(readFileSync(this.path(reference), \"utf8\")) as {\n      version: number;\n      algorithm: string;\n      iv: string;\n      tag: string;\n      ciphertext: string;\n    };\n    if (stored.version !== 1 || stored.algorithm !== \"aes-256-gcm\")\n      throw E"
-      },
-      {
-        "key": "c4",
-        "label": "配对码 HMAC",
-        "reason": "支持配对码使用带领域分隔前缀的 HMAC-SHA256 生成摘要。",
-        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
           "startLine": 134,
-          "endLine": 139
+          "endLine": 138
         },
-        "quote": "  hashPairingCode(code: string) {\n    return createHmac(\"sha256\", this.key)\n      .update(\"omem-lark-pairing-v1\\0\")\n      .update(code)\n      .digest(\"hex\");\n  }"
+        "quote": "  hashPairingCode(code: string) {\n    return createHmac(\"sha256\", this.key)\n      .update(\"omem-lark-pairing-v1\\0\")\n      .update(code)\n      .digest(\"hex\");"
       }
     ],
     "questions": [
       {
-        "question": "主密钥轮换时，已有秘密文件如何继续解密或迁移？",
-        "why": "文件格式含版本但没有 key ID，构造器也只接受单一密钥；直接更换环境密钥将使旧凭据无法读取。",
-        "nextStep": "确认部署是否明确禁止原地轮换；若需要轮换，设计带 key ID 的格式和原子重加密流程。",
+        "question": "主密钥轮换时，既有秘密文件和未完成配对码应如何迁移？",
+        "why": "密文格式包含版本字段，但接口只持有单个当前密钥；材料未展示旧密钥回退、批量重加密、轮换事务或配对码失效策略。",
+        "nextStep": "定义密钥版本与轮换流程，并测试中断恢复、旧文件读取及未完成配对的失效或迁移行为。",
         "blocking": false,
         "citationKeys": [
           "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "配对流程是否只持久化 hashPairingCode 的结果而不会保存明文码？",
+        "why": "当前材料只展示摘要方法本身，没有覆盖配对码创建、保存和校验的调用链，因而无法确认实际持久化结构。",
+        "nextStep": "补充配对码创建、存储和校验调用链的固定材料与引用；若调用方还会保存明文，应明确保存期限和保护措施。",
+        "blocking": false,
+        "citationKeys": [
           "c3"
         ]
       }
@@ -98,7 +95,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "b5399c03bdca1d24c2288231ca83d2c02d06d967410ddba22471fd80052e9c32"
+      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
     },
     {
       "kind": "material",
@@ -128,7 +125,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -139,34 +136,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:03:23.499Z",
+    "at": "2026-09-30T19:19:41.933Z",
     "trace": {
-      "runId": "8e64f403-ee9d-422b-88a3-822456ee06d0",
-      "roleId": "code-analyst",
+      "runId": "f13c1c0a-0651-4440-9c08-01f63c663811",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "99de9d383536dd9ee0f53294bf948bb0ae78091b353a0b455acb77dce6da0d61",
-      "contextHash": "d2f969fd897c8d9c14d605a61f38e833e62239f2063735a2ed3fd1ccff4ddb3b",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "68140354ac835bfeb4fb710d755aaa5757056b9937d43d6469480763c53c11ca",
+      "contextHash": "41aa7ef27f80ddc71f038bb81c13e72b9885d77e246cb425c268efdb18bef8e2",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "facf0164520ebabc99bddee80c272866bd5d23afd6432d94fc150b3582d489df",
+      "fingerprint": "3e3e090fa3b6e4cbca79e38a63075ca0dabe7c28391d33a949cfc5497fac347c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8b-f8b0-7f43-bb43-2189b3846830"
+        "01a0f3c1-a29d-7b02-9738-f8212a0e1520"
       ],
       "usage": {
-        "used": 53846,
-        "size": 760000,
+        "used": 62553,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -174,10 +171,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 127587,
-          "utf8Bytes": 129449,
-          "estimatedTokens": 43150,
-          "budgetedTokens": 53938,
+          "chars": 138201,
+          "utf8Bytes": 145603,
+          "estimatedTokens": 48535,
+          "budgetedTokens": 60669,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +183,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:03:44.671Z",
+    "at": "2026-09-30T19:20:20.280Z",
     "trace": {
-      "runId": "ee4b4da7-3d0c-48cd-9c5d-a8c5a4552a15",
+      "runId": "6784b0db-3a48-46ce-b667-59804936a9e4",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "abb4a15fe37af0017b47718a1916fec1bab6920c91268d83ec4c8e93f3b6616a",
-      "contextHash": "3a31d73934e40ca581e63bec669d79ecfbc5105cf99e73b6abfd98ac96929601",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2c50e6afadc2c99cbd28b18fbf231521fd7e77fdc05803dad5795a916e80ce80",
+      "contextHash": "52fe86b5d413ae3c76e5fe4ca9afdda8f9d1abe8c94e0fb6fe6023c7ca5c703b",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "222dce97e10e86233ccfc4af78e1a430658e88c0306d23cd5036a2014d003648",
+      "fingerprint": "431cc3ddea0558ca2f5bd7d70cc254ddfeaf94b63558b483a9bfb417c8afdafd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,11 +206,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-dc69-7453-9eb7-0b40c0051a4f"
+        "01a0f3c2-3857-75b2-b21d-0f7f2ab7368c"
       ],
       "usage": {
-        "used": 56756,
-        "size": 760000,
+        "used": 60824,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -221,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 145062,
-          "utf8Bytes": 155016,
-          "estimatedTokens": 51672,
-          "budgetedTokens": 64590,
+          "chars": 134937,
+          "utf8Bytes": 141077,
+          "estimatedTokens": 47026,
+          "budgetedTokens": 58783,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

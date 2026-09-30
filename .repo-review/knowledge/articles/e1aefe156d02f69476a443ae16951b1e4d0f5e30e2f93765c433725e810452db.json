@@ -2,84 +2,102 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/retrieval/port.ts",
-    "title": "统一检索端口与证据回读合同",
-    "summary": "定义原始来源与已应用记忆的统一检索接口；SourceCandidate 明确绑定固定 Fragment 和 Revision，而 MemoryCandidate 只携带记忆标识与来源摘要，端口本身未规定其如何解析为原始证据。",
+    "title": "统一检索端口与证据返回合同",
+    "summary": "定义来源检索、记忆召回与证据读取的统一边界；明确只有来源候选直接携带固定片段锚点，并约束项目过滤、可见性与后端替换方式。",
     "category": "architecture",
     "sections": [
       {
         "key": "purpose",
-        "title": "后端替换与证据边界",
-        "body": "该端口让检索调用方与后端解耦：当前可以使用 SQLite 关键词基线，未来可替换为向量或侧车服务，而上层流水线与助手工具无需改变接口。文件注释提出结果应回到不可变 Fragment，以便引用原始证据。[[c1]] 但具体类型中只有 `SourceCandidate` 明确携带 `sourceRevisionId` 和 `fragmentId`；`MemoryCandidate` 只有记忆 id、分数、摘要、状态及 provenance，当前接口没有展示把记忆候选解析回 Fragment 的步骤。[[c3]]"
+        "title": "作用与被替代结论",
+        "body": "该文件以稳定端口隔离检索调用方和具体后端，使关键词基线或后续实现可以替换，而流水线与助手无需同步改写。[[c1]]\n\n此前“所有检索结果都能直接回到不可变片段”的结论已被替代：类型合同只保证 **来源候选**携带 `sourceRevisionId` 与 `fragmentId`；**记忆候选**仅含记忆 ID、类型、状态和 provenance，没有直接证据锚点。文件头注释对“所有返回结果”的概括比实际接口更宽，不能据此扩大合同。[[c2]]"
       },
       {
         "key": "scope",
-        "title": "范围与信任边界",
-        "body": "查询支持项目、主题、工作区范围，以及时间和数量参数。项目过滤有强制信任条件：应用、会话或运行标识只是捕获上下文，不能推导项目关系；只有项目 id 来自已确认关联且 `project_trusted=true` 时才可缩小范围，否则实现必须执行工作区级召回。[[c2]]"
+        "title": "查询范围与信任边界",
+        "body": "`SearchQuery` 统一承载文本、范围、数量、捕获修订时间和可见性策略。项目关系不得从 application、conversationId 或 runId 等上下文载体推断；只有确认过的 ContextLink 才能提供可信项目标识，否则实现必须执行工作区级召回，不能擅自增加项目过滤。可见性过滤还应先于最终排序和数量截断。[[c3]]"
       },
       {
         "key": "contract",
-        "title": "核心操作与未定义语义",
-        "body": "接口分别提供原始来源搜索与已应用记忆搜索，后者用于冲突或复用召回。`readEvidence` 只能按 Revision id 与可选 Fragment id 回读不可变正文，因此它能直接承接 `SourceCandidate` 的定位字段，却不能仅凭当前 `MemoryCandidate` 完成同样回读。`health` 则暴露后端名称及可用性。[[c3]] 本文件没有规定分数范围、跨后端可比性、同分顺序、时间格式校验或故障语义。"
+        "title": "接口流程与实现限制",
+        "body": "端口提供同步来源检索、可选的异步来源检索、已应用记忆召回、证据读取和健康检查。`readEvidence` 接收修订 ID 与可选片段 ID，因此可直接承接 `SourceCandidate` 的定位字段；接口本身没有定义从 `MemoryCandidate.id` 解析到修订或片段的步骤。[[c4]]\n\n异步钩子允许语义实现先取得词法结果，再融合向量候选；语义分支异常时返回词法结果，并继续输出带修订与片段标识的来源候选。这说明后端可以演进，但排序算法、向量存储及记忆到原始证据的映射都不由本端口合同保证。[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "检索端口设计说明",
-        "reason": "支持后端可替换和以不可变原始证据为目标的设计意图。",
+        "label": "统一检索端口设计说明",
+        "reason": "说明端口用于隔离调用方与可替换的关键词或后续检索实现。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/port.ts",
           "startLine": 1,
-          "endLine": 8
+          "endLine": 4
         },
-        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools)."
       },
       {
         "key": "c2",
-        "label": "项目范围信任规则",
-        "reason": "说明项目关系不得由捕获上下文推断，未确认时必须进行工作区级召回。",
+        "label": "来源候选与记忆候选字段",
+        "reason": "支持只有来源候选直接携带修订和片段锚点，而记忆候选没有这些字段的类型区分。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 48,
+          "endLine": 67
+        },
+        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n  routes?: string[];\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string"
+      },
+      {
+        "key": "c3",
+        "label": "项目可信与查询过滤规则",
+        "reason": "支持可信项目来源、未知项目时的工作区回退、时间范围及可见性过滤约束。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/port.ts",
           "startLine": 17,
-          "endLine": 36
+          "endLine": 40
         },
         "quote": "/**\n * A project relationship is never inferred from context carriers like\n * `application` / `conversationId` / `runId`. Those only describe where a capture\n * happened. A real project link is a separate ContextLink record that carries its\n * own source evidence, candidate confidence and a confirmed flag. Until such a"
       },
       {
-        "key": "c3",
-        "label": "候选类型与统一接口",
-        "reason": "区分 SourceCandidate 与 MemoryCandidate 字段，并支持搜索、证据回读和健康检查的接口说明。",
-        "relation": "implements",
+        "key": "c4",
+        "label": "检索端口方法合同",
+        "reason": "说明来源检索、记忆检索和证据读取的参数与返回类型，并揭示记忆候选缺少直接读取证据所需的修订标识。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/port.ts",
-          "startLine": 45,
-          "endLine": 87
+          "startLine": 81,
+          "endLine": 93
         },
-        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string;\n  score: number;\n  "
+        "quote": "export interface RetrievalPort {\n  /** Keyword/vector search over imported source fragments. */\n  searchSources(query: SearchQuery): SourceCandidate[];\n  /** Optional local semantic branch; callers await this when supplied. */\n  searchSourcesAsync?(query: SearchQuery): Promise<SourceCandidate[]>;\n  /** Search over alre"
+      },
+      {
+        "key": "c5",
+        "label": "语义来源检索的融合与降级",
+        "reason": "说明可选异步实现如何保持来源候选结构、融合词法与向量结果，并在失败时退回词法检索。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 80,
+          "endLine": 112
+        },
+        "quote": "  /** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const lexical = super.searchSources({ ...query, limit: 100 });\n    if (!query.text.trim() || !this.model) return lexical.slice(0, query.limit ?? 20);\n    try {\n    "
       }
     ],
     "questions": [
       {
-        "question": "不同检索后端返回的 score 是否需要统一归一化和稳定排序规则？",
-        "why": "端口只声明数值分数，没有定义范围、跨后端可比性或同分顺序；上层若直接比较不同实现的分数可能出现行为漂移。",
-        "nextStep": "检查具体检索实现、调用方及排序阈值测试，再决定是否将分数语义加入端口合同。",
+        "question": "是否应将文件头“Everything returned here points back at immutable fragment ids”改为仅限定来源候选，或为记忆候选补充明确的原始证据映射合同？",
+        "why": "现有注释宣称所有返回结果均指向固定片段，但 `MemoryCandidate` 没有 revisionId 或 fragmentId，`readEvidence` 也不能用记忆 ID 读取证据，注释与公开类型合同不一致。",
+        "nextStep": "由维护者选择收窄注释，或提供并记录记忆到原始修订/片段的映射接口及实现材料，再据此更新本文。",
         "blocking": false,
         "citationKeys": [
-          "c3"
-        ]
-      },
-      {
-        "question": "MemoryCandidate 应如何解析到可供 readEvidence 使用的 Revision 与 Fragment？",
-        "why": "记忆候选没有 revisionId 或 fragmentId，而 readEvidence 需要这些定位信息；当前文件无法证明记忆召回最终必然回到固定原证据。",
-        "nextStep": "检查记忆表的 provenance 结构和调用链；若存在稳定解析步骤，应补充接口或文档合同，否则明确记忆候选仅用于冲突与复用判断。",
-        "blocking": false,
-        "citationKeys": [
-          "c3"
+          "c2",
+          "c4"
         ]
       }
     ]
@@ -87,49 +105,69 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/retrieval.ts",
-      "digest": "517b5e92b2004f470c270b1e867498787527335b9fdf66e6fdb158a6993eea96"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "090c7e7e24ef5ea97ba2e7bc5317e8662ac0e2d53ca2314bb6adb0daf91aaed7"
+      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/app.ts",
-      "digest": "daf6a31b5108c878b5096efb0a5804562f99bb62023d9f99e143ef6af3ce868c"
+      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/associations.ts",
       "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:12:40.550Z",
+    "at": "2026-09-30T19:25:45.639Z",
     "trace": {
-      "runId": "7549c040-9a8d-49a6-afaa-5bcbe88bbf0b",
+      "runId": "999e6c22-47a9-4b36-969b-f738a9112585",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "fff506b920793d8acb096cf1f559cd7df75c8abbcc4bd9ed389dab90edd0deab",
-      "contextHash": "955e9df1d79a1e8877a8a1a41bc9b48741f3cf8dc36717eec4a1774c609b99d1",
+      "promptHash": "ce177fbbdb5e3b7e88104ac7b14c7bb7d0cdba382c93058b87ff1c0051376c29",
+      "contextHash": "0d6a685d9ca0c105ff4415155f25ea0e2c700999fd9b596b647059893847b888",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2ba3f4dfedbf38a723caf4878f3de7ff38b668364607100fceb432793f2f47eb",
+      "fingerprint": "28296bea313af41de012d7e5a3429cf73dc3b2d28c495a308787b3d97a0b9804",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -142,11 +180,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef02-7df8-7323-a73c-793dd9f7e216"
+        "01a0f3c7-6df0-7940-994d-e85eb4509609"
       ],
       "usage": {
-        "used": 52878,
-        "size": 760000,
+        "used": 44428,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -154,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 117772,
-          "utf8Bytes": 129037,
-          "estimatedTokens": 43013,
-          "budgetedTokens": 53767,
+          "chars": 84031,
+          "utf8Bytes": 87850,
+          "estimatedTokens": 29284,
+          "budgetedTokens": 36605,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -166,17 +204,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:15.335Z",
+    "at": "2026-09-30T19:26:01.144Z",
     "trace": {
-      "runId": "b087330d-74cd-456a-8a2c-47ce1df7dd00",
+      "runId": "0c0c2a36-ac8f-4db5-8916-28e89f105170",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "cbcbbeb3b0ba15f0958f356db6a9bc3476f6cedca178508e4026cefc6c936e30",
-      "contextHash": "474c5ba54ccc05c8a789dcb666f74dd49079374c0e76999b0bf7f7e2072d4ac8",
+      "promptHash": "95541c7f192f8db5e9bcb81e1b653eb96d0ccb661cd9d92bd1f2bedbeb42eed3",
+      "contextHash": "dbd2ab3c7a7ab5c7c3392ae27830c1bf7a3a1a5d771a40263dad6b636f68c4f5",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c4644df2eeac28415d66765293f1f072b5c3781a00ea1b2a842966a4c2433ed5",
+      "fingerprint": "bf8f46cbbfb4228e4451355df705b32c2476b37227126b374796e848f649efbd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -189,11 +227,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef03-398c-79f2-a656-9c230614f1a0"
+        "01a0f3c7-c328-7b51-819d-df4f478c1660"
       ],
       "usage": {
-        "used": 49586,
-        "size": 760000,
+        "used": 42817,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -201,10 +239,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 118346,
-          "utf8Bytes": 128851,
-          "estimatedTokens": 42951,
-          "budgetedTokens": 53689,
+          "chars": 81659,
+          "utf8Bytes": 84840,
+          "estimatedTokens": 28280,
+          "budgetedTokens": 35350,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

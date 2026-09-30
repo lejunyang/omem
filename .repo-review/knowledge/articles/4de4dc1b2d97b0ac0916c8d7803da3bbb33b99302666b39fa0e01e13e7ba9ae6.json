@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/retrieval/factory.ts",
+    "title": "检索后端工厂",
+    "summary": "读取严格的检索配置，并在默认关键词检索与启用后的本地中文语义检索之间切换，同时向调用方统一暴露关闭钩子。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "configuration",
+        "title": "配置合同",
+        "body": "配置只允许 `enabled` 和 `osdkModel` 两项：前者默认关闭语义检索，后者默认指向 `memory-zh`，且别名只能包含字母、数字、下划线和连字符。读取函数直接解析 JSON 并交给严格 schema，因此未知字段、非法别名或格式错误都会在启动配置阶段暴露。[[c1]]"
+      },
+      {
+        "key": "selection",
+        "title": "后端选择与生命周期",
+        "body": "未提供配置或未启用时，工厂直接构造 SQLite 关键词检索，并返回无操作的异步关闭函数。启用后则构造 `SemanticRetrieval`，把中文 embedding 加载器作为延迟工厂传入，立即调用 `start()`，关闭时委托语义后端释放资源。[[c2]] 因而该模块是后端装配点：它依赖统一 `RetrievalPort`、关键词实现、语义实现和模型加载器，但不参与排序算法或向量计算本身。"
+      },
+      {
+        "key": "boundary",
+        "title": "可见边界",
+        "body": "这里的回退只由配置开关决定，并未出现“语义初始化失败后自动退回关键词检索”的处理。`start()` 是否同步抛错、后台失败如何反映到健康状态，取决于未提供的 `SemanticRetrieval` 实现，不能由本文件确认。[[c3]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "检索配置解析",
+        "reason": "支持严格配置字段、默认值和模型别名格式的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/factory.ts",
+          "startLine": 9,
+          "endLine": 13
+        },
+        "quote": "export const retrievalConfigSchema = z.object({ enabled: z.boolean().default(false), osdkModel: z.string().regex(/^[a-zA-Z0-9_-]+$/).default(\"memory-zh\") }).strict();\nexport type RetrievalConfig = z.input<typeof retrievalConfigSchema>;\nexport function readRetrievalConfig(path: string) {\n  return retrievalConfigSchema.p"
+      },
+      {
+        "key": "c2",
+        "label": "关键词与语义后端选择",
+        "reason": "说明关闭时采用关键词检索，启用时启动语义检索并提供关闭钩子。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/factory.ts",
+          "startLine": 14,
+          "endLine": 18
+        },
+        "quote": "export function createRetrieval(db: DatabaseSync, config?: RetrievalConfig, cwd = process.cwd()): { retrieval: RetrievalPort; close: () => Promise<void> } {\n  if (!config?.enabled) return { retrieval: new KeywordRetrieval(db), close: async () => {} };\n  const retrieval = new SemanticRetrieval(db, () => loadChineseEmbed"
+      },
+      {
+        "key": "c3",
+        "label": "语义检索启动调用",
+        "reason": "支持本文件没有捕获 start 异常或声明自动降级策略这一边界判断。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/factory.ts",
+          "startLine": 14,
+          "endLine": 18
+        },
+        "quote": "export function createRetrieval(db: DatabaseSync, config?: RetrievalConfig, cwd = process.cwd()): { retrieval: RetrievalPort; close: () => Promise<void> } {\n  if (!config?.enabled) return { retrieval: new KeywordRetrieval(db), close: async () => {} };\n  const retrieval = new SemanticRetrieval(db, () => loadChineseEmbed"
+      }
+    ],
+    "questions": [
+      {
+        "question": "语义模型加载或后台索引失败时，服务是否继续提供关键词检索？",
+        "why": "工厂启用语义模式后只创建并启动 SemanticRetrieval，没有可见的异常捕获或显式 fallback；缺少 semantic.ts 材料，无法判断其内部健康状态和降级策略。",
+        "nextStep": "检查 SemanticRetrieval.start、health 和 search 的错误路径，并验证模型缺失、摘要不符与索引失败三种场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-30T19:22:13.917Z",
+    "trace": {
+      "runId": "95952240-8704-4c12-a148-01b2eda26b5e",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "be6da817367d1a86a7b4b0af9b1c386d9447d8ee7527717dbc46cc361541556f",
+      "contextHash": "09439dfdad4c8480731d6fed0afe9c94afef82bc3d027b88c657593be0373a68",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7c288405af8b8ccc81152ede5119a055caa17bc4e461d640fe3404e55884ad81",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3c3-830a-71d3-a1ce-87178e464c5c"
+      ],
+      "usage": {
+        "used": 48527,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 80570,
+          "utf8Bytes": 83287,
+          "estimatedTokens": 27763,
+          "budgetedTokens": 34704,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-30T19:22:42.369Z",
+    "trace": {
+      "runId": "e81304b4-7d4d-4831-b8fb-5150b92bd223",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2df70fb6611560dc5402454f98ede7b730c378a2f682a833de5fb985fa940fb0",
+      "contextHash": "4afb6779fab199f827bb783826a04463110145109152e9e2d1fd4f9d55de717c",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "52f50ed727bdd367ac2337e2f26c7131998f6960fffc72e955273c2beb67854e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3c4-891f-7572-8e72-098925e922fa"
+      ],
+      "usage": {
+        "used": 51997,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 103086,
+          "utf8Bytes": 113787,
+          "estimatedTokens": 37929,
+          "budgetedTokens": 47412,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

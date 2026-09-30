@@ -2,76 +2,98 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/config.ts",
-    "title": "服务端运行配置的解析与默认值",
-    "summary": "集中校验代理档案、通知、学习、飞书及捕获根目录配置，并结合环境变量生成数据目录、监听地址和认证令牌等运行参数。",
+    "title": "服务端配置加载与运行环境派生",
+    "summary": "使用严格 schema 校验用户配置，并从环境变量派生数据目录、Agent 工作目录、鉴权令牌和监听地址；显式配置文件不存在时直接使用示例配置。",
     "category": "configuration",
     "sections": [
       {
         "key": "schema",
-        "title": "配置合同与约束",
-        "body": "配置至少要求一个代理 profile，并为通知、学习和飞书集成提供默认值。外部通知支持即时、窗口和定时模式；窗口长度、轮询间隔、本地时间均有边界，时区还会用 `Intl.DateTimeFormat` 验证为有效 IANA 名称。根配置以及 `notifications.external`、`learning`、`lark` 对象使用 `strict()` 拒绝未知字段；`notifications` 对象本身没有调用 `strict()`，不能把相同行为泛化到它。[[c1]]"
+        "title": "配置合同与默认值",
+        "body": "配置以 Zod 严格对象定义，至少需要一个 Agent profile，并覆盖通知、检索、捕获根目录、学习任务和飞书轮询。外部通知支持即时、时间窗或定时模式；当地时间和 IANA 时区在加载阶段校验。学习与飞书集成默认关闭，体现这些外部能力需要显式启用。[[c1]]"
       },
       {
         "key": "loading",
-        "title": "加载顺序与运行派生值",
-        "body": "加载时优先读取 `OMEM_CONFIG` 指向的文件，否则尝试默认本地文件，并在其不存在时回退到示例配置；JSON 随即经过 schema 解析，profile ID 还要通过额外的唯一性检查。[[c2]] 数据目录来自 `OMEM_DATA_DIR` 或 `.omem`，启动时以私有权限递归创建；代理工作目录、令牌、监听主机和端口则由目录或环境变量派生。端口仅经 `Number` 转换，本文件没有验证其有限性、整数性或合法端口范围。[[c3]]"
+        "title": "文件选择与运行时字段",
+        "body": "加载器只先确定一个候选文件：若设置 `OMEM_CONFIG` 就使用该路径，否则使用工作目录的 `omem.local.json`；该候选不存在时直接读取示例配置。它不会在“显式路径不存在”后再尝试本地配置，这一表述取代此前的三级顺序说法。JSON 通过 schema 后还会检查 profile ID 唯一性。[[c2]]\n\n数据目录、Agent 工作目录、token、host 和 port 从环境派生，数据目录会以私有权限创建。[[c3]] 数据库打开、迁移、资源目录创建及数据库文件权限收紧由 `Store` 构造过程负责，而不是本配置模块。[[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界条件",
+        "body": "schema 使用 `.strict()`，未知顶层键以及学习、飞书子项中的未知键会被拒绝。`captureRoots` 本身只是字符串数组；实际导入时，connector 会解析目标与根目录的真实路径并检查包含关系。[[c5]]\n\n端口目前仅经 `Number(...)` 转换，材料中没有显示有限数、整数或 1–65535 范围校验，因此配置成功并不等同于监听端口一定有效。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "配置模式、默认值与严格对象",
-        "reason": "支持通知、学习、飞书和时区的约束，并可准确区分哪些对象调用了 strict。",
+        "label": "服务配置 schema",
+        "reason": "支持通知策略、时区校验、捕获根目录以及学习和飞书默认关闭等配置合同。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/config.ts",
-          "startLine": 5,
-          "endLine": 73
+          "startLine": 6,
+          "endLine": 75
         },
         "quote": "const timezoneSchema = z\n  .string()\n  .min(1)\n  .max(100)\n  .refine((timezone) => {\n    try {\n      new Intl.DateTimeFormat(\"en\", { timeZone: timezone });\n      return true;\n    } catch {\n      return false;\n    }\n  }, \"invalid IANA timezone\");\nconst schema = z\n  .object({\n    profiles: z.array(profileSchema).min(1),\n"
       },
       {
         "key": "c2",
-        "label": "配置文件选择与档案去重",
-        "reason": "说明配置文件回退顺序、schema 解析以及 profile ID 唯一性检查。",
+        "label": "配置文件选择与 profile 去重",
+        "reason": "支持单一候选配置文件、候选不存在时使用示例配置及 profile ID 唯一性检查。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/config.ts",
-          "startLine": 93,
-          "endLine": 104
+          "startLine": 95,
+          "endLine": 106
         },
         "quote": "export function loadConfig() {\n  const file = resolve(process.env.OMEM_CONFIG || \"omem.local.json\");\n  const config = schema.parse(\n    JSON.parse(\n      readFileSync(\n        existsSync(file) ? file : resolve(\"config/omem.example.json\"),\n        \"utf8\",\n      ),\n    ),\n  );\n  if (new Set(config.profiles.map((p) => p.i"
       },
       {
         "key": "c3",
-        "label": "运行环境派生配置",
-        "reason": "支持数据目录创建以及工作目录、令牌、监听地址和端口的环境变量来源与当前校验边界。",
+        "label": "运行环境字段派生",
+        "reason": "支持数据目录、工作目录、token、host 和 port 的具体派生方式。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/config.ts",
-          "startLine": 105,
-          "endLine": 114
+          "startLine": 107,
+          "endLine": 116
         },
         "quote": "  const dataDir = resolve(process.env.OMEM_DATA_DIR || \".omem\");\n  mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n  return {\n    ...config,\n    dataDir,\n    agentCwd: join(dataDir, \"agent-workspace\"),\n    token: process.env.OMEM_TOKEN,\n    host: process.env.OMEM_HOST || \"127.0.0.1\",\n    port: Number(process.env."
+      },
+      {
+        "key": "c4",
+        "label": "存储初始化与权限",
+        "reason": "支持数据库创建、迁移、资产目录建立及数据库文件权限收紧由 Store 完成。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 43,
+          "endLine": 66
+        },
+        "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
+      },
+      {
+        "key": "c5",
+        "label": "文件导入根目录约束",
+        "reason": "说明 captureRoots 的安全语义在 connector 中通过真实路径解析实施。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 10,
+          "endLine": 17
+        },
+        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
       }
     ],
     "questions": [
       {
-        "question": "是否应为 `OMEM_PORT` 增加有限整数和端口范围校验？",
-        "why": "当前配置代码仅执行 `Number` 转换，不能在配置层拒绝 NaN、非整数、负数或超出端口范围的值。",
-        "nextStep": "结合实际监听入口的错误处理，决定是否把 host、port 纳入运行配置的 Zod 校验。",
-        "blocking": false,
-        "citationKeys": [
-          "c3"
-        ]
-      },
-      {
-        "question": "是否应为 `OMEM_PORT` 增加有限整数和合法端口范围校验？",
-        "why": "当前配置仅执行 `Number` 转换，无法在配置层拒绝 NaN、非整数、负数或超出端口范围的值。",
-        "nextStep": "结合实际监听入口的错误处理，决定是否将 host、port 纳入运行配置的 Zod 校验。",
+        "question": "服务监听端口是否应在配置层增加有限整数范围校验？",
+        "why": "当前实现只对环境变量执行 Number 转换，材料中未显示对 NaN、非整数、负数或超出 TCP 端口范围的拒绝。",
+        "nextStep": "检查服务启动入口是否另有端口验证；若没有，在配置派生处增加 1–65535 的有限整数约束和相应测试。",
         "blocking": false,
         "citationKeys": [
           "c3"
@@ -88,7 +110,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
@@ -123,7 +145,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -134,34 +156,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:03:44.906Z",
+    "at": "2026-09-30T19:18:10.914Z",
     "trace": {
-      "runId": "9b2d598c-db07-4cd7-bd70-53cca1eb54d0",
-      "roleId": "code-analyst",
+      "runId": "79591dfe-8707-4bd6-8fb4-eebb58e057a6",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "a2b9fb20f3f9a715f896ae5868edb594e84a50e04b7d4033eaacb1b1c0a91268",
-      "contextHash": "e526999fbc3b715e3a5236cd0611fee1a491f2111bde08481c2b7fce2ab7ed07",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "875ac26190509463c54f4b2e0581016cc369433c884d6117bc1835fa1a3c8d26",
+      "contextHash": "8e0c650ddf3cd7fae414f132c5bf910aca8a55f6481d48b6992440ff5b6695fe",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6d17f4acbcdabfb789ac9de01ad2832a1c371f8bed167003131140201186aa19",
+      "fingerprint": "33355e1bfdcd99b5139274bc7eb55ff817545542005658274cb8524c5f6bb3b4",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-9a12-7043-a6ca-754b0e060662"
+        "01a0f3bf-f43e-7882-a2ec-1336c55fdb9d"
       ],
       "usage": {
-        "used": 53699,
-        "size": 760000,
+        "used": 66109,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -169,10 +191,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 125918,
-          "utf8Bytes": 135551,
-          "estimatedTokens": 45184,
-          "budgetedTokens": 56480,
+          "chars": 135446,
+          "utf8Bytes": 148147,
+          "estimatedTokens": 49383,
+          "budgetedTokens": 61729,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -181,17 +203,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:04:08.395Z",
+    "at": "2026-09-30T19:18:45.635Z",
     "trace": {
-      "runId": "bcf4efa2-6f6b-4b27-a5d0-ca68e92af5d8",
+      "runId": "8a3bf8bf-f5da-4269-9719-59d1091ea116",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "199c3e1cb5d0882d9439cac5f2d7715e530280eb956b154516bc64ea135ce42f",
-      "contextHash": "1378a99b72efb25b7f17a4e08385e6b3896b8bf30f9a125aee3da58691a8ab49",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "4f298715ec3ddc7d6763375d2944cc78d7d5d37698adc3aa347f2499fb0f48d0",
+      "contextHash": "22e886304543001e276c798ee0cab0e1a2f5a8f54dd563d9ea527021385efb71",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c3c05206433a67a65bf94d82f4f83aa46d7a9ea77d62e784a8458fdd5d9dde93",
+      "fingerprint": "bba85daba6a36c5b14ac91e16f1786d2afd9a56ff73a3547c5eea59eaef3746d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -204,11 +226,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8d-30b1-7760-9447-a1a4d34f2665"
+        "01a0f3c0-d34f-73a1-a93e-ee3c8a573b32"
       ],
       "usage": {
-        "used": 49906,
-        "size": 760000,
+        "used": 60459,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -216,10 +238,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 121336,
-          "utf8Bytes": 128437,
-          "estimatedTokens": 42813,
-          "budgetedTokens": 53517,
+          "chars": 131016,
+          "utf8Bytes": 140643,
+          "estimatedTokens": 46881,
+          "budgetedTokens": 58602,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

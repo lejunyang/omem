@@ -2,84 +2,102 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/inputs/spool.ts",
-    "title": "Hook 捕获暂存队列",
-    "summary": "以本地文件队列承接带来源事件标识的捕获输入，通过稳定摘要、原子写入、容量限制和严格回执校验，实现可重放且避免静默丢失的投递。",
+    "title": "Hook 捕获持久缓冲与可靠投递",
+    "summary": "以生产者、事件号和内容摘要建立本地磁盘缓冲，在上游暂不可用时保存 CaptureInput；通过容量保护、原子写入、回执核验和顺序停止降低静默丢失或错误确认风险。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-enqueue",
-        "title": "用途与入队流程",
-        "body": "`HookSpool` 解决外部 Hook 已到达、下游捕获服务却暂不可用时的可靠暂存问题。记录保留生产者、事件标识、完整捕获输入、内容摘要和创建时间；目录与记录分别限制为 `0700`、`0600`。文件名由生产者和事件标识的稳定摘要确定，因此同一事件重复到达时可直接返回原记录；若事件标识相同而负载摘要不同，则明确报冲突，避免覆盖证据。写入先落随机临时文件并 `fsync`，再重命名和同步目录，以降低半写文件风险。[[c1]] [[c2]]"
+        "key": "purpose_and_identity",
+        "title": "事件身份与幂等入列",
+        "body": "`HookSpool` 用生产者和事件号的稳定摘要确定记录路径，使事件身份与随机生成的记录编号分离。[[c1]] 入列要求捕获来源同时提供 `collectorId` 和 `eventId`；已有同路径记录且载荷摘要一致时返回重复结果，摘要不同时拒绝为事件冲突。该检查提供单进程常规幂等，但不能据此推断多进程竞争下严格的先写者胜出。[[c2]]"
       },
       {
-        "key": "capacity-and-flush",
-        "title": "容量、保留期与投递边界",
-        "body": "入队前会统计 JSON 记录数量与字节数，默认上限为 1000 条和 50 MB；超限只追加受大小约束的告警并抛出专用容量错误，不会淘汰旧记录。保留期默认七天，但超期记录也只是产生告警，并不会自动删除。[[c3]] 刷新按创建时间顺序、受 `limit` 限制地串行发送；只有回执中的生产者、事件标识和负载摘要全部吻合才删除文件。任一发送或校验失败都会记录结果并停止本轮，因此后续事件不会越过失败项。该实现没有并发消费者锁，材料也未展示损坏 JSON 的隔离恢复。[[c4]]"
+        "key": "durability_and_capacity",
+        "title": "持久性与容量边界",
+        "body": "构造时把缓冲目录设为 `0700`；写入使用 `0600` 随机临时文件，完成文件级 `fsync` 后重命名并尝试同步目录。目录同步在部分平台不受支持时会被忽略，因此持久性仍受文件系统语义影响。[[c3]] 入列还会统计现有 JSON 记录数量和字节数，默认限制为 1000 条与 50 MB；超限时写容量告警并抛出专用错误。[[c4]]"
+      },
+      {
+        "key": "flush_semantics",
+        "title": "投递、回执与失败顺序",
+        "body": "待投递记录按创建时间排序，超过默认七天只产生告警而不自动删除。刷新逐条调用发送器，只有回执中的生产者、事件号和载荷摘要均与本地记录一致才删除文件；首个异常会终止本轮处理，保留失败项及后续项目供重试，因此保证顺序的同时存在队头阻塞。[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "暂存记录与安全目录",
-        "reason": "说明暂存记录保存的幂等字段、捕获内容以及目录权限初始化。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 20,
-          "endLine": 63
-        },
-        "quote": "export type SpoolRecord = {\n  schemaVersion: 1;\n  id: string;\n  producer: string;\n  eventId: string;\n  payloadDigest: string;\n  capture: CaptureInput;\n  createdAt: string;\n};\n\nexport type CaptureAcknowledgement = {\n  receipt: {\n    producer: string;\n    eventId: string;\n    payloadDigest: string;\n    revisionId: string"
-      },
-      {
-        "key": "c2",
-        "label": "幂等入队与原子写入",
-        "reason": "支持稳定键、负载冲突检测以及临时文件同步后重命名的写入流程。",
+        "label": "稳定事件路径",
+        "reason": "支持文件路径由生产者和事件号的稳定摘要确定。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
           "startLine": 69,
-          "endLine": 171
+          "endLine": 77
         },
-        "quote": "  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord, \"producer\" | \"eventId\">) {\n    return join(\n      this.directory,\n      this.key(record.producer, record.eventId) + \".json\",\n    );\n  }\n\n  private syncDirectory() {\n    try {\n"
+        "quote": "  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord, \"producer\" | \"eventId\">) {\n    return join(\n      this.directory,\n      this.key(record.producer, record.eventId) + \".json\",\n    );"
+      },
+      {
+        "key": "c2",
+        "label": "入列校验与重复检测",
+        "reason": "支持缺少事件身份时拒绝、相同载荷返回重复以及不同载荷报冲突。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 126,
+          "endLine": 137
+        },
+        "quote": "  enqueue(capture: CaptureInput) {\n    const producer = capture.provenance?.collectorId;\n    const eventId = capture.provenance?.eventId;\n    if (!producer || !eventId) throw Error(\"HOOK_EVENT_ID_REQUIRED\");\n    const payloadDigest = stableDigest(capture);\n    const path = this.path({ producer, eventId });\n    if (exis"
       },
       {
         "key": "c3",
-        "label": "容量与保留期处理",
-        "reason": "说明默认容量阈值、超限告警，以及超期记录仅告警而不清理。",
+        "label": "目录权限与原子写入",
+        "reason": "支持目录和文件权限、文件同步、重命名及目录同步降级的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 61,
+          "endLine": 105
+        },
+        "quote": "    mkdirSync(directory, { recursive: true, mode: 0o700 });\n    chmodSync(directory, 0o700);\n  }\n\n  private now() {\n    return (this.options.now ?? (() => new Date()))();\n  }\n\n  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord,"
+      },
+      {
+        "key": "c4",
+        "label": "容量统计与告警",
+        "reason": "支持默认条目数和字节上限、容量告警内容及超限错误。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
           "startLine": 139,
-          "endLine": 194
+          "endLine": 168
         },
         "quote": "    const pending = jsonFiles(this.directory);\n    const currentBytes = pending.reduce(\n      (total, name) => total + statSync(join(this.directory, name)).size,\n      0,\n    );\n    const record: SpoolRecord = {\n      schemaVersion: 1,\n      id: randomUUID(),\n      producer,\n      eventId,\n      payloadDigest,\n      ca"
       },
       {
-        "key": "c4",
-        "label": "顺序刷新与回执校验",
-        "reason": "支持刷新时严格匹配回执、成功后删除、失败即停止的行为。",
+        "key": "c5",
+        "label": "保留期与顺序刷新",
+        "reason": "支持超期告警、按时间排序、回执核验、成功删除及失败后停止。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 197,
+          "startLine": 174,
           "endLine": 229
         },
-        "quote": "  async flush(\n    sender: (capture: CaptureInput) => Promise<CaptureAcknowledgement>,\n    limit = 10,\n  ) {\n    const outcomes: {\n      eventId: string;\n      delivered: boolean;\n      error?: string;\n    }[] = [];\n    for (const record of this.pending().slice(0, Math.max(0, limit))) {\n      try {\n        const respon"
+        "quote": "  pending() {\n    const records = jsonFiles(this.directory).map(\n      (name) =>\n        JSON.parse(\n          readFileSync(join(this.directory, name), \"utf8\"),\n        ) as SpoolRecord,\n    );\n    const cutoff =\n      this.now().getTime() - (this.options.retentionMs ?? 7 * 86_400_000);\n    for (const record of records"
       }
     ],
     "questions": [
       {
-        "question": "是否需要支持多个进程同时刷新同一暂存目录？",
-        "why": "当前材料展示了原子文件写入，但 `pending` 与 `flush` 没有租约、锁或原子认领；并发刷新可能重复发送同一记录。",
-        "nextStep": "确认部署是否保证单消费者；若不能保证，应增加文件级认领或持久化租约并补充并发行为测试。",
+        "question": "同一生产者和事件号被多个进程同时入列时，是否要求严格的跨进程先写者胜出语义？",
+        "why": "当前流程先检查正式文件是否存在，再写随机临时文件并重命名；材料没有展示多进程竞争时的排他创建或冲突复核。",
+        "nextStep": "增加多进程并发测试并确认目标文件系统的重命名覆盖语义；若要求严格幂等，应在提交正式路径时增加排他机制并复核最终摘要。",
         "blocking": false,
         "citationKeys": [
           "c2",
-          "c4"
+          "c3"
         ]
       }
     ]
@@ -133,40 +151,40 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:02:57.660Z",
+    "at": "2026-09-30T19:18:23.636Z",
     "trace": {
-      "runId": "ec3fa096-0572-4505-a992-47476943d2a1",
-      "roleId": "code-analyst",
+      "runId": "ca926296-6f48-478c-b9fd-1f45cd1b1b2c",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "a2696527429647c187b3591f37dcc98e8ad608d3041cec373b5a288135bb8434",
-      "contextHash": "3c776bcf4bbd1bec19c86a6f371b055183e1b4ed31b390c4b5e3b268e0d1779f",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "73f8393b2a3266923bfb901322318cc20260eb9b87e557a814a138da8d99d4ea",
+      "contextHash": "60f1aad2512cf1cd2a3ee687639b12928f04439c6fcfd622904e33e74f684914",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ba8d3be75f9a06dfef532b2659db8b8d92d39428dc8ad76ee82f876acb3eca6c",
+      "fingerprint": "553eecd81c0260f129dcbf814e34fe60068148fba4ff9cdbea393193b0d05b8e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8b-8922-7e71-b421-cad69e0e87c6"
+        "01a0f3c0-302d-7140-9a84-3fa43938bb01"
       ],
       "usage": {
-        "used": 53060,
-        "size": 760000,
+        "used": 67029,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -174,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124747,
-          "utf8Bytes": 126777,
-          "estimatedTokens": 42259,
-          "budgetedTokens": 52824,
+          "chars": 142897,
+          "utf8Bytes": 155351,
+          "estimatedTokens": 51784,
+          "budgetedTokens": 64730,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +204,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:03:20.578Z",
+    "at": "2026-09-30T19:18:56.903Z",
     "trace": {
-      "runId": "23485087-b5df-45e8-861d-0cb045629f50",
+      "runId": "14e7fbf0-0a5c-4321-bab5-11ff05d3f153",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "1847da482fd5d690995b733ed881cd60e38d43c8196e877f43d5d8b625e0effc",
-      "contextHash": "45f2a90fe5d73dbc316f3ab8ddaebe4be24a3791d25686b41311c65940bc423d",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "251330589348a0fb87b75eb7b279d156404e30c763d03cb3625d35b838f8f245",
+      "contextHash": "83fd6fd450d1f0028a4fcd903c8aa7b1e57071fab8e87eeb7f4db85c402747cb",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e6429997986280da9acdd9a80162a7e46801e3800afd65991fcbbfa224e36fe1",
+      "fingerprint": "82d8d648b62c150da18ac8960c42899f3676a6de922305533541197e9a661911",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,11 +227,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-775a-7790-bfbc-2b7aa491dd1a"
+        "01a0f3c1-051b-7d91-b044-d7405d2081bf"
       ],
       "usage": {
-        "used": 56578,
-        "size": 760000,
+        "used": 62446,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -221,10 +239,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 143646,
-          "utf8Bytes": 154634,
-          "estimatedTokens": 51545,
-          "budgetedTokens": 64432,
+          "chars": 143307,
+          "utf8Bytes": 152973,
+          "estimatedTokens": 50991,
+          "budgetedTokens": 63739,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

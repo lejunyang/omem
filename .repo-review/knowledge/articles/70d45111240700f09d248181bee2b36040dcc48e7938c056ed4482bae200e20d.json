@@ -2,133 +2,193 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/storage/migrations.ts",
-    "title": "SQLite 模式迁移与历史校验",
-    "summary": "定义并原子执行 1–14 版 SQLite 模式演进，校验版本、迁移名称与校验和，拒绝由较新程序创建的数据库，并在成功后启用 WAL。",
-    "category": "implementation",
+    "title": "SQLite 模式演进与历史完整性保护",
+    "summary": "通过按版本登记、以 SQL 语句集合校验和核对的顺序迁移，将 SQLite 模式推进到版本 17；迁移在独立事务中更新历史和 user_version，并拒绝缺失、未知、篡改、超前或高于程序支持范围的模式历史。",
+    "category": "architecture",
     "sections": [
       {
-        "key": "purpose",
-        "title": "解决的问题与数据边界",
-        "body": "该模块把捕获材料、不可变修订、任务与记忆版本、作业、治理决策、通知投递、会话和来源画像等持久化能力组织为顺序迁移；当前支持的最高模式版本是 14。基础表先建立 Source→Revision→Fragment、变化记录和通知，再逐版加入可靠作业、受治理记忆、飞书接入、质量标注及注意力案例等能力。[[c1]]\n\n它也明确数据库兼容边界：若磁盘模式比当前程序更新，就拒绝继续写入，避免旧程序破坏新结构。[[c2]]"
+        "key": "schema-scope",
+        "title": "模式覆盖范围",
+        "body": "迁移文件集中定义服务器持久化结构：基础版本建立来源、修订、片段、关系、变更、通知和任务等表。该材料只能证明表结构及唯一约束，不能据此断言数据库机制禁止更新修订；这替代此前直接把基础 `revisions` 表称为“不可变修订”的结论。[[c1]] 迁移清单按版本逐步加入作业与输入缓冲、角色运行时、治理式记忆、飞书连接与投递、质量标注、会话、来源画像、刷新结果和检索索引，当前支持版本为 17。[[c2]] 版本 13 还建立知识争议表，用于保留相互矛盾的来源归属，而不自动应用或隐藏任一方。[[c3]]\n\n版本 15 把 FTS5 定义为可重建的片段投影，并用触发器同步片段变化。[[c4]] 版本 17 定义按模型、片段和分片区分的向量表及 head 表，但本文件没有描述语义索引的重建流程。[[c5]] 因此旧结论“词法与语义索引都在此明确可重建”被替代为：只有 FTS 在当前材料中被明确声明可重建。"
       },
       {
-        "key": "migration_flow",
-        "title": "迁移流程与一致性",
-        "body": "每组 SQL 先按固定分隔符计算 SHA-256，并与版本、名称一起登记。启动时读取 `PRAGMA user_version`，核对迁移历史不存在超前、未知、缺失或校验和漂移；仅对旧版顺序升级。[[c3]]\n\n单次迁移使用 `BEGIN IMMEDIATE`，要求当前版本恰为目标版本减一；执行全部语句、写迁移记录、调用验收钩子并更新 `user_version` 后才提交，任一步失败均回滚。全部完成后再次校验历史并启用 WAL。[[c4]]"
+        "key": "migration-flow",
+        "title": "校验和与事务迁移",
+        "body": "每组迁移 SQL 以固定分隔符拼接后计算 SHA-256，因此校验和绑定的是语句集合。[[c6]] 历史校验按版本寻找预期迁移并核对该校验和；它没有比较已存储名称与当前名称，所以“版本、名称、语句和校验和全部绑定”的旧结论被替代。校验还会拒绝历史记录超前、未知版本、校验和不匹配及当前 schema 所需记录缺失；schema 0 或 1 缺少迁移表可继续，版本 1 另有旧校验和兼容例外。[[c7]]\n\n单次迁移使用 `BEGIN IMMEDIATE`，只允许从目标版本的前一版本推进。SQL 执行后写入迁移历史、调用提交前钩子、更新 `user_version` 并提交；任一步失败都会回滚。升级到版本 2 时还会补写旧基础迁移记录。[[c8]]"
       },
       {
-        "key": "limits",
-        "title": "特殊兼容与边界条件",
-        "body": "版本 1 允许旧式固定校验和，升级到版本 2 时会补写历史记录，这是对早期无完整迁移账本数据库的窄兼容。若数据库既无迁移表又声明版本大于 1，或历史记录与本构建不一致，会直接报错。[[c5]]\n\n版本 13 通过建新表、复制、删除和改名扩展提案及策略状态，并同步重建外键子表；这依赖整次迁移事务保证中间结构不外露。该文件只定义结构演进，实际业务写入由 Store 和各 Repository 完成。[[c6]]"
+        "key": "runtime-boundaries",
+        "title": "入口保护与验证边界",
+        "body": "迁移入口先开启外键约束并拒绝高于程序支持版本的数据库；随后校验当前历史，依次应用高于初始版本的迁移，再按版本 17 复核历史并启用 WAL。[[c9]] 这些实现证明了顺序推进、单次迁移回滚和历史完整性保护机制，但不能单独证明所有旧数据库形态均经过真实升级验证。\n\n尤其是表重建、外键关系、FTS5 触发器、向量表及旧版兼容分支仍需结合迁移测试和数据库夹具确认。提交前钩子被明确设计为验收测试接缝，抛错应使整次迁移回滚，但该声明本身并不等于行为已经被测试覆盖。[[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "模式版本与迁移清单",
-        "reason": "支持最高版本以及各功能切片按版本顺序演进的说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 920,
-          "endLine": 1005
-        },
-        "quote": "const migrations: readonly Migration[] = [\n  {\n    version: 1,\n    name: \"foundation\",\n    statements: baselineStatements,\n    checksum: checksum(baselineStatements),\n  },\n  {\n    version: 2,\n    name: \"batch-two-contracts\",\n    statements: batchTwoStatements,\n    checksum: checksum(batchTwoStatements),\n  },\n  {\n    ve"
-      },
-      {
-        "key": "c2",
-        "label": "新版本数据库保护",
-        "reason": "支持数据库模式超前时拒绝写入的兼容边界。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 1096,
-          "endLine": 1103
-        },
-        "quote": "export function migrateDatabase(db: DatabaseSync, hooks: MigrationHooks = {}) {\n  db.exec(\"PRAGMA foreign_keys=ON\");\n  const initialVersion = userVersion(db);\n  if (initialVersion > SUPPORTED_SCHEMA_VERSION)\n    throw new UnsupportedSchemaVersionError(\n      initialVersion,\n      SUPPORTED_SCHEMA_VERSION,\n    );"
-      },
-      {
-        "key": "c3",
-        "label": "迁移历史校验",
-        "reason": "说明历史记录的超前、未知、校验和和缺失检查。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 1024,
-          "endLine": 1055
-        },
-        "quote": "function validateHistory(db: DatabaseSync, version: number) {\n  if (!tableExists(db, \"migrations\")) {\n    if (version === 0 || version === 1) return;\n    throw Error(`Schema ${version} is missing migration history`);\n  }\n  const rows = db\n    .prepare(\"SELECT version,name,checksum FROM migrations ORDER BY version\")\n   "
-      },
-      {
-        "key": "c4",
-        "label": "原子迁移执行",
-        "reason": "支持顺序执行、提交前钩子、版本更新和失败回滚流程。",
+        "label": "基础持久化表",
+        "reason": "支持基础版本的核心表与唯一约束，同时表明该范围未提供禁止更新修订的数据库机制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 1057,
-          "endLine": 1111
+          "startLine": 30,
+          "endLine": 44
+        },
+        "quote": "const baselineStatements = [\n  `CREATE TABLE IF NOT EXISTS migrations(\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    checksum TEXT NOT NULL,\n    applied_at TEXT NOT NULL\n  )`,\n  \"CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, namespace TEXT NOT NULL, external_id TEXT NOT NULL, head TEXT, UNIQUE("
+      },
+      {
+        "key": "c2",
+        "label": "迁移版本清单",
+        "reason": "支持数据库能力按迁移演进至版本 17，并界定各版本的功能范围。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 959,
+          "endLine": 1052
+        },
+        "quote": "const migrations: readonly Migration[] = [\n  {\n    version: 1,\n    name: \"foundation\",\n    statements: baselineStatements,\n    checksum: checksum(baselineStatements),\n  },\n  {\n    version: 2,\n    name: \"batch-two-contracts\",\n    statements: batchTwoStatements,\n    checksum: checksum(batchTwoStatements),\n  },\n  {\n    ve"
+      },
+      {
+        "key": "c3",
+        "label": "知识争议存储",
+        "reason": "支持版本 13 建立争议记录结构，并保留相互矛盾来源归属的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 860,
+          "endLine": 875
+        },
+        "quote": "  // F5: two supported claims that contradict each other are kept as competing\n  // source attributions; neither side is auto-applied and neither is hidden.\n  `CREATE TABLE knowledge_disputes(\n     id TEXT PRIMARY KEY,\n     workspace_id TEXT NOT NULL,\n     topic_key TEXT NOT NULL,\n     existing_memory_id TEXT REFERENCE"
+      },
+      {
+        "key": "c4",
+        "label": "全文检索投影",
+        "reason": "支持 FTS 被明确设计为可重建投影，并由触发器同步片段变化。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 915,
+          "endLine": 928
+        },
+        "quote": "// FTS is a rebuildable projection of immutable fragments; triggers cover capture\n// and restore, including writes from another process. Rank with SQLite BM25.\nconst retrievalIndexStatements = [\n  `CREATE VIRTUAL TABLE fragment_search USING fts5(text, title, tokenize='trigram')`,\n  `INSERT INTO fragment_search(rowid,te"
+      },
+      {
+        "key": "c5",
+        "label": "语义向量存储结构",
+        "reason": "支持向量按模型、片段和分片存储及 embedding head 的结构，同时限定材料没有说明重建流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 948,
+          "endLine": 957
+        },
+        "quote": "const embeddingStatements = [\n  `CREATE TABLE fragment_embeddings (\n    fragment_id TEXT NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,\n    model_id TEXT NOT NULL, part INTEGER NOT NULL, start_offset INTEGER NOT NULL,\n    end_offset INTEGER NOT NULL, vector BLOB NOT NULL,\n    PRIMARY KEY(model_id,fragment_id,part"
+      },
+      {
+        "key": "c6",
+        "label": "迁移语句校验和算法",
+        "reason": "支持仅将迁移 SQL 语句集合以固定分隔符拼接后计算 SHA-256，不包含迁移名称。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 943,
+          "endLine": 946
+        },
+        "quote": "const checksum = (statements: readonly string[]) =>\n  createHash(\"sha256\")\n    .update(statements.join(\"\\n-- statement --\\n\"))\n    .digest(\"hex\");"
+      },
+      {
+        "key": "c7",
+        "label": "迁移历史完整性校验",
+        "reason": "支持按版本定位预期迁移并核对校验和，以及历史缺失、超前、未知版本和旧版例外规则。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 1054,
+          "endLine": 1101
+        },
+        "quote": "const legacyV1Checksum = createHash(\"sha256\")\n  .update(\"omem-foundation-user-version-1\")\n  .digest(\"hex\");\n\nconst userVersion = (db: DatabaseSync) =>\n  Number(\n    (db.prepare(\"PRAGMA user_version\").get() as { user_version: number })\n      .user_version,\n  );\n\nconst tableExists = (db: DatabaseSync, table: string) =>\n "
+      },
+      {
+        "key": "c8",
+        "label": "事务化迁移执行",
+        "reason": "支持相邻版本约束、迁移历史写入、提交前钩子、user_version 更新及失败回滚流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 1104,
+          "endLine": 1140
         },
         "quote": "function applyMigration(\n  db: DatabaseSync,\n  migration: Migration,\n  hooks: MigrationHooks,\n) {\n  db.exec(\"BEGIN IMMEDIATE\");\n  try {\n    const currentVersion = userVersion(db);\n    if (currentVersion >= migration.version) {\n      db.exec(\"COMMIT\");\n      return;\n    }\n    if (currentVersion !== migration.version - 1"
       },
       {
-        "key": "c5",
-        "label": "旧版迁移账本兼容",
-        "reason": "说明版本 1 旧校验和及版本 2 补录历史的特殊处理。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 1007,
-          "endLine": 1009
-        },
-        "quote": "const legacyV1Checksum = createHash(\"sha256\")\n  .update(\"omem-foundation-user-version-1\")\n  .digest(\"hex\");"
-      },
-      {
-        "key": "c6",
-        "label": "注意力治理表重建",
-        "reason": "支持版本 13 通过复制和重命名改变约束、并同时处理外键子表的论断。",
+        "key": "c9",
+        "label": "迁移入口与版本保护",
+        "reason": "支持拒绝过新模式、迁移前后验证历史、顺序执行待应用版本及完成后启用 WAL。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 819,
-          "endLine": 859
+          "startLine": 1143,
+          "endLine": 1158
         },
-        "quote": "  // proposals gains the internal disposition states. Its only child FK is\n  // proposal_source_reads(proposal_id); rebuild both together in one tx.\n  `CREATE TABLE proposals_new(\n     id TEXT PRIMARY KEY,\n     workspace_id TEXT NOT NULL,\n     schema_version INTEGER NOT NULL,\n     kind TEXT NOT NULL CHECK(kind IN ('tas"
+        "quote": "export function migrateDatabase(db: DatabaseSync, hooks: MigrationHooks = {}) {\n  db.exec(\"PRAGMA foreign_keys=ON\");\n  const initialVersion = userVersion(db);\n  if (initialVersion > SUPPORTED_SCHEMA_VERSION)\n    throw new UnsupportedSchemaVersionError(\n      initialVersion,\n      SUPPORTED_SCHEMA_VERSION,\n    );\n  vali"
+      },
+      {
+        "key": "c10",
+        "label": "迁移验收测试接缝",
+        "reason": "支持提交前钩子被设计为测试回滚行为的接缝，但不把设计声明当作实际测试结果。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 25,
+          "endLine": 28
+        },
+        "quote": "export type MigrationHooks = {\n  /** Acceptance-test seam. Throwing here must roll the whole migration back. */\n  beforeCommit?: (version: number, db: DatabaseSync) => void;\n};"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "从每个历史 schema 版本升级到 17 的真实测试覆盖到哪些组合？",
+        "why": "迁移包含表重建、外键关系、FTS5、向量表和历史兼容分支；实现中的事务与测试钩子不能单独证明所有旧版本数据形态均已验证。",
+        "nextStep": "检查迁移测试及数据库夹具，至少验证逐版本升级、钩子抛错全量回滚、校验和篡改、过新版本拒写和 FTS 触发器同步。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c8",
+          "c9",
+          "c10"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/storage/migrations.ts",
-      "digest": "2a2f7075bdf0d349cba5b68104c83fba9c240ed2c77327ade76af6c94f916fb9"
+      "digest": "2903273d887300b5407818c616dabb33402bb5657c83886b1eb9b34c6ec68e2e"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/storage/repository.ts",
-      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/requests.ts",
-      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
     },
     {
       "kind": "material",
@@ -137,41 +197,46 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/source-profile/service.ts",
-      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:07:20.237Z",
+    "at": "2026-09-30T20:05:15.510Z",
     "trace": {
-      "runId": "7251d2d4-da1c-4b12-8e48-69ab13f3c324",
-      "roleId": "code-analyst",
+      "runId": "f752f5ed-fbd4-4690-9a73-337805339750",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "e433a15c17514fd6d2ad022730c87d8329dd0339fb2e15d8b7a45bd448fa7b51",
-      "contextHash": "777ba08392f24633319c424e292dbb2fa0357684f63e87cd1e62b5dd1987ef25",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "1692dd16db6c84eb5df586005c2600d44ca2dda10ba823ca4831b33647e01aa6",
+      "contextHash": "430507faee375da42db404c95544e9399f0d95bcda428df0d1ffa984ff51c5ea",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6881b49b1034731737f8376b5958a13776de5e9aa50e558e3243b1faea57a5d1",
+      "fingerprint": "acc29e807cd4fe1363f10dc55c06701319313699530f46223419e0ad40190144",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8f-e455-7b31-ad01-4fd9d010c1a5"
+        "01a0f3eb-3ca3-72b0-853e-a4195fd9134a"
       ],
       "usage": {
-        "used": 50102,
-        "size": 760000,
+        "used": 59085,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -179,10 +244,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 126376,
-          "utf8Bytes": 128454,
-          "estimatedTokens": 42818,
-          "budgetedTokens": 53523,
+          "chars": 119802,
+          "utf8Bytes": 130560,
+          "estimatedTokens": 43520,
+          "budgetedTokens": 54400,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -191,17 +256,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:07:41.110Z",
+    "at": "2026-09-30T20:05:39.220Z",
     "trace": {
-      "runId": "139a887c-6479-44de-b4cc-a3f58ce6c5be",
+      "runId": "639a9bde-b2bb-413c-96e7-8ee56493bad2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "e617a98daa637581ca23b89c0a3fbb442393f0e693e4c37e902ef1c9f50d2e2a",
-      "contextHash": "b2867c4a3bea4c370c76fae7c7abccec9c5ab96c3ee5c7710f4e208fa892e515",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "5f37b18de08eff2bc0197623d6014f1af5a21014df060fc8ad766b46198e44df",
+      "contextHash": "b81179fa7e5e30e094a2db59af5ef96d32ed6172a3688b9e05838de78bd99a7d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1c301786b81c1c1052690c3b6966533a424a083eb785d4a0aa25d8f95d046129",
+      "fingerprint": "89b970c4533161167f73ee60ef0f5e37ad4f7a9c665365aaaadb6382e28c2665",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -214,11 +279,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee90-7978-7571-a32b-e2a06ca99c49"
+        "01a0f3eb-edba-7ea3-9ba1-eb0e472bc757"
       ],
       "usage": {
-        "used": 52401,
-        "size": 760000,
+        "used": 53921,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -226,10 +291,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 137317,
-          "utf8Bytes": 144099,
-          "estimatedTokens": 48033,
-          "budgetedTokens": 60042,
+          "chars": 115773,
+          "utf8Bytes": 124649,
+          "estimatedTokens": 41550,
+          "budgetedTokens": 51938,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

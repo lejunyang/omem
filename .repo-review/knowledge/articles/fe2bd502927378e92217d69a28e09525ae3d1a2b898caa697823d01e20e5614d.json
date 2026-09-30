@@ -2,171 +2,189 @@
   "version": 1,
   "document": {
     "key": "module:inputs",
-    "title": "inputs · 模块理解",
-    "summary": "inputs 模块为外部捕获提供两层可靠性：HookSpool 在下游不可用时持久暂存并校验投递回执，InputAggregator 将聊天或屏幕事件按来源流聚合为有界、可追溯的 CaptureInput。当前已实现幂等、容量保护、按说话者去重与迟到标记，但多消费者协调和跨事务补偿仍待明确。",
+    "title": "inputs · 输入接入与可靠成批",
+    "summary": "inputs 模块在统一捕获链前提供两种机制：HookSpool 持久保存并顺序投递 CaptureInput，InputAggregator 将聊天或屏幕事件按流暂存、去重并重新封装成批量 CaptureInput。当前聚合数据固定属于 personal workspace；跨进程缓冲竞争以及 capture 与聚合事务间的补偿策略仍未确定。",
     "category": "architecture",
     "sections": [
       {
-        "key": "responsibility",
-        "title": "职责与设计背景",
-        "body": "inputs 位于外部采集器与统一捕获入口之间，处理事件已产生、但尚不能安全形成知识材料的阶段。HookSpool 保存生产者、事件标识、负载摘要和完整捕获输入，并用受限目录权限保护暂存数据。[[c1]] 稳定事件键让重复投递返回原记录；同键异载荷会报冲突，写入则经临时文件、文件同步、重命名和目录同步完成。[[c2]]\n\nInputAggregator 仅接收 chat 与 screen：聊天按会话划流，屏幕按应用与窗口划流；事件必须带采集器和事件标识，并以 pending 状态进入固定的 personal workspace。[[c3]] 因而两层职责不同：spool 应对下游暂不可用，aggregator 将连续细粒度事件整理成可捕获批次。"
+        "key": "role",
+        "title": "职责、输入合同与实现边界",
+        "body": "模块包含磁盘缓冲和事件聚合两条路径，但现有材料只证明其行为，不能把“服务不可用”或“突发输入”写成已确认的设计动机。`HookSpool` 的记录明确保存完整 `CaptureInput`，并附带生产者、事件号、内容摘要和创建时间；`enqueue` 从输入来源中取得 `collectorId` 与 `eventId`，校验重复或冲突后才落盘。[[c1]][[c2]] `InputAggregator` 同样接收 `CaptureInput`，但只允许 chat 与 screen，分别按会话或应用与窗口划流；事件表读写固定使用 `personal` workspace，不能据此宣称已有多租户隔离。[[c3]][[c4]]"
       },
       {
         "key": "flow",
-        "title": "从暂存到聚合捕获",
-        "body": "暂存队列默认限制为 1000 条或 50 MB，超限会告警并拒绝新项；默认七天保留期也只告警，不自动清理。[[c4]] 刷新按创建时间串行发送，只有生产者、事件标识和摘要均与回执一致才删除文件，一项失败即停止本轮。[[c5]]\n\n聚合流在静默 15 秒、最早事件等待满 5 分钟或事件数达到默认 50 时就绪。[[c6]] 候选事件按时间选取，并以“内容摘要＋说话者”去重：同一说话者的重复内容不重复贡献 parts，不同说话者的相同文本仍保留；单批 parts 上限为 50。[[c7]] 合并后，每个 part 保留来源和观察时间，批次记录事件集合、观察窗口与迟到关联；顶层 actor 仅在三项身份字段一致时保留。[[c8]]"
+        "title": "从可靠落盘到批量捕获",
+        "body": "Hook 缓冲先写入权限为 `0600` 的随机临时文件，完成文件同步后重命名，并尝试同步目录；目录同步失败会被忽略，因此最终持久性仍取决于平台文件系统语义。[[c5]] 入列默认受 1000 条和 50,000,000 字节限制，超限会记录容量告警并拒绝新记录。[[c6]] 刷新按创建时间逐条发送，只有回执中的生产者、事件号和摘要全部匹配才删除本地文件；首个失败即停止本轮，既保留顺序重试，也可能造成队头阻塞。[[c7]]\n\n聚合流在静默 15 秒、最早事件等待 5 分钟或事件数达到阈值时就绪。候选按接收时间选择，以内容摘要和 actor ID 联合去重，单批最多容纳 50 个 part；不同 actor 的相同内容仍作为独立证据保留。[[c8]]"
       },
       {
-        "key": "progress-limits",
-        "title": "当前进展、边界与跨模块风险",
-        "body": "就暂存侧而言，现有实现已经覆盖本地持久化、重复与冲突检测、容量保护、顺序重放和严格回执校验。[[c2]] [[c4]] [[c5]] 就聚合侧而言，已实现有界就绪窗口、按说话者去重、parts 预算和迟到事件表达。[[c6]] [[c7]] [[c8]] 这些能力共同形成通向统一 CaptureInput 的可追踪路径，但聚合入库固定使用 personal workspace，不能据此推断已有租户隔离。[[c3]]\n\n两项跨模块风险尚未闭合。spool 的单文件原子写入不等于多消费者协调，刷新流程未展示锁、租约或原子认领。[[c5]] aggregator 又会先调用外部 capture，随后才在数据库事务中复核事件仍为 pending；若发生 `INPUT_BATCH_CHANGED`，回滚不能自动撤销已创建的 revision 或 job。[[c10]] 此外，顶层 actor 的稳定性只比较 actorId、actorType 与验证来源，外部身份、principal 身份和 binding version 却可能从最后事件继承。[[c8]]"
+        "key": "provenance_limits",
+        "title": "来源保留、替代结论与一致性限制",
+        "body": "批量 envelope 把 actor 外部标识、观察时间、事件号、转发状态等信息下沉到每个 part。[[c9]] 顶层 actor 的稳定性只比较 `actorId`、`actorType` 和 `actorVerifiedBy`；一致时，其他顶层 actor 字段取最后一条事件。[[c10]] 这替代了旧稿中“全部 actor 信息一致才保留顶层身份”的过宽结论。\n\n迟到事件不会改写旧批：只要本批任一观察时间不晚于上一批末尾，就通过 `lateForBatchId` 建立关联。[[c10]] 聚合刷新先调用外部 capture，之后才在数据库事务中复查 pending 状态、写入批次并更新事件，因此只能确认聚合表内部事务一致，不能认为 revision、job 与批次原子提交。[[c11]] HookSpool 也采用“先检查正式路径、后重命名临时文件”的流程，尚不足以证明多个进程共享目录时具有严格的先写者胜出语义。[[c2]][[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Hook 暂存记录与安全目录",
-        "reason": "说明暂存记录保存事件身份、摘要与完整捕获输入，并支持目录权限保护的职责描述。",
-        "relation": "explains",
+        "label": "缓冲记录的 CaptureInput 合同",
+        "reason": "支持 HookSpool 记录直接包含完整 CaptureInput 及其事件身份、摘要和创建时间。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
           "startLine": 20,
-          "endLine": 63
+          "endLine": 27
         },
-        "quote": "export type SpoolRecord = {\n  schemaVersion: 1;\n  id: string;\n  producer: string;\n  eventId: string;\n  payloadDigest: string;\n  capture: CaptureInput;\n  createdAt: string;\n};\n\nexport type CaptureAcknowledgement = {\n  receipt: {\n    producer: string;\n    eventId: string;\n    payloadDigest: string;\n    revisionId: string"
+        "quote": "export type SpoolRecord = {\n  schemaVersion: 1;\n  id: string;\n  producer: string;\n  eventId: string;\n  payloadDigest: string;\n  capture: CaptureInput;\n  createdAt: string;"
       },
       {
         "key": "c2",
-        "label": "稳定事件键与原子入队",
-        "reason": "支持重复与冲突检测，以及临时文件同步、重命名和目录同步构成的可靠写入流程。",
+        "label": "Hook 入列与重复冲突判断",
+        "reason": "支持 enqueue 接收 CaptureInput、提取稳定事件身份、检查既有记录并保存新记录的完整流程，也界定并发竞争问题。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 69,
+          "startLine": 126,
           "endLine": 171
         },
-        "quote": "  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord, \"producer\" | \"eventId\">) {\n    return join(\n      this.directory,\n      this.key(record.producer, record.eventId) + \".json\",\n    );\n  }\n\n  private syncDirectory() {\n    try {\n"
+        "quote": "  enqueue(capture: CaptureInput) {\n    const producer = capture.provenance?.collectorId;\n    const eventId = capture.provenance?.eventId;\n    if (!producer || !eventId) throw Error(\"HOOK_EVENT_ID_REQUIRED\");\n    const payloadDigest = stableDigest(capture);\n    const path = this.path({ producer, eventId });\n    if (exis"
       },
       {
         "key": "c3",
-        "label": "聚合事件接收与流划分",
-        "reason": "支持允许的聚合来源、流键规则、事件身份要求、幂等检测及固定 personal workspace 边界。",
+        "label": "聊天与屏幕流键规则",
+        "reason": "说明聚合器只接受 chat 和 screen，并展示会话、应用及窗口的流划分规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 39,
+          "endLine": 50
+        },
+        "quote": "  private streamKey(input: CaptureInput) {\n    if (input.source === \"chat\") {\n      if (!input.context.conversationId)\n        throw Error(\"CHAT_CONVERSATION_ID_REQUIRED\");\n      return input.context.conversationId;\n    }\n    if (input.source === \"screen\")\n      return [\n        input.context.application || \"unknown-ap"
+      },
+      {
+        "key": "c4",
+        "label": "聚合事件接收与 personal 工作区",
+        "reason": "支持聚合器接收 CaptureInput、校验事件身份、处理重复冲突，并固定写入 personal workspace。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
-          "startLine": 24,
-          "endLine": 104
+          "startLine": 53,
+          "endLine": 103
         },
-        "quote": "export class InputAggregator {\n  constructor(private readonly db: DatabaseSync) {}\n\n  private transaction<T>(work: () => T): T {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      thro"
-      },
-      {
-        "key": "c4",
-        "label": "暂存容量与保留期",
-        "reason": "支持默认条数和字节容量、超限拒绝，以及超期记录仅告警而不自动清理的说明。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 139,
-          "endLine": 194
-        },
-        "quote": "    const pending = jsonFiles(this.directory);\n    const currentBytes = pending.reduce(\n      (total, name) => total + statSync(join(this.directory, name)).size,\n      0,\n    );\n    const record: SpoolRecord = {\n      schemaVersion: 1,\n      id: randomUUID(),\n      producer,\n      eventId,\n      payloadDigest,\n      ca"
+        "quote": "  ingest(input: CaptureInput, now = new Date()) {\n    const eventId = input.provenance?.eventId;\n    const producer = input.provenance?.collectorId;\n    if (!eventId || !producer) throw Error(\"INPUT_EVENT_ID_REQUIRED\");\n    const streamKey = this.streamKey(input);\n    const payloadDigest = stableDigest(input);\n    cons"
       },
       {
         "key": "c5",
-        "label": "顺序刷新与严格回执",
-        "reason": "支持串行发送、三字段回执校验、成功后删除和失败即停止，也表明流程中没有消费者认领步骤。",
+        "label": "缓冲文件原子写入",
+        "reason": "支持临时文件权限、文件同步、重命名以及目录同步的降级行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 197,
-          "endLine": 229
+          "startLine": 80,
+          "endLine": 105
         },
-        "quote": "  async flush(\n    sender: (capture: CaptureInput) => Promise<CaptureAcknowledgement>,\n    limit = 10,\n  ) {\n    const outcomes: {\n      eventId: string;\n      delivered: boolean;\n      error?: string;\n    }[] = [];\n    for (const record of this.pending().slice(0, Math.max(0, limit))) {\n      try {\n        const respon"
+        "quote": "  private syncDirectory() {\n    try {\n      const descriptor = openSync(this.directory, \"r\");\n      try {\n        fsyncSync(descriptor);\n      } finally {\n        closeSync(descriptor);\n      }\n    } catch {\n      // Directory fsync is unsupported on some platforms; file fsync still completed.\n    }\n  }\n\n  private atom"
       },
       {
         "key": "c6",
-        "label": "聚合流就绪条件",
-        "reason": "说明静默窗口、最大等待窗口和事件数量阈值如何触发批次处理。",
+        "label": "缓冲容量保护",
+        "reason": "支持现有记录容量统计、默认条目数和字节上限，以及超限告警与拒绝行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 139,
+          "endLine": 168
+        },
+        "quote": "    const pending = jsonFiles(this.directory);\n    const currentBytes = pending.reduce(\n      (total, name) => total + statSync(join(this.directory, name)).size,\n      0,\n    );\n    const record: SpoolRecord = {\n      schemaVersion: 1,\n      id: randomUUID(),\n      producer,\n      eventId,\n      payloadDigest,\n      ca"
+      },
+      {
+        "key": "c7",
+        "label": "顺序投递与回执核验",
+        "reason": "支持按创建时间投递、核验回执、成功删除以及首个失败后停止的处理语义。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 174,
+          "endLine": 229
+        },
+        "quote": "  pending() {\n    const records = jsonFiles(this.directory).map(\n      (name) =>\n        JSON.parse(\n          readFileSync(join(this.directory, name), \"utf8\"),\n        ) as SpoolRecord,\n    );\n    const cutoff =\n      this.now().getTime() - (this.options.retentionMs ?? 7 * 86_400_000);\n    for (const record of records"
+      },
+      {
+        "key": "c8",
+        "label": "聚合触发、选择与去重",
+        "reason": "支持静默期、最大等待、数量阈值、接收顺序、同 actor 内容去重及 part 预算。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
           "startLine": 124,
-          "endLine": 143
+          "endLine": 178
         },
         "quote": "  private readyStreams(options: AggregationOptions) {\n    const now = options.now ?? new Date();\n    const quietCutoff = iso(\n      new Date(now.getTime() - (options.quietMs ?? 15_000)),\n    );\n    const windowCutoff = iso(\n      new Date(now.getTime() - (options.maxWindowMs ?? 300_000)),\n    );\n    const maxEvents = M"
       },
       {
-        "key": "c7",
-        "label": "按说话者去重与 parts 预算",
-        "reason": "支持内容摘要加说话者的去重规则、跨说话者保留相同内容以及单批 50 parts 上限。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/inputs/aggregator.ts",
-          "startLine": 145,
-          "endLine": 179
-        },
-        "quote": "  private selectBatchEvents(stream: Row, maxEvents: number) {\n    const candidates = this.db\n      .prepare(\n        `SELECT * FROM input_events\n         WHERE workspace_id=? AND source=? AND stream_key=? AND state='pending'\n         ORDER BY received_at,id LIMIT ?`,\n      )\n      .all(\n        String(stream.workspace_"
-      },
-      {
-        "key": "c8",
-        "label": "批次信封、身份与迟到关联",
-        "reason": "支持 part 来源保留、批次观察窗口、迟到标记，以及顶层 actor 稳定性判断和其他身份字段继承的实际行为。",
-        "relation": "implements",
+        "key": "c9",
+        "label": "逐 part 来源复制",
+        "reason": "支持批量 envelope 为各 part 保存 actor 外部标识、观察时间、事件号、转发及生产者属性。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
           "startLine": 181,
-          "endLine": 317
+          "endLine": 214
         },
         "quote": "  private envelopeFor(stream: Row, events: Row[]) {\n    const parsed = events.map((event) =>\n      captureSchema.parse(JSON.parse(String(event.envelope))),\n    );\n    const unique = new Set<string>();\n    const parts: CaptureInput[\"parts\"] = [];\n    for (let index = 0; index < parsed.length; index++) {\n      const sour"
       },
       {
         "key": "c10",
-        "label": "捕获与批次提交边界",
-        "reason": "支持外部 capture 先于数据库批次事务执行、随后复核 pending 状态的顺序及其补偿风险。",
-        "relation": "calls",
+        "label": "迟到关联与顶层 actor 判定",
+        "reason": "支持迟到批次关联、确定性批次身份，以及顶层 actor 稳定性实际比较的字段范围。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 224,
+          "endLine": 306
+        },
+        "quote": "    const previous = this.db\n      .prepare(\n        `SELECT * FROM input_batches\n         WHERE workspace_id=? AND source=? AND stream_key=?\n         ORDER BY created_at DESC LIMIT 1`,\n      )\n      .get(\n        String(stream.workspace_id),\n        String(stream.source),\n        String(stream.stream_key),\n      ) as "
+      },
+      {
+        "key": "c11",
+        "label": "捕获调用与批次事务边界",
+        "reason": "支持 capture 在数据库事务外先执行，随后才复查 pending、写批次并更新事件状态。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
           "startLine": 320,
-          "endLine": 403
+          "endLine": 394
         },
         "quote": "  flushReady(\n    capture: (input: CaptureInput) => CaptureResult,\n    options: AggregationOptions = {},\n  ) {\n    const maxEvents = Math.max(1, Math.min(options.maxEvents ?? 50, 500));\n    const results: {\n      batchId: string;\n      revisionId: string;\n      jobId: string | null;\n      eventIds: string[];\n      late"
       }
     ],
     "questions": [
       {
-        "question": "是否要求多个进程能够同时刷新同一 Hook 暂存目录？",
-        "why": "刷新流程读取待处理文件、发送并删除，但没有显示锁、租约或原子认领；若部署允许多消费者，同一记录可能被重复发送。",
-        "nextStep": "确认部署的消费者模型；如需多进程支持，增加原子认领或持久租约并补充并发刷新测试。",
+        "question": "capture 成功但聚合批次事务失败时，应复用、补偿还是清理已经生成的 revision 和 job？",
+        "why": "capture 在事务外执行，随后才复查事件状态并写入批次；材料未展示跨两部分的回滚、补偿或恢复协议。",
+        "nextStep": "检查统一 capture 对批量 externalId 的幂等行为，并补充状态并发变化、批次写入失败及重试场景的行为测试，再确定补偿策略。",
         "blocking": false,
         "citationKeys": [
+          "c11"
+        ]
+      },
+      {
+        "question": "HookSpool 是否需要保证多个进程对同一生产者和事件号严格执行先写者胜出？",
+        "why": "实现先检查正式路径是否存在，再把随机临时文件重命名到该路径；没有排他创建或竞争后的摘要复核，结果依赖目标文件系统的重命名语义。",
+        "nextStep": "明确部署中是否允许多个 Hook 进程共享缓冲目录；若允许，验证目标文件系统的竞争行为，并评估排他提交或提交后冲突校验。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
           "c5"
-        ]
-      },
-      {
-        "question": "capture 成功后批次事务因事件状态变化而失败时，应如何处理已创建的 revision 或 job？",
-        "why": "外部 capture 在数据库复核和批次写入之前执行，后续 `INPUT_BATCH_CHANGED` 回滚无法自动补偿其外部效果。",
-        "nextStep": "核对 capture 的幂等身份与 revision 生成规则，并在确定性重用、事务外盒或显式补偿机制中选择方案，再增加并发及失败注入测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c10"
-        ]
-      },
-      {
-        "question": "批次顶层 actor 的一致性是否还应比较外部身份、principal 身份和 binding version？",
-        "why": "当前只用 actorId、actorType 和 actorVerifiedBy 判断稳定，却会在稳定时从最后事件继承其他身份字段，可能形成超出已验证范围的归属。",
-        "nextStep": "依据身份绑定合同明确继承规则；必要时扩大一致性比较，或仅在所有相关身份字段一致时生成顶层 actor。",
-        "blocking": false,
-        "citationKeys": [
-          "c8"
         ]
       }
     ]
@@ -185,28 +203,28 @@
     {
       "kind": "article",
       "key": "omem:apps/server/src/inputs/aggregator.ts",
-      "digest": "995c004b4f30ed757c72e98d51bb7a1e852f7253ca1df741ea5499f5de5d4607"
+      "digest": "91716a28f320a2dfcf55bfdcc4317534ba75cc8dba49e131d36b39344543960d"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/inputs/spool.ts",
-      "digest": "11a5366ad29e4ba79fbffa748d97ec4994d5f02f3c923f3270cd8d0528bbee47"
+      "digest": "1ca12a2c3f41d56cf6441bfbd5aed8c037897250fe31fddc8ed09fdfd1c98ba5"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:17:19.791Z",
+    "at": "2026-09-30T19:40:44.501Z",
     "trace": {
-      "runId": "1feafccd-b435-4536-9885-f518a68b73d1",
+      "runId": "58b9db8f-e808-4181-9828-20a66637e1c4",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "d8e1f1265d7627b49a45b5960ff4e50a6f263856e7c1e708bc08e2c8a1278032",
-      "contextHash": "6935d4c6d96664fc7ff9a924132496398ae3480497f419d5a4c05e640f7f1da0",
+      "promptHash": "f33e2824c4b05f9325ede411ddc7ba70791f3ba6076efcd1286d757b5f00fe6c",
+      "contextHash": "9f956ec1b03159cc7a79e7b78e4ed7bacc78150534fee968d888bae573097bd1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "149ab4b1ad9d009b916761393b40ce03c776b510a7c0f2f420e52f10404532a8",
+      "fingerprint": "17ff6b1833a3abcda76461507ddaafc53e38781faa311f831015fbebdc90004b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -219,11 +237,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eed0-49ac-7060-8457-cecee2b63327"
+        "01a0f3d5-0dc8-77d2-a39a-05dc62bd3d2d"
       ],
       "usage": {
-        "used": 30304,
-        "size": 760000,
+        "used": 36483,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -231,10 +249,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 50465,
-          "utf8Bytes": 59755,
-          "estimatedTokens": 19919,
-          "budgetedTokens": 24899,
+          "chars": 49768,
+          "utf8Bytes": 58834,
+          "estimatedTokens": 19612,
+          "budgetedTokens": 24515,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -243,17 +261,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:17:27.127Z",
+    "at": "2026-09-30T19:41:03.246Z",
     "trace": {
-      "runId": "5e2c70ec-4023-4c5b-b04d-7b86463fda75",
+      "runId": "0cc47346-9baa-444b-95b3-1483305832ac",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9bb7faebd56f6851ad4d8f25a513a12615615fe485923fb9d92c3cc0854bb093",
-      "contextHash": "5860079aafa43e2c9bf06be60d4f048eb2dfb738c98457863f2379f68f229104",
+      "promptHash": "6f8911c15b857bbd05e1f56af548b20f686891b6e217e7b0aba2de595b4435d5",
+      "contextHash": "8c896c9993b7b29753d65fce685ccc7cf22403c73c6eae619e8da724271d8553",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "52556888af1474f365ba4d719458567355370c4ac4ed975ca1415494663640ea",
+      "fingerprint": "0d096ccac691aad55c6cc427821b9496a71da00193b2a62a760f4b06e2a2ef09",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -266,11 +284,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eed0-8eaf-7551-9638-6484d1a3376e"
+        "01a0f3d5-7ac0-7db3-b880-1182041a398b"
       ],
       "usage": {
-        "used": 27459,
-        "size": 760000,
+        "used": 33360,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -278,10 +296,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 47109,
-          "utf8Bytes": 54438,
-          "estimatedTokens": 18146,
-          "budgetedTokens": 22683,
+          "chars": 45673,
+          "utf8Bytes": 53064,
+          "estimatedTokens": 17688,
+          "budgetedTokens": 22110,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

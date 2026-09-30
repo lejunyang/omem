@@ -2,26 +2,26 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
-    "title": "Botmux 既有 Lark 应用导入提供器",
-    "summary": "从经过基础结构、字段和大小校验的 Botmux JSON 文件发现可复用应用，并按应用标识向 onboarding 提供应用密钥、平台品牌及可选 owner 身份线索。",
+    "title": "Botmux 既有 Lark 应用复用适配器",
+    "summary": "从受控本地配置读取 botmux 应用，验证凭据一致性，对外提供脱敏应用列表，并仅在明确选择应用后返回注册所需凭据。",
     "category": "implementation",
     "sections": [
       {
-        "key": "source-validation",
-        "title": "配置来源与输入校验",
-        "body": "提供器用于复用 Botmux 保存的 Lark 应用。配置路径依次取构造参数、两个环境变量和用户目录下的默认文件；配置值会经 `resolve` 形成绝对路径。文件不存在时返回空集合，存在时必须是普通文件、大小不超过 5 MB且顶层为数组。每项应用标识必须符合 `cli_` 格式并具有非空密钥；同一标识若对应不同密钥会报凭据冲突，JSON 解析错误则向上传播。[[c1]] 这些检查覆盖基础格式与冲突，但材料未显示文件权限、所有者或符号链接目标校验。"
+        "key": "source_and_validation",
+        "title": "配置来源与输入约束",
+        "body": "提供器优先采用构造参数，其次读取 `OMEM_BOTMUX_CONFIG` 或 `BOTS_CONFIG`，否则使用用户目录下的 `.botmux/bots.json`。路径会被解析为绝对路径；文件不存在时视为空列表，存在时必须是普通文件、不得超过 5 MB，且顶层必须为数组。每项应用编号需匹配 `cli_` 格式并具有非空密钥，同一应用编号若出现不同密钥则整体拒绝。[[c1]]"
       },
       {
-        "key": "listing-credentials",
-        "title": "应用展示与凭据交付",
-        "body": "`list` 按应用标识去重，返回应用标识、名称、平台品牌和 Botmux 来源；名称缺失时用标识末六位生成回退名称，只有品牌值严格等于 `lark` 才归为 Lark，其余统一归为飞书。[[c2]] `credentials` 会再次读取配置并按应用标识查找，找不到时报错；找到后向接入流程返回 client ID、密钥、可选 owner open ID 和平台品牌。[[c3]] onboarding 的导入分支确实调用该接口取得 Botmux 凭据，再进入统一的凭据接受流程。[[c4]] 文件没有缓存，因此列表与凭据读取可能看到不同时间点的磁盘内容；其可信边界仍依赖部署环境对该配置文件的保护。"
+        "key": "listing_and_credentials",
+        "title": "列表展示与凭据交付",
+        "body": "`list` 按应用编号去重，只暴露编号、名称、品牌和来源，不返回密钥；缺少名称时使用编号末六位生成可读名称，未知品牌默认按飞书处理。`credentials` 会重新读取并查找指定应用，未找到则报错；找到后返回 clientId、clientSecret，以及可选 owner open ID 和品牌，供接入流程继续注册或能力检查。[[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Botmux 路径解析与文件校验",
-        "reason": "支持配置路径优先级、文件存在性、普通文件和大小限制、JSON 数组结构、应用标识与密钥校验以及凭据冲突处理。",
+        "label": "Botmux 配置读取与验证",
+        "reason": "支持路径优先级、文件大小与结构限制、应用编号和凭据冲突校验。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -33,53 +33,27 @@
       },
       {
         "key": "c2",
-        "label": "可复用应用列表",
-        "reason": "说明列表按应用标识去重，并公开应用标识、名称、平台品牌和来源，以及名称与品牌的回退规则。",
+        "label": "应用列表与凭据查询",
+        "reason": "支持列表不暴露密钥、按应用去重，以及选择后返回注册凭据。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
           "startLine": 63,
-          "endLine": 79
+          "endLine": 94
         },
         "quote": "  list(): ReusableLarkApp[] {\n    const unique = new Map<string, ReusableLarkApp>();\n    for (const entry of this.entries()) {\n      const appId = String(entry.larkAppId);\n      if (!unique.has(appId))\n        unique.set(appId, {\n          appId,\n          name:\n            typeof entry.name === \"string\" && entry.name\n"
-      },
-      {
-        "key": "c3",
-        "label": "既有应用凭据读取",
-        "reason": "说明凭据接口重新查找目标应用，并返回应用标识、密钥、可选 owner 身份线索和平台品牌。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
-          "startLine": 81,
-          "endLine": 95
-        },
-        "quote": "  credentials(appId: string): LarkRegistrationCredentials {\n    const entry = this.entries().find(\n      (candidate) => candidate.larkAppId === appId,\n    );\n    if (!entry) throw Error(\"BOTMUX_APP_NOT_FOUND\");\n    return {\n      clientId: appId,\n      clientSecret: String(entry.larkAppSecret),\n      userInfo: {\n      "
-      },
-      {
-        "key": "c4",
-        "label": "Botmux 导入接入流程",
-        "reason": "提供跨文件源代码依据，证明 onboarding 在 Botmux 导入模式下调用既有应用提供器获取凭据并交给统一接入流程。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-          "startLine": 124,
-          "endLine": 164
-        },
-        "quote": "  async importExisting(value: unknown) {\n    const input = larkExistingImportSchema.parse(value);\n    const id = randomUUID();\n    const at = iso(this.clock());\n    this.transaction(() => {\n      this.db\n        .prepare(\n          `INSERT INTO lark_onboardings(\n             id,workspace_id,mode,requested_app_id,reques"
       }
     ],
     "questions": [
       {
-        "question": "Botmux 配置文件是否需要强制安全权限、所有者及符号链接目标检查？",
-        "why": "文件包含可直接使用的应用密钥；现有材料只展示文件类型、大小、JSON 结构和字段格式校验，没有展示对权限过宽、非预期所有者或符号链接替换的防护。",
-        "nextStep": "根据部署威胁模型确定可信文件策略，并增加权限、所有者及符号链接检查，或明确记录接受该风险的运行环境约束。",
+        "question": "botmux 配置文件的所有权和权限是否需要在读取前强制校验？",
+        "why": "材料检查了文件类型和大小，但未检查文件权限、所有者或符号链接边界；该文件包含明文应用密钥。",
+        "nextStep": "确定支持的平台安全基线，并补充权限与所有者校验或迁移到加密密钥存储。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c3"
+          "c2"
         ]
       }
     ]
@@ -133,23 +107,23 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:04:44.493Z",
+    "at": "2026-09-30T19:16:52.292Z",
     "trace": {
-      "runId": "658ad2dc-4037-4de8-81e8-c72ba9bccc2a",
+      "runId": "62d0ed23-757e-4f8d-856b-48f79b10214d",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "9a571f82c6db48c0c5083174fe7440ed7cffad21bcab552562532bc09129246b",
-      "contextHash": "0ae6539533e3831cfc6baa2e83fd7431231331d6f9fed73cf2b99704c469934c",
+      "promptHash": "1b1bb6cd4611a020d53fdbd10a99d3c42dcd8f183a15b704d7bc49b80b1a3bdc",
+      "contextHash": "9dd1d982275d8e793e179f953402bf7c609d370f0752dc4940cd0625dcf15b30",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fe9bb347bfb410fd0ee291d62228917f2848c3d4f6d5bfc0f1285f3fe9eae212",
+      "fingerprint": "e946d048bb583e2179a6f90e70614e25ec18f43606635ea46da79a4e58013edb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -162,11 +136,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8d-bad4-7283-a845-7cad49685b5f"
+        "01a0f3be-b4ac-7282-aade-c9f671b10032"
       ],
       "usage": {
-        "used": 51717,
-        "size": 760000,
+        "used": 59069,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -174,10 +148,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 131096,
-          "utf8Bytes": 136644,
-          "estimatedTokens": 45548,
-          "budgetedTokens": 56935,
+          "chars": 124839,
+          "utf8Bytes": 126869,
+          "estimatedTokens": 42290,
+          "budgetedTokens": 52863,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +160,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:05:02.754Z",
+    "at": "2026-09-30T19:17:28.570Z",
     "trace": {
-      "runId": "9aec7af7-5d6f-4e4f-85d1-731298f59859",
+      "runId": "bdf3ae8d-5ffa-4771-bad9-9c1b2a7fa65a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "7015dcdf443063bfc178a09766f9d4d9b1d30212fc68f8f86ec063ba5876bac5",
-      "contextHash": "5cf5f05cdb0470025bf62bea3199bda828cf46f081313e135216e19d7e2e7662",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "d92d088269cbf475affbb719bf5d521f8f8696c533e6f339a3f3000d3ef67c25",
+      "contextHash": "3b4a4524bf58d4fadcd522daab833b5729fd14568e5f879a257e8f4bca11ed1c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "98a7334c398081cd9872a74b8c1d6c9024aa15484bf373738c7dfa9c2478ee9c",
+      "fingerprint": "bdb51970e48a86c7d730de9738f9c3fee7f4d043475ed87efa98213e2d0ee1c6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,11 +183,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8e-18d8-71c2-9608-0731ea70e95e"
+        "01a0f3bf-9f7b-7f50-ae10-3ec3946df79c"
       ],
       "usage": {
-        "used": 49893,
-        "size": 760000,
+        "used": 62338,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -221,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129361,
-          "utf8Bytes": 134261,
-          "estimatedTokens": 44754,
-          "budgetedTokens": 55943,
+          "chars": 138803,
+          "utf8Bytes": 148505,
+          "estimatedTokens": 49502,
+          "budgetedTokens": 61878,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

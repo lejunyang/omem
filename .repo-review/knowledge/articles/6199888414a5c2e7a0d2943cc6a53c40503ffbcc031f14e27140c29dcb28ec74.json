@@ -2,44 +2,49 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/connectors.ts",
-    "title": "受限外部来源到统一捕获输入的转换器",
-    "summary": "将本地文本文件、Git 历史文件、飞书文档和 Agent hook 事件安全地转换为统一 CaptureInput，同时限制路径、大小、URL、字段和敏感文本。",
+    "title": "受边界约束的外部捕获连接器",
+    "summary": "将本地文件、Git 固定提交、飞书文档和 Agent Hook 事件规范化为统一 CaptureInput，并通过路径、大小、URL、字段和部分凭据脱敏限制捕获边界。",
     "category": "implementation",
     "sections": [
       {
-        "key": "filesystem-git",
-        "title": "文件与 Git 的有界读取",
-        "body": "文件连接器先解析真实路径，并要求它位于显式配置的捕获根目录内，从而同时约束普通路径和符号链接；随后限制为 500 KB、严格 UTF-8 且不含 NUL 的纯文本。[[c1]] Git 连接器复用仓库根目录检查，并分别限制 ref 与仓库内路径；它先把 ref 验证为 commit SHA，再用参数数组调用 `git show`，最终把 SHA 记录为上游版本。材料只证明该文件读取指定提交中的单个路径，没有递归扫描或自动抓取链接。[[c2]]"
+        "key": "local-inputs",
+        "title": "文件与 Git 的固定读取",
+        "body": "文件导入先解析真实路径，并要求目标位于配置的捕获根目录内，以防符号链接或相对路径绕过；随后限制为 500 KB，执行严格 UTF-8 解码并拒绝含空字节的内容。产物统一为文本 part，规范化后的路径同时作为外部身份。[[c1]]\n\nGit 导入复用仓库根目录约束，但对 ref 与仓库路径采用不同规则：ref 使用保守字符白名单，并拒绝前导连字符和 `..`；路径则拒绝绝对路径、父目录段、冒号和前导连字符。它先把 ref 解析为 commit SHA，再以该 SHA 读取文件，因此记录的是固定来源版本。此表述取代此前笼统称“Git ref 与路径均采用保守字符规则”的结论。[[c2]]"
       },
       {
         "key": "lark",
         "title": "飞书文档读取",
-        "body": "飞书入口只接受 HTTPS、无用户名密码、路径形态为 docx/wiki 且主机位于允许域名的 URL。验证后通过 `lark-cli` 请求 Markdown 和引用详情，检查响应成功及正文类型，再把正文、原文链接和可选引用映射作为捕获内容；引用映射只是来源上下文，不被解释为可执行标记或推导链接。[[c3]]"
+        "body": "飞书连接器只接受 HTTPS、无内嵌用户凭据、路径格式受限且属于允许域名的 docx/wiki URL，再调用外部 `lark-cli` 获取带 ID 的 Markdown。正文和原文链接成为捕获 parts；可选 reference map 被序列化为标注“来源引用元信息”的文本 part，而 `context` 保持为空。[[c3]]"
       },
       {
-        "key": "hook",
-        "title": "Hook 字段筛选与来源身份",
-        "body": "Hook 转换要求对象输入，只从 profile 明示的字段中选择会话、轮次、工具、提示、输入输出和错误；未知扩展及隐藏转录不会自动进入捕获。序列化时仅对形如部分 API token 的字符串做替换，并执行字符预算。[[c4]] 事件优先采用显式 ID，否则由会话、调用信息和正文摘要生成稳定身份；结果携带时间、collector 和原始生产者标记，但 actor 保持未知，避免无依据绑定到个人。[[c5]]"
+        "key": "hooks",
+        "title": "Hook 字段选择与来源身份",
+        "body": "Hook 捕获仅选择 profile 明确列出的会话、工具、提示、输入、响应和错误字段，未知扩展及隐藏转录不会自动纳入。字符串中的 `sk-`、`ghp_` 形态会被替换，序列化结果还受字符预算约束。[[c4]]\n\n事件身份优先采用显式 event ID；缺失时，由会话、轮次、工具调用、事件名称和内容摘要生成稳定身份。合法时间戳会被规范化，并连同采集器、转发状态和 producer kind 写入 provenance。[[c5]]"
+      },
+      {
+        "key": "limits",
+        "title": "已知边界",
+        "body": "这些连接器执行显式、有限的读取，捕获文本中的普通 URL 只会保留而不会被自动抓取。[[c6]] 文件入口只接受有限大小的纯 UTF-8 文本；Git 路径检查并非通用字符白名单；飞书能力依赖外部 CLI 及其授权。Hook 当前替换式只覆盖两类密钥前缀，不能视为通用秘密扫描器。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "捕获根目录与文本限制",
-        "reason": "支持真实路径约束、文件大小、UTF-8 和二进制文本检查。",
+        "label": "本地文件导入边界",
+        "reason": "支持真实路径必须位于配置根目录内，以及大小、UTF-8、空字节和统一文本输入等约束。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/connectors.ts",
-          "startLine": 1,
+          "startLine": 10,
           "endLine": 34
         },
-        "quote": "/** Connectors are explicit, bounded reads. URLs in captured text are retained, never\n * automatically crawled. Server filesystem imports require configured roots. */\nimport { readFile, realpath, stat } from \"node:fs/promises\";\nimport { resolve, relative, isAbsolute } from \"node:path\";\nimport { execFile } from \"node:ch"
+        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
       },
       {
         "key": "c2",
-        "label": "Git 引用与路径读取",
-        "reason": "说明 Git ref、仓库路径的校验及通过已验证提交读取单文件的流程。",
+        "label": "Git 固定提交读取",
+        "reason": "支持 ref 的字符白名单、仓库路径的独立拒绝条件，以及先解析 commit SHA 再读取文件的固定版本流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -51,8 +56,8 @@
       },
       {
         "key": "c3",
-        "label": "飞书 URL 和 CLI 响应转换",
-        "reason": "支持允许域名、URL 形态、外部 CLI 调用及统一捕获内容的构造。",
+        "label": "飞书文档连接器",
+        "reason": "支持 URL 协议、路径及域名限制，外部 CLI 调用，以及正文、链接和 reference map 的 parts 组织方式。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,8 +69,8 @@
       },
       {
         "key": "c4",
-        "label": "Hook 白名单与文本预算",
-        "reason": "说明 hook 仅捕获 profile 明示字段、执行有限脱敏并限制最大字符数。",
+        "label": "Hook 捕获字段与脱敏",
+        "reason": "支持字段白名单、字符预算，以及仅针对 sk- 和 ghp_ 两类前缀的替换边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -77,8 +82,8 @@
       },
       {
         "key": "c5",
-        "label": "Hook 稳定身份与来源元数据",
-        "reason": "支持事件 ID 回退算法、时间规范化和未验证 actor 的 provenance 表达。",
+        "label": "Hook 事件身份与来源",
+        "reason": "支持显式事件 ID、摘要回退身份、时间规范化和 provenance 字段的构造流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -87,13 +92,26 @@
           "endLine": 238
         },
         "quote": "  const explicitEventId = v.event_id ?? v.hook_id ?? v.message_id;\n  const fallbackIdentity = [\n    v.session_id,\n    v.turn_id,\n    v.tool_use_id,\n    v.tool_call_id,\n    v.tool_name,\n    event,\n    createHash(\"sha256\").update(text).digest(\"hex\"),\n  ]\n    .filter((part) => part !== undefined && part !== null && String"
+      },
+      {
+        "key": "c6",
+        "label": "显式有限读取原则",
+        "reason": "支持连接器不会自动爬取捕获文本中的 URL，并要求服务端文件导入受配置根目录约束。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 1,
+          "endLine": 9
+        },
+        "quote": "/** Connectors are explicit, bounded reads. URLs in captured text are retained, never\n * automatically crawled. Server filesystem imports require configured roots. */\nimport { readFile, realpath, stat } from \"node:fs/promises\";\nimport { resolve, relative, isAbsolute } from \"node:path\";\nimport { execFile } from \"node:ch"
       }
     ],
     "questions": [
       {
-        "question": "Hook 文本是否还需要覆盖更多秘密格式或结构化字段级脱敏？",
-        "why": "现有替换只匹配两类前缀形式的长字符串，材料不能证明其他令牌、密码或嵌套非字符串秘密均会被清除。",
-        "nextStep": "依据实际 hook 数据分类建立敏感字段清单，并增加结构化删除与多种凭据格式的测试。",
+        "question": "Hook 密钥脱敏是否需要覆盖更多凭据格式或改用可配置规则？",
+        "why": "当前替换表达式只显式覆盖 `sk-` 和 `ghp_` 形态，其他令牌、Authorization 值或私钥片段仍可能出现在获准捕获的字段中。",
+        "nextStep": "结合真实 Hook 样本建立敏感字段与令牌格式清单，再决定增加结构化字段过滤还是扩展可配置脱敏器。",
         "blocking": false,
         "citationKeys": [
           "c4"
@@ -110,7 +128,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
@@ -145,7 +163,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -156,34 +174,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:02:31.928Z",
+    "at": "2026-09-30T19:19:09.946Z",
     "trace": {
-      "runId": "fdb98094-d0c7-4b1e-ae2d-db638b282086",
-      "roleId": "code-analyst",
+      "runId": "67e7fb1f-bd57-4ca5-aaed-f61b8b8428e7",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "d84a1436781fa1c16f1df33365d0860899e3cc6a036fc18ba536de28eab03fb6",
-      "contextHash": "1c90f6fdc966562afb6c99d3d9b281a94ee9dda2ca0860e1e0a75d4bc58ebbf7",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "382c8b21735064bbf50687e9ac342256953c0d849b8e73439ec2934235a01e43",
+      "contextHash": "91ae2c36f0e9b6675111006fee4884c6e7946576e974468d9da2d722ad13b7c4",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "89b7cbc1272879850193c7a4bcc95bef69d0f2dedd3466645f5d1b7a6e2817b0",
+      "fingerprint": "b2de419f9fc575c4ad8b40ed6a71ff7ac9fc50b64c01ffa7af193ea8c514cf8a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8b-3732-7771-9f59-588e53b88a4a"
+        "01a0f3c1-5c6a-7dd3-ba6c-10c46ff41e55"
       ],
       "usage": {
-        "used": 49305,
-        "size": 760000,
+        "used": 53544,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -191,10 +209,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 109552,
-          "utf8Bytes": 111371,
-          "estimatedTokens": 37124,
-          "budgetedTokens": 46405,
+          "chars": 114433,
+          "utf8Bytes": 118242,
+          "estimatedTokens": 39414,
+          "budgetedTokens": 49268,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -203,17 +221,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:03:06.007Z",
+    "at": "2026-09-30T19:19:32.292Z",
     "trace": {
-      "runId": "2e79240a-b27c-4d75-a9fd-7d4e931f7733",
+      "runId": "d1e37e22-059c-428b-b1c8-b52b32de3a74",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "966e003fb7ece1ade11c6d46b806a7c1690b2ed3e6976c11797c2fdd3f0c12ad",
-      "contextHash": "a2e3bc93ffba599c3474dade47c44bc7fcdffc700d0cfb8c74b2c2ea81a34306",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "8d9d0d0dada2f610b97d649ef0e976052b3517a751c2e55bf3e2d3b279a086b6",
+      "contextHash": "f2b216860b47860b70eb28568d24231e8951b50767090b40b6f03fe20ae27147",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "8d7c95d3769504330976d1cd6eea40d75f72e3677ddd474428cfe75030320144",
+      "fingerprint": "44f72c6588b3ff6b3cb8846bd53d5f2c62e08e647d05e18043b14c70bb38a705",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -226,11 +244,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee8c-149d-7042-a7c2-8d49d3851bff"
+        "01a0f3c1-bbd2-74f3-b1fd-303ee37677b9"
       ],
       "usage": {
-        "used": 53392,
-        "size": 760000,
+        "used": 52060,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -238,10 +256,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129085,
-          "utf8Bytes": 139068,
-          "estimatedTokens": 46356,
-          "budgetedTokens": 57945,
+          "chars": 111773,
+          "utf8Bytes": 114814,
+          "estimatedTokens": 38272,
+          "budgetedTokens": 47840,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:scripts/live-refresh-smoke.ts",
+    "title": "来源更新与记忆重核验冒烟验证",
+    "summary": "通过真实模型配置下的 LearningPipeline 验证同一来源由重试上限 3 更新为 5 后，旧记忆即时失效，经流水线处理后沿用原身份生成新版本，并保留旧原始证据。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "purpose-and-fixture",
+        "title": "问题与测试夹具",
+        "body": "脚本针对“新修订已捕获，但旧派生记忆是否及时失效并由新版本接续”的风险。它在临时 Store 中选择 `gpt-5.6-sol` profile，组装 LearningPipeline、MemoryService 与 FeedbackService；捕获函数以固定 externalId 和完整所有者 provenance 生成 Aurora 重试上限事实。[[c1]] 材料只能确认这些组件参与流水线，不能据此单独证明其内部角色必然相互独立。"
+      },
+      {
+        "key": "refresh-flow",
+        "title": "失效、处理与版本续接",
+        "body": "首次捕获“上限 3 次”并经 LearningPipeline drain 后，数据库应只有一条 active memory；同一来源更新为“5 次”时，在第二次 drain 前原记忆立即变为 `invalidated`。[[c2]] 处理完成后，记忆数量仍为一、ID 不变、版本升至 2、状态恢复 active，正文包含 5；旧 source revision 的 fragment 仍含 3，且新 revision 对应的刷新记录为 `applied`。[[c3]] 这些是可观察的成功结果，不足以断言内部具体提取和复核角色的独立性。"
+      },
+      {
+        "key": "reporting-and-limits",
+        "title": "诊断产物与覆盖边界",
+        "body": "成功或失败后，脚本都会停止流水线，收集 jobs、refresh records 和 proposals，写入验证报告，并关闭及删除临时环境。[[c4]] 覆盖范围限于单一来源、单一明确数值变化和成功处理路径；含糊冲突、模型失败、多个候选、批量预算、重启恢复及失败结果不得覆盖旧有效知识等语义尚未由该脚本证明。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "学习流水线与来源夹具",
+        "reason": "支持真实模型 profile、LearningPipeline 装配，以及同一来源两次捕获的身份和 provenance 设置。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-refresh-smoke.ts",
+          "startLine": 10,
+          "endLine": 23
+        },
+        "quote": "const config = loadConfig();\nconst directory = mkdtempSync(join(tmpdir(), \"omem-live-refresh-\"));\nconst store = new Store(directory);\nlet pipeline: LearningPipeline | undefined;\nconst report: Record<string, unknown> = { startedAt: new Date().toISOString() };\ntry {\n  const { profile } = await selectLiveProfile(config.pr"
+      },
+      {
+        "key": "c2",
+        "label": "旧记忆即时失效",
+        "reason": "支持首次处理后存在一条有效记忆，并在来源更新后、再次处理前转为 invalidated。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-refresh-smoke.ts",
+          "startLine": 24,
+          "endLine": 31
+        },
+        "quote": "  console.log(\"Live refresh: extract and independently verify initial source\");\n  const old = capture(3); await pipeline.drain(8);\n  const before = store.db.prepare(\"SELECT id,version FROM memories WHERE status='active'\").all() as { id: string; version: number }[];\n  assert.equal(before.length, 1, \"Expected one applied"
+      },
+      {
+        "key": "c3",
+        "label": "版本续接与原文保留",
+        "reason": "支持处理后沿用记忆 ID、版本递增、正文更新、旧原文保留及刷新记录 applied。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-refresh-smoke.ts",
+          "startLine": 32,
+          "endLine": 37
+        },
+        "quote": "  const after = store.db.prepare(\"SELECT m.id,m.version,m.status,r.body FROM memories m JOIN memory_revisions r ON r.id=m.head_revision_id\").all();\n  assert.equal(after.length, 1); assert.equal(after[0]!.id, before[0]!.id); assert.equal(after[0]!.version, 2); assert.equal(after[0]!.status, \"active\");\n  assert.match(Str"
+      },
+      {
+        "key": "c4",
+        "label": "刷新诊断报告",
+        "reason": "支持收集任务、刷新记录与提案，写入报告并清理资源。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-refresh-smoke.ts",
+          "startLine": 38,
+          "endLine": 46
+        },
+        "quote": "} catch (error) { report.status = \"failed\"; report.error = String(error); process.exitCode = 1; }\nfinally {\n  await pipeline?.stop();\n  report.jobs = store.jobs.list(); report.refresh = store.db.prepare(\"SELECT * FROM refresh_records\").all();\n  report.proposals = new MemoryService(store).proposals(); report.finishedAt "
+      }
+    ],
+    "questions": [
+      {
+        "question": "当第二次流水线处理失败或给出 ambiguous 结果时，旧记忆应保持 invalidated、恢复 active，还是进入可见的待处理状态？",
+        "why": "当前材料只展示新 revision 成功应用后的最终状态，无法确认失败路径对旧有效知识和刷新记录的精确语义。",
+        "nextStep": "补充模型失败与 ambiguous verdict 的现场测试，检查 memory、proposal、job 和 refresh_record 的状态组合及重试行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-assistant-smoke.ts",
+      "digest": "717ee10967b49593e5dbb5e764f0863bd1b30aba4aada54bd0b361adfd64896c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-refresh-smoke.ts",
+      "digest": "18d18495727491cd7e1cb6fa8b9ae440269175d9ec4c3ce24e9a944e5aa7de11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-retrieval-smoke.ts",
+      "digest": "7b4c6cdfbc7b93a6883d060595ffde9c5bce21d7ca4d2358244c801293857a91"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/retrieval-index.ts",
+      "digest": "e00fa36bfb6fb2bcdf888653bc52f006be6a7d2527b967783c02c2bf52ee696f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "183b2bdd497d04202fd81a7e942c574fe56fb71f75b6049b5b456830d3515672"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-09-30T20:06:44.637Z",
+    "trace": {
+      "runId": "32836daa-c91f-40bc-a055-07cb8a401b03",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "9fbc6a19edb49918ad30e134f34111f4ec1a733de2643000abd5bb05cf9c58ea",
+      "contextHash": "4d0a6953f3c8d56701648816d4adb237ac17a2117183d456ccbc385a8f6118ba",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "373fbf149d393a5a56ee68643b6bfa3e883fe58908062e61a025424a75ee0d37",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3ec-4a83-7c30-98ac-b2ff2f4b589a"
+      ],
+      "usage": {
+        "used": 56841,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 104779,
+          "utf8Bytes": 114182,
+          "estimatedTokens": 38061,
+          "budgetedTokens": 47577,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-09-30T20:07:17.512Z",
+    "trace": {
+      "runId": "cd5c360d-6e31-436c-97e1-c50bf99e7280",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "de9a7fdfb89da3a5e1c8c2e12bd2d7578ea91468b9d96b0f49c6d9ed581ea25d",
+      "contextHash": "912127306e9f89455cfe1a2d00d9d1da6d31ce8fba623f03c7203ce1043d6584",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "bcfb337843ae7651f08f563729b2637ec3c30eee31bfbdcfb35c448e04bc1084",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f3ed-4a7d-7481-ae91-112f53c809e7"
+      ],
+      "usage": {
+        "used": 56563,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 115126,
+          "utf8Bytes": 128677,
+          "estimatedTokens": 42893,
+          "budgetedTokens": 53617,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -2,78 +2,122 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/quality/import.ts",
-    "title": "仅供评测的质量样本导入器",
-    "summary": "把显式指定的文档规则切分为人工标注草稿数据集；它刻意与正常捕获和学习链路隔离，生成标签只可作为研究标注起点。",
-    "category": "research",
+    "title": "研究标注数据集导入器",
+    "summary": "把研究文档的文本内容切分、排序并包装成人工质量标注草稿。被替代的结论是“整个模块都由哨兵强制隔离”：实际仅数据集导入入口执行运行时校验，公开生成器与生产链路的隔离仍依赖调用边界。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "eval-boundary",
+        "key": "purpose",
         "title": "用途与隔离边界",
-        "body": "该文件解决的是质量研究数据集的冷启动，而不是生产知识提炼。文件声明这些 helper 只供显式触发的人工标注 harness 使用，HTTP capture、CLI 导入、inputs ingest 和学习管线都不得调用；普通材料仍应进入不可变 source revision 与 fragment。规则生成的 `explicit/claim`、逐字 evidence 和 `autoApply=true` 只是待人工判断的草稿，不能泄漏到生产捕获。[[c1]] 入口还要求调用者传入字面量 `EVAL_ONLY_RESEARCH`，错误 opt-in 会立即失败。[[c2]]"
+        "body": "该模块服务于研究性质的人工质量标注：把 Lark/HTML 文档转换为规则生成的草稿样本，供人工判断，不属于普通捕获、导入或学习流程。[[c1]] 被替代的结论是“整个模块都由显式哨兵强制隔离”：`documentQualityEvalSamples` 是可直接调用且没有哨兵参数的公开生成器。[[c2]] 真正的运行时保护位于 `importQualityDatasetEval`；传入值不等于固定常量时会显式失败。[[c3]] 因此落库入口受到强制保护，而生成器不进入生产路径仍依赖调用关系和集成纪律。"
       },
       {
-        "key": "sampling-flow",
-        "title": "切分、排序与落库流程",
-        "body": "样本构建只合并文本 part，将 Markdown/HTML 表达清理为纯文本，并用标题维护 section。白板、网格、表格和图片块被跳过；长行按中文标点拆句，只保留 24–500 字的文本，再以 section 与正文摘要去重并产生稳定 fragment 标识。[[c3]] 每个候选都生成 claim 草稿，并根据“必须、限制、不支持”等规则词、否定表达和数字加权；候选按分数降序、原文顺序次序截取。达不到目标数量会报错，而不是静默生成较小数据集。[[c4]]\n\n导入阶段根据整份文档和来源信息计算 source digest，经 `QualityRepository.createDataset` 建数据集，再批量添加样本。这里未处理非文本 part 的质量样本，也没有模型判断；准确性、限定完整性和是否可自动沉淀仍交给人工标注。[[c5]]"
+        "key": "pipeline",
+        "title": "候选生成流程",
+        "body": "生成器只汇集 `CaptureInput` 的文本部分，以空行分块，并用 Markdown 标题更新候选所属章节。[[c4]] 图片、表格及部分复杂 HTML 块会被跳过；普通文本先清洗，超过 120 字时按中文句末标点拆分，仅保留 24～500 字的内容，并依据章节与文本摘要在本次生成中去重。[[c5]] 每个候选被包装为 `explicit/claim` 草稿，限制词、否定词和数字参与加权，随后按分数及来源顺序排序并截取目标数量。[[c6]]"
+      },
+      {
+        "key": "persistence",
+        "title": "数据集请求与限制",
+        "body": "候选少于目标数量时会抛出 `QUALITY_SOURCE_TOO_SMALL`；来源摘要覆盖来源 URI、文档标识、上游版本和完整文本。[[c7]] 导入入口随后请求仓储创建数据集，并把生成样本交给仓储批量写入。[[c8]] 这里不再声称入口必然“取得既有数据集”：当前获准材料只能证明它调用 `createDataset`，无法展示仓储是否按名称、切分和摘要复用已有记录。规则切分器也不核验事实准确性，且草稿默认带有自动应用标记，因此生成结果只能用于受隔离的人工研究标注。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评测专用边界声明",
-        "reason": "支持该导入器与普通捕获、学习管线隔离及草稿标签不得用于生产的说明。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 1,
-          "endLine": 14
-        },
-        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
-      },
-      {
-        "key": "c2",
-        "label": "显式研究 opt-in",
-        "reason": "说明只有指定字面量才能执行质量数据集导入。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 156,
-          "endLine": 175
-        },
-        "quote": "/** Eval-only: materialize a rule-split draft dataset for human annotation.\n *  Guarded by {@link QUALITY_EVAL_ONLY}: the ordinary capture/import pipeline\n *  does not create quality datasets or annotation samples. */\nexport function importQualityDatasetEval(input: {\n  optIn: typeof QUALITY_EVAL_ONLY;\n  repository: Qua"
-      },
-      {
-        "key": "c3",
-        "label": "文档清理与候选切分",
-        "reason": "支持文本 part 合并、特殊块跳过、句长限制及摘要去重流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 30,
-          "endLine": 105
-        },
-        "quote": "const plainText = (value: string) =>\n  value\n    .replace(/!\\[([^\\]]*)\\]\\([^)]*\\)/g, \"$1\")\n    .replace(/\\[([^\\]]+)\\]\\([^)]*\\)/g, \"$1\")\n    .replace(/<[^>]+>/g, \" \")\n    .replace(/[*_~`>#]/g, \"\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n\n/** Eval-only: split a research document into draft annotation samples.\n *  Never im"
-      },
-      {
-        "key": "c4",
-        "label": "草稿标签评分与数量约束",
-        "reason": "解释规则标签、候选评分排序及样本不足时失败的行为。",
+        "label": "评测专用模块说明",
+        "reason": "支持该模块面向人工研究标注，并明确普通捕获、导入和学习链路不得调用。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 2,
+          "endLine": 14
+        },
+        "quote": " * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import pip"
+      },
+      {
+        "key": "c2",
+        "label": "公开的文档样本生成器",
+        "reason": "支持生成器是没有评测哨兵参数的公开函数。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 39,
+          "endLine": 45
+        },
+        "quote": "/** Eval-only: split a research document into draft annotation samples.\n *  Never imported by capture/import/HTTP/CLI/learning code paths. */\nexport function documentQualityEvalSamples(\n  document: CaptureInput,\n  sourceUri: string,\n  limit = 40,\n) {"
+      },
+      {
+        "key": "c3",
+        "label": "导入入口的评测哨兵校验",
+        "reason": "支持固定哨兵由数据集导入入口校验，值不匹配时显式抛错。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 156,
+          "endLine": 171
+        },
+        "quote": "/** Eval-only: materialize a rule-split draft dataset for human annotation.\n *  Guarded by {@link QUALITY_EVAL_ONLY}: the ordinary capture/import pipeline\n *  does not create quality datasets or annotation samples. */\nexport function importQualityDatasetEval(input: {\n  optIn: typeof QUALITY_EVAL_ONLY;\n  repository: Qua"
+      },
+      {
+        "key": "c4",
+        "label": "文本汇集与章节识别",
+        "reason": "支持仅汇集文本部分、按空行分块并以 Markdown 标题跟踪章节。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 46,
+          "endLine": 69
+        },
+        "quote": "  const markdown = document.parts\n    .filter(\n      (\n        part,\n      ): part is Extract<CaptureInput[\"parts\"][number], { type: \"text\" }> =>\n        part.type === \"text\",\n    )\n    .map((part) => part.text)\n    .join(\"\\n\\n\");\n  const blocks = markdown.split(/\\n\\s*\\n/);\n  let section = \"文档正文\";\n  const candidates: {"
+      },
+      {
+        "key": "c5",
+        "label": "版式过滤、拆句与生成内去重",
+        "reason": "支持复杂版式过滤、长度条件、中文拆句及基于章节和文本摘要的本次生成去重。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 70,
+          "endLine": 105
+        },
+        "quote": "    if (\n      /<(?:whiteboard|grid|column|table)\\b/i.test(raw) ||\n      /^!\\[/m.test(raw) ||\n      /^\\s*\\|/m.test(raw) ||\n      /\\|-{1,}\\|/.test(raw)\n    )\n      continue;\n    const sentences = raw.split(/\\n+/).flatMap((line) => {\n      const cleaned = plainText(line).replace(/^[-+*]\\s+/, \"\");\n      return cleaned.len"
+      },
+      {
+        "key": "c6",
+        "label": "草稿构造与候选排序",
+        "reason": "支持候选被构造成事实草稿，并按规则词、否定表达和数字加权排序后截取。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
           "startLine": 106,
-          "endLine": 153
+          "endLine": 140
         },
         "quote": "      const ruleMatches = text.match(\n        /只能|仅能|最多|必须|不能|不支持|需要|允许|优先|限制|条件|规则/g,\n      );\n      candidates.push({\n        input,\n        draftLabel: qualityLabelSchema.parse({\n          disposition: \"extract\",\n          objects: [\n            {\n              kind: \"claim\",\n              statement: text,\n         "
       },
       {
-        "key": "c5",
-        "label": "质量仓库落库调用",
-        "reason": "说明数据集创建和样本批量写入依赖 QualityRepository。",
+        "key": "c7",
+        "label": "数量校验与来源摘要",
+        "reason": "支持候选不足时报错，以及来源摘要包含文档身份、版本和完整文本。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 141,
+          "endLine": 153
+        },
+        "quote": "  if (samples.length < limit)\n    throw Error(\n      `QUALITY_SOURCE_TOO_SMALL: expected ${limit}, found ${samples.length}`,\n    );\n  return {\n    sourceDigest: stableDigest({\n      sourceUri,\n      documentId: document.externalId,\n      revisionId: document.upstreamVersion ?? null,\n      markdown,\n    }),\n    samples,"
+      },
+      {
+        "key": "c8",
+        "label": "数据集创建与样本写入调用",
+        "reason": "支持入口请求仓储创建数据集并调用批量样本写入，但不据此断言仓储一定复用既有数据集。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -84,29 +128,9 @@
         "quote": "  const generated = documentQualityEvalSamples(\n    input.document,\n    input.sourceUri,\n    input.targetCount,\n  );\n  const dataset = input.repository.createDataset({\n    name: input.name,\n    split: input.split,\n    sourceUri: input.sourceUri,\n    sourceRevisionId: input.document.upstreamVersion ?? null,\n    sourceDi"
       }
     ],
-    "questions": [
-      {
-        "question": "被跳过的图片、表格和白板材料是否计划通过独立评测集覆盖？",
-        "why": "当前候选器明确跳过这些结构，只处理文本 part，因此现有数据集不能衡量多模态或结构化材料的提炼质量。",
-        "nextStep": "若这些输入属于质量评测范围，应设计保留原始定位与人工标签的独立样本构造器，不应复用当前纯文本规则切分结果冒充覆盖。",
-        "blocking": false,
-        "citationKeys": [
-          "c3"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/learning/pipeline.ts",
-      "digest": "3ae1285f4f529258e0273949da1660869c2d121290c605a53d9c0ea2a5bf44a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/learning/refresh.ts",
-      "digest": "82040e6bf9053694fce5e0fba676574f3e95fcf309d9076f297fa674697efd2d"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/quality/import.ts",
@@ -114,8 +138,13 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/quality/lark-annotations.ts",
-      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "2903273d887300b5407818c616dabb33402bb5657c83886b1eb9b34c6ec68e2e"
     },
     {
       "kind": "material",
@@ -124,61 +153,51 @@
     },
     {
       "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "2d5f5398d88c1f60c6bab5472fc97e501f64d3251718ed4c53f38d8cba6b6be0"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/worker.ts",
-      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/repository.ts",
-      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:36:22.914Z",
+    "at": "2026-09-30T20:05:15.510Z",
     "trace": {
-      "runId": "b24a508b-9e49-4030-a33d-9b29aeeb18c5",
-      "roleId": "code-analyst",
+      "runId": "f752f5ed-fbd4-4690-9a73-337805339750",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "d6d9a86c5eafafc99edd87107f6c137aeb9b9b0a70faded4d19ccb17c259fb08",
-      "contextHash": "775cf64b377935696b9e2041fe922cc7fb3a70584a2e0881cf89d345ba10501f",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "1692dd16db6c84eb5df586005c2600d44ca2dda10ba823ca4831b33647e01aa6",
+      "contextHash": "430507faee375da42db404c95544e9399f0d95bcda428df0d1ffa984ff51c5ea",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "14feaa8c6d4a0069dad959ba68382169acc8dc67a5f41fee01beef01e423ed38",
+      "fingerprint": "acc29e807cd4fe1363f10dc55c06701319313699530f46223419e0ad40190144",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaa-213d-7d13-98e6-3838885b25f1"
+        "01a0f3eb-3ca3-72b0-853e-a4195fd9134a"
       ],
       "usage": {
-        "used": 48481,
-        "size": 760000,
+        "used": 59085,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -186,10 +205,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 104046,
-          "utf8Bytes": 106725,
-          "estimatedTokens": 35575,
-          "budgetedTokens": 44469,
+          "chars": 119802,
+          "utf8Bytes": 130560,
+          "estimatedTokens": 43520,
+          "budgetedTokens": 54400,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -198,17 +217,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:36:50.583Z",
+    "at": "2026-09-30T20:05:39.220Z",
     "trace": {
-      "runId": "afa11d9e-b028-47d8-baa8-0f33d508c8b6",
+      "runId": "639a9bde-b2bb-413c-96e7-8ee56493bad2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "23ea58bf4c39249e897ea17eb8257be8a67d56838fff53295c4ed9de4ef6bda3",
-      "contextHash": "5fc04761f2d28bfbb15cb839ae410658ccb196bac67e758908bb49e833e8c4e7",
+      "promptHash": "5f37b18de08eff2bc0197623d6014f1af5a21014df060fc8ad766b46198e44df",
+      "contextHash": "b81179fa7e5e30e094a2db59af5ef96d32ed6172a3688b9e05838de78bd99a7d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "04c039dc6f97233cd2e75bca2c35775b51c16fdbda7244f0b64c73cbbfe27cd0",
+      "fingerprint": "89b970c4533161167f73ee60ef0f5e37ad4f7a9c665365aaaadb6382e28c2665",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -221,11 +240,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeab-107d-7e81-8977-b6d2f434d03a"
+        "01a0f3eb-edba-7ea3-9ba1-eb0e472bc757"
       ],
       "usage": {
-        "used": 52686,
-        "size": 760000,
+        "used": 53921,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -233,10 +252,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 126336,
-          "utf8Bytes": 137353,
-          "estimatedTokens": 45785,
-          "budgetedTokens": 57232,
+          "chars": 115773,
+          "utf8Bytes": 124649,
+          "estimatedTokens": 41550,
+          "budgetedTokens": 51938,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,83 +2,114 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/main.ts",
-    "title": "repo-review 服务启动入口",
-    "summary": "在回环地址启动独立评审服务，依次同步仓库关系、恢复知识、更新代码投影，并以显式模型配置构建 API。",
+    "title": "repo-review 服务启动与生命周期入口",
+    "summary": "按固定顺序完成仓库材料同步、知识恢复、代码投影和可选模型配置，然后在回环地址启动评审 API，并将正常关闭交给应用钩子收尾。",
     "category": "workflow",
     "sections": [
       {
-        "key": "startup-sequence",
-        "title": "同步与恢复顺序",
-        "body": "入口从环境变量或当前目录确定仓库根目录，API 默认监听 5180 且固定绑定回环地址。创建独立评审存储后，启动流程先执行评审增量同步，再恢复仓库材料和知识文章，随后更新代码投影并汇总文章恢复状态；因此启动会恢复既有知识，但这段流程没有触发知识生成。[[c1]]"
+        "key": "startup",
+        "title": "启动顺序",
+        "body": "入口从 `REVIEW_REPO_ROOT` 或当前目录确定仓库根并创建独立评审 Store，随后先执行增量材料同步，再恢复已发布知识，最后将代码图投影到当前固定材料。服务在这些步骤完成后才进入应用构建与监听，因此初次请求看到的是已初始化的来源、知识和代码图；启动阶段任一步抛错都会进入失败分支关闭 Store。[[c1]]"
       },
       {
-        "key": "model-and-server",
-        "title": "模型选择与服务装配",
-        "body": "该入口明确只承载评审 API，不接入个人工作区服务。[[c2]] 代码理解模型采用显式可选配置，构建出的模型端口可以为空并记录为 `none`；应用装配接收仓库根目录、API 端口和默认 5181 的 Web 端口，完成后才在回环地址监听。[[c3]]"
+        "key": "configuration",
+        "title": "显式模型与检索配置",
+        "body": "代码理解模型只从评审专用配置加载，默认允许为空，并随其他依赖传给 `buildReviewApp`。检索配置优先采用环境变量指定路径；否则仅在仓库内 `config/retrieval.json` 存在时读取，缺失时交给应用工厂使用默认值。API 与 Web 端口可由环境变量覆盖，但监听地址固定为 `127.0.0.1`，与本地评审边界一致。[[c2]]"
       },
       {
-        "key": "shutdown",
-        "title": "退出与失败处理",
-        "body": "收到中断或终止信号时，入口先异步关闭应用再退出进程；启动阶段若抛出错误，则关闭存储并继续抛出原错误，避免失败后遗留已打开的数据库连接。[[c4]]"
+        "key": "lifecycle",
+        "title": "监听与关闭边界",
+        "body": "应用构建完成后才调用 Fastify `listen`。进程收到 SIGINT 或 SIGTERM 时调用 `app.close()`，成功后以状态 0 退出；入口代码本身没有展示关闭超时、拒绝处理或重复信号策略。启动异常路径则直接关闭 Store 并重新抛出错误。[[c3]]\n\n正常的 `app.close()` 还会触发应用注册的关闭钩子，由该钩子等待检索服务停止并关闭 Store。此前仅以入口信号代码支持这一内部行为的引用不充分，现已由应用关闭钩子的固定材料补足。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审启动同步链路",
-        "reason": "支持仓库根目录、回环端口以及同步、知识恢复和代码投影的实际执行顺序。",
-        "relation": "implements",
+        "label": "评审服务初始化序列",
+        "reason": "支持材料同步、知识恢复和代码投影先于应用监听的启动流程。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/main.ts",
-          "startLine": 13,
-          "endLine": 25
+          "startLine": 15,
+          "endLine": 27
         },
         "quote": "const repoRoot = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst port = Number(process.env.REVIEW_PORT || 5180);\nconst host = \"127.0.0.1\";\n\nconsole.log(\"repo-review: starting incremental sync...\");\nconst store = createReviewStore(repoRoot);\ncreateReviewKnowledgeRepository(store);\ntry {\n  const stats = await runRev"
       },
       {
         "key": "c2",
-        "label": "独立评审入口边界",
-        "reason": "直接支持评审入口不装配个人工作区服务的边界声明。",
+        "label": "模型、检索与端口配置",
+        "reason": "说明评审专用模型配置、检索配置选择、端口参数和应用构建依赖。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/main.ts",
-          "startLine": 5,
-          "endLine": 6
-        },
-        "quote": "/** review entry point: run the incremental sync first, then serve the review\n * API on loopback. It never wires up the personal workspace services. */"
-      },
-      {
-        "key": "c3",
-        "label": "模型与应用配置",
-        "reason": "支持模型为显式可选配置，以及 API、Web 端口传入应用构建器后开始监听。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/main.ts",
-          "startLine": 27,
-          "endLine": 43
+          "startLine": 29,
+          "endLine": 45
         },
         "quote": "  // Opt-in model: only REVIEW_CODE_MODEL_CONFIG is read; default is no model.\n  const codeUnderstandingModel = loadReviewCodeModelConfig();\n  const port_ = buildReviewCodeModel();\n  console.log(\n    \"repo-review: code understanding model =\",\n    port_ ? port_.transport : \"none\",\n  );\n\n  const { app } = await buildRevi"
       },
       {
-        "key": "c4",
-        "label": "服务关闭与异常清理",
-        "reason": "支持信号关闭应用以及启动失败时关闭存储并重新抛错的行为。",
+        "key": "c3",
+        "label": "监听、信号与启动失败清理",
+        "reason": "支持回环监听、信号触发 app.close、成功退出及启动失败关闭 Store 的入口行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/main.ts",
-          "startLine": 45,
-          "endLine": 51
+          "startLine": 46,
+          "endLine": 56
         },
-        "quote": "  for (const signal of [\"SIGINT\", \"SIGTERM\"] as const)\n    process.on(signal, () => {\n      void app.close().then(() => process.exit(0));\n    });\n} catch (error) {\n  store.close();\n  throw error;"
+        "quote": "  await app.listen({ port, host });\n  console.log(`repo-review: API at http://${host}:${port}`);\n\n  for (const signal of [\"SIGINT\", \"SIGTERM\"] as const)\n    process.on(signal, () => {\n      void app.close().then(() => process.exit(0));\n    });\n} catch (error) {\n  store.close();\n  throw error;\n}"
+      },
+      {
+        "key": "c4",
+        "label": "应用资源关闭钩子",
+        "reason": "补充证明 app.close 会通过应用钩子关闭检索服务和 Store。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 621,
+          "endLine": 624
+        },
+        "quote": "  app.addHook(\"onClose\", async () => {\n    await retrievalService.close();\n    store.close();\n  });"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "启动中断或 `app.close()` 失败时，进程是否需要超时退出、错误日志及重复信号保护？",
+        "why": "当前入口只串联 `app.close()` 与成功退出，没有给出关闭拒绝、长时间挂起或二次信号到达时的处理策略。",
+        "nextStep": "结合运行要求决定失败与超时策略，并用子进程级测试覆盖 SIGINT、SIGTERM、重复信号、关闭拒绝和启动失败。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
   },
   "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/knowledge.ts",
@@ -87,7 +118,17 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/main.ts",
-      "digest": "82eb5847c2e790d30601c56f56510991f1469df01ee9c2cf2321fc0a2324e5b4"
+      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
     },
     {
       "kind": "material",
@@ -96,34 +137,24 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-api.test.ts",
-      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-      "digest": "f5e49b50ac988174f6bcc5d099d50228c29a8bc54ab02af13814683eec8bfd1b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "3918eac125957b90822f9c407a819dd78144e4306668852f6d754380f129a6bc"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:12:30.939Z",
+    "at": "2026-09-30T19:24:50.836Z",
     "trace": {
-      "runId": "a2d1d7d9-3682-484f-8352-ac9a43d618ce",
+      "runId": "1eb5c029-7afe-4d78-915d-5c43c1186df2",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "84cf2a514ecbf23f1f3d667d3aaa74e7b91779d72e32d002a54a3ca12d0defa2",
-      "contextHash": "00388204774b99b06706e591a4625d31811d5bd5c6a2edcb98965d70d969737c",
+      "promptHash": "1d244360c16025417f11c83f6110cb891f3ae997447e67efd74d462bde610056",
+      "contextHash": "99759138fdb4aabca7a72c7b1c26f4a7312359600076a30c6e0f19ec0881a385",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "43d153891f6f0dcf497c344348c889c7a43da69a070cd59b63828eb49a8fe733",
+      "fingerprint": "69981a745bb9820ed2c1ab4815ba73e1edf2cb7bb74571e41bc34125b8dd8d38",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -136,11 +167,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef02-7dcc-7162-a075-2bae7926b85d"
+        "01a0f3c6-5c67-75d2-b8e1-8f13408a8875"
       ],
       "usage": {
-        "used": 30867,
-        "size": 760000,
+        "used": 48807,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -148,10 +179,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 47191,
-          "utf8Bytes": 52906,
-          "estimatedTokens": 17636,
-          "budgetedTokens": 22045,
+          "chars": 90169,
+          "utf8Bytes": 97052,
+          "estimatedTokens": 32351,
+          "budgetedTokens": 40439,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -160,17 +191,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:01.836Z",
+    "at": "2026-09-30T19:25:23.425Z",
     "trace": {
-      "runId": "a7df62da-8ec6-459f-83db-a3f0eb67ca43",
+      "runId": "ebed6294-0e74-4424-a2b7-a2813345982b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b7f2cfa776311934d77b98cfecdcf54eff2c4d21bd3d1046be9045a4e3b68b2c",
-      "contextHash": "dce6c30c912515b66ef0047583698a984bc6df5d6b1133961e2371eae05e40c0",
+      "promptHash": "590ce447b18d7e2a20431e5e57b6a0b758cb1e44aad4504c87ed6ceeeee25fb7",
+      "contextHash": "e32b3f8c082ea3e7c058e523b0f8cd2062dd019ce4c490302cfe1f3b2c2ff0f3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ddfdceaaad782484787eb91ebf09fc66cb6a69f400ac5e6df2311f5badb254bd",
+      "fingerprint": "63282d21f59755e5958626368d0bf4f09fc1398c0df1a98bfad584257ad46340",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -183,11 +214,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef03-13a7-7173-b5a1-9f8bb8cc2599"
+        "01a0f3c6-ed33-7641-9001-f7d0876e6715"
       ],
       "usage": {
-        "used": 31806,
-        "size": 760000,
+        "used": 47428,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -195,10 +226,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 55585,
-          "utf8Bytes": 64193,
-          "estimatedTokens": 21398,
-          "budgetedTokens": 26748,
+          "chars": 89776,
+          "utf8Bytes": 96307,
+          "estimatedTokens": 32103,
+          "budgetedTokens": 40129,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
