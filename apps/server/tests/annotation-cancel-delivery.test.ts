@@ -218,6 +218,7 @@ describe("G18 cancelling an annotation session revokes unsent cards", () => {
     const fixture = setup();
     try {
       const session = fixture.quality.start(fixture.datasetId, "cli_g18");
+      const deliveredId = intentRow(fixture.store, session.id)!.id;
       const at = new Date().toISOString();
       // The first card already reached the user.
       fixture.store.db
@@ -237,7 +238,9 @@ describe("G18 cancelling an annotation session revokes unsent cards", () => {
 
       expect(sessionState(fixture.store, session.id)).toBe("cancelled");
       // User-visible history is preserved, not rewritten as if it were recalled.
-      const delivered = intentRow(fixture.store, session.id, 0)!;
+      const delivered = fixture.store.db.prepare(
+        "SELECT state,message_id AS messageId FROM delivery_intents WHERE id=?",
+      ).get(deliveredId) as { state: string; messageId: string };
       expect(delivered.state).toBe("delivered");
       expect(delivered.messageId).toBe("om_seen");
       // The in-flight intent cannot be recalled mid-network; cancel leaves it to
