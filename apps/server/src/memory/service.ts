@@ -81,6 +81,32 @@ export class MemoryService {
     } = {},
   ) {}
 
+  /** Explicit owner commands reuse the same atomic receipts, revision history
+   * and notification outbox as proposals. The model never writes task rows. */
+  commandTask(input: { taskId: string; expectedVersion: number; action: "complete" | "reopen" | "reschedule";
+    dueAt: string | null; dueExpression: string | null; requestId: string; evidenceId: string }) {
+    const evidence = this.store.evidence(input.evidenceId);
+    const owner = this.options.ownerId ?? "owner";
+    if (!evidence || (evidence.revision.provenance?.actorPrincipalId ?? evidence.revision.provenance?.actorId) !== owner ||
+      !evidence.revision.provenance?.actorVerifiedBy || evidence.revision.provenance?.quoted || evidence.revision.provenance?.forwarded ||
+      evidence.revision.provenance?.producerKind !== "original") throw Error("TASK_OWNER_EVIDENCE_REQUIRED");
+    const task = this.db.prepare("SELECT * FROM tasks WHERE id=? AND workspace_id='personal'").get(input.taskId) as Row | undefined;
+    if (!task || (task.owner_id && task.owner_id !== owner)) throw Error("TASK_NOT_FOUND");
+    if (input.action === "reschedule" && (!input.dueAt || !Number.isFinite(Date.parse(input.dueAt)))) throw Error("INVALID_TASK_TIME");
+    const actionName = { complete: "完成", reopen: "重新打开", reschedule: "改期" }[input.action];
+    return this.store.applications.applyTask({
+      metadata: { workspaceId: "personal", applicationId: `assistant-command:${input.requestId}:${input.taskId}`,
+        proposalId: `assistant-task:${input.requestId}:${input.taskId}`, proposalDigest: stableDigest(input), generation: 1,
+        title: `${actionName}待办：${task.title}`, details: evidence.fragment.text,
+        delivery: { channelBindingVersion: 1, channel: "in_app", target: "notification-center" } },
+      task: { id: input.taskId, expectedVersion: input.expectedVersion, title: String(task.title), detail: String(task.detail),
+        ownerId: owner, nextStep: String(task.next_step), evidenceId: input.evidenceId,
+        status: input.action === "complete" ? "done" : input.action === "reopen" ? "open" : task.status as "open" | "done",
+        dueAt: input.action === "reschedule" ? input.dueAt : task.due_at ? String(task.due_at) : null,
+        dueExpression: input.action === "reschedule" ? input.dueExpression : task.due_expression ? String(task.due_expression) : null },
+    });
+  }
+
   private get db(): DatabaseSync {
     return this.store.db;
   }
