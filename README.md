@@ -49,7 +49,7 @@ osdk run review:build
 
 个人服务的“知识整理”使用同一流程处理已进入 Capture 的材料。知识正文可引导助手召回，但返回的依据仍是原始 Fragment，继续经过会话可见性过滤。疑问保留为有依据的调查项，用户可以补充背景或加入待办；回答作为原始材料保存并触发重核对。派生解释与已应用事实保持区别，独立模型复核也不等于人工验收。
 
-检索已使用 SQLite FTS5/BM25、中文短词保底以及原文/记忆/知识正文的 RRF 融合，命中派生内容后回查固定原文。跨文件调用的精确类型解析、embedding 检索和所有来源的自动重核验尚未完成；不会把这些能力写成已交付。流程、分项提交与验证记录见 [通用知识流程](docs/implementation/knowledge-pipeline.md)，早期问题见 [复审记录](docs/implementation/code-wiki-review-2026-09-29.md)。
+检索已使用 SQLite FTS5/BM25、中文短词保底以及原文/记忆/知识正文的 RRF 融合，命中派生内容后回查固定原文。跨文件调用的精确类型解析、embedding 检索、周期巡检及跨来源冲突的自动修订尚未完成；不会把这些能力写成已交付。流程、分项提交与验证记录见 [通用知识流程](docs/implementation/knowledge-pipeline.md)，早期问题见 [复审记录](docs/implementation/code-wiki-review-2026-09-29.md)。
 
 工具版本由 [osdk.toml](osdk.toml)、[osdk.lock](osdk.lock) 固定；应用包由 pnpm 工作区管理，锁文件为 [pnpm-lock.yaml](pnpm-lock.yaml)（`pnpm-workspace.yaml` 声明 `apps/*`、`packages/*` 成员）。`osdk deps --frozen` 负责调用 pnpm 以 `--frozen-lockfile` 安装应用依赖；本项目声明的构建脚本（esbuild、protobufjs）由 pnpm 按需从源码构建。首次安装如遇包构建脚本门禁，请依本机提示检查并批准对应包，不关闭全局门禁。
 
@@ -69,6 +69,12 @@ CLI-only 模式暂不支持附图，附图问题需选择支持 image 的 ACP；
 Batch 2 角色运行包位于 `packages/agent-runtime/roles`。extractor、verifier、planner、feedback-curator 都有固定 manifest、prompt、输出 schema 和最小 Skill；当前使用 inline skill 模式，运行时校验全部资产 digest、上下文/输出预算和结构化结果。`osdk run live-role` 会用已登录 TraeX 对虚构小样本执行一次真实提炼和独立复核，可用 `OMEM_LIVE_MODEL` 显式选择本次验证模型；产品和脚本不禁用 Astra。报告写到忽略提交的 `.omem/verification/live-role-smoke.json`。这条命令会真实消耗模型调用。
 
 Agent 进程在 `.omem/agent-workspace` 工作。内置配置采用只读/无工具策略，ACP 权限请求转成通知且拒绝自动执行；这不等于给任意第三方 Agent 提供 OS 安全沙箱。自定义运行器需保留自己的隔离/权限约束。
+
+## 材料变更后的记忆更新
+
+已知来源出现新版本时，旧记忆先停止作为有效依据，再复用现有提炼任务和独立复核任务。仍受新原文支持的结论更新同一个记忆 ID，旧原文和旧记忆版本继续保留；无法支持的保留 `needs_review`。`GET /api/memory-refreshes` 可查看影响范围、核验任务和真实应用结果。调度任务成功只表示已排队，只有实际修复所有受影响记忆后才记为 `applied`。
+
+学习 worker 仍由 `learning.enabled` 控制。模型不可用或复核失败不会恢复旧事实。本轮没有新增全库定时巡检，也没有自动生成英语卡片。角色给模型的 JSON Schema 现在由宿主 Zod 合同生成；修改合同后运行 `osdk exec --tool node --tool pnpm -- pnpm exec tsx scripts/sync-role-schemas.ts` 同步。
 
 ## 日常使用
 

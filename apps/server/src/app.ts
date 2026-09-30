@@ -62,6 +62,11 @@ export async function buildApp(
   // the adapter raises ModelUnavailableError and the runtime degrades honestly.
   const assistantProfile =
     config.profiles.find((p) => p.transport === "acp") ?? null;
+  app.get("/api/memory-refreshes", async () => store.db.prepare(
+    `SELECT id,source_id AS sourceId,new_revision_id AS revisionId,affected_count AS affectedCount,
+      affected_memory_ids AS affectedMemoryIds,status,result_json AS result,created_at AS createdAt
+     FROM refresh_records ORDER BY created_at DESC LIMIT 100`).all().map(row => ({ ...row,
+       affectedMemoryIds: JSON.parse(String(row.affectedMemoryIds)), result: JSON.parse(String(row.result)) })));
   registerKnowledgeRoutes(app, { store, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined });
   const assistantModel = new AcpAssistantModel({
     profile: assistantProfile,

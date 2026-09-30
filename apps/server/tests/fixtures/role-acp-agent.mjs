@@ -45,12 +45,30 @@ function output(text) {
   const jobId = lastField(text, "job_id", "fixture-job");
   const roleId = field(text, "role_id", "extractor");
   const projectId = field(text, "project_id", "none");
-  const imageCount = (pendingText.match(/"asset_hash"/g) || []).length;
+  const imageCount = JSON.parse(text.match(/\[TRUSTED CONTEXT\]\s*(\{[^\n]+\})/)[1]).material_index.filter(m => m.image).length;
   if (text.includes("OUTPUT_FLOOD")) return "x".repeat(120_000);
   if (text.includes("MALFORMED_OUTPUT")) return "not-json";
   if (roleId.endsWith("-analyst") || roleId === "knowledge-writer" || roleId === "knowledge-refresher") {
     const keys = JSON.parse(text.match(/"targetKeys":(\[[^\]]+\])/)?.[1] || '["manual:a"]');
     return JSON.stringify({ schema_version: 1, documents: keys.map(key => ({ key, title: "Fixture knowledge", summary: "Fixture summary", category: "implementation", sections: [{key:"behavior",title:"Behavior",body:"Fixed source is cited here.[[c1]]"}], citations:[{key:"c1",label:"Fixed source",reason:"Supports the behavior",relation:"supports",target:{kind:"material",key,startLine:1,endLine:1},quote:""}],questions:[] })) });
+  }
+  if (text.includes("REFRESH_FACT")) {
+    const ctx = JSON.parse(text.match(/\[TRUSTED CONTEXT\]\s*(\{[^\n]+\})/)[1]);
+    if (roleId === "verifier") return JSON.stringify({ schema_version: 1, job_id: jobId, role_id: roleId,
+      assessments: ctx.candidates.map(c => ({ proposal_id: c.proposal_id, proposal_digest: c.proposal_digest,
+        quote_asset_verdict: "valid", semantic_verdict: "supported", reason_code: "fixture_support",
+        reason: "Current fixed source supports updated limit.", missing_context: [] })) });
+    const m = JSON.parse(text.match(/\[UNTRUSTED MATERIAL JSON\]\s*(\{[^\n]+\})/)[1]);
+    const target = ctx.task.refreshTargets[0];
+    return JSON.stringify({ schema_version: 1, job_id: jobId, role_id: "extractor", observations: [], abstentions: [],
+      proposals: [{ schema_version: 1, proposal_id: "refresh-fixture", kind: "claim", operation: target ? "update" : "create",
+        ...(target ? { target_id: target.memory_id } : {}),
+        scope: target?.scope ?? { workspace_id: "personal", project_id: null, subject_id: "owner" },
+        body: { statement: m.text, attribution: "source states", valid_from: null, valid_to: null },
+        evidence: [{ fragment_revision_id: m.fragment_revision_id, source_revision_id: m.source_revision_id,
+          exact_quote: m.text, selector: { start: 0, end: Array.from(m.text).length, unit: "unicode_codepoint" } }],
+        uncertainties: [], reason: "Recheck against new source", expected_versions: target ? { [target.memory_id]: target.version } : {},
+        origin: { job_id: jobId, role_bundle: "extractor@1", producer_kind: "derived" } }] });
   }
   if (roleId === "verifier") {
     // Batch acceptance: the verifier context carries a `candidates` array with one

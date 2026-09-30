@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 15;
+export const SUPPORTED_SCHEMA_VERSION = 16;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -927,6 +927,19 @@ const retrievalIndexStatements = [
    INSERT INTO fragment_search(rowid,text,title) VALUES(new.rowid,new.text,(SELECT title FROM revisions WHERE id=new.revision_id)); END`,
 ] as const;
 
+const memoryRefreshStatements = [
+  `ALTER TABLE refresh_records RENAME TO refresh_records_legacy`,
+  `CREATE TABLE refresh_records(
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, source_id TEXT NOT NULL,
+    previous_revision_id TEXT, new_revision_id TEXT NOT NULL, affected_count INTEGER NOT NULL,
+    affected_memory_ids TEXT NOT NULL, status TEXT NOT NULL,
+    created_at TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '{}')`,
+  `INSERT INTO refresh_records(id,workspace_id,source_id,previous_revision_id,new_revision_id,affected_count,affected_memory_ids,status,created_at)
+    SELECT id,workspace_id,source_id,previous_revision_id,new_revision_id,affected_count,affected_memory_ids,status,created_at FROM refresh_records_legacy`,
+  `DROP TABLE refresh_records_legacy`,
+  `CREATE INDEX refresh_records_source_idx ON refresh_records(source_id,created_at)`,
+] as const;
+
 const checksum = (statements: readonly string[]) =>
   createHash("sha256")
     .update(statements.join("\n-- statement --\n"))
@@ -1023,6 +1036,7 @@ const migrations: readonly Migration[] = [
     statements: retrievalIndexStatements,
     checksum: checksum(retrievalIndexStatements),
   },
+  { version: 16, name: "memory-refresh-outcomes", statements: memoryRefreshStatements, checksum: checksum(memoryRefreshStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

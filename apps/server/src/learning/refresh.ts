@@ -1,81 +1,42 @@
-import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-
+import { stableDigest } from "../storage/digest.js";
 type Row = Record<string, unknown>;
+export type SourceRefreshInputRef = { sourceId?: string; previousRevisionId?: string; revisionId?: string };
 
-export type SourceRefreshInputRef = {
-  sourceId?: string;
-  previousRevisionId?: string;
-  revisionId?: string;
-};
+/** Freeze the invalidation set before reprocessing. Repeated delivery cannot
+ * erase affected memories merely because some have already been repaired. */
+export function recordSourceRefresh(db: DatabaseSync, workspaceId: string, inputRefs: SourceRefreshInputRef[]) {
+  const ref = inputRefs.find(r => r.sourceId && r.revisionId);
+  if (!ref?.sourceId || !ref.revisionId) throw Error("REFRESH_MISSING_SOURCE_REF");
+  const id = `refresh-${stableDigest({ workspaceId, sourceId: ref.sourceId, revisionId: ref.revisionId })}`;
+  let row = db.prepare("SELECT * FROM refresh_records WHERE id=?").get(id) as Row | undefined;
+  if (!row) {
+    const affected = db.prepare(`SELECT DISTINCT m.id FROM memories m
+      JOIN memory_dependencies md ON md.memory_revision_id=m.head_revision_id
+      WHERE md.source_id=? AND md.state='stale' AND m.status='invalidated'`).all(ref.sourceId) as Row[];
+    const ids = affected.map(r => String(r.id));
+    db.prepare(`INSERT INTO refresh_records(id,workspace_id,source_id,previous_revision_id,new_revision_id,
+      affected_count,affected_memory_ids,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(
+        id,workspaceId,ref.sourceId,ref.previousRevisionId ?? null,ref.revisionId,ids.length,JSON.stringify(ids),ids.length ? "needs_review" : "no_effect",new Date().toISOString());
+    row = db.prepare("SELECT * FROM refresh_records WHERE id=?").get(id) as Row;
+  }
+  return { recordId: id, status: String(row.status), affectedCount: Number(row.affected_count),
+    affectedMemoryIds: JSON.parse(String(row.affected_memory_ids)) as string[] };
+}
 
-/**
- * refresh_dependents does NOT re-verify the invalidated memories yet. It only
- * records the real blast radius so the auditable refresh_records row exists. The
- * caller (pipeline handler) MUST treat this as blocked / not_implemented and never
- * report the job as reviewed or succeeded.
- */
-export type SourceRefreshResult = {
-  status: "blocked";
-  reason: "not_implemented";
-  affectedCount: number;
-  affectedMemoryIds: string[];
-};
-
-/**
- * F8: record the real blast radius of a source revision update. The deterministic
- * invalidation already happened in store.capture (dependencies -> stale, memories
- * -> invalidated, and KeywordRetrieval only recalls active rows). This writes an
- * auditable refresh_records row, but it does NOT re-verify or "review" anything:
- * that step is not implemented. Callers must surface the blocked/not_implemented
- * status instead of counting affected memories as reviewed.
- */
-export function recordSourceRefresh(
-  db: DatabaseSync,
-  workspaceId: string,
-  inputRefs: SourceRefreshInputRef[],
-): SourceRefreshResult {
-  const ref = inputRefs[0];
-  if (!ref || typeof ref.sourceId !== "string" || typeof ref.revisionId !== "string")
-    throw new Error("REFRESH_MISSING_SOURCE_REF");
-  const sourceId: string = ref.sourceId;
-  const newRevisionId: string = ref.revisionId;
-  const previousRevisionId: string | null =
-    typeof ref.previousRevisionId === "string" ? ref.previousRevisionId : null;
-  const affected = db
-    .prepare(
-      `SELECT DISTINCT m.id FROM memories m
-       JOIN memory_dependencies md ON md.memory_revision_id = m.head_revision_id
-       WHERE md.source_id = ?`,
-    )
-    .all(sourceId) as Row[];
-  const affectedMemoryIds = affected.map((row) => String(row.id));
-  // Record the invalidation honestly. There is no verified re-review here:
-  // affected memories need review; an empty blast radius is simply no_effect.
-  const recordStatus = affectedMemoryIds.length
-    ? "needs_review"
-    : "no_effect";
-  db.prepare(
-    `INSERT INTO refresh_records(
-       id,workspace_id,source_id,previous_revision_id,new_revision_id,
-       affected_count,affected_memory_ids,status,created_at
-     ) VALUES(?,?,?,?,?,?,?,?,?)`,
-  ).run(
-    randomUUID(),
-    workspaceId,
-    sourceId,
-    previousRevisionId,
-    newRevisionId,
-    affectedMemoryIds.length,
-    JSON.stringify(affectedMemoryIds),
-    recordStatus,
-    new Date().toISOString(),
-  );
-  // The job itself stays blocked: we have not re-verified anything.
-  return {
-    status: "blocked",
-    reason: "not_implemented",
-    affectedCount: affectedMemoryIds.length,
-    affectedMemoryIds,
-  };
+/** The dispatcher succeeding means only 'queued'. Reconciliation is based on
+ * current dependencies and real application state after independent verification. */
+export function reconcileSourceRefresh(db: DatabaseSync, revisionId: string, detail: Record<string, unknown>) {
+  const records = db.prepare("SELECT * FROM refresh_records WHERE new_revision_id=? AND affected_count>0").all(revisionId) as Row[];
+  for (const row of records) {
+    const ids = JSON.parse(String(row.affected_memory_ids)) as string[];
+    const repaired = ids.filter(id => !!db.prepare(`SELECT 1 FROM memories m
+      JOIN memory_dependencies md ON md.memory_revision_id=m.head_revision_id
+      JOIN sources s ON s.id=md.source_id
+      WHERE m.id=? AND m.status='active' AND md.source_revision_id=? AND md.state='current' AND s.head=md.source_revision_id`).get(id, revisionId));
+    const stale = !db.prepare("SELECT 1 FROM sources WHERE id=? AND head=?").get(String(row.source_id), revisionId);
+    db.prepare("UPDATE refresh_records SET status=?,result_json=? WHERE id=?").run(
+      stale ? "superseded" : repaired.length === ids.length ? "applied" : "needs_review",
+      JSON.stringify({ ...detail, repaired, unresolved: ids.filter(id => !repaired.includes(id)) }), String(row.id));
+  }
 }
