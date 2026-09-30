@@ -33,7 +33,10 @@ export type SearchQuery = {
    */
   project_trusted?: boolean;
   limit?: number;
+  /** Filter by captured revision time (not event time or historical as-of). */
   timeRange?: TimeRange;
+  /** Host visibility policy, applied before final ranking/limit. */
+  visible?: (fragmentId: string) => boolean;
 };
 
 export type ProvenanceRef = {
@@ -50,6 +53,7 @@ export type SourceCandidate = {
   sourceRevisionId: string;
   fragmentId: string;
   provenance: ProvenanceRef;
+  routes?: string[];
 };
 
 export type MemoryCandidate = {

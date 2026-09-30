@@ -614,6 +614,7 @@ export class AssistantRuntime {
         this.options.retrieval.searchSources({
           text: userText,
           limit: 20,
+          visible: fragmentId => this.isVisible(conversation, fragmentId),
         });
       rows = candidates.map((c) => ({
         id: c.fragmentId,
@@ -682,6 +683,8 @@ export class AssistantRuntime {
   private enrichEvidence(fragmentId: string): AssistantEvidence | null {
     const record = this.store.evidence(fragmentId);
     if (!record) return null;
+    const head = this.store.db.prepare("SELECT head FROM sources WHERE id=?").get(record.revision.sourceId) as { head: string } | undefined;
+    if (head?.head !== record.revision.id || record.revision.provenance?.producerKind === "derived" || (record.revision.context as Record<string, unknown> | undefined)?.derived === true) return null;
     return {
       fragmentId: record.fragment.id,
       sourceRevisionId: record.revision.id,

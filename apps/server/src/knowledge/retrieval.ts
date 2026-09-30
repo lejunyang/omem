@@ -9,7 +9,7 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
   if (!terms.length || !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_heads'").get()) return [];
   const rows = db.prepare(`SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON r.id=h.revision_id
     WHERE h.current=1 AND (${terms.map(() => "r.artifact LIKE ? ESCAPE '!'").join(" OR ")}) LIMIT 30`).all(...terms.map(t => "%" + t.replace(/[!%_]/g, "!$&") + "%")) as Row[];
-  const sourceCache = new Map<string, { row: Row; digest: string } | null>();
+  const sourceCache = new Map<string, { row: Row; digest: string; text: string } | null>();
   const articleCache = new Map<string, { id: string; artifact: KnowledgeArtifact } | null>();
   function source(key: string) {
     if (sourceCache.has(key)) return sourceCache.get(key)!;
@@ -21,7 +21,7 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
     const parts = body.parts as { type: string; text?: string; url?: string; label?: string; assetId?: string; mimeType?: string }[];
     const text = parts.filter(p => p.type === "text" || p.type === "link").map(p => p.type === "text" ? p.text ?? "" : `${p.label ?? ""}\n${p.url}`).join(body.context?.captureFormat === "verbatim-v1" ? "" : "\n\n");
     const images = parts.filter(p => p.type === "image").map(p => ({ assetId: p.assetId, mimeType: p.mimeType, label: p.label ?? row.title }));
-    const value = { row, digest: stableDigest({ text, images, actor: body.provenance?.actorId ?? null, quoted: body.provenance?.quoted ?? false, forwarded: body.provenance?.forwarded ?? false }) };
+    const value = { row, text, digest: stableDigest({ text, images, actor: body.provenance?.actorId ?? null, quoted: body.provenance?.quoted ?? false, forwarded: body.provenance?.forwarded ?? false }) };
     sourceCache.set(key, value); return value;
   }
   function article(key: string) {
@@ -32,18 +32,40 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
   }
   const seen = new Set<string>(), output = new Map<string, Row>();
   function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {
-    if (depth > 8 || seen.has(a.document.key) || output.size >= 30) return;
-    seen.add(a.document.key);
+    if (depth > 8 || output.size >= 100) return;
     if (a.dependencies.some(d => d.kind === "material" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) return;
     for (const c of a.document.citations.filter(c => !keys || keys.has(c.key))) {
-      if (c.target.kind === "article") { const child = article(c.target.key); if (child) visit(child.artifact, depth + 1); continue; }
+      const visitKey = `${a.document.key}:${c.key}`;
+      if (seen.has(visitKey)) continue;
+      seen.add(visitKey);
+      if (c.target.kind === "article") {
+        const child = article(c.target.key);
+        if (child) {
+          const section = c.target.section;
+          const sections = child.artifact.document.sections.filter(s => !section || s.key === section);
+          visit(child.artifact, depth + 1, new Set(sections.flatMap(s => [...s.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!))));
+        }
+        continue;
+      }
       const s = source(c.target.key); if (!s || !c.quote.trim()) continue;
       const fragments = db.prepare("SELECT id,text FROM fragments WHERE revision_id=? ORDER BY ordinal").all(String(s.row.id)) as Row[];
-      const fragment = fragments.find(f => String(f.text).includes(c.quote.trim()));
-      if (!fragment) continue;
+      const lines = s.text.split("\n");
+      const startLine = c.target.startLine, endLine = c.target.endLine;
+      if (!startLine || !endLine || endLine > lines.length) continue;
+      const excerpt = lines.slice(startLine - 1, endLine).join("\n");
+      if (!excerpt.includes(c.quote)) continue;
+      const start = lines.slice(0, startLine - 1).reduce((n, l) => n + l.length + 1, 0);
+      const end = start + excerpt.length;
       const body = JSON.parse(String(s.row.body));
-      output.set(String(fragment.id), { fragment_id: fragment.id, revision_id: s.row.id, fragment_text: fragment.text, title: s.row.title,
-        revision_created_at: s.row.created_at, namespace: s.row.namespace, actor_id: body.provenance?.actorId ?? null });
+      let cursor = 0;
+      for (const fragment of fragments) {
+        const text = String(fragment.text), offset = s.text.indexOf(text, cursor);
+        if (offset < 0) continue; // image placeholders are not text coordinates
+        cursor = offset + text.length;
+        if (offset >= end || cursor <= start) continue;
+        output.set(String(fragment.id), { fragment_id: fragment.id, revision_id: s.row.id, fragment_text: fragment.text, title: s.row.title,
+          revision_created_at: s.row.created_at, namespace: s.row.namespace, actor_id: body.provenance?.actorId ?? null });
+      }
     }
   }
   for (const row of rows) {

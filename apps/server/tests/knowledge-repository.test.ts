@@ -114,3 +114,15 @@ it("retires old investigation questions and notifies only for a new knowledge re
   expect(repository.questions()[0]!.state).toBe("superseded");
   expect(store.notifications()).toHaveLength(notifications + 1);
 });
+
+
+it("retrieves all original fragments covered by a cross-paragraph citation", () => {
+  const { repository, store, capture } = setup();
+  capture("第一段解释接口背景。\n\n第二段说明实现原理。\n\n不相关的其他说明。");
+  const m = repository.materials()[0]!;
+  const d = document(); d.title = "CrossParagraphRationale";
+  d.citations[0]!.target.startLine = 1; d.citations[0]!.target.endLine = 3;
+  repository.publish(artifact(bindKnowledgeQuotes(d, new Map([[m.key,m]])), [{ kind: "material", key: m.key, digest: m.digest }]));
+  const hits = new KeywordRetrieval(store.db).searchSources({ text: "CrossParagraphRationale" });
+  expect(hits.map(h => h.fragmentId).sort()).toEqual(m.fragments.slice(0,2).map(f => f.id).sort());
+});
