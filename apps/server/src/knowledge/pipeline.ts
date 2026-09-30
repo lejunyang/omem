@@ -142,7 +142,7 @@ export class KnowledgePipeline {
     throw Error(`Semantic review still requests changes: ${remaining.map(t => t.key).join(", ")}`);
   }
 
-  private previousFeedback(targets: KnowledgeMaterial[]) {
+  private previousFeedback(targets: KnowledgeMaterial[], offers: Offer[]) {
     const drafts: KnowledgeDocument[] = [], issues: unknown[] = [];
     for (const target of targets) {
       const rows = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
@@ -150,6 +150,9 @@ export class KnowledgePipeline {
       for (const row of rows) {
         const input = JSON.parse(row.input_refs)[0];
         if (!input.materials?.some((m: {key:string;digest:string}) => m.key === target.key && m.digest === target.digest)) continue;
+        // A draft from an old multi-document batch may rely on a sibling that
+        // is no longer supplied. Do not smuggle that context into a repair.
+        if (!input.materials.every((m: {key:string;digest:string}) => offers.some(o => o.material.key === m.key && o.material.digest === m.digest))) continue;
         const draft = input.task?.drafts?.find((d: KnowledgeDocument) => d.key === target.key);
         const verdict = JSON.parse(row.output_json).verdicts.find((v: {documentKey:string}) => v.documentKey === target.key);
         if (draft && verdict) { drafts.push(draft); issues.push(verdict); }
@@ -161,12 +164,10 @@ export class KnowledgePipeline {
   async analyze(materials: KnowledgeMaterial[], supplements: (targets: KnowledgeMaterial[]) => Offer[] = () => []) {
     const current = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));
     const pending = materials.filter(m => { const a = current.get(m.key); return !a; });
-    const batches: KnowledgeMaterial[][] = [];
-    for (const material of pending) {
-      const last = batches.at(-1);
-      if (last && last.length < 6 && analystFor(last[0]!) === analystFor(material) && last.reduce((n, m) => n + m.text.length, material.text.length) < 95000 && !material.images.length) last.push(material);
-      else batches.push([material]);
-    }
+    // Each article gets its own original and explicit linked context. Sharing a
+    // prompt to save calls made unrelated batch siblings permanent dependencies.
+    // Concurrency still bounds cost; genuinely supplied context stays tracked.
+    const batches = pending.map(material => [material]);
     const failures: { keys: string[]; error: string }[] = [];
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(this.options.concurrency ?? 3, batches.length) }, async () => {
@@ -178,7 +179,7 @@ export class KnowledgePipeline {
           if (answer) offers.push({ material: answer, ranges: [{ start: 1, end: answer.lineCount }] });
         }
         for (const s of supplements(targets)) if (!offers.some(o => o.material.key === s.material.key)) offers.push(s);
-        try { await this.writeAndVerify(analystFor(targets[0]!), targets.map(m => ({ key: m.key, title: m.title })), offers, [], this.previousFeedback(targets)); }
+        try { await this.writeAndVerify(analystFor(targets[0]!), targets.map(m => ({ key: m.key, title: m.title })), offers, [], this.previousFeedback(targets, offers)); }
         catch (error) { const failure = { keys: targets.map(m => m.key), error: String(error) }; failures.push(failure); this.options.log?.(`FAILED ${failure.keys.join(", ")}: ${failure.error}`); }
       }
     }));
