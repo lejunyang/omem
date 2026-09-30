@@ -78,6 +78,26 @@ it("distinguishes Lark documents from conversations and recognizes ordinary impo
   expect(analystFor({ ...base, namespace: "file", path: null, title: "main.py" })).toBe("code-analyst");
 });
 
+it("isolates sibling articles while retaining explicitly supplied background dependencies", async () => {
+  const { store, repository, pipeline, capture } = setup();
+  const other = (text: string) => store.capture({ source: "manual", externalId: "other", title: "Other note", parts: [{ type: "text", text }], context: {} });
+  other("Another release also uses fixed evidence.");
+  expect((await pipeline.analyze(repository.materials())).failures).toEqual([]);
+  const sibling = repository.get("manual:other")!;
+  expect(sibling.dependencies.map(d => d.key)).toEqual(["manual:other"]);
+  capture("The first release has changed.");
+  repository.refresh();
+  expect(repository.get("manual:example")!.current).toBe(false);
+  expect(repository.get("manual:other")!.current).toBe(true);
+  expect(repository.get("manual:other")!.revision).toBe(sibling.revision);
+  const materials = repository.materials(), background = materials.find(m => m.key === "manual:other")!;
+  await pipeline.analyze(materials, () => [{ material: background, ranges: [{ start: 1, end: 1 }] }]);
+  expect(repository.get("manual:example")!.dependencies.map(d => d.key)).toContain("manual:other");
+  other("The supplied background changed.");
+  repository.refresh();
+  expect(repository.get("manual:example")!.current).toBe(false);
+});
+
 it("provides full fixed source to synthesis when it fits, enabling a new supported line citation", async () => {
   const { repository, pipeline, capture } = setup();
   capture("The release uses fixed evidence.\nThe next line supplies additional context.");
