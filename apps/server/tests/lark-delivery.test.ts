@@ -368,8 +368,10 @@ describe("B2-06 Lark delivery acceptance", () => {
           "SELECT change_id FROM delivery_intent_changes WHERE intent_id=? ORDER BY ordinal",
         )
         .all(String(active[0]!.id))
-        .map((row) => String((row as { change_id: string }).change_id)),
-    ).toEqual(receipts.map((receipt) => receipt.changeId));
+        .map((row) => String((row as { change_id: string }).change_id)).sort(),
+    // Millisecond timestamps can tie; this contract preserves every mapping,
+    // not the insertion order of independently generated UUIDs.
+    ).toEqual(receipts.map((receipt) => receipt.changeId).sort());
     expect(
       resource.store.db
         .prepare(
