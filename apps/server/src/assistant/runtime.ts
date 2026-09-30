@@ -474,8 +474,8 @@ export class AssistantRuntime {
       //    from the previous consultation turn (anaphora like "按这个").
       const retrieved = await this.retrieveEvidence(input.userText, input.conversation);
       const priorCtx = this.priorWorkingContext(input.conversation);
-      let evidence = [...priorCtx, ...retrieved.filter(
-        (r) => !priorCtx.some((p) => p.fragmentId === r.fragmentId),
+      let evidence = [...retrieved, ...priorCtx.filter(
+        (p) => !retrieved.some((r) => r.fragmentId === p.fragmentId),
       )];
 
       // 1b. Read owner-scoped corrections from FeedbackService (H-G16).
@@ -666,14 +666,10 @@ export class AssistantRuntime {
           limit: 20,
           visible: fragmentId => this.isVisible(conversation, fragmentId),
         });
-      rows = candidates.map((c) => ({
-        id: c.fragmentId,
-        text: c.snippet,
-        title: "",
-      }));
-      // Enrich with full fragment text via readEvidence / store.evidence.
-      return rows
-        .map((row) => this.enrichEvidence(row.id))
+      // Retain the actual semantic hit inside a long original fragment. The ACP
+      // evidence budget is 2,000 characters; rereading only its prefix loses tails.
+      return candidates
+        .map((c) => this.enrichEvidence(c.fragmentId, c.routes?.includes("semantic") ? c.snippet : undefined))
         .filter((e): e is AssistantEvidence => Boolean(e))
         .filter((e) => this.isVisible(conversation, e.fragmentId));
     }
@@ -750,26 +746,36 @@ export class AssistantRuntime {
     for (let i = turns.length - 1; i >= 0; i--) {
       const t = turns[i]!;
       if (t.inputMessageRefs.status !== "done") continue;
-      const selected = t.selectedEvidence as Array<{ fragmentId: string }>;
+      const selected = t.selectedEvidence as Array<{ fragmentId: string; text?: string }>;
       if (!selected || !selected.length) continue;
       return selected
-        .map((s) => this.enrichEvidence(s.fragmentId))
+        .map((s) => this.enrichEvidence(s.fragmentId, s.text))
         .filter((e): e is AssistantEvidence => Boolean(e))
         .filter((e) => this.isVisible(conversation, e.fragmentId));
     }
     return [];
   }
 
-  private enrichEvidence(fragmentId: string): AssistantEvidence | null {
+  private enrichEvidence(fragmentId: string, focus?: string): AssistantEvidence | null {
     const record = this.store.evidence(fragmentId);
     if (!record) return null;
     const head = this.store.db.prepare("SELECT head FROM sources WHERE id=?").get(record.revision.sourceId) as { head: string } | undefined;
     if (head?.head !== record.revision.id || record.revision.provenance?.producerKind === "derived" || (record.revision.context as Record<string, unknown> | undefined)?.derived === true) return null;
+    let text = record.fragment.text;
+    // A stored excerpt is only a locator, never independent evidence. Check it
+    // against the current immutable original before using it, including follow-ups.
+    if (text.length > 2000 && typeof focus === "string" && focus.length > 0 && focus.length <= 2000) {
+      const offset = text.indexOf(focus);
+      if (offset >= 0) {
+        const start = Math.max(0, offset - Math.floor((2000 - focus.length) / 2));
+        text = text.slice(start,start + 2000);
+      }
+    }
     return {
       fragmentId: record.fragment.id,
       sourceRevisionId: record.revision.id,
       revisionTitle: record.revision.title,
-      text: record.fragment.text,
+      text,
     };
   }
 
