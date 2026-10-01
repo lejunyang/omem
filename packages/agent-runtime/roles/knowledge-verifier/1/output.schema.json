@@ -92,5 +92,5 @@
     "verdicts"
   ],
   "additionalProperties": false,
-  "$id": "https://omem.local/schemas/KnowledgeReview.v1"
+  "$id": "https://omem.invalid/contracts/KnowledgeReview.v1"
 }

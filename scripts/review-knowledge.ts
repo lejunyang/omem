@@ -1,3 +1,4 @@
+import { reviewMaterialHref } from "../apps/server/src/review/knowledge.js";
 import { taskFlag, taskTargets } from "./task-args.js";
 import { restoreReviewKnowledge, writeReviewKnowledgeIndex } from "../apps/server/src/review/knowledge.js";
 /** Explicit repository application of the shared material knowledge pipeline. */
@@ -34,7 +35,7 @@ const stage = join(runtime, "knowledge-staging"), assets = join(root, ".repo-rev
 mkdirSync(stage, { recursive: true }); mkdirSync(assets, { recursive: true });
 const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, "knowledge-agents"), new RuntimeRequestRepository(store.db)), profile,
   { concurrency, retryTag: taskFlag("retry") ? new Date().toISOString() : undefined, budget: config, log: m => console.log(new Date().toISOString(), m), onPublish: a => {
-    writeKnowledgeArticle(stage, a);
+    writeKnowledgeArticle(stage, a, reviewMaterialHref);
     for (const ext of ["json", "md"]) copyFileSync(join(stage, `${digest(a.document.key)}.${ext}`), join(assets, `${digest(a.document.key)}.${ext}`));
   } });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void pipeline.stop());
@@ -122,9 +123,7 @@ try {
     } else if (!report.failures.length && !compositionFailures.length) {
     const plan = await pipeline.plan();
     writeFileSync(join(stage, "plan.json"), JSON.stringify(plan, null, 2) + "\n"); copyFileSync(join(stage, "plan.json"), join(root, ".repo-review/knowledge/plan.json"));
-    for (const chapter of plan.chapters.filter(c => c.key !== "overview")) await pipeline.synthesize({ key: `topic:${chapter.key}`, title: chapter.title, purpose: chapter.purpose }, chapter.materialKeys);
-    const overview = plan.chapters.find(c => c.key === "overview")!;
-    await pipeline.synthesize({ key: "topic:overview", title: overview.title, purpose: overview.purpose }, plan.chapters.filter(c => c.key !== "overview").map(c => `topic:${c.key}`));
+    for (const chapter of plan.chapters) await pipeline.synthesize({ key: `topic:${chapter.key}`, title: chapter.title, purpose: chapter.purpose }, chapter.materialKeys);
     }
     recordCoverage();
   }

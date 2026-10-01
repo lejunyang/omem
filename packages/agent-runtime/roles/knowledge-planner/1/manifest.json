@@ -11,7 +11,7 @@
       "canonical_name": "omem-knowledge-planner",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "c3856cb51f7e47e53a96251712922dd2dc041fc6317cc0803fc96037d6e8e4d9"
+      "artifact_digest": "41a861ebe515a7678cf84d270394c35d88048cba01df29f2bcb04761433af110"
     }
   ],
   "output_schema": "KnowledgePlan.v1",

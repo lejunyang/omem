@@ -24,7 +24,8 @@ export const knowledgeQuestionSchema = z.object({
 
 export const knowledgeDocumentSchema = z.object({
   key, title: z.string().min(1).max(240), summary: z.string().min(1).max(1600),
-  category: z.enum(["overview", "architecture", "background", "requirements", "progress", "implementation", "tests", "configuration", "workflow", "research", "conversation", "visual"]),
+  category: z.string().min(1).max(120),
+  topicPath: z.array(z.string().trim().min(1).max(120)).optional().describe("Human topic hierarchy, broad to specific. Organize by the subject and reader purpose, not source directories or internal ids."),
   sections: z.array(z.object({
     key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,59}$/),
     title: z.string().min(1).max(200),
@@ -53,7 +54,7 @@ export const knowledgePlanSchema = z.object({
     key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,59}$/),
     title: z.string().min(1).max(200), purpose: z.string().min(1).max(1600),
     materialKeys: z.array(key).min(1).max(400),
-  }).strict()).min(4).max(32),
+  }).strict()).min(1).max(32),
 }).strict();
 
 export const wikiPageBriefSchema = z.object({
@@ -61,6 +62,8 @@ export const wikiPageBriefSchema = z.object({
   kind: z.enum(["tutorial", "explanation", "how-to", "reference"]),
   reader: z.string(), goal: z.string(), scenario: z.string(),
   questions: z.array(z.string()).min(1).max(12), entryPaths: z.array(z.string()).max(20),
+  topicPath: z.array(z.string().trim().min(1).max(120)).optional(),
+  materialKeys: z.array(key).min(1).optional().describe("Explicit investigation scope. Omit to search all eligible captured materials; entryPaths are starting points only."),
 }).strict();
 export type WikiPageBrief = z.infer<typeof wikiPageBriefSchema>;
 

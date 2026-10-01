@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.js";
-import { importDevelopmentKnowledge } from "../src/knowledge/development.js";
+import { importDevelopmentKnowledge } from "../src/review/development.js";
 import { bindKnowledgeQuotes } from "../src/knowledge/repository.js";
 import { writeKnowledgeArticle } from "../src/knowledge/artifacts.js";
 import type { KnowledgeArtifact } from "../../../packages/contracts/src/knowledge.js";

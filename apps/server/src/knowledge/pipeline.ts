@@ -116,8 +116,10 @@ export class KnowledgePipeline {
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
     for (let attempt = 0; attempt < 4; attempt++) {
-      const write = await this.runRole(repair ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, reading: publication?.reading, research: publication?.research, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
+      const write = await this.runRole(repair ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, catalogTopics: [...new Set(this.repository.list().map(a => JSON.stringify(a.document.topicPath ?? [])).filter(p => p !== "[]"))].map(p => JSON.parse(p)), reading: publication?.reading, research: publication?.research, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
       const batch = knowledgeBatchSchema.parse(write.result);
+      // Explicit placement is user/page-plan data, not inferred from repository paths.
+      if (publication?.reading.topicPath) for (const document of batch.documents) document.topicPath = publication.reading.topicPath;
       const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents, targets: remaining, reading: publication?.reading }, out => {
         const r = knowledgeReviewSchema.parse(out);
         if (r.verdicts.length !== remaining.length || remaining.some(t => !r.verdicts.some(v => v.documentKey === t.key))) throw Error("Review every target exactly once");
@@ -191,11 +193,16 @@ export class KnowledgePipeline {
    * are optional background, never a prerequisite or an arbitrary batching tree. */
   async writePage(brief: WikiPageBrief) {
     this.repository.refresh();
-    const writerVersion = stableDigest(["reader-first@1", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
+    const writerVersion = stableDigest(["reader-first@2", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
     const existing = this.repository.get(brief.key);
     if (existing?.current && stableDigest(existing.reading) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion) return [existing];
-    const research = new MaterialResearch(this.repository.materials(), brief);
-    if (!research.offers.size) throw Error(`No available entry materials for ${brief.title}`);
+    const available = this.repository.materials();
+    const scope = brief.materialKeys ? new Set(brief.materialKeys) : null;
+    const materials = scope ? available.filter(m => scope.has(m.key)) : available;
+    if (!materials.length || (scope && materials.length !== scope.size)) throw Error("Selected materials are no longer available");
+    const research = new MaterialResearch(materials, brief);
+    if (!research.offers.size) research.search(brief.title + " " + brief.goal);
+    if (!research.offers.size) for (const m of materials.slice(0, 3)) research.read(m.key, 1, Math.min(m.lineCount, 80));
     const rounds: unknown[] = [];
     let observations: unknown = [], findings = "", gaps: string[] = [];
     for (let round = 0; round < 3; round++) {
@@ -218,12 +225,12 @@ export class KnowledgePipeline {
 
   async plan(): Promise<KnowledgePlan> {
     const materials = this.repository.materials();
-    const articles = this.repository.list().filter(a => a.current && !a.document.key.startsWith("topic:"));
-    const base = materials.find(m => m.path === "README.md") ?? materials[0]!;
+    const articles = this.repository.list().filter(a => a.current);
+    const base = materials[0];
+    if (!base) throw Error("No captured materials to organize");
     const result = await this.runRole("knowledge-planner", [{ material: base, ranges: [{ start: 1, end: Math.min(base.lineCount, 100) }] }], [],
       { title: "知识树规划", catalog: articles.map(a => ({ key: a.document.key, title: a.document.title, category: a.document.category, summary: a.document.summary.slice(0, 220) })) }, out => {
         const plan = knowledgePlanSchema.parse(out);
-        for (const required of ["overview", "architecture", "background", "requirements", "progress"]) if (!plan.chapters.some(c => c.key === required)) throw Error(`Missing chapter ${required}`);
         for (const chapter of plan.chapters) for (const key of chapter.materialKeys) if (!articles.some(a => a.document.key === key)) throw Error(`Unknown catalog key ${key}`);
       });
     return knowledgePlanSchema.parse(result.result);

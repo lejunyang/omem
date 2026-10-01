@@ -81,8 +81,10 @@ it("distinguishes Lark documents from conversations and recognizes ordinary impo
 it("investigates a requested range beyond the entry preview before writing and independently reviewing a reader page", async () => {
   const { pipeline, repository, run, capture } = setup();
   capture("Intro\n" + "Background\n".repeat(148) + "The delivery worker retries pending messages.");
+  repository.store.capture({ source: "manual", externalId: "unrelated", title: "摄影", parts: [{ type: "text", text: "UNRELATED_CAMERA_MATERIAL" }], context: {} });
   let researchRound = 0;
   run.mockImplementation(async input => {
+    expect(JSON.stringify(input.context)).not.toContain("UNRELATED_CAMERA_MATERIAL");
     const bundle = pipeline.registry.load(input.roleId);
     let result: unknown;
     if (input.roleId === "knowledge-researcher") {
@@ -102,9 +104,11 @@ it("investigates a requested range beyond the entry preview before writing and i
     input.validateOutput?.(result);
     return { result, bundle, trace: { runId: "fixture-research", promptHash: "p", contextHash: "c", skillHash: "s", toolHash: "t", fingerprint: "f", effectiveEffort: null, repairAttempts: 0, roleId: input.roleId, roleVersion: "1", bundleHash: bundle.bundleHash, effectiveModel: "fixture", outputSchema: bundle.manifest.output_schema, sessionIds: [input.roleId + researchRound], loadedSkills: [], allowedTools: [], usage: {} } } as Awaited<ReturnType<RoleRuntimeGateway["run"]>>;
   });
-  const [page] = await pipeline.writePage({ key: "guide:delivery", title: "Delivery", order: 0, kind: "explanation", reader: "New contributor", goal: "Explain retry behavior", scenario: "A pending message", questions: ["What happens after failure?"], entryPaths: ["manual:example"] });
+  const [page] = await pipeline.writePage({ key: "guide:delivery", title: "Delivery", order: 0, kind: "explanation", reader: "New contributor", goal: "Explain retry behavior", scenario: "A pending message", questions: ["What happens after failure?"], entryPaths: ["manual:example"], materialKeys: ["manual:example"], topicPath: ["消息系统", "重试"] });
   expect(researchRound).toBe(2);
   expect(page!.reading?.goal).toBe("Explain retry behavior");
+  expect(page!.document.topicPath).toEqual(["消息系统", "重试"]);
+  expect(page!.dependencies.every(d => d.key === "manual:example")).toBe(true);
   expect(page!.document.citations[0]!.quote).toContain("retries pending messages");
   expect(page!.generation.trace.research).toHaveProperty("rounds");
   expect(repository.list()).toHaveLength(1); // No per-file article prerequisite.

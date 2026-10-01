@@ -16,7 +16,7 @@ export class MaterialResearch {
   }
 
   catalog() {
-    return this.materials.filter(m => !m.path?.startsWith("docs/archive/") && !m.path?.startsWith(".agents/") && !/lock\.(?:json|yaml)$/.test(m.path ?? "")).map(m => ({ key: m.key, ...(m.path && m.title !== m.path ? { title: m.title } : {}), lines: m.lineCount }));
+    return this.materials.map(m => ({ key: m.key, title: m.title, path: m.path, lines: m.lineCount }));
   }
 
   private size() {
@@ -45,10 +45,9 @@ export class MaterialResearch {
     const scopes = (query.match(/(?:[\w.-]+\/)+[\w./-]+/g) ?? []).filter(path => this.materials.some(m => m.path === path || m.path?.startsWith(path.replace(/\/$/, "") + "/")));
     const paths = scopes.length ? this.materials.filter(m => scopes.some(path => m.path === path || m.path?.startsWith(path.replace(/\/$/, "") + "/"))) : [];
     const terms = tokenize(scopes.reduce((text, path) => text.replaceAll(path, " "), query));
-    const historical = /历史|当时|archive|history|decision/i.test(query);
     if (!terms.length && paths.length) return paths.slice(0, 5).map(m => this.read(m.key, 1, Math.min(m.lineCount, 80)));
     if (!terms.length) return [];
-    const candidates = (paths.length ? paths : this.materials).filter(m => historical || !m.path?.startsWith("docs/archive/")).map(material => {
+    const candidates = (paths.length ? paths : this.materials).map(material => {
       const lines = material.text.split("\n"), title = (material.path ?? material.title).toLowerCase();
       const matches = lines.flatMap((line, i) => {
         const score = terms.filter(t => line.toLowerCase().includes(t)).length;

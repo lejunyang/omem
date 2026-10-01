@@ -1,5 +1,5 @@
 import { evidenceSection } from "./retrieval/context.js";
-import { importDevelopmentKnowledge, developmentRetrieval } from "./knowledge/development.js";
+import { importDevelopmentKnowledge, developmentRetrieval } from "./review/development.js";
 import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
 import { messageWorkflows } from "./assistant/message-workflows.js";
 import { registerKnowledgeRoutes } from "./knowledge/api.js";
@@ -78,7 +78,7 @@ export async function buildApp(
     workspaceRoot: config.agentCwd,
   });
   const retrievalService = createRetrieval(store.db, config.retrieval);
-  const assistantRetrieval = development ? developmentRetrieval(store, resolve(process.env.OMEM_REPO_ROOT!), retrievalService.retrieval) : retrievalService.retrieval;
+  const assistantRetrieval = development ? developmentRetrieval(store, retrievalService.retrieval) : retrievalService.retrieval;
   registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined, retrieval: assistantRetrieval });
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",

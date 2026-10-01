@@ -98,7 +98,7 @@ it("uses derived knowledge to find original evidence without promoting prose or 
 it("keeps identical external ids from different material carriers distinct", () => {
   const { store, repository } = setup();
   for (const source of ["file", "manual"] as const) store.capture({ source, externalId: "omem:README.md", title: source, parts: [{ type: "text", text: "Same text, different source identity." }], context: {} });
-  expect(repository.materials().map(m => m.key).sort()).toEqual(["manual:omem:README.md", "omem:README.md"]);
+  expect(repository.materials().map(m => m.key).sort()).toEqual(["file:omem:README.md", "manual:omem:README.md"]);
 });
 
 it("retires old investigation questions and notifies only for a new knowledge revision", () => {
