@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "pages": [
+    {
+      "key": "guide:overview",
+      "title": "先认识 omem：把材料变成能找回的工作记忆",
+      "order": 0,
+      "kind": "explanation",
+      "reader": "能使用开发工具，但第一次接触 omem 的人",
+      "goal": "读完知道 omem 解决什么问题、主要界面如何配合，能用一个例子解释材料、知识、记忆和事项的区别。",
+      "scenario": "你保存了一份项目约定，后来想找回某个决定，并需要跟进一次评审。贯穿这个示例解释用户操作与系统结果。",
+      "questions": [
+        "它解决什么日常问题，如何开始使用？",
+        "原始材料、知识文章、个人记忆、事项分别是什么，为什么有区别？",
+        "代码与其他材料如何共同使用？",
+        "目前哪些步骤可用，哪些主动能力还没有实现？"
+      ],
+      "entryPaths": [
+        "README.md",
+        "docs/reader-first/operations.md",
+        "apps/server/src/app.ts",
+        "apps/web/src/App.vue"
+      ]
+    },
+    {
+      "key": "guide:capture",
+      "title": "一份材料的旅程：从导入到阅读与引用",
+      "order": 1,
+      "kind": "explanation",
+      "reader": "想理解数据如何进入系统的开发者",
+      "goal": "沿一次导入解释输入、固定版本、检索与后台处理的分支，能找到相应代码入口。",
+      "scenario": "通过网页保存一份两节的 Markdown 项目约定，随后改动一条规则再导入。用简短内容示例展示原始材料与知识的区别。",
+      "questions": [
+        "页面或连接器把什么交给服务端？",
+        "原文保存和版本变化如何发生？",
+        "保存后哪些事情立即发生，哪些依赖后台 Agent 或显式知识生成？",
+        "引用为什么能打开旧版本？",
+        "图片和代码走同一来源体系时有什么专门处理？"
+      ],
+      "entryPaths": [
+        "apps/server/src/store.ts",
+        "apps/server/src/connectors.ts",
+        "apps/server/src/learning/pipeline.ts",
+        "apps/server/src/knowledge/repository.ts"
+      ]
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：搜索、上下文与 RAG",
+      "order": 2,
+      "kind": "explanation",
+      "reader": "想理解搜索效果并能定位原因的开发者",
+      "goal": "用一个中文问题走完召回、融合、背景补充与回答，区分找不到和找到却答不好。",
+      "scenario": "用户记得飞书消息要经过后台处理，却不记得文件名，输入“飞书 消息 后台”，随后追问处理过程。",
+      "questions": [
+        "顶部搜索、知识搜索和助手是否共用召回？",
+        "全文、中文短词、符号、向量、记忆与知识分别帮助解决什么问题？",
+        "命中一个片段后怎样补上下文？",
+        "助手如何使用来源和进一步查询？",
+        "当前中文模型、重排、时间检索有哪些实际限制？"
+      ],
+      "entryPaths": [
+        "apps/server/src/retrieval/keyword.ts",
+        "apps/server/src/retrieval/semantic.ts",
+        "apps/server/src/retrieval/context.ts",
+        "apps/server/src/assistant/runtime.ts",
+        "apps/server/src/knowledge/api.ts"
+      ]
+    },
+    {
+      "key": "guide:memory",
+      "title": "规则变了以后：原文、记忆与待办如何更新",
+      "order": 3,
+      "kind": "explanation",
+      "reader": "想知道个人记忆如何维护与跟进事项的人",
+      "goal": "解释保存材料、应用记忆、重新核验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。",
+      "scenario": "项目约定从重试三次改为五次；另一条独立消息让助手明早跟进评审。不要把约定文本直接当用户交办。",
+      "questions": [
+        "一条原始记录怎样成为可用记忆？",
+        "来源变化后旧结论如何失效和重核验？",
+        "记忆重核验与 Wiki 更新是否同一个流程？",
+        "等待、跟进时间、截止时间和通知已读有什么区别？",
+        "目前能主动做什么，哪些仍需要用户或后续实现？"
+      ],
+      "entryPaths": [
+        "apps/server/src/learning/pipeline.ts",
+        "apps/server/src/memory/service.ts",
+        "apps/server/src/tasks/follow-up.ts",
+        "apps/server/src/assistant/message-workflows.ts"
+      ]
+    },
+    {
+      "key": "guide:contributing",
+      "title": "改一条完整功能链：从搜索结果到界面",
+      "order": 4,
+      "kind": "how-to",
+      "reader": "会 TypeScript，准备第一次修改 omem 的开发者",
+      "goal": "能从用户可见行为定位 API、检索与组件，完成小改动并通过真实页面确认结果。",
+      "scenario": "以“搜索结果显示它属于哪一节”为贯穿例子，解释现有实现、扩展位置和检查方法；不是要求读者执行大规模重构。",
+      "questions": [
+        "怎样启动开发环境，仓库材料如何进入 dev？",
+        "顶部搜索的 UI、API、检索和上下文分别在哪里？",
+        "要增加或调整章节提示，应修改哪些地方？",
+        "如何复用组件、保持间距并查看真实效果？",
+        "改完怎样更新相关知识，怎样区分检查通过和阅读可用？"
+      ],
+      "entryPaths": [
+        "scripts/dev.ts",
+        "apps/web/src/App.vue",
+        "apps/server/src/app.ts",
+        "apps/server/src/retrieval/context.ts",
+        "docs/reader-first/operations.md"
+      ]
+    }
+  ]
+}

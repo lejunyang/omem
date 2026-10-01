@@ -38,8 +38,8 @@ export function publishReviewArticle(root: string, article: KnowledgeArticle) {
 }
 
 export function writeReviewKnowledgeIndex(root: string, articles: KnowledgeArticle[]) {
-  const pages = articles.filter(a => a.current), overview = pages.find(a => a.document.key === "topic:overview");
-  const md = ["# omem · 可追溯知识", "", overview?.document.summary ?? "仓库材料经 AI 分析与独立复核，正文引用可递归进入相关知识、代码和原始文档。", "", ...pages.filter(a => a.document.key.startsWith("topic:")).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`), "", "## 模块与材料", "", ...pages.filter(a => !a.document.key.startsWith("topic:")).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`)].join("\n") + "\n";
+  const pages = articles.filter(a => a.current), overview = pages.find(a => a.document.key === "guide:overview") ?? pages.find(a => a.document.key === "topic:overview");
+  const md = ["# omem · 可追溯知识", "", overview?.document.summary ?? "仓库材料经 AI 分析与独立复核，正文引用可递归进入相关知识、代码和原始文档。", "", ...pages.filter(a => a.reading).sort((a,b) => a.reading!.order-b.reading!.order).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`), "", "## 其他主题", "", ...pages.filter(a => a.document.key.startsWith("topic:")).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`), "", "## 模块与材料", "", ...pages.filter(a => !a.document.key.startsWith("topic:") && !a.reading).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`)].join("\n") + "\n";
   const path = join(root, ".repo-review/wiki.md");
   if (!existsSync(path) || readFileSync(path, "utf8") !== md) writeFileSync(path, md);
 }

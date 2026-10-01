@@ -56,6 +56,25 @@ export const knowledgePlanSchema = z.object({
   }).strict()).min(4).max(32),
 }).strict();
 
+export const wikiPageBriefSchema = z.object({
+  key, title: z.string(), order: z.number().int().nonnegative(),
+  kind: z.enum(["tutorial", "explanation", "how-to", "reference"]),
+  reader: z.string(), goal: z.string(), scenario: z.string(),
+  questions: z.array(z.string()).min(1).max(12), entryPaths: z.array(z.string()).max(20),
+}).strict();
+export type WikiPageBrief = z.infer<typeof wikiPageBriefSchema>;
+
+/** A bounded, read-only investigation over already captured material. */
+export const knowledgeResearchSchema = z.object({
+  schema_version: z.literal(1), ready: z.boolean(),
+  findings: z.string().max(12000), gaps: z.array(z.string()).max(12),
+  requests: z.array(z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("search"), query: z.string().min(1).max(300) }).strict(),
+    z.object({ kind: z.literal("read"), materialKey: key, startLine: z.number().int().positive(), endLine: z.number().int().positive() }).strict(),
+  ])).max(12),
+}).strict();
+export type KnowledgeResearch = z.infer<typeof knowledgeResearchSchema>;
+
 export type KnowledgeDocument = z.infer<typeof knowledgeDocumentSchema>;
 export type KnowledgeCitation = z.infer<typeof knowledgeCitationSchema>;
 export type KnowledgeQuestion = z.infer<typeof knowledgeQuestionSchema>;
@@ -75,4 +94,5 @@ export type KnowledgeArtifact = {
   dependencies: { kind: "material" | "article"; key: string; digest: string }[];
   generation: { model: string; effort: string | null; at: string; trace: Record<string, unknown> };
   review: { model: string; at: string; trace: Record<string, unknown>; verdict: "accepted" };
+  reading?: WikiPageBrief;
 };
