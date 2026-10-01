@@ -2,63 +2,104 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/highlight.test.ts",
-    "title": "代码高亮行为测试",
-    "summary": "验证 TypeScript 多行语法状态、按行拆分结果以及已知和未知语言下的 HTML 转义安全性；尚未覆盖全部语言别名、并发加载和复杂嵌套标签。",
-    "category": "tests",
+    "title": "代码高亮的跨行状态与安全转义测试",
+    "summary": "这组测试验证代码高亮在按行展示时仍能保留跨行语法状态，并确保已知及未知语言的输入标记都不会作为原始 HTML 输出。它覆盖核心正确性与基础注入防护，但未验证全部语言别名、并发加载及实际页面集成。",
+    "category": "阅读与交互样式",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "阅读与交互样式"
+    ],
     "sections": [
       {
-        "key": "tested-behavior",
-        "title": "断言覆盖的行为",
-        "body": "测试先把包含跨行注释与 TypeScript 声明的源码交给 `highlightCode`，再用 `highlightedLines` 拆成编号行；它断言结果正好有三行，第二行仍处于注释样式，第三行能识别关键字。这证明拆行没有丢失跨行 lexer 样式状态，并覆盖了高亮与逐行展示的组合路径。[[c1]]\n\n另一用例分别传入 `ts` 和未知语言，并以形似 `<img onerror>` 的文本检查输出：两条路径都不得保留真实 `<img` 标签，且必须出现转义后的尖括号。因此测试同时约束了 highlight.js 已知语言输出和未知语言降级分支的基本注入防护。[[c2]]"
+        "key": "purpose",
+        "title": "解决按行展示与不可信代码输入的问题",
+        "body": "代码阅读界面通常要把高亮结果拆成带行号的多行；若直接按换行符切割，跨行注释等语法生成的 `<span>` 可能在行间断裂。同时，代码内容可能含有看似 HTML 的文本，渲染前必须保证它不会变成真实标签。本测试以 TypeScript 跨行注释和带事件属性的图片标签为代表，分别守住显示正确性与安全转义两条底线。参考 [[c1]]"
       },
       {
-        "key": "coverage-boundary",
-        "title": "覆盖边界",
-        "body": "这些断言关注结果片段而非完整 HTML，因此允许高亮库调整无关的标签结构；但它没有验证空输入、大小写语言名、所有别名、XML 所需的多语言加载、并发注册，或不平衡 span 输入的拆行行为。测试也没有挂载真实代码查看器，不能证明行号、复制、滚动或 CSS 主题在浏览器中的表现。当前证据仅能支持两个独立测试用例所列的行为边界。[[c3]]"
+        "key": "flow",
+        "title": "从高亮结果到独立行片段",
+        "body": "测试先调用异步高亮，再将返回的 HTML 交给分行函数，断言最终得到三行、第二行仍带注释样式、第三行能识别 `export` 关键字。实现侧会按语言别名动态注册语法；分行时维护尚未闭合的 `<span>` 栈，在每个换行处临时闭合标签，并在下一行重新打开，因此每一行都是可单独渲染的有效片段，同时保留词法状态。参考 [[c2]] [[c3]]"
+      },
+      {
+        "key": "coverage",
+        "title": "已覆盖边界与仍未覆盖的行为",
+        "body": "安全用例同时遍历已知语言 `ts` 与未知语言：前者经过高亮库，后者走显式转义回退；两条路径都不得保留真实 `<img`，且必须出现 `&lt;`。参考 [[c4]]\n\n现有断言尚未覆盖空字符串、大小写语言名、其余别名、XML 额外语法加载、重复或并发注册，以及畸形高亮 HTML。材料也没有展示这些函数在 Vue 页面中的调用，因此无法据此确认行号渲染、样式注入方式或浏览器端焦点行为。"
+      },
+      {
+        "key": "relationships",
+        "title": "与高亮实现的关系",
+        "body": "该测试直接依赖同目录的 `highlightCode` 与 `highlightedLines`：前者负责语言选择、动态加载和安全输出，后者负责把高亮 HTML 转成逐行片段。测试证明两者组合后的关键结果，却没有隔离断言各自的全部合同；若未来更换高亮引擎，只要跨行样式和转义结果保持一致，这些用例仍可作为面向行为的回归保护。参考 [[c1]] [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "跨行注释与关键字测试",
-        "reason": "支持多行注释状态在拆行为编号行后仍被保留，以及 TypeScript 关键字被识别的论断。",
-        "relation": "supports",
+        "label": "测试入口与跨行场景",
+        "reason": "支持测试直接组合调用高亮与分行函数，并以 TypeScript 跨行注释验证逐行展示结果。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/highlight.test.ts",
-          "startLine": 4,
-          "endLine": 9
+          "startLine": 1,
+          "endLine": 8
         },
-        "quote": "it(\"highlights TypeScript and preserves multiline comments in numbered rows\", async () => {\n  const lines = highlightedLines(await highlightCode(\"/* start\\ncontinued */\\nexport const value = 1;\", \"ts\"));\n  expect(lines).toHaveLength(3);\n  expect(lines[1]).toContain('<span class=\"hljs-comment\">continued */</span>');\n  e"
+        "quote": "import { expect, it } from \"vitest\";\nimport { highlightCode, highlightedLines } from \"./highlight\";\n\nit(\"highlights TypeScript and preserves multiline comments in numbered rows\", async () => {\n  const lines = highlightedLines(await highlightCode(\"/* start\\ncontinued */\\nexport const value = 1;\", \"ts\"));\n  expect(lines)"
       },
       {
         "key": "c2",
-        "label": "已知与未知语言转义测试",
-        "reason": "支持两类语言输入都不会把恶意标记作为真实 HTML 输出的安全断言。",
+        "label": "语言加载与高亮流程",
+        "reason": "说明已知语言经过别名解析、按需注册后交由 highlight.js 生成安全的高亮 HTML。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.ts",
+          "startLine": 25,
+          "endLine": 32
+        },
+        "quote": "export async function highlightCode(code: string, language: string): Promise<string> {\n  const lang = aliases[language.toLowerCase()];\n  if (!lang) return escapeCode(code);\n  const required: (keyof typeof loaders)[] = lang === \"xml\" ? [\"xml\", \"javascript\", \"css\"] : [lang];\n  await Promise.all(required.map(async (name) "
+      },
+      {
+        "key": "c3",
+        "label": "跨行标签栈",
+        "reason": "支持分行函数在换行处闭合并重新打开 span，从而保留跨行词法状态且让每行 HTML 独立有效。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.ts",
+          "startLine": 35,
+          "endLine": 50
+        },
+        "quote": "/** Preserve multiline lexer state while making each numbered row valid HTML.\n * Input is exclusively highlight.js output (escaped text and generated spans). */\nexport function highlightedLines(html: string): string[] {\n  const stack: string[] = [];\n  const lines = [\"\"];\n  for (const token of html.split(/(<span[^>]*>|<"
+      },
+      {
+        "key": "c4",
+        "label": "已知与未知语言的转义断言",
+        "reason": "支持两条语言处理路径都不会输出真实图片标签，并会将小于号编码。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/highlight.test.ts",
           "startLine": 11,
-          "endLine": 17
+          "endLine": 16
         },
-        "quote": "it(\"escapes markup for known and unknown languages\", async () => {\n  for (const language of [\"ts\", \"unknown\"]) {\n    const html = await highlightCode('<img src=x onerror=\"alert(1)\">', language);\n    expect(html).not.toContain(\"<img\");\n    expect(html).toContain(\"&lt;\");\n  }\n});"
-      },
-      {
-        "key": "c3",
-        "label": "当前测试文件范围",
-        "reason": "用完整测试范围说明现有材料只包含两个用例，从而界定尚未覆盖的行为。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/highlight.test.ts",
-          "startLine": 1,
-          "endLine": 17
-        },
-        "quote": "import { expect, it } from \"vitest\";\nimport { highlightCode, highlightedLines } from \"./highlight\";\n\nit(\"highlights TypeScript and preserves multiline comments in numbered rows\", async () => {\n  const lines = highlightedLines(await highlightCode(\"/* start\\ncontinued */\\nexport const value = 1;\", \"ts\"));\n  expect(lines)"
+        "quote": "it(\"escapes markup for known and unknown languages\", async () => {\n  for (const language of [\"ts\", \"unknown\"]) {\n    const html = await highlightCode('<img src=x onerror=\"alert(1)\">', language);\n    expect(html).not.toContain(\"<img\");\n    expect(html).toContain(\"&lt;\");\n  }"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "这些高亮片段在实际 Vue 页面中通过哪种渲染方式插入 DOM，是否还有额外的内容安全约束？",
+        "why": "提供的材料只包含高亮实现与单元测试，没有调用方；因此无法判断页面是否使用 v-html、是否配置内容安全策略，以及逐行片段是否还会经过二次处理。",
+        "nextStep": "补充直接调用 highlightCode 或 highlightedLines 的组件材料，并检查其模板渲染及安全边界。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
@@ -70,42 +111,22 @@
       "kind": "material",
       "key": "omem:packages/ui/src/highlight.ts",
       "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/index.ts",
-      "digest": "e33d8712c3cd93e2ea519cdd60dbec8c2407918313f14927d6e4b0cc7e61d84d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/tokens.css",
-      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:27:51.594Z",
+    "at": "2026-10-01T19:14:37.947Z",
     "trace": {
-      "runId": "9af3944a-51e6-48c4-bf07-e7883435c24a",
+      "runId": "c9f12a7b-06f7-4255-9871-8fc9149a822f",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c42e424fd058724183a612182dc84a6b9f1ad2753e5a33fbeff9c1c421cc6d08",
-      "contextHash": "8a9c4954245ff99e94b298752afd19b2859345a98137d1254fcbb236575cef9e",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "fdc07e26cf263e265a579b7e62276b89890977945b5827258cbf16b15db870cf",
+      "contextHash": "ed2cc46ce2e2fd48f590b6c734ae2fd5559837c4cab65c95aa9a84a5a96dc63b",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1e997f740ee0e6c150f13c64aa1a4a617b39e1cdcbba9c5c80513376ae10d2fd",
+      "fingerprint": "3085b534b70002184f8311cc69491a4547b85c322972ccbccdac33153cdf774b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -118,11 +139,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-898a-7fe3-82c3-33f92cd20624"
+        "01a0f8e3-9492-7542-aa59-908b85c2f9eb"
       ],
       "usage": {
-        "used": 23800,
-        "size": 760000,
+        "used": 22616,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -130,10 +151,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21857,
-          "utf8Bytes": 23621,
-          "estimatedTokens": 7874,
-          "budgetedTokens": 9843,
+          "chars": 11421,
+          "utf8Bytes": 14731,
+          "estimatedTokens": 4911,
+          "budgetedTokens": 6139,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -142,17 +163,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:28:09.152Z",
+    "at": "2026-10-01T19:14:53.812Z",
     "trace": {
-      "runId": "d47b5ccf-6c92-458e-958c-8009346e47f6",
+      "runId": "6cde36ff-a1f3-4775-bd98-73fa44d9805c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "40fd35eb46d08050a3dfcbc2b3636c208175e4acc6b3062173c27870200e8c9b",
-      "contextHash": "3cf64dff645c5f0aa455a97ae6dc4ce7dce108d784ec0a16a0485b89452b242e",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "c96aa028bb87afe00c4360589170e7de09f7aafa3fb8f9e2235682334f642dc3",
+      "contextHash": "ad98a7d99d785f16d84dcb15cc7f3a2d9e86f0150ea2719101ea4bdbde4660fa",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f9f3910fd4ea94c92c29a5706c7af585855b6634ef8c83b432dd1559ca1ae915",
+      "fingerprint": "073d0291cfba632a88c0c488d318dc43e827d5432a17a169123fe084198f7f9f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -165,11 +186,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-42f2-7540-99b6-a0c549aa8f7e"
+        "01a0f8e3-fb01-7841-8f34-1edb4cf8b07a"
       ],
       "usage": {
-        "used": 26356,
-        "size": 760000,
+        "used": 22812,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -177,10 +198,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37389,
-          "utf8Bytes": 46011,
-          "estimatedTokens": 15337,
-          "budgetedTokens": 19172,
+          "chars": 12974,
+          "utf8Bytes": 18202,
+          "estimatedTokens": 6068,
+          "budgetedTokens": 7585,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

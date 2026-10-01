@@ -2,45 +2,38 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/DecisionsView.vue",
-    "title": "需要人工判断的变更处理界面",
-    "summary": "该 Vue 页面集中展示因歧义、冲突或影响较大而不能自动处理的提案，让用户查看变化、依据与有效状态，并选择确认、拒绝或要求补充背景。提交时携带提案摘要、操作者和独立请求标识，完成后通知上层刷新数据。",
-    "category": "implementation",
+    "title": "需要人工判断的变更处理页",
+    "summary": "该页面集中展示歧义、冲突或影响较大的变更提案，让用户查看变化与原始依据后选择确认、拒绝或要求补充背景；同时阻止提交来源已变化的旧判断，并在每次操作后刷新列表。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "工作区入口"
+    ],
     "sections": [
       {
         "key": "purpose",
-        "title": "把高风险变化交给用户判断",
-        "body": "该页面解决的是**自动处理与人工决策之间的交接**：它接收上层提供的判断列表，并通过事件把刷新、打开证据、错误和操作结果交还给父组件处理，因此本身主要负责展示与交互，不负责持有完整业务状态。参考 [[c1]]\n\n界面明确只承接歧义、冲突或影响较大的变化，并提示旧批准不会在来源变化或判断过期后继续使用。这使用户面对的不是普通通知，而是一组有时效、有证据且可能改变系统状态的待审提案。参考 [[c2]]"
+        "title": "只把需要判断的变化交给用户",
+        "body": "页面接收上层传入的判断列表，定位为处理歧义、冲突和较大影响的入口，而不是所有变化的流水账。顶部明确说明每次动作都有独立回执，并且来源变化或判断过期后不会沿用旧批准；没有待处理项时，也会提示高置信、小范围变化可自动生效。参考 [[c1]] [[c2]]"
       },
       {
-        "key": "decision-flow",
-        "title": "一次判断如何提交",
-        "body": "用户可对待处理提案执行确认、拒绝或补充背景。组件先用“判断 ID + 动作”标记当前按钮为忙碌状态，再调用 API，提交动作、提案摘要、随机生成的请求标识和操作者；成功后发出对应通知并刷新列表，失败时上报错误后仍刷新，最后清除忙碌状态。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[查看待判断提案] --> B{选择动作}\n  B -->|确认| C[提交并应用]\n  B -->|拒绝| D[记录拒绝]\n  B -->|补充背景| E[记录背景请求]\n  C --> F[通知并刷新]\n  D --> F\n  E --> F\n```\n\n三个操作按钮只在状态为 `pending` 时出现，因此已确认、已拒绝、过期或失效的记录仍可阅读，但不能从此界面重复提交。参考 [[c4]]"
+        "key": "review-flow",
+        "title": "从理解提案到提交选择",
+        "body": "每项提案先显示人读标题、状态、有效期和已有处理回执，再展开动作、对象、影响数量、结构化正文及不确定项。证据列表可向上层发出 `open` 事件，以查看对应原始片段；若状态为 `stale`，页面明确告知原件已更新，并且不再提供提交按钮。参考 [[c3]] [[c4]]\n\n```mermaid\nflowchart LR\n  A[查看变化与不确定项] --> B[打开原始依据]\n  A --> C{当前状态}\n  C -->|pending| D[补充背景、拒绝或确认]\n  C -->|stale| E[等待新版本重新核验]\n```\n\n只有 `pending` 状态显示三种动作，因此已确认、已拒绝、过期或失效记录仍可阅读，但不能再次从此页提交。参考 [[c5]]"
       },
       {
-        "key": "evidence-and-boundaries",
-        "title": "证据、状态与界面边界",
-        "body": "每项判断展示人类可读状态、有效期、已有处理回执、变更原因，以及动作、对象、影响数量和提案正文；若提案仍有不确定项，也会直接提示用户。这些信息帮助用户在操作前理解“改什么、影响多大、还有什么未知”。参考 [[c5]]\n\n提案证据以可打开的引用列表呈现，点击后仅向上层发送证据片段标识；页面没有自行读取原文。来源已变化时还会显示明确警告，说明旧判断不能再提交、需要等待新版本核验。参考 [[c6]]\n\n当列表为空时，页面说明高置信、小范围变化会自动生效，表明该视图只覆盖人工介入路径；但自动应用规则及服务端如何校验摘要、过期状态和请求幂等性不在当前材料中。参考 [[c7]] 页面只提供一处明确的响应式适配：窄屏下把三列变更摘要折叠为单列。参考 [[c8]]"
+        "key": "submission-boundaries",
+        "title": "提交协议与界面边界",
+        "body": "提交时，组件把动作、提案摘要、随机生成的请求标识和操作者标识发送到对应判断接口。成功后展示与动作匹配的通知并要求上层刷新；失败时上报错误，也会刷新，以便以服务端最新状态为准。`finally` 会清除当前加载标识。参考 [[c6]]\n\n加载状态由“判断 ID + 动作”组成，只标识具体按钮；材料未显示页面级互斥、服务端幂等实现或摘要冲突的响应规则。布局方面，变化摘要在宽屏使用三列，窄于 700px 时改为单列，长回执和 JSON 内容允许换行或滚动。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "组件输入与上层事件",
-        "reason": "支持该页面由外部接收判断列表，并将刷新、证据打开、错误和通知交给父组件处理。",
+        "label": "待判断页面定位",
+        "reason": "支持页面只面向歧义、冲突和较大影响变化，以及旧批准不会沿用的说明。",
         "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 2,
-          "endLine": 12
-        },
-        "quote": "import { ref } from \"vue\";\nimport { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel } from \"@omem/ui\";\nimport { api, type Decision } from \"./api\";\n\ndefineProps<{ decisions: Decision[] }>();\nconst emit = defineEmits<{\n  refresh: [];\n  open: [id: string];\n  error: [text: string];\n  notice: [text: string];\n}>();"
-      },
-      {
-        "key": "c2",
-        "label": "人工判断入口说明",
-        "reason": "支持页面只处理歧义、冲突和较大影响，并强调旧批准不会跨来源变化或过期继续生效。",
-        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/DecisionsView.vue",
@@ -50,9 +43,61 @@
         "quote": "<template>\n  <section class=\"page decisions-page\">\n    <span class=\"eyebrow\">只把歧义、冲突和较大影响交给你</span>\n    <h1>待判断</h1>\n    <p class=\"muted\">\n      每个动作都有独立 request receipt；来源变化或判断过期后不会沿用旧批准。\n    </p>"
       },
       {
+        "key": "c2",
+        "label": "无待判断项提示",
+        "reason": "支持高置信小范围变化自动生效、其余变化进入人工判断入口的产品边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 141,
+          "endLine": 145
+        },
+        "quote": "    <OmEmpty\n      v-if=\"!decisions.length\"\n      title=\"没有需要判断的变化\"\n      description=\"高置信小范围变化会自动生效，其余会连同 diff 和原证据出现在这里。\"\n    />"
+      },
+      {
         "key": "c3",
-        "label": "判断请求处理流程",
-        "reason": "支持忙碌状态、API 请求字段、成功通知、异常处理、刷新和状态清理的完整流程。",
+        "label": "提案信息展示",
+        "reason": "支持页面展示状态、有效期、回执、变化详情和不确定项的描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 65,
+          "endLine": 110
+        },
+        "quote": "    <OmPanel\n      v-for=\"decision in decisions\"\n      :key=\"decision.id\"\n      class=\"stack\"\n      :title=\"title(decision)\"\n    >\n      <div class=\"row\">\n        <OmBadge\n          :tone=\"\n            decision.state === 'pending'\n              ? 'warning'\n              : decision.state === 'approved'\n                ?"
+      },
+      {
+        "key": "c4",
+        "label": "依据与失效提示",
+        "reason": "支持证据片段可被打开，以及来源更新后旧判断不可提交的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 111,
+          "endLine": 121
+        },
+        "quote": "      <div class=\"evidence-list\">\n        <OmCitation\n          v-for=\"(item, index) in decision.proposal.evidence\"\n          :key=\"item.fragment_revision_id\"\n          :label=\"`依据 ${index + 1}${item.exact_quote ? `：${item.exact_quote.slice(0, 36)}` : ''}`\"\n          @open=\"emit('open', item.fragment_revision_id)\"\n    "
+      },
+      {
+        "key": "c5",
+        "label": "待处理动作入口",
+        "reason": "支持只有 pending 状态展示补充背景、拒绝和确认应用三种操作。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 122,
+          "endLine": 139
+        },
+        "quote": "      <template v-if=\"decision.state === 'pending'\" #actions>\n        <OmButton\n          :loading=\"busy === decision.id + 'request_context'\"\n          @click=\"decide(decision, 'request_context')\"\n          >补充背景</OmButton\n        >\n        <OmButton\n          :loading=\"busy === decision.id + 'reject'\"\n          @click"
+      },
+      {
+        "key": "c6",
+        "label": "判断提交流程",
+        "reason": "支持请求字段、成功与失败通知、刷新列表及清理加载状态的核心流程。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -63,104 +108,64 @@
         "quote": "async function decide(\n  decision: Decision,\n  action: \"approve\" | \"reject\" | \"request_context\",\n) {\n  busy.value = decision.id + action;\n  try {\n    await api(`/decisions/${decision.id}`, {\n      action,\n      proposalDigest: decision.proposalDigest,\n      requestId: crypto.randomUUID(),\n      actorId: decision.actorI"
       },
       {
-        "key": "c4",
-        "label": "待处理状态的操作按钮",
-        "reason": "支持三种人工动作及其仅在 pending 状态下可用的界面约束。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 123,
-          "endLine": 140
-        },
-        "quote": "      <template v-if=\"decision.state === 'pending'\" #actions>\n        <OmButton\n          :loading=\"busy === decision.id + 'request_context'\"\n          @click=\"decide(decision, 'request_context')\"\n          >补充背景</OmButton\n        >\n        <OmButton\n          :loading=\"busy === decision.id + 'reject'\"\n          @click"
-      },
-      {
-        "key": "c5",
-        "label": "判断详情与不确定项",
-        "reason": "支持页面展示状态、期限、回执、原因、影响范围、正文和不确定项。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 71,
-          "endLine": 110
-        },
-        "quote": "      <div class=\"row\">\n        <OmBadge\n          :tone=\"\n            decision.state === 'pending'\n              ? 'warning'\n              : decision.state === 'approved'\n                ? 'success'\n                : ['stale', 'expired'].includes(decision.state)\n                  ? 'danger'\n                  : 'neutra"
-      },
-      {
-        "key": "c6",
-        "label": "证据入口与失效警告",
-        "reason": "支持证据点击由事件交给上层处理，以及来源变化后禁止继续使用旧判断的提示。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 112,
-          "endLine": 121
-        },
-        "quote": "      <div class=\"evidence-list\">\n        <OmCitation\n          v-for=\"(item, index) in decision.proposal.evidence\"\n          :key=\"item.fragment_revision_id\"\n          :label=\"`依据 ${index + 1}${item.exact_quote ? `：${item.exact_quote.slice(0, 36)}` : ''}`\"\n          @open=\"emit('open', item.fragment_revision_id)\"\n    "
-      },
-      {
         "key": "c7",
-        "label": "空列表与自动处理边界",
-        "reason": "支持该视图面向需要人工判断的变化，而高置信、小范围变化走自动生效路径。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 142,
-          "endLine": 146
-        },
-        "quote": "    <OmEmpty\n      v-if=\"!decisions.length\"\n      title=\"没有需要判断的变化\"\n      description=\"高置信小范围变化会自动生效，其余会连同 diff 和原证据出现在这里。\"\n    />"
-      },
-      {
-        "key": "c8",
-        "label": "窄屏布局适配",
-        "reason": "支持变更摘要在小屏幕下由三列调整为单列的响应式行为。",
+        "label": "窄屏与长内容适配",
+        "reason": "支持三列摘要在窄屏切换为单列，以及 JSON、回执长文本的显示边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 191,
-          "endLine": 195
+          "startLine": 149,
+          "endLine": 194
         },
-        "quote": "@media (max-width: 700px) {\n  .diff-grid {\n    grid-template-columns: 1fr;\n  }\n}"
+        "quote": "<style scoped>\n.diff-grid {\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 10px;\n  margin: 4px 0 12px;\n}\n.diff-grid div {\n  display: flex;\n  flex-direction: column;\n  gap: 5px;\n  padding: 12px;\n  background: var(--om-soft);\n  border-radius: 5px;\n}\npre {\n  max-width: 100%;\n  overflow: auto;\n  padding: "
       }
     ],
     "questions": [
       {
-        "question": "服务端如何校验 proposalDigest、actorId、requestId，以及过期或 stale 判断是否会被强制拒绝？",
-        "why": "组件会提交这些字段并在界面上限制状态，但提供的代码没有展示 API 实现和服务端校验逻辑，不能据此前端行为断言并发安全、权限控制或幂等保证。",
-        "nextStep": "检查对应判断接口的路由、领域服务及持久化实现，并确认摘要匹配、操作者校验、请求去重和状态转换的测试。",
+        "question": "服务端如何利用 requestId 和 proposalDigest 实现幂等、并发冲突检测与过期拒绝？",
+        "why": "当前材料只显示客户端生成并发送这些字段，无法确认重复请求、摘要不一致或判断刚好过期时的服务端语义。",
+        "nextStep": "检查判断接口的路由实现及其测试，确认状态码、错误消息和回执复用规则。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4",
           "c6"
         ]
       },
       {
-        "question": "确认、拒绝、请求背景、异常刷新及 stale 状态是否有组件或端到端测试？",
-        "why": "当前材料只包含实现，没有测试文件；因此可以解释代码意图，但无法确认按钮禁用、重复点击、错误提示、证据打开和窄屏布局已被自动化验证。",
-        "nextStep": "查找 DecisionsView 的组件测试和真实浏览器流程；若不存在，补充对三类动作、API 失败、失效记录不可提交及证据事件的行为断言。",
+        "question": "证据打开事件是否通过统一的递归引用抽屉处理，并能恢复焦点与滚动状态？",
+        "why": "组件只向上层发出片段标识，实际导航和交互恢复逻辑不在所给材料中。",
+        "nextStep": "检查父组件对 open 事件的绑定及证据抽屉实现，并进行键盘与窄屏交互验证。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4",
-          "c6",
-          "c8"
+          "c4"
         ]
       },
       {
-        "question": "服务端如何校验 proposalDigest、actorId 和 requestId，并拒绝过期或 stale 的判断？",
-        "why": "材料能确认组件提交这些字段并仅为 pending 状态展示操作入口，但不能确认服务端的摘要匹配、操作者校验、幂等处理和状态转换约束；草稿已正确将其标为当前材料之外的边界。",
-        "nextStep": "对照判断接口的路由、领域服务、持久化实现及相关行为测试，补充端到端约束说明。",
+        "question": "三种动作的重复点击和交叉点击是否有自动化测试覆盖？",
+        "why": "材料未提供测试文件；当前组件仅记录一个动作级加载标识，无法从源码确认按钮组件是否阻止并发提交。",
+        "nextStep": "查看 OmButton 的 loading 行为和该页面的组件测试，补充快速连续点击、失败刷新及 stale 状态不可提交的断言。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4",
+          "c5",
           "c6"
+        ]
+      },
+      {
+        "question": "服务端如何利用 requestId 和 proposalDigest 处理重复请求、并发冲突和过期判断？",
+        "why": "当前材料只证明客户端会发送这两个字段，不能确认服务端的幂等、摘要校验及冲突响应语义；草稿已恰当地将其保留为未知边界。",
+        "nextStep": "查阅判断接口的路由实现及协议测试，补充服务端对重复请求、摘要不一致和过期状态的处理规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
+        ]
+      },
+      {
+        "question": "证据的 open 事件是否接入统一引用抽屉，并支持焦点、滚动与展开状态恢复？",
+        "why": "当前组件只证明会向上层发出片段标识，实际证据导航和交互恢复由材料范围外的宿主组件决定。",
+        "nextStep": "检查父组件的 open 事件绑定及引用抽屉实现，并在桌面和窄屏页面验证交互。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
         ]
       }
     ]
@@ -169,31 +174,31 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/DecisionsView.vue",
-      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
+      "digest": "2f5074e0d5d0ef86228c684136a810dce0ffa2e913c674cf6e6678a76157ad1e"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
+      "digest": "5b1fc796094157c6c689332d72eacf6d57c95025e92b39991ed4b0becc6cbb9a"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:08:36.124Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:03:07.147Z",
     "trace": {
-      "runId": "bf27c158-6fc4-4f90-a03f-2f28e546f077",
+      "runId": "2d1cfc86-f034-4ba4-a3e8-8c815b80f6c3",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
-      "promptHash": "0a5d0907a25428e86a5f549008a5a7ae3889c07d0c5d504d82dcabd7f6669a20",
-      "contextHash": "c5392d80ecc304b671f16aae46595d22ea0b9f40865421dd4a55350f797aea81",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "993768776abdbb3c47b39724c5efe16e56f3de74b3ec438a21f43b4bc67c15b1",
+      "contextHash": "3fc926b65d681ffabba67fb0a884af1c1ebf9a2f671cec6f406f590014bbdaa0",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1767fd493c23c68bf1745f79af9fdd73fd07850cbf810f1c645cc06acea9b272",
+      "fingerprint": "e070130b3109d9c9d524c5afcb76404f4993b474368202141a7c6655970d692b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-code-analyst",
@@ -203,10 +208,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75d-6bd0-7c11-b918-78a8ebe23b83"
+        "01a0f8d8-f36c-7b63-9a4f-bbf4e702f00e"
       ],
       "usage": {
-        "used": 25995,
+        "used": 26686,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -215,10 +220,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 15500,
-          "utf8Bytes": 19036,
-          "estimatedTokens": 6346,
-          "budgetedTokens": 7933,
+          "chars": 15734,
+          "utf8Bytes": 19342,
+          "estimatedTokens": 6448,
+          "budgetedTokens": 8060,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -227,20 +232,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:08:52.436Z",
+    "at": "2026-10-01T19:03:22.659Z",
     "trace": {
-      "runId": "c94556a5-63d5-49ff-b7ab-c7d0fbd6402d",
+      "runId": "6ea01aa0-da2f-44e5-94fb-51bd4ec7edd1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "38ec69538c086663e7d2da30b0b4a6ce40a8cd806f2a248ff255d1ff1d275e4e",
-      "contextHash": "0cf27e28476283e2d43d2195e6813ee753c0c275b2afa5a0ccddfa7769808097",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "57833d5f08bf9c3a276341517fefcfbbff2ebff9171c873d1f836f7ca77c930c",
+      "contextHash": "7822a6a41c8f2d3081728051cf78a84925103a24e8cc8da8f26d472cb8710dc4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "044c6fd9761b1afac8e72301dad377071f5fb0be7f34b31ed46ef64adce09012",
+      "fingerprint": "276c9ef3798dc0aad5bce686f6ff48710502559b6c3c832c12351566eb855a00",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -250,10 +255,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75d-e402-7883-9019-23a336554cff"
+        "01a0f8d9-64c9-7080-93a8-8bef1993ca74"
       ],
       "usage": {
-        "used": 25928,
+        "used": 24969,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -262,10 +267,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 19113,
-          "utf8Bytes": 25371,
-          "estimatedTokens": 8457,
-          "budgetedTokens": 10572,
+          "chars": 19104,
+          "utf8Bytes": 25350,
+          "estimatedTokens": 8450,
+          "budgetedTokens": 10563,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

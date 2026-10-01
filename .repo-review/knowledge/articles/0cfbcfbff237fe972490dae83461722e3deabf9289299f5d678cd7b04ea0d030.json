@@ -2,39 +2,64 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-    "title": "共享证据 Trail 状态管理",
-    "summary": "以 Vue 组合式函数管理抽屉帧栈、当前帧、循环提示、焦点来源及关闭/后退/跳转操作，供个人与仓库知识阅读器复用。",
-    "category": "implementation",
+    "title": "递归证据抽屉的导航状态管理",
+    "summary": "该组合函数为个人知识与仓库知识阅读器统一管理递归证据抽屉：保存浏览栈、当前层级、开关状态、循环提示及焦点来源，并提供进入、返回、跳转和关闭操作。它只负责交互状态；数据加载、抽屉渲染、滚动恢复、URL 持久化与焦点归还由调用方或相关组件承担。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "证据阅读",
+      "递归证据追踪"
+    ],
     "sections": [
       {
-        "key": "state-and-push",
-        "title": "状态与入栈流程",
-        "body": "组合式函数建立响应式帧数组、当前索引、开关状态、循环位置和触发元素，并以计算属性暴露当前活动帧。注释明确渲染栈不设深度上限，URL 长度预算交给路由序列化层。[[c1]] `push` 先按 kind 与 id 查重；若发现已有帧，只记录 `loopAt` 并返回，不重复入栈。首次打开时，浏览器环境会记录当前聚焦元素，随后不可变追加帧、移动到末帧、打开抽屉并调用变更回调。[[c2]]"
+        "key": "purpose",
+        "title": "让读者沿证据逐层深入",
+        "body": "`useEvidenceTrail` 解决的是阅读知识时连续追踪引用的问题：用户可以从当前内容进入下一层证据，同时仍能沿原路径返回。它把个人知识与仓库知识阅读器共用的状态收敛为一组响应式引用，并允许调用方传入 `onChange`，在导航发生变化后同步执行外围逻辑。参考 [[c1]]\n\n每个层级使用 `TrailFrame` 表示；帧以 `kind` 与 `id` 作为稳定身份，还可携带标题、滚动位置及加载文件、符号或片段所需的引用信息。因此，本组合函数管理的是统一的导航轨迹，而不是某一种材料的内容。参考 [[c2]]"
       },
       {
-        "key": "navigation-and-boundaries",
-        "title": "返回、跳转与关闭边界",
-        "body": "`close` 清空全部帧并复位索引、开关和循环状态；`back` 在只剩一帧时直接关闭，否则删除末帧并更新当前索引；`jump` 保留目标索引之前的路径、切换当前帧并清除循环提示。三类成功状态变更都会调用 `onChange`，便于外层同步路由或持久化。[[c3]]\n\n当前实现保存了首次触发元素，却没有在 `close` 中调用其 `focus()`；焦点归还可能由抽屉组件负责，但提供的材料不能证明。`jump` 也未校验负数或越界索引，调用者必须保证输入有效；重复 push 只设置循环位置，不触发 `onChange`。滚动位置虽然属于帧合同，本组合式函数没有直接读写。[[c4]]"
+        "key": "navigation-flow",
+        "title": "入栈、返回与路径截断",
+        "body": "调用 `push` 时，函数先检查栈中是否已有相同 `kind + id` 的帧：若存在，只记录循环发生的位置并停止入栈；若不存在，则在抽屉首次打开时保存当前聚焦元素，随后追加新帧、切换到末帧并打开抽屉。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[请求进入证据] --> B{轨迹中已存在}\n  B -- 是 --> C[记录循环位置]\n  B -- 否 --> D[保存触发焦点]\n  D --> E[追加帧并打开抽屉]\n  E --> F[返回、跳转或关闭]\n```\n参考 [[c3]]\n\n`back` 在只剩一层时直接关闭，否则弹出末帧；`jump` 将轨迹截断到指定层级；`close` 清空整条轨迹并复位循环状态。三者都会触发 `onChange`，便于路由或宿主界面跟随更新。参考 [[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "职责边界与已知限制",
+        "body": "该状态本身不限制递归深度；源码明确把 URL 长度预算交给路由序列化器处理。相关轨迹类型模块也将“可渲染深度”和“写入 URL 的深度”分开，后者定义了上限，但这里没有直接调用其序列化函数，因此无法仅凭现有材料确认具体由哪个页面完成深链同步。参考 [[c5]]\n\n组合函数只保存首次打开抽屉时的触发元素，并未在 `close` 中主动调用 `focus()`；同样，帧的 `scroll` 字段由抽屉管理，而本函数只做数组增删。由此可知，焦点归还和逐层滚动恢复需要外围抽屉组件实现，当前材料不能证明这些行为已经完整接线。参考 [[c6]]\n\n此外，`jump(index)` 未在函数内部校验索引范围。正常调用应传入现有层级索引；越界、负数及循环提示如何呈现均未在所给代码中定义。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "共享 Trail 响应式状态",
-        "reason": "支持该组合式函数供两类知识阅读器共享、渲染无界且暴露当前帧的说明。",
+        "label": "共享导航状态入口",
+        "reason": "支持该组合函数服务于两类知识阅读器，并通过响应式状态及变更回调统一管理证据轨迹。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-          "startLine": 1,
+          "startLine": 4,
           "endLine": 7
         },
-        "quote": "import { computed, ref } from \"vue\";\nimport type { TrailFrame } from \"./trail\";\n\n/** Shared frame state for personal and repository knowledge readers. Rendering\n * remains unbounded; URL budgets are handled by the route serializer. */\nexport function useEvidenceTrail(onChange: () => void = () => {}) {\n  const frames = "
+        "quote": "/** Shared frame state for personal and repository knowledge readers. Rendering\n * remains unbounded; URL budgets are handled by the route serializer. */\nexport function useEvidenceTrail(onChange: () => void = () => {}) {\n  const frames = ref<TrailFrame[]>([]), current = ref(0), open = ref(false), loopAt = ref<number |"
       },
       {
         "key": "c2",
-        "label": "去重、焦点记录与入栈",
-        "reason": "支持循环检测、首次打开时保存触发元素以及追加并打开抽屉的流程。",
+        "label": "证据轨迹帧结构",
+        "reason": "解释轨迹帧的身份、展示标题、滚动位置和数据加载引用等核心概念。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 16,
+          "endLine": 30
+        },
+        "quote": "export type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown in the drawer header / breadcrumb. */\n  title: string;\n  /** Where to scroll back to when this frame is popped. Managed by the drawer. */\n  scroll?: number;\n  /** Free-form refs the pare"
+      },
+      {
+        "key": "c3",
+        "label": "证据入栈与循环检测",
+        "reason": "支持 push 对重复帧的检测、首次打开时保存焦点以及追加新帧的完整流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -45,52 +70,95 @@
         "quote": "  function push(frame: TrailFrame) {\n    const found = frames.value.findIndex(f => f.kind === frame.kind && f.id === frame.id);\n    if (found >= 0) { loopAt.value = found; return; }\n    if (!open.value && typeof document !== \"undefined\" && document.activeElement instanceof HTMLElement) trigger.value = document.activeEl"
       },
       {
-        "key": "c3",
-        "label": "关闭、返回与跳转操作",
-        "reason": "支持三种导航操作如何变更栈、索引、开关、循环状态并通知外层。",
+        "key": "c4",
+        "label": "返回跳转与关闭",
+        "reason": "支持返回、路径截断、整体关闭及触发变更回调的行为说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/useEvidenceTrail.ts",
           "startLine": 14,
-          "endLine": 17
+          "endLine": 16
         },
         "quote": "  function close() { frames.value = []; current.value = 0; open.value = false; loopAt.value = null; onChange(); }\n  function back() { if (frames.value.length <= 1) close(); else { frames.value = frames.value.slice(0, -1); current.value = frames.value.length - 1; onChange(); } }\n  function jump(index: number) { frames.v"
       },
       {
-        "key": "c4",
-        "label": "组合式函数返回合同",
-        "reason": "用于界定已暴露的状态和方法，并支持焦点恢复、索引校验及滚动管理不在当前实现中的判断。",
+        "key": "c5",
+        "label": "渲染与 URL 深度边界",
+        "reason": "说明状态渲染不设深度上限，而 URL 持久化预算属于路由序列化职责。",
         "relation": "explains",
         "target": {
           "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 32,
+          "endLine": 42
+        },
+        "quote": "/** Serialize a frame to a hash path segment pair. */\nexport function frameToSegment(f: TrailFrame): string {\n  return encodeURIComponent(f.kind) + \"/\" + encodeURIComponent(f.id);\n}\n\n/** Max trail depth we persist into the URL. The renderer itself is unbounded\n * (matches the prototype's 100-level chain); this budget o"
+      },
+      {
+        "key": "c6",
+        "label": "焦点与滚动状态边界",
+        "reason": "支持本函数仅记录触发元素，以及滚动恢复字段明确由抽屉管理的判断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 20,
+          "endLine": 29
+        },
+        "quote": "  /** Short title shown in the drawer header / breadcrumb. */\n  title: string;\n  /** Where to scroll back to when this frame is popped. Managed by the drawer. */\n  scroll?: number;\n  /** Free-form refs the parent needs to load the frame's data. */\n  fileId?: string;\n  symbolId?: string;\n  fragmentId?: string;\n  line?: "
+      },
+      {
+        "key": "c7",
+        "label": "跳转索引处理",
+        "reason": "支持 jump 直接切片和设置当前索引、内部未进行范围校验这一边界说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
           "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-          "startLine": 7,
+          "startLine": 15,
           "endLine": 17
         },
-        "quote": "  const frames = ref<TrailFrame[]>([]), current = ref(0), open = ref(false), loopAt = ref<number | null>(null), trigger = ref<HTMLElement | null>(null);\n  function push(frame: TrailFrame) {\n    const found = frames.value.findIndex(f => f.kind === frame.kind && f.id === frame.id);\n    if (found >= 0) { loopAt.value = fo"
+        "quote": "  function back() { if (frames.value.length <= 1) close(); else { frames.value = frames.value.slice(0, -1); current.value = frames.value.length - 1; onChange(); } }\n  function jump(index: number) { frames.value = frames.value.slice(0, index + 1); current.value = index; loopAt.value = null; onChange(); }\n  return { fram"
       }
     ],
     "questions": [
       {
-        "question": "关闭全部 Trail 后，触发元素的焦点由哪个组件恢复？",
-        "why": "组合式函数记录了 `trigger`，但 `close` 仅复位状态，没有执行焦点恢复；缺少抽屉组件源码时无法确认键盘焦点合同是否完整实现。",
-        "nextStep": "检查共享 Trail 抽屉的关闭与卸载逻辑，并用浏览器测试验证 Esc、关闭按钮及最后一帧后退都会把焦点归还触发元素。",
+        "question": "哪个宿主组件负责把轨迹写入 URL，并在刷新后恢复完整帧数据？",
+        "why": "材料只声明 URL 预算由路由序列化器处理，并提供 `kind/id` 的片段编码；没有展示序列化调用、恢复流程或超过上限时的用户提示。",
+        "nextStep": "检查调用 `useEvidenceTrail`、`frameToSegment` 或 `MAX_TRAIL` 的页面与路由代码，确认深链往返和超限提示。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3",
-          "c4"
+          "c1",
+          "c5"
         ]
       },
       {
-        "question": "`jump` 的索引是否由所有调用者保证在有效范围内？",
-        "why": "函数直接切片并把 `current` 设为传入值，负数或越界值可能使 `active` 变成未定义，当前材料没有运行时校验。",
-        "nextStep": "检查调用点与测试；若索引可来自 URL 或用户输入，应增加边界校验并覆盖负数、等于长度和大于长度的情况。",
+        "question": "关闭抽屉后是否可靠归还焦点，并逐层恢复滚动位置？",
+        "why": "当前函数会记录首次触发元素，但不执行焦点恢复；类型注释又明确滚动位置由抽屉管理，实际交互只能由外围组件证明。",
+        "nextStep": "检查共享抽屉组件对 `trigger`、帧 `scroll`、Esc、返回和关闭事件的处理及相应交互测试。",
         "blocking": false,
         "citationKeys": [
           "c3",
-          "c4"
+          "c6"
+        ]
+      },
+      {
+        "question": "`jump` 的索引是否始终由受控的面包屑层级产生？",
+        "why": "函数没有检查负数或越界索引；若调用方可传入非法值，可能形成空轨迹但仍保持打开状态，或使活动帧变为未定义。",
+        "nextStep": "核对所有 `jump` 调用点及测试，确认输入约束；若并非天然受控，再决定是在组合函数还是调用方增加防护。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
+        ]
+      },
+      {
+        "question": "jump 的索引是否始终由受控的面包屑层级产生？",
+        "why": "函数没有检查负数或越界索引；若调用方可传入非法值，可能形成空轨迹但仍保持打开状态，或使活动帧变为未定义。",
+        "nextStep": "核对所有 jump 调用点及测试，确认输入约束；若并非天然受控，再决定是在组合函数还是调用方增加防护。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
         ]
       }
     ]
@@ -98,49 +166,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/ui/src/highlight.test.ts",
-      "digest": "e28c86210be9b50f634470deb2febca4ebba15c398236484c9eeded020ab5033"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/highlight.ts",
-      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/index.ts",
-      "digest": "e33d8712c3cd93e2ea519cdd60dbec8c2407918313f14927d6e4b0cc7e61d84d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/tokens.css",
-      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
+      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
+      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
     },
     {
       "kind": "material",
       "key": "omem:packages/ui/src/trail.ts",
       "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:27:51.594Z",
+    "at": "2026-10-01T19:16:38.570Z",
     "trace": {
-      "runId": "9af3944a-51e6-48c4-bf07-e7883435c24a",
+      "runId": "1439f2cd-594a-4927-bcad-242cb3ef4619",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c42e424fd058724183a612182dc84a6b9f1ad2753e5a33fbeff9c1c421cc6d08",
-      "contextHash": "8a9c4954245ff99e94b298752afd19b2859345a98137d1254fcbb236575cef9e",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "518c50f60b356742745cc1e1175273fd0bc3646a677f147f30969b6baa44b2fb",
+      "contextHash": "e9c66ca26c4b0047037dc63c6d03dfa207008cd6418959381a6df7eea7d2b3de",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1e997f740ee0e6c150f13c64aa1a4a617b39e1cdcbba9c5c80513376ae10d2fd",
+      "fingerprint": "a9ffefc8ec1c12302603463e5833efaa206314ea5a27a6246bc8e39fb6a0c85c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -153,11 +201,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-898a-7fe3-82c3-33f92cd20624"
+        "01a0f8e5-5ad1-79e1-adc3-2d7d9c61c884"
       ],
       "usage": {
-        "used": 23800,
-        "size": 760000,
+        "used": 23202,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -165,10 +213,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21857,
-          "utf8Bytes": 23621,
-          "estimatedTokens": 7874,
-          "budgetedTokens": 9843,
+          "chars": 11848,
+          "utf8Bytes": 15190,
+          "estimatedTokens": 5064,
+          "budgetedTokens": 6330,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -177,17 +225,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:28:09.152Z",
+    "at": "2026-10-01T19:16:54.941Z",
     "trace": {
-      "runId": "d47b5ccf-6c92-458e-958c-8009346e47f6",
+      "runId": "87f9a46b-26d5-4e81-a9f5-40ac8aba81c4",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "40fd35eb46d08050a3dfcbc2b3636c208175e4acc6b3062173c27870200e8c9b",
-      "contextHash": "3cf64dff645c5f0aa455a97ae6dc4ce7dce108d784ec0a16a0485b89452b242e",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "912115615a9972dbcca02f2467ba364046abf350d754125982ff28b5cddbd340",
+      "contextHash": "4d12f4dabc3afa35e42f4ea9a46dc9ffed398a5eb6a6fe8513f81e1cfd2264f6",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f9f3910fd4ea94c92c29a5706c7af585855b6634ef8c83b432dd1559ca1ae915",
+      "fingerprint": "820af44b997c4d60ebeddc1e5174b5dba8dada37b16067f21b40f88d7736fa84",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -200,11 +248,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-42f2-7540-99b6-a0c549aa8f7e"
+        "01a0f8e5-c676-77e2-ad14-5eb1df1ab8af"
       ],
       "usage": {
-        "used": 26356,
-        "size": 760000,
+        "used": 23722,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -212,10 +260,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37389,
-          "utf8Bytes": 46011,
-          "estimatedTokens": 15337,
-          "budgetedTokens": 19172,
+          "chars": 15640,
+          "utf8Bytes": 21728,
+          "estimatedTokens": 7243,
+          "budgetedTokens": 9054,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

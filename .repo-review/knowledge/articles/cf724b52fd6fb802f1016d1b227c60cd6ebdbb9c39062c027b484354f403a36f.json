@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/reader-first/ui-redesign.md",
+    "title": "知识库阅读与整理入口重设计",
+    "summary": "说明知识库界面如何分离日常阅读与知识整理，改进分类导航、材料选择、响应式弹窗和折叠交互，并明确截至 2026-10-02 的验证范围与尚未覆盖的能力。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "工作区入口"
+    ],
+    "sections": [
+      {
+        "key": "reader_problem",
+        "title": "从拥挤的分类页回到阅读任务",
+        "body": "这次重设计解决的核心问题，是整理表单、重复导航和错位的材料勾选框干扰了读者浏览文章。此前的检查只确认控件存在，没有验证表单展开后的真实页面状态，因此布局缺陷仍进入了实际界面。参考 [[c1]]\n\n新的分类首页首先呈现标题、摘要和文章列表，把“阅读已有知识”作为默认任务；创建入口则打开独立的两步弹窗，使整理知识成为明确但不抢占首屏的操作。分类名称用于进入列表，箭头只负责展开目录，分类结构仍取自持久化数据。参考 [[c2]]"
+      },
+      {
+        "key": "composition_flow",
+        "title": "两步整理与大量材料选择",
+        "body": "整理流程允许用户搜索材料、只查看已选项并分批显示，适合材料达到数百项时缩小选择范围。最终提交的仍是**已选材料范围与阅读目标**，后续继续进入原有的调查、写作和独立复核流程；因此这轮改变的是入口和选材体验，并未另造一套知识生成机制。参考 [[c2]]\n\n草稿在步骤切换以及关闭后重新打开时保留，成功提交后才清空。弹窗在手机上转为全屏，底部操作按钮固定可见；文档同时要求在桌面、768px 和 390px 宽度下检查长标题、选材行对齐和展开后的间距。参考 [[c3]]"
+      },
+      {
+        "key": "shared_interactions",
+        "title": "统一折叠交互与能力边界",
+        "body": "公共 `OmDisclosure` 取代了业务页面中的原生折叠元素，并用于分类目录。普通标题可整行展开，而分类目录将“进入分类”和“展开子项”分成两个操作；组件支持受控状态、默认展开、标题与元信息插槽，并保留收起内容。变更对比和运行详情仍在展开事件发生时加载。参考 [[c4]]\n\n截至 2026-10-02，浏览器检查覆盖了键盘 Enter、ARIA 状态及其关联内容、草稿保留、标题导航与展开分离、减少动画和窄屏布局；实际开发页面的交互检查和组件展示的桌面、手机截图也已完成。参考 [[c6]]\n\n整理提交检查拦截了生成请求，只验证材料范围和目标，并不等同于真实模型生成；固定引用首次在 5 秒内未完成，改用 30 秒等待后通过，也不能据此宣称服务性能改善。此次 UI 调整同样不能证明检索相关性或文章质量已经提高。参考 [[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "改版问题背景",
+        "reason": "支持分类页首屏拥挤、重复导航、勾选框错位以及既有检查未覆盖真实展开状态的说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/ui-redesign.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# 知识库阅读界面重设计\n\n2026-10-02。此前分类页打开整理表单后，阅读列表被挤出首屏；导航在每个分类下重复操作链接；材料勾选框受全局 label 排版影响，与标题上下分离。只检查控件存在，没有检查真实展开状态，导致这些问题进入实际页面。"
+      },
+      {
+        "key": "c2",
+        "label": "阅读与整理分流",
+        "reason": "支持分类首页、两步弹窗、目录交互、材料筛选以及继续使用原有生成流程的描述。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/ui-redesign.md",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "这轮将阅读和整理分别组织：分类首页展示标题、摘要与文章列表，创建入口打开两步弹窗。目录的箭头负责展开，分类名称负责打开列表；分类结构继续来自持久分类数据。材料列表支持搜索、只看已选和分批显示，避免数百项一次占满界面。已选范围与阅读目标仍提交给原有调查、写作和独立复核流程。"
+      },
+      {
+        "key": "c3",
+        "label": "草稿与响应式弹窗",
+        "reason": "支持草稿生命周期、手机全屏、固定底部按钮及多视口检查要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/ui-redesign.md",
+          "startLine": 7,
+          "endLine": 7
+        },
+        "quote": "复用公共 OmDialog/OmButton/OmIcon，未增加仓库路径规则或改变知识结构。草稿在上下步与关闭重开时保留，成功提交后清空；手机弹窗全屏，底部按钮固定可见。桌面、768px、390px 均须实际截图检查，特别是长标题、选材行对齐及表单展开后的间距。"
+      },
+      {
+        "key": "c4",
+        "label": "公共折叠组件",
+        "reason": "支持 OmDisclosure 的适用范围、交互差异、组件能力和延迟加载行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/ui-redesign.md",
+          "startLine": 13,
+          "endLine": 15
+        },
+        "quote": "## 公共折叠组件\n\n新增 `packages/ui/OmDisclosure`，替换业务 Vue 页面全部原生 details/summary；分类目录也使用同一组件。普通标题整行展开；分类目录的标题打开分类、箭头单独展开。展开使用明确 SVG 箭头，提供受控状态、默认展开、标题和元信息插槽；收起保留内容，变更对比/运行详情的加载仍由展开事件触发。来源问题区减少了一层重复折叠。"
+      },
+      {
+        "key": "c5",
+        "label": "验证边界与性能现象",
+        "reason": "支持真实页面的部分验证范围，并明确真实模型生成、服务性能、检索相关性和文章质量未被本轮证明。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/ui-redesign.md",
+          "startLine": 9,
+          "endLine": 11
+        },
+        "quote": "## 验证与限制\n\n`osdk deps --frozen`、`osdk run check` 退出 0（类型检查、361 项测试、构建）。`osdk run browser` 退出 0，17 组交互通过；其中整理提交检查拦截了生成请求，只核对材料范围和目标，不冒充真实模型生成。实际 65092 dev 页面通过 10 组浏览器检查，含分类列表、两步表单、固定代码行引用、焦点及 1440/768/390px 布局。截图在 `.repo-review/runtime/browser/library-*.png`、`composer-materials-*.png`、`composer-purpose-*.png`；已实际查看。固定引用"
+      },
+      {
+        "key": "c6",
+        "label": "交互与可访问性检查",
+        "reason": "支持键盘 Enter、ARIA 状态、草稿保留、导航与展开分离、窄屏布局以及实际截图检查等验证结果。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/ui-redesign.md",
+          "startLine": 17,
+          "endLine": 17
+        },
+        "quote": "`#/design` 提供组件展示。浏览器检查键盘 Enter、aria 状态与关联内容、草稿保留、标题导航与展开分离、减少动画和窄屏；全量 check（361 项）、类型检查和构建退出 0；browser 增至 18 组并通过，实际 dev 的 10 组检查通过。已查看组件展示的桌面和手机截图，修正了相邻折叠区间距与预览多余字符。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "两步整理入口是否已通过一次不拦截请求的真实模型生成验收？",
+        "why": "现有记录明确说明交互检查拦截了生成请求，只核对材料范围和阅读目标，因此无法据此确认从提交到文章产出的完整用户流程。",
+        "nextStep": "使用当前实际模型配置完成一次小范围整理任务，检查调查、写作、独立复核、产物展示和失败反馈，并将结果更新到当前进展文档。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "固定引用首次响应较慢是偶发等待，还是存在稳定的服务性能问题？",
+        "why": "材料只记录将网络等待从 5 秒延长到 30 秒后通过，并明确没有宣称性能改善，尚不足以判断原因和用户影响。",
+        "nextStep": "在实际开发页面重复采集固定引用请求的耗时与失败阶段，再决定是否需要服务端诊断或界面加载反馈改进。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/ui-redesign.md",
+      "digest": "648d0b7053d5c644ce82939bf15b8db11fc4a5ffa717a10d4f98ad7cdf251687"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T19:12:08.436Z",
+    "trace": {
+      "runId": "60a8adbd-e7ab-4d85-ac3d-876f7032ff13",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "0cfa9d4027da44fcd0fc3fab247127e3993c647de13b70f0cde89b9bb36bf42a",
+      "promptHash": "a5e6b91d8a25cba7ab90bb018a002197202e3dcee4209ef7e0c63951b34690e8",
+      "contextHash": "226c33a2d9560a9d49ed134edb19d18b46dbe12b521ccc6c24fa5236f417904e",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "90e19e05462f95be1367d906e2447b7ce64535019f641156af5f3001d9e8cafd",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f8e1-533f-7982-827a-5bbb53d62242"
+      ],
+      "usage": {
+        "used": 27083,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 14362,
+          "utf8Bytes": 26192,
+          "estimatedTokens": 8731,
+          "budgetedTokens": 10914,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T19:12:25.928Z",
+    "trace": {
+      "runId": "3c3a9e6d-b49e-4396-9bc3-45fb477091d4",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "e3be2c09c23ee565068bb39d812c3936b6117e694fe1d18d12438aad3dc86f98",
+      "contextHash": "9c3e708bae1e9ebec07452f241157e51067d5d05236ef621c0b353f8ef8de2d9",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "796d2c7c794ac46efe287b327a470a558d1ab57837865da7883984301df3825b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f8e1-a7ff-77a3-9a01-30d438b3131b"
+      ],
+      "usage": {
+        "used": 22969,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 10424,
+          "utf8Bytes": 19302,
+          "estimatedTokens": 6434,
+          "budgetedTokens": 8043,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

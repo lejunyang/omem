@@ -1,10 +1,12 @@
 {
   "version": 1,
-  "checkedAt": "2026-10-01T18:05:45.412Z",
+  "checkedAt": "2026-10-01T19:28:38.823Z",
   "model": "gpt-5.6-sol",
   "workflow": "reader-first",
   "selection": [
-    "guide:memory"
+    "guide:overview",
+    "guide:retrieval",
+    "guide:contributing"
   ],
   "pages": [
     {
@@ -3307,6 +3309,18 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/articles/6ba3506018107300d809a719e933e9033ace2be1685572eac4d2d607776f3bbb.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/6ba3506018107300d809a719e933e9033ace2be1685572eac4d2d607776f3bbb.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/articles/6be1d1423e81f543ff2d2a2e3f51afea057a48afe476a6cc0f9f570c45c1c2d4.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -3650,6 +3664,18 @@
     },
     {
       "path": ".repo-review/knowledge/articles/78c85c71da9b8ee81c56f3c57b9087072cd00451c17c810dfe9ec4ed216165aa.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/78f7700ae70bb697992117b2fd48b4142bf2fd94368145ce4178ddb68c3941f4.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/78f7700ae70bb697992117b2fd48b4142bf2fd94368145ce4178ddb68c3941f4.md",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -5707,6 +5733,18 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/articles/cf724b52fd6fb802f1016d1b227c60cd6ebdbb9c39062c027b484354f403a36f.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/cf724b52fd6fb802f1016d1b227c60cd6ebdbb9c39062c027b484354f403a36f.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/articles/cfee38c74676fbb70c676ee05412ecf2b8dcfe997a33bad560381d363d161652.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -6367,6 +6405,18 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/articles/e94c2059fddef7fff4c4166c0dbc7b6dd2df8213ee38ea3b2e0b6ac17c30d082.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/e94c2059fddef7fff4c4166c0dbc7b6dd2df8213ee38ea3b2e0b6ac17c30d082.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/articles/e9da3ae0f3d2927555f5ba23124101b64470aa0f621b098f227d3f041e2ca998.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -6494,6 +6544,18 @@
     },
     {
       "path": ".repo-review/knowledge/articles/ede2c69e062657956772faa6ee16b21fd8181d554d0c295036e9f9c09cc12e2a.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/ee0a84f496114970fb93010189670a2ce962ef99ebfc02598b40a98b60af34d8.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/ee0a84f496114970fb93010189670a2ce962ef99ebfc02598b40a98b60af34d8.md",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -7003,6 +7065,12 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/verification/generalization-2026-10-02.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/verification/history/2026-09-29.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -7123,7 +7191,19 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/verification/history/2026-10-01T16-21-24-404Z-52ef1724.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/verification/history/code-seeds-verification.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/verification/history/guides-2026-10-01T18-01.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -7142,6 +7222,12 @@
     },
     {
       "path": ".repo-review/knowledge/verification/queries.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/verification/reader-browser.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -7182,9 +7268,9 @@
       "path": "README.md",
       "state": "captured",
       "materialKey": "omem:README.md",
-      "digest": "07d337ae3c2c942b3b8e4b1e05d86bb31c73fd13c133200322159c01efe37a45",
+      "digest": "78a2957c617fa41be8694d0e50dc61d85c00c56e5d2cb96ff64c3c23da54c5b8",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/server/src/agent-runtime/budget.ts",
@@ -8048,7 +8134,7 @@
       "materialKey": "omem:apps/server/tests/knowledge-repository.test.ts",
       "digest": "645df3727577be14af1785ed9a8aa2cf341dc41dc99d388d1813d8aced2dad18",
       "reason": "固定材料已保存",
-      "knowledge": "pending"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/server/tests/knowledge-research.test.ts",
@@ -8286,9 +8372,9 @@
       "path": "apps/web/src/App.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/App.vue",
-      "digest": "ee55d9667e2719a082f517a19315819bae04d50bc19bf1506180292b7b98b03b",
+      "digest": "fc148df3d268d4efd0c5554f970f10a4daf4e5f1ca3afa7247ef5125d7e74c76",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/AssetImage.vue",
@@ -8310,9 +8396,9 @@
       "path": "apps/web/src/ChangeHistory.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/ChangeHistory.vue",
-      "digest": "1f21cdad181d9f7efb65262dde04e31f808c7ea41bf0ed28c280d629cd60cd0e",
+      "digest": "139a6e50fc00e99554e09a4186132e59c542ad99d2da124c035b264bc8ffd4a4",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/ChatPane.vue",
@@ -8326,25 +8412,25 @@
       "path": "apps/web/src/DailyAssistant.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/DailyAssistant.vue",
-      "digest": "5a77fd15c326f3d11d6f8445a16ef0c8d610456a5bbda060d14eb4a6244a9f60",
+      "digest": "8477cf77258bdb86930821470617dfd10877c423a483c830186ac7872d830634",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/DecisionsView.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/DecisionsView.vue",
-      "digest": "b16ee6fd8f41c1dd0e8aa6b51ba374e757c6e619e9e5de4ae617490cf456dfef",
+      "digest": "b8768cdec9b6ec5ecf9467148db606a756e87b48faead059dd00f6e28aa3ded7",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/EvidenceReader.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "98c11af0dd8aca47fd1c00600031379f25f0140c624bbdcde1cd1c2c7f68cf17",
+      "digest": "8822c7b3f14af19153955350348a04f3d6fa305c8d1203ebb4f5521c5f0b5416",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/LarkSetup.vue",
@@ -8358,9 +8444,9 @@
       "path": "apps/web/src/LearningView.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/LearningView.vue",
-      "digest": "6ee95bdf5017c17649ca88adfde5f7a23f2c05dbe108acd3111c90a8b8ddac24",
+      "digest": "058152382233faf79fa665ac66cd8118eed38a0e5bf384f9cef57ab8b1a61508",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/NotificationDetail.vue",
@@ -8400,7 +8486,7 @@
       "materialKey": "omem:apps/web/src/codewiki/CodeWiki.vue",
       "digest": "9b06d65f5801900b7260bc55f26de91af19bd3a0acf59549a7048d45d7c3dbf6",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/codewiki/FileFrame.vue",
@@ -8424,7 +8510,7 @@
       "materialKey": "omem:apps/web/src/codewiki/ModuleFrame.vue",
       "digest": "9fa10819629fdfa3beee72ae7d8d34099f28f79aae4dac1c72310eea479b696a",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/codewiki/SymbolFrame.vue",
@@ -8486,25 +8572,25 @@
       "path": "apps/web/src/knowledge/ArticleComposer.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/ArticleComposer.vue",
-      "digest": "a34bf579765485ee921b758e496dcffceb5148e11123fb18f04e10faa2dd6f91",
+      "digest": "1e410bba86ca48d2fb82065e5f140847b79e4ec7063a9f115114ce09592a8ab7",
       "reason": "固定材料已保存",
-      "knowledge": "pending"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeDocument.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "866f11162e6051fef55cc0de08ca7c238d57362cf03670bb694eb180884953ce",
+      "digest": "8064b4893eb0b8428a431958ad8a0833f7297e862ce05fa996f6a0035f3843d8",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeFolder.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeFolder.vue",
-      "digest": "ace18c9d6b686ba107de75f929256eaa868cbd76148795ea411309b009d7d388",
+      "digest": "8746050beaa2088dd26f1bd76a90b39acc3194bfdf5251c68e4646d648a0d860",
       "reason": "固定材料已保存",
-      "knowledge": "pending"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeFrame.vue",
@@ -8512,23 +8598,23 @@
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
       "digest": "ec3ecb0a9b3207c0e05c064896933dca9a7bf546fa5851496f484c093b2ff9f6",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeHome.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "0ddc266c336976ddac936c5f67df929a9cb2da3c2e6559921ef9c1b6c13fe48c",
+      "digest": "14ffbe87374d5170e4d7486053faac96bfbb1fdd11e5b134a211def2525cc365",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeQuestions.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "843732b8df92b1e36df987343345a385602de1ed8bb0c277ecee7790d61390ca",
+      "digest": "a77d0ccedf6509181d238b753816597126d3879c836ec37c720010528b8d48a8",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeSource.vue",
@@ -8536,15 +8622,15 @@
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
       "digest": "bdec1e89ebea509245d4bc2291567b2dd544d6da05543bfb73ee771860f96f08",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeTree.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
-      "digest": "bf2b5a626b6b3ee553ca1d416c2a34829bab1ab53bea053e66a13c819ec66427",
+      "digest": "3197e5835c20d72f9f536109d89ec0e911919e9f66e458c7688d6fcb65e757b7",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/PersonalKnowledge.vue",
@@ -8552,7 +8638,7 @@
       "materialKey": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
       "digest": "4de66fb46081924b43b0d495e1d9781f101e9e0df0eb9d70f432f57659427803",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/api.ts",
@@ -8560,7 +8646,7 @@
       "materialKey": "omem:apps/web/src/knowledge/api.ts",
       "digest": "dcbdcaaf20ef8fcede6281b9359a10163dba613dbb038860b18688417ef588c6",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/knowledge/topics.ts",
@@ -8568,7 +8654,7 @@
       "materialKey": "omem:apps/web/src/knowledge/topics.ts",
       "digest": "f2a55a34f58d461b42a3ba7dd71102f5d044bb09293093d9d00883205356139f",
       "reason": "固定材料已保存",
-      "knowledge": "pending"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/main.ts",
@@ -8576,7 +8662,7 @@
       "materialKey": "omem:apps/web/src/main.ts",
       "digest": "dc8b1b3814857ad462936a08f3a6e2c90a8a366699649a115229f05b24c743a2",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/src/review-api.ts",
@@ -8590,9 +8676,9 @@
       "path": "apps/web/src/styles.css",
       "state": "captured",
       "materialKey": "omem:apps/web/src/styles.css",
-      "digest": "291c821b8588ed83df0c37342b36f29e5952fe921c6e3ba0aedee2fc6a885eb7",
+      "digest": "ed964d56d5c1146991dbba2248995fb85bcf70c39ebca971c11a4cb4dfee1291",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/web/tsconfig.json",
@@ -8670,9 +8756,9 @@
       "path": "design.md",
       "state": "captured",
       "materialKey": "omem:design.md",
-      "digest": "bd3871cdeeb9fa33a43a83b26f65c98930c35e69d6c8cde40c73defcf37503a2",
+      "digest": "5f04375ab6812d093da261f4bf9ac1e9b853d0a28b42d7b44992aa4086c44dec",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "docs/README.md",
@@ -9478,7 +9564,7 @@
       "path": "docs/reader-first/progress.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/progress.md",
-      "digest": "b06ec971c1068ad9084d6119dcd3b06fcdc59770249a59e97e2816e0ac66b228",
+      "digest": "0868e4019730952e06f4f0d3c264737ca4bdbe7052b8706e4546b0887d50182d",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -9489,6 +9575,14 @@
       "digest": "3c8a0d3756bc833ecaa3ade3be303fd689147ea030764939aa872f017f9db9f6",
       "reason": "固定材料已保存",
       "knowledge": "pending"
+    },
+    {
+      "path": "docs/reader-first/ui-redesign.md",
+      "state": "captured",
+      "materialKey": "omem:docs/reader-first/ui-redesign.md",
+      "digest": "5897ff4e8916991155bf608a91498adae0653a6af3e21d14a1f3a1186225d391",
+      "reason": "固定材料已保存",
+      "knowledge": "reviewed"
     },
     {
       "path": "docs/reader-first/validation.md",
@@ -10278,7 +10372,15 @@
       "path": "packages/ui/src/components/OmDialog.vue",
       "state": "captured",
       "materialKey": "omem:packages/ui/src/components/OmDialog.vue",
-      "digest": "c366174da30b5c486fb5addbba9b5cd90faaed66350779f403c111eaf9fbcea9",
+      "digest": "97bfd3209919869a2ee6808a322e2da9ea83aad9c23001765f2bfe35a1c53dbf",
+      "reason": "固定材料已保存",
+      "knowledge": "reviewed"
+    },
+    {
+      "path": "packages/ui/src/components/OmDisclosure.vue",
+      "state": "captured",
+      "materialKey": "omem:packages/ui/src/components/OmDisclosure.vue",
+      "digest": "6eb4b764505f50f66ae23ab1606d0ec0c0c71b7c8bbcfdbcca7fd807d705818b",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
     },
@@ -10366,7 +10468,7 @@
       "path": "packages/ui/src/index.ts",
       "state": "captured",
       "materialKey": "omem:packages/ui/src/index.ts",
-      "digest": "40c6ba41fa3bb356799fed15869a34559cbf478d3d3bc89b0c7af1af0f048719",
+      "digest": "876e8cafec401336bbe2b6b3fb71dc56c06988794db1128cb755a6a3a4b3bada",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
     },
@@ -10414,17 +10516,17 @@
       "path": "scripts/browser-smoke.ts",
       "state": "captured",
       "materialKey": "omem:scripts/browser-smoke.ts",
-      "digest": "e9d1722676d353f2be9c00bec459b2ee351f9c6addddeefd5df53f6e1e23fcf8",
+      "digest": "8af51c3ba58e7a2263e686069e29705b88fcfc4d13dafa0ee84c0a4b0baf2965",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "scripts/code-wiki-viewport.ts",
       "state": "captured",
       "materialKey": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "fa8d0471a9f0862f3ff5cefb9cfa2c3ff3d0529a529da53857bfad3c1b6ad98f",
+      "digest": "6413802db09f5d24d625b2996293866ca89d3a2df4574a7059e0d311e1ae66ed",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "scripts/dev-ports.ts",
@@ -10462,9 +10564,9 @@
       "path": "scripts/knowledge-browser.ts",
       "state": "captured",
       "materialKey": "omem:scripts/knowledge-browser.ts",
-      "digest": "73acd47a2d4aaee3e53a14d2ea824be3493f1c034e063741a9f2958b365bab80",
+      "digest": "570a210d584a3c0a73b4d433924cd23fac16e88553e0387aa776b108b78e7b69",
       "reason": "固定材料已保存",
-      "knowledge": "stale"
+      "knowledge": "reviewed"
     },
     {
       "path": "scripts/live-acp-smoke.ts",

@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-01T18:07:25.323Z",
-  "implementationCommit": "e3ed2d5a47d7826629ec5809dfa14a16c3e4fd8e",
-  "sourceDigest": "f0a302ed3c9b3c0b9068035b59688969aa1c7734e77b887e76f426e78a6506c3",
+  "recordedAt": "2026-10-01T19:30:05.633Z",
+  "implementationCommit": "a86a2f2c342859d619851fe26ecd4cb955d2186c",
+  "sourceDigest": "71ecea2e4ee4fd25f4cc75c0c13badf2bdd59909263658ee506d2c8a71e9d9a2",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T18-07-25-323Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-01T19-30-05-633Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T18-07-25-323Z/project.log",
-        "sha256": "634c931a744a2f105bebc3abac1e6c4b2855461834ddb1dbfd3d5b4542c1d392"
+        "log": ".repo-review/runtime/verification/2026-10-01T19-30-05-633Z/project.log",
+        "sha256": "c8886635fa8b0fd86281732f2072b99857c4af2be8fbddef7b2319b4aeff105a"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T18-07-25-323Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-01T19-30-05-633Z/liveChineseRetrieval.log",
         "sha256": "3f9f7a5452dcd3e9c0b7f46783ca607ed550f01cf0e7a5f7b57dfff17361d92f"
       }
     },
@@ -51,8 +51,8 @@
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 168,
-        "citations": 1076,
+        "articles": 198,
+        "citations": 1315,
         "errors": []
       }
     },
@@ -65,7 +65,7 @@
         "semantic": {
           "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 11165,
+          "indexed": 11431,
           "pending": 0,
           "error": null
         }
@@ -87,17 +87,17 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
   "knowledge": {
-    "materials": 555,
-    "reviewedMaterials": 154,
-    "pendingMaterials": 401,
-    "currentArticles": 168,
-    "citations": 1076,
+    "materials": 557,
+    "reviewedMaterials": 183,
+    "pendingMaterials": 374,
+    "currentArticles": 198,
+    "citations": 1315,
     "articleLinks": 6,
     "errors": [],
     "restore": {
-      "stale": 310,
-      "restored": 175,
-      "missing": 4
+      "stale": 288,
+      "restored": 203,
+      "missing": 3
     },
     "incomplete": true,
     "note": "未覆盖或过期文章不计为通过；本检查只验证当前正文，不能代表全库已经生成。"
@@ -114,15 +114,15 @@
         "baselineTop5": [
           "docs/reader-first/validation.md",
           "docs/archive/2026-10-01-baseline/PROJECT-README.md",
-          "docs/archive/2026-10-01-baseline/implementation/status.md",
           "apps/web/src/App.vue",
+          "docs/archive/2026-10-01-baseline/implementation/status.md",
           "docs/archive/2026-10-01-baseline/prototype/app.jsx"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 7397,
+        "elapsedMs": 7981,
         "top5": [
           {
             "path": "docs/reader-first/validation.md",
@@ -142,20 +142,20 @@
             "snippet": "## 中文语义检索"
           },
           {
+            "path": "apps/web/src/App.vue",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "\n        ><label\n          >到期时间<input\n            v-model=\"taskDraft.dueAt\"\n            type=\"datetime-local\" /></label\n        ><small v-if=\"focus\">将关联当前选中片段 "
+          },
+          {
             "path": "docs/archive/2026-10-01-baseline/implementation/status.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
             "snippet": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，"
-          },
-          {
-            "path": "apps/web/src/App.vue",
-            "routes": [
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "idence?.open(r.id)\" /></OmPanel\n      ><OmEmpty\n        v-if=\"!searching && !searchError && !results.length\"\n        title=\"未找到相关片段\"\n        description=\"试试原文关键"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
@@ -177,8 +177,8 @@
         "status": 200,
         "baselineTop5": [
           "docs/archive/2026-10-01-baseline/AGENTS.md",
-          "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/archive/2026-10-01-baseline/research/integration-readiness.md",
+          "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/reader-first/validation.md",
           "apps/web/src/App.vue"
         ],
@@ -186,7 +186,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 5975,
+        "elapsedMs": 6746,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
@@ -197,20 +197,20 @@
             "snippet": "合中文的模型，通过 osdk CLI 声明、下载和锁定，运行时禁止隐式联网下载。当前 memory-zh 为 BGE-small-zh-v1.5；换模型必须更换向量身份，不能混用旧索引。\n- Personal-first, server or local. Preserve team scope in architec"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
-            "routes": [
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "Agent profile。启动只恢复知识，不自动调用生成式模型；启用的本地向量索引可后台补建。显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模"
-          },
-          {
             "path": "docs/archive/2026-10-01-baseline/research/integration-readiness.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
             "snippet": "- **官方文档明确支持本地 Ollama**：「本地 Ollama 和远程模型可以组合使用，例如由本地模型生成向量、远程模型生成回答」。来源：https://weknora.weixin.qq.com/docs/03-features/06-models\n- 仍需至少一个 embedding + 一个 chat LL"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "Agent profile。启动只恢复知识，不自动调用生成式模型；启用的本地向量索引可后台补建。显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模"
           },
           {
             "path": "docs/reader-first/validation.md",
@@ -227,7 +227,7 @@
               "short-keyword",
               "semantic"
             ],
-            "snippet": "ff\"\n            placeholder=\"仅保存在当前浏览器会话\" /></label\n        ><OmButton @click=\"saveToken\">保存令牌并重新连接</OmButton></details\n        ></OmPanel\n      >\n      <p clas"
+            "snippet": " ><OmButton @click=\"saveToken\">保存令牌并重新连接</OmButton></OmDisclosure></OmPanel\n      >\n      <p class=\"muted\">\n        命令、参数、默认模型、上下文指令和通知模式在 omem.local.json\n     "
           }
         ]
       },
@@ -241,8 +241,8 @@
         "status": 200,
         "baselineTop5": [
           "docs/reader-first/validation.md",
-          "config/wiki-pages.json",
           "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+          "config/wiki-pages.json",
           "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
           "docs/archive/2026-10-01-baseline/prototype/app.jsx"
         ],
@@ -250,7 +250,7 @@
         "passed": false,
         "firstExpectedRank": 12,
         "uniquePathsAt5": 5,
-        "elapsedMs": 6138,
+        "elapsedMs": 6650,
         "top5": [
           {
             "path": "docs/reader-first/validation.md",
@@ -261,20 +261,20 @@
             "snippet": "| 问法 | 实际结果 | 判断 |\n| --- | --- | --- |\n| 知识文章是怎样生成的 | 知识检索前五个章节包含入门、检索、材料旅程；原始材料侧仍有前端组件排在架构说明前 | 能找到相关讲解，机制入口排序仍可改善 |\n| 规则修改后旧记忆怎么处理 | 前五个章节大部分来自概览，专项记忆页没有出现；原始"
           },
           {
-            "path": "config/wiki-pages.json",
-            "routes": [
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n      \"scenario\": \"项目约定从重试三次改为五次；另一条独立消息让助手明早跟进评审。不要把约定文本直接当用户交办。\",\n      \"questions\": [\n        \"一条原始记录怎样成为可用记忆？\",\n        \"来源变化后"
-          },
-          {
             "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
             "snippet": "明从“重试 3 次”改成“5 次” | 停用旧结论，重新分析新材料，独立复核后更新原记忆，保留旧历史 | 已用真实 GPT-5.6-sol 验证同 ID 从 3 次更新为 5 次；旧原文保留，不能只排队就算完成 |"
+          },
+          {
+            "path": "config/wiki-pages.json",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n      \"scenario\": \"项目约定从重试三次改为五次；另一条独立消息让助手明早跟进评审。不要把约定文本直接当用户交办。\",\n      \"questions\": [\n        \"一条原始记录怎样成为可用记忆？\",\n        \"来源变化后"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
@@ -311,7 +311,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 7319,
+        "elapsedMs": 8488,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -368,7 +368,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 7257,
+        "elapsedMs": 8049,
         "top5": [
           {
             "path": "apps/server/src/retrieval/semantic.ts",
@@ -425,7 +425,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 4,
-        "elapsedMs": 8263,
+        "elapsedMs": 10140,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",

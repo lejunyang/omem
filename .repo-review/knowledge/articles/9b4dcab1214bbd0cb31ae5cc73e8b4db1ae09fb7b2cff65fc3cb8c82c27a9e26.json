@@ -2,109 +2,102 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-    "title": "模块说明与代码下探界面",
-    "summary": "该界面把模块级知识、结构化说明与文件入口组织在同一阅读路径中：优先呈现已保存的知识文章，缺失时回退到职责、流程和风险说明，并支持继续下探符号或文件。当前限制是模块知识元数据请求静默失败，且符号所属文件依赖父层补全。",
-    "category": "implementation",
+    "title": "模块说明、证据与文件下探界面",
+    "summary": "该组件把模块级知识正文、结构化代码理解结果、证据入口和模块文件清单汇集到同一阅读页面，并通过事件把知识引用、符号及文件的进一步浏览交给父组件处理。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "证据阅读"
+    ],
     "sections": [
       {
         "key": "purpose",
-        "title": "从模块概览进入实现细节",
-        "body": "`ModuleFrame` 服务于“先理解模块，再进入代码”的阅读场景。它接收聚合模块及可选的结构化说明，不在组件内重新划分模块；页面明确以人工整理或已保存的说明为主，说明缺失时仍保留文件入口。参考 [[c1]]\n\n组件实际接收包含模块、说明、加载状态和符号名称映射的属性，并用共享标签函数显示模块名称，同时呈现文件数与解析符号数。参考 [[c2]] 参考 [[c3]]"
+        "title": "把模块结论与可核查入口放在一起",
+        "body": "`ModuleFrame` 面向想快速理解一个代码模块的读者：顶部显示模块名称、文件数和解析符号数，优先加载已发布的知识文章；若文章不存在，仍可展示结构化模块说明或继续浏览文件，避免根据解析计数臆造摘要。模块名称由聚合模块的稳定标识转换而来，文件和符号统计也直接来自 `AggModule`。参考 [[c1]] [[c2]]\n\n知识文章加载成功后交给通用 `KnowledgeDocument` 渲染；其正文中的可操作引用会转成 `knowledge` 事件，由外层页面决定如何打开证据轨迹。请求通过共享知识 API 发出，该 API 会附带会话令牌，并把非成功响应转换成异常。参考 [[c3]] [[c4]]"
       },
       {
-        "key": "reading-flow",
-        "title": "知识正文与结构化说明",
-        "body": "模块标识变化时，组件查询 `module:<模块标识>` 对应的知识元数据；查询成功后把文章键和版本交给通用知识阅读器，并将正文中的引用导航继续交给上层。若没有文章，则根据加载状态显示提示，或回退到“暂无已保存说明”的空状态。参考 [[c4]] 参考 [[c5]]\n\n通用阅读器负责获取完整正文、阻止较旧请求覆盖新结果，并仅对可操作引用发出导航事件。参考 [[c6]] 回退说明则展示职责、边界、关键流程、入口出口、风险和未决问题，并区分人工整理、模型生成及过期状态。参考 [[c7]]"
+        "key": "display-flow",
+        "title": "从模块切换到结构化说明",
+        "body": "当 `mod.id` 变化时，组件先清空旧文章，再请求键为 `module:<模块标识>` 的知识元数据；请求失败会被静默忽略。随后页面按优先级呈现：已有文章时显示文章；否则在外部 `loading` 为真时显示读取提示；再否则，如果没有代码理解详情或输出，则明确提示“暂无已保存的说明”。参考 [[c5]]\n\n结构化输出存在时，页面依次展示说明来源、是否过期、模型或整理者，以及职责、边界、关键流程、入口、出口、风险限制和未决问题。空职责与空流程有专门占位提示，但边界、入口、出口、风险和未决问题为空时不会额外解释，因此读者只能看到空面板。参考 [[c6]]"
       },
       {
-        "key": "drilldown",
-        "title": "符号、证据与文件下探",
-        "body": "结构化说明中的符号引用优先显示解析名称，其次使用整理备注，点击后只提交符号标识，由父层查找所属文件；证据引用目前仅展示备注，不在本组件内直接打开。参考 [[c8]]\n\n文件先按语言分组，并按组内文件数量降序排列。参考 [[c9]] 每个文件入口显示短文件名、完整路径和删除状态，点击后发出文件下探事件。参考 [[c10]] 入口与出口在宽屏下并排显示，窄屏时改为单栏。参考 [[c11]]"
+        "key": "navigation-boundaries",
+        "title": "下探导航与已知边界",
+        "body": "引用被分成符号和原始证据两类。符号按钮优先显示 `symbolMap` 解析出的名称，其次使用说明备注，始终避免直接把内部符号标识展示给读者；点击时仅发出符号标识，所属文件留给父组件通过图数据解析。由于此处发送的 `fileId` 是空字符串，父组件必须完成映射后才能可靠打开目标。证据引用目前只展示备注，没有点击处理。参考 [[c7]]\n\n文件按语言分组，并按各语言包含的文件数降序排列；点击文件会发送完整 `fileId`，已删除文件仍可出现在清单中并带有醒目标记。双栏的入口/出口区域在窄屏下改为单栏。组件只负责展示和发出导航意图，不负责维护证据抽屉、符号到文件的索引或知识文章内部的并发保护。参考 [[c8]]\n\n值得注意的是，本组件自己的文章请求没有类似 `KnowledgeDocument` 所用的 generation 校验：快速切换模块时，较早请求可能较晚返回并覆盖当前模块的元数据；现有材料未提供父层是否通过销毁组件或其他机制规避这一竞态的证据。延伸阅读：[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "模块阅读职责",
-        "reason": "说明组件以整理后的模块知识为主、缺失时诚实提示并继续提供文件浏览。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 2,
-          "endLine": 5
-        },
-        "quote": "/** A module frame. Shows the hand-curated module-architect note (职责/边界/流程/\n * 入口出口/风险/unknowns/confidence/seed + clickable symbol & evidence refs),\n * then lists the files in the bucket. When no curated note exists it says so\n * honestly instead of inventing a summary — parser-derived counts are secondary. */"
-      },
-      {
-        "key": "c2",
-        "label": "组件输入合同",
-        "reason": "支持组件实际接收聚合模块、结构化说明、加载状态和符号名称映射。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 10,
-          "endLine": 18
-        },
-        "quote": "import type { AggModule } from \"./modules\";\nimport { moduleLabel } from \"./modules\";\nimport type { CodeFile, CodeUnderstandingDetail } from \"../review-api\";\n\nconst props = defineProps<{\n  mod: AggModule;\n  detail: CodeUnderstandingDetail | null;\n  loading?: boolean;\n  symbolMap?: Map<string, { name: string }>;"
-      },
-      {
-        "key": "c3",
-        "label": "模块标题与统计",
-        "reason": "支持页面调用共享标签函数，并显示模块的文件数和解析符号数。",
+        "label": "模块页概览",
+        "reason": "支持页面展示模块名称、文件数、符号数以及优先呈现知识文章的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 70,
-          "endLine": 71
+          "startLine": 68,
+          "endLine": 80
         },
-        "quote": "    <h2>{{ moduleLabel(mod.id) }}</h2>\n    <p class=\"muted\">{{ mod.fileCount }} 个文件 · {{ mod.symbolCount }} 个解析符号</p>"
+        "quote": "<template>\n  <div class=\"module-frame\">\n    <h2>{{ moduleLabel(mod.id) }}</h2>\n    <p class=\"muted\">{{ mod.fileCount }} 个文件 · {{ mod.symbolCount }} 个解析符号</p>\n\n    <KnowledgeDocument v-if=\"knowledge\" prefix=\"/api/review/knowledge\" :document-key=\"knowledge.key\" :revision=\"knowledge.revision\" @navigate=\"emit('knowledge', "
+      },
+      {
+        "key": "c2",
+        "label": "聚合模块数据结构",
+        "reason": "说明模块标签转换以及文件数、符号数和文件集合的来源。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 36,
+          "endLine": 45
+        },
+        "quote": "export function moduleLabel(id: string): string {\n  return MODULE_LABELS[id] ?? id;\n}\n\nexport type AggModule = {\n  id: string;\n  fileCount: number;\n  symbolCount: number;\n  files: CodeFile[];\n};"
+      },
+      {
+        "key": "c3",
+        "label": "知识正文导航",
+        "reason": "支持知识正文由通用组件渲染并把引用导航事件上交的论断。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+          "startLine": 21,
+          "endLine": 32
+        },
+        "quote": "const emit = defineEmits<{\n  knowledge: [frame: KnowledgeFrame];\n  drill: [\n    target:\n      | { type: \"file\"; fileId: string }\n      | { type: \"symbol\"; fileId: string; symbolId: string }\n      | { type: \"fragment\"; fragmentId: string; title?: string },\n  ];\n}>();\n\nconst knowledge = ref<ArticleMeta | null>(null);\nwat"
       },
       {
         "key": "c4",
-        "label": "模块知识查询",
-        "reason": "支持模块标识变化时查询对应知识元数据，也表明异常目前被静默忽略。",
+        "label": "知识请求封装",
+        "reason": "说明知识 API 如何携带会话令牌、处理响应错误并返回 JSON。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/api.ts",
+          "startLine": 6,
+          "endLine": 10
+        },
+        "quote": "export async function knowledgeApi<T>(prefix: string, path: string, init?: RequestInit): Promise<T> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, headers: { ...(init?.body !== undefined ? { \"content-type\": \"application/json\" } : {}), ...(token ? { Autho"
+      },
+      {
+        "key": "c5",
+        "label": "文章加载与降级顺序",
+        "reason": "支持模块变化时请求文章元数据，以及文章、加载提示和无说明占位的呈现顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
           "startLine": 31,
-          "endLine": 32
+          "endLine": 44
         },
-        "quote": "const knowledge = ref<ArticleMeta | null>(null);\nwatch(() => props.mod.id, async (id) => { knowledge.value = null; try { knowledge.value = await knowledgeApi<ArticleMeta>(\"/api/review/knowledge\", \"/articles/\" + encodeURIComponent(\"module:\" + id)); } catch {} }, { immediate: true });"
-      },
-      {
-        "key": "c5",
-        "label": "文章与空状态切换",
-        "reason": "支持知识文章、加载提示和无说明空状态之间的实际呈现顺序。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 73,
-          "endLine": 80
-        },
-        "quote": "    <KnowledgeDocument v-if=\"knowledge\" prefix=\"/api/review/knowledge\" :document-key=\"knowledge.key\" :revision=\"knowledge.revision\" @navigate=\"emit('knowledge', $event)\" />\n    <div v-else-if=\"loading\" class=\"muted\">正在读取模块说明…</div>\n\n    <OmEmpty\n      v-else-if=\"!detail || !out\"\n      title=\"该模块暂无已保存的说明\"\n      descript"
+        "quote": "const knowledge = ref<ArticleMeta | null>(null);\nwatch(() => props.mod.id, async (id) => { knowledge.value = null; try { knowledge.value = await knowledgeApi<ArticleMeta>(\"/api/review/knowledge\", \"/articles/\" + encodeURIComponent(\"module:\" + id)); } catch {} }, { immediate: true });\n\nconst grouped = computed(() => {\n  "
       },
       {
         "key": "c6",
-        "label": "正文加载与引用导航",
-        "reason": "说明通用阅读器如何隔离异步竞态、加载文章并将可操作引用转换为导航事件。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-          "startLine": 10,
-          "endLine": 23
-        },
-        "quote": "let generation = 0;\nwatch(() => [props.documentKey, props.revision], async () => {\n  const current = ++generation; error.value = \"\"; article.value = null;\n  try {\n    const result = await knowledgeApi<Article>(props.prefix, \"/articles/\" + encodeURIComponent(props.documentKey) + (props.revision ? \"?revision=\" + encodeUR"
-      },
-      {
-        "key": "c7",
         "label": "结构化模块说明",
-        "reason": "支持回退界面展示来源状态、职责、边界、流程、入口出口、风险和未决问题。",
+        "reason": "支持职责、边界、流程、入口出口、风险和未决问题等结构化内容的展示及部分空状态行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -115,85 +108,63 @@
         "quote": "    <template v-else>\n      <p class=\"muted\">说明范围：{{ detail.targetId }}</p>\n      <OmStatusLine\n        :kind=\"detail.seed ? 'seed' : 'derived'\"\n        :source-note=\"detail.seed ? '人工整理的模块说明' : '模型派生说明 · 未经独立语义复核'\"\n      />\n      <div class=\"row badges\">\n        <OmBadge :tone=\"detail.seed ? 'neutral' : 'success'\">\n  "
       },
       {
-        "key": "c8",
+        "key": "c7",
         "label": "符号与证据引用",
-        "reason": "支持符号名称回退、符号下探事件及父层补全所属文件的职责划分。",
+        "reason": "支持引用分类、符号人读标签、父组件负责文件解析以及证据当前不可点击的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
           "startLine": 46,
-          "endLine": 59
+          "endLine": 60
         },
         "quote": "/** Node refs are symbol ids (sym_*); evidence refs are fragment ids (ev_*). */\nconst nodeRefs = computed(() => (props.detail?.refs ?? []).filter((r) => r.kind === \"node\"));\nconst evidenceRefs = computed(() => (props.detail?.refs ?? []).filter((r) => r.kind === \"evidence\"));\n\n/** Never show a raw sym_* id. Prefer the r"
       },
       {
+        "key": "c8",
+        "label": "引用和文件下探",
+        "reason": "支持符号按钮、静态证据行、按语言分组的文件列表、删除标记与文件下探事件的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
+          "startLine": 131,
+          "endLine": 167
+        },
+        "quote": "      <OmPanel title=\"证据引用（可下探）\" class=\"stack\">\n        <div v-if=\"nodeRefs.length || evidenceRefs.length\">\n          <button\n            v-for=\"r in nodeRefs\"\n            :key=\"'n' + r.id\"\n            class=\"ref-row\"\n            @click=\"openNodeRef(r)\"\n          >\n            <OmBadge tone=\"neutral\">符号</OmBadge>\n     "
+      },
+      {
         "key": "c9",
-        "label": "语言分组规则",
-        "reason": "支持文件按语言归组，并按各组文件数量降序排列。",
-        "relation": "implements",
+        "label": "正文请求竞态保护",
+        "reason": "对照说明通用知识正文组件用 generation 丢弃过期响应，从而指出模块元数据请求缺少同类保护。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 34,
-          "endLine": 42
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 11,
+          "endLine": 20
         },
-        "quote": "const grouped = computed(() => {\n  const byLang = new Map<string, CodeFile[]>();\n  for (const f of props.mod.files) {\n    const arr = byLang.get(f.language) ?? [];\n    arr.push(f);\n    byLang.set(f.language, arr);\n  }\n  return [...byLang.entries()].sort((a, b) => b[1].length - a[1].length);\n});"
-      },
-      {
-        "key": "c10",
-        "label": "文件浏览入口",
-        "reason": "支持文件行展示短名称、完整路径和删除标记，并在点击时发出文件下探事件。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 155,
-          "endLine": 166
-        },
-        "quote": "    <h4 style=\"margin-top:14px\">文件</h4>\n    <OmPanel v-for=\"[lang, files] in grouped\" :key=\"lang\" :title=\"lang\" class=\"stack\">\n      <button\n        v-for=\"f in files\"\n        :key=\"f.fileId\"\n        class=\"file-row\"\n        @click=\"emit('drill', { type: 'file', fileId: f.fileId })\"\n      >\n        <span class=\"path\">{"
-      },
-      {
-        "key": "c11",
-        "label": "响应式双栏布局",
-        "reason": "支持入口出口双栏布局及窄屏下切换为单栏的界面行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-          "startLine": 177,
-          "endLine": 189
-        },
-        "quote": ".two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }\n.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }\n.file-row { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--om-line); paddin"
+        "quote": "let generation = 0;\nwatch(() => [props.documentKey, props.revision], async () => {\n  const current = ++generation; error.value = \"\"; article.value = null;\n  try {\n    const result = await knowledgeApi<Article>(props.prefix, \"/articles/\" + encodeURIComponent(props.documentKey) + (props.revision ? \"?revision=\" + encodeUR"
       }
     ],
     "questions": [
       {
-        "question": "知识元数据请求失败时，是否应区分“文章不存在”和“接口异常”？",
-        "why": "当前查询捕获并忽略所有异常，正常缺失、网络故障和服务错误会进入相同的回退路径，用户无法判断原因。",
-        "nextStep": "结合知识接口的错误合同设计可见状态，并补充 404 与其他异常的行为测试。",
+        "question": "快速连续切换模块时，模块知识元数据是否应像知识正文请求一样丢弃过期响应？",
+        "why": "当前监听器会清空文章并发起异步请求，但没有确认响应仍属于最新模块；通用知识正文组件已有 generation 校验，显示项目中存在明确的并发处理范式。",
+        "nextStep": "补充组件测试，使用可控 Promise 让旧模块请求晚于新模块返回，确认是否会显示旧文章；若会，则为元数据请求增加序号或取消机制。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c5"
+          "c5",
+          "c9"
         ]
       },
       {
-        "question": "快速切换模块时，元数据查询是否需要防止旧响应覆盖新模块？",
-        "why": "通用正文阅读器具有请求代次保护，但 ModuleFrame 自身的元数据查询没有同类判断，较慢的旧请求可能晚于新请求返回。",
-        "nextStep": "增加元数据请求代次或取消机制，并用乱序响应测试验证最终文章属于当前模块。",
+        "question": "原始证据引用是否预期支持点击下探？",
+        "why": "界面标题称证据引用“可下探”，但只有符号引用绑定点击事件，证据引用使用静态行展示；仅凭现有代码无法判断这是暂未实现还是有意限制。",
+        "nextStep": "核对父级导航合同和产品交互设计；若证据应可访问，为 evidence 行发出 fragment 类型的 drill 事件并补充键盘交互测试。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c6"
-        ]
-      },
-      {
-        "question": "父组件能否在符号缺失或过期时安全处理下探？",
-        "why": "本组件发出的符号事件把 fileId 留空，实际导航依赖父层完成符号到文件的映射；现有材料没有覆盖映射失败时的用户可见行为。",
-        "nextStep": "检查父层映射与不可解析分支，并补充符号正常、缺失和过期三类点击测试。",
-        "blocking": false,
-        "citationKeys": [
+          "c7",
           "c8"
         ]
       }
@@ -218,44 +189,44 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/api.ts",
-      "digest": "668d5d6f22b4f79251b1975cbbee8e79d84974665e4f2ebec9600cb3a8808d35"
+      "digest": "fb263ea97baf43823a7ee0a9488aff2d9e83fa23c72228602324a478e69d5588"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "b1e6cb519dc2112a4477e1a90b0fe5c255771d23cf8131e411dfc2f16ab7645b"
+      "digest": "77fcdac9368a209fe761c6e536826422cd8e7ba5393a1519a8d21c13de135bd0"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T06:53:49.618Z",
+    "at": "2026-10-01T19:04:11.299Z",
     "trace": {
-      "runId": "98e6d792-ab9e-4dae-8182-a6d4707d2a07",
-      "roleId": "knowledge-refresher",
+      "runId": "4684ac8c-0993-4308-8099-54cfba184c13",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "0698b9055ee28c6975337d28a865105727eefc4c39c84e453e4f481677436ea4",
-      "contextHash": "5123ffdad09f2bf2539be2b27ce41e1b44920c90806e4af0d809b0b3c24b900f",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "983e7db07e1f689f732a08b72c19c4019f17946d3f9295c93a9a22e413b01313",
+      "contextHash": "738b25e02884391c3f76e04676ed491cf46c536b96d8267b8e886105314b9994",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4b2a58c0cabae925149ee13eecae6ebcfaf27176e38f711cf2336793637c8b0e",
+      "fingerprint": "46738991061d46b7c8656027b0414122ad8da3a0be25243f0d3a324105d4653e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63d-4f92-7351-8cdf-a7fc058f1582"
+        "01a0f8d9-e64c-7610-86c9-465bc612c485"
       ],
       "usage": {
-        "used": 33248,
+        "used": 29792,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -264,10 +235,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37878,
-          "utf8Bytes": 45271,
-          "estimatedTokens": 15091,
-          "budgetedTokens": 18864,
+          "chars": 31640,
+          "utf8Bytes": 35432,
+          "estimatedTokens": 11811,
+          "budgetedTokens": 14764,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -276,17 +247,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:54:07.688Z",
+    "at": "2026-10-01T19:04:35.276Z",
     "trace": {
-      "runId": "6c92cc38-9101-4264-9b3e-44da51cfbc50",
+      "runId": "96876fae-e162-4b31-b16f-5b82aaa423a0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "6c09128779eb8a4585c680b52fb106bcbb9b29196c612cac60ece7fcb85be35a",
-      "contextHash": "dc0e18b50b0257a8b323552948eaf88187b701e2585a88b94e25f8d028799f2f",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "211c60fa37e9b6e98dbdb9659f0905089179258e2f65842fca1ee6052c7bca20",
+      "contextHash": "95e5104aa734530a5fe4dd063e764be37ccda45fb74705d63e32773cb9a1e311",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1691eb7d88bae5e3d387d72ccaa6bb54eabf65f148a97ff466bb13a5942da893",
+      "fingerprint": "952885df351fdc7b12c0ebf1b02205c4810cedc19b632a3e74af2829e40c3f32",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -299,10 +270,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63d-b48b-74c0-b752-16a607219de6"
+        "01a0f8da-6059-70a0-98f4-54d7430a5a30"
       ],
       "usage": {
-        "used": 31399,
+        "used": 30978,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -311,10 +282,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 34850,
-          "utf8Bytes": 39252,
-          "estimatedTokens": 13084,
-          "budgetedTokens": 16355,
+          "chars": 36510,
+          "utf8Bytes": 43534,
+          "estimatedTokens": 14512,
+          "budgetedTokens": 18140,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

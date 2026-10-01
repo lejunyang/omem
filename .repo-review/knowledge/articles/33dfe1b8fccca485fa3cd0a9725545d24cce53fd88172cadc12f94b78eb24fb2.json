@@ -2,36 +2,37 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/api.ts",
-    "title": "知识阅读界面的请求与导航适配",
-    "summary": "该适配层连接共享知识合同与前端阅读界面，组合文章及引用的展示状态，统一发送带会话令牌的请求，并生成可传递的文章阅读帧。响应运行时校验、认证失效恢复和完整阅读栈行为仍需结合调用方确认。",
-    "category": "implementation",
+    "title": "知识页面的请求与阅读栈适配",
+    "summary": "为 Web 知识阅读界面组合共享知识类型、前端引用状态、鉴权请求封装与知识阅读帧，并明确请求头合并和错误解析的适用边界。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "代码知识浏览"
+    ],
     "sections": [
       {
         "key": "purpose",
-        "title": "连接知识合同与阅读界面",
-        "body": "知识阅读界面既要展示文章，也要判断引用当前能否打开。该适配层复用共享的知识文档与引用类型，为文章补充版本、复核信息和疑问数量，并为引用增加可操作状态、不可用原因与解析目标，使组件能够区分“存在引用”和“当前可跳转的引用”。参考 [[c1]]\n\n共享合同统一约束文档分类、章节、引用和待确认问题，因此界面类型与知识生成、复核流程使用同一套基础数据结构。参考 [[c2]]"
+        "title": "组织知识页面的数据",
+        "body": "该文件是知识阅读界面的轻量适配层：它复用共享合同中的知识文档、引用和页面规划类型，再补充当前修订、生成信息、问题数量以及引用是否可操作等前端状态。`Article` 将文章元数据、正文和解析后的引用组合起来，供页面展示知识内容并定位证据。参考 [[c1]]\n\n共享合同统一规定引用关系、目标类型、材料行号和文章章节等字段；前端的 `Citation` 在此基础上增加解析结果、可操作性、不可用原因与当前版本状态，没有另建一套引用格式。参考 [[c2]]"
       },
       {
         "key": "request-flow",
-        "title": "发送请求并转换错误",
-        "body": "`knowledgeApi` 接收服务前缀、路径和标准请求选项，从会话存储读取令牌。请求带正文时默认加入 JSON 内容类型，存在令牌时加入 Bearer 认证，调用方提供的同名请求头最后合并，因而可以覆盖这些默认值。参考 [[c3]]\n\n非成功响应先尝试解析 JSON。仅当解析结果不是 `null` 且其 `error` 属性为真值时，才会把该值交给 `Error`；字符串、数字、布尔值或不含真值 `error` 的对象可安全读取属性，并回退为包含状态码的中文提示。若 JSON 结果为 `null`，访问 `body.error` 会直接产生属性访问异常，绕过该后备提示；JSON 解析失败则以空对象回退。成功响应直接返回 JSON 解析结果。参考 [[c4]]"
+        "title": "统一请求、令牌与错误处理",
+        "body": "`knowledgeApi` 接收服务前缀、路径和可选的 `RequestInit`，从会话存储读取令牌。请求带正文时会默认添加 JSON 内容类型，有令牌时会添加 Bearer 鉴权；当 `init.headers` 是普通键值对象时，其中的同名字段会覆盖这些默认值。当前通过对象展开合并请求头，因此不能据此认为 `Headers` 实例或键值对数组也能被正确合并。参考 [[c3]]\n\n成功响应被直接解析为 JSON。失败响应也会先尝试解析 JSON，并在结果是包含 `error` 字段的对象时优先采用该信息，否则通常以 HTTP 状态码生成中文异常；若 JSON 成功解析为 `null`，当前代码访问 `body.error` 时会产生类型错误。泛型 `T` 只提供编译期约束，本函数自身不执行共享 Zod schema 的运行时校验。参考 [[c4]]"
       },
       {
-        "key": "navigation",
-        "title": "生成文章阅读帧",
-        "body": "阅读帧用统一结构表示知识文章、引用或原始材料，并携带标识与人读标题。参考 [[c5]]\n\n`knowledgeFrame` 创建知识文章帧，把文章键、可选版本和章节序列化进 `id`，供调用方传递具体阅读位置。现有材料只能确认帧的形状与构造方式，尚不能确定由哪个模块恢复该标识，以及如何完成深链、返回和关闭等阅读栈交互。参考 [[c6]]"
-      },
-      {
-        "key": "boundaries",
-        "title": "适配层的责任边界",
-        "body": "泛型 `T` 只表达编译期预期；成功响应在此处没有经过共享 Zod schema 的运行时校验。该封装也只负责读取并发送会话令牌，再把非成功响应转换为异常，没有展示令牌刷新或针对 401、403 的恢复策略。参考 [[c7]]\n\n共享 schema 约束引用关系、目标类型、材料行号和文章章节；前端则在这些基础字段上增加解析结果、可操作状态与当前性信息。参考 [[c8]]"
+        "key": "navigation-boundaries",
+        "title": "标识阅读位置与适用边界",
+        "body": "`KnowledgeFrame` 定义 `knowledge`、`citation` 和 `source` 三类阅读帧。现有 `knowledgeFrame` 构造器只创建知识帧，并把知识键、可选修订号和章节序列化进字符串 `id`，用于表达具体知识版本或阅读位置。参考 [[c5]] [[c6]]\n\n该封装直接依赖浏览器的 `sessionStorage` 与 `fetch`，因此不是服务端通用客户端。解析后的引用可以记录文章或材料目标的标题、修订、摘要和位置，并通过 `actionable`、`unavailableReason` 与 `current` 告诉界面目标能否打开、为何不可用以及是否为当前版本。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文章与引用展示类型",
-        "reason": "支持前端为文章补充元数据、为引用补充解析结果与可操作状态，并组合界面文章类型的说明。",
+        "label": "文章与引用前端模型",
+        "reason": "支持该文件复用共享知识类型，并组合文章元数据、正文与解析后引用状态的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -39,25 +40,25 @@
           "startLine": 1,
           "endLine": 4
         },
-        "quote": "import type { KnowledgeDocument, KnowledgeCitation } from \"../../../../packages/contracts/src/knowledge\";\nexport type ArticleMeta = { children?: string[]; key: string; title: string; summary: string; category: string; current: boolean; revision: string; model: string; reviewedBy: string; generatedAt: string; questionCo"
+        "quote": "import type { KnowledgeDocument, KnowledgeCitation, WikiPageBrief } from \"../../../../packages/contracts/src/knowledge\";\nexport type ArticleMeta = { children?: string[]; key: string; title: string; summary: string; category: string; topicPath?: string[]; current: boolean; revision: string; model: string; reviewedBy: st"
       },
       {
         "key": "c2",
-        "label": "知识文档合同",
-        "reason": "支持共享合同统一约束文档分类、章节、引用与问题结构的说明。",
+        "label": "共享引用合同",
+        "reason": "说明共享合同约束引用关系、目标、行号和章节字段，而前端引用类型在其上扩展展示状态。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:packages/contracts/src/knowledge.ts",
-          "startLine": 25,
-          "endLine": 35
+          "startLine": 4,
+          "endLine": 15
         },
-        "quote": "export const knowledgeDocumentSchema = z.object({\n  key, title: z.string().min(1).max(240), summary: z.string().min(1).max(1600),\n  category: z.enum([\"overview\", \"architecture\", \"background\", \"requirements\", \"progress\", \"implementation\", \"tests\", \"configuration\", \"workflow\", \"research\", \"conversation\", \"visual\"]),\n  se"
+        "quote": "export const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \"background\", \"tracks\"]),\n  target: z.obj"
       },
       {
         "key": "c3",
-        "label": "认证与请求头合并",
-        "reason": "支持令牌读取、JSON 内容类型注入、Bearer 认证及调用方请求头覆盖顺序的说明。",
+        "label": "鉴权请求组装",
+        "reason": "支持令牌读取、条件默认请求头以及通过对象展开合并调用方请求头，并据此界定 HeadersInit 形式的限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -69,9 +70,9 @@
       },
       {
         "key": "c4",
-        "label": "响应错误处理",
-        "reason": "支持错误响应解析、error 属性读取、状态码后备提示、null 属性访问例外及成功响应直接解析 JSON 的说明。",
-        "relation": "explains",
+        "label": "响应解析与失败处理",
+        "reason": "支持成功响应直接解析、失败响应读取 error 或状态码回退，并揭示 null 响应与缺少运行时校验的边界。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/api.ts",
@@ -83,7 +84,7 @@
       {
         "key": "c5",
         "label": "阅读帧类型",
-        "reason": "支持阅读帧可表示知识文章、引用或原始材料并携带标识和标题的说明。",
+        "reason": "支持阅读帧包含知识、引用和来源三种类别以及通用标识与标题字段。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -95,8 +96,8 @@
       },
       {
         "key": "c6",
-        "label": "文章帧构造",
-        "reason": "支持文章键、可选版本和章节被序列化进知识文章帧标识的说明。",
+        "label": "知识帧构造器",
+        "reason": "支持构造器固定创建知识帧，并将知识键、修订号和章节编码进字符串标识。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -108,60 +109,37 @@
       },
       {
         "key": "c7",
-        "label": "请求封装边界",
-        "reason": "支持成功响应未经运行时 schema 校验、令牌仅被读取发送以及非成功响应统一抛错的边界说明。",
-        "relation": "explains",
+        "label": "引用解析状态",
+        "reason": "支持解析后引用记录目标信息、可操作性、不可用原因和当前版本状态。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/api.ts",
-          "startLine": 7,
-          "endLine": 10
-        },
-        "quote": "  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, headers: { ...(init?.body !== undefined ? { \"content-type\": \"application/json\" } : {}), ...(token ? { Authorization: \"Bearer \" + token } : {}), ...init?.headers } });\n  if (!response.ok) { const body = await r"
-      },
-      {
-        "key": "c8",
-        "label": "共享引用字段约束",
-        "reason": "支持引用关系、目标类型、材料行号和文章章节由共享 schema 约束的说明。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/knowledge.ts",
           "startLine": 3,
-          "endLine": 15
+          "endLine": 3
         },
-        "quote": "const key = z.string().min(1).max(500);\nexport const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \""
+        "quote": "export type Citation = KnowledgeCitation & { actionable: boolean; unavailableReason?: string | null; current?: boolean; resolved?: { kind: \"article\" | \"material\"; key: string; revision?: string; digest?: string; section?: string; title: string; startLine?: number; endLine?: number } | null };"
       }
     ],
     "questions": [
       {
-        "question": "知识请求的成功响应是否应在前端用共享 Zod schema 做运行时校验？",
-        "why": "当前函数将 `response.json()` 直接作为泛型 `T` 返回，给定材料未显示服务端响应或调用方是否另有运行时校验。",
-        "nextStep": "检查知识 API 调用点及服务端响应校验代码；若两端均未校验，再决定是否为该封装增加解析器参数。",
+        "question": "知识请求的返回值是否会在调用方通过共享 Zod schema 做运行时校验？",
+        "why": "现有材料只证明 `knowledgeApi` 将 `response.json()` 直接作为泛型 `T` 返回，无法确定上层是否另行解析和校验响应。",
+        "nextStep": "检查 `knowledgeApi` 的调用点以及共享知识 schema 的使用位置。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c7"
+          "c4",
+          "c2"
         ]
       },
       {
-        "question": "知识帧的序列化标识由哪个模块恢复并驱动完整阅读栈？",
-        "why": "现有材料只能确认 `KnowledgeFrame` 的形状和 `knowledgeFrame` 的构造方式，不能确认深链恢复、返回、关闭等调用链行为。",
-        "nextStep": "提供使用 `KnowledgeFrame` 或 `knowledgeFrame` 的组件与 composable 源码，以核实真实调用链和边界行为。",
+        "question": "`citation` 与 `source` 两类阅读帧由谁创建，并如何恢复阅读状态？",
+        "why": "类型声明列出三类阅读帧，但当前材料只展示知识帧构造器，不能确认另外两类帧的创建与导航流程。",
+        "nextStep": "查看 `KnowledgeFrame` 的使用位置及阅读栈组件。",
         "blocking": false,
         "citationKeys": [
           "c5",
           "c6"
-        ]
-      },
-      {
-        "question": "会话令牌过期时由哪里负责刷新、清理或引导重新认证？",
-        "why": "当前封装只读取并发送会话令牌，且把所有非成功响应统一转换为异常，没有展示针对 401、403 的恢复策略。",
-        "nextStep": "检查认证初始化、登录状态管理和知识 API 错误消费代码，确认认证失效时的用户体验与恢复策略。",
-        "blocking": false,
-        "citationKeys": [
-          "c3",
-          "c7"
         ]
       }
     ]
@@ -170,28 +148,28 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/api.ts",
-      "digest": "668d5d6f22b4f79251b1975cbbee8e79d84974665e4f2ebec9600cb3a8808d35"
+      "digest": "fb263ea97baf43823a7ee0a9488aff2d9e83fa23c72228602324a478e69d5588"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+      "digest": "6347a97df7eba549873d1af1e21fdb2343e92ee147ad04c66f94d4ecbaddf6c2"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T07:20:25.238Z",
+    "at": "2026-10-01T19:10:47.413Z",
     "trace": {
-      "runId": "f66deaf5-c488-408c-9535-58666419730c",
+      "runId": "680283b1-eca2-4611-a846-d93d9f02f9b5",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "bfe584e34c4611859b5408450cbc4470a65a50b0b024696e27899fe6f4663297",
-      "contextHash": "9c262b6524f796ac51ce31ca5fbf3893f9dfa0c4e9fb629482099c364dd2e63f",
+      "bundleHash": "0cfa9d4027da44fcd0fc3fab247127e3993c647de13b70f0cde89b9bb36bf42a",
+      "promptHash": "6c258c33483090614072ac42b3d7c4413125202ce6223dd03a0d867fb56883a5",
+      "contextHash": "9191814b595f4bda2483892ca737b1a7ad8bc11ff497bdea31be12599e9c2e21",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "7d0cd5cc30efb8414dfe92605c1e12186c67b3406e3d1334f8b734193272f5f7",
+      "fingerprint": "a1abdbd733ac08eed51b7c857da0c25e0c7131a947726e024781eccbb62e9155",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -204,10 +182,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f655-a728-7411-8484-9662c9ae76a4"
+        "01a0f8e0-17d2-7e43-bb31-ca9b26bbaa97"
       ],
       "usage": {
-        "used": 27490,
+        "used": 26472,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -216,10 +194,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 20248,
-          "utf8Bytes": 27456,
-          "estimatedTokens": 9152,
-          "budgetedTokens": 11440,
+          "chars": 20339,
+          "utf8Bytes": 28623,
+          "estimatedTokens": 9541,
+          "budgetedTokens": 11927,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -228,17 +206,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T07:20:46.629Z",
+    "at": "2026-10-01T19:11:02.678Z",
     "trace": {
-      "runId": "9651110d-2015-4f4b-9c1c-8f76384e3a3e",
+      "runId": "ded0b967-aa6a-44a3-9c27-3e801429f807",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
-      "promptHash": "09bf0590fea80d7e5601f1def6a03e71cb7124caf099be10bb03370db6f94313",
-      "contextHash": "7666cd1727824045e61be1f21b2764784efdc89872e623e12cd27b7acc84dae5",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "edae1b2d74d707b308ea2eb43d6d484557de7a98c41a267ff98c9aed90486e5f",
+      "contextHash": "6672cbab58ab9b1ce44f8fa0bab0388a8dedcc57f66b228d04c0cbc799591354",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "275f64dde7f8bc77a6304a31b05dde6073bfb2fbf38e72a6f745432dd0efcb01",
+      "fingerprint": "626c80e01e664f2b7dbcf6597e250c89ea6da2abdc014d9f6fcdeaed13aee261",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -251,10 +229,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f656-11b6-7c91-be64-ac8f783849ca"
+        "01a0f8e0-6c39-7a83-8e1a-ca1b68212f3a"
       ],
       "usage": {
-        "used": 24963,
+        "used": 23478,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -263,10 +241,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 16407,
-          "utf8Bytes": 21321,
-          "estimatedTokens": 7107,
-          "budgetedTokens": 8884,
+          "chars": 16323,
+          "utf8Bytes": 21851,
+          "estimatedTokens": 7284,
+          "budgetedTokens": 9105,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

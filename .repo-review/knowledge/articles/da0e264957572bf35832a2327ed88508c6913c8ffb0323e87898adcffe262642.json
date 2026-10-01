@@ -2,243 +2,164 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/App.vue",
-    "title": "个人记忆 Web 工作台的总控编排",
-    "summary": "App.vue 是个人工作记忆前端的应用壳与流程协调器：识别服务模式，维护页面、连接和公共数据状态，并把材料采集、原文阅读、证据问答、任务、通知与 Agent 配置连接到各业务组件及后端接口。",
-    "category": "implementation",
+    "title": "个人工作记忆的 Web 应用总入口",
+    "summary": "App.vue 是个人工作记忆前端的页面编排与状态协调中心：识别服务运行模式，加载材料、任务、通知等全局数据，组织搜索、采集、阅读和行动流程，并把证据阅读、问答、判断等专门能力交给子组件。",
+    "category": "前端应用架构",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "工作区入口"
+    ],
     "sections": [
       {
-        "key": "workspace-and-boot",
-        "title": "统一工作台与启动分流",
-        "body": "该组件把日常助理、知识库、原始材料、输入、待判断、任务、通知和设置组织在同一工作台中，并通过 URL hash 与会话存储保持当前位置；无法识别的地址回到知识库。参考 [[c1]]\n\n启动时先探测仓库评审服务。确认处于 review 模式后，只提示用户进入统一主应用；只有评审健康接口明确返回 404，才继续检查个人服务。连接失败会显示原因并定时重试，个人服务就绪后再加载 Agent 配置、公共数据和首份材料。参考 [[c2]]"
+        "key": "purpose-and-navigation",
+        "title": "统一工作入口与两种运行模式",
+        "body": "该组件解决的是“从同一入口完成记忆采集、阅读、检索和行动”的问题。它用稳定导航连接知识库、原始材料、材料处理、待判断、待办、通知和设置，并通过 URL hash 与会话存储保持当前页面。参考 [[c1]]\n\n启动时先探测知识评审服务：确认返回 `review` 模式便停止加载个人业务数据；只有评审路由明确返回 404，才继续访问个人服务健康接口。其他状态会显示连接原因并每两秒重试，避免代理尚未就绪时误启动个人数据轮询。参考 [[c2]]"
       },
       {
-        "key": "capture-and-refresh",
-        "title": "从材料输入到固定证据",
-        "body": "工作台并行刷新材料、通知、任务、变更、处理任务、提案和判断，并用互斥标志避免重复刷新；轮询失败保留已有页面状态，只更新错误提示。即时通知模式会把新变化汇总为短暂提示。参考 [[c3]]\n\n输入按文本、飞书、服务器文件和 Git 文件分流。文本模式把正文、链接和图片组成统一 parts，并附上来源、采集者、时间、时区和转发状态；保存后刷新列表、打开返回版本，并区分新版本与重复内容。参考 [[c4]] 图片限 PNG、JPEG、WebP 和 5 MB，界面一次选择一张；搜索用递增版本号丢弃迟到响应，当前仍是精确文本检索。参考 [[c5]]"
+        "key": "data-and-search",
+        "title": "集中刷新与防竞态搜索",
+        "body": "个人模式下，组件并行读取材料、通知、任务、变更、处理作业、提案和判断事项；若用户正在阅读旧版本，还会根据最新材料列表重新标记它是否为当前版本。刷新有互斥标记，后台失败写入独立轮询错误，不会把定时刷新重叠执行。参考 [[c3]]\n\n搜索采用 250 毫秒防抖，并在输入变化时中止上一请求、递增版本号；只有版本仍匹配的响应才能更新结果，因此较慢的旧请求不会覆盖新查询。组件卸载时也会清理轮询、重试、提示与搜索计时器。参考 [[c4]]"
       },
       {
-        "key": "evidence-and-actions",
-        "title": "围绕原文连接问答与业务动作",
-        "body": "阅读页展示当前或历史版本、连贯正文、固定片段和版本入口；用户可把片段设为提问焦点，也可打开证据阅读器追溯来源。参考 [[c6]] App 负责把材料处理、待判断和日常助理等子组件的刷新、证据打开、错误与提示事件汇入统一通道。参考 [[c7]]\n\nChatPane 将问题、焦点、可选模型、思考强度和上下文范围提交为异步运行，再轮询结果；App 只提供配置和焦点，不直接执行模型。参考 [[c8]] 创建任务可以关联当前证据，状态更新携带预期版本；恢复历史则携带预期头版本，并把服务端返回结果作为新版本打开，旧历史仍被保留。参考 [[c9]] [[c10]]"
+        "key": "capture-and-reading",
+        "title": "从多源采集到可追溯阅读",
+        "body": "采集流程按模式分流到飞书、服务器文件、Git 文件或通用多模态接口。手工输入可组合文本、链接和单张图片，并附带采集者、来源 URI、事件时间、时区及是否转发等来源信息；保存后刷新全局状态、打开返回的修订版本，并提示是复用重复版本还是生成了新证据。参考 [[c5]]\n\n阅读区展示材料目录、当前或历史版本、代码或 Markdown 正文、固定片段和版本历史。用户可把某个片段设为问答焦点，也可通过引用组件打开证据；右侧 `ChatPane` 接收同一焦点及模型配置，证据弹窗保存后则触发全局刷新。参考 [[c6]]"
       },
       {
-        "key": "boundaries",
-        "title": "能力探测、并发约束与组件边界",
-        "body": "Agent 能力探测通过 generation 标记忽略迟到结果，切换配置时清空旧选项，并在设置页触发重新读取。探测结果会保留所有 `type === \"select\"` 的配置项；模型与思考强度输入框分别读取其中 ID 为 `model` 和 `reasoning_effort` 的选项，其他 select 项仍显示在“已发现的配置选项”中。参考 [[c11]] [[c12]]\n\n设置页声明上下文超限应明确拒绝，浏览器令牌只用于连接 omem 服务，网页不能修改执行命令。版本冲突、鉴权及返回结构仍依赖 API 封装和服务端语义。通知详情通过事件请求打开版本或证据，参考 [[c13]]；证据阅读器自行加载证据、维护阅读栈并恢复滚动位置。参考 [[c14]]"
+        "key": "boundaries-and-components",
+        "title": "输入边界与子模块协作",
+        "body": "前端先限制图片为 PNG、JPEG 或 WebP 且不超过 5 MB；材料目录最多直接展示 80 项，小屏下改为上下布局。服务器文件和 Git 的真实路径授权、文本大小等限制只在界面中说明，最终安全校验仍必须由后端执行。参考 [[c7]]\n\n该文件主要承担编排而非实现全部业务：`LearningView`、`DecisionsView`、`DailyAssistant` 通过事件请求刷新或打开证据；`NotificationDetail` 可回到证据或具体修订；`EvidenceReader` 与 `ChatPane` 共享当前 Agent、模型和思考强度。这里能确认组件间的属性与事件连接，但不能仅凭本文件断言这些子组件内部或后端的完整调用链。参考 [[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "工作台导航与页面状态",
-        "reason": "支持工作台页面组成、hash 路由、默认页面和会话状态同步的说明。",
+        "label": "工作区导航与页面状态",
+        "reason": "支持该组件统一组织主要工作页面，并同步 URL 与会话状态的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 39,
-          "endLine": 69
+          "startLine": 40,
+          "endLine": 70
         },
         "quote": "const navigation = [\n  [\"daily\", \"spark\", \"日常助理\"], [\"knowledge\", \"book\", \"知识库\"],\n  [\"read\", \"layers\", \"原始材料\"], [\"capture\", \"plus\", \"输入材料\"],\n  [\"learning\", \"spark\", \"材料处理\"], [\"decisions\", \"check\", \"待判断\"],\n  [\"tasks\", \"check\", \"事项与待办\"], [\"changes\", \"clock\", \"变更历史\"],\n  [\"notifications\", \"spark\", \"通知中心\"], [\"lark\", \"layers\""
       },
       {
         "key": "c2",
-        "label": "服务模式识别与启动恢复",
-        "reason": "支持启动时区分评审服务与个人服务，以及错误重试和初始化加载流程。",
+        "label": "启动模式探测",
+        "reason": "支持评审模式优先探测、个人服务识别条件及失败重试流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 183,
-          "endLine": 235
+          "startLine": 194,
+          "endLine": 245
         },
         "quote": "async function boot() {\n  if (booting.value) return;\n  booting.value = true;\n  clearTimeout(bootRetryTimer);\n  clearInterval(pollTimer);\n  error.value = \"\";\n  connectionError.value = \"\";\n  // Review mode: the dev/prod server behind /api is the repo-review knowledge base,\n  // not the personal workspace. Detect it befor"
       },
       {
         "key": "c3",
-        "label": "公共数据刷新与通知提示",
-        "reason": "支持多类业务数据并行刷新、刷新互斥、错误保留和即时通知汇总。",
+        "label": "全局数据刷新",
+        "reason": "支持并行加载业务集合、修订状态校正和刷新互斥处理。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 129,
-          "endLine": 181
+          "startLine": 140,
+          "endLine": 193
         },
         "quote": "async function refresh() {\n  if (refreshing) return;\n  refreshing = true;\n  try {\n    [\n      sources.value,\n      notifications.value,\n      tasks.value,\n      changes.value,\n      jobs.value,\n      proposals.value,\n      decisions.value,\n    ] = await Promise.all([\n      api<Source[]>(\"/sources\"),\n      api<Notificat"
       },
       {
         "key": "c4",
-        "label": "多来源材料捕获流程",
-        "reason": "支持导入模式分流、统一 parts 与 provenance 构造，以及保存后的刷新和版本跳转。",
+        "label": "搜索竞态控制",
+        "reason": "支持搜索防抖、中止旧请求、版本校验及卸载清理的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 281,
-          "endLine": 340
+          "startLine": 97,
+          "endLine": 107
+        },
+        "quote": "let searchVersion = 0;\nlet searchTimer: ReturnType<typeof setTimeout>;\nlet searchController: AbortController | undefined;\nconst searching = ref(false), searchError = ref(\"\");\nwatch(query, () => {\n  clearTimeout(searchTimer); searchController?.abort();\n  const version = ++searchVersion;\n  results.value = []; searchError"
+      },
+      {
+        "key": "c5",
+        "label": "多源材料采集",
+        "reason": "支持不同采集入口、来源元数据构造以及保存后的刷新和打开流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 290,
+          "endLine": 350
         },
         "quote": "async function capture() {\n  busy.value = true;\n  error.value = \"\";\n  try {\n    let response: { revision: Revision; duplicate: boolean };\n    if (importMode.value === \"lark\")\n      response = await api(\"/connectors/lark\", { url: input.value.url });\n    else if (importMode.value === \"file\")\n      response = await api(\"/"
       },
       {
-        "key": "c5",
-        "label": "搜索竞态与图片限制",
-        "reason": "支持搜索响应版本保护，以及图片格式、大小和单文件选择限制。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 249,
-          "endLine": 279
-        },
-        "quote": "async function search() {\n  const v = ++searchVersion;\n  try {\n    const r = await api<typeof results.value>(\n      \"/search?q=\" + encodeURIComponent(query.value),\n    );\n    if (v === searchVersion) results.value = r;\n  } catch (e) {\n    error.value = String(e);\n  }\n}\nasync function upload(e: Event) {\n  const file = ("
-      },
-      {
         "key": "c6",
-        "label": "原始材料阅读界面",
-        "reason": "支持版本状态、正文渲染、固定片段操作和历史版本入口的描述。",
+        "label": "材料阅读与聚焦问答",
+        "reason": "支持版本正文、固定片段、历史入口以及阅读区问答焦点的界面关系。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 565,
-          "endLine": 603
+          "startLine": 576,
+          "endLine": 613
         },
         "quote": "      <template v-if=\"revision\"\n        ><div class=\"row\">\n          <OmBadge>{{ revision.source }}</OmBadge\n          ><OmBadge :tone=\"revision.current ? 'neutral' : 'warning'\"\n            >v{{ revision.version }} ·\n            {{ revision.current ? \"当前版本\" : \"历史版本\" }}</OmBadge\n          >\n        </div>\n        <h1>{{"
       },
       {
         "key": "c7",
-        "label": "业务子组件事件编排",
-        "reason": "支持 App 向业务子组件传递数据，并统一接收刷新、证据、错误和提示事件。",
-        "relation": "depends_on",
+        "label": "输入与展示边界",
+        "reason": "支持图片格式和大小限制，以及材料目录数量限制等明确边界。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 708,
-          "endLine": 725
+          "startLine": 269,
+          "endLine": 288
         },
-        "quote": "    <PersonalKnowledge v-else-if=\"view === 'knowledge'\" />\n    <LearningView\n      v-else-if=\"view === 'learning'\"\n      :jobs=\"jobs\"\n      :processing=\"processing\"\n      :sources=\"sources\"\n      :proposals=\"proposals\"\n      @refresh=\"refresh\"\n      @open=\"(id) => evidence?.open(id)\"\n      @error=\"(text) => (error = te"
+        "quote": "async function upload(e: Event) {\n  const file = (e.target as HTMLInputElement).files?.[0];\n  if (!file) return;\n  if (\n    ![\"image/png\", \"image/jpeg\", \"image/webp\"].includes(file.type) ||\n    file.size > 5_000_000\n  ) {\n    error.value = \"支持 PNG/JPEG/WebP，单张不超过 5 MB\";\n    return;\n  }\n  const reader = new FileReader()"
       },
       {
         "key": "c8",
-        "label": "焦点问答运行流程",
-        "reason": "支持问答提交焦点与 Agent 配置、异步轮询运行结果及完成后刷新。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ChatPane.vue",
-          "startLine": 33,
-          "endLine": 67
-        },
-        "quote": "async function poll(id: string) {\n  try {\n    const result = await api<Run>(\"/runs/\" + id);\n    if (disposed) return;\n    run.value = result;\n    if (run.value.state === \"running\")\n      timer = setTimeout(() => void poll(id), 450);\n    else {\n      busy.value = false;\n      if (run.value.state === \"done\") emit(\"saved\""
-      },
-      {
-        "key": "c9",
-        "label": "任务的证据关联与版本更新",
-        "reason": "支持任务创建关联当前证据，以及状态切换携带预期版本。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 343,
-          "endLine": 369
-        },
-        "quote": "async function createTask() {\n  try {\n    await api(\"/tasks\", {\n      title: taskDraft.value.title,\n      detail: taskDraft.value.detail,\n      dueAt: taskDraft.value.dueAt\n        ? new Date(taskDraft.value.dueAt).toISOString()\n        : null,\n      ...(focus.value ? { evidenceId: focus.value.id } : {}),\n    });\n    t"
-      },
-      {
-        "key": "c10",
-        "label": "历史恢复为新版本",
-        "reason": "支持恢复请求携带预期头版本、刷新数据并打开返回版本且保留历史。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 397,
-          "endLine": 408
-        },
-        "quote": "async function restore(c: Change) {\n  if (!c.afterId) return;\n  try {\n    const r = await api<Revision>(\"/changes/\" + c.id + \"/restore\", {\n      expectedHead: c.afterId,\n    });\n    await refresh();\n    await openRevision(r.id);\n    say(\"已恢复为新版本，历史保留\");\n  } catch (e) {\n    error.value = String(e);\n  }"
-      },
-      {
-        "key": "c11",
-        "label": "Agent 配置项探测",
-        "reason": "支持仅保留所有 select 类型配置项、展开分组选项、忽略迟到响应及切换配置时清理旧状态。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 410,
-          "endLine": 457
-        },
-        "quote": "let probeGeneration = 0;\nasync function probe() {\n  const requestedProfile = profileId.value;\n  if (!requestedProfile) return;\n  const run = ++probeGeneration;\n  probing.value = true;\n  probeError.value = \"\";\n  probeNote.value = \"\";\n  try {\n    const response = await api<{\n      configOptions?: {\n        id: string;\n  "
-      },
-      {
-        "key": "c12",
-        "label": "模型与思考强度配置界面",
-        "reason": "支持模型和思考强度分别读取指定 ID 的选项，同时展示探测到的其他 select 配置项及连接边界。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 797,
-          "endLine": 869
-        },
-        "quote": "    <section v-else-if=\"view === 'settings'\" class=\"page\">\n      <h1>能力与连接</h1>\n      <p class=\"muted\">\n        使用运行 omem 的电脑上已登录的 Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。\n      </p>\n      <OmPanel title=\"问答运行配置\"\n        ><div class=\"form\">\n          <label\n            >Agent 接入<select v-model=\"profileId\" @change=\"setProf"
-      },
-      {
-        "key": "c13",
-        "label": "通知详情的打开事件",
-        "reason": "支持通知详情展示变化，并通过事件请求父组件打开证据或具体版本。",
+        "label": "专门子组件编排",
+        "reason": "支持 App 向材料处理、判断、证据阅读、通知详情和问答组件传递状态及接收事件的关系。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/NotificationDetail.vue",
-          "startLine": 28,
-          "endLine": 57
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 718,
+          "endLine": 738
         },
-        "quote": "<template>\n  <OmDialog\n    :open=\"open\"\n    title=\"通知与变化详情\"\n    @close=\"emit('close')\"\n    @back=\"emit('close')\"\n  >\n    <p v-if=\"loading\" class=\"muted\">正在读取持久状态…</p>\n    <template v-else-if=\"detail\">\n      <div class=\"row\">\n        <OmBadge>{{ ({knowledge:\"知识更新\",capture:\"材料更新\",task:\"事项\",decision:\"需要判断\"} as Record<stri"
-      },
-      {
-        "key": "c14",
-        "label": "证据阅读栈行为",
-        "reason": "支持证据阅读器加载证据、维护帧栈与滚动位置，并向 App 暴露打开入口。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/EvidenceReader.vue",
-          "startLine": 16,
-          "endLine": 64
-        },
-        "quote": "async function open(id: string) {\n  if (loading) return;\n  const i = frames.value.findIndex((f) => f.e.fragment.id === id);\n  if (i >= 0) {\n    loop.value = i;\n    return;\n  }\n  loading = true;\n  error.value = \"\";\n  try {\n    const e = await api<Evidence>(\"/evidence/\" + id);\n    if (current.value)\n      current.value.s"
+        "quote": "    <PersonalKnowledge v-else-if=\"view === 'knowledge'\" />\n    <LearningView\n      v-else-if=\"view === 'learning'\"\n      :jobs=\"jobs\"\n      :processing=\"processing\"\n      :sources=\"sources\"\n      :proposals=\"proposals\"\n      @refresh=\"refresh\"\n      @open=\"(id) => evidence?.open(id)\"\n      @error=\"(text) => (error = te"
       }
     ],
     "questions": [
       {
-        "question": "App.vue 的启动分流、搜索竞态和轮询清理是否已有浏览器级回归测试？",
-        "why": "提供的材料不含测试文件，无法确认评审与个人服务分流、迟到搜索响应、自动重试和组件卸载后的定时器清理是否被实际断言。",
-        "nextStep": "检查对应 Vitest 与 Playwright 用例，重点覆盖评审健康接口返回 404、401、其他故障以及快速连续搜索。",
+        "question": "个人服务各 API 的鉴权、并发冲突和路径白名单是否都在服务端再次强制校验？",
+        "why": "本文件展示了访问令牌传递、任务 expectedVersion、文件与 Git 路径限制文案，但没有提供 API 封装或服务端实现；因此只能确认前端意图，不能确认安全边界和冲突处理已经落地。",
+        "nextStep": "检查 api 模块及对应服务端路由，重点核对令牌附加方式、任务版本冲突返回、captureRoots 校验和文件大小限制。",
         "blocking": false,
         "citationKeys": [
           "c2",
+          "c5",
+          "c7"
+        ]
+      },
+      {
+        "question": "启动、搜索竞态、轮询清理和多源采集目前有哪些自动化测试？",
+        "why": "提供的目标材料只有应用组件，没有测试文件，无法说明这些关键分支已有何种断言，也无法判断 review 路由非 404、旧搜索响应晚到、组件卸载和重复采集等行为是否覆盖。",
+        "nextStep": "补充或检查 App.vue 对应的组件测试与端到端测试，按上述分支核对真实请求、状态变化和清理行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4",
           "c5"
-        ]
-      },
-      {
-        "question": "任务 expectedVersion 与恢复 expectedHead 冲突时，界面会向用户提供什么可操作信息？",
-        "why": "组件只把异常转换为字符串写入统一错误栏；现有材料未包含 API 封装和服务端冲突响应，无法确认用户能否区分版本冲突、权限失败与网络错误。",
-        "nextStep": "结合 API 错误类型和服务端实现核对冲突状态码、消息文本，以及是否需要重新加载或重试动作。",
-        "blocking": false,
-        "citationKeys": [
-          "c9",
-          "c10"
-        ]
-      },
-      {
-        "question": "文本捕获为空但只包含链接或图片时，后端是否接受并如何生成固定片段？",
-        "why": "前端只要求标题，parts 可以没有文本；固定片段生成规则位于未提供的服务端代码中，因此不能由本文件确认纯图片、纯链接或空 parts 的行为。",
-        "nextStep": "检查 `/captures` 的请求校验、分段实现及相应行为测试，分别确认纯链接、纯图片和空 parts 的处理结果。",
-        "blocking": false,
-        "citationKeys": [
-          "c4"
         ]
       }
     ]
@@ -247,7 +168,7 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/App.vue",
-      "digest": "fb782773fe2a535eb91df1240b9f1ad5442c316a5d08d74b6857d65509aaadeb"
+      "digest": "657628c2991264e1245cdbadfa8b2fc9ef056328b1038b14ead2eb230b2e6ddd"
     },
     {
       "kind": "material",
@@ -257,12 +178,12 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+      "digest": "1351598ce3ed88cb905decebe70850af448cccda7bf1db855207eb13cf641e41"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/DecisionsView.vue",
-      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
+      "digest": "2f5074e0d5d0ef86228c684136a810dce0ffa2e913c674cf6e6678a76157ad1e"
     },
     {
       "kind": "material",
@@ -272,34 +193,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:07:39.621Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:01:44.075Z",
     "trace": {
-      "runId": "fc14e4ef-4927-450f-bdf1-f0c3caad2d81",
-      "roleId": "knowledge-refresher",
+      "runId": "defb6c11-b748-481e-a33d-cdc3e537d253",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "e5c5663f2482b335b996dd06f5f3c6a0c15f45b0a4d76b3d6b3b54bf5d375c0b",
-      "contextHash": "bae6d245cd624f40035d94e3a5a863c0d6eae066f0f5da807ea1825dda496d9d",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "205fd22db1983cecd41611fec26260a71aa545af4f11aa53ed987e303aa19ff0",
+      "contextHash": "fd05aab927ed454a665813927ecbb40fba52fbfdf3d587fc0fbaeca0203634b1",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "20e72038417fa10d936025eb744d40fb88ef951e5f275e5d47d6dca9664d9b69",
+      "fingerprint": "474bcffe605fb9d67e4d678091609d2969624830a68f632a84622c00120817bd",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75c-7159-79c0-bcbb-f0aab62cb635"
+        "01a0f8d7-9d00-7f61-a055-412e22d6ac80"
       ],
       "usage": {
-        "used": 44751,
+        "used": 41114,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -308,10 +229,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 70990,
-          "utf8Bytes": 83052,
-          "estimatedTokens": 27684,
-          "budgetedTokens": 34605,
+          "chars": 61718,
+          "utf8Bytes": 68666,
+          "estimatedTokens": 22889,
+          "budgetedTokens": 28612,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -320,20 +241,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:08:05.309Z",
+    "at": "2026-10-01T19:01:57.393Z",
     "trace": {
-      "runId": "a5548d75-ed7c-49fa-8220-26f42fe09d16",
+      "runId": "645946ac-9684-43be-8006-2ad9407b8a4a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "a277b6b7fdd328dbc48907d49c078c320ab131188bdf7b6631554692b3a60dab",
-      "contextHash": "b0fb25ba5e64bb6022c737bc9baa8c38540ba29cad0befcc2eab3f76ee4289b5",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "58c62d88982729831b50848ea22e651d32eb02363afd6962a7839fc7c3919d5b",
+      "contextHash": "874b77a6554436d51240d20123c9ae1f2ee14453a7d74320d018cbdf72478e83",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "62aa1fdedb8857f50c81378fbc755f3b6b59b905cf8e90625def1481b3b35220",
+      "fingerprint": "628f5c9e4f37eec391a50bddbb26f6da0cda73ed7bbd0f8f1158498a17559d0a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -343,10 +264,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75d-072c-7930-a2f0-b3224e889b00"
+        "01a0f8d8-227f-7ea3-95ab-7a8dcd941a23"
       ],
       "usage": {
-        "used": 41741,
+        "used": 39387,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -355,10 +276,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 67180,
-          "utf8Bytes": 77614,
-          "estimatedTokens": 25872,
-          "budgetedTokens": 32340,
+          "chars": 66352,
+          "utf8Bytes": 76537,
+          "estimatedTokens": 25513,
+          "budgetedTokens": 31892,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

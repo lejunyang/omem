@@ -2,123 +2,103 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-    "title": "个人知识库的阅读入口与证据路径",
-    "summary": "该组件组合知识目录、文章阅读和多层证据抽屉，并负责保存、恢复当前文章及引用阅读路径，让用户深入证据时仍保留主阅读上下文。",
-    "category": "implementation",
+    "title": "个人知识库入口与递归证据阅读",
+    "summary": "该组件把知识首页、URL 路由和递归引用抽屉组合为个人知识库入口，使读者可以选择文章、沿引用继续查看知识或原始材料，并通过地址栏恢复阅读路径。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "代码知识浏览"
+    ],
     "sections": [
       {
         "key": "purpose",
-        "title": "在文章阅读中追溯证据",
-        "body": "个人知识库入口解决“阅读结论时继续查看依据，又不丢失正文位置”的问题。主区域由 `KnowledgeHome` 展示目录和当前文章，文章产生的导航帧进入共享轨迹抽屉，因此知识正文与证据阅读可以并存。参考 [[c1]]\n\n活动帧会交给 `KnowledgeFrame`，内容加载后再把可读标题回填到对应轨迹帧。该组件进一步按帧类型展示知识文章、原始材料或固定引用；固定引用解析成功后，还会根据目标类型打开文章或材料。参考 [[c2]]、[[c7]]"
+        "title": "统一知识浏览与证据追溯入口",
+        "body": "`PersonalKnowledge` 是个人知识库页面的装配层：它保存当前文章键，向 `KnowledgeHome` 提供知识接口前缀，并接收首页发出的文章选择与证据导航事件。首页组件明确以 `selectedKey` 为输入，并通过 `select`、`navigate` 两类事件把用户操作交回父层，因此该入口负责页面级状态和导航协调，而非文章内容本身。参考 [[c1]]、[[c2]]"
       },
       {
-        "key": "route-flow",
-        "title": "文章选择与深链恢复",
-        "body": "初始文章优先采用会话中保存的选择，否则打开总览。用户切换文章时，入口更新当前键，并把文章位置和引用帧栈编码进 URL hash；地址更新使用替换历史记录的方式。参考 [[c3]]\n\n页面初始化及 hash 变化时会恢复路由：解析当前文章，只保留 `knowledge`、`citation`、`source` 三类帧，把栈顶设为当前项，并依据栈是否为空决定抽屉是否打开。恢复期间使用临时读取标题，待内容加载后再更新。参考 [[c4]]"
+        "key": "route-trail",
+        "title": "把阅读位置写入地址并恢复",
+        "body": "选择文章后，组件把当前文章和证据栈编码进 `location.hash`；没有选中文章时回到 `#/knowledge`。证据层数超过 `MAX_TRAIL` 时不会继续保存完整链接，但已有阅读状态仍保留，并向用户显示提示。参考 [[c3]]\n\n恢复时只处理 `#/knowledge/` 路由，将其转换为共享模块路由格式后解析；恢复出的轨迹还会过滤为 `knowledge`、`citation`、`source` 三种受支持帧，并把最后一帧设为当前位置。组件在挂载期间监听 `hashchange`，卸载时移除监听。参考 [[c4]]"
       },
       {
-        "key": "limits",
-        "title": "职责边界与路径限制",
-        "body": "深链保存受 `MAX_TRAIL` 约束。帧数超限时，现有阅读栈仍然可用，但页面停止把完整路径写入链接，并显示状态提示；因此该限制控制的是可分享 URL 的长度预算，而非运行时可阅读的层数。参考 [[c5]]\n\n入口组件主要负责编排轨迹、路由和抽屉。文章列表的获取、选择持久化与定时刷新由 `KnowledgeHome` 完成。参考 [[c6]] 固定引用的数据请求由 `KnowledgeFrame` 在引用帧变化时发起，并用代次检查避免较早请求覆盖当前结果；其模板负责呈现加载、不可用状态及最终内容。参考 [[c8]]、[[c7]]"
+        "key": "drawer-flow",
+        "title": "递归引用抽屉如何工作",
+        "body": "页面正文始终由 `KnowledgeHome` 承载；证据导航则进入共享的 `useEvidenceTrail`，再由 `OmTrailDrawer` 提供返回、跳转、关闭、循环提示和焦点归还。抽屉内部通过 `KnowledgeFrame` 展示当前帧，并用 `KeepAlive` 保留已打开内容的组件状态；内容加载完成后，临时的“正在读取引用…”会被真实标题替换。参考 [[c5]]\n\n`KnowledgeFrame` 遇到引用帧时，会根据文章、修订和引用标识请求固定引用；切换帧后仅接纳当前一代请求的结果，成功时更新引用数据与标题，失败时记录错误。参考 [[c6]]\n\n解析期间页面显示等待提示；引用不可用或无法操作时给出可读原因，成功解析后则按目标类型打开文章章节或原始材料行段。由此可以看出入口与证据展示组件之间的主流程，但具体接口响应、滚动恢复和循环判定规则不在这些材料中。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识库入口组合",
-        "reason": "支持主知识页面与共享证据抽屉并存，以及目录导航进入轨迹的说明。",
+        "label": "个人知识页装配",
+        "reason": "支持该组件持有页面选择状态、引入首页与证据帧组件并协调导航的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-          "startLine": 27,
-          "endLine": 31
+          "startLine": 2,
+          "endLine": 16
         },
-        "quote": "<template>\n  <section class=\"library-page\"><p v-if=\"linkNotice\" role=\"status\">{{ linkNotice }}</p><KnowledgeHome prefix=\"/api/knowledge\" :selected-key=\"selectedKey\" @select=\"select\" @navigate=\"push\" /></section>\n  <OmTrailDrawer :open=\"open\" :frames=\"frames\" :current=\"current\" :loop-at=\"loopAt\" :return-focus-to=\"trigge"
+        "quote": "import { ref, onMounted, onBeforeUnmount } from \"vue\";\nimport { OmTrailDrawer, useEvidenceTrail, parseHash, writeHash, MAX_TRAIL } from \"@omem/ui\";\nimport KnowledgeHome from \"./KnowledgeHome.vue\";\nimport KnowledgeFrame from \"./KnowledgeFrame.vue\";\nconst selectedKey = ref(sessionStorage.getItem(\"omem-knowledge-page\") ||"
       },
       {
         "key": "c2",
-        "label": "活动帧与标题回填",
-        "reason": "支持活动帧交给内容组件，并在加载完成后更新轨迹帧可读标题的说明。",
-        "relation": "calls",
+        "label": "首页交互合同",
+        "reason": "说明 KnowledgeHome 接收选中键，并通过 select 与 navigate 事件将操作交给父组件。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-          "startLine": 29,
-          "endLine": 30
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 10,
+          "endLine": 18
         },
-        "quote": "  <OmTrailDrawer :open=\"open\" :frames=\"frames\" :current=\"current\" :loop-at=\"loopAt\" :return-focus-to=\"trigger\" @close=\"close\" @back=\"back\" @jump=\"jump\" @dismiss-loop=\"loopAt = null\">\n    <KeepAlive v-if=\"open\"><KnowledgeFrame v-if=\"active\" :key=\"active.kind + active.id\" :frame=\"active\" prefix=\"/api/knowledge\" @navigate"
+        "quote": "const props = defineProps<{\n  prefix: string;\n  compact?: boolean;\n  selectedKey?: string;\n}>();\nconst emit = defineEmits<{\n  navigate: [frame: KnowledgeFrame];\n  select: [key: string];\n}>();"
       },
       {
         "key": "c3",
-        "label": "文章状态与路由保存",
-        "reason": "支持默认文章、选择更新以及将当前文章和轨迹写入 URL hash 的流程。",
+        "label": "阅读地址保存",
+        "reason": "支持空选择路由、文章与证据栈编码，以及路径过长时仅提示而不影响当前阅读的边界行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-          "startLine": 6,
-          "endLine": 15
+          "startLine": 8,
+          "endLine": 16
         },
-        "quote": "const selectedKey = ref(sessionStorage.getItem(\"omem-knowledge-page\") || \"topic:overview\");\nconst linkNotice = ref(\"\");\nfunction saveRoute() {\n  if (frames.value.length > MAX_TRAIL) { linkNotice.value = \"引用路径过长，当前阅读不受影响，但链接暂不保存完整路径。\"; return; }\n  linkNotice.value = \"\";\n  const hash = writeHash({ view: {name:\"module\", m"
+        "quote": "function saveRoute() {\n  if (frames.value.length > MAX_TRAIL) { linkNotice.value = \"引用路径过长，当前阅读不受影响，但链接暂不保存完整路径。\"; return; }\n  linkNotice.value = \"\";\n  if (!selectedKey.value) { history.replaceState(null, \"\", \"#/knowledge\"); return; }\n  const hash = writeHash({ view: {name:\"module\", module:selectedKey.value}, trail:fra"
       },
       {
         "key": "c4",
-        "label": "知识深链恢复",
-        "reason": "支持解析知识路由、过滤允许的帧类型、定位当前帧和恢复抽屉状态。",
+        "label": "阅读路径恢复",
+        "reason": "支持知识路由解析、帧类型过滤、当前位置恢复和 hashchange 生命周期管理的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-          "startLine": 16,
-          "endLine": 25
+          "startLine": 17,
+          "endLine": 26
         },
         "quote": "function restoreRoute() {\n  if (!location.hash.startsWith(\"#/knowledge/\")) return;\n  const route = parseHash(location.hash.replace(\"#/knowledge/\", \"#/module/\"));\n  if (route.view.name === \"module\") selectedKey.value = route.view.module;\n  frames.value = route.trail.filter(f => [\"knowledge\", \"citation\", \"source\"].includ"
       },
       {
         "key": "c5",
-        "label": "引用路径长度限制",
-        "reason": "支持轨迹超限时保留当前阅读、停止保存完整链接并显示提示的边界说明。",
-        "relation": "supports",
+        "label": "证据抽屉组合",
+        "reason": "支持首页与抽屉并存、当前证据帧渲染、导航事件传递和加载后更新标题的流程。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-          "startLine": 8,
-          "endLine": 12
+          "startLine": 28,
+          "endLine": 32
         },
-        "quote": "function saveRoute() {\n  if (frames.value.length > MAX_TRAIL) { linkNotice.value = \"引用路径过长，当前阅读不受影响，但链接暂不保存完整路径。\"; return; }\n  linkNotice.value = \"\";\n  const hash = writeHash({ view: {name:\"module\", module:selectedKey.value}, trail:frames.value }).replace(\"#/module/\", \"#/knowledge/\");\n  history.replaceState(null, \"\", h"
+        "quote": "<template>\n  <section class=\"library-page\"><p v-if=\"linkNotice\" role=\"status\">{{ linkNotice }}</p><KnowledgeHome prefix=\"/api/knowledge\" :selected-key=\"selectedKey\" @select=\"select\" @navigate=\"push\" /></section>\n  <OmTrailDrawer :open=\"open\" :frames=\"frames\" :current=\"current\" :loop-at=\"loopAt\" :return-focus-to=\"trigge"
       },
       {
         "key": "c6",
-        "label": "知识目录职责",
-        "reason": "支持目录组件获取文章、保存选择、同步外部选择并定时刷新数据的说明。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-          "startLine": 16,
-          "endLine": 27
-        },
-        "quote": "function select(key: string) { selected.value = key; sessionStorage.setItem(\"omem-knowledge-page\", key); emit(\"select\", key); }\nwatch(() => props.selectedKey, key => { if (key) selected.value = key; });\nasync function load() {\n  try {\n    const result = await knowledgeApi<{ articles: ArticleMeta[] }>(props.prefix, \"/ar"
-      },
-      {
-        "key": "c7",
-        "label": "知识与证据内容分派",
-        "reason": "支持知识、原始材料和固定引用三类内容的渲染分派，以及引用加载和不可用状态的呈现。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 21,
-          "endLine": 30
-        },
-        "quote": "  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event, frame.id)\" />\n "
-      },
-      {
-        "key": "c8",
         "label": "固定引用请求",
-        "reason": "支持仅为引用帧发起固定引用请求、处理错误并防止过期异步结果覆盖当前状态的说明。",
-        "relation": "calls",
+        "reason": "支持引用帧根据解析出的标识请求固定引用，并通过请求代次避免旧结果覆盖当前帧的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
@@ -126,15 +106,56 @@
           "endLine": 16
         },
         "quote": "watch(() => props.frame.id, async () => {\n  const current = ++generation; citation.value = null; error.value = \"\";\n  if (props.frame.kind !== \"citation\") return;\n  try { const c = await knowledgeApi<Citation>(props.prefix, \"/citation?\" + new URLSearchParams({ document: String(parsed.value.document), revision: String(pa"
+      },
+      {
+        "key": "c7",
+        "label": "引用结果分派",
+        "reason": "支持解析等待、错误与不可操作提示，以及成功后打开文章章节或材料行段的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 23,
+          "endLine": 30
+        },
+        "quote": "  <template v-else>\n    <OmEmpty v-if=\"error\" title=\"引用不可用\" :description=\"error\" />\n    <p v-else-if=\"!citation\">正在解析固定引用…</p>\n    <template v-else>\n      <aside class=\"citation-reason\"><OmBadge>{{ relationLabels[citation.relation] || '引用' }}</OmBadge><p>{{ citation.reason }}</p></aside>\n      <OmEmpty v-if=\"!citation."
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "损坏或字段不完整的 `#/knowledge/` 地址最终如何降级？",
+        "why": "入口直接调用 `parseHash` 并使用解析结果，但提供的材料没有说明解析器是否捕获异常、校验帧字段或回退到知识首页；这会影响外部分享链接损坏时的用户体验。",
+        "nextStep": "查看 `@omem/ui` 中 `parseHash` 的实现，以及非法 hash、未知帧类型和超长轨迹的行为约定。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "证据抽屉是否会逐层恢复滚动位置、展开状态并在关闭后归还焦点？",
+        "why": "当前组件传入焦点归还目标并用 `KeepAlive` 包裹活动帧，但所给材料不足以确认抽屉内部对滚动、展开状态和多层返回的完整处理。",
+        "nextStep": "补充 `useEvidenceTrail`、`OmTrailDrawer` 及相关阅读组件的实现材料，以确认这些交互状态的保存和恢复方式。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "证据抽屉是否会逐层恢复滚动位置、展开状态，并在关闭后归还焦点？",
+        "why": "当前材料能确认入口传入焦点目标、使用 `KeepAlive` 并连接返回和跳转事件，但不足以确认抽屉内部完整的状态恢复细节。",
+        "nextStep": "补充 `useEvidenceTrail`、`OmTrailDrawer` 及相关内容组件的实现材料，核对多层返回、滚动、展开状态和焦点恢复合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-      "digest": "826b26c11a26eb00995d9a0add998e3c4de4f9fc874627882753d3bbbcb85812"
+      "digest": "84d9475a5aac95f5d9071467bc1fbb1d68e5338d4e87d084546b6c6c66a926d4"
     },
     {
       "kind": "material",
@@ -144,26 +165,26 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "bdb7374c59733c2d94cdb1c7065fca29ffeafd05458f1fbbc1e2b7057ad8eac8"
+      "digest": "8e72e3d1a2927e9365fe8d47fcf8a766f1faf1e8c0830a21d793ee80878d64af"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:12:14.874Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:10:10.406Z",
     "trace": {
-      "runId": "1cfb6f1f-2ee7-405e-929b-ef0fd3371849",
+      "runId": "42bad22b-3f34-49e7-bfc1-58e8f2c29e3f",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "2785eb53b44bb6b901dc991a066091098840797918cee16123ee79fd6d785177",
-      "contextHash": "01279f7fe1528619b2dbe65a185ed7a27c62bdbb2f61e88906e34f121587c297",
+      "bundleHash": "0cfa9d4027da44fcd0fc3fab247127e3993c647de13b70f0cde89b9bb36bf42a",
+      "promptHash": "016b28556901f22c30c979cb31f69ceb5c5be51dc36a72bfeac4e14ca39a6411",
+      "contextHash": "3fbf670b80a597d1712ef88d802badcc1f5879b346564edba2f0aa2abf3b55a7",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "90bc267b19b68b37c1a9b115085c2b4ad851486db5e19f7eff960eeca1e90a45",
+      "fingerprint": "6c3495a2e830bea580830ab24c3298406a63c9f81eb714395c5648843371780a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -173,10 +194,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f760-e063-7bf1-a321-af995bbb7c9a"
+        "01a0f8df-8128-78c1-9446-e9c5fa53ff1a"
       ],
       "usage": {
-        "used": 29574,
+        "used": 27694,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -185,10 +206,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 25471,
-          "utf8Bytes": 31457,
-          "estimatedTokens": 10486,
-          "budgetedTokens": 13108,
+          "chars": 24489,
+          "utf8Bytes": 32956,
+          "estimatedTokens": 10986,
+          "budgetedTokens": 13733,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -197,20 +218,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:12:29.998Z",
+    "at": "2026-10-01T19:10:29.439Z",
     "trace": {
-      "runId": "3e423727-abd3-44ba-aec5-6080eaa00b0f",
+      "runId": "6472e208-fd6f-4461-bf20-cc9dd6270c9a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "39944bfe8334cb6f11b7d67da7e0175afeb5dd1f85ea81f2de49308d5b83eae6",
-      "contextHash": "37c3a4d289725d83648b6bf2c94d44bd8470b9d5925bc3e770cea98d4cdde11d",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "3e3366b812e639001b87ea9b53a8150b61b67b72e3e49c94209e76c25769004c",
+      "contextHash": "da0f061ddea5f31419bb39e9ec7e99e11d4338d1a33949a06fec66cba68cfcb5",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "468ee33f7f4a047576cec9b7330f388774ce2895da395ded6efcabcbbf02d20d",
+      "fingerprint": "ec5d1054cd863045ccbdb156b6502ccbaf2b5c87ca1dcc2b38bc802a4f431855",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -220,10 +241,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f761-3bdc-7322-b4dc-4e30184845a8"
+        "01a0f8df-e165-75b1-9922-558616d1ffd2"
       ],
       "usage": {
-        "used": 26288,
+        "used": 25110,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -232,10 +253,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23150,
-          "utf8Bytes": 28280,
-          "estimatedTokens": 9427,
-          "budgetedTokens": 11784,
+          "chars": 21124,
+          "utf8Bytes": 26997,
+          "estimatedTokens": 8999,
+          "budgetedTokens": 11249,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,31 +2,37 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/main.ts",
-    "title": "Web 应用启动入口",
-    "summary": "该文件是 Vue 前端的最小启动入口：导入 Vue 运行时与根组件，依次加载共享设计令牌和应用级样式，随后将以 App 为根组件的应用挂载到页面中的 #app 容器。业务界面状态由根组件继续组织。",
-    "category": "implementation",
+    "title": "Web 应用的启动与样式入口",
+    "summary": "该入口文件负责创建 Vue 应用、装载根组件，并在首屏渲染前引入共享设计令牌与应用级样式。它刻意保持轻量，把导航、状态和业务界面交给根组件及其下游模块。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "工作区入口"
+    ],
     "sections": [
       {
         "key": "purpose",
         "title": "解决什么问题",
-        "body": "`main.ts` 负责把浏览器页面、Vue 运行时和 omem 的根界面连接起来，是 Web 应用开始执行的入口。它以 `App` 为根组件创建 Vue 应用，并将应用挂载到页面的 `#app` 节点，后续界面渲染由此启动。参考 [[c1]]\n\n入口本身不保存业务数据，也不编排导航或页面生命周期，职责集中在依赖装载、全局样式引入和根应用挂载。"
+        "body": "这个文件是浏览器端应用的**启动入口**：它把根组件 `App` 交给 Vue 创建应用实例，再挂载到页面中的 `#app` 容器。实际使用时，浏览器加载该模块后，工作区界面才会进入 Vue 的渲染与响应式生命周期。参考 [[c1]]\n\n入口本身不承担导航或数据处理，只负责把应用“接上线”，因此启动职责清晰，也便于将复杂界面留在根组件中。参考 [[c2]]"
       },
       {
         "key": "startup-flow",
-        "title": "启动与样式加载流程",
-        "body": "启动流程保持为一条同步链路：\n\n```mermaid\nflowchart LR\n  A[导入 Vue 与 App 根组件] --> B[加载共享设计令牌]\n  B --> C[加载 Web 应用样式]\n  C --> D[创建应用并挂载到 #app]\n```\n\n共享的 `tokens.css` 在本地 `styles.css` 之前导入，使 Web 端样式建立在 UI 包提供的设计变量之上；最终效果仍取决于样式规则及构建后的级联顺序。参考 [[c2]]\n\n文件最后直接调用 Vue 的创建与挂载接口，没有展示插件注册、异步准备或启动错误处理。参考 [[c3]]"
+        "title": "启动流程与模块关系",
+        "body": "启动顺序可以概括为：导入 Vue 工厂函数 → 导入根组件 → 加载共享设计令牌和应用样式 → 创建并挂载应用。两个 CSS 导入发生在挂载语句之前；其中 `@omem/ui/tokens.css` 提供共享 UI 设计令牌，`styles.css` 则是当前 Web 应用的样式入口。参考 [[c3]]\n\n`main.ts` 与 `App.vue` 的关系是直接且有源码依据的：前者导入并挂载后者；而 `App.vue` 再组合导航、证据阅读、聊天、个人知识和学习等界面组件，因此 `main.ts` 是这些功能进入浏览器的统一上游入口，但材料不足以证明它会直接调用这些子组件。参考 [[c4]]"
       },
       {
-        "key": "relations-and-limits",
-        "title": "与根组件的关系及边界",
-        "body": "入口直接导入 Vue 的 `createApp`、`App.vue`、共享设计令牌和本地样式，并将 `App.vue` 作为根组件；导航选择、当前视图和页面标题等业务界面状态由根组件继续组织。参考 [[c1]]、[[c4]]\n\n当前材料没有包含宿主 HTML，因此只能确认运行页面需要存在 `#app`，无法判断该容器由哪个模板提供，也无法确认容器缺失时的反馈方式。材料同样未提供入口测试，尚不能判断挂载行为和样式加载顺序是否有自动化断言。"
+        "key": "boundaries",
+        "title": "边界条件与失败点",
+        "body": "挂载目标被固定为选择器 `#app`，所以宿主 HTML 必须提供匹配节点；现有材料未包含 HTML，无法确认该节点如何创建。入口也没有展示路由器、全局插件、错误处理或启动时异步初始化，不能据此断言这些能力不存在，只能确认它们不在这六行入口代码中。参考 [[c5]]\n\n当前材料没有对应测试文件，因此无法说明启动挂载、样式加载或缺失容器时的行为是否受到自动化断言保护。根组件内部存在基于 URL hash 与会话存储的视图选择逻辑，但那属于挂载后的界面状态管理，而非入口初始化。参考 [[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Vue 应用启动入口",
-        "reason": "支持入口导入的直接依赖、以 App 为根组件创建应用并挂载到 #app 的论断。",
+        "label": "Vue 应用挂载",
+        "reason": "支持入口创建 Vue 应用并挂载到页面容器的核心作用。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -38,21 +44,47 @@
       },
       {
         "key": "c2",
-        "label": "全局样式加载顺序",
-        "reason": "支持共享设计令牌先于 Web 应用本地样式加载的流程说明。",
-        "relation": "supports",
+        "label": "根组件导入",
+        "reason": "支持入口将复杂界面职责交给 App 根组件的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/main.ts",
+          "startLine": 1,
+          "endLine": 2
+        },
+        "quote": "import { createApp } from \"vue\";\nimport App from \"./App.vue\";"
+      },
+      {
+        "key": "c3",
+        "label": "全局样式加载",
+        "reason": "支持共享设计令牌和应用样式在挂载前被导入的流程描述。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/main.ts",
           "startLine": 3,
-          "endLine": 4
+          "endLine": 5
         },
-        "quote": "import \"@omem/ui/tokens.css\";\nimport \"./styles.css\";"
+        "quote": "import \"@omem/ui/tokens.css\";\nimport \"./styles.css\";\ncreateApp(App).mount(\"#app\");"
       },
       {
-        "key": "c3",
-        "label": "根应用创建与挂载",
-        "reason": "支持入口直接创建并挂载应用，未在该文件中安排其他初始化步骤的论断。",
+        "key": "c4",
+        "label": "根组件功能组合",
+        "reason": "说明 App 根组件继续组合证据阅读、聊天、个人知识和学习等界面模块。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 32,
+          "endLine": 39
+        },
+        "quote": "import EvidenceReader from \"./EvidenceReader.vue\";\nimport ChatPane from \"./ChatPane.vue\";\nimport AssetImage from \"./AssetImage.vue\";\nimport PersonalKnowledge from \"./knowledge/PersonalKnowledge.vue\";\nimport LearningView from \"./LearningView.vue\";\nimport DecisionsView from \"./DecisionsView.vue\";\nimport NotificationDetai"
+      },
+      {
+        "key": "c5",
+        "label": "固定挂载容器",
+        "reason": "支持挂载目标固定为 #app，并界定入口代码未展示其他初始化步骤。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -63,37 +95,36 @@
         "quote": "createApp(App).mount(\"#app\");"
       },
       {
-        "key": "c4",
-        "label": "根组件界面状态",
-        "reason": "支持导航、当前视图和页面标题由 App 根组件继续组织的论断。",
-        "relation": "depends_on",
+        "key": "c6",
+        "label": "根组件视图状态",
+        "reason": "支持 hash、会话存储和视图同步由根组件管理，而不是由启动入口管理。",
+        "relation": "background",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 39,
-          "endLine": 50
+          "startLine": 40,
+          "endLine": 51
         },
         "quote": "const navigation = [\n  [\"daily\", \"spark\", \"日常助理\"], [\"knowledge\", \"book\", \"知识库\"],\n  [\"read\", \"layers\", \"原始材料\"], [\"capture\", \"plus\", \"输入材料\"],\n  [\"learning\", \"spark\", \"材料处理\"], [\"decisions\", \"check\", \"待判断\"],\n  [\"tasks\", \"check\", \"事项与待办\"], [\"changes\", \"clock\", \"变更历史\"],\n  [\"notifications\", \"spark\", \"通知中心\"], [\"lark\", \"layers\""
       }
     ],
     "questions": [
       {
-        "question": "页面中的 #app 容器由哪个 HTML 模板提供，缺失时是否需要显式启动错误提示？",
-        "why": "入口使用固定选择器挂载，但给定材料没有包含宿主 HTML，也没有展示挂载失败处理。",
-        "nextStep": "检查 Web 应用的 HTML 入口及启动约定，确认容器来源和缺失时的预期行为。",
+        "question": "宿主页面是否始终提供唯一的 `#app` 挂载节点？",
+        "why": "材料仅显示固定选择器，没有提供 HTML 模板或启动失败处理；节点缺失时的实际用户体验无法从现有材料确认。",
+        "nextStep": "补读 Web 应用的 HTML 入口及相关启动测试，确认节点定义、唯一性和缺失时的处理。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
+          "c5"
         ]
       },
       {
-        "question": "是否存在覆盖 main.ts 启动行为的自动化测试？",
-        "why": "当前材料只有实现代码，无法确认根组件挂载和样式加载顺序是否经过测试断言。",
-        "nextStep": "检查测试目录与构建配置，确认是否需要补充最小的入口挂载测试。",
+        "question": "启动入口是否有针对挂载和全局样式的自动化测试？",
+        "why": "允许材料中没有测试文件，无法判断这些启动合同是否被断言覆盖。",
+        "nextStep": "检查与 `main.ts`、应用启动或浏览器首屏相关的测试配置和测试文件。",
         "blocking": false,
         "citationKeys": [
-          "c2",
+          "c1",
           "c3"
         ]
       }
@@ -108,39 +139,39 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/App.vue",
-      "digest": "fb782773fe2a535eb91df1240b9f1ad5442c316a5d08d74b6857d65509aaadeb"
+      "digest": "657628c2991264e1245cdbadfa8b2fc9ef056328b1038b14ead2eb230b2e6ddd"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:12:45.140Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:10:13.697Z",
     "trace": {
-      "runId": "d3aa2a1a-b417-4761-b6c0-ac0bc858aed2",
-      "roleId": "knowledge-refresher",
+      "runId": "2405e0b9-974a-4f92-a6b0-faf903382682",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "e46b38fb73473e493224fbd475ee10750792395b268b72c7bb11f22f4ea0a032",
-      "contextHash": "8ebaf3599009f84a04c53f5af6b28351a7be188585fb3f8e49cfbd5681c16ea8",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "da5d3d29c3164925408ef1647c5c24957c097c2d17624f7d3d343ec9e6981f13",
+      "contextHash": "d867c5c02bc072a619f46467769409732c6f211c1ca50a9877aca3895656979a",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ccf76eb6c10b032747ee7dedf97681bf84de3f635aedc3a45e6861c6c41b10e6",
+      "fingerprint": "8115f5b7245ef7320b0e41b8925d666f234dac2ab8cb2a39c60f17dbfe1b9fc1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f761-65f8-7111-957d-8ad949a6e39a"
+        "01a0f8df-8951-7d10-95d3-956785f2ec04"
       ],
       "usage": {
-        "used": 24705,
+        "used": 22562,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -149,10 +180,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 14214,
-          "utf8Bytes": 19728,
-          "estimatedTokens": 6576,
-          "budgetedTokens": 8220,
+          "chars": 11103,
+          "utf8Bytes": 14467,
+          "estimatedTokens": 4823,
+          "budgetedTokens": 6029,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -161,20 +192,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:13:03.621Z",
+    "at": "2026-10-01T19:10:30.646Z",
     "trace": {
-      "runId": "f8afea40-8f63-468c-8cc1-70d97468a83b",
+      "runId": "f7d255a3-cbd0-4f76-a1d3-1738dbf20eb8",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "35b76968034415928453c56fd8d38328cb37d4028eba0a0aa5a0d2e651d66b9d",
-      "contextHash": "4070aa3640de8e70fe1792502cfd3154a963438177fc78e1e3e4f9b00d876cf2",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "df66a387f0dc0c67e6e1266f5fc0d4575b7a1b0056a6ebd51e158ccd95c5d3a3",
+      "contextHash": "9eea2202036c63026bf608c92d2b86149a102e0037e0a138decb8de4428f80aa",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f9ecbadf7fbe038374ed466dc2a4c3fba2c28142a10da64e37800fd886d22e1b",
+      "fingerprint": "b06e62926ea9098cdf8e227fe85a30ec3bf5ceb055e61a3e7d45e0e011222a07",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -184,10 +215,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f761-bf34-7542-864c-28db388a912a"
+        "01a0f8df-e6d3-78c0-b31c-0ff512b6cd40"
       ],
       "usage": {
-        "used": 22935,
+        "used": 23260,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -196,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 11624,
-          "utf8Bytes": 16248,
-          "estimatedTokens": 5416,
-          "budgetedTokens": 6770,
+          "chars": 12830,
+          "utf8Bytes": 18234,
+          "estimatedTokens": 6078,
+          "budgetedTokens": 7598,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

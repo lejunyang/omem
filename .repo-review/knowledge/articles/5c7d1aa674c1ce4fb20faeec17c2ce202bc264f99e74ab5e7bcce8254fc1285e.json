@@ -2,138 +2,127 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/ChangeHistory.vue",
-    "title": "变更历史的筛选、差异查看与版本操作",
-    "summary": "该页面集中呈现材料、知识和事项等变更，支持按类型筛选、按需比较固定版本，并仅为材料捕获与恢复记录提供阅读和恢复入口；历史获取与实际恢复由上层负责。",
-    "category": "implementation",
+    "title": "变更历史的筛选、比较与版本恢复入口",
+    "summary": "该页面把材料、知识、事项等变化集中为可筛选的时间记录，并为具备版本关联的材料或知识提供差异查看；对于材料版本，还可继续阅读或发起“恢复为新版本”。组件只负责展示与派发操作，差异读取及真正恢复由外部模块完成。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "变更历史"
+    ],
     "sections": [
       {
-        "key": "purpose-and-presentation",
-        "title": "集中查看发生过什么变化",
-        "body": "页面接收变更列表，将材料捕获、知识、恢复、事项、判断、问答和引用等类型映射为中文名称，并按用户选择的类型过滤记录。它还为首次保存、材料更新以及缺少正文关联的旧知识记录生成更明确的摘要，帮助用户快速判断变化性质。参考 [[c1]]\n\n列表展示标题、时间、类型和摘要，并说明只保留最近 200 条记录。筛选下拉框根据实际数据动态生成选项，未知类型在选项中显示为“其他变化”，但在记录标签中显示为“变化”；没有匹配项时显示空状态。参考 [[c2]]"
+        "key": "purpose",
+        "title": "从变化记录找到可执行入口",
+        "body": "页面解决“最近发生了什么、具体改了什么、能否回到旧内容”的问题。它接收 `Change[]`，将记录按材料、知识、恢复、事项、判断、问答和引用等类别显示，并以中文标签和本地化时间降低内部数据结构对读者的干扰。页面文案同时说明这里只呈现最近 200 条记录，并强调恢复不会覆盖现有版本，而是创建新版本。参考 [[c1]]"
       },
       {
-        "key": "lazy-comparison",
-        "title": "展开后再读取固定版本差异",
-        "body": "只有记录存在更新后版本，且类型属于材料、恢复或知识时，页面才提供差异入口。用户首次展开记录后才挂载比较组件，避免列表初始加载时为每条历史立即读取正文。参考 [[c3]]\n\n比较组件按变更标识请求固定版本，切换记录时先清空旧内容和错误，再以三行上下文生成前后正文补丁。参考 [[c4]] 页面分别处理读取中、请求失败、版本关联不完整、无文字差异和逐块增删展示；无文字差异仍可能意味着复核或来源记录发生变化。参考 [[c5]]"
+        "key": "flow",
+        "title": "筛选、展开差异与恢复流程",
+        "body": "用户先通过下拉框选择全部变化或某一种实际存在的变化类型，`visible` 会据此过滤列表。每条记录展示标题、类型、时间和摘要；材料首次保存、材料更新以及缺少正文关联的旧知识记录会得到专门说明。具备 `afterId` 的材料、恢复或知识记录可展开差异，组件仅在首次展开后挂载 `ChangeComparison`，避免一开始就读取全部内容。参考 [[c2]]\n\n材料或恢复记录还提供两个动作：有新版本时可发出 `open(afterId)` 阅读该版本；同时具备前后版本时才可发出 `restore(change)`，由父级决定如何执行恢复。参考 [[c3]]"
       },
       {
-        "key": "boundaries-and-relations",
-        "title": "阅读与恢复操作的组件边界",
-        "body": "阅读和恢复按钮只面向 `capture` 与 `restore` 类型：存在更新后版本时可发出 `open`，同时存在前后版本时可发出 `restore`。因此，即使知识记录具有更新后版本，也只能查看差异，不会出现阅读或恢复按钮。组件仅向父级传递版本标识或完整变更对象，实际导航、恢复请求及创建新版本的流程不在当前材料中。参考 [[c6]]\n\n页面使用的 `Change` 类型由前端 API 模块从共享 contracts 重新导出，从而与其他调用方沿用同一数据合同；但现有材料未展示历史列表的获取、权限控制及浏览器测试。参考 [[c7]]"
+        "key": "boundaries",
+        "title": "职责边界与缺失状态",
+        "body": "该组件不直接请求后端、不计算文本差异，也不实施恢复；它依赖 API 层导出的 `Change` 类型，并把具体比较交给 `ChangeComparison`。后者按变化 ID 请求固定版本内容，再用三行上下文生成补丁，因此这里的“展开”实际会触发另一个组件的数据读取。参考 [[c4]]\n\n边界处理主要体现在条件展示：没有匹配记录时显示空状态；缺少 `afterId` 时不能阅读或比较；只有前后版本都存在时才允许恢复。知识记录虽可比较，但不出现恢复按钮。当前材料未提供父组件监听 `open`、`restore` 的实现，也未提供测试文件，因此无法确认恢复确认流程、请求失败后的页面级反馈，以及筛选和事件条件是否有自动化断言。参考 [[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "变更筛选与摘要规则",
-        "reason": "支持页面接收变更列表、按类型过滤，并为特定材料与知识记录生成用户可读摘要。",
+        "label": "历史页面用途与分类",
+        "reason": "支持页面面向用户的问题、记录范围说明、恢复语义以及变化类型中文标签。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ChangeHistory.vue",
           "startLine": 6,
-          "endLine": 15
+          "endLine": 10
         },
         "quote": "const props = defineProps<{ changes: Change[] }>();\nconst emit = defineEmits<{ open: [id: string]; restore: [change: Change] }>();\nconst filter = ref(\"all\");\nconst expanded = ref(new Set<string>());\nconst labels: Record<string, string> = { capture: \"材料\", knowledge: \"知识\", restore: \"恢复\", task: \"事项\", decision: \"判断\", answe"
       },
       {
         "key": "c2",
-        "label": "历史列表展示规则",
-        "reason": "支持最近记录说明、动态筛选、未知类型在筛选项与记录标签中的不同文案，以及空状态行为。",
+        "label": "筛选与按需展开差异",
+        "reason": "支持过滤计算、摘要分支、记录渲染和展开后才挂载比较组件的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ChangeHistory.vue",
-          "startLine": 20,
-          "endLine": 34
+          "startLine": 11,
+          "endLine": 27
         },
-        "quote": "    <h1>变更历史</h1>\n    <p class=\"muted\">查看材料和知识具体改了什么，以及事项状态如何变化。这里保留最近 200 条记录；恢复材料会创建新版本。</p>\n    <label>查看范围<select v-model=\"filter\"><option value=\"all\">全部变化</option><option v-for=\"kind in [...new Set(changes.map(c => c.kind))]\" :key=\"kind\" :value=\"kind\">{{ labels[kind] || '其他变化' }}</option></select></label>\n    <OmP"
+        "quote": "const visible = computed(() => props.changes.filter(c => filter.value === \"all\" || c.kind === filter.value));\nfunction summary(c: Change) {\n  if (c.kind === \"capture\") return c.beforeId ? \"原始材料已更新。展开查看具体增删。\" : \"首次保存原始材料。\";\n  if (c.kind === \"knowledge\" && !c.afterId) return \"旧版知识整理记录：当时未保存正文版本关联。\";\n  return c.details;\n}"
       },
       {
         "key": "c3",
-        "label": "按需展开差异",
-        "reason": "支持差异入口仅面向具有更新后版本的材料、恢复和知识记录，并在展开后才挂载比较组件。",
+        "label": "阅读与恢复动作条件",
+        "reason": "支持阅读按钮和恢复按钮的显示条件，以及组件通过事件把动作交给父级处理。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ChangeHistory.vue",
-          "startLine": 26,
-          "endLine": 28
-        },
-        "quote": "      <details v-if=\"c.afterId && ['capture','restore','knowledge'].includes(c.kind)\" @toggle=\"($event.currentTarget as HTMLDetailsElement).open && expanded.add(c.id)\">\n        <summary>查看内容差异</summary><ChangeComparison v-if=\"expanded.has(c.id)\" :change-id=\"c.id\" />\n      </details>"
-      },
-      {
-        "key": "c4",
-        "label": "固定版本差异计算",
-        "reason": "支持按变更标识请求内容、切换时重置状态，并以三行上下文生成结构化补丁。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ChangeComparison.vue",
-          "startLine": 9,
-          "endLine": 14
-        },
-        "quote": "watch(() => props.changeId, async id => {\n  content.value = undefined; error.value = \"\";\n  try { content.value = await api(`/changes/${encodeURIComponent(id)}/content`); }\n  catch (e) { error.value = String(e); }\n}, { immediate: true });\nconst patch = computed(() => content.value?.after ? structuredPatch(\"之前\", \"之后\", co"
-      },
-      {
-        "key": "c5",
-        "label": "差异展示状态",
-        "reason": "支持读取、错误、关联缺失、无文字差异及补丁增删块等界面状态。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ChangeComparison.vue",
-          "startLine": 17,
-          "endLine": 28
-        },
-        "quote": "  <section class=\"change-comparison\" aria-label=\"内容差异\">\n    <p v-if=\"error\" role=\"alert\">{{ error }}</p>\n    <p v-else-if=\"!content\" role=\"status\">正在读取固定版本…</p>\n    <p v-else-if=\"!content.after || (content.hasBefore && !content.before)\" class=\"muted\">这条历史记录没有保存可比较的完整版本关联，无法还原差异。</p>\n    <template v-else>\n      <p>{{ co"
-      },
-      {
-        "key": "c6",
-        "label": "材料版本操作条件",
-        "reason": "支持阅读与恢复按钮仅限材料捕获和恢复类型，以及两个事件各自所需的版本关联条件。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ChangeHistory.vue",
-          "startLine": 29,
-          "endLine": 32
+          "startLine": 28,
+          "endLine": 31
         },
         "quote": "      <template #actions><template v-if=\"['capture','restore'].includes(c.kind)\">\n        <OmButton v-if=\"c.afterId\" @click=\"emit('open', c.afterId)\">阅读此版本</OmButton>\n        <OmButton v-if=\"c.beforeId && c.afterId\" @click=\"emit('restore', c)\">恢复为新版本</OmButton>\n      </template></template>"
       },
       {
-        "key": "c7",
-        "label": "共享变更类型入口",
-        "reason": "支持 Change 类型来自共享 contracts，并经前端 API 模块重新导出的依赖关系。",
+        "key": "c4",
+        "label": "固定版本差异计算",
+        "reason": "说明比较组件会按变化 ID 获取内容并使用带上下文的结构化补丁，界定历史列表与差异模块的关系。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 1,
-          "endLine": 8
+          "key": "omem:apps/web/src/ChangeComparison.vue",
+          "startLine": 2,
+          "endLine": 14
         },
-        "quote": "import type { TaskFollowUp } from \"../../../packages/contracts/src/task-flow.js\";\nimport type {\n  Revision,\n  Fragment,\n  Change,\n  RunEvent,\n} from \"../../../packages/contracts/src/index\";\nexport type { Revision, Fragment, Change };"
+        "quote": "import { ref, computed, watch } from \"vue\";\nimport { structuredPatch } from \"diff\";\nimport { api } from \"./api\";\nconst props = defineProps<{ changeId: string }>();\ntype Snapshot = { title: string; version: string; text: string };\nconst content = ref<{ before: Snapshot | null; after: Snapshot | null; hasBefore: boolean "
+      },
+      {
+        "key": "c5",
+        "label": "条件展示与空状态",
+        "reason": "支持可比较类型、版本条件、材料恢复限制和无记录时的空状态等边界行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChangeHistory.vue",
+          "startLine": 26,
+          "endLine": 33
+        },
+        "quote": "      <OmDisclosure v-if=\"c.afterId && ['capture','restore','knowledge'].includes(c.kind)\" @update:open=\"$event && expanded.add(c.id)\" title=\"查看内容差异\"><ChangeComparison v-if=\"expanded.has(c.id)\" :change-id=\"c.id\" />\n      </OmDisclosure>\n      <template #actions><template v-if=\"['capture','restore'].includes(c.kind)\">\n "
       }
     ],
     "questions": [
       {
-        "question": "父级如何处理 open 与 restore 事件，并保证恢复操作创建新版本？",
-        "why": "当前材料只证明 ChangeHistory 的事件和按钮条件，未包含父组件、导航或恢复接口，无法确认成功反馈、并发冲突与失败处理。",
-        "nextStep": "检查使用 ChangeHistory 的父组件、对应恢复 API 和行为测试，补充从点击到新版本生成的完整流程。",
+        "question": "父级如何处理 `open` 与 `restore` 事件，恢复前是否需要确认并如何呈现失败？",
+        "why": "当前材料只能确认本组件发出事件，不能据此断言实际导航、恢复请求、并发冲突或错误反馈行为。",
+        "nextStep": "补充挂载 ChangeHistory 的父组件及对应恢复 API 实现，沿事件监听器核对完整流程。",
         "blocking": false,
         "citationKeys": [
-          "c6"
+          "c3"
         ]
       },
       {
-        "question": "筛选、懒加载和差异异常状态是否已有自动化测试？",
-        "why": "提供的材料没有测试文件，无法确认未知类型文案、重复展开、请求失败和版本关联缺失等边界行为已被断言。",
-        "nextStep": "定位相关组件测试或端到端测试；若不存在，覆盖筛选结果、首次展开加载、事件参数和异常提示。",
+        "question": "筛选、按需加载和恢复按钮条件是否已有自动化测试？",
+        "why": "提供的材料没有测试文件，无法说明现有断言，也无法判断网络失败、重复展开和版本字段缺失等行为是否被覆盖。",
+        "nextStep": "检查 ChangeHistory 与 ChangeComparison 的组件测试或端到端测试；若不存在，优先覆盖筛选结果、首次展开请求、错误状态和恢复事件参数。",
         "blocking": false,
         "citationKeys": [
           "c2",
-          "c3",
+          "c4",
           "c5"
+        ]
+      },
+      {
+        "question": "父级如何处理 `open` 与 `restore` 事件，恢复前是否需要确认，并如何呈现请求失败？",
+        "why": "现有材料只能确认 `ChangeHistory` 按条件发出事件，无法确认实际导航、恢复请求、并发处理和页面级错误反馈；草稿已正确保留这一职责边界。",
+        "nextStep": "补充挂载 `ChangeHistory` 的父组件及恢复 API 实现，再核对完整交互流程。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
         ]
       }
     ]
@@ -142,12 +131,12 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/ChangeHistory.vue",
-      "digest": "bbde5f01d04e3616e0b3ef5bfe5609363f173f5b0c0c8eb0980379c1f32d26a1"
+      "digest": "7511f0b3e028fc418947e457379e2246190fcbe19673398bf8743d2842289151"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
+      "digest": "5b1fc796094157c6c689332d72eacf6d57c95025e92b39991ed4b0becc6cbb9a"
     },
     {
       "kind": "material",
@@ -157,34 +146,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:08:16.910Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:02:20.817Z",
     "trace": {
-      "runId": "e88bf2a1-7628-43a2-81cf-a377c693857f",
-      "roleId": "knowledge-refresher",
+      "runId": "a8baa755-836a-470d-b194-18ffbbb96040",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "729c4d2b8b3a06547c6759b9683722cceaffaa2c3dd6a704eb98b1504678752b",
-      "contextHash": "ab5f17396605079863ddcd50ed24bc0fb8f4276060dd966bbd89563aac2465b7",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "ff64a75ac36ab7cec99fc1f55d01a757638b6e02f06f6c507d9bef8fd1564a4b",
+      "contextHash": "1c09bb57a77e1d1517d74a290d320c9293d2484ddc9a1b0c14bc3e0c16ba8de7",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d7b13207e1da2c60b09e894a386796880f7b6894238a16c2e4afc0ff8e88041b",
+      "fingerprint": "3156b71c4bff74100c41e696f7aa95edd3a2b942b7969800809c0d77c4eeffac",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75d-43c6-7100-a28a-29fb62e7cc5f"
+        "01a0f8d8-5676-7b23-a911-936b085416f2"
       ],
       "usage": {
-        "used": 28985,
+        "used": 25171,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -193,10 +182,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 20683,
-          "utf8Bytes": 27705,
-          "estimatedTokens": 9235,
-          "budgetedTokens": 11544,
+          "chars": 14862,
+          "utf8Bytes": 18476,
+          "estimatedTokens": 6159,
+          "budgetedTokens": 7699,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -205,20 +194,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:08:43.292Z",
+    "at": "2026-10-01T19:02:37.412Z",
     "trace": {
-      "runId": "52353314-42f8-4387-99c1-dbf36c85f74a",
+      "runId": "2bcee5c2-ac55-4d51-b81d-489e62596aac",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "f96cf67c2ff23a4f2a2fe1f999783d39c761c7f4a7d42ec4eb658003fed24094",
-      "contextHash": "7790c486f0e5990d8312e448a918915daaa08527f03a435dbb3ba7d5cf418c3c",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "4f6f94e80e681741ad820f31b17bce5723152d7e9d4dd50ed27c33e7b0e7736b",
+      "contextHash": "3a0469a84110124f42f1135c5009f502a39a0919a124cfcee6b05ecfb3005a22",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "69bd7d59111557a921f8959d1d7abd47880e475fc157ebcb4c5089c2a85a4a9a",
+      "fingerprint": "e02d5089918ed39e4b2461e9c24f25351faf9a9916d0e96034301ab70878e408",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -228,10 +217,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75d-9e3e-7300-a4db-162ecb218d17"
+        "01a0f8d8-b1de-7ab1-9285-310ad5706b7d"
       ],
       "usage": {
-        "used": 25867,
+        "used": 24870,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -240,10 +229,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 17938,
-          "utf8Bytes": 23928,
-          "estimatedTokens": 7976,
-          "budgetedTokens": 9970,
+          "chars": 17417,
+          "utf8Bytes": 23627,
+          "estimatedTokens": 7876,
+          "budgetedTokens": 9845,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

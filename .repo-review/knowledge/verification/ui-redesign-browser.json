@@ -1,0 +1,64 @@
+{
+  "date": "2026-10-02",
+  "implementationCommit": "a86a2f2",
+  "actualDev": {
+    "base": "http://127.0.0.1:65092",
+    "checks": [
+      "unified app has real repository chapters",
+      "menu and breadcrumbs agree; Lark errors stay on its page",
+      "citations open the fixed code range and expand context",
+      "README reads as a document with intact code fences",
+      "material changes show real differences and notifications omit empty internals",
+      "Agent capabilities load automatically and local access needs no token",
+      "category browsing and composer at desktop, tablet and mobile widths",
+      "readable layout at 1440px",
+      "readable layout at 768px",
+      "readable layout at 390px"
+    ],
+    "errors": []
+  },
+  "newModelArticle": {
+    "base": "http://127.0.0.1:65092",
+    "article": "可展开且可选择的内容区块",
+    "revision": "918d52f823edbc70fdf12d1cef689a7f4498d1d0ab6de9356fc9ade4e5ff1276",
+    "citation": {
+      "label": "标题双操作模式",
+      "startLine": 23,
+      "endLine": 52
+    },
+    "checks": [
+      "published real-model article",
+      "fixed code lines",
+      "return focus",
+      "persisted category navigation"
+    ]
+  },
+  "browserRegression": {
+    "date": "2026-10-01",
+    "browser": "145.0.7632.6",
+    "checks": [
+      "empty real workspace and material capture",
+      "reading-first library and two-step article composer",
+      "search loading, empty, failure and superseded requests",
+      "A-U01 real job, applied proposal, notification and evidence flow",
+      "recursive evidence, cycle and return focus",
+      "version update and immutable prior revision",
+      "task creation and persistent change notifications",
+      "daily assistant uses the persistent conversation API without a selected fragment",
+      "daily follow-up controls: waiting, snooze, cancel and narrow layout",
+      "A-U02 decision diff, evidence, receipts and stale state",
+      "A-U03 QR, direct authorization link, reusable app and pairing",
+      "page reload and desktop rendering",
+      "A-U04 768px layout and keyboard focus",
+      "390px mobile viewport and full-screen dialog",
+      "100 persisted evidence nodes and bounded current rendering",
+      "A-U05 offline, model, delivery failure and restart truthfulness",
+      "Markdown tables and Mermaid diagrams render through the real reader",
+      "shared disclosures keep content and separate folder navigation from expansion"
+    ],
+    "errors": [],
+    "agent": "deterministic ACP protocol fixture",
+    "backend": "real Fastify + SQLite"
+  },
+  "screenshots": "gitignored .repo-review/runtime/browser/; screenshots actually inspected"
+}
