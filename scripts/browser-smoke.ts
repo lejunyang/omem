@@ -193,7 +193,7 @@ try {
   await page.goto(base);
   await check("empty real workspace and material capture", async () => {
     await expect(
-      page.getByRole("heading", { name: "让第一份材料，成为有来处的记忆" }),
+      page.getByRole("heading", { name: "知识从你的材料开始" }),
     ).toBeVisible();
     await page
       .getByRole("button", { name: "输入材料", exact: true })
@@ -284,11 +284,13 @@ try {
   store.link(a!.id, b!.id);
   store.link(b!.id, a!.id);
   await check("recursive evidence, cycle and return focus", async () => {
+    await page.getByRole("button", { name: "原始材料", exact: true }).click();
     await page
       .locator(".source-link")
       .filter({ hasText: "发布前的回滚验证" })
       .click();
-    await page.getByRole("button", { name: "查看引用" }).first().click();
+    await page.getByText("选择原文提问或查看来源", { exact: true }).click();
+    await page.getByRole("button", { name: "打开这段原文" }).first().click();
     const d = page.locator("dialog[open]");
     await expect(d).toBeVisible();
     await d.locator(".edge button").first().click();
@@ -329,7 +331,7 @@ try {
     await expect(page.locator(".reader")).toContainText("历史版本");
   });
   await check("task creation and persistent change notifications", async () => {
-    await page.getByRole("button", { name: "需求与待办", exact: true }).click();
+    await page.getByRole("button", { name: "事项与待办", exact: true }).click();
     await page.getByLabel("事项", { exact: true }).fill("补充回滚验证记录");
     await page.getByLabel("到期时间").fill("2020-01-01T09:00");
     await page.getByRole("button", { name: "记录待办" }).click();
@@ -353,12 +355,12 @@ try {
     await page.getByLabel("发给日常助理").fill("今天有什么需要跟进的事项？");
     await page.getByRole("button", { name: "发送消息", exact: true }).click();
     await expect(page.getByText("日常消息已读取；当前没有需要变更的事项。", { exact: true })).toBeVisible({ timeout: 20000 });
-    await page.getByRole("button", { name: "知识阅读", exact: true }).click();
+    await page.getByRole("button", { name: "原始材料", exact: true }).click();
     await page.getByRole("button", { name: "日常助理", exact: true }).click();
     await expect(page.getByText("今天有什么需要跟进的事项？", { exact: true })).toBeVisible();
   });
   await check("daily follow-up controls: waiting, snooze, cancel and narrow layout", async () => {
-    await page.getByRole("button", { name: "需求与待办", exact: true }).click();
+    await page.getByRole("button", { name: "事项与待办", exact: true }).click();
     await page.getByLabel("事项", { exact: true }).fill("等待评审回复");
     await page.getByRole("button", { name: "记录待办" }).click();
     const panel = page.locator(".om-panel").filter({ has: page.getByRole("heading", { name: "等待评审回复", exact: true }) });
@@ -546,6 +548,7 @@ try {
     },
   );
   await check("page reload and desktop rendering", async () => {
+    await page.getByRole("button", {name:"原始材料",exact:true}).click();
     await page.reload();
     await expect(
       page.locator(".source-link").filter({ hasText: "发布前的回滚验证" }),
@@ -569,7 +572,8 @@ try {
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
-    await page.getByRole("button", { name: "查看引用" }).first().click();
+    await page.getByText("选择原文提问或查看来源", { exact: true }).click();
+    await page.getByRole("button", { name: "打开这段原文" }).first().click();
     const dialog = page.locator("dialog[open]");
     await expect(dialog).toBeVisible();
     await page.keyboard.press("Tab");
@@ -588,7 +592,8 @@ try {
       ),
     ).toBe(true);
     await page.screenshot({ path: join(out, "mobile.png") });
-    await page.getByRole("button", { name: "查看引用" }).first().click();
+    await page.getByText("选择原文提问或查看来源", { exact: true }).click();
+    await page.getByRole("button", { name: "打开这段原文" }).first().click();
     await expect(page.locator("dialog[open]")).toBeVisible();
     expect(
       await page
@@ -631,8 +636,9 @@ try {
         .locator(".source-link")
         .filter({ hasText: "100 层引用验收" })
         .click();
+      await page.getByText("选择原文提问或查看来源", { exact: true }).click();
       await page
-        .getByRole("button", { name: /查看引用/ })
+        .getByRole("button", { name: /打开这段原文/ })
         .first()
         .click();
       const d = page.locator("dialog[open]");
@@ -697,9 +703,7 @@ try {
       await page.route("**/api/jobs", (route) => route.abort());
       await new Promise((resolve) => setTimeout(resolve, 2800));
       await expect(page.getByRole("alert")).toContainText("Failed to fetch");
-      await expect(
-        page.locator(".source-link").filter({ hasText: "发布前的回滚验证" }),
-      ).toBeVisible();
+      await expect(page.getByRole("button", {name:"原始材料",exact:true})).toBeVisible();
       await page.unroute("**/api/jobs");
 
       await app.close();
@@ -708,11 +712,9 @@ try {
       store = built.store;
       base = await app.listen({ port: 0, host: "127.0.0.1" });
       await page.goto(base);
-      await expect(
-        page.locator(".source-link").filter({ hasText: "发布前的回滚验证" }),
-      ).toBeVisible();
+      await expect(page.getByRole("button", {name:"原始材料",exact:true})).toBeVisible();
       await page
-        .getByRole("button", { name: "需求与待办", exact: true })
+        .getByRole("button", { name: "事项与待办", exact: true })
         .click();
       await expect(
         page.getByRole("heading", { name: "提交发布前回滚验证报告" }),
@@ -722,6 +724,15 @@ try {
       ).toBeVisible();
     },
   );
+  await check("Markdown tables and Mermaid diagrams render through the real reader", async () => {
+    store.capture({ source: "manual", externalId: "rich-document", title: "结构化阅读验收", context: {}, parts: [{type:"text", text: "# 阅读流程\n\n| 阶段 | 说明 |\n| --- | --- |\n| 捕获 | 保存原文 |\n\n```mermaid\nflowchart LR\n  A[捕获] --> B[阅读]\n```\n\n<script>window.__unsafeDiagram = true</script>"}] });
+    await page.getByRole("button", {name:"原始材料",exact:true}).click();
+    await page.getByLabel("查找原始材料").fill("结构化阅读验收");
+    await page.locator(".source-link").filter({hasText:"结构化阅读验收"}).click();
+    await expect(page.locator(".reader .md-body table")).toContainText("保存原文");
+    await expect(page.locator(".reader .om-diagram svg")).toBeVisible({timeout:30000});
+    await expect(page.locator(".reader script")).toHaveCount(0);
+  });
   expect(errors).toEqual([]);
   writeFileSync(
     resolve("docs/implementation/browser-verification.json"),

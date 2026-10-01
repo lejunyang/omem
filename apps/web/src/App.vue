@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import DailyAssistant from "./DailyAssistant.vue";
 import TaskFollowUpControls from "./TaskFollowUpControls.vue";
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import {
   OmShell,
+  OmMarkdown,
+  OmCodeViewer,
   OmButton,
   OmIcon,
   OmBadge,
@@ -33,8 +35,16 @@ import LearningView from "./LearningView.vue";
 import DecisionsView from "./DecisionsView.vue";
 import NotificationDetail from "./NotificationDetail.vue";
 import LarkSetup from "./LarkSetup.vue";
-import ReviewApp from "./ReviewApp.vue";
-const view = ref("read");
+const navigation = [
+  ["daily", "spark", "日常助理"], ["knowledge", "book", "知识库"],
+  ["read", "layers", "原始材料"], ["capture", "plus", "输入材料"],
+  ["learning", "spark", "学习流程"], ["decisions", "check", "待判断"],
+  ["tasks", "check", "事项与待办"], ["changes", "clock", "变更历史"],
+  ["notifications", "spark", "通知中心"], ["lark", "layers", "飞书机器人"],
+  ["settings", "layers", "能力与连接"], ["design", "book", "设计系统"],
+];
+const view = ref(sessionStorage.getItem("omem-view") || "knowledge");
+const pageTitle = computed(() => navigation.find(([id]) => id === view.value)?.[2] ?? "知识库");
 const sources = ref<Source[]>([]);
 const revision = ref<Revision | null>(null);
 const focus = ref<Fragment | null>(null);
@@ -52,6 +62,8 @@ const notificationDetail = ref<NotificationDetailType | null>(null);
 const notificationOpen = ref(false);
 const notificationLoading = ref(false);
 const error = ref("");
+const pollError = ref("");
+watch(view, () => { error.value = ""; query.value = ""; sessionStorage.setItem("omem-view", view.value); });
 const reviewMode = ref(false);
 const connecting = ref(true);
 const connectionError = ref("");
@@ -62,6 +74,7 @@ const toast = ref("");
 const token = ref("");
 const evidence = ref<InstanceType<typeof EvidenceReader>>();
 const query = ref("");
+const sourceQuery = ref("");
 const results = ref<
   { id: string; text: string; title: string; version: number }[]
 >([]);
@@ -152,8 +165,9 @@ async function refresh() {
           .join("；"),
       );
     lastNotificationId = latest?.id || "none";
+    pollError.value = "";
   } catch (e) {
-    error.value = String(e);
+    pollError.value = String(e);
   } finally {
     refreshing = false;
   }
@@ -444,8 +458,8 @@ onBeforeUnmount(() => {
       </details>
     </OmPanel>
   </OmShell>
-  <ReviewApp v-else-if="reviewMode" />
-  <OmShell v-else
+  <OmPanel v-else-if="reviewMode" title="知识库已合并到主应用"><p>请使用 osdk run dev 启动统一的个人助理。仓库知识将在同一个知识库中展示。</p></OmPanel>
+  <OmShell v-else :class="{ 'reading-shell': view === 'knowledge' }"
     ><template #top
       ><div class="top-controls">
         <input
@@ -466,21 +480,9 @@ onBeforeUnmount(() => {
       </div>
       <nav class="navigation">
         <button
-          v-for="[id, icon, label] in [
-            ['daily', 'spark', '日常助理'],
-            ['read', 'book', '知识阅读'],
-            ['knowledge', 'layers', '知识整理'],
-            ['capture', 'plus', '输入材料'],
-            ['learning', 'spark', '学习流程'],
-            ['decisions', 'check', '待判断'],
-            ['tasks', 'check', '需求与待办'],
-            ['changes', 'clock', '变更历史'],
-            ['notifications', 'spark', '通知中心'],
-            ['lark', 'layers', '飞书机器人'],
-            ['settings', 'layers', '能力与连接'],
-            ['design', 'book', '设计系统'],
-          ]"
+          v-for="[id, icon, label] in navigation"
           :key="id"
+          :title="label"
           :class="{ active: view === id }"
           @click="
             view = id;
@@ -490,11 +492,12 @@ onBeforeUnmount(() => {
           <OmIcon :name="icon" />{{ label }}
         </button>
       </nav>
-      <h4 class="nav-heading">
+      <h4 v-if="view === 'read'" class="nav-heading">
         材料目录 <small>{{ sources.length }}</small>
       </h4>
+      <input v-if="view === 'read'" v-model="sourceQuery" aria-label="查找原始材料" placeholder="查找原始材料" class="source-filter" />
       <button
-        v-for="s in sources"
+        v-for="s in (view === 'read' ? sources.filter(s => s.title.toLowerCase().includes(sourceQuery.toLowerCase())).slice(0, 80) : [])"
         :key="s.id"
         class="source-link"
         :class="{ selected: revision?.sourceId === s.sourceId }"
@@ -506,39 +509,19 @@ onBeforeUnmount(() => {
         <span>{{ s.title }}</span
         ><small>{{ s.source }} · v{{ s.version }}</small>
       </button>
-      <p v-if="!sources.length" class="muted">
+      <p v-if="view === 'read' && !sources.length" class="muted">
         导入第一份材料，开始积累记忆。
       </p></template
     >
     <div class="page-bar">
       <span
         >我的工作记忆 /
-        {{
-          view === "read"
-            ? "知识阅读"
-            : view === "capture"
-              ? "输入材料"
-              : view === "learning"
-                ? "学习流程"
-                : view === "decisions"
-                  ? "待判断"
-                  : view === "tasks"
-                    ? "需求与待办"
-                    : view === "changes"
-                      ? "变更历史"
-                      : view === "notifications"
-                        ? "通知中心"
-                        : view === "lark"
-                          ? "飞书机器人"
-                          : view === "settings"
-                            ? "能力与连接"
-                            : "设计系统"
-        }}</span
+        {{ pageTitle }}</span
       ><OmBadge>个人版 · 基础链路</OmBadge>
     </div>
-    <div v-if="error" class="error-banner" role="alert">
-      {{ error
-      }}<OmButton variant="ghost" @click="error = ''">关闭提示</OmButton>
+    <div v-if="error || pollError" class="error-banner" role="alert">
+      {{ error || pollError
+      }}<OmButton variant="ghost" @click="error = ''; pollError = ''">关闭提示</OmButton>
     </div>
     <section v-if="query" class="page">
       <h1>搜索“{{ query }}”</h1>
@@ -569,23 +552,15 @@ onBeforeUnmount(() => {
           保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
           每个片段都有固定身份
         </p>
-        <p class="reading-note">
-          <OmIcon name="link" />
-          点击片段旁的“查看引用”逐层阅读，选择片段后可以直接追问。
-        </p>
-        <div
-          v-for="f in revision.fragments"
-          :key="f.id"
-          class="fragment"
-          :class="{ focused: focus?.id === f.id }"
-        >
-          <p>{{ f.text }}</p>
-          <div class="row">
-            <small>片段 {{ f.ordinal + 1 }}</small
-            ><OmButton variant="ghost" @click="focus = f">以此片段提问</OmButton
-            ><OmCitation label="查看引用" @open="evidence?.open(f.id)" />
+        <OmCodeViewer v-if="/\.(?:[cm]?[jt]sx?|vue|json|toml|css)$/.test(revision.title)" :code="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n')" :language="revision.title.split('.').pop()" />
+        <OmMarkdown v-else :source="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n')" />
+        <details class="stack"><summary>选择原文提问或查看来源</summary>
+          <div v-for="f in revision.fragments" :key="f.id" class="fragment">
+            <p>{{ f.text.slice(0, 120) }}{{ f.text.length > 120 ? '…' : '' }}</p>
+            <OmButton variant="ghost" @click="focus = f">就这段提问</OmButton>
+            <OmCitation label="打开这段原文" @open="evidence?.open(f.id)" />
           </div>
-        </div>
+        </details>
         <template v-for="(p, i) in revision.parts" :key="i"
           ><AssetImage
             v-if="p.type === 'image'"
@@ -938,7 +913,7 @@ onBeforeUnmount(() => {
         }
       " />
     <div v-if="toast" class="toast" role="status">{{ toast }}</div>
-    <template #assistant
+    <template v-if="view === 'read'" #assistant
       ><ChatPane
         :key="focus?.id"
         :focus="focus"
@@ -949,3 +924,9 @@ onBeforeUnmount(() => {
         @saved="refresh" /></template
   ></OmShell>
 </template>
+
+<style scoped>
+@media(min-width:701px){.reading-shell :deep(.om-nav){width:76px;padding:20px 8px;}.reading-shell .workspace-title,.reading-shell .nav-heading,.reading-shell .source-link{display:none;}.reading-shell .navigation button{font-size:0;justify-content:center;gap:0;padding:12px;}.reading-shell .navigation button svg{width:22px;height:22px;}}
+</style>
+
+<style scoped>.source-filter{width:100%;min-height:44px;padding:8px;border:1px solid var(--om-line);border-radius:6px;}</style>
