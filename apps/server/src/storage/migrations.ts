@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 17;
+export const SUPPORTED_SCHEMA_VERSION = 18;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -956,6 +956,26 @@ const embeddingStatements = [
     model_id TEXT NOT NULL, PRIMARY KEY(model_id,fragment_id))`,
 ] as const;
 
+// Preserve existing revision rows while expanding the business lifecycle.
+const taskFollowUpStatements = [
+  "ALTER TABLE tasks ADD COLUMN follow_up TEXT",
+  `CREATE TABLE task_revisions_v18(
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id),
+    version INTEGER NOT NULL CHECK(version >= 1), title TEXT NOT NULL, detail TEXT NOT NULL,
+    due_at TEXT, due_expression TEXT, owner_id TEXT, next_step TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('open','waiting','done','cancelled')),
+    evidence_set TEXT NOT NULL, correction_feedback_id TEXT, created_at TEXT NOT NULL,
+    follow_up TEXT, UNIQUE(task_id,version))`,
+  "INSERT INTO task_revisions_v18 SELECT *,NULL FROM task_revisions",
+  "DROP TABLE task_revisions",
+  "ALTER TABLE task_revisions_v18 RENAME TO task_revisions",
+  `CREATE TABLE task_reminder_receipts(
+    task_id TEXT NOT NULL REFERENCES tasks(id), task_version INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('due','follow_up')), occurrence TEXT NOT NULL,
+    notification_id TEXT NOT NULL REFERENCES notifications(id), created_at TEXT NOT NULL,
+    PRIMARY KEY(task_id,task_version,kind,occurrence))`,
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1049,6 +1069,7 @@ const migrations: readonly Migration[] = [
   },
   { version: 16, name: "memory-refresh-outcomes", statements: memoryRefreshStatements, checksum: checksum(memoryRefreshStatements) },
   { version: 17, name: "fragment-semantic-index", statements: embeddingStatements, checksum: checksum(embeddingStatements) },
+  { version: 18, name: "task-follow-up-lifecycle", statements: taskFollowUpStatements, checksum: checksum(taskFollowUpStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

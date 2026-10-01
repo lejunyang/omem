@@ -1,3 +1,5 @@
+import type { TaskAction, TaskFollowUp, TaskStatus } from "../../../../packages/contracts/src/task-flow.js";
+import { validateFollowUp } from "../tasks/follow-up.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
@@ -83,7 +85,7 @@ export class MemoryService {
 
   /** Explicit owner commands reuse the same atomic receipts, revision history
    * and notification outbox as proposals. The model never writes task rows. */
-  commandTask(input: { taskId: string; expectedVersion: number; action: "complete" | "reopen" | "reschedule";
+  commandTask(input: { taskId: string; expectedVersion: number; action: TaskAction; followUp?: TaskFollowUp | null;
     dueAt: string | null; dueExpression: string | null; requestId: string; evidenceId: string }) {
     const evidence = this.store.evidence(input.evidenceId);
     const owner = this.options.ownerId ?? "owner";
@@ -92,8 +94,12 @@ export class MemoryService {
       evidence.revision.provenance?.producerKind !== "original") throw Error("TASK_OWNER_EVIDENCE_REQUIRED");
     const task = this.db.prepare("SELECT * FROM tasks WHERE id=? AND workspace_id='personal'").get(input.taskId) as Row | undefined;
     if (!task || (task.owner_id && task.owner_id !== owner)) throw Error("TASK_NOT_FOUND");
+    if (["done", "cancelled"].includes(String(task.status)) && ["wait", "snooze", "reschedule"].includes(input.action)) throw Error("请先重新打开该事项");
     if (input.action === "reschedule" && (!input.dueAt || !Number.isFinite(Date.parse(input.dueAt)))) throw Error("INVALID_TASK_TIME");
-    const actionName = { complete: "完成", reopen: "重新打开", reschedule: "改期" }[input.action];
+    const followUp = input.followUp ? validateFollowUp(input.followUp, evidence.fragment.text) : null;
+    if (input.action === "wait" && !followUp?.waiting_on) throw Error("请说明等待谁或什么结果");
+    if (input.action === "snooze" && !followUp?.snoozed_until) throw Error("请说明下次提醒的明确时间");
+    const actionName = { complete: "完成", reopen: "重新打开", reschedule: "改期", wait: "等待", snooze: "稍后跟进", cancel: "取消" }[input.action];
     return this.store.applications.applyTask({
       metadata: { workspaceId: "personal", applicationId: `assistant-command:${input.requestId}:${input.taskId}`,
         proposalId: `assistant-task:${input.requestId}:${input.taskId}`, proposalDigest: stableDigest(input), generation: 1,
@@ -101,7 +107,10 @@ export class MemoryService {
         delivery: { channelBindingVersion: 1, channel: "in_app", target: "notification-center" } },
       task: { id: input.taskId, expectedVersion: input.expectedVersion, title: String(task.title), detail: String(task.detail),
         ownerId: owner, nextStep: String(task.next_step), evidenceId: input.evidenceId,
-        status: input.action === "complete" ? "done" : input.action === "reopen" ? "open" : task.status as "open" | "done",
+        status: input.action === "complete" ? "done" : input.action === "cancel" ? "cancelled" : input.action === "reopen" ? "open" : input.action === "wait" ? "waiting" : task.status as TaskStatus,
+        followUp: ["complete", "cancel", "reopen"].includes(input.action) ? null : input.action === "wait" ? followUp : input.action === "snooze" ? {
+          ...followUp!, waiting_on: task.follow_up ? JSON.parse(String(task.follow_up)).waiting_on : null, next_check_at: followUp!.snoozed_until,
+        } : undefined,
         dueAt: input.action === "reschedule" ? input.dueAt : task.due_at ? String(task.due_at) : null,
         dueExpression: input.action === "reschedule" ? input.dueExpression : task.due_expression ? String(task.due_expression) : null },
     });
@@ -1237,6 +1246,8 @@ export class MemoryService {
             dueAt: proposal.body.due_at,
             dueExpression: proposal.body.due_expression,
             nextStep: proposal.body.next_step,
+            ...(proposal.body.follow_up ? { followUp: proposal.body.follow_up,
+              ...(proposal.operation === "create" ? { status: proposal.body.follow_up.waiting_on ? "waiting" as const : "open" as const } : {}) } : {}),
             evidenceId:
               "exact_quote" in proposal.evidence[0]!
                 ? proposal.evidence[0]!.fragment_revision_id

@@ -1,3 +1,4 @@
+import { taskFollowUpSchema, type TaskFollowUp, type TaskStatus } from "../../../../packages/contracts/src/task-flow.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { stableDigest } from "./digest.js";
@@ -48,7 +49,8 @@ export type TaskApplication = {
     dueExpression?: string | null;
     nextStep: string;
     evidenceId?: string | null;
-    status?: "open" | "done";
+    status?: TaskStatus;
+    followUp?: TaskFollowUp | null;
   };
 };
 
@@ -553,6 +555,10 @@ export class ApplicationRepository {
         const taskId = existing
           ? String(existing.id)
           : (input.task.id ?? randomUUID());
+        const parsedFollowUp = input.task.followUp ? taskFollowUpSchema.parse(input.task.followUp) : null;
+        const followUp = input.task.followUp === undefined ? (existing?.follow_up ? String(existing.follow_up) : null) : parsedFollowUp ? JSON.stringify({ ...parsedFollowUp,
+          next_check_at: parsedFollowUp.next_check_at ? new Date(parsedFollowUp.next_check_at).toISOString() : null,
+          snoozed_until: parsedFollowUp.snoozed_until ? new Date(parsedFollowUp.snoozed_until).toISOString() : null }) : null;
         const previousVersion = existing ? Number(existing.version) : 0;
         const nextVersion = previousVersion + 1;
         if (
@@ -565,7 +571,7 @@ export class ApplicationRepository {
           const updated = this.db
             .prepare(
               `UPDATE tasks SET title=?,detail=?,due_at=?,evidence_id=?,status=?,
-                 version=?,workspace_id=?,owner_id=?,due_expression=?,next_step=?
+                 version=?,workspace_id=?,owner_id=?,due_expression=?,next_step=?,follow_up=?
                WHERE id=? AND workspace_id=? AND version=?`,
             )
             .run(
@@ -579,6 +585,7 @@ export class ApplicationRepository {
               input.task.ownerId ?? null,
               input.task.dueExpression ?? null,
               input.task.nextStep,
+              followUp,
               taskId,
               input.metadata.workspaceId,
               previousVersion,
@@ -589,8 +596,8 @@ export class ApplicationRepository {
             .prepare(
               `INSERT INTO tasks(
                  id,title,detail,due_at,evidence_id,status,created_at,version,
-                 workspace_id,owner_id,due_expression,next_step
-               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+                 workspace_id,owner_id,due_expression,next_step,follow_up
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .run(
               taskId,
@@ -605,14 +612,15 @@ export class ApplicationRepository {
               input.task.ownerId ?? null,
               input.task.dueExpression ?? null,
               input.task.nextStep,
+              followUp,
             );
         }
         this.db
           .prepare(
             `INSERT INTO task_revisions(
              id,workspace_id,task_id,version,title,detail,due_at,due_expression,
-             owner_id,next_step,status,evidence_set,correction_feedback_id,created_at
-           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)`,
+             owner_id,next_step,status,evidence_set,correction_feedback_id,created_at,follow_up
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)`,
           )
           .run(
             randomUUID(),
@@ -630,6 +638,7 @@ export class ApplicationRepository {
               input.task.evidenceId ? [input.task.evidenceId] : [],
             ),
             date,
+            followUp,
           );
         return {
           id: taskId,

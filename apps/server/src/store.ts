@@ -1,3 +1,5 @@
+import { dispatchTaskReminders } from "./tasks/follow-up.js";
+import type { TaskStatus, TaskFollowUp } from "../../../packages/contracts/src/task-flow.js";
 import { recordSourceRefresh } from "./learning/refresh.js";
 /** SQLite is the single-user foundation. Immutable revisions, changes and notification
  * outbox are committed together. Postgres/team enforcement remains a later migration. */
@@ -639,15 +641,15 @@ export class Store {
       .prepare("UPDATE notifications SET read_at=? WHERE id=?")
       .run(now(), notificationId);
   }
-  tasks() {
+  tasks(): (Record<string, unknown> & { followUp: TaskFollowUp | null })[] {
     return this.db
       .prepare(
         `SELECT id,title,detail,due_at AS dueAt,evidence_id AS evidenceId,
            status,version,workspace_id AS workspaceId,owner_id AS ownerId,
-           due_expression AS dueExpression,next_step AS nextStep
+           due_expression AS dueExpression,next_step AS nextStep,follow_up AS followUp
          FROM tasks ORDER BY created_at DESC`,
       )
-      .all();
+      .all().map(row => ({ ...row, followUp: row.followUp ? JSON.parse(String(row.followUp)) : null }));
   }
   createTask(input: {
     title: string;
@@ -699,7 +701,7 @@ export class Store {
   }
   setTaskStatus(
     taskId: string,
-    status: "open" | "done",
+    status: TaskStatus,
     expectedVersion: number,
   ) {
     return this.tx(() => {
@@ -712,7 +714,7 @@ export class Store {
       if (old.status === status) return { version: expectedVersion };
       const updated = this.db
         .prepare(
-          "UPDATE tasks SET status=?,version=version+1 WHERE id=? AND version=?",
+          "UPDATE tasks SET status=?,follow_up=NULL,version=version+1 WHERE id=? AND version=?",
         )
         .run(status, taskId, expectedVersion);
       if (Number(updated.changes) !== 1) throw Error("STALE_TASK_VERSION");
@@ -740,7 +742,7 @@ export class Store {
         );
       this.record(
         "task",
-        `${status === "done" ? "完成" : "重新打开"}待办：${old.title}`,
+        `${status === "done" ? "完成" : status === "cancelled" ? "取消" : status === "waiting" ? "等待" : "重新打开"}待办：${old.title}`,
         null,
         null,
         "待办状态已变更。",
@@ -748,26 +750,7 @@ export class Store {
       return { version: expectedVersion + 1 };
     });
   }
-  remind() {
-    return this.tx(() => {
-      const tasks = this.db
-        .prepare(
-          "SELECT * FROM tasks WHERE status='open' AND due_at IS NOT NULL AND due_at<=?",
-        )
-        .all(now()) as Row[];
-      for (const t of tasks)
-        this.db
-          .prepare("INSERT OR IGNORE INTO notifications VALUES(?,?,?,?,?,?,?)")
-          .run(
-            id(),
-            null,
-            "待办到期：" + t.title,
-            String(t.detail),
-            now(),
-            null,
-            `due:${t.id}:${t.version}`,
-          );
-      return tasks.length;
-    });
+  remind(instant = now()) {
+    return this.tx(() => dispatchTaskReminders(this.db, instant));
   }
 }

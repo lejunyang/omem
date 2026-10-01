@@ -1,3 +1,5 @@
+import { taskFollowUpSchema, taskStatusSchema } from "./task-flow.js";
+export * from "./task-flow.js";
 import { z } from "zod";
 // Per-part provenance lets an aggregated batch keep which speaker / event / time a
 // fragment came from, instead of flattening multi-speaker turns into actor=null.
@@ -275,6 +277,7 @@ export const taskProposalBodySchema = z
     due_at: z.iso.datetime({ offset: true }).nullable(),
     due_expression: z.string().min(1).max(500).nullable(),
     next_step: z.string().max(2000),
+    follow_up: taskFollowUpSchema.optional(),
   })
   .strict();
 
@@ -457,7 +460,7 @@ export const correctionProposalSchema = z
 
 export const taskUpdateSchema = z
   .object({
-    status: z.enum(["open", "done"]),
+    status: taskStatusSchema,
     expectedVersion: z.number().int().min(1),
   })
   .strict();
