@@ -59,7 +59,7 @@ export class AcpAssistantModel implements AssistantModelPort {
       ? input.evidence
           .map(
             (e) =>
-              `[evidence id=${e.fragmentId}] (${e.revisionTitle})\n${e.text.slice(0, 2000)}`,
+              `[evidence id=${e.fragmentId}] (${e.revisionTitle}${e.sectionTitle ? " / " + e.sectionTitle : ""})\n${e.text.slice(0, 2000)}`,
           )
           .join("\n\n")
       : "(no evidence available)";

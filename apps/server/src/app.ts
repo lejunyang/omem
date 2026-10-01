@@ -1,3 +1,4 @@
+import { evidenceSection } from "./retrieval/context.js";
 import { importDevelopmentKnowledge } from "./knowledge/development.js";
 import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
 import { messageWorkflows } from "./assistant/message-workflows.js";
@@ -71,13 +72,14 @@ export async function buildApp(
       affected_memory_ids AS affectedMemoryIds,status,result_json AS result,created_at AS createdAt
      FROM refresh_records ORDER BY created_at DESC LIMIT 100`).all().map(row => ({ ...row,
        affectedMemoryIds: JSON.parse(String(row.affectedMemoryIds)), result: JSON.parse(String(row.result)) })));
-  registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined });
+
   const assistantModel = new AcpAssistantModel({
     profile: assistantProfile,
     workspaceRoot: config.agentCwd,
   });
   const retrievalService = createRetrieval(store.db, config.retrieval);
   const assistantRetrieval = retrievalService.retrieval;
+  registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined, retrieval: assistantRetrieval });
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",
     memory,
@@ -268,9 +270,15 @@ export async function buildApp(
     const b = z.object({ from: str, to: str }).strict().parse(req.body);
     return store.link(b.from, b.to);
   });
-  app.get<{ Querystring: { q?: string } }>("/api/search", async (req) =>
-    store.search((req.query.q || "").slice(0, 300)),
-  );
+  app.get<{ Querystring: { q?: string } }>("/api/search", async (req) => {
+    const query = { text: (req.query.q || "").slice(0, 300), limit: 30 };
+    const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ?? assistantRetrieval.searchSources(query));
+    return hits.flatMap(hit => {
+      const entry = store.evidence(hit.fragmentId);
+      return entry ? [{ id: hit.fragmentId, text: hit.snippet, title: entry.revision.title, version: entry.revision.version,
+        score: hit.score, routes: hit.routes, section: evidenceSection(store, hit.fragmentId) }] : [];
+    });
+  });
   app.get<{ Params: { id: string } }>("/api/assets/:id", async (req, reply) => {
     const bytes = store.asset(req.params.id);
     if (!bytes) return reply.code(404).send({ error: "Asset not found" });

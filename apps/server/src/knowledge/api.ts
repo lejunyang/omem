@@ -1,3 +1,6 @@
+import type { RetrievalPort } from "../retrieval/port.js";
+import { KeywordRetrieval, tokenize } from "../retrieval/keyword.js";
+import { fragmentPositions } from "./structure.js";
 import type { FastifyInstance } from "fastify";
 import type { Store } from "../store.js";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
@@ -10,9 +13,10 @@ import { KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
 import { posix } from "node:path";
 import { parseFile } from "../code/parse.js";
 
-export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
+export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
   const prefix = input.prefix;
+  const retrieval: RetrievalPort = input.retrieval ?? new KeywordRetrieval(input.store.db);
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
   const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,
@@ -80,9 +84,28 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   });
   app.post<{ Params: { id: string } }>(prefix + "/questions/:id/task", async req => ({ taskId: repository.createTask(req.params.id) }));
   app.get<{ Querystring: { q?: string } }>(prefix + "/search", async req => {
-    const terms = (req.query.q ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const text = (req.query.q ?? "").trim().slice(0, 300), terms = tokenize(text);
     if (!terms.length) return [];
-    return repository.list().flatMap(a => a.document.sections.filter(s => terms.some(t => (s.title + s.body).toLowerCase().includes(t))).map(s => ({ ...meta(a), section: s.key, sectionTitle: s.title, excerpt: s.body.slice(0, 600), derived: true }))).slice(0, 50);
+    repository.refresh();
+    const query = { text, limit: 60 };
+    const hits = await (retrieval.searchSourcesAsync?.(query) ?? retrieval.searchSources(query));
+    const hitRanks = new Map(hits.map((hit, i) => [hit.fragmentId, 1 / (i + 1)]));
+    const materials = new Map(repository.materials().map(m => [m.key, m]));
+    return repository.list().filter(a => a.current).flatMap(a => a.document.sections.flatMap(section => {
+      const words = (a.document.title + " " + section.title + " " + section.body).toLowerCase();
+      const lexical = terms.reduce((n, term) => n + (words.includes(term) ? 1 : 0), 0) / terms.length;
+      let evidence = 0;
+      for (const c of a.document.citations.filter(c => section.body.includes("[[" + c.key + "]]"))) {
+        if (c.target.kind !== "material") continue;
+        const material = materials.get(c.target.key);
+        if (!material) continue;
+        for (const fragment of fragmentPositions(material)) {
+          if (fragment.endLine >= (c.target.startLine ?? 1) && fragment.startLine <= (c.target.endLine ?? material.lineCount)) evidence = Math.max(evidence, hitRanks.get(fragment.id) ?? 0);
+        }
+      }
+      const score = lexical + evidence;
+      return score ? [{ ...meta(a), section: section.key, sectionTitle: section.title, excerpt: section.body.slice(0, 600), derived: true, score }] : [];
+    })).sort((a, b) => b.score - a.score).slice(0, 50);
   });
   app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });

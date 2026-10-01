@@ -1,3 +1,4 @@
+import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
 import { taskFollowUpSchema, type TaskFollowUp, type TaskAction } from "../../../../packages/contracts/src/task-flow.js";
 import { validateFollowUp } from "../tasks/follow-up.js";
 import { randomUUID } from "node:crypto";
@@ -17,6 +18,7 @@ export type AssistantEvidence = {
   /** Revision id of the fragment's source revision (used as source_revision_id). */
   sourceRevisionId: string;
   revisionTitle: string;
+  sectionTitle?: string;
   text: string;
 };
 
@@ -677,10 +679,24 @@ export class AssistantRuntime {
         });
       // Retain the actual semantic hit inside a long original fragment. The ACP
       // evidence budget is 2,000 characters; rereading only its prefix loses tails.
-      return candidates
-        .map((c) => this.enrichEvidence(c.fragmentId, c.routes?.includes("semantic") ? c.snippet : undefined))
-        .filter((e): e is AssistantEvidence => Boolean(e))
-        .filter((e) => this.isVisible(conversation, e.fragmentId));
+      const visible = (id: string) => this.isVisible(conversation, id);
+      const evidence = new Map<string, AssistantEvidence>();
+      for (const c of candidates) {
+        const hit = this.enrichEvidence(c.fragmentId, c.routes?.includes("semantic") ? c.snippet : undefined);
+        if (hit && visible(hit.fragmentId)) {
+          hit.sectionTitle = evidenceSection(this.store, hit.fragmentId, visible)?.title;
+          evidence.set(hit.fragmentId, hit);
+        }
+      }
+      // Preserve all ranked hits, then fill the remaining budget with original
+      // heading / neighboring evidence. Every added fragment is visibility checked.
+      for (const c of candidates) for (const id of evidenceNeighbors(this.store, c.fragmentId, visible)) {
+        if (evidence.size >= 28) break;
+        if (evidence.has(id)) continue;
+        const neighbor = this.enrichEvidence(id);
+        if (neighbor) evidence.set(id, neighbor);
+      }
+      return [...evidence.values()];
     }
     // Legacy fallback (old tests without retrieval port).
     const q = userText.trim().slice(0, 300);
