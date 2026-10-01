@@ -88,7 +88,7 @@ async function render() {
     }
     if (diagrams.length) {
       const { default: mermaid } = await import("mermaid");
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", flowchart: { htmlLabels: false }, suppressErrorRendering: true });
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", htmlLabels: false, flowchart: { htmlLabels: false }, suppressErrorRendering: true });
       for (const [i, diagram] of diagrams.entries()) {
         const block = doc.querySelector(`.om-diagram-${i}`);
         try {
@@ -185,7 +185,7 @@ function onClick(ev: MouseEvent) {
 <style scoped>
 .md-body :deep(.om-paragraph-references){display:block;margin-top:4px;color:var(--om-muted);font:12px/1.8 var(--om-sans);}
 .md-body :deep(.om-diagram){background:var(--om-panel);white-space:normal;text-align:center;}
-.md-body :deep(.om-diagram svg){max-width:100%;height:auto;}
+.md-body :deep(.om-diagram svg){max-width:100%;height:auto;font-size:16px;}
 .md-body :deep(table){display:block;max-width:100%;overflow:auto;font-size:14px;}
 .md-body :deep(h2),.md-body :deep(h3){margin-top:1.7em;line-height:1.5;}
 </style>
@@ -193,5 +193,7 @@ function onClick(ev: MouseEvent) {
 <style scoped>
 .md-body :deep(.om-diagram rect),.md-body :deep(.om-diagram polygon){fill:var(--om-paper);stroke:var(--om-secondary);}
 .md-body :deep(.om-diagram text){fill:var(--om-ink);font-family:var(--om-sans);}
+.md-body :deep(.om-diagram .label text){text-anchor:middle;}
 .md-body :deep(.om-diagram path){stroke:var(--om-secondary);}
+.md-body :deep(.om-diagram .flowchart-link){fill:none;stroke-width:1.5px;}
 </style>

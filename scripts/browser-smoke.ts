@@ -731,6 +731,9 @@ try {
     await page.locator(".source-link").filter({hasText:"结构化阅读验收"}).click();
     await expect(page.locator(".reader .md-body table")).toContainText("保存原文");
     await expect(page.locator(".reader .om-diagram svg")).toBeVisible({timeout:30000});
+    await expect(page.locator(".reader .om-diagram svg")).toContainText("捕获");
+    await expect(page.locator(".reader .om-diagram svg")).toContainText("阅读");
+    await expect(page.locator(".reader .om-diagram foreignObject")).toHaveCount(0);
     await expect(page.locator(".reader script")).toHaveCount(0);
   });
   expect(errors).toEqual([]);
