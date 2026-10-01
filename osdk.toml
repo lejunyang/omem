@@ -1,7 +1,8 @@
-# omem foundation: one TypeScript runtime for Vue, API and CLI/ACP bridges.
+# Bun runs TypeScript scripts; Node runs the compiled server and build tools.
 [tools]
 node = "24.18.1"
 pnpm = "11"
+bun = "1.4.2"
 
 [models.memory-zh.views]
 
@@ -18,12 +19,7 @@ agents = ["universal", "claude-code"]
 [tasks]
 dev = "pnpm run dev"
 "dev:review" = "pnpm run dev:review"
-"retrieval:index" = "pnpm exec tsx scripts/retrieval-index.ts"
-"retrieval:verify" = "pnpm exec tsx scripts/live-retrieval-smoke.ts"
-"review:verify" = "node --import tsx scripts/review-verify.ts"
-"review:build" = "pnpm exec tsx scripts/review-wiki.ts"
-"review:analyze" = "pnpm exec tsx scripts/review-knowledge.ts"
-"review:generate" = "pnpm exec tsx scripts/review-knowledge.ts"
+"retrieval:verify" = "bun scripts/live-retrieval-smoke.ts"
 build = "pnpm run build"
 test = "pnpm run test"
 typecheck = "pnpm run typecheck"
@@ -34,7 +30,7 @@ run = ["pnpm run typecheck", "pnpm run test", "pnpm run build"]
 [tasks.browser]
 run = "pnpm run test:browser"
 [tasks.live-acp]
-run = "pnpm exec tsx scripts/live-acp-smoke.ts"
+run = "bun scripts/live-acp-smoke.ts"
 [tasks.live-role]
 run = "pnpm run test:live-role"
 [tasks.live-learning]
@@ -57,3 +53,60 @@ exclude = []
 kind = "embedding"
 family = "bge"
 derived_from = "BAAI/bge-small-zh-v1.5"
+
+[tasks."retrieval:index"]
+run = [{ argv = ["bun", "scripts/retrieval-index.ts", "{{args}}"] }]
+
+[tasks."retrieval:index".flags.review]
+help = "Use the isolated repository database"
+
+[tasks."review:verify"]
+run = [{ argv = ["bun", "scripts/review-verify.ts", "{{args}}"] }]
+
+[tasks."review:verify".flags.full]
+help = "Run dependencies, complete project checks and live Chinese retrieval"
+
+[tasks."review:build"]
+run = [{ argv = ["bun", "scripts/review-wiki.ts", "{{args}}"] }]
+
+[[tasks."review:build".args]]
+name = "target"
+default = ""
+help = "File or directory to process; omit for all materials"
+
+[tasks."review:build".flags.generate]
+help = "Generate missing Wiki descriptions with the configured model"
+
+[tasks."review:analyze"]
+run = [{ argv = ["bun", "scripts/review-knowledge.ts", "{{args}}"] }]
+
+[[tasks."review:analyze".args]]
+name = "target"
+default = ""
+help = "File or directory to process; omit for all materials"
+
+[tasks."review:analyze".flags.modules]
+help = "Update affected modules and existing ancestors"
+
+[tasks."review:analyze".flags.files-only]
+help = "Only analyze source materials"
+
+[tasks."review:analyze".flags.retry]
+help = "Retry unfinished model work"
+
+[tasks."review:generate"]
+run = [{ argv = ["bun", "scripts/review-knowledge.ts", "{{args}}"] }]
+
+[[tasks."review:generate".args]]
+name = "target"
+default = ""
+help = "File or directory to process; omit for all materials"
+
+[tasks."review:generate".flags.modules]
+help = "Update affected modules and existing ancestors"
+
+[tasks."review:generate".flags.files-only]
+help = "Only analyze source materials"
+
+[tasks."review:generate".flags.retry]
+help = "Retry unfinished model work"

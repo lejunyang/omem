@@ -1,3 +1,4 @@
+import { taskFlag, taskTargets } from "./task-args.js";
 import { restoreReviewKnowledge, writeReviewKnowledgeIndex } from "../apps/server/src/review/knowledge.js";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,8 +13,8 @@ import { exportGeneratedUnderstanding, GENERATED_DIR } from "../apps/server/src/
 import { moduleForPath } from "../packages/contracts/src/code-modules.js";
 
 const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();
-const generate = process.argv.includes("--generate");
-const targets = process.argv.filter(a => a.startsWith("--target=")).map(a => a.slice(9));
+const generate = taskFlag("generate");
+const targets = taskTargets();
 if (generate && !targets.length) throw new Error("Specify --target=<repo-relative file or directory>; generation is explicitly scoped");
 const store = createReviewStore(root);
 const stage = join(root, ".repo-review/runtime/wiki-build");

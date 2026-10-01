@@ -1,4 +1,4 @@
-/** Shared personal/review development lifecycle; direct Node children, explicit
+/** Shared personal/review development lifecycle; direct Bun children, explicit
  * proxy ports, bounded shutdown and child failure propagation. */
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { selectDevPort } from "./dev-ports.js";
@@ -8,7 +8,7 @@ const label = review ? "repo-review" : "omem";
 let API_PORT: number;
 let WEB_PORT: number;
 const repoRoot = process.cwd();
-const node = process.execPath;
+const bun = process.execPath;
 
 // ---------------------------------------------------------------------------
 // Child lifecycle helpers.
@@ -91,14 +91,14 @@ async function main(): Promise<void> {
   }
 
   apiChild = spawn(
-    node,
-    ["--import", "tsx", ...(review ? [] : ["--watch"]), review ? "apps/server/src/review/main.ts" : "apps/server/src/main.ts"],
+    bun,
+    [...(review ? [] : ["--watch"]), review ? "apps/server/src/review/main.ts" : "apps/server/src/main.ts"],
     { cwd: repoRoot, stdio: "inherit", detached: process.platform !== "win32",
       env: { ...process.env, OMEM_PORT: String(API_PORT), REVIEW_PORT: String(API_PORT), REVIEW_WEB_PORT: String(WEB_PORT) } },
   );
   webChild = spawn(
-    node,
-    ["--import", "tsx", "scripts/dev-review-vite.ts"],
+    bun,
+    ["scripts/dev-review-vite.ts"],
     {
       cwd: repoRoot,
       stdio: "inherit",

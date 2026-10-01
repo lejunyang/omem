@@ -13,6 +13,15 @@ url = "https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz"
 file_name = "node-v24.18.1-linux-x64.tar.gz"
 checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
 
+[platforms.macos-arm64.tools.bun]
+request = "latest"
+version = "1.4.2"
+
+[platforms.macos-arm64.tools.bun.artifact]
+url = "https://registry.npmjs.org/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-1.4.2.tgz"
+file_name = "bun-1.4.2.tgz"
+checksum = "sha512:31775990fd5f79ab6ac59fbf5535d61b50558cce0e1817a1558d90f3c11e523ffb2f450c782188b66c8f61337ec31be5189e85eba244b73b30f86bd059ec276a"
+
 [models.memory-zh]
 provider = "huggingface"
 repository = "Xenova/bge-small-zh-v1.5"
@@ -66,14 +75,14 @@ installer = "pnpm"
 installer_version = "11.28.3"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "88b7678585cab2664e50c7382ec92aa4c77e4e9ba085f84b74d629594f9bb6e2"
+manifest_sha256 = "4eadab2602e5075f1cf65a68da2ba9daac18c2f8a8b48cd2ceeb3d475f35213f"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
 [deps.pnpm.native_lock]
 kind = "pnpm-lock"
 path = "pnpm-lock.yaml"
-sha256 = "6bade774792472d990cbb6595c952395d6b4f409ea0053d0481bb26416ed05bf"
+sha256 = "af6c4febeb0590bc65098829de37db8d325c5e805198c2de2c4dc3a73225f72a"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

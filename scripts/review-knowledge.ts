@@ -1,3 +1,4 @@
+import { taskFlag, taskTargets } from "./task-args.js";
 import { restoreReviewKnowledge, writeReviewKnowledgeIndex } from "../apps/server/src/review/knowledge.js";
 /** Explicit repository application of the shared material knowledge pipeline. */
 import { copyFileSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
@@ -23,16 +24,16 @@ if (config.transport !== "acp" || !config.command) throw Error("Knowledge roles 
 const profile = profileSchema.parse({ id: "traex", name: "Repository knowledge", transport: "acp", command: config.command, args: config.args ?? [], model: config.model, effort: config.effort, timeoutMs: config.timeoutMs, maxContextChars: 200000 });
 const concurrency = Number(process.env.REVIEW_KNOWLEDGE_CONCURRENCY ?? 3);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 6) throw Error("REVIEW_KNOWLEDGE_CONCURRENCY must be 1..6");
-const only = process.argv.filter(a => a.startsWith("--only=") || a.startsWith("--target=")).map(a => a.slice(a.indexOf("=")+1));
-const withModules = process.argv.includes("--modules");
-const filesOnly = process.argv.includes("--files-only") || (only.length > 0 && !withModules);
+const only = taskTargets();
+const withModules = taskFlag("modules");
+const filesOnly = taskFlag("files-only") || (only.length > 0 && !withModules);
 const groupFor = (path: string) => /^(apps|packages|scripts)\//.test(path) ? moduleForPath(path) : path.startsWith("docs/") ? "docs-" + (path.split("/")[1] ?? "root") : "project";
 const store = createReviewStore(root), repository = createReviewKnowledgeRepository(store);
 const runtime = join(root, ".repo-review/runtime");
 const stage = join(runtime, "knowledge-staging"), assets = join(root, ".repo-review/knowledge/articles");
 mkdirSync(stage, { recursive: true }); mkdirSync(assets, { recursive: true });
 const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, "knowledge-agents"), new RuntimeRequestRepository(store.db)), profile,
-  { concurrency, retryTag: process.argv.includes("--retry") ? new Date().toISOString() : undefined, budget: config, log: m => console.log(new Date().toISOString(), m), onPublish: a => {
+  { concurrency, retryTag: taskFlag("retry") ? new Date().toISOString() : undefined, budget: config, log: m => console.log(new Date().toISOString(), m), onPublish: a => {
     writeKnowledgeArticle(stage, a);
     for (const ext of ["json", "md"]) copyFileSync(join(stage, `${digest(a.document.key)}.${ext}`), join(assets, `${digest(a.document.key)}.${ext}`));
   } });

@@ -13,7 +13,7 @@
  *    flake was EBUSY unlinking omem.sqlite-wal because rmSync ran before the
  *    OS released SQLite file handles on Windows)
  *  - termination contract: child.kill(SIGTERM) behavior differs by platform.
- *    On Windows a piped child.kill only TerminateProcesses the tsx CLI wrapper
+ *    On Windows a piped child.kill only TerminateProcesses the Bun orchestrator
  *    (the orchestrator's SIGTERM handler does NOT run); we assert the forced
  *    contract: tree reap + ports release. On POSIX we assert the real graceful
  *    path: the orchestrator's handler runs and exits 0.
@@ -43,8 +43,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const node = process.execPath;
-const tsxCli = "node_modules/tsx/dist/cli.mjs";
+const bun = "bun";
 const isWin = process.platform === "win32";
 
 // ---------------------------------------------------------------------------
@@ -131,7 +130,7 @@ function killTree(pid: number): Promise<void> {
 }
 
 function spawnOrchestrator(env: NodeJS.ProcessEnv) {
-  const child = spawn(node, [tsxCli, "scripts/dev-review.ts"], {
+  const child = spawn(bun, ["scripts/dev-review.ts"], {
     cwd: projectRoot,
     // Pipe (not ignore) so we can dump diagnostics on failure, but drain the
     // buffers so they never fill and stall the child.
@@ -230,7 +229,7 @@ async function bootAndShutdown(
 
     // Await the orchestrator's own exit event (real code/signal) BEFORE we
     // touch ports or fixtures. On Windows the forced-kill path may leave the
-    // tsx wrapper alive briefly; the finally block reaps the tree regardless.
+    // Bun orchestrator alive briefly; the finally block reaps the tree regardless.
     const exited = await waitForChildExit(child, isWin ? 5_000 : 20_000);
     exitCode = exited.code;
     console.log(`[review-dev] orchestrator exit: code=${exited.code} signal=${exited.signal}`);
@@ -318,7 +317,7 @@ describe("dev-review orchestrator", { timeout: 120_000 }, () => {
           webPort,
           fixture,
           async (child, _pid) => {
-            // On Windows this is TerminateProcess on the tsx CLI wrapper; the
+            // On Windows this is TerminateProcess on the Bun orchestrator; the
             // orchestrator's SIGTERM handler never runs, so exitCode will be a
             // forced-kill code (1) and the finally reaps the tree. On POSIX
             // this reaches the handler and we expect a clean exit 0.
