@@ -57,8 +57,8 @@ describe("B2-02 buffered input acceptance", () => {
     };
     const capture = captureSchema.parse(hookInput(rawEvent));
     const forwarded = spawnSync(
-      process.execPath,
-      ["--import", "tsx", "apps/server/src/hook-forward.ts"],
+      "bun",
+      ["apps/server/src/hook-forward.ts"],
       {
         cwd: process.cwd(),
         input: JSON.stringify(rawEvent),

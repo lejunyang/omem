@@ -1,3 +1,4 @@
+import { taskFlag } from "./task-args.js";
 /** Reproducible repository acceptance. Reports describe this run only. */
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
@@ -15,7 +16,7 @@ import { readRetrievalConfig } from "../apps/server/src/retrieval/factory.js";
 import { SemanticRetrieval } from "../apps/server/src/retrieval/semantic.js";
 
 const root=process.env.REVIEW_REPO_ROOT ?? process.cwd();
-const full=process.argv.includes('--full');
+const full=taskFlag("full");
 const at=new Date().toISOString(), runId=at.replace(/[:.]/g,'-');
 const output=join(root,'.repo-review/knowledge/verification.json');
 const history=join(root,'.repo-review/knowledge/verification/history');
@@ -31,20 +32,22 @@ const initialDigest=sourceDigest();
 const queryPath=join(root,'.repo-review/knowledge/verification/queries.json');
 const queryDigest=hash(readFileSync(queryPath));
 const checks: {name:string;state:'passed'|'failed'|'skipped';details?:unknown}[]=[];
-async function command(name:string,args:string[]) {
+async function command(name:string,args:string[], executable="osdk") {
   console.log('CHECK',name);
   const chunks:Buffer[]=[];
   const result=await new Promise<{exitCode:number|null;error?:string}>(resolve=>{
-    const child=spawn('osdk',args,{cwd:root,stdio:['ignore','pipe','pipe']});
+    const child=spawn(executable,args,{cwd:root,stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',chunk=>chunks.push(Buffer.from(chunk)));child.stderr.on('data',chunk=>chunks.push(Buffer.from(chunk)));
     child.on('error',error=>resolve({exitCode:null,error:String(error)}));child.on('close',exitCode=>resolve({exitCode}));
   });
   const bytes=Buffer.concat(chunks), log=join(logs,name+'.log');writeFileSync(log,bytes);
-  checks.push({name,state:result.exitCode===0?'passed':'failed',details:{command:['osdk',...args],...result,log:relative(root,log),sha256:hash(bytes)}});
+  checks.push({name,state:result.exitCode===0?'passed':'failed',details:{command:[executable,...args],...result,log:relative(root,log),sha256:hash(bytes)}});
   console.log('RESULT',name,result.exitCode);
 }
 for(const [name,args] of [['dependencies',['deps','--frozen']],['project',['run','check']],['liveChineseRetrieval',['run','retrieval:verify']]] as const) {
-  if(full) await command(name,[...args]);else checks.push({name,state:'skipped',details:'Run with --full; earlier results are not inherited.'});
+  // A Bun child uses the already selected executable, avoiding recursive osdk
+  // shim entry while preserving the exact managed runtime and its guard.
+  if(full) await (name==='liveChineseRetrieval' ? command(name,['scripts/live-retrieval-smoke.ts'],process.execPath) : command(name,[...args]));else checks.push({name,state:'skipped',details:'Run with --full; earlier results are not inherited.'});
 }
 const report: Record<string,unknown>={version:4,recordedAt:at,implementationCommit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),sourceDigest:initialDigest,queryDigest,mode:full?'full':'repository',checks,
   scope:'本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。',
