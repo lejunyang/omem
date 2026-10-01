@@ -58,6 +58,27 @@ try {
     if (/highlight|dynamic import/i.test(message.text()) && ["warning", "error"].includes(message.type())) errors.push(message.text());
   });
 
+  await check("startup: unavailable review API waits and recovers without personal polling", async () => {
+    let unavailable = true;
+    const personalRequests: string[] = [];
+    page.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      if (/^\/api\/(health|profiles|sources|tasks|notifications|changes|jobs|proposals|decisions)$/.test(path)) personalRequests.push(path);
+    });
+    await page.route("**/api/review/health", route => unavailable
+      ? route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"API starting"}' })
+      : route.continue());
+    await page.goto(BASE + "/");
+    await expect(page.getByRole("heading", { name: "正在连接服务" })).toBeVisible();
+    await expect(page.getByText("服务暂未就绪（HTTP 503）")).toBeVisible();
+    await sleep(2700);
+    expect(personalRequests).toEqual([]);
+    unavailable = false;
+    await expect(page.getByRole("button", { name: "仓库知识", exact: true })).toBeVisible({ timeout: 10000 });
+    expect(personalRequests).toEqual([]);
+    await page.unroute("**/api/review/health");
+  });
+
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(BASE + "/#/overview");

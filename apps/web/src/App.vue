@@ -53,6 +53,10 @@ const notificationOpen = ref(false);
 const notificationLoading = ref(false);
 const error = ref("");
 const reviewMode = ref(false);
+const connecting = ref(true);
+const connectionError = ref("");
+let bootRetryTimer: ReturnType<typeof setTimeout>;
+const booting = ref(false);
 const busy = ref(false);
 const toast = ref("");
 const token = ref("");
@@ -155,24 +159,43 @@ async function refresh() {
   }
 }
 async function boot() {
+  if (booting.value) return;
+  booting.value = true;
+  clearTimeout(bootRetryTimer);
+  clearInterval(pollTimer);
   error.value = "";
+  connectionError.value = "";
   // Review mode: the dev/prod server behind /api is the repo-review knowledge base,
   // not the personal workspace. Detect it before touching business APIs.
   try {
-    const r = await fetch("/api/review/health");
+    const token = sessionStorage.getItem("omem-token");
+    const r = await fetch("/api/review/health", {
+      headers: token ? { Authorization: "Bearer " + token } : {},
+      signal: AbortSignal.timeout(5000),
+    });
     if (r.ok) {
       const h = (await r.json()) as { mode?: string };
       if (h && h.mode === "review") {
         reviewMode.value = true;
+        connecting.value = false;
+        booting.value = false;
         return;
       }
+      throw Error("服务返回了无法识别的运行模式");
     }
-  } catch {
-    /* network error falls through to the normal workspace boot below */
-  }
-  try {
+    // Only a real missing review route identifies the personal server. A proxy
+    // failure while the API is syncing must never start personal API polling.
+    if (r.status !== 404) throw Error(r.status === 401 ? "服务需要访问令牌" : `服务暂未就绪（HTTP ${r.status}）`);
     const health = await api<{ notificationMode: string }>("/health");
     notificationMode.value = health.notificationMode;
+    connecting.value = false;
+  } catch (e) {
+    connectionError.value = e instanceof Error ? e.message : String(e);
+    booting.value = false;
+    bootRetryTimer = setTimeout(() => void boot(), 2000);
+    return;
+  }
+  try {
     profiles.value = await api("/profiles");
     if (!profiles.value.some((p) => p.id === profileId.value))
       profileId.value = profiles.value[0]?.id || "";
@@ -181,6 +204,9 @@ async function boot() {
       await openRevision(sources.value[0].id, false);
   } catch (e) {
     error.value = String(e);
+  } finally {
+    booting.value = false;
+    pollTimer = setInterval(() => void refresh(), 2500);
   }
 }
 async function openRevision(id: string, navigate = true) {
@@ -398,18 +424,27 @@ function saveToken() {
   token.value = "";
   void boot();
 }
-onMounted(async () => {
-  await boot();
-  if (!reviewMode.value)
-    pollTimer = setInterval(() => void refresh(), 2500);
-});
+onMounted(() => void boot());
 onBeforeUnmount(() => {
+  clearTimeout(bootRetryTimer);
   clearInterval(pollTimer);
   clearTimeout(toastTimer);
 });
 </script>
 <template>
-  <ReviewApp v-if="reviewMode" />
+  <OmShell v-if="connecting">
+    <OmPanel title="正在连接服务">
+      <p role="status">正在等待服务就绪，连接恢复后会自动进入对应工作区。</p>
+      <p v-if="connectionError">{{ connectionError }}</p>
+      <OmButton :disabled="booting" @click="boot">重新连接</OmButton>
+      <details><summary>访问令牌</summary>
+        <label for="startup-token">服务访问令牌</label>
+        <input id="startup-token" v-model="token" type="password" autocomplete="off" />
+        <OmButton @click="saveToken">保存并连接</OmButton>
+      </details>
+    </OmPanel>
+  </OmShell>
+  <ReviewApp v-else-if="reviewMode" />
   <OmShell v-else
     ><template #top
       ><div class="top-controls">
