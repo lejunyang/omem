@@ -2,81 +2,74 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
-    "title": "知识撰写角色的结构化输出合同",
-    "summary": "该文件声明 KnowledgeBatch.v1 的 JSON Schema：一批输出包含 1–16 个知识文档，每份文档由元数据、Markdown 章节、可追溯引用和待确认问题组成。它定义的是静态格式约束，不能单独证明运行时已经执行校验、引用抽取或语义复核。",
+    "title": "知识文章批量输出合同",
+    "summary": "该 Schema 定义知识写作角色向宿主提交批量文章时的数据边界：一批包含 1–16 篇文档，每篇由基本信息、Markdown 章节、可追溯引用和待确认问题组成。它约束字段类型、数量、长度、枚举和未知字段，但仅能证明输出格式要求，不能单独证明宿主已完成引用抽取、独立复核或知识发布。",
     "category": "configuration",
     "sections": [
       {
-        "key": "document_shape",
-        "title": "文档与章节结构",
-        "body": "合同将顶层数据限定为版本号和文档数组，并把单批文档数限制为 1–16。文档属性包括键、标题、摘要、分类以及章节；分类覆盖架构、需求、进展、实现、测试、配置和研究等用途。章节数量为 1–20，每节必须提供格式受限的 key、标题与 Markdown 正文，且章节对象不接受额外字段。[[c1]]\n\n文档级 required 列表进一步明确：每份文档都必须包含 key、title、summary、category、sections、citations 和 questions，并由 `additionalProperties: false` 排除未声明属性。顶层同样要求 schema_version 与 documents，且拒绝额外属性。[[c3]] 这些内容能证明合同如何声明有效数据形状，但不能据此断言实际生成结果已经过运行时验证。"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "该合同用于把模型生成的知识文章变成宿主能够稳定校验和处理的结构化数据。顶层固定为版本号与文档数组，一次允许提交 1–16 篇；每篇必须提供键、标题、摘要、类别、章节、引用和问题清单。类别覆盖概览、架构、需求、进展、实现、测试、配置、工作流等常见 Wiki 主题，方便后续按用途组织内容。参考 [[c1]]"
       },
       {
-        "key": "evidence_and_questions",
-        "title": "证据与不确定性表达",
-        "body": "引用对象要求人读标签、引用理由、受限关系、目标与 quote；目标可以指向材料或文章，并可携带材料行号或文章章节。关系仅允许 supports、explains、implements、depends_on、calls、contradicts、background 和 tracks。quote 的描述要求留空，由宿主依据固定行范围抽取原文。[[c2]]\n\nquestions 最多 20 项，每项必须表达问题、原因、下一步、是否阻塞以及关联引用键。它让未确认事项可以与证据一起结构化保存，而不必伪装成结论。不过，Schema 本身无法证明宿主确实抽取了原文，也不能证明引用语义足以支撑附近论断；这些仍需调用链与行为测试佐证。"
+        "key": "article_structure",
+        "title": "文章、章节与引用如何组织",
+        "body": "文章正文由 1–20 个章节组成；章节包含稳定键、标题和 Markdown 正文，并禁止额外字段。引用是独立结构：除人读标签和引用理由外，还要声明关系类型以及材料或文章目标；材料目标可定位到固定行号，文章目标可定位到章节。`quote` 字段仍是必填项，但说明要求保持为空，精确引文由宿主依据固定范围抽取。这一设计把作者选择证据位置与宿主复制原文分开，有利于后续复核。参考 [[c2]]"
+      },
+      {
+        "key": "validation_boundary",
+        "title": "校验范围与能力边界",
+        "body": "合同同时定义待确认问题，可记录问题、原因、下一步、是否阻塞以及关联引用，适合保留证据不足或需要选择的事项。各层普遍设置长度、数量和格式限制，并通过 `additionalProperties: false` 拒绝未声明字段。参考 [[c3]]\n\n需要注意：这份文件是输出结构规范，只说明什么 JSON 可以通过结构校验；它没有展示引用是否真实支持论断、行号是否存在、文档键是否覆盖任务目标，也不能据此认定独立 verifier、发布流程或运行时处理已经实现。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文档属性与章节约束",
-        "reason": "支持附近关于批量数量、文档属性、分类枚举以及章节必填字段和额外属性限制的说明。",
+        "label": "批量文档基本结构",
+        "reason": "支持顶层版本、文档批次规模以及每篇文档基本字段和类别范围的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
-          "startLine": 5,
-          "endLine": 77
+          "startLine": 1,
+          "endLine": 47
         },
-        "quote": "    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLen"
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties"
       },
       {
         "key": "c2",
-        "label": "引用与问题结构",
-        "reason": "支持附近关于引用关系、目标定位、quote 宿主抽取约定及 questions 必填结构的说明。",
+        "label": "章节与引用合同",
+        "reason": "支持章节数量与字段、引用关系、目标定位方式以及 quote 由宿主抽取的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
-          "startLine": 78,
-          "endLine": 206
+          "startLine": 48,
+          "endLine": 164
         },
-        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+        "quote": "          \"sections\": {\n            \"minItems\": 1,\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,59}$\"\n     "
       },
       {
         "key": "c3",
-        "label": "文档与顶层必填约束",
-        "reason": "直接支持附近关于文档全部必填字段、文档级额外属性禁用，以及顶层必填字段和额外属性限制的论断。",
-        "relation": "supports",
+        "label": "问题字段与严格校验",
+        "reason": "支持待确认问题的数据结构、文档必填字段和禁止额外属性的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
-          "startLine": 208,
+          "startLine": 166,
           "endLine": 227
         },
-        "quote": "        },\n        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalP"
+        "quote": "          \"questions\": {\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"question\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1,\n                  \"maxLength\": 1000\n                }"
       }
     ],
     "questions": [
       {
-        "question": "知识撰写角色的输出是否在运行时使用该 Schema 做强制校验，并由宿主补全引用原文？",
-        "why": "材料只提供 JSON Schema 及 quote 字段中的宿主行为描述，没有提供验证器、引用抽取调用链或行为测试，不能把格式声明视为已实现能力。",
-        "nextStep": "检查角色执行器的 Schema 加载、失败处理和引用抽取实现，并补充有效输出、越界行号、多余字段及抽取结果的行为测试。",
+        "question": "宿主在结构校验之后，是否还会验证目标键、材料行号、正文引用键和 citations 数组之间的一致性？",
+        "why": "当前材料只定义 JSON Schema；其中 citationKeys 仅声明为字符串数组，目标行号也只有数值范围约束，因此无法确认这些跨字段和外部资源约束是否由运行时落实。",
+        "nextStep": "检查宿主的解析与独立复核实现，并用不存在的目标、越界行号、正文缺失引用和孤立 citation 等案例验证实际行为。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c3"
-        ]
-      },
-      {
-        "question": "运行时是否确实使用该 Schema 强制校验输出，并由宿主按固定行范围补全引用原文？",
-        "why": "草稿已明确把这些内容标为未确认事项；所给材料只定义静态合同和宿主行为描述，没有展示验证器、引用抽取调用链或行为测试。",
-        "nextStep": "检查角色执行器的 Schema 加载、校验失败处理、引用抽取实现及相应行为测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
           "c2",
           "c3"
         ]
@@ -88,47 +81,22 @@
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/output.schema.json",
       "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/prompt.md",
-      "digest": "a139c9318e2687fb85358fbd369d5b7ac7f0dc0fb1369c4261a714d3e1ca324e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/SKILL.md",
-      "digest": "eeb26db50c60090599b6de6aac0804459a184d21afdcad5e07e3dbe49d6b1054"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/skills/omem-knowledge-writer/agents/openai.yaml",
-      "digest": "00a4929cd148fb583122620865b904f4030ceb4c3d16781a02cb248ffaf148f6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/material-analyst/1/manifest.json",
-      "digest": "7f61ba46e4f43f27d72c37ab46ea98b2e3206700a2bd3f4a6c3dd19adb3c136f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/material-analyst/1/output.schema.json",
-      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:24:46.359Z",
+    "at": "2026-10-01T06:58:55.719Z",
     "trace": {
-      "runId": "6fb82252-75d6-4b21-88d5-ec78686ccb46",
+      "runId": "65913d3b-5a5f-44bf-a956-7ff0dbc10a57",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "b1ed6ac1919e20b9302850ea22b05f239c58044b8e8a81f04895d725763194a5",
-      "contextHash": "70cad412e1d0e260226e1d56440df6973bee07375c95596bdb89569551f99432",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "e9e25ec890416bad42b76fb228bddd7100a518a1ba28aad75ce36aaccc8f4d9a",
+      "contextHash": "8b2a5382023fd9a9327ff32e6f68b5f9f2ba3810b723bc555e798d055ad0be79",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2bda0c5966449631e4d2d99a2b4f7b0baf82488376f9963161b0a1d3874f6c22",
+      "fingerprint": "d63263fbfcd5def0fe7b5fdceb7526a70b8347f5761452dd540f86f69e3a3545",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -141,11 +109,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea0-25f2-7ec0-9985-c97f28da8f3e"
+        "01a0f642-0bc8-7b60-9e4e-e941dd31174f"
       ],
       "usage": {
-        "used": 24577,
-        "size": 760000,
+        "used": 23778,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -153,10 +121,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35293,
-          "utf8Bytes": 41581,
-          "estimatedTokens": 13861,
-          "budgetedTokens": 17327,
+          "chars": 14977,
+          "utf8Bytes": 17929,
+          "estimatedTokens": 5977,
+          "budgetedTokens": 7472,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -165,17 +133,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:24:59.519Z",
+    "at": "2026-10-01T06:59:11.721Z",
     "trace": {
-      "runId": "677133cc-131f-4e39-87d6-298a3808922c",
+      "runId": "a68e4c63-2046-4d02-b0d6-d92ae5e291a7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "bdb39dbf86213d9c759bfa483c4162e1a5f3253d5922421232fb0664d775316f",
-      "contextHash": "712fa7b2f5e02a00f67af4f0983ed747915a090e93eae838e27509bd462e9d39",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "d07923cdc90a74cbaf333ce938f5592764af199c5ee243516c5224f488f1990c",
+      "contextHash": "14ec40686324ae4a6ff8cdf3b24c7bddfd6a1c9b3acb05c743954b8a5c67fe60",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e0cad97e427339a83eed49130ab909ee1518db39061083c3d7014b9c582f5192",
+      "fingerprint": "1ac9954509046e5f07be3d8672dbc8790ec7e97c6c637ad1ad9138b4ebf24581",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -188,11 +156,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea0-6fe2-7763-b4ce-bbe33fbfa4b9"
+        "01a0f642-63ca-7d60-8815-a6e665077a6d"
       ],
       "usage": {
-        "used": 23169,
-        "size": 760000,
+        "used": 23036,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -200,10 +168,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 34061,
-          "utf8Bytes": 40201,
-          "estimatedTokens": 13401,
-          "budgetedTokens": 16752,
+          "chars": 15071,
+          "utf8Bytes": 17859,
+          "estimatedTokens": 5953,
+          "budgetedTokens": 7442,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

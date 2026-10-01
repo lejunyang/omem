@@ -2,57 +2,111 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
-    "title": "知识写作角色运行清单",
-    "summary": "该清单定义 knowledge-writer 第 1 版：加载内联写作技能，输出 KnowledgeBatch.v1，并采用无工具、无会话复用和不继承用户扩展的隔离配置；其预算与复核角色同量级。",
+    "title": "知识写作角色的配置边界",
+    "summary": "该清单定义 knowledge-writer 第 1 版使用的运行配置、内联技能、结构化输出名称、隔离策略与预算参数。它记录的是角色声明，尚不能单独证明运行时如何执行校验、限额或修复。",
     "category": "configuration",
     "sections": [
       {
-        "key": "writer-contract",
-        "title": "写作角色与产物",
-        "body": "清单把运行单元标识为 `knowledge-writer` 第 1 版，使用 `traex` profile 和 `prompt.md`，并以内联方式加载带制品摘要的 `omem-knowledge-writer` 第 1 版技能。其输出 schema 是 `KnowledgeBatch.v1`，表明配置职责是生成结构化知识批次，而非作出 KnowledgeReview 判定。[[c1]]"
+        "key": "purpose",
+        "title": "面向结构化知识写作的角色",
+        "body": "该清单将角色标识为 **knowledge-writer 第 1 版**，引用 `traex` 配置并加载 `prompt.md`，用于把知识写作任务交给一组固定的角色资源处理。参考 [[c1]]\n\n角色声明输出模式为 `KnowledgeBatch.v1`，表明产物应遵循这一命名合同；但仅凭清单无法确认合同包含哪些字段，也无法确认宿主怎样解析或校验结果。参考 [[c2]]"
       },
       {
-        "key": "runtime-boundaries",
-        "title": "运行隔离与容量",
-        "body": "写作角色配置为完全禁用工具，每次建立新会话，且不继承用户技能或 MCP；这使其依赖宿主显式提供的材料与角色资源。上下文和输出上限分别为 96,000 与 24,000 token，结构修复最多尝试两次。[[c2]] 这些内容证明当前清单如何声明角色，不证明写作质量、引用语义核验或宿主执行状态；独立复核仍需由另一角色完成。"
+        "key": "skill-and-isolation",
+        "title": "固定技能与隔离运行",
+        "body": "写作能力通过 `omem-knowledge-writer` 第 1 版技能包以内联方式装载，并用工件摘要标识对应内容，为识别角色依赖的技能版本提供配置依据。参考 [[c3]]\n\n工具策略声明为 `none`，允许工具列表为空；会话不复用，也不继承用户技能或 MCP。因此，该角色无法通过清单声明的工具自行读取文件或补查资料，且不会从用户侧扩展这些能力。至于是否还有系统提示或其他运行时注入，材料没有说明。参考 [[c4]]"
+      },
+      {
+        "key": "budget-and-limits",
+        "title": "上下文、输出与修复预算",
+        "body": "清单为任务声明最多 96,000 个上下文 token、24,000 个输出 token，以及最多两次修复尝试。这些参数描述了期望的资源边界，可供运行时调度与约束角色执行。参考 [[c5]]\n\n不过，材料没有给出超限行为、修复触发条件或加载器实现；因此，两次修复不能直接解释为专门处理格式错误，也不能仅凭配置断言这些上限已被强制执行。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识写作角色与输出声明",
-        "reason": "支持 writer 的角色版本、profile、内联技能制品及 KnowledgeBatch.v1 输出职责。",
-        "relation": "explains",
+        "label": "角色与提示模板",
+        "reason": "支持角色标识、版本、运行配置引用和提示模板的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
           "startLine": 2,
-          "endLine": 17
+          "endLine": 8
         },
-        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"knowledge-writer\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-knowledge-writer\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"4dcfb9d9f050bb713"
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"knowledge-writer\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],"
       },
       {
         "key": "c2",
-        "label": "知识写作角色隔离与预算",
-        "reason": "支持无工具、会话不复用、不继承用户扩展以及上下文、输出和修复预算的说明。",
+        "label": "输出合同名称",
+        "reason": "支持角色声明采用 KnowledgeBatch.v1 输出模式，同时限定材料只提供模式名称。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
+          "startLine": 17,
+          "endLine": 17
+        },
+        "quote": "  \"output_schema\": \"KnowledgeBatch.v1\","
+      },
+      {
+        "key": "c3",
+        "label": "内联写作技能",
+        "reason": "支持技能包名称、版本、内联装载方式和工件摘要的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
+          "startLine": 9,
+          "endLine": 16
+        },
+        "quote": "  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-knowledge-writer\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"58888347e8f2147676ff81c21288668678a0316157558968f960e1cec3915034\"\n    }\n  ],"
+      },
+      {
+        "key": "c4",
+        "label": "工具与会话隔离",
+        "reason": "支持无可用工具、会话不复用以及不继承用户技能和 MCP 的配置结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
           "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c5",
+        "label": "生成预算参数",
+        "reason": "支持上下文、输出和修复尝试三项预算声明，并说明这些只是配置值。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
+          "startLine": 27,
           "endLine": 30
         },
-        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },\n  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
+        "quote": "  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_attempts\": 2"
       }
     ],
     "questions": [
       {
-        "question": "知识写作角色生成的 KnowledgeBatch.v1 是否必经独立 knowledge-verifier 后才能发布？",
-        "why": "当前清单只描述 writer 自身的产物和隔离策略，没有给出 writer、verifier 与发布步骤之间的编排或失败处理。",
-        "nextStep": "检查知识任务编排配置或运行 trace，确认复核是否强制、修订如何回流以及未通过结果是否会被发布。",
+        "question": "运行时是否会强制校验输出合同、工具策略和预算上限？",
+        "why": "当前材料只有角色清单，没有加载器实现、执行 trace 或失败行为，无法把配置声明视为已经验证的运行事实。",
+        "nextStep": "检查角色清单加载与执行代码，并抽查真实运行 trace 中的工具暴露、预算记录和合同校验结果。",
         "blocking": false,
         "citationKeys": [
-          "c1",
+          "c2",
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "KnowledgeBatch.v1 具体定义了哪些输出字段？",
+        "why": "清单只给出输出模式名称，未提供模式定义，无法据此确认文章、章节、引用和问题等具体结构。",
+        "nextStep": "补充 KnowledgeBatch.v1 的 schema 原文，并把字段组成的说明引用到该定义。",
+        "blocking": false,
+        "citationKeys": [
           "c2"
         ]
       }
@@ -61,66 +115,41 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/manifest.json",
-      "digest": "ced20e3fc7c32c1924bb1a75fb7c6a421c5325d5b5d2e0c5687da7a12b4be56c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/output.schema.json",
-      "digest": "17695868b9041caa6e53ea9fa41078ffb071e017cfc8809ecd37d877858ca280"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/prompt.md",
-      "digest": "00da70970c69048d908fe14b558e880e6a7cacb31a390545d3a33da6c6b2c1a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/SKILL.md",
-      "digest": "ae04527bbbee4a060f3efb902afe13f9874af8a41404e45a0defa4b0a2abb903"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/agents/openai.yaml",
-      "digest": "24fba9d13ed186bfc6973935c56d200db5432ff09ebb5f69fc91916255635b6f"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
-      "digest": "a02e6973acf352122a5a1e4b8cd28da85bdcd59715db541557c7ce61e0baacda"
+      "digest": "991986de6bcf9d74a45070a8d23bff5dfe361480d5c4c226f95bf98fd892a77f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:47:44.213Z",
+    "at": "2026-10-01T06:59:20.018Z",
     "trace": {
-      "runId": "eba62761-4eda-4339-9d0d-071cb7f788a9",
-      "roleId": "material-analyst",
+      "runId": "f63e3b06-8fea-4907-8bab-6a2d04df8967",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "c41d8b74905d1e9e85247026f8b0ecda590dcc11fae38f9ab9ab03f84ad5d0cb",
-      "contextHash": "5e8e684996dd44e0cdbbd19d15c5279a58045aeb0f63b1acececa6b96ce5b455",
-      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "fb9394e23d1c19e9d93b9b4e98fbeeb5749356649fe48ed0513ca18cbb496c36",
+      "contextHash": "ff5a8845825aa71be05142ff155fe3cade8ea9556132a3b4f4649af71482e026",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1441fa35b1d751d16d60e984c90d615a41284a31263089e077ace17121d49ece",
+      "fingerprint": "4304adefd3aa07c5711839dc51f8bcd2457a578e1133a645874def21c9ee5db5",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-material-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-e6be-7ce2-a873-c88d61f20c8e"
+        "01a0f642-7577-7480-8881-442ae0ad9c5c"
       ],
       "usage": {
-        "used": 21599,
-        "size": 760000,
+        "used": 25490,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -128,10 +157,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 18031,
-          "utf8Bytes": 20663,
-          "estimatedTokens": 6888,
-          "budgetedTokens": 8610,
+          "chars": 12423,
+          "utf8Bytes": 18511,
+          "estimatedTokens": 6171,
+          "budgetedTokens": 7714,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -140,17 +169,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:47:58.300Z",
+    "at": "2026-10-01T06:59:34.697Z",
     "trace": {
-      "runId": "54df86c5-9768-4a3a-ac48-2c36bf224c36",
+      "runId": "68faf721-f3b3-46e3-a349-db1dc3d8154d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "defa0673e3d7e6bfb1530afa5e0ae4dc476a2ff7dea3ef15a2580272092e9ae5",
-      "contextHash": "f1a93f52ec65e654550f997da015276b36423fba5d50f553472fd86510842d9e",
+      "promptHash": "67f76f2f26dbb97305bbd74004468241ff4c8830cd514cc5c319832442dbef3a",
+      "contextHash": "b474fd6ec31d24694d1b0fbb5fa2648766713a42114c125a90f9885dc51bb823",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c6d5b261646ceaf54b5eb3b3cc9860ff0c1114650c18ec6baea6ced98daf8fe9",
+      "fingerprint": "ee4d36b1a62e8f84526e69502488ff4d6e29c0352d262ac9263637f98c2d8fb8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -163,11 +192,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb5-765a-78a1-8aea-8f9a27e145d8"
+        "01a0f642-c2bf-77c1-ab55-7db875872482"
       ],
       "usage": {
-        "used": 22736,
-        "size": 760000,
+        "used": 21573,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -175,10 +204,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 27584,
-          "utf8Bytes": 36056,
-          "estimatedTokens": 12019,
-          "budgetedTokens": 15024,
+          "chars": 8181,
+          "utf8Bytes": 10913,
+          "estimatedTokens": 3638,
+          "budgetedTokens": 4548,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

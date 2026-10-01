@@ -2,52 +2,70 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/output.schema.json",
-    "title": "KnowledgeReview.v1 输出结构",
-    "summary": "该 JSON Schema 约束独立复核结果：每批包含 1–16 个逐文档 verdict，结论只能是 accepted 或 needs_revision，并可附带问题清单和结构化未决事项。",
-    "category": "implementation",
+    "title": "知识复核结果的数据合同",
+    "summary": "该 Schema 定义知识复核角色的结构化输出：一次可返回多个文档的接受或修订结论，并附带问题清单和需要进一步确认的事项。它约束输出格式，但不能单独证明复核流程已经运行或复核结果已被应用。",
+    "category": "configuration",
     "sections": [
       {
-        "key": "batch-verdicts",
-        "title": "批次与判定单位",
-        "body": "`KnowledgeReview.v1` 的顶层对象固定 `schema_version` 为 1，并要求提供 `verdicts`。批次必须包含 1–16 项，每项用最长 500 字符的 `documentKey` 对应一份草稿；`verdict` 只能取 `accepted` 或 `needs_revision`。[[c1]] 因而该合同表达的是逐文档二元复核结果，不包含评分、部分通过或自动改写正文的字段。"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "知识生成后需要稳定、可校验的复核结果格式，供宿主接收逐文档结论。该合同以 `schema_version: 1` 标识版本，要求顶层包含 `verdicts`，一次输出至少覆盖一个、最多覆盖十六个文档。它描述的是**复核输出的数据形状**，并不代表复核器已经执行，也不能证明某篇知识文章已经通过审核。参考 [[c1]]"
       },
       {
-        "key": "issues-questions",
-        "title": "问题与未决事项",
-        "body": "每个 verdict 可列最多 30 条、每条最长 1,600 字符的 `issues`。`questions` 最多 20 项，每项必须同时给出问题、原因、下一步、是否阻塞及引用键列表，且禁止额外属性。[[c2]] 顶层和 verdict 同样关闭额外属性并要求关键字段齐全，使宿主可进行严格结构校验；但 schema 只保证形状，不能证明结论在语义上正确。[[c3]]"
+        "key": "verdict-flow",
+        "title": "逐文档记录结论与问题",
+        "body": "每条结果通过 `documentKey` 对应被复核文档，`verdict` 只能取 `accepted` 或 `needs_revision`。`issues` 是相关问题细节的文本数组：每项必须非空、最长 1600 个字符，单个文档最多记录三十项。Schema 没有规定 `issues` 与某一种结论之间的条件关系，因此不能仅据此断言接受结论必须没有问题，或问题只用于解释修订结论。参考 [[c2]]"
+      },
+      {
+        "key": "clarification",
+        "title": "把不确定事项结构化",
+        "body": "复核结果还可携带结构化 `questions`。每个问题必须同时给出问题内容、提出原因、下一步行动、是否阻塞和相关引用键，使缺少背景或证据的事项能够被后续流程明确处理。参考 [[c3]]\n\n`documentKey`、`verdict`、`issues` 和 `questions` 都是每条结果的必填字段；结果对象与顶层对象均禁止额外属性。若要增加新状态或元数据，需要先演进 Schema，而不能直接写入未声明字段。参考 [[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "复核批次与判定枚举",
-        "reason": "支持 schema 版本、批次数量、documentKey 以及两种 verdict 取值的说明。",
+        "label": "复核输出顶层结构",
+        "reason": "支持合同版本、顶层 verdicts 字段及单批文档数量范围的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/output.schema.json",
           "startLine": 1,
-          "endLine": 27
+          "endLine": 12
         },
-        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"verdicts\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\""
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"verdicts\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\","
       },
       {
         "key": "c2",
-        "label": "问题与未决事项字段",
-        "reason": "支持 issues 数量和长度，以及 questions 必填结构与约束的说明。",
+        "label": "文档结论与问题清单",
+        "reason": "支持 documentKey、二态 verdict 以及 issues 的数量和文本约束，并表明 Schema 未声明二者的条件关系。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/output.schema.json",
-          "startLine": 28,
-          "endLine": 78
+          "startLine": 16,
+          "endLine": 35
         },
-        "quote": "          \"issues\": {\n            \"maxItems\": 30,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1,\n              \"maxLength\": 1600\n            }\n          },\n          \"questions\": {\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"it"
+        "quote": "          \"documentKey\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLength\": 500\n          },\n          \"verdict\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"accepted\",\n              \"needs_revision\"\n            ]\n          },\n          \"issues\": {\n            "
       },
       {
         "key": "c3",
-        "label": "严格必填与顶层合同",
-        "reason": "支持 verdict 必填字段、禁止额外属性以及顶层 KnowledgeReview.v1 标识的说明。",
+        "label": "待确认问题结构",
+        "reason": "支持结构化问题的字段组成、长度限制和必填要求。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/output.schema.json",
+          "startLine": 37,
+          "endLine": 76
+        },
+        "quote": "          \"questions\": {\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"question\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1,\n                  \"maxLength\": 1000\n                }"
+      },
+      {
+        "key": "c4",
+        "label": "必填字段与严格对象约束",
+        "reason": "支持逐条结果的必填字段，以及结果对象和顶层对象禁止额外属性的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -63,66 +81,41 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/manifest.json",
-      "digest": "ced20e3fc7c32c1924bb1a75fb7c6a421c5325d5b5d2e0c5687da7a12b4be56c"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/output.schema.json",
       "digest": "17695868b9041caa6e53ea9fa41078ffb071e017cfc8809ecd37d877858ca280"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/prompt.md",
-      "digest": "00da70970c69048d908fe14b558e880e6a7cacb31a390545d3a33da6c6b2c1a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/SKILL.md",
-      "digest": "ae04527bbbee4a060f3efb902afe13f9874af8a41404e45a0defa4b0a2abb903"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/agents/openai.yaml",
-      "digest": "24fba9d13ed186bfc6973935c56d200db5432ff09ebb5f69fc91916255635b6f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
-      "digest": "a02e6973acf352122a5a1e4b8cd28da85bdcd59715db541557c7ce61e0baacda"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:47:44.213Z",
+    "at": "2026-10-01T06:58:39.608Z",
     "trace": {
-      "runId": "eba62761-4eda-4339-9d0d-071cb7f788a9",
-      "roleId": "material-analyst",
+      "runId": "c81f808c-5584-464d-9acb-0aed1c74e2ab",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "c41d8b74905d1e9e85247026f8b0ecda590dcc11fae38f9ab9ab03f84ad5d0cb",
-      "contextHash": "5e8e684996dd44e0cdbbd19d15c5279a58045aeb0f63b1acececa6b96ce5b455",
-      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "00b591440e88b2c7d2bca2ac86f893108555b37ce9248e200047ccb171b955e9",
+      "contextHash": "8ed004aebbd88a3937547e8c14e9d37ad05a35cfab0a45b2f5ec5afa92705fa2",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1441fa35b1d751d16d60e984c90d615a41284a31263089e077ace17121d49ece",
+      "fingerprint": "52ce4a75397f2505f4219fc28289034f8338aa9792c151fe5f3ab930f7120705",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-material-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-e6be-7ce2-a873-c88d61f20c8e"
+        "01a0f641-c095-7c03-ba26-c00bdd166732"
       ],
       "usage": {
-        "used": 21599,
-        "size": 760000,
+        "used": 24977,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -130,10 +123,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 18031,
-          "utf8Bytes": 20663,
-          "estimatedTokens": 6888,
-          "budgetedTokens": 8610,
+          "chars": 14005,
+          "utf8Bytes": 18909,
+          "estimatedTokens": 6303,
+          "budgetedTokens": 7879,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -142,17 +135,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:47:58.300Z",
+    "at": "2026-10-01T06:58:53.286Z",
     "trace": {
-      "runId": "54df86c5-9768-4a3a-ac48-2c36bf224c36",
+      "runId": "3709d8fb-808a-41ff-b5bc-f3f7d557623c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "defa0673e3d7e6bfb1530afa5e0ae4dc476a2ff7dea3ef15a2580272092e9ae5",
-      "contextHash": "f1a93f52ec65e654550f997da015276b36423fba5d50f553472fd86510842d9e",
+      "promptHash": "2d43a9c48f272ea891850106e3cacd216cf5f0eebdee875cc6dfa12fa2d62c54",
+      "contextHash": "7cd6a2f2eadc0d37a857ecf83da616c075c859fe4678a5edd26162710c64bdf3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c6d5b261646ceaf54b5eb3b3cc9860ff0c1114650c18ec6baea6ced98daf8fe9",
+      "fingerprint": "4067d1d7e97c244f872f8e7295b8844eef76f0083675251130907e02ad58b78c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -165,11 +158,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb5-765a-78a1-8aea-8f9a27e145d8"
+        "01a0f642-22d7-7401-82e5-21e1d1c10e85"
       ],
       "usage": {
-        "used": 22736,
-        "size": 760000,
+        "used": 21729,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -177,10 +170,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 27584,
-          "utf8Bytes": 36056,
-          "estimatedTokens": 12019,
-          "budgetedTokens": 15024,
+          "chars": 10282,
+          "utf8Bytes": 12546,
+          "estimatedTokens": 4182,
+          "budgetedTokens": 5228,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

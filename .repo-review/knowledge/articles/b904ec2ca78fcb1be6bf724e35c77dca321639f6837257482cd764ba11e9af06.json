@@ -2,58 +2,76 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/components/OmStatusLine.vue",
-    "title": "OmStatusLine：内容来源层级状态提示",
-    "summary": "该组件用统一标签区分原始证据、派生说明、候选推断、过期内容、加载失败和人工整理，刻意不承担关系边状态展示。",
+    "title": "内容来源层级状态提示",
+    "summary": "一个轻量的 Vue 3 展示组件，用统一的中文标签和视觉样式区分原始证据、派生说明、候选判断、过期内容、加载错误与人工整理内容；它只表达内容的来源层级，不承担关系状态判断。",
     "category": "implementation",
     "sections": [
       {
-        "key": "semantic-role",
-        "title": "语义职责",
-        "body": "组件解决知识阅读中“内容从何而来、可信层级如何”的即时辨识问题。它接受六种封闭状态，并将其映射为中文标签；可选 `sourceNote` 用于补充来源说明。根元素采用 `role=\"note\"`，所以状态是正文旁的解释性信息，而不是可操作控件。[[c1]] 文件注释明确将它与关系状态徽章分开：这里表达内容的来源层级，关系边自身的确认状态应由其他组件承担。"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "知识阅读界面会同时呈现原始材料、系统生成的解释和尚未确认的判断。该组件在内容块前提供紧凑状态行，让读者先辨认内容的**来源与可信阶段**，避免把派生说明或候选猜测误读成原始证据。它明确不表示关系边的确认状态；关系状态应继续由其他徽章组件承担。参考 [[c1]]"
       },
       {
-        "key": "visual-boundary",
-        "title": "视觉编码与边界",
-        "body": "所有状态共享紧凑边框标签，派生说明和人工整理用不同左边框强调；候选使用警示色，过期内容带删除线，错误使用危险色背景，原始证据则保持基础样式。附加来源文字使用弱化颜色。[[c2]]\n\n组件没有默认分支：TypeScript 调用方只能传已声明状态，但若运行时收到异常值，标签可能为空且没有回退。颜色和部分背景值依赖外部主题变量或固定色值；材料没有显示图标、屏幕阅读器专用文本、状态切换逻辑或测试，因此不能确认仅凭颜色之外的可辨识性是否经过验证。"
+        "key": "rendering",
+        "title": "状态映射与渲染流程",
+        "body": "组件接收必填的 `kind` 和可选的 `sourceNote`。六种允许状态会映射为固定中文标签：原始证据、派生说明、候选未登记、已过期、加载失败和人工整理。模板始终显示标签，仅在提供说明时追加辅助文字；根节点带有 `role=\"note\"`，使这段信息在语义上成为内容注记。参考 [[c2]]\n\n```mermaid\nflowchart LR\n  A[kind] --> B[中文来源标签]\n  C[sourceNote 可选] --> D[补充说明]\n  B --> E[状态提示行]\n  D --> E\n```\n参考 [[c2]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "视觉区分与能力边界",
+        "body": "基础样式保持小字号、弱背景和单行标签；派生内容与人工整理使用不同左边框，候选状态采用警示色，过期状态增加删除线，错误状态使用危险色。原始状态没有专属覆盖样式，因此沿用基础外观。参考 [[c3]]\n\n组件只负责展示：状态集合由 TypeScript 联合类型封闭，传入方必须自行决定内容属于哪一类；它不执行数据校验、状态转换、点击交互或关系跳转。当前材料也未提供测试文件，因而无法确认无障碍读屏效果、长说明文本布局及各主题变量下的视觉表现。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "来源层级类型与可见标签",
-        "reason": "支持组件区分六种内容来源状态、显示来源补充信息且不承担关系状态的说明。",
+        "label": "来源层级职责边界",
+        "reason": "支持组件用于区分内容来源层级，并明确不承担关系状态展示的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmStatusLine.vue",
-          "startLine": 1,
-          "endLine": 24
+          "startLine": 2,
+          "endLine": 7
         },
-        "quote": "<script setup lang=\"ts\">\n/** A small prefix tag that distinguishes the PROVENANCE LAYER of a block of\n * content (raw evidence vs derived explanation vs candidate guess vs stale vs\n * load error). This is intentionally NOT a relation-status badge: edge status\n * stays on OmBadge. See docs/implementation/code-wiki-ui-de"
+        "quote": "/** A small prefix tag that distinguishes the PROVENANCE LAYER of a block of\n * content (raw evidence vs derived explanation vs candidate guess vs stale vs\n * load error). This is intentionally NOT a relation-status badge: edge status\n * stays on OmBadge. See docs/implementation/code-wiki-ui-design.md §9. */\ntype Kind "
       },
       {
         "key": "c2",
-        "label": "状态标签视觉编码",
-        "reason": "支持不同来源层级通过边框、警示色、删除线和错误色表现的说明。",
-        "relation": "supports",
+        "label": "标签映射与模板渲染",
+        "reason": "支持六类中文标签、必选状态参数、可选来源说明及 note 语义角色的流程说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmStatusLine.vue",
-          "startLine": 26,
+          "startLine": 6,
+          "endLine": 23
+        },
+        "quote": "type Kind = \"raw\" | \"derived\" | \"candidate\" | \"stale\" | \"error\" | \"seed\";\nconst props = defineProps<{ kind: Kind; sourceNote?: string }>();\n\nconst LABEL: Record<Kind, string> = {\n  raw: \"原始证据\",\n  derived: \"派生说明\",\n  candidate: \"候选 · 未登记\",\n  stale: \"已过期\",\n  error: \"加载失败\",\n  seed: \"人工整理\",\n};\n</script>\n\n<template>\n  <div c"
+      },
+      {
+        "key": "c3",
+        "label": "状态视觉样式",
+        "reason": "支持派生、人工、候选、过期和错误状态采用不同视觉表达，以及原始状态沿用基础样式的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmStatusLine.vue",
+          "startLine": 27,
           "endLine": 69
         },
-        "quote": "<style scoped>\n.om-status-line {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  margin: 0 0 6px;\n}\n.tag {\n  font-size: 11px;\n  letter-spacing: 0.04em;\n  border: 1px solid var(--om-line);\n  border-radius: 4px;\n  padding: 1px 6px;\n  color: var(--om-secondary);\n  background: var(--om-soft);\n  white-space: nowrap;\n}"
+        "quote": ".om-status-line {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  margin: 0 0 6px;\n}\n.tag {\n  font-size: 11px;\n  letter-spacing: 0.04em;\n  border: 1px solid var(--om-line);\n  border-radius: 4px;\n  padding: 1px 6px;\n  color: var(--om-secondary);\n  background: var(--om-soft);\n  white-space: nowrap;\n}\n.derived .tag "
       }
     ],
     "questions": [
       {
-        "question": "来源状态的视觉和语义差异是否经过无障碍测试？",
-        "why": "候选、过期和错误状态主要依靠样式区分，虽然标签文字不同，但材料未提供对比度、屏幕阅读器或高对比模式测试。",
-        "nextStep": "补充各 kind 的可见文本断言，并在浏览器检查颜色对比度和高对比模式表现。",
+        "question": "这些状态在不同主题、窄屏和辅助技术中的呈现是否已有行为测试？",
+        "why": "当前材料仅包含组件实现，没有测试或使用方材料，无法确认颜色对比度、长 sourceNote 换行、读屏输出以及非法运行时 kind 的实际行为。",
+        "nextStep": "检查该组件的测试与调用位置，并补充包含六种状态、可选说明、窄视口和无障碍语义的渲染断言。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
+          "c2",
+          "c3"
         ]
       }
     ]
@@ -61,69 +79,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmPanel.vue",
-      "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
-      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmShell.vue",
-      "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/ui/src/components/OmStatusLine.vue",
       "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
-      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/highlight.ts",
-      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmIcon.vue",
-      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmButton.vue",
-      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:26:55.969Z",
+    "at": "2026-10-01T07:01:31.868Z",
     "trace": {
-      "runId": "f0a2b923-fe64-4f46-a375-0c579799d0c5",
+      "runId": "46c03c88-f59e-43e2-a00c-670e37bad7b1",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "efd3d1ff303420d53087badd2f464bf3aa8af87cfd54c30ed58bf02f24e5b8d2",
-      "contextHash": "7757dfeebda306a48c1622bc127ad757355a97b2adcedddbc067054f1a5e145a",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "a303dff962d6de3f4f0ec648763a38f41d9534d8d1f7bd7327cf290bb8936cca",
+      "contextHash": "a19f7275d61f33a936ddcbdc50dc474632ce71cbebc16a9cbef765d44b023ad7",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a55b61e8eae72a7843c32cbe28f2f184d2d2358e900c2034101338d8e48a648c",
+      "fingerprint": "c5f403a372236ab2799dc1b7cf415de30b5d129598390fcbbd448a312aa71998",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -136,11 +109,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea1-9483-76f2-b00c-f39d11d9b12f"
+        "01a0f644-75f5-79d0-972e-d15d4b244fbb"
       ],
       "usage": {
-        "used": 34567,
-        "size": 760000,
+        "used": 23524,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -148,10 +121,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 51248,
-          "utf8Bytes": 53271,
-          "estimatedTokens": 17757,
-          "budgetedTokens": 22197,
+          "chars": 8916,
+          "utf8Bytes": 12062,
+          "estimatedTokens": 4021,
+          "budgetedTokens": 5027,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -160,17 +133,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:27:20.220Z",
+    "at": "2026-10-01T07:01:48.330Z",
     "trace": {
-      "runId": "6633981a-2593-4850-bc67-603ea31b227a",
+      "runId": "aaa76906-e8e7-46fb-a2cd-a131aef94a2c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0c4ed297379bac8b72fd264a7dfc8b50245b813d8943880f8519c6281265990e",
-      "contextHash": "afef2621b0f791d244cfd43f8ab6aa704d541379ab6ae6a336528fdb10b4d141",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "7bc7383c6a650641de00b6885915d22f4fcbfd8f8aebce8db91257d52a2505b8",
+      "contextHash": "0b25951d8498a0d60c855b12f9397cb5ccc15198da3f0daccc5b9c2e8ebd3d23",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "eabebc66d564f07fe2b3e0059765d8da27b4fac7ead33b03960fea24900c6e4d",
+      "fingerprint": "0619a701c7fa8be43ba55d37de2ca17ed3fcb5ed481f709078ac61b2ffa526f3",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -183,11 +156,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-69a8-73c1-8014-650a56b0797e"
+        "01a0f644-c796-71a0-a726-072606716a79"
       ],
       "usage": {
-        "used": 37890,
-        "size": 760000,
+        "used": 21936,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -195,10 +168,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 66460,
-          "utf8Bytes": 76474,
-          "estimatedTokens": 25492,
-          "budgetedTokens": 31865,
+          "chars": 8772,
+          "utf8Bytes": 11498,
+          "estimatedTokens": 3833,
+          "budgetedTokens": 4792,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

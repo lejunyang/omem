@@ -2,57 +2,84 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/components/OmPanel.vue",
-    "title": "OmPanel：统一内容区块的语义与视觉容器",
-    "summary": "OmPanel 是轻量布局组件，为标题、正文与操作区提供稳定插槽和统一面板样式，不承担数据加载、状态管理或业务交互。",
+    "title": "通用内容面板与插槽布局",
+    "summary": "OmPanel 是一个轻量的 Vue 3 结构组件，以统一容器组合可选页头、默认内容和可选操作区。页头由真值 title 或 heading 插槽触发，页脚由 actions 插槽触发；边框、背景和圆角依赖外部提供的 CSS 自定义属性。",
     "category": "implementation",
     "sections": [
       {
-        "key": "contract",
-        "title": "组件合同",
-        "body": "该组件解决不同页面内容块结构不一致的问题：根节点固定为语义化 `section`，可选 `title` 渲染三级标题，也允许调用方通过 `heading` 插槽追加或替代标题区域内容；默认插槽承载正文，只有存在 `actions` 插槽时才创建页脚。[[c1]] 这种设计让业务模块组合标题控件和操作按钮，而不必复制面板骨架。"
+        "key": "purpose-and-structure",
+        "title": "内容区域的基础结构",
+        "body": "OmPanel 将内容组织在一个带有 `om-panel` 类名的 `section` 中。默认插槽始终位于主体位置；页头和页脚则根据调用方传入的属性或插槽按需创建。因此，它提供的是通用的标题、正文与操作区结构，具体承载何种业务内容由使用方决定。参考 [[c1]]"
       },
       {
-        "key": "layout-boundary",
-        "title": "布局边界与模块关系",
-        "body": "样式只定义内边距、边框、背景、圆角以及标题区和操作区的弹性排列，颜色与圆角依赖全局设计变量。操作区允许换行，适合按钮数量变化，但组件没有密度、加载、错误或响应式变体，也不约束插槽内容的语义。[[c2]]\n\n材料中没有脚本逻辑、事件或对子组件的调用，因此它与其他模块的关系是纯展示组合；可访问性仍依赖调用方提供恰当标题和操作标签。未提供测试文件，无法确认空标题、仅 heading 插槽及 actions 条件渲染是否有自动化覆盖。"
+        "key": "rendering-flow",
+        "title": "标题、正文与操作区的组合规则",
+        "body": "组件只声明一个可选的字符串属性 `title`。当 `title` 为真值或存在 `heading` 插槽时，页头会被渲染；真值 `title` 显示为 `h3`，命名插槽 `heading` 紧随其后，因此两者同时提供时会同时出现。默认插槽不受这些条件影响。只有存在 `actions` 插槽时才会生成页脚，未提供操作内容时不会留下空页脚。参考 [[c2]]"
+      },
+      {
+        "key": "visual-boundaries",
+        "title": "布局样式与主题依赖",
+        "body": "面板具有 24 像素内边距。页头使用横向弹性布局、垂直居中和 12 像素间距，并与正文保持 16 像素距离；标题字号为 16 像素。页脚同样采用弹性布局，操作项间距为 8 像素，允许换行，并与正文保持 20 像素距离。边框、背景和圆角分别读取 `--om-line`、`--om-panel` 与 `--om-radius`，组件内未设置回退值；仅凭当前文件无法确认这些变量由何处声明。参考 [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "面板属性与插槽结构",
-        "reason": "支持标题、heading、默认内容和 actions 插槽按需组成语义面板的说明。",
+        "label": "面板基础结构",
+        "reason": "支持组件以 section 包裹默认内容，并按条件提供页头和操作区的结构描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmPanel.vue",
+          "startLine": 4,
+          "endLine": 12
+        },
+        "quote": "<template>\n  <section class=\"om-panel\">\n    <header v-if=\"title || $slots.heading\">\n      <h3 v-if=\"title\">{{ title }}</h3>\n      <slot name=\"heading\" />\n    </header>\n    <slot />\n    <footer v-if=\"$slots.actions\"><slot name=\"actions\" /></footer>\n  </section>"
+      },
+      {
+        "key": "c2",
+        "label": "属性与插槽渲染规则",
+        "reason": "支持 title 属性的类型，以及 title、heading、默认插槽和 actions 插槽各自的渲染条件。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmPanel.vue",
           "startLine": 1,
-          "endLine": 13
+          "endLine": 12
         },
         "quote": "<script setup lang=\"ts\">\ndefineProps<{ title?: string }>();\n</script>\n<template>\n  <section class=\"om-panel\">\n    <header v-if=\"title || $slots.heading\">\n      <h3 v-if=\"title\">{{ title }}</h3>\n      <slot name=\"heading\" />\n    </header>\n    <slot />\n    <footer v-if=\"$slots.actions\"><slot name=\"actions\" /></footer>\n  "
       },
       {
-        "key": "c2",
-        "label": "面板视觉布局规则",
-        "reason": "支持面板依赖设计变量、标题横向布局及操作区换行的边界说明。",
-        "relation": "supports",
+        "key": "c3",
+        "label": "面板布局样式",
+        "reason": "支持面板、页头、标题和页脚的尺寸与布局规则，并表明三个主题变量没有组件内回退值。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmPanel.vue",
-          "startLine": 14,
-          "endLine": 37
+          "startLine": 15,
+          "endLine": 35
         },
-        "quote": "<style scoped>\n.om-panel {\n  padding: 24px;\n  border: 1px solid var(--om-line);\n  background: var(--om-panel);\n  border-radius: var(--om-radius);\n}\nheader {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  margin-bottom: 16px;\n}\nh3 {\n  margin: 0;\n  font-size: 16px;\n}\nfooter {\n  display: flex;\n  gap: 8px;\n  flex-w"
+        "quote": ".om-panel {\n  padding: 24px;\n  border: 1px solid var(--om-line);\n  background: var(--om-panel);\n  border-radius: var(--om-radius);\n}\nheader {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  margin-bottom: 16px;\n}\nh3 {\n  margin: 0;\n  font-size: 16px;\n}\nfooter {\n  display: flex;\n  gap: 8px;\n  flex-wrap: wrap;\n  ma"
       }
     ],
     "questions": [
       {
-        "question": "OmPanel 是否要求 heading 插槽必须提供可识别的标题层级？",
-        "why": "当只传 heading 插槽时组件会创建 header，但自身不会保证其中存在标题元素，可能影响区域导航与可访问性。",
-        "nextStep": "由组件规范明确 heading 插槽合同，或在调用方测试中断言其包含适当标题。",
+        "question": "宿主样式是否保证为 OmPanel 提供 `--om-line`、`--om-panel` 和 `--om-radius`？",
+        "why": "[[c3]] 显示三个 CSS 变量均无回退值，但当前材料没有它们的声明位置或主题作用域，无法确认所有使用场景下的最终视觉效果。",
+        "nextStep": "检查共享主题入口及 OmPanel 的消费位置，确认变量定义和继承范围；若不能保证，则补充回退值或明确使用约束。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c3"
+        ]
+      },
+      {
+        "question": "同时提供真值 `title` 与 `heading` 插槽时，同时渲染两者是否符合组件设计意图？",
+        "why": "[[c2]] 可以确认当前实现会同时渲染标题元素和插槽内容，但单文件材料不能确认这是有意的补充关系还是尚未定义的冲突行为。",
+        "nextStep": "对照视觉规范或组件调用处确认语义，并据此记录插槽合同或调整渲染优先级。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
         ]
       }
     ]
@@ -60,86 +87,41 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/ui/src/components/OmPanel.vue",
       "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
-      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmShell.vue",
-      "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmStatusLine.vue",
-      "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
-      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/highlight.ts",
-      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmIcon.vue",
-      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmButton.vue",
-      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:26:55.969Z",
+    "at": "2026-10-01T07:02:24.983Z",
     "trace": {
-      "runId": "f0a2b923-fe64-4f46-a375-0c579799d0c5",
-      "roleId": "code-analyst",
+      "runId": "69ed7c25-a3d3-4558-8a8f-82146d8a53cc",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "efd3d1ff303420d53087badd2f464bf3aa8af87cfd54c30ed58bf02f24e5b8d2",
-      "contextHash": "7757dfeebda306a48c1622bc127ad757355a97b2adcedddbc067054f1a5e145a",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "f5399c9c85969f4c1c1b2fadba05e694ea6f5a52677af12b4b798d9b2aa1effa",
+      "contextHash": "0d4caa89cbc3fd6f26c8c92e3d9a97e4b4a570e9e0e964d3d0bfb12ffa58bdee",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a55b61e8eae72a7843c32cbe28f2f184d2d2358e900c2034101338d8e48a648c",
+      "fingerprint": "a72c06b07d92b6924f7095c7adc15228e6a067d7ac8bc22a2d1310eea5bb409b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea1-9483-76f2-b00c-f39d11d9b12f"
+        "01a0f645-4afe-7f01-a37b-79f593304154"
       ],
       "usage": {
-        "used": 34567,
-        "size": 760000,
+        "used": 23962,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -147,10 +129,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 51248,
-          "utf8Bytes": 53271,
-          "estimatedTokens": 17757,
-          "budgetedTokens": 22197,
+          "chars": 11594,
+          "utf8Bytes": 17230,
+          "estimatedTokens": 5744,
+          "budgetedTokens": 7180,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -159,17 +141,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:27:20.220Z",
+    "at": "2026-10-01T07:02:41.614Z",
     "trace": {
-      "runId": "6633981a-2593-4850-bc67-603ea31b227a",
+      "runId": "481d4fa4-c720-4186-a25c-31987603fa6b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0c4ed297379bac8b72fd264a7dfc8b50245b813d8943880f8519c6281265990e",
-      "contextHash": "afef2621b0f791d244cfd43f8ab6aa704d541379ab6ae6a336528fdb10b4d141",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "b3a5e875e3f611e02d41b6d38c4c20e8ecb2b3ad44fb6ffd663be991930274b2",
+      "contextHash": "de29a84d3db459a5a32be078728aceadff13476972c2f69b3d2745d022d969f4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "eabebc66d564f07fe2b3e0059765d8da27b4fac7ead33b03960fea24900c6e4d",
+      "fingerprint": "aabcbe49b85b975a673439ece4d8705c96ada1ce0b9383152604e8748c02f3a2",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -182,11 +164,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-69a8-73c1-8014-650a56b0797e"
+        "01a0f645-94a5-7642-b839-a3f6fff4fd39"
       ],
       "usage": {
-        "used": 37890,
-        "size": 760000,
+        "used": 21552,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -194,10 +176,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 66460,
-          "utf8Bytes": 76474,
-          "estimatedTokens": 25492,
-          "budgetedTokens": 31865,
+          "chars": 7718,
+          "utf8Bytes": 10320,
+          "estimatedTokens": 3440,
+          "budgetedTokens": 4300,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

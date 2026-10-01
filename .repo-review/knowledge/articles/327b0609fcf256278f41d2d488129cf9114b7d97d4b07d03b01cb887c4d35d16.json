@@ -2,40 +2,53 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
-    "title": "代码分析技能的 OpenAI 界面元数据",
-    "summary": "该 YAML 为技能提供人类可见名称、简短英文描述和默认调用提示，作用是帮助支持该界面的宿主展示并触发技能；它不包含分析规则本身，也不能证明特定模型或运行时已接入。",
+    "title": "代码材料分析角色的 OpenAI 展示配置",
+    "summary": "该文件为代码材料分析技能声明面向 OpenAI 代理界面的名称、简介与默认提示语。它说明角色如何被展示和引导，但不能单独证明技能实现、运行时注册或实际执行链路已经完成。",
     "category": "configuration",
     "sections": [
       {
-        "key": "interface-metadata",
-        "title": "展示信息",
-        "body": "配置在 `interface` 下给出中文展示名“分析代码材料”，并用英文短描述概括从固定证据构建关联知识的目标。[[c1]] 这属于界面和发现层元数据，便于用户识别技能，但未规定输出 schema、证据范围或错误处理。"
+        "key": "role_presentation",
+        "title": "角色如何呈现",
+        "body": "该配置把角色的人类可见名称设为“分析代码材料”，用于让使用者识别其面向代码证据分析的用途。这里记录的是界面或代理元数据，而非分析算法本身；仅凭这份声明，不能推断代码解析、引用生成或复核流程已经实现。参考 [[c1]]\n\n英文短描述进一步将目标概括为：从固定证据构建相互关联的知识。这体现了角色的预期方向——知识结论应依附于给定材料，而不是脱离证据自由生成；但它仍属于能力描述，不是运行结果。参考 [[c2]]"
       },
       {
-        "key": "default-invocation",
-        "title": "默认调用方式及限制",
-        "body": "默认提示要求使用 `$omem-code-analyst` 处理提供的固定材料，说明宿主预期通过技能名触发配套规则。[[c2]] 具体分析纪律仍位于技能正文和角色提示中；当前材料没有说明该 YAML 由哪个客户端读取，也没有模型、effort、权限或兼容版本配置，因此不能推断实际调用链已经可用。"
+        "key": "default_invocation",
+        "title": "默认调用引导与边界",
+        "body": "默认提示语要求调用指定的代码分析技能处理已提供的固定材料，说明该配置承担的是**调用引导**：把宿主传入的材料交给相应技能，而不是在 YAML 中定义具体处理步骤。参考 [[c3]]\n\n从现有五行内容无法确认宿主是否会读取此文件、技能是否已注册，也无法判断默认提示语是否会在真实运行中被采用。因此，这份材料最多证明存在一项角色配置意图；实际可用性仍需结合运行时加载代码、技能正文或真实执行记录验证。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "代码分析技能界面名称与简介",
-        "reason": "支持该文件提供中文展示名和固定证据知识构建简介的说明。",
+        "label": "角色展示名称",
+        "reason": "支持附近关于该配置声明人类可见角色名称、但不等同于算法实现的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
           "startLine": 1,
-          "endLine": 3
+          "endLine": 2
         },
-        "quote": "interface:\n  display_name: \"分析代码材料\"\n  short_description: \"Build linked knowledge from fixed evidence\""
+        "quote": "interface:\n  display_name: \"分析代码材料\""
       },
       {
         "key": "c2",
-        "label": "代码分析技能默认提示",
-        "reason": "支持默认通过技能名处理固定材料的调用意图。",
+        "label": "角色能力简介",
+        "reason": "支持附近关于角色以固定证据构建关联知识这一预期目标的概括。",
         "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
+          "startLine": 3,
+          "endLine": 3
+        },
+        "quote": "  short_description: \"Build linked knowledge from fixed evidence\""
+      },
+      {
+        "key": "c3",
+        "label": "默认技能调用提示",
+        "reason": "支持附近关于默认提示语引导宿主调用代码材料分析技能的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
@@ -47,13 +60,13 @@
     ],
     "questions": [
       {
-        "question": "哪个宿主或客户端消费此界面配置，且是否校验 `$omem-code-analyst` 已安装并与清单摘要一致？",
-        "why": "材料只提供展示与默认提示字段，没有加载路径、兼容性约束或失败行为。",
-        "nextStep": "检查技能注册和客户端适配实现，并用缺失技能、摘要不匹配及正常加载场景做行为验证。",
+        "question": "该 OpenAI 角色配置是否已被运行时发现并用于真实代码材料分析任务？",
+        "why": "当前材料只给出展示元数据和默认提示语，没有加载逻辑、技能实现或执行记录，不能据此把配置意图称为已实现能力。",
+        "nextStep": "检查对应技能正文、运行时角色发现与注册代码，并以一次真实调用 trace 验证所加载的名称、提示语和技能。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c2"
+          "c3"
         ]
       }
     ]
@@ -61,49 +74,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
-      "digest": "7cde63e2dcf6d7d5820002f3736794672245ca6ec134029de2104771ec4f8849"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
-      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/code-analyst/1/prompt.md",
-      "digest": "9180045624754f89e283095f5c576c757d2e2c635d46bb13036f8e03ebf3ef42"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/SKILL.md",
-      "digest": "0dba74dc50b689ee1649b649b0b5ac5b8c12a720dbff228d3df39b253510d45f"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
       "digest": "256abc8de3ce26865ff75c63133cbffe6d43473b38dd79d130c4531122481aa1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
-      "digest": "026d42bd86eb84d28aa08dc7c839dc4deedbb8bee2f7c241704d376e508d3de9"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:22:26.933Z",
+    "at": "2026-10-01T06:57:21.297Z",
     "trace": {
-      "runId": "2dae6280-d281-40d3-af1b-02e002f8d8e9",
+      "runId": "65ee3ab6-1329-4603-ab2b-9ecef6ec2bf1",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "bcb8541a7f6fc2cdbb575d798a581f9523ab7535977581925a94d76bdee85b05",
-      "contextHash": "e914d9f0fb9aa22ea767291dddb8dd8784ff150790a2e29f4d6f8187837a1108",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "4bb0c99ae870d77f4351328bb6b72778145fbeeabe866e773833522af733b6b4",
+      "contextHash": "4180098aa471a5e44740553bbcab13551354922985fc5ccacfc82e92a473272c",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "7c71724d4ab4cb582ac52eb65355b8fbd6e24e12bf33abaea0e480d3b33c8cf6",
+      "fingerprint": "d14424d5f1d2bb21148f0d9ba9c748f502a5767be4e37fcd555e8e9cc0190c01",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -116,11 +104,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9d-9dd8-7e12-988a-d6a5c86af3e3"
+        "01a0f640-a13a-7470-9b05-b7adc9149bff"
       ],
       "usage": {
-        "used": 23933,
-        "size": 760000,
+        "used": 21817,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -128,10 +116,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23398,
-          "utf8Bytes": 26794,
-          "estimatedTokens": 8932,
-          "budgetedTokens": 11165,
+          "chars": 7285,
+          "utf8Bytes": 10249,
+          "estimatedTokens": 3417,
+          "budgetedTokens": 4272,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -140,17 +128,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:22:48.588Z",
+    "at": "2026-10-01T06:57:38.915Z",
     "trace": {
-      "runId": "9083d0e8-b11d-4286-90c3-49ca5e08599e",
+      "runId": "51801e6c-e1a1-41b8-bef0-35c5e1457854",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "7daa4d5698d09092120e391017e114579006747e7c86a30fbe6d6f73b5ab1b33",
-      "contextHash": "f5f8fd419f904017378abed6c167b98b79194908870d882bbff60a6bebaa5456",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "38d88b5ad1c015386e684b6fa7cb05c1c25248cd0d727cb67eecff51bc5a7a05",
+      "contextHash": "7a4b42d7810531604066dba232aa54c4c67ed6aa3554c3ad2613ac223401fa39",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "90717e3b7ac70531fab628197404dbdfc14dc56a72eb8a77775437d1f0d20418",
+      "fingerprint": "71e02811b3984811017b86f24b038d3c134e48d90e2c5862c0543a0f96b85cc7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -163,11 +151,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9e-4eaf-7263-af09-e38259a1522f"
+        "01a0f640-f709-7512-9d42-ef016df14927"
       ],
       "usage": {
-        "used": 25937,
-        "size": 760000,
+        "used": 20806,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -175,10 +163,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35666,
-          "utf8Bytes": 47936,
-          "estimatedTokens": 15979,
-          "budgetedTokens": 19974,
+          "chars": 6185,
+          "utf8Bytes": 8629,
+          "estimatedTokens": 2877,
+          "budgetedTokens": 3597,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

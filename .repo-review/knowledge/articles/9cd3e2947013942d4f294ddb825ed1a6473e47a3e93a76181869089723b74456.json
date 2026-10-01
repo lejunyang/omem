@@ -2,115 +2,115 @@
   "version": 1,
   "document": {
     "key": "module:agent-runtime:part-1",
-    "title": "agent-runtime · 模块理解 · 专题 1",
-    "summary": "Agent 运行时把版本化角色制品、可信上下文、非可信材料、模型传输和持久任务连接为受控且可追踪的执行链：加载并核对角色资产，隔离组装提示，执行 ACP 或 CLI，按共享合同校验并有限修复输出，最后保存追踪和角色结果。当前交互请求仍以拒绝记录为主，角色输出保存与任务完成也不在同一事务。",
+    "title": "可审计的角色 Agent 运行时",
+    "summary": "agent-runtime 将版本化角色资产、固定证据上下文、模型传输、结构化结果校验和持久任务衔接为受控执行链。它已实现资产校验、信任分层、预算限制、有限修复与运行追踪；结果保存和任务完成之间仍存在恢复窗口，运行时请求的并发决议与作用域边界也需继续确认。",
     "category": "architecture",
     "sections": [
       {
-        "key": "bundle_and_trust",
-        "title": "角色制品与信任边界",
-        "body": "运行入口先加载版本化角色包。注册表校验角色与清单身份、读取输出 Schema 并仅核对其 `$id` 末段是否匹配清单中的输出 Schema 标识，同时验证技能名称和制品摘要；它并不在此处验证 Schema 内容或模型输出。角色包身份由清单、提示、Schema 和技能内容共同形成，原生技能则复制到隔离工作区。[[c1]] 目录摘要统一路径分隔符与 CRLF/LF，降低跨平台差异。[[c2]]\n\n提示构造把角色规则、内联技能、输出合同和来源元数据放入可信区，把派生知识及材料正文标为非可信数据。[[c3]] 图像会校验 Base64、摘要及格式标记，并在提示组装时累计字节数，超过 10 MB 即拒绝。[[c4]]"
+        "key": "purpose",
+        "title": "为什么需要角色运行时",
+        "body": "该模块让代码分析、对话分析等角色在统一边界内运行，而不是由业务代码临时拼接模型调用。角色清单声明提示模板、技能版本、输出合同、工具策略、会话隔离与资源预算；代码分析角色例如被配置为不使用工具、不复用会话，并输出知识批次。参考 [[c1]]\n\n加载器会核对角色身份、输出 Schema、技能名称和制品摘要，再将清单、提示、Schema 与技能内容汇总为稳定的角色包身份。参考 [[c3]] 路径安全由更前置的检查承担：资产必须存在且位于角色根目录，真实路径不得越界，候选文件本身不能是符号链接；递归枚举技能目录时直接遇到符号链接也会拒绝。参考 [[c2]]"
       },
       {
-        "key": "execution_and_validation",
-        "title": "预算、执行与结构化校验",
-        "body": "网关合并输入、输出和上下文预留预算，并要求各值为 1 至 1,000,000 的安全整数；文本令牌量按 UTF-8 字节数除以 3 后增加 25% 余量近似估算，并非模型专用 tokenizer。[[c5]]\n\n每轮尝试重新渲染提示并检查输入预算。ACP 可传图像、托管 MCP 和原生技能，CLI 仅接收文本。输出预算通过后，网关要求结果是单一 JSON 对象，再按清单指定的共享 Zod 合同解析，并执行可选的调用方附加校验；这才是实际结构化输出校验所在。[[c6]] 只有执行块内的输出类错误、语法错误或 Zod 错误会在次数允许时重试。成功 trace 保存运行审计字段，而指纹仅采用角色包、提示、上下文、技能、工具摘要及有效模型配置。[[c7]]"
+        "key": "execution",
+        "title": "从固定材料到结构化结果",
+        "body": "提示组装时，角色说明、内联技能、输出合同与来源元数据进入可信区，派生文章和材料正文则标为非可信数据；文本、图片及上下文还要经过大小、摘要与类型检查。参考 [[c4]]\n\n执行前会合并预算、核对 profile 和工具能力、准备工作区。每次尝试重新渲染提示并估算输入量；ACP 可携带图片和托管工具，并从会话配置回读有效模型与推理强度，CLI 只接收文本且继续使用 profile 初始化值。输出随后接受预算、单一 JSON 对象、共享合同及调用方附加校验。参考 [[c5]] 只有执行块内的输出类错误、`SyntaxError` 或 `ZodError` 才会在未取消且仍有次数时修复，次数耗尽则明确失败。参考 [[c6]]\n\n成功 trace 保存模型、会话、用量、修复次数及各类摘要；运行指纹只由角色包、提示、上下文、技能、工具摘要和有效 model、effort 组成。参考 [[c7]] 知识合同统一约束文档、章节、引用和问题的结构，但正文引用键等跨字段语义仍需附加校验落实。参考 [[c8]]"
       },
       {
-        "key": "durable_job_flow",
-        "title": "持久任务衔接与结果保存",
-        "body": "角色任务处理器按任务生成上下文、透传取消信号、调用网关并要求存在会话标识，随后保存结构化结果和完整 trace，把输出记录引用交还 worker。[[c8]] worker 负责租约领取、心跳、处理器分派及成功标记；失败会优先保留 `JobExecutionError` 明示的种类，否则普通异常默认归为 `permanent`，取消归为 `cancelled`，停机中断归为 `transient`。[[c9]] 仓库定义的失败种类还包括 `bad_output`、`auth` 与 `config`，其中仅 `bad_output` 和 `transient` 具有内建重试额度。[[c10]] 这替代了“异常仅按取消、瞬时或永久失败处理”的过窄结论。\n\n角色输出保存会在一个事务内校验运行中租约、更新尝试追踪并插入输出记录。[[c11]] 任务成功标记随后由 worker 在另一个事务完成，因此两者之间仍有崩溃窗口，当前材料未显示按任务尝试或输出摘要去重。"
+        "key": "jobs-and-persistence",
+        "title": "与持久任务系统协作",
+        "body": "角色任务处理器按任务生成上下文、调用运行网关、确认会话标识，再把结构化结果和完整 trace 保存为可引用的角色输出。参考 [[c9]] Worker 负责领取租约、维持心跳、传递取消信号，并在处理器返回后另行把任务标记为成功；异常则进入取消、失败或有限重试流程。参考 [[c10]]\n\n仓库保存角色输出时，会在一个事务内验证运行租约、更新本次尝试的 trace 并插入输出；任务成功状态由随后独立的 `succeed` 事务更新。参考 [[c11]] 因而两部分都可追踪，但进程若在两次事务之间退出，可能留下“输出已保存、任务尚未成功”的恢复窗口。"
       },
       {
-        "key": "progress_and_limits",
-        "title": "当前能力与边界",
-        "body": "共享知识合同统一约束文档、章节、引用、问题和批次形状，使多类分析角色复用同一输出结构。[[c12]] 代码分析角色清单声明无工具、会话不复用、不继承用户扩展，并设定上下文、输出和修复预算；这些是运行配置，并非质量或测试覆盖证明。[[c13]]\n\n交互请求尚未形成等待用户决策后恢复执行的闭环：网关收到 ACP 权限或询问请求时，仅通过可选仓库记录为 `denied`；仓库虽声明 `pending`、`expired`、`resolved` 并提供决议方法，但材料未展示暂停任务、持久化具体动作及恢复原会话的调用链。[[c14]] 所给材料也没有自动化测试或真实 ACP/CLI 运行结果，无法确认路径安全、预算拦截、修复分支、崩溃恢复及并发决议的实际覆盖。"
+        "key": "limits",
+        "title": "当前边界与待完善能力",
+        "body": "令牌量按 UTF-8 字节近似估算并增加余量，不是模型专用 tokenizer；预算构造只校验各字段为规定范围内的安全整数，不能证明组合一定适配具体模型。参考 [[c12]]\n\n运行时请求仓库能够记录被拒绝的权限或信息征询，并提供请求决议与查询；但决议更新未检查受影响行数，批准或拒绝动作没有写入该表，列表也未显示工作区过滤或分页。参考 [[c13]] 此外，所给材料没有展示角色工作区清理策略，也没有证明崩溃窗口会复用已有输出。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "角色包加载、标识核对与工作区准备",
-        "reason": "支持角色清单身份、输出 Schema 标识核对、技能摘要、角色包身份和隔离工作区的说明，并限定此处不执行结构化输出验证。",
+        "label": "角色运行配置",
+        "reason": "支持角色清单声明提示、技能、输出合同、隔离策略和预算边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+          "startLine": 2,
+          "endLine": 30
+        },
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"code-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-code-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"7a3dae9e901ee4846571b09ce"
+      },
+      {
+        "key": "c2",
+        "label": "角色资产路径检查",
+        "reason": "直接支持根目录归属、真实路径越界、候选文件符号链接和技能目录枚举符号链接的安全边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+          "startLine": 41,
+          "endLine": 70
+        },
+        "quote": "const inside = (root: string, candidate: string) => {\n  const path = relative(root, candidate);\n  return path === \"\" || (!path.startsWith(\"..\") && !isAbsolute(path));\n};\n\nfunction safeFile(root: string, path: string) {\n  const candidate = resolve(root, path);\n  if (!inside(resolve(root), candidate) || !existsSync(candi"
+      },
+      {
+        "key": "c3",
+        "label": "角色包加载与身份生成",
+        "reason": "支持清单身份、输出 Schema、技能名称和摘要校验，以及稳定角色包身份的生成。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/bundles.ts",
           "startLine": 105,
-          "endLine": 191
+          "endLine": 167
         },
         "quote": "export class RoleBundleRegistry {\n  constructor(readonly root = resolve(\"packages/agent-runtime/roles\")) {}\n\n  load(roleId: string, version = \"1\"): RoleBundle {\n    if (!/^[a-z0-9-]+$/.test(roleId) || !/^[a-zA-Z0-9._-]+$/.test(version))\n      throw Error(\"ROLE_ID_OR_VERSION_INVALID\");\n    const directory = resolve(this"
       },
       {
-        "key": "c2",
-        "label": "跨平台技能目录摘要",
-        "reason": "支持目录摘要对路径分隔符和文本换行进行归一化的论断。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-          "startLine": 73,
-          "endLine": 89
-        },
-        "quote": "export function directoryDigest(directory: string) {\n  const hash = createHash(\"sha256\");\n  for (const path of files(directory)) {\n    // Normalize the relative path to forward slashes so the digest does not\n    // depend on the platform path separator (Windows uses \"\\\\\", POSIX \"/\").\n    const normalizedPath = relative"
-      },
-      {
-        "key": "c3",
-        "label": "可信提示与非可信材料分层",
-        "reason": "支持角色规则和来源索引进入可信区，而派生知识与材料正文作为非可信内容进入提示。",
+        "key": "c4",
+        "label": "提示信任分层",
+        "reason": "支持可信角色配置和来源索引与非可信派生知识、材料正文的分层及上下文检查。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/gateway.ts",
           "startLine": 106,
-          "endLine": 188
+          "endLine": 207
         },
         "quote": "export function renderRolePrompt(\n  bundle: RoleBundle,\n  manifestInput: ContextManifest,\n  repair?: string,\n) {\n  const context = contextManifestSchema.parse(manifestInput);\n  if (context.role_id !== bundle.manifest.role_id)\n    throw Error(\"ROLE_CONTEXT_MISMATCH\");\n  const inlineSkills = bundle.skills\n    .filter((sk"
       },
       {
-        "key": "c4",
-        "label": "图像校验与累计字节限制",
-        "reason": "支持图像 Base64、摘要和格式标记校验，以及提示构造中超过一千万字节即拒绝的累计限制。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 81,
-          "endLine": 193
-        },
-        "quote": "function validateImage(material: ContextManifest[\"materials\"][number]) {\n  if (!material.image) return null;\n  const bytes = Buffer.from(material.image.data_base64, \"base64\");\n  if (\n    !bytes.length ||\n    bytes.toString(\"base64\").replace(/=+$/, \"\") !==\n      material.image.data_base64.replace(/=+$/, \"\")\n  )\n    thro"
-      },
-      {
         "key": "c5",
-        "label": "令牌估算与生成预算",
-        "reason": "支持 UTF-8 近似令牌估算、25% 余量、预算默认值和数值边界校验。",
+        "label": "执行前校验、传输分支与结果验证",
+        "reason": "支持预算合并、profile 与工具能力校验、工作区准备，以及模型配置初始化、ACP 配置回读、CLI 文本限制、输入输出预算和结构化结果校验流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/budget.ts",
-          "startLine": 1,
-          "endLine": 23
+          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+          "startLine": 258,
+          "endLine": 367
         },
-        "quote": "/** An explicit estimate, not a model-specific tokenizer. UTF-8 bytes / 3 is a\n * practical code/mixed-CJK estimate; 25% headroom is charged to the budget. */\nexport function estimateTokens(text: string) {\n  const utf8Bytes = Buffer.byteLength(text, \"utf8\");\n  const estimatedTokens = Math.ceil(utf8Bytes / 3);\n  return "
+        "quote": "    const originalBundle = this.registry.load(input.roleId, input.roleVersion ?? \"1\");\n    const limits = generationBudget(input.budget ?? {}, originalBundle.manifest.budget);\n    const bundle = { ...originalBundle, manifest: { ...originalBundle.manifest, budget: { ...originalBundle.manifest.budget, max_context_tokens:"
       },
       {
         "key": "c6",
-        "label": "执行分支与实际输出校验",
-        "reason": "支持每轮提示渲染、输入输出预算、ACP 与 CLI 分支、共享 Zod 合同解析、附加校验及有限修复边界。",
-        "relation": "implements",
+        "label": "有限输出修复",
+        "reason": "直接支持可修复错误类型、取消状态和修复次数耗尽时的判定。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 302,
-          "endLine": 410
+          "startLine": 396,
+          "endLine": 409
         },
-        "quote": "    for (\n      let repairAttempt = 0;\n      repairAttempt <= bundle.manifest.budget.max_repair_attempts;\n      repairAttempt++\n    ) {\n      let output = \"\";\n      const rendered = renderRolePrompt(\n        bundle,\n        context,\n        repairAttempt\n          ? `The prior response failed validation: ${lastError}. "
+        "quote": "      } catch (error) {\n        lastError =\n          error instanceof Error ? error.message : \"unknown validation error\";\n        if (\n          signal.aborted ||\n          (!lastError.startsWith(\"ROLE_OUTPUT_\") &&\n            !(\n              error instanceof SyntaxError ||\n              (error as { name?: string })."
       },
       {
         "key": "c7",
-        "label": "运行追踪与指纹范围",
-        "reason": "支持 trace 保存的审计字段，以及运行指纹实际采用的摘要和模型配置范围。",
-        "relation": "tracks",
+        "label": "运行追踪与指纹",
+        "reason": "支持 trace 的记录字段及运行指纹的限定组成。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/gateway.ts",
@@ -121,60 +121,8 @@
       },
       {
         "key": "c8",
-        "label": "角色任务处理器成功路径",
-        "reason": "支持上下文生成、网关调用、会话标识校验、角色输出保存和结果引用返回。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
-          "startLine": 18,
-          "endLine": 49
-        },
-        "quote": "  return async (job, signal) => {\n    const context = await input.context(job.id);\n    const run = await input.gateway.run({\n      roleId: input.roleId,\n      roleVersion: input.roleVersion,\n      profile: input.profile,\n      context,\n      signal,\n      managedTools: input.managedTools,\n    });\n    const sessionId = "
-      },
-      {
-        "key": "c9",
-        "label": "Worker 的失败种类选择",
-        "reason": "支持显式 JobExecutionError 种类的保留，以及普通异常、取消和停机中断的默认分类方式。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/jobs/worker.ts",
-          "startLine": 97,
-          "endLine": 120
-        },
-        "quote": "    } catch (error) {\n      const failure =\n        error instanceof JobExecutionError\n          ? error\n          : new JobExecutionError(\n              error instanceof Error ? error.message : \"Job execution failed\",\n              controller.signal.aborted ? \"cancelled\" : \"permanent\",\n            );\n      try {\n     "
-      },
-      {
-        "key": "c10",
-        "label": "任务失败类型与重试规则",
-        "reason": "支持完整失败类型集合，并说明 bad_output 与 transient 的重试额度及其他类型直接结束的规则。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/jobs/repository.ts",
-          "startLine": 93,
-          "endLine": 99
-        },
-        "quote": "export type JobFailureKind =\n  | \"transient\"\n  | \"bad_output\"\n  | \"auth\"\n  | \"config\"\n  | \"permanent\"\n  | \"cancelled\";"
-      },
-      {
-        "key": "c11",
-        "label": "角色输出事务保存",
-        "reason": "支持保存时校验运行中租约，并在一个事务内更新运行追踪和插入角色输出；也用于说明该事务未同时完成任务状态。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/jobs/repository.ts",
-          "startLine": 452,
-          "endLine": 503
-        },
-        "quote": "  saveRoleOutput(input: {\n    jobId: string;\n    leaseToken: string;\n    model: string | null;\n    effort: string | null;\n    promptHash: string;\n    skillHash: string;\n    toolHash: string;\n    fingerprint: string;\n    roleBundleHash: string;\n    contextHash: string;\n    outputSchema: string;\n    sessionId: string;\n  "
-      },
-      {
-        "key": "c12",
-        "label": "共享知识输出合同",
-        "reason": "支持知识文档、章节、引用、问题和批次由统一 Zod 合同约束。",
+        "label": "知识输出共享合同",
+        "reason": "支持知识文档、章节、引用和问题的统一结构，并界定静态合同的约束范围。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -185,67 +133,100 @@
         "quote": "const key = z.string().min(1).max(500);\nexport const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \""
       },
       {
-        "key": "c13",
-        "label": "分析角色隔离与预算配置",
-        "reason": "支持代码分析角色的无工具、会话不复用、禁止继承扩展能力及预算配置。",
+        "key": "c9",
+        "label": "角色任务适配器",
+        "reason": "支持按任务构造上下文、调用网关、检查会话并保存角色输出的衔接流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
+          "startLine": 18,
+          "endLine": 49
+        },
+        "quote": "  return async (job, signal) => {\n    const context = await input.context(job.id);\n    const run = await input.gateway.run({\n      roleId: input.roleId,\n      roleVersion: input.roleVersion,\n      profile: input.profile,\n      context,\n      signal,\n      managedTools: input.managedTools,\n    });\n    const sessionId = "
+      },
+      {
+        "key": "c10",
+        "label": "持久任务执行循环",
+        "reason": "支持租约领取、心跳、处理器调用、任务成功更新及失败分类处理。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/worker.ts",
+          "startLine": 47,
+          "endLine": 134
+        },
+        "quote": "  async processOne() {\n    const now = this.options.now ?? (() => new Date());\n    const leaseMs = this.options.leaseMs ?? 60_000;\n    const lease = this.repository.claimNext({\n      workerId: this.workerId,\n      kinds: this.options.kinds,\n      jobIds: this.options.jobIds,\n      fingerprint: this.options.fingerprint("
+      },
+      {
+        "key": "c11",
+        "label": "输出保存与任务完成",
+        "reason": "支持角色输出保存和任务成功更新由两个独立事务完成，据此说明两阶段恢复窗口。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/repository.ts",
+          "startLine": 452,
+          "endLine": 578
+        },
+        "quote": "  saveRoleOutput(input: {\n    jobId: string;\n    leaseToken: string;\n    model: string | null;\n    effort: string | null;\n    promptHash: string;\n    skillHash: string;\n    toolHash: string;\n    fingerprint: string;\n    roleBundleHash: string;\n    contextHash: string;\n    outputSchema: string;\n    sessionId: string;\n  "
+      },
+      {
+        "key": "c12",
+        "label": "令牌估算与预算边界",
+        "reason": "支持 UTF-8 近似估算、余量、默认预算和单字段数值校验的能力与限制。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
-          "startLine": 17,
-          "endLine": 30
+          "key": "omem:apps/server/src/agent-runtime/budget.ts",
+          "startLine": 1,
+          "endLine": 23
         },
-        "quote": "  \"output_schema\": \"KnowledgeBatch.v1\",\n  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },\n  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_atte"
+        "quote": "/** An explicit estimate, not a model-specific tokenizer. UTF-8 bytes / 3 is a\n * practical code/mixed-CJK estimate; 25% headroom is charged to the budget. */\nexport function estimateTokens(text: string) {\n  const utf8Bytes = Buffer.byteLength(text, \"utf8\");\n  const estimatedTokens = Math.ceil(utf8Bytes / 3);\n  return "
       },
       {
-        "key": "c14",
+        "key": "c13",
         "label": "运行时交互请求仓储",
-        "reason": "支持请求状态模型、拒绝记录、决议方法和查询边界，并说明当前网关持久化路径主要记录 denied。",
+        "reason": "支持拒绝记录、请求决议和列表查询的实现范围，以及并发、动作持久化与作用域限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/requests.ts",
-          "startLine": 7,
+          "startLine": 40,
           "endLine": 115
         },
-        "quote": "export type RuntimeRequest = {\n  id: string;\n  workspaceId: string;\n  jobId: string | null;\n  sessionId: string;\n  turnId: string | null;\n  providerRequestId: string;\n  kind: \"permission\" | \"elicitation\";\n  state: \"pending\" | \"denied\" | \"expired\" | \"resolved\";\n  options: unknown;\n  expiresAt: string;\n  createdAt: strin"
+        "quote": "  recordDenied(input: {\n    workspaceId: string;\n    jobId?: string | null;\n    sessionId: string;\n    turnId?: string | null;\n    providerRequestId: string;\n    kind: \"permission\" | \"elicitation\";\n    options: unknown;\n    now?: Date;\n    ttlMs?: number;\n  }) {\n    const now = input.now ?? new Date();\n    const payloa"
       }
     ],
     "questions": [
       {
-        "question": "角色输出保存后、任务成功标记前发生崩溃时，系统应复用已有输出还是重新执行并产生新输出？",
-        "why": "角色输出保存和任务成功标记分别位于处理器与 worker 的两个仓库事务中，存在已插入输出但任务仍可被重新领取的窗口；当前材料未显示按任务尝试或输出摘要进行唯一性去重。",
-        "nextStep": "补充“保存成功后进程退出”的故障注入测试，并依据期望语义增加同一任务尝试的唯一约束、已有输出复用或原子完成接口。",
+        "question": "角色输出已保存但任务尚未标记成功时，重领任务如何避免重复模型执行或重复输出？",
+        "why": "输出保存与任务成功更新位于两个独立事务；当前材料没有展示针对两步之间进程退出的恢复或去重策略。",
+        "nextStep": "补充该崩溃窗口的行为测试，并检查任务重领时是否会复用当前 attempt 已有的角色输出。",
         "blocking": false,
         "citationKeys": [
-          "c8",
           "c9",
+          "c10",
           "c11"
         ]
       },
       {
-        "question": "ACP 权限或信息征询是否计划进入真正的等待决策与恢复执行流程？",
-        "why": "网关当前回调只记录已拒绝请求；仓库虽有 pending 与 resolve 分支，但材料没有展示任务转为等待决策、向用户暴露请求、持久化具体动作并恢复原会话的调用链。",
-        "nextStep": "检查 ACP 适配器、HTTP 路由和任务状态转换；若该能力属于当前目标，定义请求创建、作用域鉴权、决议审计、过期处理与会话恢复的端到端合同。",
+        "question": "并发决议同一运行时请求时，是否要求只有一个调用方成功，且批准或拒绝动作应保存在哪里？",
+        "why": "条件更新只允许 pending 状态，但实现未检查影响行数；返回的 approve 或 reject 动作也没有写入当前请求表。",
+        "nextStep": "检查请求路由与后续消费链，增加并发决议测试，并明确动作审计及恢复所依赖的持久化位置。",
         "blocking": false,
         "citationKeys": [
-          "c6",
-          "c14"
+          "c13"
         ]
       },
       {
-        "question": "Agent 运行主链的关键边界目前有哪些真实行为测试和外部 CLI 活体验证？",
-        "why": "提供的源码能证明实现路径，但没有测试文件、退出码或真实 ACP/CLI 运行记录，无法确认路径逃逸、摘要稳定性、预算拦截、输出修复、租约失效和并发决议的实际覆盖。",
-        "nextStep": "汇总对应自动化测试与 live check，优先覆盖角色资产安全、ACP/CLI 配置发现、修复次数、输出保存崩溃窗口和请求并发决议，并分别记录测试与外部活体验证结果。",
+        "question": "CLI 传输记录的模型与推理强度代表请求配置还是运行端最终配置？",
+        "why": "ACP 分支会从会话配置回读最终值，CLI 分支则沿用 profile 初始化值，现有材料未提供 CLI 适配器的配置发现能力。",
+        "nextStep": "检查 CLI 适配器返回合同和真实运行 trace；若运行端可能覆盖配置，为 CLI 增加最终配置回读或明确字段语义。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c6",
-          "c9",
-          "c10",
-          "c11",
-          "c14"
+          "c5",
+          "c7"
         ]
       }
     ]
@@ -299,7 +280,7 @@
     {
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
-      "digest": "7cde63e2dcf6d7d5820002f3736794672245ca6ec134029de2104771ec4f8849"
+      "digest": "5f543f43e1f4a8d5d545d2ab915798a987f2497179441bb8d5ce20edefcc70be"
     },
     {
       "kind": "material",
@@ -309,12 +290,12 @@
     {
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/prompt.md",
-      "digest": "9180045624754f89e283095f5c576c757d2e2c635d46bb13036f8e03ebf3ef42"
+      "digest": "34d4b19579e41b1bd2372fcd662d2edde2d65d29a9e7613c3370543f31c1ea23"
     },
     {
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/SKILL.md",
-      "digest": "0dba74dc50b689ee1649b649b0b5ac5b8c12a720dbff228d3df39b253510d45f"
+      "digest": "0aeb965b147f14ccc47eb9589e55dec940c774b5640e6aad9314894a7acdb278"
     },
     {
       "kind": "material",
@@ -359,32 +340,32 @@
     {
       "kind": "article",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
-      "digest": "91975706c965e48572abfc6881225b6d498bc6605303f7ae063a94fd1e233197"
+      "digest": "8b1f4ad5fea53bf04f60e0351ad06d400038c49d5b1f3feddbdf29e8af380614"
     },
     {
       "kind": "article",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
-      "digest": "b79f8d8b760ed017792b6cc02097381a83397a192f9ee3a8e228bfa06f5f9d5e"
+      "digest": "9546f7ea5055947722abfe102accdc551a31a1b0dab99d5fd9c1a097f342530b"
     },
     {
       "kind": "article",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/prompt.md",
-      "digest": "8113f7970fe98943e46fcb6e37a0ee027a6c666f501878721a614952500577ac"
+      "digest": "4670fee2277139be944fcce0d17aae14caa2cd2222f00d92220728612e411212"
     },
     {
       "kind": "article",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/SKILL.md",
-      "digest": "230f2c3c6306d83d5f3993cc9513109963522fa43e607563b9a07a59fc4bd3b6"
+      "digest": "6bbe3f5ea2ee5d3d404b7fe4c7e198d44e9d2939b0b1651426f29d94d41c0b0f"
     },
     {
       "kind": "article",
       "key": "omem:packages/agent-runtime/roles/code-analyst/1/skills/omem-code-analyst/agents/openai.yaml",
-      "digest": "18a340c05509d5b2fe31b5fdecddfa7a50c6315c3a1645e459e1b4a6be43ac80"
+      "digest": "ede486d5eb4e6246dfbede34b57be971a9ee833992682390df5d15cd6074add4"
     },
     {
       "kind": "article",
       "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/manifest.json",
-      "digest": "74b594884cb4b54a47fd29533968247c4d574607cfedf199d06d403d56c17719"
+      "digest": "ae11d2523bbab0cef3d1f54888664fe3a72fc8b2e801c0006c1233ae80ab721a"
     },
     {
       "kind": "article",
@@ -395,17 +376,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T04:07:40.945Z",
+    "at": "2026-10-01T07:30:38.729Z",
     "trace": {
-      "runId": "4e01aa47-5e52-4d3f-8632-7329bc688c1c",
+      "runId": "ea264c70-72ae-43a7-b8f1-186f37f31266",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "493f7b0cd6853059042ff4332f0287391e4a35772fe68e808c4ae0988376b170",
-      "contextHash": "b51499d7f0c7d1a939da74e5023b1c56a468dfd07ebe020397ed7936b0129c6e",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "6ee40db370d1116e178242daf60cb99a442e32455e75663646d3396cea6997d0",
+      "contextHash": "f23c7153d92bf95abf57b7e0ceeb6e46ced4fe2a8d5023ad1fd68e993f0adb28",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4911b3de13c0f251b4f502e245393603f79538faf5486beff5b6fcae3700face",
+      "fingerprint": "e5ab9150c29547c7135f4fcbadb4e4fb94db352839622f4caade49a1ecb084d5",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -418,10 +399,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f5a5-1ba7-7df0-bde1-38fe8ba90912"
+        "01a0f65f-0344-7471-bc7f-b945c1bfc173"
       ],
       "usage": {
-        "used": 80242,
+        "used": 84772,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -430,10 +411,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 181970,
-          "utf8Bytes": 216544,
-          "estimatedTokens": 72182,
-          "budgetedTokens": 90228,
+          "chars": 185740,
+          "utf8Bytes": 226164,
+          "estimatedTokens": 75388,
+          "budgetedTokens": 94235,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -442,17 +423,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T04:07:59.925Z",
+    "at": "2026-10-01T07:31:00.295Z",
     "trace": {
-      "runId": "1807e6e0-9402-4019-91a7-43c7acf87ef3",
+      "runId": "f06f692d-a4c8-459c-b870-beac4e3a8988",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "1b8a49ea9be5812346b4d6334bb9cdec89f6cc88702cc4adad3e0322c77e7918",
-      "contextHash": "dc0b03de937557f439208e74bbb5ab05eda934ba67a319b24858e18539217646",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "eb8eae06a31b74a4109b5a4e95d4e78c54250cd1205a0759bb1a18c532af2afe",
+      "contextHash": "25f31a66656f1d84a24fb3ccc9efb7d752f4fdcb850e1c06f3e344755e7e18f2",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "80ce45a14c5b7497fa0c654ece96a5d42388ee3a87e4589721bb3da84f6caaf6",
+      "fingerprint": "7bf03e6c7f2ad4f46585571150fa5a2de711d66c83a3c566c291c2ba3829039d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -465,10 +446,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f5a5-98e8-7f63-8a75-1c06792d97d9"
+        "01a0f65f-6d62-74c2-aa8f-2c2e02b7306e"
       ],
       "usage": {
-        "used": 77981,
+        "used": 79655,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -477,10 +458,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 179342,
-          "utf8Bytes": 212560,
-          "estimatedTokens": 70854,
-          "budgetedTokens": 88568,
+          "chars": 182518,
+          "utf8Bytes": 221288,
+          "estimatedTokens": 73763,
+          "budgetedTokens": 92204,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

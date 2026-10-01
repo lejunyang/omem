@@ -2,36 +2,36 @@
   "version": 1,
   "document": {
     "key": "module:ui",
-    "title": "ui · 模块理解",
-    "summary": "@omem/ui 是 Vue 3 应用可复用的展示与证据阅读层，提供基础控件、安全 Markdown、源码阅读、Evidence Trail、深链和关系图；完整轨迹恢复、超长深链提示、移动端覆盖语义、missing 关系呈现及键盘等价性仍待补齐。",
+    "title": "共享知识阅读与证据追溯界面",
+    "summary": "`@omem/ui` 是个人记忆与仓库知识共用的 Vue 3 界面基础，覆盖应用外壳、安全正文与代码展示、来源提示、证据 Trail、深链和关系图。局部组件合同已经形成，但调用方串接、超长路径处理与若干键盘和缺失关系行为仍需验证。",
     "category": "architecture",
     "sections": [
       {
-        "key": "purpose-and-boundary",
-        "title": "作用、背景与边界",
-        "body": "`@omem/ui` 是私有 ESM 包，通过根入口和令牌样式提供能力，由消费方提供 Vue 3；Markdown 解析、HTML 清洗和代码高亮依赖集中在包内。[[c1]] 公共出口将基础控件、应用外壳和知识阅读组件组织为供上层应用复用的展示与阅读能力，但现有依据不足以声称个人知识与仓库评审均已复用其中全部能力。[[c2]] 本次覆盖的实现主要承担呈现、组合与交互；此前对整个包“不保存知识或决定权限”的宽泛判断，已被“现有子章节没有证明这些职责由 UI 模块承担”这一较窄结论替代。[[c3]]"
+        "key": "purpose",
+        "title": "让不同知识入口共享一种阅读语言",
+        "body": "`@omem/ui` 解决的是知识界面各自实现、交互含义不一致的问题：个人记忆、仓库文章、源码证据和架构关系都可复用同一组 Vue 3 组件、样式令牌与阅读合同。包以统一入口和令牌样式对外提供能力，并集中依赖 Markdown 解析、HTML 净化、代码高亮与 Mermaid 渲染。参考 [[c1]]\n\n应用外壳负责组织顶部工具区、导航、正文和助理区域，并在窄屏下将侧栏转换为抽屉；来源状态则帮助读者区分原始证据、派生说明、候选判断、过期内容和加载失败。业务路由、权限、数据获取及具体动作仍属于调用方。延伸阅读：[[c2]]、[[c3]]"
       },
       {
-        "key": "reading-flow",
-        "title": "证据阅读流程",
-        "body": "阅读从正文内联引用进入：Markdown 组件替换引用入口、解析和清洗内容、处理代码高亮，再把点击分流到证据、站外链接或站内导航；失败时保留原始 Markdown。源码查看器继续提供稳定行号、范围定位、逐行证据入口和异步竞态保护。[[c4]] 高亮器仅加载已知语言，未知语言先转义；已有测试覆盖 TypeScript 跨行注释和恶意标签转义，但不能据此推断全部语言与完整查看器均已验证。[[c5]] 来源提示与关系状态分离，使派生说明保持为解释和下钻入口，而不是新的独立事实证据。[[c6]]"
+        "key": "content-flow",
+        "title": "安全呈现知识正文与源码",
+        "body": "知识正文不是直接注入页面：引用先被识别，Markdown 再被解析；普通代码块进入高亮流程，Mermaid 先保留为占位内容，正文 HTML 净化后才渲染图形，生成的 SVG 还会再次净化。异步结果仅在属于最新渲染代次时提交，失败时保留可读的原始图表描述。参考 [[c4]]\n\n```mermaid\nflowchart LR\n  A[知识正文与引用] --> B[Markdown 解析]\n  B --> C[代码高亮]\n  B --> D[Mermaid 占位]\n  C --> E[正文净化]\n  D --> E\n  E --> F[图形渲染与再次净化]\n```\n参考 [[c4]]\n\n源码阅读沿用共享高亮能力，以稳定行号支持定位、范围导航和逐行引用；未知语言会安全转义后原样展示，跨行样式通过换行时闭合并重开高亮标记来保留。参考 [[c5]]"
       },
       {
-        "key": "trail-and-relations",
-        "title": "跨层下钻与关联展示",
-        "body": "Evidence Trail 用帧栈组织模块、文件、符号、知识、引用和原文；状态层负责入栈、返回、跳层与关闭，抽屉负责 Escape 退层、面包屑回跳、滚动恢复和焦点归还。[[c7]] 哈希深链只持久化 `kind` 与 `id`，刷新后的标题和定位仍需上层补全；200 帧是 URL 预算而非渲染上限，超限提示与完整恢复尚未得到证明。[[c8]]\n\n关系图通过固定排序和有界分层生成确定性 SVG。[[c9]] 但 missing 边可能无路径或落入 confirmed 默认样式，边标签的键盘处理也与鼠标选择语义不一致；此前“边标签具备键鼠等价选择”的结论已被这一限制替代。[[c10]]"
+        "key": "evidence-trail",
+        "title": "沿引用逐层阅读并返回原处",
+        "body": "读者打开引用或关联对象时，共享 Trail 状态按对象类型和稳定身份建立帧栈，并保存标题、滚动位置及恢复数据所需的引用字段。抽屉用面包屑展示路径，打开或切层时聚焦当前标题并恢复滚动；Esc 在多层时返回上一层，关闭后把焦点交还触发元素或先前焦点。参考 [[c6]]、[[c7]]\n\n轨迹可写入哈希深链，以支持刷新恢复和分享。完整渲染栈不应因 URL 长度而截断，但当前只约定最多持久化 200 帧；标题、滚动位置等信息仍需上层根据 `kind` 与 `id` 恢复。关系图同样只发出节点或边的选择事件，具体打开哪类证据由调用方决定。参考 [[c8]]、[[c9]]"
       },
       {
-        "key": "progress-and-limits",
-        "title": "进展与待验证边界",
-        "body": "模块已形成可组合的视觉基线、响应式外壳、富文本、源码高亮、来源提示、证据轨迹和关系图。窄屏导航与助手会覆盖正文，但现有知识未证明遮罩、Escape、焦点约束或展开状态属性已经实现，因此交互语义仍需选择。[[c11]] Trail 超出 URL 预算时由谁提示并保留当前栈，也需检查路由调用层和浏览器行为。[[c12]] 阅读器还需验证大文件逐行渲染性能与多重范围命中。[[c13]]"
+        "key": "limits",
+        "title": "当前进展与实现边界",
+        "body": "现有子章节证明共享组件已覆盖外壳、正文、源码、证据抽屉、深链和关系图等局部能力，但没有足够调用方与浏览器材料证明它们已串成完整、可往返的端到端阅读流程。因此，这一模块更准确地说是已经形成共享原语和合同，集成验收仍不完整。参考 [[c2]]、[[c9]]\n\n待完善点包括：清空异步渲染中的 Markdown 时可能未复位加载状态；哈希中的未知轨迹类型缺少明确运行时策略；超过 200 帧的提示与持久化责任未见落实。关系图对缺失端点可能产生空路径或异常标签，边标签的键盘操作与鼠标选择语义也不一致。参考 [[c10]]、[[c11]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "共享 UI 包配置",
-        "reason": "支持私有 ESM、公开入口、Vue 对等依赖以及 Markdown 清洗和高亮依赖范围。",
+        "label": "共享 UI 包边界",
+        "reason": "支持该模块是 Vue 3 共享包，并统一导出入口、视觉令牌及正文渲染相关依赖。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -39,201 +39,202 @@
           "startLine": 1,
           "endLine": 1
         },
-        "quote": "{\"name\":\"@omem/ui\",\"version\":\"0.1.0\",\"private\":true,\"type\":\"module\",\"exports\":{\".\":\"./src/index.ts\",\"./tokens.css\":\"./src/tokens.css\"},\"peerDependencies\":{\"vue\":\"^3.5.0\"},\"dependencies\":{\"dompurify\":\"^3.4.16\",\"highlight.js\":\"^11.12.0\",\"marked\":\"^18.0.14\"}}"
+        "quote": "{\"name\":\"@omem/ui\",\"version\":\"0.1.0\",\"private\":true,\"type\":\"module\",\"exports\":{\".\":\"./src/index.ts\",\"./tokens.css\":\"./src/tokens.css\"},\"peerDependencies\":{\"vue\":\"^3.5.0\"},\"dependencies\":{\"dompurify\":\"^3.4.16\",\"highlight.js\":\"^11.12.0\",\"marked\":\"^18.0.14\",\"mermaid\":\"11.12.2\"}}"
       },
       {
         "key": "c2",
-        "label": "共享 UI 的公共表面",
-        "reason": "提供下钻入口，支持公共出口将展示与阅读能力供上层应用组装的有限结论。",
+        "label": "统一知识阅读界面",
+        "reason": "解释共享外壳、响应式布局、视觉基线及调用方责任，支持模块的界面基础定位。",
         "relation": "explains",
         "target": {
           "kind": "article",
           "key": "module:ui:part-2",
-          "section": "role-and-surface"
+          "section": "reader-foundation"
         },
         "quote": ""
       },
       {
         "key": "c3",
-        "label": "基础组件与模块边界",
-        "reason": "支持基础控件承担展示和组合职责，并限定对知识持久化与权限职责的判断范围。",
+        "label": "内容来源状态",
+        "reason": "解释阅读器如何区分不同来源阶段，支持统一阅读语言的论断。",
         "relation": "explains",
         "target": {
           "kind": "article",
-          "key": "module:ui:part-1",
-          "section": "role-and-boundary"
+          "key": "module:ui:part-2",
+          "section": "evidence-reading"
         },
         "quote": ""
       },
       {
         "key": "c4",
-        "label": "富文本、源码与证据入口",
-        "reason": "说明 Markdown 清洗、点击分流、源码行号和共享高亮器的协作流程。",
+        "label": "正文安全呈现流程",
+        "reason": "支持引用替换、Markdown 解析、正文净化、Mermaid 渲染与二次净化的处理顺序。",
         "relation": "explains",
         "target": {
           "kind": "article",
           "key": "module:ui:part-1",
-          "section": "evidence-reading"
+          "section": "content-reading"
         },
         "quote": ""
       },
       {
         "key": "c5",
-        "label": "代码阅读测试边界",
-        "reason": "概括高亮加载、转义策略、已有测试及尚未覆盖的范围。",
-        "relation": "tracks",
+        "label": "安全代码展示",
+        "reason": "支持语言懒加载、未知语言转义、跨行高亮保持及现有验证边界。",
+        "relation": "explains",
         "target": {
           "kind": "article",
           "key": "module:ui:part-2",
-          "section": "code-reading-progress"
+          "section": "code-reading"
         },
         "quote": ""
       },
       {
         "key": "c6",
-        "label": "页面骨架与可信层级",
-        "reason": "支持来源层级与关系状态分离，以及派生说明不成为独立证据的边界。",
+        "label": "证据追溯交互",
+        "reason": "支持证据帧入栈、逐层返回、焦点归还和滚动恢复的阅读流程。",
         "relation": "explains",
         "target": {
           "kind": "article",
           "key": "module:ui:part-2",
-          "section": "shell-and-provenance"
+          "section": "evidence-reading"
         },
         "quote": ""
       },
       {
         "key": "c7",
-        "label": "共享证据路径协作",
-        "reason": "概括 Trail 状态管理、抽屉交互、滚动恢复和焦点归还之间的协作。",
-        "relation": "explains",
+        "label": "分层阅读路径合同",
+        "reason": "支持 Trail 帧字段、循环检测、面包屑与可恢复路径的说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "article",
           "key": "module:ui:part-2",
-          "section": "evidence-trail"
+          "section": "trail-contract"
         },
         "quote": ""
       },
       {
         "key": "c8",
-        "label": "证据轨迹与深链限制",
-        "reason": "支持哈希只保存部分帧信息，以及 URL 预算和完整恢复仍需上层落实的判断。",
-        "relation": "tracks",
+        "label": "深链与证据容器",
+        "reason": "解释哈希路由、证据对话框、轨迹深度预算及关系图选择由调用方承接。",
+        "relation": "explains",
         "target": {
           "kind": "article",
           "key": "module:ui:part-1",
-          "section": "trail-and-routing"
+          "section": "navigation-and-graph"
         },
         "quote": ""
       },
       {
         "key": "c9",
-        "label": "关系图确定性布局",
-        "reason": "支持关系图通过固定排序和有界分层形成稳定布局的论断。",
-        "relation": "explains",
+        "label": "共享组件能力边界",
+        "reason": "支持局部原语已经实现但端到端调用链尚无充分材料证明的判断。",
+        "relation": "tracks",
         "target": {
           "kind": "article",
           "key": "module:ui:part-1",
-          "section": "graph-progress-limits"
+          "section": "current-boundaries"
         },
         "quote": ""
       },
       {
         "key": "c10",
-        "label": "关系展示交互限制",
-        "reason": "支持 missing 边呈现不完整以及键盘与鼠标选择语义不一致的限制。",
+        "label": "轨迹与渲染限制",
+        "reason": "支持 Markdown 加载状态、未知轨迹类型和 200 帧持久化提示等未决边界。",
         "relation": "tracks",
         "target": {
           "kind": "article",
           "key": "module:ui:part-1",
-          "section": "graph-progress-limits"
+          "section": "current-boundaries"
         },
         "quote": ""
       },
       {
         "key": "c11",
-        "label": "响应式应用外壳",
-        "reason": "说明窄屏覆盖层现状及移动端模态、键盘和焦点语义尚未明确。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "module:ui:part-2",
-          "section": "shell-and-provenance"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c12",
-        "label": "Trail URL 预算待验证行为",
-        "reason": "追踪超限持久化提示、当前渲染栈保留及刷新恢复责任。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "module:ui:part-2",
-          "section": "evidence-trail"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c13",
-        "label": "阅读器性能与范围限制",
-        "reason": "追踪源码阅读器逐行渲染性能和多重范围命中尚未验证的边界。",
+        "label": "关系图实现边界",
+        "reason": "支持缺失关系渲染和边标签键盘选择语义存在问题的说明。",
         "relation": "tracks",
         "target": {
           "kind": "article",
           "key": "module:ui:part-1",
-          "section": "evidence-reading"
+          "section": "current-boundaries"
         },
         "quote": ""
       }
     ],
     "questions": [
       {
-        "question": "Trail 超过 200 帧时，哪个路由或容器负责阻止不完整持久化、显示提示并保留当前渲染栈？",
-        "why": "现有知识只确认 200 帧是 URL 预算；哈希序列化可能截取，而状态层仍允许继续入栈。",
-        "nextStep": "检查哈希写入调用方和浏览器测试，补充超限提示、当前栈保留及刷新行为断言。",
+        "question": "个人知识与仓库知识的实际入口是否已完整连接引用打开、Trail 跳转、URL 同步、刷新恢复和焦点归还？",
+        "why": "现有依据主要覆盖共享状态与组件合同，缺少调用方和真实浏览器行为，不能确认端到端路径已经完成。",
+        "nextStep": "补充两个入口的父级事件绑定材料，并用浏览器测试覆盖打开引用、逐层返回、关闭全部、刷新恢复和焦点归还。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c7",
+          "c8",
+          "c9"
+        ]
+      },
+      {
+        "question": "超过 200 帧的轨迹应如何向用户提示，并由哪个路由入口拒绝或降级持久化？",
+        "why": "渲染栈约定不静默截断，但 URL 只有 200 帧预算，现有材料没有展示统一提示和刷新后的降级策略。",
+        "nextStep": "明确序列化责任与提示文案，覆盖第 200、201 帧以及刷新恢复的浏览器行为。",
         "blocking": false,
         "citationKeys": [
           "c7",
           "c8",
-          "c12"
+          "c10"
         ]
       },
       {
-        "question": "页面刷新后，Trail 的人读标题、滚动位置及文件或符号定位字段由哪一层补全？",
-        "why": "哈希只保存 kind 与 id，无法独立恢复完整帧。",
-        "nextStep": "核对轨迹数据加载容器，定义恢复失败时的人读原因与不可操作状态，并测试整栈往返。",
+        "question": "未知轨迹类型应被拒绝，还是转换为带原因的不可操作帧？",
+        "why": "外部哈希可能包含任意字符串，而现有材料没有证明解析层或加载层提供了安全、可解释的兼容策略。",
+        "nextStep": "选择兼容策略，在解析边界实现运行时校验，并增加畸形深链测试。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c8"
+          "c8",
+          "c10"
         ]
       },
       {
-        "question": "窄屏导航和助手侧栏应采用普通补充区域还是模态覆盖交互？",
-        "why": "当前样式会覆盖正文，但现有知识未证明遮罩、Escape、焦点约束和展开状态属性已经实现。",
-        "nextStep": "确定背景是否可交互，再补齐相应 ARIA、键盘、焦点归还及多视口浏览器测试。",
+        "question": "关系图中的缺失关系与边标签键盘操作应采用什么一致行为？",
+        "why": "缺失端点可能生成空路径或异常标签，边标签键盘操作与鼠标点击又会发出不同类型的选择事件。",
+        "nextStep": "确定缺失关系是显示带原因的不可操作状态还是显式过滤，并让边标签的 Enter、空格与点击触发同一关系选择。",
         "blocking": false,
         "citationKeys": [
+          "c9",
           "c11"
         ]
       },
       {
-        "question": "missing 关系在端点齐全与端点缺失时分别应如何绘制、解释并允许操作？",
-        "why": "missing 边可能使用 confirmed 样式或因缺少端点而没有路径，用户难以稳定理解其状态。",
-        "nextStep": "明确视觉与操作合同，增加专用路径、状态样式、人读原因和两类端点测试。",
+        "question": "清空正在异步渲染的 Markdown 时是否应立即结束加载状态？",
+        "why": "子章节指出空正文分支可能直接返回，未明确复位加载状态，可能留下持续的加载提示。",
+        "nextStep": "明确预期状态转换，并增加渲染过程中清空正文的组件行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c9",
+          "c4",
           "c10"
         ]
       },
       {
-        "question": "关系边标签按 Enter 或空格时，是否应与鼠标点击一样发出边选择事件？",
-        "why": "当前鼠标路径选择边，键盘路径却复用节点处理器，两种输入方式语义不一致。",
-        "nextStep": "确认交互合同后拆分边专用键盘处理器，并增加键鼠等价性的组件测试。",
+        "question": "超过 200 帧时由哪个入口负责提示并处理 URL 持久化降级？",
+        "why": "材料只确认渲染栈不应静默截断以及 URL 的 200 帧预算，未确认统一的超限提示和刷新恢复策略。",
+        "nextStep": "检查哈希序列化调用方，并验证第 200、201 帧及刷新后的可见行为。",
         "blocking": false,
         "citationKeys": [
+          "c7",
+          "c8",
           "c10"
+        ]
+      },
+      {
+        "question": "未知轨迹类型、缺失关系以及边标签键盘操作应采用什么运行时兼容行为？",
+        "why": "文章准确指出这些局部边界，但现有材料尚未给出统一、可解释的最终处理策略。",
+        "nextStep": "明确不可操作状态或拒绝策略，并补充相应解析、关系图交互与浏览器行为材料。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c11"
         ]
       }
     ]
@@ -242,49 +243,49 @@
     {
       "kind": "material",
       "key": "omem:packages/ui/package.json",
-      "digest": "755ac58962dc9eb9ebad8e9001a9d83e326ecff277e56289915908dfa4bfd997"
+      "digest": "868ef804919897259a2eb468d7b2d05dc89fdc7e5e218f8433ddc18b6b7d62a5"
     },
     {
       "kind": "article",
       "key": "module:ui:part-1",
-      "digest": "0da25934f843a9dc96af411c5c025c1dfd3ee1c3f53cf0a6a608a079617ec536"
+      "digest": "6a0f0e31635baa50594e8da111b03d25a6dc8f7dc44e40b368f77594e9e5035f"
     },
     {
       "kind": "article",
       "key": "module:ui:part-2",
-      "digest": "1169f00429fe70a48d426878821304ff1a5ca72ea92d64e989938260259f1815"
+      "digest": "c0c590521865dfe2d4e51ebf58b0df46c15ccbc9c8dd30e69dccf351e9fb52b7"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T03:10:20.172Z",
+    "effort": "high",
+    "at": "2026-10-01T08:34:32.469Z",
     "trace": {
-      "runId": "41adc045-50c6-4afc-9a14-5e4d09fef1a8",
-      "roleId": "knowledge-refresher",
+      "runId": "251f1adb-98d9-4eec-8278-dab3a95a6401",
+      "roleId": "knowledge-writer",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "347ef112e53c5213832334fa21200277c33407893ee6bd13430bd2b55359a84a",
-      "contextHash": "95777c0e0395949882a797269d895b31a7bd675805597aa7c2b73fbef63be5b8",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3e627be543b2979e3759ca541af350fd8033b07dd1ba343d30dbb2260e8aa464",
+      "promptHash": "c5a35012bfeb3ceeef77b6bb89fe6a77a94a8bed749de118cdc61920e70a5c18",
+      "contextHash": "3cd287fc9e7d519b01bc941ea1266b4c0e99dd29693cca8104af903114587869",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b79ea7e697bf68e54f9b4f58be8471a31ac9147e3a7901cec88fc7946d0ea8cf",
+      "fingerprint": "dee0501fe62a9c7987cc9e52cc17b8ef5e4b5bc68ef8a796431aca11eb2855f1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-knowledge-writer",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f570-b3cd-7041-b97e-1c49e02017bd"
+        "01a0f699-771f-7441-8522-1ef7edce42ef"
       ],
       "usage": {
-        "used": 35703,
+        "used": 32040,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -293,10 +294,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 32626,
-          "utf8Bytes": 47003,
-          "estimatedTokens": 15668,
-          "budgetedTokens": 19585,
+          "chars": 29744,
+          "utf8Bytes": 42062,
+          "estimatedTokens": 14021,
+          "budgetedTokens": 17527,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -305,20 +306,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T03:10:42.070Z",
+    "at": "2026-10-01T08:34:56.705Z",
     "trace": {
-      "runId": "ff8f3165-8b04-4e97-917e-12ae62ba383e",
+      "runId": "981f87ba-4e4f-4c85-a943-e093ee057995",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "a23867fea0668a97c096adf4dddeff37f35fe9c7643c2be99c9ea28e6364d975",
-      "contextHash": "02fac577e18969c9eb92acba1e51d7ad051c112ecb89ccc422310267fb711e2e",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "f5eecfde736057ed380bbee262cb49744e68f5a0bbfb95e47fc8fb37079b4b6e",
+      "contextHash": "41d364f887bd41b879cb384db5b5254d35af2b11798f1ae031c799b4ca32497f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c7c52194f86555fd01e85268b24c142653542ba4d2a53153aeddc4ded50212de",
+      "fingerprint": "22982d4b68bebe80bbc4d7213345d667036ed6b28133d3961e90322739497770",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -328,10 +329,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f571-29d9-73f2-810b-c5dd7ef1bbcb"
+        "01a0f699-eb5d-7510-8b56-ea71ba07b3a1"
       ],
       "usage": {
-        "used": 30350,
+        "used": 33957,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -340,10 +341,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 29276,
-          "utf8Bytes": 41522,
-          "estimatedTokens": 13841,
-          "budgetedTokens": 17302,
+          "chars": 32323,
+          "utf8Bytes": 47304,
+          "estimatedTokens": 15768,
+          "budgetedTokens": 19710,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

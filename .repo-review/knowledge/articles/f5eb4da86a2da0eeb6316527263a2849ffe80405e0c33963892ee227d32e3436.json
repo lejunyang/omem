@@ -2,76 +2,123 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/quality-lark-annotate.ts",
-    "title": "通过 Lark 卡片进行质量集实时标注",
-    "summary": "该脚本导入只用于评估的 Lark 数据集，启动带加密凭据的 Lark 运行主机，发送标注卡片并等待首个新增事件，同时区分投递失败、未送达和等待超时。",
+    "title": "飞书质量数据集人工标注流程",
+    "summary": "该脚本是显式启动的研究评测入口：从飞书文档生成待人工判断的质量样本，启动卡片标注会话，并观察当前会话的卡片消息与数据库全局标注事件计数。由于全局计数增长会先于投递终态检查触发退出，它只能验证有限的在线链路信号，不能单独确认本次会话已成功收到有效标注。",
     "category": "workflow",
     "sections": [
       {
-        "key": "configuration",
-        "title": "输入、密钥与运行组件",
-        "body": "命令要求提供 Lark 文档 URL，并从环境变量或密钥文件取得加密密钥；可选 App ID 必须符合 `cli_` 前缀格式。随后读取 Lark 文档，创建 Store、加密密钥库、注册与能力探测组件、已有应用提供器，以及绑定 MemoryService 的 Lark 运行主机。[[c1]] 这是依赖真实外部配置的集成流程。"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "该脚本用于联通一次真实的**飞书人工质量标注实验**：操作者提供飞书文档地址和加密密钥，脚本读取文档、准备本地运行环境，并通过飞书卡片发起人工标注。它适合观察外部应用、卡片投递和反馈数据库是否产生了链路信号。参考 [[c1]]\n\n样本生成器被明确限定为评测用途：规则切分得到的候选内容和草拟标签只供人工判断，不属于普通捕获、学习或知识生产链路，也不能直接作为可信知识写入。参考 [[c2]]"
       },
       {
-        "key": "session",
-        "title": "数据集导入与会话启动",
-        "body": "脚本以明确的 `QUALITY_EVAL_ONLY` opt-in 导入 dev split，默认数据集名为 `merchant-center-dev-v1`、目标数量为 40，并允许环境变量覆盖。它先记录已有标注事件数，再启动质量标注会话和运行主机；`resend` 仅在对应环境变量为 `1` 时启用。[[c2]]"
+        "key": "flow",
+        "title": "从文档到在线观察信号",
+        "body": "```mermaid\nflowchart LR\n  A[读取飞书文档] --> B[初始化本地存储与密钥]\n  B --> C[组装飞书接入和运行宿主]\n  C --> D[导入 dev 评测数据集]\n  D --> E[启动标注会话并发送卡片]\n  E --> F[轮询会话、全局事件数与投递状态]\n```\n参考 [[c3]]\n\n脚本将数据集导入 `dev` 分片，样本上限可配置；随后记录整个 `quality_annotation_events` 表的初始行数，创建会话并启动运行宿主。参考 [[c4]] 当前会话出现消息 ID 时，可确认该会话已有卡片消息；但“收到标注”仅由全表事件总数增长触发，查询没有按会话、数据集或当前样本过滤。其他并发标注活动也可能满足条件，因此该信号不能证明新增事件属于本次会话。参考 [[c5]]"
       },
       {
-        "key": "wait-and-failure",
-        "title": "等待、进度与失败边界",
-        "body": "轮询默认最长一小时，每 500 毫秒读取会话、事件和最新投递意图。获得 message id 时报告卡片已发送；检测到事件总数增加时输出仓库进度并成功结束。[[c3]] 投递进入 failed、unknown 或 cancelled 会立即报错；截止前始终没有 message id 时抛出未送达错误，已经送达但始终没有新增事件则抛出等待超时。最终始终停止 host 并关闭 Store。当前成功条件只是收到至少一个新增事件，并不等同于整份数据集完成。"
+        "key": "boundaries",
+        "title": "失败条件与验收边界",
+        "body": "启动前必须提供文档地址和加密密钥，可选飞书应用 ID 还需符合格式要求。参考 [[c1]] 轮询先检查全局事件计数，再检查当前会话关联投递的状态；因此，只有在未先因全局事件增长而退出的轮询中，检测到投递进入失败、未知或取消终态才会报错。等待结束时，若始终没有消息 ID，则判为卡片未送达；到达截止时间则判为等待超时。运行宿主和本地存储最终都会关闭。参考 [[c6]]\n\n一次零退出最多说明：当前会话曾出现卡片消息，并且等待期内全局标注事件数有所增加。并发事件增长甚至可能掩盖本会话的投递失败；脚本也不确认当前样本完成标注、标签合法、重复提交幂等或整批数据集处理完毕。参考 [[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Lark 标注运行配置",
-        "reason": "支持文档 URL、密钥和 App ID 校验，以及 Store、onboarding 与运行主机的组装。",
-        "relation": "depends_on",
+        "label": "运行输入与凭据要求",
+        "reason": "支持脚本需要飞书文档地址、加密密钥，并校验可选应用 ID 的前置条件。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-lark-annotate.ts",
           "startLine": 19,
-          "endLine": 50
+          "endLine": 30
         },
         "quote": "const sourceUri = process.argv[2] || process.env.OMEM_QUALITY_SOURCE;\nif (!sourceUri) throw Error(\"Usage: quality-lark-annotate <Lark document URL>\");\nconst dataDir = resolve(process.env.OMEM_DATA_DIR || \".omem\");\nconst key = process.env.OMEM_SECRET_KEY\n  ? process.env.OMEM_SECRET_KEY\n  : process.env.OMEM_LARK_KEY_FILE"
       },
       {
         "key": "c2",
-        "label": "评估数据集与标注会话",
-        "reason": "支持只用于评估的导入、dev split、目标数量、事件基线与会话启动配置。",
+        "label": "评测样本隔离边界",
+        "reason": "说明文档切分与草拟标签仅服务人工研究评测，不得进入普通捕获、学习和知识生产流程。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c3",
+        "label": "标注运行环境组装",
+        "reason": "支持读取文档后初始化存储、密钥、飞书接入服务与运行宿主的流程关系。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 32,
+          "endLine": 50
+        },
+        "quote": "const document = await larkInput(sourceUri);\nconst store = new Store(dataDir);\nconst secrets = new EncryptedSecretStore(resolve(dataDir, \"secrets\"), key);\nconst onboarding = new LarkOnboardingService(\n  store.db,\n  secrets,\n  new OfficialLarkRegistrationAdapter(),\n  new OfficialLarkCapabilityProbe(),\n  () => new Date()"
+      },
+      {
+        "key": "c4",
+        "label": "数据集与会话启动",
+        "reason": "支持导入 dev 评测数据集、配置目标样本数、记录事件基线并启动标注会话。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-lark-annotate.ts",
           "startLine": 52,
-          "endLine": 72
+          "endLine": 75
         },
         "quote": "try {\n  const imported = importQualityDatasetEval({\n    optIn: QUALITY_EVAL_ONLY,\n    repository: host.quality.repository,\n    document,\n    sourceUri,\n    name: process.env.OMEM_QUALITY_DATASET || \"merchant-center-dev-v1\",\n    split: \"dev\",\n    targetCount: Number(process.env.OMEM_QUALITY_TARGET || 40),\n  });\n  const "
       },
       {
-        "key": "c3",
-        "label": "投递与标注事件轮询",
-        "reason": "支持卡片就绪、首个新增事件、投递终态错误，以及未送达和已送达后等待超时的区别。",
+        "key": "c5",
+        "label": "卡片与全局事件判定",
+        "reason": "支持当前会话消息 ID 的观察方式，并表明成功退出判据是未按会话或数据集过滤的全表事件计数增长。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 76,
+          "endLine": 123
+        },
+        "quote": "  while (Date.now() < deadline) {\n    const row = store.db\n      .prepare(\n        `SELECT state,message_id AS messageId,current_sample_id AS currentSampleId\n         FROM quality_annotation_sessions WHERE id=?`,\n      )\n      .get(session.id) as\n      | {\n          state: string;\n          messageId: string | null;\n  "
+      },
+      {
+        "key": "c6",
+        "label": "投递检查与资源清理",
+        "reason": "支持投递终态检查位于全局事件成功判定之后，以及卡片未送达、等待超时和最终资源清理的处理顺序。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-lark-annotate.ts",
-          "startLine": 73,
+          "startLine": 125,
           "endLine": 143
         },
-        "quote": "  let ready = false;\n  const timeoutMs = Number(process.env.OMEM_QUALITY_WAIT_MS || 3_600_000);\n  const deadline = Date.now() + timeoutMs;\n  while (Date.now() < deadline) {\n    const row = store.db\n      .prepare(\n        `SELECT state,message_id AS messageId,current_sample_id AS currentSampleId\n         FROM quality_a"
+        "quote": "    const delivery = store.db\n      .prepare(\n        `SELECT state,last_error AS lastError FROM delivery_intents\n         WHERE annotation_session_id=? ORDER BY created_at DESC LIMIT 1`,\n      )\n      .get(session.id) as\n      | { state: string; lastError: string | null }\n      | undefined;\n    if (delivery && [\"faile"
       }
     ],
     "questions": [
       {
-        "question": "实时标注命令应在收到首个事件后退出，还是应持续到整个数据集完成？",
-        "why": "当前实现检测到事件总数首次增加就成功退出，但数据集可能包含多条样本，材料没有说明命令的最终完成标准。",
-        "nextStep": "明确该命令是单次链路冒烟还是完整标注会话；若是后者，应依据仓库进度或会话终态决定退出。",
+        "question": "新增的标注事件能否通过会话、数据集或样本字段与当前标注会话可靠关联，并据此替代全局计数判据？",
+        "why": "现有脚本只比较整个事件表的行数，无法排除其他并发标注会话造成的增长；所给材料也没有展示事件记录的关联字段及写入校验。",
+        "nextStep": "检查飞书运行宿主的卡片事件处理、质量仓储的事件表结构与写入测试，确认可用关联字段后，将等待条件改为查询当前会话或当前数据集的有效事件。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3"
+          "c5"
+        ]
+      },
+      {
+        "question": "一次事件写入具体对应哪些卡片动作，是否已校验标签合法性并防止重复提交？",
+        "why": "当前材料只展示事件数量的轮询，没有提供事件语义、标签验证和幂等处理的实现依据。",
+        "nextStep": "补充检查卡片回调处理、质量标签校验及事件写入逻辑，并用行为测试覆盖非法标签和重复回调。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
         ]
       }
     ]
@@ -79,49 +126,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
-      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/knowledge-browser.ts",
-      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-role-smoke.ts",
-      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/quality-evaluate.ts",
-      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/quality-lark-annotate.ts",
       "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/quality-run.ts",
-      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:46:50.120Z",
+    "at": "2026-10-01T07:26:31.890Z",
     "trace": {
-      "runId": "02b7be29-5096-45d7-a278-87fa116e4607",
+      "runId": "ce361acd-c141-4f0b-a635-b4689557f241",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "742b32caf4d7b28712e03dc4171d3f8266bfc45c22777e8da47e01862f0e3225",
-      "contextHash": "2a2742a14f00d0a5b68ed4df1c7922aa1fc4fd7b9921da4a3b67fa1e844c6879",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "b0467c150b213d4faa4ab6b7f7b4580af19cfaaa577b751586386d029011ed61",
+      "contextHash": "8fbdabd02b6ac299c813d07af5681e50cc5863c90b484080c021e20824724140",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "48e67deea6c7cbac1ce93e68013fdbfc1714fb4a1cb1af205e51fe2d2b811e1b",
+      "fingerprint": "35c66ab22c6870c8bfff520ea099520e1134c0591b557bc183230ba599d68b2b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -134,11 +176,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeeb-1fb4-70d1-bcaf-ed42732f2b65"
+        "01a0f65b-43a7-7c40-bdc7-7e653d950fac"
       ],
       "usage": {
-        "used": 35326,
-        "size": 760000,
+        "used": 31218,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -146,10 +188,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 61645,
-          "utf8Bytes": 71957,
-          "estimatedTokens": 23986,
-          "budgetedTokens": 29983,
+          "chars": 32774,
+          "utf8Bytes": 39840,
+          "estimatedTokens": 13280,
+          "budgetedTokens": 16600,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -158,17 +200,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:46:58.341Z",
+    "at": "2026-10-01T07:26:58.185Z",
     "trace": {
-      "runId": "95bc7121-a43d-416d-af26-20f580cfb551",
+      "runId": "b699e0ae-6a09-4789-a1b2-cac692fd7664",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e56ae2be9aed635efcf6aa8557b5f45a684a6c03c314f90689f9f378019248a8",
-      "contextHash": "296c5641c062d4414d1a7a2bea0b2879cfbe39ad36eb6fbdf5c8ba327c4428df",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "ad1b68890e0b2ed4f768273abe7e5de765c2ea5a43e54f8fbc5d6c6208f14a0e",
+      "contextHash": "c35340a8277c814475767a0ab53e9064163a596b45a7f8f9db98a7919f511815",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a5f65c11b230e527d63b45f39b56123a5541ec09989e91372f5d2454e956f18f",
+      "fingerprint": "16804608e7138ece4c439d4bbe3b0a6e4d6ac2d164dd57cce46df95093d20aeb",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -181,11 +223,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeeb-91a4-77f2-8451-4bead72ff742"
+        "01a0f65b-bfae-7063-a85f-e469dab28684"
       ],
       "usage": {
-        "used": 30333,
-        "size": 760000,
+        "used": 28803,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -193,10 +235,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 57274,
-          "utf8Bytes": 64742,
-          "estimatedTokens": 21581,
-          "budgetedTokens": 26977,
+          "chars": 29202,
+          "utf8Bytes": 34002,
+          "estimatedTokens": 11334,
+          "budgetedTokens": 14168,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

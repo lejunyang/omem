@@ -2,113 +2,86 @@
   "version": 1,
   "document": {
     "key": "omem:docs/implementation/browser-verification.json",
-    "title": "浏览器验证记录（2026-10-01）",
-    "summary": "该记录汇总了一次基于真实 Fastify、SQLite 后端和确定性 ACP 协议夹具的浏览器检查，覆盖材料捕获、证据追踪、版本更新、助手会话、任务跟进、授权配对、响应式布局、大规模证据渲染及故障呈现。错误列表为空，但文件未提供逐项断言、执行命令、退出码或外部 Agent CLI 实测证据，因此只能说明本次记录声称的覆盖与结果，不能外推为全部外部集成已验收。",
+    "title": "浏览器端到端验收范围与证据边界",
+    "summary": "该记录描述了 2026-10-01 在指定 Chromium 版本上完成的一组浏览器验收场景，覆盖捕获、证据阅读、助手跟进、授权、响应式布局、故障呈现与富文本渲染。后端为真实 Fastify 与 SQLite，但智能体使用确定性 ACP 协议夹具，因此它能证明界面和应用流程在受控响应下可运行，不能单独证明真实外部 Agent CLI 或模型调用成功。",
     "category": "tests",
     "sections": [
       {
-        "key": "scope",
-        "title": "验证范围",
-        "body": "该文件记录日期为 2026-10-01，浏览器版本为 145.0.7632.6。检查从空白真实工作区和材料捕获开始，覆盖 A-U01 的真实任务、提案应用、通知与证据流，并检查递归证据、循环返回焦点、版本更新及旧修订不可变性。[[c1]]\n\n后续范围延伸到持久会话 API、等待/稍后提醒/取消等日常跟进控制，以及 A-U02 的决策差异、凭据和过期状态；还包括二维码与直接授权链接、应用复用和配对流程。[[c2]]"
+        "key": "purpose",
+        "title": "这份记录验证什么",
+        "body": "这是一份浏览器验收结果快照，记录日期为 2026-10-01，并明确了执行时使用的浏览器版本。它适合回答“哪些用户场景曾在浏览器中走通过”，但不是持续集成报告，也不能据此推断其他浏览器或后续代码版本仍然通过。参考 [[c1]]"
       },
       {
-        "key": "ui_and_resilience",
-        "title": "界面规模与故障场景",
-        "body": "界面检查包含页面重载、桌面渲染、768px 布局与键盘焦点，以及 390px 移动视口和全屏对话框。记录还声明使用 100 个持久化证据节点验证当前渲染有界，并覆盖离线、模型、投递失败和重启后的真实性呈现，说明目标不仅是主路径可用，也包括响应式交互、规模边界和故障状态。[[c3]]"
+        "key": "coverage",
+        "title": "覆盖的用户流程",
+        "body": "验收从空工作区与材料捕获开始，继续覆盖提案应用、通知和递归证据阅读，以及版本更新时保留不可变旧修订。日常助手部分检查了无选中片段时的持久会话，并验证等待、稍后提醒、取消等跟进控制。范围还包括决策差异与过期状态、二维码和授权链接、页面重载、桌面及移动布局、键盘焦点、大量证据节点下的受限渲染，以及 Markdown 表格和 Mermaid 图表的真实阅读器呈现。参考 [[c2]]"
       },
       {
-        "key": "evidence_boundary",
-        "title": "结果与证据边界",
-        "body": "记录中的 `errors` 为空，可视为这次汇总未登记浏览器错误；运行环境被描述为真实 Fastify 与 SQLite 后端。[[c4]] 但 Agent 明确标注为“确定性 ACP 协议夹具”，因此它能够支持前后端协议与界面流程验证，却不能单独证明真实外部 Agent CLI、模型能力发现或网络集成均可工作。文件也没有逐项结果、断言证据、执行命令和退出码，故应把它视为一次浏览器验收摘要，而不是完整可复现的测试报告。[[c5]]"
+        "key": "evidence-boundary",
+        "title": "实现事实与证明边界",
+        "body": "记录声明执行时没有错误，后端使用真实 Fastify 与 SQLite，因此可视为应用服务器、持久化和浏览器界面协同工作的历史证据。不过智能体一侧采用的是**确定性 ACP 协议夹具**：这能稳定验证协议消费和界面行为，却不能替代真实 Agent CLI、模型能力发现、网络异常或供应商兼容性的现场检查。`errors` 为空也只表示本次记录未发现错误，不代表所有环境均无缺陷。参考 [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "核心材料与证据流程检查",
-        "reason": "支持验证日期、浏览器版本，以及材料捕获、A-U01、递归证据和不可变修订等核心覆盖范围。",
+        "label": "验收日期与浏览器版本",
+        "reason": "支持该记录是特定日期、特定浏览器版本下的历史验收快照。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/browser-verification.json",
           "startLine": 2,
-          "endLine": 9
+          "endLine": 4
         },
-        "quote": "  \"date\": \"2026-10-01\",\n  \"browser\": \"145.0.7632.6\",\n  \"checks\": [\n    \"empty real workspace and material capture\",\n    \"A-U01 real job, applied proposal, notification and evidence flow\",\n    \"recursive evidence, cycle and return focus\",\n    \"version update and immutable prior revision\",\n    \"task creation and persiste"
+        "quote": "  \"date\": \"2026-10-01\",\n  \"browser\": \"145.0.7632.6\",\n  \"checks\": ["
       },
       {
         "key": "c2",
-        "label": "助手跟进、决策与授权检查",
-        "reason": "支持持久会话、跟进控制、A-U02 决策状态和 A-U03 授权配对流程的覆盖说明。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/browser-verification.json",
-          "startLine": 10,
-          "endLine": 14
-        },
-        "quote": "    \"daily assistant uses the persistent conversation API without a selected fragment\",\n    \"daily follow-up controls: waiting, snooze, cancel and narrow layout\",\n    \"A-U02 decision diff, evidence, receipts and stale state\",\n    \"A-U03 QR, direct authorization link, reusable app and pairing\",\n    \"page reload and desk"
-      },
-      {
-        "key": "c3",
-        "label": "响应式、规模与故障检查",
-        "reason": "支持桌面与移动布局、键盘焦点、100 个证据节点及离线和重启故障场景的覆盖说明。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/browser-verification.json",
-          "startLine": 14,
-          "endLine": 18
-        },
-        "quote": "    \"page reload and desktop rendering\",\n    \"A-U04 768px layout and keyboard focus\",\n    \"390px mobile viewport and full-screen dialog\",\n    \"100 persisted evidence nodes and bounded current rendering\",\n    \"A-U05 offline, model, delivery failure and restart truthfulness\""
-      },
-      {
-        "key": "c4",
-        "label": "错误汇总与真实后端",
-        "reason": "支持本次记录错误列表为空，并确认后端采用真实 Fastify 与 SQLite 的陈述。",
+        "label": "浏览器验收场景",
+        "reason": "支持正文对捕获、证据、助手跟进、授权、响应式布局、故障状态和富文本渲染等覆盖范围的概括。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/browser-verification.json",
-          "startLine": 19,
-          "endLine": 22
+          "startLine": 5,
+          "endLine": 19
         },
-        "quote": "  ],\n  \"errors\": [],\n  \"agent\": \"deterministic ACP protocol fixture\",\n  \"backend\": \"real Fastify + SQLite\""
+        "quote": "    \"empty real workspace and material capture\",\n    \"A-U01 real job, applied proposal, notification and evidence flow\",\n    \"recursive evidence, cycle and return focus\",\n    \"version update and immutable prior revision\",\n    \"task creation and persistent change notifications\",\n    \"daily assistant uses the persistent "
       },
       {
-        "key": "c5",
-        "label": "确定性 ACP 协议夹具",
-        "reason": "说明 Agent 侧使用的是协议夹具，支持限定该记录不能替代真实外部 CLI 或模型集成验证。",
-        "relation": "explains",
+        "key": "c3",
+        "label": "执行结果与运行组件",
+        "reason": "支持本次记录无错误、后端采用真实 Fastify 与 SQLite，同时智能体使用确定性 ACP 协议夹具的证据边界。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/browser-verification.json",
-          "startLine": 20,
-          "endLine": 22
+          "startLine": 21,
+          "endLine": 23
         },
         "quote": "  \"errors\": [],\n  \"agent\": \"deterministic ACP protocol fixture\",\n  \"backend\": \"real Fastify + SQLite\""
       }
     ],
     "questions": [
       {
-        "question": "这些检查是否有对应的逐项断言、执行命令、退出码和失败截图或 trace？",
-        "why": "当前材料只有检查名称和空错误列表，无法判断每项检查的具体通过条件，也不足以独立复现结果。",
-        "nextStep": "关联浏览器脚本输出、测试运行日志或完整验证报告，并为每个检查项记录结果与证据位置。",
+        "question": "这些场景是否另有使用真实 Agent CLI 与指定模型执行的浏览器验收记录？",
+        "why": "当前记录明确使用确定性 ACP 协议夹具，无法据此确认真实模型启动、能力协商和响应链路在同一批场景中成功。",
+        "nextStep": "补充或关联一次真实 Agent CLI/ACP 运行记录，并分别报告协议夹具验收与现场模型验收结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "每个检查项的具体断言、执行入口和失败截图保存在哪里？",
+        "why": "当前材料只列出场景名称与总体零错误结果，缺少逐项断言和可复现步骤，无法独立判断每项检查的深度。",
+        "nextStep": "关联浏览器脚本、逐项结果及必要的截图或 trace，并记录与本快照对应的源码版本。",
         "blocking": false,
         "citationKeys": [
           "c1",
           "c2",
-          "c3",
-          "c4"
-        ]
-      },
-      {
-        "question": "是否另有真实 Agent CLI/ACP 与目标模型的现场验证记录？",
-        "why": "本记录明确使用确定性 ACP 协议夹具；协议夹具通过不能证明外部 CLI、模型能力协商及真实调用链可用。",
-        "nextStep": "补充单独标注的 live check，记录实际 CLI、模型与 effort 配置、退出码及运行 trace。",
-        "blocking": false,
-        "citationKeys": [
-          "c5"
+          "c3"
         ]
       }
     ]
@@ -117,23 +90,23 @@
     {
       "kind": "material",
       "key": "omem:docs/implementation/browser-verification.json",
-      "digest": "1cdf8eada52c4dddf644511f409f87490b8d27b6b261a7d6db7cfd574862ab67"
+      "digest": "d5a23dd2323c42659deb3503f9412e3d2dbcc2c7abd48037bad4ab08baf35116"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:43:34.997Z",
+    "at": "2026-10-01T07:20:26.307Z",
     "trace": {
-      "runId": "b83e6848-d3a8-45e6-af69-f10b11f633ea",
+      "runId": "d59d37a5-4f97-4a66-9dcf-72bbe5cc0010",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "29ce5c93e192e6fa13513456a0bc62d2adfadba4d48903b3a70dde5f3cffb702",
-      "contextHash": "cc5619da1a110cf1da8f3df5aa09006d930b8376cc861d719af10e05bf44bd30",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "ae848d1e27f0bb5576e2a3c16c0e1c63489a96289f2702aa57fdde501e9278bd",
+      "contextHash": "cfe0504006d181020943ee2ab050abb4530b250d4c010b23c08e76039ce4e1d7",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4844fa5aa095bc389a92a61295892b1a3f784e9aacfcdd408c8ddfacaa416bb6",
+      "fingerprint": "4eaf5293cb3c22cf083f2112795692bf86ff8bee48d9192a90f65d664c911e3e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -146,10 +119,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f558-2ac5-75f0-affb-71e0b42b5905"
+        "01a0f655-b610-7a80-929f-74a67a5135e0"
       ],
       "usage": {
-        "used": 23004,
+        "used": 22255,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -158,10 +131,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 7136,
-          "utf8Bytes": 8756,
-          "estimatedTokens": 2919,
-          "budgetedTokens": 3649,
+          "chars": 8048,
+          "utf8Bytes": 11000,
+          "estimatedTokens": 3667,
+          "budgetedTokens": 4584,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -170,17 +143,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:43:51.727Z",
+    "at": "2026-10-01T07:20:41.560Z",
     "trace": {
-      "runId": "7bdbd611-c375-4d94-a2a6-3b0fdbccb22f",
+      "runId": "afa4b183-d70b-45a9-aa1f-ef3557428322",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "57dd7051deaa735dca7d4a64cf84b3cab2e575c771de50db4b410e2a17c3196f",
-      "contextHash": "5fd56db6ce94f3f8c084445773f6527d9751323b4deaf6fdca6236b1ad799830",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "b0eb7860953dc0fa73716e4a2dbe314dd95be7577d85c7862be71ae36b7b3a9d",
+      "contextHash": "6a357fedc0953d4eca64982707e70dbbd971d503f5e17b2050dc51768ab7ae3c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c4501399ba7cb26e216f89eea8c21adf5eaf1669b8088da0c8cd115b40edca1f",
+      "fingerprint": "94f85028ed753ea3bcc8fc906e5b4432965ed3c830387cca0b7d7603802a5ee4",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -193,10 +166,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f558-9f42-7900-afa7-d63c64c080a5"
+        "01a0f656-1570-76d3-b49d-209d5d9e1c8c"
       ],
       "usage": {
-        "used": 21622,
+        "used": 22109,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -205,10 +178,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 8815,
-          "utf8Bytes": 11853,
-          "estimatedTokens": 3951,
-          "budgetedTokens": 4939,
+          "chars": 8235,
+          "utf8Bytes": 12123,
+          "estimatedTokens": 4041,
+          "budgetedTokens": 5052,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

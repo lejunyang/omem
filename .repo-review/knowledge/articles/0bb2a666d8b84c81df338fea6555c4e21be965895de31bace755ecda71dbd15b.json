@@ -2,26 +2,26 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
-    "title": "知识刷新技能的 OpenAI 界面配置",
-    "summary": "该文件声明刷新技能在代理界面中的显示名称、英文简介和默认提示语，用于引导代理调用指定技能处理固定材料；它不包含刷新实现或运行证明。",
+    "title": "关联知识更新角色的界面与默认提示配置",
+    "summary": "该配置为“更新关联知识”角色声明面向用户的名称、简短说明和默认提示词，表达了基于固定证据构建关联知识的预期用途；它属于角色入口元数据，不能单独证明知识更新流程已经实现或能够成功运行。",
     "category": "configuration",
     "sections": [
       {
-        "key": "presentation",
-        "title": "技能展示语义",
-        "body": "界面将技能显示为“更新关联知识”，与刷新角色的职责名称一致。短描述则把任务概括为从固定证据构建关联知识，突出输入证据的固定性与产物之间的关联。[[c1]] 该描述较为通用，没有单独表达保留未受影响知识和标记替代结论等增量语义。"
+        "key": "role-purpose",
+        "title": "角色解决什么问题",
+        "body": "该角色面向需要从既有、固定证据中整理关联知识的场景。界面名称采用“更新关联知识”，让用户能从角色列表或操作入口理解其用途；英文短说明进一步限定目标是依据固定证据构建相互关联的知识，而不是脱离来源自由生成内容。参考 [[c1]]\n\n这里记录的是角色的**展示语义与预期职责**。仅凭这份配置，无法确认材料解析、引用固定、独立复核或结果保存等实际处理能力是否已经接通。"
       },
       {
-        "key": "default",
-        "title": "默认调用入口",
-        "body": "默认提示语要求代理使用指定的知识刷新技能处理已提供的固定材料。[[c2]] 这只是界面层的默认调用文本；是否真正加载正确版本、是否采用清单中的无工具策略，以及输出是否通过 KnowledgeBatch 合同，仍需要运行时校验和行为结果才能确认。"
+        "key": "invocation",
+        "title": "默认调用方式与边界",
+        "body": "默认提示词要求使用指定的知识更新技能处理已提供的固定材料，说明该角色被设计为把具体工作委托给技能合同，并以调用时供应的材料作为输入。参考 [[c2]]\n\n因此，这个 YAML 更像 Agent 入口配置：它统一展示名称、用途摘要和默认请求，却没有描述技能内部流程、支持的材料类型、失败处理或输出如何落库。判断功能是否可用，仍需结合技能定义、运行时装配及真实执行结果，不能把默认提示词视为已实现能力。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识刷新界面名称与简介",
-        "reason": "支持技能的用户可见名称及基于固定证据构建关联知识的定位。",
+        "label": "角色名称与用途",
+        "reason": "支持附近关于角色展示名称以及“基于固定证据构建关联知识”这一预期职责的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -33,8 +33,8 @@
       },
       {
         "key": "c2",
-        "label": "知识刷新默认提示语",
-        "reason": "支持代理界面默认调用知识刷新技能处理固定材料的约定。",
+        "label": "默认技能调用提示",
+        "reason": "支持附近关于默认提示词会调用知识更新技能并处理所供应固定材料的说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -47,53 +47,17 @@
     ],
     "questions": [
       {
-        "question": "界面短描述是否需要明确体现“增量刷新、保留未受影响知识和标记替代结论”？",
-        "why": "当前短描述与知识规划入口同样采用通用的固定证据表述，不能清楚区分规划新知识与刷新既有知识两种操作。",
-        "nextStep": "由产品或角色维护者确认界面区分需求；若需要，调整短描述并通过代理选择界面检查可辨识性。",
+        "question": "知识更新技能是否已经接入可运行的材料处理、引用复核与结果保存流程？",
+        "why": "当前材料只给出角色元数据和默认提示词，无法据此确认技能实现、运行时装配或端到端执行状态。",
+        "nextStep": "检查对应技能定义、角色运行时注册以及一次使用固定材料的真实执行记录，再区分已实现能力与配置中的预期行为。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
-        ]
-      },
-      {
-        "question": "界面短描述是否需要明确体现增量刷新、保留未受影响知识和标记替代结论？",
-        "why": "当前短描述只说明从固定证据构建关联知识，与知识规划入口的描述相同，不能清楚区分两种操作。",
-        "nextStep": "由产品或角色维护者确认区分需求；如需区分，调整短描述并检查代理选择界面的可辨识性。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
           "c2"
         ]
       }
     ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
-      "digest": "468bbb6b669089c57790cb8ba50178f9d7d9a8ffb6835dd48c18a137f7e25fa1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
-      "digest": "eb5e63bd3b6e3878ed2dffe409bae271e20993ac0baabdf1e4c47bb12cfbb27d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
-      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
-      "digest": "4314f06e1b0e6ba910552b65d93ffce60f1ada2837ed285ca1979b5f9afa1e94"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/SKILL.md",
-      "digest": "7cc6c58913efeb9fd59c189e30c43fe0b266d747e6671e61c977949c27ac9b6f"
-    },
     {
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
@@ -103,17 +67,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:23:33.379Z",
+    "at": "2026-10-01T07:22:20.391Z",
     "trace": {
-      "runId": "199ac603-c8d2-4ddc-bc10-73337bdf68d5",
+      "runId": "0714f67a-fb83-493a-a53a-d058088be502",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "92a44dfc33138fc923b2598cd48a9ae406f7f0d6e574498df685e924a54d31b8",
-      "contextHash": "b0debaf029893a97683879e270c7048b66d9ca2187c0ef238335e03e11459f73",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "191b66dbaeb12418aa499729f9a97e836b8234c91709833c67d4049f3778e43c",
+      "contextHash": "96eed9131dd5a8638f50210e2af88521a9ba812135e12a9362ceef9a3e61ae93",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ceeabaf73efe948f941f09bbd9171bdc803d23dc7c20c760f12aecb5da2083e8",
+      "fingerprint": "6e8413809b585b456e795b7f8c57a9d61935bbb9b37dce03920a4c7654d4185a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -126,11 +90,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9e-90b1-7731-822d-dd67e8eaf1b6"
+        "01a0f657-887a-79b2-ab02-8cc09a243f31"
       ],
       "usage": {
-        "used": 23945,
-        "size": 760000,
+        "used": 22550,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -138,10 +102,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23174,
-          "utf8Bytes": 26432,
-          "estimatedTokens": 8811,
-          "budgetedTokens": 11014,
+          "chars": 7390,
+          "utf8Bytes": 10354,
+          "estimatedTokens": 3452,
+          "budgetedTokens": 4315,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -150,17 +114,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:23:51.676Z",
+    "at": "2026-10-01T07:22:39.688Z",
     "trace": {
-      "runId": "a0545f02-7565-4ac3-b128-7fd7aa2f247e",
+      "runId": "0367d031-1c2f-4223-952c-22580bc459fc",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "3dfa76d5abf62a96b63d3dc8ec93b66c8f1ed916f9317a6d0013bc2f8b39d31e",
-      "contextHash": "fd5474391e31196a1861373e699d04032e295888896ca4341ab196897ab0dfcb",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "7194376efefafe443dd70c8541c3ea76efd08a6673ed6cda19582b15e5673f9d",
+      "contextHash": "c05fd3e8b2ce87291b43799687ff03d742562fbb2a7ff2bb309e194cc2a72e9d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "10d76f4f484b9c366f48e2092258328d79d173c527a8e97a131b55db3da713f2",
+      "fingerprint": "a1e3d14a3adc4f9fa9e4f4dcf6356417ba21721ddd33bbedc26b5fe4787d6b62",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -173,11 +137,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9f-53a6-7b11-9a73-0641f6a1c7d7"
+        "01a0f657-d9e3-7320-9f78-e4ef17dca3d0"
       ],
       "usage": {
-        "used": 25873,
-        "size": 760000,
+        "used": 21024,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -185,10 +149,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36073,
-          "utf8Bytes": 48005,
-          "estimatedTokens": 16002,
-          "budgetedTokens": 20003,
+          "chars": 6601,
+          "utf8Bytes": 10049,
+          "estimatedTokens": 3350,
+          "budgetedTokens": 4188,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

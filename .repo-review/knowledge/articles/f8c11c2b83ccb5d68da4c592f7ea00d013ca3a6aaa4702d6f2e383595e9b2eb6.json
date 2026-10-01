@@ -2,99 +2,115 @@
   "version": 1,
   "document": {
     "key": "module:docs-implementation:part-3",
-    "title": "统一知识流水线、Code Wiki 与验证边界",
-    "summary": "本专题串联实现文档中从历史 Code Knowledge 设计到当前通用知识流水线的演进：代码知识不是第二套知识库，而是统一不可变证据链上的可重建投影；材料经共用角色分析、独立复核后发布，并通过 Evidence Trail、检索和助手回到原始片段。当前已具备中文语义检索、来源更新重核验和多视口浏览器流程，但跨文件调用、跨版本符号身份、全库知识覆盖及若干外部集成仍有明确限制。",
+    "title": "从统一捕获到可追溯知识与行动",
+    "summary": "本章说明 omem 如何把手工、文件、代码、聊天和屏幕事件统一保存为版本化原始材料，再经分析、独立复核和固定引用形成可阅读知识，并将证据用于助手召回、代码理解与事项跟进；同时区分当前已验证能力、历史设计和仍需现场验收的外部集成。",
     "category": "overview",
     "sections": [
       {
-        "key": "purpose_and_evolution",
-        "title": "为什么要统一证据与知识模型",
-        "body": "早期 repo-review 已能把仓库保存为不可变版本和固定片段，并用人工关系连接代码、需求、决策与测试，但代码侧缺少精确符号和结构关系，因此历史方案提出以确定性 TS/Vue 解析补充文件、符号与结构边，模型理解只作为可选增强。[[c1]][[c2]]\n\n这条路线的关键不是建设独立 Code Wiki，而是让代码、文档、对话和图片都服从同一事实边界：原始权威始终是 Capture→Source→Revision→Fragment，代码图和知识正文只是可重建投影。这样既能提供面向人的解释，又能在来源变化、模型失败或定位缺失时保留旧证据并诚实标记状态。"
+        "key": "purpose",
+        "title": "解决材料、解释与行动相互脱节的问题",
+        "body": "omem 面向的不是单纯文档搜索，而是把零散输入变成**能追溯、会更新、可继续行动**的个人知识。手工内容、文件、Git、飞书、Agent、hook、聊天和屏幕观察都进入统一捕获合同；即时材料直接保存，连续事件则按会话或窗口聚合，并保留观察时间、参与者和版本。参考 [[c1]]\n\n原始事实始终属于 Capture、Source、Revision 与 Fragment。知识正文只是带固定引用的派生解释：来源变化会使相关知识过期，但旧修订和旧引用仍可回读；用户回答则作为新的原始材料加入下一轮核对，而不是改写历史证据。参考 [[c2]]"
       },
       {
-        "key": "pipeline_and_connections",
-        "title": "如何生成、复核、阅读与召回",
-        "body": "当前通用流程先由材料角色组织正文和内联引用，再用独立会话检查引用是否真正支持附近论断；只有通过复核的修订才能发布，分析期间来源改变也会阻止旧结果落地。用户回答则作为新的原始材料进入下一轮，而不是直接改写既有证据。[[c3]][[c4]]\n\n仓库只是输入适配器：通过的知识可保存为 JSON 与 Markdown，索引重建不触发模型。个人知识和仓库知识共用 Evidence Trail，可从正文逐层进入章节、原始材料或代码，并恢复返回路径、滚动、焦点与深链；助手即使命中派生正文，最终仍沿固定引用返回原始 Fragment。[[c5]] 这也与日常助理相连：交办、任务应用、真实回执和提醒复用既有 MemoryService 与证据规则，不另建 Agent 或事实来源。[[c6]]"
+        "key": "pipeline",
+        "title": "分析、复核、发布与更新如何协作",
+        "body": "处理链路可概括为：\n\n```mermaid\nflowchart LR\n  A[统一捕获与版本化] --> B[材料分析]\n  B --> C[独立语义复核]\n  C -->|通过| D[不可变知识修订]\n  C -->|退回| E[定向刷新]\n  D --> F[阅读与助手召回]\n  F --> G[回答或显式待办]\n  G --> A\n```\n\n材料、代码、对话和图像共用同一角色运行时与持久任务表；知识任务按种类领取，不会抢占学习或通知工作。KnowledgePipeline 先分析，再由独立会话检查引用是否真正支持论断，来源在处理中变化时拒绝发布。参考 [[c3]]\n\n仓库评审只是这条通用流程的输入适配器。通过复核的结果保存为 JSON 和带内联引用的 Markdown；局部生成会调用模型，索引重建则只恢复已有知识。运行数据、旧历史库和派生正文不会被重新冒充为原始证据。参考 [[c4]]"
       },
       {
-        "key": "progress",
-        "title": "当前进展与可验证能力",
-        "body": "截至 2026-10-01，知识流程已接入共用合同、八种角色、持久分析、独立复核、仓库全材料适配和知识引导召回；检索又增加固定版中文向量模型、按模型身份隔离的向量索引、混合召回与来源更新后的 extractor／verifier／apply 闭环。全库是否完成仍以实时 coverage 和 verification 记录为准，不能沿用旧统计。[[c7]]\n\n代码域已有无需模型的 TS/Vue 结构图、关系视图和多层 trail，但跨文件调用仍不解析，名称级调用只是候选，跨 revision 的符号与片段身份也尚未续接。[[c8]] 因而 Code Wiki 的价值主要是把结构、派生解释和固定证据放进同一阅读路径，而不是宣称已具备完整的跨仓语义代码分析。"
+        "key": "reading_and_action",
+        "title": "代码阅读、证据下钻与事项跟进",
+        "body": "代码知识是在统一证据链上增加的可重建投影：固定快照经 TS/Vue 解析形成文件、符号和关系，人工登记边仍来自明确 seed；它不是第二套知识库。当前结构图可用于浏览，但跨文件调用不解析，名称级调用只是候选，跨 revision 的符号与片段身份仍需重新同步定位。参考 [[c5]]\n\n个人知识与仓库知识共用 Evidence Trail：正文引用先说明理由，再逐层进入知识章节、固定原文或代码；支持返回、循环跳回、滚动、焦点和深链恢复。助手即使命中派生正文，最终也沿引用返回原始 Fragment，并重新核对当前来源。参考 [[c6]]\n\n证据还可进入日常行动链：本人交办先保存原文，模型提出结构化操作，MemoryService 校验应用并返回真实回执；等待对象、跟进时间和业务截止时间分别保存，完成、取消或稍后都有明确状态语义。参考 [[c7]]"
       },
       {
-        "key": "verification_and_limits",
-        "title": "验证证据与剩余限制",
-        "body": "浏览器记录覆盖材料捕获、递归证据、版本不可变、日常跟进、授权配对、桌面与移动布局、百节点渲染及故障呈现；后端是真实 Fastify 与 SQLite，但 Agent 使用确定性 ACP 协议夹具，所以该记录不能替代真实外部 CLI 或模型验收。[[c9]]\n\n另一份实现验证记录给出了依赖冻结、全量测试、构建和三套浏览器流程的退出码，并包含一次真实模型的小样本复核校准；它同时明确排除了全量语义正确性、真实飞书 WebSocket、外部观察器和多租户隔离等外推。[[c10]] 因此当前应区分三层证据：确定性测试证明合同与状态机，真实浏览器证明可消费流程，小规模 live check 证明特定配置可连通；任何一层都不能单独代表全库知识质量或全部外部集成已经完成。"
+        "key": "progress_and_limits",
+        "title": "当前进展、验证边界与剩余限制",
+        "body": "截至 2026-10-01，统一知识阅读、中文向量检索、来源更新后的重核验、日常助手与事项跟进已经形成可运行切片；状态页同时强调全库知识尚未完整，实际完成度必须看当前覆盖与验证报告，不能沿用旧统计。参考 [[c8]]\n\n浏览器记录覆盖捕获、递归证据、版本保留、任务跟进、授权页面、三种视口、故障呈现和 Markdown／Mermaid 阅读；后端使用真实 Fastify 与 SQLite，但智能体是确定性 ACP 协议夹具，因此该记录不能证明真实模型或外部服务在同一批场景中通过。参考 [[c9]]\n\n实现验证还明确保留若干边界：跨文件类型感知调用、真实飞书 WebSocket、外部屏幕观察器和租户隔离没有由该批检查证明；独立模型复核也不等于人工验收。当前架构仍以个人单用户 SQLite 为事实边界。参考 [[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "历史设计的定位与目标",
-        "reason": "说明 Code Knowledge 文档是历史提案，并概括早期弱代码建模与确定性解析目标。",
-        "relation": "background",
-        "target": {
-          "kind": "article",
-          "key": "omem:docs/implementation/code-knowledge-design.md",
-          "section": "positioning"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c2",
-        "label": "早期代码知识问题与分层方案",
-        "reason": "以原始设计材料支持固定片段、弱符号建模以及确定性结构层先行的具体背景。",
+        "label": "统一捕获与事件聚合",
+        "reason": "支持多来源输入、即时与聚合入口、版本化及观察时间的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:docs/implementation/code-knowledge-design.md",
-          "startLine": 14,
-          "endLine": 28
+          "key": "omem:docs/implementation/inputs.md",
+          "startLine": 3,
+          "endLine": 44
         },
-        "quote": "【事实】当前 repo-review（`apps/server/src/review/`）已经是一个\"代码评审知识库\"：\n它把 omem 仓库本身扫描成不可变 revision + 固定 fragment，并通过**手维护的 seed**\n（`docs/repo-review/associations.json`）建立 `code fragment → intent → requirement/decision/research/test`\n的双向关系。但它的代码侧是**弱建模**：\n\n- 代码文件只被正则切成 fragment（`sync.ts` 的 `CODE_BOUNDARY`），没有\"符号\"实体；\n- 符号只是 `conte"
+        "quote": "立即保存的统一入口是 `POST /api/captures`；需要静默窗/最大窗口聚合的 chat/screen 事件使用 `POST /api/input-events`。运行时 Zod 合同在 packages/contracts/src/index.ts。私有/远程服务器请求带 Bearer token。\n\n```json\n{\n  \"source\": \"screen\",\n  \"externalId\": \"desktop-observer/event-001\",\n  \"title\": \"正在阅读产品需求\",\n  \"observedAt\": \"2026-09-26T16:00:00+08:00\",\n  \"provenance\":"
+      },
+      {
+        "key": "c2",
+        "label": "固定引用与不可变知识",
+        "reason": "支持原始证据边界、不可变知识修订、来源变化失效及用户回答保存方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/knowledge-pipeline.md",
+          "startLine": 5,
+          "endLine": 13
+        },
+        "quote": "## 已完成：正文与固定引用合同\n\n`KnowledgeDocument` 用具名章节组织 Markdown 正文，`[[c1]]` 引用贴在对应文字旁。引用有可读名称、理由、关系和材料行范围或知识章节目标。模型选择位置，宿主从固定版本复制引文；语义支持性另由独立角色复核，位置存在不能替代语义复核。\n\n`KnowledgeRepository` 保存不可变知识修订和当前指针。原始材料仍来自 Capture / Source / Revision / Fragment，派生知识不会再次作为独立原件采集。来源变化会使对应知识及依赖它的章节过期，旧引用仍可读取原始固定版本。JSON 和 Markdown 可作为可移植产物保存和重建。\n\n疑"
       },
       {
         "key": "c3",
-        "label": "共用运行时与发布门槛",
-        "reason": "引用子知识对共用角色运行时、独立复核和发布条件的组织性解释。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "section": "runtime-pipeline"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c4",
-        "label": "分析、复核与仓库适配原始说明",
-        "reason": "支持只有通过复核的正文才发布、来源变化拒绝发布、用户回答作为原始材料及可提交产物等流程。",
+        "label": "共用角色运行与发布门槛",
+        "reason": "支持各类材料共用运行时、任务隔离、独立复核和来源变化时拒绝发布。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 23,
+          "startLine": 15,
+          "endLine": 29
+        },
+        "quote": "## 已完成：共用 Agent 运行时\n\n材料、代码、对话、图像分析，以及章节规划、写作、复核和刷新这八个角色都使用既有 `RoleRuntimeGateway`、版本化 manifest/prompt/schema 和内嵌 skill。没有新增另一套模型进程或任务存储。宿主可以规范化引用后再交给独立复核角色，角色的原始范围和运行 trace 保留。\n\n持久 worker 增加按 kind/job id 领取的过滤条件，知识整理不会抢走学习或通知任务。预算使用共用实现；正式 review 配置为 192000 输入 / 24000 输出 / 16000 预留 tokens，仍需通过当前模型声明窗口校验。角色默认预算是 96000 /"
+      },
+      {
+        "key": "c4",
+        "label": "仓库适配与知识产物",
+        "reason": "支持仓库只是输入适配器、通过结果可移植保存，以及生成和索引重建的职责区别。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/knowledge-pipeline.md",
+          "startLine": 31,
           "endLine": 37
         },
-        "quote": "## 已完成：通用分析、复核与服务接口\n\n`KnowledgePipeline` 先运行材料角色，再使用独立会话复核。只有通过的正文才发布；同批已通过内容可以先保存，未通过内容继续修订。模型选择引用行范围，宿主复制精确短引文，复核角色判断其是否支持正文。持久任务和角色输出支持重建投影后复用，分析期间来源变化会拒绝当前发布。\n\n个人服务已提供 `/api/knowledge`：正文、固定引用、原始材料、搜索、问题、回答和显式待办动作。它直接处理手工材料等通用 Capture 输入。回答保留为原始材料，并使对应知识进入重核对；下一轮处理会把回答提供给 Agent。代码关系只作为材料类型适配，不构成新的事实或记忆 authority。\n\n"
+        "quote": "## 已完成：仓库材料适配与可提交产物\n\n`review:analyze` 使用统一流程处理全部 Git 可见材料（含源码、文档、部署配置、技能和图像），记录明确的排除/失败原因。运行数据、旧历史库、私有环境与派生知识不重新作为独立证据。每份通过独立复核的正文立即保存为 JSON + 带内联链接的 Markdown；后续按模块、主题和概览逐层组合，仍保留固定引用。\n\n`review:generate -- --target=<path>` 是同一流程的局部入口；`review:build` 只重建当前知识索引，不重新调用模型。启动与手动同步均接入材料和知识恢复。review 中用户明确保存的回答写为原始 user-notes 材料，"
       },
       {
         "key": "c5",
-        "label": "共用阅读与原始证据召回",
-        "reason": "支持个人知识与仓库知识共用 Evidence Trail，并说明派生正文只负责导航到原始 Fragment。",
-        "relation": "explains",
+        "label": "代码知识实测与边界",
+        "reason": "支持 Code Wiki 的统一证据链定位、确定性解析现状及跨文件调用和跨版本身份限制。",
+        "relation": "tracks",
         "target": {
-          "kind": "article",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "section": "repository-and-reader"
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 48,
+          "endLine": 59
         },
-        "quote": ""
+        "quote": "## Code Wiki（通用代码知识纵向切片）实测\n\n> 定位：Code Wiki 不是独立产品，是同一 Capture→Source/Revision/Fragment→Relation/Retrieval 证据链在代码域上的确定性 typed projection；repo-review 只是隔离 dev 配置/视图（5180 API + 5181 web、独立 SQLite、不起业务 worker）。以下数字为 2026-09-29 对运行中 `osdk run dev:review` 实例的实测（`/api/review/*` 直接查询），非设计目标。\n\n- **确定性代码图（无模型）**：TS Compiler AST（"
       },
       {
         "key": "c6",
-        "label": "日常交办与证据治理主线",
-        "reason": "说明日常助理复用现有模型、MemoryService 和原始材料规则，并界定其与知识流程的关系。",
-        "relation": "depends_on",
+        "label": "共用证据阅读与召回",
+        "reason": "支持 Evidence Trail 的共享交互合同，以及派生正文只引导召回原始 Fragment。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/knowledge-pipeline.md",
+          "startLine": 45,
+          "endLine": 59
+        },
+        "quote": "## 已完成：正文内联引用阅读\n\n个人“知识整理”和仓库“仓库知识”使用同一组阅读组件；代码结构视图作为补充入口。正文中的引用带可读名称，打开后先展示引用理由，再进入固定知识章节或原始材料；代码 import 行旁也能进入目标模块知识。帧栈行为已集中到 `packages/ui/useEvidenceTrail`，知识、材料与旧代码视图使用同一 dialog 合同，支持逐层返回、循环跳回、滚动与焦点恢复以及深链。\n\n验证：完整 `osdk run check` 通过；`knowledge-browser.ts` 用真实 Vue/API/SQLite 验证正文→章节→三个模块→固定代码的五层链、理由、import 跳转、Esc、深链、"
+      },
+      {
+        "key": "c7",
+        "label": "交办与事项状态流程",
+        "reason": "支持本人交办、结构化操作、MemoryService 应用、跟进时间和状态变更的工作方式。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/daily-follow-up.md",
@@ -104,82 +120,60 @@
         "quote": "当前可用的主线是：本人交办 → 保存指令原文 → 模型提出结构化任务操作 → MemoryService 检查并应用 → 真实回执回复 → 约定时间站内提醒 → 本人完成、取消或稍后。\n\n`assistant/message-workflows.ts` 定义随手交办、讨论归并、等待跟进、事项回顾四类模板，进入 AcpAssistantModel 的真实提示词。它们不另建 Agent 框架；后台 LearningPipeline 的 extractor/verifier 仍使用统一原始材料和归属规则。模板不会授予捕获内容写权限。\n\n事项状态为 open / waiting / done / cancelled。`follow_up` "
       },
       {
-        "key": "c7",
-        "label": "检索、重核验与知识流程最新状态",
-        "reason": "支持中文向量检索、来源更新闭环、共用知识角色已经落地，同时限定全库覆盖仍应读取当前报告。",
+        "key": "c8",
+        "label": "统一知识能力最新进展",
+        "reason": "支持统一阅读、检索、来源更新闭环和全库覆盖仍未完成的当前状态。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
-          "startLine": 5,
+          "startLine": 1,
           "endLine": 17
         },
-        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手"
-      },
-      {
-        "key": "c8",
-        "label": "Code Wiki 实测能力与结构限制",
-        "reason": "支持确定性代码图已经实现，并说明跨文件调用和跨版本身份续接仍受限制。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 46,
-          "endLine": 57
-        },
-        "quote": "## Code Wiki（通用代码知识纵向切片）实测\n\n> 定位：Code Wiki 不是独立产品，是同一 Capture→Source/Revision/Fragment→Relation/Retrieval 证据链在代码域上的确定性 typed projection；repo-review 只是隔离 dev 配置/视图（5180 API + 5181 web、独立 SQLite、不起业务 worker）。以下数字为 2026-09-29 对运行中 `osdk run dev:review` 实例的实测（`/api/review/*` 直接查询），非设计目标。\n\n- **确定性代码图（无模型）**：TS Compiler AST（"
+        "quote": "> **2026-10-01 统一知识阅读（本轮）**：`dev` 将本仓库原始材料、已复核文章与所需历史证据接入个人库；移除 `dev:review` 用户入口。知识阅读改为功能目录、完整文章、页内导航；引用移到段末，代码按引用行展开，原始 Markdown 连贯渲染。菜单与面包屑共享定义，飞书未启用提示留在飞书页面。Mermaid 使用标准库渲染。旧正文不会因换界面自动变成高质量知识；受影响内容需要真实 ACP 重新分析与独立复核。本轮验收结果见 [统一知识阅读](unified-knowledge-reading.md)。\n\n> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既"
       },
       {
         "key": "c9",
-        "label": "浏览器流程与协议夹具边界",
-        "reason": "支持浏览器覆盖范围、真实后端以及确定性 ACP 夹具不能代表真实外部模型验收的判断。",
-        "relation": "tracks",
+        "label": "浏览器验收范围",
+        "reason": "支持浏览器场景覆盖、真实后端与确定性 ACP 协议夹具之间的证据边界。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/browser-verification.json",
           "startLine": 2,
-          "endLine": 22
+          "endLine": 23
         },
         "quote": "  \"date\": \"2026-10-01\",\n  \"browser\": \"145.0.7632.6\",\n  \"checks\": [\n    \"empty real workspace and material capture\",\n    \"A-U01 real job, applied proposal, notification and evidence flow\",\n    \"recursive evidence, cycle and return focus\",\n    \"version update and immutable prior revision\",\n    \"task creation and persiste"
       },
       {
         "key": "c10",
-        "label": "实现检查、浏览器验证与剩余限制",
-        "reason": "支持依赖、测试、构建和浏览器检查的实际退出结果，并限定 live 校准及外部集成的证据范围。",
-        "relation": "supports",
+        "label": "实现验证剩余限制",
+        "reason": "支持跨文件解析、外部集成、租户隔离和模型复核仍存在的验证边界。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/knowledge-verification.json",
-          "startLine": 2,
+          "startLine": 39,
           "endLine": 52
         },
-        "quote": "  \"version\": 1,\n  \"recordedAt\": \"2026-09-29T20:01:05.538823+00:00\",\n  \"implementationCommit\": \"72ae4708ef238e7b67053cec97dbe5901d539d39\",\n  \"scope\": \"Implementation verification. Knowledge corpus generation and coverage are recorded separately; this is not a claim that every external integration was tested.\",\n  \"workin"
+        "quote": "    {\n      \"command\": \"knowledge-verifier live calibration\",\n      \"model\": \"gpt-5.6-sol\",\n      \"result\": \"Supported statement 42 accepted; contradictory statement 43 needs_revision\",\n      \"scope\": \"Small synthetic live check; not proof of universal semantic correctness\"\n    }\n  ],\n  \"remainingLimits\": [\n    \"No emb"
       }
     ],
     "questions": [
       {
-        "question": "当前全仓知识的 reviewed、stale、pending 与 failed 分布分别是多少？",
-        "why": "状态文档明确要求以当前 coverage 和 verification 为准，而本批材料没有提供这两份最新资产，无法判断全库生成是否完整。",
-        "nextStep": "读取当前 coverage 与完整验证报告，按材料、模块和上层章节列出覆盖、失败原因、过期依赖及可重试项。",
+        "question": "当前全仓知识中 reviewed、stale、pending 与 failed 分别覆盖哪些材料和上层章节？",
+        "why": "状态材料明确说明全库知识尚未完整，旧统计不能代表当前覆盖；本批材料没有提供最新覆盖报告的逐项结果。",
+        "nextStep": "读取当前 coverage 与 verification 固定材料，按状态、失败原因和受影响上层章节生成可复核清单，并优先重建 stale 内容。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c10"
-        ]
-      },
-      {
-        "question": "跨文件 calls 与跨 revision 符号身份应先解决哪一项？",
-        "why": "前者限制调用图可信度，后者导致代码变化后必须重新定位且旧边只能作为历史；两者影响的数据结构、迁移风险和验收方式不同。",
-        "nextStep": "分别定义最小切片：先以真实仓库样例验证跨文件调用精度，再以重命名和移动案例验证身份续接，由用户按主要使用场景排序。",
-        "blocking": false,
-        "citationKeys": [
+          "c4",
           "c8"
         ]
       },
       {
-        "question": "下一轮要优先补真实 Agent CLI、飞书 WebSocket，还是外部观察器的现场验收？",
-        "why": "现有浏览器流程使用协议夹具，实现验证也明确不覆盖全部外部集成；不同选择需要不同授权主体、网络环境和数据范围。",
-        "nextStep": "选择一个具体集成和最小数据范围，记录能力协商、输入、退出码、运行 trace、内容断言与失败恢复，形成独立 live 验收材料。",
+        "question": "真实飞书 WebSocket、外部屏幕观察器和全局 hook 中，下一项需要进入现场验收的是哪一个？",
+        "why": "现有实现与浏览器检查主要证明本地应用流程，验证记录明确没有覆盖这些需要授权、网络或操作系统范围的外部集成。",
+        "nextStep": "由用户选择具体集成及数据范围，再记录授权主体、真实输入、退出码、内容断言、失败恢复和撤销方式。",
         "blocking": false,
         "citationKeys": [
           "c9",
@@ -187,13 +181,12 @@
         ]
       },
       {
-        "question": "下一轮应优先补哪一种外部现场验收？",
-        "why": "现有浏览器记录使用协议夹具，实现验证也明确未覆盖全部外部集成，尚不能外推真实 Agent CLI、飞书 WebSocket 或外部观察器均已验收。",
-        "nextStep": "选择一个具体集成和最小数据范围，记录能力协商、输入、退出码、运行 trace、内容断言与失败恢复。",
+        "question": "跨 revision 代码身份续接是否已成为近期必需能力？",
+        "why": "当前代码修改后依靠重新同步定位，新旧符号或片段没有可审计的语义续接；这会影响长期重命名、移动、拆分和合并追踪。",
+        "nextStep": "用四类真实代码演化样本评估重新定位的失败率，再决定是否引入显式映射、置信度和错误合并回退机制。",
         "blocking": false,
         "citationKeys": [
-          "c9",
-          "c10"
+          "c5"
         ]
       }
     ]
@@ -207,7 +200,7 @@
     {
       "kind": "material",
       "key": "omem:docs/implementation/browser-verification.json",
-      "digest": "1cdf8eada52c4dddf644511f409f87490b8d27b6b261a7d6db7cfd574862ab67"
+      "digest": "d5a23dd2323c42659deb3503f9412e3d2dbcc2c7abd48037bad4ab08baf35116"
     },
     {
       "kind": "material",
@@ -222,7 +215,7 @@
     {
       "kind": "material",
       "key": "omem:docs/implementation/status.md",
-      "digest": "6f300567fb45ec1cd275528d00ea60384f90f01d55f0af228c818ef4bf1bd240"
+      "digest": "726656da857c2c99807a238300d8c6f8d475a8f1eb2bae50c67d68a8fde48b17"
     },
     {
       "kind": "material",
@@ -272,12 +265,12 @@
     {
       "kind": "article",
       "key": "omem:docs/implementation/browser-verification.json",
-      "digest": "51449cf47455e4dac0ccc458da24370cabd66bb164174f4b1f1658372b0cc7ab"
+      "digest": "3a2a1a8257fe4de1538b1beca8967afb781ecc531423f8ef8ec84f644e311b72"
     },
     {
       "kind": "article",
       "key": "omem:docs/implementation/code-knowledge-design.md",
-      "digest": "4fad8cf18d33def8f1c7c664aaf686b9da08f5136ebee7a52c447948e1c48b3e"
+      "digest": "8f683ce3851d1558e7e60c801ce3541ba972147c67692f1978a0aed4372628ac"
     },
     {
       "kind": "article",
@@ -328,17 +321,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T03:04:00.055Z",
+    "at": "2026-10-01T07:27:50.893Z",
     "trace": {
-      "runId": "bb4e2bc8-9585-453c-a1f5-468819547d14",
+      "runId": "683b7ba5-5963-4a98-95ed-f2757f20935d",
       "roleId": "knowledge-writer",
       "roleVersion": "1",
-      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
-      "promptHash": "d81ebf0ec15d57574b52ecf36d97701ce195c67b6a94da7db484b45477646d17",
-      "contextHash": "de237df4959a1c78d6e36fba44917c44c17c8b03aacf2f0996f9a8c75fd47c52",
+      "bundleHash": "3e627be543b2979e3759ca541af350fd8033b07dd1ba343d30dbb2260e8aa464",
+      "promptHash": "823d6f8010e10de245160d77d4cd5d33cd21eb1bd02a8ca079ccf75475f2c99a",
+      "contextHash": "dad76404e3fa694430666e00a554d282c9a188ca47a95b278fbe8a507a6c6ecb",
       "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "06bb6bb3395debe9e2c3366ea5b5e3d837353b9cc9d8bb095ee9fc249c9c04f5",
+      "fingerprint": "3ef937e351ef62a118adf71734c21406f927a519a6c32c98a6edde696f29acfe",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -351,10 +344,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f56a-9443-7421-bf63-2569b4166146"
+        "01a0f65c-1951-7bc3-929f-629b5fa130cc"
       ],
       "usage": {
-        "used": 115824,
+        "used": 116296,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -363,10 +356,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 214184,
-          "utf8Bytes": 319782,
-          "estimatedTokens": 106594,
-          "budgetedTokens": 133243,
+          "chars": 213782,
+          "utf8Bytes": 321419,
+          "estimatedTokens": 107140,
+          "budgetedTokens": 133925,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -375,17 +368,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T03:04:27.723Z",
+    "at": "2026-10-01T07:28:21.403Z",
     "trace": {
-      "runId": "271f41ad-3230-4573-8e71-4abc6b81bfe7",
+      "runId": "88c09d3e-0fb2-42ca-9602-af367d1112dc",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "67641c98210db8073a79b0434cd1ea79fa28050dee4e56fa72aa8d27dd17a48d",
-      "contextHash": "c5ab2bd0face292e1bd004b316835179706a45346fc2517ecd647690ba9c1af9",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "878f7d3a6e8a20eac4d2fc442078534c2232c3ef299a31d26dfa418eefede613",
+      "contextHash": "b8ee015fe5e4bb2101b3119032321647e93591021cba8336044dea6e85d8eba1",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "88b7f576c0538ecb3a684b0c8e2af09497fd85c65a6ffa09b5d3cb61372d0dba",
+      "fingerprint": "30d0ef0068be1df174eeb8bc94f74ddd1522b8c22f36c0f8bfb2b1900b4e303b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -398,10 +391,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f56b-4e84-70d1-b105-cf76d72a4012"
+        "01a0f65c-e761-7a62-ac3c-f30a3c75b965"
       ],
       "usage": {
-        "used": 116450,
+        "used": 117419,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -410,10 +403,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 219188,
-          "utf8Bytes": 329556,
-          "estimatedTokens": 109852,
-          "budgetedTokens": 137315,
+          "chars": 219442,
+          "utf8Bytes": 332473,
+          "estimatedTokens": 110825,
+          "budgetedTokens": 138532,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

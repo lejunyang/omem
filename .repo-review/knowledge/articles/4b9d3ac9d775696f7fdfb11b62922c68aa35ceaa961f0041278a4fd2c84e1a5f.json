@@ -2,89 +2,125 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-    "title": "原始材料读取与证据导航",
-    "summary": "按材料键及可选 digest 请求材料，展示当前或历史版本、引用位置与附件，并把关联知识和内部链接接回统一导航。",
+    "title": "固定原始材料阅读与引用跳转",
+    "summary": "该组件读取知识引用所指向的固定原始材料，区分当前与历史版本，并为代码、Markdown、图片及指定行范围提供相应阅读方式；关联目标会转换为上层可管理的知识或原文导航帧。",
     "category": "implementation",
     "sections": [
       {
-        "key": "loading",
-        "title": "可选版本定位与竞态保护",
-        "body": "组件接收材料键、可选 digest 和引用行范围；请求由材料键或 digest 变化触发。提供 digest 时会将其作为查询参数请求指定内容，未提供时仅按材料键请求，版本固定性取决于后端解析，前端材料本身不能证明其不可变。`generation` 只允许最新请求更新材料、错误和标题。[[c1]]"
+        "key": "purpose",
+        "title": "让知识结论回到固定原文",
+        "body": "组件用于核查知识文章背后的原始证据。材料键变化时，它会携带可选摘要读取指定版本；成功后保存材料并把可读标题通知上层，失败则记录异常。只有最新请求可以更新这些状态。参考 [[c1]]\n\n页面把请求状态明确呈现为“正在读取”、可见错误或材料正文；加载完成后显示材料标题、当前或历史版本标识，并在存在知识解读时提供返回文章的入口。参考 [[c2]]\n\n请求统一经过知识 API：它从会话存储读取令牌、按需设置请求头，将非成功响应转换为异常，再解析 JSON 结果。参考 [[c3]]"
       },
       {
-        "key": "rendering",
-        "title": "材料状态与内容呈现",
-        "body": "界面区分加载、不可用和成功状态，并按返回的 current 标记显示“当前版本”或“历史版本”。若有行号则显示引用位置；代码或非 Markdown 文件进入代码查看器，Markdown 可同时呈现引用原文块与全文，图片附件随后展示。存在知识解读时还可创建知识帧继续阅读。[[c2]]"
+        "key": "loading-and-window",
+        "title": "定位引用行并隔离过期响应",
+        "body": "每轮材料请求都有递增标记，因此快速切换材料时，较慢的旧响应不会覆盖当前页面；网络请求本身不会被取消，只在结果落地时判断是否仍属最新一轮。参考 [[c1]]\n\n代码阅读窗口把材料按行拆分，并依据传入的起止行计算摘录。未指定范围时默认从首行开始、最多展示前 80 行；起点和终点分别受全文长度约束，但代码没有保证终点不小于起点。参考 [[c4]]"
       },
       {
-        "key": "navigation",
-        "title": "关联知识与内部链接",
-        "body": "代码引用会先查询同键文章，成功时以文章标题创建知识帧，失败则降级为原始材料帧。Markdown 内部链接以当前材料目录为基准规整 `..`、`.` 和普通路径，去掉片段后补成 `omem:` 键，再复用同一引用流程；因此当前实现定位关联文件，但不保留目标锚点。[[c3]][[c4]]"
+        "key": "render-and-navigation",
+        "title": "按材料类型阅读并追踪关联",
+        "body": "代码或非 Markdown 文件通过代码查看器展示当前窗口，可向上或向下扩展 20 行，并把引用锚点与关联链接交给查看器。Markdown 连贯渲染全文；同时给出起止行时会显示对应摘录，材料图片排列在正文之后。参考 [[c5]]\n\n打开关联目标时，组件先请求知识文章，成功后进入知识阅读；任意请求异常都会回退为原始材料帧。Markdown 内链以当前材料目录为基准，移除片段并处理 `.`、`..` 后生成材料键。该逻辑没有区分文章不存在、鉴权失败、服务端错误或网络故障，也未专门识别外部 URL 与绝对路径。参考 [[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "材料请求与代次保护",
-        "reason": "支持 digest 为可选查询参数、监听触发条件，以及最新请求独占状态更新。",
+        "label": "材料加载与竞态保护",
+        "reason": "支持按材料键和摘要发起请求、仅接纳最新响应、发送已加载标题以及记录最新请求错误的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 5,
-          "endLine": 14
+          "startLine": 16,
+          "endLine": 21
         },
-        "quote": "const props = defineProps<{ prefix: string; materialKey: string; digest?: string; startLine?: number; endLine?: number }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\ntype Material = { key: string; title: string; text: string; path: string | null; codeLanguage?: string "
+        "quote": "let generation = 0;\nwatch(() => [props.materialKey, props.digest], async () => {\n  const current = ++generation; material.value = null; error.value = \"\";\n  try { const m = await knowledgeApi<Material>(props.prefix, \"/materials/\" + encodeURIComponent(props.materialKey) + (props.digest ? \"?digest=\" + encodeURIComponent(p"
       },
       {
         "key": "c2",
-        "label": "原始材料阅读界面",
-        "reason": "支持版本标记、引用行、代码与 Markdown 分派、知识入口及图片呈现。",
+        "label": "材料阅读状态与版本入口",
+        "reason": "支持加载、错误、材料标题、版本状态和知识解读入口的可见界面说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 26,
+          "startLine": 33,
           "endLine": 40
         },
         "quote": "<template>\n  <section class=\"knowledge-source\">\n    <OmEmpty v-if=\"error\" title=\"原始材料不可用\" :description=\"error\" />\n    <p v-else-if=\"!material\">正在读取固定原文…</p>\n    <template v-else>\n      <h2>{{ material.title }}</h2>\n      <div class=\"source-actions\"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmBu"
       },
       {
         "key": "c3",
-        "label": "关联文章的降级导航",
-        "reason": "支持先查询文章元数据，失败时仍打开原始材料帧。",
-        "relation": "explains",
+        "label": "知识接口请求封装",
+        "reason": "支持会话令牌注入、非成功响应转为异常及 JSON 返回行为。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 15,
-          "endLine": 18
+          "key": "omem:apps/web/src/knowledge/api.ts",
+          "startLine": 6,
+          "endLine": 10
         },
-        "quote": "async function reference(key: string) {\n  try { const a = await knowledgeApi<ArticleMeta>(props.prefix, \"/articles/\" + encodeURIComponent(key)); emit(\"navigate\", knowledgeFrame(key, a.title)); }\n  catch { emit(\"navigate\", { kind: \"source\", id: JSON.stringify({ key }), title: \"关联原始材料\" }); }\n}"
+        "quote": "export async function knowledgeApi<T>(prefix: string, path: string, init?: RequestInit): Promise<T> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, headers: { ...(init?.body !== undefined ? { \"content-type\": \"application/json\" } : {}), ...(token ? { Autho"
       },
       {
         "key": "c4",
-        "label": "Markdown 内部路径解析",
-        "reason": "支持以当前文件目录规整内部路径、去除片段并转换为材料键。",
+        "label": "引用行窗口计算",
+        "reason": "支持引用起止行的默认值、边界约束和窗口摘录方式，并揭示反向范围未被统一纠正的限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 19,
-          "endLine": 23
+          "startLine": 9,
+          "endLine": 15
         },
-        "quote": "function internal(path: string) {\n  if (!material.value?.path) return;\n  const base = material.value.path.split(\"/\").slice(0, -1);\n  for (const p of path.split(\"#\")[0]!.split(\"/\")) { if (p === \"..\") base.pop(); else if (p && p !== \".\") base.push(p); }\n  void reference(\"omem:\" + base.join(\"/\"));"
+        "quote": "const from = ref(1), to = ref(1);\nconst lines = computed(() => material.value?.text.split(\"\\n\") ?? []);\nconst excerpt = computed(() => lines.value.slice(from.value - 1, to.value).join(\"\\n\"));\nwatch(() => [material.value, props.startLine, props.endLine], () => {\n  from.value = Math.max(1, Math.min(props.startLine ?? 1, "
+      },
+      {
+        "key": "c5",
+        "label": "代码、文档与图片展示",
+        "reason": "支持代码窗口扩展、Markdown 连贯渲染、指定行摘录和图片展示流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 41,
+          "endLine": 51
+        },
+        "quote": "      <template v-if=\"material.codeLanguage || (material.path && !/\\.(?:md|markdown)$/.test(material.path))\">\n      <OmButton v-if=\"from > 1\" variant=\"ghost\" @click=\"from = Math.max(1, from - 20)\">向上展开 20 行</OmButton>\n      <OmCodeViewer :code=\"excerpt\" :start-line=\"from\" :language=\"material.codeLanguage || material.pa"
+      },
+      {
+        "key": "c6",
+        "label": "关联目标与相对路径解析",
+        "reason": "支持知识文章跳转、异常时回退原文，以及 Markdown 相对路径解析行为和相关限制。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 22,
+          "endLine": 30
+        },
+        "quote": "async function reference(key: string) {\n  try { const a = await knowledgeApi<ArticleMeta>(props.prefix, \"/articles/\" + encodeURIComponent(key)); emit(\"navigate\", knowledgeFrame(key, a.title)); }\n  catch { emit(\"navigate\", { kind: \"source\", id: JSON.stringify({ key }), title: \"关联原始材料\" }); }\n}\nfunction internal(path: str"
       }
     ],
     "questions": [
       {
-        "question": "未提供 digest 时，材料端点选择当前版本、最新版本还是其他版本？",
-        "why": "前端只按 materialKey 发出请求，虽展示后端返回的 current 状态，但现有材料没有给出服务端版本解析规则。",
-        "nextStep": "核对材料 API 路由和版本查询测试，明确无 digest 请求的稳定性及缓存语义。",
+        "question": "空材料以及反向或越界的起止行组合，产品期望如何显示？",
+        "why": "起点和终点分别受到约束，但现有逻辑没有保证终点不小于起点；提供的材料也没有说明这些边界应显示空窗口、自动纠正还是错误提示。",
+        "nextStep": "补充组件和浏览器测试，覆盖空字符串、反向范围、负数及超过全文长度的参数，再依据产品约定统一边界处理。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "关联文章请求失败时是否应始终回退到原始材料？",
+        "why": "统一 API 会把所有非成功响应转为异常，而关联跳转捕获所有异常，因此文章不存在、鉴权失败、服务端错误和网络故障目前都会进入同一回退分支。",
+        "nextStep": "确认接口错误语义；若仅文章不存在时允许回退，应保留响应状态或结构化错误，并把其他故障呈现为可见错误。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c6"
         ]
       }
     ]
@@ -92,49 +128,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "25fc3c91a561c2e0f39ed27224f02c8ecda0c740198171974497b5c42a7ab463"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-      "digest": "d10e4fe95d71f27225663cc3081e7c259308ec05b72a400e228f4dde1756d36f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-      "digest": "8642623296154c94e9930ac91046b69f5ef988082489e22c2263e23aafd08985"
+      "digest": "2a96e1802c6165776ac3964d10d14662a940f1f39ea81a3f29d71e860e330f26"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/api.ts",
-      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
+      "digest": "668d5d6f22b4f79251b1975cbbee8e79d84974665e4f2ebec9600cb3a8808d35"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:35:12.881Z",
+    "at": "2026-10-01T06:54:43.972Z",
     "trace": {
-      "runId": "37b8e422-2f3c-4d65-9512-c500b959680c",
+      "runId": "a2b3aa13-cf1d-4f45-b6a9-030b7b80e1ad",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "84cc1ff1bb1f014328e5c7702077f1dda72e2d5b21f9f556dfbcaf5257bc89b7",
-      "contextHash": "e9d709e8ac9d54e26cef2afd7d357176ed9d6771bfdb0c1f31af779152f4ceae",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "a1cc0b00d13dea8a23ae113c29c70d0b779ac4f9d48a6574a5b18e839d2ffbcd",
+      "contextHash": "2fd047cd090fd89d416a8846651c88a755201bd1a191600ca4e5f34834ce67d6",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "422e0b05be95a2e889bbfe188fe0c915ec1694cb40766fff40be8a404f7961a9",
+      "fingerprint": "5f8d0d46b0553da932eeb13b3662b7a4c80ad1ed3438de54d262b9a0a36e72cc",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -147,11 +163,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef17-3b83-77a1-a991-1c7cfebe8637"
+        "01a0f63e-2d39-76b3-a3e9-236a2c8c3889"
       ],
       "usage": {
-        "used": 32861,
-        "size": 760000,
+        "used": 28890,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -159,10 +175,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 48655,
-          "utf8Bytes": 61163,
-          "estimatedTokens": 20388,
-          "budgetedTokens": 25485,
+          "chars": 20385,
+          "utf8Bytes": 27731,
+          "estimatedTokens": 9244,
+          "budgetedTokens": 11555,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -171,17 +187,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:35:29.405Z",
+    "at": "2026-10-01T06:55:02.011Z",
     "trace": {
-      "runId": "e33386af-8dd0-444b-a527-2fb826e1cd30",
+      "runId": "5b131cab-def2-4616-96e6-9601d2a8f04a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "768f3715a631f961ebc7561acf56349fd0c92678a8e08dc5a9032dec2489e49b",
-      "contextHash": "4aae98e56ead896194fb6b2458789e4a0d8d42f4ee3de9fb39d0de2a4196901c",
+      "promptHash": "fa347726bc65d85e7d59d346eb543a5bf22cec5068006a1f2b76e02cdbfb1855",
+      "contextHash": "2783f6e51d74e1725595d61a10abb10a11ece67969d45bbd4b2c1c91b105f775",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bcbd2e1cc61713d665be8daef29874d2bd9e5cb7b68f4e9ca9f31b873ebca5db",
+      "fingerprint": "eea579b24e6c0aa30fdde56a756f285b17684fc0ca156c4052778e677302d9b6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -194,11 +210,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef17-dc95-70e0-aa0b-4beab7429d41"
+        "01a0f63e-8a17-7893-a347-71a0c566bcdb"
       ],
       "usage": {
-        "used": 28075,
-        "size": 760000,
+        "used": 24596,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -206,10 +222,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 44806,
-          "utf8Bytes": 54597,
-          "estimatedTokens": 18199,
-          "budgetedTokens": 22749,
+          "chars": 15847,
+          "utf8Bytes": 19495,
+          "estimatedTokens": 6499,
+          "budgetedTokens": 8124,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

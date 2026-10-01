@@ -2,40 +2,53 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
-    "title": "知识规划技能的 OpenAI 界面配置",
-    "summary": "该文件为知识规划技能声明面向代理界面的名称、简介与默认提示语；它描述入口配置，不足以证明技能已被加载或执行。",
+    "title": "知识章节组织代理配置",
+    "summary": "该配置为知识规划角色提供面向用户的名称、简短英文说明和默认调用提示，表明其目标是依据固定证据组织相互关联的知识内容。材料仅能证明配置声明，不能据此确认运行时加载、模型调用或知识生成流程已经实现并可用。",
     "category": "configuration",
     "sections": [
       {
-        "key": "interface",
-        "title": "界面定位",
-        "body": "配置把该技能以“组织知识章节”呈现，表明其面向用户的主要职责是把固定证据组织为相互关联的知识内容。英文短描述进一步强调产物必须建立在固定证据之上，而不是脱离材料自由生成。[[c1]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "该文件描述一个用于**组织知识章节**的代理入口。它面向需要把固定材料整理成连贯知识内容的场景，并以中文显示名称向用户表达职责。参考 [[c1]]\n\n简短说明进一步强调，产物应当由固定证据构建并保留关联关系；这是一项角色定位和设计意图，而不是知识已经生成或复核通过的证明。参考 [[c2]]"
       },
       {
         "key": "invocation",
-        "title": "默认调用方式与边界",
-        "body": "默认提示语要求通过指定的知识规划技能处理已提供的固定材料，这为代理入口提供了调用约定。[[c2]] 但本文件只有界面元数据，没有角色清单、输出合同、工具策略或运行记录，因此只能确认配置意图，不能据此断言技能已成功注册、输入已校验或知识已经生成。"
+        "title": "默认调用方式与证据边界",
+        "body": "配置中的默认提示要求调用指定的知识规划技能处理已提供的固定材料，说明预期入口是“技能 + 固定材料”，而非任意自由生成。参考 [[c3]]\n\n现有五行材料没有展示配置由谁加载、输入合同如何校验、引用怎样生成，也没有运行记录或测试结果。因此，只能确认该代理元数据与默认提示已经写入配置文件，不能称其运行链路已经实现或验证。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识规划界面名称与简介",
-        "reason": "支持该配置面向知识章节组织，并强调从固定证据构建关联知识。",
-        "relation": "explains",
+        "label": "代理显示名称",
+        "reason": "支持该配置把角色呈现为负责组织知识章节的代理入口。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
           "startLine": 1,
-          "endLine": 3
+          "endLine": 2
         },
-        "quote": "interface:\n  display_name: \"组织知识章节\"\n  short_description: \"Build linked knowledge from fixed evidence\""
+        "quote": "interface:\n  display_name: \"组织知识章节\""
       },
       {
         "key": "c2",
-        "label": "知识规划默认提示语",
-        "reason": "支持代理界面默认通过知识规划技能处理固定材料的调用约定。",
-        "relation": "depends_on",
+        "label": "固定证据知识定位",
+        "reason": "支持角色以固定证据构建关联知识的职责描述。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
+          "startLine": 3,
+          "endLine": 3
+        },
+        "quote": "  short_description: \"Build linked knowledge from fixed evidence\""
+      },
+      {
+        "key": "c3",
+        "label": "默认技能提示",
+        "reason": "支持默认调用提示要求使用知识规划技能处理所提供的固定材料。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
@@ -47,23 +60,14 @@
     ],
     "questions": [
       {
-        "question": "知识规划技能是否已由运行时成功注册，并能产出其预期的结构化结果？",
-        "why": "当前材料只包含界面配置，没有对应清单、输出模式、加载日志或行为测试，无法从配置声明推断实际可用性。",
-        "nextStep": "检查该角色的清单与输出合同，并执行一次使用固定材料的真实调用，记录结构校验和退出状态。",
+        "question": "该代理配置目前是否已被运行时发现、加载并用于真实知识生成任务？",
+        "why": "材料只包含显示名称、简介和默认提示，没有加载代码、执行轨迹或行为验证，无法从配置声明推断实际可用状态。",
+        "nextStep": "检查角色注册与配置加载实现，并提供一次真实任务的运行轨迹及输出验证记录。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c2"
-        ]
-      },
-      {
-        "question": "知识规划技能是否已由运行时成功注册，并能产出预期的结构化结果？",
-        "why": "材料只有界面名称、简介和默认提示语，不能证明技能已加载或执行。",
-        "nextStep": "结合角色清单、输出合同及真实调用结果核验注册和结构化输出。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c2"
+          "c2",
+          "c3"
         ]
       }
     ]
@@ -73,47 +77,22 @@
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
       "digest": "468bbb6b669089c57790cb8ba50178f9d7d9a8ffb6835dd48c18a137f7e25fa1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
-      "digest": "eb5e63bd3b6e3878ed2dffe409bae271e20993ac0baabdf1e4c47bb12cfbb27d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
-      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
-      "digest": "4314f06e1b0e6ba910552b65d93ffce60f1ada2837ed285ca1979b5f9afa1e94"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/SKILL.md",
-      "digest": "7cc6c58913efeb9fd59c189e30c43fe0b266d747e6671e61c977949c27ac9b6f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
-      "digest": "df5592fd59bc200546ba138dee22816073a69783056f7324f74eaeed4938a78f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:23:33.379Z",
+    "at": "2026-10-01T07:21:16.874Z",
     "trace": {
-      "runId": "199ac603-c8d2-4ddc-bc10-73337bdf68d5",
+      "runId": "1e9d5bd0-420d-408b-b926-b22050fed59d",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "92a44dfc33138fc923b2598cd48a9ae406f7f0d6e574498df685e924a54d31b8",
-      "contextHash": "b0debaf029893a97683879e270c7048b66d9ca2187c0ef238335e03e11459f73",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "532d1b8df8ff385bdeb6586c66cd629ec05aeffbb85849c582b272c508be5e03",
+      "contextHash": "9037233736133b88fe08a7a0808178197b063b65fda72f9a6c3985ee837f2d1d",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ceeabaf73efe948f941f09bbd9171bdc803d23dc7c20c760f12aecb5da2083e8",
+      "fingerprint": "d4315f5f050659cf987fe8163a2a811fb6b7c157b5467429c7adcb394b3c61cc",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -126,11 +105,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9e-90b1-7731-822d-dd67e8eaf1b6"
+        "01a0f656-7a6c-7433-9f04-37586d209fbb"
       ],
       "usage": {
-        "used": 23945,
-        "size": 760000,
+        "used": 21741,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -138,10 +117,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23174,
-          "utf8Bytes": 26432,
-          "estimatedTokens": 8811,
-          "budgetedTokens": 11014,
+          "chars": 7360,
+          "utf8Bytes": 10324,
+          "estimatedTokens": 3442,
+          "budgetedTokens": 4303,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -150,17 +129,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:23:51.676Z",
+    "at": "2026-10-01T07:21:32.038Z",
     "trace": {
-      "runId": "a0545f02-7565-4ac3-b128-7fd7aa2f247e",
+      "runId": "df204b8d-789a-43c3-aa3e-255b1a76cf4e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "3dfa76d5abf62a96b63d3dc8ec93b66c8f1ed916f9317a6d0013bc2f8b39d31e",
-      "contextHash": "fd5474391e31196a1861373e699d04032e295888896ca4341ab196897ab0dfcb",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "297542325d6bdcde92cd93e83fbd871da90b6688a4007027e97f02afd2c7e881",
+      "contextHash": "80ca9b573142e989db570c3ff9d33846bf88d993f56d2471a4b596c9127775df",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "10d76f4f484b9c366f48e2092258328d79d173c527a8e97a131b55db3da713f2",
+      "fingerprint": "79831fbc0801a7af204cfae6f5d39228432762d78f4c73d926997878a34c95bd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -173,11 +152,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9f-53a6-7b11-9a73-0641f6a1c7d7"
+        "01a0f656-dd3d-7602-a72b-f24f0550b3df"
       ],
       "usage": {
-        "used": 25873,
-        "size": 760000,
+        "used": 21085,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -185,10 +164,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36073,
-          "utf8Bytes": 48005,
-          "estimatedTokens": 16002,
-          "budgetedTokens": 20003,
+          "chars": 6723,
+          "utf8Bytes": 10021,
+          "estimatedTokens": 3341,
+          "budgetedTokens": 4177,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

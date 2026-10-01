@@ -1,0 +1,528 @@
+{
+  "kind": "unpublished-editorial-review",
+  "recordedAt": "2026-10-01T09:14:46.297Z",
+  "scope": "Final overview readability edit; retained the previously accepted article because this attempt did not pass independent semantic review.",
+  "jobId": "99f42820-7214-4836-9335-154d7c9dd0ae",
+  "roleJobState": "succeeded",
+  "review": {
+    "schema_version": 1,
+    "verdicts": [
+      {
+        "documentKey": "topic:overview",
+        "verdict": "needs_revision",
+        "issues": [
+          "“助手如何回答并执行操作”第一段称“统一助手运行时服务 Web 与飞书入口；配置有效 ACP Profile 时调用真实模型”，超出了 [[c8]] 所引 `topic:assistant_memory` 的 `assistant_boundary` 章节。该子章节只确认运行时面向这些入口、模型通过端口注入，以及 ACP 适配器在有效 Profile 下的行为；同时明确指出现有依据不能确认生产 Web 与飞书入口均已实际装配 ACP。当前表述省略了这一关键证据边界，可能让读者误以为两类生产入口的真实模型装配均已确认。应改为描述运行时与适配器的能力边界，或补充入口组合根的已复核依据后再陈述实际装配状态。"
+        ],
+        "questions": [
+          {
+            "question": "当前全库知识中已复核、过期、待处理和失败内容各有多少？",
+            "why": "现有进展文章说明完成度必须以当次覆盖和验证报告为准，但提供的子知识没有给出当前报告的具体分布。",
+            "nextStep": "读取最新覆盖与验证产物，按状态和材料类型汇总，并保留失败原因、源码指纹与索引状态。",
+            "blocking": false,
+            "citationKeys": [
+              "c17",
+              "c18"
+            ]
+          },
+          {
+            "question": "群聊捕获范围是否已通过明确交互授权？",
+            "why": "飞书链路可以建立群监控目标并捕获消息，但当前依据没有证明范围选择、授权文案和撤销流程。",
+            "nextStep": "核对接入界面、绑定记录和群目标状态；未明确授权的目标应保持不可采集，并补充撤销路径。",
+            "blocking": false,
+            "citationKeys": [
+              "c11"
+            ]
+          },
+          {
+            "question": "批量记忆提案获批后，应整体应用还是进入逐条审阅？",
+            "why": "批量确认保存了全部提案摘要，但通用批准路径只展示代表提案的单项应用，产品语义尚未闭合。",
+            "nextStep": "确定整体或逐条处理策略，再补充幂等、部分失败与重启恢复的行为验证。",
+            "blocking": false,
+            "citationKeys": [
+              "c21"
+            ]
+          },
+          {
+            "question": "何时恢复人工标注并建立跨来源正式质量集？",
+            "why": "当前尚无冻结数据集，自动化和小样本实机结果不能替代正式质量门。",
+            "nextStep": "由可信负责人明确授权材料、样本隔离、目标规模和冻结标准，再恢复标注并运行正式评测。",
+            "blocking": false,
+            "citationKeys": [
+              "c17",
+              "c18",
+              "c19"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "trace": {
+    "runId": "d8265069-1b55-446b-bd95-0b19e819adfe",
+    "roleId": "knowledge-verifier",
+    "roleVersion": "1",
+    "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+    "promptHash": "be6be7915059b07484803147111bf3ce6acac2fc421a5625769b2495f089634a",
+    "contextHash": "bd8db83ddcf61763356cc99b816e3df4ac9b2290f87e8dcc0a59366c6cbbe8ad",
+    "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+    "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "fingerprint": "91821620a3450ab1a8e72a9af37cfb5958cd867f067cf1c7bbbe441086c637f8",
+    "outputSchema": "KnowledgeReview.v1",
+    "effectiveModel": "gpt-5.6-sol",
+    "effectiveEffort": "high",
+    "loadedSkills": [
+      {
+        "name": "omem-knowledge-verifier",
+        "version": "1",
+        "mode": "inline"
+      }
+    ],
+    "allowedTools": [],
+    "sessionIds": [
+      "01a0f6be-3b2b-75c0-8388-f41dd93fa24f"
+    ],
+    "usage": {
+      "used": 79945,
+      "size": 258400,
+      "cost": null,
+      "budget": {
+        "maxInputTokens": 192000,
+        "maxOutputTokens": 24000,
+        "contextReserveTokens": 16000
+      },
+      "estimate": {
+        "chars": 152783,
+        "utf8Bytes": 224845,
+        "estimatedTokens": 74949,
+        "budgetedTokens": 93687,
+        "estimator": "utf8-bytes/3 + 25% headroom"
+      }
+    },
+    "repairAttempts": 0
+  },
+  "inputReferences": [
+    {
+      "role": "knowledge-verifier",
+      "task": {
+        "targetKeys": [
+          "topic:overview"
+        ],
+        "drafts": [
+          {
+            "key": "topic:overview",
+            "title": "omem：从原始证据到可行动的个人记忆",
+            "summary": "omem 把多来源材料、可追溯知识、对话检索、事项跟进和代码理解组织在同一证据体系中。当前已形成个人单用户的可运行切片，但完整主动助理、团队隔离、正式质量门和若干一致性边界仍待完成。",
+            "category": "overview",
+            "sections": [
+              {
+                "key": "purpose",
+                "title": "从保存材料到复用可信经历",
+                "body": "omem 面向需要长期复用文档、聊天、代码和任务经历的个人用户。它关注的不是摘要数量，而是让知识、回答和行动回到当时的原始依据。飞书主助手与 Web 管理入口属于同一记忆体系；代码可以采用 AST 特化，但不会另建独立知识库。参考 [[c1]]\n\n材料进入系统后归入稳定来源；内容变化会追加不可变修订，并切成可固定引用的原文片段。当前服务在单用户 SQLite 基础上连接检索、知识整理、助手和持久任务。参考 [[c2]] 知识文章只是便于阅读和导航的派生视图，事实依据仍来自固定修订与原始片段。参考 [[c3]]\n\n即时材料可直接形成 Capture，需要补齐上下文的聊天和屏幕事件则先持久化聚合。不同入口共享文本、图片、链接及来源信息合同。参考 [[c4]]"
+              },
+              {
+                "key": "knowledge-flow",
+                "title": "材料如何成为可复核知识",
+                "body": "```mermaid\nflowchart TD\n  A[多来源材料] --> B[统一捕获]\n  B --> C[不可变修订与固定片段]\n  C --> D[分析并组织正文]\n  D --> E[独立语义复核]\n  E -->|通过| F[发布可追溯知识]\n  C -->|来源更新| G[重新提取与复核]\n  F -->|依赖变化| H[标记失效并重新整理]\n```\n手工、文件、Git、Hook、聊天、屏幕和飞书材料进入共同证据链；Hook 还可通过本地 Spool 耐久保存，补传失败或回执不匹配时保留记录。参考 [[c4]]、[[c20]]\n\n捕获更新会追加修订和固定片段。受影响的记忆重新提取并接受独立复核，只有真实应用结果完成对账后才算修复；进入队列不等于应用成功。参考 [[c5]] 知识依赖变化会使当前文章及其上层文章失效，历史版本继续保留，重新整理和复核通过后才能成为当前版本。参考 [[c7]]\n\n运行时把角色说明和可信配置与不可信材料分开，材料正文不能取得指令权限。参考 [[c6]] 模型选择、图片能力、预算、结构化输出和运行追踪另由执行层约束。参考 [[c22]]"
+              },
+              {
+                "key": "assistant-and-integrations",
+                "title": "助手如何回答并执行操作",
+                "body": "统一助手运行时服务 Web 与飞书入口；配置有效 ACP Profile 时调用真实模型。模型只能引用宿主提供的证据并请求受管工具，权限、可见性和最终写入由服务端控制。参考 [[c8]]\n\n检索融合全文、短关键词、代码符号、记忆和知识导航，并可叠加固定中文向量模型；无论命中记忆还是派生知识，最终依据都会回到原始片段。参考 [[c9]] 事项创建要求用户明确交办，长期记忆还要经过提取、独立复核、固定证据校验和策略评估。参考 [[c10]]\n\n飞书链路已覆盖所有者绑定、持久化收件箱、私聊与群聊路由及统一消息捕获。参考 [[c11]] 助手回复、决策卡片和通知投递使用 outbox、租约与重试状态机；真实外部联调和多 worker 竞争仍需补充验证。参考 [[c12]] 批量提案可以汇总为一个确认事项，但现有通用批准路径只展示代表提案的单项应用，整批处理语义尚未闭合。参考 [[c21]]"
+              },
+              {
+                "key": "code-progress-limits",
+                "title": "代码知识、当前能力与交付边界",
+                "body": "Code Wiki 先把仓库文件纳入统一证据链，再投影为代码快照、符号和人工关系。解析器当前以单文件结构为主，名称级调用保持候选，人工关系无法定位时保留缺失状态。参考 [[c13]] 阅读界面将知识、模块、文件、符号和固定源码放入同一证据轨迹，不会用当前工作树补造历史内容。参考 [[c14]]\n\n当前个人应用已经提供持久会话、等待与事项操作和站内提醒。参考 [[c15]] 知识阅读支持固定引用回查，中文混合检索和固定向量模型已经接入；来源更新也已形成重新提取、复核和应用对账闭环，但小样本命中不能代表整体质量。参考 [[c16]]\n\n系统仍是单用户实现，缺少完整主动监听、重复提醒、团队 ACL、跨文件精确调用、周期巡检和正式冻结质量集。参考 [[c17]] 完成度需要分层判断：自动化检查、浏览器验收、真实模型或外部集成冒烟、冻结人工数据集验证不同风险，不能彼此替代。参考 [[c18]] 当前实机记录、复杂中文评测、并发一致性和飞书投递回填仍需更强证据。参考 [[c19]]"
+              }
+            ],
+            "citations": [
+              {
+                "key": "c1",
+                "label": "个人助理与统一证据目标",
+                "reason": "说明个人优先、飞书与 Web 入口分工，以及代码知识仍属于统一记忆体系。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:requirements",
+                  "section": "product-purpose"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c2",
+                "label": "证据主链与服务形态",
+                "reason": "支持不可变证据基础、当前服务组合和单用户 SQLite 边界。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:architecture",
+                  "section": "purpose-and-shape"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c3",
+                "label": "原始证据基础",
+                "reason": "解释知识正文是带引用的派生视图，事实依据仍来自原始修订与片段。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:evidence_knowledge",
+                  "section": "evidence-foundation"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c4",
+                "label": "多来源统一捕获",
+                "reason": "支持即时 Capture、事件聚合及不同来源共享多模态合同。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:inputs_integrations",
+                  "section": "unified_capture"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c5",
+                "label": "修订与记忆刷新",
+                "reason": "说明捕获追加修订、固定片段、记忆依赖失效和实际应用对账。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:architecture",
+                  "section": "capture-and-refresh"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c6",
+                "label": "可信配置与材料分层",
+                "reason": "支持角色配置与材料正文的信任分层，以及材料不能取得指令权限。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:agent_governance",
+                  "section": "purpose"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c7",
+                "label": "知识复核、发布与失效",
+                "reason": "支持独立复核、有限修订、事务发布、依赖失效传播及历史版本保留。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:evidence_knowledge",
+                  "section": "review-publish"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c8",
+                "label": "统一助手信任边界",
+                "reason": "说明统一运行时、ACP 配置边界，以及模型只能使用宿主证据和受管工具。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:assistant_memory",
+                  "section": "assistant_boundary"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c9",
+                "label": "会话与原始证据检索",
+                "reason": "支持混合检索、语义降级以及记忆和知识命中回查原始片段。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:assistant_memory",
+                  "section": "conversation_retrieval"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c10",
+                "label": "事项与记忆治理",
+                "reason": "支持明确事项意图、提取复核、策略评估和来源刷新对账。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:assistant_memory",
+                  "section": "governed_memory"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c11",
+                "label": "飞书绑定与实时捕获",
+                "reason": "支持所有者绑定、事件收件箱、助手路由、群消息分流和统一捕获。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:inputs_integrations",
+                  "section": "lark_ingress"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c12",
+                "label": "飞书可靠投递",
+                "reason": "说明助手回复、决策卡片、通知租约和重试状态机及其验证边界。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:inputs_integrations",
+                  "section": "reliable_delivery"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c13",
+                "label": "仓库知识生成流程",
+                "reason": "支持仓库捕获、固定快照、单文件解析和人工关系构建的范围。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:code_wiki",
+                  "section": "pipeline"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c14",
+                "label": "代码知识阅读路径",
+                "reason": "支持知识、模块、文件、符号和固定源码共用证据轨迹。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:code_wiki",
+                  "section": "reading"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c15",
+                "label": "当前个人助理体验",
+                "reason": "支持统一应用、持久会话、等待跟进、事项操作和站内提醒的当前进展。",
+                "relation": "tracks",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:progress",
+                  "section": "current-experience"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c16",
+                "label": "知识检索与更新闭环",
+                "reason": "支持可追溯知识阅读、混合检索、中文向量召回、原片段回查和来源更新复核。",
+                "relation": "tracks",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:progress",
+                  "section": "knowledge-loop"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c17",
+                "label": "交付边界与未完成项",
+                "reason": "支持单用户限制、主动助理缺口、代码解析边界和正式质量门状态。",
+                "relation": "tracks",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:progress",
+                  "section": "limits-and-status"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c18",
+                "label": "分层验证体系",
+                "reason": "说明自动化、浏览器、实机冒烟与冻结数据集分别承担不同验收职责。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:quality_validation",
+                  "section": "validation_layers"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c19",
+                "label": "验证证据的现有限制",
+                "reason": "支持实机记录、中文质量、并发一致性和飞书回填仍需补强的判断。",
+                "relation": "tracks",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:quality_validation",
+                  "section": "progress_and_limits"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c20",
+                "label": "Hook 离线补传",
+                "reason": "支持 Hook 经本地 Spool 耐久保存、核验 Capture 回执并在失败时保留记录。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:inputs_integrations",
+                  "section": "aggregation_spool"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c21",
+                "label": "批量批准的未闭合语义",
+                "reason": "支持批量确认保存全部提案摘要，而通用批准路径只展示代表提案单项应用的限制。",
+                "relation": "tracks",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:assistant_memory",
+                  "section": "progress_limits"
+                },
+                "quote": ""
+              },
+              {
+                "key": "c22",
+                "label": "模型与运行过程约束",
+                "reason": "支持模型能力检查、预算估算、结构化运行和追踪信息的治理边界。",
+                "relation": "explains",
+                "target": {
+                  "kind": "article",
+                  "key": "topic:agent_governance",
+                  "section": "runtime"
+                },
+                "quote": ""
+              }
+            ],
+            "questions": [
+              {
+                "question": "当前全库知识中已复核、过期、待处理和失败内容各有多少？",
+                "why": "现有进展文章说明完成度必须以当次覆盖和验证报告为准，但提供的子知识没有给出当前报告的具体分布。",
+                "nextStep": "读取最新覆盖与验证产物，按状态和材料类型汇总，并保留失败原因、源码指纹与索引状态。",
+                "blocking": false,
+                "citationKeys": [
+                  "c17",
+                  "c18"
+                ]
+              },
+              {
+                "question": "群聊捕获范围是否已通过明确交互授权？",
+                "why": "飞书链路可以建立群监控目标并捕获消息，但当前依据没有证明范围选择、授权文案和撤销流程。",
+                "nextStep": "核对接入界面、绑定记录和群目标状态；未明确授权的目标应保持不可采集，并补充撤销路径。",
+                "blocking": false,
+                "citationKeys": [
+                  "c11"
+                ]
+              },
+              {
+                "question": "批量记忆提案获批后，应整体应用还是进入逐条审阅？",
+                "why": "批量确认保存了全部提案摘要，但通用批准路径只展示代表提案的单项应用，产品语义尚未闭合。",
+                "nextStep": "确定整体或逐条处理策略，再补充幂等、部分失败与重启恢复的行为验证。",
+                "blocking": false,
+                "citationKeys": [
+                  "c21"
+                ]
+              },
+              {
+                "question": "何时恢复人工标注并建立跨来源正式质量集？",
+                "why": "当前尚无冻结数据集，自动化和小样本实机结果不能替代正式质量门。",
+                "nextStep": "由可信负责人明确授权材料、样本隔离、目标规模和冻结标准，再恢复标注并运行正式评测。",
+                "blocking": false,
+                "citationKeys": [
+                  "c17",
+                  "c18",
+                  "c19"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "retryTag": "2026-10-01T09:09:53.940Z",
+      "materials": [
+        {
+          "key": "omem:docs/research/code-wiki-landscape.md",
+          "digest": "cb59fe86c1f4e0c3f98ed22c2ad085fcea475dc05fc945177d8937a8785ac476",
+          "ranges": [
+            {
+              "start": 1,
+              "end": 60
+            }
+          ]
+        }
+      ],
+      "articles": [
+        {
+          "key": "topic:background",
+          "revision": "173161e9e768f59a6f64beffa61c40181ec74bfa00463ea7ba7e0070a106c269"
+        },
+        {
+          "key": "topic:requirements",
+          "revision": "de1bff89dfa971df06a5f9bc5959caa7e803181b2baaeeba884e7d7d5965f4c3"
+        },
+        {
+          "key": "topic:architecture",
+          "revision": "fc794c8450a958b624b4985ec2a6fd05f18ca88365bf9425fd6adbf6ca9222a5"
+        },
+        {
+          "key": "topic:evidence_knowledge",
+          "revision": "40f35167cea0fb87190bb56294f2a2c8353891a958037725661de7fd6a287e2f"
+        },
+        {
+          "key": "topic:agent_governance",
+          "revision": "73ff7277945795f09b39aa5969484c6e7d834fd0b4a1c7cbf2f0aec5fb3bdcb8"
+        },
+        {
+          "key": "topic:assistant_memory",
+          "revision": "7784183b37448b70fbd1118807bf95b6f91c0f7d0f9bcf29b6e4c6e6e87aab3a"
+        },
+        {
+          "key": "topic:inputs_integrations",
+          "revision": "782383b23a289359cb0a6ce439a03674ba0a1592d2774a1331c20e500f8700ef"
+        },
+        {
+          "key": "topic:code_wiki",
+          "revision": "df9a5f87ee5659635c79f2ef7f86b0eb462fc4834c6e4e3345725ebbfed6a45d"
+        },
+        {
+          "key": "topic:quality_validation",
+          "revision": "5edb84a0c5a7f7f17d82e6ef9799eb6655069a2c64f203d51f66e0a29ae2f1ce"
+        },
+        {
+          "key": "topic:progress",
+          "revision": "dd10f50567e5bc924afe22e9316ede0228d647d7b56562bbb2fa48efc591662d"
+        }
+      ],
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "budget": {
+        "transport": "acp",
+        "maxInputTokens": 192000,
+        "maxOutputTokens": 24000,
+        "contextReserveTokens": 16000,
+        "command": "traex",
+        "args": [
+          "-c",
+          "sandbox_mode=\"read-only\"",
+          "acp",
+          "serve"
+        ],
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "timeoutMs": 480000
+      },
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd"
+    }
+  ],
+  "retainedHead": {
+    "revision_id": "45671814c1b98177a39af507350892fc470c948d4e4fed5cb02cce1c3860c5f8",
+    "current": 1
+  }
+}

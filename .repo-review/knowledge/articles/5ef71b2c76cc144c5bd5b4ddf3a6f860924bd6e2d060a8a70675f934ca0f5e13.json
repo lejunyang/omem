@@ -2,88 +2,148 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/knowledge-browser.ts",
-    "title": "知识阅读 Trail 的真实浏览器回归脚本",
-    "summary": "该脚本在临时仓库中构造固定知识链，启动 Review API 与 Vue 页面，并用 Chromium 验证多层引用阅读、深链、焦点、响应式、待办和源码转义。",
+    "title": "知识阅读链路的真实浏览器验收",
+    "summary": "该脚本以临时仓库、真实 SQLite、服务端 API 和 Vue 页面组成端到端环境，验证知识文章的内联引用可逐层打开、深链可恢复、代码材料安全展示、待确认问题可转为任务，并检查多种视口下的基本布局表现。",
     "category": "tests",
     "sections": [
       {
-        "key": "fixture",
-        "title": "夹具与被测系统",
-        "body": "脚本创建包含 A→B→C import 的临时仓库及带脚本标签的 HTML 原文，执行 Review 同步、材料捕获和代码同步，再发布 C、B、A、架构与总览五层固定知识。随后它以临时路径实例化 Store、启动 Review 应用并打开无头 Chromium。[[c1]] 这覆盖固定材料、知识仓库、API 和已构建 Web UI 的集成链路，不依赖模型生成；当前材料不进一步证明 Store 构造期间的迁移细节。"
+        "key": "purpose-and-fixture",
+        "title": "解决什么问题",
+        "body": "该脚本验证的不是孤立组件，而是用户从知识总览进入文章、沿引用阅读其他文章和固定源码的完整体验。它先创建包含三级调用关系和一份 HTML 材料的临时仓库，再依次执行仓库同步、材料捕获与代码同步，随后发布带内联引用、问题项及生成/复核元数据的固定知识文章；因此测试结果不依赖 LLM 输出。参考 [[c1]]\n\n脚本使用真实 `Store`、知识仓库和 Review Web 应用，并通过随机端口启动服务、用无头 Chromium 访问页面，覆盖 Vue、HTTP API 与 SQLite 的集成边界。参考 [[c2]]"
       },
       {
-        "key": "trail",
-        "title": "Trail 与深链断言",
-        "body": "浏览器从总览进入 Trail，逐层打开三个模块与固定代码，检查五层面包屑、引用理由和源码内容；Esc 会退回一层，刷新后四层深链仍可恢复，关闭全部再打开和关闭后焦点回到入口。[[c2]] 这些断言验证了帧栈导航、URL 序列化和基本无障碍焦点行为。"
+        "key": "reading-flow",
+        "title": "引用阅读与导航状态",
+        "body": "测试从总览页点击“架构说明”，依次沿模块 A、B、C 到源码，断言引用理由可见、面包屑形成五层阅读轨迹，最终代码视图展示固定源码。按 Esc 后应退回一层；刷新页面仍恢复四层轨迹，URL 中保留深链状态；关闭全部后再次打开和关闭，焦点回到原入口。参考 [[c3]]\n\n另一条路径从模块 A 的知识卡进入其源码，再点击代码中的 `b.ts` 行引用，断言目标打开为“模块 B”的知识文章。这证明导入引用能够连接源码阅读和已有知识，但这里只验证 fixture 中明确构造的单个跨文件 import，并不能证明任意跨文件调用都可解析。参考 [[c4]]"
       },
       {
-        "key": "other-assertions",
-        "title": "导航、安全与覆盖边界",
-        "body": "脚本还验证 import 行可打开目标模块知识，1440、768、390 三种视口不产生水平溢出，未解决问题只能由用户显式加入待办，并且 HTML 材料作为源码显示而不会执行其中脚本。[[c3]] 它属于单页 Chromium 冒烟回归，不覆盖其他浏览器、并发、真实历史库或网络异常；最终会检查页面错误并清理浏览器、应用与临时仓库。[[c4]]"
+        "key": "safety-and-actions",
+        "title": "布局、安全与用户操作",
+        "body": "脚本把视口依次调整为 1440、768 和 390 像素，并以页面总宽不超过视口为断言，检查桌面、平板和手机宽度下没有横向溢出。该检查覆盖基础响应式布局，但未断言触控手势、视觉截图或各断点的具体排版。参考 [[c5]]\n\n知识问题默认不会自动执行：测试展开问题区、点击“加入待办”，同时核对页面状态和 SQLite 中新增的一项任务。最后直接深链打开含 `<script>` 的 HTML 原文，确认代码视图显示文本但未设置页面全局变量，并要求运行期间没有页面异常，从而验证原始 HTML 被转义而非执行。参考 [[c6]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "测试边界与清理",
+        "body": "这是单进程、无头 Chromium 下的固定数据验收；材料和知识均由脚本即时构造，未覆盖真实模型生成质量、其他浏览器、网络故障、并发访问、超长轨迹上限或服务重启后的持久恢复。脚本无论断言成功与否都会关闭浏览器和应用，并删除临时仓库，避免测试数据残留。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时仓库与固定知识链",
-        "reason": "支持临时源码、同步、固定知识发布以及 Review 应用和浏览器启动流程。",
-        "relation": "depends_on",
+        "label": "临时仓库与固定知识",
+        "reason": "支持脚本构造三级源码关系、同步材料并发布固定知识文章且不依赖模型的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
           "startLine": 14,
-          "endLine": 45
+          "endLine": 42
         },
         "quote": "const root = mkdtempSync(join(tmpdir(), \"knowledge-browser-\"));\nmkdirSync(join(root, \"apps/server/src\"), { recursive: true });\nwriteFileSync(join(root, \"apps/server/src/a.ts\"), 'import { b } from \"./b.js\";\\nexport function a() { return b(); }\\n');\nwriteFileSync(join(root, \"apps/server/src/b.ts\"), 'import { c } from \"./"
       },
       {
         "key": "c2",
-        "label": "多层 Trail 与深链断言",
-        "reason": "支持逐层阅读、Esc 回退、刷新恢复、关闭全部和焦点归还等交互结论。",
+        "label": "真实应用启动",
+        "reason": "支持测试连接 Store、知识仓库、Review 应用和无头 Chromium 的集成范围。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
-          "startLine": 46,
-          "endLine": 68
+          "startLine": 20,
+          "endLine": 47
         },
-        "quote": "try {\n  const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });\n  const errors: string[] = []; page.on(\"pageerror\", e => errors.push(e.message));\n  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .knowledge-document\").getByRole(\"link\", { name: \"架构说明 ↗\", exa"
+        "quote": "const store = new Store(join(root, \".repo-review/runtime/data\"));\nawait runReviewSync(store, root); captureRepositoryMaterials(store, root); await runCodeSync(store, root);\nconst repository = createReviewKnowledgeRepository(store);\nconst materials = new Map(repository.materials().map(m => [m.key, m]));\nfunction publish"
       },
       {
         "key": "c3",
-        "label": "导航、响应式、待办与源码安全",
-        "reason": "支持 import 跳转、多视口无溢出、显式创建待办和 HTML 不执行的测试范围。",
+        "label": "多层引用阅读",
+        "reason": "支持引用理由、五层轨迹、源码展示、Esc 回退、深链刷新恢复及焦点归还等断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 49,
+          "endLine": 68
+        },
+        "quote": "  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .knowledge-document\").getByRole(\"link\", { name: \"架构说明 ↗\", exact: true });\n  await entry.click();\n  await expect(page.locator(\".om-trail .citation-reason\")).toContainText(\"当前段落\");\n  for (const label of [\"模块 A 的说明\", \"模块 B 的说明\", \"模块 C"
+      },
+      {
+        "key": "c4",
+        "label": "导入引用跳转",
+        "reason": "支持从 A 的源码行引用打开模块 B 知识文章的行为，并界定该断言只覆盖当前 fixture。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
           "startLine": 70,
-          "endLine": 90
+          "endLine": 74
         },
         "quote": "  await page.locator(\".knowledge-card\").filter({ hasText: \"模块 A\" }).first().click();\n  await page.locator(\".om-trail\").getByRole(\"link\", { name: \"A 的实现 ↗\", exact: true }).click();\n  await page.locator(\".om-trail .line-reference\").filter({ hasText: \"b.ts\" }).click();\n  await expect(page.locator(\".om-trail .knowledge-doc"
       },
       {
-        "key": "c4",
-        "label": "错误检查与资源清理",
-        "reason": "说明脚本断言无页面错误，并在 finally 中关闭浏览器、应用及删除临时仓库。",
-        "relation": "explains",
+        "key": "c5",
+        "label": "多视口无溢出",
+        "reason": "支持三个视口宽度下仅检查页面横向溢出的测试范围。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
-          "startLine": 91,
+          "startLine": 75,
+          "endLine": 79
+        },
+        "quote": "  for (const width of [1440, 768, 390]) {\n    await page.setViewportSize({ width, height: 950 });\n    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);\n  }\n  console.log(\"PASS 1440/768/390 without horizontal overflow\");"
+      },
+      {
+        "key": "c6",
+        "label": "待办与源码转义",
+        "reason": "支持用户显式创建待办、数据库落库，以及 HTML 原文显示但脚本不执行的安全断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 80,
+          "endLine": 91
+        },
+        "quote": "  await page.locator(\".om-trail button[aria-label='关闭全部']\").click();\n  const questions = page.locator(\".knowledge-home > .knowledge-questions\");\n  await questions.locator(\"summary\").click();\n  await questions.getByRole(\"button\", { name: \"加入待办\", exact: true }).click();\n  await expect(questions).toContainText(\"已加入待办\");\n "
+      },
+      {
+        "key": "c7",
+        "label": "资源清理",
+        "reason": "支持 finally 阶段关闭浏览器、应用并删除临时目录的说明；同时该文件显示测试仅启动 Chromium。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 45,
           "endLine": 92
         },
-        "quote": "  expect(errors).toEqual([]);\n} finally { await browser.close(); await app.close(); rmSync(root, { recursive: true, force: true }); }"
+        "quote": "const browser = await chromium.launch({ headless: true });\ntry {\n  const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });\n  const errors: string[] = []; page.on(\"pageerror\", e => errors.push(e.message));\n  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .k"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "这条浏览器验收是否还需要覆盖 Firefox、WebKit 和触控交互？",
+        "why": "当前脚本只启动 Chromium，并通过改变视口宽度检查横向溢出；这不足以确认其他浏览器的渲染差异或移动端触控行为。",
+        "nextStep": "由维护者确定正式支持的浏览器矩阵，再为所需浏览器增加相同导航流程，并补充触控与焦点交互断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c7"
+        ]
+      },
+      {
+        "question": "深链恢复是否需要验证关闭并重启服务后的持久性？",
+        "why": "现有断言只在同一次应用进程中刷新页面，能够证明 URL 状态恢复，但不能证明服务重启或数据库重新打开后的行为。",
+        "nextStep": "若产品承诺跨会话恢复，应关闭并重新构建应用后复用原 URL，断言文章、轨迹和失效引用的处理结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c7"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
-      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
-    },
     {
       "kind": "material",
       "key": "omem:scripts/knowledge-browser.ts",
@@ -91,56 +151,56 @@
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-role-smoke.ts",
-      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/quality-evaluate.ts",
-      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/quality-lark-annotate.ts",
-      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/quality-run.ts",
-      "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:46:02.929Z",
+    "at": "2026-10-01T07:24:19.149Z",
     "trace": {
-      "runId": "4880e74a-2b02-4a28-9a75-c4da11ae5a54",
-      "roleId": "knowledge-refresher",
+      "runId": "f5673d0b-8dcb-4be0-a0b5-df55eda9674e",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "a996affef32f5651acd1523cd305ecf6778fa538ee3a5fcd1c135c68eb4ed646",
-      "contextHash": "bcb01aab653311c7503eb8eeb688ff7f7512945c50752e844312b3d8173f8c73",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "a31451bf2726e876f170ad0a7e2619a595a375879a603854ab16a0631384b9a2",
+      "contextHash": "89ceabce96b2cec68444c65594ec41233602d4bc532057dd0792412096b1756e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5900840874c5610ceaea40658e8d29011c9360750eed2fe6b3d3eee2d6d05936",
+      "fingerprint": "4ba87f77a97706ffc76c87bc6eddebde5529a81cc0d0b8474015c4277c3071ab",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeea-12c8-76f0-ba5a-602114160399"
+        "01a0f659-320e-7330-900a-f2528d4b0709"
       ],
       "usage": {
-        "used": 35183,
-        "size": 760000,
+        "used": 30844,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -148,10 +208,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 56963,
-          "utf8Bytes": 64151,
-          "estimatedTokens": 21384,
-          "budgetedTokens": 26730,
+          "chars": 35054,
+          "utf8Bytes": 38786,
+          "estimatedTokens": 12929,
+          "budgetedTokens": 16162,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -160,17 +220,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:46:20.562Z",
+    "at": "2026-10-01T07:24:41.563Z",
     "trace": {
-      "runId": "2e62fde2-2f2e-47ff-b2a3-0f6eb82e423c",
+      "runId": "e7d896fc-9153-40b4-98e6-1447f890cfb1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "5911744546482c3adcfd438d44f4e0aecba4f428440a01fcbe23f1e20537b307",
-      "contextHash": "02f1d2c819d33419cc520135180edbada89f1a4ee5dfc38c4004a70a88b90204",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "21bdd1a8178ad27270f191f22bd5e9289bb971cf1a19f39a96adb3990615a36c",
+      "contextHash": "db6d2f3040dd7f2e19120de3e278f9dac2f7ea91598004bdb9ff74b553760863",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "373dd1d8539136d5c701d10a0fb9b7f9e9d0b97d4bbf912f005fd79bc092edcd",
+      "fingerprint": "032f2eb222c01b4f83daa2a80093ed32850e3e9803da96d5361ca0ab3c00af3a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -183,11 +243,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeea-d8a9-7663-be9a-aa9e943fc23a"
+        "01a0f659-b1a6-72d2-ac29-b62a333baad2"
       ],
       "usage": {
-        "used": 33329,
-        "size": 760000,
+        "used": 31870,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -195,10 +255,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 62318,
-          "utf8Bytes": 72236,
-          "estimatedTokens": 24079,
-          "budgetedTokens": 30099,
+          "chars": 38186,
+          "utf8Bytes": 43634,
+          "estimatedTokens": 14545,
+          "budgetedTokens": 18182,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
