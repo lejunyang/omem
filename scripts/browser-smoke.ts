@@ -210,6 +210,33 @@ try {
     ).toBeVisible();
     expect(store.list()).toHaveLength(1);
   });
+  await check("search loading, empty, failure and superseded requests", async () => {
+    const input = page.getByRole("textbox", { name: "搜索材料", exact: true });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    await page.route("**/api/search?*", async route => {
+      const q = new URL(route.request().url()).searchParams.get("q");
+      if (q === "delayed") { await gate; await route.fulfill({ status: 200, contentType: "application/json", body: "[]" }).catch(() => {}); }
+      else if (q === "failed") await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "临时不可用" }) });
+      else await route.continue();
+    });
+    await input.fill("delayed");
+    await expect(page.getByText("正在搜索相关材料…", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "未找到相关片段" })).toHaveCount(0);
+    await input.fill("回滚");
+    release!();
+    await expect(page.locator(".page .om-panel").filter({ hasText: "发布前的回滚验证" }).first()).toBeVisible();
+    await expect(page.getByText("正在搜索相关材料…", { exact: true })).toHaveCount(0);
+    await input.fill("no-result-unique-zzz");
+    await expect(page.getByRole("heading", { name: "未找到相关片段" })).toBeVisible();
+    await input.fill("failed");
+    await expect(page.getByText(/搜索失败：.*临时不可用/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "未找到相关片段" })).toHaveCount(0);
+    await page.getByRole("button", { name: "日常助理", exact: true }).click();
+    await expect(page.getByText(/搜索失败：/)).toHaveCount(0);
+    await page.unroute("**/api/search?*");
+    await page.getByRole("button", { name: "原始材料", exact: true }).click();
+  });
   const first = store.list()[0]!.id as string;
   const revision = store.revision(first)!;
   await check(

@@ -249,9 +249,10 @@ export async function api<T>(
   path: string,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
+  signal?: AbortSignal,
 ): Promise<T> {
   const r = await fetch("/api" + path, {
-    method,
+    method, signal,
     headers: { "Content-Type": "application/json", ...headers() },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
