@@ -21,7 +21,7 @@
 2. 用 `osdk run review:generate -- --only=<文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库重建时省略选择器。必须走真实 `traex acp` 的 `gpt-5.6-sol`，保留独立 verifier 与运行 trace；手写 seed、fixture 或只跑 AST sync 不算模型验证。
 3. 检查覆盖记录中的 reviewed / stale / pending / failed，抽查正文内联引用能回到固定原文。失败应保留旧历史、列明原因，不得手改模型产物冒充复核通过。上层章节受依赖变化影响也应重建，未覆盖部分明确标 stale。
 4. 语义检索相关修改运行 `osdk run retrieval:verify`；用 `osdk run retrieval:index -- --review` 更新仓库索引，再通过真实 `/api/review/search` 检查中文问法回到当前原始材料。改 UI 另跑下文浏览器检查。
-5. `.repo-review/knowledge/verification.json` 记录实际命令、退出码、模型/快照、验证范围和剩余限制；生成覆盖记录与 wiki 索引一并维护。不能用“所有检查通过”替代当前知识覆盖情况。
+5. 运行 `osdk run review:verify -- --full` 自动生成 `.repo-review/knowledge/verification.json`：记录实际命令、退出码、源码/题集指纹、索引状态、知识引用和真实 HTTP 检索。未执行项标 skipped，旧报告自动进入 `verification/history/`；不能手填通过率或用检查通过代替全库覆盖。知识生成仍另走真实 ACP，验证入口不代替模型复核。
 
 ## Code Wiki / repo-review 维护规则
 

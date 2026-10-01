@@ -51,7 +51,11 @@ osdk run review:analyze
 osdk run review:generate -- --target=apps/server/src/retrieval/keyword.ts
 # 重试未完成/过期项；正常运行会复用已完成知识与持久结果
 osdk run review:analyze -- --retry
-# 仅重建索引，不调用模型
+# 当前知识引用、索引和真实 HTTP 检索验证
+osdk run review:verify
+# 另跑冻结依赖、完整检查与真实中文模型验证
+osdk run review:verify -- --full
+# 仅重建 Wiki 索引，不调用模型
 osdk run review:build
 ```
 
@@ -62,6 +66,7 @@ osdk run review:build
 直接阅读随 Git 提交的 [Wiki 索引](.repo-review/wiki.md)。目录用途：
 
 - `.repo-review/knowledge/articles/*.json` 与 `.md`：当前流程的知识正文、内联引用、原材料/子知识依赖及真实分析和复核记录。
+- `.repo-review/knowledge/verification.json`：自动生成的本次验证报告；旧报告及专项记录归入 `verification/history/`，未执行的检查不继承旧通过率。使用说明见 [验证入口](.repo-review/knowledge/verification/README.md)。
 - `.repo-review/knowledge/coverage.json`：逐文件处理结果与排除理由；失败、过期和待处理不会算作完成。
 - `.repo-review/knowledge/user-notes.json`：用户在 review 界面明确保存的补充材料，用于后续核对。
 - `.repo-review/knowledge/understandings/` 和 `generated/`：早期切片的人工说明与模型产物，保留溯源；不冒充新流程独立复核结果。

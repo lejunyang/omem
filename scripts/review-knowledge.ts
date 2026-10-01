@@ -44,11 +44,19 @@ try {
   await runCodeSync(store, root);
   console.log("Restore:", restoreKnowledgeArticles(repository, assets).reduce((n, r) => { n[r.state] = (n[r.state] ?? 0) + 1; return n; }, {} as Record<string, number>));
   const allMaterials = repository.materials().filter(m => m.key.startsWith("omem:"));
-  const materials = allMaterials.filter(m => !only.length || only.some(path => m.path === path || m.path?.startsWith(path + "/")));
-  if (!materials.length) throw Error("No matching captured materials");
   const byKey = new Map(allMaterials.map(m => [m.key, m]));
+  const requested = allMaterials.filter(m => !only.length || only.some(path => m.path === path || m.path?.startsWith(path + "/")));
+  const requestedKeys = new Set(requested.map(m=>m.key));
+  const selected = new Set(requestedKeys);
+  const saved = readdirSync(assets).filter(f => f.endsWith(".json")).map(file => JSON.parse(readFileSync(join(assets,file),"utf8"))) as ReturnType<KnowledgeRepository["list"]>;
+  // Older multi-material batches have conservative sibling dependencies. Refresh
+  // just the originals actually invalidated by a requested changed material.
+  for (const article of saved) if (byKey.has(article.document.key) && !repository.get(article.document.key)?.current && article.dependencies.some(d=>d.kind==='material' && requestedKeys.has(d.key) && byKey.get(d.key)?.digest!==d.digest)) selected.add(article.document.key);
+  const materials = allMaterials.filter(m=>selected.has(m.key));
+  if (!materials.length) throw Error("No matching captured materials");
   const files = listFiles(store), byFile = new Map(files.map(f => [f.fileId, f]));
   console.log("Material inventory:", materials.length, "targets;", coverage.filter(c => c.state === "excluded").length, "excluded;", coverage.filter(c => c.state === "failed").length, "capture failures");
+  if(materials.length>requested.length)console.log("Affected former batch siblings:",materials.filter(m=>!requested.some(r=>r.key===m.key)).map(m=>m.path));
   const report = await pipeline.analyze(materials, targets => {
     const extra = new Set<string>();
     for (const target of targets) {
