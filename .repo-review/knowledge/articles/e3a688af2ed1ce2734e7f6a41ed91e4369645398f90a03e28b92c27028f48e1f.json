@@ -1,0 +1,1124 @@
+{
+  "version": 1,
+  "document": {
+    "key": "guide:overview",
+    "title": "先认识 omem：把材料变成能找回的工作记忆",
+    "summary": "omem 把文档、代码、聊天、图片和个人经历放进同一个工作记忆中。本页用“保存项目评审约定、找回批准规则、跟进评审回复”的例子，说明原始材料、知识文章、个人记忆与事项各自解决什么问题，以及目前可以依赖的能力边界。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "scenario",
+        "title": "从一份项目约定开始",
+        "body": "假设你收到一份项目约定，其中写着：“评审必须由模块负责人批准，回复期限为周五。”几周后，你需要确认由谁批准；提交评审后，又要等张三回复并在次日上午检查。\n\nomem 要解决的正是这类跨越时间的日常问题：把文档、代码、聊天、图片和个人经历组织到一起，让你以后不仅能找到原话，还能读懂背景并继续行动。它已经具备输入、检索、记忆、问答和事项的基础，但高质量知识整理与更主动的助理能力仍在推进。参考 [[c1]]"
+      },
+      {
+        "key": "getting-started",
+        "title": "启动并保存第一份材料",
+        "body": "本地使用时，先运行：\n\n```bash\nosdk install\nosdk deps --frozen\nosdk run dev\n```\n\n随后打开终端显示的 Web 地址。开发模式会载入本仓库材料和已经发布的知识，同时保留个人数据；启动本身不会自动生成整库知识。参考 [[c2]]\n\n进入“输入材料”，选择“文本＋图片＋链接”，填写标题“项目评审约定”，粘贴约定正文并保存。这里也可以改用飞书文档、Git 文件或服务器文本文件作为输入。参考 [[c3]]\n\n若希望以后用同一个来源持续更新，可以填写稳定的“来源标识”；相同标识的新内容会形成后续版本。保存完成后，界面会打开原始材料：内容没变时复用原版本，内容变化时形成新的固定版本。参考 [[c4]] [[c5]]\n\n```mermaid\nflowchart LR\n  A[保存项目评审约定] --> B[形成可回看的原始材料]\n  B --> C[搜索或阅读知识]\n  C --> D[找到批准规则]\n  D --> E[记录等待评审回复的事项]\n```\n\n这条主线把“保存、找回、行动”连在一起；材料的当前版本和历史版本都能从阅读页打开。参考 [[c6]]"
+      },
+      {
+        "key": "four-concepts",
+        "title": "材料、知识、记忆和事项有什么区别",
+        "body": "同一份项目约定可以同时参与四种用途，但四者不能互相替代：\n\n| 对象 | 回答的问题 | 本例中的样子 |\n| --- | --- | --- |\n| **原始材料** | 当时到底写了什么？ | 保存下来的“项目评审约定”及其历史版本 |\n| **知识文章** | 这些材料合起来该怎样理解？ | 跨约定、讨论和代码整理出的“如何完成项目评审” |\n| **个人记忆** | 哪些事实或经验以后仍会用到？ | “评审需要模块负责人批准”这一可复用背景 |\n| **事项** | 下一步做什么，何时再检查？ | “等待张三的评审回复，明早检查” |\n\n原始材料保留历史和原话；知识文章围绕读者问题跨材料解释，但不会变成一份取代原文的新事实。参考 [[c7]] 知识库会把入门指南放在“从这里开始”，也能按主题、功能或材料名称查找章节；文章正文中的引用可以继续打开对应来源。参考 [[c8]] [[c9]]\n\n个人记忆来自材料中提炼出的事实、经历、流程或经验。保存或更新原文后，相关处理任务可能先进入队列；只有启用自动处理并配置可用的 Agent，后台才会实际提炼和核验。明确可靠的结果可以写入记忆，需要用户判断的内容会进入“待判断”。自动处理未启用时，原文保存与检索仍然可用，因此“材料已保存”不等于“记忆已经形成”。参考 [[c10]]\n\n事项则是需要推进的行动对象，可以记录背景、截止时间并关联当前选中的原文。它不是对约定的解释，也不是一条静态事实。参考 [[c11]]"
+      },
+      {
+        "key": "finding",
+        "title": "找回决定，并围绕原文继续提问",
+        "body": "几周后想确认“评审由谁批准”，可以直接在顶部搜索“评审谁批准”或约定中的关键词。搜索会结合原文、代码名称、已有知识以及已启用的中文语义索引；结果显示相关章节或行范围，并提供“查看固定片段”。参考 [[c12]]\n\n也可以进入“原始材料”，按名称筛选“项目评审约定”，打开当前版本或历史版本。找到相关段落后，选择“就这段提问”，例如询问：“这条规则对本次评审意味着什么？”参考 [[c13]]\n\n从原始材料进入的这次问答，会以当前选中的片段作为固定依据。回答完成后可以重新打开本次提供的依据；不过系统目前不会自动核验回答中的每一个主张，因此重要决定仍应回到原文确认。参考 [[c14]] [[c15]]"
+      },
+      {
+        "key": "code",
+        "title": "代码与其他材料共用一条阅读路线",
+        "body": "代码没有被放进另一套知识产品。它与文档、聊天、图片使用同一个材料体系、知识库和搜索入口，只是额外利用结构和符号信息帮助精确定位。参考 [[c1]] [[c7]]\n\n例如，项目约定说明“评审必须由模块负责人批准”，知识文章可以把这条规则与讨论记录、相关实现一起讲清楚；沿文章引用打开代码时，页面会显示对应行，并允许向上或向下展开上下文。参考 [[c16]]\n\n当前可以依赖的是代码与其他材料的共同保存、搜索、定位、阅读和引用。完整的意图路由与跨文件功能链仍在扩展，因此不能把一次代码命中理解成系统已经稳定还原了完整调用图。参考 [[c17]]"
+      },
+      {
+        "key": "follow-up",
+        "title": "把评审回复变成可跟进的事项",
+        "body": "提交评审后，可以在“日常助理”输入：“帮我跟进张三的评审回复，明天上午 9 点提醒我检查。”会话会保留这条消息，展示处理状态和结果；若处理失败，原消息仍会保存并可重试，所用材料也能从结果旁打开。参考 [[c18]]\n\n也可以进入“事项与待办”手动填写事项、背景和到期时间。若此前选中了约定原文，新事项可以关联该来源，之后仍能从事项回看依据。事项支持待推进、等待回复、已完成和已取消等状态。参考 [[c11]]\n\n“跟进设置”可以登记等待对象、下次检查时间、暂缓提醒或取消事项。**跟进时间与截止时间是两回事**：前者表示何时再看一次，后者表示事情最迟何时完成；不填写检查时间时，也可以只记录正在等待谁。参考 [[c19]]\n\n这里的“等待张三回复”不会自动联系张三，也不会自动判断回复是否已经到达。通知标为已读只会清除未读状态，不会批准变更、完成事项或取消后续提醒。参考 [[c20]] [[c21]]"
+      },
+      {
+        "key": "limits",
+        "title": "现在可以依赖什么，哪些仍在路上",
+        "body": "目前已有一条可用的基础链路：统一输入与固定版本、全文和中文检索、代码符号定位、知识阅读及递归引用、基于原文的问答、来源变化后的记忆重核验、持久事项和站内提醒。统一搜索、问题驱动的 Wiki 与阅读界面已经完成首个可用切片，但覆盖范围和实际阅读质量仍在继续扩展。参考 [[c22]]\n\n尚未完成的主动能力包括持续维护人物、项目和主题的综合理解、自动监听他人回复、周期回顾、日历和学习卡。因此，omem 现在更像一个能保存来路、协助找回并管理行动的个人工作记忆，而不是会自行观察所有外部变化的全自动助理。参考 [[c20]] [[c23]]\n\n当前服务使用 SQLite，面向单用户，不具备团队隔离。飞书、外部通知、全局 hooks 和屏幕监听都需要单独、明确地启用或界定范围；系统不会默认采集这些外部信息。参考 [[c20]] [[c22]] [[c24]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "产品目标与当前基础",
+        "reason": "支持 omem 将多种个人材料组织为可读懂、可找回、可行动的记忆，并说明完整主动能力仍在推进。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 3,
+          "endLine": 5
+        },
+        "quote": "把文档、代码、聊天、图片与个人经历组织成能读懂、找回并用于行动的记忆。代码使用 AST 帮助定位，与其他材料共享同一个知识库。\n\n项目正在进行一次以阅读和实际问题为中心的重构。已有输入、检索、记忆、问答与事项基础；完整的高质量知识整理和主动助理仍在推进。当前能力与计划分开记录，测试通过不等于内容好用。"
+      },
+      {
+        "key": "c2",
+        "label": "本地启动方式",
+        "reason": "支持启动命令、打开 Web 地址、保留个人数据以及启动不自动生成整库知识的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 7,
+          "endLine": 17
+        },
+        "quote": "## 开始使用\n\n```bash\nosdk install\nosdk deps --frozen\nosdk run dev\n```\n\n打开终端打印的 web 地址。默认 API / web 为 4317 / 5173，占用时自动选择空闲端口；可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定。开发模式在统一界面中载入本仓库材料和已发布知识，保留已有个人数据。启动不自动生成整库 Wiki；若已启用后台材料处理，待处理任务会继续使用对应 Agent。\n\n生产运行：`osdk run build`、`osdk run start`，默认 `http://127.0.0.1:4317`，从“输入材料”开始。需要已安装并登"
+      },
+      {
+        "key": "c3",
+        "label": "材料输入入口",
+        "reason": "支持文本、图片、链接、飞书文档、Git 文件和服务器文件等用户可见输入方式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 613,
+          "endLine": 630
+        },
+        "quote": "    <section v-else-if=\"view === 'capture'\" class=\"page\">\n      <span class=\"eyebrow\">记忆的起点</span>\n      <h1>输入材料</h1>\n      <p class=\"muted\">\n        群聊、屏幕观测、Agent 会话都可以按相同的多模态协议接入。\n      </p>\n      <div class=\"tabs\">\n        <OmButton\n          v-for=\"[id, label] in [\n            ['text', '文本＋图片＋链接'],\n            ['l"
+      },
+      {
+        "key": "c4",
+        "label": "来源标识与材料正文",
+        "reason": "支持相同来源标识产生新版本，以及用户粘贴材料正文的操作说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 650,
+          "endLine": 660
+        },
+        "quote": "              >来源标识（相同标识产生新版本）<input\n                v-model=\"input.externalId\"\n                placeholder=\"可留空，自动分配\"\n            /></label>\n          </div>\n          <label\n            >材料正文<textarea\n              v-model=\"input.text\"\n              rows=\"9\"\n              placeholder=\"输入或粘贴材料；段落会成为固定片段。\"\n            "
+      },
+      {
+        "key": "c5",
+        "label": "保存后的用户反馈",
+        "reason": "支持保存后打开原始材料，以及内容未变化时复用原版本的可观察结果。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 327,
+          "endLine": 333
+        },
+        "quote": "    await refresh();\n    await openRevision(response.revision.id);\n    say(\n      response.duplicate\n        ? \"材料内容未改变，复用原版本\"\n        : \"材料已保存，固定证据片段已生成\",\n    );"
+      },
+      {
+        "key": "c6",
+        "label": "原始材料与版本历史",
+        "reason": "支持当前或历史版本的标识、文档和代码阅读方式，以及打开版本历史的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 565,
+          "endLine": 603
+        },
+        "quote": "      <template v-if=\"revision\"\n        ><div class=\"row\">\n          <OmBadge>{{ revision.source }}</OmBadge\n          ><OmBadge :tone=\"revision.current ? 'neutral' : 'warning'\"\n            >v{{ revision.version }} ·\n            {{ revision.current ? \"当前版本\" : \"历史版本\" }}</OmBadge\n          >\n        </div>\n        <h1>{{"
+      },
+      {
+        "key": "c7",
+        "label": "一个来源体系与多种用途",
+        "reason": "支持代码和普通材料共用来源体系，以及原件、检索结构和讲解页面承担不同用途。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/architecture.md",
+          "startLine": 5,
+          "endLine": 9
+        },
+        "quote": "## 一个来源体系，多种用途\n\n原始材料进入 Capture，保留 Source 与 Revision。文本、图片、链接和上下文一起保存；代码是同一材料体系的专用解析，不建立独立知识库。\n\n保存单位、检索单位、讲解单位分开：原件保留历史；结构块按标题/列表/表格/函数/对话组织；页面围绕一个读者问题跨材料解释。派生内容能够引导检索和提供理解背景，但不成为第二份独立事实。"
+      },
+      {
+        "key": "c8",
+        "label": "知识库阅读入口",
+        "reason": "支持知识库从入门指南开始，并可按主题、功能或材料名称查找文章。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 48,
+          "endLine": 72
+        },
+        "quote": "  <section class=\"knowledge-library\">\n    <aside class=\"book-navigation\">\n      <h1>知识库</h1>\n      <p class=\"muted\">先读懂一条流程，再沿引用深入</p>\n      <button class=\"mobile-navigation-toggle\" :aria-expanded=\"mobileNavigation\" @click=\"mobileNavigation = !mobileNavigation\">{{ mobileNavigation ? '收起章节目录' : '展开章节目录' }}</button>\n    "
+      },
+      {
+        "key": "c9",
+        "label": "知识正文与引用",
+        "reason": "支持文章展示阅读目标和分节正文，并从正文引用继续导航到对应来源。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 31,
+          "endLine": 45
+        },
+        "quote": "    <template v-else>\n      <div class=\"article-body\"><h2>{{ article.title }}</h2>\n      <p class=\"knowledge-summary\">{{ article.summary }}</p>\n      <div v-if=\"article.reading\" class=\"reading-goal\"><strong>读完这一篇</strong><p>{{ article.reading.goal }}</p></div>\n      <p v-if=\"!article.current\" class=\"update-note\" role=\""
+      },
+      {
+        "key": "c10",
+        "label": "材料处理与记忆形成",
+        "reason": "支持材料任务排队、自动处理的启用条件、可靠结果写入记忆及待判断入口，并说明未启用时原文仍可保存和检索。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 81,
+          "endLine": 102
+        },
+        "quote": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入记忆，需要你判断的内容进入“待判断”。语言学习与记忆卡复习尚未接入。当前最多显示 200 条，优先展示运行中、需处理和已有结果的任务。</p>\n    <p role=\"status\">{{ processing.running ? '后台处理服务已启动' : processin"
+      },
+      {
+        "key": "c11",
+        "label": "事项创建与状态",
+        "reason": "支持手动记录事项、背景和到期时间，关联当前材料，并查看事项状态及来源。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 726,
+          "endLine": 765
+        },
+        "quote": "    <section v-else-if=\"view === 'tasks'\" class=\"page\">\n      <span class=\"eyebrow\">从工作中记下要推进的事</span>\n      <h1>需求与待办</h1>\n      <p class=\"muted\">\n        可在助手中交办、改期、登记等待或稍后跟进。截止时间与跟进时间分开，提醒进入通知中心；完成或取消后停止提醒。\n      </p>\n      <form class=\"form\" @submit.prevent=\"createTask\">\n        <label\n          >事项<input\n         "
+      },
+      {
+        "key": "c12",
+        "label": "统一搜索结果",
+        "reason": "支持搜索结合原文、代码名称、已有知识和中文语义索引，并能打开固定片段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 530,
+          "endLine": 543
+        },
+        "quote": "    <section v-if=\"query\" class=\"page\">\n      <h1>搜索“{{ query }}”</h1>\n      <p class=\"muted\">结合原文、代码名称与已有知识查找。已启用的中文语义索引也会参与召回。</p>\n      <OmPanel v-for=\"r in results\" :key=\"r.id\" :title=\"r.title\" class=\"stack\"\n        ><p v-if=\"r.section\" class=\"search-section\">{{ r.section.title }} · 第 {{ r.section.startLine }}–{{ r"
+      },
+      {
+        "key": "c13",
+        "label": "选择原文继续提问",
+        "reason": "支持从原始材料中选定具体段落提问，并打开该段原文。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 580,
+          "endLine": 585
+        },
+        "quote": "        <details class=\"stack\"><summary>选择原文提问或查看来源</summary>\n          <div v-for=\"f in revision.fragments\" :key=\"f.id\" class=\"fragment\">\n            <p>{{ f.text.slice(0, 120) }}{{ f.text.length > 120 ? '…' : '' }}</p>\n            <OmButton variant=\"ghost\" @click=\"focus = f\">就这段提问</OmButton>\n            <OmCitation l"
+      },
+      {
+        "key": "c14",
+        "label": "当前片段问答请求",
+        "reason": "支持问答必须具有当前选中的片段，并将该片段作为请求焦点；引用路径仅在另有路径数据时才可加入。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChatPane.vue",
+          "startLine": 49,
+          "endLine": 61
+        },
+        "quote": "async function ask() {\n  if (!draft.value.trim() || !props.focus || busy.value) return;\n  error.value = \"\";\n  busy.value = true;\n  try {\n    const started = await api<{ id: string; state: \"running\" }>(\"/runs\", {\n      question: draft.value,\n      profileId: props.profileId,\n      focusId: props.focus.id,\n      ...(prop"
+      },
+      {
+        "key": "c15",
+        "label": "问答依据与核验边界",
+        "reason": "支持查看本次问答提供的片段依据，并说明系统尚未自动核验回答中的每个主张。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChatPane.vue",
+          "startLine": 115,
+          "endLine": 120
+        },
+        "quote": "        <OmCitation\n          v-if=\"run.state === 'done' && focus\"\n          label=\"查看本次提供的依据\"\n          @open=\"emit('open', focus.id)\"\n        /><small v-if=\"run.state === 'done'\"\n          >材料可回查；系统尚未自动核验回答中每个主张的支持度。</small"
+      },
+      {
+        "key": "c16",
+        "label": "代码原文阅读",
+        "reason": "支持代码引用按行展示、展开上下文并沿关联继续阅读的体验。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 37,
+          "endLine": 50
+        },
+        "quote": "    <template v-else>\n      <h2>{{ material.title }}</h2>\n      <div class=\"source-actions\"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if=\"material.knowledge\" variant=\"secondary\" @click=\"emit('navigate', knowledgeFrame(material.key, material.knowledge.title))\">阅读这份材料的知识解读 ↗</OmButton>"
+      },
+      {
+        "key": "c17",
+        "label": "检索与跨文件能力边界",
+        "reason": "支持原文、检索片段和讲解章节用途不同，以及完整意图路由和跨文件功能链仍待扩展。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 31,
+          "endLine": 40
+        },
+        "quote": "检索已有全文、中文短词、符号、记忆和知识路径，可选本地 BGE-small-zh-v1.5。安装中文向量模型：\n\n```bash\nosdk model sync memory-zh\nosdk model verify memory-zh --json\n```\n\n原文、检索片段与讲解章节是不同用途，不应该以同一种切分组织阅读。顶部搜索、知识检索与助手已共用召回基础；助手补读原始章节与相邻上下文。完整意图路由和跨文件功能链扩展仍待实现。\n\nWiki 按读者问题调查、讲解：页面计划规定阅读目标和真实案例，模型在已捕获材料中搜索、补读，撰写后由独立角色复核。运行 `osdk run review:guides` 生成五篇入门指南（实际调用 "
+      },
+      {
+        "key": "c18",
+        "label": "日常助理会话",
+        "reason": "支持评审跟进示例、持久消息、处理状态、失败重试和打开所用材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DailyAssistant.vue",
+          "startLine": 48,
+          "endLine": 70
+        },
+        "quote": "<template>\n  <section class=\"page daily-assistant\">\n    <span class=\"eyebrow\">记下、找回、持续跟进</span><h1>日常助理</h1>\n    <p class=\"muted\">直接交办、回顾事项或查找记忆。等待与跟进时间会保存，完成和取消以实际操作结果为准。</p>\n    <details><summary>可以怎样使用</summary>\n      <p v-for=\"item in workflows\" :key=\"item.id\"><b>{{ item.title }}</b>：{{ item.trigger }}，整理为{{ item.o"
+      },
+      {
+        "key": "c19",
+        "label": "等待与跟进设置",
+        "reason": "支持登记等待对象、设置检查时间、暂缓提醒和取消事项，并说明跟进时间不改变截止时间及不会自动联系对方。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/TaskFollowUpControls.vue",
+          "startLine": 24,
+          "endLine": 35
+        },
+        "quote": "<template>\n  <div v-if=\"task.status === 'open' || task.status === 'waiting'\">\n    <OmButton variant=\"ghost\" :aria-expanded=\"expanded\" @click=\"expanded = !expanded\">跟进设置</OmButton>\n    <form v-if=\"expanded\" class=\"form\" @submit.prevent=\"command('wait')\">\n      <label>等待对象或结果<input v-model=\"waitingOn\" placeholder=\"例如：张三的"
+      },
+      {
+        "key": "c20",
+        "label": "运行与主动跟进边界",
+        "reason": "支持 SQLite 单用户服务、外部集成需明确范围、现有事项操作，以及尚未自动监听回复等能力边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/operations.md",
+          "startLine": 23,
+          "endLine": 25
+        },
+        "quote": "当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书需单独启用、授权和配对；OMEM_SECRET_KEY 是加密 App Secret 的本地主密钥，不能入 Git。外部通知、全局 hooks 与屏幕监听需要独立明确范围。\n\n日常消息支持交办、等待、改期、完成、取消与站内到期提醒；没有自动监听对方回复、周期回顾、日历或学习卡。通知已读不等于事项完成。"
+      },
+      {
+        "key": "c21",
+        "label": "通知已读的实际含义",
+        "reason": "支持标为已读只清除未读提醒，不会批准变更、完成待办或取消后续提醒。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 768,
+          "endLine": 776
+        },
+        "quote": "    <section v-else-if=\"view === 'notifications'\" class=\"page\">\n      <h1>通知中心</h1>\n      <p class=\"muted\">\n        {{\n          notificationMode === \"instant\"\n            ? \"每次变更即时提示，完整记录保留在这里。\"\n            : \"变更保留在通知中心，当前关闭逐条浮动提示。\"\n        }}\n        标为已读仅清除未读提醒，不会批准变更、完成待办或取消后续提醒。"
+      },
+      {
+        "key": "c22",
+        "label": "当前实施进度",
+        "reason": "支持统一搜索、问题驱动 Wiki 和阅读界面的首片状态，列出可复用基础，并明确当前单用户实现不具备团队隔离。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/progress.md",
+          "startLine": 5,
+          "endLine": 16
+        },
+        "quote": "| 阶段 | 状态 | 交付与验收 |\n| --- | --- | --- |\n| 文档基线 | 已完成 | 归档旧方案和历史记录，更新 README、AGENTS、视觉约定 |\n| 统一搜索与上下文 | 首片已实现 | 顶部搜索共用混合召回；知识搜索结合原文命中排序；助手补原始章节标题与相邻片段。尚未有完整意图路由和跨文件功能链扩展 |\n| 问题驱动的 Wiki | 首片已实现 | 五篇页面计划；模型请求搜索与按行补读；写作与独立复核。模型内容与可读性结果见本轮验收记录，不以协议测试代替 |\n| 阅读界面 | 首片已实现 | 学习目录、阅读目标、下一篇、参考资料折叠；统一段落/表格/代码/按钮间距；实际服务 390/768/144"
+      },
+      {
+        "key": "c23",
+        "label": "记忆与主动事项路线",
+        "reason": "支持从原始记录到记忆再到行动的目标关系，并区分已有重核验和仍属后续的主动能力。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/architecture.md",
+          "startLine": 25,
+          "endLine": 27
+        },
+        "quote": "## 记忆与主动事项\n\n原始记录 → 经历 → 当前事实/偏好/经验 → 人物、项目、主题综合理解 → 行动。维护变化与来源，避免每轮问答从孤立事实重新拼凑。来源更新已有重核验可复用；周期整合、事件时间检索、自动回复跟进和学习卡另列后续阶段，不写成已实现。"
+      },
+      {
+        "key": "c24",
+        "label": "单用户与显式集成",
+        "reason": "支持当前为单用户服务，并说明飞书、外部通知和屏幕监听是独立的显式集成。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 55,
+          "endLine": 55
+        },
+        "quote": "个人数据在 `.omem/`。配置使用 `omem.local.json` 或 `OMEM_CONFIG`，不要提交真实会话、原件、数据库、密钥或模型权重。当前是单用户服务；飞书、外部通知和屏幕监听都是独立的显式集成。"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:README.md",
+      "digest": "9d306677f8bd466c1e11deede09fb2e9c47b8d799bd326b75a948bc9ea235854"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/operations.md",
+      "digest": "1ecbcc948134372278e9d11b5aeb711d2df5988c358a7643d9e7ea54198de0f0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "3cc9db64ebf4443678ed277ad2df3320ed9517b5c3336ffaf76af552fb3c6cca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/README.md",
+      "digest": "b5b7c47624f4ed67a02440bf84a4ca011d8f54faf0766a635942a90f136cd62b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/progress.md",
+      "digest": "9244eeb5bee20153550f0da0f2c429196e5a9f41038ad1fcacdcdba86779bac8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/architecture.md",
+      "digest": "4c28b3df73de168f174192f484235162e3ff83e2bb0acf1588031d48c721ba65"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/review.md",
+      "digest": "2aa549f44335f5ca9f2911a883b4736c8c5a53233c96537db671d79e5b7fe6a1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+      "digest": "ceda6a98813b3de9f2f11d753d7eb2602e5758c64526aa7bf159cbde42bc2cad"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChatPane.vue",
+      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/DailyAssistant.vue",
+      "digest": "90d6706d5794f3878e997d0b34611aae7aa06e9a21dd0896fdf02c25df334b29"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/TaskFollowUpControls.vue",
+      "digest": "9297d3e6de28308580a8f1ed0532d810dad92a5d991b184b1bcf576747e6490a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "25c54456f617ebff4f0a5565b253c74a6be8e8260bbdfaeb415e68e0166f1310"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b6bcd304447ba703962195cb9459b3d6c588a9b1037fbcd9fe565dc02c71d199"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+      "digest": "908fa60afaec9d3067731ce8c1bf34b842e15fe09ba30d70adff77b74d97e4fe"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/message-workflows.ts",
+      "digest": "1de3a26cceae1263b44f8c385de992841d6ba8bf892161dc002c84e5a582fbcc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "770504ecd25bca96794747bd325f2ac796a9a46fa387a0d48fbc88cfbc847fa5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/edges.test.ts",
+      "digest": "ac821d09b7a452c0e7980d0550ce86b1acc40ae35426d04181af8648da592a64"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.test.ts",
+      "digest": "d040287ff32ac0368675b3c0986a3dca8b05ff9983e9e204f369c1eec38578a2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "0b18c7e95c118580d32641cebf60d85844d73ba8fd74153b32ebcf44be13897e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/DecisionsView.vue",
+      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
+    }
+  ],
+  "reading": {
+    "key": "guide:overview",
+    "title": "先认识 omem：把材料变成能找回的工作记忆",
+    "order": 0,
+    "kind": "explanation",
+    "reader": "第一次接触 omem、尚未阅读任何代码的个人用户",
+    "goal": "不阅读代码也能知道 omem 解决什么问题、如何保存与找回一份项目约定、怎样跟进一次评审；能用同一个例子区分材料、知识、记忆与事项。只讲使用层概念，Source/Revision/Fragment 内部模型、claim 匹配、scope/epoch、错误状态和配置细节留给后面的开发指南。",
+    "scenario": "你保存了一份项目约定，后来想找回某个决定，并需要跟进一次评审。贯穿这个示例解释用户操作与系统结果。",
+    "questions": [
+      "它解决什么日常问题，如何开始使用？",
+      "原始材料、知识文章、个人记忆、事项分别是什么，为什么有区别？",
+      "代码与其他材料如何共同使用？",
+      "目前哪些步骤可用，哪些主动能力还没有实现？"
+    ],
+    "entryPaths": [
+      "README.md",
+      "docs/reader-first/operations.md",
+      "apps/server/src/app.ts",
+      "apps/web/src/App.vue"
+    ]
+  },
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T15:57:33.672Z",
+    "trace": {
+      "runId": "b6e1353d-1959-4ad5-b40b-efb6338320c3",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "cfbdebf0d9930c054a5d83dd81c80b5d4df79e697e13c182694e4c260548129d",
+      "promptHash": "cb8a787fd66dcce0fe54a812db6bfe345fdfd5b63c5468b1b0b94eb17bfc68f6",
+      "contextHash": "90cc31beaa0f319f7cfc2148b93638ede379f5c436c2545768a66b3248077915",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "5b25bcae2baa0ff720596b1cf6fec7f02e1a24946ff007f5a5a240bf04727698",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f82e-ecad-72f1-bbba-dcbf16f9a332"
+      ],
+      "usage": {
+        "used": 95806,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 206940,
+          "utf8Bytes": 256172,
+          "estimatedTokens": 85391,
+          "budgetedTokens": 106739,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0,
+      "research": {
+        "rounds": [
+          {
+            "trace": {
+              "runId": "b0e320ee-2054-4d2c-855e-10274197f5a8",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "a841bc455936ce2bf69e86de5599ab7ab9f1a49582980e9fead7dec44338218c",
+              "contextHash": "ff162f0da6961cc9baa4a80cdcaa91555cf11a8493e9d54c0331dc276be1bac8",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "c0fe5a556884a61dcacb7237670840fca673d131130cf81658a920a5b9c7ca96",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f82a-d117-76d0-8d3b-90b77e264b5c"
+              ],
+              "usage": {
+                "used": 35560,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 48293,
+                  "utf8Bytes": 53201,
+                  "estimatedTokens": 17734,
+                  "budgetedTokens": 22168,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面目标已经明确：面向第一次接触 omem 的个人用户，以“保存项目约定—找回决定—跟进评审”为贯穿案例，解释用户操作和可见结果，不展开内部数据模型与配置细节。\n\n现有材料已确认以下事实：\n1. omem 的产品目标是把文档、代码、聊天、图片和个人经历放进同一个可检索、可阅读、可行动的记忆系统；代码额外使用 AST 定位，但仍与其他材料共享知识库（README.md 1-5）。\n2. 用户可通过 `osdk install`、`osdk deps --frozen`、`osdk run dev` 启动，并打开终端打印的 Web 地址；开发模式会载入本仓库材料和已发布知识，同时保留个人数据，但不会在启动时自动生成整库 Wiki（README.md 7-17；operations.md 3-7）。\n3. 当前界面把“日常助理、知识库、原始材料、输入材料、材料处理、待判断、事项与待办、变更历史、通知中心、飞书机器人、能力与连接”作为不同入口。这支持页面用用户可见入口区分材料、知识、待判断内容和事项，但尚需读完整交互代码确认每一步具体如何操作（App.vue 39-50）。\n4. 原始材料会保留固定版本，知识与代码引用可以返回当时原文；检索覆盖全文、中文短词、符号、记忆和知识路径。原文、检索片段与讲解章节被明确视为不同用途（README.md 27-40）。\n5. 日常助理已有持久会话，以及事项交办、等待、改期、完成、取消和站内提醒；来源更新后已有记忆会重核验。尚未实现持续项目理解、自动监听回复、周期回顾和学习卡片（README.md 42；operations.md 25）。\n6. 当前服务是 SQLite 单用户服务，飞书、外部通知、全局 hooks 和屏幕监听均需独立显式启用，不能在概览中暗示默认具备这些主动能力（README.md 55；operations.md 19-25）。\n\n基于现有证据的解释：页面可以把“材料”讲成用户保存的原件及其版本，把“知识”讲成围绕问题整理、可回到原文的阅读页面，把“事项”讲成需要跟进且有状态变化的行动对象。可是“个人记忆”在界面和服务中的具体呈现、它与知识及检索结果的用户层边界，尚缺足够原文支持，不能仅凭一般概念补写。",
+            "gaps": [
+              "尚未读到“输入材料”表单及提交后的完整用户可见流程，无法准确说明如何保存示例中的项目约定。",
+              "尚未读到搜索、原始材料阅读、知识页面和引用回看之间的完整交互，无法准确说明用户如何找回某个决定。",
+              "尚未读到日常助理与事项控件的完整实现，无法把“跟进一次评审”落实为已有操作及状态变化。",
+              "个人记忆与知识文章、原始材料、事项之间的用户层区别仍缺直接实现或当前文档依据。",
+              "需要核对当前进度文档，避免把正在推进或仅经过测试的能力写成已可用。",
+              "代码材料如何进入同一知识库、普通用户能看到什么结果，仍需当前架构和评审入口材料支持。"
+            ],
+            "requests": [
+              {
+                "kind": "read",
+                "materialKey": "omem:docs/reader-first/README.md",
+                "startLine": 1,
+                "endLine": 14
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:docs/reader-first/progress.md",
+                "startLine": 1,
+                "endLine": 41
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:docs/reader-first/architecture.md",
+                "startLine": 1,
+                "endLine": 32
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:docs/reader-first/review.md",
+                "startLine": 1,
+                "endLine": 60
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/App.vue",
+                "startLine": 99,
+                "endLine": 500
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/App.vue",
+                "startLine": 501,
+                "endLine": 936
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/app.ts",
+                "startLine": 101,
+                "endLine": 500
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/app.ts",
+                "startLine": 501,
+                "endLine": 692
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+                "startLine": 1,
+                "endLine": 33
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/ChatPane.vue",
+                "startLine": 1,
+                "endLine": 213
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/DailyAssistant.vue",
+                "startLine": 1,
+                "endLine": 79
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/TaskFollowUpControls.vue",
+                "startLine": 1,
+                "endLine": 42
+              }
+            ]
+          },
+          {
+            "trace": {
+              "runId": "cc219a14-cd83-4687-8c3f-2c20f6072f8b",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "87346e5e4b90afa08810169dd9105c199634db1c13d3ae4fb2021946b8b86626",
+              "contextHash": "58c364318e4920faf5be21a3e7c5fba39576228677cea5feb45caba7cc7f1f6f",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "1febb84385ff79ccb8daace91ff15467431789413bedb095cae897ec9f6ab57b",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f82b-3e68-78c3-8892-19dc3cf4bd8e"
+              ],
+              "usage": {
+                "used": 70675,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 157854,
+                  "utf8Bytes": 176918,
+                  "estimatedTokens": 58973,
+                  "budgetedTokens": 73717,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面目标已经明确：面向第一次接触 omem 的个人用户，以“保存项目约定—找回决定—跟进评审”为贯穿案例，解释用户操作和可见结果，不展开 Source/Revision/Fragment、claim 匹配、scope/epoch 等内部机制。\n\n已确认的完整主流程如下：\n1. 开始使用：运行 `osdk install`、`osdk deps --frozen`、`osdk run dev`，再打开终端打印的 Web 地址。开发模式会把本仓库材料和已发布知识接入同一个个人库，并保留个人数据；启动不会自动生成整库知识（README.md 7-17；operations.md 3-7）。\n2. 保存项目约定：在“输入材料”中可输入文本、图片和链接，也可导入飞书文档、指定 Git 文件或服务器文本文件。保存成功后进入“原始材料”，新内容生成固定版本；内容未变时复用原版本。相同来源标识可形成后续版本，历史版本仍可打开（App.vue 281-341、545-705）。\n3. 找回决定：顶部搜索会结合原文、代码名称、已有知识以及已启用的中文语义索引；搜索结果显示来源标题、章节或行范围，并可打开固定原文。用户也可进入“原始材料”，按名称筛选材料、查看当前或历史版本，选择某段原文继续提问（App.vue 249-259、530-612）。服务端搜索通过统一 retrieval 对材料召回，再把命中映射回可查看的固定证据（app.ts 273-280）。\n4. 围绕材料提问：在原始材料中选定一段后，侧边问答以该段或当前引用路径作为范围，调用已配置的 Agent CLI/ACP。回答会保存，并允许回看本次提供的依据；界面明确提示系统尚未自动核验回答中每个主张（ChatPane.vue 49-75、81-145）。\n5. 跟进评审：可在“日常助理”直接输入“帮我跟进张三的评审回复，明天上午9点提醒我检查”，形成持久会话并展示处理状态和所用材料；也可在“事项与待办”手动记录事项、背景和截止时间。事项能登记等待对象、设置下次跟进或暂缓提醒、完成、取消及重新打开，提醒进入通知中心（DailyAssistant.vue 38-71；App.vue 725-765；TaskFollowUpControls.vue 8-36）。\n6. 行动边界：跟进时间与截止时间分开；“等待”不会自动联系对方。通知标为已读只清除未读状态，不等于完成事项或停止后续提醒（TaskFollowUpControls.vue 25-35；App.vue 768-791；operations.md 23-25）。\n\n四类用户层概念目前可支持的解释：\n- 原始材料：用户保存或导入的原件，包括文本、图片、链接、聊天或代码，并保留版本和可回查位置。它回答“当时原文是什么”。依据是 README.md 27-38、architecture.md 5-9 及 App.vue 的输入和阅读流程。\n- 知识文章：围绕读者问题跨材料整理的解释，能引导理解和检索，但不是另一份独立事实；结论仍可返回原文。它回答“为了完成某个任务，应怎样理解这些材料”。依据是 architecture.md 9-17、README.md 38-40。知识库界面已确认支持文章选择及递归打开知识、引用和来源，但仍需补读其首页和正文组件，才能准确描述第一次进入时看到什么（PersonalKnowledge.vue 6-30）。\n- 个人记忆：从原始记录形成经历、当前事实、偏好或经验，并在来源更新后重新核验，目标是避免每次问答都从孤立材料重新拼装。持续的人物、项目和主题综合理解尚属后续能力（architecture.md 25-27；progress.md 11、16）。这是目标与已有基础的组合描述；目前尚缺用户界面和实际检索呈现的原文，不能把完整“持续理解”写成已实现。\n- 事项：明确需要推进的行动对象，有状态、截止时间、等待对象和跟进时间，也可关联材料来源。它回答“下一步要做什么、何时再检查”，不同于保存事实或解释事实（App.vue 343-372、726-765；app.ts 341-368）。\n\n代码与其他材料共同使用的事实：代码与文档、聊天、图片共享同一知识库和搜索入口；代码额外用 AST、符号和结构信息帮助定位。搜索界面明确同时检索原文、代码名称和知识，代码原件在阅读页用代码查看器展示，而非进入第二套产品（README.md 3、31-40；architecture.md 5-9；App.vue 530-579）。当前跨文件功能链和完整意图路由仍未完成，因此概览只能承诺代码可共同保存、定位、检索和引用，不能声称已经能稳定还原完整调用图（README.md 38；progress.md 8）。\n\n当前能力边界已确认：统一搜索、问题驱动 Wiki 和阅读界面均为“首片已实现”；固定修订、中文检索、符号定位、来源变化后的记忆重核验、持久事项和站内提醒已有基础。持续项目/人物/主题理解、自动监听回复、周期回顾、日历、学习卡和更广接入尚未实现。当前为 SQLite 单用户服务；飞书、外部通知、全局 hooks 和屏幕监听均需独立显式启用（progress.md 5-16；README.md 42、55；operations.md 19-25）。",
+            "gaps": [
+              "知识库首页与文章正文的实际呈现尚未读全，需要确认用户如何从知识文章回到原始材料，以及是否能直接搜索知识。",
+              "个人记忆目前缺少明确的用户可见入口和展示方式，需要确认它是否只参与助手/检索背景，避免把内部 `/api/memories` 误写成现有界面功能。",
+              "日常助理把自然语言转成查找、交办或回顾的具体规则尚未核实；需要读取工作流定义和相关运行逻辑，以确认贯穿案例中的评审消息会产生什么用户可见结果。",
+              "材料处理与“待判断”可能影响从材料形成记忆的解释，需要确认普通高置信变化与需要用户判断的分界在界面上如何呈现，但不展开内部状态。"
+            ],
+            "requests": [
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+                "startLine": 1,
+                "endLine": 95
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+                "startLine": 1,
+                "endLine": 81
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+                "startLine": 1,
+                "endLine": 59
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/assistant/message-workflows.ts",
+                "startLine": 1,
+                "endLine": 11
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/assistant/runtime.ts messageWorkflows task createTask retrieval memories"
+              },
+              {
+                "kind": "search",
+                "query": "apps/web/src personal memory memories 记忆"
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/LearningView.vue",
+                "startLine": 1,
+                "endLine": 269
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/DecisionsView.vue",
+                "startLine": 1,
+                "endLine": 197
+              }
+            ]
+          },
+          {
+            "trace": {
+              "runId": "2235ddfd-6e55-4704-ad5b-ae2bd903ccec",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "3c3fce6ef6f2db2c3a1dadd6fa877b206e00e7d044faf4bacada3467b458e4ad",
+              "contextHash": "b6d932beb84cc799aa135976c946c0f6da9f31c4eced77368e5c73d46d962599",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "714d7f549915ca8b1e0eb28d9797590fe3e915f93e173dc1e5ecc21f5af49841",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f82b-c095-7010-9766-9b6bac2d6576"
+              ],
+              "usage": {
+                "used": 88309,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 211696,
+                  "utf8Bytes": 234563,
+                  "estimatedTokens": 78188,
+                  "budgetedTokens": 97735,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面面向第一次接触 omem 的个人用户，应以同一个具体例子贯穿：“保存项目约定 → 找回其中的决定 → 把评审回复登记为待跟进事项”。正文只需要解释用户做什么、系统给出什么结果，以及现阶段的能力边界，不应展开 Source/Revision/Fragment、claim 匹配、scope/epoch 等内部模型。\n\n一、它解决的日常问题与开始方式\n- omem 把文档、代码、聊天、图片和个人经历放进同一个“工作记忆”中，目标不是单纯囤积文件，而是让用户以后能读懂背景、找回决定，并把决定转成下一步行动（README.md 1-5；docs/reader-first/README.md 1-3）。\n- 本地开始方式是依次运行 `osdk install`、`osdk deps --frozen`、`osdk run dev`，然后打开终端显示的 Web 地址。开发模式会载入本仓库材料和已发布知识，同时保留个人数据；启动不会自动生成整库知识（README.md 7-17；operations.md 3-7）。\n- 第一次进入界面可从“输入材料”开始。用户可以粘贴文本并附带图片或链接，也可以导入飞书文档、指定 Git 文件或服务器文本文件（App.vue 613-705）。例如，把“评审必须由模块负责人批准，回复期限为周五”作为“项目评审约定”保存。\n- 保存成功后，界面打开“原始材料”并提示材料已经保存；内容未变化时复用原版本。使用相同来源标识再次保存会形成新版本，旧版本仍可在历史中打开（App.vue 281-341、545-603）。\n\n二、同一例子中的四类对象\n- 原始材料是用户保存或导入的原件，回答“当时到底写了什么”。在例子中，它就是那份“项目评审约定”。界面显示标题、保存时间、当前或历史版本，并允许打开具体原文；代码文件使用代码阅读器，普通文本按文档阅读（App.vue 545-603）。原件保存历史，文本、图片、链接和代码属于同一来源体系（architecture.md 5-9）。\n- 知识文章是围绕读者问题整理出的解释，回答“这些材料合在一起意味着什么、我该怎样理解”。它可以跨材料组织内容，但不是一份取代原文的新事实；正文引用仍能打开写作时的固定原文（architecture.md 9-17；KnowledgeDocument.vue 31-45）。知识库首页把入门指南放在“从这里开始”，还可按主题、功能或材料名称查找章节；文章会显示阅读目标、正文目录、下一篇和来源记录（KnowledgeHome.vue 47-73；KnowledgeDocument.vue 31-45）。在例子中，知识文章可以把散落在约定、代码和讨论里的评审流程整理成一篇“如何完成评审”的说明。\n- 个人记忆是系统从原始记录中提炼并维护的经历、当前事实、偏好或经验，目标是下次询问时不必重新从孤立材料拼装背景（architecture.md 25-27）。保存材料后，若自动处理已启用，系统会排队提炼事实、经历、流程和待办，经过核验后把可靠结果写入记忆；有歧义或影响较大的变化进入“待判断”。未启用自动处理时，原文保存与检索仍可使用，不应暗示已经产生了记忆（LearningView.vue 81-102；DecisionsView.vue 58-145）。在例子中，“评审需要模块负责人批准”可成为以后查找时使用的当前事实，但持续的人物、项目和主题综合理解仍未完成（progress.md 11-16）。\n- 事项是需要推进的行动对象，回答“下一步做什么、什么时候再检查”。它有状态、截止时间、等待对象和下次跟进时间，也可以关联原始材料（App.vue 726-765）。在例子中，“等待张三的评审回复”应是事项，而不是把这句话仅保存为知识或记忆。\n- 这四者的关系可简化为：原始材料保留原话；知识文章帮助理解；个人记忆保存以后还会用到的事实或经验；事项推动下一步行动。它们可以引用同一份项目约定，但用途不同。\n\n三、如何找回决定并继续追问\n- 顶部搜索会结合原文、代码名称、已有知识和已启用的中文语义索引；结果显示材料标题、相关章节或行范围，并提供“查看固定片段”（App.vue 530-543）。服务端统一检索后把命中映射回可打开的固定证据（app.ts 273-280）。用户可搜索“评审谁批准”或约定中的关键原句，找到当时保存的决定。\n- 用户也可以进入“原始材料”，按名称筛选材料，查看当前版本或历史版本，并选择某段原文继续提问（App.vue 545-603）。\n- 选定一段原文后，侧边问答可以只围绕当前片段，或围绕当前引用路径回答；回答会保存，并能回看本次提供给模型的依据（ChatPane.vue 49-75、81-145）。界面明确说明：材料可以回查，但系统尚未自动核验回答中每个主张的支持度，因此回答不能等同于已经核实的原文事实（ChatPane.vue 115-120）。\n\n四、代码怎样与其他材料共同使用\n- 代码没有形成第二套知识产品。它和文档、聊天、图片共享同一个材料体系、知识库和搜索入口，只是额外使用 AST、符号及结构信息帮助精确定位（README.md 1-3；architecture.md 5-9）。\n- 对普通用户而言，可以把配置文档、评审讨论和实现代码一起保存和搜索。例如，先从项目约定找到“需要模块负责人批准”，再沿引用查看实现该规则的代码位置；代码原件会用代码查看器展示（App.vue 530-579；KnowledgeSource.vue 37-50）。\n- 当前只能承诺共同保存、搜索、定位、阅读和引用代码。跨文件功能链与完整意图路由仍在扩展，不能声称系统已能稳定还原完整调用图（README.md 38；progress.md 8）。\n\n五、怎样跟进一次评审\n- 最直接的入口是“日常助理”。用户可以输入“帮我跟进张三的评审回复，明天上午9点提醒我检查”。会话会持久保存，界面显示处理状态、结果以及使用过的材料；失败的消息仍会保留并可重试（DailyAssistant.vue 38-71）。\n- 用户也可以在“事项与待办”手动填写事项、背景和到期时间；若此前在原始材料中选中了约定片段，新事项可关联该来源（App.vue 343-357、726-765）。\n- 跟进设置允许登记等待对象、下次检查时间、暂缓提醒或取消事项。跟进时间不改变截止时间；只记录等待时也可以不设置检查时间（TaskFollowUpControls.vue 24-36）。事项还可以完成、取消或重新打开，提醒进入通知中心（App.vue 746-765）。\n- 重要边界是：“等待张三回复”不会让系统自动联系张三，也不会自动判断回复已经到达。通知标为已读只会清除未读状态，不会完成事项或取消以后提醒（TaskFollowUpControls.vue 28-30；App.vue 768-791；operations.md 23-25）。\n\n六、当前可用与尚未实现的能力\n- 已有基础包括：统一 Capture 和固定版本、全文与中文检索、代码符号定位、知识阅读及递归查看引用、基于原文的问答、来源变化后的记忆重核验、持久事项和站内提醒（progress.md 8-16；README.md 27-42）。\n- 问题驱动 Wiki、统一搜索和阅读界面均是“首片已实现”，意味着已有一条真实可用流程，但覆盖和质量仍在继续扩展；生成或测试通过不能替代实际阅读验收（progress.md 5-10、18-24）。\n- 尚未完成的主动能力包括：持续维护人物、项目和主题的综合理解，自动监听他人回复，周期回顾、日历、学习卡，以及更广泛的材料接入（progress.md 11-16；operations.md 23-25）。\n- 当前是 SQLite 单用户服务，不具备团队隔离。飞书、外部通知、全局 hooks 和屏幕监听都是需要单独明确启用的集成，不能描述成默认自动采集（README.md 55；operations.md 19-25）。",
+            "gaps": [],
+            "requests": []
+          }
+        ],
+        "findings": "页面面向第一次接触 omem 的个人用户，应以同一个具体例子贯穿：“保存项目约定 → 找回其中的决定 → 把评审回复登记为待跟进事项”。正文只需要解释用户做什么、系统给出什么结果，以及现阶段的能力边界，不应展开 Source/Revision/Fragment、claim 匹配、scope/epoch 等内部模型。\n\n一、它解决的日常问题与开始方式\n- omem 把文档、代码、聊天、图片和个人经历放进同一个“工作记忆”中，目标不是单纯囤积文件，而是让用户以后能读懂背景、找回决定，并把决定转成下一步行动（README.md 1-5；docs/reader-first/README.md 1-3）。\n- 本地开始方式是依次运行 `osdk install`、`osdk deps --frozen`、`osdk run dev`，然后打开终端显示的 Web 地址。开发模式会载入本仓库材料和已发布知识，同时保留个人数据；启动不会自动生成整库知识（README.md 7-17；operations.md 3-7）。\n- 第一次进入界面可从“输入材料”开始。用户可以粘贴文本并附带图片或链接，也可以导入飞书文档、指定 Git 文件或服务器文本文件（App.vue 613-705）。例如，把“评审必须由模块负责人批准，回复期限为周五”作为“项目评审约定”保存。\n- 保存成功后，界面打开“原始材料”并提示材料已经保存；内容未变化时复用原版本。使用相同来源标识再次保存会形成新版本，旧版本仍可在历史中打开（App.vue 281-341、545-603）。\n\n二、同一例子中的四类对象\n- 原始材料是用户保存或导入的原件，回答“当时到底写了什么”。在例子中，它就是那份“项目评审约定”。界面显示标题、保存时间、当前或历史版本，并允许打开具体原文；代码文件使用代码阅读器，普通文本按文档阅读（App.vue 545-603）。原件保存历史，文本、图片、链接和代码属于同一来源体系（architecture.md 5-9）。\n- 知识文章是围绕读者问题整理出的解释，回答“这些材料合在一起意味着什么、我该怎样理解”。它可以跨材料组织内容，但不是一份取代原文的新事实；正文引用仍能打开写作时的固定原文（architecture.md 9-17；KnowledgeDocument.vue 31-45）。知识库首页把入门指南放在“从这里开始”，还可按主题、功能或材料名称查找章节；文章会显示阅读目标、正文目录、下一篇和来源记录（KnowledgeHome.vue 47-73；KnowledgeDocument.vue 31-45）。在例子中，知识文章可以把散落在约定、代码和讨论里的评审流程整理成一篇“如何完成评审”的说明。\n- 个人记忆是系统从原始记录中提炼并维护的经历、当前事实、偏好或经验，目标是下次询问时不必重新从孤立材料拼装背景（architecture.md 25-27）。保存材料后，若自动处理已启用，系统会排队提炼事实、经历、流程和待办，经过核验后把可靠结果写入记忆；有歧义或影响较大的变化进入“待判断”。未启用自动处理时，原文保存与检索仍可使用，不应暗示已经产生了记忆（LearningView.vue 81-102；DecisionsView.vue 58-145）。在例子中，“评审需要模块负责人批准”可成为以后查找时使用的当前事实，但持续的人物、项目和主题综合理解仍未完成（progress.md 11-16）。\n- 事项是需要推进的行动对象，回答“下一步做什么、什么时候再检查”。它有状态、截止时间、等待对象和下次跟进时间，也可以关联原始材料（App.vue 726-765）。在例子中，“等待张三的评审回复”应是事项，而不是把这句话仅保存为知识或记忆。\n- 这四者的关系可简化为：原始材料保留原话；知识文章帮助理解；个人记忆保存以后还会用到的事实或经验；事项推动下一步行动。它们可以引用同一份项目约定，但用途不同。\n\n三、如何找回决定并继续追问\n- 顶部搜索会结合原文、代码名称、已有知识和已启用的中文语义索引；结果显示材料标题、相关章节或行范围，并提供“查看固定片段”（App.vue 530-543）。服务端统一检索后把命中映射回可打开的固定证据（app.ts 273-280）。用户可搜索“评审谁批准”或约定中的关键原句，找到当时保存的决定。\n- 用户也可以进入“原始材料”，按名称筛选材料，查看当前版本或历史版本，并选择某段原文继续提问（App.vue 545-603）。\n- 选定一段原文后，侧边问答可以只围绕当前片段，或围绕当前引用路径回答；回答会保存，并能回看本次提供给模型的依据（ChatPane.vue 49-75、81-145）。界面明确说明：材料可以回查，但系统尚未自动核验回答中每个主张的支持度，因此回答不能等同于已经核实的原文事实（ChatPane.vue 115-120）。\n\n四、代码怎样与其他材料共同使用\n- 代码没有形成第二套知识产品。它和文档、聊天、图片共享同一个材料体系、知识库和搜索入口，只是额外使用 AST、符号及结构信息帮助精确定位（README.md 1-3；architecture.md 5-9）。\n- 对普通用户而言，可以把配置文档、评审讨论和实现代码一起保存和搜索。例如，先从项目约定找到“需要模块负责人批准”，再沿引用查看实现该规则的代码位置；代码原件会用代码查看器展示（App.vue 530-579；KnowledgeSource.vue 37-50）。\n- 当前只能承诺共同保存、搜索、定位、阅读和引用代码。跨文件功能链与完整意图路由仍在扩展，不能声称系统已能稳定还原完整调用图（README.md 38；progress.md 8）。\n\n五、怎样跟进一次评审\n- 最直接的入口是“日常助理”。用户可以输入“帮我跟进张三的评审回复，明天上午9点提醒我检查”。会话会持久保存，界面显示处理状态、结果以及使用过的材料；失败的消息仍会保留并可重试（DailyAssistant.vue 38-71）。\n- 用户也可以在“事项与待办”手动填写事项、背景和到期时间；若此前在原始材料中选中了约定片段，新事项可关联该来源（App.vue 343-357、726-765）。\n- 跟进设置允许登记等待对象、下次检查时间、暂缓提醒或取消事项。跟进时间不改变截止时间；只记录等待时也可以不设置检查时间（TaskFollowUpControls.vue 24-36）。事项还可以完成、取消或重新打开，提醒进入通知中心（App.vue 746-765）。\n- 重要边界是：“等待张三回复”不会让系统自动联系张三，也不会自动判断回复已经到达。通知标为已读只会清除未读状态，不会完成事项或取消以后提醒（TaskFollowUpControls.vue 28-30；App.vue 768-791；operations.md 23-25）。\n\n六、当前可用与尚未实现的能力\n- 已有基础包括：统一 Capture 和固定版本、全文与中文检索、代码符号定位、知识阅读及递归查看引用、基于原文的问答、来源变化后的记忆重核验、持久事项和站内提醒（progress.md 8-16；README.md 27-42）。\n- 问题驱动 Wiki、统一搜索和阅读界面均是“首片已实现”，意味着已有一条真实可用流程，但覆盖和质量仍在继续扩展；生成或测试通过不能替代实际阅读验收（progress.md 5-10、18-24）。\n- 尚未完成的主动能力包括：持续维护人物、项目和主题的综合理解，自动监听他人回复，周期回顾、日历、学习卡，以及更广泛的材料接入（progress.md 11-16；operations.md 23-25）。\n- 当前是 SQLite 单用户服务，不具备团队隔离。飞书、外部通知、全局 hooks 和屏幕监听都是需要单独明确启用的集成，不能描述成默认自动采集（README.md 55；operations.md 19-25）。",
+        "gaps": [],
+        "materials": [
+          {
+            "key": "omem:README.md",
+            "digest": "9d306677f8bd466c1e11deede09fb2e9c47b8d799bd326b75a948bc9ea235854",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 56
+              }
+            ]
+          },
+          {
+            "key": "omem:docs/reader-first/operations.md",
+            "digest": "1ecbcc948134372278e9d11b5aeb711d2df5988c358a7643d9e7ea54198de0f0",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 26
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/app.ts",
+            "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 692
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/App.vue",
+            "digest": "3cc9db64ebf4443678ed277ad2df3320ed9517b5c3336ffaf76af552fb3c6cca",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 936
+              }
+            ]
+          },
+          {
+            "key": "omem:docs/reader-first/README.md",
+            "digest": "b5b7c47624f4ed67a02440bf84a4ca011d8f54faf0766a635942a90f136cd62b",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 14
+              }
+            ]
+          },
+          {
+            "key": "omem:docs/reader-first/progress.md",
+            "digest": "9244eeb5bee20153550f0da0f2c429196e5a9f41038ad1fcacdcdba86779bac8",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 41
+              }
+            ]
+          },
+          {
+            "key": "omem:docs/reader-first/architecture.md",
+            "digest": "4c28b3df73de168f174192f484235162e3ff83e2bb0acf1588031d48c721ba65",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 32
+              }
+            ]
+          },
+          {
+            "key": "omem:docs/reader-first/review.md",
+            "digest": "2aa549f44335f5ca9f2911a883b4736c8c5a53233c96537db671d79e5b7fe6a1",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 60
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+            "digest": "ceda6a98813b3de9f2f11d753d7eb2602e5758c64526aa7bf159cbde42bc2cad",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 33
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/ChatPane.vue",
+            "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 213
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/DailyAssistant.vue",
+            "digest": "90d6706d5794f3878e997d0b34611aae7aa06e9a21dd0896fdf02c25df334b29",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 79
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/TaskFollowUpControls.vue",
+            "digest": "9297d3e6de28308580a8f1ed0532d810dad92a5d991b184b1bcf576747e6490a",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 42
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+            "digest": "25c54456f617ebff4f0a5565b253c74a6be8e8260bbdfaeb415e68e0166f1310",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 95
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+            "digest": "b6bcd304447ba703962195cb9459b3d6c588a9b1037fbcd9fe565dc02c71d199",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 81
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+            "digest": "908fa60afaec9d3067731ce8c1bf34b842e15fe09ba30d70adff77b74d97e4fe",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 59
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/assistant/message-workflows.ts",
+            "digest": "1de3a26cceae1263b44f8c385de992841d6ba8bf892161dc002c84e5a582fbcc",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 11
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/assistant/runtime.ts",
+            "digest": "770504ecd25bca96794747bd325f2ac796a9a46fa387a0d48fbc88cfbc847fa5",
+            "ranges": [
+              {
+                "start": 22,
+                "end": 31
+              },
+              {
+                "start": 60,
+                "end": 69
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/codewiki/edges.test.ts",
+            "digest": "ac821d09b7a452c0e7980d0550ce86b1acc40ae35426d04181af8648da592a64",
+            "ranges": [
+              {
+                "start": 11,
+                "end": 20
+              },
+              {
+                "start": 44,
+                "end": 53
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/codewiki/modules.test.ts",
+            "digest": "d040287ff32ac0368675b3c0986a3dca8b05ff9983e9e204f369c1eec38578a2",
+            "ranges": [
+              {
+                "start": 6,
+                "end": 18
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/codewiki/modules.ts",
+            "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4",
+            "ranges": [
+              {
+                "start": 148,
+                "end": 157
+              },
+              {
+                "start": 164,
+                "end": 173
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/memory/service.ts",
+            "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 7
+              },
+              {
+                "start": 465,
+                "end": 474
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/LearningView.vue",
+            "digest": "0b18c7e95c118580d32641cebf60d85844d73ba8fd74153b32ebcf44be13897e",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 269
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/DecisionsView.vue",
+            "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 197
+              }
+            ]
+          }
+        ]
+      },
+      "writerVersion": "29f3ea78e530ff7b242f271e45475916ab314266b4c45c899a043cac24210e0e"
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T15:57:52.838Z",
+    "trace": {
+      "runId": "2e1aecbc-5d68-45dd-8081-2e0616e7f265",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e9d0289f6a9ebcefcc1649bc58140312da70887f42c363b3a0b9130fd4a97ee2",
+      "promptHash": "013ec1590421bfa3f1e3d9b9192faf35b0a6d8785d30c50c53bc56bcdf68cde9",
+      "contextHash": "203339fd192ce309d57f96e8926c72f710a9ea49c5b9301cdf588ece9043005a",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "04d6716f8c11a059d0be9ba3c09a41a42c127f0816cc5327db4afec2195c2c04",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f82f-7692-7052-83e5-07a2f0c0a1a3"
+      ],
+      "usage": {
+        "used": 81877,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 184740,
+          "utf8Bytes": 217720,
+          "estimatedTokens": 72574,
+          "budgetedTokens": 90718,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

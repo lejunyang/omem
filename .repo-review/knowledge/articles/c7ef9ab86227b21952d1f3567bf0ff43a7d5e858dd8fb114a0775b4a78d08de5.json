@@ -1,0 +1,1225 @@
+{
+  "version": 1,
+  "document": {
+    "key": "guide:retrieval",
+    "title": "一次中文提问如何找到答案：召回、上下文与 RAG",
+    "summary": "以“飞书 消息 后台”为贯穿示例，解释顶部搜索、知识搜索和助手如何共享原始证据召回，词法、符号、记忆、知识与中文向量如何互补，命中后怎样补齐章节上下文，以及如何区分召回失败、可见性限制、上下文不足和模型回答失败。",
+    "category": "overview",
+    "sections": [
+      {
+        "key": "scenario",
+        "title": "从一个记不清文件名的问题开始",
+        "body": "假设用户只记得“飞书消息要经过后台处理”，于是输入 **“飞书 消息 后台”**，看到若干原始材料片段后，再追问“具体经过哪些步骤？”。系统不会直接把搜索摘要当答案，而是找回仍属当前版本的原始片段，再把可见证据交给助手；候选保留原始 fragment 标识，方便回到不可变材料核对。参考 [[c1]]\n\n```mermaid\nflowchart LR\n  Q[中文问题] --> R[词法与语义召回]\n  R --> F[融合、排序与去重]\n  F --> C[补同节标题和相邻片段]\n  C --> M[模型组织回答]\n  M --> X[必要时追加一轮查询]\n  X --> V[校验引用并保存结果]\n```\n\n运行时先召回和补充证据，再调用模型；模型可以请求至多一轮扩展检索。回答完成后，服务器校验引用是否属于实际提供的证据，最后保存答案及有效引用。参考 [[c2]] [[c24]]"
+      },
+      {
+        "key": "entry-points",
+        "title": "三个入口共享底座，但返回的不是同一种东西",
+        "body": "生产应用创建一套检索服务，并把同一个实例交给知识路由和助手；顶部搜索也直接使用该实例。因此，三个入口共享候选来源和底层排序能力，但对结果的组织方式不同。参考 [[c3]]\n\n| 入口 | 返回内容 | 适合判断 |\n| --- | --- | --- |\n| 顶部搜索 | 原始片段摘要、标题、分数、路线和章节 | 材料是否进入工作区级召回 |\n| 知识搜索 | 当前知识文章中相关的章节 | 已整理知识是否覆盖问题 |\n| 助手 | 基于当前会话可见证据生成的回答 | 上下文是否充分、模型是否理解 |\n\n顶部接口直接返回原始命中及其 `routes`；知识搜索则先召回原始片段，再把排名投影到引用这些材料的文章章节，并叠加标题和正文的词面匹配。参考 [[c4]] [[c5]]\n\n所以，顶部搜索有结果而知识搜索没有文章，不一定是召回失败，也可能只是尚无当前文章引用该材料，或文章文字没有匹配查询。"
+      },
+      {
+        "key": "lexical-recall",
+        "title": "词面召回如何处理中文短词、路径和代码符号",
+        "body": "查询先按空白和标点切分。ASCII 单词会被保留；中文连续文本既保留完整词，也产生相邻二元组，同时跳过过于常见的二字组合。示例中的“飞书”“消息”“后台”因此都能成为检索词。参考 [[c6]]\n\n长度至少三个字符的词走 trigram 全文索引，适合较长中文词、代码路径和子串；二字中文改走正文或标题包含查询，因区分度较低，可能产生更多泛化候选。若查询包含 `AssistantRuntime` 一类标识符，系统还会精确匹配当前代码快照中的符号名或限定名，但结果仍指向统一的原始片段。参考 [[c7]] [[c8]]\n\n全文、短词、代码符号、记忆和知识路线通过倒数排名融合，避免直接比较不同体系的原始分数；之后再用相关性和重复度调整顺序，代码符号命中获得额外权重。参考 [[c9]] [[c10]]"
+      },
+      {
+        "key": "semantic-recall",
+        "title": "记忆、知识与中文向量各自补什么",
+        "body": "**记忆和知识提供新的找法，不充当新的独立事实。** 命中已应用记忆后，检索沿证据集合回到仍为当前版本的原始片段；知识正文命中后也会检查固定依赖和引用范围，再返回引用覆盖的原文。无效知识投影不会阻断其他召回路线。参考 [[c11]] [[c12]]\n\n语义路线负责弥补“意思接近、用词不同”。当前配置启用 `memory-zh`，加载锁定版本的 `bge-small-zh-v1.5`；应用校验本地权重并以 CPU 量化方式运行，不会自行联网下载。参考 [[c13]] [[c14]]\n\n长片段按 **400 字窗口、320 字步长**生成重叠向量，以免尾部内容被忽略。查询时，每个片段保留最相近的窗口，词法与向量候选再经倒数排名融合。参考 [[c25]] [[c15]]\n\n索引在后台追赶新材料，不阻塞查询；模型尚未加载或推理出错时仍返回词法结果，并在健康状态中显示 indexing 或 degraded。因此，没有 `semantic` 路线不等于没有材料，应结合其他 `routes` 和检索健康状态判断。"
+      },
+      {
+        "key": "context",
+        "title": "命中一个片段后，怎样补齐可读上下文",
+        "body": "单个命中可能只说明“后台处理存在”，却不足以解释前后步骤。助手会定位其所属章节，尝试补入章节标题、前一个片段和后一个片段；补充内容不能跨越章节边界，而且要再次通过可见性检查。参考 [[c16]]\n\n例如命中某节的“失败后重试”时，可以补到同节标题和前面的“发送待处理消息”，但不会混入下一节的“永久删除”；若可见性策略全部拒绝，就不补任何内容。参考 [[c17]]\n\n运行时先保留已排序命中，再用剩余预算补邻居，总证据量最多 28 条。语义命中会把窗口摘要作为定位信息传给证据展开。参考 [[c18]]\n\n若原始片段超过 2000 字，助手会确认该窗口确实存在于当前原文，再围绕命中位置截取最多 2000 字；定位摘要本身不会成为独立证据。这样可避免向量找到了长片段尾部，模型却只读到开头。参考 [[c26]]"
+      },
+      {
+        "key": "assistant-rag",
+        "title": "助手如何追问、扩展检索并约束引用",
+        "body": "助手处理追问时，会读取当前会话最近的已完成历史，并合并上一轮实际选中的证据，因此“按这个继续说”可以沿用刚才找到的材料。首轮模型输入包括用户问题、对话历史、证据和运行时上下文；模型提出的额外搜索词只用于检索，不能当作事实。参考 [[c19]]\n\n额外查询会去重，最多 3 个、每个最多 160 字；并行召回后与原证据按 fragment 去重，最多保留 24 条，再调用模型一次。这适合从“飞书消息进入后台”继续寻找具体处理阶段，但不是无限搜索循环。参考 [[c20]]\n\n模型提交的 fragment id 必须存在于本轮实际 evidence 中，否则会被过滤；保存的 selected evidence 也只包含校验后的引用。参考 [[c24]]\n\n模型未配置或真实传输不可用时，轮次保持待重试；其他模型异常会生成明确的降级回复且不附引用。参考 [[c21]]"
+      },
+      {
+        "key": "diagnosis",
+        "title": "如何区分“找不到”与“找到却答不好”",
+        "body": "可以沿同一个问题逐层定位：\n\n1. **顶部搜索没有正确原始片段**：问题发生在回答之前。顶部 `/api/search` 当前只传查询文本和数量上限，不传时间范围或会话可见性，因此先检查分词是否过泛、材料是否仍为当前原始版本，以及语义索引是否正在建立或已经降级。查看 `routes` 可以判断命中来自全文、短词、符号、记忆、知识还是语义路线。参考 [[c4]]\n2. **顶部搜索有结果，助手却看不到同一片段**：再检查助手的会话可见性。助手调用检索时会显式传入可见性函数；飞书宿主还要求材料所属 conversationId 与当前 chatId 一致。参考 [[c18]] [[c23]]\n3. **顶部搜索有片段，知识搜索没有文章**：底层召回可能正常，只是当前文章尚未引用该材料，或查询没有匹配相应章节。参考 [[c5]]\n4. **助手有命中，却缺少流程前后文**：检查章节与 fragment 边界、可见性以及 28 条上下文预算。参考 [[c16]] [[c18]]\n5. **首轮和扩展检索都提供了正确证据，回答仍遗漏或误解**：这是“找到却答不好”。应查看第二轮实际输入、24 条合并截断及最终有效引用，而不是继续调整第一阶段分词。参考 [[c20]] [[c24]]\n6. **轮次处于 pending 或 degraded**：优先处理模型可用性；它与搜索能否找到材料是两个独立故障面。参考 [[c21]]\n\n当前排序由路线融合、来源或符号权重及 MMR 式去重组成，现有实现没有展示独立的学习型重排阶段；中文向量又依赖本地锁定权重，权重不可用时只剩词法路线。参考 [[c10]] [[c14]]\n\n检索合同允许调用方显式提供时间范围，但过滤依据是材料 revision 的捕获时间，而不是飞书消息实际发生时间，也不是历史时点查询。当前顶部搜索和助手调用都没有传入这一条件；只有未来某个调用方实际提供 `timeRange` 时，才应把捕获时间过滤纳入该入口的排查。参考 [[c22]]"
+      },
+      {
+        "key": "limits",
+        "title": "理解当前边界，避免修错层次",
+        "body": "“搜不到”并不总是排名问题。顶部搜索是工作区级原始材料检索，而助手还受宿主可见性约束；如果两者结果不一致，应先确认访问范围，而不是放宽相关性阈值。飞书群聊只把当前 chatId 对应的材料交给助手，这是证据隔离边界。参考 [[c23]]\n\n语义检索使用本地小型中文模型和精确余弦计算，索引按批次追赶；RRF 负责融合不同路线，MMR 负责降低重复，但不能替代模型对候选进行细粒度交叉理解。参考 [[c15]] [[c10]]\n\n上下文也有明确预算：单个长片段最多围绕命中位置取 2000 字，初始证据与章节邻居最多 28 条，扩展检索合并后最多 24 条。跨越多个远距离章节的完整流程仍可能被截断，因此确认“材料已命中”之后，还要检查模型实际收到的证据范围。参考 [[c18]] [[c20]] [[c26]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "统一检索证据合同",
+        "reason": "说明检索结果保留不可变原始片段标识，支持从候选回到原文核对。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
+      },
+      {
+        "key": "c2",
+        "label": "助手处理主流程",
+        "reason": "支持初次召回、模型调用和至多一轮扩展检索的整体流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 481,
+          "endLine": 523
+        },
+        "quote": "      // 1. Read-only retrieval via RetrievalPort, then visibility filtering.\n      //    G08: also merge prior turn working context so the model sees fragments\n      //    from the previous consultation turn (anaphora like \"按这个\").\n      const retrieved = await this.retrieveEvidence(input.userText, input.conversation);"
+      },
+      {
+        "key": "c3",
+        "label": "共享检索实例",
+        "reason": "证明知识路由与助手注入同一个检索实例，顶部搜索也使用该实例。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 80,
+          "endLine": 88
+        },
+        "quote": "  const retrievalService = createRetrieval(store.db, config.retrieval);\n  const assistantRetrieval = development ? developmentRetrieval(store, resolve(process.env.OMEM_REPO_ROOT!), retrievalService.retrieval) : retrievalService.retrieval;\n  registerKnowledgeRoutes(app, { store, repository: development?.repository, pref"
+      },
+      {
+        "key": "c4",
+        "label": "顶部原始片段搜索",
+        "reason": "说明顶部搜索只传文本和数量上限，并返回原始命中、路线与章节；它没有传时间范围或会话可见性。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 273,
+          "endLine": 280
+        },
+        "quote": "  app.get<{ Querystring: { q?: string } }>(\"/api/search\", async (req) => {\n    const query = { text: (req.query.q || \"\").slice(0, 300), limit: 30 };\n    const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ?? assistantRetrieval.searchSources(query));\n    return hits.flatMap(hit => {\n      const entry = st"
+      },
+      {
+        "key": "c5",
+        "label": "知识章节搜索",
+        "reason": "说明知识搜索如何调用检索端口，再把原始证据排名投影到当前文章章节并融合词面匹配。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 86,
+          "endLine": 108
+        },
+        "quote": "  app.get<{ Querystring: { q?: string } }>(prefix + \"/search\", async req => {\n    const text = (req.query.q ?? \"\").trim().slice(0, 300), terms = tokenize(text);\n    if (!terms.length) return [];\n    repository.refresh();\n    const query = { text, limit: 60 };\n    const hits = await (retrieval.searchSourcesAsync?.(query"
+      },
+      {
+        "key": "c6",
+        "label": "中文查询分词",
+        "reason": "支持中文完整词、相邻二元组和停用二元组的分词行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 210,
+          "endLine": 250
+        },
+        "quote": "/**\n * Split a query into matchable terms: whitespace/punctuation chunks; ASCII words.\n * For CJK runs of length >= 2, also emit overlapping 2-gram substrings so that\n * short follow-up queries like \"按这个\" or \"刚才说的\" match fragments that\n * contain individual character pairs, instead of requiring the whole phrase.\n */\nex"
+      },
+      {
+        "key": "c7",
+        "label": "长词与短词检索",
+        "reason": "说明长词使用 trigram 全文索引、二字词使用正文或标题包含匹配。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 53,
+          "endLine": 80
+        },
+        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRan"
+      },
+      {
+        "key": "c8",
+        "label": "精确代码符号召回",
+        "reason": "支持从当前代码快照精确匹配符号，并仍返回统一的原始 fragment。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 123,
+          "endLine": 135
+        },
+        "quote": "  private exactSymbols(query: string): Row[] {\n    // Optional AST projection: never create a separate code evidence store.\n    if (!this.db.prepare(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='code_symbols'\").get()) return [];\n    const names = [...new Set((query.match(/[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$"
+      },
+      {
+        "key": "c9",
+        "label": "多路线排名融合",
+        "reason": "说明全文、短词、符号、记忆和知识路线使用倒数排名融合。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 97,
+          "endLine": 120
+        },
+        "quote": "    const branches: [string, Row[]][] = [\n      [\"code-symbol\", this.exactSymbols(query.text)],\n      [\"fulltext\", fts],\n      [\"short-keyword\", [...lexical.values()].sort((a,b) => b.score-a.score).map(v => v.row)],\n      [\"memory\", memoryRows],\n      [\"knowledge\", knowledgeEvidenceCandidates(this.db, terms)],\n    ];\n "
+      },
+      {
+        "key": "c10",
+        "label": "相关性与去重排序",
+        "reason": "支持符号权重、MMR 式相关性排序和冗余控制的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/ranking.ts",
+          "startLine": 3,
+          "endLine": 32
+        },
+        "quote": "/** MMR over fused relevance, using existing normalized vectors for redundancy.\n * https://www.elastic.co/search-labs/blog/maximum-marginal-relevance-diversify-results\n * This changes ordering only: original identities, visibility and provenance survive.\n */\nexport function rankEvidence(hits: SourceCandidate[], query: "
+      },
+      {
+        "key": "c11",
+        "label": "记忆回到原始证据",
+        "reason": "说明记忆命中沿证据集合返回原始片段，不把记忆正文当作独立来源。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 81,
+          "endLine": 102
+        },
+        "quote": "    // Active memory prose routes back to its evidence; never quote the memory\n    // itself as an additional independent source.\n    const memoryRows: Row[] = [];\n    for (const memory of this.searchMemories({ ...query, limit: 50 })) {\n      const refs = this.db.prepare(`SELECT COALESCE(p.evidence,mr.evidence_set) AS "
+      },
+      {
+        "key": "c12",
+        "label": "知识导航到原文",
+        "reason": "说明派生知识用于定位固定引用覆盖的原始片段，无效投影不会中断检索。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 34,
+          "endLine": 79
+        },
+        "quote": "  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || output.size >= 100) return;\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) return;\n    for (const c of a.document.citations.filter(c => !keys "
+      },
+      {
+        "key": "c13",
+        "label": "中文检索配置",
+        "reason": "证明当前语义检索配置启用了 memory-zh。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/retrieval.json",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "{\n  \"enabled\": true,\n  \"osdkModel\": \"memory-zh\"\n}"
+      },
+      {
+        "key": "c14",
+        "label": "本地中文向量模型",
+        "reason": "支持锁定 BGE 模型版本、校验权重和离线 CPU 量化加载的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 14,
+          "endLine": 43
+        },
+        "quote": "export const BGE_REVISION = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\";\nconst files = [\"config.json\", \"tokenizer.json\", \"tokenizer_config.json\", \"special_tokens_map.json\", \"vocab.txt\", \"onnx/model_quantized.onnx\"];\n\n/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async func"
+      },
+      {
+        "key": "c15",
+        "label": "语义索引与降级",
+        "reason": "说明后台索引、词法与向量融合，以及异常时退回词法检索。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 21,
+          "endLine": 115
+        },
+        "quote": "  override health() {\n    const modelId = this.model?.id ?? \"\";\n    const total = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT}`).get()!.n);\n    const indexed = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT} AND EXISTS (\n      SELECT 1 FROM fragment_embedding_heads h WHERE h.fragment_id=f"
+      },
+      {
+        "key": "c16",
+        "label": "章节邻居补充",
+        "reason": "说明命中后只补同一章节的标题和相邻片段，并继续执行可见性过滤。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/context.ts",
+          "startLine": 5,
+          "endLine": 18
+        },
+        "quote": "/** Complement a hit with its heading / nearby original fragments, not a new fact. */\nexport function evidenceNeighbors(store: Store, fragmentId: string, visible: (id: string) => boolean) {\n  const evidence = store.evidence(fragmentId);\n  if (!evidence) return [];\n  const material = materialFromRevision(store, evidence"
+      },
+      {
+        "key": "c17",
+        "label": "邻居边界示例",
+        "reason": "用测试场景证明邻居补充不会跨到下一章节，可见性拒绝时结果为空。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/reading-context.test.ts",
+          "startLine": 48,
+          "endLine": 55
+        },
+        "quote": "    const material = materialFromRevision(store, captured.revision.id)!;\n    expect(materialSections(material).map(s => s.title)).toEqual([\"Guide\", \"Sending\", \"Deleting\"]);\n    const hit = material.fragments.find(f => f.text === \"Retry after failure.\")!;\n    const neighbors = evidenceNeighbors(store, hit.id, () => true"
+      },
+      {
+        "key": "c18",
+        "label": "助手召回与证据预算",
+        "reason": "支持助手显式传入会话可见性、保留排序命中、补充章节邻居和 28 条预算。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 665,
+          "endLine": 699
+        },
+        "quote": "  private async retrieveEvidence(\n    userText: string,\n    conversation: Conversation,\n  ): Promise<AssistantEvidence[]> {\n    // A: prefer the injected RetrievalPort (project-wide contract). Fall back\n    // to store.search for legacy tests that don't wire a port.\n    let rows: Array<{ id: string; text: string; title"
+      },
+      {
+        "key": "c19",
+        "label": "会话历史与工作上下文",
+        "reason": "说明助手合并当前会话历史及上一轮工作证据来理解追问。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 465,
+          "endLine": 508
+        },
+        "quote": "      // Prior turns are per-conversation only: a group conversation never replays\n      // private p2p history, because those live in a different conversation row.\n      const maxPrior = this.options.maxPriorTurns ?? 20;\n      const priorTurns = this.router\n        .turns(input.conversation.id)\n        .filter(\n      "
+      },
+      {
+        "key": "c20",
+        "label": "一轮扩展检索",
+        "reason": "支持额外查询的数量、长度、并行召回、去重截断和第二次模型调用限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 514,
+          "endLine": 523
+        },
+        "quote": "        searchQueries.push(...[...new Set(reply.searchQueries ?? [])].map(q => q.trim().slice(0, 160)).filter(Boolean).slice(0, 3));\n        if (searchQueries.length) {\n          this.assertNotCancelled(input.signal);\n          const extra = (await Promise.all(searchQueries.map(q => this.retrieveEvidence(q, input.conve"
+      },
+      {
+        "key": "c21",
+        "label": "模型不可用与降级",
+        "reason": "说明模型不可用时保持待重试，以及其他异常生成无引用降级回复。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 524,
+          "endLine": 540
+        },
+        "quote": "      } catch (error) {\n        if (input.signal.aborted || error instanceof TurnCancelledError) {\n          this.router.cancelTurn(input.turnId, \"cancelled\");\n          return;\n        }\n        const unavailable = error instanceof ModelUnavailableError;\n        if (unavailable) {\n          // H-G20: model unavailable"
+      },
+      {
+        "key": "c22",
+        "label": "可选时间过滤合同",
+        "reason": "证明时间范围是调用方可选条件，且针对 revision 捕获时间，而不是事件时间或历史时点。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 25,
+          "endLine": 39
+        },
+        "quote": "export type SearchQuery = {\n  text: string;\n  scope?: RetrievalScope;\n  /** Confirmed project id (from a confirmed ContextLink). Null when unknown. */\n  project_id?: string | null;\n  /**\n   * False unless project_id comes from a confirmed/trusted ContextLink. When false\n   * or absent, implementations MUST NOT filter b"
+      },
+      {
+        "key": "c23",
+        "label": "飞书群聊证据可见性",
+        "reason": "支持飞书助手宿主按当前 chatId 限制可交给模型的材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 93,
+          "endLine": 105
+        },
+        "quote": "      const chatId = record.revision.context?.conversationId;\n      return Boolean(chatId && chatId === conversation.chatId);\n    };\n    const assistantRetrieval = input.retrieval ?? new KeywordRetrieval(input.store.db);\n    const assistantFeedback = new FeedbackService(input.store);\n    this.assistant = input.assistan"
+      },
+      {
+        "key": "c24",
+        "label": "回答引用白名单",
+        "reason": "支持服务器过滤未提供给模型的引用，并只保存校验后的 selected evidence。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 604,
+          "endLine": 625
+        },
+        "quote": "      // 4. Only allow citations the runtime actually supplied.\n      const allowed = new Set(evidence.map((item) => item.fragmentId));\n      const citationIds = (reply.citationIds ?? []).filter((id) =>\n        allowed.has(id),\n      );\n      const selectedEvidence = evidence.filter((item) =>\n        citationIds.includ"
+      },
+      {
+        "key": "c25",
+        "label": "长片段向量窗口",
+        "reason": "支持长片段使用 400 字窗口和 320 字步长建立重叠向量的精确参数。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 125,
+          "endLine": 131
+        },
+        "quote": "export function embeddingWindows(text: string) {\n  const windows: { start: number; end: number }[] = [];\n  for (let start = 0; start < Math.max(1,text.length); start += 320) {\n    windows.push({ start, end: Math.min(text.length,start+400) });\n    if (start + 400 >= text.length) break;\n  }\n  return windows;"
+      },
+      {
+        "key": "c26",
+        "label": "语义命中原文截取",
+        "reason": "支持验证语义焦点仍存在于当前原文，并围绕命中位置截取最多 2000 字。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 786,
+          "endLine": 806
+        },
+        "quote": "  private enrichEvidence(fragmentId: string, focus?: string): AssistantEvidence | null {\n    const record = this.store.evidence(fragmentId);\n    if (!record) return null;\n    const head = this.store.db.prepare(\"SELECT head FROM sources WHERE id=?\").get(record.revision.sourceId) as { head: string } | undefined;\n    if ("
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "be42007fce29d70b9402637abb5fe64685b46872ae815a2285bbbc67303962e3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/context.ts",
+      "digest": "81ce242b8ed22df4ecde092dfe80627471e50a1962b6bef71e14b57c5ed03a36"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "770504ecd25bca96794747bd325f2ac796a9a46fa387a0d48fbc88cfbc847fa5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "8216ac2d415f54fa67219cb9a51f5542868e1b1a70b60c45e8cf040d523dcf74"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/development.ts",
+      "digest": "54a8cc78f2966e8f4528afba10711f2c37cf0efbae1a8d82cc2147dec6da7a07"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "350cbe18e9f431c0e6eba3b0948c5b90e4b6e4270e67fbaea0a15b2914fbc48f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/reading-context.test.ts",
+      "digest": "d1199e5e8c57769fbbc45bfc07002627f53af89faf59d5b59ebb98a75fd26433"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/ranking.ts",
+      "digest": "e0a3c7a3c7b7c4636440cec6dd26fb3389d36aaa3be87df58dffa19441467176"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/retrieval.json",
+      "digest": "b367efa304dd3bf3ef142072d307f8e560d43f7c3a52dfc358f04c75b892984a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-semantic.test.ts",
+      "digest": "d3f8ad637c5d37864e1089bd4556eb20b60b432a1b7e9b33b50020e9c583aac4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+      "digest": "11d39b71ed0e6535224f258858e0ae4cf70e29603770cd209bc002affbd71d02"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "digest": "75a226dad659fee68a8933f0db15c14c3cb27335b34f562fd687c4fc4e3e7962"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "f4cbe8e666dd4e62a616da98d8c1051fd0f1aacb4feb87d538b97209d1781def"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-api.test.ts",
+      "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
+      "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "ab3ec90e19240ee6dd101346cc6cbdc23f47ef08b2dc81049d869ebf4dd707a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+      "digest": "6e92d6bf702f386c61e1c9314b6d2474664b11ab9f28f897f99af15bcdc9bb8b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+      "digest": "25c54456f617ebff4f0a5565b253c74a6be8e8260bbdfaeb415e68e0166f1310"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b6bcd304447ba703962195cb9459b3d6c588a9b1037fbcd9fe565dc02c71d199"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+    }
+  ],
+  "reading": {
+    "key": "guide:retrieval",
+    "title": "一次提问如何找到答案：搜索、上下文与 RAG",
+    "order": 2,
+    "kind": "explanation",
+    "reader": "想理解搜索效果并能定位原因的开发者",
+    "goal": "用一个中文问题走完召回、融合、背景补充与回答，区分找不到和找到却答不好。",
+    "scenario": "用户记得飞书消息要经过后台处理，却不记得文件名，输入“飞书 消息 后台”，随后追问处理过程。",
+    "questions": [
+      "顶部搜索、知识搜索和助手是否共用召回？",
+      "全文、中文短词、符号、向量、记忆与知识分别帮助解决什么问题？",
+      "命中一个片段后怎样补上下文？",
+      "助手如何使用来源和进一步查询？",
+      "当前中文模型、重排、时间检索有哪些实际限制？"
+    ],
+    "entryPaths": [
+      "apps/server/src/retrieval/keyword.ts",
+      "apps/server/src/retrieval/semantic.ts",
+      "apps/server/src/retrieval/context.ts",
+      "apps/server/src/assistant/runtime.ts",
+      "apps/server/src/knowledge/api.ts"
+    ]
+  },
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T16:11:51.473Z",
+    "trace": {
+      "runId": "f570fefa-a14a-4b1a-a9ae-48dafe6df67d",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "cfbdebf0d9930c054a5d83dd81c80b5d4df79e697e13c182694e4c260548129d",
+      "promptHash": "898e0cc0e59fba5eaa56b5fb93d72ccf0ac116fe5c3b027e24d78ed2569b50e0",
+      "contextHash": "7397687e0a06e70008424728df28b13515f185069ec11dbff423d5d0d388282d",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "3c29892f47f31f7475767590739ae4360d93cd6ba168f3ec1030c2c7ca9e0e3f",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f83b-f44f-7cc1-afdd-777afd611089"
+      ],
+      "usage": {
+        "used": 87513,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 185770,
+          "utf8Bytes": 214473,
+          "estimatedTokens": 71491,
+          "budgetedTokens": 89364,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0,
+      "research": {
+        "rounds": [
+          {
+            "trace": {
+              "runId": "c6e9e8d6-941a-4fda-8c86-acf92f6440df",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "32469cd2891f9e32cd6acae564cdd6fae17e7354c3d8de46571a555a9056500b",
+              "contextHash": "a2cd0227aa0a9d1d1d70976034183d0bbe56aed8ae0d341ae4c504109bd46486",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "0bfa709816996850d8fbeedba2c6f9e021d8cf760111b6420e3d31a5a4a73926",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f837-d07a-7d20-91df-4ae0f817ac44"
+              ],
+              "usage": {
+                "used": 36354,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 62469,
+                  "utf8Bytes": 64501,
+                  "estimatedTokens": 21501,
+                  "budgetedTokens": 26877,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面面向需要诊断搜索效果的开发者，核心任务是沿“飞书 消息 后台”这类中文查询追踪召回、融合、上下文补充和助手回答，并明确区分召回失败与生成失败。现有材料已显示：KeywordRetrieval 将原始来源、记忆和知识纳入同一检索实现，但记忆命中会回溯到其证据片段，不把记忆正文当作独立事实；长中文词与代码/路径子串走 trigram FTS，少于三个字符的词走 LIKE 路径，另有精确符号分支。SemanticRetrieval 在词法结果之上加入本地 embedding，按窗口索引长片段，查询时不等待索引完成；模型尚未加载时会退回词法排序。evidenceNeighbors 会在命中片段所属章节内补标题、前一片段和后一片段，并继续应用可见性过滤。知识搜索接口会调用注入的同一个 RetrievalPort，再把来源命中排名映射到当前知识文章的章节及其材料引用；还需补读后半段确认最终融合公式。助手模型输入明确包含对话历史和运行时提供的证据，并且最多可请求一轮额外检索；还需定位完整 turn 流程，确认首轮召回、邻居补充、二次查询、引用校验及失败呈现。",
+            "gaps": [
+              "尚未确认顶部全局搜索的服务端入口和它是否复用同一 RetrievalPort。",
+              "尚未读完 KeywordRetrieval 的多分支融合、记忆/知识检索、分词和排序细节。",
+              "尚未读完 SemanticRetrieval 的稠密结果融合方式与窗口策略。",
+              "尚未定位助手完整执行流程及“找不到”与“找到却答不好”的用户可见区别。",
+              "尚未确认当前 embedding、reranker、时间范围查询的配置和实际限制。",
+              "尚未读取相关测试中的中文短词、符号、上下文及助手二次检索实例。"
+            ],
+            "requests": [
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/retrieval/keyword.ts",
+                "startLine": 97,
+                "endLine": 262
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/retrieval/semantic.ts",
+                "startLine": 81,
+                "endLine": 139
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/knowledge/api.ts",
+                "startLine": 86,
+                "endLine": 124
+              },
+              {
+                "kind": "search",
+                "query": "omem:apps/server/src/assistant/runtime.ts searchSourcesAsync"
+              },
+              {
+                "kind": "search",
+                "query": "omem:apps/server/src/assistant/runtime.ts evidenceNeighbors"
+              },
+              {
+                "kind": "search",
+                "query": "omem:apps/server/src/assistant/runtime.ts searchQueries"
+              },
+              {
+                "kind": "search",
+                "query": "searchSourcesAsync("
+              },
+              {
+                "kind": "search",
+                "query": "evidenceNeighbors("
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/retrieval/port.ts",
+                "startLine": 1,
+                "endLine": 99
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/retrieval/ranking.ts",
+                "startLine": 1,
+                "endLine": 34
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:config/retrieval.json",
+                "startLine": 1,
+                "endLine": 5
+              },
+              {
+                "kind": "search",
+                "query": "retrieval rerank timeRange embeddingModel"
+              }
+            ]
+          },
+          {
+            "trace": {
+              "runId": "0caf512e-955b-4ed5-817f-d9908b2dbdb3",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "f51a1e2180f7db93c0ebd902a76b95bb708d05f4c506afcde9365bf06d442cbe",
+              "contextHash": "b52d84ae04e2efaf90a3baca93381da363f4dd20beb758d077da58dae9bcb89e",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "1a0a766530e2f0cfa80bff98785c3791cbc73599be9420384fe03edbe52a30fa",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f838-27cf-72d0-bc4a-fc49babd3d99"
+              ],
+              "usage": {
+                "used": 59250,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 134571,
+                  "utf8Bytes": 137680,
+                  "estimatedTokens": 45894,
+                  "budgetedTokens": 57368,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "已确认页面目标是帮助开发者诊断一次中文提问从召回到回答的完整链路，并把“没有召回到材料”与“材料已经给到模型但回答仍不好”分开。\n\n当前可确认的主流程如下：\n1. 顶部搜索 `/api/search` 直接调用 `assistantRetrieval.searchSourcesAsync`（若实现了异步语义检索）或同步 `searchSources`，返回固定原始片段的摘要、标题、版本、分数、召回路线和所属章节（app.ts 273-280）。知识搜索 `/knowledge/search` 同样通过注入的 `RetrievalPort` 先搜索原始片段，再把片段排名投影到当前知识文章中引用这些材料的章节；文章标题、章节标题和正文的词面匹配分数还会与证据命中分数相加（knowledge/api.ts 86-108）。助手也调用同一个端口的异步或同步来源搜索，并附加会话可见性过滤（assistant/runtime.ts 672-679）。因此三者共享召回接口和底层候选机制，但输出组织不同：顶部搜索展示原始命中，知识搜索返回派生文章章节，助手把原始证据交给模型。\n2. 词法召回先对查询分词。ASCII 单词保留；中文连续串既保留完整短语，也产生相邻二元组，并排除一组高频停用二元组（keyword.ts 210-250）。长度至少 3 的词使用 trigram FTS，适合较长中文词和代码/路径子串；短于 3 的词通过正文或标题 LIKE 搜索（53-80、138-143）。示例“飞书 消息 后台”会产生三个完整中文词及相应二元组，因此长词可走 FTS，二字词可走短词分支。\n3. 精确代码符号是独立分支：查询中像标识符的名字会与当前代码快照中的 `name` 或 `qualified_name` 精确匹配，且排序阶段给予 1.5 倍偏好；它仍返回统一的原始 fragment，而不是第二套代码事实库（keyword.ts 97-135；ranking.ts 7-10）。\n4. 词法、短词、符号、记忆和知识五条路线通过 reciprocal-rank fusion 合并，避免直接比较 BM25、包含次数和派生文本分数；同一片段在每条路线只贡献一次（keyword.ts 97-120）。随后 `rankEvidence` 可做 MMR 式去冗余：相关性权重 0.85、冗余惩罚 0.15；相同摘要视为完全重复，同一来源版本默认相似度 0.8，有向量时用余弦相似度（ranking.ts 3-32）。\n5. 记忆和知识用于“导航回证据”，不是额外事实。命中已应用记忆后，系统读取该记忆的证据集合，并把候选替换成其中仍为当前、原始的固定片段（keyword.ts 81-102、146-198）。知识派生文本也只帮助找到其中引用的原始片段；无效知识投影不会中断原始证据检索（knowledge/retrieval.ts 1-2、74-79）。\n6. 语义召回在词法召回之上增加中文 embedding。当前配置启用 `memory-zh`（config/retrieval.json 1-4），实现只接受锁定的 `Xenova/bge-small-zh-v1.5` 快照，并校验模型身份与文件哈希（embedding.ts 17-24）。长 fragment 以 400 字窗口、320 字步长建立重叠向量，避免只索引开头；查询向量最多取前 400 字，每个 fragment 保留得分最高的窗口摘要（semantic.ts 51-75、82-105、125-131）。词法与向量各取最多 100 个候选，再次用 reciprocal-rank fusion 合并并去冗余（106-114）。\n7. 向量索引异步追赶新捕获内容，不阻塞查询。模型尚未加载时只返回词法排序；加载、维度或推理错误也会记录 degraded 状态并退回词法结果，而不会让搜索整体失败（semantic.ts 21-42、81-115）。测试还验证了长尾窗口、当前/原始/可见性过滤、时间过滤以及缺少模型权重时的词法降级（retrieval-semantic.test.ts 10-41）。\n8. 命中 fragment 后，助手保留全部已排序命中，再在最多 28 条证据的预算内补充同一章节的标题、前一片段和后一片段；补充项必须仍在章节范围内并再次通过可见性检查（context.ts 5-18；assistant/runtime.ts 690-699）。测试证明它会补到当前章节标题和前文，但不会跨到下一章节；全部不可见时不补任何内容（reading-context.test.ts 48-55）。语义命中还会保留长片段中实际命中的窗口，避免 2000 字模型证据预算只重读 fragment 开头而丢失尾部（assistant/runtime.ts 672-681）。\n9. 助手模型合同明确接收用户文本、历史轮次和运行时提供的证据；回答只能引用运行时传入的 fragment id。模型最多能提出一轮 `searchQueries`，这些查询只是检索词，不被视为事实（assistant/runtime.ts 56-65、88-100）。还需补读完整 turn 实现，确认额外查询如何合并、引用如何校验，以及无命中和模型不可用分别怎样呈现。\n10. 时间过滤目前按捕获 revision 的 `created_at` 比较，而不是消息事件时间或历史 as-of；词法和语义分支均在最终排名前应用该过滤（port.ts 35-39；keyword.ts 57-61；semantic.ts 93-100）。这意味着用户若按“消息实际发生时间”提问，当前实现可能无法按那个时间轴准确筛选。\n\n基于代码的解释：对“飞书 消息 后台”，如果顶部搜索完全没有候选，应先检查分词路线、当前/原始材料过滤、可见性、时间条件以及语义索引健康状态；若顶部搜索能看到正确片段，助手证据也包含该片段及章节邻居，但最终回答遗漏后台流程，则问题更可能位于证据预算、模型理解、二次查询选择或回答生成，而不是第一阶段召回。此诊断边界还需用完整助手 turn 代码确认。",
+            "gaps": [
+              "尚缺助手一次 turn 的完整实现：初次证据何时生成、模型提出的 searchQueries 如何执行与合并、是否严格限制为一轮。",
+              "尚缺回答 citationIds 的服务端校验和错误/降级分支，无法完整说明“找到却答不好”如何被系统识别或呈现。",
+              "尚需确认应用初始化时顶部搜索、知识搜索和助手是否确实注入同一个 retrieval 实例，而不仅是实现同一接口。",
+              "尚缺中文短词、标题、精确符号和多路线融合的完整测试例子，用于把机制落到读者可复现的诊断现象。",
+              "当前只确认 embedding 和 MMR 去冗余，尚未发现独立 cross-encoder reranker；需补读工厂和配置确认这是实际限制而非材料遗漏。"
+            ],
+            "requests": [
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/assistant/runtime.ts",
+                "startLine": 430,
+                "endLine": 720
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/assistant/runtime.ts",
+                "startLine": 720,
+                "endLine": 900
+              },
+              {
+                "kind": "search",
+                "query": "omem:apps/server/src/assistant/runtime.ts citationIds searchQueries degraded"
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/knowledge/retrieval.ts",
+                "startLine": 8,
+                "endLine": 81
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/retrieval/embedding.ts",
+                "startLine": 14,
+                "endLine": 46
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/retrieval/factory.ts",
+                "startLine": 9,
+                "endLine": 20
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/app.ts",
+                "startLine": 58,
+                "endLine": 110
+              },
+              {
+                "kind": "search",
+                "query": "registerKnowledgeRoutes retrievalService assistantRetrieval"
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/tests/retrieval-keyword.test.ts",
+                "startLine": 1,
+                "endLine": 177
+              },
+              {
+                "kind": "search",
+                "query": "omem:apps/server/tests/assistant-runtime.test.ts searchQueries citationIds evidence"
+              },
+              {
+                "kind": "search",
+                "query": "reranker cross-encoder rerank retrieval"
+              },
+              {
+                "kind": "search",
+                "query": "apps/web/src /api/search /knowledge/search"
+              }
+            ]
+          },
+          {
+            "trace": {
+              "runId": "3c4c3737-23ce-42f3-801e-5c76e31c3942",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "8d6906c0d73590ecd29a2cc00d2c445fb2b52284908834d9c1637f8b57bdea7c",
+              "contextHash": "1e676578539a2c07ed693042573008dc928e1ab505490f2cc9e683b286c16b95",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "d56077e834cdc2954262d05f24c33991e98c8272955f037813f73a53347c1c1f",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f838-bcca-7431-b2dd-42d4b7777a44"
+              ],
+              "usage": {
+                "used": 79487,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 203177,
+                  "utf8Bytes": 209413,
+                  "estimatedTokens": 69805,
+                  "budgetedTokens": 87257,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面所需的主流程、关键分支与诊断边界已经覆盖。\n\n一、三个入口共用召回底座，但消费结果的方式不同\n\n生产应用只创建一个 `assistantRetrieval`，并同时注入知识路由和 `AssistantRuntime`（apps/server/src/app.ts 80-88）。顶部搜索 `/api/search` 直接调用该端口的异步语义搜索（若存在）或同步搜索，展示原始片段的摘要、标题、版本、分数、召回路线和章节（apps/server/src/app.ts 273-280）。知识搜索 `/api/knowledge/search` 也调用同一端口，但随后把原始片段排名投影到引用这些材料的当前知识文章章节，并叠加文章标题、章节标题和正文的词面匹配（apps/server/src/knowledge/api.ts 86-108）。助手仍用同一端口搜索原始片段，再做会话可见性检查和上下文补充（apps/server/src/assistant/runtime.ts 665-699）。因此它们共享候选来源和底层排序机制，却不是同一种结果：顶部搜索返回原始命中，知识搜索返回派生知识章节，助手把原始证据交给模型。\n\n二、以“飞书 消息 后台”为例，第一阶段怎样召回\n\n`tokenize` 按空白和标点拆分查询，保留 ASCII 单词；中文串既保留完整词，也产生相邻二元组，并剔除常见停用二元组（apps/server/src/retrieval/keyword.ts 210-250）。这个查询会保留“飞书”“消息”“后台”三个二字词。由于 FTS trigram 只处理长度至少 3 的项，二字词走正文或标题 `LIKE` 分支；更长中文词、代码路径子串走 FTS（apps/server/src/retrieval/keyword.ts 53-80、138-143）。这能解释中文短词为何可找，但也意味着短词依赖包含匹配，容易比有区分度的长词产生更多候选。\n\n如果问题包含 `AssistantRuntime` 一类标识符，系统还会查询当前代码快照中的精确 `name` 或 `qualified_name`；该路线最终仍返回统一的原始 fragment，而不是另一套代码事实（apps/server/src/retrieval/keyword.ts 123-135）。排序时 `code-symbol` 命中乘以 1.5（apps/server/src/retrieval/ranking.ts 7-10）。\n\n全文、短词、代码符号、记忆和知识五条词法路线通过 reciprocal-rank fusion 合并，避免直接比较 BM25、包含次数和派生文本分数；同一 fragment 每条路线只贡献一次（apps/server/src/retrieval/keyword.ts 97-120）。随后 `rankEvidence` 用 0.85 相关性和 0.15 冗余惩罚做 MMR 式去重排序：相同摘要视为完全重复，同一来源版本默认相似度 0.8，有向量时使用余弦相似度（apps/server/src/retrieval/ranking.ts 3-32）。当前没有独立的 cross-encoder 或学习型 reranker；所谓“重排”实际是来源权重、符号偏好和这层 MMR。\n\n三、记忆、知识与向量分别补什么\n\n记忆路线搜索已应用且状态为 active 的记忆文本，但不会把记忆本身当成独立证据；命中后沿 evidence set 回到仍为当前、原始的固定片段（apps/server/src/retrieval/keyword.ts 81-102、146-198）。知识路线也只把派生文章当导航：先匹配当前知识正文，再验证固定依赖和引用范围，最后返回引用覆盖的原始 fragments；无效投影不会打断其他原始证据检索（apps/server/src/knowledge/retrieval.ts 1-2、34-79）。因此记忆和知识擅长利用已经整理出的表达找到原文，不改变“答案必须回到原始材料”的事实边界。\n\n语义路线用于弥补词面不同但意思接近的情况。当前配置启用 `memory-zh`（config/retrieval.json 1-4），加载器只接受锁定 revision 的 `Xenova/bge-small-zh-v1.5`，逐文件校验哈希，离线以 CPU q8、CLS pooling 运行，并对查询加中文检索指令（apps/server/src/retrieval/embedding.ts 14-43）。长 fragment 按 400 字窗口、320 字步长建立重叠向量；查询最多嵌入前 400 字，每个 fragment 保留得分最高的窗口（apps/server/src/retrieval/semantic.ts 51-75、82-105、125-131）。词法候选和向量候选各最多 100 条，再用 RRF 合并并去冗余（apps/server/src/retrieval/semantic.ts 82-114）。\n\n向量索引在后台分批追赶新捕获内容，不阻塞查询；模型尚未加载时直接使用词法结果，加载、维度或推理出错时记录 degraded 状态并回退词法搜索（apps/server/src/retrieval/semantic.ts 21-48、81-115）。测试覆盖了长尾窗口、排除旧版本/派生/不可见材料、时间过滤，以及模型权重缺失时仍保留词法搜索（apps/server/tests/retrieval-semantic.test.ts 10-41）。所以“没有语义命中”不能立刻等同于“没有材料”：应同时查看 routes 和 retrieval health，确认当前是否仍在 indexing 或已 degraded。\n\n四、命中片段后怎样补上下文\n\n助手先保留全部已排序命中。对每个命中，它定位所属材料章节，再尝试补入该章节标题、前一个 fragment 和后一个 fragment；补充项不得越过章节边界，并逐项重新执行可见性检查（apps/server/src/retrieval/context.ts 5-18；apps/server/src/assistant/runtime.ts 682-699）。测试证明命中“Retry after failure.”时会补到“Sending”标题和同节前文，但不会补进下一节“Deleting”；可见性全拒绝时不补任何内容（apps/server/tests/reading-context.test.ts 48-55）。补充总预算最多 28 条 evidence（apps/server/src/assistant/runtime.ts 691-699）。\n\n语义搜索还有一个长片段保护：候选若含 `semantic` 路线，助手把命中的窗口作为 focus；原 fragment 超过 2000 字时，从不可变原文中验证该窗口确实存在，再截取围绕命中位置的最多 2000 字，而不是总读开头（apps/server/src/assistant/runtime.ts 680-688、786-806）。因此“向量找到了尾部但模型没看到”这一类问题已有针对性处理，不过 2000 字单片段预算和最多 28 条总 evidence 仍可能让跨多个远距离片段的流程信息不完整。\n\n五、助手怎样使用来源并进一步查询\n\n一次 turn 先读取当前会话最近最多 20 轮历史，再召回当前问题的 evidence；上一轮实际选中的 evidence 也会作为 working context 合并，以支持“按这个”“刚才那个”之类追问（apps/server/src/assistant/runtime.ts 465-488、767-783）。模型收到用户文本、会话历史、证据、可见性、可信纠正、可见任务和时钟；第一轮可以提出额外 `searchQueries`，这些只被视为检索词，不是事实（apps/server/src/assistant/runtime.ts 496-514；模型合同见 88-100）。\n\n额外查询去重后最多 3 个，每个截到 160 字；运行时并行召回，将新 evidence 放在旧 evidence 前面、按 fragment 去重并截到 24 条，然后以 `retrievalRound: 1` 再调用模型，最多只有这一轮扩展检索（apps/server/src/assistant/runtime.ts 514-523）。这让模型在首次证据只提到“飞书消息进入后台”时，可以进一步搜索具体处理函数或阶段，但无法无限代理式搜索。\n\n模型提交的引用 id 会由服务器与实际传入的 evidence 集合交叉校验，未提供给模型的 id 被丢弃；持久化的 selected evidence 也只包含校验后的引用（apps/server/src/assistant/runtime.ts 604-625）。模型不可配置、认证失败或传输不可用时，turn 保持 pending 以便重试，不伪造答案；其他模型异常会写入明确的 degraded 回复且不带引用（apps/server/src/assistant/runtime.ts 524-540）。\n\n六、如何区分“找不到”与“找到却答不好”\n\n可以沿同一问题分层诊断：\n\n1. 先看顶部搜索。若 `/api/search?q=飞书%20消息%20后台` 没有正确原始片段，问题位于回答模型之前。优先检查分词是否只有过泛的二字词、材料是否为 source head/current、是否被 original/derived 条件排除、会话可见性、时间条件、知识或记忆引用是否仍有效，以及语义索引健康状态。顶部接口返回的 `routes` 能直接说明候选来自 fulltext、short-keyword、code-symbol、memory、knowledge 或 semantic（apps/server/src/app.ts 273-280）。\n2. 顶部搜索有命中而知识搜索没有相应文章，不表示底层召回失败。知识搜索只返回当前文章中能由正文词面或引用证据映射到的章节；可能只是尚无知识文章引用该片段，或文章投影/固定依赖无效（apps/server/src/knowledge/api.ts 86-108；apps/server/src/knowledge/retrieval.ts 34-79）。\n3. 顶部搜索和助手初始 evidence 都有正确片段，但没有补到同节标题或相邻步骤，应检查材料章节结构、fragment 边界、可见性以及 28 条上下文预算（apps/server/src/retrieval/context.ts 5-18；apps/server/src/assistant/runtime.ts 691-699）。\n4. evidence 已包含正确流程，额外查询也召回了所需 fragments，但最终答案仍遗漏或误解，则属于“给足材料仍答不好”：重点查看第二轮模型输入、24 条合并截断、模型对中文材料的理解和最终 citationIds，而不是继续调整第一阶段召回（apps/server/src/assistant/runtime.ts 514-523、604-611）。\n5. turn 为 pending 或 degraded 时，应先处理模型可用性；这与搜索是否成功是两个独立故障面（apps/server/src/assistant/runtime.ts 524-540）。\n\n七、当前实际限制\n\n中文 embedding 是锁定的小型 BGE 模型，只有本地 CPU q8 推理；应用不会隐式下载权重。权重未安装或校验失败时只剩词法召回（apps/server/src/retrieval/embedding.ts 17-43；apps/server/src/retrieval/semantic.ts 81-115）。当前没有学习型 reranker，RRF 和 MMR 能融合、去重，却不能像 cross-encoder 那样重新理解查询与候选的细粒度语义（apps/server/src/retrieval/keyword.ts 104-120；apps/server/src/retrieval/ranking.ts 3-24）。\n\n时间过滤比较的是捕获 revision 的 `created_at`，不是飞书消息实际发生时间，也不是历史 as-of 查询；词法和向量分支都在最终排名前使用这一字段（apps/server/src/retrieval/port.ts 35-39；apps/server/src/retrieval/keyword.ts 57-61；apps/server/src/retrieval/semantic.ts 93-100）。所以用户若说“找上周发出的飞书消息”，捕获晚于事件发生时，当前时间过滤可能与用户理解的时间轴不一致。\n\n可见性也会造成看似“搜不到”：通用助手在群聊中默认拒绝全部 evidence，除非宿主注入真实策略；飞书宿主的策略要求材料 conversationId 与当前 chatId 相同（apps/server/src/assistant/runtime.ts 809-815；apps/server/src/integrations/lark/runtime.ts 93-105）。这属于访问范围，不应通过放宽排名来修复。",
+            "gaps": [],
+            "requests": []
+          }
+        ],
+        "findings": "页面所需的主流程、关键分支与诊断边界已经覆盖。\n\n一、三个入口共用召回底座，但消费结果的方式不同\n\n生产应用只创建一个 `assistantRetrieval`，并同时注入知识路由和 `AssistantRuntime`（apps/server/src/app.ts 80-88）。顶部搜索 `/api/search` 直接调用该端口的异步语义搜索（若存在）或同步搜索，展示原始片段的摘要、标题、版本、分数、召回路线和章节（apps/server/src/app.ts 273-280）。知识搜索 `/api/knowledge/search` 也调用同一端口，但随后把原始片段排名投影到引用这些材料的当前知识文章章节，并叠加文章标题、章节标题和正文的词面匹配（apps/server/src/knowledge/api.ts 86-108）。助手仍用同一端口搜索原始片段，再做会话可见性检查和上下文补充（apps/server/src/assistant/runtime.ts 665-699）。因此它们共享候选来源和底层排序机制，却不是同一种结果：顶部搜索返回原始命中，知识搜索返回派生知识章节，助手把原始证据交给模型。\n\n二、以“飞书 消息 后台”为例，第一阶段怎样召回\n\n`tokenize` 按空白和标点拆分查询，保留 ASCII 单词；中文串既保留完整词，也产生相邻二元组，并剔除常见停用二元组（apps/server/src/retrieval/keyword.ts 210-250）。这个查询会保留“飞书”“消息”“后台”三个二字词。由于 FTS trigram 只处理长度至少 3 的项，二字词走正文或标题 `LIKE` 分支；更长中文词、代码路径子串走 FTS（apps/server/src/retrieval/keyword.ts 53-80、138-143）。这能解释中文短词为何可找，但也意味着短词依赖包含匹配，容易比有区分度的长词产生更多候选。\n\n如果问题包含 `AssistantRuntime` 一类标识符，系统还会查询当前代码快照中的精确 `name` 或 `qualified_name`；该路线最终仍返回统一的原始 fragment，而不是另一套代码事实（apps/server/src/retrieval/keyword.ts 123-135）。排序时 `code-symbol` 命中乘以 1.5（apps/server/src/retrieval/ranking.ts 7-10）。\n\n全文、短词、代码符号、记忆和知识五条词法路线通过 reciprocal-rank fusion 合并，避免直接比较 BM25、包含次数和派生文本分数；同一 fragment 每条路线只贡献一次（apps/server/src/retrieval/keyword.ts 97-120）。随后 `rankEvidence` 用 0.85 相关性和 0.15 冗余惩罚做 MMR 式去重排序：相同摘要视为完全重复，同一来源版本默认相似度 0.8，有向量时使用余弦相似度（apps/server/src/retrieval/ranking.ts 3-32）。当前没有独立的 cross-encoder 或学习型 reranker；所谓“重排”实际是来源权重、符号偏好和这层 MMR。\n\n三、记忆、知识与向量分别补什么\n\n记忆路线搜索已应用且状态为 active 的记忆文本，但不会把记忆本身当成独立证据；命中后沿 evidence set 回到仍为当前、原始的固定片段（apps/server/src/retrieval/keyword.ts 81-102、146-198）。知识路线也只把派生文章当导航：先匹配当前知识正文，再验证固定依赖和引用范围，最后返回引用覆盖的原始 fragments；无效投影不会打断其他原始证据检索（apps/server/src/knowledge/retrieval.ts 1-2、34-79）。因此记忆和知识擅长利用已经整理出的表达找到原文，不改变“答案必须回到原始材料”的事实边界。\n\n语义路线用于弥补词面不同但意思接近的情况。当前配置启用 `memory-zh`（config/retrieval.json 1-4），加载器只接受锁定 revision 的 `Xenova/bge-small-zh-v1.5`，逐文件校验哈希，离线以 CPU q8、CLS pooling 运行，并对查询加中文检索指令（apps/server/src/retrieval/embedding.ts 14-43）。长 fragment 按 400 字窗口、320 字步长建立重叠向量；查询最多嵌入前 400 字，每个 fragment 保留得分最高的窗口（apps/server/src/retrieval/semantic.ts 51-75、82-105、125-131）。词法候选和向量候选各最多 100 条，再用 RRF 合并并去冗余（apps/server/src/retrieval/semantic.ts 82-114）。\n\n向量索引在后台分批追赶新捕获内容，不阻塞查询；模型尚未加载时直接使用词法结果，加载、维度或推理出错时记录 degraded 状态并回退词法搜索（apps/server/src/retrieval/semantic.ts 21-48、81-115）。测试覆盖了长尾窗口、排除旧版本/派生/不可见材料、时间过滤，以及模型权重缺失时仍保留词法搜索（apps/server/tests/retrieval-semantic.test.ts 10-41）。所以“没有语义命中”不能立刻等同于“没有材料”：应同时查看 routes 和 retrieval health，确认当前是否仍在 indexing 或已 degraded。\n\n四、命中片段后怎样补上下文\n\n助手先保留全部已排序命中。对每个命中，它定位所属材料章节，再尝试补入该章节标题、前一个 fragment 和后一个 fragment；补充项不得越过章节边界，并逐项重新执行可见性检查（apps/server/src/retrieval/context.ts 5-18；apps/server/src/assistant/runtime.ts 682-699）。测试证明命中“Retry after failure.”时会补到“Sending”标题和同节前文，但不会补进下一节“Deleting”；可见性全拒绝时不补任何内容（apps/server/tests/reading-context.test.ts 48-55）。补充总预算最多 28 条 evidence（apps/server/src/assistant/runtime.ts 691-699）。\n\n语义搜索还有一个长片段保护：候选若含 `semantic` 路线，助手把命中的窗口作为 focus；原 fragment 超过 2000 字时，从不可变原文中验证该窗口确实存在，再截取围绕命中位置的最多 2000 字，而不是总读开头（apps/server/src/assistant/runtime.ts 680-688、786-806）。因此“向量找到了尾部但模型没看到”这一类问题已有针对性处理，不过 2000 字单片段预算和最多 28 条总 evidence 仍可能让跨多个远距离片段的流程信息不完整。\n\n五、助手怎样使用来源并进一步查询\n\n一次 turn 先读取当前会话最近最多 20 轮历史，再召回当前问题的 evidence；上一轮实际选中的 evidence 也会作为 working context 合并，以支持“按这个”“刚才那个”之类追问（apps/server/src/assistant/runtime.ts 465-488、767-783）。模型收到用户文本、会话历史、证据、可见性、可信纠正、可见任务和时钟；第一轮可以提出额外 `searchQueries`，这些只被视为检索词，不是事实（apps/server/src/assistant/runtime.ts 496-514；模型合同见 88-100）。\n\n额外查询去重后最多 3 个，每个截到 160 字；运行时并行召回，将新 evidence 放在旧 evidence 前面、按 fragment 去重并截到 24 条，然后以 `retrievalRound: 1` 再调用模型，最多只有这一轮扩展检索（apps/server/src/assistant/runtime.ts 514-523）。这让模型在首次证据只提到“飞书消息进入后台”时，可以进一步搜索具体处理函数或阶段，但无法无限代理式搜索。\n\n模型提交的引用 id 会由服务器与实际传入的 evidence 集合交叉校验，未提供给模型的 id 被丢弃；持久化的 selected evidence 也只包含校验后的引用（apps/server/src/assistant/runtime.ts 604-625）。模型不可配置、认证失败或传输不可用时，turn 保持 pending 以便重试，不伪造答案；其他模型异常会写入明确的 degraded 回复且不带引用（apps/server/src/assistant/runtime.ts 524-540）。\n\n六、如何区分“找不到”与“找到却答不好”\n\n可以沿同一问题分层诊断：\n\n1. 先看顶部搜索。若 `/api/search?q=飞书%20消息%20后台` 没有正确原始片段，问题位于回答模型之前。优先检查分词是否只有过泛的二字词、材料是否为 source head/current、是否被 original/derived 条件排除、会话可见性、时间条件、知识或记忆引用是否仍有效，以及语义索引健康状态。顶部接口返回的 `routes` 能直接说明候选来自 fulltext、short-keyword、code-symbol、memory、knowledge 或 semantic（apps/server/src/app.ts 273-280）。\n2. 顶部搜索有命中而知识搜索没有相应文章，不表示底层召回失败。知识搜索只返回当前文章中能由正文词面或引用证据映射到的章节；可能只是尚无知识文章引用该片段，或文章投影/固定依赖无效（apps/server/src/knowledge/api.ts 86-108；apps/server/src/knowledge/retrieval.ts 34-79）。\n3. 顶部搜索和助手初始 evidence 都有正确片段，但没有补到同节标题或相邻步骤，应检查材料章节结构、fragment 边界、可见性以及 28 条上下文预算（apps/server/src/retrieval/context.ts 5-18；apps/server/src/assistant/runtime.ts 691-699）。\n4. evidence 已包含正确流程，额外查询也召回了所需 fragments，但最终答案仍遗漏或误解，则属于“给足材料仍答不好”：重点查看第二轮模型输入、24 条合并截断、模型对中文材料的理解和最终 citationIds，而不是继续调整第一阶段召回（apps/server/src/assistant/runtime.ts 514-523、604-611）。\n5. turn 为 pending 或 degraded 时，应先处理模型可用性；这与搜索是否成功是两个独立故障面（apps/server/src/assistant/runtime.ts 524-540）。\n\n七、当前实际限制\n\n中文 embedding 是锁定的小型 BGE 模型，只有本地 CPU q8 推理；应用不会隐式下载权重。权重未安装或校验失败时只剩词法召回（apps/server/src/retrieval/embedding.ts 17-43；apps/server/src/retrieval/semantic.ts 81-115）。当前没有学习型 reranker，RRF 和 MMR 能融合、去重，却不能像 cross-encoder 那样重新理解查询与候选的细粒度语义（apps/server/src/retrieval/keyword.ts 104-120；apps/server/src/retrieval/ranking.ts 3-24）。\n\n时间过滤比较的是捕获 revision 的 `created_at`，不是飞书消息实际发生时间，也不是历史 as-of 查询；词法和向量分支都在最终排名前使用这一字段（apps/server/src/retrieval/port.ts 35-39；apps/server/src/retrieval/keyword.ts 57-61；apps/server/src/retrieval/semantic.ts 93-100）。所以用户若说“找上周发出的飞书消息”，捕获晚于事件发生时，当前时间过滤可能与用户理解的时间轴不一致。\n\n可见性也会造成看似“搜不到”：通用助手在群聊中默认拒绝全部 evidence，除非宿主注入真实策略；飞书宿主的策略要求材料 conversationId 与当前 chatId 相同（apps/server/src/assistant/runtime.ts 809-815；apps/server/src/integrations/lark/runtime.ts 93-105）。这属于访问范围，不应通过放宽排名来修复。",
+        "gaps": [],
+        "materials": [
+          {
+            "key": "omem:apps/server/src/retrieval/keyword.ts",
+            "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 262
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/semantic.ts",
+            "digest": "be42007fce29d70b9402637abb5fe64685b46872ae815a2285bbbc67303962e3",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 139
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/context.ts",
+            "digest": "81ce242b8ed22df4ecde092dfe80627471e50a1962b6bef71e14b57c5ed03a36",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 31
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/assistant/runtime.ts",
+            "digest": "770504ecd25bca96794747bd325f2ac796a9a46fa387a0d48fbc88cfbc847fa5",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 100
+              },
+              {
+                "start": 430,
+                "end": 900
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/knowledge/api.ts",
+            "digest": "8216ac2d415f54fa67219cb9a51f5542868e1b1a70b60c45e8cf040d523dcf74",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 124
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/app.ts",
+            "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae",
+            "ranges": [
+              {
+                "start": 58,
+                "end": 110
+              },
+              {
+                "start": 272,
+                "end": 281
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/knowledge/development.ts",
+            "digest": "54a8cc78f2966e8f4528afba10711f2c37cf0efbae1a8d82cc2147dec6da7a07",
+            "ranges": [
+              {
+                "start": 30,
+                "end": 39
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/port.ts",
+            "digest": "350cbe18e9f431c0e6eba3b0948c5b90e4b6e4270e67fbaea0a15b2914fbc48f",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 99
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/reading-context.test.ts",
+            "digest": "d1199e5e8c57769fbbc45bfc07002627f53af89faf59d5b59ebb98a75fd26433",
+            "ranges": [
+              {
+                "start": 5,
+                "end": 14
+              },
+              {
+                "start": 48,
+                "end": 57
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/ranking.ts",
+            "digest": "e0a3c7a3c7b7c4636440cec6dd26fb3389d36aaa3be87df58dffa19441467176",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 34
+              }
+            ]
+          },
+          {
+            "key": "omem:config/retrieval.json",
+            "digest": "b367efa304dd3bf3ef142072d307f8e560d43f7c3a52dfc358f04c75b892984a",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 5
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/retrieval-semantic.test.ts",
+            "digest": "d3f8ad637c5d37864e1089bd4556eb20b60b432a1b7e9b33b50020e9c583aac4",
+            "ranges": [
+              {
+                "start": 5,
+                "end": 14
+              },
+              {
+                "start": 32,
+                "end": 41
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+            "digest": "11d39b71ed0e6535224f258858e0ae4cf70e29603770cd209bc002affbd71d02",
+            "ranges": [
+              {
+                "start": 4,
+                "end": 13
+              },
+              {
+                "start": 281,
+                "end": 290
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/knowledge/retrieval.ts",
+            "digest": "75a226dad659fee68a8933f0db15c14c3cb27335b34f562fd687c4fc4e3e7962",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 81
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/embedding.ts",
+            "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047",
+            "ranges": [
+              {
+                "start": 4,
+                "end": 46
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/factory.ts",
+            "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 20
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+            "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c",
+            "ranges": [
+              {
+                "start": 93,
+                "end": 109
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/review/app.ts",
+            "digest": "f4cbe8e666dd4e62a616da98d8c1051fd0f1aacb4feb87d538b97209d1781def",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 8
+              },
+              {
+                "start": 80,
+                "end": 89
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/knowledge-api.test.ts",
+            "digest": "a02e624900a6e499de52724b9239eb534dd11904df9a35953868b4e1d89766bd",
+            "ranges": [
+              {
+                "start": 4,
+                "end": 19
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
+            "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 177
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+            "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d",
+            "ranges": [
+              {
+                "start": 241,
+                "end": 250
+              },
+              {
+                "start": 473,
+                "end": 482
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/api.ts",
+            "digest": "ab3ec90e19240ee6dd101346cc6cbdc23f47ef08b2dc81049d869ebf4dd707a8",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 12
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+            "digest": "6e92d6bf702f386c61e1c9314b6d2474664b11ab9f28f897f99af15bcdc9bb8b",
+            "ranges": [
+              {
+                "start": 3,
+                "end": 21
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+            "digest": "25c54456f617ebff4f0a5565b253c74a6be8e8260bbdfaeb415e68e0166f1310",
+            "ranges": [
+              {
+                "start": 3,
+                "end": 12
+              },
+              {
+                "start": 20,
+                "end": 29
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+            "digest": "b6bcd304447ba703962195cb9459b3d6c588a9b1037fbcd9fe565dc02c71d199",
+            "ranges": [
+              {
+                "start": 2,
+                "end": 21
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+            "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 15
+              }
+            ]
+          }
+        ]
+      },
+      "writerVersion": "29f3ea78e530ff7b242f271e45475916ab314266b4c45c899a043cac24210e0e"
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T16:12:22.476Z",
+    "trace": {
+      "runId": "53f80820-30e2-490a-8746-7297beb4ad7c",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e9d0289f6a9ebcefcc1649bc58140312da70887f42c363b3a0b9130fd4a97ee2",
+      "promptHash": "fa178aa899b0fe0b96913afddcb8a0287595df96c237652d8114bddd1cf9419e",
+      "contextHash": "fc66173e6fdade1f8a6e8d18d2348e0af10a0c76b066b6d7bfd0483a3d2f95f4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "f19da268355b4ccf051362a8b511a52b69d682b5dd8297d104f2bf3799b96a31",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f83c-a606-7eb1-ad5c-9ed02903c017"
+      ],
+      "usage": {
+        "used": 67653,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 158015,
+          "utf8Bytes": 171152,
+          "estimatedTokens": 57051,
+          "budgetedTokens": 71314,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
