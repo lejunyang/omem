@@ -1,3 +1,5 @@
+import { taskFollowUpSchema, type TaskFollowUp, type TaskAction } from "../../../../packages/contracts/src/task-flow.js";
+import { validateFollowUp } from "../tasks/follow-up.js";
 import { randomUUID } from "node:crypto";
 import type { Store } from "../store.js";
 import type { MemoryService, FeedbackService } from "../memory/service.js";
@@ -27,17 +29,19 @@ export type AssistantCreateTaskCall = {
   citationIds?: string[];
   dueAt?: string | null;
   dueExpression?: string | null;
+  followUp?: TaskFollowUp | null;
 };
 
 export type AssistantUpdateTaskCall = {
   tool: "update_task";
   taskId: string;
   expectedVersion: number;
-  action: "complete" | "reopen" | "reschedule";
+  action: TaskAction;
   dueAt?: string | null;
   dueExpression?: string | null;
+  followUp?: TaskFollowUp | null;
 };
-export type AssistantTask = { id: string; title: string; detail: string; status: string; version: number; dueAt: string | null };
+export type AssistantTask = { id: string; title: string; detail: string; status: string; version: number; dueAt: string | null; followUp?: TaskFollowUp | null; nextStep?: string };
 
 export function validatedDueAt(dueAt: string | null | undefined, expression: string | null | undefined, userText: string) {
   if (!dueAt) return null;
@@ -129,6 +133,9 @@ export type VisibilityPolicy = (input: {
  * a task topic must never auto-create a task, even if the model emits create_task.
  */
 const TASK_INTENT_PATTERNS = [
+  /帮我跟进/,
+  /帮我追踪/,
+  /记录.*等待/,
   /帮我记/,
   /帮我建/,
   /帮我创建/,
@@ -585,9 +592,11 @@ export class AssistantRuntime {
         if (action.rejected) return `${action.tool === "create_task" ? "未创建任务" : "未执行事项变更"}：${action.detail ?? action.reason}。`;
         const task = this.store.tasks().find(t => t.id === action.taskId);
         if (!task) return "事项变更尚未确认。";
-        const verb = action.tool === "create_task" ? "已创建任务" : action.action === "complete" ? "已完成" : action.action === "reopen" ? "已重新打开" : "已改期";
+        const verb = action.tool === "create_task" ? "已创建任务" : ({ complete: "已完成", reopen: "已重新打开", reschedule: "已改期", wait: "已设为等待", snooze: "已暂缓提醒", cancel: "已取消" } as Record<string,string>)[String(action.action)] ?? "已更新";
         const time = task.dueAt ? `；提醒时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）` : "";
-        return `${verb}：${task.title}${action.action === "complete" ? "" : time}。`;
+        const follow = task.followUp ? taskFollowUpSchema.parse(task.followUp) : null;
+        const check = follow?.next_check_at ? `；下次跟进：${new Intl.DateTimeFormat("zh-CN", { timeZone: follow.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(follow.next_check_at))}（${follow.timezone}）` : follow?.waiting_on ? "；尚未设置跟进时间" : "";
+        return `${verb}：${task.title}${["complete","cancel"].includes(String(action.action)) ? "" : time + (follow?.waiting_on ? `；等待：${follow.waiting_on}` : "") + check}。`;
       }).join("\n") : reply.answer;
 
       // 4. Only allow citations the runtime actually supplied.
@@ -687,18 +696,20 @@ export class AssistantRuntime {
     return this.store.tasks().filter(t => conversation.visibility === "private" ||
       (typeof t.evidenceId === "string" && this.isVisible(conversation, t.evidenceId)))
       .slice(0, 60).map(t => ({ id: String(t.id), title: String(t.title), detail: String(t.detail),
-        status: String(t.status), version: Number(t.version), dueAt: t.dueAt ? String(t.dueAt) : null }));
+        status: String(t.status), version: Number(t.version), dueAt: t.dueAt ? String(t.dueAt) : null, followUp: t.followUp as TaskFollowUp | null, nextStep: String(t.nextStep ?? "") }));
   }
 
   private governTaskUpdate(call: AssistantUpdateTaskCall,
     input: { turnId: string; userText: string; conversation: Conversation }, tasks: AssistantTask[]): Record<string, unknown> {
     const reject = (reason: string) => ({ tool: "update_task", rejected: true, reason });
     const patterns = { complete: /完成|做完|办完|标.*完成|\bdone\b|\bcomplete\b/i,
-      reopen: /重新打开|还没完成|恢复.*待办|\breopen\b/i, reschedule: /改到|改为|改期|推迟|延后|提前|挪到|\breschedule\b/i };
+      reopen: /重新打开|还没完成|恢复.*待办|\breopen\b/i, reschedule: /改到|改为|改期|推迟|延后|提前|挪到|\breschedule\b/i,
+      wait: /等待|等.*回复|等.*确认|等.*结果|\bwait\b/i, snooze: /稍后|再提醒|再跟进|先不提醒|暂停提醒|晚点|\bsnooze\b/i, cancel: /取消|不用做|不做了|\bcancel\b/i };
     if (!patterns[call.action].test(input.userText) || /怎么|如何|是否|吗[？?]?$/.test(input.userText)) return reject("没有明确的事项变更指令");
     if (!tasks.some(t => t.id === call.taskId && t.version === call.expectedVersion)) return reject("事项不存在、不可见或已被修改，请重新确认");
     if (!this.options.memory) return reject("事项服务不可用");
     try {
+      const followUp = call.followUp ? validateFollowUp({ ...call.followUp, timezone: this.options.timezone ?? "Asia/Shanghai" }, input.userText) : null;
       const dueAt = call.action === "reschedule" ? validatedDueAt(call.dueAt, call.dueExpression, input.userText) : null;
       if (call.action === "reschedule" && !dueAt) return reject("请给出明确的改期时间");
       const revision = this.store.capture({ source: "manual", externalId: `turn:${input.turnId}`, title: "事项变更指令",
@@ -707,7 +718,7 @@ export class AssistantRuntime {
           sourceUri: null, eventId: input.turnId, eventAt: new Date().toISOString(), timezone: this.options.timezone ?? "Asia/Shanghai",
           quoted: false, forwarded: false, producerKind: "original" } }).revision;
       const receipt = this.options.memory.commandTask({ taskId: call.taskId, expectedVersion: call.expectedVersion,
-        action: call.action, dueAt, dueExpression: call.dueExpression ?? null, requestId: input.turnId,
+        action: call.action, dueAt, dueExpression: call.dueExpression ?? null, followUp, requestId: input.turnId,
         evidenceId: revision.fragments[0]!.id });
       return { tool: "update_task", action: call.action, taskId: receipt.entityId, receiptId: receipt.id };
     } catch (error) { return reject(error instanceof Error ? error.message : "事项变更失败"); }
@@ -905,6 +916,7 @@ export class AssistantRuntime {
             due_at: validatedDueAt(input.call.dueAt, input.call.dueExpression, input.userText),
             due_expression: input.call.dueExpression ?? null,
             next_step: input.call.detail,
+            ...(input.call.followUp ? { follow_up: validateFollowUp({ ...input.call.followUp, timezone: this.options.timezone ?? "Asia/Shanghai" }, input.userText) } : {}),
           },
           evidence: allEvidence.map((e) => {
             const codePoints = Array.from(e.text);

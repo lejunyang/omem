@@ -1,3 +1,5 @@
+import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
+import { messageWorkflows } from "./assistant/message-workflows.js";
 import { registerKnowledgeRoutes } from "./knowledge/api.js";
 import Fastify from "fastify";
 import staticFiles from "@fastify/static";
@@ -304,7 +306,24 @@ export async function buildApp(
       return { ok: true };
     },
   );
+  app.get("/api/assistant/workflows", async () => messageWorkflows.map(({ instruction: _instruction, ...recipe }) => recipe));
   app.get("/api/tasks", async () => store.tasks());
+  app.post<{ Params: { id: string } }>("/api/tasks/:id/commands", async req => {
+    const command = taskCommandSchema.parse(req.body);
+    const task = store.tasks().find(t => t.id === req.params.id);
+    if (!task) throw Error("Task not found");
+    const label = { complete: "标记完成", reopen: "重新打开", reschedule: "修改截止时间", wait: "记录等待", snooze: "暂缓提醒", cancel: "取消" }[command.action];
+    const description = [`用户对已有事项“${task.title}”执行：${label}。`,
+      command.followUp?.waiting_on ? `等待：${command.followUp.waiting_on}` : "",
+      command.followUp?.time_expression ? `跟进时间：${command.followUp.time_expression}（${command.followUp.timezone}）` : "",
+      command.dueExpression ? `截止时间：${command.dueExpression}` : ""].filter(Boolean).join("\n");
+    const revision = store.capture({ source: "manual", externalId: `task-control:${command.requestId}`, title: `事项操作：${task.title}`,
+      parts: [{ type: "text", text: description }], context: {},
+      provenance: { collectorId: "task-controls", actorId: "owner", actorType: "owner", actorVerifiedBy: "local-user",
+        sourceUri: null, eventId: command.requestId, eventAt: new Date().toISOString(), timezone: command.followUp?.timezone ?? config.notifications.external?.timezone ?? "Asia/Shanghai",
+        quoted: false, forwarded: false, producerKind: "original" } }).revision;
+    return memory.commandTask({ taskId: req.params.id, ...command, evidenceId: revision.fragments[0]!.id });
+  });
   app.post("/api/tasks", async (req) =>
     store.createTask(taskSchema.parse(req.body)),
   );
@@ -560,10 +579,11 @@ export async function buildApp(
   app.post<{ Params: { id: string } }>(
     "/api/assistant/conversations/:id/turns",
     async (req, reply) => {
-      const body = z.object({ text: str }).strict().parse(req.body);
+      const body = z.object({ text: str, requestId: z.string().min(1).max(200).optional() }).strict().parse(req.body);
       const result = await assistant.turn({
         conversationId: req.params.id,
         userText: body.text,
+        transportEventId: body.requestId ? `web:${body.requestId}` : null,
       });
       if (!result.conversation)
         return reply.code(404).send({ error: "Conversation not found" });

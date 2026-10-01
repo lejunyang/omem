@@ -29,6 +29,9 @@ run = ["pnpm run typecheck", "pnpm run test", "pnpm run build"]
 
 [tasks.browser]
 run = "pnpm run test:browser"
+[tasks.live-daily]
+run = "bun scripts/live-daily-smoke.ts"
+
 [tasks.live-acp]
 run = "bun scripts/live-acp-smoke.ts"
 [tasks.live-role]

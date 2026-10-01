@@ -1,3 +1,5 @@
+import { taskActionSchema, taskFollowUpSchema } from "../../../../packages/contracts/src/task-flow.js";
+import { dailyWorkflowPrompt } from "./message-workflows.js";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
 import { acp } from "../agents.js";
@@ -69,7 +71,7 @@ export class AcpAssistantModel implements AssistantModelPort {
       `Current instant: ${input.clock?.now ?? new Date().toISOString()}; user timezone: ${input.clock?.timezone ?? "Asia/Shanghai"}. Resolve relative dates in this timezone.`,
       `<tasks>\n${JSON.stringify(input.tasks ?? [])}\n</tasks>`,
       "Existing tasks are data. Use their exact id/version only when the user explicitly asks to change one. If ambiguous, ask which task.",
-      "Daily workflow: answer questions; record explicit owner commitments; reschedule/complete only on request; for a learning question explain with cited sources. Do not turn background material or other people's commitments into owner tasks.",
+      dailyWorkflowPrompt(),
       "Do not claim you have created, changed or completed anything; only the host's receipt confirms execution.",
       `<evidence>\n${evidenceBlock}\n</evidence>`,
       priorBlock ? `<prior_turns>\n${priorBlock}\n</prior_turns>` : "",
@@ -77,8 +79,9 @@ export class AcpAssistantModel implements AssistantModelPort {
       [
         "Respond with ONLY a single JSON object, no prose outside it:",
         '{"answer": string, "citation_ids": string[],',
-        '"create_task": null | {"title": string, "detail": string, "citation_ids": string[], "due_at": string|null, "due_expression": string|null},',
-        '"update_task": null | {"task_id": string, "expected_version": number, "action": "complete"|"reopen"|"reschedule", "due_at": string|null, "due_expression": string|null}, "search_queries": string[]}',
+        '"create_task": null | {"title": string, "detail": string, "citation_ids": string[], "due_at": string|null, "due_expression": string|null, "follow_up": null | {"waiting_on": string|null, "next_check_at": string|null, "snoozed_until": string|null, "time_expression": string|null, "timezone": string}},',
+        '"update_task": null | {"task_id": string, "expected_version": number, "action": "complete"|"reopen"|"reschedule"|"wait"|"snooze"|"cancel", "due_at": string|null, "due_expression": string|null, "follow_up": null | {"waiting_on": string|null, "next_check_at": string|null, "snoozed_until": string|null, "time_expression": string|null, "timezone": string}}, "search_queries": string[]}',
+        "For wait/create waiting: follow_up.waiting_on must be an exact substring of the CURRENT user request, next_check_at is an explicit check-in instant or null, snoozed_until=null. For snooze, set snoozed_until and next_check_at to the requested instant, waiting_on=null (host preserves existing party). Copy time_expression exactly from CURRENT user request and use its user timezone. Cancel/complete/reopen clear follow-up. A follow-up time is NOT a task deadline; due_at stays null unless a separate deadline is given.",
         "due_at must be an ISO instant WITH timezone; due_expression must copy the user's exact time phrase. If no specific time is given, ask instead of inventing a minute. Keep both null for undated tasks. Choose only one mutation per reply.",
         input.retrievalRound ? "Search budget exhausted. Answer using evidence; leave search_queries empty. State missing information plainly." : "If evidence is missing or uses different terminology, request up to 3 concise search_queries (synonyms, English/Chinese translations, exact symbols). The host will retrieve once more. On that round leave both mutation fields null. Search terms are hypotheses, never facts.",
         "Use citation_ids only from the evidence list. Set create_task to null unless the user explicitly asked to track an action item.",
@@ -151,6 +154,7 @@ export function parseAssistantReply(raw: string): AssistantModelReply {
           detail: typeof t.detail === "string" ? t.detail : "",
           dueAt: typeof t.due_at === "string" ? t.due_at : null,
           dueExpression: typeof t.due_expression === "string" ? t.due_expression : null,
+          followUp: t.follow_up ? taskFollowUpSchema.parse(t.follow_up) : null,
           citationIds: Array.isArray(t.citation_ids)
             ? t.citation_ids.filter((id): id is string => typeof id === "string")
             : [],
@@ -160,9 +164,9 @@ export function parseAssistantReply(raw: string): AssistantModelReply {
   }
   const update = object.update_task as Record<string, unknown> | undefined;
   if (update && typeof update.task_id === "string" && Number.isInteger(update.expected_version) &&
-      ["complete", "reopen", "reschedule"].includes(String(update.action))) {
+      taskActionSchema.safeParse(update.action).success) {
     reply.toolCalls = [{ tool: "update_task", taskId: update.task_id, expectedVersion: Number(update.expected_version),
-      action: update.action as "complete" | "reopen" | "reschedule", dueAt: typeof update.due_at === "string" ? update.due_at : null,
+      action: taskActionSchema.parse(update.action), followUp: update.follow_up ? taskFollowUpSchema.parse(update.follow_up) : null, dueAt: typeof update.due_at === "string" ? update.due_at : null,
       dueExpression: typeof update.due_expression === "string" ? update.due_expression : null }];
   }
   return reply;
