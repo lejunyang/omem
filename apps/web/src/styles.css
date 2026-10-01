@@ -277,3 +277,8 @@ details > p {
     width: 90vw;
   }
 }
+.knowledge-document .reading-goal {
+  /* Page briefs contain editorial instructions. The article summary is the
+     reader-facing introduction; keep workflow metadata out of product prose. */
+  display: none;
+}
