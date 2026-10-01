@@ -42,7 +42,13 @@ export function restoreKnowledgeArticles(repository: KnowledgeRepository, direct
     let progress = false;
     for (let i = pending.length - 1; i >= 0; i--) {
       const { file, artifact } = pending[i]!;
-      if (artifact.dependencies?.some(d => d.kind === "article" && !repository.get(d.key))) continue;
+      if (artifact.dependencies?.some(d => d.kind === "article" && (
+        !repository.get(d.key) ||
+        // Existing heads may still be the previous generation. Restore the
+        // matching child asset first instead of prematurely rejecting its parent.
+        (repository.get(d.key)?.revision !== d.digest && pending.some(p =>
+          p.artifact.document?.key === d.key && digest(stableDigest(p.artifact)) === d.digest))
+      ))) continue;
       let state = "restored", reason = "";
       try {
         if (artifact.version !== 1 || artifact.review?.verdict !== "accepted" || !artifact.generation?.model || !artifact.review.model) throw Error("Missing generation/review provenance");
