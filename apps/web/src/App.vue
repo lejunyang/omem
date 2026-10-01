@@ -43,7 +43,9 @@ const navigation = [
   ["notifications", "spark", "通知中心"], ["lark", "layers", "飞书机器人"],
   ["settings", "layers", "能力与连接"], ["design", "book", "设计系统"],
 ];
-const view = ref(sessionStorage.getItem("omem-view") || "knowledge");
+function hashView() { const key = location.hash.replace(/^#\//, "").split(/[/?]/)[0]; return navigation.some(([id]) => id === key) ? key! : "knowledge"; }
+const view = ref(location.hash ? hashView() : sessionStorage.getItem("omem-view") || "knowledge");
+function syncView() { view.value = hashView(); }
 const pageTitle = computed(() => navigation.find(([id]) => id === view.value)?.[2] ?? "知识库");
 const sources = ref<Source[]>([]);
 const revision = ref<Revision | null>(null);
@@ -63,7 +65,7 @@ const notificationOpen = ref(false);
 const notificationLoading = ref(false);
 const error = ref("");
 const pollError = ref("");
-watch(view, () => { error.value = ""; query.value = ""; sessionStorage.setItem("omem-view", view.value); });
+watch(view, () => { error.value = ""; query.value = ""; sessionStorage.setItem("omem-view", view.value); if (hashView() !== view.value) location.hash = "/" + view.value; });
 const reviewMode = ref(false);
 const connecting = ref(true);
 const connectionError = ref("");
@@ -438,8 +440,9 @@ function saveToken() {
   token.value = "";
   void boot();
 }
-onMounted(() => void boot());
+onMounted(() => { window.addEventListener("hashchange", syncView); void boot(); });
 onBeforeUnmount(() => {
+  window.removeEventListener("hashchange", syncView);
   clearTimeout(bootRetryTimer);
   clearInterval(pollTimer);
   clearTimeout(toastTimer);

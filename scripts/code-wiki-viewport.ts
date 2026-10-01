@@ -51,6 +51,17 @@ try {
     await page.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
     await expect(trigger).toBeFocused();
+    await trigger.click();
+    await drawer.getByRole("button", {name:/阅读这份材料的知识解读/}).click();
+    await expect(drawer.locator(".layer-chip")).toContainText("第 2 层");
+    expect(page.url()).toContain("/trail/");
+    await page.reload();
+    await expect(page.locator("dialog[open] .layer-chip")).toContainText("第 2 层");
+    await expect(page.locator("dialog[open] .article-body > h2")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("dialog[open] .layer-chip")).toContainText("第 1 层");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("dialog[open]")).toHaveCount(0);
     await expect(page.locator(".book-content .om-paragraph-references").first()).toBeVisible();
   });
   await check("README reads as a document with intact code fences", async () => {

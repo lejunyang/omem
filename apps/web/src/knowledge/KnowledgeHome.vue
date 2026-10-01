@@ -1,19 +1,20 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { OmEmpty } from "@omem/ui";
 import KnowledgeDocument from "./KnowledgeDocument.vue";
 import KnowledgeTree from "./KnowledgeTree.vue";
 import { knowledgeApi, type ArticleMeta, type KnowledgeFrame } from "./api";
-const props = defineProps<{ prefix: string; compact?: boolean }>();
-const emit = defineEmits<{ navigate: [frame: KnowledgeFrame] }>();
+const props = defineProps<{ prefix: string; compact?: boolean; selectedKey?: string }>();
+const emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; select: [key: string] }>();
 const loading = ref(true);
-const articles = ref<ArticleMeta[]>([]), query = ref(""), selected = ref(sessionStorage.getItem("omem-knowledge-page") || "topic:overview"), error = ref("");
+const articles = ref<ArticleMeta[]>([]), query = ref(""), selected = ref(props.selectedKey || sessionStorage.getItem("omem-knowledge-page") || "topic:overview"), error = ref("");
 let timer: ReturnType<typeof setInterval> | undefined;
 const topics = computed(() => articles.value.filter(a => a.key.startsWith("topic:")).sort((a,b) => a.key === 'topic:overview' ? -1 : b.key === 'topic:overview' ? 1 : 0));
 const modules = computed(() => articles.value.filter(a => a.key.startsWith("module:") && !a.key.includes(":part-")));
 const matches = computed(() => articles.value.filter(a => (a.title + a.summary + a.key).toLowerCase().includes(query.value.toLowerCase())));
 const current = computed(() => articles.value.find(a => a.key === selected.value));
-function select(key: string) { selected.value = key; sessionStorage.setItem("omem-knowledge-page", key); }
+function select(key: string) { selected.value = key; sessionStorage.setItem("omem-knowledge-page", key); emit("select", key); }
+watch(() => props.selectedKey, key => { if (key) selected.value = key; });
 async function load() {
   try {
     const result = await knowledgeApi<{ articles: ArticleMeta[] }>(props.prefix, "/articles");
