@@ -9,6 +9,7 @@ import { ensureReviewMetaTable } from "./store.js";
 import type { Store } from "../store.js";
 import { currentMaterials, KnowledgeRepository } from "../knowledge/repository.js";
 import { createHash } from "node:crypto";
+import { ensureMaterialAliases } from "../knowledge/material-identity.js";
 
 export type RepositoryCoverage = { path: string; state: "captured" | "excluded" | "failed"; reason: string; materialKey?: string; digest?: string };
 
@@ -68,9 +69,12 @@ export function captureRepositoryMaterials(store: Store, repoRoot: string): Repo
 
 export function createReviewKnowledgeRepository(store: Store) {
   ensureReviewMetaTable(store);
+  ensureMaterialAliases(store.db);
   return new KnowledgeRepository(store, () => {
+    const aliases = new Map((store.db.prepare("SELECT id,external_id FROM sources WHERE namespace='file' AND external_id LIKE 'omem:%'").all() as { id: string; external_id: string }[]).map(row => [row.id, row.external_id]));
+    store.db.prepare("INSERT OR IGNORE INTO knowledge_material_aliases(material_key,source_id) SELECT external_id,id FROM sources WHERE namespace='file' AND external_id LIKE 'omem:%'").run();
     const removed = new Set((store.db.prepare("SELECT source_id FROM review_source_meta WHERE removed=1 OR legacy_alias_of IS NOT NULL").all() as { source_id: string }[]).map(r => r.source_id));
-    return currentMaterials(store).filter(m => !removed.has(m.sourceId));
+    return currentMaterials(store).filter(m => !removed.has(m.sourceId)).map(m => aliases.has(m.sourceId) ? { ...m, key: aliases.get(m.sourceId)! } : m);
   });
 }
 
@@ -82,7 +86,6 @@ export function linkedMaterialOffers(all: KnowledgeMaterial[], targets: Knowledg
   for (const target of targets) {
     if (!target.path) continue;
     const references = [...target.text.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)].map(m => m[1]!);
-    if (target.path.endsWith(".html")) references.push("./build.mjs", "./app.jsx", "./styles.css");
     for (const ref of references) {
       if (/^(?:[a-z]+:|\/\/)/i.test(ref)) continue;
       const [file, anchor] = ref.split("#");

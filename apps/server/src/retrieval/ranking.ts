@@ -6,7 +6,7 @@ import type { SearchQuery, SourceCandidate } from "./port.js";
  */
 export function rankEvidence(hits: SourceCandidate[], query: SearchQuery, vectors = new Map<string, Float32Array>()): SourceCandidate[] {
   const limit = Math.max(1, Math.min(query.limit ?? 20, 100));
-  const pool = hits.map(hit => ({ ...hit, score: hit.score * (query.sourceWeight?.(hit.id) ?? 1) * (hit.routes?.includes('code-symbol') ? 1.5 : 1) }))
+  const pool = hits.map(hit => ({ ...hit, score: hit.score * (hit.routes?.includes('code-symbol') ? 1.5 : 1) }))
     .sort((a,b) => b.score-a.score || a.id.localeCompare(b.id));
   if (!pool.length || query.diversify === false) return pool.slice(0,limit);
   const scale = pool[0]!.score || 1, selected: SourceCandidate[] = [];

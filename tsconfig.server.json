@@ -24,6 +24,7 @@
     "scripts/review-verify.ts",
     "scripts/retrieval-index.ts",
     "scripts/live-retrieval-smoke.ts",
-    "scripts/review-guides.ts"
+    "scripts/review-guides.ts",
+    "scripts/live-knowledge-smoke.ts"
   ]
 }

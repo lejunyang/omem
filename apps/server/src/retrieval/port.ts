@@ -37,8 +37,6 @@ export type SearchQuery = {
   timeRange?: TimeRange;
   /** Host visibility policy, applied before final ranking/limit. */
   visible?: (fragmentId: string) => boolean;
-  /** Host ranking preference, independent of eligibility. Defaults to equal weights. */
-  sourceWeight?: (fragmentId: string) => number;
   /** False retains raw fused order for comparisons or downstream fusion. */
   diversify?: boolean;
 };

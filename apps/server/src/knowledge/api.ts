@@ -12,6 +12,7 @@ import { KnowledgePipeline } from "./pipeline.js";
 import { KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
 import { posix } from "node:path";
 import { parseFile } from "../code/parse.js";
+import { wikiPageBriefSchema } from "../../../../packages/contracts/src/knowledge.js";
 
 export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
@@ -20,7 +21,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
   const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,
-    children: a.dependencies.filter(d => d.kind === "article").map(d => d.key), generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length, reading: a.reading });
+    topicPath: a.document.topicPath ?? [], generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length, reading: a.reading });
   const resolveCitation = (a: KnowledgeArticle, key: string) => {
     const c = a.document.citations.find(c => c.key === key);
     if (!c) return null;
@@ -53,6 +54,16 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const m = entry.material;
     const knowledge = repository.get(m.key);
     const all = repository.materials();
+    const documentLinks: { href: string; target: string }[] = [];
+    if (m.path) for (const match of m.text.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+      const href = match[1]!;
+      if (/^(?:[a-z]+:|\/\/)/i.test(href)) continue;
+      const file = href.split("#")[0]!;
+      let decoded = file; try { decoded = decodeURIComponent(file); } catch { continue; }
+      const path = file ? posix.normalize(posix.join(posix.dirname(m.path), decoded)) : m.path;
+      const targets = all.filter(target => target.namespace === m.namespace && target.path === path);
+      if (targets.length === 1) documentLinks.push({ href, target: targets[0]!.key });
+    }
     const links: { line: number; label: string; reason: string; target: string }[] = [];
     if (m.path && /\.(?:[cm]?[jt]sx?|vue)$/.test(m.path)) {
       const parsed = parseFile(m.path, m.text);
@@ -68,7 +79,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const filename = m.path ?? (["file", "git"].includes(m.namespace) ? m.title : "");
     const codeLanguage = filename && !/\.(md|markdown)$/i.test(filename) ? filename.split(".").at(-1)?.toLowerCase() ?? "text" : null;
     return { key: m.key, title: m.title, path: m.path, codeLanguage, digest: m.digest, revisionId: m.revisionId, text: m.text, lineCount: m.lineCount, current: entry.current,
-      images: m.images.map(i => ({ ...i, url: prefix + "/assets/" + i.assetId })), knowledge: knowledge ? meta(knowledge) : null, links };
+      images: m.images.map(i => ({ ...i, url: prefix + "/assets/" + i.assetId })), knowledge: knowledge ? meta(knowledge) : null, links, documentLinks };
   });
   app.get<{ Params: { id: string } }>(prefix + "/assets/:id", async (req, reply) => {
     const image = input.store.db.prepare("SELECT json_extract(p.value,'$.mimeType') mime FROM revisions r,json_each(r.body,'$.parts') p WHERE json_extract(p.value,'$.type')='image' AND json_extract(p.value,'$.assetId')=? LIMIT 1").get(req.params.id) as { mime: string } | undefined;
@@ -83,15 +94,20 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return { revisionId };
   });
   app.post<{ Params: { id: string } }>(prefix + "/questions/:id/task", async req => ({ taskId: repository.createTask(req.params.id) }));
-  app.get<{ Querystring: { q?: string } }>(prefix + "/search", async req => {
+  app.get<{ Querystring: { q?: string; topic?: string } }>(prefix + "/search", async (req, reply) => {
     const text = (req.query.q ?? "").trim().slice(0, 300), terms = tokenize(text);
     if (!terms.length) return [];
     repository.refresh();
-    const query = { text, limit: 60 };
+    let topic: string[] = [];
+    try { if (req.query.topic) { topic = JSON.parse(req.query.topic); if (!Array.isArray(topic) || topic.some(p => typeof p !== "string")) throw Error(); } }
+    catch { return reply.code(400).send({ error: "分类路径无效" }); }
+    const articles = repository.list().filter(a => a.current && topic.every((part, i) => a.document.topicPath?.[i] === part));
+    const materials = new Map(repository.materials().map(m => [m.key, m]));
+    const scopedFragments = new Set(articles.flatMap(a => a.dependencies.filter(d => d.kind === "material").flatMap(d => materials.get(d.key)?.fragments.map(f => f.id) ?? [])));
+    const query = { text, limit: 60, ...(topic.length ? { visible: (id: string) => scopedFragments.has(id) } : {}) };
     const hits = await (retrieval.searchSourcesAsync?.(query) ?? retrieval.searchSources(query));
     const hitRanks = new Map(hits.map((hit, i) => [hit.fragmentId, 1 / (i + 1)]));
-    const materials = new Map(repository.materials().map(m => [m.key, m]));
-    return repository.list().filter(a => a.current).flatMap(a => a.document.sections.flatMap(section => {
+    const ranked = articles.flatMap(a => a.document.sections.flatMap(section => {
       const words = (a.document.title + " " + section.title + " " + section.body).toLowerCase();
       const lexical = terms.reduce((n, term) => n + (words.includes(term) ? 1 : 0), 0) / terms.length;
       let evidence = 0;
@@ -105,7 +121,28 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
       }
       const score = lexical + evidence;
       return score ? [{ ...meta(a), section: section.key, sectionTitle: section.title, excerpt: section.body.slice(0, 600), derived: true, score }] : [];
-    })).sort((a, b) => b.score - a.score).slice(0, 50);
+    })).sort((a, b) => b.score - a.score);
+    // One article per result, with its best matching section. Long articles do
+    // not consume the whole result window simply by repeating related words.
+    const best = new Map<string, typeof ranked[number]>();
+    for (const hit of ranked) if (!best.has(hit.key)) best.set(hit.key, hit);
+    return [...best.values()].slice(0, 50);
+  });
+  app.post<{ Body: { brief: unknown; revisionIds: string[] } }>(prefix + "/pages", async (req, reply) => {
+    if (!input.profile) return reply.code(503).send({ error: "请先在能力与连接中配置 Agent" });
+    if (running) return reply.code(409).send({ error: "知识整理正在进行" });
+    const parsed = wikiPageBriefSchema.safeParse(req.body?.brief);
+    const ids = req.body?.revisionIds;
+    if (!parsed.success || !Array.isArray(ids) || !ids.length || ids.length > 500) return reply.code(400).send({ error: "请填写阅读目标并选择原始材料" });
+    const selectedIds = new Set(ids), selected = repository.materials().filter(m => selectedIds.has(m.revisionId));
+    if (selected.length !== selectedIds.size) return reply.code(400).send({ error: "所选材料已更新，请刷新后重试" });
+    const brief = { ...parsed.data, materialKeys: selected.map(m => m.key) };
+    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: "traex" }, { budget: input.budget, onPublish: input.onPublish });
+    const pipeline = running;
+    lastRun = { state: "running", title: brief.title, key: brief.key };
+    void pipeline.writePage(brief).then(() => { lastRun = { state: "published", title: brief.title, key: brief.key }; })
+      .catch(error => { lastRun = { state: "failed", title: brief.title, error: String(error) }; }).finally(() => { running = null; });
+    return reply.code(202).send({ state: "running", key: brief.key });
   });
   app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });

@@ -30,20 +30,17 @@
           },
           "category": {
             "type": "string",
-            "enum": [
-              "overview",
-              "architecture",
-              "background",
-              "requirements",
-              "progress",
-              "implementation",
-              "tests",
-              "configuration",
-              "workflow",
-              "research",
-              "conversation",
-              "visual"
-            ]
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "topicPath": {
+            "description": "Human topic hierarchy, broad to specific. Organize by the subject and reader purpose, not source directories or internal ids.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
           },
           "sections": {
             "minItems": 1,
@@ -224,5 +221,5 @@
     "documents"
   ],
   "additionalProperties": false,
-  "$id": "https://omem.local/schemas/KnowledgeBatch.v1"
+  "$id": "https://omem.invalid/contracts/KnowledgeBatch.v1"
 }

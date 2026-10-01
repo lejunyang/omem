@@ -80,7 +80,7 @@ export class SemanticRetrieval extends KeywordRetrieval {
 
   /** Separate async hook keeps synchronous lexical callers compatible. */
   async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {
-    const lexical = super.searchSources({ ...query, sourceWeight: undefined, diversify: false, limit: 100 });
+    const lexical = super.searchSources({ ...query, diversify: false, limit: 100 });
     if (!query.text.trim() || !this.model) return rankEvidence(lexical,query);
     try {
       const [raw] = await this.model.embed([query.text.slice(0, 400)], "query");

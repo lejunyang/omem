@@ -3,6 +3,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { KnowledgeArtifact } from "../../../../packages/contracts/src/knowledge.js";
 import { stableDigest } from "../storage/digest.js";
+import { sourceForMaterialKey } from "./material-identity.js";
 type Row = Record<string, unknown>;
 
 export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): Row[] {
@@ -13,8 +14,8 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
   const articleCache = new Map<string, { id: string; artifact: KnowledgeArtifact } | null>();
   function source(key: string) {
     if (sourceCache.has(key)) return sourceCache.get(key)!;
-    const index = key.indexOf(":"), namespace = key.startsWith("omem:") ? "file" : key.slice(0, index), external = key.startsWith("omem:") ? key : key.slice(index + 1);
-    const row = db.prepare("SELECT r.*,s.namespace FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace=? AND (s.external_id=? OR (s.external_id IS NULL AND s.id=?)) LIMIT 1").get(namespace, external, external) as Row | undefined;
+    const sourceId = sourceForMaterialKey(db, key);
+    const row = sourceId ? db.prepare("SELECT r.*,s.namespace FROM sources s JOIN revisions r ON s.head=r.id WHERE s.id=?").get(sourceId) as Row | undefined : undefined;
     if (!row) { sourceCache.set(key, null); return null; }
     const body = JSON.parse(String(row.body));
     if (!Array.isArray(body.parts) || body.context?.derived || body.provenance?.producerKind === "derived") { sourceCache.set(key, null); return null; }

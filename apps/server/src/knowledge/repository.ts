@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Store } from "../store.js";
 import { stableDigest } from "../storage/digest.js";
+import { sourceForMaterialKey, ensureMaterialAliases } from "./material-identity.js";
 import { knowledgeDocumentSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -21,7 +22,7 @@ export function materialFromRevision(store: Store, revisionId: string): Knowledg
   const images = parts.filter(p => p.type === "image").map(p => ({ assetId: p.assetId!, mimeType: p.mimeType as KnowledgeMaterial["images"][number]["mimeType"], label: p.label ?? r.title }));
   const external = source.external_id ? String(source.external_id) : r.sourceId;
   const material: KnowledgeMaterial = {
-    key: r.source === "file" && external.startsWith("omem:") ? external : `${r.source}:${external}`,
+    key: `${r.source}:${external}`,
     title: r.title, path: typeof context.filePath === "string" ? context.filePath : r.source === "file" && /^(?:\/|[A-Za-z]:[\\/])/.test(external) ? external.replace(/\\/g, "/") : null,
     conversationId: typeof context.conversationId === "string" ? context.conversationId : undefined,
     sourceId: r.sourceId, revisionId: r.id, namespace: r.source,
@@ -35,7 +36,9 @@ export function materialFromRevision(store: Store, revisionId: string): Knowledg
 
 export function currentMaterials(store: Store): KnowledgeMaterial[] {
   const rows = store.db.prepare("SELECT id,head FROM sources WHERE head IS NOT NULL ORDER BY namespace,external_id").all() as Row[];
-  return rows.map(r => materialFromRevision(store, String(r.head))).filter((m): m is KnowledgeMaterial => !!m);
+  const aliases = store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_material_aliases'").get()
+    ? new Map((store.db.prepare("SELECT material_key,source_id FROM knowledge_material_aliases ORDER BY material_key").all() as Row[]).map(r => [String(r.source_id), String(r.material_key)])) : new Map<string, string>();
+  return rows.map(r => materialFromRevision(store, String(r.head))).filter((m): m is KnowledgeMaterial => !!m).map(m => aliases.has(m.sourceId) ? { ...m, key: aliases.get(m.sourceId)! } : m);
 }
 
 /** Validate the exact source/derived distinction and every inline reference.
@@ -92,6 +95,7 @@ export class KnowledgeRepository {
     // CLI generation and the reader may share this WAL database. Wait for a
     // bounded writer transaction instead of failing immediately with SQLITE_BUSY.
     store.db.exec("PRAGMA busy_timeout=30000");
+    ensureMaterialAliases(store.db);
     store.db.exec(`CREATE TABLE IF NOT EXISTS knowledge_revisions(
       id TEXT PRIMARY KEY, document_key TEXT NOT NULL, artifact TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS knowledge_heads(document_key TEXT PRIMARY KEY, revision_id TEXT NOT NULL REFERENCES knowledge_revisions(id), current INTEGER NOT NULL DEFAULT 0);
@@ -189,12 +193,11 @@ export class KnowledgeRepository {
   resolveMaterial(key: string, expectedDigest?: string) {
     const current = this.materials().find(m => m.key === key);
     if (current && (!expectedDigest || current.digest === expectedDigest)) return { material: current, current: true };
-    const separator = key.indexOf(":");
-    const namespace = key.startsWith("omem:") ? "file" : key.slice(0, separator);
-    const externalId = key.startsWith("omem:") ? key : key.slice(separator + 1);
-    for (const row of this.store.db.prepare("SELECT r.id FROM revisions r JOIN sources s ON s.id=r.source_id WHERE s.namespace=? AND (s.external_id=? OR s.id=?) ORDER BY r.created_at DESC").all(namespace, externalId, externalId) as Row[]) {
+    const sourceId = sourceForMaterialKey(this.store.db, key);
+    if (!sourceId) return null;
+    for (const row of this.store.db.prepare("SELECT id FROM revisions WHERE source_id=? ORDER BY created_at DESC").all(sourceId) as Row[]) {
       const m = materialFromRevision(this.store, String(row.id));
-      if (m?.key === key && (!expectedDigest || m.digest === expectedDigest)) return { material: m, current: false };
+      if (m && (!expectedDigest || m.digest === expectedDigest)) return { material: { ...m, key }, current: false };
     }
     return null;
   }

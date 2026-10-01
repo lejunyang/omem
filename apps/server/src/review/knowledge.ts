@@ -32,14 +32,21 @@ export function saveReviewAnswerMaterials(store: Store, root: string) {
   writeFileSync(path, JSON.stringify(inputs, null, 2) + "\n");
 }
 
+export const reviewMaterialHref = (target: import("../../../../packages/contracts/src/knowledge.js").KnowledgeCitation["target"]) => target.key.startsWith("omem:") ? `../../../${target.key.slice(5)}${target.startLine ? "#L" + target.startLine : ""}` : undefined;
+
 export function publishReviewArticle(root: string, article: KnowledgeArticle) {
-  writeKnowledgeArticle(join(root, ".repo-review/runtime/knowledge-staging"), article);
-  writeKnowledgeArticle(join(root, ".repo-review/knowledge/articles"), article);
+  writeKnowledgeArticle(join(root, ".repo-review/runtime/knowledge-staging"), article, reviewMaterialHref);
+  writeKnowledgeArticle(join(root, ".repo-review/knowledge/articles"), article, reviewMaterialHref);
 }
 
 export function writeReviewKnowledgeIndex(root: string, articles: KnowledgeArticle[]) {
-  const pages = articles.filter(a => a.current), overview = pages.find(a => a.document.key === "guide:overview") ?? pages.find(a => a.document.key === "topic:overview");
-  const md = ["# omem · 可追溯知识", "", overview?.document.summary ?? "仓库材料经 AI 分析与独立复核，正文引用可递归进入相关知识、代码和原始文档。", "", ...pages.filter(a => a.reading).sort((a,b) => a.reading!.order-b.reading!.order).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`), "", "## 其他主题", "", ...pages.filter(a => a.document.key.startsWith("topic:")).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`), "", "## 模块与材料", "", ...pages.filter(a => !a.document.key.startsWith("topic:") && !a.reading).map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`)].join("\n") + "\n";
+  const pages = articles.filter(a => a.current).sort((a, b) => (a.reading?.order ?? Infinity) - (b.reading?.order ?? Infinity) || a.document.title.localeCompare(b.document.title));
+  const groups = new Map<string, KnowledgeArticle[]>();
+  for (const article of pages) {
+    const label = article.document.topicPath?.join(" / ") || "未分类";
+    groups.set(label, [...(groups.get(label) ?? []), article]);
+  }
+  const md = ["# 知识目录", "", ...[...groups].flatMap(([label, members]) => ["## " + label, "", ...members.map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`), ""])].join("\n");
   const path = join(root, ".repo-review/wiki.md");
   if (!existsSync(path) || readFileSync(path, "utf8") !== md) writeFileSync(path, md);
 }

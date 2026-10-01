@@ -8,15 +8,12 @@ import { Store } from "../store.js";
 import { restoreReviewKnowledge } from "../review/knowledge.js";
 import { createReviewKnowledgeRepository } from "../review/materials.js";
 import { reviewDataDir } from "../review/store.js";
-import { digest, materialFromRevision } from "./repository.js";
+import { digest, materialFromRevision } from "../knowledge/repository.js";
 import { stableDigest } from "../storage/digest.js";
-import { loadReviewSearchPolicy } from "../review/search-policy.js";
 import type { RetrievalPort, SearchQuery } from "../retrieval/port.js";
 
-/** Apply the repository input's lifecycle and ranking to every dev search entry.
- * Personal captures keep their original eligibility and weight. */
-export function developmentRetrieval(store: Store, root: string, retrieval: RetrievalPort): RetrievalPort {
-  const weight = loadReviewSearchPolicy(root);
+/** Input adapter eligibility only. Content ranking is shared with all captures. */
+export function developmentRetrieval(store: Store, retrieval: RetrievalPort): RetrievalPort {
   const policy = (query: SearchQuery): SearchQuery => {
     const rows = store.db.prepare(`SELECT f.id,s.external_id AS key,m.removed,m.legacy_alias_of
       FROM fragments f JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
@@ -25,7 +22,6 @@ export function developmentRetrieval(store: Store, root: string, retrieval: Retr
     const imported = new Map(rows.map(row => [row.id, row]));
     return { ...query,
       visible: id => { const row = imported.get(id); return !row?.removed && !row?.legacy_alias_of && (query.visible?.(id) ?? true); },
-      sourceWeight: id => { const row = imported.get(id); return (query.sourceWeight?.(id) ?? 1) * (row ? weight(row.key.slice(5), query.text) : 1); },
     };
   };
   return {
@@ -64,7 +60,7 @@ export function importDevelopmentKnowledge(store: Store, root: string) {
           if (!material || !digests.has(material.digest)) continue;
           const revision = prior.revision(material.revisionId)!;
           const parts = revision.parts.map(p => p.type === "image" ? { type: "image", mimeType: p.mimeType, label: p.label, data: prior.asset(p.assetId)?.toString("base64") } : p);
-          store.capture({ source: "file", externalId: material.key, title: revision.title, parts, context: revision.context, provenance: revision.provenance } as CaptureInput);
+          store.capture({ source: "file", externalId: key, title: revision.title, parts, context: revision.context, provenance: revision.provenance } as CaptureInput);
           digests.delete(material.digest); if (!digests.size) break;
         }
       }

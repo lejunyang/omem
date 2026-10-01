@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rankEvidence } from "../src/retrieval/ranking.js";
-import { loadReviewSearchPolicy } from "../src/review/search-policy.js";
 import { KeywordRetrieval } from "../src/retrieval/keyword.js";
 import { Store } from "../src/store.js";
 import type { SourceCandidate } from "../src/retrieval/port.js";
@@ -17,24 +16,15 @@ it("retains the strongest evidence while placing complementary evidence before m
   expect(rankEvidence(hits,{text:"implementation",limit:2,diversify:false},vectors).map(h=>h.id)).toEqual(['a','mirror']);
 });
 
-it("applies repository preferences before top-N and allows explicitly searching historical material", () => {
-  const dir=mkdtempSync(join(tmpdir(),'review-ranking-')), store=new Store(join(dir,'db'));
+it("filters eligible evidence before top-N without path preferences", () => {
+  const dir=mkdtempSync(join(tmpdir(),'retrieval-eligibility-')), store=new Store(dir);
   try {
-    mkdirSync(join(dir,'config'));
-    writeFileSync(join(dir,'config/review-search.json'),JSON.stringify({rules:[{prefix:'docs/prototype/',weight:.2}]}));
-    const weight=loadReviewSearchPolicy(dir), paths=new Map<string,string>();
-    for(const path of ['docs/prototype/design.md','src/current.ts']) {
-      const capture=store.capture({source:'file',externalId:path,title:path,parts:[{type:'text',text:'circuit breaker retry policy'}],context:{}});
-      paths.set(capture.revision.fragments[0]!.id,path);
-    }
+    const first=store.capture({source:'manual',externalId:'language',title:'口语练习',parts:[{type:'text',text:'Practice shadowing by repeating short sentences.'}],context:{}});
+    const second=store.capture({source:'file',externalId:'anything',title:'Shadowing notes',parts:[{type:'text',text:'Practice shadowing with a recording.'}],context:{filePath:'docs/archive/recording.md'}});
     const retrieval=new KeywordRetrieval(store.db);
-    const hits=retrieval.searchSources({text:'circuit breaker',limit:1,sourceWeight:id=>weight(paths.get(id)!,'circuit breaker')});
-    expect(paths.get(hits[0]!.id)).toBe('src/current.ts');
-    expect(weight('docs/prototype/design.md','查原型里的 circuit breaker')).toBe(1);
-    expect(weight('docs/prototype/design.md','docs/prototype/design.md')).toBe(1);
-    expect(weight('docs/prototype/design.md','circuit breaker','research')).toBe(1);
-    const hidden=retrieval.searchSources({text:'circuit breaker',limit:1,visible:id=>paths.get(id)!=='src/current.ts',sourceWeight:()=>1});
-    expect(paths.get(hidden[0]!.id)).toBe('docs/prototype/design.md');
+    expect(retrieval.searchSources({text:'shadowing',limit:10})).toHaveLength(2);
+    const hits=retrieval.searchSources({text:'shadowing',limit:1,visible:id=>id!==first.revision.fragments[0]!.id});
+    expect(hits[0]!.sourceRevisionId).toBe(second.revision.id);
   } finally {store.close();rmSync(dir,{recursive:true,force:true});}
 });
 

@@ -1,16 +1,16 @@
 import { stableDigest } from "../storage/digest.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { KnowledgeArtifact } from "../../../../packages/contracts/src/knowledge.js";
+import type { KnowledgeArtifact, KnowledgeCitation } from "../../../../packages/contracts/src/knowledge.js";
 import { knowledgeDocumentSchema } from "../../../../packages/contracts/src/knowledge.js";
 import { digest, KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
 
-export function articleMarkdown(a: KnowledgeArticle) {
+export function articleMarkdown(a: KnowledgeArticle, materialHref?: (target: KnowledgeCitation["target"]) => string | undefined) {
   const links = new Map(a.document.citations.map(c => [c.key, c]));
   const body = a.document.sections.map(section => {
     const text = section.body.replace(/\[\[([a-zA-Z][a-zA-Z0-9_-]*)\]\]/g, (_, id: string) => {
       const c = links.get(id); if (!c) return "（引用不可用）";
-      const target = c.target.kind === "article" ? `${digest(c.target.key)}.md${c.target.section ? "#" + c.target.section : ""}` : c.target.key.startsWith("omem:") ? `../../../${c.target.key.slice(5)}${c.target.startLine ? "#L" + c.target.startLine : ""}` : "#source-evidence";
+      const target = c.target.kind === "article" ? `${digest(c.target.key)}.md${c.target.section ? "#" + c.target.section : ""}` : materialHref?.(c.target) ?? "#source-evidence";
       return `[${c.label.replace(/[\[\]]/g, "")} ↗](${target} "${c.reason.replace(/["\n]/g, " ")}")`;
     });
     return `<a id="${section.key}"></a>\n## ${section.title}\n\n${text}`;
@@ -18,11 +18,11 @@ export function articleMarkdown(a: KnowledgeArticle) {
   return `# ${a.document.title}\n\n${a.document.summary}\n\n来源：${a.generation.model} 分析，${a.review.model} 独立复核；模型解释仍可被原始证据纠正。\n\n${body}\n`;
 }
 
-export function writeKnowledgeArticle(directory: string, a: KnowledgeArticle) {
+export function writeKnowledgeArticle(directory: string, a: KnowledgeArticle, materialHref?: (target: KnowledgeCitation["target"]) => string | undefined) {
   mkdirSync(directory, { recursive: true });
   const { current, revision, ...artifact } = a;
   const name = digest(a.document.key);
-  const outputs = [[`${name}.json`, JSON.stringify(artifact, null, 2) + "\n"], [`${name}.md`, articleMarkdown(a)]] as const;
+  const outputs = [[`${name}.json`, JSON.stringify(artifact, null, 2) + "\n"], [`${name}.md`, articleMarkdown(a, materialHref)]] as const;
   for (const [file, text] of outputs) {
     const path = join(directory, file);
     if (!existsSync(path) || readFileSync(path, "utf8") !== text) writeFileSync(path, text);
