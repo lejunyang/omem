@@ -2,75 +2,195 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/knowledge.ts",
-    "title": "仓库知识资产的恢复、持久化与索引发布",
-    "summary": "连接运行时知识仓库与可提交的 repo-review 资产，恢复用户回答和文章、标记待重核验依赖，并生成知识导航页。",
-    "category": "workflow",
+    "title": "仓库评审知识的恢复、持久化与发布编排",
+    "summary": "该模块连接仓库材料捕获、通用知识仓库与磁盘知识资产，负责恢复用户补充和已复核文章、衔接问题状态与失效记录、导出回答、双目录发布文章并生成 Wiki 入口。它是 repo-review 的编排层，不承担代码分析、模型生成或引用语义复核。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "restore",
-        "title": "启动恢复与失效标记",
-        "body": "`restoreReviewKnowledge` 先读取用户回答文件，强制其为 manual 来源且 externalId 使用 knowledge-answer 前缀，再通过 Store 捕获为固定材料。随后捕获仓库材料、恢复文章，并把对应问题标为 answered。若回答材料的 digest 尚未出现在文章依赖中，则写入 invalidation，明确表示“已入库”不等于知识正文已重核验；最后刷新仓库视图。[[c1]]"
+        "key": "responsibility",
+        "title": "模块定位与统一知识链路",
+        "body": "该文件是 repo-review 接入通用知识系统的编排层：恢复时先捕获仓库材料，再创建通用 `KnowledgeRepository` 并导入文章，没有建立代码专用的知识存储。[[c1]] 材料适配器把普通文件按内容哈希捕获为稳定的 `omem:*` 来源；内容或捕获格式未变化时可复用已有 revision，从而让文章依赖能够对照当前材料。[[c2]]\n\n文章的 Markdown 渲染、文档键摘要命名以及 JSON/Markdown 双格式写入由通用 artifacts 模块实现；依赖检查和恢复状态则由该模块的另一段恢复流程负责。[[c3]][[c5]] 本文件主要选择 repo-review 的目录并串联这些通用能力。"
       },
       {
-        "key": "persist",
-        "title": "回答与文章持久化",
-        "body": "`saveReviewAnswerMaterials` 从当前 manual 来源中筛选 knowledge-answer，重建 CaptureInput 并写入 `.repo-review/knowledge/user-notes.json`。`publishReviewArticle` 同时写运行时 staging 和可发布 articles 目录，使生成过程与提交资产均有落点。写文件前仅知识目录被显式创建；文章目录是否自动创建取决于被调用的 `writeKnowledgeArticle`，本材料不能进一步确认。[[c2]]"
+        "key": "restore-flow",
+        "title": "启动恢复与回答触发的重核验",
+        "body": "`restoreReviewKnowledge` 先读取 `user-notes.json`，只接受 `source=manual` 且 `externalId` 以 `knowledge-answer:` 开头的记录，并交由捕获 schema 校验；解析、身份检查或 schema 校验失败都会从当前函数抛出。[[c4]] 随后它捕获仓库材料并恢复已发布文章。恢复要求资产具有生成模型记录、复核模型记录且复核结论为 `accepted`；这替代了旧稿中“实现保证生成者与复核者独立”的过强结论，因为所给实现并未核验两者身份是否不同。材料摘要或子文章 revision 变化时，导入结果标记为 stale。[[c5]]\n\n已恢复的用户回答会把对应问题更新为 answered 并记录回答 revision；若目标文章尚未依赖该回答的当前 digest，则登记“尚未用于知识重核对”的 invalidation。[[c6]] 因此，回答被捕获和问题被标记为已回答，并不代表正文已经完成重新分析。"
       },
       {
-        "key": "index",
-        "title": "Wiki 索引生成边界",
-        "body": "索引只纳入 `current` 文章，以 `topic:overview` 摘要作为介绍；其他 topic 页面和模块/材料页面分组输出，并以 document key 的 digest 形成链接。内容无变化时不重写 wiki。该函数只负责导航文件，不执行模型分析、独立复核或覆盖率判定；这些能力来自其调用链上的通用知识组件。[[c3]]"
+        "key": "persistence-boundaries",
+        "title": "回答导出、文章发布与 Wiki 索引",
+        "body": "`saveReviewAnswerMaterials` 仅导出 manual 命名空间下 `knowledge-answer:*` 来源的当前 revision，将其中的 parts、context 和 provenance 写回 `user-notes.json`。[[c7]] `publishReviewArticle` 连续调用同一通用写入器，把文章分别发布到运行期 staging 与版本化 articles 目录。[[c8]] 通用写入器以文档键摘要作为文件名，并为每个目录生成 JSON 资产和带内联引用链接的 Markdown。[[c3]]\n\n`writeReviewKnowledgeIndex` 只从调用方传入列表中筛选 `current=true` 的文章：主题文章与模块文章分别列出，概览摘要用作导语，并仅在文本变化时重写 Wiki 文件。[[c9]] 双目录写入和索引写入均为同步的顺序操作，所给代码没有展示跨文件事务或失败补偿。"
+      },
+      {
+        "key": "limits",
+        "title": "校验边界与被替代的状态结论",
+        "body": "该模块不分析代码、不调用生成模型，也不判断引用是否在语义上支持论断。通用仓库校验负责文档 schema、引用键、目标、章节和材料行号等结构约束，并明确把语义正确性留给独立模型角色。[[c10]]\n\n旧稿关于“stale、rejected 或 missing 的导入结果不会生成入口”的结论应被替代：当前索引函数只检查传入文章的 `current` 字段，并不读取 `knowledge_imports` 的导入状态。[[c9]] 恢复流程确实会记录 restored、stale、rejected 或 missing，但现有材料不足以证明某次新资产导入失败时，数据库里已有的 current 文章一定被撤销。[[c5]]"
+      },
+      {
+        "key": "open-risks",
+        "title": "尚待确认的运行策略",
+        "body": "当前恢复入口将用户补充文件的读取、JSON 解析、身份检查与捕获校验串在同一同步流程中，未展示坏记录隔离策略。[[c4]] 同样，文章发布依次写入两个目录，未展示原子替换或回滚。[[c8]] 这些都属于上层运行策略与容错要求，不能仅凭本文件判断其预期行为。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审知识恢复流程",
-        "reason": "支持回答捕获、文章恢复、问题状态更新及未消费回答触发失效标记的说明。",
+        "label": "评审知识恢复的组装入口",
+        "reason": "支持该模块依次连接仓库材料捕获、通用知识仓库创建与文章恢复的定位。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/knowledge.ts",
+          "startLine": 15,
+          "endLine": 17
+        },
+        "quote": "  const coverage = captureRepositoryMaterials(store, root);\n  const repository = createReviewKnowledgeRepository(store);\n  const restored = restoreKnowledgeArticles(repository, join(root, \".repo-review/knowledge/articles\"));"
+      },
+      {
+        "key": "c2",
+        "label": "仓库材料的内容哈希捕获",
+        "reason": "支持文件按哈希判断是否重新捕获，并以 omem 文件键形成稳定材料来源。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 36,
+          "endLine": 54
+        },
+        "quote": "      const bytes = readFileSync(absolute);\n      const hash = createHash(\"sha256\").update(bytes).digest(\"hex\");\n      const externalId = `omem:${path}`;\n      const previous = store.db.prepare(\"SELECT r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='file' AND s.external_id=?\").get(externalId) a"
+      },
+      {
+        "key": "c3",
+        "label": "通用文章渲染与双格式写入",
+        "reason": "支持内联引用 Markdown 渲染、文档键摘要命名以及 JSON 和 Markdown 文件生成。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "startLine": 8,
+          "endLine": 29
+        },
+        "quote": "export function articleMarkdown(a: KnowledgeArticle) {\n  const links = new Map(a.document.citations.map(c => [c.key, c]));\n  const body = a.document.sections.map(section => {\n    const text = section.body.replace(/\\[\\[([a-zA-Z][a-zA-Z0-9_-]*)\\]\\]/g, (_, id: string) => {\n      const c = links.get(id); if (!c) return \"（引"
+      },
+      {
+        "key": "c4",
+        "label": "用户补充的恢复约束",
+        "reason": "支持 user-notes 的同步读取、manual 来源限制、外部标识检查和捕获 schema 校验。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 9,
-          "endLine": 25
+          "endLine": 14
         },
         "quote": "export function restoreReviewKnowledge(store: Store, root: string) {\n  const notes = join(root, \".repo-review/knowledge/user-notes.json\");\n  if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, \"utf8\")) as CaptureInput[]) {\n    if (input.source !== \"manual\" || !input.externalId?.startsWith(\"knowled"
       },
       {
-        "key": "c2",
-        "label": "回答和文章资产写入",
-        "reason": "说明用户补充与知识文章分别写入哪些评审目录。",
+        "key": "c5",
+        "label": "文章恢复、来源记录与状态判定",
+        "reason": "支持生成和复核模型记录要求、accepted 复核结论、依赖过期判定以及 rejected 和 missing 状态；同时表明实现未校验生成者与复核者身份不同。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "startLine": 32,
+          "endLine": 59
+        },
+        "quote": "export function restoreKnowledgeArticles(repository: KnowledgeRepository, directory: string) {\n  if (!existsSync(directory)) return [];\n  const result: { file: string; state: string; reason: string }[] = [];\n  const pending: { file: string; artifact: KnowledgeArtifact }[] = [];\n  for (const file of readdirSync(director"
+      },
+      {
+        "key": "c6",
+        "label": "回答状态与知识失效衔接",
+        "reason": "支持用户回答更新问题状态，并在文章未依赖当前回答时登记重核验失效原因。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/knowledge.ts",
+          "startLine": 18,
+          "endLine": 24
+        },
+        "quote": "  for (const m of repository.materials().filter(m => m.key.startsWith(\"manual:knowledge-answer:\"))) {\n    const id = m.key.slice(\"manual:knowledge-answer:\".length);\n    store.db.prepare(\"UPDATE knowledge_questions SET state='answered',answer_revision=? WHERE id=?\").run(m.revisionId, id);\n    const q = store.db.prepare("
+      },
+      {
+        "key": "c7",
+        "label": "用户回答材料导出",
+        "reason": "支持仅导出指定 manual 来源的当前内容，并保存 parts、context 与 provenance。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 28,
-          "endLine": 38
+          "endLine": 32
         },
         "quote": "export function saveReviewAnswerMaterials(store: Store, root: string) {\n  const rows = store.db.prepare(\"SELECT s.external_id,r.title,r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='manual' AND s.external_id LIKE 'knowledge-answer:%' ORDER BY s.external_id\").all() as { external_id: string; titl"
       },
       {
-        "key": "c3",
-        "label": "知识 Wiki 索引生成",
-        "reason": "支持 current 页面筛选、主题分组、摘要和 digest 链接规则。",
+        "key": "c8",
+        "label": "文章向两个目录发布",
+        "reason": "支持同一文章依次写入运行期 staging 与可发布 articles 目录，也揭示该函数未提供跨目录事务。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/knowledge.ts",
+          "startLine": 35,
+          "endLine": 38
+        },
+        "quote": "export function publishReviewArticle(root: string, article: KnowledgeArticle) {\n  writeKnowledgeArticle(join(root, \".repo-review/runtime/knowledge-staging\"), article);\n  writeKnowledgeArticle(join(root, \".repo-review/knowledge/articles\"), article);\n}"
+      },
+      {
+        "key": "c9",
+        "label": "基于 current 字段的 Wiki 索引",
+        "reason": "支持索引仅筛选传入列表中的 current 文章、按主题分组并在内容变化时写入文件；它不读取导入状态。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 40,
-          "endLine": 45
+          "endLine": 44
         },
         "quote": "export function writeReviewKnowledgeIndex(root: string, articles: KnowledgeArticle[]) {\n  const pages = articles.filter(a => a.current), overview = pages.find(a => a.document.key === \"topic:overview\");\n  const md = [\"# omem · 可追溯知识\", \"\", overview?.document.summary ?? \"仓库材料经 AI 分析与独立复核，正文引用可递归进入相关知识、代码和原始文档。\", \"\", ...pa"
+      },
+      {
+        "key": "c10",
+        "label": "知识文档结构校验边界",
+        "reason": "支持通用仓库校验内联引用、目标和材料范围，而语义正确性由独立模型角色检查。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 41,
+          "endLine": 69
+        },
+        "quote": "/** Validate the exact source/derived distinction and every inline reference.\n * Semantic correctness is checked separately by an independent model role. */\nexport function validateKnowledgeDocument(document: KnowledgeDocument, materials: Map<string, KnowledgeMaterial>, articles: Map<string, KnowledgeArticle>, offered?"
       }
     ],
     "questions": [
       {
-        "question": "文章发布目标目录不存在时，`writeKnowledgeArticle` 是否会自行创建目录并保证双写的一致性？",
-        "why": "当前文件只显式创建用户回答目录，文章写入函数的内部实现未包含在材料中。",
-        "nextStep": "检查知识 artifact 写入实现及失败注入测试，确认 staging 成功而发布目录失败时的恢复策略。",
+        "question": "文章向 staging 与发布目录写入时，如果第二次写入失败，是否需要保证两个目录原子一致或提供恢复机制？",
+        "why": "当前实现连续执行两次同步写入，所给材料未展示事务、临时文件替换或失败补偿，可能留下 staging 已更新而发布目录未更新的状态。",
+        "nextStep": "检查调用方的错误处理和启动恢复约定，补充第二次写入失败的行为测试；若产品要求强一致，再确定原子发布或补偿策略。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c8"
+        ]
+      },
+      {
+        "question": "损坏的 user-notes.json 或单条非法用户回答应使整个知识恢复失败，还是应隔离坏记录并继续恢复其他资产？",
+        "why": "读取、JSON 解析、来源检查和 schema 校验位于同一同步流程中，任一异常都会在材料捕获与文章恢复之前中止；材料未说明这是否是刻意的 fail-fast 策略。",
+        "nextStep": "由启动流程和产品容错要求确认预期，并增加整文件损坏、单条非法输入和其余有效记录能否恢复的测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "当磁盘中的新版文章被判为 stale、rejected 或 missing 时，数据库中同键的旧 current 文章应继续出现在 Wiki，还是应被撤销或显式标记？",
+        "why": "恢复流程记录导入状态，但索引只查看调用方传入文章的 current 字段；所给材料没有展示导入失败状态如何影响既有 current 版本。",
+        "nextStep": "检查 KnowledgeRepository 的 publish、refresh 及索引调用方，明确旧版本保留策略，并为新版导入失败后的 Wiki 可见性增加行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c9"
         ]
       }
     ]
@@ -78,85 +198,60 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/semantic.ts",
-      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/review/knowledge.ts",
       "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/main.ts",
-      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/embedding.ts",
-      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/artifacts.ts",
+      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:23:17.669Z",
+    "at": "2026-10-01T00:14:37.923Z",
     "trace": {
-      "runId": "32bc7d66-0960-4507-80cf-17737c4e381d",
-      "roleId": "code-analyst",
+      "runId": "88fc848c-a47a-4f5d-bd86-3c45c0b7cabd",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "5b1fa399e7bc0e096163ad7621c6d6cedae5449ab103a6d353dfae9a150e5ca4",
-      "contextHash": "3c896e38a13d7d900157c57cdaeea7f6b32a47ad974299e132ac389ffb142583",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "923aab33bcfe42f062f7685abcbe8d34ec1a6a8a6ad14fa7077662f56b736734",
+      "contextHash": "fe68e48dbe15fa93612187bf5a9b0cf073d34fd403c035e8ff4bbb6d94b85d56",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f16319e6c3af0d7b77eb2d7755bcca287305890e2afe10df88e9a961aa755612",
+      "fingerprint": "d951fd0971e1043d90e40f60a3a94c32cc8bd96c3fdd700be68b55878101e7e2",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-9d14-7323-afcf-e36a972bfc67"
+        "01a0f4cf-c4f3-7f12-b7e5-ef296e0d31fd"
       ],
       "usage": {
-        "used": 46720,
+        "used": 33777,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -165,10 +260,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 80555,
-          "utf8Bytes": 82669,
-          "estimatedTokens": 27557,
-          "budgetedTokens": 34447,
+          "chars": 41467,
+          "utf8Bytes": 48157,
+          "estimatedTokens": 16053,
+          "budgetedTokens": 20067,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -177,17 +272,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:24:13.144Z",
+    "at": "2026-10-01T00:14:59.941Z",
     "trace": {
-      "runId": "e9553d28-dcce-43c9-a853-c8268b0135ee",
+      "runId": "1bdc12d6-bab5-4902-bdb7-1d56e9ec37a0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "f7101426752da5e0bbe0df083bc8011dc216cbd96a2fd1c43b88d891baebeb5c",
-      "contextHash": "03c89395898c13e7271889abec2597803ac48818cbf7249119f9fd6951cc19ae",
+      "promptHash": "8749165831be4ff824e6df401f1bcac0934106bc5bc457e2aa7ae38c2da2c70e",
+      "contextHash": "fc7ca5f66d4aef7d5f142cd4f07ab9d9d244a904dfa09e36c9be415aad03fc04",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b652922ee8459b62a440ad55335d34bedd6941a43590a2b38eeb5170513fea5f",
+      "fingerprint": "5a4a8062cb750e10f8bbb7c40e45d52661f772d6bdd8c0da775ebc3429b26031",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -200,10 +295,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c5-8213-79a0-99bd-451dafbf8ba5"
+        "01a0f4d0-3b5d-7452-a2a8-ca8d9f967303"
       ],
       "usage": {
-        "used": 51200,
+        "used": 31518,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -212,10 +307,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 94682,
-          "utf8Bytes": 103496,
-          "estimatedTokens": 34499,
-          "budgetedTokens": 43124,
+          "chars": 38486,
+          "utf8Bytes": 43916,
+          "estimatedTokens": 14639,
+          "budgetedTokens": 18299,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

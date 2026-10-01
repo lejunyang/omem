@@ -2,191 +2,168 @@
   "version": 1,
   "document": {
     "key": "omem:osdk.toml",
-    "title": "osdk 工具链与任务配置",
-    "summary": "配置声明 Node 与 pnpm 工具链、来自 one-sdk 的固定版本 osdk-guide，以及开发、仓库分析、局部生成、构建、检查、浏览器、live 和质量任务入口。它描述命令编排；任务是否成功及外部服务是否可用仍取决于实际执行记录。",
+    "title": "osdk.toml：统一运行时、任务与中文向量模型配置",
+    "summary": "该文件声明 omem 的 Node/pnpm 工具链、项目任务入口、osdk 指南来源，以及固定版本的中文 embedding 模型。它是环境与命令编排配置，不足以证明任务已执行、检查已通过或模型已下载。",
     "category": "configuration",
     "sections": [
       {
-        "key": "toolchain",
-        "title": "工具与技能配置",
-        "body": "项目基础运行时声明 Node `24.18.1` 与 pnpm 主版本 `11`，依赖管理启用自动处理并允许源码构建。[[c1]] `osdk-guide` 来自 `github:lejunyang/one-sdk`，固定到指定 ref，面向 universal 与 claude-code agent。[[c2]] 锁文件进一步解析出 pnpm `11.28.2`、冻结锁安装命令及原生锁摘要；因此可复现性应以锁文件和 `osdk deps --frozen` 的实际退出状态共同判断。[[c3]]"
+        "key": "runtime_and_dependency",
+        "title": "运行时与依赖约定",
+        "body": "配置将项目基础描述为服务 Vue、API 与 CLI/ACP 桥接的一套 TypeScript 运行时，并固定 Node 24.18.1、pnpm 11。pnpm 依赖启用自动处理，并允许从源码构建；osdk 指南则锁定到 `lejunyang/one-sdk` 的特定提交，供 universal 与 claude-code 两类代理使用。[[c1]] [[c2]]\n\n这些内容表达的是期望的工具链和依赖来源；仅凭配置无法确认本机当前版本、依赖解析结果或对应指南已经成功加载。"
       },
       {
-        "key": "review-tasks",
-        "title": "仓库分析与局部生成入口",
-        "body": "任务表将 `review:analyze` 与 `review:generate` 都映射到 `scripts/review-knowledge.ts`，并另设 Wiki 构建、开发、测试、类型检查和启动入口。[[c4]] 两者并非未定义的重复命令：流程文档说明 `review:analyze` 处理全部 Git 可见材料，而 `review:generate -- --target=<path>` 是同一流程的局部入口；`review:build` 只重建知识索引，不调用模型。[[c5]] 区别来自传入范围和使用方式，而不是两个不同脚本。"
+        "key": "task_orchestration",
+        "title": "开发、验证与质量任务入口",
+        "body": "任务表集中映射了日常开发、repo-review、检索索引与验证、知识分析与生成、构建、测试和类型检查入口。综合检查 `check` 按顺序组合 typecheck、test 与 build，浏览器测试和多类 live smoke/质量评估则保留为独立任务。[[c3]] [[c4]]\n\n这里定义的是可调用命令及其组合关系，不是运行记录：无法据此声称全量检查、真实 ACP、浏览器验证、Lark 集成或检索验证已经通过。"
       },
       {
-        "key": "verification-levels",
-        "title": "聚合检查与专项验证",
-        "body": "`check` 明确依次运行类型检查、测试和构建；浏览器检查、ACP、角色、学习、pipeline、飞书 host live 及质量任务则各有独立入口。[[c6]] 因而 `osdk run check` 不能代替这些专项 live 验证，配置中存在任务也不代表它已经执行成功或外部 CLI、网络服务可用。实际能力结论应引用对应命令的退出状态和行为断言。"
+        "key": "embedding_model",
+        "title": "中文记忆向量模型",
+        "body": "`memory-zh` 被声明为 embedding 模型，来源锁定到 Xenova 发布的 BGE-small-zh-v1.5 特定修订，并明确列出配置、分词器、词表及量化 ONNX 文件；模型家族为 BGE，派生自 BAAI/bge-small-zh-v1.5。[[c5]]\n\n固定来源修订与文件清单有助于形成可复现的模型身份，但空的 `views` 与 `exclude` 只反映当前配置结构；材料未展示下载状态、文件校验结果、向量维度、索引身份迁移或真实检索效果。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "基础工具配置",
-        "reason": "支持 Node、pnpm 的版本要求，以及 pnpm 自动依赖和允许源码构建的设置。",
-        "relation": "depends_on",
+        "label": "基础运行时与工具版本",
+        "reason": "支持项目采用统一 TypeScript 运行时并固定 Node、pnpm 版本的陈述。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:osdk.toml",
           "startLine": 1,
-          "endLine": 8
+          "endLine": 4
         },
-        "quote": "# omem foundation: one TypeScript runtime for Vue, API and CLI/ACP bridges.\n[tools]\nnode = \"24.18.1\"\npnpm = \"11\"\n\n[deps.pnpm]\nauto = true\nallow_build_from_source = true"
+        "quote": "# omem foundation: one TypeScript runtime for Vue, API and CLI/ACP bridges.\n[tools]\nnode = \"24.18.1\"\npnpm = \"11\""
       },
       {
         "key": "c2",
-        "label": "osdk-guide 来源配置",
-        "reason": "支持技能来自 one-sdk、固定 ref 以及适用 agent 范围。",
-        "relation": "supports",
+        "label": "pnpm 与 osdk 指南来源",
+        "reason": "支持依赖处理策略以及 one-sdk 指南来源、提交和代理适用范围的说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:osdk.toml",
-          "startLine": 10,
-          "endLine": 14
+          "startLine": 8,
+          "endLine": 16
         },
-        "quote": "[skills.osdk-guide]\nsource = \"github:lejunyang/one-sdk\"\nskill = \"osdk-guide\"\nref = \"02a2f2b3142ded7d73554aaee629a24966a62313\"\nagents = [\"universal\", \"claude-code\"]"
+        "quote": "[deps.pnpm]\nauto = true\nallow_build_from_source = true\n\n[skills.osdk-guide]\nsource = \"github:lejunyang/one-sdk\"\nskill = \"osdk-guide\"\nref = \"02a2f2b3142ded7d73554aaee629a24966a62313\"\nagents = [\"universal\", \"claude-code\"]"
       },
       {
         "key": "c3",
-        "label": "工具链锁定结果",
-        "reason": "支持解析后的 Node、pnpm 安装器版本、冻结锁命令和 pnpm 锁文件摘要。",
+        "label": "核心项目任务映射",
+        "reason": "支持开发、检索、知识生成、构建、测试和类型检查入口由该配置统一编排的陈述。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:osdk.lock",
-          "startLine": 3,
-          "endLine": 28
+          "key": "omem:osdk.toml",
+          "startLine": 18,
+          "endLine": 30
         },
-        "quote": "[platforms.linux-x64.tools.node]\nrequest = \"24.18.1\"\nversion = \"24.18.1\"\n\n[platforms.linux-x64.tools.node.options]\narch = \"x64\"\ncorepack = \"false\"\n\n[platforms.linux-x64.tools.node.artifact]\nurl = \"https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz\"\nfile_name = \"node-v24.18.1-linux-x64.tar.gz\"\nchecksum = \"s"
+        "quote": "[tasks]\ndev = \"pnpm run dev\"\n\"dev:review\" = \"pnpm run dev:review\"\n\"retrieval:index\" = \"pnpm exec tsx scripts/retrieval-index.ts\"\n\"retrieval:verify\" = \"pnpm exec tsx scripts/live-retrieval-smoke.ts\"\n\"review:verify\" = \"node --import tsx scripts/review-verify.ts\"\n\"review:build\" = \"pnpm exec tsx scripts/review-wiki.ts\"\n\"re"
       },
       {
         "key": "c4",
-        "label": "核心任务映射",
-        "reason": "支持开发、Wiki 构建、知识分析与生成、构建、测试、类型检查和启动任务的命令映射。",
-        "relation": "implements",
+        "label": "综合检查与专项验证任务",
+        "reason": "支持 check 的组成及浏览器、live、Lark 和质量任务保持独立入口的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:osdk.toml",
-          "startLine": 16,
-          "endLine": 25
+          "startLine": 31,
+          "endLine": 51
         },
-        "quote": "[tasks]\ndev = \"pnpm run dev\"\n\"dev:review\" = \"pnpm run dev:review\"\n\"review:build\" = \"pnpm exec tsx scripts/review-wiki.ts\"\n\"review:analyze\" = \"pnpm exec tsx scripts/review-knowledge.ts\"\n\"review:generate\" = \"pnpm exec tsx scripts/review-knowledge.ts\"\nbuild = \"pnpm run build\"\ntest = \"pnpm run test\"\ntypecheck = \"pnpm run t"
+        "quote": "[tasks.check]\nrun = [\"pnpm run typecheck\", \"pnpm run test\", \"pnpm run build\"]\n\n[tasks.browser]\nrun = \"pnpm run test:browser\"\n[tasks.live-acp]\nrun = \"pnpm exec tsx scripts/live-acp-smoke.ts\"\n[tasks.live-role]\nrun = \"pnpm run test:live-role\"\n[tasks.live-learning]\nrun = \"pnpm run test:live-learning\"\n[tasks.live-pipeline]\n"
       },
       {
         "key": "c5",
-        "label": "全仓分析与局部生成语义",
-        "reason": "解释两个同脚本入口的已知区别，并支持 Wiki 构建不重新调用模型。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 31,
-          "endLine": 37
-        },
-        "quote": "## 已完成：仓库材料适配与可提交产物\n\n`review:analyze` 使用统一流程处理全部 Git 可见材料（含源码、文档、部署配置、技能和图像），记录明确的排除/失败原因。运行数据、旧历史库、私有环境与派生知识不重新作为独立证据。每份通过独立复核的正文立即保存为 JSON + 带内联链接的 Markdown；后续按模块、主题和概览逐层组合，仍保留固定引用。\n\n`review:generate -- --target=<path>` 是同一流程的局部入口；`review:build` 只重建当前知识索引，不重新调用模型。启动与手动同步均接入材料和知识恢复。review 中用户明确保存的回答写为原始 user-notes 材料，"
-      },
-      {
-        "key": "c6",
-        "label": "聚合检查与专项任务",
-        "reason": "支持 check 的三个命令序列，以及浏览器、live 和质量验证具有独立任务入口。",
-        "relation": "explains",
+        "label": "中文向量模型身份",
+        "reason": "支持 memory-zh 的锁定来源、文件清单、模型类型、家族和上游模型说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:osdk.toml",
-          "startLine": 26,
-          "endLine": 46
+          "startLine": 53,
+          "endLine": 59
         },
-        "quote": "[tasks.check]\nrun = [\"pnpm run typecheck\", \"pnpm run test\", \"pnpm run build\"]\n\n[tasks.browser]\nrun = \"pnpm run test:browser\"\n[tasks.live-acp]\nrun = \"pnpm exec tsx scripts/live-acp-smoke.ts\"\n[tasks.live-role]\nrun = \"pnpm run test:live-role\"\n[tasks.live-learning]\nrun = \"pnpm run test:live-learning\"\n[tasks.live-pipeline]\n"
+        "quote": "[models.memory-zh]\nsource = \"hf:Xenova/bge-small-zh-v1.5@75c43b069aac4d136ba6bc1122f995fedcfd2781\"\ninclude = [\"config.json\", \"tokenizer.json\", \"tokenizer_config.json\", \"special_tokens_map.json\", \"vocab.txt\", \"onnx/model_quantized.onnx\"]\nexclude = []\nkind = \"embedding\"\nfamily = \"bge\"\nderived_from = \"BAAI/bge-small-zh-v1"
+      },
+      {
+        "key": "c6",
+        "label": "模型视图占位配置",
+        "reason": "支持当前 views 为空的事实，并界定配置本身没有给出索引与运行验证结果。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:osdk.toml",
+          "startLine": 6,
+          "endLine": 6
+        },
+        "quote": "[models.memory-zh.views]"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "`models.memory-zh.views` 是否预期保持为空，还是尚缺少面向检索或索引的视图声明？",
+        "why": "配置存在空的 views 表，而模型主体已声明来源与文件清单；仅凭材料无法判断这是有意设计还是未完成配置。",
+        "nextStep": "结合 osdk 模型配置规范和实际索引初始化记录，确认空 views 的语义及是否需要补充声明。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c5"
+        ]
+      },
+      {
+        "question": "这些任务和锁定模型在当前环境中是否已完成真实执行验证？",
+        "why": "文件只定义命令与模型身份，没有退出码、下载校验、运行 trace 或检索结果，因此不能把配置状态当作实现验收。",
+        "nextStep": "查阅或执行相应的依赖解析、综合检查、live 验证与检索验证流程，并保存实际退出码和结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:docs/implementation/status.md",
-      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
-      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/validation.md",
-      "digest": "5eb15b18beab74b3acb92965d549a00866e74a07934129b495f1eacfd0203b5b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:integrations/traex/hooks.example.json",
-      "digest": "0ce9740fd7d84a9b15fbd12ca8bb9d0490f943747b987ea9d4c4246fe5e61279"
-    },
-    {
-      "kind": "material",
-      "key": "omem:osdk.lock",
-      "digest": "8ea83c4ae93ba830a0045e8b54a64455979ac30a10af73730b5546d379eb90e9"
-    },
-    {
-      "kind": "material",
       "key": "omem:osdk.toml",
-      "digest": "f2f80953f5e21a98762274f91832d3384390ba80aaa52869785489a1f8c94d74"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/knowledge-pipeline.md",
-      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
-      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
-      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/decisions.md",
-      "digest": "0c9ad65608b280513073e08eb7a7ebf2dba050641f385305f7526cd7a0eb5ad7"
+      "digest": "fc04e90c021c9b3ef24088d059a1cebca87e76b7641ea83b34a983c1269ca690"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:06:41.658Z",
+    "at": "2026-10-01T00:37:18.414Z",
     "trace": {
-      "runId": "b1fda0c8-092e-4623-8fb0-53ac699e7b04",
-      "roleId": "knowledge-refresher",
+      "runId": "5709d1b5-3c60-478e-99f2-8d9a04ed72af",
+      "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "48eff0a9ff3e5ec32d897f8b081c21836f91e592d8cfcb906e9fafbfa558d358",
-      "contextHash": "eb7f8aff9929ad5bfd1146be69386beb0887bf5238356af3d7efc091978f99bc",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "3599936a5bb26f8e5170082a0b9cf730e441151c7ce4ee84357c447ed1d446bb",
+      "contextHash": "1ff8a819c24c95d7eb492daabce841841e9d1920f3f7c836bbdfa4303c569979",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9978df3bd571dd30e804a77ed7ace1bb506f247a21e16c91390384e5a9975a35",
+      "fingerprint": "23a826fbefffa6d6f491226ec1150f6853ee93efb20237acdf2c9d9459d24f29",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-material-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-5a29-7691-bab2-7b7e309fd996"
+        "01a0f4e4-a52c-76d3-bd9d-8a35853477ac"
       ],
       "usage": {
-        "used": 43350,
-        "size": 760000,
+        "used": 22159,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -194,10 +171,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 67006,
-          "utf8Bytes": 100014,
-          "estimatedTokens": 33338,
-          "budgetedTokens": 41673,
+          "chars": 7915,
+          "utf8Bytes": 9535,
+          "estimatedTokens": 3179,
+          "budgetedTokens": 3974,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -206,17 +183,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:06:57.839Z",
+    "at": "2026-10-01T00:37:32.349Z",
     "trace": {
-      "runId": "1ad94e6d-07f6-4172-bff9-6b896679fd9b",
+      "runId": "60ba17b7-b6c1-42b9-b0c7-b866042ca66e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "be560d6dfb37f2107591789f28a64f8d80e7bbac1910787075a09f2f6b52867c",
-      "contextHash": "fecea56500ab2da590e3d986c0a3c0e8ba91015c33a2fa8a6bc263a52a551af3",
+      "promptHash": "c11524ccd721ddc84d4ccfe8919bcc234ae0b97a91f9fdc43d4ef5ef955286c2",
+      "contextHash": "5092c00b45e8f4ea335528aca683fb251c0315b765f339040b5e9851211f1e7f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d06aa101934690360571a2a0fe8a00f0d754aa968cb0ec30fad6745dfbf515c1",
+      "fingerprint": "ea243424c42d6d519955e4cb3ec610c899e9c2f3f7556643b6dca6035f089cdc",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -229,11 +206,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-d0e6-77e1-b4ed-cfc43d46218c"
+        "01a0f4e4-ff24-7e23-9617-19d067bd21cc"
       ],
       "usage": {
-        "used": 41059,
-        "size": 760000,
+        "used": 22240,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -241,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 65229,
-          "utf8Bytes": 97923,
-          "estimatedTokens": 32641,
-          "budgetedTokens": 40802,
+          "chars": 9961,
+          "utf8Bytes": 12835,
+          "estimatedTokens": 4279,
+          "budgetedTokens": 5349,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

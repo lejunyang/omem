@@ -2,122 +2,96 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/quality/import.ts",
-    "title": "研究标注数据集导入器",
-    "summary": "把研究文档的文本内容切分、排序并包装成人工质量标注草稿。被替代的结论是“整个模块都由哨兵强制隔离”：实际仅数据集导入入口执行运行时校验，公开生成器与生产链路的隔离仍依赖调用边界。",
+    "title": "研究标注数据集导入与规则候选生成",
+    "summary": "该模块是显式启用的评估工具：从 CaptureInput 的文本部分生成规则切分、排序并校验的标注草稿，再交由 QualityRepository 持久化。它刻意隔离于普通捕获与学习流程，生成的 extract/claim 与 autoApply 仅供人工研究标注，不能视为生产知识。",
     "category": "implementation",
     "sections": [
       {
         "key": "purpose",
-        "title": "用途与隔离边界",
-        "body": "该模块服务于研究性质的人工质量标注：把 Lark/HTML 文档转换为规则生成的草稿样本，供人工判断，不属于普通捕获、导入或学习流程。[[c1]] 被替代的结论是“整个模块都由显式哨兵强制隔离”：`documentQualityEvalSamples` 是可直接调用且没有哨兵参数的公开生成器。[[c2]] 真正的运行时保护位于 `importQualityDatasetEval`；传入值不等于固定常量时会显式失败。[[c3]] 因此落库入口受到强制保护，而生成器不进入生产路径仍依赖调用关系和集成纪律。"
+        "title": "解决的问题与安全边界",
+        "body": "模块为人工质量评估准备可复现的候选样本，把 Lark/HTML 转换后的捕获文档切成便于标注的短句；它不是通用导入器，也不得被 HTTP、CLI 捕获或学习流程调用。规则结果统一标成 `explicit/claim` 且 `autoApply=true`，只是待人工判断的草稿，不能作为生产知识自动生效。[[c1]]\n\n调用方还必须传入精确的评估 opt-in 字面量，否则在创建数据集前立即抛错。这道运行时门禁与文件注释共同表达了隔离意图，但无法单凭本材料证明仓库其他调用路径均未引用该模块。[[c2]]"
       },
       {
         "key": "pipeline",
-        "title": "候选生成流程",
-        "body": "生成器只汇集 `CaptureInput` 的文本部分，以空行分块，并用 Markdown 标题更新候选所属章节。[[c4]] 图片、表格及部分复杂 HTML 块会被跳过；普通文本先清洗，超过 120 字时按中文句末标点拆分，仅保留 24～500 字的内容，并依据章节与文本摘要在本次生成中去重。[[c5]] 每个候选被包装为 `explicit/claim` 草稿，限制词、否定词和数字参与加权，随后按分数及来源顺序排序并截取目标数量。[[c6]]"
+        "title": "候选生成核心流程",
+        "body": "函数只汇集 `CaptureInput.parts` 中的文本部分，图片和链接不会进入样本文本；随后按空行分块，用 Markdown 标题维护当前章节，并跳过白板、网格、列、表格及图片块。[[c3]] 长文本按中文句末符号继续拆分，候选长度限定为 24–500 字；章节与正文的稳定摘要同时用于去重和派生 fragment 标识。摘要实现会递归规范化对象键、忽略 `undefined` 后计算 SHA-256，因此相同规范化输入可得到稳定结果。[[c4]]\n\n每个候选经仓库层 schema 校验，来源记录 URI、文档、修订、片段和章节，标签则保存原句作为 claim 与证据，并明确禁止把文档描述解释成外部操作授权。规则词、否定词和数字提高评分，最终按分数降序、原文块顺序升序取前 `limit` 条；数量不足时整体失败。[[c5]]"
       },
       {
         "key": "persistence",
-        "title": "数据集请求与限制",
-        "body": "候选少于目标数量时会抛出 `QUALITY_SOURCE_TOO_SMALL`；来源摘要覆盖来源 URI、文档标识、上游版本和完整文本。[[c7]] 导入入口随后请求仓储创建数据集，并把生成样本交给仓储批量写入。[[c8]] 这里不再声称入口必然“取得既有数据集”：当前获准材料只能证明它调用 `createDataset`，无法展示仓储是否按名称、切分和摘要复用已有记录。规则切分器也不核验事实准确性，且草稿默认带有自动应用标记，因此生成结果只能用于受隔离的人工研究标注。"
+        "title": "持久化关系、限制与测试证据",
+        "body": "导入入口先生成样本及覆盖源 URI、文档版本和完整文本的 source digest，再调用 `QualityRepository.createDataset` 建立数据集，继而用 `addSamples` 写入样本，返回数据集信息、插入结果和生成数量。[[c6]] 这说明模块依赖质量仓库承担实际存储，并依赖 contracts 中的 `CaptureInput` 作为输入合同；该合同允许文本、图片和链接，但本实现有意只消费文本。[[c7]]\n\n边界上，标题只有在整个分块匹配 Markdown 标题时才更新章节；表格和图片块会整块跳过，短句、超长句及重复句也会丢弃。提供材料没有测试文件，因此只能确认源码中的显式分支与异常，不能确认排序稳定性、HTML 清洗、持久化原子性或异常回滚已被自动化测试覆盖。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评测专用模块说明",
-        "reason": "支持该模块面向人工研究标注，并明确普通捕获、导入和学习链路不得调用。",
+        "label": "评估专用用途声明",
+        "reason": "支持该模块只服务人工标注、不得进入普通捕获及生产知识流程的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 2,
+          "startLine": 1,
           "endLine": 14
         },
-        "quote": " * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import pip"
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
       },
       {
         "key": "c2",
-        "label": "公开的文档样本生成器",
-        "reason": "支持生成器是没有评测哨兵参数的公开函数。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 39,
-          "endLine": 45
-        },
-        "quote": "/** Eval-only: split a research document into draft annotation samples.\n *  Never imported by capture/import/HTTP/CLI/learning code paths. */\nexport function documentQualityEvalSamples(\n  document: CaptureInput,\n  sourceUri: string,\n  limit = 40,\n) {"
-      },
-      {
-        "key": "c3",
-        "label": "导入入口的评测哨兵校验",
-        "reason": "支持固定哨兵由数据集导入入口校验，值不匹配时显式抛错。",
-        "relation": "supports",
+        "label": "评估导入门禁",
+        "reason": "支持导入必须携带专用 opt-in，错误调用会在数据集创建前失败。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/import.ts",
           "startLine": 156,
-          "endLine": 171
+          "endLine": 176
         },
         "quote": "/** Eval-only: materialize a rule-split draft dataset for human annotation.\n *  Guarded by {@link QUALITY_EVAL_ONLY}: the ordinary capture/import pipeline\n *  does not create quality datasets or annotation samples. */\nexport function importQualityDatasetEval(input: {\n  optIn: typeof QUALITY_EVAL_ONLY;\n  repository: Qua"
       },
       {
-        "key": "c4",
-        "label": "文本汇集与章节识别",
-        "reason": "支持仅汇集文本部分、按空行分块并以 Markdown 标题跟踪章节。",
+        "key": "c3",
+        "label": "文本汇集与分块过滤",
+        "reason": "支持仅消费文本部分、维护章节并跳过复杂视觉块的流程说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 46,
-          "endLine": 69
+          "startLine": 41,
+          "endLine": 82
         },
-        "quote": "  const markdown = document.parts\n    .filter(\n      (\n        part,\n      ): part is Extract<CaptureInput[\"parts\"][number], { type: \"text\" }> =>\n        part.type === \"text\",\n    )\n    .map((part) => part.text)\n    .join(\"\\n\\n\");\n  const blocks = markdown.split(/\\n\\s*\\n/);\n  let section = \"文档正文\";\n  const candidates: {"
+        "quote": "export function documentQualityEvalSamples(\n  document: CaptureInput,\n  sourceUri: string,\n  limit = 40,\n) {\n  const markdown = document.parts\n    .filter(\n      (\n        part,\n      ): part is Extract<CaptureInput[\"parts\"][number], { type: \"text\" }> =>\n        part.type === \"text\",\n    )\n    .map((part) => part.text)"
+      },
+      {
+        "key": "c4",
+        "label": "稳定摘要实现",
+        "reason": "解释候选去重、片段标识和源摘要所依赖的规范化 SHA-256 算法。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
       },
       {
         "key": "c5",
-        "label": "版式过滤、拆句与生成内去重",
-        "reason": "支持复杂版式过滤、长度条件、中文拆句及基于章节和文本摘要的本次生成去重。",
+        "label": "样本构造、评分与数量校验",
+        "reason": "支持候选长度限制、schema 校验、草稿标签、规则评分、排序截取及数量不足报错的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 70,
-          "endLine": 105
+          "startLine": 83,
+          "endLine": 153
         },
-        "quote": "    if (\n      /<(?:whiteboard|grid|column|table)\\b/i.test(raw) ||\n      /^!\\[/m.test(raw) ||\n      /^\\s*\\|/m.test(raw) ||\n      /\\|-{1,}\\|/.test(raw)\n    )\n      continue;\n    const sentences = raw.split(/\\n+/).flatMap((line) => {\n      const cleaned = plainText(line).replace(/^[-+*]\\s+/, \"\");\n      return cleaned.len"
+        "quote": "    for (const sentence of sentences) {\n      const text = sentence.trim();\n      if (text.length < 24 || text.length > 500) continue;\n      const inputDigest = stableDigest({ section, text });\n      if (seen.has(inputDigest)) continue;\n      seen.add(inputDigest);\n      const fragmentId = `quality-fragment-${inputDige"
       },
       {
         "key": "c6",
-        "label": "草稿构造与候选排序",
-        "reason": "支持候选被构造成事实草稿，并按规则词、否定表达和数字加权排序后截取。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 106,
-          "endLine": 140
-        },
-        "quote": "      const ruleMatches = text.match(\n        /只能|仅能|最多|必须|不能|不支持|需要|允许|优先|限制|条件|规则/g,\n      );\n      candidates.push({\n        input,\n        draftLabel: qualityLabelSchema.parse({\n          disposition: \"extract\",\n          objects: [\n            {\n              kind: \"claim\",\n              statement: text,\n         "
-      },
-      {
-        "key": "c7",
-        "label": "数量校验与来源摘要",
-        "reason": "支持候选不足时报错，以及来源摘要包含文档身份、版本和完整文本。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 141,
-          "endLine": 153
-        },
-        "quote": "  if (samples.length < limit)\n    throw Error(\n      `QUALITY_SOURCE_TOO_SMALL: expected ${limit}, found ${samples.length}`,\n    );\n  return {\n    sourceDigest: stableDigest({\n      sourceUri,\n      documentId: document.externalId,\n      revisionId: document.upstreamVersion ?? null,\n      markdown,\n    }),\n    samples,"
-      },
-      {
-        "key": "c8",
-        "label": "数据集创建与样本写入调用",
-        "reason": "支持入口请求仓储创建数据集并调用批量样本写入，但不据此断言仓储一定复用既有数据集。",
+        "label": "数据集创建与样本写入",
+        "reason": "支持生成结果如何交给 QualityRepository 持久化以及返回值如何组成的说明。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -126,25 +100,49 @@
           "endLine": 186
         },
         "quote": "  const generated = documentQualityEvalSamples(\n    input.document,\n    input.sourceUri,\n    input.targetCount,\n  );\n  const dataset = input.repository.createDataset({\n    name: input.name,\n    split: input.split,\n    sourceUri: input.sourceUri,\n    sourceRevisionId: input.document.upstreamVersion ?? null,\n    sourceDi"
+      },
+      {
+        "key": "c7",
+        "label": "捕获内容部分合同",
+        "reason": "支持 CaptureInput 可包含文本、图片和链接，而导入模块只选取文本的模块关系说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 18,
+          "endLine": 46
+        },
+        "quote": "export const textPart = z\n  .object({\n    type: z.literal(\"text\"),\n    text: z.string().min(1).max(200000),\n    provenance: partProvenanceSchema.optional(),\n  })\n  .strict();\nexport const imagePart = z\n  .object({\n    type: z.literal(\"image\"),\n    mimeType: z.enum([\"image/png\", \"image/jpeg\", \"image/webp\"]),\n    data: z"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "是否应在进入切分流程前显式约束 targetCount/limit 为正整数并设置合理上限？",
+        "why": "当前可见实现直接把 limit 交给 `slice`，只在结果数小于 limit 时失败；零值或负值可能绕过“样本不足”语义，超大值则可能造成不必要的全文处理。提供的仓库材料片段不足以确认上层 schema 是否已经约束该参数。",
+        "nextStep": "检查调用入口与 QualityRepository 的数据集输入 schema；若没有统一约束，在公开导入边界增加正整数及上限校验，并补充零值、负值和超大值测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "是否应在公开导入边界显式约束 targetCount/limit 为正整数并设置合理上限？",
+        "why": "可见实现未对该参数做整数、正数或上限校验；当值为零或负数时，slice 与样本不足判断可能产生不符合目标数量语义的结果。现有材料未展示调用入口是否已施加约束。",
+        "nextStep": "检查所有调用入口及数据集输入 schema；若上层没有统一约束，为 targetCount/limit 添加正整数和合理上限校验，并覆盖零值、负值、非整数及超大值测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
       "key": "omem:apps/server/src/quality/import.ts",
       "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/source-profile/service.ts",
-      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/migrations.ts",
-      "digest": "2903273d887300b5407818c616dabb33402bb5657c83886b1eb9b34c6ec68e2e"
     },
     {
       "kind": "material",
@@ -160,43 +158,38 @@
       "kind": "material",
       "key": "omem:apps/server/src/storage/digest.ts",
       "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:05:15.510Z",
+    "at": "2026-10-01T00:08:02.683Z",
     "trace": {
-      "runId": "f752f5ed-fbd4-4690-9a73-337805339750",
-      "roleId": "knowledge-refresher",
+      "runId": "3a921ecd-d565-4b6b-98d1-08a9a0579a98",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "1692dd16db6c84eb5df586005c2600d44ca2dda10ba823ca4831b33647e01aa6",
-      "contextHash": "430507faee375da42db404c95544e9399f0d95bcda428df0d1ffa984ff51c5ea",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "1f23a30da145b0ea6589b3687034d70d5e5bf49e6aee93428595f4da5bb668ed",
+      "contextHash": "219acac3a10d63605d8c0462fe38141d4bb9cd386fd8007e027befcf1afcd183",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "acc29e807cd4fe1363f10dc55c06701319313699530f46223419e0ad40190144",
+      "fingerprint": "b33b40f95a50812a08813a2fd2658ec72645e286fa9a8b42103fe9c9cf9cc771",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3eb-3ca3-72b0-853e-a4195fd9134a"
+        "01a0f4c9-c581-73c1-9100-13000f80e770"
       ],
       "usage": {
-        "used": 59085,
+        "used": 26927,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -205,10 +198,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 119802,
-          "utf8Bytes": 130560,
-          "estimatedTokens": 43520,
-          "budgetedTokens": 54400,
+          "chars": 21960,
+          "utf8Bytes": 23970,
+          "estimatedTokens": 7990,
+          "budgetedTokens": 9988,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -217,17 +210,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:05:39.220Z",
+    "at": "2026-10-01T00:08:20.529Z",
     "trace": {
-      "runId": "639a9bde-b2bb-413c-96e7-8ee56493bad2",
+      "runId": "3c34b806-563f-46d5-9622-87b6467c5bc7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "5f37b18de08eff2bc0197623d6014f1af5a21014df060fc8ad766b46198e44df",
-      "contextHash": "b81179fa7e5e30e094a2db59af5ef96d32ed6172a3688b9e05838de78bd99a7d",
+      "promptHash": "5d9dd7df043ab162a0206c60aea86f435175a8ec8d72731356736eb1f706751d",
+      "contextHash": "39f9e73420fd8c01e4143a5a7083f41c52da5f6fb66b54ee11333bf591a7f705",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "89b970c4533161167f73ee60ef0f5e37ad4f7a9c665365aaaadb6382e28c2665",
+      "fingerprint": "1f8f226a0f9b55f4665cc742407436089d7d2ee92cd65d5eea78d45b371c94fd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -240,10 +233,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3eb-edba-7ea3-9ba1-eb0e472bc757"
+        "01a0f4ca-3353-77c0-b1f6-bd438cf4360c"
       ],
       "usage": {
-        "used": 53921,
+        "used": 27190,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -252,10 +245,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 115773,
-          "utf8Bytes": 124649,
-          "estimatedTokens": 41550,
-          "budgetedTokens": 51938,
+          "chars": 25322,
+          "utf8Bytes": 29004,
+          "estimatedTokens": 9668,
+          "budgetedTokens": 12085,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

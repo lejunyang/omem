@@ -2,31 +2,36 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/source-profile/service.ts",
-    "title": "来源修订的确定性导航画像",
-    "summary": "以规则方式从固定修订及有序片段生成结构、主题、语言、时态和覆盖缺口等导航元数据；画像按来源修订与生成代次存储并可读取最新版，但不是经过独立核验的事实，画像失败也不应阻断原始证据。",
+    "title": "来源修订画像服务",
+    "summary": "该服务为已捕获的来源修订生成可追溯、确定性的导航画像：识别文本载体、标题层级、语言、主题、时态、话语类型、显式链接与覆盖缺口，并按代次写入 SQLite。画像属于派生元数据，失败时原则上不应阻断原始证据读取。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-model",
-        "title": "作用与数据定位",
-        "body": "该服务为固定来源修订生成导航画像，记录载体类型、标题路径、话语分类、候选主题、时间提示、显式链接、覆盖缺口和证据片段引用，并区分正常、部分和失败状态。[[c1]] 迁移说明明确画像是可重新派生、可能包含未知项的导航信息，而不是经过独立核验的新事实；画像失败不得阻碍原始证据读取。[[c2]]\n\n画像表以“来源修订 + 生成代次”为复合主键，并为同一修订建立代次倒序索引。[[c3]] 服务的 `latest` 查询与此结构一致，按生成代次降序取第一条。[[c4]] 这替代了此前仅用查询代码同时证明主键和索引结构的不充分论证。"
+        "key": "purpose-and-contract",
+        "title": "作用与数据合同",
+        "body": "服务为原始修订补充可用于导航和问答范围判断的结构信息。`SourceProfile` 汇集载体类型、标题路径、语言、主题候选、话语片段、时间提示、链接、证据引用、处理状态及画像版本；`derived: true` 明确它是派生视图而非新的事实来源。[[c1]] `latest` 按画像代次倒序读取指定修订的最近记录，允许历史代次继续留存。[[c2]]"
       },
       {
         "key": "analysis-flow",
-        "title": "分析与持久化流程",
-        "body": "`persistForRevision` 读取指定修订及其按 ordinal 排序的片段；修订不存在时抛错。分析完成后，它读取该修订已有最大代次、递增 generation，并写入完整画像。[[c5]] 分类器先识别图片占位和过短噪声，再按代码形态、问句、约束词、示例词、定义词、未来或历史提示及指令词分类，未命中时归为一般论断。[[c6]] 分析阶段维护 Markdown 标题栈，把正文关联到最近父标题；标题文本与去停用词后的高频词共同形成主题候选。[[c7]]"
+        "title": "核心分析流程",
+        "body": "持久化入口读取修订正文和按序排列的固定片段，调用分析函数后查询已有最大代次、递增编号并写库。[[c3]] 分析先维护 Markdown 标题栈，让非标题片段关联最近父标题，同时记录时态和父标题指代；图片标记、含竖线文本及超长片段会形成覆盖缺口。[[c5]]\n\n段落分类是有优先级的规则流程：代码或命令样式先归为示例，之后依次判断问题、约束、示例、定义、计划、历史和指令，未命中时归为普通论断。[[c4]] 这取代了旧稿中仅凭分类调用范围推断具体规则的表述。"
       },
       {
-        "key": "boundaries",
-        "title": "识别边界与失败降级",
-        "body": "语言识别只统计汉字区间与拉丁字母，粗略输出中文、英文、混合或未知；项目候选来自正文上下文，显式链接来自带 URL 的内容部件。[[c8]] 图片占位、含竖线的疑似表格及超长片段会登记 coverage gap，使画像成为 `partial`，但当前实现不会理解图片、表格或长文的内部语义。[[c9]]\n\n`recordFailure` 会尝试写入失败画像，并吞掉失败记录自身的数据库异常，以维持画像只是可选导航元数据的边界。[[c10]] 不过材料没有展示生产调用方如何捕获 `persistForRevision` 的异常，因此尚不能确认每条捕获路径都落实了该隔离。"
+        "key": "topics-and-relations",
+        "title": "主题提取与模块关系",
+        "body": "主题候选由标题文本和片段高频词合并产生：内容通过共享的 `tokenize` 分词，过滤停用词与短词后按频次截取。[[c6]] 关键词检索也使用该分词入口，并将长度至少为三个字符的词项送入 FTS 路径；由于材料未给出 `tokenize` 本体，仍不能断言完整的中英文切词规则。[[c7]] 正文上下文中的 application、conversationId、runId 会形成项目候选，结构化 parts 中的 URL 则形成显式链接。[[c8]]"
+      },
+      {
+        "key": "failure-and-boundaries",
+        "title": "失败策略与边界",
+        "body": "画像器同步、确定且尽力而为；修订缺失会抛错，正文 JSON 解析及数据库操作也可能失败。注释要求调用方隔离这些异常，使画像失败不妨碍原始证据捕获和阅读，但当前文件不能证明所有入口均已遵守。[[c9]] `recordFailure` 尝试保存截断后的错误，并吞掉失败记录本身的写库异常。[[c10]]\n\n语言只按中日韩统一表意字符和拉丁字母计数判定，覆盖缺口存在时状态降为 `partial`。[[c11]] 图片不解析、表格仅凭竖线启发式识别的结论则来自缺口生成逻辑，而非语言与状态代码。[[c5]] 因此画像适合导航提示，不应替代原始片段或完整语义理解。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "来源画像字段与状态",
-        "reason": "支持画像包含派生导航字段、证据引用以及正常、部分、失败三种状态。",
+        "label": "来源画像数据结构",
+        "reason": "支持画像所含派生字段、状态、证据引用及版本信息。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,47 +43,21 @@
       },
       {
         "key": "c2",
-        "label": "画像的派生信息边界",
-        "reason": "支持画像不是已核验事实、允许重新派生且失败不得阻断原始证据读取。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 766,
-          "endLine": 768
-        },
-        "quote": "// V3-03: deterministic, derived navigation profile per source revision. This is NOT a\n// verified fact: it may be re-derived, carries unknowns, and must never block the\n// original evidence from being read when profiling fails."
-      },
-      {
-        "key": "c3",
-        "label": "画像表主键与索引",
-        "reason": "直接支持画像以来源修订和生成代次为复合主键，并建立代次倒序索引。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 770,
-          "endLine": 792
-        },
-        "quote": "  `CREATE TABLE source_profiles(\n     source_revision_id TEXT NOT NULL REFERENCES revisions(id),\n     profile_generation INTEGER NOT NULL CHECK(profile_generation >= 1),\n     profiler_version TEXT NOT NULL,\n     carrier_type TEXT NOT NULL,\n     languages TEXT NOT NULL,\n     title_path TEXT NOT NULL,\n     coverage_gaps "
-      },
-      {
-        "key": "c4",
-        "label": "最新版画像查询",
-        "reason": "支持服务按来源修订查询，并按生成代次降序读取第一条画像。",
+        "label": "最新画像读取",
+        "reason": "支持按画像代次倒序返回指定修订的最近记录。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 122,
-          "endLine": 128
+          "startLine": 119,
+          "endLine": 129
         },
-        "quote": "  latest(revisionId: string): SourceProfile | null {\n    const row = this.db\n      .prepare(\n        \"SELECT * FROM source_profiles WHERE source_revision_id=? ORDER BY profile_generation DESC LIMIT 1\",\n      )\n      .get(revisionId) as Row | undefined;\n    return row ? fromRow(row) : null;"
+        "quote": "export class SourceProfileService {\n  constructor(private readonly db: DatabaseSync) {}\n\n  latest(revisionId: string): SourceProfile | null {\n    const row = this.db\n      .prepare(\n        \"SELECT * FROM source_profiles WHERE source_revision_id=? ORDER BY profile_generation DESC LIMIT 1\",\n      )\n      .get(revisionId"
       },
       {
-        "key": "c5",
-        "label": "画像生成与代次持久化",
-        "reason": "支持读取固定修订和有序片段、执行分析、递增生成代次并持久化的流程。",
+        "key": "c3",
+        "label": "画像生成与持久化入口",
+        "reason": "支持读取修订和片段、执行分析、递增画像代次并写入数据库的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -89,10 +68,10 @@
         "quote": "  /** Synchronous, deterministic, best-effort. Callers wrap this so a profiling\n   *  failure never prevents the original evidence from being captured/read. */\n  persistForRevision(revisionId: string): SourceProfile {\n    const row = this.db\n      .prepare(\"SELECT title,body,created_at FROM revisions WHERE id=?\")\n     "
       },
       {
-        "key": "c6",
+        "key": "c4",
         "label": "话语分类规则",
-        "reason": "直接支持问题、约束、计划、历史、示例、定义、指令和一般论断等分类规则。",
-        "relation": "implements",
+        "reason": "直接支持代码优先及问题、约束、定义、计划、历史、指令等分类的匹配顺序。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
@@ -102,49 +81,75 @@
         "quote": "function classify(text: string): Classified {\n  const t = text.trim();\n  if (/^\\[图片\\]/.test(t))\n    return { kind: \"noise\", tags: [\"image\"], tense: \"unknown\", refParent: false };\n  if (t.length < 4)\n    return { kind: \"noise\", tags: [], tense: \"unknown\", refParent: false };\n\n  const present = /当前|目前|现在|现状|现有/.test(t);\n"
       },
       {
-        "key": "c7",
-        "label": "标题关联与主题候选",
-        "reason": "支持标题栈、父标题关联、分类结果写入及标题和高频词共同形成主题候选。",
-        "relation": "implements",
+        "key": "c5",
+        "label": "标题关联与覆盖缺口",
+        "reason": "支持标题栈、父标题关联、时态记录，以及图片、表格样式和超长片段的缺口检测。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 251,
+          "startLine": 265,
+          "endLine": 303
+        },
+        "quote": "  const titlePath: TitleNode[] = [];\n  const segments: DiscourseSegment[] = [];\n  const coverageGaps: string[] = [];\n  const temporalNotes = new Set<string>();\n  const headingStack: string[] = [];\n\n  for (const fragment of fragments) {\n    const trimmed = fragment.text.trim();\n    const headingMatch = HEADING.exec(trim"
+      },
+      {
+        "key": "c6",
+        "label": "主题候选提取",
+        "reason": "支持通过共享分词器统计高频词，并与标题合并形成主题候选。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 305,
           "endLine": 318
         },
-        "quote": "export function analyze(input: {\n  title: string;\n  body: {\n    context?: Record<string, unknown>;\n    parts?: unknown[];\n  };\n  fragments: { id: string; ordinal: number; text: string }[];\n}): SourceProfile {\n  const fragments = input.fragments;\n  const hasHeading = fragments.some((f) => HEADING.test(f.text.trim()));\n "
+        "quote": "  // Topic candidates: heading texts + frequent non-stopword terms.\n  const freq = new Map<string, number>();\n  for (const fragment of fragments)\n    for (const term of tokenize(fragment.text)) {\n      if (STOPWORDS.has(term.toLowerCase()) || term.length < 2) continue;\n      freq.set(term, (freq.get(term) ?? 0) + 1);\n "
+      },
+      {
+        "key": "c7",
+        "label": "关键词检索的查询分词",
+        "reason": "证明检索模块同样调用 tokenize，并说明较长词项进入 FTS 路径；该范围不包含分词器内部实现。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 53,
+          "endLine": 70
+        },
+        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRan"
       },
       {
         "key": "c8",
-        "label": "语言、项目与链接候选",
-        "reason": "支持语言按汉字和拉丁字母计数粗判，并说明项目候选和显式链接的来源。",
+        "label": "上下文候选与显式链接",
+        "reason": "支持从正文上下文提取项目候选，并从结构化 parts 收集 URL。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 320,
+          "startLine": 337,
           "endLine": 350
         },
-        "quote": "  // Language detection from raw character counts.\n  let cjk = 0;\n  let latin = 0;\n  for (const fragment of fragments)\n    for (const ch of fragment.text) {\n      if (/[一-鿿]/.test(ch)) cjk++;\n      else if (/[A-Za-z]/.test(ch)) latin++;\n    }\n  const languages: string[] =\n    cjk >= 10 && latin >= 10\n      ? [\"zh\", \"en"
+        "quote": "  const context = input.body.context ?? {};\n  const projectCandidates = [\n    context.application,\n    context.conversationId,\n    context.runId,\n  ].filter((v): v is string => typeof v === \"string\" && v.length > 0);\n\n  const explicitLinks: string[] = [];\n  for (const part of input.body.parts ?? []) {\n    if (part && t"
       },
       {
         "key": "c9",
-        "label": "覆盖缺口判定",
-        "reason": "支持图片、疑似表格和长片段被登记为覆盖缺口，以及缺口影响画像状态。",
-        "relation": "explains",
+        "label": "尽力而为的调用边界",
+        "reason": "支持画像失败应由调用方隔离，以及修订缺失和正文解析位于持久化入口中的判断。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 271,
-          "endLine": 303
+          "startLine": 131,
+          "endLine": 155
         },
-        "quote": "  for (const fragment of fragments) {\n    const trimmed = fragment.text.trim();\n    const headingMatch = HEADING.exec(trimmed);\n    if (headingMatch) {\n      const level = headingMatch[1]!.length;\n      const text = headingMatch[2]!.trim();\n      headingStack.length = Math.min(headingStack.length, level - 1);\n      hea"
+        "quote": "  /** Synchronous, deterministic, best-effort. Callers wrap this so a profiling\n   *  failure never prevents the original evidence from being captured/read. */\n  persistForRevision(revisionId: string): SourceProfile {\n    const row = this.db\n      .prepare(\"SELECT title,body,created_at FROM revisions WHERE id=?\")\n     "
       },
       {
         "key": "c10",
-        "label": "画像失败记录与降级",
-        "reason": "支持失败画像写入以及二次写库异常不影响来源可读性的降级设计。",
-        "relation": "supports",
+        "label": "失败画像记录",
+        "reason": "支持错误信息截断保存、二次写库异常被吞掉以及来源继续可读的设计意图。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/source-profile/service.ts",
@@ -152,16 +157,51 @@
           "endLine": 190
         },
         "quote": "  recordFailure(revisionId: string, error: unknown): void {\n    const message =\n      error instanceof Error ? error.message : String(error ?? \"unknown\");\n    try {\n      this.db\n        .prepare(\n          `INSERT INTO source_profiles(\n             source_revision_id,profile_generation,profiler_version,carrier_type,\n "
+      },
+      {
+        "key": "c11",
+        "label": "语言识别与结果状态",
+        "reason": "支持字符计数阈值、画像结果字段及覆盖缺口决定 partial 状态的结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 320,
+          "endLine": 371
+        },
+        "quote": "  // Language detection from raw character counts.\n  let cjk = 0;\n  let latin = 0;\n  for (const fragment of fragments)\n    for (const ch of fragment.text) {\n      if (/[一-鿿]/.test(ch)) cjk++;\n      else if (/[A-Za-z]/.test(ch)) latin++;\n    }\n  const languages: string[] =\n    cjk >= 10 && latin >= 10\n      ? [\"zh\", \"en"
       }
     ],
     "questions": [
       {
-        "question": "哪些生产调用路径负责捕获画像生成异常并调用 recordFailure？",
-        "why": "服务注释和失败记录实现表明画像失败不应阻断原始证据，但所给材料没有展示 persistForRevision 的调用方及异常处理，无法确认所有捕获路径均落实了该隔离。",
-        "nextStep": "检查捕获流程中 SourceProfileService.persistForRevision 的调用点，并验证异常时修订仍然提交且失败画像可查询。",
+        "question": "`recordFailure` 固定写入 profile_generation=1；当同一修订已存在成功画像时，数据库约束是否允许再次记录失败？",
+        "why": "当前材料未提供 source_profiles 表结构或唯一约束。若修订 ID 与代次构成唯一键，失败记录可能写入失败并被静默吞掉，因而无法留下失败历史。",
+        "nextStep": "检查 source_profiles 的建表迁移及相关测试，确认唯一键设计，并验证已有画像后再次失败的实际行为。",
         "blocking": false,
         "citationKeys": [
+          "c3",
           "c10"
+        ]
+      },
+      {
+        "question": "所有调用 `persistForRevision` 的入口是否都捕获画像异常并继续完成原始证据写入？",
+        "why": "本文件只以注释声明调用方应隔离失败，没有提供跨文件调用点和事务边界，无法确认捕获、导入及后台任务中的实际行为。",
+        "nextStep": "沿调用点检查事务顺序与异常处理，并补充画像失败后修订及片段仍可读取的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c9",
+          "c10"
+        ]
+      },
+      {
+        "question": "现有测试是否覆盖分类规则冲突、Markdown 标题跳级、混合语言阈值及 malformed body JSON？",
+        "why": "提供的材料不包含测试文件；分类存在明确优先级，标题栈和语言判断也包含启发式边界，尚无法确认这些路径已有真实行为断言。",
+        "nextStep": "检查对应测试文件，并验证分类优先级、父标题恢复、partial 状态、代次递增和解析失败路径。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c11"
         ]
       }
     ]
@@ -169,54 +209,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/quality/import.ts",
-      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/source-profile/service.ts",
       "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/storage/migrations.ts",
-      "digest": "2903273d887300b5407818c616dabb33402bb5657c83886b1eb9b34c6ec68e2e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/repository.ts",
-      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+      "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:05:15.510Z",
+    "at": "2026-10-01T00:20:30.263Z",
     "trace": {
-      "runId": "f752f5ed-fbd4-4690-9a73-337805339750",
+      "runId": "968e942b-1e38-455b-a9ee-33384c3f9358",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "1692dd16db6c84eb5df586005c2600d44ca2dda10ba823ca4831b33647e01aa6",
-      "contextHash": "430507faee375da42db404c95544e9399f0d95bcda428df0d1ffa984ff51c5ea",
+      "promptHash": "22d5e69870fb266acd05bc773b669d7939fed3f7d992b5c4f96226ed2c754ee5",
+      "contextHash": "1ec309528c12b39ba12c3bfed3564ead37296150cd4d5fb7ffff973fcfcfa654",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "acc29e807cd4fe1363f10dc55c06701319313699530f46223419e0ad40190144",
+      "fingerprint": "c921d7ae997ac71f49ed761f4ee85074a1b385ce63c350cdd8757a8c97ae037c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -229,10 +244,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3eb-3ca3-72b0-853e-a4195fd9134a"
+        "01a0f4d5-3245-7350-9f82-2223c6287e68"
       ],
       "usage": {
-        "used": 59085,
+        "used": 31686,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -241,10 +256,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 119802,
-          "utf8Bytes": 130560,
-          "estimatedTokens": 43520,
-          "budgetedTokens": 54400,
+          "chars": 34239,
+          "utf8Bytes": 40479,
+          "estimatedTokens": 13493,
+          "budgetedTokens": 16867,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -253,17 +268,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:05:39.220Z",
+    "at": "2026-10-01T00:20:55.094Z",
     "trace": {
-      "runId": "639a9bde-b2bb-413c-96e7-8ee56493bad2",
+      "runId": "fb272e73-f968-4552-b35a-7413dd2da1ad",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "5f37b18de08eff2bc0197623d6014f1af5a21014df060fc8ad766b46198e44df",
-      "contextHash": "b81179fa7e5e30e094a2db59af5ef96d32ed6172a3688b9e05838de78bd99a7d",
+      "promptHash": "91831cd5a54ecc23f734665c6afa24dfea44cb73b6771f2fd614b87cb67605f9",
+      "contextHash": "fe1c2013bb6d7f5457b9a5c362860a82fc40218c5778b56a6fe5444c457ec5d4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "89b970c4533161167f73ee60ef0f5e37ad4f7a9c665365aaaadb6382e28c2665",
+      "fingerprint": "41558dd80853023ecd52d2b7f66fee00da4cc1fc05116d2fe076435e0e0ab168",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -276,10 +291,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3eb-edba-7ea3-9ba1-eb0e472bc757"
+        "01a0f4d5-9cbc-7cb2-bb45-ad5d94f5aabd"
       ],
       "usage": {
-        "used": 53921,
+        "used": 29233,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -288,10 +303,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 115773,
-          "utf8Bytes": 124649,
-          "estimatedTokens": 41550,
-          "budgetedTokens": 51938,
+          "chars": 31420,
+          "utf8Bytes": 36078,
+          "estimatedTokens": 12026,
+          "budgetedTokens": 15033,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

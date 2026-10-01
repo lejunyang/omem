@@ -3,87 +3,73 @@
   "document": {
     "key": "module:retrieval",
     "title": "retrieval · 模块理解",
-    "summary": "检索模块以统一端口连接上层调用方与 SQLite 证据库，默认融合中文关键词、记忆证据和知识证据，可选加载锁定的本地 BGE 模型建立语义索引；来源候选可回读固定片段，语义未就绪或异常时仍保留词法召回。",
+    "summary": "检索模块以统一端口连接关键词、记忆、知识与本地语义召回，并把候选落回不可变原始片段。代码材料显示已实现中文分词、多路融合、离线向量索引、异常降级和多样化排序；这些是源码能力描述，不代表已经通过运行或行为测试验证。",
     "category": "architecture",
     "sections": [
       {
         "key": "purpose",
-        "title": "职责、范围与证据边界",
-        "body": "模块通过统一端口隔离流水线、助手与具体检索后端，使关键词基线和后续实现可以替换。[[c1]] 查询合同约束时间、可见性及项目范围：项目关系只能来自已确认的关联，不能根据会话或运行上下文推断；没有可信项目时必须保持工作区级召回。[[c2]]\n\n此前“所有返回结果都直接指向不可变片段”的结论已被替代。`SourceCandidate` 明确携带 revision 与 fragment 锚点，而 `MemoryCandidate` 只有记忆 ID 和 provenance；`readEvidence` 也只接受 revision 与可选 fragment 标识。[[c3]] [[c4]] 因而公开合同目前只保证来源候选可直接回读原文，记忆候选仍需额外的证据映射。"
+        "title": "统一检索层的职责",
+        "body": "检索模块负责从捕获材料、已应用记忆和派生知识线索中寻找可引用证据，而不生成新的事实权威。统一端口隔离具体后端，并要求候选携带固定 fragment 与 revision，供上层回读原文。[[c1]] [[c2]]\n\n查询合同还规定时间、可见性和来源偏好；项目范围不能从会话或应用上下文推断，只有确认过的关联才能收窄，否则必须保持工作区召回。[[c3]]"
       },
       {
-        "key": "selection",
-        "title": "后端选择与模型装配",
-        "body": "工厂使用严格配置选择后端：默认关闭语义能力并创建关键词检索；启用后创建 `SemanticRetrieval`、启动后台追赶，并向调用方暴露关闭钩子。[[c5]] 中文向量模型由 osdk 提供固定快照，应用校验仓库、revision 和关键文件摘要后，才以禁止远程模型、仅本地文件、CPU q8 的方式加载；查询附加中文检索指令，材料保持原样，并统一采用 CLS pooling 和归一化。[[c6]] 这使运行期不隐式下载模型，并把权重与分词资产摘要纳入向量身份。"
+        "key": "lexical-flow",
+        "title": "关键词召回与证据回溯",
+        "body": "默认配置关闭语义能力，工厂装配 SQLite 关键词实现；启用后才创建语义实现、启动后台索引并返回关闭回调。[[c4]] 关键词路径汇总代码符号、全文、短关键词、记忆证据和知识证据五路候选，经资格过滤与去重后使用倒数排名融合。[[c5]]\n\n记忆命中通过解析 evidence set 回查原始片段。[[c12]] 知识正文则作为导航：系统检查知识依赖和引用范围，递归解析文章引用，并把有效引用映射回当前原始 fragment。[[c6]] 这两条路径职责不同；此前用知识引用同时证明记忆 evidence set 行为的结论已被替代。"
       },
       {
-        "key": "lexical_flow",
-        "title": "关键词、记忆与知识召回",
-        "body": "词法查询先拆出 ASCII 词、中文完整串和重叠二元组，并过滤常见中文停用二元组。[[c9]] 长度至少三字符的词进入 trigram FTS5，查询显式连接当前 source head 并排除派生 revision；[[c7]] 较短词则走转义后的 `LIKE`，同样限定当前 head 与非派生材料。[[c8]]\n\n候选还包括活跃记忆和知识两路。记忆命中不会把记忆正文当作独立证据，而会沿证据集合回查当前 head 的原始片段；四路结果统一执行时间、可见性过滤，按 fragment 去重后用倒数排名融合。[[c10]] 但知识路线由外部函数提供，本模块未再次检查其 head、原始性或知识时效，因此不能把其他路线的证据保证自动推广到知识候选。"
+        "key": "semantic-flow",
+        "title": "本地语义索引、融合与排序",
+        "body": "语义实现继承关键词基线，仅为当前 head 的非派生片段建立可重建向量视图。正文按 400 字符窗口、320 字符步长切分，向量及完成标记按模型身份在单片段事务中写入。[[c7]] 模型从 osdk 管理的固定快照加载，核对仓库、revision 和关键文件哈希，并禁止远程模型加载；查询与正文使用不同输入形式。[[c8]]\n\n异步搜索先取得词法候选，再计算当前模型身份下已有窗口的语义分数并融合。模型尚未加载时直接排序词法候选；当前身份没有向量、或语义行经时间与可见性过滤后为空时，融合只保留已有词法候选；语义处理抛错也回退到词法排序。若词法候选本身为空，结果仍为空。[[c9]] 最终排序应用来源权重、代码符号加权和 MMR 式去冗余，只改变顺序，不改变证据身份与溯源。[[c10]]"
       },
       {
-        "key": "semantic_flow",
-        "title": "语义索引、融合与限制",
-        "body": "语义实现继承关键词基线，后台只追赶当前 head 的非派生片段；长文本按 400 字窗口、320 字步长重叠切分，分批生成 passage 向量，并在一个片段全部完成后事务性写入窗口及模型 head。索引按 `model.id` 判断缺失项，避免把另一模型身份的完成标记当作当前索引。[[c11]]\n\n查询先取得词法候选。空查询或模型尚未加载时会直接返回词法结果，此路径不设置错误，健康状态仍可能是 `indexing`；模型可用后才扫描当前模型 ID 的向量，计算各窗口精确余弦并与词法结果做 RRF 融合。查询嵌入、向量读取或维度校验失败时才记录错误并返回词法结果，使健康状态表现为降级。[[c12]] 当前实现明确以个人 SQLite 资料规模为前提，采用全量精确余弦而非独立向量服务；健康信息区分 ready、indexing 与 degraded。[[c13]]"
+        "key": "progress-limits",
+        "title": "代码进展与待验证边界",
+        "body": "材料显示代码实现了“统一合同—关键词召回—后台向量追赶—混合融合—原文回读”流程，并通过健康状态报告索引中、就绪或降级。[[c11]] 此处仅描述源码实现；此前“已形成可运行切片”及“当前已具备经验证能力”的结论已被替代，因为材料未提供实际运行、测试退出码或行为断言。\n\n尚不能确认服务器是否只启动一次并在退出或重载时关闭模型，也未展示模型换代、head 迁移、片段删除或分窗缩短后的旧索引回收。记忆路径会直接解析 evidence set，缺失值、损坏 JSON 或不完整关联应跳过还是中断请求也没有明确合同。[[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "统一检索端口",
-        "reason": "支持检索后端可替换且流水线与助手调用方无需随实现改写的架构职责。",
+        "label": "统一检索端口的设计目标",
+        "reason": "支持检索后端隔离以及候选必须回到固定原始证据的模块职责。",
         "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "section": "purpose"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "固定证据锚点合同",
+        "reason": "直接支持所有检索结果应指向不可变片段、供上层引用原文的论断。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/port.ts",
           "startLine": 1,
-          "endLine": 4
+          "endLine": 7
         },
-        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools)."
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
       },
       {
-        "key": "c2",
-        "label": "查询范围与可信项目规则",
-        "reason": "支持可信项目来源、工作区回退、捕获时间范围和排序前可见性过滤约束。",
-        "relation": "supports",
+        "key": "c3",
+        "label": "可信项目与宿主过滤策略",
+        "reason": "支持项目关系不得从上下文载体推断，以及时间、可见性和来源权重的查询边界。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/port.ts",
           "startLine": 17,
-          "endLine": 40
+          "endLine": 43
         },
         "quote": "/**\n * A project relationship is never inferred from context carriers like\n * `application` / `conversationId` / `runId`. Those only describe where a capture\n * happened. A real project link is a separate ContextLink record that carries its\n * own source evidence, candidate confidence and a confirmed flag. Until such a"
       },
       {
-        "key": "c3",
-        "label": "来源与记忆候选类型",
-        "reason": "支持只有来源候选直接携带 revision 与 fragment 锚点，而记忆候选没有这些字段的判断。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/port.ts",
-          "startLine": 48,
-          "endLine": 67
-        },
-        "quote": "export type SourceCandidate = {\n  /** Fragment id (fixed evidence anchor). */\n  id: string;\n  score: number;\n  snippet: string;\n  sourceRevisionId: string;\n  fragmentId: string;\n  provenance: ProvenanceRef;\n  routes?: string[];\n};\n\nexport type MemoryCandidate = {\n  /** memory id from the memories table. */\n  id: string"
-      },
-      {
         "key": "c4",
-        "label": "证据读取接口",
-        "reason": "支持证据回读需要 revision 与可选 fragment 标识，且端口没有定义从记忆 ID 到证据锚点的解析步骤。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/port.ts",
-          "startLine": 81,
-          "endLine": 93
-        },
-        "quote": "export interface RetrievalPort {\n  /** Keyword/vector search over imported source fragments. */\n  searchSources(query: SearchQuery): SourceCandidate[];\n  /** Optional local semantic branch; callers await this when supplied. */\n  searchSourcesAsync?(query: SearchQuery): Promise<SourceCandidate[]>;\n  /** Search over alre"
-      },
-      {
-        "key": "c5",
-        "label": "检索后端工厂",
-        "reason": "支持严格配置、默认关键词后端、语义后端启动及关闭生命周期的说明。",
+        "label": "检索后端装配入口",
+        "reason": "支持默认选择关键词实现，以及启用配置后创建并启动语义实现、返回关闭回调的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -94,131 +80,139 @@
         "quote": "export const retrievalConfigSchema = z.object({ enabled: z.boolean().default(false), osdkModel: z.string().regex(/^[a-zA-Z0-9_-]+$/).default(\"memory-zh\") }).strict();\nexport type RetrievalConfig = z.input<typeof retrievalConfigSchema>;\nexport function readRetrievalConfig(path: string) {\n  return retrievalConfigSchema.p"
       },
       {
+        "key": "c5",
+        "label": "五路召回与倒数排名融合",
+        "reason": "支持代码符号、全文、短关键词、记忆和知识五条分支及其去重融合过程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 97,
+          "endLine": 120
+        },
+        "quote": "    const branches: [string, Row[]][] = [\n      [\"code-symbol\", this.exactSymbols(query.text)],\n      [\"fulltext\", fts],\n      [\"short-keyword\", [...lexical.values()].sort((a,b) => b.score-a.score).map(v => v.row)],\n      [\"memory\", memoryRows],\n      [\"knowledge\", knowledgeEvidenceCandidates(this.db, terms)],\n    ];\n "
+      },
+      {
         "key": "c6",
-        "label": "本地中文向量加载器",
-        "reason": "支持锁定快照及摘要校验、禁止远程模型、CPU 量化加载和查询特化策略。",
+        "label": "知识正文回溯原始片段",
+        "reason": "仅用于支持知识 artifact 的依赖检查、递归引用解析和原始 fragment 映射，不用于证明记忆 evidence set 行为。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 33,
+          "endLine": 68
+        },
+        "quote": "  const seen = new Set<string>(), output = new Map<string, Row>();\n  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || output.size >= 100) return;\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) "
+      },
+      {
+        "key": "c7",
+        "label": "语义分窗与事务写入",
+        "reason": "支持按当前片段选择待索引内容、重叠分窗、批量嵌入、向量校验及单片段事务写入。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 51,
+          "endLine": 78
+        },
+        "quote": "  private async index(limit: number) {\n    const model = await this.ready();\n    const fragments = this.database.prepare(`SELECT ${COLUMNS} ${CURRENT} AND NOT EXISTS (\n      SELECT 1 FROM fragment_embedding_heads h WHERE h.fragment_id=f.id AND h.model_id=?) ORDER BY r.created_at DESC,f.id LIMIT ?`).all(model.id, limit)"
+      },
+      {
+        "key": "c8",
+        "label": "中文模型的离线校验加载",
+        "reason": "支持固定模型版本、关键文件哈希校验、禁止远程加载及查询专用输入处理。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/embedding.ts",
           "startLine": 14,
-          "endLine": 40
+          "endLine": 43
         },
         "quote": "export const BGE_REVISION = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\";\nconst files = [\"config.json\", \"tokenizer.json\", \"tokenizer_config.json\", \"special_tokens_map.json\", \"vocab.txt\", \"onnx/model_quantized.onnx\"];\n\n/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async func"
       },
       {
-        "key": "c7",
-        "label": "当前原始片段的全文检索",
-        "reason": "支持长词使用 trigram FTS5，并通过 source head 连接和 ORIGINAL 条件限定当前非派生 revision。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/keyword.ts",
-          "startLine": 52,
-          "endLine": 72
-        },
-        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRan"
-      },
-      {
-        "key": "c8",
-        "label": "当前原始片段的短词检索",
-        "reason": "支持短词使用转义后的 LIKE，并同样连接当前 source head、应用 ORIGINAL 条件。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/keyword.ts",
-          "startLine": 122,
-          "endLine": 127
-        },
-        "quote": "  private searchFragmentsForTerm(term: string): Row[] {\n    const escaped = \"%\" + term.replace(/[!%_]/g, \"!$&\") + \"%\";\n    return this.db.prepare(`SELECT ${SOURCE_COLUMNS} FROM fragments f\n      JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id\n      WHERE (f.text LIKE ? ESCAPE '!' OR r.title LIKE ? "
-      },
-      {
         "key": "c9",
-        "label": "中文与 ASCII 分词规则",
-        "reason": "支持 ASCII token、中文完整串、重叠二元组及常见停用二元组过滤的说明。",
+        "label": "词法与语义融合及异常回退",
+        "reason": "支持词法预取、语义行过滤、两路融合，以及无当前向量、过滤后语义分支为空或异常时保留已有词法候选的准确边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/retrieval/keyword.ts",
-          "startLine": 194,
-          "endLine": 234
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 81,
+          "endLine": 114
         },
-        "quote": "/**\n * Split a query into matchable terms: whitespace/punctuation chunks; ASCII words.\n * For CJK runs of length >= 2, also emit overlapping 2-gram substrings so that\n * short follow-up queries like \"按这个\" or \"刚才说的\" match fragments that\n * contain individual character pairs, instead of requiring the whole phrase.\n */\nex"
+        "quote": "  /** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const lexical = super.searchSources({ ...query, sourceWeight: undefined, diversify: false, limit: 100 });\n    if (!query.text.trim() || !this.model) return rankEvid"
       },
       {
         "key": "c10",
-        "label": "记忆证据回溯与四路融合",
-        "reason": "支持记忆回查当前原始片段、知识路线接入、统一过滤、去重和倒数排名融合流程。",
-        "relation": "implements",
+        "label": "相关性加权与多样化排序",
+        "reason": "支持来源和代码符号加权、MMR 冗余抑制，以及排序不改变证据身份的边界。",
+        "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/retrieval/keyword.ts",
-          "startLine": 80,
-          "endLine": 119
+          "key": "omem:apps/server/src/retrieval/ranking.ts",
+          "startLine": 3,
+          "endLine": 32
         },
-        "quote": "    // Active memory prose routes back to its evidence; never quote the memory\n    // itself as an additional independent source.\n    const memoryRows: Row[] = [];\n    for (const memory of this.searchMemories({ ...query, limit: 50 })) {\n      const refs = this.db.prepare(`SELECT COALESCE(p.evidence,mr.evidence_set) AS "
+        "quote": "/** MMR over fused relevance, using existing normalized vectors for redundancy.\n * https://www.elastic.co/search-labs/blog/maximum-marginal-relevance-diversify-results\n * This changes ordering only: original identities, visibility and provenance survive.\n */\nexport function rankEvidence(hits: SourceCandidate[], query: "
       },
       {
         "key": "c11",
-        "label": "后台语义索引流程",
-        "reason": "支持按模型身份追赶缺失片段、重叠切窗、批量嵌入及事务性写入索引的说明。",
-        "relation": "implements",
+        "label": "语义索引健康状态与后台追赶",
+        "reason": "支持代码中的索引进度统计、健康状态、正常轮询和错误退避；不用于声称这些行为已经实际运行验证。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/semantic.ts",
-          "startLine": 34,
-          "endLine": 77
+          "startLine": 21,
+          "endLine": 48
         },
-        "quote": "  /** Automatic catch-up includes subsequent captures, without blocking a query on indexing. */\n  start() {\n    const tick = async () => {\n      if (this.stopped) return;\n      try { await this.indexBatch(); } catch (error) { this.error = String(error); }\n      if (!this.stopped) { this.timer = setTimeout(tick, this.er"
+        "quote": "  override health() {\n    const modelId = this.model?.id ?? \"\";\n    const total = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT}`).get()!.n);\n    const indexed = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT} AND EXISTS (\n      SELECT 1 FROM fragment_embedding_heads h WHERE h.fragment_id=f"
       },
       {
         "key": "c12",
-        "label": "词法与语义融合及异常降级",
-        "reason": "支持模型未加载时直接返回词法结果，以及按模型 ID 扫描、维度检查、精确余弦、RRF 融合和异常时记录错误后降级。",
-        "relation": "implements",
+        "label": "记忆证据集合解析路径",
+        "reason": "支持记忆命中通过 evidence set 回查原始片段，并说明直接 JSON 解析使坏数据处理策略仍需确认。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/retrieval/semantic.ts",
-          "startLine": 80,
-          "endLine": 111
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 81,
+          "endLine": 95
         },
-        "quote": "  /** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const lexical = super.searchSources({ ...query, limit: 100 });\n    if (!query.text.trim() || !this.model) return lexical.slice(0, query.limit ?? 20);\n    try {\n    "
-      },
-      {
-        "key": "c13",
-        "label": "个人 SQLite 规模与健康状态",
-        "reason": "支持全量精确余弦适用于个人 SQLite 资料规模，以及 indexing、ready、degraded 健康状态的区分。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/semantic.ts",
-          "startLine": 10,
-          "endLine": 26
-        },
-        "quote": "/** Exact cosine is sufficient for a personal SQLite library; no separate vector authority. */\nexport class SemanticRetrieval extends KeywordRetrieval {\n  private model: EmbeddingModel | null = null;\n  private loading: Promise<EmbeddingModel> | null = null;\n  private work: Promise<number> | null = null;\n  private timer"
+        "quote": "    // Active memory prose routes back to its evidence; never quote the memory\n    // itself as an additional independent source.\n    const memoryRows: Row[] = [];\n    for (const memory of this.searchMemories({ ...query, limit: 50 })) {\n      const refs = this.db.prepare(`SELECT COALESCE(p.evidence,mr.evidence_set) AS "
       }
     ],
     "questions": [
       {
-        "question": "知识召回路线是否保证返回当前 head 上的非派生原始片段，并排除过期知识所指向的旧证据？",
-        "why": "全文、短词和记忆证据路线显式约束当前 head 与原始 revision，但 `knowledgeEvidenceCandidates` 的结果在本模块中只统一经过时间和可见性过滤，其内部证据选择及过期处理不在现有材料中。",
-        "nextStep": "核验知识检索实现及行为测试；若没有同等保证，在知识候选出口或融合前增加当前性、原始性与知识时效校验。",
+        "question": "服务器组合根是否保证语义检索只启动一次，并在退出或配置重载时调用关闭回调？",
+        "why": "工厂会立即启动后台任务并返回关闭函数，但提供的材料没有调用方；语义实例关闭后会永久进入停止状态，而启动方法没有重复调用保护。",
+        "nextStep": "检查服务器创建、配置重载和 shutdown 路径，并增加重复启动、正常退出与在途索引关闭的集成断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c11"
+        ]
+      },
+      {
+        "question": "模型身份变化、来源 head 更新、片段删除或分窗数量缩短后，旧向量和旧完成标记由谁清理？",
+        "why": "当前索引按 fragment 与模型身份写入窗口并记录完成，但材料没有展示旧模型、非当前片段及多余窗口的回收流程。",
+        "nextStep": "检查数据库约束与捕获同步逻辑，明确保留或清理策略，并验证换模型及修订迁移不会让旧索引参与查询。",
         "blocking": false,
         "citationKeys": [
           "c7",
           "c8",
-          "c10"
+          "c9"
         ]
       },
       {
-        "question": "记忆候选是否需要补充到原始 revision 与 fragment 的公开映射合同？",
-        "why": "端口注释声称返回结果能够回到不可变片段，但 `MemoryCandidate` 不含证据锚点，`readEvidence` 也只接受 revision 与 fragment 标识，公开类型无法直接完成该回读。",
-        "nextStep": "由维护者选择收窄端口注释，使其只描述来源候选，或为记忆候选增加明确且经过测试的证据解析接口。",
+        "question": "单条记忆的 evidence set 缺失、JSON 损坏或关联记录不完整时，来源检索应跳过该记忆还是让请求失败？",
+        "why": "当前路径直接读取并解析 evidence set，未展示异常捕获或数据库完整性保证，坏数据可能中断整个关键词请求。",
+        "nextStep": "核对表约束和现有测试；若无强保证，为缺失值、畸形 JSON 和失效引用定义明确降级合同并增加行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3",
-          "c4"
+          "c12"
         ]
       }
     ]
@@ -236,59 +230,74 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "350cbe18e9f431c0e6eba3b0948c5b90e4b6e4270e67fbaea0a15b2914fbc48f"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/retrieval/semantic.ts",
-      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
+      "digest": "be42007fce29d70b9402637abb5fe64685b46872ae815a2285bbbc67303962e3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "digest": "75a226dad659fee68a8933f0db15c14c3cb27335b34f562fd687c4fc4e3e7962"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/ranking.ts",
+      "digest": "e0a3c7a3c7b7c4636440cec6dd26fb3389d36aaa3be87df58dffa19441467176"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/retrieval/embedding.ts",
-      "digest": "843068c0a009a9a86f9c56c09ef84eace3c23e6e260c92793667aa36879215a3"
+      "digest": "41d183ebb80c79ef124aeaf3064a14b2a1b892827376440a57ac0e1713840f8d"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/retrieval/factory.ts",
-      "digest": "97465e8141367bca1a422244b510a3445f0460651f9be439d3d6aeb4782d1206"
+      "digest": "770435debfd41e8347305cecb27a0f3ba2e285ed8fe08d6ee0a020f9d3f61bc1"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "54da3008e2c9ea749a0607efc63b9aef75457ab0e6adf815549dafe23c57f9fe"
+      "digest": "85d53ae4f5f0a42b3379bb3b3290e7a88c8579a5620efbc4193cce763770e2bd"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "5e8f0693a0ee61d9157802551c5e560541687e23485959d1356de788ee600fa0"
+      "digest": "f5b56b12a0791a2cbdeb70f02de52bbf4e3a314a02a81218cce4b65ccf7e9cf7"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/server/src/retrieval/ranking.ts",
+      "digest": "12edc0860383d1255f690e0b13cff5151e5f3d6b6dc854edccfe8392ce32ecbc"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/retrieval/semantic.ts",
-      "digest": "6d284bb7499c2cfa860073c2697417473d288113b99892fc0c0eda54b33dbba6"
+      "digest": "4d3be755227cecfd4812b95ac18c47bc834bd5ef49c9f458a8f2d0dd783f6b73"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:45:56.913Z",
+    "at": "2026-10-01T01:05:19.043Z",
     "trace": {
-      "runId": "ee4846bc-89a7-490f-b0c8-ef3657716237",
+      "runId": "d39a8337-e943-4c47-beff-8a11369105f0",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "51081fa7147fe311147c39c721d64e43dad34996d58a50d961599249ae5d6af4",
-      "contextHash": "0aad911f9f1a14ad6f222f00fba5d67879935ddfc42f34f3095ea6d09b259ae1",
+      "promptHash": "93203a4a5cd3ad3db3cda4ab7a3d25a29f9ba52e3bb5ab41966224e9b969fce1",
+      "contextHash": "a89fb6b0e9f2151c8b32a023b00edd22797b4acc7d16af23df784168b77d9cca",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "dd7b3434ad3867b6cd55714dffff0a34f4c0a4f0d37a7774003a594491a82ac1",
+      "fingerprint": "5aa8f01622c578f28a19cb31a6372f3e7e30a40e3f40e7fa01712f06b5dbeae1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -301,10 +310,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3d9-bde5-7722-b904-84d8311a593d"
+        "01a0f4fe-3121-7790-b29a-fa8cdafa1daf"
       ],
       "usage": {
-        "used": 42522,
+        "used": 53944,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -313,10 +322,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 65014,
-          "utf8Bytes": 78673,
-          "estimatedTokens": 26225,
-          "budgetedTokens": 32782,
+          "chars": 97862,
+          "utf8Bytes": 122576,
+          "estimatedTokens": 40859,
+          "budgetedTokens": 51074,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -325,17 +334,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:46:11.938Z",
+    "at": "2026-10-01T01:05:42.088Z",
     "trace": {
-      "runId": "2781cee0-dfe8-47e3-9466-43200dc4ac5b",
+      "runId": "0fdbb255-2dd1-4544-9729-c8a45973e600",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "a1d365b95ff8a8e3acd9aeed1828277838e0a2787d9f40d81fca5603811b9314",
-      "contextHash": "c428b5b591aaf238dc3c9a67764660f1db1f1567e11127d94d716a80309554c2",
+      "promptHash": "99cd97eaa132c925cb7c504159460a7b0208cd8723c273f1c44302cca045e82e",
+      "contextHash": "a178ea87618e2339fa709c41f62a2038d66f557ef29889bcaa5ef7909e5eb387",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d7ec28a55af8dd2ec5e4eadf11c8bc5eb7598f20abfe17b6ee283e7962bfb631",
+      "fingerprint": "721f02bb900fe448601ed584768e289c79e86709ea270bcf20a3903f66dc9618",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -348,10 +357,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3da-43c1-7a20-8e7a-27bda641b12c"
+        "01a0f4fe-a2cb-71b1-b75e-15b693bcc575"
       ],
       "usage": {
-        "used": 38999,
+        "used": 51291,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -360,10 +369,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 62826,
-          "utf8Bytes": 74946,
-          "estimatedTokens": 24982,
-          "budgetedTokens": 31228,
+          "chars": 94352,
+          "utf8Bytes": 116949,
+          "estimatedTokens": 38983,
+          "budgetedTokens": 48729,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,143 +2,92 @@
   "version": 1,
   "document": {
     "key": "omem:config/review-code-model.json",
-    "title": "仓库知识模型实际配置",
-    "summary": "当前实际配置以只读 TraeX ACP 运行 gpt-5.6-sol/medium，并设置较大的输入预算和独立输出、预留额度；状态文档确认生成与 review 服务默认读取此文件。",
+    "title": "代码评审模型配置",
+    "summary": "该文件声明代码评审生成任务通过 ACP 启动 traex 服务，选用 gpt-5.6-sol 与 medium 推理强度，并设置超时、输入输出令牌及上下文预留预算。它描述的是期望运行配置，本身不能证明命令已成功启动、模型能力已被运行时接受或评审流程已经执行。",
     "category": "configuration",
     "sections": [
       {
-        "key": "active-runtime",
-        "title": "当前运行合同",
-        "body": "实际配置指定 ACP 传输及 `traex` 命令，并用只读沙箱参数启动服务；选定模型为 `gpt-5.6-sol`、effort 为 `medium`。[[c1]] 与示例文件内容一致并不意味着两者地位相同：状态文档明确说生成及 review 服务默认读取本文件，只有环境变量可覆盖，因此它才是仓库评审流程的默认模型入口。[[c2]]"
+        "key": "transport_model",
+        "title": "传输方式与模型选择",
+        "body": "配置采用 `acp` 传输，由 `traex -c sandbox_mode=\"read-only\" acp serve` 启动服务，并把评审模型指定为 `gpt-5.6-sol`。只读沙箱体现了生成过程不应直接改写工作区的运行边界；但该文件只是静态声明，无法单独证明本机存在对应命令、ACP 握手成功，或服务端确实支持所选模型。[[c1]]"
       },
       {
-        "key": "capacity-and-evidence",
-        "title": "容量设置与验证口径",
-        "body": "配置将超时设为 480000 毫秒，输入上限 192000、输出上限 24000，并保留 16000 tokens 的上下文空间。[[c3]] 这些预算支持较长材料分析，但仍应在运行 trace 中记录实际模型、快照、范围和失败结果。状态记录表明真实 gpt-5.6-sol 已用于来源更新闭环验证；这证明特定流程在当次环境中跑通，不应外推为所有知识、助手或外部集成都已验收。[[c4]]"
+        "key": "runtime_budget",
+        "title": "运行预算与上下文边界",
+        "body": "单次调用超时设置为 480000 毫秒，最大输入为 192000 tokens，最大输出为 24000 tokens，并额外预留 16000 tokens 上下文空间；推理强度配置为 `medium`。这些数值共同约束长代码材料的装载、生成篇幅和调用时长，但材料没有说明超限时的截断策略、重试机制，也没有提供真实运行 trace，因此不能据此认定配置已通过能力校验或在生产流程中生效。[[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "实际 ACP 模型选择",
-        "reason": "支持当前实际文件采用只读 TraeX ACP、gpt-5.6-sol 和 medium effort。",
-        "relation": "explains",
+        "label": "ACP 传输与评审模型配置",
+        "reason": "支持附近关于 traex 启动参数、只读沙箱、ACP 传输方式及 gpt-5.6-sol 模型选择的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:config/review-code-model.json",
-          "startLine": 1,
-          "endLine": 11
+          "startLine": 2,
+          "endLine": 10
         },
-        "quote": "{\n  \"transport\": \"acp\",\n  \"command\": \"traex\",\n  \"args\": [\n    \"-c\",\n    \"sandbox_mode=\\\"read-only\\\"\",\n    \"acp\",\n    \"serve\"\n  ],\n  \"model\": \"gpt-5.6-sol\",\n  \"effort\": \"medium\","
+        "quote": "  \"transport\": \"acp\",\n  \"command\": \"traex\",\n  \"args\": [\n    \"-c\",\n    \"sandbox_mode=\\\"read-only\\\"\",\n    \"acp\",\n    \"serve\"\n  ],\n  \"model\": \"gpt-5.6-sol\","
       },
       {
         "key": "c2",
-        "label": "默认模型配置来源",
-        "reason": "确认生成和 review 服务默认读取实际配置文件，而非示例或个人 Agent profile。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 11,
-          "endLine": 11
-        },
-        "quote": "> 本轮后续：实际 Agent 配置改为 `config/review-code-model.json`，生成及 review 服务默认读取它，环境变量仍可覆盖。启动默认直接重建 runtime，不依赖旧 `.repo-review/data/`；旧历史导入改为 `REVIEW_IMPORT_LEGACY=1` 显式选择。后续正文知识管线的进度与验收将另行补充。"
-      },
-      {
-        "key": "c3",
-        "label": "实际模型预算",
-        "reason": "支持超时、输入输出上限和上下文预留的具体数值。",
-        "relation": "explains",
+        "label": "推理强度与调用预算",
+        "reason": "支持附近关于 medium 推理强度、超时、输入输出令牌上限和上下文预留值的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:config/review-code-model.json",
-          "startLine": 12,
+          "startLine": 11,
           "endLine": 15
         },
-        "quote": "  \"timeoutMs\": 480000,\n  \"maxInputTokens\": 192000,\n  \"maxOutputTokens\": 24000,\n  \"contextReserveTokens\": 16000"
-      },
-      {
-        "key": "c4",
-        "label": "来源更新真实模型验证",
-        "reason": "说明真实模型验证覆盖的具体闭环，并帮助限制结论外推范围。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 3,
-          "endLine": 3
-        },
-        "quote": "> **2026-10-01 来源更新闭环**：`refresh_dependents` 不再是 NOT_IMPLEMENTED 占位。Capture 同事务记录失效范围，调度复用已有 extractor job，独立 verifier 后由 MemoryService 原子更新同一记忆；失败/缺证据维持 `needs_review`，只有全部受影响记忆真正应用才记 `applied`。`/api/memory-refreshes` 提供状态和结果。模型 schema 从宿主 Zod 合同生成，修正原先 body 空定义及把可空元数据误当事实歧义的问题。全量 `osdk run check` exit 0（56 文件 / 341 用"
+        "quote": "  \"effort\": \"medium\",\n  \"timeoutMs\": 480000,\n  \"maxInputTokens\": 192000,\n  \"maxOutputTokens\": 24000,\n  \"contextReserveTokens\": 16000"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "当前 ACP 运行时是否已验证支持 gpt-5.6-sol、medium 推理强度及这些令牌上限？",
+        "why": "材料仅给出静态配置，没有能力发现结果、握手记录或真实运行 trace，无法确认设置会被接受而非拒绝或降级。",
+        "nextStep": "执行受控的 ACP 能力发现与一次真实评审调用，保存模型、effort、预算、退出状态和错误信息对应的运行记录。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "输入超过预算或调用达到超时时，评审流程采用截断、分批、重试还是失败保留旧结果？",
+        "why": "预算数值已经定义，但材料未描述超限处理语义；这会影响大规模代码评审的完整性及失败结果能否安全落地。",
+        "nextStep": "结合调用实现和错误处理测试确认策略，并在配置说明或运行文档中记录可观察行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:config/omem.example.json",
-      "digest": "f03a576e24e30589fc3ed538495d2d073ede3f42ec4101b8a702fd7c44578968"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/retrieval.json",
-      "digest": "b367efa304dd3bf3ef142072d307f8e560d43f7c3a52dfc358f04c75b892984a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.example.json",
-      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
       "key": "omem:config/review-code-model.json",
       "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/README.md",
-      "digest": "a84591c62c77df07dd1e380186bcf73e7e402b35957cd0ae125e3b475d3849b7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/status.md",
-      "digest": "7a5220a095c4e1d3f2d72794130b87b6493abad244cfa20589a2c260a4806d84"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/01-决策摘要.md",
-      "digest": "708e5785eaccdb91b07f6d1f65ddca81292b6544cef6fb15074fb64ae138e9ed"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/02-审查范围与证据口径.md",
-      "digest": "4c4e44a1cf4e2780da3e02d51a1a42af8ac162397ae7b389cd8e7eafd9ca4ab0"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/03-统一证据内核.md",
-      "digest": "3da0e1e8ef15387b562af03b078f276885651dba4a93e1ed5e656051c8bf48e7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/04-端到端数据流与多模态接入.md",
-      "digest": "8cbf1aacb6687e8f67a2f8b642856379b54f85c586f0b1de8d0ed7ee0fe6a212"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:27:49.238Z",
+    "at": "2026-10-01T00:34:29.474Z",
     "trace": {
-      "runId": "ab723195-dd6c-4f12-a138-a19a4db281a0",
+      "runId": "544b4fb0-326d-4c13-af4a-256639659cc4",
       "roleId": "material-analyst",
       "roleVersion": "1",
       "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "47696263d765eee0a16f2aaa4ba8aecd4002f987121a4cf952564f92a8daf142",
-      "contextHash": "240bf130da4803639bf78027c5d885d3146915aa14d827ab653745c687fa31df",
+      "promptHash": "cb3efadec7c56523682a42c865a5b0bdf20ab7fc99725fa6926ea9fac1315f8e",
+      "contextHash": "decf9b316c964c92e0f32d6537145f18e5cb08c308814dd0c262531f5c8309b2",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6eb9c8c32d9a540ee4344a02962aad121e8f0521a892f9c39cf8933d13f5e1f4",
+      "fingerprint": "5ad1df5e60bf472ae6b2afb372e78259c4a227cfdd96c176e0cc3b62770e3c9f",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -151,10 +100,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c8-ba9e-7892-97f4-41ce44540912"
+        "01a0f4e2-0e66-7b20-871d-ff7c6dd9b0b8"
       ],
       "usage": {
-        "used": 46366,
+        "used": 21122,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -163,10 +112,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 52123,
-          "utf8Bytes": 77923,
-          "estimatedTokens": 25975,
-          "budgetedTokens": 32469,
+          "chars": 6244,
+          "utf8Bytes": 7864,
+          "estimatedTokens": 2622,
+          "budgetedTokens": 3278,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -175,17 +124,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:28:20.308Z",
+    "at": "2026-10-01T00:34:42.636Z",
     "trace": {
-      "runId": "c4c62b14-415d-4d16-b343-56c5e47ed23b",
+      "runId": "9df16830-c316-43d1-aced-c61c8334036b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e662c1edb91075d890d779f1a3d3c845cdd1b8872396a65dba78e7ff4eaba04f",
-      "contextHash": "15abdf83ea0981a487dc12601a23b19b075427b8f7dfe95d662f3afac9129efe",
+      "promptHash": "f354eb59bd68e37d92786a61b2a83de033796d57faac48e9d42a32f754319b29",
+      "contextHash": "f35b8cfc56e7ed1c2cf67af1a3be89402b5eacecd671680fa61d7c3bc1acf66d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "49e6cb014434b707a2c7c3b4d31c05a582a4e8d3843108c4d407bdb4c86b170e",
+      "fingerprint": "a1fb4533606a7b2ba9977754d6bc26520300c4abc07d286da3a28ebb0466596c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -198,10 +147,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c9-a637-7ac1-b66a-d234bd24e562"
+        "01a0f4e2-6acc-7fb2-b564-c09541b88301"
       ],
       "usage": {
-        "used": 51155,
+        "used": 20801,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -210,10 +159,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 68813,
-          "utf8Bytes": 107300,
-          "estimatedTokens": 35767,
-          "budgetedTokens": 44709,
+          "chars": 6058,
+          "utf8Bytes": 8392,
+          "estimatedTokens": 2798,
+          "budgetedTokens": 3498,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

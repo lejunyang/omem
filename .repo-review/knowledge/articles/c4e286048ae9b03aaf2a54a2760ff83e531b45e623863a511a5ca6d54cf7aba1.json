@@ -2,32 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/retrieval-index.ts",
-    "title": "语义索引显式追平脚本",
-    "summary": "为普通数据目录或 repo-review 隔离环境补建语义索引；review 模式先同步仓库材料、恢复已发布知识并同步代码结构，再以固定批量索引至完成。",
-    "category": "implementation",
+    "title": "批量补建语义检索索引脚本",
+    "summary": "该脚本是大量导入后的显式语义索引追赶入口：按普通或 repo-review 模式选择配置与 Store，评审模式先准备仓库材料、知识与代码数据，再以固定批次建立索引。它直接创建语义检索器，并传入中文 embedding 加载回调。",
+    "category": "workflow",
     "sections": [
       {
-        "key": "modes-and-dependencies",
-        "title": "双运行模式",
-        "body": "该脚本是大批量导入后的显式追平入口，补充服务器对后续捕获的常规索引。默认模式读取应用检索配置并打开普通 Store；`--review` 模式读取 review 检索配置并创建隔离 Store。两种模式都把各自配置中的可选 `osdkModel` 传给中文 embedding 加载器，再构造 SemanticRetrieval。[[c1]] 可选链意味着材料没有证明每次运行都显式指定模型，也没有展示加载器缺省行为。"
+        "key": "purpose-and-setup",
+        "title": "用途、模式与配置边界",
+        "body": "该脚本用于大量导入后的显式索引追赶，服务器仍负责后续捕获的持续索引。它以 `--review` 区分普通与评审模式：前者使用应用配置和个人 Store，后者读取可由环境变量指定的检索配置并创建 repo-review Store；随后直接实例化 `SemanticRetrieval`，向其传入调用 `loadChineseEmbedding` 的回调。[[c1]] 现有材料未包含语义检索器实现，因此此前“仅在真正需要向量时才加载模型”的结论被替代，不能据此确认回调的实际执行时机。\n\n标准工厂会严格解析 `enabled` 和模型别名；未启用时返回关键词检索，启用后才创建、启动语义检索器。[[c2]] 补建脚本没有经过该工厂，因此是否有意绕过 `enabled=false` 仍需确认。"
       },
       {
         "key": "review-preparation",
-        "title": "评审数据准备顺序",
-        "body": "review 模式在索引前依次执行 review sync、恢复已发布知识和 code sync。[[c2]] 因此待索引数据可包含仓库原始材料、已保存知识及代码派生结构；脚本只负责将这些已进入 Store 的内容追平到语义索引，本身不生成新知识或调用生成式模型。"
+        "title": "评审数据准备与隔离职责",
+        "body": "评审模式在批量索引前依次调用仓库材料同步、知识恢复和代码同步。材料只能证明调用顺序，不能在缺少两个同步函数实现的情况下断言其具体写入效果。[[c3]] 已提供的知识恢复流程会载入保存的用户补充、捕获仓库材料、恢复知识文章，并为尚未参与重核对的回答记录失效原因，最后刷新知识仓库。[[c4]]\n\nrepo-review 复用共享的 Store、capture 与 retrieval 原语，但数据目录、SQLite 和评审专属路径状态相互隔离，不接触个人工作区、Lark/学习 worker 或 secrets。[[c5]]"
       },
       {
-        "key": "batch-loop-and-boundaries",
-        "title": "批处理与资源边界",
-        "body": "索引以每批 16 条循环执行，`indexBatch` 返回空时结束；过程中输出累计 fragment 数与 health，完成后输出最终健康状态，`finally` 始终关闭检索器和 Store。[[c3]] 脚本没有展示跨同步步骤的事务、断点恢复或搜索质量断言；任一步抛错会终止本次流程，是否可安全重跑取决于下层幂等合同。"
+        "key": "batching-and-cleanup",
+        "title": "批处理、模型约束与清理限制",
+        "body": "核心循环每次调用 `indexBatch(16)`：零值结束，非零则累计数量并输出健康状态；完成后打印包含 `completed: true` 的 JSON。`finally` 先等待检索器关闭，再关闭 Store；若前一关闭操作抛错，后一操作不会执行，故只能确认正常路径上的关闭顺序。[[c6]]\n\n中文 embedding 由 osdk 查询固定模型快照，校验仓库、revision 和文件哈希，禁止远程模型与文件缓存，并以本地 CPU、量化权重初始化。[[c7]] 模型缺失、身份不符或校验失败都会使加载失败；现有材料未提供端到端测试结果，无法确认各失败路径的实际退出码与资源释放表现。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "索引模式与可选模型配置",
-        "reason": "支持普通和 review 两种配置、Store 选择，以及可选 osdkModel 被传给中文 embedding 加载器。",
-        "relation": "implements",
+        "label": "索引脚本的模式选择与检索器初始化",
+        "reason": "支持脚本用途、普通与评审配置和 Store 的选择，以及向语义检索器传入 embedding 加载回调的论断；不用于推断回调执行时机。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/retrieval-index.ts",
@@ -38,49 +38,102 @@
       },
       {
         "key": "c2",
-        "label": "review 索引前同步流程",
-        "reason": "支持 review 模式依次同步仓库材料、恢复知识并同步代码结构。",
+        "label": "标准检索工厂的启用开关",
+        "reason": "支持配置严格解析、未启用时使用关键词检索，以及启用后才创建并启动语义检索器的边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/factory.ts",
+          "startLine": 9,
+          "endLine": 18
+        },
+        "quote": "export const retrievalConfigSchema = z.object({ enabled: z.boolean().default(false), osdkModel: z.string().regex(/^[a-zA-Z0-9_-]+$/).default(\"memory-zh\") }).strict();\nexport type RetrievalConfig = z.input<typeof retrievalConfigSchema>;\nexport function readRetrievalConfig(path: string) {\n  return retrievalConfigSchema.p"
+      },
+      {
+        "key": "c3",
+        "label": "评审预同步调用顺序",
+        "reason": "支持评审模式在索引循环前依次调用仓库同步、知识恢复和代码同步，但不外推未提供实现的写入效果。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/retrieval-index.ts",
           "startLine": 16,
-          "endLine": 17
+          "endLine": 19
         },
-        "quote": "try {\n  if (review) { await runReviewSync(store,root); restoreReviewKnowledge(store,root); await runCodeSync(store,root); }"
+        "quote": "try {\n  if (review) { await runReviewSync(store,root); restoreReviewKnowledge(store,root); await runCodeSync(store,root); }\n  let count = 0;\n  while (true) { const indexed = await retrieval.indexBatch(16); if (!indexed) break; count += indexed; console.log(\"Indexed\",count,\"fragments\",retrieval.health()); }"
       },
       {
-        "key": "c3",
-        "label": "索引循环与关闭",
-        "reason": "支持固定批量追平、进度和健康输出，以及最终资源关闭。",
+        "key": "c4",
+        "label": "评审知识恢复流程",
+        "reason": "支持用户补充、仓库材料和知识文章的恢复，以及未参与重核对回答的失效记录与仓库刷新。",
         "relation": "explains",
         "target": {
           "kind": "material",
+          "key": "omem:apps/server/src/review/knowledge.ts",
+          "startLine": 9,
+          "endLine": 25
+        },
+        "quote": "export function restoreReviewKnowledge(store: Store, root: string) {\n  const notes = join(root, \".repo-review/knowledge/user-notes.json\");\n  if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, \"utf8\")) as CaptureInput[]) {\n    if (input.source !== \"manual\" || !input.externalId?.startsWith(\"knowled"
+      },
+      {
+        "key": "c5",
+        "label": "评审 Store 的隔离边界",
+        "reason": "支持 repo-review 复用通用数据原语但隔离运行数据、个人工作区和评审专属元数据的论断。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "/** repo-review is a code-review-only knowledge base that shares omem's Store,\n * capture and retrieval primitives but points at an isolated data directory. It\n * never touches the personal workspace SQLite/state, runs no Lark/learning workers,\n * and never reads secrets.\n *\n * This module also owns the review-specific"
+      },
+      {
+        "key": "c6",
+        "label": "批次循环与资源关闭顺序",
+        "reason": "支持固定批次、零值退出、完成输出，以及先关闭检索器再关闭 Store 的实际控制流与限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
           "key": "omem:scripts/retrieval-index.ts",
-          "startLine": 18,
+          "startLine": 16,
           "endLine": 21
         },
-        "quote": "  let count = 0;\n  while (true) { const indexed = await retrieval.indexBatch(16); if (!indexed) break; count += indexed; console.log(\"Indexed\",count,\"fragments\",retrieval.health()); }\n  console.log(JSON.stringify({ completed: true, ...retrieval.health() }));\n} finally { await retrieval.close(); store.close(); }"
+        "quote": "try {\n  if (review) { await runReviewSync(store,root); restoreReviewKnowledge(store,root); await runCodeSync(store,root); }\n  let count = 0;\n  while (true) { const indexed = await retrieval.indexBatch(16); if (!indexed) break; count += indexed; console.log(\"Indexed\",count,\"fragments\",retrieval.health()); }\n  console.lo"
+      },
+      {
+        "key": "c7",
+        "label": "中文向量模型的离线加载约束",
+        "reason": "支持固定模型快照、文件哈希校验、禁止远程模型，以及本地 CPU 量化初始化的运行边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 14,
+          "endLine": 44
+        },
+        "quote": "export const BGE_REVISION = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\";\nconst files = [\"config.json\", \"tokenizer.json\", \"tokenizer_config.json\", \"special_tokens_map.json\", \"vocab.txt\", \"onnx/model_quantized.onnx\"];\n\n/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async func"
       }
     ],
     "questions": [
       {
-        "question": "review sync、知识恢复和 code sync 中任一步失败后，已写入的部分数据是否可安全重跑并保持索引幂等？",
-        "why": "脚本顺序调用这些过程，但没有展示跨步骤事务边界、补偿机制或幂等保证。",
-        "nextStep": "查验各同步函数与 indexBatch 的幂等合同，并增加中途失败后重跑的集成测试。",
+        "question": "显式执行该脚本时，评审配置中的 enabled=false 是否仍应允许构建语义索引？",
+        "why": "脚本直接实例化 SemanticRetrieval，而标准工厂在 enabled 未开启时返回 KeywordRetrieval；现有材料无法判断差异是有意的运维语义还是遗漏。",
+        "nextStep": "核对命令文档、调用方及相关测试，并为 enabled=false 时的预期行为增加明确断言。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3"
+          "c1",
+          "c2"
         ]
       },
       {
-        "question": "未配置 osdkModel 时，中文 embedding 加载器选择什么默认模型和向量身份？",
-        "why": "脚本传入的是可选配置值，当前材料没有给出加载器默认行为，无法判断不同环境是否会生成兼容索引。",
-        "nextStep": "补充 embedding 加载实现与配置材料，并在最终 health 中核对模型身份和向量维度。",
+        "question": "批次累计、空队列退出、评审预同步失败，以及 retrieval.close() 抛错时 Store 未关闭的路径是否有端到端测试覆盖？",
+        "why": "现有材料只能证明控制流、输出语句和清理顺序，没有测试结果可用于确认实际退出码及失败路径。",
+        "nextStep": "查阅任务配置与测试；必要时增加子进程级测试，断言输出、退出码、调用顺序及资源关闭行为。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c3",
+          "c6"
         ]
       }
     ]
@@ -88,69 +141,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-assistant-smoke.ts",
-      "digest": "717ee10967b49593e5dbb5e764f0863bd1b30aba4aada54bd0b361adfd64896c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-refresh-smoke.ts",
-      "digest": "18d18495727491cd7e1cb6fa8b9ae440269175d9ec4c3ce24e9a944e5aa7de11"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-retrieval-smoke.ts",
-      "digest": "7b4c6cdfbc7b93a6883d060595ffde9c5bce21d7ca4d2358244c801293857a91"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/retrieval-index.ts",
       "digest": "e00fa36bfb6fb2bcdf888653bc52f006be6a7d2527b967783c02c2bf52ee696f"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/review-knowledge.ts",
-      "digest": "183b2bdd497d04202fd81a7e942c574fe56fb71f75b6049b5b456830d3515672"
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:06:44.637Z",
+    "at": "2026-10-01T00:42:00.147Z",
     "trace": {
-      "runId": "32836daa-c91f-40bc-a055-07cb8a401b03",
+      "runId": "78532543-57cd-436c-9e9a-c1659206e5d8",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9fbc6a19edb49918ad30e134f34111f4ec1a733de2643000abd5bb05cf9c58ea",
-      "contextHash": "4d0a6953f3c8d56701648816d4adb237ac17a2117183d456ccbc385a8f6118ba",
+      "promptHash": "81dfe8273d8552ea11ed7c7659b6264dad1df697db9c0ef06059287b47e18c80",
+      "contextHash": "49035499aacab7480a4eb54dbda79e6f3de03a3b7adcdfbb41ccda7f4d95ec6d",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "373fbf149d393a5a56ee68643b6bfa3e883fe58908062e61a025424a75ee0d37",
+      "fingerprint": "27381c3b2ef907eae0cfb72d2f5b737f46de6f48ecd7670fc127ac06261f3192",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -163,10 +191,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ec-4a83-7c30-98ac-b2ff2f4b589a"
+        "01a0f4e8-f134-7053-8635-e955998f27d2"
       ],
       "usage": {
-        "used": 56841,
+        "used": 29208,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -175,10 +203,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 104779,
-          "utf8Bytes": 114182,
-          "estimatedTokens": 38061,
-          "budgetedTokens": 47577,
+          "chars": 29606,
+          "utf8Bytes": 34743,
+          "estimatedTokens": 11581,
+          "budgetedTokens": 14477,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -187,17 +215,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:07:17.512Z",
+    "at": "2026-10-01T00:42:15.778Z",
     "trace": {
-      "runId": "cd5c360d-6e31-436c-97e1-c50bf99e7280",
+      "runId": "2844b434-8168-4bef-b16e-2ff1db4f580e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "de9a7fdfb89da3a5e1c8c2e12bd2d7578ea91468b9d96b0f49c6d9ed581ea25d",
-      "contextHash": "912127306e9f89455cfe1a2d00d9d1da6d31ce8fba623f03c7203ce1043d6584",
+      "promptHash": "a0585c08986121175771e8373abb9bd4ace4ab3a4d353ea941682fb69fcbaad2",
+      "contextHash": "886aa2cc94667ff30b0f7bbd3003b9f7cb30f17c23b80714caf06e3180924241",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bcfb337843ae7651f08f563729b2637ec3c30eee31bfbdcfb35c448e04bc1084",
+      "fingerprint": "89062d2f250c24ba12d645dae424c2bead66c7737ae17322fcf736e87359761b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -210,10 +238,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ed-4a7d-7481-ae91-112f53c809e7"
+        "01a0f4e9-4d62-7ac0-9704-123b6f50f703"
       ],
       "usage": {
-        "used": 56563,
+        "used": 26911,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -222,10 +250,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 115126,
-          "utf8Bytes": 128677,
-          "estimatedTokens": 42893,
-          "budgetedTokens": 53617,
+          "chars": 26312,
+          "utf8Bytes": 30105,
+          "estimatedTokens": 10035,
+          "budgetedTokens": 12544,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,32 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/retrieval/embedding.ts",
-    "title": "中文本地向量模型加载器",
-    "summary": "从 osdk 锁定快照加载 BGE-small-zh-v1.5，逐文件校验后以离线 CPU 量化模式提供查询与材料向量，并把全部关键资产摘要纳入向量身份。",
+    "title": "中文语义检索嵌入模型加载器",
+    "summary": "该模块定义统一的嵌入接口，并从 osdk 管理的不可变本地快照加载 BGE-small-zh-v1.5。加载过程校验仓库、版本与关键文件哈希，禁止运行时联网；查询和正文采用不同输入形式，输出经 CLS 池化与归一化。",
     "category": "implementation",
     "sections": [
       {
-        "key": "contract",
-        "title": "模型抽象与快照身份",
-        "body": "模块用 `EmbeddingModel` 统一模型身份、批量向量化和资源关闭，并显式区分 query 与 passage，给上层语义检索留下用途特化入口。[[c1]] 当前实现只接受固定仓库与固定 revision 的 BGE-small-zh-v1.5；模型路径由 `osdk model show` 返回，应用自身不负责下载。[[c2]]"
+        "key": "purpose-and-contract",
+        "title": "作用与接口边界",
+        "body": "该文件为中文语义检索提供统一的嵌入能力。`EmbeddingModel` 暴露模型身份、按 `query` 或 `passage` 用途批量生成向量，以及释放资源三个操作；接口注释要求身份涵盖权重、分词器、池化、查询指令和窗口版本，以便调用方识别不兼容的向量配置。[[c1]]\n\n当前材料只呈现加载器本身，没有展示索引建立、查询或加载旧索引的调用路径，因此不能确认模型身份是否会被端到端强制校验，也不能据此断言模型变化一定会阻止旧向量混用。"
       },
       {
-        "key": "verification",
-        "title": "加载与完整性校验",
-        "body": "加载器枚举配置、分词器、词表和量化 ONNX 文件，把 osdk 清单中的 SHA-256 与本地文件逐项比较；缺少记录或内容不一致都会中止。[[c3]] 校验后才动态载入 Transformers，并关闭远程模型和文件系统缓存，以 `local_files_only`、CPU、q8 和双线程建立特征提取管线，因此运行期不会隐式联网补模型。[[c4]]"
+        "key": "verified-loading",
+        "title": "受校验的本地加载流程",
+        "body": "加载器通过 `osdk model show` 获取指定别名的快照元数据，并限定命令超时和输出大小；若仓库不是指定的 BGE-small-zh-v1.5，或 revision 与代码锁定值不一致，该加载过程会抛错并拒绝加载该快照。[[c2]] 随后它读取配置、分词器、词表和量化 ONNX 模型，逐项计算 SHA-256，与 osdk 清单核对；缺少预期哈希或内容不一致同样会失败。[[c3]]\n\n校验完成后才创建特征提取流水线。实现关闭远程模型与文件系统缓存，要求仅从本地快照加载，并固定使用 CPU、q8 精度和两个推理线程；这保证本函数不会隐式联网下载，同时要求运行环境预先具备完整快照及推理依赖。[[c4]]"
       },
       {
-        "key": "embedding",
-        "title": "向量生成与边界",
-        "body": "查询文本会加中文检索指令，材料文本保持原样；两者都使用 CLS pooling 和归一化。模型身份由固定算法/窗口标签及所有关键文件哈希共同组成，可阻止不同权重或分词资产产生的向量被当成同一索引。[[c5]] `close` 会释放 extractor。该文件没有展示截断到“window400”的具体参数，名称表达的窗口策略是否由模型配置或其他层落实仍不能确定。"
+        "key": "embedding-behavior",
+        "title": "向量生成、身份与资源释放",
+        "body": "返回对象的 `id` 由固定配置标签与全部受检文件哈希派生；受检内容变化会产生不同身份，可供调用方识别向量配置不兼容，但本文件没有证明索引侧一定保存并强制核对该身份。[[c5]] 标签包含 `window400-v1`，然而当前材料未显示明确的长度切分、截断参数或窗口单位，因此其与实际输入处理的一致性仍需从调用层或 tokenizer 配置确认。\n\n生成向量时，仅 `query` 会添加中文检索指令，`passage` 保持原文；两者随后统一使用 CLS 池化并归一化，调用方必须正确传入用途。`close` 显式释放 extractor，说明资源生命周期由调用者负责；空输入、超长文本、关闭后复用及推理错误的处理未在本文件中说明。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "向量模型接口",
-        "reason": "支持模型身份、用途区分、批量嵌入和关闭生命周期的说明。",
-        "relation": "implements",
+        "label": "嵌入模型接口契约",
+        "reason": "支持模型接口包含身份、按用途生成向量和资源释放能力，并说明身份设计需要覆盖哪些向量配置。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/embedding.ts",
@@ -38,9 +38,9 @@
       },
       {
         "key": "c2",
-        "label": "osdk 快照解析与版本门禁",
-        "reason": "说明应用通过 osdk 查找快照且只接受锁定的仓库和 revision。",
-        "relation": "depends_on",
+        "label": "快照发现与版本校验",
+        "reason": "支持加载器从 osdk 获取快照，并在仓库或固定 revision 不符合要求时让当前加载过程失败。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/embedding.ts",
@@ -51,8 +51,8 @@
       },
       {
         "key": "c3",
-        "label": "关键模型文件校验",
-        "reason": "支持逐文件比较清单摘要、本地内容不符即失败的完整性策略。",
+        "label": "关键模型文件完整性校验",
+        "reason": "支持逐项读取关键文件、计算 SHA-256，并在清单缺失或校验不一致时抛错的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,8 +64,8 @@
       },
       {
         "key": "c4",
-        "label": "离线 CPU 量化加载",
-        "reason": "说明禁止远程模型和缓存、仅从本地快照创建 q8 CPU 管线。",
+        "label": "离线量化推理配置",
+        "reason": "支持禁止远程模型和文件系统缓存，并仅使用本地快照、CPU 与 q8 精度创建流水线的边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -77,26 +77,50 @@
       },
       {
         "key": "c5",
-        "label": "向量身份与查询特化",
-        "reason": "支持文件哈希参与模型身份、查询加指令、CLS 归一化及资源释放的描述。",
+        "label": "内容绑定的向量身份",
+        "reason": "支持模型身份由配置标签和受检文件哈希派生；该引用仅证明身份生成，不证明调用方必然强制隔离索引。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/embedding.ts",
           "startLine": 35,
-          "endLine": 44
+          "endLine": 36
         },
-        "quote": "  return {\n    id: \"bge-zh-cls-q8-window400-v1:\" + createHash(\"sha256\").update(hashes.join(\":\" )).digest(\"hex\"),\n    async embed(texts, purpose) {\n      const result = await extractor(texts.map(text => purpose === \"query\" ? \"为这个句子生成表示以用于检索相关文章：\" + text : text), {\n        pooling: \"cls\", normalize: true,\n      });\n     "
+        "quote": "  return {\n    id: \"bge-zh-cls-q8-window400-v1:\" + createHash(\"sha256\").update(hashes.join(\":\" )).digest(\"hex\"),"
+      },
+      {
+        "key": "c6",
+        "label": "查询指令、池化与资源释放",
+        "reason": "支持查询与正文的不同预处理、CLS 池化、向量归一化及显式释放 extractor 的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 37,
+          "endLine": 43
+        },
+        "quote": "    async embed(texts, purpose) {\n      const result = await extractor(texts.map(text => purpose === \"query\" ? \"为这个句子生成表示以用于检索相关文章：\" + text : text), {\n        pooling: \"cls\", normalize: true,\n      });\n      return result.tolist() as number[][];\n    },\n    async close() { await extractor.dispose(); },"
       }
     ],
     "questions": [
       {
-        "question": "`window400` 是否真的由当前加载参数强制实施？",
-        "why": "模型 id 声明了 window400，但可见的 extractor 调用只设置 pooling 和 normalize，材料没有出现显式截断长度，因此无法确认身份名称与实际分词窗口完全一致。",
-        "nextStep": "检查锁定模型的 tokenizer 配置和语义检索调用处是否显式设置 max_length，并补充长文本行为测试。",
+        "question": "标识中的 window400 是否由其他调用层实施了明确的 400 长度切分或截断？",
+        "why": "模型身份包含 `window400-v1`，但当前文件没有显式的 tokenizer 最大长度、截断参数或分块规则，无法确认该标签与真实输入窗口一致。",
+        "nextStep": "检查该加载器的调用代码和 tokenizer 配置，确认窗口策略的实施位置、长度单位及超长中文输入行为。",
         "blocking": false,
         "citationKeys": [
-          "c4",
+          "c1",
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "调用方是否在索引与查询路径中强制校验完全相同的模型 id？",
+        "why": "本模块只生成内容绑定的身份，没有展示索引元数据、身份不一致时的拒绝逻辑或重建流程，因此不能确认不同向量配置会被端到端隔离。",
+        "nextStep": "沿 `loadChineseEmbedding` 和 `EmbeddingModel.id` 的引用检查索引创建、加载和查询路径，并验证身份不一致时会拒绝使用旧索引或触发显式重建。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
           "c5"
         ]
       }
@@ -105,85 +129,40 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/quality/import.ts",
-      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/lark-annotations.ts",
-      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/repository.ts",
-      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/retrieval/embedding.ts",
       "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/factory.ts",
-      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:22:13.917Z",
+    "at": "2026-10-01T00:10:37.699Z",
     "trace": {
-      "runId": "95952240-8704-4c12-a148-01b2eda26b5e",
-      "roleId": "code-analyst",
+      "runId": "9db823d6-72ab-4d27-a732-00820fc3dc62",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "be6da817367d1a86a7b4b0af9b1c386d9447d8ee7527717dbc46cc361541556f",
-      "contextHash": "09439dfdad4c8480731d6fed0afe9c94afef82bc3d027b88c657593be0373a68",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "bd14c4a641e67115854c1e466fafe939baea02db446e2bb3dbe97a5c86b4d933",
+      "contextHash": "3024a5985c7364da159f875b9ebf36d425b7f65c6c0b3c65afe79825f42394a3",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "7c288405af8b8ccc81152ede5119a055caa17bc4e461d640fe3404e55884ad81",
+      "fingerprint": "1e17ceb31f5e435e80020f0acc9b9778f12fe8d2f9d598d3d644813e4cf676e4",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c3-830a-71d3-a1ce-87178e464c5c"
+        "01a0f4cc-3e66-7a03-81f8-290a84f6e842"
       ],
       "usage": {
-        "used": 48527,
+        "used": 24835,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -192,10 +171,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 80570,
-          "utf8Bytes": 83287,
-          "estimatedTokens": 27763,
-          "budgetedTokens": 34704,
+          "chars": 14544,
+          "utf8Bytes": 19642,
+          "estimatedTokens": 6548,
+          "budgetedTokens": 8185,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -204,17 +183,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:22:42.369Z",
+    "at": "2026-10-01T00:10:53.592Z",
     "trace": {
-      "runId": "e81304b4-7d4d-4831-b8fb-5150b92bd223",
+      "runId": "202df67c-53c1-4201-aad7-6caecbad018a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2df70fb6611560dc5402454f98ede7b730c378a2f682a833de5fb985fa940fb0",
-      "contextHash": "4afb6779fab199f827bb783826a04463110145109152e9e2d1fd4f9d55de717c",
+      "promptHash": "27229e1c15822dd4154a8e48e8d73821df776d5d99af93d5bf697d2bacc66f2e",
+      "contextHash": "5b6a441073db77f81e83153ede0489d65f32539db476934710d3d8c195206b90",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "52f50ed727bdd367ac2337e2f26c7131998f6960fffc72e955273c2beb67854e",
+      "fingerprint": "55a27413e0e5f754c5f4cd292ac18401ae6b8b41ca56c6aafc4e8e3fce4de3ad",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -227,10 +206,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-891f-7572-8e72-098925e922fa"
+        "01a0f4cc-90a7-7b71-8e2c-f24e11ab6dd1"
       ],
       "usage": {
-        "used": 51997,
+        "used": 22750,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -239,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 103086,
-          "utf8Bytes": 113787,
-          "estimatedTokens": 37929,
-          "budgetedTokens": 47412,
+          "chars": 11368,
+          "utf8Bytes": 14994,
+          "estimatedTokens": 4998,
+          "budgetedTokens": 6248,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

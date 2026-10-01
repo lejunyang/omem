@@ -2,99 +2,230 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/retrieval/semantic.ts",
-    "title": "SQLite 本地语义检索与词法融合",
-    "summary": "在关键词检索之上增量构建本地向量索引，以精确余弦和 RRF 融合改善中文语义召回，并在模型或索引异常时回退词法结果。",
+    "title": "语义检索与词法检索融合",
+    "summary": "该模块为当前版本的非派生固定片段增量建立本地向量索引，并将词法候选与当前可用的语义候选按倒数排名融合。向量只参与召回与可选的 MMR 去冗余，不成为独立事实来源。此前两项过窄结论已被替代：纯词法结果还可能源于同身份向量为空或全部被过滤；错误状态是在索引方法未抛出异常并退出循环后清除，即使因停止而提前退出或本轮没有片段也会清除，并不表示所选片段全部处理完成。",
     "category": "implementation",
     "sections": [
       {
-        "key": "indexing",
-        "title": "增量索引流程",
-        "body": "`SemanticRetrieval` 继承关键词实现，只索引当前 source head 上的非派生片段。后台 `start` 周期调用 `indexBatch`，同一时间复用一个工作 Promise，正常时每秒追赶、出错后延迟 30 秒。每个长片段按 400 字窗口、320 字步长重叠切分，分批生成 passage 向量；全部向量准备好后才在事务中写入分片及 head 标记，从而避免半成品被视为已索引。[[c1]]"
+        "key": "purpose-and-lifecycle",
+        "title": "作用与运行生命周期",
+        "body": "`SemanticRetrieval` 在词法检索之上增加本地精确余弦检索，仅索引当前 head 上且未标记为派生内容的固定片段；健康状态按当前模型身份统计完成标记，因此向量是可重建的检索视图，而非新的事实权威。[[c1]]\n\n`start` 启动后台追赶：正常时约每秒执行一批，发生错误后退避至 30 秒；`indexBatch` 复用在途 Promise 来合并并发调用，默认批量上限为 8。[[c2]] `close` 会设置永久停止状态、取消定时器、等待当前批次并释放已加载模型，但本类没有重复启动保护，材料也未展示上层对调用次数和顺序的约束。[[c4]]"
       },
       {
-        "key": "search",
-        "title": "查询、融合与降级",
-        "body": "查询先取最多 100 条词法候选；空查询或模型尚未加载时直接返回词法结果。模型可用后生成 query 向量，对同一片段的多个窗口取最高余弦分数，并在扫描过程中执行可见性和捕获时间过滤。词法与稠密分支通过基于排名的倒数分数融合，合并 `routes` 后稳定排序；嵌入或维度异常会记录健康错误并退回词法召回。[[c2]]"
+        "key": "indexing-flow",
+        "title": "分窗、模型身份与原子写入",
+        "body": "索引器按模型身份选择尚无完成标记的当前片段，将标题前 64 字符与正文窗口组合后生成 passage 向量；每次最多嵌入 16 个窗口，并检查返回数量与请求数量一致。[[c5]] 正文按 400 字符窗口、320 字符步长重叠切分；向量还须非空、元素均为有限数值且范数非零，随后归一化。[[c6]]\n\n单个片段的全部窗口及完成标记在同一即时事务中写入，写入失败会回滚。索引方法只要未抛出异常并退出循环，就会清除错误状态；这包括 `stopped` 导致循环提前结束以及本轮没有选中片段的情况，因此原先“成功处理完所选片段后才清除错误”的结论已被替代。[[c3]]\n\n模型身份约定覆盖权重、分词、池化、查询指令和窗口版本；当前加载器锁定中文 BGE 快照、校验文件哈希并禁止远程加载，查询文本另加专用指令。相关条件变化时应更换身份，避免新旧向量混用。[[c7]]"
       },
       {
-        "key": "boundaries",
-        "title": "边界条件与依赖",
-        "body": "窗口函数至少产生一个窗口，覆盖空文本；向量必须非空、有限且范数非零。读取旧向量时若维度与当前查询向量不同会明确报错，要求模型身份变化时建立新索引。该类依赖 `EmbeddingModel` 提供身份、query/passage 嵌入和关闭能力，也依赖 `KeywordRetrieval` 作为兼容基线；代码采用全量精确余弦，适用前提是个人 SQLite 资料规模。[[c3]]"
+        "key": "search-fusion-and-limits",
+        "title": "部分索引融合、排序与降级边界",
+        "body": "异步检索先取得最多 100 条词法候选，并把来源权重和多样化留给最终统一排序。空查询或模型尚未装载时直接返回词法排序；否则模块计算当前模型身份下各窗口的余弦分数，先应用可见性与捕获时间过滤，再为每个片段保留最高分窗口。[[c8]]\n\n词法分支与前 100 条语义候选以 `1/(60+rank+1)` 的倒数排名分数融合。若同身份索引没有向量，或语义行全部被过滤，融合结果也会自然退化为纯词法；这替代了“纯词法只发生于空查询、模型未装载或异常”的过窄结论。查询嵌入、维度校验或其他语义步骤报错时，同样会记录错误并回退到词法排序。[[c9]]\n\n最终排序应用来源权重、代码符号加权和结果上限；启用多样化时，MMR 利用向量相似度、重复摘录或同一修订关系降低冗余。它只改变顺序，不删除或改写固定证据的身份与溯源。[[c10]]"
+      },
+      {
+        "key": "contract-boundaries",
+        "title": "查询合同与证据边界",
+        "body": "查询合同要求可见性过滤在最终排序和截断前执行，来源权重只影响排序资格之外的偏好；候选结果始终携带固定片段、来源修订和溯源信息。[[c11]] 词法基线同样只检索非派生材料，并在候选阶段应用时间与可见性条件，因此语义扩展延续了原始证据优先和宿主访问控制的边界。[[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "语义索引调度与事务写入",
-        "reason": "支持后台追赶、重叠窗口、批量嵌入和原子写入的流程说明。",
+        "label": "当前片段范围与语义健康状态",
+        "reason": "支持语义索引仅覆盖当前非派生片段、使用精确余弦，并按当前模型身份统计索引进度和降级状态。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/semantic.ts",
-          "startLine": 34,
-          "endLine": 77
+          "startLine": 7,
+          "endLine": 27
+        },
+        "quote": "type Fragment = { id: string; revision_id: string; text: string; title: string; created_at: string; namespace: string; actor: string | null };\nconst CURRENT = `FROM fragments f JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id WHERE ${ORIGINAL}`;\nconst COLUMNS = \"f.id,f.revision_id,f.text,r.title,r.c"
+      },
+      {
+        "key": "c2",
+        "label": "后台追赶与批次协调",
+        "reason": "支持后台循环的正常间隔、错误退避、默认批量上限以及并发索引调用共享在途任务。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 35,
+          "endLine": 48
         },
         "quote": "  /** Automatic catch-up includes subsequent captures, without blocking a query on indexing. */\n  start() {\n    const tick = async () => {\n      if (this.stopped) return;\n      try { await this.indexBatch(); } catch (error) { this.error = String(error); }\n      if (!this.stopped) { this.timer = setTimeout(tick, this.er"
       },
       {
-        "key": "c2",
-        "label": "语义与词法融合搜索",
-        "reason": "支持过滤、最高窗口得分、RRF 融合及异常降级行为。",
+        "key": "c3",
+        "label": "索引事务与错误状态清理",
+        "reason": "支持单片段窗口与完成标记的事务提交、失败回滚，并证明循环正常退出后无条件清除错误，包括停止导致的提前退出。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/semantic.ts",
-          "startLine": 80,
-          "endLine": 111
+          "startLine": 55,
+          "endLine": 78
         },
-        "quote": "  /** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const lexical = super.searchSources({ ...query, limit: 100 });\n    if (!query.text.trim() || !this.model) return lexical.slice(0, query.limit ?? 20);\n    try {\n    "
+        "quote": "    for (const fragment of fragments) {\n      if (this.stopped) break;\n      // Overlapping windows prevent a long immutable fragment from silently losing its tail.\n      const windows = embeddingWindows(fragment.text);\n      const vectors: number[][] = [];\n      for (let i = 0; i < windows.length; i += 16) {\n        c"
       },
       {
-        "key": "c3",
-        "label": "窗口与向量校验",
-        "reason": "说明切窗边界和非法向量的显式失败条件。",
-        "relation": "supports",
+        "key": "c4",
+        "label": "语义检索资源关闭",
+        "reason": "支持关闭时设置停止状态、取消调度、等待在途索引并释放模型资源，也显示该停止状态不会复位。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/semantic.ts",
-          "startLine": 122,
-          "endLine": 135
+          "startLine": 117,
+          "endLine": 121
+        },
+        "quote": "  async close() {\n    this.stopped = true;\n    clearTimeout(this.timer);\n    await this.work?.catch(() => {});\n    await this.model?.close();"
+      },
+      {
+        "key": "c5",
+        "label": "待索引选择与批量嵌入",
+        "reason": "支持按模型身份选择未完成片段、标题拼接、每十六个窗口调用 passage 嵌入及返回数量校验。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 45,
+          "endLine": 65
+        },
+        "quote": "  indexBatch(limit = 8): Promise<number> {\n    if (this.work) return this.work;\n    this.work = this.index(limit).catch(error => { this.error = String(error); throw error; }).finally(() => this.work = null);\n    return this.work;\n  }\n\n  private async index(limit: number) {\n    const model = await this.ready();\n    cons"
+      },
+      {
+        "key": "c6",
+        "label": "重叠分窗与向量有效性校验",
+        "reason": "支持四百字符窗口、三百二十字符步长，以及非空、有限数值、非零范数和归一化要求。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 125,
+          "endLine": 137
         },
         "quote": "export function embeddingWindows(text: string) {\n  const windows: { start: number; end: number }[] = [];\n  for (let start = 0; start < Math.max(1,text.length); start += 320) {\n    windows.push({ start, end: Math.min(text.length,start+400) });\n    if (start + 400 >= text.length) break;\n  }\n  return windows;\n}\nfunction n"
+      },
+      {
+        "key": "c7",
+        "label": "中文嵌入模型身份与离线加载",
+        "reason": "支持模型身份组成约定、锁定快照与哈希校验、禁止远程加载、查询专用指令及模型资源释放。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 7,
+          "endLine": 43
+        },
+        "quote": "export interface EmbeddingModel {\n  /** Includes weights, tokenizer, pooling, query instruction and window version. */\n  id: string;\n  embed(texts: string[], purpose: \"query\" | \"passage\"): Promise<number[][]>;\n  close(): Promise<void>;\n}\n\nexport const BGE_REVISION = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\";\nconst fil"
+      },
+      {
+        "key": "c8",
+        "label": "部分语义索引上的候选构造",
+        "reason": "支持词法候选预取、空查询和模型未装载时提前返回，以及语义窗口的可见性、时间、维度和每片段最高分筛选。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 81,
+          "endLine": 105
+        },
+        "quote": "  /** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const lexical = super.searchSources({ ...query, sourceWeight: undefined, diversify: false, limit: 100 });\n    if (!query.text.trim() || !this.model) return rankEvid"
+      },
+      {
+        "key": "c9",
+        "label": "倒数排名融合与异常回退",
+        "reason": "支持两路候选的倒数排名融合、语义分支为空时保留词法候选，以及语义处理异常后的词法回退。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 106,
+          "endLine": 114
+        },
+        "quote": "      const fused = new Map<string, SourceCandidate>();\n      for (const branch of [lexical, [...dense.values()].sort((a,b) => b.score-a.score).slice(0,100)]) {\n        branch.forEach((hit,rank) => {\n          const prior = fused.get(hit.id);\n          fused.set(hit.id, { ...hit, score: (prior?.score ?? 0) + 1/(60+rank"
+      },
+      {
+        "key": "c10",
+        "label": "统一排序与 MMR 去冗余",
+        "reason": "支持最终来源加权、结果上限和 MMR 排序，并说明去冗余只改变顺序而保留证据身份与溯源。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/ranking.ts",
+          "startLine": 3,
+          "endLine": 32
+        },
+        "quote": "/** MMR over fused relevance, using existing normalized vectors for redundancy.\n * https://www.elastic.co/search-labs/blog/maximum-marginal-relevance-diversify-results\n * This changes ordering only: original identities, visibility and provenance survive.\n */\nexport function rankEvidence(hits: SourceCandidate[], query: "
+      },
+      {
+        "key": "c11",
+        "label": "检索查询与候选合同",
+        "reason": "说明可见性、来源权重和多样化参数的职责，以及候选必须保留固定片段、来源修订和溯源字段。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 25,
+          "endLine": 60
+        },
+        "quote": "export type SearchQuery = {\n  text: string;\n  scope?: RetrievalScope;\n  /** Confirmed project id (from a confirmed ContextLink). Null when unknown. */\n  project_id?: string | null;\n  /**\n   * False unless project_id comes from a confirmed/trusted ContextLink. When false\n   * or absent, implementations MUST NOT filter b"
+      },
+      {
+        "key": "c12",
+        "label": "词法检索的原始证据过滤",
+        "reason": "支持词法基线排除派生材料，并在候选资格阶段执行时间范围和宿主可见性过滤。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 16,
+          "endLine": 66
+        },
+        "quote": "export const ORIGINAL = \"COALESCE(json_extract(r.body, '$.provenance.producerKind'),'original') != 'derived' AND COALESCE(json_extract(r.body, '$.context.derived'),0) != 1\";\nconst SOURCE_COLUMNS = `f.id AS fragment_id,f.revision_id,f.text AS fragment_text,\n  r.title,r.created_at AS revision_created_at,s.namespace,\n  js"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "哪个上层组件负责保证 `start` 与 `close` 的调用次数和先后顺序？",
+        "why": "当前材料只展示本类生命周期方法；`start` 没有重复调用保护，而 `close` 会永久设置停止状态，无法确认组合根是否保证只启动一次且关闭后不再复用。",
+        "nextStep": "检查实例创建、服务启动和关闭代码，并增加重复启动、关闭及关闭后调用的集成测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4"
+        ]
+      },
+      {
+        "question": "模型换代、片段 head 变化或窗口数量缩短后，旧向量与旧完成标记由谁回收？",
+        "why": "当前实现按模型身份写入窗口和完成标记，但提供的材料没有展示旧模型、非当前片段或多余窗口的清理策略。",
+        "nextStep": "核对数据库外键、同步和索引维护代码，并覆盖模型身份变化、head 迁移、片段删除及窗口缩短场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3",
+          "c7"
+        ]
+      },
+      {
+        "question": "语义降级、维度不匹配、空语义分支、事务回滚和中途关闭目前有哪些自动化行为断言？",
+        "why": "材料展示了这些分支的实现，但没有提供测试文件，无法确认部分索引融合、错误健康状态和资源生命周期是否已被真实验证。",
+        "nextStep": "补查相关测试材料，并分别验证正常融合、过滤后纯词法结果、异常回退、事务失败和关闭等待行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c8",
+          "c9"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/retrieval/semantic.ts",
-      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/app.ts",
-      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/knowledge.ts",
-      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/main.ts",
-      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
+      "digest": "be42007fce29d70b9402637abb5fe64685b46872ae815a2285bbbc67303962e3"
     },
     {
       "kind": "material",
@@ -103,50 +234,50 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/retrieval/ranking.ts",
+      "digest": "e0a3c7a3c7b7c4636440cec6dd26fb3389d36aaa3be87df58dffa19441467176"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "350cbe18e9f431c0e6eba3b0948c5b90e4b6e4270e67fbaea0a15b2914fbc48f"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:23:17.669Z",
+    "at": "2026-10-01T01:01:26.883Z",
     "trace": {
-      "runId": "32bc7d66-0960-4507-80cf-17737c4e381d",
-      "roleId": "code-analyst",
+      "runId": "f5507801-012a-4cae-8133-ca5c96f2378d",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "5b1fa399e7bc0e096163ad7621c6d6cedae5449ab103a6d353dfae9a150e5ca4",
-      "contextHash": "3c896e38a13d7d900157c57cdaeea7f6b32a47ad974299e132ac389ffb142583",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "3da010a999cde31036d494621f3a6c579171d373b33c3bcc2fca25e59ecfa423",
+      "contextHash": "47c14277f8a72ec1b01a5ad04c724aa86c723617a0b62d1a4ab7c0ba12456ca2",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f16319e6c3af0d7b77eb2d7755bcca287305890e2afe10df88e9a961aa755612",
+      "fingerprint": "02301149ac98298060dee403d42930bbb6f6eac2a21768b170ecfc8676375ee0",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-9d14-7323-afcf-e36a972bfc67"
+        "01a0f4fa-96be-7fc1-bd3b-a0f83360b9ca"
       ],
       "usage": {
-        "used": 46720,
+        "used": 32961,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -155,10 +286,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 80555,
-          "utf8Bytes": 82669,
-          "estimatedTokens": 27557,
-          "budgetedTokens": 34447,
+          "chars": 37234,
+          "utf8Bytes": 43755,
+          "estimatedTokens": 14585,
+          "budgetedTokens": 18232,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -167,17 +298,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:24:13.144Z",
+    "at": "2026-10-01T01:01:50.623Z",
     "trace": {
-      "runId": "e9553d28-dcce-43c9-a853-c8268b0135ee",
+      "runId": "848f83cd-0032-4471-be30-cf28c4fc9d9a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "f7101426752da5e0bbe0df083bc8011dc216cbd96a2fd1c43b88d891baebeb5c",
-      "contextHash": "03c89395898c13e7271889abec2597803ac48818cbf7249119f9fd6951cc19ae",
+      "promptHash": "45d3b9a435049ff0eda58bed696eb1afd67009c5703d67f38f3c65cb633bb854",
+      "contextHash": "0970c80770e0c21d646076794b241d54d8f637889e337591dc20f6b0a3821989",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b652922ee8459b62a440ad55335d34bedd6941a43590a2b38eeb5170513fea5f",
+      "fingerprint": "e6e59ddd8e9786be07288360952b7b5104f3d0890c521e261696141311760901",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -190,10 +321,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c5-8213-79a0-99bd-451dafbf8ba5"
+        "01a0f4fb-18e8-7b13-ae2d-c03891b0d79f"
       ],
       "usage": {
-        "used": 51200,
+        "used": 30784,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -202,10 +333,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 94682,
-          "utf8Bytes": 103496,
-          "estimatedTokens": 34499,
-          "budgetedTokens": 43124,
+          "chars": 35080,
+          "utf8Bytes": 40477,
+          "estimatedTokens": 13493,
+          "budgetedTokens": 16867,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

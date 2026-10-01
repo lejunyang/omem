@@ -2,27 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:osdk.lock",
-    "title": "osdk 锁定工具链与依赖快照",
-    "summary": "锁文件固定 Linux x64 的 Node 24.18.1、pnpm 11.28.2 安装器、原生 pnpm 锁摘要和 osdk-guide 的解析提交，用于可复现依赖恢复。它记录解析结果与校验信息，不单独证明下载、安装或项目检查已经成功。",
+    "title": "osdk.lock：工具链、中文向量模型与依赖锁定",
+    "summary": "该锁文件固定了 Linux x64 的 Node.js 工具链、中文 embedding 模型及其制品、pnpm 安装输入，并记录 osdk-guide 技能来源。它能证明期望版本与完整性约束已被声明，但不能单独证明依赖已经安装、模型已下载或运行检查已经通过。",
     "category": "configuration",
     "sections": [
       {
-        "key": "runtime",
-        "title": "运行时与安装输入",
-        "body": "锁文件 schema 为 4，并将 Linux x64 的 Node 请求与解析版本都固定为 `24.18.1`，同时记录官方归档地址、文件名和 SHA-256 校验值；该工具配置关闭 corepack。[[c1]] pnpm 依赖解析使用安装器版本 `11.28.2` 和 Node 24.18.1，输入清单为 `package.json`，安装命令带 frozen lockfile，并允许从源码构建。[[c2]] 这些字段共同限定可复现安装输入，但执行成功仍应依据真实命令退出码。"
+        "key": "runtime-and-dependencies",
+        "title": "运行时与应用依赖",
+        "body": "锁文件采用 schema 4，并为 Linux x64 固定 Node.js 24.18.1、架构及关闭 Corepack 的选项，同时记录下载地址和 SHA-256 校验值。这些字段用于让工具链解析与制品校验可复现，但属于锁定配置，不等同于当前机器已经成功安装该运行时。[[c1]]\n\n应用依赖由 pnpm 11.28.3 管理，绑定 `node@24.18.1`，以 `package.json` 为清单并要求执行冻结锁安装；同时保存清单与 `pnpm-lock.yaml` 的摘要。由此可判断依赖解析输入被固定，但不能据此宣称安装命令或项目检查已实际成功运行。[[c2]]"
       },
       {
-        "key": "locks",
-        "title": "原生锁与技能来源",
-        "body": "依赖快照进一步固定 `pnpm-lock.yaml` 的路径和摘要，使 manifest 或原生锁变化能够被检测，而不是静默沿用旧解析结果。[[c3]] `osdk-guide` 技能来自 `github:lejunyang/one-sdk`，解析到明确提交并记录内容哈希，面向 universal 与 claude-code agent。[[c4]] 因而实际上游是 one-sdk；锁文件只描述当前解析快照，不表示远端永久可达，也不代替 `osdk deps --frozen` 与项目检查。"
+        "key": "memory-model",
+        "title": "中文记忆向量模型",
+        "body": "`memory-zh` 被配置为 Hugging Face 上的 `Xenova/bge-small-zh-v1.5`，用途为 embedding，且请求版本与解析版本固定到同一提交；配置还说明其源模型家族为 BGE，并派生自 `BAAI/bge-small-zh-v1.5`。这建立了明确的模型身份，可用于避免不同修订的向量结果被无意混用。[[c3]]\n\n锁文件限定了配置、分词器、词表和量化 ONNX 模型等所需文件，随后逐项记录大小与 SHA-256，其中量化模型约 24 MB。该信息支持下载后完整性验证和离线运行准备，但文件清单本身不能证明这些制品已存在于本地缓存，也不能证明索引已用该模型生成。[[c4]]"
+      },
+      {
+        "key": "skill-provenance",
+        "title": "osdk 指南来源",
+        "body": "配置还锁定 `osdk-guide` 技能来自 `github:lejunyang/one-sdk`，解析到具体提交并以复制模式安装，目标代理包括 universal 与 claude-code。这说明仓库期望使用的指南来源及版本边界，而不是指南内容已被执行或所有相关流程已经验收。[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Node 锁定记录",
-        "reason": "支持 Linux x64 Node 版本、归档来源、校验值和 corepack 配置。",
-        "relation": "depends_on",
+        "label": "Node.js 工具链锁定",
+        "reason": "支持 schema、Linux x64、Node.js 版本、平台选项以及制品地址和校验值均已在锁文件中声明的论断。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:osdk.lock",
@@ -33,129 +38,119 @@
       },
       {
         "key": "c2",
-        "label": "pnpm 安装快照",
-        "reason": "支持 pnpm 安装器版本、运行时、manifest、冻结安装命令与源码构建设置。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:osdk.lock",
-          "startLine": 16,
-          "endLine": 23
-        },
-        "quote": "[deps.pnpm]\ninstaller = \"pnpm\"\ninstaller_version = \"11.28.2\"\nruntime = \"node@24.18.1\"\nmanifest = \"package.json\"\nmanifest_sha256 = \"92a0e297b8c8efa902f03db922a7b594fc7c3f3ab79402fd85eecfc454c76edd\"\nrun = \"pnpm.cmd install --frozen-lockfile\"\nallow_build_from_source = true"
-      },
-      {
-        "key": "c3",
-        "label": "pnpm 原生锁摘要",
-        "reason": "支持原生锁文件种类、路径和摘要的可复现性约束。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:osdk.lock",
-          "startLine": 25,
-          "endLine": 28
-        },
-        "quote": "[deps.pnpm.native_lock]\nkind = \"pnpm-lock\"\npath = \"pnpm-lock.yaml\"\nsha256 = \"573790b7a0e8fa299120cb75805b1cbea161ad5e8abab18824becc35cb1246ae\""
-      },
-      {
-        "key": "c4",
-        "label": "osdk-guide 解析结果",
-        "reason": "支持技能的真实上游、内容哈希、固定提交和适用 agent。",
+        "label": "pnpm 依赖锁定",
+        "reason": "支持 pnpm 版本、Node.js 运行时、冻结安装命令及原生锁文件摘要的配置说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:osdk.lock",
-          "startLine": 30,
-          "endLine": 37
+          "startLine": 64,
+          "endLine": 76
         },
-        "quote": "[skills.osdk-guide]\nsource = \"github:lejunyang/one-sdk\"\ncontent_hash = \"b3-v2:25feab3235fe25a48293e03508e2dfc0f447c3f6dc178f36748ebf7ba1a390b4\"\nresolved_commit = \"02a2f2b3142ded7d73554aaee629a24966a62313\"\nagents = [\n    \"universal\",\n    \"claude-code\",\n]"
+        "quote": "[deps.pnpm]\ninstaller = \"pnpm\"\ninstaller_version = \"11.28.3\"\nruntime = \"node@24.18.1\"\nmanifest = \"package.json\"\nmanifest_sha256 = \"88b7678585cab2664e50c7382ec92aa4c77e4e9ba085f84b74d629594f9bb6e2\"\nrun = \"pnpm install --frozen-lockfile\"\nallow_build_from_source = true\n\n[deps.pnpm.native_lock]\nkind = \"pnpm-lock\"\npath = \"p"
+      },
+      {
+        "key": "c3",
+        "label": "中文向量模型身份",
+        "reason": "支持 memory-zh 的提供方、仓库、固定修订、embedding 类型和 BGE 来源关系。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:osdk.lock",
+          "startLine": 16,
+          "endLine": 24
+        },
+        "quote": "[models.memory-zh]\nprovider = \"huggingface\"\nrepository = \"Xenova/bge-small-zh-v1.5\"\nrequested_revision = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\"\nrevision = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\"\nendpoint = \"https://huggingface.co\"\nkind = \"embedding\"\nfamily = \"bge\"\nderived_from = \"BAAI/bge-small-zh-v1.5\""
+      },
+      {
+        "key": "c4",
+        "label": "模型制品清单与校验",
+        "reason": "支持模型包含量化 ONNX、分词器和词表等文件，并逐项锁定大小与摘要的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:osdk.lock",
+          "startLine": 25,
+          "endLine": 62
+        },
+        "quote": "include = [\n    \"config.json\",\n    \"tokenizer.json\",\n    \"tokenizer_config.json\",\n    \"special_tokens_map.json\",\n    \"vocab.txt\",\n    \"onnx/model_quantized.onnx\",\n]\n\n[[models.memory-zh.files]]\npath = \"config.json\"\nsize = 716\nsha256 = \"d4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f\"\n\n[[models.memory-zh"
+      },
+      {
+        "key": "c5",
+        "label": "osdk-guide 技能来源",
+        "reason": "支持技能的真实上游、解析提交、适用代理与复制安装模式的配置事实。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:osdk.lock",
+          "startLine": 78,
+          "endLine": 87
+        },
+        "quote": "[skills.osdk-guide]\nsource = \"github:lejunyang/one-sdk\"\ncontent_hash = \"b3-v2:53d69d90eae02ecd9a4194f3fc10020e67f9540ed5e5a2a4d23ee0a080d21592\"\nrequested_ref = \"default\"\nresolved_commit = \"8a30f0abbaf6dc9668fd6357a0bc0a9d7be97990\"\nagents = [\n    \"universal\",\n    \"claude-code\",\n]\ninstall_mode = \"copy\""
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "锁定的 Node.js、pnpm 依赖和 memory-zh 模型制品是否已经在目标环境完成安装或下载，并通过实际运行检查？",
+        "why": "锁文件只记录期望版本、下载来源和完整性信息，没有安装结果、缓存状态、命令退出码或行为验证记录，因此不能把配置状态表述为已部署事实。",
+        "nextStep": "结合 osdk 的依赖安装日志、模型缓存清单及相关检查命令的真实退出码确认当前状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c4"
+        ]
+      },
+      {
+        "question": "现有向量索引是否全部由当前固定修订的 memory-zh 模型生成？",
+        "why": "锁文件确定了模型身份，却没有提供索引元数据或向量身份迁移记录；若存在旧索引，仍需排除不同模型或修订混用。",
+        "nextStep": "检查索引元数据中的模型仓库、修订和向量身份，并在不一致时重新构建索引。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:docs/implementation/status.md",
-      "digest": "8b35f7fd9ae336a51ba306e431c9bcb01b82e5bdba0eaee264d7ef72abb81ef5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/reviews/2026-09-27-batch2/reproduction-results.json",
-      "digest": "f17a69b2499b32edbaad4d6c1f8b32760e86b0819aaf5a445f896de5b49c8a47"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/validation.md",
-      "digest": "5eb15b18beab74b3acb92965d549a00866e74a07934129b495f1eacfd0203b5b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:integrations/traex/hooks.example.json",
-      "digest": "0ce9740fd7d84a9b15fbd12ca8bb9d0490f943747b987ea9d4c4246fe5e61279"
-    },
-    {
-      "kind": "material",
       "key": "omem:osdk.lock",
-      "digest": "8ea83c4ae93ba830a0045e8b54a64455979ac30a10af73730b5546d379eb90e9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:osdk.toml",
-      "digest": "f2f80953f5e21a98762274f91832d3384390ba80aaa52869785489a1f8c94d74"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/knowledge-pipeline.md",
-      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
-      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
-      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/decisions.md",
-      "digest": "0c9ad65608b280513073e08eb7a7ebf2dba050641f385305f7526cd7a0eb5ad7"
+      "digest": "51becbd370e56257146366950b3e8026d7b647c5138dc4a93fad516ac7e37bad"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:05:41.326Z",
+    "at": "2026-10-01T00:37:16.027Z",
     "trace": {
-      "runId": "13ca1481-4530-4536-b4c8-ad75e3c125fd",
-      "roleId": "knowledge-refresher",
+      "runId": "09f4a7aa-1b68-4988-8f47-90ebbe16e0f5",
+      "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "ddf2106406b42ecfaac7dba1cf9e48ac0d4ff33d34ba2793bcd5244a67a1ee93",
-      "contextHash": "fdad3adcf07faa217e8106b3d11882bf065f9534e39545b73bf8c4c673f2a10f",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "f3594c64ec6de440d1e5fe56d7a60571d353f1e8a2285035fb879e07398eda7c",
+      "contextHash": "8c3a527d15614ab220f79408cdbb340dfd65e5d096b89db67271dc5bae4a0321",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f633dbb124d5af02e7634607676dba36e279f5d6ad55c7db799ca5ddfa45fbf4",
+      "fingerprint": "8bae2fabab215f4b329fd2494b8b84496017ad560208056674344eacebc8fb6a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-material-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec5-362e-7c20-907e-1753c3f2d913"
+        "01a0f4e4-9c19-7921-a4a0-1e68824d79c9"
       ],
       "usage": {
-        "used": 43237,
-        "size": 760000,
+        "used": 22620,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -163,10 +158,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 63716,
-          "utf8Bytes": 92876,
-          "estimatedTokens": 30959,
-          "budgetedTokens": 38699,
+          "chars": 8689,
+          "utf8Bytes": 10309,
+          "estimatedTokens": 3437,
+          "budgetedTokens": 4297,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -175,17 +170,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:06:10.894Z",
+    "at": "2026-10-01T00:37:29.435Z",
     "trace": {
-      "runId": "4df309bb-cc64-43c3-83bf-b49411e91eb4",
+      "runId": "ad04067f-41b5-4c6e-a7c1-ea66d9df9e6a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "37bee0ec007e22d199c1d9e9d9da4fc3200460f17c7653e3031c92e98be63965",
-      "contextHash": "e24994608a95f1c26a358e3814b5d7b8159e783f1d346c64c39f268cb4dc6043",
+      "promptHash": "91258838774c524107d16b2e9465c33ae275ab1749cd836d2e1315a617f611e8",
+      "contextHash": "d47770f9c8318baf70953be4f1459d4c3cbb1352cf96ab84167c78da92368739",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c8435882f3cd5c7e1ffd6cc9ebb24e1a45ec3579f7ac0c4ae54bdf04e4c1b9be",
+      "fingerprint": "3c86b9e33eead184b6fddaa0736fc1e2c3ba4a9d93de0f351fbb639d072b6088",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -198,11 +193,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec5-e5fc-7452-89ac-dbb507e626db"
+        "01a0f4e4-f5c9-7683-b1d9-defdff283ca0"
       ],
       "usage": {
-        "used": 44572,
-        "size": 760000,
+        "used": 22869,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -210,10 +205,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 71737,
-          "utf8Bytes": 106928,
-          "estimatedTokens": 35643,
-          "budgetedTokens": 44554,
+          "chars": 10926,
+          "utf8Bytes": 13856,
+          "estimatedTokens": 4619,
+          "budgetedTokens": 5774,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

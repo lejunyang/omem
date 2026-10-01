@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/review/search-policy.ts",
+    "title": "仓库评审搜索权重策略",
+    "summary": "该模块从仓库配置中加载路径前缀权重，生成一个查询期评分函数；它通过显式类别、历史研究意图和查询中的路径命中保护用户意图，避免仓库偏好压低明确相关的结果。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose-config",
+        "title": "作用与配置加载",
+        "body": "该模块解决仓库评审搜索中的结果偏好问题：允许按文件路径前缀配置正权重，同时明确这些偏好只适用于仓库场景，不应扩展为个人数据的全局规则。配置结构由 Zod 校验，每条规则要求非空前缀，权重必须大于 0 且不超过 1；缺少 `rules` 时使用空数组。[[c1]]\n\n`loadReviewSearchPolicy` 在传入根目录下寻找 `config/review-search.json`。文件存在时同步读取、解析 JSON 并校验；不存在时解析空对象，从而得到默认空规则。文件损坏、JSON 非法或字段不合约时没有降级分支，错误会直接由解析过程抛出。[[c2]]"
+      },
+      {
+        "key": "matching-flow",
+        "title": "匹配与优先级流程",
+        "body": "规则加载后按前缀长度降序排列，使更具体的路径优先于较宽泛的目录规则。返回的闭包接收候选路径、查询文本和可选类别：若调用方已指定类别，查询表达历史、调研、原型或早期版本意图，或者查询文本直接包含候选路径，则立即返回中性权重 `1`，显式意图优先于默认偏好。[[c3]]\n\n其余情况采用第一个能匹配 `path.startsWith(prefix)` 的规则权重；没有匹配规则也返回 `1`。因此该策略本质上只能保持或降低候选权重，不能用大于 1 的系数提升结果，也不负责计算文本相关性、排序或可见性过滤。[[c4]]"
+      },
+      {
+        "key": "boundaries-relations",
+        "title": "边界与模块关系",
+        "body": "匹配是区分大小写的字符串前缀判断，没有路径规范化或目录边界判断；例如相似前缀也可能命中。查询中的路径检测则统一转为小写，但仍是简单子串包含。历史意图依赖固定的中英文关键词，未覆盖的同义表达不会触发保护分支。[[c5]]\n\n从当前材料只能确认该文件向外暴露策略加载函数，并依赖 Node 文件系统、路径工具和 Zod；没有提供调用方源码，无法断言它具体接入哪个检索阶段，也无法确认返回权重如何与其他评分合并。材料中亦无测试文件，因而配置异常、前缀冲突和意图覆盖等行为虽可由实现推断，但没有可见的自动化断言证据。[[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "搜索策略配置结构与作用边界",
+        "reason": "支持仓库偏好不应成为个人数据全局规则，以及前缀和权重的校验约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/search-policy.ts",
+          "startLine": 5,
+          "endLine": 6
+        },
+        "quote": "const schema = z.object({ rules: z.array(z.object({ prefix:z.string().min(1), weight:z.number().positive().max(1) })).default([]) });\n/** Repository-specific preferences never become a global rule for personal data. */"
+      },
+      {
+        "key": "c2",
+        "label": "评审搜索配置加载逻辑",
+        "reason": "支持配置文件位置、缺省空配置及同步读取和校验流程的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/search-policy.ts",
+          "startLine": 7,
+          "endLine": 9
+        },
+        "quote": "export function loadReviewSearchPolicy(root: string) {\n  const path=join(root,\"config/review-search.json\");\n  const {rules}=schema.parse(existsSync(path)?JSON.parse(readFileSync(path,\"utf8\")):{});"
+      },
+      {
+        "key": "c3",
+        "label": "具体前缀优先与显式意图覆盖",
+        "reason": "支持规则排序，以及类别、历史研究问题和路径命中返回中性权重的核心流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/search-policy.ts",
+          "startLine": 10,
+          "endLine": 13
+        },
+        "quote": "  rules.sort((a,b)=>b.prefix.length-a.prefix.length);\n  return (path: string, query: string, category?: string) => {\n    // An explicit category, path or historical question overrides defaults.\n    if (category || /历史|调研|原型|旧版|早期|\\bhistory\\b|\\bresearch\\b|\\bprototype\\b/i.test(query) || query.toLowerCase().includes(path."
+      },
+      {
+        "key": "c4",
+        "label": "路径前缀权重回退",
+        "reason": "支持首个前缀匹配规则生效、无匹配时回退为 1，并结合配置上限说明该策略不会放大评分。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/search-policy.ts",
+          "startLine": 5,
+          "endLine": 14
+        },
+        "quote": "const schema = z.object({ rules: z.array(z.object({ prefix:z.string().min(1), weight:z.number().positive().max(1) })).default([]) });\n/** Repository-specific preferences never become a global rule for personal data. */\nexport function loadReviewSearchPolicy(root: string) {\n  const path=join(root,\"config/review-search.j"
+      },
+      {
+        "key": "c5",
+        "label": "字符串匹配边界",
+        "reason": "支持路径采用 startsWith、查询路径采用小写子串匹配，以及历史意图依赖固定正则关键词的边界分析。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/search-policy.ts",
+          "startLine": 11,
+          "endLine": 14
+        },
+        "quote": "  return (path: string, query: string, category?: string) => {\n    // An explicit category, path or historical question overrides defaults.\n    if (category || /历史|调研|原型|旧版|早期|\\bhistory\\b|\\bresearch\\b|\\bprototype\\b/i.test(query) || query.toLowerCase().includes(path.toLowerCase())) return 1;\n    return rules.find(rule=>"
+      },
+      {
+        "key": "c6",
+        "label": "模块导入与公开入口",
+        "reason": "支持该模块依赖文件系统、路径和 Zod并仅显示一个公开加载函数；调用方和测试在当前材料中不可见。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/search-policy.ts",
+          "startLine": 1,
+          "endLine": 7
+        },
+        "quote": "import { existsSync, readFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { z } from \"zod\";\n\nconst schema = z.object({ rules: z.array(z.object({ prefix:z.string().min(1), weight:z.number().positive().max(1) })).default([]) });\n/** Repository-specific preferences never become a global rule for persona"
+      }
+    ],
+    "questions": [
+      {
+        "question": "该策略返回的权重在实际检索链路中如何与语义分数、关键词分数或其他排序信号合并？",
+        "why": "当前材料只展示权重函数的生成与返回值，没有调用方源码，无法确认其应用阶段及最终排序影响。",
+        "nextStep": "检查 `loadReviewSearchPolicy` 的源码调用点及相关检索排序实现，并补充基于真实结果顺序的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c6"
+        ]
+      },
+      {
+        "question": "路径前缀是否应按目录边界匹配并在比较前统一规范化？",
+        "why": "当前使用原始字符串的 `startsWith`，可能让名称相近但不属于同一目录的路径命中，也可能受路径分隔符和大小写差异影响。",
+        "nextStep": "结合 `review-search.json` 的真实规则和目标平台路径形式确定语义，再为相似前缀、尾部分隔符及大小写情况补充测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/search-policy.ts",
+      "digest": "541160c3f34bbe5d6ac194c24b7075a6509d2fd75d4882d82e397b20fbacecdc"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T00:17:03.369Z",
+    "trace": {
+      "runId": "cfc48b72-85a5-48de-aaa3-21606bd1f090",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "4d942fe27bf696e50f2e54fb33f31dd10a394551c2f379a4e740705d6e88ded8",
+      "contextHash": "12ac8a1fdcd194b821c1d51d13339e99a944133585d908a1528c015a2c9b46cb",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "00cc0c371bdbfeae62612bf82c6853052ed80ef9724743cd94f5f030b7addebd",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f4d2-05b1-7e63-bf28-7801ad0978da"
+      ],
+      "usage": {
+        "used": 21925,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 7022,
+          "utf8Bytes": 8806,
+          "estimatedTokens": 2936,
+          "budgetedTokens": 3670,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T00:17:16.536Z",
+    "trace": {
+      "runId": "7fa2113c-7a0c-456d-bdcb-e12d430e6f02",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "0ee8a1d1c5541e0615d2961c43ca943d11daf45ecb5fa00710263ad6deeac3d0",
+      "contextHash": "9a0cbc27ca2d7c763debebd53e5e58adb9de8675d6208dddf7addef7a6538bf3",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b3b2ae25827c83f80052e6591a4ab7fc12e6f47c25b898088fd380c5b2516b9c",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f4d2-7300-7f90-a06f-da6f1a34bc8a"
+      ],
+      "usage": {
+        "used": 21981,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 9531,
+          "utf8Bytes": 13095,
+          "estimatedTokens": 4365,
+          "budgetedTokens": 5457,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

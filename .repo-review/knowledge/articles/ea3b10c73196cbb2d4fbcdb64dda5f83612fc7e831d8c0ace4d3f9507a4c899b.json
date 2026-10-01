@@ -2,181 +2,246 @@
   "version": 1,
   "document": {
     "key": "omem:docs/implementation/status.md",
-    "title": "omem 当前实施状态与历史边界",
-    "summary": "状态页顶部记录截至 2026-10-01 的最新检索、来源更新、助手和知识流程进展；页面后部保留较早切片，阅读时必须以带日期的新记录替代已经失效的旧结论。",
+    "title": "实现状态：当前能力、验证证据与历史边界",
+    "summary": "该状态页以顶部 2026-10-01 更新作为最新口径，记录了中文向量检索、来源更新重核验、日常助手动作闭环和通用知识流程；中下部则混有 2026-09-29 快照及 Batch 2 历史。阅读时必须按日期和显式更正辨别现状，不能把旧限制或计划直接当成当前事实。",
     "category": "progress",
     "sections": [
       {
-        "key": "latest-slices",
-        "title": "2026-10-01 最新闭环",
-        "body": "中文语义检索已使用固定版 BGE-small-zh-v1.5 q8，并按模型身份隔离原片段分窗向量；四条中文同义问法的 top-1 为 4/4，但这只是小样本，reranker、ANN 和历史时点检索仍未实现。[[c1]]\n\n来源更新方面，`refresh_dependents` 已不再是占位：Capture 同事务记录失效范围，调度复用 extractor，独立 verifier 后由 MemoryService 原子更新同一记忆；失败或缺证据时继续保持 `needs_review`。[[c2]] 日常助手也已验证补搜、事项上下文、时区及创建—改期—完成流程，但重复提醒、外部到期投递和取消状态仍有缺口。[[c3]]"
+        "key": "reading_order",
+        "title": "状态口径与阅读顺序",
+        "body": "本页并非时间一致的单一快照：顶部 2026-10-01 条目明确覆盖后文旧说法，并要求知识覆盖、失败及检索验收以当前报告为准；通用正文、引用、角色和仓库材料流程也被声明为当前新增能力。[[c1]] 第 29 行后的“实现状态”主要保存 2026-09-29 的验证快照，其运行时权威仍是当前工作树和服务接口，不能据静态数字推断现在的提交、索引或覆盖情况。[[c2]] Batch 2 更被明确标为追溯材料，部分能力已被 assistant-v3 重构替代。[[c3]]"
       },
       {
-        "key": "knowledge-and-review",
-        "title": "统一知识与仓库评审",
-        "body": "通用知识流程现已接入共用正文与引用合同、八种角色、持久分析、独立复核、个人知识入口、多层引用、问题与待办，以及由知识导航回原始证据的召回。实际完成度应读取覆盖记录，失败、过期或未生成的材料不能计为完成。[[c4]]\n\nrepo-review 默认读取实际模型配置，环境变量仍可覆盖；启动默认直接重建 runtime，不依赖旧 `.repo-review/data/`，遗留历史仅在显式启用导入时进入。[[c5]] 另一条较新的复审记录说明，启动会恢复材料、代码和版本化知识，但默认启动仍不调用模型。[[c6]] 因而“重建或恢复既有派生状态”与“自动发起生成式处理”是两个不同阶段。"
+        "key": "current_capabilities",
+        "title": "2026-10-01 已实现能力",
+        "body": "检索已从早期关键词方案发展为共享的中文语义检索：固定 BGE-small-zh-v1.5 模型、按模型身份隔离的原片段向量、词法降级以及个人助手、飞书助手与 repo-review 共用；四条同义问法 top-1 为 4/4，但只是小样本，reranker、ANN 和历史时点检索仍未实现。[[c4]] 来源更新闭环已接通 extractor、独立 verifier 与同一记忆的原子更新，失败或缺证据继续保持待复核；这直接推翻后文“refresh_dependents 未实现”的旧记录。[[c5]] 日常助手则已具备补搜、事项上下文、时区以及事项创建、改期、完成和重新打开，并以真实 ACP 烟测验证；重复提醒、外部到期投递和取消状态仍缺失。[[c6]]\n\n知识整理采用共用正文与固定引用合同，材料分析后由独立会话复核，只有通过内容才发布；仓库只是统一 Capture 流程的输入适配器，派生正文不成为新的事实权威。[[c7]] Code Wiki 同样定位为证据链上的代码投影，支持固定 Capture 文本、可提交知识资产与共享阅读链，但跨文件调用及跨 revision 身份续接仍是边界。[[c8]]"
       },
       {
-        "key": "historical-conflicts",
-        "title": "旧记录与当前事实的冲突处理",
-        "body": "页面后部保留了 2026-09-29 的历史限制，其中仍称 `refresh_dependents` 会记录影响后主动抛出未实现错误。[[c7]] 这一结论已被页首 2026-10-01 的真实 extractor、verifier 与原子应用闭环取代。[[c2]] 旧段落可用于追溯当时状态，但不能继续充当当前能力说明。\n\nG15—G20 的验收记录证明对应测试路径均为 pass，同时清楚限定：G15 使用 fake transport，G20 的进程恢复使用同一数据库上的新 runtime 实例模拟，并非真实飞书网络或真实 kill/restart。[[c8]] 因此这些测试支持代码合同，却不能外推为外部系统边界已经完整验收。"
+        "key": "verification",
+        "title": "验证证据及其适用范围",
+        "body": "最新检索记录包含固定模型下载校验、全量检查通过、9,613 个片段的首轮真实索引，以及真实中文查询相对词法基线的改善；这些数字证明该次环境与样本，不代表整体质量。[[c4]] 来源刷新以真实 traex、gpt-5.6-sol、medium 验证同一记忆从“3 次”更新为“5 次”，旧原文仍保留且五个 jobs 成功；日常助手烟测也使用真实 ACP，但采用隔离数据库和合成材料，没有发生外部发送。[[c5]][[c6]]\n\n较早的 G01–G20 表记录二十项测试均通过，不过 G15 仅为 fake transport，G20 的重启仅由同数据库的新 runtime 实例模拟，因此不能外推为真实飞书网络或真实进程重启验收。[[c9]] Code Wiki 的历史浏览器、模型生成与恢复验证可证明相应切片曾跑通，仍应与当前 coverage、verification 报告及运行时快照区分。[[c10]]"
       },
       {
-        "key": "enduring-boundaries",
-        "title": "仍有效的架构边界",
-        "body": "跨批次仍有效的底座包括 TypeScript/Fastify/SQLite/Vue、统一 Capture、版本化材料与不可变片段、引用链、事务化通知，以及 ACP 与多种 CLI adapter。[[c9]]\n\n实现仍是个人单用户方案，不具备多租户 ACL、分布式事务或 pgvector；所有原件与回答可追溯，也不等于每项主张都已通过正式语义支持评估。[[c10]] 对后部旧限制应逐条核对：与页首新进展冲突的结论已经被替代，其余边界则需结合当前代码和最新验证记录判断，不能整段沿用。"
+        "key": "limits",
+        "title": "当前限制与历史冲突",
+        "body": "当前明确缺口包括全库知识尚未完整、周期性全库巡检、跨来源冲突自动修订、学习卡、reranker、ANN、历史时点检索、重复提醒和外部到期投递。[[c1]][[c4]][[c5]][[c6]] 单用户 SQLite 是实施事实，多租户 ACL、分布式事务和 pgvector 不应被暗示为已具备。[[c11]]\n\n文档内部存在可识别的历史冲突：旧矩阵仍写“无 traecli、仅关键词检索”，旧限制还称 refresh_dependents 主动抛出未实现错误；顶部 2026-10-01 更新已经分别记录真实 ACP、向量检索和重核验闭环，因此这些旧段落只能作为历史证据。[[c12]][[c13]] 类似地，2026-09-29 复审所列“关键词检索、下游重核验未完成”准确描述当时状态，却不能覆盖后续实现。[[c14]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "中文语义检索最新状态",
-        "reason": "支持固定模型、按身份隔离的向量索引、小样本结果及仍未实现的检索能力。",
+        "label": "2026-10-01 当前进展总览",
+        "reason": "支持顶部更新具有较新口径，并列明当前知识覆盖与若干未完成能力。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
           "startLine": 1,
-          "endLine": 1
+          "endLine": 13
         },
-        "quote": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，模型缺失时保留词法结果并报告 degraded。真实四条中文同义问法 top-1 为 4/4，词法基线为 0/4；这是小样本，不是整体检索质量结论。`osdk deps --frozen` 与全量 `osdk run check` 通过（57 文件 / 343 用例、typecheck、build）；首轮真实仓库向量索"
+        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify -- --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个"
       },
       {
         "key": "c2",
-        "label": "来源更新闭环最新状态",
-        "reason": "证明 refresh_dependents 已由占位演进为 extractor、独立 verifier 和原子应用闭环，并说明失败状态。",
-        "relation": "tracks",
+        "label": "实现状态的运行时权威说明",
+        "reason": "支持静态页面只记录最近验证证据，当前提交和快照需由运行时查询确认。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 29,
+          "endLine": 40
+        },
+        "quote": "# 实现状态\n\n> 本页为唯一当前状态来源。文档最后更新：2026-09-29（通用 Code Knowledge / Code Wiki 纵向切片完成后）。**运行时权威**：当前 commit / 工作树状态以 `git rev-parse --short HEAD`、`git status --short` 为准，代码 snapshot 以运行中 `GET /api/review/code/current-snapshot` 为准；本静态页只记录最后一次验证命令与历史证据，不固化任何 commit id、snapshot id 或本地提交数。\n\n## 当前状态\n\n- **代码基线**：`16d3aa6` 之后叠加 assist"
+      },
+      {
+        "key": "c3",
+        "label": "Batch 2 历史记录声明",
+        "reason": "支持 Batch 2 仅供追溯、部分能力已被后续版本替代的判断。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 109,
+          "endLine": 122
+        },
+        "quote": "## 历史实现记录（Batch 2）\n\n> **以下为历史记录，当前产品行为以本页「当前状态」与 assistant-v3 为准。** Batch 2 是 v3 之前的实现包；其中部分能力已被 v3 重构替代（如 quality dataset 守卫、provenance、检索端口），保留此处仅用于追溯，不作为当前已交付清单。\n\n### Batch 2 进度概览\n\n- **B2-01**：Proposal/ProposalBatch/AssessmentBatch/CorrectionProposal v1 严格合同、capture provenance、任务 CAS、SQLite v1→v2 事务迁移与回滚校验。A-M01～A-M"
+      },
+      {
+        "key": "c4",
+        "label": "中文语义检索进展",
+        "reason": "支持固定中文向量模型、共享检索、真实小样本结果和 reranker 等剩余缺口。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
           "startLine": 3,
           "endLine": 3
         },
-        "quote": "> **2026-10-01 来源更新闭环**：`refresh_dependents` 不再是 NOT_IMPLEMENTED 占位。Capture 同事务记录失效范围，调度复用已有 extractor job，独立 verifier 后由 MemoryService 原子更新同一记忆；失败/缺证据维持 `needs_review`，只有全部受影响记忆真正应用才记 `applied`。`/api/memory-refreshes` 提供状态和结果。模型 schema 从宿主 Zod 合同生成，修正原先 body 空定义及把可空元数据误当事实歧义的问题。全量 `osdk run check` exit 0（56 文件 / 341 用"
+        "quote": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，模型缺失时保留词法结果并报告 degraded。真实四条中文同义问法 top-1 为 4/4，词法基线为 0/4；这是小样本，不是整体检索质量结论。`osdk deps --frozen` 与全量 `osdk run check` 通过（57 文件 / 343 用例、typecheck、build）；首轮真实仓库向量索"
       },
       {
-        "key": "c3",
-        "label": "日常助手最新状态",
-        "reason": "支持补搜、事项生命周期和时区能力已经验证，同时界定提醒、外部投递与取消缺口。",
-        "relation": "tracks",
+        "key": "c5",
+        "label": "来源更新闭环进展",
+        "reason": "支持 refresh_dependents 已进入 extractor、verifier、原子应用闭环及其真实模型验证范围。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
           "startLine": 5,
           "endLine": 5
         },
-        "quote": "> **2026-10-01 日常助手闭环**：补搜一次（最多三个查询）、现有事项上下文、用户时区、带时间创建/改期/完成/重新打开，以及由真实回执生成的动作回复。`osdk run check` 通过：56 文件 / 340 用例 + typecheck/build。`scripts/live-assistant-smoke.ts` 用真实 **traex / gpt-5.6-sol / medium** 验证了中文召回英文原文及创建→改期→完成（隔离数据库、合成材料，无外部发送）。一次性到期站内提醒仍复用已有轮询；独立日程、重复提醒、外部到期投递及取消状态未实现。"
-      },
-      {
-        "key": "c4",
-        "label": "通用知识流程当前能力",
-        "reason": "说明共用知识合同、角色、复核、引用、问题和召回能力，并支持以覆盖记录衡量完成度。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 9,
-          "endLine": 9
-        },
-        "quote": "> **当前新增能力以本段与 [通用知识流程](knowledge-pipeline.md) 为准。** 已接入共用正文/引用合同、八种知识角色、持久分析与独立复核、仓库全材料适配、个人知识入口、正文多层引用、问题/待办、知识引导原始证据召回。所有实现按功能分项提交。全仓 AI 处理与章节生成的逐文件结果见 `.repo-review/knowledge/coverage.json`；没有把未通过、过期或未生成的材料算作完成。下方 Code Wiki 200 文件/6 份说明等统计保留为此前切片的历史记录。"
-      },
-      {
-        "key": "c5",
-        "label": "review 配置与 runtime 重建策略",
-        "reason": "支持实际模型配置、默认直接重建 runtime 和显式遗留导入的运行方式。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 11,
-          "endLine": 11
-        },
-        "quote": "> 本轮后续：实际 Agent 配置改为 `config/review-code-model.json`，生成及 review 服务默认读取它，环境变量仍可覆盖。启动默认直接重建 runtime，不依赖旧 `.repo-review/data/`；旧历史导入改为 `REVIEW_IMPORT_LEGACY=1` 显式选择。后续正文知识管线的进度与验收将另行补充。"
+        "quote": "> **2026-10-01 来源更新闭环**：`refresh_dependents` 不再是 NOT_IMPLEMENTED 占位。Capture 同事务记录失效范围，调度复用已有 extractor job，独立 verifier 后由 MemoryService 原子更新同一记忆；失败/缺证据维持 `needs_review`，只有全部受影响记忆真正应用才记 `applied`。`/api/memory-refreshes` 提供状态和结果。模型 schema 从宿主 Zod 合同生成，修正原先 body 空定义及把可空元数据误当事实歧义的问题。全量 `osdk run check` exit 0（56 文件 / 341 用"
       },
       {
         "key": "c6",
-        "label": "启动恢复与模型调用边界",
-        "reason": "支持启动自动恢复既有材料和知识，同时默认启动不调用模型的独立断言。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 13,
-          "endLine": 13
-        },
-        "quote": "> 2026-09-29 Linux 本机复审：见 [方案与实现复审](code-wiki-review-2026-09-29.md)。Code Wiki 已改为从精确 Capture 文本派生；启动自动完成材料/代码/版本化知识恢复；开发端口可配置且默认冲突自动选择；共享语法高亮与符号源行号已修复。仓库 Wiki 入口为 [`.repo-review/wiki.md`](../../.repo-review/wiki.md)，更新命令 `osdk run review:build`。本机 traecli 0.207.1 的 GPT-5.6-Sol 已真实生成模块说明，默认启动仍不调用模型。下文较早的“本机无 traecli”“没有"
-      },
-      {
-        "key": "c7",
-        "label": "已被替代的重核验限制",
-        "reason": "展示历史段落曾把 refresh_dependents 标为未实现，支持将其明确标记为被新闭环替代。",
-        "relation": "contradicts",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 94,
-          "endLine": 102
-        },
-        "quote": "## 已知限制与环境问题（2026-09-29 复测）\n\n- **osdk 验证**：`osdk deps --frozen` exit 0；`osdk run check` 连续 2 轮 exit 0（typecheck [tsc + vue-tsc] + 全量 vitest **47 文件 / 306 用例** + tsc/vite build，2026-09-29）。本轮首次 check 的 A-R07 timeout 已由 af77ca6 复现根因并回归稳定（详见「当前状态·测试」）。信任门已由 MainAgent 执行 `osdk --yes trust` 解决。\n- **ACP 子进程清理已根治**：`agents.ts"
-      },
-      {
-        "key": "c8",
-        "label": "G15 至 G20 验收及限制",
-        "reason": "支持 G15 至 G20 的通过状态，并明确 fake transport 与模拟进程恢复的验收边界。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 85,
-          "endLine": 92
-        },
-        "quote": "| G15 | 图片/富文本群消息进入模型 | lark-rich-parts.test.ts · \"post message parses title + paragraph text parts\"、\"image message downloads via fake transport and creates image part with asset\"、\"reply message sets replyTo/quoted provenance on all parts\" | **pass（fake transport 验证）** | `realtime.ts` `buildCaptureParts()` 解析 post 富文本为"
-      },
-      {
-        "key": "c9",
-        "label": "跨批次基础能力",
-        "reason": "支持仍有效的技术栈、统一 Capture、版本化证据、通知及 ACP/CLI 基础。",
+        "label": "日常助手闭环进展",
+        "reason": "支持助手的检索与事项动作能力、真实 ACP 烟测条件及尚未实现的提醒边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
-          "startLine": 122,
-          "endLine": 130
+          "startLine": 7,
+          "endLine": 7
         },
-        "quote": "### 已实现的基础能力（跨 Batch，仍有效）\n\n- Node/TypeScript + Fastify HTTP API；SQLite + 图片对象目录；Vue 3 阅读台。\n- CaptureEnvelope 文本/图片/链接 + 上下文；图片类型/预算校验。\n- 文件、固定 Git commit、lark-cli 文档导入；主动 HTTP/CLI；opt-in TraeX hook 转发。\n- 版本化材料与不可变片段；引用/反向引用；环跳回；恢复为新版本且拒绝覆盖后续修改。\n- 持久变更/通知同事务；待办状态、关联证据、UTC 到期去重。\n- 官方 ACP SDK initialize/new/config/prompt/"
+        "quote": "> **2026-10-01 日常助手闭环**：补搜一次（最多三个查询）、现有事项上下文、用户时区、带时间创建/改期/完成/重新打开，以及由真实回执生成的动作回复。`osdk run check` 通过：56 文件 / 340 用例 + typecheck/build。`scripts/live-assistant-smoke.ts` 用真实 **traex / gpt-5.6-sol / medium** 验证了中文召回英文原文及创建→改期→完成（隔离数据库、合成材料，无外部发送）。一次性到期站内提醒仍复用已有轮询；独立日程、重复提醒、外部到期投递及取消状态未实现。"
       },
       {
-        "key": "c10",
-        "label": "长期实现取舍",
-        "reason": "支持个人单用户、非多租户边界，以及可追溯不等于每项主张均已完成语义验证。",
+        "key": "c7",
+        "label": "通用知识分析与服务流程",
+        "reason": "说明独立复核、固定引文、发布门槛和派生知识不成为新事实权威。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/knowledge-pipeline.md",
+          "startLine": 23,
+          "endLine": 37
+        },
+        "quote": "## 已完成：通用分析、复核与服务接口\n\n`KnowledgePipeline` 先运行材料角色，再使用独立会话复核。只有通过的正文才发布；同批已通过内容可以先保存，未通过内容继续修订。模型选择引用行范围，宿主复制精确短引文，复核角色判断其是否支持正文。持久任务和角色输出支持重建投影后复用，分析期间来源变化会拒绝当前发布。\n\n个人服务已提供 `/api/knowledge`：正文、固定引用、原始材料、搜索、问题、回答和显式待办动作。它直接处理手工材料等通用 Capture 输入。回答保留为原始材料，并使对应知识进入重核对；下一轮处理会把回答提供给 Agent。代码关系只作为材料类型适配，不构成新的事实或记忆 authority。\n\n"
+      },
+      {
+        "key": "c8",
+        "label": "Code Wiki 实测定位与边界",
+        "reason": "支持 Code Wiki 是统一证据链的代码投影，并说明跨文件调用和跨版本身份限制。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
-          "startLine": 132,
-          "endLine": 135
+          "startLine": 42,
+          "endLine": 53
         },
-        "quote": "### 明确的实现取舍\n\n- 统一 TypeScript + SQLite 个人单用户实现；**不具备**多租户 ACL、分布式事务、pgvector。team scope 仅保留在架构设想中。\n- 所有原件/回答可追溯，不等于每个 Claim 已由证据验证器证实；正式 supported_by 自动评估未实现。"
+        "quote": "## Code Wiki（通用代码知识纵向切片）实测\n\n> 定位：Code Wiki 不是独立产品，是同一 Capture→Source/Revision/Fragment→Relation/Retrieval 证据链在代码域上的确定性 typed projection；repo-review 只是隔离 dev 配置/视图（5180 API + 5181 web、独立 SQLite、不起业务 worker）。以下数字为 2026-09-29 对运行中 `osdk run dev:review` 实例的实测（`/api/review/*` 直接查询），非设计目标。\n\n- **确定性代码图（无模型）**：TS Compiler AST（"
+      },
+      {
+        "key": "c9",
+        "label": "G01 至 G20 验收结论",
+        "reason": "支持二十项场景的通过统计，同时限定 fake transport 与模拟重启的证据强度。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 67,
+          "endLine": 94
+        },
+        "quote": "## G01–G20 验收场景逐项覆盖\n\n来源：[assistant-v3/migration-and-acceptance.md](assistant-v3/migration-and-acceptance.md) 第 88–109 行。测试名均为 `apps/server/tests/` 下实际存在的用例，未重新编号。\n\n| ID | 场景简述 | 对应测试文件 · 用例名 | 状态 | 证据/断言要点 |\n| --- | --- | --- | --- | --- |\n| G01 | 导入 40 段业务说明，无逐句确认卡 | retrieval-source-profile.test.ts · \"G01: importing "
+      },
+      {
+        "key": "c10",
+        "label": "Code Wiki 历史验证记录",
+        "reason": "支持较早切片曾完成检查、浏览器验收、真实模型生成和恢复回归。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 39,
+          "endLine": 44
+        },
+        "quote": "## 验证记录\n\n- 第一切片 `fa2d57b`：`osdk run check` exit 0，49 文件 / 309 用例，typecheck/build 通过；真实浏览器 1440/768/390、可见代码高亮、引用栈、焦点归还、XSS 通过。\n- 本机 ACP 握手：TraeCode CLI 0.207.1 返回 GPT-5.6-Sol/Terra/Luna；实际配置选择 `gpt-5.6-sol` + `medium`，每次调用仍通过 ACP configOptions 校验支持性。\n- 已完成检索、助手、记忆治理、代码投影、材料同步、共享阅读器六个明确目标的真实模型生成，严格输出与引用校验通过。模型调用记录与产物字段可"
+      },
+      {
+        "key": "c11",
+        "label": "单用户实现取舍",
+        "reason": "支持当前实现不具备多租户 ACL、分布式事务与 pgvector。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 124,
+          "endLine": 138
+        },
+        "quote": "### 已实现的基础能力（跨 Batch，仍有效）\n\n- Node/TypeScript + Fastify HTTP API；SQLite + 图片对象目录；Vue 3 阅读台。\n- CaptureEnvelope 文本/图片/链接 + 上下文；图片类型/预算校验。\n- 文件、固定 Git commit、lark-cli 文档导入；主动 HTTP/CLI；opt-in TraeX hook 转发。\n- 版本化材料与不可变片段；引用/反向引用；环跳回；恢复为新版本且拒绝覆盖后续修改。\n- 持久变更/通知同事务；待办状态、关联证据、UTC 到期去重。\n- 官方 ACP SDK initialize/new/config/prompt/"
+      },
+      {
+        "key": "c12",
+        "label": "旧能力矩阵中的历史状态",
+        "reason": "支持旧段落曾记录无真实 CLI 和仅关键词召回，需与顶部新进展区分。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 55,
+          "endLine": 65
+        },
+        "quote": "## 能力矩阵\n\n| 能力域 | 代码已实现 | 本地测试通过 | 真实 ACP 验证 | 真实飞书验证 | 剩余缺口 |\n| --- | --- | --- | --- | --- | --- |\n| 主助手对话 | 会话路由/turn 持久化与幂等排队（同 transport_event_id 不重复建 turn/task）、RetrievalPort 注入（Web+飞书均接 KeywordRetrieval 中文 2-gram 召回）、create_task 经 MemoryService + detectTaskIntent 意图门控（咨询类零写入）、多轮回指（priorWorkingContext 携带前轮 selecte"
+      },
+      {
+        "key": "c13",
+        "label": "旧限制清单中的过期描述",
+        "reason": "支持旧段落曾把 refresh_dependents、真实 ACP 与向量检索列为未完成。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 96,
+          "endLine": 105
+        },
+        "quote": "## 已知限制与环境问题（2026-09-29 复测）\n\n- **osdk 验证**：`osdk deps --frozen` exit 0；`osdk run check` 连续 2 轮 exit 0（typecheck [tsc + vue-tsc] + 全量 vitest **47 文件 / 306 用例** + tsc/vite build，2026-09-29）。本轮首次 check 的 A-R07 timeout 已由 af77ca6 复现根因并回归稳定（详见「当前状态·测试」）。信任门已由 MainAgent 执行 `osdk --yes trust` 解决。\n- **ACP 子进程清理已根治**：`agents.ts"
+      },
+      {
+        "key": "c14",
+        "label": "2026-09-29 复审架构边界",
+        "reason": "说明关键词检索与下游重核验未完成是复审时点的历史结论。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 31,
+          "endLine": 37
+        },
+        "quote": "## 仍然存在的架构边界\n\n1. 当前接入范围是本仓库与单用户 SQLite。代码源枚举和关系仍有 review 适配逻辑、默认仓库标识仍为 omem；不能把这次改造说成任意多仓库/多租户均已接入。\n2. 个人助手的自动材料学习与 CodeUnderstanding 角色运行尚未完全统一编排。代码角色有单独的严格输出合同及 registry，复用 ACP 传输；尚未统一进入所有输入渠道的持久任务/复核流水线。后续应接统一材料处理端口，不能再增加第二套 Capture 或 memory authority。\n3. 模型说明是派生资料，结构与引用存在性校验不证明每句解释正确。此次没有独立 verifier 语义复核，也没有把说明作为已验"
       }
     ],
     "questions": [
       {
-        "question": "状态页是否应把已被 2026-10-01 更新覆盖的旧限制迁入独立历史区，并逐条标注 superseded-by？",
-        "why": "同一页面同时出现来源更新闭环已实现和 refresh_dependents 未实现的相反陈述；虽然日期能帮助人工判断，机器检索或局部阅读仍可能把旧结论误当现状。",
-        "nextStep": "保留历史文本及其时间点，同时为失效段落增加明确标记，并指向替代它的最新固定段落。",
+        "question": "是否应把第 29 行后的旧“当前状态”、能力矩阵和限制清单迁入独立历史文档，或逐项加上明确的失效日期？",
+        "why": "同一页面同时存在 2026-10-01 的真实 ACP、向量检索和 refresh_dependents 闭环，以及 2026-09-29 的相反描述；虽然顶部已有更正，局部阅读或自动抽取仍容易把旧状态误判为现状。",
+        "nextStep": "以顶部更新和当前 verification、coverage 报告为基准，逐条标注被替代项，并保留原日期与验证证据而不覆盖历史。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c7"
+          "c1",
+          "c12",
+          "c13",
+          "c14"
         ]
       },
       {
-        "question": "真实飞书网络与真实进程 kill/restart 是否列入下一轮验收？",
-        "why": "G15 只使用 fake transport，G20 只使用同数据库的新 runtime 实例；当前证据覆盖代码合同，但没有覆盖外部网络和操作系统进程边界。",
-        "nextStep": "若属于近期交付范围，准备隔离凭据和临时数据库，分别执行真实飞书媒体与回执测试，以及进程级终止和恢复演练。",
+        "question": "当前全库知识覆盖率、失败材料和 stale 项的具体数量是多少？",
+        "why": "状态页明确要求以当前 coverage.json 和 verification.json 为准，但提供材料没有给出这些报告的实时内容，无法从历史的文件数或模型说明数可靠推算。",
+        "nextStep": "读取并汇总当前覆盖与验证报告，按 reviewed、stale、pending、failed 分类，同时列出生成时间和源码指纹。",
         "blocking": false,
         "citationKeys": [
-          "c8"
+          "c1",
+          "c10"
+        ]
+      },
+      {
+        "question": "当前全库知识覆盖中的 reviewed、stale、pending 和 failed 各有多少？",
+        "why": "材料明确要求以当前 coverage.json 和 verification.json 为准，但所提供原材料没有包含这些报告的实时内容，不能从历史文件数、测试数或模型说明数推算。",
+        "nextStep": "读取当前覆盖与验证报告，记录生成时间、源码指纹和各状态数量后，再补充精确统计。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c10"
         ]
       }
     ]
@@ -184,85 +249,55 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:config/omem.example.json",
-      "digest": "f03a576e24e30589fc3ed538495d2d073ede3f42ec4101b8a702fd7c44578968"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/retrieval.json",
-      "digest": "b367efa304dd3bf3ef142072d307f8e560d43f7c3a52dfc358f04c75b892984a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.example.json",
-      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.json",
-      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/README.md",
-      "digest": "a84591c62c77df07dd1e380186bcf73e7e402b35957cd0ae125e3b475d3849b7"
-    },
-    {
-      "kind": "material",
       "key": "omem:docs/implementation/status.md",
-      "digest": "7a5220a095c4e1d3f2d72794130b87b6493abad244cfa20589a2c260a4806d84"
+      "digest": "8fe3da97df7a3b7143b4b17ffb8daee3c01cf1c2919fb3edf2628b638e551ccd"
     },
     {
       "kind": "material",
-      "key": "omem:docs/2026-10-01/01-决策摘要.md",
-      "digest": "708e5785eaccdb91b07f6d1f65ddca81292b6544cef6fb15074fb64ae138e9ed"
+      "key": "omem:docs/implementation/knowledge-pipeline.md",
+      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
     },
     {
       "kind": "material",
-      "key": "omem:docs/2026-10-01/02-审查范围与证据口径.md",
-      "digest": "4c4e44a1cf4e2780da3e02d51a1a42af8ac162397ae7b389cd8e7eafd9ca4ab0"
+      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
     },
     {
       "kind": "material",
-      "key": "omem:docs/2026-10-01/03-统一证据内核.md",
-      "digest": "3da0e1e8ef15387b562af03b078f276885651dba4a93e1ed5e656051c8bf48e7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/04-端到端数据流与多模态接入.md",
-      "digest": "8cbf1aacb6687e8f67a2f8b642856379b54f85c586f0b1de8d0ed7ee0fe6a212"
+      "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+      "digest": "d373476a90bff5e3da0d6fccedf5b964468be9b364499e050cbb7b63041a5c8c"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:28:54.800Z",
+    "at": "2026-10-01T00:35:52.426Z",
     "trace": {
-      "runId": "160e8621-9d45-437c-bcbd-46169f3bc790",
-      "roleId": "knowledge-refresher",
+      "runId": "77b68403-21fc-4ae4-91f8-a304384f6de6",
+      "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "541c9a62b71013a504bec635e3c8e36ad99b8673bb54596cd60e1b4b30834fa0",
-      "contextHash": "eb0a569f74113ff2fb4c4da28e1463abda60950ffa2139135e344f7549d36fe4",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "c69323cff70e084bb6a783008eb994e3f194541cc40f21d52bc11528928f68c4",
+      "contextHash": "a154806169ef150d89603a4ae76630cfe3f2b782c55c0d7c23203a97956c0d46",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d0adb8dc2be79c2187b87a3e2c5f3864de1436a13953ee41489a9fe1fdbb9b87",
+      "fingerprint": "20b7e1d7c1b58ccb3ff5aedc75ba12e5ffffb644f65100c0a205912663f0f9de",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-material-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ca-2131-74e0-b740-823a4bbcbc10"
+        "01a0f4e3-1ab5-7ce1-99bc-f1b45cd592fe"
       ],
       "usage": {
-        "used": 48577,
+        "used": 40438,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -271,10 +306,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 62328,
-          "utf8Bytes": 95363,
-          "estimatedTokens": 31788,
-          "budgetedTokens": 39735,
+          "chars": 45022,
+          "utf8Bytes": 69774,
+          "estimatedTokens": 23258,
+          "budgetedTokens": 29073,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -283,17 +318,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:29:14.298Z",
+    "at": "2026-10-01T00:36:11.330Z",
     "trace": {
-      "runId": "e82f3c41-9fe9-4ff5-8c4f-11612a1a6908",
+      "runId": "244a5d1b-8c00-4067-b180-07b4b6854028",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "24fd431fedc91073852d126aa9858e946aed434de4d8be4444935d68426ac16d",
-      "contextHash": "b0fee7ed0bc06ebde13e2f034e32816cf4638dbd16bf908da010aee98af63701",
+      "promptHash": "c7f26fb08290636fa20760067413a9ae742e3ef7d3d9c292dd57f412f4eb6314",
+      "contextHash": "9a884a460e8fb5953b30568bb20809de59cf12daadbd7daa66559e4c018b5c7b",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6063c5869cd2d1590c458151dcf53847cb3fa3aec5a86586f51ff33e8c05d7f0",
+      "fingerprint": "955ee72d4c695cc992686fee7c22ce5560473eb85d84104847212a8964b6e268",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -306,10 +341,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ca-a959-7d03-825d-b0fa387d327a"
+        "01a0f4e3-af40-7a80-8f5a-a7e88d147e74"
       ],
       "usage": {
-        "used": 45642,
+        "used": 42524,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -318,10 +353,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 59798,
-          "utf8Bytes": 91971,
-          "estimatedTokens": 30657,
-          "budgetedTokens": 38322,
+          "chars": 53065,
+          "utf8Bytes": 84732,
+          "estimatedTokens": 28244,
+          "budgetedTokens": 35305,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

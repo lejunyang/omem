@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:config/review-search.json",
+    "title": "仓库评审搜索的路径权重配置",
+    "summary": "该文件以八条静态规则为指定路径前缀声明数值权重。现有材料可确认规则数量、路径和值，但没有定义权重的运行语义、默认值、匹配算法或加载入口，因此不能据此断言真实搜索排序及各目录的资料角色。",
+    "category": "configuration",
+    "sections": [
+      {
+        "key": "configured-rules",
+        "title": "已声明的前缀与权重",
+        "body": "配置通过 `rules` 数组列出八组 `prefix` 与 `weight`。其中，`docs/2026-10-01/README.md` 和 `docs/implementation/status.md` 的权重均为 1；`docs/implementation/`、`docs/2026-10-01/`、`docs/research/` 分别为 0.8、0.65、0.7。[[c1]]\n\n其余三条规则将 `docs/prototype/`、`.agents/`、`.claude/` 分别设为 0.35、0.65、0.45。[[c2]] 这些内容能够支持对静态数值及其大小的比较，但路径名称本身不足以说明目录的用途、内容年代、维护责任或权威程度。"
+      },
+      {
+        "key": "interpretation-limits",
+        "title": "配置的解释边界",
+        "body": "从文件整体可确认，它只包含八条路径前缀与数值权重规则，没有同时声明未匹配路径的默认权重、多个前缀同时命中时的选择或合并策略，也没有解释权重参与评分的方向。[[c3]]\n\n该材料还未展示由哪个运行组件加载此文件、何时加载，以及这些数值是否实际改变检索结果。因此，目前应把它理解为一份静态配置声明；若要进一步说明“数值越大排序越靠前”或某类资料具有更高搜索优先级，仍需结合配置加载器、评分逻辑及真实检索验证。[[c3]]"
+      },
+      {
+        "key": "relationship-to-materials",
+        "title": "与仓库材料分类的关系",
+        "body": "规则覆盖具体说明文件、实施目录、日期目录、研究目录、原型目录以及两个点号开头的目录，表明配置选择了不同粒度的路径作为匹配对象：既有精确文件路径，也有目录前缀。[[c1]] [[c2]]\n\n不过，配置没有描述这些路径之间的继承关系，也不能单凭权重判断精确文件规则是否覆盖目录规则。要确认日期目录是否需要周期更新，或 `.agents/`、`.claude/`、`docs/prototype/` 各自承担什么资料角色，需要补充相应设计说明或维护文档。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "主要文档路径的权重规则",
+        "reason": "支持两个具体文件以及实施、日期和研究目录所声明的路径前缀与数值权重。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-search.json",
+          "startLine": 2,
+          "endLine": 7
+        },
+        "quote": "  \"rules\": [\n    { \"prefix\": \"docs/2026-10-01/README.md\", \"weight\": 1 },\n    { \"prefix\": \"docs/implementation/status.md\", \"weight\": 1 },\n    { \"prefix\": \"docs/implementation/\", \"weight\": 0.8 },\n    { \"prefix\": \"docs/2026-10-01/\", \"weight\": 0.65 },\n    { \"prefix\": \"docs/research/\", \"weight\": 0.7 },"
+      },
+      {
+        "key": "c2",
+        "label": "原型与工具目录的权重规则",
+        "reason": "支持原型、.agents 与 .claude 三个路径前缀及其权重，并与前一组规则共同说明配置使用了文件和目录两种粒度。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-search.json",
+          "startLine": 8,
+          "endLine": 10
+        },
+        "quote": "    { \"prefix\": \"docs/prototype/\", \"weight\": 0.35 },\n    { \"prefix\": \".agents/\", \"weight\": 0.65 },\n    { \"prefix\": \".claude/\", \"weight\": 0.45 }"
+      },
+      {
+        "key": "c3",
+        "label": "完整路径权重配置",
+        "reason": "覆盖完整规则数组，支持共有八条规则，并说明文件本身未包含默认值、匹配算法、评分方向或运行时加载信息。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-search.json",
+          "startLine": 1,
+          "endLine": 12
+        },
+        "quote": "{\n  \"rules\": [\n    { \"prefix\": \"docs/2026-10-01/README.md\", \"weight\": 1 },\n    { \"prefix\": \"docs/implementation/status.md\", \"weight\": 1 },\n    { \"prefix\": \"docs/implementation/\", \"weight\": 0.8 },\n    { \"prefix\": \"docs/2026-10-01/\", \"weight\": 0.65 },\n    { \"prefix\": \"docs/research/\", \"weight\": 0.7 },\n    { \"prefix\": \"do"
+      }
+    ],
+    "questions": [
+      {
+        "question": "这些 `weight` 数值是否在检索实现中表示数值越大，结果排序越靠前？",
+        "why": "当前材料只声明字段和值，未定义评分方向，也不能证明配置已被运行时加载。",
+        "nextStep": "补充搜索服务读取并应用该配置的实现材料，或提供真实检索行为验证，再描述其排序效果。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "未匹配路径以及同时命中多个前缀时如何确定权重？",
+        "why": "配置没有默认规则、匹配优先顺序或权重合并方式，这些细节会影响实际结果。",
+        "nextStep": "检查配置加载器和评分逻辑，并记录未匹配与多重匹配用例的真实行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "`.agents/`、`.claude/` 和 `docs/prototype/` 各自承担什么资料角色，日期目录规则是否需要周期性更新？",
+        "why": "路径名称和权重本身不足以证明目录用途、时代属性或维护责任。",
+        "nextStep": "补充说明目录定位与配置维护流程的 README、设计文档或实现材料；补证前仅按路径名称陈述。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:config/review-search.json",
+      "digest": "f8a29b4c30d67671bd2a3676fbdc135c9d4fa1d27513464c8e9b5ded932b9e34"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T00:36:03.648Z",
+    "trace": {
+      "runId": "e4c02094-1534-4c85-b525-f6f6d46852ef",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "d3fc1119995ecf7efa53a47cb81be7597e17484113f2545c8202f44494b1e46c",
+      "contextHash": "1b38b222b3f83373f9d15db94ac8b8a94f8ce812bc12136455f1b0ef0bfc12c7",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "29a5cb1f487137a29b3887fe0aa9c611608fdc8e1118d6dd1c63691125990207",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f4e3-8449-7263-a0ba-7cf2555c0548"
+      ],
+      "usage": {
+        "used": 24721,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 10511,
+          "utf8Bytes": 14769,
+          "estimatedTokens": 4923,
+          "budgetedTokens": 6154,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T00:36:18.789Z",
+    "trace": {
+      "runId": "e5c02e02-6e7e-4c27-bdee-465ff64d892d",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "c0f67b12e5332f64568dea56d19967dbc14a7f03992d679fe7d270378cc795f9",
+      "contextHash": "0ba243726a3460702a047d08597df63f6caee3a04afcd4c3c4d55fdc7923cc6e",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "43ead2fa4cd4ed04642e62387534510eca1043d869b84371119259147b6f5b9b",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f4e3-dccb-7820-8b04-03aba9d9f15f"
+      ],
+      "usage": {
+        "used": 21517,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 7508,
+          "utf8Bytes": 10594,
+          "estimatedTokens": 3532,
+          "budgetedTokens": 4415,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -3,187 +3,173 @@
   "document": {
     "key": "module:learning",
     "title": "learning · 模块理解",
-    "summary": "learning 模块以持久作业串联记忆候选提取、独立复核、整批策略应用和来源变更重核验，通过固定修订、逐片段来源、运行指纹与稳定摘要维持可追溯性。",
+    "summary": "learning 模块连接原始捕获、角色运行时与记忆治理：它确认固定修订仍然有效，生成并独立复核提案，再把整批候选交给 MemoryService 决定应用、延后、保留、拒绝或请求确认；来源更新则触发失效记忆的重新核验。",
     "category": "architecture",
     "sections": [
       {
-        "key": "purpose-context",
-        "title": "职责与可信输入",
-        "body": "该模块把原始捕获转化为可审查的记忆变更，而非直接把模型输出写成事实。`LearningPipeline` 只领取候选提取、提案复核和依赖刷新三类作业，并把模型、effort 及阶段哈希纳入执行指纹。[[c1]][[c2]] 构造角色上下文时会确认修订仍是来源 head，且来源标识与 validity epoch 未漂移；会话位置不被当作可信项目。固定 fragment 还会重新对应原始 part，以保留说话人、时间、回复、引用、转发和图片资产等来源信息。[[c3]]"
+        "key": "role",
+        "title": "作用、边界与可追溯性",
+        "body": "learning 领取提取、提案复核和依赖刷新三类持久任务，并校验 extractor、verifier 的角色包是否匹配配置档。任务领取指纹包含模型、effort，以及由流水线版本、配置档和阶段名生成的 prompt、skill、tool 哈希；它不是实际运行内容的完整快照。[[c1]] 角色执行后另行保存有效模型与 effort、各类哈希、输出 schema、会话、已加载技能与允许工具清单、用量、模型输出及运行 trace。此前“领取指纹直接覆盖完整提示词、技能和工具内容”的结论已被替代。[[c2]] 当前底层仍是单用户 SQLite，不能据此宣称已有团队租户强制隔离。[[c11]]"
       },
       {
-        "key": "extract-verify-apply",
-        "title": "提取、独立复核与整批应用",
-        "body": "提取阶段调用 extractor，校验并保存 ProposalBatch、运行 trace 与观察记录；存在候选时才入列 verifier，没有候选则以 abstention 核对来源刷新状态。[[c4]] 复核阶段先验证父作业、已存输出的 schema、摘要、作业标识和角色 bundle 哈希，再生成稳定 proposal 标识并应用已确认纠正。verifier 必须逐项覆盖且摘要完全匹配，随后全部候选作为一个 ChangeSet 交给批量策略评估，统一决定自动应用、等待决策或拒绝，避免拆单绕过影响预算。[[c5]][[c6]]"
+        "key": "flow",
+        "title": "从固定证据到受治理记忆",
+        "body": "运行前会确认任务引用的修订仍是来源 head，sourceId 与 validity epoch 均未变化；上下文保留逐部件作者、回复、时间、转发、引用和图片资产信息，同时不把会话标识当作可信项目。[[c3]] 捕获侧按文本段落、链接、图片的确定顺序生成 fragment，[[c4]] learning 再手工镜像该顺序，把 fragment ordinal 回接到原始 part；两处若不同步，逐部件 provenance 可能错配。[[c5]]\n\n提取器产出结构化候选与观察记录，有候选时创建独立 verifier 任务。复核阶段校验父任务、已存输出摘要、角色包摘要、候选覆盖和提案摘要绑定，并由宿主重建候选身份；随后所有候选连同各自 verdict 一次性交给 `evaluateBatch`。[[c6]] MemoryService 按受影响记忆与新实体的去重并集计算整批影响。超预算时只暂停原本会自动应用的项；仅当确有被暂停项时，才创建一次合并确认。若所有条目最终均为拒绝、延后、仅保留来源、忽略噪声或不产生新应用的重复项，则不会生成该批量确认。此前“超预算必然生成合并确认”的结论已被替代。[[c7]]"
       },
       {
-        "key": "refresh-relations",
-        "title": "来源更新与模块协作",
-        "body": "来源更新先冻结受影响的失效记忆集合，并以工作区、来源和新修订生成幂等记录；其身份依赖递归规范化对象键后计算的 SHA-256 摘要。[[c7]][[c8]] 若新修订仍是当前 head，流水线以捕获阶段相同的 extractor 身份重新入列；若来源已经前进，则立即核对并把旧刷新记为 superseded。[[c9]] **替代旧结论：**此前把刷新流程笼统描述为同时连接检索、反馈等服务，范围过宽；当前材料能直接确认的是刷新记录、来源状态、持久作业队列与提取角色之间的协作。检索和反馈参与通用上下文构造及纠正应用，但不是刷新分支自身的全部调用链。[[c3]][[c6]]"
-      },
-      {
-        "key": "progress-limits",
-        "title": "运行能力、错误边界与未决限制",
-        "body": "流水线提供单步处理、有限排空、后台轮询、取消、状态查询和停止能力；达到排空上限会显式报错。[[c13]] 错误在公开前会遮蔽令牌、凭据等敏感内容，并分类为坏输出、认证、暂态、配置或永久错误。[[c12]] “成功入列”不等于记忆已修复：只有受影响记忆恢复 active、依赖指向新修订且来源 head 一致时，记录才成为 applied；否则保持 needs_review，来源前进则成为 superseded。[[c10]][[c11]] 当前刷新记录会寻找第一组有效来源，而流水线后续直接读取引用数组第一项；两者在多来源或排序异常输入下可能不一致。[[c7]][[c9]]"
+        "key": "refresh_limits",
+        "title": "来源刷新、循环防护与限制",
+        "body": "来源产生新修订后，旧依赖会标为 stale、相关记忆变为 invalidated，并排入依赖刷新任务。[[c8]] 派生材料不会进入捕获后的 `extract_claims` 队列，以免模型总结自循环为独立证据；原始 Agent 会话仍可进入学习流程。[[c9]]\n\n刷新记录会冻结最初受影响集合；queued 只表示已入列。只有记忆重新 active、依赖指向新修订且来源 head 一致时才算 applied，来源继续前进则记为 superseded，否则保持 needs_review。[[c10]] 流水线提供单步处理、有限排空、轮询、取消和停止，但这些实现分支本身不是端到端运行证明。[[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "学习流水线的作业与可信上下文",
-        "reason": "子知识解释了模块限定作业种类、执行指纹和可信上下文构造，用于概括模块定位。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/src/learning/pipeline.ts",
-          "section": "jobs-context"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c2",
-        "label": "持久 worker 与执行指纹",
-        "reason": "支持流水线只处理三类学习作业，并把模型、effort 和阶段哈希写入执行指纹。",
+        "label": "学习任务范围与领取指纹",
+        "reason": "支持模块领取的任务种类、角色配置校验，以及领取指纹包含模型、effort和阶段摘要而非完整运行内容。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/learning/pipeline.ts",
-          "startLine": 65,
+          "startLine": 73,
           "endLine": 123
         },
-        "quote": "export class LearningPipeline {\n  private readonly gateway: RoleRuntimeGateway;\n  private readonly worker: DurableJobWorker;\n  private readonly controller = new AbortController();\n  private loopPromise: Promise<void> | null = null;\n  private processed = 0;\n  private lastError: string | null = null;\n\n  constructor(\n    "
+        "quote": "  constructor(\n    private readonly input: {\n      store: Store;\n      memory: MemoryService;\n      feedback: FeedbackService;\n      profile: AgentProfile;\n      workspaceRoot: string;\n      pollMs?: number;\n      ownerId?: string;\n      workerId?: string;\n      retrieval?: RetrievalPort;\n    },\n  ) {\n    const registr"
+      },
+      {
+        "key": "c2",
+        "label": "角色输出与运行轨迹保存",
+        "reason": "支持实际持久化的模型、effort、哈希、清单、用量、输出及运行轨迹字段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "startLine": 331,
+          "endLine": 358
+        },
+        "quote": "  private saveRun(\n    job: JobLease,\n    run: {\n      result: unknown;\n      trace: RoleRunTrace;\n    },\n  ) {\n    const sessionId = run.trace.sessionIds.at(-1);\n    if (!sessionId) throw Error(\"ROLE_SESSION_ID_MISSING\");\n    return this.input.store.jobs.saveRoleOutput({\n      jobId: job.id,\n      leaseToken: job.leas"
       },
       {
         "key": "c3",
-        "label": "修订新鲜度与逐片段来源",
-        "reason": "支持拒绝过期修订、区分会话位置与可信项目，并将原始 part 的来源信息和图片带入角色上下文。",
+        "label": "当前修订与证据上下文校验",
+        "reason": "支持来源 head、来源身份、有效期校验，以及逐部件来源信息、图片资产和不可信项目边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/learning/pipeline.ts",
           "startLine": 180,
-          "endLine": 281
+          "endLine": 280
         },
         "quote": "  private context(\n    job: JobLease,\n    roleId: ContextManifest[\"role_id\"],\n    candidates?: Record<string, unknown>[],\n  ) {\n    const refs = this.sourceRefs(job);\n    if (!refs.length) throw Error(\"LEARNING_INPUT_REVISION_MISSING\");\n    const revisions = refs.map((reference) => {\n      const revision = this.input.s"
       },
       {
         "key": "c4",
-        "label": "候选提取阶段",
-        "reason": "支持 extractor 执行、输出和观察保存、verifier 入列、无候选收敛及异常回写流程。",
+        "label": "捕获侧固定片段拆分规则",
+        "reason": "给出文本段落、链接和图片生成 fragment 的实际顺序，支持两侧必须保持一致的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 208,
+          "endLine": 220
+        },
+        "quote": "      const texts = parts.flatMap((p) =>\n        p.type === \"text\"\n          ? p.text.split(/\\n\\s*\\n/).filter((t) => t.trim())\n          : p.type === \"link\"\n            ? [`${p.label}\\n${p.url}`]\n            : [`[图片] ${p.label}`],\n      );\n      if (texts.length > 2000)\n        throw Error(\"Fragment budget exceeded (20"
+      },
+      {
+        "key": "c5",
+        "label": "逐部件映射的镜像约束",
+        "reason": "支持 learning 手工复现捕获拆分顺序，以及规则漂移可能导致 fragment 与 part 来源错配的限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "startLine": 310,
+          "endLine": 328
+        },
+        "quote": "  /**\n   * Reconstruct the part→fragment mapping in the exact order store.capture splits\n   * parts into fragments (paragraph text parts, then one fragment per link/image),\n   * so a fragment ordinal resolves back to its source part and its per-part\n   * provenance. This MUST mirror the flatMap in store.capture.\n   */\n"
+      },
+      {
+        "key": "c6",
+        "label": "提取、独立复核与整批评估入口",
+        "reason": "支持提案生成、父子输出绑定、候选身份重建、复核覆盖与摘要校验，以及所有候选连同 verdict 进入整批评估。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/learning/pipeline.ts",
           "startLine": 420,
-          "endLine": 455
+          "endLine": 545
         },
         "quote": "  private async extract(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"extractor@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);\n      const context = this.context(job, \"extractor\");\n      const run = await this.gateway.run({\n        roleId: \"extractor\","
       },
       {
-        "key": "c5",
-        "label": "提取与独立复核流程",
-        "reason": "子知识组织了提取、父输出完整性校验、独立复核和整批策略应用之间的关系。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/src/learning/pipeline.ts",
-          "section": "extract-verify"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c6",
-        "label": "复核完整性与整批策略评估",
-        "reason": "支持父作业及输出摘要核验、逐候选覆盖检查，并以完整 ChangeSet 调用批量策略评估。",
-        "relation": "implements",
+        "key": "c7",
+        "label": "整批影响预算与合并确认条件",
+        "reason": "支持整批去重计算影响、暂停原本可自动应用的条目，并证明只有存在被暂停条目时才创建合并确认。",
+        "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/learning/pipeline.ts",
-          "startLine": 457,
-          "endLine": 563
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 1471,
+          "endLine": 1508
         },
-        "quote": "  private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);\n      const reference = job.inputRefs.find(\n        (value) =>\n          typeof value === \"object\" &&\n          value !== null "
-      },
-      {
-        "key": "c7",
-        "label": "冻结来源刷新影响集合",
-        "reason": "解释刷新记录如何选择来源引用、冻结受影响记忆并以稳定键保证重复投递的一致性。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/src/learning/refresh.ts",
-          "section": "purpose"
-        },
-        "quote": ""
+        "quote": "    // Read-only pass: de-duplicated union impact over the whole ChangeSet.\n    const memoryIds = new Set<string>();\n    const entityKeys = new Set<string>();\n    for (const { proposal } of parsed) {\n      for (const id of this.affectedMemoryIds(proposal)) memoryIds.add(id);\n      const key = this.newEntityKey(proposal"
       },
       {
         "key": "c8",
-        "label": "规范化摘要实现",
-        "reason": "支持刷新记录及执行身份所用摘要基于规范化 JSON 和 SHA-256 计算。",
+        "label": "新修订引发依赖失效与刷新入列",
+        "reason": "支持来源更新后旧依赖置为 stale、记忆失效以及 refresh_dependents 任务入列。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/storage/digest.ts",
-          "startLine": 3,
-          "endLine": 19
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 244,
+          "endLine": 273
         },
-        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+        "quote": "      if (head) {\n        this.db\n          .prepare(\n            `UPDATE memory_dependencies SET state='stale'\n             WHERE source_id=? AND source_revision_id<>?`,\n          )\n          .run(String(source.id), revisionId);\n        this.db\n          .prepare(\n            `UPDATE memories SET status='invalidated',"
       },
       {
         "key": "c9",
-        "label": "来源刷新分支与重新入列",
-        "reason": "直接支持流水线读取首项引用、判断来源是否前进、标记 superseded，并以相同 extractor 身份重新入列的论断。",
+        "label": "派生材料学习队列过滤",
+        "reason": "支持派生材料不进入 extract_claims 队列，而原始 Agent 会话仍可进入学习流程的循环防护边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/learning/pipeline.ts",
-          "startLine": 126,
-          "endLine": 143
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 355,
+          "endLine": 375
         },
-        "quote": "  private async refreshDependents(job: JobLease) {\n    const refs = job.inputRefs as { sourceId?: string; previousRevisionId?: string; revisionId?: string }[];\n    const result = recordSourceRefresh(this.input.store.db, job.workspaceId, refs);\n    if (!result.affectedCount) return { resultRef: result.recordId, usage: {"
+        "quote": "  private queueCaptureJob(input: CaptureInput, revision: Revision) {\n    // Only derived material (model summaries/reflections) is withheld from the\n    // learning queue: it must not self-loop as independent evidence. Original Agent\n    // sessions are real experience and DO enter extract_claims (G14).\n    if (input.p"
       },
       {
         "key": "c10",
-        "label": "刷新结果的状态边界",
-        "reason": "子知识解释入列与实际应用成功的区别，以及 applied、needs_review 和 superseded 的判定。",
-        "relation": "explains",
+        "label": "刷新影响冻结与结果协调",
+        "reason": "支持冻结最初影响集合，并依据当前记忆、依赖和来源 head 区分 applied、superseded 与 needs_review。",
+        "relation": "implements",
         "target": {
-          "kind": "article",
+          "kind": "material",
           "key": "omem:apps/server/src/learning/refresh.ts",
-          "section": "reconciliation"
+          "startLine": 6,
+          "endLine": 40
         },
-        "quote": ""
+        "quote": "/** Freeze the invalidation set before reprocessing. Repeated delivery cannot\n * erase affected memories merely because some have already been repaired. */\nexport function recordSourceRefresh(db: DatabaseSync, workspaceId: string, inputRefs: SourceRefreshInputRef[]) {\n  const ref = inputRefs.find(r => r.sourceId && r.r"
       },
       {
         "key": "c11",
-        "label": "依据当前依赖核对刷新结果",
-        "reason": "支持仅在记忆状态、当前依赖和来源 head 全部吻合时标记 applied。",
-        "relation": "implements",
+        "label": "单用户 SQLite 存储边界",
+        "reason": "支持当前存储是单用户基础、团队级强制隔离仍属后续迁移的限制。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/learning/refresh.ts",
-          "startLine": 27,
-          "endLine": 40
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 1,
+          "endLine": 4
         },
-        "quote": "/** The dispatcher succeeding means only 'queued'. Reconciliation is based on\n * current dependencies and real application state after independent verification. */\nexport function reconcileSourceRefresh(db: DatabaseSync, revisionId: string, detail: Record<string, unknown>) {\n  const records = db.prepare(\"SELECT * FROM "
+        "quote": "import { recordSourceRefresh } from \"./learning/refresh.js\";\n/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";"
       },
       {
         "key": "c12",
-        "label": "公开错误脱敏与分类",
-        "reason": "直接支持敏感凭据遮蔽，以及坏输出、认证、暂态、配置和永久错误的分类规则。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/learning/pipeline.ts",
-          "startLine": 30,
-          "endLine": 56
-        },
-        "quote": "const publicError = (error: unknown) =>\n  (error instanceof Error ? error.message : \"Learning pipeline failed\")\n    .replace(/\\b(?:sk-|ghp_)[A-Za-z0-9_-]{12,}/g, \"[REDACTED]\")\n    .replace(\n      /\\b(authorization|password|secret|token)\\s*[:=]\\s*[^\\s,;]+/gi,\n      \"$1=[REDACTED]\",\n    )\n    .replace(/[\\r\\n]+/g, \" \")\n  "
-      },
-      {
-        "key": "c13",
-        "label": "轮询、排空与停止控制",
-        "reason": "支持单步处理、排空上限、后台轮询、取消、状态报告和停止语义。",
+        "label": "学习流水线运行控制",
+        "reason": "支持单步处理、有限排空、轮询、取消、状态查询和停止等运行接口。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -196,26 +182,25 @@
     ],
     "questions": [
       {
-        "question": "一次刷新作业包含多个来源修订时，应拆成多个记录，还是由一个作业完整处理全部来源？",
-        "why": "刷新记录函数寻找第一组同时具有来源和修订标识的引用，但流水线随后直接使用数组第一项；若第一项不完整或有效来源不在首位，记录对象与后续状态检查可能不一致。",
-        "nextStep": "明确刷新作业的单来源输入约束；若允许多来源，则按来源拆分记录、入列和核对事务，并增加引用顺序变化与部分缺字段的行为测试。",
+        "question": "learning 主流程目前通过了哪些真实端到端运行检查？",
+        "why": "材料只有实现代码，没有测试文件、实际退出码或真实 Agent CLI 运行记录，无法确认过期输入、图片缺失、复核覆盖错误、批量超预算、取消与重试等路径已经过行为验证。",
+        "nextStep": "补充相关测试和最近检查记录，并分别标明进程内行为测试、协议 fixture 与真实 Agent CLI live check 的结果。",
         "blocking": false,
         "citationKeys": [
+          "c3",
+          "c6",
           "c7",
-          "c9"
+          "c12"
         ]
       },
       {
-        "question": "当前学习流水线的端到端验证覆盖了哪些真实模型失败、重试和进程恢复场景？",
-        "why": "源码定义了输出校验、错误分类、持久 worker 和刷新状态转换，但未提供测试或运行 trace，无法确认真实 Agent CLI、暂态故障及进程重启后的幂等恢复已经验收。",
-        "nextStep": "检查相关测试和真实运行 trace，分别验证成功提取复核、坏输出、认证失败、暂态错误重试、来源继续前进及 worker 重启恢复。",
+        "question": "捕获侧与 learning 侧的 fragment 拆分顺序是否已有共享实现或防漂移契约测试？",
+        "why": "两处分别实现相同的文本段落、链接和图片拆分规则；若未来只修改一侧，fragment ordinal 可能回接到错误 part，污染逐部件 provenance。",
+        "nextStep": "核对现有测试；若没有保障，抽取共享拆分函数，或增加覆盖文本、空段、链接和图片顺序的一致性契约测试。",
         "blocking": false,
         "citationKeys": [
           "c4",
-          "c6",
-          "c11",
-          "c12",
-          "c13"
+          "c5"
         ]
       }
     ]
@@ -225,6 +210,16 @@
       "kind": "material",
       "key": "omem:apps/server/src/learning/pipeline.ts",
       "digest": "7f869f973a9d6d42ce9f9600a4df0bbdb9b5aa80f8a6b395991d94f4c86069c8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
@@ -239,7 +234,7 @@
     {
       "kind": "article",
       "key": "omem:apps/server/src/learning/pipeline.ts",
-      "digest": "75c62ad1f9c85f2e2fa9158df659aac8243df6af6d04e2bb8f64fc7b28c90a1f"
+      "digest": "3db44b7bfadc7ae1ec300aa27ff96c98e234be13b61a4d0b8eb7b9a3bd860288"
     },
     {
       "kind": "article",
@@ -250,17 +245,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:43:35.720Z",
+    "at": "2026-10-01T00:46:42.502Z",
     "trace": {
-      "runId": "cef20e69-b297-4d26-86b6-7e06ae3f0783",
+      "runId": "29eca4d6-5b1a-4701-bee3-bc6b1fb449a9",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "5037c8e1602985c566cfb187d1d2d130285eaa846b00739e3c35d67992e22add",
-      "contextHash": "10f8f21e60f73616ae9c6273b8e9268a65c098a2d0137031c3dd6df4a03e72d1",
+      "promptHash": "41e8f10c622ebd289968aa48f64cb42ee547b9f86d8b61d203735c51893689e7",
+      "contextHash": "55019c02407db7dc4262a2c58441e2c68f0440bc026c975cec14980365777ebc",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b1cf53002b90ff64607cae9134d4798a1227fd5632d79d56fcf4cfad9e541d71",
+      "fingerprint": "163e9fa365c9f1240bc6d91d6087dd4b02beb6333d9dd795b1650a090bf5ab2f",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -273,10 +268,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3d7-8cc4-7ce0-b34a-2a992789e957"
+        "01a0f4ed-2ad7-7ee3-9cd0-ac5aa8bbc359"
       ],
       "usage": {
-        "used": 37938,
+        "used": 73628,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -285,10 +280,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 56020,
-          "utf8Bytes": 64616,
-          "estimatedTokens": 21539,
-          "budgetedTokens": 26924,
+          "chars": 183816,
+          "utf8Bytes": 196074,
+          "estimatedTokens": 65358,
+          "budgetedTokens": 81698,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -297,17 +292,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:43:53.717Z",
+    "at": "2026-10-01T00:47:03.725Z",
     "trace": {
-      "runId": "79b12530-7a62-4a16-bc73-9259ec981b4e",
+      "runId": "09b63e91-ee66-4f15-8611-b9913a75e1a5",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "5cc60efbc0beca20fbc358aefa417f3b398a2066593dcbad9b0e94847c46d8cd",
-      "contextHash": "a368daa0f12ead8890364d2c83523dae3a6702c2ec18db84f8c98c0a10f961ba",
+      "promptHash": "3ae4a3dbb3fd4e5dbfa5550199a0cdf33651a39eb73396c599976a69bafc579e",
+      "contextHash": "c34892af43f3ec63973bc50bdb090a040da1381d64c5595676d8893a080f3239",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d5a2e0e3e679c15bb3d4a894a9ea768d6134d2724992f13bc7dc8a2818b42e3b",
+      "fingerprint": "dfd4cd88b33022f166d25d1b955f6c70df8b549da8d187a037695c072b1be9aa",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -320,10 +315,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3d8-17bd-7732-9ad9-368444c2bbad"
+        "01a0f4ed-9c30-7d50-af9a-800dd2df3d5f"
       ],
       "usage": {
-        "used": 35185,
+        "used": 71046,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -332,10 +327,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 54207,
-          "utf8Bytes": 61694,
-          "estimatedTokens": 20565,
-          "budgetedTokens": 25707,
+          "chars": 180678,
+          "utf8Bytes": 191463,
+          "estimatedTokens": 63821,
+          "budgetedTokens": 79777,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
