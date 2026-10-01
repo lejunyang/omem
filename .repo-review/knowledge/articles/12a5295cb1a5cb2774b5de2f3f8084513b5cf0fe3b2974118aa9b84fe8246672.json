@@ -2,114 +2,68 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/EvidenceReader.vue",
-    "title": "证据阅读、引用追踪与上下文追问",
-    "summary": "该组件把单个证据片段组织成可逐层深入并返回原位的阅读对话框，集中呈现材料上下文、双向引用、图片与追问入口。它负责前端状态和交互编排，关系校验、问答执行以及底层对话框能力由其他模块承担。",
-    "category": "implementation",
+    "title": "递归证据阅读与就地追问",
+    "summary": "证据阅读器以栈式对话框串联引用片段、完整材料和反向引用，并保留逐层滚动位置；读者还可查看图片、添加显式引用，或围绕当前证据路径发起追问。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "证据阅读"
+    ],
     "sections": [
       {
         "key": "purpose",
-        "title": "从引用进入可追溯的阅读现场",
-        "body": "组件服务于“从一条引用继续查证”的场景：外部调用公开的 `open(id)` 后，前端获取证据并建立阅读帧；证据对象同时包含当前片段、所属修订、出向引用和反向引用。参考 [[c1]] [[c2]]\n\n对话框以修订标题作为标题，并在正文上方明确展示来源、版本号以及现行或历史状态，帮助读者判断证据所处版本，而不是把不同修订混作同一材料。参考 [[c3]] [[c4]]"
+        "title": "从引用片段回到材料上下文",
+        "body": "组件解决的是“看到一条证据后如何继续读懂来源”的问题。打开片段时，它请求包含片段、所属修订、下级引用和反向引用的证据对象，并将其压入阅读栈；界面同时标出来源、版本及是否现行，避免把历史内容误当成当前版本。参考 [[c1]] [[c2]]\n\n读者可在**引用片段、完整材料、反向引用**之间切换。完整材料按修订中的片段连续展示，并把其中的图片交给图片组件加载，因此文本上下文和非文本附件仍处于同一阅读入口。参考 [[c3]]"
       },
       {
         "key": "navigation",
-        "title": "分层导航与阅读位置恢复",
-        "body": "打开下一条引用前，组件保存当前滚动位置，再将新证据压入帧栈并滚到顶部；返回上一层时弹出当前帧并恢复原来的位置。参考 [[c1]] [[c5]]\n\n路径栏可直接回到任意已访问层。若目标片段已经存在于栈中，组件不会再次请求或压栈，而是提示其层级并允许回跳，以避免引用环无限展开。`loading` 阻止同时发起新的打开请求；请求失败时记录错误，已有帧保持不变。参考 [[c1]] [[c6]]\n\n关闭对话框会清空全部帧。当前材料只展示了组件内的帧栈处理，没有展示 URL 深链、Esc 行为或关闭后的焦点归还规则。参考 [[c3]]"
+        "title": "递归展开而不丢失阅读位置",
+        "body": "点击下级引用会再次调用 `open`：组件先保存当前层滚动位置，再把新证据加入栈并滚到顶部；返回时弹出一层并恢复上一层位置。路径导航也允许直接裁剪到任意已访问层。参考 [[c4]]\n\n若目标片段已经存在于栈中，组件不会重复压栈，而是提示它位于第几层，让读者回到该层，从而避免循环引用造成无限嵌套。并发打开请求由单个 `loading` 标志拦截；这意味着加载期间的其他打开动作会被直接忽略，而不是排队。参考 [[c5]]"
       },
       {
-        "key": "views",
-        "title": "查看上下文并维护引用关系",
-        "body": "阅读区提供三种视角：**引用片段**显示精确文本及其下级引用，**完整材料**按修订中的片段顺序连续展示并加载图片部件，**反向引用**列出直接指向当前片段的来源。界面明确提示，记录了引用关系并不等于自动判定其语义支持度。参考 [[c7]]\n\n用户可以输入另一个片段标识并向 `/relations` 提交来源与目标；成功后，组件重新获取当前证据、清空输入并通知父组件刷新。目标是否合法、重复关系如何处理以及最终采用何种关系类型，取决于未提供的服务端实现，不能从本组件确认。参考 [[c8]]"
+        "key": "actions",
+        "title": "关联证据与围绕路径追问",
+        "body": "读者可输入另一个片段 ID 建立显式关系；保存成功后，当前证据会重新获取，并向父级发出 `saved` 事件。界面明确说明这种关系只是“明确引用”，不会自动判断支持度。参考 [[c6]]\n\n每一层可独立展开追问侧栏。阅读器把当前片段、模型配置以及整个栈中的片段 ID 交给 `ChatPane`；后者仅在选择路径范围时把这些 ID 作为上下文提交，因此“就这段问”和“沿证据路径问”具有不同范围。参考 [[c7]]\n\n错误会显示为警告；但当前材料未展示后端对无效、重复或自引用关系的约束，也没有测试文件可证明循环提示、滚动恢复和加载期点击等交互已被自动化覆盖。"
       },
       {
-        "key": "followup",
-        "title": "沿证据路径发起追问",
-        "body": "每个阅读帧独立保存追问侧栏状态；当前层的 `ChatPane` 会接收焦点片段、模型配置和整条阅读路径。`ChatPane` 发出的 `open` 事件被转交给阅读器的同一个 `open` 方法，因此组件接口允许后续引用继续进入现有帧栈，但现有材料没有展示答案引用在何处实际触发该事件。参考 [[c9]]\n\n追问默认聚焦当前片段；只有选择路径范围时，路径中的片段标识才作为 `contextIds` 提交给 `/runs`。问答运行、轮询和答案生成属于 `ChatPane` 及服务端职责，并非阅读器自身完成。参考 [[c10]]"
+        "key": "boundaries",
+        "title": "实现边界与可见限制",
+        "body": "组件自身只管理前端阅读状态，并依赖 API 返回完整的 `Evidence` 结构；引用关系的持久化、权限和有效性判断都不在本文件中。关闭对话框会清空整个阅读栈，而返回按钮在首层会弹出最后一帧，从而回到外部阅读界面。参考 [[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "证据打开与加载",
-        "reason": "支持通过片段标识获取证据、保存滚动位置、压入阅读帧、阻止并发请求及记录失败的说明。",
+        "label": "证据加载与阅读栈",
+        "reason": "支持打开证据时请求数据并压入栈的流程说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/EvidenceReader.vue",
           "startLine": 16,
-          "endLine": 40
+          "endLine": 34
         },
         "quote": "async function open(id: string) {\n  if (loading) return;\n  const i = frames.value.findIndex((f) => f.e.fragment.id === id);\n  if (i >= 0) {\n    loop.value = i;\n    return;\n  }\n  loading = true;\n  error.value = \"\";\n  try {\n    const e = await api<Evidence>(\"/evidence/\" + id);\n    if (current.value)\n      current.value.s"
       },
       {
         "key": "c2",
-        "label": "证据数据合同",
-        "reason": "说明证据对象由片段、修订、出向引用和反向引用组成。",
+        "label": "证据数据结构",
+        "reason": "说明证据对象包含片段、修订、下级引用和反向引用。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/api.ts",
-          "startLine": 26,
+          "startLine": 18,
           "endLine": 31
         },
-        "quote": "export type Evidence = {\n  fragment: Fragment;\n  revision: Revision;\n  outgoing: Edge[];\n  backlinks: Edge[];\n};"
+        "quote": "export type Edge = {\n  id: string;\n  kind: string;\n  targetId: string;\n  text: string;\n  title: string;\n  version: number;\n};\nexport type Evidence = {\n  fragment: Fragment;\n  revision: Revision;\n  outgoing: Edge[];\n  backlinks: Edge[];\n};"
       },
       {
         "key": "c3",
-        "label": "阅读对话框状态",
-        "reason": "支持对话框标题、层级、侧栏状态、关闭清栈和返回事件的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/EvidenceReader.vue",
-          "startLine": 67,
-          "endLine": 74
-        },
-        "quote": "  <OmDialog\n    :open=\"!!current\"\n    :title=\"current?.e.revision.title || '证据'\"\n    :depth=\"frames.length\"\n    :side-open=\"current?.ask\"\n    @close=\"frames = []\"\n    @back=\"back\"\n    ><template v-if=\"current\""
-      },
-      {
-        "key": "c4",
-        "label": "修订来源与版本标识",
-        "reason": "直接支持界面展示材料来源、版本号及现行或历史状态的论断。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/EvidenceReader.vue",
-          "startLine": 98,
-          "endLine": 101
-        },
-        "quote": "        <OmBadge>{{ current.e.revision.source }}</OmBadge\n        ><OmBadge :tone=\"current.e.revision.current ? 'neutral' : 'warning'\"\n          >v{{ current.e.revision.version }} ·\n          {{ current.e.revision.current ? \"现行版本\" : \"历史版本\" }}</OmBadge"
-      },
-      {
-        "key": "c5",
-        "label": "返回与滚动恢复",
-        "reason": "支持弹出当前帧并恢复上一层滚动位置的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/EvidenceReader.vue",
-          "startLine": 41,
-          "endLine": 46
-        },
-        "quote": "async function back() {\n  frames.value.pop();\n  loop.value = -1;\n  await nextTick();\n  const el = document.querySelector(\".om-dialog .dialog-scroll\");\n  if (el) el.scrollTop = current.value?.scroll || 0;"
-      },
-      {
-        "key": "c6",
-        "label": "路径回跳与循环提示",
-        "reason": "支持路径裁剪、重复目标提示以及回到既有阅读层的交互说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/EvidenceReader.vue",
-          "startLine": 75,
-          "endLine": 95
-        },
-        "quote": "      ><nav class=\"path\" aria-label=\"证据路径\">\n        <OmButton\n          v-for=\"(f, i) in frames\"\n          :key=\"f.e.fragment.id\"\n          variant=\"ghost\"\n          @click=\"\n            frames = frames.slice(0, i + 1);\n            loop = -1;\n          \"\n          >{{ i + 1 }} {{ f.e.revision.title }}</OmButton\n       "
-      },
-      {
-        "key": "c7",
-        "label": "三种证据视角",
-        "reason": "支持引用片段、完整材料、图片部件和反向引用的展示方式，以及引用不自动代表支持度的提示。",
+        "label": "材料视图与图片展示",
+        "reason": "支持三种阅读标签及完整材料中图片渲染的描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -120,36 +74,49 @@
         "quote": "      <div class=\"tabs\">\n        <OmButton\n          v-for=\"[key, label] in [\n            ['excerpt', '引用片段'],\n            ['context', '完整材料'],\n            ['backlinks', '反向引用'],\n          ]\"\n          :key=\"key\"\n          :variant=\"current.tab === key ? 'primary' : 'ghost'\"\n          @click=\"current.tab = key\"\n       "
       },
       {
-        "key": "c8",
-        "label": "人工添加引用",
-        "reason": "支持前端提交来源与目标、刷新当前证据、清空输入及发出保存通知的流程说明。",
+        "key": "c4",
+        "label": "逐层返回与滚动恢复",
+        "reason": "支持入栈前保存滚动位置、返回后恢复上一层位置的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/EvidenceReader.vue",
+          "startLine": 27,
+          "endLine": 46
+        },
+        "quote": "    if (current.value)\n      current.value.scroll =\n        document.querySelector(\".om-dialog .dialog-scroll\")?.scrollTop || 0;\n    frames.value.push({ e, tab: \"excerpt\", ask: false, scroll: 0 });\n    loop.value = -1;\n    await nextTick();\n    const el = document.querySelector(\".om-dialog .dialog-scroll\");\n    if (el)"
+      },
+      {
+        "key": "c5",
+        "label": "循环与并发打开处理",
+        "reason": "支持已在栈中的片段只提示所在层，以及加载期间忽略新打开请求的边界说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/EvidenceReader.vue",
+          "startLine": 15,
+          "endLine": 23
+        },
+        "quote": "let loading = false;\nasync function open(id: string) {\n  if (loading) return;\n  const i = frames.value.findIndex((f) => f.e.fragment.id === id);\n  if (i >= 0) {\n    loop.value = i;\n    return;\n  }\n  loading = true;"
+      },
+      {
+        "key": "c6",
+        "label": "显式引用保存",
+        "reason": "支持创建关系、刷新当前证据并通知父级的流程，以及界面对关系含义的限定。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/EvidenceReader.vue",
           "startLine": 48,
-          "endLine": 63
+          "endLine": 59
         },
         "quote": "async function link() {\n  if (!current.value || !target.value.trim()) return;\n  try {\n    await api(\"/relations\", {\n      from: current.value.e.fragment.id,\n      to: target.value.trim(),\n    });\n    current.value.e = await api<Evidence>(\n      \"/evidence/\" + current.value.e.fragment.id,\n    );\n    target.value = \"\";\n "
       },
       {
-        "key": "c9",
-        "label": "证据侧栏接口",
-        "reason": "支持每层追问状态、焦点证据、路径上下文以及 ChatPane 的 open 事件接入阅读器的组件关系。",
+        "key": "c7",
+        "label": "证据路径追问",
+        "reason": "支持阅读器向追问组件传递当前片段和路径，以及追问组件按范围提交上下文的说明。",
         "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/EvidenceReader.vue",
-          "startLine": 161,
-          "endLine": 172
-        },
-        "quote": "    ><template #aside\n      ><ChatPane\n        v-for=\"f in frames.filter((frame) => frame.ask)\"\n        v-show=\"f === current && f.ask\"\n        :key=\"f.e.fragment.id\"\n        :focus=\"f.e.fragment\"\n        :profile-id=\"profileId\"\n        :model=\"model\"\n        :effort=\"effort\"\n        :path-ids=\"frames.map((x) => x.e.fr"
-      },
-      {
-        "key": "c10",
-        "label": "追问范围与运行创建",
-        "reason": "说明追问如何以当前片段为焦点，并仅在选择路径范围时提交路径上下文。",
-        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ChatPane.vue",
@@ -157,26 +124,49 @@
           "endLine": 63
         },
         "quote": "async function ask() {\n  if (!draft.value.trim() || !props.focus || busy.value) return;\n  error.value = \"\";\n  busy.value = true;\n  try {\n    const started = await api<{ id: string; state: \"running\" }>(\"/runs\", {\n      question: draft.value,\n      profileId: props.profileId,\n      focusId: props.focus.id,\n      ...(prop"
+      },
+      {
+        "key": "c8",
+        "label": "对话框关闭与返回",
+        "reason": "支持关闭时清空栈、返回时弹出一层及首层返回阅读界面的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/EvidenceReader.vue",
+          "startLine": 67,
+          "endLine": 74
+        },
+        "quote": "  <OmDialog\n    :open=\"!!current\"\n    :title=\"current?.e.revision.title || '证据'\"\n    :depth=\"frames.length\"\n    :side-open=\"current?.ask\"\n    @close=\"frames = []\"\n    @back=\"back\"\n    ><template v-if=\"current\""
       }
     ],
     "questions": [
       {
-        "question": "关闭阅读器后的焦点归还、Esc 退层以及 URL 深链由谁负责？",
-        "why": "当前组件只显示关闭时清空帧栈并把返回事件交给 `back`，提供的材料没有包含 OmDialog 的键盘、焦点和 URL 状态合同。",
-        "nextStep": "检查 `@omem/ui` 中 OmDialog 的实现以及调用 EvidenceReader 的父组件，确认键盘操作、焦点恢复和深链序列化的职责边界。",
+        "question": "后端如何处理无效目标、重复关系和片段自引用？",
+        "why": "前端只提交来源与目标片段 ID，并把服务端错误转成提示；现有材料没有给出关系接口的校验和幂等规则，因此不能确定这些输入最终会被拒绝、合并还是重复保存。",
+        "nextStep": "查看 `/relations` 的服务端实现及接口测试，确认目标存在性、重复关系、自引用和权限校验。",
         "blocking": false,
         "citationKeys": [
-          "c3",
           "c6"
         ]
       },
       {
-        "question": "新增引用请求在服务端会接受哪些目标，并如何处理重复提交与关系类型？",
-        "why": "前端只提交来源片段和目标片段，随后刷新证据；现有材料没有提供 `/relations` 路由及存储实现，因此无法确认合法性校验、去重和关系分类规则。",
-        "nextStep": "查阅 `/relations` 的路由、关系存储及相关服务端测试，再补充确切行为与失败反馈。",
+        "question": "循环提示、逐层滚动恢复和加载期间连续点击是否有自动化交互测试？",
+        "why": "这些行为由组件内部状态和 DOM 滚动位置共同决定，但提供的材料中没有测试文件，无法确认浏览器环境下的断言与未覆盖分支。",
+        "nextStep": "检查 EvidenceReader 的组件或浏览器测试；若不存在，补充循环引用、返回恢复滚动、关闭清栈及并发打开的场景。",
         "blocking": false,
         "citationKeys": [
+          "c4",
+          "c5",
           "c8"
+        ]
+      },
+      {
+        "question": "后端如何处理不存在的目标、重复关系和片段自引用？",
+        "why": "草稿已准确限定前端只提交来源与目标片段 ID；现有材料未包含 `/relations` 的服务端校验与幂等规则，因此这些输入的最终行为仍不能确认。",
+        "nextStep": "查看 `/relations` 的服务端实现及接口合同，确认目标存在性、重复关系和自引用的处理规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
         ]
       }
     ]
@@ -185,12 +175,12 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+      "digest": "1351598ce3ed88cb905decebe70850af448cccda7bf1db855207eb13cf641e41"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
+      "digest": "5b1fc796094157c6c689332d72eacf6d57c95025e92b39991ed4b0becc6cbb9a"
     },
     {
       "kind": "material",
@@ -205,34 +195,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:09:50.781Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:03:17.272Z",
     "trace": {
-      "runId": "6a96ee5a-303d-40a5-b163-fdecc867a63a",
-      "roleId": "knowledge-refresher",
+      "runId": "d57562ab-d7dc-4431-bc34-153bcaf26192",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "1af43372e702074f280a060ab0170ad239b4853684b498e90b05ce9c51be7cda",
-      "contextHash": "520dd155cdc6f7f16f0ef18c5774e7983044d6ca98bae3c5b1a4e9d1fb380a6e",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "f1fbd027de74cf905423effcf13d397e5ecf1a0c8fe0bc7caa600138307cb937",
+      "contextHash": "345f4e436526baadfd27f9af937e812d6d15e1561bd2ff44664e9511fecdf8b1",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "cd7d70e6d2b642ee4e622671d3400750bd9a08e6ee9b29bb26779fb7d7f2d605",
+      "fingerprint": "ffeb8d7a9462f5662d1548d6ae2267accea058bdf279b22860179b6eaefed280",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75e-831b-7d51-8baa-41da2a25ba54"
+        "01a0f8d9-1bf2-7842-bbef-55f5f936b343"
       ],
       "usage": {
-        "used": 32135,
+        "used": 27183,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -241,10 +231,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 31371,
-          "utf8Bytes": 39485,
-          "estimatedTokens": 13162,
-          "budgetedTokens": 16453,
+          "chars": 23361,
+          "utf8Bytes": 26809,
+          "estimatedTokens": 8937,
+          "budgetedTokens": 11172,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -253,20 +243,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:10:07.867Z",
+    "at": "2026-10-01T19:03:39.769Z",
     "trace": {
-      "runId": "09a352f1-021d-4ad5-afc7-c0c42111f31c",
+      "runId": "30936c5b-d8fc-45e0-83f3-ed8075bbee89",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "1fd09e74ac5b8991f5ef2aba60f5a28b8c85673f29a778f932eee33da556c03d",
-      "contextHash": "2f30e700b88137ad1f065df256b5721c11238d38a36f0cd4cc9017452d04cf6b",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "bce326fd508502b00be07233300b6396684c05151c64c76794ec9ae13439bbac",
+      "contextHash": "a3f046a73bcc43308088904b85ff9e839d226316e313bfac037d834e74147da2",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "883e6d296965e984d4780e22e86f70468319addd1adeec003ca4fdd5f5e4c9d6",
+      "fingerprint": "a28841551476733696e0038a0182b7a7a6da185c7f442f772dc84a275549a88b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -276,10 +266,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75f-0831-78c1-8b12-f5451c83904a"
+        "01a0f8d9-99b9-7f40-a226-f4ae9950d888"
       ],
       "usage": {
-        "used": 29080,
+        "used": 27862,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -288,10 +278,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 28027,
-          "utf8Bytes": 34134,
-          "estimatedTokens": 11378,
-          "budgetedTokens": 14223,
+          "chars": 27246,
+          "utf8Bytes": 33516,
+          "estimatedTokens": 11172,
+          "budgetedTokens": 13965,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

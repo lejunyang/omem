@@ -2,37 +2,38 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/knowledge-browser.ts",
-    "title": "知识阅读链路的浏览器验收",
-    "summary": "该脚本用临时仓库、真实 SQLite、服务端 API、Vue 页面与无头浏览器，端到端验证知识文章、内联引用、源码阅读、深链恢复、待办转化及安全渲染；它使用固定 fixture，不验证模型生成质量。",
-    "category": "tests",
+    "title": "知识浏览与递归证据追踪的端到端验证",
+    "summary": "该脚本在临时仓库中构造代码、材料与知识文章，启动真实服务并通过 Chromium 验证递归引用、代码跳转、深链接恢复、焦点归还、响应式布局、待办创建和源码安全展示。它覆盖 Vue、API 与 SQLite 的成功路径，不依赖 LLM。",
+    "category": "仓储集成测试",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "知识管理",
+      "仓储集成测试"
+    ],
     "sections": [
       {
         "key": "purpose",
-        "title": "解决什么问题",
-        "body": "这是一条面向知识阅读体验的浏览器验收脚本。它不调用大模型，而是在临时目录创建三层 TypeScript 依赖和一份带脚本的 HTML 原文，再初始化真实存储、仓库同步、代码同步与知识仓库，从而检查前端、API 和 SQLite 串联后是否仍保持一致行为。参考 [[c1]]\n\n测试使用独立临时数据目录，适合在不污染个人知识库的情况下复现导航、引用与任务交互。其关注点是**用户最终看到并操作的结果**，不是单个组件或协议 fixture。参考 [[c2]]"
+        "title": "验证真实知识阅读链路",
+        "body": "脚本验证的是一条完整的读者流程：用户从知识首页进入叙述中的引用，逐层查看章节和模块说明，最终定位到固定代码；过程同时经过真实 Vue 页面、服务 API 与 SQLite。知识内容由显式 fixture 构造，不调用 LLM，因此失败可以稳定复现和定位。参考 [[c1]]\n\n它先在临时目录写入 A→B→C 的最小 TypeScript 依赖链，以及一份包含脚本标签的 HTML；随后创建 Store，执行评审同步、仓库材料捕获和代码同步，再建立知识仓储。参考 [[c2]]"
       },
       {
         "key": "fixture-flow",
-        "title": "固定知识如何形成可导航链路",
-        "body": "`publish` 辅助函数构造带内联引用的知识文档，绑定材料原文，并把材料摘要或文章版本记录为依赖；每篇 fixture 都带已接受的生成与复核元数据。模块 A 还额外加入源码引用和一个“责任人未知”的问题，用于覆盖原文阅读与待办入口。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  总览 --> 架构说明\n  架构说明 --> 模块A\n  模块A --> 模块B\n  模块B --> 模块C\n  模块C --> 固定源码\n```\n\n脚本按上述关系发布文章，随后启动真实 review 应用与 Chromium，形成从知识总览逐层进入章节、模块和固定源码的完整阅读路径。参考 [[c4]]"
+        "title": "从固定材料到递归引用",
+        "body": "`publish` 为每个模块组装带内联引用的知识文档，绑定材料原文，并把材料摘要或目标文章修订号记录为依赖；模块 A 还带有实现引用和一个待确认问题。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  总览 --> 架构说明 --> 模块A --> 模块B --> 模块C --> 固定代码\n```\n\n脚本按上述顺序发布文章并设置引用目标，从而形成可递归展开的证据链。参考 [[c4]] 知识仓储会校验每节是否使用内联引用、引用是否确有目标，以及材料行号是否有效，所以这些 fixture 也必须满足正式知识合同。延伸阅读：[[c5]]"
       },
       {
-        "key": "assertions",
-        "title": "关键交互与行为断言",
-        "body": "浏览器从总览进入架构说明后，连续打开四级引用，检查引用理由、五层面包屑和源码内容；按 Esc 应退回一层，刷新后仍能从 URL 深链恢复栈状态。关闭全部后再次打开并关闭，还断言焦点归还原入口，覆盖键盘导航与可恢复阅读上下文。参考 [[c5]]\n\n脚本还从模块 A 的源码视图点击 `b.ts` 行引用，并断言目标是模块 B 的知识文章。这证明当前 UI 能依据 fixture 中的真实 `import` 导航到目标模块；它没有证明任意跨文件函数调用都已被解析。参考 [[c6]]"
-      },
-      {
-        "key": "boundaries",
-        "title": "边界、安全性与未覆盖范围",
-        "body": "同一页面分别在 1440、768 和 390 像素宽度下检查无横向溢出；未解决问题只有在用户点击“加入待办”后才进入存储。HTML 材料则以源码文本展示，并明确断言其中的脚本没有在页面执行，覆盖了原文阅读的基本注入风险。参考 [[c7]]\n\n最后，脚本要求页面运行期间没有未捕获错误，并在 `finally` 中关闭浏览器、服务端并删除临时目录。由于全部数据在单进程临时环境中构造，该验收没有覆盖真实模型生成、鉴权、多用户隔离、服务重启后的持久化恢复，也没有遍历所有引用循环或极深 trail。参考 [[c8]]"
+        "key": "assertions-limits",
+        "title": "浏览器断言与能力边界",
+        "body": "浏览器断言覆盖五层面包屑、代码内容、Esc 返回一层、刷新后恢复深链接、关闭后归还焦点，以及从 import 行引用跳到目标模块知识。参考 [[c6]] 脚本还在 1440、768、390 三种宽度检查无横向溢出，并验证用户能把未解决问题加入待办且 Store 中产生对应任务。参考 [[c7]]\n\n安全检查会打开含 `<script>` 的 HTML 原文：界面应显示源码，而页面全局变量仍为未定义，说明材料没有作为脚本执行。进入浏览器断言阶段后，无论断言成功还是抛错，`finally` 都会尝试关闭浏览器和服务并删除临时目录；它不覆盖此前的 Store 创建、同步、发布、服务启动或 Chromium 启动失败。参考 [[c8]]\n\n当前验收只启动 Chromium，且生成与复核元数据使用固定 fixture 值，因此不能证明 Firefox、WebKit 上行为一致，也不能代表真实模型的生成质量。同步失败、发布校验失败和待办写入失败时的用户可读反馈同样未被这条成功路径验证。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "浏览器验收定位",
-        "reason": "说明脚本使用真实 Vue、API、SQLite 导航并明确不调用大模型。",
-        "relation": "explains",
+        "label": "端到端验证定位",
+        "reason": "支持脚本使用真实 Vue、API、SQLite，并以显式 fixture 取代 LLM 的测试定位。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
@@ -43,8 +44,8 @@
       },
       {
         "key": "c2",
-        "label": "临时仓库与同步初始化",
-        "reason": "支持临时目录、测试源码、独立 Store 以及同步和材料仓库初始化的描述。",
+        "label": "临时仓库与同步流程",
+        "reason": "支持临时代码和 HTML 的创建，以及 Store、评审同步、材料捕获、代码同步和知识仓储初始化流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -56,9 +57,9 @@
       },
       {
         "key": "c3",
-        "label": "知识 fixture 发布流程",
-        "reason": "支持内联引用、问题、原文绑定、依赖记录及生成复核元数据的构造流程。",
-        "relation": "explains",
+        "label": "知识文档发布逻辑",
+        "reason": "解释 fixture 文档、内联引用、问题、原文绑定和依赖摘要如何组装并发布。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
@@ -69,90 +70,104 @@
       },
       {
         "key": "c4",
-        "label": "文章链与应用启动",
-        "reason": "支持总览到模块源码的固定文章关系，以及真实服务和浏览器的启动过程。",
+        "label": "递归文章链",
+        "reason": "支持总览、架构、A、B、C 与固定材料之间逐层引用关系的构造。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
           "startLine": 37,
-          "endLine": 45
+          "endLine": 42
         },
         "quote": "const a = \"omem:apps/server/src/a.ts\", b = \"omem:apps/server/src/b.ts\", c = \"omem:apps/server/src/c.ts\";\npublish(c, \"模块 C\", c, \"material\", \"C 的实现\");\npublish(b, \"模块 B\", c, \"article\", \"模块 C 的说明\");\npublish(a, \"模块 A\", b, \"article\", \"模块 B 的说明\", true);\npublish(\"topic:architecture\", \"架构说明\", a, \"article\", \"模块 A 的说明\");\npublish("
       },
       {
         "key": "c5",
-        "label": "多层阅读与深链恢复",
-        "reason": "支持引用理由、面包屑层级、源码显示、Esc 回退、刷新恢复和焦点归还等断言。",
-        "relation": "supports",
+        "label": "知识引用合同",
+        "reason": "说明知识仓储对内联引用、目标存在性和材料行号范围的正式校验。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/knowledge-browser.ts",
-          "startLine": 49,
-          "endLine": 68
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 44,
+          "endLine": 70
         },
-        "quote": "  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .knowledge-document\").getByRole(\"link\", { name: \"架构说明 ↗\", exact: true });\n  await entry.click();\n  await expect(page.locator(\".om-trail .citation-reason\")).toContainText(\"当前段落\");\n  for (const label of [\"模块 A 的说明\", \"模块 B 的说明\", \"模块 C"
+        "quote": "/** Validate the exact source/derived distinction and every inline reference.\n * Semantic correctness is checked separately by an independent model role. */\nexport function validateKnowledgeDocument(document: KnowledgeDocument, materials: Map<string, KnowledgeMaterial>, articles: Map<string, KnowledgeArticle>, offered?"
       },
       {
         "key": "c6",
-        "label": "导入引用导航",
-        "reason": "支持从模块 A 的源码行引用进入模块 B 知识文章的具体断言。",
+        "label": "递归导航与恢复",
+        "reason": "支持逐层打开引用、面包屑深度、代码展示、Esc 返回、刷新恢复、焦点归还和 import 跳转等断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
-          "startLine": 70,
+          "startLine": 47,
           "endLine": 74
         },
-        "quote": "  await page.locator(\".knowledge-card\").filter({ hasText: \"模块 A\" }).first().click();\n  await page.locator(\".om-trail\").getByRole(\"link\", { name: \"A 的实现 ↗\", exact: true }).click();\n  await page.locator(\".om-trail .line-reference\").filter({ hasText: \"b.ts\" }).click();\n  await expect(page.locator(\".om-trail .knowledge-doc"
+        "quote": "  const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });\n  const errors: string[] = []; page.on(\"pageerror\", e => errors.push(e.message));\n  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .knowledge-document\").getByRole(\"link\", { name: \"架构说明 ↗\", exact: tr"
       },
       {
         "key": "c7",
-        "label": "响应式、待办与安全渲染",
-        "reason": "支持多视口无溢出、用户主动创建待办以及 HTML 原文不执行脚本的行为。",
+        "label": "响应式与待办",
+        "reason": "支持三种视口无横向溢出，以及由未解决知识显式创建待办并写入 Store 的行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
           "startLine": 75,
-          "endLine": 90
+          "endLine": 86
         },
         "quote": "  for (const width of [1440, 768, 390]) {\n    await page.setViewportSize({ width, height: 950 });\n    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);\n  }\n  console.log(\"PASS 1440/768/390 without horizontal overflow\");\n  await page.locator(\".om-trail button[aria-labe"
       },
       {
         "key": "c8",
-        "label": "错误检查与资源清理",
-        "reason": "支持未捕获页面错误断言及浏览器、服务端、临时目录的最终清理。",
+        "label": "源码安全与清理边界",
+        "reason": "支持 HTML 只显示而不执行，并准确限定 finally 仅保护进入 try 后的浏览器断言阶段。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
-          "startLine": 91,
+          "startLine": 43,
           "endLine": 92
         },
-        "quote": "  expect(errors).toEqual([]);\n} finally { await browser.close(); await app.close(); rmSync(root, { recursive: true, force: true }); }"
+        "quote": "const { app } = await buildReviewApp({ store, repoRoot: root, webDistDir: resolve(\"apps/web/dist\") });\nconst base = await app.listen({ host: \"127.0.0.1\", port: 0 });\nconst browser = await chromium.launch({ headless: true });\ntry {\n  const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });\n  const"
+      },
+      {
+        "key": "c9",
+        "label": "Chromium 与固定元数据",
+        "reason": "支持测试仅启动 Chromium、发布时使用固定生成和复核元数据，并界定失败路径和真实模型质量不在当前验证范围内。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "startLine": 33,
+          "endLine": 45
+        },
+        "quote": "  bindKnowledgeQuotes(document, materials);\n  const dependencies: KnowledgeArtifact[\"dependencies\"] = document.citations.map(c => ({ kind: c.target.kind, key: c.target.key, digest: c.target.kind === \"material\" ? materials.get(c.target.key)!.digest : repository.get(c.target.key)!.revision }));\n  return repository.publis"
       }
     ],
     "questions": [
       {
-        "question": "是否需要为真实服务重启后的 trail 恢复、鉴权和多用户隔离增加独立浏览器验收？",
-        "why": "现有脚本使用同一进程中的临时 Store 和动态端口，只能证明当前单用户 fixture 环境下的页面、API 与数据库协作，无法据此确认生产部署边界。",
-        "nextStep": "根据产品当前的单用户验收范围决定是否新增重启持久化测试；鉴权或多用户隔离应在相应能力实际实现后单独设计场景。",
+        "question": "是否需要把同步失败、发布校验失败和待办写入失败纳入这条端到端验收？",
+        "why": "当前脚本主要验证成功路径；同步或发布等进入 `try` 之前的前置步骤失败时，既没有用户可读故障行为断言，也不受现有 `finally` 的完整资源清理保障。",
+        "nextStep": "为最重要的失败场景注入可控故障，分别断言 API 状态、用户可读错误、既有知识可访问性及临时资源清理；若暂不覆盖，至少保持当前边界说明。",
         "blocking": false,
         "citationKeys": [
           "c2",
-          "c4",
+          "c3",
           "c8"
         ]
       },
       {
-        "question": "是否需要补充引用循环、超深 trail 和失效目标的浏览器场景？",
-        "why": "当前 fixture 是固定的无环五层链，只覆盖一次 Esc、刷新恢复和关闭全部，不能说明循环引用、长栈或 missing/stale 目标的交互表现。",
-        "nextStep": "在保持真实 API 与浏览器路径的前提下，增加循环文章、超过常规深度的引用链及不可导航目标 fixture，并断言提示、回退和 URL 行为。",
+        "question": "递归证据追踪是否要求在 Firefox 或 WebKit 中保持相同行为？",
+        "why": "现有验收只启动 Chromium；材料没有给出产品支持的浏览器范围。",
+        "nextStep": "先确认支持矩阵；若包含 Firefox 或 WebKit，将相同导航、焦点恢复和响应式断言参数化运行。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c5"
+          "c6",
+          "c7",
+          "c9"
         ]
       }
     ]
@@ -161,17 +176,17 @@
     {
       "kind": "material",
       "key": "omem:scripts/knowledge-browser.ts",
-      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
+      "digest": "0a77677dd6a079791c0dbdf4c63db5f19871c19cf9294dd38e5de7f074a0cf8c"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
+      "digest": "6dd61dc81d3579e2c69eba9a6fc1a777dc4d04627e7f2170b201e0e53b403950"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1cc007a5fd3cbc9208c80f6c54fd43cc766bae38f247e58b30659eff308a1f5e"
+      "digest": "a268f9c53ef5d785a64c749368dbcbc7c04c587f58b685fcaf5ee2f5aaa45fa1"
     },
     {
       "kind": "material",
@@ -181,39 +196,39 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
+      "digest": "c045754363ae114355ce1f04bb65dc0e571776e8de6be03477696c1f0e52684d"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:13:35.128Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:18:33.919Z",
     "trace": {
-      "runId": "34ad5a0d-4b44-42a5-9101-4ae905c9e181",
-      "roleId": "code-analyst",
+      "runId": "5fc127e8-8caf-40d2-9e97-6757b1d9f482",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
-      "promptHash": "c96e551cd2114f6ea83482b891a7d242b53453ac74ac0cf26e9405b1b3dd36c8",
-      "contextHash": "995351d6f94330831394849faf00cbedeb66f45d8a9e9497a3e0dee1fede24ad",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "0cfa9d4027da44fcd0fc3fab247127e3993c647de13b70f0cde89b9bb36bf42a",
+      "promptHash": "0e13a9989c08caf9a16f8532e0f22daf7a515aa25911b5cf1f199a67317ef60e",
+      "contextHash": "b7b28f093413a0e6395bf8445e845e319c2739cf48b41a9650343b2d5bc642d1",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "666fef4a2bbe5eeab087477f78359d67aad2bbdd1d07cf6d5de03583c5573ec5",
+      "fingerprint": "7d882e0e8a7aa29debdddfbd1e4cf3385bdefa1d18f5082122e78cceb1814e8e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f761-fbbe-73c1-8543-760310d2a9e9"
+        "01a0f8e7-31ca-7b51-b578-1593343ef427"
       ],
       "usage": {
-        "used": 31337,
+        "used": 34183,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -222,10 +237,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35054,
-          "utf8Bytes": 38786,
-          "estimatedTokens": 12929,
-          "budgetedTokens": 16162,
+          "chars": 45082,
+          "utf8Bytes": 55304,
+          "estimatedTokens": 18435,
+          "budgetedTokens": 23044,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -234,20 +249,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:13:52.691Z",
+    "at": "2026-10-01T19:18:50.786Z",
     "trace": {
-      "runId": "b8c73bc1-973c-412b-acad-a23e18c6fd4e",
+      "runId": "4ea244e9-0cea-42f4-bd14-4528079912e3",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "0fa72f0d30609db193bd561e685902022f81ea2002b4c579a256224f0786ff00",
-      "contextHash": "1b825ddad0bee3d7833befdc89cdb33ded1a0024d95de8facf1579781778b47c",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "5f3f932dc7e922beda928a1128c95121ba6f597e0ad7b7fd33850fba573b5987",
+      "contextHash": "06020cb4272930b89126c99e7c3b0f26200d47e11fcdc7a06ff990d0e3186f03",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "18b1fb1094b1bfc2610934cbce7fbb3dcbb70aed5dbcad51161b1798ceb24e03",
+      "fingerprint": "daf39f9141adf42941c031682afc60868d0f025d71511c6ae97ecdcb3225425f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -257,10 +272,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f762-74d9-7652-a910-35c45a8306a3"
+        "01a0f8e7-89cd-7342-ba21-c52025b53652"
       ],
       "usage": {
-        "used": 32127,
+        "used": 31003,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -269,10 +284,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 39210,
-          "utf8Bytes": 45628,
-          "estimatedTokens": 15210,
-          "budgetedTokens": 19013,
+          "chars": 40561,
+          "utf8Bytes": 47341,
+          "estimatedTokens": 15781,
+          "budgetedTokens": 19727,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

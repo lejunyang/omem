@@ -2,26 +2,38 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/trail.ts",
-    "title": "证据 Trail 的可序列化数据模型",
-    "summary": "定义可跨模块复用的证据阅读帧、URL 片段编码、循环定位与无损压栈，并将 URL 持久化预算与渲染深度分离。",
-    "category": "architecture",
+    "title": "证据追踪抽屉的可序列化导航栈",
+    "summary": "定义证据追踪抽屉的共享帧模型，以及深链接序列化、循环检测和入栈操作。它让用户能沿模块、文件、符号、决策、引用和来源逐层阅读，并为返回位置恢复与 URL 长度控制提供基础数据，但具体抽屉交互和持久化策略由调用方实现。",
+    "category": "Web 应用通用交互组件",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "证据阅读",
+      "递归证据追踪"
+    ],
     "sections": [
       {
-        "key": "frame-contract",
-        "title": "帧合同与导航语义",
-        "body": "Trail 被建模为单个浮动抽屉中的帧栈，目标是支持从模块逐层进入文件、符号、决策或测试，再按原路径返回；帧采用普通可序列化记录，以便整个栈经 `location.hash` 深链恢复。[[c1]] 帧类型覆盖模块、文件、符号、评审片段、决策、知识、引用和来源。每帧以 `kind + id` 形成稳定身份，并携带人读标题；可选的滚动位置用于退栈恢复，文件、符号、片段、行号和模块字段则留给父级加载具体数据。[[c2]]"
+        "key": "purpose",
+        "title": "解决递归阅读中的导航问题",
+        "body": "证据阅读并非一次跳转：用户可能从模块进入文件，再深入符号、决策、测试或原始来源。这里把每一步表示成一个可序列化的栈帧，使同一个浮动抽屉能够逐层钻取并逐层返回；普通记录结构还允许调用方把整条路径写入 `location.hash`，刷新后恢复深链接。参考 [[c1]]\n\n帧类型覆盖模块、文件、符号、评审片段、决策、知识、引用和来源，说明该模型承担的是跨内容类型的统一导航，而不是某一种代码实体的专用历史。参考 [[c2]]"
       },
       {
-        "key": "stack-utilities",
-        "title": "序列化、循环与深度边界",
-        "body": "`frameToSegment` 分别对 kind 与 id 做 URI 编码，再组合成两段哈希路径，避免标识中的保留字符直接破坏路由。[[c3]] `findLoop` 以 kind 和 id 查找已有帧，返回索引或 `-1`，只提供纯检测，不自行决定跳转或提示。`pushFrame` 则始终返回追加后的新数组，不修改原栈。[[c4]]\n\n`MAX_TRAIL=200` 被注释为 URL 持久化预算而非渲染上限；真实链条达到预算时应由调用者显式告知，而不是静默丢帧。值得注意的是，`pushFrame` 的注释称“bounded”，实现却没有读取该常量，因此截断或拒绝序列化必须发生在未提供的路由层。[[c5]]"
+        "key": "frame-data",
+        "title": "帧如何保存身份与恢复线索",
+        "body": "每个帧以 `kind + id` 构成稳定身份，`title` 用于抽屉标题或面包屑；可选的 `scroll` 保存弹出子层后应恢复的位置。`fileId`、`symbolId`、`fragmentId`、行号和模块名则是自由组合的加载线索，由上层按帧类型解释。参考 [[c3]]\n\n`frameToSegment` 只把类型与身份分别进行 URI 编码后拼成路径片段，因此 URL 中不会包含标题、滚动位置或其他加载字段。仅凭当前材料无法确认这些附加字段是否另有序列化机制。参考 [[c4]]"
+      },
+      {
+        "key": "stack-rules",
+        "title": "循环检测与深度边界",
+        "body": "`findLoop` 以同类型且同 ID 为重复条件，返回已有帧下标，供容器在入栈前决定如何处理循环；函数本身不修改栈，也不规定是回退到旧帧、拒绝打开还是展示提示。参考 [[c5]]\n\n持久化到 URL 的设计上限是 200 层，注释明确渲染器本身不受此限制，并要求触顶时由调用方显式提示。值得注意的是，`pushFrame` 的注释称入栈受上限约束，但实现只是复制旧数组并追加新帧，没有检查 `MAX_TRAIL`；所以实际限长只能依赖未提供的调用方，不能据此认定本文件已经执行截断或拒绝策略。参考 [[c6]] [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Trail 栈设计目标",
-        "reason": "支持单抽屉逐层阅读、返回及通过哈希恢复整个帧栈的架构说明。",
+        "label": "追踪栈设计目的",
+        "reason": "支持抽屉逐层钻取、返回以及通过地址哈希恢复深链接的用途说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -33,21 +45,34 @@
       },
       {
         "key": "c2",
-        "label": "TrailFrame 类型合同",
-        "reason": "支持帧种类、稳定身份、人读标题、滚动恢复和数据引用字段的说明。",
+        "label": "可导航内容类型",
+        "reason": "支持该导航模型统一覆盖代码、知识、决策、引用与来源等多类内容。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/trail.ts",
           "startLine": 6,
-          "endLine": 30
+          "endLine": 14
         },
-        "quote": "export type TrailFrameKind =\n  | \"module\"\n  | \"file\"\n  | \"symbol\"\n  | \"fragment\" // a review (doc/decision/research) fragment\n  | \"decision\"\n  | \"knowledge\"\n  | \"citation\"\n  | \"source\";\n\nexport type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown"
+        "quote": "export type TrailFrameKind =\n  | \"module\"\n  | \"file\"\n  | \"symbol\"\n  | \"fragment\" // a review (doc/decision/research) fragment\n  | \"decision\"\n  | \"knowledge\"\n  | \"citation\"\n  | \"source\";"
       },
       {
         "key": "c3",
-        "label": "哈希路径片段编码",
-        "reason": "支持 kind 与 id 被分别 URI 编码后组成路径片段的流程。",
+        "label": "栈帧字段定义",
+        "reason": "说明稳定身份、展示标题、滚动恢复位置以及各类数据加载线索。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 16,
+          "endLine": 30
+        },
+        "quote": "export type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown in the drawer header / breadcrumb. */\n  title: string;\n  /** Where to scroll back to when this frame is popped. Managed by the drawer. */\n  scroll?: number;\n  /** Free-form refs the pare"
+      },
+      {
+        "key": "c4",
+        "label": "深链接片段编码",
+        "reason": "支持序列化函数仅编码帧类型与 ID 的判断。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -58,37 +83,70 @@
         "quote": "/** Serialize a frame to a hash path segment pair. */\nexport function frameToSegment(f: TrailFrame): string {\n  return encodeURIComponent(f.kind) + \"/\" + encodeURIComponent(f.id);\n}"
       },
       {
-        "key": "c4",
-        "label": "循环查找与不可变压栈",
-        "reason": "支持循环检测只返回索引，以及压栈通过新数组追加而不修改输入的论断。",
+        "key": "c5",
+        "label": "重复帧定位",
+        "reason": "说明循环检测采用 kind 与 id 联合匹配，并只返回已有位置供容器决策。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/trail.ts",
           "startLine": 44,
-          "endLine": 53
+          "endLine": 48
         },
-        "quote": "/** Return the existing index of a frame with the same kind+id, or -1. Pure:\n * used by the container to decide whether pushing would loop. */\nexport function findLoop(frames: TrailFrame[], next: Pick<TrailFrame, \"kind\" | \"id\">): number {\n  return frames.findIndex((f) => f.kind === next.kind && f.id === next.id);\n}\n\n/*"
+        "quote": "/** Return the existing index of a frame with the same kind+id, or -1. Pure:\n * used by the container to decide whether pushing would loop. */\nexport function findLoop(frames: TrailFrame[], next: Pick<TrailFrame, \"kind\" | \"id\">): number {\n  return frames.findIndex((f) => f.kind === next.kind && f.id === next.id);\n}"
       },
       {
-        "key": "c5",
-        "label": "URL 深链预算说明",
-        "reason": "支持 200 层仅限制持久化、渲染不静默截断，并揭示压栈注释与实现之间的边界。",
-        "relation": "contradicts",
+        "key": "c6",
+        "label": "URL 持久化深度",
+        "reason": "支持 200 层限制只针对序列化深链接、渲染不受限且触顶应显式提示的边界说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/trail.ts",
           "startLine": 37,
-          "endLine": 52
+          "endLine": 42
         },
         "quote": "/** Max trail depth we persist into the URL. The renderer itself is unbounded\n * (matches the prototype's 100-level chain); this budget only bounds the\n * serialized deep-link so a path cannot grow an infinitely long URL. A generous\n * ceiling means real chains never hit it; if they do, the caller surfaces an\n * explic"
+      },
+      {
+        "key": "c7",
+        "label": "实际入栈行为",
+        "reason": "显示 pushFrame 实际仅追加帧，与其受限入栈的注释存在未落实的差异。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/trail.ts",
+          "startLine": 50,
+          "endLine": 53
+        },
+        "quote": "/** Push a frame, bounded to MAX_TRAIL. Returns the new stack. */\nexport function pushFrame(frames: TrailFrame[], next: TrailFrame): TrailFrame[] {\n  return [...frames, next];\n}"
       }
     ],
     "questions": [
       {
-        "question": "哪个路由序列化函数负责在超过 200 帧时拒绝持久化并向用户显示提示？",
-        "why": "本材料声明预算由调用者处理，但 `pushFrame` 不应用 `MAX_TRAIL`，且未提供路由实现，无法确认超限是否真的可见而非被静默处理。",
-        "nextStep": "检查哈希路由序列化实现及其测试，确认超限返回值、用户提示和刷新后的恢复策略。",
+        "question": "调用方在哪里执行 MAX_TRAIL 检查，并在达到 200 层时向用户展示什么提示？",
+        "why": "本文件声明限制只作用于 URL 持久化，但 pushFrame 没有执行检查；缺少调用方源码，无法确认边界是否真正落实。",
+        "nextStep": "检查使用 pushFrame、MAX_TRAIL 和 frameToSegment 的容器或组合式函数，核对入栈前检查、提示及 URL 写入逻辑。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c7"
+        ]
+      },
+      {
+        "question": "深链接恢复时，scroll 和各类可选加载字段如何重建？",
+        "why": "当前序列化函数只写入 kind 与 id，材料没有展示其他字段是由 ID 重新查询、另行持久化，还是刷新后丢弃。",
+        "nextStep": "检查哈希解析和帧数据加载实现，确认刷新后的滚动恢复及实体定位行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "发现循环后，容器会回退到已有帧、拒绝入栈，还是允许重复并提示？",
+        "why": "findLoop 只提供已有下标，没有定义用户可见的处理策略。",
+        "nextStep": "检查调用 findLoop 的抽屉容器及相关交互测试，记录实际循环处理和焦点、滚动状态恢复规则。",
         "blocking": false,
         "citationKeys": [
           "c5"
@@ -99,49 +157,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/ui/src/highlight.test.ts",
-      "digest": "e28c86210be9b50f634470deb2febca4ebba15c398236484c9eeded020ab5033"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/highlight.ts",
-      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/index.ts",
-      "digest": "e33d8712c3cd93e2ea519cdd60dbec8c2407918313f14927d6e4b0cc7e61d84d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/tokens.css",
-      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/ui/src/trail.ts",
       "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:27:51.594Z",
+    "at": "2026-10-01T19:15:53.434Z",
     "trace": {
-      "runId": "9af3944a-51e6-48c4-bf07-e7883435c24a",
+      "runId": "44d284f2-9ea9-4e86-80ea-c434d61c3294",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c42e424fd058724183a612182dc84a6b9f1ad2753e5a33fbeff9c1c421cc6d08",
-      "contextHash": "8a9c4954245ff99e94b298752afd19b2859345a98137d1254fcbb236575cef9e",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "4b205c1102c5e593f8b28d396a5876cebc31fefe43aca1daa8809239cc9caabb",
+      "contextHash": "139ec89730c24bd7d9db53571dcda1791d8f9311d566ff8504a2707fd1476a73",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1e997f740ee0e6c150f13c64aa1a4a617b39e1cdcbba9c5c80513376ae10d2fd",
+      "fingerprint": "9bcc4b17a48671821692d7a33e48c531065930776c8330454cddd9adbd809626",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -154,11 +187,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-898a-7fe3-82c3-33f92cd20624"
+        "01a0f8e4-acba-7333-b4a0-68a8244ae94b"
       ],
       "usage": {
-        "used": 23800,
-        "size": 760000,
+        "used": 22295,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -166,10 +199,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21857,
-          "utf8Bytes": 23621,
-          "estimatedTokens": 7874,
-          "budgetedTokens": 9843,
+          "chars": 9448,
+          "utf8Bytes": 12758,
+          "estimatedTokens": 4253,
+          "budgetedTokens": 5317,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -178,17 +211,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:28:09.152Z",
+    "at": "2026-10-01T19:16:10.293Z",
     "trace": {
-      "runId": "d47b5ccf-6c92-458e-958c-8009346e47f6",
+      "runId": "01cf3436-d60f-4cff-86bb-59107935cfc9",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "40fd35eb46d08050a3dfcbc2b3636c208175e4acc6b3062173c27870200e8c9b",
-      "contextHash": "3cf64dff645c5f0aa455a97ae6dc4ce7dce108d784ec0a16a0485b89452b242e",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "8a67048102c59613bd2afcbf6500913325d65b78a602c7b77a4c0257a786b04d",
+      "contextHash": "18fc85086c80208733cafff5856cb6800b71b2be1adf6ed7319dd4d0ccad0414",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f9f3910fd4ea94c92c29a5706c7af585855b6634ef8c83b432dd1559ca1ae915",
+      "fingerprint": "ab14f7b073926fe7090b51290962fd471e1915505ba7fb05d079abbe4d75fed7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -201,11 +234,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-42f2-7540-99b6-a0c549aa8f7e"
+        "01a0f8e5-17b0-76f0-8658-94764fd303d0"
       ],
       "usage": {
-        "used": 26356,
-        "size": 760000,
+        "used": 22684,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -213,10 +246,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37389,
-          "utf8Bytes": 46011,
-          "estimatedTokens": 15337,
-          "budgetedTokens": 19172,
+          "chars": 12470,
+          "utf8Bytes": 18130,
+          "estimatedTokens": 6044,
+          "budgetedTokens": 7555,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

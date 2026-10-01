@@ -2,123 +2,128 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/highlight.ts",
-    "title": "安全代码高亮与逐行 HTML 拆分",
-    "summary": "按语言别名懒加载 highlight.js 语法定义，对未知语言安全降级，并在保持跨行 span 状态的前提下生成可独立渲染的行。",
-    "category": "implementation",
+    "title": "代码高亮与逐行 HTML 拆分",
+    "summary": "为阅读界面的代码块提供按需语法高亮、安全降级和逐行渲染能力，并在拆分行号时延续跨行语法样式。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "阅读与交互样式"
+    ],
     "sections": [
       {
-        "key": "language-loading",
-        "title": "语言选择与安全降级",
-        "body": "模块只从 highlight.js 核心包起步，以字面量动态导入声明 TypeScript、JavaScript、XML、CSS、Markdown、JSON、INI 和 Bash，便于构建工具解析开发及生产环境的代码块；常用扩展名和名称再统一映射到这些加载器。[[c1]] `highlightCode` 将语言名转为小写后查别名，未知语言不尝试自动探测，而是对 `&`、`<`、`>` 做转义后原样返回，避免把捕获内容当成标记。XML 路径额外注册 JavaScript 与 CSS，以支持嵌入内容；注册完成后才调用高亮器，并容忍非法语法。[[c2]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "阅读界面既要显示带语法颜色的代码，也要避免把所有语言定义打进初始资源。这里仅声明 TypeScript、JavaScript、XML、CSS、Markdown、JSON、INI 和 Bash 的动态加载器，并把 `tsx`、`vue`、`toml` 等常见标记映射到实际高亮器；字面量导入也便于 Vite 在开发和生产构建中解析代码块。参考 [[c1]]"
       },
       {
-        "key": "line-splitting",
-        "title": "跨行样式的拆分流程",
-        "body": "代码查看器需要每个编号行都是有效 HTML，但 highlight.js 的 span 可能跨越换行。`highlightedLines` 因而扫描生成的 span、闭合标签和换行：遇到起始 span 就压栈，遇到闭合标签就出栈；遇到换行时先闭合当前全部样式，再在下一行按栈中起始标签重开。这样每行可独立渲染，同时保留多行注释等词法状态。[[c3]]\n\n该解析器明确假定输入只来自 highlight.js 的已转义文本和生成 span，并不是通用 HTML 解析器。它只识别特定 span 形态，未校验错误嵌套；若调用者传入任意 HTML，其正确性与安全性不能由本模块保证。[[c4]]"
+        "key": "highlight-flow",
+        "title": "从语言标记到安全 HTML",
+        "body": "`highlightCode` 先将语言名转为小写并查询别名。无法识别时不尝试自动猜测，而是转义 `&`、`<`、`>` 后返回，从而保留原代码并防止其被当作 HTML。支持的语言按需加载且只在尚未注册时注册；XML 还会同时准备 JavaScript 和 CSS，以支持 HTML、Vue 一类混合内容。最后由 highlight.js 生成高亮片段，并允许非法词法内容继续渲染。参考 [[c2]]"
+      },
+      {
+        "key": "line-rendering",
+        "title": "逐行展示如何保持跨行样式",
+        "body": "行号或逐行定位要求每一行都是独立、合法的 HTML，但高亮器生成的 `<span>` 可能跨越换行。`highlightedLines` 因而维护开放标签栈：遇到换行时先补齐当前行的闭合标签，再让下一行重新带上仍处于开放状态的标签；普通标签则随遍历入栈或出栈。参考 [[c3]]\n\n这个拆分器明确只接受 highlight.js 产生的已转义文本和 `span`，并非通用 HTML 解析器；若传入其他标签、属性中包含特殊片段或结构不平衡的 HTML，其结果没有保证。当前材料也没有展示调用方，因此只能确认它提供高亮与分行能力，不能据此断言具体页面如何添加行号、复制操作或证据定位。参考 [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "高亮语言加载器与别名表",
-        "reason": "说明受支持语言、构建时可解析的字面量动态导入及扩展名归一化关系。",
+        "label": "语言加载与别名",
+        "reason": "支持按需加载的语言集合、常见语言别名以及字面量动态导入的构建目的。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/highlight.ts",
-          "startLine": 1,
+          "startLine": 3,
           "endLine": 19
         },
-        "quote": "import hljs from \"highlight.js/lib/core\";\n\n// Literal imports let Vite resolve every chunk in development and production.\nconst loaders = {\n  typescript: () => import(\"highlight.js/lib/languages/typescript\"),\n  javascript: () => import(\"highlight.js/lib/languages/javascript\"),\n  xml: () => import(\"highlight.js/lib/lang"
+        "quote": "// Literal imports let Vite resolve every chunk in development and production.\nconst loaders = {\n  typescript: () => import(\"highlight.js/lib/languages/typescript\"),\n  javascript: () => import(\"highlight.js/lib/languages/javascript\"),\n  xml: () => import(\"highlight.js/lib/languages/xml\"),\n  css: () => import(\"highlight"
       },
       {
         "key": "c2",
-        "label": "高亮入口与未知语言降级",
-        "reason": "支持语言查找、XML 依赖注册、未知语言转义和最终调用 highlight.js 的流程。",
+        "label": "高亮处理流程",
+        "reason": "支持未知语言转义降级、混合语言依赖加载、注册和最终高亮输出的流程说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/highlight.ts",
           "startLine": 21,
-          "endLine": 33
+          "endLine": 32
         },
         "quote": "export function escapeCode(text: string): string {\n  return text.replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");\n}\n\nexport async function highlightCode(code: string, language: string): Promise<string> {\n  const lang = aliases[language.toLowerCase()];\n  if (!lang) return escapeCode(code);\n  const req"
       },
       {
         "key": "c3",
-        "label": "逐行 span 状态机",
-        "reason": "支持换行时闭合并在下一行重开活动 span 的核心算法说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/highlight.ts",
-          "startLine": 37,
-          "endLine": 50
-        },
-        "quote": "export function highlightedLines(html: string): string[] {\n  const stack: string[] = [];\n  const lines = [\"\"];\n  for (const token of html.split(/(<span[^>]*>|<\\/span>|\\n)/)) {\n    if (token === \"\\n\") {\n      lines[lines.length - 1] += \"</span>\".repeat(stack.length);\n      lines.push(stack.join(\"\"));\n    } else {\n      "
-      },
-      {
-        "key": "c4",
-        "label": "拆分器输入前提",
-        "reason": "支持该函数仅面向 highlight.js 输出、不是通用 HTML 解析器的边界判断。",
-        "relation": "depends_on",
+        "label": "跨行样式恢复",
+        "reason": "支持输入前提、开放标签栈以及换行时闭合并重开标签的逐行拆分机制与限制。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/highlight.ts",
           "startLine": 35,
-          "endLine": 40
+          "endLine": 50
         },
         "quote": "/** Preserve multiline lexer state while making each numbered row valid HTML.\n * Input is exclusively highlight.js output (escaped text and generated spans). */\nexport function highlightedLines(html: string): string[] {\n  const stack: string[] = [];\n  const lines = [\"\"];\n  for (const token of html.split(/(<span[^>]*>|<"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "哪些界面组件消费 `highlightCode` 和 `highlightedLines`，它们是否会把非 highlight.js HTML 传入分行函数？",
+        "why": "当前材料只有工具实现，没有调用方源码，无法用源代码确认它与代码阅读、行号及证据定位组件的具体关系，也无法判断输入约束是否在边界处得到保证。",
+        "nextStep": "补充直接调用这两个导出函数的组件材料，并检查传入 HTML 的来源及错误处理。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "未知语言降级、XML 依赖加载和跨行 span 恢复是否已有自动化测试？",
+        "why": "提供的材料不含测试文件，因此无法说明这些关键分支已被断言，也无法确认并发加载同一语言等行为是否覆盖。",
+        "nextStep": "提供相关测试材料；重点核对特殊字符转义、大小写别名、动态加载失败、多行嵌套 span 与空行。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "哪些调用方负责把 `highlightCode` 的输出传给 `highlightedLines`，并进一步实现行号或证据定位？",
+        "why": "当前材料只证明了高亮、安全降级和逐行 HTML 拆分能力；草稿已正确限制其范围，但具体界面集成仍无法从本材料确认。",
+        "nextStep": "补充直接调用这两个导出函数的组件材料，核对输入来源及逐行结果的实际用途。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/ui/src/highlight.test.ts",
-      "digest": "e28c86210be9b50f634470deb2febca4ebba15c398236484c9eeded020ab5033"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/ui/src/highlight.ts",
       "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/index.ts",
-      "digest": "e33d8712c3cd93e2ea519cdd60dbec8c2407918313f14927d6e4b0cc7e61d84d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/tokens.css",
-      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:27:51.594Z",
+    "at": "2026-10-01T19:15:08.798Z",
     "trace": {
-      "runId": "9af3944a-51e6-48c4-bf07-e7883435c24a",
+      "runId": "cb6c9385-9e65-4982-a973-74bd38e58866",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c42e424fd058724183a612182dc84a6b9f1ad2753e5a33fbeff9c1c421cc6d08",
-      "contextHash": "8a9c4954245ff99e94b298752afd19b2859345a98137d1254fcbb236575cef9e",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "1dfc656a674d321fb735e414fbd7032a6ec68dca7e450c458f545842f7a96c33",
+      "contextHash": "86735d0f1bab87d02a3e1bc70f5d096999fe35ab2b10517b21a8e60501ca4716",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1e997f740ee0e6c150f13c64aa1a4a617b39e1cdcbba9c5c80513376ae10d2fd",
+      "fingerprint": "3d0846a862640bdf247c893208967468dcabe7f3b34049a5ef12ff5253ce742d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -131,11 +136,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-898a-7fe3-82c3-33f92cd20624"
+        "01a0f8e4-0aef-78c1-b311-277744ec6604"
       ],
       "usage": {
-        "used": 23800,
-        "size": 760000,
+        "used": 21985,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -143,10 +148,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21857,
-          "utf8Bytes": 23621,
-          "estimatedTokens": 7874,
-          "budgetedTokens": 9843,
+          "chars": 9771,
+          "utf8Bytes": 13081,
+          "estimatedTokens": 4361,
+          "budgetedTokens": 5452,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -155,17 +160,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:28:09.152Z",
+    "at": "2026-10-01T19:15:26.067Z",
     "trace": {
-      "runId": "d47b5ccf-6c92-458e-958c-8009346e47f6",
+      "runId": "21703952-633e-43e2-8dc8-4f9bdb445588",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "40fd35eb46d08050a3dfcbc2b3636c208175e4acc6b3062173c27870200e8c9b",
-      "contextHash": "3cf64dff645c5f0aa455a97ae6dc4ce7dce108d784ec0a16a0485b89452b242e",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "1ab87471c857a09fabf309ec65df8dc3c04d847b1d9c2b5619c423f3a1d75cdf",
+      "contextHash": "d8e75cc01da69f37305f7d8498fc25ee271985673b83b0f44a081b6f9ce45e59",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f9f3910fd4ea94c92c29a5706c7af585855b6634ef8c83b432dd1559ca1ae915",
+      "fingerprint": "7cd7b894db3bd5bc6b1e3a27b861a47e59866677776c52434eb8249b663821de",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -178,11 +183,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-42f2-7540-99b6-a0c549aa8f7e"
+        "01a0f8e4-6796-7d73-8b28-81c23055ef95"
       ],
       "usage": {
-        "used": 26356,
-        "size": 760000,
+        "used": 21913,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -190,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37389,
-          "utf8Bytes": 46011,
-          "estimatedTokens": 15337,
-          "budgetedTokens": 19172,
+          "chars": 10865,
+          "utf8Bytes": 15877,
+          "estimatedTokens": 5293,
+          "budgetedTokens": 6617,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

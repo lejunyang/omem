@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/knowledge/topics.ts",
+    "title": "知识文章的主题归类与阅读顺序",
+    "summary": "将文章元数据按主题路径组织成可供知识库导航使用的树，同时提供主题前缀匹配和稳定的文章排序规则；其输入类型来自知识 API 的 ArticleMeta 合同。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "代码知识浏览"
+    ],
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决导航中的归类与排序问题",
+        "body": "知识库页面拿到的是扁平文章列表，而读者需要按“领域—子主题”逐层浏览。本模块提供三个基础能力：判断文章是否属于某个主题路径、按阅读顺序排列文章，以及把列表转换成主题树。主题匹配采用**路径前缀**逐段比较，因此文章位于更深层主题时也会匹配其祖先主题；空路径则会匹配所有文章。排序优先使用 `reading.order`，未配置时视为末尾，同序再按标题比较。参考 [[c1]]"
+      },
+      {
+        "key": "tree-flow",
+        "title": "从文章列表构建主题树",
+        "body": "构建过程先创建标题为“知识库”的根节点，并记录输入文章总数；随后复制并排序文章，避免直接改变调用方数组。每篇文章沿 `topicPath` 逐层查找子节点，缺失时即时创建，并在经过的每一层累加文章数量；最终只把文章放入路径终点节点。没有主题路径的文章会直接留在根节点。\n\n```mermaid\nflowchart LR\n  A[扁平文章列表] --> B[按阅读顺序和标题排序]\n  B --> C[逐段遍历主题路径]\n  C --> D[查找或创建子节点]\n  D --> E[终点节点收录文章]\n```\n\n这使 `count` 表示某主题及其后代包含的文章数，而 `articles` 仅表示直接落在该节点的文章。参考 [[c2]]"
+      },
+      {
+        "key": "contracts-limits",
+        "title": "数据合同与可见边界",
+        "body": "本模块不获取文章，也不解析正文，只消费知识 API 层定义的 `ArticleMeta`。它依赖其中的 `title`、可选 `topicPath` 和可选 `reading.order`；其他修订、模型、审核等字段不会参与建树。参考 [[c3]]\n\n需要注意，子主题没有单独执行排序：其展示先后取决于已排序文章首次经过各主题的顺序。当前材料也没有调用方或测试文件，因此无法确认界面是否依赖这一隐式顺序，以及重复主题名、空主题段等输入是否会在上游被校验。参考 [[c2]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "主题匹配与文章排序",
+        "reason": "支持主题采用路径前缀匹配，以及阅读顺序缺失时后置、同序按标题比较的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/topics.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "import type { ArticleMeta } from \"./api\";\nexport type TopicNode = { title: string; path: string[]; children: TopicNode[]; articles: ArticleMeta[]; count: number };\nexport const inTopic = (article: ArticleMeta, path: string[]) => path.every((part, i) => article.topicPath?.[i] === part);\nexport const articleOrder = (a: A"
+      },
+      {
+        "key": "c2",
+        "label": "主题树构建流程",
+        "reason": "支持根节点初始化、逐层创建主题、累计数量及在终点节点收录文章的流程和边界说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/topics.ts",
+          "startLine": 5,
+          "endLine": 16
+        },
+        "quote": "export function topicTree(articles: ArticleMeta[]): TopicNode {\n  const root: TopicNode = { title: \"知识库\", path: [], children: [], articles: [], count: articles.length };\n  for (const article of [...articles].sort(articleOrder)) {\n    let node = root;\n    for (const part of article.topicPath ?? []) {\n      let child = n"
+      },
+      {
+        "key": "c3",
+        "label": "文章元数据合同",
+        "reason": "说明主题模块所消费的 ArticleMeta 来自知识 API 层，并确认 topicPath 与 reading 字段为可选数据。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/api.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "import type { KnowledgeDocument, KnowledgeCitation, WikiPageBrief } from \"../../../../packages/contracts/src/knowledge\";\nexport type ArticleMeta = { children?: string[]; key: string; title: string; summary: string; category: string; topicPath?: string[]; current: boolean; revision: string; model: string; reviewedBy: st"
+      }
+    ],
+    "questions": [
+      {
+        "question": "子主题是否需要独立、显式的排序规则？",
+        "why": "当前子节点按排序后文章首次出现的顺序创建，材料未说明这是否是产品要求；改变文章阅读顺序可能连带改变主题导航顺序。",
+        "nextStep": "检查主题树的界面调用处和页面验收要求，确认应保持首次出现顺序，还是按名称或专门的主题序号排序。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "哪些异常主题路径需要由本模块防御？",
+        "why": "现有实现直接接受可选字符串数组，无法从给定材料判断上游是否禁止空字符串、重复层级或其他非规范路径；同时没有提供测试文件来确认已约定的边界行为。",
+        "nextStep": "补读 ArticleMeta 的生产端与 topicTree 相关测试；若上游没有正式校验，再决定是在数据入口规范化还是在建树时处理。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/topics.ts",
+      "digest": "a46b77ef7924e5edd06c4cd04af4ebd8aeb9675bee1c71b2ff14a8d5dc3769f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "fb263ea97baf43823a7ee0a9488aff2d9e83fa23c72228602324a478e69d5588"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T19:09:31.010Z",
+    "trace": {
+      "runId": "3bb3a64e-54f8-437f-8926-3dbed67a78a6",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "7bebb9fedf80f84e72a2d451de711122f1ec0b6f7891d2216a25e6906b9d5529",
+      "contextHash": "74069c76d95904edab0919d29021e13ef422c0c1c7f694b8b11a8bca22f71361",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "c346bdc92803cfc5882fe612a65f6b65a73dc8f4bd282b480429025f060a2642",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f8de-daa2-7fb3-9638-3cd5adc00371"
+      ],
+      "usage": {
+        "used": 22403,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 10700,
+          "utf8Bytes": 13974,
+          "estimatedTokens": 4658,
+          "budgetedTokens": 5823,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T19:09:49.153Z",
+    "trace": {
+      "runId": "8a31d22c-3bcb-4af3-ada8-1a7c0e53f7fd",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "e8b5b498527576ca8861ec9ba54dbd0e0cb701e12589b6f6a4d123cf151395cc",
+      "contextHash": "b33f715a057ef8824200195b1b6a4d1ea8965f20268790a5af496e68d3695a62",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "cc0003e2a887a8aa99f6505db61051ed64fe3261db745be2b7d59d8922266dbc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f8df-4181-7373-b2c6-e3f7679a02b7"
+      ],
+      "usage": {
+        "used": 22108,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 11948,
+          "utf8Bytes": 17228,
+          "estimatedTokens": 5743,
+          "budgetedTokens": 7179,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

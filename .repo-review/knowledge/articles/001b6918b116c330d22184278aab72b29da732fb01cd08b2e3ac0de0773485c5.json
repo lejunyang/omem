@@ -2,70 +2,76 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/DailyAssistant.vue",
-    "title": "日常助理的对话提交与持续跟进",
-    "summary": "该页面为日常交办、事项回顾和记忆查询提供固定会话界面：初始化会话与使用说明，持续刷新处理状态，并支持失败重试和证据回看。",
-    "category": "implementation",
+    "title": "日常助理：交办、追踪与记忆引用入口",
+    "summary": "该页面把日常交办、事项回顾和记忆查找集中到持续会话中，通过轮询展示处理进度，支持失败重试，并允许从回答使用的证据跳回原始材料。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "工作区入口"
+    ],
     "sections": [
       {
-        "key": "purpose-and-relations",
-        "title": "日常事项的统一入口",
-        "body": "页面面向交办跟进、回顾待办和查找记忆等日常场景。用户在同一界面输入消息，查看助理给出的结果与处理状态；可展开的工作流说明用于提示适合的输入和预期输出。发送按钮会在会话尚未建立、输入为空或当前正忙时禁用。参考 [[c1]]\n\n组件复用公共面板、按钮、徽章和引用控件，并通过统一的 `api` 封装访问助理接口。它承担前端交互与状态展示，不足以单独说明后端如何执行任务、保存轮次或选择证据。参考 [[c2]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "日常助理面向“交办一件事、回顾待办、从记忆中找信息”这类连续场景。页面不是一次性问答框：它先取得固定 Web 会话及可用工作流说明，再展示该会话中保留下来的历史消息，使等待、失败和后续重试都能在同一入口继续。参考 [[c1]]\n\n界面用状态徽标区分已处理、处理中、等待重试、失败和停止；回答引用的材料则显示为可点击来源，点击后通过 `open` 事件交给上层打开对应片段。参考 [[c2]]"
       },
       {
-        "key": "conversation-flow",
-        "title": "会话初始化、提交与刷新",
-        "body": "组件挂载时并行取得固定标识为 `web-daily` 的会话和工作流说明，随后加载已有轮次，并每两秒刷新一次。卸载时会设置销毁标记并停止定时器；初始化请求返回后会检查该标记，轮次加载也只在组件未销毁时写入结果。参考 [[c3]] [[c4]]\n\n```mermaid\nflowchart LR\n  A[取得会话与工作流] --> B[加载已有轮次]\n  B --> C[提交带 requestId 的消息]\n  C --> D[主动刷新轮次]\n  D --> E[定时获取后续状态]\n```\n\n参考 [[c3]] [[c5]]\n\n发送前会拒绝空文本、未取得会话或忙碌状态。失败后再次发送相同文本时，客户端沿用尚未清除的 `requestId`；只有提交成功才清空草稿，并重新加载轮次、通知父组件刷新。该代码证明客户端保留了重复请求标识，但不能据此确认服务端一定执行幂等去重。参考 [[c5]]"
+        "key": "flow",
+        "title": "从发送到结果刷新的流程",
+        "body": "页面挂载时并行创建或取得 `web-daily` 会话、加载工作流模板，随后读取历史轮次，并每两秒刷新一次。发送前会拒绝空文本、尚未取得会话或已有任务运行的情况；提交成功后清空输入、重新加载轮次并通知父组件刷新。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[取得会话与工作流] --> B[加载历史轮次]\n  B --> C[发送消息]\n  C --> D[重新加载结果]\n  D --> E[轮询运行状态]\n  D --> F[通知上层刷新]\n```\n参考 [[c4]]\n\n同一段文本在失败后再次发送时会沿用尚未清除的随机请求标识，体现出前端对重复提交的防护意图；但服务端是否据此保证幂等，当前材料无法确认。参考 [[c5]]"
       },
       {
-        "key": "failure-and-evidence",
-        "title": "失败恢复与证据回看",
-        "body": "页面把轮次状态显示为“已处理”“处理中”“等待重试”“处理失败”和“已停止”等可读文案。仅 `pending` 或 `failed` 轮次会提示消息已保留并提供人工重试按钮；重试成功后重新加载轮次并通知外层刷新，失败则展示错误。参考 [[c6]] [[c7]]\n\n每个轮次还可以展示后端返回的证据条目。点击引用时，组件把对应片段标识交给父组件打开；证据如何检索、筛选和校验并不在该页面中实现。参考 [[c6]]"
+        "key": "boundaries",
+        "title": "失败恢复与实现边界",
+        "body": "当轮次处于 `pending` 或 `failed` 时，页面保留原消息并提供“重试这条消息”；全局繁忙期间发送与重试都会被禁止，因此界面一次只推动一个操作。普通发送失败后会尝试静默重载，以便呈现服务端可能已经保存的状态；重试失败则只显示错误。参考 [[c6]]\n\n组件卸载时会设置销毁标记并清除定时器，异步请求返回后也会避免写入已卸载页面。不过轮询请求本身没有取消，定时触发也未显式防止请求重叠；其实际影响取决于 API 延迟和服务端处理方式。参考 [[c7]]\n\n当前材料没有测试文件，因此无法确认键盘操作、轮询重叠、请求幂等及父组件打开证据后的焦点恢复是否已被自动化断言覆盖。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "日常助理使用入口",
-        "reason": "支持页面的使用场景、工作流提示、输入表单和发送按钮禁用条件。",
-        "relation": "implements",
+        "label": "会话与使用入口",
+        "reason": "支持页面面向交办、回顾和记忆查找，并在挂载时取得固定会话与工作流的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/DailyAssistant.vue",
-          "startLine": 48,
-          "endLine": 58
+          "startLine": 38,
+          "endLine": 53
         },
-        "quote": "<template>\n  <section class=\"page daily-assistant\">\n    <span class=\"eyebrow\">记下、找回、持续跟进</span><h1>日常助理</h1>\n    <p class=\"muted\">直接交办、回顾事项或查找记忆。等待与跟进时间会保存，完成和取消以实际操作结果为准。</p>\n    <details><summary>可以怎样使用</summary>\n      <p v-for=\"item in workflows\" :key=\"item.id\"><b>{{ item.title }}</b>：{{ item.trigger }}，整理为{{ item.o"
+        "quote": "onMounted(async () => {\n  try {\n    const [conversation, templates] = await Promise.all([api<{ id: string }>(\"/assistant/conversations\", { chatId: \"web-daily\" }), api<typeof workflows.value>(\"/assistant/workflows\")]);\n    if (disposed) return;\n    conversationId.value = conversation.id; workflows.value = templates; awa"
       },
       {
         "key": "c2",
-        "label": "页面依赖与交互状态",
-        "reason": "支持组件复用公共 UI、通过 API 访问能力并维护会话、轮次和忙碌状态。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/DailyAssistant.vue",
-          "startLine": 2,
-          "endLine": 13
-        },
-        "quote": "import { ref, computed, onMounted, onBeforeUnmount } from \"vue\";\nimport { OmButton, OmPanel, OmCitation, OmEmpty, OmBadge } from \"@omem/ui\";\nimport { api } from \"./api\";\ntype Turn = { id: string; inputText: string; result: string; inputMessageRefs: { status: string }; selectedEvidence: { fragmentId: string; revisionTit"
-      },
-      {
-        "key": "c3",
-        "label": "轮次加载与销毁保护",
-        "reason": "支持轮次加载仅在组件未销毁时写回状态的结论。",
+        "label": "状态与证据入口",
+        "reason": "支持轮次状态映射、失败提示以及点击证据后向上层发送打开事件的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/DailyAssistant.vue",
-          "startLine": 14,
-          "endLine": 18
+          "startLine": 61,
+          "endLine": 70
         },
-        "quote": "async function reload() {\n  if (!conversationId.value) return;\n  const result = await api<Turn[]>(`/assistant/conversations/${conversationId.value}/turns`);\n  if (!disposed) turns.value = result;\n}"
+        "quote": "    <div aria-live=\"polite\">\n      <OmPanel v-for=\"turn in turns\" :key=\"turn.id\" class=\"stack\" title=\"日常消息\">\n        <p class=\"message-text\">{{ turn.inputText }}</p>\n        <OmBadge>{{ ({ done: \"已处理\", running: \"处理中\", pending: \"等待重试\", failed: \"处理失败\", cancelled: \"已停止\" } as Record<string,string>)[turn.inputMessageRefs.st"
+      },
+      {
+        "key": "c3",
+        "label": "发送前置条件",
+        "reason": "支持繁忙、空输入和缺少会话时拒绝发送，以及成功后刷新数据的流程说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DailyAssistant.vue",
+          "startLine": 19,
+          "endLine": 29
+        },
+        "quote": "async function send() {\n  if (busy.value || !draft.value.trim() || !conversationId.value) return;\n  sending.value = true; error.value = \"\";\n  try {\n    const text = draft.value.trim();\n    if (pendingRequest?.text !== text) pendingRequest = { id: crypto.randomUUID(), text };\n    await api(`/assistant/conversations/${co"
       },
       {
         "key": "c4",
-        "label": "会话初始化与轮询生命周期",
-        "reason": "支持固定会话和工作流并行初始化、定时刷新、初始化防写回及卸载时停止轮询。",
+        "label": "初始化与轮询流程",
+        "reason": "支持会话和模板并行加载、首次重载及每两秒轮询的流程图。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -77,34 +83,21 @@
       },
       {
         "key": "c5",
-        "label": "消息提交与请求标识",
-        "reason": "支持发送门槛、相同失败文本复用 requestId，以及成功后清理草稿和刷新轮次。",
-        "relation": "implements",
+        "label": "请求标识复用",
+        "reason": "支持相同待处理文本复用 requestId、成功后才清除该标识的描述。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/DailyAssistant.vue",
-          "startLine": 19,
-          "endLine": 29
+          "startLine": 23,
+          "endLine": 28
         },
-        "quote": "async function send() {\n  if (busy.value || !draft.value.trim() || !conversationId.value) return;\n  sending.value = true; error.value = \"\";\n  try {\n    const text = draft.value.trim();\n    if (pendingRequest?.text !== text) pendingRequest = { id: crypto.randomUUID(), text };\n    await api(`/assistant/conversations/${co"
+        "quote": "    const text = draft.value.trim();\n    if (pendingRequest?.text !== text) pendingRequest = { id: crypto.randomUUID(), text };\n    await api(`/assistant/conversations/${conversationId.value}/turns`, { text, requestId: pendingRequest.id });\n    pendingRequest = null;\n    draft.value = \"\"; await reload(); emit(\"refresh\""
       },
       {
         "key": "c6",
-        "label": "轮次状态与证据入口",
-        "reason": "支持状态文案、失败轮次提示与重试入口，以及将证据片段交给父组件打开。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/DailyAssistant.vue",
-          "startLine": 62,
-          "endLine": 70
-        },
-        "quote": "      <OmPanel v-for=\"turn in turns\" :key=\"turn.id\" class=\"stack\" title=\"日常消息\">\n        <p class=\"message-text\">{{ turn.inputText }}</p>\n        <OmBadge>{{ ({ done: \"已处理\", running: \"处理中\", pending: \"等待重试\", failed: \"处理失败\", cancelled: \"已停止\" } as Record<string,string>)[turn.inputMessageRefs.status] ?? \"待处理\" }}</OmBadge>\n "
-      },
-      {
-        "key": "c7",
-        "label": "失败轮次重试",
-        "reason": "支持重试接口调用、成功后的轮次刷新和外层通知，以及失败错误展示。",
+        "label": "失败重试机制",
+        "reason": "支持重试的繁忙保护、错误处理，以及仅为未完成轮次展示重试按钮的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -113,40 +106,59 @@
           "endLine": 36
         },
         "quote": "async function retry(turn: Turn) {\n  if (busy.value) return;\n  sending.value = true; error.value = \"\";\n  try { await api(`/assistant/conversations/${conversationId.value}/turns/${turn.id}/retry`, {}); await reload(); emit(\"refresh\"); }\n  catch (e) { error.value = String(e); }\n  finally { sending.value = false; }"
+      },
+      {
+        "key": "c7",
+        "label": "卸载清理保护",
+        "reason": "支持销毁标记、异步返回保护和定时器清理，同时界定请求未被显式取消的限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DailyAssistant.vue",
+          "startLine": 12,
+          "endLine": 18
+        },
+        "quote": "let timer: ReturnType<typeof setInterval> | undefined;\nlet disposed = false;\nasync function reload() {\n  if (!conversationId.value) return;\n  const result = await api<Turn[]>(`/assistant/conversations/${conversationId.value}/turns`);\n  if (!disposed) turns.value = result;\n}"
       }
     ],
     "questions": [
       {
-        "question": "服务端是否按 requestId 对重复提交执行幂等去重？",
-        "why": "客户端会为相同的失败待重试文本保留 requestId，但现有材料没有对应服务端路由、存储实现或行为测试，无法确认重复请求不会产生两个轮次。",
-        "nextStep": "补充对应服务端路由、存储实现，或重复 requestId 的行为验证材料。",
+        "question": "服务端是否使用 requestId 对发送请求实施幂等去重？",
+        "why": "前端会为待处理文本保留 requestId，但材料只展示请求参数，不能证明服务端的去重规则；这决定网络超时后的再次提交是否可能产生重复轮次。",
+        "nextStep": "检查 `/assistant/conversations/:id/turns` 的服务端处理器及其请求标识持久化或唯一约束。",
         "blocking": false,
         "citationKeys": [
           "c5"
         ]
       },
       {
-        "question": "定时刷新与发送或重试后的主动刷新并发时，较早响应是否可能覆盖较新的轮次数据？",
-        "why": "页面每两秒刷新，发送和重试完成后也会主动加载轮次；现有代码仅防止组件销毁后的写回，没有展示请求序列号、取消机制或只接纳最新响应的约束。",
-        "nextStep": "补充延迟与乱序响应场景的组件测试，或核对服务端响应顺序是否保证结果不会回退。",
+        "question": "两秒轮询是否允许多个 reload 请求重叠？",
+        "why": "定时器持续调用 reload，而材料未展示进行中锁或 AbortController；慢请求可能乱序覆盖较新的轮次列表。",
+        "nextStep": "检查通用 API 封装是否具备取消或响应排序机制，并补充慢响应场景测试。",
         "blocking": false,
         "citationKeys": [
-          "c3",
           "c4",
-          "c5",
           "c7"
         ]
       },
       {
-        "question": "空输入、重复提交、组件卸载、失败重试和证据打开是否已有自动化测试覆盖？",
-        "why": "现有材料展示了这些交互及异步边界的实现，但没有提供对应测试文件或真实行为验证结果。",
-        "nextStep": "补充该组件的 Vitest 或浏览器测试材料，核对状态变化、卸载后的异步行为和事件触发。",
+        "question": "失败重试、证据打开和卸载期间异步返回是否有组件测试覆盖？",
+        "why": "提供的材料不含测试文件，无法判断这些关键交互及无障碍行为是否已被断言。",
+        "nextStep": "查阅该组件对应的测试材料，重点验证状态按钮、重复提交、卸载清理、错误提示和 open 事件。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3",
-          "c5",
+          "c2",
           "c6",
+          "c7"
+        ]
+      },
+      {
+        "question": "两秒轮询是否允许多个 reload 请求重叠并发生乱序覆盖？",
+        "why": "材料显示定时器每两秒调用 reload，但未展示进行中锁、取消或响应排序机制；组件只能避免卸载后写入，不能据此确认慢响应时的并发行为。",
+        "nextStep": "检查通用 API 封装及相关调用链是否提供取消或响应排序机制。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
           "c7"
         ]
       }
@@ -156,44 +168,44 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/DailyAssistant.vue",
-      "digest": "90d6706d5794f3878e997d0b34611aae7aa06e9a21dd0896fdf02c25df334b29"
+      "digest": "67fc0b6008f5853851bb64a832d353a9990acf7d121dc656c8f0d76c29d4cec7"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
+      "digest": "5b1fc796094157c6c689332d72eacf6d57c95025e92b39991ed4b0becc6cbb9a"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T12:10:49.193Z",
+    "effort": "medium",
+    "at": "2026-10-01T19:02:29.239Z",
     "trace": {
-      "runId": "5fd436a6-797a-4107-a500-fc21cb1d4fb1",
-      "roleId": "knowledge-refresher",
+      "runId": "c39011c2-300c-4ac8-99ef-35692369d9e6",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "ccb5f832d997dbac042543d263d0049a2f8ffa1675bd0aba6cb36bef013e5b67",
-      "contextHash": "6d46306bac8916064a85a3a809ce0de8cefc1658031817961ddd8626ba817958",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "afde6b1c3b513e06e62fb67c284911fa1c8f45357c2d460fa2e293e6aa57c384",
+      "contextHash": "993a4fbd1a0cebb8e7c667b07fd7b37aa6747bfe5817be2dfa5d500b43e62b24",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6993c027b80943fcc811b21c7c28a53ef6190909247a495e241ab90959e50638",
+      "fingerprint": "7fa6e3d8a8b404a1035577a2c8e39f5ba360e8d9d4000096a19b785d3604919f",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75f-7f33-7e93-88f6-2c41b5663462"
+        "01a0f8d8-6000-79e0-8ad2-8ace99fbb4cf"
       ],
       "usage": {
-        "used": 27581,
+        "used": 25736,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -202,10 +214,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 19842,
-          "utf8Bytes": 26686,
-          "estimatedTokens": 8896,
-          "budgetedTokens": 11120,
+          "chars": 14352,
+          "utf8Bytes": 17854,
+          "estimatedTokens": 5952,
+          "budgetedTokens": 7440,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -214,20 +226,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T12:11:05.495Z",
+    "at": "2026-10-01T19:02:47.846Z",
     "trace": {
-      "runId": "73db615c-38c5-49b6-9e4e-563d0b06494c",
+      "runId": "f9ce4c86-1c00-47a3-b7e4-b3c49c88f524",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "82c4ed897b179784f4b60eeb8c1816512b1b7afb5be81e14e4b7c224cabe593b",
-      "contextHash": "15bd9afadc21a57a5203eccb745a76dedfab30b097573d65d77e4d5d7103ef93",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "c728c88143caf79a3422ed4715a82427bffa707565607d285d218361875325a9",
+      "contextHash": "56e97a68a2cd145a854c72acc8737951dc561892db5131c0ddb7453739351970",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e6772828e5cc074564d16753a87f91cc3efb7b320d307f8e427b5fd9d5ab082e",
+      "fingerprint": "066a7ba1ed279ad1af33ebf77aae7084bf99c67c8fb0a7b73d49e87a36aadb0d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -237,10 +249,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f75f-ed06-7680-8c37-5dbfdab32902"
+        "01a0f8d8-d103-7bc2-a15e-2d41f0845159"
       ],
       "usage": {
-        "used": 25751,
+        "used": 24747,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -249,10 +261,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 17741,
-          "utf8Bytes": 23691,
-          "estimatedTokens": 7897,
-          "budgetedTokens": 9872,
+          "chars": 18107,
+          "utf8Bytes": 24315,
+          "estimatedTokens": 8105,
+          "budgetedTokens": 10132,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

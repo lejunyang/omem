@@ -2,27 +2,38 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/index.ts",
-    "title": "共享 UI 包公共入口",
-    "summary": "集中导出基础组件、代码与 Markdown 阅读组件、证据 trail、关系图及哈希路由类型，使消费者依赖稳定的包级接口。",
-    "category": "architecture",
+    "title": "统一的界面组件与阅读交互入口",
+    "summary": "该文件是 packages/ui 的公共导出入口，把基础界面组件、代码与 Markdown 阅读组件、关系图、证据轨迹以及哈希路由能力集中暴露给上层应用。它让调用方无需了解内部文件布局，但本身不实现组件行为，也不能证明具体交互已经过测试。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "通用交互组件"
+    ],
     "sections": [
       {
-        "key": "public-surface",
-        "title": "组件与类型出口",
-        "body": "该文件是共享 UI 包的聚合入口：基础按钮、图标、徽章、面板、空状态、对话框和壳层，与引用、代码查看、Markdown、状态栏、关系图及 trail 抽屉从同一入口提供。[[c1]] 它还单独导出关系图的数据类型和代码范围标记类型，使上层应用能够构造组件输入而无需直接引用组件内部路径。材料仅展示出口，不能据此确认各组件内部实现或它们彼此调用。[[c2]]"
+        "key": "public-entry",
+        "title": "面向上层应用的统一入口",
+        "body": "这个入口文件把按钮、图标、徽标、面板、空状态、对话框和应用外壳等通用组件汇总为统一的命名导出，同时提供引用、代码查看、Markdown 渲染、状态提示和关系图等阅读组件。上层模块可以从同一包入口选择所需能力，不必依赖各组件的内部路径。参考 [[c1]]"
       },
       {
-        "key": "trail-and-routing",
-        "title": "证据导航合同",
-        "body": "入口把 `TrailFrame` 类型、最大深链预算、帧序列化、循环检测和压栈函数与 `useEvidenceTrail` 一并暴露，表明帧数据模型、纯函数和 Vue 状态管理被设计为可复用合同。[[c3]] 同时公开哈希路由的解析与写入函数及 Wiki 路由类型，为上层把导航状态放入 URL 提供接口。[[c4]] 但这里没有展示具体消费者，所以只能确认可导入关系，不能断言哪个应用已实际使用全部出口，也不能证明哈希序列化与 trail 栈之间的集成行为。"
+        "key": "typed-workflows",
+        "title": "带类型约束的阅读流程",
+        "body": "入口不仅导出可视组件，也公开关系图的模块与边类型、代码范围标记，以及证据轨迹的帧类型和栈操作函数。这些公共接口可用于组织“打开证据—继续深入—检测循环—限制轨迹长度”一类递归阅读流程；具体数据含义和算法行为仍需由对应实现文件确认。参考 [[c2]]\n\n哈希路由的解析、写入函数及其路由类型也通过同一入口暴露，`useEvidenceTrail` 则提供证据轨迹的组合式接口。当前材料只能确认它们同属公共 API，不能据此认定路由与轨迹之间存在调用关系。参考 [[c3]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "公共接口能够说明什么",
+        "body": "该文件本质上是 **barrel export**：它确定公共 API 的名称和来源，却没有呈现组件属性、事件、可访问性、错误处理、滚动恢复或响应式布局等实现细节。`OmDisclosure` 作为通用展开组件被单独导出，但材料不足以判断它与证据抽屉、Markdown 或代码查看器之间是否存在调用关系。参考 [[c4]]\n\n材料也不包含测试代码，因此能确认的是 TypeScript 层面的公开表面，不能进一步断言组件挂载、类型兼容、焦点归还或循环轨迹等行为已经得到验证。参考 [[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "共享组件导出清单",
-        "reason": "支持该入口统一公开基础控件与知识阅读相关组件的论断。",
-        "relation": "explains",
+        "label": "公共界面组件导出",
+        "reason": "支持基础界面组件和多种阅读组件由同一包入口统一命名导出的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/index.ts",
@@ -33,109 +44,106 @@
       },
       {
         "key": "c2",
-        "label": "图与代码查看器类型导出",
-        "reason": "支持消费者可从包入口取得关系图数据类型和代码范围类型。",
+        "label": "关系图与证据轨迹接口",
+        "reason": "支持关系图模块与边类型、代码范围标记、轨迹帧及轨迹操作函数属于公共 API 的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/index.ts",
           "startLine": 14,
-          "endLine": 18
+          "endLine": 20
         },
-        "quote": "export type {\n  GraphModule,\n  GraphEdge,\n} from \"./components/OmRelationGraph.vue\";\nexport type { CodeRangeMark } from \"./components/OmCodeViewer.vue\";"
+        "quote": "export type {\n  GraphModule,\n  GraphEdge,\n} from \"./components/OmRelationGraph.vue\";\nexport type { CodeRangeMark } from \"./components/OmCodeViewer.vue\";\nexport type { TrailFrame, TrailFrameKind } from \"./trail\";\nexport { MAX_TRAIL, frameToSegment, findLoop, pushFrame } from \"./trail\";"
       },
       {
         "key": "c3",
-        "label": "Trail 类型、函数与组合式函数导出",
-        "reason": "支持 trail 数据模型、栈辅助函数和 Vue 状态接口构成公共合同。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/index.ts",
-          "startLine": 19,
-          "endLine": 24
-        },
-        "quote": "export type { TrailFrame, TrailFrameKind } from \"./trail\";\nexport { MAX_TRAIL, frameToSegment, findLoop, pushFrame } from \"./trail\";\nexport { parseHash, writeHash } from \"./OmHashRoute\";\nexport type { WikiRoute, WikiView } from \"./OmHashRoute\";\n\nexport { useEvidenceTrail } from \"./useEvidenceTrail\";"
-      },
-      {
-        "key": "c4",
-        "label": "哈希路由出口",
-        "reason": "支持共享包向上层提供 URL 哈希解析、写入及路由类型。",
+        "label": "路由与轨迹组合接口",
+        "reason": "支持哈希路由函数、路由类型和 useEvidenceTrail 被统一导出的说明，但不证明它们之间存在调用关系。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/index.ts",
           "startLine": 21,
-          "endLine": 22
+          "endLine": 24
         },
-        "quote": "export { parseHash, writeHash } from \"./OmHashRoute\";\nexport type { WikiRoute, WikiView } from \"./OmHashRoute\";"
+        "quote": "export { parseHash, writeHash } from \"./OmHashRoute\";\nexport type { WikiRoute, WikiView } from \"./OmHashRoute\";\n\nexport { useEvidenceTrail } from \"./useEvidenceTrail\";"
+      },
+      {
+        "key": "c4",
+        "label": "展开组件导出",
+        "reason": "支持 OmDisclosure 是独立公开组件的论断，同时说明入口本身不能揭示它与其他组件的内部关系。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/index.ts",
+          "startLine": 26,
+          "endLine": 26
+        },
+        "quote": "export { default as OmDisclosure } from \"./components/OmDisclosure.vue\";"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "证据轨迹是否完整实现了抽屉递归导航、滚动与展开状态恢复、Esc 返回及焦点归还？",
+        "why": "入口只公开轨迹组件、组合式接口、类型和栈操作函数，无法观察这些交互行为的具体实现。",
+        "nextStep": "检查 useEvidenceTrail、trail、OmTrailDrawer 的实现及对应交互测试，并按实际调用关系补充流程说明。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "这些公共导出是否都有组件挂载、类型兼容和关键用户行为测试？",
+        "why": "当前材料没有测试文件或断言，不能把导出存在等同于运行时行为已经验证。",
+        "nextStep": "补读 packages/ui 的相关测试与上层调用点，区分已断言行为和仍未覆盖的场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c4"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/ui/src/highlight.test.ts",
-      "digest": "e28c86210be9b50f634470deb2febca4ebba15c398236484c9eeded020ab5033"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/highlight.ts",
-      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/ui/src/index.ts",
-      "digest": "e33d8712c3cd93e2ea519cdd60dbec8c2407918313f14927d6e4b0cc7e61d84d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/tokens.css",
-      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/useEvidenceTrail.ts",
-      "digest": "29af1590e4465ebd412ae027a4ebe6a1bb83b7fd12e14bad1539ea8e9c3ae463"
+      "digest": "a6684743c2445958e174523b1551177a13cd043c063eb78ece69002c88eeff3b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:27:51.594Z",
+    "at": "2026-10-01T19:16:01.068Z",
     "trace": {
-      "runId": "9af3944a-51e6-48c4-bf07-e7883435c24a",
-      "roleId": "code-analyst",
+      "runId": "d0b2f593-1f78-4bed-8836-70bb1053ccc3",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c42e424fd058724183a612182dc84a6b9f1ad2753e5a33fbeff9c1c421cc6d08",
-      "contextHash": "8a9c4954245ff99e94b298752afd19b2859345a98137d1254fcbb236575cef9e",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "0cfa9d4027da44fcd0fc3fab247127e3993c647de13b70f0cde89b9bb36bf42a",
+      "promptHash": "a1a5aac3f40770e5453ca13d95a1473b64f833614a946fbde4e032fe514aef58",
+      "contextHash": "74f11b0cb3fd679ba313f6b443a6d8e3b8097aa7ec23269fd0821eb4922b7732",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1e997f740ee0e6c150f13c64aa1a4a617b39e1cdcbba9c5c80513376ae10d2fd",
+      "fingerprint": "85bb84547509b3230419ab4331da1557a55661e00e4bd5592ac6b0b80887caff",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-898a-7fe3-82c3-33f92cd20624"
+        "01a0f8e4-e6e7-7da0-9525-3681eab228ca"
       ],
       "usage": {
-        "used": 23800,
-        "size": 760000,
+        "used": 24292,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -143,10 +151,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21857,
-          "utf8Bytes": 23621,
-          "estimatedTokens": 7874,
-          "budgetedTokens": 9843,
+          "chars": 13986,
+          "utf8Bytes": 22182,
+          "estimatedTokens": 7394,
+          "budgetedTokens": 9243,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -155,17 +163,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:28:09.152Z",
+    "at": "2026-10-01T19:16:14.376Z",
     "trace": {
-      "runId": "d47b5ccf-6c92-458e-958c-8009346e47f6",
+      "runId": "69b04e23-9dc6-45aa-b98f-880daaadb975",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "40fd35eb46d08050a3dfcbc2b3636c208175e4acc6b3062173c27870200e8c9b",
-      "contextHash": "3cf64dff645c5f0aa455a97ae6dc4ce7dce108d784ec0a16a0485b89452b242e",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "8f877d00ee98026d9be51e712da7349f60b2b33f343cba814e6d9b02c580603d",
+      "contextHash": "05413fd8da5486bff47b7822193768fcbe16823c35282648008a7e1d424eb3c5",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f9f3910fd4ea94c92c29a5706c7af585855b6634ef8c83b432dd1559ca1ae915",
+      "fingerprint": "91504a382b2f24f1ba43c291ba3d3251bddbb1e966ed8817cb902f04d4cae582",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -178,11 +186,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-42f2-7540-99b6-a0c549aa8f7e"
+        "01a0f8e5-3594-7402-8659-eb2ae67bc44b"
       ],
       "usage": {
-        "used": 26356,
-        "size": 760000,
+        "used": 21383,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -190,10 +198,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37389,
-          "utf8Bytes": 46011,
-          "estimatedTokens": 15337,
-          "budgetedTokens": 19172,
+          "chars": 9862,
+          "utf8Bytes": 15102,
+          "estimatedTokens": 5034,
+          "budgetedTokens": 6293,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

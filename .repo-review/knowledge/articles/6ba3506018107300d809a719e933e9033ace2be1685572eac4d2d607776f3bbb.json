@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/knowledge/KnowledgeFolder.vue",
+    "title": "知识主题文件夹的递归浏览与选中联动",
+    "summary": "该组件把主题节点递归渲染为可折叠目录，并在主题选择、文章选择和当前路径变化之间维持一致状态；文章关系树由另一个组件负责，但此处只展示主题节点直接包含的文章。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "代码知识浏览"
+    ],
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决主题目录的浏览问题",
+        "body": "知识库文章带有层级主题后，读者需要先按主题逐层缩小范围，再打开具体文章。`KnowledgeFolder` 接收一个主题节点、当前文章和活动主题路径，用折叠面板显示主题名称与文章数量；只有路径与当前主题完全相等且未选中文章时，目录标题才呈现活动状态。参考 [[c1]]\n\n主题节点并非组件临时推断：上游会按文章的 `topicPath` 建树，将文章排序后放入对应节点，并沿途累计数量。该组件消费这一稳定结构，避免把目录组织逻辑混入视图。延伸阅读：[[c2]]"
+      },
+      {
+        "key": "flow",
+        "title": "展开、递归与事件上送",
+        "body": "组件初始化时会展开活动路径上的目录以及第一层目录；当外部切换活动路径时，匹配的新祖先目录会自动展开，但已打开的其他目录不会被强制收起。参考 [[c3]]\n\n```mermaid\nflowchart TD\n  A[主题节点] --> B[折叠面板]\n  B --> C[递归渲染子主题]\n  B --> D[渲染本主题文章]\n  C --> E[上送主题或文章选择]\n  D --> E\n```\n\n子主题继续使用 `KnowledgeFolder`，并原样转发 `topic` 与 `select` 事件；本层文章交给 `KnowledgeTree`，文章点击最终上送文章键。参考 [[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界与组件分工",
+        "body": "该组件负责**主题层级**，不在这里展开文章之间的子级关系：传给 `KnowledgeTree` 的文章集合固定为空，因此后者无法从集合中解析当前文章的 `children`。这意味着文件夹内只显示该主题节点直接收纳的文章；是否有意禁用文章关系展开，仅凭现有材料不能确认。参考 [[c5]]\n\n活动判断采用“节点路径是活动路径前缀”的规则，所以祖先目录会保持展开；高亮则额外要求路径长度相等。样式只提供缩进、左侧层级线和活动背景，具体折叠交互与可访问性标题由共享的 `OmDisclosure` 承担，但其内部行为不在材料范围内。参考 [[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "主题文件夹输入与高亮",
+        "reason": "支持组件接收主题节点、选中项和活动路径，并据此判断当前主题高亮的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFolder.vue",
+          "startLine": 6,
+          "endLine": 14
+        },
+        "quote": "const props = defineProps<{\n  node: TopicNode;\n  selected: string;\n  activePath: string[];\n}>();\nconst emit = defineEmits<{ select: [key: string]; topic: [path: string[]] }>();\nconst isActive = () =>\n  props.node.path.every((part, i) => props.activePath[i] === part);\nconst expanded = ref(isActive() || props.node.path.l"
+      },
+      {
+        "key": "c2",
+        "label": "主题树构建规则",
+        "reason": "说明主题节点、文章归属和累计数量来自上游正式建树逻辑。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/topics.ts",
+          "startLine": 5,
+          "endLine": 16
+        },
+        "quote": "export function topicTree(articles: ArticleMeta[]): TopicNode {\n  const root: TopicNode = { title: \"知识库\", path: [], children: [], articles: [], count: articles.length };\n  for (const article of [...articles].sort(articleOrder)) {\n    let node = root;\n    for (const part of article.topicPath ?? []) {\n      let child = n"
+      },
+      {
+        "key": "c3",
+        "label": "目录自动展开",
+        "reason": "支持初始展开第一层或活动路径，以及活动路径变化时展开匹配目录的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFolder.vue",
+          "startLine": 12,
+          "endLine": 20
+        },
+        "quote": "const isActive = () =>\n  props.node.path.every((part, i) => props.activePath[i] === part);\nconst expanded = ref(isActive() || props.node.path.length === 1);\nwatch(\n  () => props.activePath,\n  () => {\n    if (isActive()) expanded.value = true;\n  },\n);"
+      },
+      {
+        "key": "c4",
+        "label": "递归渲染与事件转发",
+        "reason": "支持子主题递归、直接文章渲染以及选择事件逐层上送的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFolder.vue",
+          "startLine": 35,
+          "endLine": 53
+        },
+        "quote": "      <ul>\n        <KnowledgeFolder\n          v-for=\"child in node.children\"\n          :key=\"child.title\"\n          :node=\"child\"\n          :selected=\"selected\"\n          :active-path=\"activePath\"\n          @select=\"emit('select', $event)\"\n          @topic=\"emit('topic', $event)\"\n        />\n        <KnowledgeTree\n     "
+      },
+      {
+        "key": "c5",
+        "label": "文章子级解析边界",
+        "reason": "结合空文章集合的传参和 KnowledgeTree 的子级查找逻辑，支持此处无法展开文章子关系的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+          "startLine": 11,
+          "endLine": 18
+        },
+        "quote": "const expanded = ref(false);\nconst children = computed(() =>\n  (props.article.children ?? [])\n    .filter(\n      (key) => !props.ancestors?.includes(key) && key !== props.article.key,\n    )\n    .flatMap((key) => props.articles.find((a) => a.key === key) ?? []),\n);"
+      },
+      {
+        "key": "c6",
+        "label": "层级样式与活动背景",
+        "reason": "支持文件夹仅定义层级缩进、边线和活动背景等局部视觉职责。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFolder.vue",
+          "startLine": 57,
+          "endLine": 69
+        },
+        "quote": "<style scoped>\n.topic-folder {\n  list-style: none;\n  min-width: 0;\n}\n.active:deep(> .disclosure-heading) {\n  background: var(--om-soft);\n}\nul {\n  padding: 0 0 0 8px;\n  margin: 0 0 4px 8px;\n  border-left: 1px solid var(--om-line);\n}"
+      }
+    ],
+    "questions": [
+      {
+        "question": "向 KnowledgeTree 传入空的 articles 集合，是有意只展示主题直属文章，还是遗漏了完整文章集合？",
+        "why": "KnowledgeTree 依赖 articles 集合解析文章的 children，而当前组件明确传入空数组；现有材料没有父组件或产品设计说明，无法判断这是功能边界还是接线缺失。",
+        "nextStep": "检查 KnowledgeFolder 的调用方及代码知识浏览页面设计，并用含文章 children 的真实数据确认期望交互。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeFolder.vue",
+      "digest": "19e47a025028ae9cfffb943d4fe83afce2b060bec91f44c09686fbce0689c903"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+      "digest": "eada1c8bb8f137ef88782fa0a49874d8986694f7510689e20c8eb1d4b5c7f329"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/topics.ts",
+      "digest": "a46b77ef7924e5edd06c4cd04af4ebd8aeb9675bee1c71b2ff14a8d5dc3769f9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T19:04:57.263Z",
+    "trace": {
+      "runId": "f28d2bcc-525d-4163-9476-076b5dc866a1",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "a95e889a37b2cee9d44568c7198077207dac0cb64898a6978c206e7cff6a76d6",
+      "promptHash": "2f84c09b5d0fec5a2dad294cf5793028ba2dfa29f59f0b40849aa8477fa71054",
+      "contextHash": "3dd6807f3414a039eb3305bc2a70a2acde454a42eeab537048a495d5b862b109",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "cc6e52ce9a61548f8b1790997ade7b62481a0ec7dd34d25a88bccd1d8fb525ac",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f8da-b2b0-7481-878e-38926a8bff8a"
+      ],
+      "usage": {
+        "used": 23639,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 14239,
+          "utf8Bytes": 17521,
+          "estimatedTokens": 5841,
+          "budgetedTokens": 7302,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T19:05:14.177Z",
+    "trace": {
+      "runId": "056eff63-a40f-4563-8d77-bf0ad8b4eabe",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "dc7f275e97d40c61bdef6307fb20642300fc49f15142f8c06f2de6897101fce0",
+      "contextHash": "7b317ebb44837ab352b3f5f0646e7c09feaa1bd6bb00657c6b997b44d39f55f1",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "1cdc61a0b7c40fa5a331820f1ab4c25b88d5a32e68e8f2a6dc878a1360b71f81",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f8db-14f5-7aa3-a3ea-830950932843"
+      ],
+      "usage": {
+        "used": 23938,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 16859,
+          "utf8Bytes": 22173,
+          "estimatedTokens": 7391,
+          "budgetedTokens": 9239,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

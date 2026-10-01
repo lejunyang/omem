@@ -2,32 +2,38 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-    "title": "知识疑问的补充与待办跟进",
-    "summary": "该组件在知识阅读现场展示尚未确认的问题，并提供“补充背景”和“加入待办”两种操作。前端提交答案后会提示其已作为原始材料保存并等待重新核对，但现有材料不足以验证服务端实际持久化与重核对行为。",
-    "category": "implementation",
+    "title": "待核对问题的补充与调查入口",
+    "summary": "该组件集中展示知识生成中尚未确定的问题，并提供“补充背景”和“加入待办”两条处理路径。操作完成后会重新加载列表；加载异常虽会被记录，但初始列表为空时不会显示在当前界面中。",
+    "category": "Web 应用",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "Web 应用",
+      "材料处理"
+    ],
     "sections": [
       {
         "key": "purpose",
-        "title": "把不确定事项留在阅读现场",
-        "body": "组件用于承接知识文章中仍缺少依据的问题：挂载时从知识接口加载列表，可按当前 `documentKey` 筛选，并排除已被取代的事项。读者因此能在阅读结论的同时看到尚待补充的背景、疑问原因和建议的调查步骤。参考 [[c1]]\n\n界面以折叠区域呈现这些事项，并用徽标区分已补充背景、已加入待办、需要判断和后续调查。**“补充背景”和“加入待办”按钮只对 `open` 状态显示**；问题转为其他状态后，列表内容仍可保留用于说明处理结果。参考 [[c2]]"
+        "title": "把知识缺口变成可处理事项",
+        "body": "组件用于承接材料中暂时无法确认的事项，让读者看到问题、产生原因及建议的下一步，而不是把不确定内容混入知识正文。它可以限定为当前文档的问题，并统一排除已被替代的记录。参考 [[c1]]\n\n页面用徽标区分“已补充背景”“已加入待办”“需要判断”和一般后续调查，只有状态仍为 `open` 的问题提供操作入口。没有可见问题时，整个折叠区域都不会渲染。参考 [[c2]]"
       },
       {
-        "key": "interaction-flow",
-        "title": "补充背景与登记待办",
-        "body": "选择“补充背景”会打开必填文本框，提交时由客户端向回答端点发送答案。请求成功后，组件显示“回答已作为原始材料保存，相关知识等待重新核对”的提示，清空输入与当前编辑状态并重新加载列表；这只能证明前端请求和反馈流程，不能单凭该组件确认服务端已经完成原始材料持久化或知识重核对。另一条路径会向任务端点发起请求，成功后提示已加入待办并刷新列表。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[加载待核对问题] --> B{用户操作}\n  B -->|补充背景| C[客户端提交答案]\n  C --> D[成功后提示并刷新列表]\n  B -->|加入待办| E[客户端请求登记任务]\n  E --> F[成功后刷新列表]\n```\n参考 [[c3]]"
+        "key": "workflow",
+        "title": "补充背景与加入待办的流程",
+        "body": "```mermaid\nflowchart LR\n  A[查看待核对问题] --> B{选择处理方式}\n  B --> C[补充背景]\n  B --> D[加入待办]\n  C --> E[保存为原始材料]\n  D --> F[重新加载问题列表]\n  E --> F\n```\n\n选择“补充背景”后，组件展开必填文本框，将内容提交到该问题的回答端点；成功后清空编辑状态并重新加载列表。选择“加入待办”则调用任务端点，成功后也会刷新列表。界面明确提示回答被保存为原始材料，相关知识仍等待重新核对，因此前端不会直接用回答改写正文。参考 [[c3]]"
       },
       {
-        "key": "api-boundary",
-        "title": "请求边界与交互限制",
-        "body": "组件通过统一的 `knowledgeApi` 发起请求。该封装从会话存储读取令牌，在有请求体时设置 JSON 内容类型，合并调用方请求头，并在非成功响应时优先抛出服务端返回的错误；组件再把加载或操作异常显示为状态消息。参考 [[c4]]\n\n当前交互状态较轻量：所有问题共用一份答案和消息，且没有提交中状态或防重复提交。还有一个状态残留边界：操作按钮受 `open` 限制，但回答表单只检查当前 `active` ID；若用户先打开表单，再把同一问题加入待办，刷新后该非开放问题仍可能继续显示表单。参考 [[c2]]、[[c3]]"
+        "key": "integration-limits",
+        "title": "请求封装与界面边界",
+        "body": "组件通过共享的 `knowledgeApi` 请求后端。该封装拼接前缀与路径，在存在请求体时设置 JSON 内容类型，从会话存储附加令牌，并把失败响应转换为可读错误；业务状态迁移仍由服务端决定。参考 [[c4]]\n\n组件在首次挂载及操作成功后加载问题。首次加载失败时，异常文字会写入 `message`，但问题数组仍为空，而状态消息位于受 `visible.length` 控制的折叠区域内，因此当前模板不会把这次错误显示出来。`documentKey` 变化会影响本地筛选结果；材料中没有监听 `prefix` 并主动重新请求的逻辑。参考 [[c1]]、[[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "问题加载与筛选",
-        "reason": "支持组件按文档筛选问题、排除已取代事项并在挂载时加载列表的说明。",
-        "relation": "supports",
+        "reason": "支持按文档与状态筛选问题、首次挂载加载数据，以及加载异常写入消息状态的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
@@ -39,20 +45,20 @@
       {
         "key": "c2",
         "label": "问题展示与操作条件",
-        "reason": "支持状态徽标、问题详情、开放状态按钮条件及回答表单显示条件的说明。",
+        "reason": "支持无可见问题时隐藏整个区域、状态徽标映射、开放问题操作入口及状态消息所在位置的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
           "startLine": 18,
-          "endLine": 25
+          "endLine": 27
         },
-        "quote": "  <details v-if=\"visible.length\" class=\"knowledge-questions\">\n    <summary>待核对与后续调查 · {{ visible.filter(q => q.state === 'open').length }}</summary>\n    <p class=\"muted\">材料中还不能确定的事项保留在这里。你可以补充背景，或将下一步调查加入待办。</p>\n    <div v-for=\"q in visible\" :key=\"q.id\" class=\"question\">\n      <OmBadge>{{ q.state === 'answered' ? '已补充背"
+        "quote": "  <OmDisclosure v-if=\"visible.length\" class=\"knowledge-questions\" title=\"待核对与后续调查\"><template #title>待核对与后续调查 · {{ visible.filter(q => q.state === 'open').length }}</template>\n    <p class=\"muted\">材料中还不能确定的事项保留在这里。你可以补充背景，或将下一步调查加入待办。</p>\n    <div v-for=\"q in visible\" :key=\"q.id\" class=\"question\">\n      <OmBadge>{{ q.st"
       },
       {
         "key": "c3",
-        "label": "回答与待办请求",
-        "reason": "支持客户端提交答案或任务请求、更新提示、清理编辑状态和重新加载列表的流程。",
+        "label": "回答与待办处理",
+        "reason": "支持回答保存、加入待办、成功后重新加载，以及回答仍需后续知识核对的流程说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,8 +70,8 @@
       },
       {
         "key": "c4",
-        "label": "知识请求封装",
-        "reason": "支持认证头、JSON 请求头、错误转换和响应解析等统一请求行为。",
+        "label": "统一知识请求封装",
+        "reason": "说明组件依赖的请求封装如何设置请求头、附加会话令牌、处理失败响应并解析结果。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -78,41 +84,13 @@
     ],
     "questions": [
       {
-        "question": "回答端点是否确实把答案持久化为原始材料并触发相关知识重核对？",
-        "why": "当前材料只能验证前端发送回答请求以及成功后的提示，无法证明服务端的数据写入和后续处理语义。",
-        "nextStep": "补充 `/questions/:id/answer` 的服务端实现与行为测试作为证据，再更新持久化和重核对流程的结论。",
+        "question": "回答保存或加入待办后，后端分别如何迁移问题状态，并由什么机制触发相关知识重新核对？",
+        "why": "现有材料只展示前端调用端点、刷新列表和提示语，没有服务端实现，无法确认状态迁移规则、任务去重方式及知识重新生成的触发条件。",
+        "nextStep": "检查问题回答与待办端点的服务端路由、MemoryService 应用逻辑及相关集成测试。",
         "blocking": false,
         "citationKeys": [
-          "c3"
-        ]
-      },
-      {
-        "question": "问题转为待办或其他非开放状态后，是否应立即关闭已展开的回答表单？",
-        "why": "操作按钮仅对开放问题显示，但表单只受当前问题 ID 控制；先展开表单再加入待办可能让刷新后的非开放问题继续显示提交入口。",
-        "nextStep": "增加“打开回答表单后加入待办”的组件测试，并按产品预期在状态变化时清理 active，或让表单同时检查 open 状态。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c3"
-        ]
-      },
-      {
-        "question": "回答保存和加入待办是否需要提交中状态与重复提交保护？",
-        "why": "两个操作都会直接发起请求，现有组件未展示按钮禁用或独立的请求中状态，服务端是否保证幂等也无法从材料判断。",
-        "nextStep": "检查对应服务端端点的幂等约束，并补充快速重复操作的行为测试，再决定由前端、服务端或两端共同保护。",
-        "blocking": false,
-        "citationKeys": [
-          "c3"
-        ]
-      },
-      {
-        "question": "问题转为待办或其他非开放状态后，是否应立即关闭已经展开的回答表单？",
-        "why": "操作按钮仅在 `open` 状态显示，但回答表单只检查 `active` ID；加入待办后重新加载数据并不会清空 `active`，因此表单可能继续显示。",
-        "nextStep": "明确预期交互，并补充“打开回答表单后加入待办”的组件测试；如需关闭表单，则在状态变化时清理 `active` 或同时检查问题状态。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c3"
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -121,28 +99,28 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
+      "digest": "69562184e5f18265f6fe95781b3c884656a3396426923f82bb075ce4d9465495"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/api.ts",
-      "digest": "668d5d6f22b4f79251b1975cbbee8e79d84974665e4f2ebec9600cb3a8808d35"
+      "digest": "fb263ea97baf43823a7ee0a9488aff2d9e83fa23c72228602324a478e69d5588"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T06:53:54.060Z",
+    "at": "2026-10-01T19:07:07.093Z",
     "trace": {
-      "runId": "4cf58d94-24a5-4326-8e14-f4b74b041eea",
+      "runId": "2ae6286c-098c-4567-b459-04e0cd20b2de",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "cac31fa7bd20553553892cf3311edfe61637a766487869a6d9dada9c4f02bd29",
-      "contextHash": "2ddb32ab07e46a5b5ea4dc3a57447438c761d2e65901f67367b019e5387e94ae",
+      "bundleHash": "0cfa9d4027da44fcd0fc3fab247127e3993c647de13b70f0cde89b9bb36bf42a",
+      "promptHash": "36b0e26331895420f765f8aaab8c1bd88b27262bf05eb3ed2213f161864e95d2",
+      "contextHash": "5c78f74ec8ee47cca05cd3c037c8316431b9d89248e68bd5870c47d1556863b1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a5e3e08eed2d85ea9939a678c9ae7b5053ee7fcb903040cdd489b333a92f6ff9",
+      "fingerprint": "e2fddf81b20b3d6d1353788f394192f13d1ad39fc74ca9f06be1e11e6552c24c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -155,10 +133,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63d-694a-70c3-b85f-6f50853d9478"
+        "01a0f8dc-c104-7361-b2e9-ce1d77affbaa"
       ],
       "usage": {
-        "used": 26189,
+        "used": 25438,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -167,10 +145,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 17486,
-          "utf8Bytes": 24602,
-          "estimatedTokens": 8201,
-          "budgetedTokens": 10252,
+          "chars": 18366,
+          "utf8Bytes": 26724,
+          "estimatedTokens": 8908,
+          "budgetedTokens": 11135,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -179,17 +157,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:54:10.043Z",
+    "at": "2026-10-01T19:07:22.016Z",
     "trace": {
-      "runId": "ecb1bb5a-39c2-4277-95a6-1080f164de68",
+      "runId": "e82429c0-9fdb-4a2b-bf92-4c35622d7449",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "309ced772e4e2b31675853d003388ac3ff2199aa50de1cb00ffeacec73298d54",
-      "contextHash": "de1680539bea7ac49216222e12b5d1aed1776a3048e62b8a976809f7bdf4d833",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "9160f13dbbe9c76c668ad79a11d06a5b97b8ac6c96997645da7322414fe51f50",
+      "contextHash": "30fd74e9a8a2ca10f73f7e272a98b6b93a461718606d5ec50bb41e6f115b93b4",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f465e366366e2532376a1c071f305ef480bc362f761e3b12e76ae9fd7990320e",
+      "fingerprint": "95f9219762a569d05f335711e3131620132553a8a5cf06cd61933a009de97e07",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -202,10 +180,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63d-c6e3-7a60-91cb-52b46af42fb5"
+        "01a0f8dd-0df2-7e40-8b72-75e7802eec6f"
       ],
       "usage": {
-        "used": 23441,
+        "used": 23286,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -214,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 13328,
-          "utf8Bytes": 17248,
-          "estimatedTokens": 5750,
-          "budgetedTokens": 7188,
+          "chars": 14353,
+          "utf8Bytes": 19919,
+          "estimatedTokens": 6640,
+          "budgetedTokens": 8300,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
