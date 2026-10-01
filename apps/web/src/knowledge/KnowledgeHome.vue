@@ -7,6 +7,7 @@ import { knowledgeApi, type ArticleMeta, type KnowledgeFrame } from "./api";
 const props = defineProps<{ prefix: string; compact?: boolean; selectedKey?: string }>();
 const emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; select: [key: string] }>();
 const loading = ref(true);
+const mobileNavigation = ref(false);
 const articles = ref<ArticleMeta[]>([]), query = ref(""), selected = ref(props.selectedKey || sessionStorage.getItem("omem-knowledge-page") || "guide:overview"), error = ref("");
 let timer: ReturnType<typeof setInterval> | undefined;
 const guides = computed(() => articles.value.filter(a => a.reading).sort((a, b) => a.reading!.order - b.reading!.order));
@@ -30,7 +31,7 @@ const modules = computed(() => articles.value.filter(a => a.key.startsWith("modu
 const matches = computed(() => [...new Map([...remoteMatches.value, ...articles.value.filter(a => (a.title + a.summary + a.key).toLowerCase().includes(query.value.toLowerCase()))].map(a => [a.key, a])).values()]);
 const nextGuide = computed(() => { const index = guides.value.findIndex(a => a.key === selected.value); return index >= 0 ? guides.value[index + 1] : undefined; });
 const current = computed(() => articles.value.find(a => a.key === selected.value));
-function select(key: string) { selected.value = key; sessionStorage.setItem("omem-knowledge-page", key); emit("select", key); }
+function select(key: string) { selected.value = key; mobileNavigation.value = false; sessionStorage.setItem("omem-knowledge-page", key); emit("select", key); }
 watch(() => props.selectedKey, key => { if (key) selected.value = key; });
 async function load() {
   try {
@@ -48,6 +49,8 @@ onBeforeUnmount(() => { clearInterval(timer); clearTimeout(searchTimer); searchV
     <aside class="book-navigation">
       <h1>知识库</h1>
       <p class="muted">先读懂一条流程，再沿引用深入</p>
+      <button class="mobile-navigation-toggle" :aria-expanded="mobileNavigation" @click="mobileNavigation = !mobileNavigation">{{ mobileNavigation ? '收起章节目录' : '展开章节目录' }}</button>
+      <div class="navigation-content" :class="{ 'mobile-open': mobileNavigation }">
       <label for="knowledge-filter">查找章节</label><input id="knowledge-filter" v-model="query" placeholder="主题、功能、材料名称" />
       <nav aria-label="知识目录">
         <p v-if="searching" class="search-status" role="status">正在查找相关章节…</p>
@@ -59,6 +62,7 @@ onBeforeUnmount(() => { clearInterval(timer); clearTimeout(searchTimer); searchV
           <details><summary>全部文章 · {{ articles.length }}</summary><ul><KnowledgeTree v-for="a in articles.filter(a => !a.reading && !a.key.startsWith('topic:') && !a.key.startsWith('module:'))" :key="a.key" :article="a" :articles="[]" :selected="selected" @select="select" /></ul></details>
         </template>
       </nav>
+      </div>
     </aside>
     <div class="book-content">
       <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -83,6 +87,8 @@ onBeforeUnmount(() => { clearInterval(timer); clearTimeout(searchTimer); searchV
 .next-guide { max-width:1000px; margin:40px auto 0; border-top:1px solid var(--om-line); padding-top:24px; display:flex; align-items:center; flex-wrap:wrap; gap:12px 20px; }
 .next-guide > span { color:var(--om-muted); font-size:13px; }
 .search-status { margin:12px 0; }
+.mobile-navigation-toggle { display:none; }
+@media(max-width:700px) { .mobile-navigation-toggle { display:block; min-height:44px; padding:8px 12px; border:1px solid var(--om-line); border-radius:6px; background:var(--om-panel); font:inherit; } .navigation-content { display:none; } .navigation-content.mobile-open { display:block; margin-top:16px; } }
 @media(min-width:701px) { .book-navigation { position:sticky; top:0; align-self:start; max-height:calc(100dvh - 125px); overflow:auto; } }
 @media(max-width:1000px) and (min-width:701px) { .knowledge-library { display:block; } .book-navigation { position:static; border-right:0; border-bottom:1px solid var(--om-line); max-height:280px; } }
 </style>
