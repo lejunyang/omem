@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import DailyAssistant from "./DailyAssistant.vue";
+import TaskFollowUpControls from "./TaskFollowUpControls.vue";
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import {
   OmShell,
@@ -308,7 +310,7 @@ async function changeTask(t: Task) {
     await api(
       "/tasks/" + t.id,
       {
-        status: t.status === "open" ? "done" : "open",
+        status: ["done", "cancelled"].includes(t.status) ? "open" : "done",
         expectedVersion: t.version,
       },
       "PATCH",
@@ -430,6 +432,7 @@ onBeforeUnmount(() => {
       <nav class="navigation">
         <button
           v-for="[id, icon, label] in [
+            ['daily', 'spark', '日常助理'],
             ['read', 'book', '知识阅读'],
             ['knowledge', 'layers', '知识整理'],
             ['capture', 'plus', '输入材料'],
@@ -684,11 +687,12 @@ onBeforeUnmount(() => {
       @open="(id) => evidence?.open(id)"
       @error="(text) => (error = text)"
       @notice="say" />
+    <DailyAssistant v-else-if="view === 'daily'" @open="id => evidence?.open(id)" @refresh="refresh" />
     <section v-else-if="view === 'tasks'" class="page">
       <span class="eyebrow">从工作中记下要推进的事</span>
       <h1>需求与待办</h1>
       <p class="muted">
-        可关联当前片段、设置到期时间；到期提醒写入通知中心。自动从观测中提炼待办将在后续接入。
+        可在助手中交办、改期、登记等待或稍后跟进。截止时间与跟进时间分开，提醒进入通知中心；完成或取消后停止提醒。
       </p>
       <form class="form" @submit.prevent="createTask">
         <label
@@ -706,14 +710,18 @@ onBeforeUnmount(() => {
       </form>
       <OmPanel v-for="t in tasks" :key="t.id" class="stack" :title="t.title"
         ><OmBadge :tone="t.status === 'done' ? 'success' : 'neutral'">{{
-          t.status === "done" ? "已完成" : "待推进"
+          ({ done: "已完成", waiting: "等待回复", cancelled: "已取消", open: "待推进" })[t.status]
         }}</OmBadge>
         <p>{{ t.detail }}</p>
+        <p v-if="t.followUp?.waiting_on">等待：{{ t.followUp.waiting_on }}</p>
+        <small v-if="t.followUp?.next_check_at">下次跟进 {{ new Date(t.followUp.next_check_at).toLocaleString("zh-CN", { timeZone: t.followUp.timezone }) }}（{{ t.followUp.timezone }}）</small>
+        <small v-if="t.followUp?.snoozed_until">已暂缓提醒至 {{ new Date(t.followUp.snoozed_until).toLocaleString("zh-CN", { timeZone: t.followUp.timezone }) }}</small>
+        <TaskFollowUpControls :task="t" @refresh="refresh" @error="text => error = text" />
         <small v-if="t.dueAt"
           >到期 {{ new Date(t.dueAt).toLocaleString("zh-CN") }}</small
         ><template #actions
           ><OmButton @click="changeTask(t)">{{
-            t.status === "done" ? "重新打开" : "标为完成"
+            ["done", "cancelled"].includes(t.status) ? "重新打开" : "标为完成"
           }}</OmButton
           ><OmCitation
             v-if="t.evidenceId"

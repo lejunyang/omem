@@ -1,3 +1,4 @@
+import type { TaskFollowUp } from "../../../packages/contracts/src/task-flow.js";
 import type {
   Revision,
   Fragment,
@@ -42,7 +43,8 @@ export type Task = {
   detail: string;
   dueAt: string | null;
   evidenceId: string | null;
-  status: "open" | "done";
+  status: "open" | "waiting" | "done" | "cancelled";
+  followUp?: TaskFollowUp | null;
   version: number;
 };
 export type Profile = {
