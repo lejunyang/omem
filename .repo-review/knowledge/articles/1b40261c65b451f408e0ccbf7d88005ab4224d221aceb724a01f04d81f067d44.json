@@ -3,31 +3,36 @@
   "document": {
     "key": "module:ui:part-1",
     "title": "ui · 模块理解 · 专题 1",
-    "summary": "共享 UI 模块集中提供基础视觉原语、安全 Markdown、源码定位、关系图、证据对话框及 Trail 深链数据合同。各局部能力已有实现，但公开导出、端到端组合、关系图异常状态、无障碍细节和自动化回归覆盖仍待核实。",
+    "summary": "@omem/ui 是面向 Vue 3 应用的共享展示与证据阅读层。本次材料确认了基础视觉组件、安全 Markdown、源码阅读、证据轨迹深链和模块关系图；完整轨迹恢复、超长深链提示、missing 关系呈现及键盘等价性仍待上层合同或测试确认。",
     "category": "architecture",
     "sections": [
       {
         "key": "role-and-boundary",
-        "title": "职责与模块边界",
-        "body": "`@omem/ui` 是私有 ESM 共享包，由消费方提供 Vue 运行时，并公开源码入口与设计令牌样式；Markdown 解析、HTML 净化和语法高亮依赖也集中在包内。[[c1]] 它以小型组件统一交互和排版：按钮规定变体、原生类型以及 loading 联动的禁用与忙碌状态；[[c2]] 面板提供标题、正文和操作区插槽，空状态提供标题、说明及后续动作容器；[[c3]][[c4]] 徽标负责有限的状态色调，图标则提供统一描边且默认作为装饰内容隐藏于辅助技术。[[c5]][[c6]]\n\n这些材料证明了共享原语各自的局部合同，但未包含根入口源码，因而尚不能据此确认完整公开 API，也不能证明所有应用都已按同一方式复用它们。此前仅用按钮材料概括面板、空状态、徽标和图标的结论已被上述逐项证据替代。"
+        "title": "模块职责与边界",
+        "body": "`@omem/ui` 是私有 ESM 包，对外声明 TypeScript 根入口和设计令牌样式，由消费方提供 Vue 3 运行时；Markdown 解析、HTML 清洗和代码高亮依赖也集中在包内。[[c1]] 本次所列组件材料显示：OmPanel 组织标题、正文和操作区，OmButton 统一按钮变体及加载禁用语义，OmBadge 提供状态色调，OmEmpty 表达空态内容，OmIcon 提供装饰性线条图形。[[c2]][[c3]][[c4]][[c5]][[c6]]\n\n此前“整个包不保存知识或决定业务权限”的宽泛否定结论缺少完整入口与全部实现证据，现被替代为更窄的判断：**本次覆盖的组件未显示知识持久化或权限决策逻辑**，其可证职责主要是展示、组合和交互。"
       },
       {
-        "key": "evidence-flow",
-        "title": "正文、源码与深链数据流",
-        "body": "Markdown 组件把 `[[引用键]]` 转换为可读链接或不可用提示，解析正文和代码块后用白名单净化 HTML，并以 generation 避免旧异步结果覆盖新内容；点击引用、外链和站内路径时分别交给不同出口。[[c7]] 源码查看器同样采用代次控制，按稳定行号渲染全文，支持锚点滚动、范围命中和逐行引用；高亮异常时模板回退到转义原文。[[c8]] 对于未知语言，共享高亮函数会直接转义源码，而非尝试加载语法包。[[c9]]\n\nTrail 帧保存 kind、稳定标识、标题、滚动位置及可选文件或符号上下文，并以 kind 与 id 检测循环；`MAX_TRAIL` 是 URL 持久化预算，不限制实际渲染栈。[[c10]] Hash 路由可恢复主视图、文件行号及 Trail，但只持久化帧的 kind/id。空 Hash或无法识别的主路由回退到概览；无法 URI 解码的段会保留原值，只要仍符合 module 或 file 路由形状就不会回退。[[c11]] 这替代了此前“损坏路由一律回退概览”的过宽结论。"
+        "key": "evidence-reading",
+        "title": "富文本、源码与证据入口",
+        "body": "证据正文会先把内联引用转换为可操作链接或不可用提示，再解析 Markdown、处理代码块，并按标签、属性与 URI 白名单清洗；异步代次控制只允许最新结果写回。[[c7]] 点击随后被分流为证据引用、站外链接和站内导航，失败时展示原始 Markdown。[[c8]]\n\n源码查看器以稳定行号拆分完整文档，处理异步高亮竞态、锚点滚动、范围命中、逐行引用和导航事件。[[c9]] 它依赖共享高亮器按需加载已知语言；未知语言直接转义，跨行高亮则被拆成逐行仍有效的 HTML。[[c10]] 当前实现逐行创建表格节点且范围重叠时只取首个匹配项，大文件性能和多语义范围导航仍需结合调用场景验证。"
       },
       {
-        "key": "progress-and-limits",
-        "title": "关系阅读能力与待核实边界",
-        "body": "证据对话框基于原生 dialog，受父层 open 状态控制：Esc 发出返回事件，遮罩和关闭按钮发出关闭事件，正常关闭时归还焦点，并可组合正文、侧栏和操作区。[[c12]] 关系图则以固定排序和最多十二轮分层计算生成可复现坐标，向外暴露节点与边选择事件。[[c13]] 但 missing 边没有专用样式：两端存在时落入 confirmed 外观，端点缺失时路径为空且标签回到原点；边标签的键盘操作还错误复用节点选择处理器，与鼠标选择边不一致。[[c14]]\n\nTrail、Hash 路由、对话框和关系图分别具备形成下钻阅读流程所需的原语，但当前材料没有父容器或调用链，不能证明它们已经组成可操作的“关系—证据—返回”端到端流程；此前把该集成关系写成既成事实的结论已被替代为待核实事项。另有局部无障碍限制：对话框标题使用固定 id，打开时直接卸载不会执行正常关闭分支的焦点归还；[[c12]] 独立引用按钮也没有 `type=\"button\"`、不可操作状态或原因字段，只能发出 open 事件。[[c15]]"
+        "key": "trail-and-routing",
+        "title": "证据轨迹与深链流程",
+        "body": "阅读轨迹用帧栈表达模块、文件、符号、片段、知识、引用和原文等层级；完整帧含稳定身份、标题、滚动位置及数据定位字段，并以 `kind + id` 检测循环。渲染入栈不会自行截断，200 帧上限被定义为 URL 持久化预算。[[c11]] OmDialog 提供受控原生模态：Esc 发出返回，遮罩和关闭按钮发出关闭全部，正常关闭后尝试归还焦点，同时支持正文、侧栏及操作区。[[c12]]\n\n哈希路由承载主视图、文件行号和轨迹，但解析后的轨迹只恢复 kind、id，并暂以 id 作为标题；解析与写入都会截取到预算范围。[[c13]][[c14]] 因而此前将“完整帧可直接通过哈希往返”视为既定能力的结论已被替代：刷新后的标题、滚动位置及文件或符号定位仍需上层补全，而本次材料没有证明恢复层或超限提示已经实现。"
+      },
+      {
+        "key": "graph-progress-limits",
+        "title": "关系展示进展与限制",
+        "body": "关系图把模块与聚合导入边绘制为确定性分层 SVG。布局固定排序模块，排除 missing 和端点异常的边后进行最多十二轮分层迭代，再按层与行生成坐标；相同输入不会产生力导向式漂移，但循环或很深的依赖链不能视为严格最长路径结果。[[c15]]\n\n已有端点间的边使用贝塞尔曲线，candidate 与 stale 有专用样式，其他状态进入 confirmed 默认分支；端点缺失时路径为空且标签位置回退原点。[[c16]] 模板中鼠标可分别选择节点和边，节点也支持 Enter 或空格；但边标签键盘事件复用了节点处理器，会把边标识作为节点标识发出。[[c17]] 因此此前“边标签具备与鼠标一致的键盘选择”这一结论被明确替代；missing 边的专用断裂样式也尚未由实际实现兑现。"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "共享 UI 包配置",
-        "reason": "支持共享包的 ESM、导出边界、Vue 对等依赖及富文本相关依赖说明。",
-        "relation": "background",
+        "reason": "支持包的私有 ESM 属性、公开入口、Vue 对等依赖及富文本相关依赖范围。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/package.json",
@@ -38,21 +43,8 @@
       },
       {
         "key": "c2",
-        "label": "通用按钮接口与加载状态",
-        "reason": "支持按钮变体、默认原生类型及 loading 联动 disabled、aria-busy 的论断。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/components/OmButton.vue",
-          "startLine": 1,
-          "endLine": 21
-        },
-        "quote": "<script setup lang=\"ts\">\nwithDefaults(\n  defineProps<{\n    variant?: \"primary\" | \"secondary\" | \"ghost\";\n    loading?: boolean;\n    disabled?: boolean;\n    type?: \"button\" | \"submit\";\n  }>(),\n  { variant: \"secondary\", type: \"button\" },\n);\n</script>\n<template>\n  <button\n    :type=\"type\"\n    class=\"om-button\"\n    :class=\""
-      },
-      {
-        "key": "c3",
-        "label": "共享面板结构",
-        "reason": "支持面板以标题、正文和操作区插槽组成内容容器的说明。",
+        "label": "通用面板结构",
+        "reason": "支持 OmPanel 通过标题、正文和操作插槽提供内容骨架。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -63,9 +55,35 @@
         "quote": "<script setup lang=\"ts\">\ndefineProps<{ title?: string }>();\n</script>\n<template>\n  <section class=\"om-panel\">\n    <header v-if=\"title || $slots.heading\">\n      <h3 v-if=\"title\">{{ title }}</h3>\n      <slot name=\"heading\" />\n    </header>\n    <slot />\n    <footer v-if=\"$slots.actions\"><slot name=\"actions\" /></footer>\n  "
       },
       {
+        "key": "c3",
+        "label": "通用按钮状态合同",
+        "reason": "支持 OmButton 的视觉变体、默认原生类型以及 loading 与 disabled 行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmButton.vue",
+          "startLine": 1,
+          "endLine": 21
+        },
+        "quote": "<script setup lang=\"ts\">\nwithDefaults(\n  defineProps<{\n    variant?: \"primary\" | \"secondary\" | \"ghost\";\n    loading?: boolean;\n    disabled?: boolean;\n    type?: \"button\" | \"submit\";\n  }>(),\n  { variant: \"secondary\", type: \"button\" },\n);\n</script>\n<template>\n  <button\n    :type=\"type\"\n    class=\"om-button\"\n    :class=\""
+      },
+      {
         "key": "c4",
-        "label": "空状态内容合同",
-        "reason": "支持空状态的必填标题、可选说明和默认插槽职责。",
+        "label": "状态徽标色调",
+        "reason": "支持 OmBadge 提供四种色调并通过插槽展示状态内容。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmBadge.vue",
+          "startLine": 1,
+          "endLine": 9
+        },
+        "quote": "<script setup lang=\"ts\">\nwithDefaults(\n  defineProps<{ tone?: \"neutral\" | \"warning\" | \"danger\" | \"success\" }>(),\n  { tone: \"neutral\" },\n);\n</script>\n<template>\n  <span class=\"om-badge\" :class=\"tone\"><slot /></span>\n</template>"
+      },
+      {
+        "key": "c5",
+        "label": "空状态内容结构",
+        "reason": "支持 OmEmpty 组合标题、可选说明和扩展操作内容。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -76,22 +94,9 @@
         "quote": "<script setup lang=\"ts\">\ndefineProps<{ title: string; description?: string }>();\n</script>\n<template>\n  <div class=\"om-empty\">\n    <h2>{{ title }}</h2>\n    <p v-if=\"description\">{{ description }}</p>\n    <slot />\n  </div>"
       },
       {
-        "key": "c5",
-        "label": "状态徽标接口",
-        "reason": "支持徽标允许的色调、默认值及插槽内容边界。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/components/OmBadge.vue",
-          "startLine": 1,
-          "endLine": 8
-        },
-        "quote": "<script setup lang=\"ts\">\nwithDefaults(\n  defineProps<{ tone?: \"neutral\" | \"warning\" | \"danger\" | \"success\" }>(),\n  { tone: \"neutral\" },\n);\n</script>\n<template>\n  <span class=\"om-badge\" :class=\"tone\"><slot /></span>"
-      },
-      {
         "key": "c6",
-        "label": "共享线条图标渲染",
-        "reason": "支持图标统一描边、继承颜色、未知名称回退及装饰性隐藏语义。",
+        "label": "共享装饰图标",
+        "reason": "支持 OmIcon 从内置路径选择图形、统一尺寸与描边，并将 SVG 标记为装饰性内容。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -103,166 +108,190 @@
       },
       {
         "key": "c7",
-        "label": "Markdown 编译、净化与链接分流",
-        "reason": "支持内联引用替换、异步解析、高亮、白名单净化、防竞态和点击分流流程。",
+        "label": "Markdown 编译与清洗流程",
+        "reason": "支持引用替换、代码高亮、HTML 白名单清洗和异步代次保护组成富文本渲染流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmMarkdown.vue",
           "startLine": 25,
-          "endLine": 91
+          "endLine": 64
         },
         "quote": "async function render() {\n  const current = ++generation;\n  failed.value = false;\n  if (!props.source) {\n    html.value = \"\";\n    return;\n  }\n  loading.value = true;\n  try {\n    const [{ marked }, DOMPurify] = await Promise.all([\n      import(\"marked\"),\n      import(\"dompurify\"),\n    ]);\n    const source = props.source"
       },
       {
         "key": "c8",
-        "label": "源码查看器高亮与安全回退",
-        "reason": "支持异步代次控制、锚点定位、范围导航、逐行引用及高亮失败后转义显示原文。",
+        "label": "Markdown 点击分流与失败回退",
+        "reason": "支持引用、外部链接和内部路径的点击分流，以及失败时展示原始 Markdown。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 69,
+          "endLine": 92
+        },
+        "quote": "function onClick(ev: MouseEvent) {\n  const a = (ev.target as HTMLElement).closest(\"a\");\n  if (!a) return;\n  const href = a.getAttribute(\"href\") || \"\";\n  if (href.startsWith(\"/__omem/citation/\")) { ev.preventDefault(); emit(\"cite\", decodeURIComponent(href.slice(\"/__omem/citation/\".length))); return; }\n  if (/^(https?:|m"
+      },
+      {
+        "key": "c9",
+        "label": "源码查看器高亮与导航",
+        "reason": "支持稳定行号、异步高亮、锚点滚动、范围导航与逐行证据入口的实现说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
           "startLine": 29,
-          "endLine": 101
+          "endLine": 100
         },
         "quote": "const hl = ref<Record<number, string>>({});\nconst loading = ref(false);\nconst root = ref<HTMLElement>();\nconst flashed = ref(false);\n\nconst lines = () => props.code.split(\"\\n\");\nconst lineNumber = (i: number) => (props.startLine ?? 1) + i;\nlet generation = 0;\nwatch(() => [props.code, props.language] as const, async ([c"
       },
       {
-        "key": "c9",
-        "label": "未知语言的转义策略",
-        "reason": "专门支持未知语言不加载语法包而直接转义源码的论断。",
+        "key": "c10",
+        "label": "共享代码高亮边界",
+        "reason": "支持已知语言按需加载、未知语言转义以及跨行高亮拆分由共享模块负责。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/highlight.ts",
           "startLine": 21,
-          "endLine": 32
+          "endLine": 50
         },
         "quote": "export function escapeCode(text: string): string {\n  return text.replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");\n}\n\nexport async function highlightCode(code: string, language: string): Promise<string> {\n  const lang = aliases[language.toLowerCase()];\n  if (!lang) return escapeCode(code);\n  const req"
       },
       {
-        "key": "c10",
-        "label": "Trail 帧与深链预算",
-        "reason": "支持帧上下文字段、循环检测及 MAX_TRAIL 仅约束 URL 持久化深度的说明。",
+        "key": "c11",
+        "label": "共享证据轨迹合同",
+        "reason": "支持轨迹帧字段、循环检测、URL 深度预算及入栈不截断渲染栈的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/trail.ts",
-          "startLine": 16,
+          "startLine": 6,
           "endLine": 52
         },
-        "quote": "export type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown in the drawer header / breadcrumb. */\n  title: string;\n  /** Where to scroll back to when this frame is popped. Managed by the drawer. */\n  scroll?: number;\n  /** Free-form refs the pare"
-      },
-      {
-        "key": "c11",
-        "label": "Hash 路由解析与序列化",
-        "reason": "支持主视图、行号和 Trail 的恢复方式，并精确说明空或未知路由回退及解码失败保留原段的行为。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/ui/src/OmHashRoute.ts",
-          "startLine": 19,
-          "endLine": 85
-        },
-        "quote": "function decode(seg: string): string {\n  try {\n    return decodeURIComponent(seg);\n  } catch {\n    return seg;\n  }\n}\n\nexport function parseHash(hash: string): WikiRoute {\n  let raw = hash.replace(/^#\\/?/, \"\");\n  if (!raw) return { view: { name: \"overview\" }, trail: [] };\n  const lineMatch = raw.match(/[?&]line=(\\d+)/);"
+        "quote": "export type TrailFrameKind =\n  | \"module\"\n  | \"file\"\n  | \"symbol\"\n  | \"fragment\" // a review (doc/decision/research) fragment\n  | \"decision\"\n  | \"knowledge\"\n  | \"citation\"\n  | \"source\";\n\nexport type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown"
       },
       {
         "key": "c12",
-        "label": "证据对话框生命周期与结构",
-        "reason": "支持受控打开、正常关闭焦点归还、Esc 返回、关闭事件、固定标题 id 和卸载路径限制。",
+        "label": "证据对话框交互",
+        "reason": "支持模态生命周期、焦点归还、Esc 返回、关闭全部和正文侧栏组合方式。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmDialog.vue",
-          "startLine": 1,
-          "endLine": 61
+          "startLine": 14,
+          "endLine": 60
         },
-        "quote": "<script setup lang=\"ts\">\nimport { ref, watch, nextTick, onBeforeUnmount } from \"vue\";\nimport OmButton from \"./OmButton.vue\";\nimport OmIcon from \"./OmIcon.vue\";\nconst props = defineProps<{\n  open: boolean;\n  title: string;\n  depth?: number;\n  sideOpen?: boolean;\n}>();\nconst emit = defineEmits<{ close: []; back: [] }>();"
+        "quote": "watch(\n  () => props.open,\n  async (open) => {\n    await nextTick();\n    if (open && !dialog.value?.open) {\n      previous = document.activeElement as HTMLElement;\n      dialog.value?.showModal();\n    } else if (!open && dialog.value?.open) {\n      dialog.value.close();\n      if (previous?.isConnected) previous.focus()"
       },
       {
         "key": "c13",
-        "label": "关系图合同与确定性布局",
-        "reason": "支持节点和边选择合同、固定排序、missing 边过滤及十二轮分层计算。",
+        "label": "哈希路由解析",
+        "reason": "支持主视图、文件行号及轨迹解析，并证明恢复后的帧只含 kind、id 和临时标题。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 27,
+          "endLine": 64
+        },
+        "quote": "export function parseHash(hash: string): WikiRoute {\n  let raw = hash.replace(/^#\\/?/, \"\");\n  if (!raw) return { view: { name: \"overview\" }, trail: [] };\n  const lineMatch = raw.match(/[?&]line=(\\d+)/);\n  const queryLine = lineMatch ? Number(lineMatch[1]) : undefined;\n\n  // Pull off a trailing /trail/<kind>/<id>/... su"
+      },
+      {
+        "key": "c14",
+        "label": "哈希路由写入",
+        "reason": "支持轨迹序列化只保存 kind 与 id，并在写入深链时应用 200 帧预算。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/OmHashRoute.ts",
+          "startLine": 67,
+          "endLine": 85
+        },
+        "quote": "export function writeHash(route: WikiRoute): string {\n  const v = route.view;\n  let base = \"#/overview\";\n  if (v.name === \"structure\") base = \"#/structure\";\n  else if (v.name === \"graph\") base = \"#/graph\";\n  else if (v.name === \"module\") base = \"#/module/\" + encodeURIComponent(v.module);\n  else if (v.name === \"file\")\n "
+      },
+      {
+        "key": "c15",
+        "label": "关系图确定性分层",
+        "reason": "支持过滤 missing 与异常端点边、固定排序、有界迭代并按层计算节点位置的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
-          "startLine": 14,
+          "startLine": 48,
           "endLine": 105
         },
-        "quote": "export type GraphModule = {\n  id: string;\n  label: string;\n  fileCount: number;\n  symbolCount: number;\n};\n\nexport type GraphEdge = {\n  id: string;\n  from: string; // importer module id (right/higher layer)\n  to: string; // imported module id (left/lower layer)\n  count: number;\n  status: \"confirmed\" | \"candidate\" | \"mis"
+        "quote": "/** layer(m) = 0 for modules that import nothing in-repo; else 1 + max layer of\n * their imports. Deterministic. */\nconst layout = computed(() => {\n  const byId = new Map(props.modules.map((m) => [m.id, m]));\n  // adjacency: module -> modules it imports\n  const imports = new Map<string, Set<string>>();\n  for (const e o"
       },
       {
-        "key": "c14",
-        "label": "关系边绘制与键盘交互",
-        "reason": "支持 missing 边缺少专用样式、缺失端点回退原点及边标签键盘误发节点选择的限制。",
+        "key": "c16",
+        "label": "关系边路径与状态分支",
+        "reason": "支持端点缺失时的空路径和原点回退，以及 missing 状态落入 confirmed 默认样式的限制。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
           "startLine": 107,
-          "endLine": 172
+          "endLine": 138
         },
         "quote": "function edgePath(e: GraphEdge): string {\n  const a = layout.value.positions.get(e.from);\n  const b = layout.value.positions.get(e.to);\n  if (!a || !b) return \"\";\n  // from (right side of importer) to (left side of imported)\n  const x1 = a.x;\n  const y1 = a.y + BOX_H / 2;\n  const x2 = b.x + BOX_W;\n  const y2 = b.y + BO"
       },
       {
-        "key": "c15",
-        "label": "独立引用按钮合同",
-        "reason": "支持引用组件仅接收标签和版本、发出 open 事件且未声明按钮类型或不可操作原因状态。",
-        "relation": "tracks",
+        "key": "c17",
+        "label": "关系图鼠标与键盘事件",
+        "reason": "支持鼠标分别选择节点和边，并证明边标签键盘事件错误复用节点选择处理器。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:packages/ui/src/components/OmCitation.vue",
-          "startLine": 1,
-          "endLine": 8
+          "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
+          "startLine": 141,
+          "endLine": 172
         },
-        "quote": "<script setup lang=\"ts\">\ndefineProps<{ label: string; version?: number }>();\ndefineEmits<{ open: [] }>();\n</script>\n<template>\n  <button class=\"om-citation\" @click=\"$emit('open')\">\n    {{ label }}<sup>{{ version ? \"v\" + version : \"↗\" }}</sup>\n  </button>"
+        "quote": "<template>\n  <svg\n    class=\"om-relation-graph\"\n    :viewBox=\"`0 0 ${layout.width} ${layout.height}`\"\n    role=\"group\"\n    aria-label=\"模块依赖图\"\n  >\n    <defs>\n      <pattern id=\"hatch\" width=\"6\" height=\"6\" patternTransform=\"rotate(45)\" patternUnits=\"userSpaceOnUse\">\n        <line x1=\"0\" y1=\"0\" x2=\"0\" y2=\"6\" stroke=\"#bbb\""
       }
     ],
     "questions": [
       {
-        "question": "关系图、Trail、Hash 路由和对话框是否已经在同一父容器中形成可操作的端到端下钻流程？",
-        "why": "现有材料只能分别证明各共享原语的局部实现，无法确认节点或边选择是否会推动 Trail、更新 Hash、打开对话框并在返回时恢复原位置。",
-        "nextStep": "提供消费这些组件的父级页面或组合式函数源码，逐段核对选择事件、Trail push、对话框状态和 Hash 写入之间的调用链。",
+        "question": "超过 200 帧导致哈希深链截断时，哪个容器负责向用户显示明确提示并保留当前渲染栈？",
+        "why": "轨迹合同声明调用方应显式提示，哈希解析和写入实际执行截取，但本次材料没有展示通知实现。",
+        "nextStep": "检查哈希写入调用方与轨迹容器，补充超过预算时的可见提示及深链往返行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c10",
           "c11",
-          "c12",
-          "c13"
-        ]
-      },
-      {
-        "question": "共享包根入口实际导出了哪些组件、组合式函数和类型？",
-        "why": "包配置只声明 `./src/index.ts` 为公开入口，本批材料未包含该文件，不能据此形成可靠的公开 API 清单。",
-        "nextStep": "检查入口源码及消费方导入，并增加公开导出契约测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c1"
-        ]
-      },
-      {
-        "question": "关系图的 missing 边及边标签键盘操作应采用什么产品语义？",
-        "why": "当前 missing 边没有专用绘制分支；边标签鼠标操作选择边，而 Enter 或空格会发出节点选择，两种输入方式不等价。",
-        "nextStep": "明确端点存在与缺失时的呈现规则，拆分边专用键盘处理器，并补充鼠标与键盘行为等价测试。",
-        "blocking": false,
-        "citationKeys": [
           "c13",
           "c14"
         ]
       },
       {
-        "question": "证据阅读能力是否已有覆盖恶意 Markdown、快速切换、Trail 往返、对话框卸载焦点和大文件源码的自动化测试？",
-        "why": "现有材料展示了安全、竞态、深链、焦点和性能相关分支，但没有测试文件或检查结果，无法确认其回归保护程度。",
-        "nextStep": "盘点单元测试和浏览器测试，优先补充净化与危险协议、快速连续更新、Hash 往返、多实例或卸载焦点以及大文件渲染基准。",
+        "question": "哈希解析后的轨迹标题、滚动位置和文件或符号定位字段由哪一层恢复，当前是否已有该实现？",
+        "why": "协议只保存 kind 与 id，解析时以 id 临时充当标题；完整 TrailFrame 所需的其他字段无法由当前哈希直接恢复。",
+        "nextStep": "核对轨迹数据加载容器；若尚未实现，定义恢复失败时的不可操作状态、人类可读原因和刷新后的整栈恢复测试。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c8",
-          "c9",
-          "c10",
           "c11",
-          "c12"
+          "c13",
+          "c14"
+        ]
+      },
+      {
+        "question": "关系图的 missing 边在端点齐全和端点缺失两种情况下分别应如何绘制与操作？",
+        "why": "missing 边不参与分层，却没有专用路径或样式；两端齐全时进入 confirmed 样式，端点缺失时路径为空且标签回退原点。",
+        "nextStep": "明确产品规则后实现 missing 专用路径、样式和可操作状态，并覆盖两类端点情况。",
+        "blocking": false,
+        "citationKeys": [
+          "c15",
+          "c16",
+          "c17"
+        ]
+      },
+      {
+        "question": "边标签按 Enter 或空格时是否应与鼠标一致地发出边选择事件？",
+        "why": "鼠标点击触发 selectEdge，键盘处理却调用节点选择函数并传入边标识，两种输入方式语义不一致。",
+        "nextStep": "确认交互合同后拆分边专用键盘处理器，并增加鼠标与键盘等价性的组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c16",
+          "c17"
         ]
       }
     ]
@@ -346,12 +375,12 @@
     {
       "kind": "article",
       "key": "omem:packages/ui/src/OmHashRoute.ts",
-      "digest": "99b7c76b411cc2a5ff60c62311e95794a7c021512ab427ae872e07f0c2370d28"
+      "digest": "030b7a7a6e2957d8584b0734b2b697cb0d3b72ed3ac163843b13b0fd8e293172"
     },
     {
       "kind": "article",
       "key": "omem:packages/ui/src/components/OmBadge.vue",
-      "digest": "c4b67908b9371fcbfae5e59ba334b47932757423a4095b3a8cdce3344cad5460"
+      "digest": "e741721808552a23d63028f017e40e894e42fdd3e593619dd971fb44b3e22c84"
     },
     {
       "kind": "article",
@@ -402,17 +431,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:52:53.824Z",
+    "at": "2026-10-01T03:06:28.630Z",
     "trace": {
-      "runId": "6be58abd-7ea2-4c47-a793-a3ea6a558ace",
+      "runId": "035d4ff0-2c28-4ff4-99b8-474580d279e4",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "75cac843535a3407b043ee0b7df5213f29879a7fc690413adabf1426fe938856",
-      "contextHash": "adfc56c6add6379ea1963d6069352579d042443fd20d7570dc79eee761df615e",
+      "promptHash": "9c250366c02333753d9bb9045cf53f29a29ac30fbf9fad9303b5d7d3c5c232ab",
+      "contextHash": "53f615e60d6a2419d954426cb5692b2f575246a6436113ae422624e64450f52d",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fc0a65d6e0696aec0486145e09c80eae12b4f52e0fd6003a01ee1371bd101964",
+      "fingerprint": "8ec0e242fcd0fc997f903434403847208fbba4f65062ecb149c97493a66fa777",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -425,11 +454,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef0-b0ad-7f21-b1a4-994f2654c16b"
+        "01a0f56d-0aa9-79d0-928f-fbfa62f0a7a1"
       ],
       "usage": {
-        "used": 51878,
-        "size": 760000,
+        "used": 60870,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -437,10 +466,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 100434,
-          "utf8Bytes": 124246,
-          "estimatedTokens": 41416,
-          "budgetedTokens": 51770,
+          "chars": 106253,
+          "utf8Bytes": 132833,
+          "estimatedTokens": 44278,
+          "budgetedTokens": 55348,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -449,17 +478,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:53:06.329Z",
+    "at": "2026-10-01T03:06:47.979Z",
     "trace": {
-      "runId": "739d9454-38e1-4110-a615-4c53cb726f94",
+      "runId": "7640003e-9f8d-4173-acb0-968718d9f4ff",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "227d04873e07ba649d4e5a6702199c2bc77b5e3aad461f6eb0c33ff375e9fe4c",
-      "contextHash": "d60aa6244a747a91c4df61efcd74352233dceea771a7db67e6cd1ce6f2080ee3",
+      "promptHash": "d8a6e68b8f68c1139302dee76b694a0254f9106d199f32f699974d19ee48306d",
+      "contextHash": "f164bb2bb6866e85f4afcde664988c6577929079446f29ece25ac9ce3762c314",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "51bc32d4d98e3ccd20b7e025d9733e5132e60285fd4047da52eeedc6228766d5",
+      "fingerprint": "72bdf0c2aebfa107ed0c8fefb765a2a856ce6356d46a2c471dad58bd5b1dc949",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -472,11 +501,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef1-1f10-72e1-b94d-ed3ed0d10570"
+        "01a0f56d-9239-73b2-98d9-c1980a4ef25c"
       ],
       "usage": {
-        "used": 49456,
-        "size": 760000,
+        "used": 57757,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -484,10 +513,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 99535,
-          "utf8Bytes": 121941,
-          "estimatedTokens": 40647,
-          "budgetedTokens": 50809,
+          "chars": 104561,
+          "utf8Bytes": 128847,
+          "estimatedTokens": 42949,
+          "budgetedTokens": 53687,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

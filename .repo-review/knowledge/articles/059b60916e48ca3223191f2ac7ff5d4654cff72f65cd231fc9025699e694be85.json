@@ -2,26 +2,62 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
-    "title": "Lark 富消息统一分片测试",
-    "summary": "验证富文本、图片与回复消息被转换为通用 Capture parts，并在转换、批处理和资产落盘过程中保留来源信息。",
+    "title": "Lark 富消息统一 parts 适配测试",
+    "summary": "该测试以临时 SQLite、加密凭据和 Lark 连接绑定构造接近真实的数据入口，验证富文本、图片及引用回复被转换为统一 parts，并保留来源信息；它覆盖适配后的持久化结果，但不证明真实 Lark 网络下载、异常输入处理或全部消息类型可用。",
     "category": "tests",
     "sections": [
       {
-        "key": "rich-text",
-        "title": "富文本到统一文本分片",
-        "body": "该测试解决 Lark `post` 消息不能直接进入通用采集合同的问题。它构造包含标题、段落、链接和 @ 提及的富文本，经过 `LarkEventInbox` 后读取持久化输入信封，断言标题成为独立文本分片，链接保留可读文字与 URL，提及和相邻正文按原段落组合。每个分片同时携带外部发送者、事件号和观测时间，避免聚合后丢失发言人及事件上下文。[[c1]]"
+        "key": "purpose-and-fixture",
+        "title": "测试目标与运行夹具",
+        "body": "这组测试解决的是 Lark 不同消息形态能否进入统一捕获合同的问题。每个用例创建独立临时目录、`Store` 与使用随机 32 字节密钥的加密凭据仓库，并直接写入有效连接、版本和群聊绑定；结束后清理目录，从而隔离 SQLite 与资产副作用。[[c1]] `groupEvent` 再提供群消息默认值，各用例仅覆盖消息类型、内容和回复关系。[[c2]] 这里能确认测试依赖 `LarkEventInbox`、`EncryptedSecretStore` 和 `Store`，但材料没有展示 `processMessage` 的实现体，因此不能据此断言其跨文件内部调用链。"
       },
       {
-        "key": "image-and-reply",
-        "title": "图片资产与回复关系",
-        "body": "图片消息通过注入的媒体端口下载，先进入信封成为带 MIME 类型和数据的 image part；批次刷新调用通用 `store.capture` 后，原始字节按 SHA-256 寻址并可从资产仓库取回。这证明 Lark 只负责输入适配，最终仍复用统一采集和资产存储路径。[[c2]]\n\n回复消息则把父消息号写入分片的 `replyTo`，并同时设置分片与信封级 quoted 标志，为后续会话聚合保留引用语义。[[c3]] 边界上，测试只覆盖一种 post 结构、PNG 图片和直接父消息；没有断言 malformed JSON、下载失败、超限媒体、其他富文本标签、多语言 post 变体或嵌套回复的降级行为。"
+        "key": "asserted-flow",
+        "title": "已断言的核心流程",
+        "body": "富文本用例把 post 标题、文本、链接和 @成员组合成三个有序文本 part，并逐项检查发送者、事件号和观察时间，验证内容转换没有丢失基本来源。[[c3]] 图片用例通过注入的媒体端口确认下载参数，随后检查生成单个 PNG image part；批次经 `flushReady` 交给 `store.capture` 后，再按固定字节的 SHA-256 查询资产，覆盖了“事件入箱—统一 part—资产落库”的可观察结果。[[c4]] 回复用例则确认 part 级 `replyTo/quoted` 与 envelope 级 quoted 标志同步存在，保证下游聚合仍能识别引用语境。[[c5]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界与未覆盖行为",
+        "body": "测试中的 `FakeMedia` 只返回固定 PNG 字节，不访问网络；这与媒体端口允许生产实现调用 Lark 资源 API、测试注入替身的合同一致。[[c6]] 因而当前断言没有覆盖鉴权、超时、限流、下载失败、错误 MIME、超大图片或重试。富文本也只覆盖一种结构良好的 JSON，没有验证畸形 JSON、空标题、未知 tag、多语言 post 结构及消息更新。测试直接插入连接与绑定数据，也未覆盖凭据环境变量解析、连接建立或权限校验；加密仓库要求 32 字节密钥这一边界仅由被测夹具满足，并未在本文件中断言失败路径。[[c7]]"
+      },
+      {
+        "key": "test-limitations",
+        "title": "测试强度与可解释限制",
+        "body": "图片断言先确认内存 envelope 中存在字符串数据，再推进聚合静默窗口并验证哈希资产存在，因此验证了最终副作用，而非仅检查模拟调用。[[c8]] 不过测试没有断言输入事件的幂等性、重复事件处理、数据库中 part 的完整字段、资产内容回读或关闭过程中的错误；临时目录清理还明确容忍 Windows 短暂占用 SQLite 文件，意味着清理失败不会令用例失败。[[c9]] 这些缺口不否定现有三个场景，但限制了它们对生产可靠性的证明范围。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "富文本解析与逐分片来源断言",
-        "reason": "支持标题、段落、链接、提及转换及来源保留的说明。",
+        "label": "临时存储与 Lark 绑定夹具",
+        "reason": "支持测试为每个用例创建隔离 Store、加密凭据以及有效连接和群聊绑定的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 14,
+          "endLine": 65
+        },
+        "quote": "const directories: string[] = [];\nafterEach(() => {\n  for (const directory of directories.splice(0)) {\n    try {\n      rmSync(directory, { recursive: true, force: true });\n    } catch {\n      // windows may hold the sqlite file briefly\n    }\n  }\n});\n\nconst setup = () => {\n  const directory = mkdtempSync(join(tmpdir(), "
+      },
+      {
+        "key": "c2",
+        "label": "群消息事件默认构造",
+        "reason": "支持各用例基于统一群消息模板覆盖少量字段的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 68,
+          "endLine": 83
+        },
+        "quote": "const groupEvent = (patch: Partial<LarkInboundEvent>): LarkInboundEvent => ({\n  appId: \"cli_parts1\",\n  eventId: `evt-${Math.random()}`,\n  kind: \"im.message.receive_v1\",\n  eventTime: \"2026-09-27T00:00:00.000Z\",\n  senderOpenId: \"ou_member\",\n  senderType: \"user\",\n  chatId: \"oc_group\",\n  chatType: \"group\",\n  messageId: `om"
+      },
+      {
+        "key": "c3",
+        "label": "富文本转换与来源断言",
+        "reason": "支持 post 被转换为标题、正文、链接和提及文本，并携带 actor、事件及时间来源的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -32,9 +68,9 @@
         "quote": "describe(\"H-G15 Lark rich messages adapt to unified parts\", () => {\n  it(\"parses a post (rich text) into title + paragraph text parts\", async () => {\n    const { store } = setup();\n    const inbox = new LarkEventInbox(store);\n    const ev = groupEvent({\n      eventId: \"evt-post\",\n      messageId: \"om_post\",\n      messa"
       },
       {
-        "key": "c2",
-        "label": "图片下载与资产寻址断言",
-        "reason": "支持图片通过媒体端口进入统一分片并在 capture 阶段落为内容寻址资产的说明。",
+        "key": "c4",
+        "label": "图片下载与资产落库断言",
+        "reason": "支持图片下载参数、统一 image part 以及经捕获后形成哈希资产的流程说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -45,9 +81,9 @@
         "quote": "  it(\"downloads an image message and stores an asset-backed image part\", async () => {\n    const { store } = setup();\n    const media = new FakeMedia();\n    const inbox = new LarkEventInbox(store, { media });\n    const ev = groupEvent({\n      eventId: \"evt-image\",\n      messageId: \"om_image\",\n      messageType: \"image\""
       },
       {
-        "key": "c3",
-        "label": "回复与引用来源断言",
-        "reason": "支持 replyTo 和 quoted 在分片及信封层保存的说明。",
+        "key": "c5",
+        "label": "引用回复来源断言",
+        "reason": "支持回复关系同时保存在 part 与 envelope 来源字段中的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -56,17 +92,88 @@
           "endLine": 227
         },
         "quote": "  it(\"carries reply_to / quoted provenance on parts for a quoted message\", async () => {\n    const { store } = setup();\n    const inbox = new LarkEventInbox(store);\n    const ev = groupEvent({\n      eventId: \"evt-reply\",\n      messageId: \"om_reply\",\n      parentMessageId: \"om_parent_123\",\n      text: \"回复内容\",\n      payl"
+      },
+      {
+        "key": "c6",
+        "label": "Lark 媒体下载端口合同",
+        "reason": "说明生产下载与测试替身之间的接口边界，支持真实网络行为未被本测试覆盖的判断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 38,
+          "endLine": 49
+        },
+        "quote": "/**\n * Inbound media download port. The production implementation calls Lark's\n * message-resource API; tests inject a fake that returns fixture bytes without\n * touching the network.\n */\nexport interface LarkMediaPort {\n  downloadImage(input: {\n    appId: string;\n    messageId: string;\n    imageKey: string;\n  }): Prom"
+      },
+      {
+        "key": "c7",
+        "label": "加密凭据密钥约束",
+        "reason": "支持凭据仓库要求精确 32 字节密钥，而目标测试只覆盖有效密钥路径的边界说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 24,
+          "endLine": 50
+        },
+        "quote": "function parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexport class EncryptedSecretStore {\n  private readonly key: Buffer"
+      },
+      {
+        "key": "c8",
+        "label": "图片数据与哈希资产验证",
+        "reason": "支持图片测试不仅检查模拟调用，还推进聚合并验证最终资产副作用的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 181,
+          "endLine": 199
+        },
+        "quote": "    const envelope = envelopeFor(store, \"evt-image\");\n    expect(envelope.parts).toHaveLength(1);\n    expect(envelope.parts[0]).toMatchObject({\n      type: \"image\",\n      mimeType: \"image/png\",\n    });\n    expect(typeof envelope.parts[0].data).toBe(\"string\");\n    // Flush the batch through store.capture: bytes are hash"
+      },
+      {
+        "key": "c9",
+        "label": "临时目录容错清理",
+        "reason": "支持 Windows 文件占用导致清理异常被忽略，以及清理失败不构成断言的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
+          "startLine": 14,
+          "endLine": 23
+        },
+        "quote": "const directories: string[] = [];\nafterEach(() => {\n  for (const directory of directories.splice(0)) {\n    try {\n      rmSync(directory, { recursive: true, force: true });\n    } catch {\n      // windows may hold the sqlite file briefly\n    }\n  }\n});"
       }
     ],
     "questions": [
       {
-        "question": "不支持的富文本标签、损坏的消息 JSON 或媒体下载失败时应拒绝整条消息，还是保留可解析部分？",
-        "why": "现有断言均使用格式正确的固定消息，没有定义错误降级及部分采集语义。",
-        "nextStep": "为异常 JSON、未知标签、媒体超限和下载超时补充合同测试，并明确重试与可见错误策略。",
+        "question": "图片下载失败、超时或返回不受支持的 MIME 类型时，事件应重试、保留待处理状态，还是降级为文本占位？",
+        "why": "当前媒体替身始终成功并返回 PNG，只能证明成功路径；错误策略会影响输入事件状态、幂等性和用户可见结果。",
+        "nextStep": "补充失败型 LarkMediaPort 替身，并依据产品策略断言数据库事件状态、重试次数以及是否产生降级 part。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
+          "c4",
+          "c6"
+        ]
+      },
+      {
+        "question": "畸形 post JSON、未知富文本 tag 与空内容应如何规范化？",
+        "why": "现有用例只提供结构完整的标题和两段内容，无法判断解析器是跳过未知节点、保留原始内容还是拒绝整个事件。",
+        "nextStep": "先明确容错合同，再增加畸形 JSON、未知 tag、空标题及混合节点的表驱动测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "重复接收相同 eventId 或 messageId 时是否保证不重复创建输入、part 与资产？",
+        "why": "当前三个场景均使用唯一标识，没有覆盖实时事件常见的重复投递与重试。",
+        "nextStep": "对同一事件连续调用两次 processMessage，并断言 input_events、捕获结果和哈希资产的数量及状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c8"
         ]
       }
     ]
@@ -74,48 +181,18 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/lark-realtime.test.ts",
-      "digest": "8c9f2eeca9a0ad0586572c2ac64d5b5f35a631f2f6199f10ba0db0474c680508"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
       "digest": "c527d049388fa485c086e91af83054f6983c0dd9bdc338f6cc60643f46042600"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/lark-runtime.test.ts",
-      "digest": "d012868f2a7037e3d0e8b4be9a1af3dd29beb77235639fbeb21de9201329edf6"
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-      "digest": "ccc264f5b3eb1f8c6062722ced2d70a544efb31e3fc38d81fdc823d41afa252e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/learning-refresh.test.ts",
-      "digest": "fe2dad4b8162d09a09f981b6307cfca63749a5b369e315629ab44c31b6be3d20"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/migrations.test.ts",
-      "digest": "bc5b4990d965d39d896c285d9548ca5b428a32b4149cf58e4713876379c78430"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
-      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
@@ -126,17 +203,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:40:22.254Z",
+    "at": "2026-10-01T02:31:11.366Z",
     "trace": {
-      "runId": "eaebd732-a1ac-4034-b2bc-1b8eba0572e0",
+      "runId": "5db1c582-57b8-4aab-975c-87d61e458e36",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c8f9085796437df3ab4a565a65478742bb80a823091cbc83fb35f08cf2d300f0",
-      "contextHash": "0ec837b12092e347896ed060436604d7acd05e16c7bbbbeff57f92d6f1d55121",
+      "promptHash": "ac35a5f5e8a0dd0139162c2e9ebfb905d5cf00276b74aaa3becbe7a2df6db34a",
+      "contextHash": "3b77806bc6300c26339b314626c4c79a67ff884b7a52825cd18f01f2ddd9c8cb",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "22abee4705dbcfd0e444ed3cb0c111e1c5a17b0e565320d8c6518f9fbc5759ac",
+      "fingerprint": "17a516e4da8e7eef0c5894fb13014b85e38b564e1d4eccdf3d01a22048694a5a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -149,11 +226,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eead-df85-73e3-bdea-83161d4d69bf"
+        "01a0f54c-caf3-7881-98ec-5fc0e57ac627"
       ],
       "usage": {
-        "used": 55385,
-        "size": 760000,
+        "used": 28047,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -161,10 +238,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 127611,
-          "utf8Bytes": 129643,
-          "estimatedTokens": 43215,
-          "budgetedTokens": 54019,
+          "chars": 24610,
+          "utf8Bytes": 26470,
+          "estimatedTokens": 8824,
+          "budgetedTokens": 11030,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -173,17 +250,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:40:52.428Z",
+    "at": "2026-10-01T02:31:29.719Z",
     "trace": {
-      "runId": "1aa255aa-e174-46a6-acf2-28e540a6eed7",
+      "runId": "e472dbc4-cffc-4a42-ab48-651a94d1788a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4cc953cc7e5d87f3fa50cafbcf45ebe70937227f0c4f1da9555cd66fcc35f7cc",
-      "contextHash": "60dbc092dd42837b9d86b21a8de9a813870eee4e2f6857cef6f0e9d157c1932c",
+      "promptHash": "57faf6db95668786a0bb99007620b4d1e580c389f5e4870787769f4053a4b9cd",
+      "contextHash": "34c8a67f348c9e097593845fda2cbb64067c4cdbc5fed06176305483f1e57bf3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2f71b46b3cf968717d81fdd1b4e9367bace3d60453508b5037873b06f5043a18",
+      "fingerprint": "369be82e097b59d96e02763baf918667fd32d39425d23ab6139c64841282c849",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -196,11 +273,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeae-b73c-7f42-97a2-e31c5ce0cabb"
+        "01a0f54d-43e2-76c1-92ee-1cb1255d0bca"
       ],
       "usage": {
-        "used": 59014,
-        "size": 760000,
+        "used": 28757,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -208,10 +285,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 143978,
-          "utf8Bytes": 154158,
-          "estimatedTokens": 51386,
-          "budgetedTokens": 64233,
+          "chars": 29615,
+          "utf8Bytes": 33763,
+          "estimatedTokens": 11255,
+          "budgetedTokens": 14069,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

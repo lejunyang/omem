@@ -2,53 +2,71 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/live-acp-smoke.ts",
-    "title": "ACP 实时接入冒烟验证",
-    "summary": "使用实际 Agent 配置发起受控算术请求，验证 ACP 会话、文本事件聚合以及模型与推理强度配置的回报；它是依赖外部 Agent CLI 的实时检查，不是隔离单元测试。",
+    "title": "ACP 真实链路冒烟脚本",
+    "summary": "该脚本通过真实 ACP 会话验证配置加载、模型探测与选择、流式文本接收以及最终答案检查能否串联运行。它适合作为外部 Agent CLI 的在线冒烟检查，但断言较宽松，不能替代协议细节、权限行为或完整模型配置测试。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose",
-        "title": "验证目标与依赖",
-        "body": "脚本从服务端配置中取得 `traex` 基础档案，再通过共享的实时模型选择器探测 ACP 能力并生成本次使用的 profile。随后它调用服务端 `acp` 入口，因此覆盖的是“配置加载—能力探测—真实会话”这一整段集成链，而非模拟协议响应。[[c1]]\n\n测试提示只要求计算 3 组、每组 4 件，并明确禁止工具和文件访问，使检查重点落在基本文本应答能力上；但是否真正遵守权限约束，仅凭最终答案无法完整证明。[[c2]]"
+        "title": "解决的问题与测试性质",
+        "body": "脚本用于确认 omem 到外部 Agent CLI 的 ACP 接入在真实环境中能够完成一次最小对话：它加载服务配置，固定寻找 `traex` profile，再根据 ACP 暴露的能力生成实际运行 profile。[[c1]] 随后发送一道答案应为 12 的简单中文题，并明确要求模型不使用工具，以便把检查重点限制在会话启动、配置应用和文本返回链路。[[c2]] 这是依赖本机 CLI、可用模型及环境配置的在线冒烟测试，不是隔离的单元测试。"
       },
       {
         "key": "flow",
-        "title": "核心流程与判定",
-        "body": "回调记录所有事件类型，并只把 `text` 事件拼接成答案。会话结束后，答案必须包含字符串 `12`，否则脚本直接失败；通过后则输出 Agent 信息、ACP 实际回报的模型与推理强度、答案及去重事件类型，便于人工核对运行环境。[[c3]]\n\n这里的断言较宽松：包含 `12` 即算成功，没有校验答案是否只有数字、是否出现权限请求，也没有断言配置模型等于请求模型。因此它能发现基本链路或明显回答错误，却不能证明事件顺序、内容纯净度和配置一致性。[[c4]]"
+        "title": "核心执行流程",
+        "body": "模型选择并非直接相信静态配置：`selectLiveProfile` 先用空 prompt 建立探测会话，读取类型为 `select` 的 model 配置项，再依次考虑 `OMEM_LIVE_MODEL`、profile 默认模型、ACP 当前值和首个可用值；显式请求不存在时会失败。[[c3]] 主脚本把选出的 profile、工作目录、文本内容、回调和取消信号传给 `acp`。回调记录所有事件类型，但只有 `text` 事件会拼入答案；会话结束后检查答案包含 `12`，再输出 Agent 信息、ACP 实际模型与推理强度、答案及去重后的事件类型，便于人工追踪运行配置。[[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界条件与模块关系",
+        "body": "该脚本与配置模块、ACP 运行模块和在线模型选择模块直接相连，跨文件关系由三个显式 import 及对应调用给出。[[c5]] 配置中的 profiles 至少有一项，但所示 schema 并不保证一定存在 id 为 `traex` 的项；脚本使用非空断言，因此缺失时不会得到友好的前置错误。[[c6]] 断言只要求拼接文本包含字符串 `12`，没有核验答案是否仅为 12，也没有断言事件种类、模型或 effort 等于期望值；此外，新建的 AbortSignal 没有主动取消路径。因而它能证明一次基本链路成功，却未覆盖工具权限、超时/中止、流式顺序、错误恢复及错误答案中偶然含有 12 的情况。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "配置探测与 ACP 调用准备",
-        "reason": "支持脚本使用服务端配置、实时 profile 选择器和 ACP 入口组成真实集成链的说明。",
+        "label": "配置加载与在线 profile 选择",
+        "reason": "支持脚本加载配置、寻找 traex profile，并调用在线模型选择逻辑的说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-acp-smoke.ts",
           "startLine": 1,
-          "endLine": 12
+          "endLine": 7
         },
         "quote": "import { loadConfig } from \"../apps/server/src/config.js\";\nimport { acp } from \"../apps/server/src/agents.js\";\nimport { selectLiveProfile } from \"./live-model.js\";\n\nconst config = loadConfig();\nconst base = config.profiles.find((profile) => profile.id === \"traex\")!;\nconst { probe, profile } = await selectLiveProfile(ba"
       },
       {
         "key": "c2",
-        "label": "受控算术测试材料",
-        "reason": "说明请求内容、禁止工具操作的约束以及预期算术结果来源。",
+        "label": "ACP 冒烟测试提示内容",
+        "reason": "支持测试发送中文算术问题并要求不调用工具的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-acp-smoke.ts",
-          "startLine": 13,
-          "endLine": 18
+          "startLine": 10,
+          "endLine": 24
         },
-        "quote": "  [\n    {\n      type: \"text\",\n      text: \"这是 omem ACP 接入测试。不要调用任何工具、不要读取文件、不要修改任何东西。提供的材料：有 3 组，每组 4 件。请仅回答总共几件。\",\n    },\n  ],"
+        "quote": "const live = await acp(\n  profile,\n  config.agentCwd,\n  [\n    {\n      type: \"text\",\n      text: \"这是 omem ACP 接入测试。不要调用任何工具、不要读取文件、不要修改任何东西。提供的材料：有 3 组，每组 4 件。请仅回答总共几件。\",\n    },\n  ],\n  (type, text) => {\n    events.push(type);\n    if (type === \"text\") answer += text;\n  },\n  new AbortController().signal,\n);"
       },
       {
         "key": "c3",
-        "label": "文本聚合与结果输出",
-        "reason": "支持事件收集、文本拼接、答案断言及诊断字段输出的流程描述。",
+        "label": "在线模型探测与选择规则",
+        "reason": "解释模型能力探测、候选优先级以及显式请求不可用时的失败行为。",
         "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 4,
+          "endLine": 36
+        },
+        "quote": "export async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  );\n  const modelOption = probe.configOptions.find(\n    (option) => option.id === \"model\",\n  );\n  if (!modelOption || modelOption.type !== \""
+      },
+      {
+        "key": "c4",
+        "label": "流式结果收集与输出断言",
+        "reason": "支持文本拼接、答案检查和诊断信息输出这一核心流程。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-acp-smoke.ts",
@@ -58,28 +76,41 @@
         "quote": "  (type, text) => {\n    events.push(type);\n    if (type === \"text\") answer += text;\n  },\n  new AbortController().signal,\n);\nif (!answer.includes(\"12\")) throw Error(\"Unexpected live ACP answer\");\nconst effectiveModel = live.configOptions.find(\n  (option) => option.id === \"model\",\n)?.currentValue;\nconsole.log(\n  JSON.str"
       },
       {
-        "key": "c4",
-        "label": "ACP 冒烟测试唯一硬断言",
-        "reason": "支持测试只要求答案包含 12、未严格验证其他行为的边界分析。",
-        "relation": "supports",
+        "key": "c5",
+        "label": "脚本的直接模块依赖",
+        "reason": "证明脚本直接依赖配置加载、ACP 运行和在线模型选择三个模块。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-acp-smoke.ts",
-          "startLine": 25,
-          "endLine": 28
+          "startLine": 1,
+          "endLine": 3
         },
-        "quote": "if (!answer.includes(\"12\")) throw Error(\"Unexpected live ACP answer\");\nconst effectiveModel = live.configOptions.find(\n  (option) => option.id === \"model\",\n)?.currentValue;"
+        "quote": "import { loadConfig } from \"../apps/server/src/config.js\";\nimport { acp } from \"../apps/server/src/agents.js\";\nimport { selectLiveProfile } from \"./live-model.js\";"
+      },
+      {
+        "key": "c6",
+        "label": "profile 数组约束与 traex 假设",
+        "reason": "配置 schema 只保证 profiles 非空；结合脚本对 traex 的非空断言，支持缺失指定 profile 的边界分析。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 18,
+          "endLine": 20
+        },
+        "quote": "const schema = z\n  .object({\n    profiles: z.array(profileSchema).min(1),"
       }
     ],
     "questions": [
       {
-        "question": "实时会话是否应强制断言没有 permission 事件，并校验实际模型、推理强度与所选 profile 一致？",
-        "why": "当前脚本收集事件并打印配置，但唯一失败条件是答案不含 12；权限回调或配置偏差可能在冒烟检查中被忽略。",
-        "nextStep": "根据 live smoke 的验收标准，增加事件白名单和 requested/effective 配置一致性断言，或明确这些字段只供诊断。",
+        "question": "`OMEM_LIVE_EFFORT` 的非法值最终是否会被 ACP 层明确拒绝，并返回何种错误？",
+        "why": "提供的模型选择代码直接把环境变量写入 profile，但当前给出的 `agents.ts` 范围未包含 `acp` 的配置应用与校验实现，因此无法确认 effort 的支持性检查和错误语义。",
+        "nextStep": "检查 `acp` 后续实现及相关测试，确认 reasoning_effort 的能力发现、允许值验证和失败传播路径。",
         "blocking": false,
         "citationKeys": [
           "c3",
-          "c4"
+          "c5"
         ]
       }
     ]
@@ -92,18 +123,8 @@
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-connectors-smoke.ts",
-      "digest": "56767351dc19db5f9be9f5bae5e33d378d427d8e53d56ee1d024075ea6c38e72"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-lark-host-smoke.ts",
-      "digest": "da10fc75972adf6fa64420e3c76a2084abe9b5bc928dbdc330d5085f95a72ad3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-learning-smoke.ts",
-      "digest": "f88a7289400e9f805776100fea75384a55628e822fc9ee11e90a9594dc7b0ac9"
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
     },
     {
       "kind": "material",
@@ -112,44 +133,24 @@
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-pipeline-smoke.ts",
-      "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:28:47.480Z",
+    "at": "2026-10-01T02:53:13.809Z",
     "trace": {
-      "runId": "2123580b-2d7e-4b1e-97fc-83f59db5349f",
+      "runId": "1964eebe-fcca-4552-b6b5-324c5d5697e4",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "b9a8ac8e56fa85230244de54a03ac0c16b8cd000f66c577241cd41197c90a5d3",
-      "contextHash": "63979c2e4296b1ebcd9eda5826f00ede54d26465ebe74d2c21a701fdb603a571",
+      "promptHash": "6fa873b2a165c182b39f494261e4985d793bb57fb5d9db2052563528ae686b2d",
+      "contextHash": "f733f9d3e98a08ae05ba9c2df868cf7d5ae966ee4327950c83d57688ca6b32c0",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "79e83ee8547c0b8a9db1230852edd362ece5e1fe27b9d918c7fd9ed6ae2e874a",
+      "fingerprint": "f689e107ae13bd1576a980ed2b9d2832ff20746c17b5761a3bbe81e1bd44f474",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -162,11 +163,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-4b6f-7f51-aae2-fee504968ba5"
+        "01a0f560-f649-79f1-ac3c-8286bb701eea"
       ],
       "usage": {
-        "used": 31129,
-        "size": 760000,
+        "used": 24849,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -174,10 +175,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 43457,
-          "utf8Bytes": 45461,
-          "estimatedTokens": 15154,
-          "budgetedTokens": 18943,
+          "chars": 16231,
+          "utf8Bytes": 18103,
+          "estimatedTokens": 6035,
+          "budgetedTokens": 7544,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +187,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:29:16.286Z",
+    "at": "2026-10-01T02:53:27.901Z",
     "trace": {
-      "runId": "7d181020-4f6c-41d0-bfd8-c4620b5caea1",
+      "runId": "def2436b-7b84-4073-b7a8-6854402f8603",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "711df273712ba84692a4f05f84cc855f851cbc3b9ebeb62b76fbf890e291c676",
-      "contextHash": "c677c030f3469f41c9535021c919516c766bdce66c6107a299ede985f5f1c8cf",
+      "promptHash": "5e624b33b0291a5b8be407713bd27889b1af494fe7a4edb0580960b0babc919c",
+      "contextHash": "11cd71fb01f7f7edea62f725f321f7a09696e9955964ecbcd6b26935dc12b58e",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f2c5d8d9398f8ea44754585a10a865a39dfce7aea45a64a32b9895226d8a7ed2",
+      "fingerprint": "a4ee9cfeb1af7f939ce19d4b9ef369f33b4257f0195e44fbcd21c0d0ff69978b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,11 +210,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea4-1dbe-75f1-8694-a6e87c823229"
+        "01a0f561-7182-74a3-b21e-4eed2248e078"
       ],
       "usage": {
-        "used": 34664,
-        "size": 760000,
+        "used": 24524,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -221,10 +222,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 61184,
-          "utf8Bytes": 71202,
-          "estimatedTokens": 23734,
-          "budgetedTokens": 29668,
+          "chars": 18341,
+          "utf8Bytes": 21523,
+          "estimatedTokens": 7175,
+          "budgetedTokens": 8969,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

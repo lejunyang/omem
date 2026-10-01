@@ -2,39 +2,58 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
-    "title": "omem-extract 的 OpenAI 界面元数据",
-    "summary": "该 YAML 为技能声明面向界面的名称、简介和默认提示语，使调用入口能够向用户展示“从固定证据提取有范围的记忆候选”。它只描述适配器元数据，不能证明技能已被发现、载入或成功执行。",
+    "title": "omem Extract 的 OpenAI 代理界面配置",
+    "summary": "该 YAML 为 omem Extract 声明面向代理宿主的展示名称、简短说明和默认提示词。它表达“从固定证据中提取限定范围的记忆候选”的角色意图，但仅凭配置不能证明技能加载、证据约束或提取流程已经在运行时实现并通过验证。",
     "category": "configuration",
     "sections": [
       {
-        "key": "interface-metadata",
-        "title": "展示与默认入口",
-        "body": "配置将界面名称设为“omem Extract”，用简短说明强调从固定证据提取带范围的记忆候选，并通过默认提示语请求使用 `omem-extract` 生成证据绑定的记忆提议。[[c1]] 这与技能正文的定位一致，但材料没有给出加载器、平台兼容性或运行验证，因此只能确认静态配置内容。"
+        "key": "interface-purpose",
+        "title": "界面身份与职责定位",
+        "body": "文件以 `interface` 节点声明代理界面，并将其展示名称设为“omem Extract”。简短说明把职责限定为：依据固定证据提取具有明确范围的记忆候选。[[c1]] 这体现的是面向宿主或用户的能力描述，强调候选内容应受证据边界约束；它不是提取算法、数据结构或验证结果本身，也不能单独作为该能力已实现的证据。"
+      },
+      {
+        "key": "default-invocation",
+        "title": "默认调用提示",
+        "body": "默认提示词要求使用 `$omem-extract`，产出受证据约束的记忆提案。[[c2]] 因而该配置承担的是将代理请求导向对应技能的入口作用，并延续“固定证据—候选提案”的约束。材料没有展示技能正文、参数传递、宿主如何解析该标记，亦未提供执行轨迹，所以这里只能确认调用意图，不能确认真实运行行为。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "OpenAI 技能界面配置",
-        "reason": "说明技能的展示名称、简短描述和默认提示语。",
+        "label": "omem Extract 界面声明",
+        "reason": "支持展示名称以及从固定证据提取限定范围记忆候选的职责描述。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
           "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "interface:\n  display_name: \"omem Extract\"\n  short_description: \"Extract scoped memory candidates from fixed evidence\""
+      },
+      {
+        "key": "c2",
+        "label": "omem Extract 默认提示词",
+        "reason": "支持默认请求通过技能标记发起证据约束记忆提案提取的配置事实。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
+          "startLine": 4,
           "endLine": 4
         },
-        "quote": "interface:\n  display_name: \"omem Extract\"\n  short_description: \"Extract scoped memory candidates from fixed evidence\"\n  default_prompt: \"Use $omem-extract to extract evidence-bound memory proposals.\""
+        "quote": "  default_prompt: \"Use $omem-extract to extract evidence-bound memory proposals.\""
       }
     ],
     "questions": [
       {
-        "question": "当前 Agent CLI 或 ACP 是否实际读取该 `agents/openai.yaml` 并解析 `$omem-extract`？",
-        "why": "材料只提供静态界面元数据，没有发现日志、集成测试或加载器实现证据。",
-        "nextStep": "查看技能发现流程，并以真实会话验证显示名称、默认提示与技能绑定。",
+        "question": "运行时宿主是否会解析 `$omem-extract` 并加载对应技能，且实际执行时是否强制固定证据范围？",
+        "why": "当前材料仅包含界面元数据和默认提示词，没有技能实现、宿主绑定配置或运行轨迹，无法据此确认调用链已经接通。",
+        "nextStep": "检查对应技能正文、代理运行时的技能注册与提示词装配逻辑，并用真实执行轨迹验证输入证据边界和输出候选。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c1",
+          "c2"
         ]
       }
     ]
@@ -42,49 +61,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
-      "digest": "8360aadfcdad2fb2f7f55a87fb069e9d35353b2c2eb6d6e965579c855f4c9b57"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
-      "digest": "2270241f396ff675d0d702907dfed9465c7f9078b9ece6ff532611cfaea37140"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
       "digest": "1d51df6a2bf8a9efa743b139e36df5e37ba0eb7b79790635ff73cde54cbd7bb6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
-      "digest": "5a382d0ffad0f254164f51864bc530bc556a6231af09107d4194ec5feecf4039"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
-      "digest": "1fbb87e87e40252797492748cf8809f1a435df9e6db7546360f4b028f8c7b83e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
-      "digest": "986867580df9cfc41b753de7e718bba3e1c6d2fe55a25f86e17ae6da8b57ec8f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:46:52.956Z",
+    "at": "2026-10-01T02:48:14.936Z",
     "trace": {
-      "runId": "b3e5ebb9-937c-47af-b51c-27975e731aa0",
+      "runId": "7e0a5a46-a3fa-4d92-bd4b-c696b38bd083",
       "roleId": "material-analyst",
       "roleVersion": "1",
       "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "45d80c47306fa40772a2beea53b4869f3a0c7cea41c14f47683be2496c351c05",
-      "contextHash": "5af7dbc4645f7a96a96508b8943fe9158bf854159afa44ac3fa0c6177f5f9f09",
+      "promptHash": "d6156e26e269914369f0431dddaf1b449fd0c169107e89ba238bedeab8f4a622",
+      "contextHash": "728431a7a24d3dd43c7736a6e93289f7e90e095d20697b4bc74dd3b27cd53ba6",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "92a84f389485d1e1a3999d57c480361df01eac264085e99663ec506e60988e16",
+      "fingerprint": "8a2f368e0072d65ce2c35bb386bf66d86b2dfc11146cbdf3cb2d62765bd91a2f",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -97,11 +91,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-0aa3-7c33-8a24-575c2462578f"
+        "01a0f55c-829c-71b1-927f-eaea8009b659"
       ],
       "usage": {
-        "used": 21331,
-        "size": 760000,
+        "used": 20977,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -109,10 +103,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 17071,
-          "utf8Bytes": 18691,
-          "estimatedTokens": 6231,
-          "budgetedTokens": 7789,
+          "chars": 6413,
+          "utf8Bytes": 8033,
+          "estimatedTokens": 2678,
+          "budgetedTokens": 3348,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -121,17 +115,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:47:06.872Z",
+    "at": "2026-10-01T02:48:33.361Z",
     "trace": {
-      "runId": "07c35bf7-55c9-49b8-9acc-4219908aaf45",
+      "runId": "f62fd32d-1d02-4728-b310-902f09a5de96",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "08bdef014dcfc514e247672efda5c33a74b8acc092a37b3a77b1b373f03d8cda",
-      "contextHash": "bd9124667ded09be016e3a9db6dd23112c8b7bee3efe8fb7fd7ee657116971d0",
+      "promptHash": "8eeafc20121c026116f80eb8282c3520ffd590186a49f03f415ff916c3b32cb1",
+      "contextHash": "8597c53274138085f53970a20d9fcdc4dc27705fc541c300da4ab061a882da5c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e227ae103c81dd60c9ad3a83f3953eb7cc151ec36e2f9129b6908676c120ce82",
+      "fingerprint": "bcc545ae31900321173ae496f21d07b58da6419ef0648e689460594e8cafa6df",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -144,11 +138,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-aea0-74b0-a4e0-8f10b624efb4"
+        "01a0f55c-e1c4-7593-b927-126177e5cbd7"
       ],
       "usage": {
-        "used": 22302,
-        "size": 760000,
+        "used": 20507,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -156,10 +150,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26150,
-          "utf8Bytes": 33998,
-          "estimatedTokens": 11333,
-          "budgetedTokens": 14167,
+          "chars": 5853,
+          "utf8Bytes": 7993,
+          "estimatedTokens": 2665,
+          "budgetedTokens": 3332,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

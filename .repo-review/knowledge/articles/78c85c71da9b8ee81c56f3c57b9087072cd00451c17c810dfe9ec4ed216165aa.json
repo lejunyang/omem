@@ -2,31 +2,57 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/quality-annotation.test.ts",
-    "title": "飞书质量标注会话验收测试",
-    "summary": "该测试验证质量样本的跳过、修订和进度状态，以及飞书标注卡从连接数据准备、投递、身份校验、事件去重到完成后冻结的会话路径。",
+    "title": "质量标注持久化与飞书交互测试",
+    "summary": "该测试验证质量样本从草稿标注、人工处置到数据集冻结的关键闭环，并覆盖飞书卡片投递、操作者鉴权和事件幂等。它证明了若干可观察行为，但未直接覆盖并发写入、投递失败、密钥轮换及异常事务恢复。",
     "category": "tests",
     "sections": [
       {
-        "key": "repository-state",
-        "title": "标注状态机",
-        "body": "仓库级用例创建 dev 数据集并加入待标注样本，`skip` 操作会持久化为 `skipped` 且不产生 confirmed label；随后修改 draft label 会更新摘要、把样本重新置为 `pending`，并重新计算进度。label digest 在调用中被作为预期摘要传入且会随修订变化；这替代了旧稿中“已证明错误摘要会触发乐观并发冲突”的过强结论，因为本用例没有提交过期摘要并断言拒绝。[[c1]]"
+        "key": "purpose-fixtures",
+        "title": "测试目标与夹具边界",
+        "body": "文件以临时目录创建真实 SQLite `Store`，并在每例结束后清理；`FakeMessages` 只记录发送参数并返回固定消息 ID，因此数据库行为是真实的，而飞书网络投递仍是进程内替身。样本夹具包含来源定位、显式事实、证据文本、自动应用标志与禁止外部操作约束，用来驱动后续标注状态机。[[c1]]\n\n从导入关系可确认测试协作了质量仓储、飞书标注服务、投递 worker、加密密钥存储和稳定摘要模块；但仅凭本文件不能确认这些模块内部的跨文件调用顺序。[[c2]]"
+      },
+      {
+        "key": "skip-revise",
+        "title": "跳过与修订状态转换",
+        "body": "第一项断言先建立单样本数据集，使用当前 `labelDigest` 执行 `skip`，要求持久化结果为 `skipped`、确认标签为空，进度也只计一个跳过项。随后以同一预期摘要修订草稿，关闭 `autoApply` 并修改备注；断言样本重新进入 `pending`、摘要发生变化、进度恢复为待处理。[[c3]] 这覆盖了跳过后返工以及摘要随标签内容变化的行为，也间接体现乐观并发参数的存在，但没有制造旧摘要冲突，因而未证明冲突会被拒绝。"
       },
       {
         "key": "lark-flow",
-        "title": "飞书投递、鉴权与防重放",
-        "body": "集成用例先在临时数据库中建立活动连接、连接版本、owner 私聊绑定和通知目标，再创建两条质量样本并启动标注服务。[[c2]] 投递 worker 发送一张项目卡，动作携带 `omem.quality.v1` 与 confirm 操作，序列化卡片不包含客户端密钥。[[c3]]\n\n入站动作必须来自绑定 owner：攻击者身份被拒且进度不变；合法事件确认首个样本，相同 eventId 重放只标记 duplicate。第二个动作完成剩余样本后，会话进入 completed、当前样本清空，随后冻结成功。这里证明的是“完成后可成功冻结”，而非本文件单独证明未完成会话一定禁止冻结。[[c4]]"
-      },
-      {
-        "key": "test-boundaries",
-        "title": "测试边界",
-        "body": "消息适配器只记录 `send`，其 `update` 是空实现，因此本文件证明的是出站任务、卡片结构和服务端状态推进，不证明真实飞书 API、消息更新、网络重试或限流恢复。[[c5]] 连接数据也是直接写入数据库，未覆盖连接建立与 capability 校验流程；外部投递发生部分成功时，会话和 delivery intent 的一致性仍需专门故障测试。"
+        "title": "飞书卡片闭环与安全断言",
+        "body": "第二项测试直接写入连接、版本、绑定和通知目标，再创建两个样本并启动标注会话。投递 worker 应只发出一张卡片；卡片动作携带 `omem.quality.v1` 与 `confirm`，序列化内容不得泄露客户端密钥。[[c4]]\n\n伪造操作者的动作必须以 `QUALITY_ACTION_REJECTED` 拒绝且不改变进度；合法事件确认首个样本，相同事件 ID 重放只标记为重复。第二张卡片选择另一动作后，两条样本均计为 confirmed，会话转为 completed 且清空当前样本，数据集最终可冻结。[[c5]] 测试未覆盖错误载荷、错误协议、群聊来源、发送或更新失败、事务中断，以及多个 worker 或多个合法操作者竞争同一样本的行为。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "跳过与修订状态转换",
-        "reason": "支持 skipped、pending、预期摘要传入、摘要变化和进度重新计算，同时显示未测试摘要冲突。",
+        "label": "临时存储、消息替身与样本夹具",
+        "reason": "支持测试使用真实临时数据库、伪造消息适配器以及样本输入和草稿标签结构的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-annotation.test.ts",
+          "startLine": 18,
+          "endLine": 65
+        },
+        "quote": "const directories: string[] = [];\nafterEach(() => {\n  for (const directory of directories.splice(0))\n    rmSync(directory, { recursive: true, force: true });\n});\n\nclass FakeMessages implements LarkMessageAdapter {\n  sends: Parameters<LarkMessageAdapter[\"send\"]>[0][] = [];\n  async send(input: Parameters<LarkMessageAdapt"
+      },
+      {
+        "key": "c2",
+        "label": "质量标注测试的模块依赖",
+        "reason": "说明测试显式依赖投递、实时事件、密钥存储、质量服务、仓储、摘要和 Store。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-annotation.test.ts",
+          "startLine": 6,
+          "endLine": 16
+        },
+        "quote": "import {\n  LarkDeliveryRepository,\n  LarkDeliveryWorker,\n  type LarkMessageAdapter,\n} from \"../src/integrations/lark/delivery.js\";\nimport type { LarkInboundEvent } from \"../src/integrations/lark/realtime.js\";\nimport { EncryptedSecretStore } from \"../src/integrations/lark/secret-store.js\";\nimport { QualityLarkAnnotation"
+      },
+      {
+        "key": "c3",
+        "label": "跳过后修订的状态断言",
+        "reason": "支持 skipped 持久化、进度统计、修订后重新 pending 以及标签摘要变化的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -37,22 +63,9 @@
         "quote": "describe(\"B2-08 owner quality annotation\", () => {\n  it(\"maps the skip action to the persisted skipped state\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-quality-skip-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const repository = new QualityRepositor"
       },
       {
-        "key": "c2",
-        "label": "飞书连接与 owner 绑定准备",
-        "reason": "支持集成用例预先建立连接、版本、owner 私聊绑定和通知目标。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/quality-annotation.test.ts",
-          "startLine": 111,
-          "endLine": 160
-        },
-        "quote": "  it(\"sends one project card and advances only authenticated, non-replayed labels\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-quality-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    const secrets = new EncryptedSecretStore(\n      join(directory, \"secrets\"),\n "
-      },
-      {
-        "key": "c3",
-        "label": "质量卡启动与安全投递",
-        "reason": "支持数据集创建、会话启动、worker 投递、协议动作及卡片不泄露 secret。",
+        "key": "c4",
+        "label": "卡片投递与密钥防泄露断言",
+        "reason": "支持启动标注会话、处理一次投递、检查动作协议以及卡片不包含客户端密钥的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -63,9 +76,9 @@
         "quote": "    const repository = new QualityRepository(store.db);\n    const dataset = repository.createDataset({\n      name: \"quality-dev\",\n      split: \"dev\",\n      sourceUri: \"https://example.test/wiki/source\",\n      sourceRevisionId: \"1\",\n      sourceDigest: stableDigest(\"source\"),\n      targetCount: 2,\n    });\n    expect(rep"
       },
       {
-        "key": "c4",
-        "label": "身份校验、幂等与完成后冻结",
-        "reason": "支持伪造动作被拒、合法事件推进、事件重放去重、会话完成以及完成后的冻结成功。",
+        "key": "c5",
+        "label": "鉴权、重放保护与完成冻结",
+        "reason": "支持伪造用户被拒、合法事件推进、重复事件幂等、会话完成和数据集冻结的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -74,29 +87,26 @@
           "endLine": 247
         },
         "quote": "    const event = (\n      eventId: string,\n      value: unknown,\n      senderOpenId = \"ou_qualityowner\",\n    ): LarkInboundEvent => ({\n      appId: \"cli_quality1\",\n      eventId,\n      kind: \"card.action.trigger\",\n      eventTime: new Date().toISOString(),\n      senderOpenId,\n      senderType: \"user\",\n      chatId: \"oc"
-      },
-      {
-        "key": "c5",
-        "label": "伪消息适配器能力",
-        "reason": "说明测试适配器的 send 永远成功且 update 为空，界定外部投递故障覆盖范围。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/quality-annotation.test.ts",
-          "startLine": 24,
-          "endLine": 31
-        },
-        "quote": "class FakeMessages implements LarkMessageAdapter {\n  sends: Parameters<LarkMessageAdapter[\"send\"]>[0][] = [];\n  async send(input: Parameters<LarkMessageAdapter[\"send\"]>[0]) {\n    this.sends.push(input);\n    return { messageId: \"om_quality_card\" };\n  }\n  async update() {}\n}"
       }
     ],
     "questions": [
       {
-        "question": "标注卡发送成功但后续卡片更新失败、网络重试或飞书限流时，会话和 delivery intent 如何保持一致？",
-        "why": "当前 FakeMessages 的 `update` 为空且 `send` 永远成功，未覆盖外部投递失败或重复投递后的恢复语义。",
-        "nextStep": "为 send/update 注入可重试和不可重试错误，断言投递状态、重试次数、事件幂等键及标注进度不被提前推进。",
+        "question": "使用过期的 expectedLabelDigest 修订或标注样本时，仓储会返回何种错误且状态是否保持不变？",
+        "why": "测试传入了摘要作为并发前提，但只验证成功路径，没有构造摘要已变化后的竞争写入。",
+        "nextStep": "增加双读取后先后写入的测试，断言第二次操作被拒绝，并核对样本、进度和会话均未被部分更新。",
         "blocking": false,
         "citationKeys": [
-          "c5"
+          "c3"
+        ]
+      },
+      {
+        "question": "飞书投递失败或重复 worker 竞争同一待发记录时，是否保证不重复发送并可安全重试？",
+        "why": "当前消息替身始终成功，且仅调用一次 processOne，无法证明失败重试和并发领取语义。",
+        "nextStep": "让消息适配器分别抛出可重试错误和永久错误，并以两个 worker 处理同一 outbox 记录，断言投递状态、重试次数及发送次数。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c4"
         ]
       }
     ]
@@ -104,86 +114,61 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/proposal-policy.test.ts",
-      "digest": "19c9fe2b49e81db587a4f3b3e6e956c9e99151c9decd8c4943a5fef2b9bc7d57"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/quality-annotation.test.ts",
       "digest": "bfaabb4a2ba8357da6dc8280e3617fcb16aefbfc81487305b88b4c7291cfd086"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-      "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
-      "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-      "digest": "7785c4def39404faf04f4ecf85bca9fecef6413e7b247cbfb011f4b8aefe9e9c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-dev.test.ts",
-      "digest": "6ac6cc2db82deff33eb27a466db8dab2f3099421e7135506eee453e154604383"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:42:39.792Z",
+    "at": "2026-10-01T02:33:41.635Z",
     "trace": {
-      "runId": "de846aa8-ecfb-46ce-9f5b-ad60c91e1dd0",
-      "roleId": "knowledge-refresher",
+      "runId": "b69be1f8-6d01-4944-be2d-3785f12a3c76",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "a04653e64b1aee49f8d8a27936ad72cb0b98edcb22fc25439ead964964f9ed79",
-      "contextHash": "232695e6ae302d6cb59f85587519ff3f40f8d618e09bdfe734ea6ea2639bbee7",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "3af81c7e4cad2e6c5490a01a045823f5be5520589e6d3cc2d43177de2969c8d8",
+      "contextHash": "f24806ce6aefcb6b6b74bfc0fc4bf95e6cee78843a3f56231e2e80c429c6ee65",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "880a0929ac1c861a10ac0da90fa46ee70dfda02b7ad1ddcc2d8a5ba6512e8e26",
+      "fingerprint": "fdaf1201e1c3c3a128e34c59d67aa0991e98eaa392641e20557c79c4ed1f44ba",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-231d-7710-8ae8-31705aaaf133"
+        "01a0f54f-1e80-78b3-9490-d614453b87f9"
       ],
       "usage": {
-        "used": 59842,
-        "size": 760000,
+        "used": 28167,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -191,10 +176,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 133162,
-          "utf8Bytes": 148656,
-          "estimatedTokens": 49552,
-          "budgetedTokens": 61940,
+          "chars": 27947,
+          "utf8Bytes": 29805,
+          "estimatedTokens": 9935,
+          "budgetedTokens": 12419,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -203,17 +188,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:43:05.172Z",
+    "at": "2026-10-01T02:33:56.979Z",
     "trace": {
-      "runId": "f7c2f4b3-1d22-4cb0-9b35-e4623f259bef",
+      "runId": "0cc59b08-c239-4028-9a17-4cf9439df9cc",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "07656017172ace9a504a9a4e15d8e44fdac9626a31beb6bad34d24f4e80a86ca",
-      "contextHash": "18f49a39ae881ce1e93f00c75d6bd0f991d475016106933c38f13a84e20893ff",
+      "promptHash": "061ff409f503bb133a93640569213aa01ddffad860353065ba14b3543cb63583",
+      "contextHash": "415414c41c80f0a58f42a7fd3b1a9b855f360de6749f19b0aed17d54ceb58d1a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bd489f236376e0c87a42178bf61ca11aed7be51b50aadee17930c3ce9ba1af40",
+      "fingerprint": "2a2f807c07bf95a910809327094577cbf262334074ea7ca5189098167abf6df0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -226,11 +211,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-d089-7b81-8822-2fb9d6a0af82"
+        "01a0f54f-8bb7-76c0-ba8d-f786d4145a98"
       ],
       "usage": {
-        "used": 54548,
-        "size": 760000,
+        "used": 28347,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -238,10 +223,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129043,
-          "utf8Bytes": 141623,
-          "estimatedTokens": 47208,
-          "budgetedTokens": 59010,
+          "chars": 30175,
+          "utf8Bytes": 33575,
+          "estimatedTokens": 11192,
+          "budgetedTokens": 13990,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

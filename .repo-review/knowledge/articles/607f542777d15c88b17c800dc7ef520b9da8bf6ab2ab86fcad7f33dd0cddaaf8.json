@@ -3,219 +3,303 @@
   "document": {
     "key": "module:other:part-2",
     "title": "other · 模块理解 · 专题 2",
-    "summary": "本专题汇总固定输入、代码图与理解结果的生命周期，以及角色测试场景、会话隔离、读取接口和普通采集边界；同时区分已验证行为、协议替身能力与仍待确定的生产约束。",
+    "summary": "本专题汇总仓库中若干跨模块保障能力：固定证据上的代码知识投影、严格合同与输入边界、会话可见性隔离、确定性 ACP 测试替身，以及普通捕获与研究标注的隔离。现有测试证明了关键行为切片，但真实模型链路、多租户授权和部分异常边界仍需单独验证。",
     "category": "overview",
     "sections": [
       {
-        "key": "evidence_foundation",
-        "title": "固定证据与代码图",
-        "body": "文件输入只接受允许根内的普通文本，拒绝逃逸符号链接和二进制内容；Git 输入读取指定修订而非未提交改动。[[c1]] 捕获后的代码被投影为按快照保存的文件、符号和边：相同输入复用快照，不同路径保持独立身份，删除与新提交保留历史，磁盘脏改动须重新捕获后才进入证据。[[c2]] 这使代码图成为固定材料的派生视图，而非另一套事实来源。"
+        "key": "evidence-projection",
+        "title": "固定证据上的代码投影与理解",
+        "body": "代码知识同步不另行捕获文件正文，而是解析已经捕获的 TypeScript/Vue Fragment，并在隔离侧表中形成文件、符号与关系快照；相同输入复用快照，未重产结构按实现约定进入过期状态。[[c1]][[c2]] 人工理解种子再以路径、限定名和类型等稳定定位器解析到当前图，封存输入摘要并做严格交叉引用校验；无效种子留下拒绝记录但不遮蔽有效结果。[[c3]][[c4]]\n\n现有集成测试已覆盖种子幂等、幽灵符号拒绝、源码变化后的 stale 与 supersedes，以及无模型时仍可读取理解和原始图。[[c5]][[c6]] 但真实仓库验收只明确检查五个必需模块，不能据此断言全部种子均已成功复核。"
       },
       {
-        "key": "understanding_flow",
-        "title": "理解生成、封存与替代",
-        "body": "人工 seed 使用路径、限定名和类型描述节点；同步后，有效 seed 以低置信度、无模型、未验证状态进入当前视图，无法解析的符号引用保留为 rejected 历史。快照变化时旧理解标为 stale，新行通过替代关系指向旧行。[[c3]] 模型路径先从当前代码表取得真实符号，再经 HTTP 生成、结构校验和持久化；畸形 JSON、未知引用或超时均不会成为当前理解。[[c4]] 这修正了旧稿中引用范围不足的问题。确定性校验还拒绝不存在的节点、边、证据、越界选择器及摘要不匹配，但它只能证明引用和输入封存有效，不能代替自然语言的语义复核。[[c5]]"
+        "key": "contracts-and-inputs",
+        "title": "合同与外部输入边界",
+        "body": "严格合同把“可解析的提议”与“已经应用的变更”分开：文档 Proposal 示例通过解析后仍没有状态字段，未知字段、正文类型不匹配及更新缺少预期版本都会被拒绝。[[c7]][[c8]] 文件连接器则先解析真实路径并限制在配置根目录内，再执行大小、UTF-8 与空字节检查；Git 连接器校验 ref 和仓库相对路径后，从解析出的固定提交读取对象，因此不会把未提交工作区内容当成该版本证据。[[c9]][[c10]]\n\n这些保障目前主要证明单机文件与 Git 的关键成功、逃逸和二进制场景；Windows 路径、SHA-256 仓库、超时以及稳定错误分类仍未由材料确认。"
       },
       {
-        "key": "runtime_security",
-        "title": "角色测试场景与会话安全",
-        "body": "多角色 ACP 文件只是确定性协议替身：它提供动态模型与推理强度、不同角色合同、超长或非法输出、超时、取消和工具权限请求等测试场景，并要求权限响应为取消；仅凭该文件不能断言宿主运行时已正确处理全部场景或真实模型质量。[[c6]] 会话路由按主体、渠道、聊天和线程复用会话，并记录递增轮次与当前目标。[[c7]] Web 入口强制收口为 owner、web、private；Lark 群聊使用独立命名空间，并在证据送入模型前排除无群聊绑定的私有片段。[[c8]] 中文群聊用例另行证明分词检索可召回不含完整查询字面串的片段。[[c9]] 这些仍是单用户语义，不能外推为完整租户授权。"
+        "key": "conversation-and-runtime",
+        "title": "会话隔离与运行时测试替身",
+        "body": "Web 会话入口由服务器强制收口为 `web/private/owner`，不能通过客户端字段伪造 Lark 群聊身份。Lark 群聊还使用连接版本命名空间创建群组会话，并在召回后过滤无群聊绑定的私有证据；测试同时证明中文分词检索能召回整句 LIKE 无法命中的片段。[[c11]][[c12]]\n\nACP 与角色运行时脚本是确定性协议替身：它们模拟动态模型/推理强度、超时、取消、权限请求和固定角色合同，便于测试宿主协议与解析流程。[[c13]][[c14]] 这些 fixture 明确不是生产模型，且自身使用简化的单会话状态与字符串分支，不能替代真实 Agent CLI/ACP 的能力协商、认证、推理质量或现场运行 trace。"
       },
       {
-        "key": "progress_limits",
-        "title": "当前覆盖与边界",
-        "body": "真实仓库测试已投影 assistant、memory、retrieval、Lark 与 Vue 区域，并验证代码文件、符号、图和源码切片接口；越界切片返回错误。[[c10]] 无模型时，人工理解详情和原始代码图仍可读取。[[c11]] 批次合同测试证明文档提议样例可解析，未知字段、正文类型不匹配和缺少并发版本的更新会被拒绝，但未逐项证明完整样例中的所有字段必填。[[c12]] 普通采集会保存修订和片段，却不会自动创建质量数据集、样本或投递意图；研究导入必须显式启用。[[c13]] 尚未覆盖跨文件调用、跨修订符号续接、大仓库性能、并发生成、真实外部模型兼容性及验证角色的独立身份约束。"
+        "key": "progress-and-limits",
+        "title": "进展、隔离策略与限制",
+        "body": "普通 `Store.capture` 已有回归测试确认会保存 revision 与 fragment，同时不会创建质量数据集、质量样本或外发意图；研究导入器只有携带显式判别值时才可生成标注样本。[[c15]][[c16]] 开发端口选择也经过真实 TCP 冲突测试：默认端口可迁移，显式冲突和非法输入会失败，但探测服务器随后关闭，所以该机制不提供持续端口预留。[[c17]][[c18]]\n\n整体上，这些切片已经把派生知识、输入安全、会话可见性和研究工具隔离到明确边界；底层 Store 仍是单用户 SQLite，团队级数据库与租户强制尚未实现。[[c19]] 当前最重要的验收缺口是：真实模型复核链路、全部种子覆盖、更多连接器入口及并发或跨平台边界，不能由协议 fixture 或局部测试替代。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文件与 Git 输入边界",
-        "reason": "支持允许根内文本读取、逃逸与二进制拒绝，以及固定 Git 修订不读取工作区改动。",
-        "relation": "supports",
+        "label": "代码知识同步职责",
+        "reason": "说明代码图建立在已捕获 Fragment 上，并解释快照复用和过期规则。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/connectors.test.ts",
-          "startLine": 9,
-          "endLine": 58
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 1,
+          "endLine": 10
         },
-        "quote": "it(\"allows bounded plain text but denies escaped symlinks and binary files\", async () => {\n  const dir = await mkdtemp(join(tmpdir(), \"omem-input-\"));\n  try {\n    const root = join(dir, \"root\");\n    await mkdir(root);\n    await writeFile(join(root, \"note.txt\"), \"工作记录\");\n    await writeFile(join(dir, \"outside.txt\"), \"ou"
+        "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
       },
       {
         "key": "c2",
-        "label": "代码快照生命周期",
-        "reason": "支持快照幂等、路径身份、删除历史、旧快照可读及脏改动重新捕获后才成为证据。",
-        "relation": "supports",
+        "label": "代码知识同步测试理解",
+        "reason": "引用子知识对解析、快照生命周期和证据边界的综合说明。",
+        "relation": "background",
         "target": {
-          "kind": "material",
+          "kind": "article",
           "key": "omem:apps/server/tests/code-knowledge.test.ts",
-          "startLine": 143,
-          "endLine": 258
+          "section": "snapshot-lifecycle"
         },
-        "quote": "describe(\"code sync lifecycle\", () => {\n  it(\"is idempotent: second identical sync reuses the snapshot, no duplicate rows\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(root, \"apps/server/src/a.ts\", \"export const a = 1;\\n\");\n    commitAll(root, \"init\");\n    const store = setup();\n    await runReviewS"
+        "quote": ""
       },
       {
         "key": "c3",
-        "label": "人工理解定位与陈旧化",
-        "reason": "完整覆盖 seed 中的路径、限定名和类型定位，以及投影、坏引用隔离和新快照替代旧理解。",
+        "label": "人工理解投影流程",
+        "reason": "支持稳定定位器解析、摘要封存、严格校验及失败不遮蔽有效结果。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 1,
+          "endLine": 25
+        },
+        "quote": "/** Curated Code Understanding projection.\n *\n * Committed seed assets live under `.repo-review/knowledge/understandings/`.\n * They are hand-curated, human-readable module notes that cite the graph by\n * stable locators (repo-relative path + qualified symbol name). At sync time\n * this module:\n *\n *   1. builds the fix"
+      },
+      {
+        "key": "c4",
+        "label": "代码理解种子投影理解",
+        "reason": "引用子知识对人工种子校验和版本生命周期的组织性说明。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
+          "section": "projection-lifecycle"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "种子过期与替代断言",
+        "reason": "支持源码变化后生成新当前理解、旧理解标记 stale 并建立 supersedes 关系。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
-          "startLine": 70,
-          "endLine": 213
+          "startLine": 178,
+          "endLine": 210
         },
-        "quote": "const goodSeed = {\n  result_id: \"seed:module-architect:alpha\",\n  target: { type: \"module\", id: \"apps/server/src/alpha\", title: \"Alpha\" },\n  curated: { by: \"tester\", at: \"2026-09-28T10:00:00Z\", against_commit: \"x\", note: \"fixture\" },\n  output: {\n    module_responsibilities: [\"holds the Alpha fixture surface\"],\n    bound"
-      },
-      {
-        "key": "c4",
-        "label": "模型生成与失败隔离",
-        "reason": "覆盖从当前代码表取得真实符号、HTTP 生成成功，以及格式错误、未知引用和超时不会进入当前理解。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-understanding-model.test.ts",
-          "startLine": 93,
-          "endLine": 243
-        },
-        "quote": "async function preparedRepo() {\n  const root = makeFixtureRepo();\n  writeFile(root, \"apps/server/src/alpha.ts\", ALPHA_TS);\n  commitAll(root, \"init\");\n  const store = setup();\n  await runReviewSync(store, root);\n  await runCodeSync(store, root);\n  const alpha = store.db\n    .prepare(\"SELECT symbol_id FROM code_symbols W"
-      },
-      {
-        "key": "c5",
-        "label": "代码理解确定性校验",
-        "reason": "支持未知引用、越界选择器、未知文件、内嵌 claim 引用和三类摘要不匹配均被拒绝。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-understanding.test.ts",
-          "startLine": 151,
-          "endLine": 227
-        },
-        "quote": "describe(\"deterministic reference validation\", () => {\n  it(\"rejects hallucinated node/edge/evidence ids\", () => {\n    const bundle = roles.load(\"repo-profiler\");\n    const out = validOutput(bundle, {\n      referenced_node_ids: [\"s1\", \"ghost-node\"],\n      referenced_edge_ids: [\"e1\", \"ghost-edge\"],\n      evidence_refs: "
+        "quote": "  it(\"marks the prior understanding stale when the input snapshot changes\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(root, \"apps/server/src/alpha.ts\", ALPHA_TS);\n    writeSeed(root, \"alpha.seed.json\", goodSeed);\n    commitAll(root, \"init\");\n\n    const store = setup();\n    await runReviewSync(stor"
       },
       {
         "key": "c6",
-        "label": "多角色 ACP 协议替身",
-        "reason": "说明该文件是非生产协议替身，并提供动态配置、角色合同、异常输出、超时、取消和权限请求场景。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
-          "startLine": 1,
-          "endLine": 350
-        },
-        "quote": "// Deterministic ACP protocol fixture for role-runtime tests. It is never a production model.\nimport readline from \"node:readline\";\n\nconst args = new Set(process.argv.slice(2));\nconst send = (value) => process.stdout.write(JSON.stringify(value) + \"\\n\");\nconst sessionId = `role-session-${process.pid}`;\nlet model = \"alph"
-      },
-      {
-        "key": "c7",
-        "label": "会话身份、轮次与目标",
-        "reason": "支持会话组合键复用、轮次序号递增、工具动作历史和当前目标保存。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/conversation-router.test.ts",
-          "startLine": 23,
-          "endLine": 93
-        },
-        "quote": "describe(\"V3-04 ConversationRouter\", () => {\n  it(\"opens one conversation per principal+channel+chat+thread key\", () => {\n    const { router } = setup();\n    const first = router.open({\n      principalId: \"owner\",\n      channel: \"lark_p2p\",\n      chatId: \"oc_owner\",\n      visibility: \"private\",\n    });\n    const again "
-      },
-      {
-        "key": "c8",
-        "label": "渠道收口与群聊证据隔离",
-        "reason": "支持 Web 参数由服务器强制收口，以及 Lark 群聊新建命名空间并过滤私有证据。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/conversation-security.test.ts",
-          "startLine": 64,
-          "endLine": 293
-        },
-        "quote": "describe(\"C conversation channel/visibility hardening\", () => {\n  it(\"web API rejects a forged Lark channel or group visibility and forces web/private/owner\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-convsec-\"));\n    directories.push(directory);\n    const previous = process.env.OMEM_SECRET_K"
-      },
-      {
-        "key": "c9",
-        "label": "Lark 中文关键词召回",
-        "reason": "支持完整查询字面串无法命中时，群聊运行链仍通过中文关键词检索召回目标片段。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/conversation-security.test.ts",
-          "startLine": 296,
-          "endLine": 410
-        },
-        "quote": "  it(\"lark group conversation recalls CJK fragments via KeywordRetrieval (not whole-sentence LIKE)\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-larkret-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    const secrets = new EncryptedSecretStore(\n      join(directo"
-      },
-      {
-        "key": "c10",
-        "label": "真实仓库代码图与读取接口",
-        "reason": "支持真实仓库关键区域的代码图覆盖，以及文件、符号、图、源码切片和越界校验接口。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge.test.ts",
-          "startLine": 286,
-          "endLine": 377
-        },
-        "quote": "// ---------------------------------------------------------------------------\n// Real omem repo coverage: assistant / memory / retrieval / lark / web.\n// ---------------------------------------------------------------------------\n\ndescribe(\"real omem repo coverage\", () => {\n  it(\"parses assistant/memory/retrieval/lark"
-      },
-      {
-        "key": "c11",
-        "label": "无模型只读降级",
-        "reason": "支持模型不可用时人工理解列表、详情和原始代码图仍可读取。",
+        "label": "无模型只读服务断言",
+        "reason": "支持模型不可用时理解列表、详情与原始代码图仍可读取。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
           "startLine": 215,
-          "endLine": 249
+          "endLine": 245
         },
         "quote": "  it(\"serves the read-only HTTP surface and states model unavailability; raw graph still works\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(root, \"apps/server/src/alpha.ts\", ALPHA_TS);\n    writeSeed(root, \"alpha.seed.json\", goodSeed);\n    commitAll(root, \"init\");\n\n    const store = setup();\n    awa"
       },
       {
-        "key": "c12",
-        "label": "提议与批次合同边界",
-        "reason": "支持提议样例解析、严格反例以及批次和纠正对象完整样例的当前兼容性。",
+        "key": "c7",
+        "label": "严格提议合同理解",
+        "reason": "引用子知识对提议解析、应用边界和 CAS 前置条件的总结。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/contracts.test.ts",
+          "section": "proposal-boundary"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c8",
+        "label": "提议合同拒绝反例",
+        "reason": "支持未知字段、类型与正文不匹配以及更新缺少预期版本时被拒绝。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/contracts.test.ts",
-          "startLine": 14,
-          "endLine": 89
+          "startLine": 22,
+          "endLine": 40
         },
-        "quote": "describe(\"Batch 2 strict contracts\", () => {\n  it(\"accepts the documented Proposal v1 fixture without treating it as applied\", () => {\n    const proposal = proposalSchema.parse(proposalFixture);\n    expect(proposal.proposal_id).toBe(\"fixture-proposal-1\");\n    expect(proposal.kind).toBe(\"task\");\n    expect(proposal).not"
+        "quote": "  it(\"rejects unknown fields, mismatched bodies and updates without CAS versions\", () => {\n    expect(() =>\n      proposalSchema.parse({ ...proposalFixture, applied: true }),\n    ).toThrow();\n    expect(() =>\n      proposalSchema.parse({\n        ...proposalFixture,\n        kind: \"claim\",\n      }),\n    ).toThrow();\n    "
+      },
+      {
+        "key": "c9",
+        "label": "连接器边界理解",
+        "reason": "引用子知识对文件真实路径防护和 Git 固定版本流程的综合解释。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/connectors.test.ts",
+          "section": "git-flow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "文件与 Git 输入校验实现",
+        "reason": "支持真实路径、纯文本限制、ref 与仓库路径校验及固定提交对象读取。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 10,
+          "endLine": 66
+        },
+        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
+      },
+      {
+        "key": "c11",
+        "label": "群聊隔离与证据过滤理解",
+        "reason": "引用子知识对群聊命名空间和私有证据过滤的组织性说明。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/conversation-security.test.ts",
+          "section": "group-isolation"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "中文群聊召回断言",
+        "reason": "支持 Lark 群聊运行链将中文分词召回的目标片段送入模型证据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/conversation-security.test.ts",
+          "startLine": 367,
+          "endLine": 410
+        },
+        "quote": "    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const realtime = new FakeRealtime();\n    const messages = new FakeMessages();\n    const model = new SpyModel();\n    const host = new LarkRuntimeHost({\n      store,\n      memory,\n      onboarding: noopOnboarding,\n      secrets,\n      realtimeAdapter:"
       },
       {
         "key": "c13",
-        "label": "普通采集与质量评测隔离",
-        "reason": "支持普通采集不创建质量标注工作，并证明研究导入缺少显式启用值时失败。",
+        "label": "通用 ACP 测试代理",
+        "reason": "支持测试替身的非生产定位、动态配置、超时与权限请求分支。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 1,
+          "endLine": 70
+        },
+        "quote": "// Protocol test double: not a production model and never enabled by default.\nimport readline from \"node:readline\";\nconst send = (value) => process.stdout.write(JSON.stringify(value) + \"\\n\");\nlet model = \"alpha\";\nlet effort = \"low\";\nlet promptId;\nlet permission = false;\nconst options = () => [\n  {\n    id: \"model\",\n    "
+      },
+      {
+        "key": "c14",
+        "label": "角色运行时 ACP 代理理解",
+        "reason": "引用子知识对角色合同、协议场景及 fixture 限制的综合说明。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
+          "section": "scenarios-limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c15",
+        "label": "普通捕获隔离断言",
+        "reason": "支持普通捕获保存 Fragment，同时三类质量或外发相关表保持零记录。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
-          "startLine": 36,
-          "endLine": 139
+          "startLine": 42,
+          "endLine": 96
         },
-        "quote": "describe(\"G01 ordinary import does not create quality annotation work\", () => {\n  it(\"persists source revision + fragments but zero quality datasets/samples/cards\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-g01-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n"
+        "quote": "      const receipt = store.capture(\n        captureSchema.parse({\n          source: \"manual\",\n          externalId: \"g01-doc\",\n          title: \"业务说明文档（40段）\",\n          parts: [{ type: \"text\", text: paragraphs }],\n          context: {},\n          provenance: {\n            collectorId: \"g01-test\",\n            actorId: "
+      },
+      {
+        "key": "c16",
+        "label": "研究导入显式准入",
+        "reason": "支持缺少 opt-in 时失败、显式研究判别值存在时才生成样本。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+          "startLine": 98,
+          "endLine": 138
+        },
+        "quote": "  it(\"guards the eval-only importer against accidental ordinary-path use\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-g01-guard-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const repository = new QualityRepository(store.db);\n      const document = cap"
+      },
+      {
+        "key": "c17",
+        "label": "开发端口冲突测试理解",
+        "reason": "引用子知识对默认端口迁移、显式冲突失败和未覆盖边界的总结。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/dev-ports.test.ts",
+          "section": "boundaries"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c18",
+        "label": "端口探测实现",
+        "reason": "支持端口范围校验、冲突处理及探测后立即释放端口的限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-ports.ts",
+          "startLine": 3,
+          "endLine": 23
+        },
+        "quote": "/** Defaults may move; explicit ports fail loudly. The chosen port is passed to\n * both the backend and proxy, so the browser never connects to another API. */\nexport async function selectDevPort(value: string | undefined, fallback: number, label: string): Promise<number> {\n  const port = value === undefined ? fallback"
+      },
+      {
+        "key": "c19",
+        "label": "单用户 SQLite 边界",
+        "reason": "支持当前存储是单用户基础，团队级数据库和权限强制仍属后续迁移。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 5
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */"
       }
     ],
     "questions": [
       {
-        "question": "代码理解的“已由 agent 验证”是否必须由不同于生成者的白名单角色完成，并校验角色版本？",
-        "why": "现有成功样例使用 relation-verifier 角色生成，同时把 verified_by 设为 relation-verifier@1，只证明该非空值能够通过，尚不能证明独立复核或身份约束。",
-        "nextStep": "增加同角色自签、不同白名单角色验证、未知验证者和版本不匹配的独立反例，再固定验证语义。",
+        "question": "真实 Agent CLI/ACP 生成与独立复核链路是否已有可重复的现场验收记录？",
+        "why": "现有材料中的 ACP 脚本和本地 HTTP 模型均为受控 fixture，只能验证协议、传输和宿主校验，不能证明真实模型发现、能力协商、运行 trace 与独立 verifier 可用。",
+        "nextStep": "执行真实模型配置下的生成与复核检查，记录模型身份、effort、退出状态、预算、运行 trace、引用校验和失败时旧有效结果是否保留。",
         "blocking": false,
         "citationKeys": [
+          "c13",
+          "c14"
+        ]
+      },
+      {
+        "question": "真实仓库是否需要把全部已提交理解种子纳入 reviewed、stale、rejected、failed 和 missing 的完整验收？",
+        "why": "当前集成测试只明确确认五个必需模块存在当前人工种子，不能排除其他种子未解析或处于失败状态。",
+        "nextStep": "枚举种子资产并通过包含历史状态的查询逐项核对，再抽查节点定位、原文引用和 supersedes 链。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
           "c5"
         ]
       },
       {
-        "question": "在把代码理解链用于更大仓库前，应采用哪些规模、并发、延迟和恢复指标作为验收门槛？",
-        "why": "现有材料证明真实仓库的基础覆盖及模型失败隔离，但没有给出超大仓库同步、并发生成、取消恢复或外部模型延迟的性能与可靠性目标。",
-        "nextStep": "确定代表性文件与符号规模、并发任务数、超时预算和恢复要求，再补充基准及并发行为测试。",
+        "question": "文件、Git、HTTP、Lark 与输入聚合入口是否都需要统一的跨平台错误合同和研究标注隔离测试？",
+        "why": "当前证据覆盖文件与 Git 的关键边界，以及直接 Store.capture 不创建质量工作，但未穷尽所有入口、Windows 路径、SHA-256 Git、超时和稳定错误码。",
+        "nextStep": "先确定支持平台与调用方依赖的错误语义，再为各入口补充端到端隔离、资源限制和异常分类断言。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c10"
+          "c9",
+          "c10",
+          "c15",
+          "c16"
         ]
       }
     ]
@@ -228,8 +312,28 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "b9d4fd78e9180e1d8d6d4b7ec092e15f38292d6c0f1346e2e6483c6dbeca3637"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
       "digest": "aeb1e454f5fe809dbfb9574bf9746feedb4997b631e6dab73a50c9e78897b089"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
     },
     {
       "kind": "material",
@@ -243,8 +347,18 @@
     },
     {
       "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/tests/connectors.test.ts",
       "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
     },
     {
       "kind": "material",
@@ -274,12 +388,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
-      "digest": "313ea67e92b023f8a3ca1a3a9e12d60362719e018b559c88f3da0fae95646c18"
+      "digest": "e8e660c57da3a30ff706140e6836d699f3cca576a26b372c1d5a23ae722d1a9d"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
-      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
+      "digest": "11f1e4b8fc33705d5f254cd190c016641f5797d17fa11ad615be6d113554f2ed"
     },
     {
       "kind": "material",
@@ -294,27 +408,27 @@
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-knowledge.test.ts",
-      "digest": "1699fa5a91e480ded83494debba0273f658c620151c60c2020e549d8347b48a6"
+      "digest": "459b1cf2d40371ca8f75da6f9acf65c6696b84889604cf8bb6e5caffe97f310e"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
-      "digest": "7fd72a90496e87a000fec85098027da2a3e3624c11e60a266e88c12b3d58e910"
+      "digest": "a44bc00b46ea7fd0055744684f7035c05dfa0f439c0d3bab4cd911ac05964a33"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-understanding-model.test.ts",
-      "digest": "47df724ae6fd2a17a173df856d87a08d3eece6ab53208232dac399b27edec9a3"
+      "digest": "55fb1e525f36e9fac82dc48fd6ad05f9c851e26d591b89f9ffc7730f9a937052"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-understanding.test.ts",
-      "digest": "b8deb99ed0ea279434f83b9df20aba0bfc89c677aca1aff1323849d5ab773175"
+      "digest": "3cafca91b44581aff1bc7d220e1c17b7abe40183e87fe64c5c57518126012049"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/connectors.test.ts",
-      "digest": "aae2e7b9036ff0f7d2f0dedb27db5132e1dd14490c9dc717e91f3b146a30620d"
+      "digest": "ca11d94bbe0b94e0449da9eedd67a23fee2edd82e94b508544e3243d2ab79942"
     },
     {
       "kind": "article",
@@ -334,55 +448,57 @@
     {
       "kind": "article",
       "key": "omem:apps/server/tests/dev-ports.test.ts",
-      "digest": "a742aaea7eafa5c5538abe2af0015603897c83d616ff96a1f2e956dbf0fcaecd"
+      "digest": "04ff5f1811f0548d9609e685053ca2a0c303fbabf7ea342834528e5765ce3a7e"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
-      "digest": "45c0f15da94d180180b46ccc72cf2a76ca26cf6cbec663e2cbbfaf24b9da034c"
+      "digest": "8b03fd17de2e7c08af8bea38814b73e9484e799353f3c4d93fe948f025ff4f02"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
-      "digest": "016b71d6f456d7b1727fcfa228d4293689c48ad9c4cbab8d0a15c1df7d865919"
+      "digest": "fe7e436eebb03f172d855b1ce93e7851da15a3b62961d64e816471e3bd9fb990"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
-      "digest": "43d938a13aaa8707e16eda0317bbc9cbb72fd92bf4fa6b086a60ee9016569621"
+      "digest": "39714a8bd693f0e35272b2625d06ac10429497342e7504123454f92cdfdc5d99"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:58:49.821Z",
+    "at": "2026-10-01T03:16:17.470Z",
     "trace": {
-      "runId": "5e59c622-d28c-4b58-9973-18b2b19fcfee",
-      "roleId": "knowledge-refresher",
+      "runId": "43e48d5c-078e-46c6-bd0b-9fe038a0148e",
+      "roleId": "knowledge-writer",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "2cce0fe44d8446fda4c66874c007d1760a2eb98f2fae01fe0a107c6a58325850",
-      "contextHash": "875627e81adfe2adcda638eb73ed13d1f0d69370642b4434f71cef93bf2ad2df",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "bd660e990a8626c4080083800ec2e5bb838f1187bd5edd12f163c33bd12fdc04",
+      "contextHash": "09d2a1b419d598f6dcfbe013a99fcf28093d5e70f4c34a80b1f6a29804aada49",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "acf54d89ea853c5d597ea0922f4d651b82da7317b1385fc0ec9c702476881004",
+      "fingerprint": "26075771d68099f0f0ca15d31c6485b8d0f2336a71fb965c95e24f0c8fe0ca35",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-knowledge-writer",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef6-230e-7c12-acfa-25367a807e93"
+        "01a0f574-cc47-7cc3-a711-f1f414a3e9eb",
+        "01a0f575-6533-7832-9bf5-555b60f30d17",
+        "01a0f575-fa46-7172-8a5c-3b45d31625c2"
       ],
       "usage": {
-        "used": 75954,
-        "size": 760000,
+        "used": 100821,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -390,29 +506,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 191706,
-          "utf8Bytes": 215472,
-          "estimatedTokens": 71824,
-          "budgetedTokens": 89780,
+          "chars": 234150,
+          "utf8Bytes": 266440,
+          "estimatedTokens": 88814,
+          "budgetedTokens": 111018,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 0
+      "repairAttempts": 2
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:58:59.726Z",
+    "at": "2026-10-01T03:16:48.281Z",
     "trace": {
-      "runId": "e2919a62-fe4d-4204-8d90-7dbe1de1a263",
+      "runId": "5df33eaa-e2be-4723-aaa5-25784daeaeaf",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "28a75a4ec41fefeb28a77ec294137c0b5a2661588276eece9137de491e95a1d3",
-      "contextHash": "49c75a72d16d8a9c71b1ef273af99188d74bf0eaab468d3cc7fddd1e60ad34e4",
+      "promptHash": "e228f55be90d4603bcc397b2d62f1ce51507660d272a772f2d53cfa759681f0a",
+      "contextHash": "e49d284bd82d00eeedfb122a251a916ccc3f1ab6d5cc9f6ca53c9e555ad62aec",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b5114959b3cfa3351def99cda1b9001538ff5157d83dec7cee6d532c3fe48eea",
+      "fingerprint": "20b3306abe48c58b8c996f7f3bef7b250ce9686f74801a425cb82cdf49592907",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -425,11 +541,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef6-8c0a-7e60-87db-8450e6f3d675"
+        "01a0f576-8e1c-71f0-aa35-609d0476b4b7"
       ],
       "usage": {
-        "used": 73194,
-        "size": 760000,
+        "used": 98395,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -437,10 +553,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 190334,
-          "utf8Bytes": 212506,
-          "estimatedTokens": 70836,
-          "budgetedTokens": 88545,
+          "chars": 242306,
+          "utf8Bytes": 278070,
+          "estimatedTokens": 92690,
+          "budgetedTokens": 115863,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

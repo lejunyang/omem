@@ -2,44 +2,57 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/acp-model.test.ts",
-    "title": "ACP 助手模型的路由与回复解析测试",
-    "summary": "该测试覆盖助手模型在未配置、CLI 与 ACP profile 下的路由结果，以及结构化回复、任务调用和引用 ID 的基础解析；现有历史预算用例仅验证构造参数可接受，尚未观测真实提示词截断。",
+    "title": "ACP 助手模型的传输路由与回复解析测试",
+    "summary": "该测试文件验证助手模型在缺少配置、误用 CLI 传输和使用 ACP 传输时的失败边界，并覆盖结构化 JSON 回复到内部回答、引用和创建任务调用的解析。它同时暴露两个未被行为性证明的点：ACP 用例只依据错误消息判断是否越过路由检查，历史预算用例仅验证实例可构造。",
     "category": "tests",
     "sections": [
       {
         "key": "transport-routing",
-        "title": "传输路由与失败边界",
-        "body": "测试分别构造 ACP 与 `codex-cli` profile。未配置 profile 时，`generate` 应以 `ModelUnavailableError` 失败；CLI profile 同样失败，且错误消息必须包含“CLI transport”，从而确认 CLI 不会被误送入 ACP 通道。[[c1]]\n\nACP profile 用例最终也得到 `ModelUnavailableError`，但消息不含“CLI transport”。这只能证明它没有命中 CLI 拒绝分支；当前断言没有观测进程、传输调用或具体错误来源，因此不能确认失败一定发生在外部命令启动阶段。此前“已尝试启动”的结论由这一更窄的边界说明替代。[[c2]]"
+        "title": "传输路由的失败边界",
+        "body": "测试用两个 `AgentProfile` fixture 区分 ACP 与 `codex-cli`。无 profile 时，`generate` 必须抛出 `ModelUnavailableError`；CLI profile 也必须被拒绝，且错误消息包含“CLI transport”，从而防止把一次性 CLI 错当成 ACP 会话。[[c1]] 这与适配器的生产约束一致：只有 `transport === \"acp\"` 才继续，缺配置或其他传输都会明确降级，且不生成伪答案。[[c2]]\n\nACP fixture 使用不存在的命令，预期最终仍是 `ModelUnavailableError`，但消息不能包含 CLI 路由错误。该断言只能说明错误表现不同，不能严格证明进程创建确已发生，也未覆盖真实 ACP 握手、鉴权、超时和成功回复。[[c3]]"
       },
       {
         "key": "reply-parsing",
-        "title": "结构化回复解析",
-        "body": "合法 JSON 中的答案、字符串引用 ID 与 `create_task` 会被转换成运行时回复及单个工具调用，任务标题、详情和依据引用均受到断言。[[c3]] 当输入省略 `create_task` 时，解析结果不产生 `toolCalls`；非 JSON 文本或缺少 `answer` 的对象会抛错。[[c4]] 此处没有传入显式的 `create_task: null`，因此此前关于“任务值为 null”的已验证结论被删除。\n\n混合类型的 `citation_ids` 会过滤掉数字和空值，仅保留字符串。[[c5]] 现有覆盖仍未确定畸形任务对象、任务时间字段、空答案或未知字段应整条拒绝还是局部忽略。"
+        "title": "结构化回复解析合同",
+        "body": "解析测试把 JSON 中的 `answer`、`citation_ids` 和可选 `create_task` 转成运行时回复：回答文本与引用顺序被保留，创建任务被规范成一个 `toolCalls` 项；当 `create_task` 为空缺时则不产生工具调用。[[c4]] 运行时合同说明引用是回答实际依赖的 fragment 标识，而工具调用仍需服务端重新治理，因此这里验证的是解析形状，不代表任务已获授权或真正创建。[[c5]]\n\n异常路径覆盖非 JSON、缺少 `answer`，并确认混合类型的 `citation_ids` 会过滤掉数字和空值。[[c6]] 尚未看到对空白回答、重复引用、畸形 `create_task` 字段、额外字段、更新时间或二次检索字段的断言。"
       },
       {
         "key": "history-budget",
-        "title": "历史预算测试的实际覆盖",
-        "body": "名为“截断历史到 `maxPriorTurns`”的用例仅以 `maxPriorTurns: 3` 构造模型，并断言实例类型。注释承认没有拦截 ACP 调用，实际也未调用 `generate` 或检查生成提示词。[[c6]] 因而它只能证明构造参数被接受，不能证明只保留最后三轮、轮次顺序正确，或单轮回复长度限制生效。"
+        "title": "历史预算测试的实际覆盖范围",
+        "body": "名为“truncates prior turns”的用例传入 `maxPriorTurns: 3`，但没有调用 `generate` 或检查最终 prompt，只断言对象成功构造；注释也明确承认截断逻辑位于内部、当前未被拦截验证。[[c7]] 实现材料显示真实逻辑会取最近若干轮，默认上限为 10，并把每轮助手结果截到 500 字符。[[c8]] 因此该用例目前是构造器兼容性检查，不能作为历史截断顺序、默认值、零值行为或 prompt 长度受控的证据。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "缺失配置与 CLI 路由测试",
-        "reason": "支持未配置 profile 会失败，以及 CLI profile 被明确识别并拒绝的论断。",
+        "label": "传输路由测试",
+        "reason": "支持无配置与 CLI profile 均被明确拒绝，以及错误类型和消息断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/acp-model.test.ts",
-          "startLine": 25,
+          "startLine": 9,
           "endLine": 56
         },
-        "quote": "describe(\"AcpAssistantModel transport routing (G)\", () => {\n  it(\"rejects when no profile is configured\", async () => {\n    const model = new AcpAssistantModel({ profile: null, workspaceRoot: \".\" });\n    await expect(\n      model.generate({\n        userText: \"hi\",\n        priorTurns: [],\n        evidence: [],\n        v"
+        "quote": "const acpProfile: AgentProfile = {\n  id: \"test-acp\",\n  name: \"Test ACP\",\n  transport: \"acp\",\n  command: \"nonexistent-acp\",\n  args: [],\n};\n\nconst cliProfile: AgentProfile = {\n  id: \"test-cli\",\n  name: \"Test CLI\",\n  transport: \"codex-cli\",\n  command: \"codex\",\n  args: [],\n};\n\ndescribe(\"AcpAssistantModel transport routing "
       },
       {
         "key": "c2",
-        "label": "ACP profile 失败断言",
-        "reason": "支持 ACP profile 的结果为模型不可用且错误消息不含 CLI transport，同时限定断言无法证明具体失败阶段。",
+        "label": "ACP 模型路由实现",
+        "reason": "解释测试对应的生产行为：仅接受 ACP，其他传输抛出模型不可用错误。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 12,
+          "endLine": 45
+        },
+        "quote": "/**\n * Production assistant model adapter. It reuses the project's real ACP transport\n * (`acp()` from agents.ts) against a configured AgentProfile.\n *\n * G: transport routing is enforced here:\n *  - profile.transport === \"acp\" → real ACP session;\n *  - any CLI transport (codex-cli / trae-cli / claude-cli) → ModelUnava"
+      },
+      {
+        "key": "c3",
+        "label": "ACP 失败路径测试",
+        "reason": "支持 ACP fixture 最终失败但不得呈现 CLI 路由错误，并界定该断言能够证明的范围。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -50,48 +63,48 @@
         "quote": "  it(\"accepts acp transport (will fail on spawn, but not on transport check)\", async () => {\n    const model = new AcpAssistantModel({\n      profile: acpProfile,\n      workspaceRoot: \".\",\n    });\n    // Should NOT throw \"CLI transport not supported\" — it should try to spawn\n    // and fail with a transport/spawn error "
       },
       {
-        "key": "c3",
-        "label": "合法回复与创建任务解析",
-        "reason": "支持答案、引用 ID 和合法 create_task 被转换为预期运行时结构。",
+        "key": "c4",
+        "label": "助手回复解析测试",
+        "reason": "支持回答、引用、创建任务调用及无任务回复的具体解析断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/acp-model.test.ts",
           "startLine": 81,
-          "endLine": 102
+          "endLine": 109
         },
         "quote": "describe(\"parseAssistantReply (G fixture parsing)\", () => {\n  it(\"parses a well-formed JSON reply with citations and create_task\", () => {\n    const raw = JSON.stringify({\n      answer: \"接口在 GET /v1/items。\",\n      citation_ids: [\"frag-1\", \"frag-2\"],\n      create_task: {\n        title: \"补文档\",\n        detail: \"加示例\",\n    "
       },
       {
-        "key": "c4",
-        "label": "缺省任务与错误输出处理",
-        "reason": "支持省略 create_task 时不生成工具调用，并支持非 JSON 与缺少 answer 时抛错；输入未覆盖显式 null。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/acp-model.test.ts",
-          "startLine": 104,
-          "endLine": 117
-        },
-        "quote": "  it(\"parses a reply without create_task (null)\", () => {\n    const raw = JSON.stringify({ answer: \"好的\", citation_ids: [] });\n    const reply = parseAssistantReply(raw);\n    expect(reply.answer).toBe(\"好的\");\n    expect(reply.toolCalls).toBeUndefined();\n  });\n\n  it(\"throws on non-JSON output\", () => {\n    expect(() => pa"
-      },
-      {
         "key": "c5",
-        "label": "引用 ID 类型过滤",
-        "reason": "支持解析器仅保留 citation_ids 中字符串元素的容错行为。",
-        "relation": "supports",
+        "label": "运行时回复合同",
+        "reason": "解释 citationIds 与受服务端治理的 toolCalls 在运行时中的职责边界。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/acp-model.test.ts",
-          "startLine": 119,
-          "endLine": 126
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 23,
+          "endLine": 63
         },
-        "quote": "  it(\"ignores malformed citation_ids (non-strings filtered)\", () => {\n    const raw = JSON.stringify({\n      answer: \"ok\",\n      citation_ids: [\"f1\", 123, null, \"f2\"],\n    });\n    const reply = parseAssistantReply(raw);\n    expect(reply.citationIds).toEqual([\"f1\", \"f2\"]);\n  });"
+        "quote": "export type AssistantCreateTaskCall = {\n  tool: \"create_task\";\n  title: string;\n  detail: string;\n  /** Evidence fragments the task is grounded on; the server re-validates both\n   *  visibility and owner provenance before creating anything. */\n  citationIds?: string[];\n  dueAt?: string | null;\n  dueExpression?: string "
       },
       {
         "key": "c6",
-        "label": "历史预算占位用例",
-        "reason": "支持该用例只验证模型构造成功、没有观测 generate 内历史截断行为的结论。",
+        "label": "畸形回复处理测试",
+        "reason": "支持非 JSON、缺失回答以及非字符串引用被过滤的边界行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/acp-model.test.ts",
+          "startLine": 111,
+          "endLine": 126
+        },
+        "quote": "  it(\"throws on non-JSON output\", () => {\n    expect(() => parseAssistantReply(\"this is not json at all\")).toThrow();\n  });\n\n  it(\"throws when answer is missing\", () => {\n    expect(() => parseAssistantReply(JSON.stringify({ citation_ids: [] }))).toThrow();\n  });\n\n  it(\"ignores malformed citation_ids (non-strings filte"
+      },
+      {
+        "key": "c7",
+        "label": "历史预算用例",
+        "reason": "表明该用例只构造带 maxPriorTurns 的模型，没有行为性验证历史截断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -100,27 +113,40 @@
           "endLine": 141
         },
         "quote": "describe(\"AcpAssistantModel history budget (G)\", () => {\n  it(\"truncates prior turns to maxPriorTurns\", async () => {\n    // We can't easily intercept the acp() call, but we verify the constructor\n    // accepts maxPriorTurns and the prompt truncates by spying on console.\n    // Instead, we test that the model construc"
+      },
+      {
+        "key": "c8",
+        "label": "历史上下文裁剪实现",
+        "reason": "解释实际截断最近轮次、默认上限和单轮结果裁剪规则，以对照测试缺口。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 47,
+          "endLine": 56
+        },
+        "quote": "    // History budget: truncate old turns to keep context bounded.\n    const maxPrior = this.deps.maxPriorTurns ?? 10;\n    const priorBlock = input.priorTurns.length\n      ? input.priorTurns\n          .slice(-maxPrior)\n          .map(\n            (t) => `user: ${t.userText}\\nassistant: ${t.result.slice(0, 500)}`,\n     "
       }
     ],
     "questions": [
       {
-        "question": "是否需要把历史预算用例补成可观测 `generate` 提示词的行为测试？",
-        "why": "当前用例只断言对象构造成功，无法发现历史截断失效、保留顺序错误或边界值回归。",
-        "nextStep": "为 ACP 调用注入可替换的传输函数或模块 mock，捕获生成提示词，并断言只包含最后三轮且顺序正确。",
+        "question": "是否需要把历史预算用例改成可观察最终 prompt 的行为测试？",
+        "why": "当前测试名称声称验证截断，但实际只断言构造成功，无法发现切片方向、默认上限或单轮文本裁剪的回归。",
+        "nextStep": "为 ACP 调用注入可替换的传输函数或 mock 边界，捕获 prompt，并断言仅保留最后三轮及每轮助手结果最多 500 字符。",
         "blocking": false,
         "citationKeys": [
-          "c6"
+          "c7",
+          "c8"
         ]
       },
       {
-        "question": "结构化回复对畸形 `create_task` 和无效任务时间字段应整条拒绝，还是忽略无效工具调用并保留答案？",
-        "why": "现有测试只覆盖合法任务、任务字段缺省、无效顶层 JSON、缺少答案及引用元素过滤，无法确定部分无效工具请求的预期策略。",
-        "nextStep": "先明确解析合同，再增加显式 `create_task: null`、缺少标题、错误引用类型、无效时间及额外字段的测试。",
+        "question": "ACP 路由用例是否应直接验证传输调用，而不是依赖错误消息排除 CLI 分支？",
+        "why": "不存在命令产生的错误可能随底层封装变化；“消息不含 CLI transport”不能严格证明 ACP 会话函数被调用。",
+        "nextStep": "注入或 mock ACP 传输，断言调用次数、profile 与工作目录参数，并另设 spawn 失败映射测试。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4",
-          "c5"
+          "c2",
+          "c3"
         ]
       }
     ]
@@ -134,49 +160,49 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
+      "digest": "efa43a2948fcae9611fe88e8ae00d6421136e04e43ba1761bda2a2fa0047665a"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
+      "digest": "17df8759d854439c570682baacfc9fca8589ebf402c35720af881a8a20bb0589"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:23:57.554Z",
+    "at": "2026-10-01T02:21:56.433Z",
     "trace": {
-      "runId": "91069a35-c7f3-45ba-b955-d3fa7670ce91",
-      "roleId": "knowledge-refresher",
+      "runId": "5f2178b8-4eac-4ed8-b63b-b9b7bcafecab",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "24bf92b626e19d49c6eeb2a318a83d9888887719b10dfceebd38df927428826d",
-      "contextHash": "ae4fc2a63e502c869dfc9a2ed905c53183a852da13d35276d5fdffb401952a7f",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "a61ee02fefbdc80b5d2e1debeeba40b6d3ab10293e467193a069e11dc0c79190",
+      "contextHash": "1e954698a772e9e401a3b33e29df29ad99f41b7a341801ff30dea4e82e349975",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "78ecb880761d1014060b5abdf4ae86e97fd553422ba85229c1f94ad2aa705949",
+      "fingerprint": "18207b6a7651747c37619c61da9d8029d5a1be9d7a20002e10fbbfced9b002c0",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4d8-6823-7a52-9fc7-d67facdf92ce"
+        "01a0f544-5ad2-7cc0-bc0a-2456eb6e7543"
       ],
       "usage": {
-        "used": 29258,
+        "used": 27028,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -185,10 +211,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 29048,
-          "utf8Bytes": 33596,
-          "estimatedTokens": 11199,
-          "budgetedTokens": 13999,
+          "chars": 23154,
+          "utf8Bytes": 25018,
+          "estimatedTokens": 8340,
+          "budgetedTokens": 10425,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -197,17 +223,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:24:14.748Z",
+    "at": "2026-10-01T02:22:12.312Z",
     "trace": {
-      "runId": "6be9f344-03a3-4d68-bf32-3f7d7c570ae3",
+      "runId": "2f672303-9491-4bf9-8d35-636ceadb2ded",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "db258e3532fac34116d950836c64b94f348217f6db2ac6c3471749fab6e2025a",
-      "contextHash": "130ee5f6571da2bb0498456d964639f14fb4f86f51fa38a4d65c38daa34b1d5b",
+      "promptHash": "71fe95f696b1e2e394c99edaf814a56df5a43851858253223832c8ee25ce21be",
+      "contextHash": "8205565926cb7c1dfc84f0d0b8924142a537f172e507cd915a064744e09b57bd",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "004d7f0ae2c09adf25049605ff6a1f88966c2b48cc72ef6c000b80b0c5ed892a",
+      "fingerprint": "17faab3413a84c57255adfb4f1187a13c54a3412b3ef960063f0dc93047a8899",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -220,10 +246,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4d8-c731-7e52-8842-41528a4c18d8"
+        "01a0f544-ccd8-78a1-9524-b811583d3a87"
       ],
       "usage": {
-        "used": 26943,
+        "used": 27399,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -232,10 +258,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 25876,
-          "utf8Bytes": 28974,
-          "estimatedTokens": 9658,
-          "budgetedTokens": 12073,
+          "chars": 27222,
+          "utf8Bytes": 30632,
+          "estimatedTokens": 10211,
+          "budgetedTokens": 12764,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

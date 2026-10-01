@@ -3,26 +3,36 @@
   "document": {
     "key": "module:web",
     "title": "web · 模块理解",
-    "summary": "现有固定材料只能确认 Web 模块具有中文浏览器入口：页面声明字符集与移动端视口，显示“omem · 个人工作记忆”标题，提供应用挂载容器，并加载模块化主脚本。此前关于 Vue/Vite 架构、双模式流程、共享 Trail、Code Wiki 和接口限制的结论因缺少对应固定源码，暂不作为已复核事实保留。",
-    "category": "architecture",
+    "summary": "Web 模块是 omem 面向中文用户的浏览器交互入口，以 Vue/Vite 承载个人工作记忆和本地仓库评审两种模式。它串联采集、固定证据阅读、知识整理、用户决策与 Code Wiki 下钻，并复用共享 UI 的证据 Trail。主要待核实项包括服务端持久化语义、异步竞态、超长深链、生产部署和真实浏览器验收。",
+    "category": "overview",
     "sections": [
       {
-        "key": "verified-entry",
-        "title": "已确认的浏览器入口",
-        "body": "当前可独立核验的范围仅限 HTML 外壳。页面语言设为简体中文，声明 UTF-8 字符集与响应式视口，并以“omem · 个人工作记忆”作为浏览器标题；正文提供 `#app` 容器，同时通过模块脚本加载 `/src/main.ts`。[[c1]] 这说明该文件承担浏览器启动入口职责，但仅凭挂载节点和脚本路径，不能进一步确认主脚本采用何种框架、如何加载样式，或后续界面由哪些组件组成。"
+        "key": "role-and-boundary",
+        "title": "定位、背景与运行边界",
+        "body": "Web 页面以 `#app` 为挂载点，由 `/src/main.ts` 启动模块脚本，HTML 语言与产品标题均面向中文个人工作记忆场景。[[c1]] 顶层应用启动时先探测仓库评审环境，未命中才初始化个人工作区；两种模式共享前端外壳，但个人接口使用会话令牌，repo-review 则是面向本机的读取、浏览与同步表面，不能据此推断二者共享认证或租户隔离。[[c2]][[c3]]\n\n开发基础设施由 Vite 配置注册 Vue 插件，使 Vue 单文件组件进入开发与构建流程；现有材料不能进一步确认 Vue 的主版本。[[c4]] 本地开发服务器监听回环地址，并把 `/api` 代理到本地后端；该配置仅描述开发链路，不能证明生产部署方式、后端路由归属或多租户保障。[[c5]]"
       },
       {
-        "key": "superseded-scope",
-        "title": "被替代的模块综述范围",
-        "body": "旧稿曾将 Web 描述为 Vue/Vite 总装层，并概括个人工作区、仓库评审、共享证据 Trail、采集、追问、学习、决策、通知和代码关系导航。此次复核后，这些结论均被“尚待固定源码核验”替代：允许材料只有入口 HTML，其中没有服务探测、状态加载、路由、组件装配、接口请求或关系处理逻辑。[[c1]] 派生子文章仍可作为后续取材线索，但在补齐其所依据的固定修订与精确行范围之前，不能据此扩展本模块的已确认职责、流程或能力边界。"
+        "key": "personal-workflow",
+        "title": "个人记忆的采集、阅读与行动闭环",
+        "body": "个人模式把文本、图片、链接及来源上下文组织为采集输入，保存后进入固定修订阅读。用户可以查看片段与历史版本，以当前片段或整条阅读路径作为问答上下文，并在完成后回查依据；界面同时明确，材料可回查不等于回答中的每项主张都已自动核验。[[c6]]\n\n知识整理页把主题正文、材料覆盖、固定引用和原始材料接入阅读栈；证据不足的内容保留为疑问，而非被正文强行补全。[[c7]] 学习轨迹、人工判断、通知回执、日常助理和飞书接入进一步连接后台处理与用户决策，但前端提交成功只能证明请求已经发出，不能独立证明服务端持久化、幂等、加密保存或后续重核验最终成功。[[c8]]"
+      },
+      {
+        "key": "review-workflow",
+        "title": "仓库评审、代码关系与统一下钻",
+        "body": "repo-review 提供仓库知识、材料浏览、固定版本阅读、全文搜索、代码追溯和同步状态等视图。确认关系来自人工维护的关联清单，词语相近只形成候选；界面可区分确认、候选、缺失和过期状态，并展示缺失目标。此前把所有缺失或过期目标概括为必然同时展示人类可读原因，超出了现有证据，现已由这一较窄结论替代。[[c9]]\n\nCode Wiki 将文件、符号和边聚合为模块结构，再由模块知识下钻到源码、符号范围、固定片段及其关系。知识、模块、文件、符号和片段共用 Trail 抽屉；片段关系还能继续进入可定位的代码文件或其他片段，展示标签优先采用人类可读字段。[[c10]] 这些文章是对固定材料的组织和下钻入口，不是新的独立事实证据，具体论断仍应沿子章节中的源码引用回查。"
+      },
+      {
+        "key": "progress-and-limits",
+        "title": "当前进展、限制与待验证事项",
+        "body": "现有子知识分别记录了双模式启动、材料采集与固定阅读、知识疑问、学习和判断流程、关系导航及统一下钻。[[c2]][[c6]][[c7]][[c8]][[c10]] Hash 路由已有基础往返测试，关系边下钻也有部分纯函数测试。[[c10]][[c11]] 但页面可能写出完整 Trail，刷新解析却最多恢复 200 层，且第 201 层行为和截断提示尚未覆盖。模块、文件、符号和片段的异步加载也缺少一致的过期响应保护，辅助关系请求失败有时会降级为空集。[[c11]]\n\n静态层面，严格 TypeScript 配置把应用、共享 UI 与契约源码纳入检查，响应式样式覆盖部分窄屏布局；这些事实不能替代生产构建和浏览器行为验收。[[c12]] 当前仍需验证桌面与窄屏布局、键盘焦点、Esc 退层、滚动恢复、关闭后的焦点归还、请求乱序和卸载清理。个人工作区整组刷新、依赖特定 DOM 选择器恢复滚动，以及手动关系表单暴露片段内部标识等限制，也仍需后续设计与测试确认。[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Web 浏览器入口",
-        "reason": "支持页面语言、字符集、移动端视口、可见标题、应用挂载容器和模块化主脚本路径；同时界定当前唯一可独立核验的事实范围。",
-        "relation": "explains",
+        "label": "Web 页面入口",
+        "reason": "直接支持浏览器挂载点、模块脚本入口、中文语言和产品标题等基础定位。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/index.html",
@@ -30,16 +40,209 @@
           "endLine": 1
         },
         "quote": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>omem · 个人工作记忆</title></head><body><div id=\"app\"></div><script type=\"module\" src=\"/src/main.ts\"></script></body></html>"
+      },
+      {
+        "key": "c2",
+        "label": "双模式启动与通信边界",
+        "reason": "支持个人工作区与仓库评审模式的启动分流、认证差异和运行边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-1",
+          "section": "role-and-boundary"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c3",
+        "label": "个人知识认证与评审边界",
+        "reason": "支持个人请求使用会话令牌、评审接口限定为本地读取浏览同步的概括，也界定疑问回答与转待办只能由前端材料确认到请求和状态反馈。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-3",
+          "section": "questions-and-boundaries"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c4",
+        "label": "Vue 与 Vite 配置入口",
+        "reason": "支持 Vite 配置注册 Vue 插件及其属于开发基础设施的论断，同时明确现有证据不能确认 Vue 主版本。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-4",
+          "section": "role"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c5",
+        "label": "Vite 本地请求链路",
+        "reason": "支持回环监听、本地端口和开发期 API 代理流程，并限定其不代表生产部署合同。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-4",
+          "section": "request-flow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c6",
+        "label": "采集、固定阅读与证据问答",
+        "reason": "支持从多来源采集到固定修订阅读、证据问答及逐主张核验限制的流程概括。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-1",
+          "section": "capture-read-answer"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c7",
+        "label": "个人知识与固定证据阅读",
+        "reason": "支持知识首页、固定引用和原始材料组成连续阅读体验。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-3",
+          "section": "knowledge-reading"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c8",
+        "label": "学习、判断、通知与外部接入",
+        "reason": "支持学习轨迹、人工判断、通知、日常助理和飞书接入的前端职责及服务端证据边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-1",
+          "section": "workflows-and-integrations"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c9",
+        "label": "仓库评审视图、关系状态与前端限制",
+        "reason": "支持评审视图范围、人工确认与候选关系、状态呈现，以及整组刷新、滚动选择器和内部片段标识等具体限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-1",
+          "section": "review-progress-limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "Code Wiki 可追溯下钻",
+        "reason": "支持从模块进入源码、符号和片段，通过统一 Trail 与关系继续下钻，并记录关系边下钻的纯函数测试。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-2",
+          "section": "evidence-trail"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c11",
+        "label": "深链、异步加载与测试边界",
+        "reason": "支持 Hash 路由测试范围、200 层恢复限制、模块与各类阅读帧的异步过期响应风险和辅助请求降级问题。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-2",
+          "section": "deeplink-progress"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c12",
+        "label": "静态检查与浏览器验收边界",
+        "reason": "支持 TypeScript 检查范围、响应式布局现状，以及生产构建和真实交互仍需验证的判断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "module:web:part-3",
+          "section": "review-and-runtime"
+        },
+        "quote": ""
       }
     ],
     "questions": [
       {
-        "question": "能否补充 Web 模块各项实现结论对应源码的固定修订与精确行范围？",
-        "why": "目前唯一允许的独立材料只能证明 HTML 入口。旧稿关于框架与样式装配、双模式启动、个人知识流程、共享 Trail、Code Wiki、接口安全、检索限制及并发幂等边界的论断，均无法从该入口文件独立复核。",
-        "nextStep": "至少加入 package.json、src/main.ts、App.vue、个人知识组件、Code Wiki 组件、共享 Trail 实现、API 客户端及相关测试的固定材料，再按每项论断逐一恢复或修正正文与引用。",
+        "question": "模块、文件、符号、片段、搜索及版本阅读是否应统一采用“最后一次请求获胜”的过期响应保护？",
+        "why": "多个异步流程会直接写回共享或组件状态，而知识正文已有 generation 保护；快速切换时旧响应可能覆盖新目标。",
+        "nextStep": "抽取统一的请求代次或取消机制，并以可控延迟测试数据、错误和 loading 状态在乱序完成时只属于最后目标。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c9",
+          "c11"
+        ]
+      },
+      {
+        "question": "Trail 超过 200 层时应保留哪部分路径，并如何提示刷新后的信息损失？",
+        "why": "页面写出与解析恢复使用的预算不一致，现有证据未覆盖第 201 层或截断提示。",
+        "nextStep": "确定保留前段、后段或拒绝继续持久化的策略，增加 200/201 层单元测试和真实浏览器刷新测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c11"
+        ]
+      },
+      {
+        "question": "疑问回答、转待办、判断提交和通知回执在服务端分别具有什么持久化、幂等与重核验保证？",
+        "why": "现有子知识主要证明前端提交字段、刷新状态和展示反馈，无法确认服务端事务及后台任务最终结果。",
+        "nextStep": "补充服务端路由、存储和任务状态材料，并覆盖成功、失败、重复提交、摘要冲突及后台处理失败场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c8"
+        ]
+      },
+      {
+        "question": "Web 模块当前通过了哪些真实构建、桌面与窄屏浏览器、键盘及 Trail 行为检查？",
+        "why": "静态配置和实现代码不能证明生产构建、响应式布局、焦点恢复、Esc 退层、滚动恢复和深链刷新均已通过行为验收。",
+        "nextStep": "记录类型检查和生产构建的真实退出码，并补充桌面、窄屏、键盘、Trail 与乱序请求的浏览器测试结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c11",
+          "c12"
+        ]
+      },
+      {
+        "question": "生产环境如何连接 Web 与 API，并由哪个后端模块承接开发代理保留的 `/api` 路径？",
+        "why": "当前配置只描述 Vite 开发服务器到本地端口的代理，缺少生产部署、反向代理和后端路由注册依据。",
+        "nextStep": "纳入后端启动、路由注册、部署或反向代理材料，分别记录开发与生产链路。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "疑问回答、转待办、判断提交和通知回执在服务端具有什么持久化、幂等与重核验保证？",
+        "why": "现有材料主要覆盖前端请求和状态反馈，不能证明服务端事务及后台任务的最终结果。",
+        "nextStep": "补充服务端路由、存储和任务状态材料，并验证失败、重复提交、冲突及后台处理失败场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c8"
+        ]
+      },
+      {
+        "question": "Web 模块当前通过了哪些真实构建与浏览器行为检查？",
+        "why": "静态配置、实现代码和局部纯函数测试不能证明生产构建、响应式布局、键盘操作及 Trail 行为已经通过验收。",
+        "nextStep": "记录类型检查和生产构建退出码，并补充桌面、窄屏、键盘、Trail 与乱序请求的浏览器测试结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c11",
+          "c12"
         ]
       }
     ]
@@ -53,33 +256,38 @@
     {
       "kind": "article",
       "key": "module:web:part-1",
-      "digest": "5157299b0e2fdef864e6ae443b8981537317d04390b8fe1abe5a522840168ce0"
+      "digest": "d2aa2d9e5c18cd1f6426e3545cc1fc910419da1b5b2146b9ab8f21f7b9857f40"
     },
     {
       "kind": "article",
       "key": "module:web:part-2",
-      "digest": "d1b34f72674c80d0b6a0fc48084740a8e414a5519c25e554b914ea36db4e11cd"
+      "digest": "7920b413edb69a2efbd4b47d8abdc8f9bd8bd75d6073b5fe99b18b2aca03fdac"
     },
     {
       "kind": "article",
       "key": "module:web:part-3",
-      "digest": "c9ebfa440535f56e22818159f17218c163436350a030cbbec6491e57b5e99e21"
+      "digest": "95cbebd07a956e1b7483354ad9270eaaa99f4860f20b9c1c686b3d9c2048feb4"
+    },
+    {
+      "kind": "article",
+      "key": "module:web:part-4",
+      "digest": "bd765cbd754c2c3537a34aa26e7d7d78c14a94264e589c1577e10e9da012ee0d"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:45:12.058Z",
+    "at": "2026-10-01T03:57:50.756Z",
     "trace": {
-      "runId": "011b6797-e1d9-4e55-a08d-19ca1b3a4540",
+      "runId": "d652c4f7-e90c-4d8d-ada1-4816cfd0b8f4",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "d4ea766d5bc360e1fba1758faac859e3cbac7a4167bb307e6803b319fcb6b6ed",
-      "contextHash": "9decfecad3fb7542a66c076282e354106ef07b389a5319bb1e1513c113393afb",
+      "promptHash": "5ddb7aec1e52819c0ae92dc64be02cdae7b1eb918aca842340ab78e2f1c6a039",
+      "contextHash": "31700153d26d7d28b1848210042479c9b4ef202cb0cbedbc09408069e4e9a695",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c45fc520438fc68ea0c2f9971380b2a986fc9196f5edb56b091975d0329eebc7",
+      "fingerprint": "45d3638ac5a055043a23791f030205b32ffc0ace287fc29ef0d37ee0898985ab",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -92,11 +300,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef20-d4c4-76c2-bb39-7e3ca1ce7125"
+        "01a0f59c-2f64-72d0-9c14-d614459c1a7f"
       ],
       "usage": {
-        "used": 29953,
-        "size": 760000,
+        "used": 48053,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -104,10 +312,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 45430,
-          "utf8Bytes": 66136,
-          "estimatedTokens": 22046,
-          "budgetedTokens": 27558,
+          "chars": 64417,
+          "utf8Bytes": 90670,
+          "estimatedTokens": 30224,
+          "budgetedTokens": 37780,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -116,17 +324,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:45:17.586Z",
+    "at": "2026-10-01T03:58:11.770Z",
     "trace": {
-      "runId": "0ebe63b0-ecc7-4ae6-a2f9-152fa89eed8c",
+      "runId": "6049e266-1aef-465d-9d70-5cafa0132d2e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "95d8d6337ea2620343db55e0390ffbe79dac275f2e56093b5caffbcc2cfe7d17",
-      "contextHash": "6d6c0a4193c6a6aa8fa21a68a0667bad78ee6822cfaf6f6380933ca7abd9afac",
+      "promptHash": "28de4c3ddf191ddb0571c41f55a531495bd1a4900d083c807b0f98ae6beb3647",
+      "contextHash": "0a872ae7a9e762b1e7bb7cec04a4061b173069164f893b2cbdc8b0fe1c7313e5",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "602b32736b69396d06915c5c4d38229679c4176322a29ce4a8b1595f15e61417",
+      "fingerprint": "d5894ba7aa45d07f76d30830cae548f13f6e998b5fec6353e2e39dac1eb32cfa",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -139,11 +347,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef21-001a-73e2-ab1c-1e0a2f11463f"
+        "01a0f59c-97b1-72f3-9fd3-a9afbdfcd636"
       ],
       "usage": {
-        "used": 25775,
-        "size": 760000,
+        "used": 41958,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -151,10 +359,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36739,
-          "utf8Bytes": 51658,
-          "estimatedTokens": 17220,
-          "budgetedTokens": 21525,
+          "chars": 60538,
+          "utf8Bytes": 84576,
+          "estimatedTokens": 28192,
+          "budgetedTokens": 35240,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

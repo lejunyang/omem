@@ -2,52 +2,96 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/main.ts",
-    "title": "服务进程启动入口",
-    "summary": "加载运行配置、构建 Fastify 应用并开始监听，同时为常见终止信号注册优雅关闭处理。",
+    "title": "服务端进程启动入口",
+    "summary": "该文件负责加载配置、构建 Fastify 应用、启动网络监听并响应进程终止信号；业务服务装配与非回环绑定校验由 buildApp 承担。",
     "category": "implementation",
     "sections": [
       {
+        "key": "purpose",
+        "title": "职责与模块关系",
+        "body": "这是服务端的进程入口，用于把配置解析、应用装配与进程生命周期串联起来：入口先调用配置模块，再把结果交给 `buildApp`，自身不直接定义 API 或业务流程。[[c1]] `buildApp` 会创建 Fastify、存储、运行记录、记忆与反馈服务，说明主要依赖装配集中在应用模块中。[[c2]]"
+      },
+      {
         "key": "startup",
-        "title": "启动链路",
-        "body": "该文件是服务进程的最薄入口：先调用 `loadConfig` 得到主机、端口及其他运行配置，再把配置交给 `buildApp` 完成应用和依赖组装，最后监听指定地址并输出可访问 URL。[[c4]] `buildApp` 会创建 Fastify、Store、Runs、MemoryService 与 FeedbackService；非回环地址若没有令牌会直接拒绝启动，因此入口本身依赖应用工厂执行安全检查和模块装配。[[c5]]"
+        "title": "启动流程与安全前置条件",
+        "body": "启动顺序是加载配置、异步构建应用、按照 `host` 与 `port` 监听，监听成功后输出访问地址。[[c3]] 配置包含通知、检索、捕获目录、学习流程及 Lark 等运行选项；其中部分字段带默认值和格式约束。[[c4]] 在真正监听之前，`buildApp` 还会检查网络暴露条件：绑定地址不是回环地址时必须提供令牌，否则直接抛错。[[c5]]"
       },
       {
         "key": "shutdown",
-        "title": "终止处理与边界",
-        "body": "进程收到 `SIGINT` 或 `SIGTERM` 时调用 `app.close()`，待关闭完成后以状态码 0 退出，意图让 Fastify 释放监听器及其生命周期资源。[[c6]] 这里没有为配置加载、构建、监听或关闭失败设置显式恢复逻辑，也没有注册其他终止事件；错误如何记录及退出由顶层运行环境和 Fastify 的 Promise 行为决定。"
+        "title": "关闭行为、替代结论与边界",
+        "body": "入口为 `SIGINT` 和 `SIGTERM` 注册处理器；收到信号后调用 Fastify 的异步 `close()`，其 Promise 成功完成后以状态码 0 退出进程。[[c6]] 先前“停止接收请求并执行关闭钩子”的表述已被这一更窄结论替代，因为现有固定材料只展示调用与成功退出，未展示 `close()` 的内部语义。材料也没有显示配置加载、应用构建、监听或关闭失败时的显式捕获，以及二次信号、强制关闭超时或非零退出策略，因此这些生产行为仍不能从本入口确认。[[c7]]"
       }
     ],
     "citations": [
       {
-        "key": "c4",
-        "label": "服务启动入口",
-        "reason": "支持配置加载、应用构建、网络监听和启动日志这一完整入口链路。",
+        "key": "c1",
+        "label": "入口加载配置并构建应用",
+        "reason": "支持入口只负责调用配置与应用构建模块、串联启动流程的论断。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/main.ts",
           "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "import { buildApp } from \"./app.js\";\nimport { loadConfig } from \"./config.js\";\nconst config = loadConfig();\nconst { app } = await buildApp(config);"
+      },
+      {
+        "key": "c2",
+        "label": "Fastify 与核心服务初始化",
+        "reason": "支持 buildApp 创建服务器实例以及存储、运行记录、记忆和反馈服务的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 46,
+          "endLine": 61
+        },
+        "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
+      },
+      {
+        "key": "c3",
+        "label": "网络监听与启动日志",
+        "reason": "支持应用按配置中的主机和端口监听，并在成功后输出访问地址。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/main.ts",
+          "startLine": 3,
           "endLine": 6
         },
-        "quote": "import { buildApp } from \"./app.js\";\nimport { loadConfig } from \"./config.js\";\nconst config = loadConfig();\nconst { app } = await buildApp(config);\nawait app.listen({ port: config.port, host: config.host });\nconsole.log(`omem listening at http://${config.host}:${config.port}`);"
+        "quote": "const config = loadConfig();\nconst { app } = await buildApp(config);\nawait app.listen({ port: config.port, host: config.host });\nconsole.log(`omem listening at http://${config.host}:${config.port}`);"
+      },
+      {
+        "key": "c4",
+        "label": "运行配置结构",
+        "reason": "说明配置模块定义通知、检索、捕获目录、学习和 Lark 等设置及其部分默认值与约束。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 18,
+          "endLine": 70
+        },
+        "quote": "const schema = z\n  .object({\n    profiles: z.array(profileSchema).min(1),\n    notifications: z\n      .object({\n        mode: z.enum([\"instant\", \"digest\"]).default(\"instant\"),\n        external: z\n          .object({\n            mode: z.enum([\"instant\", \"window\", \"scheduled\"]).default(\"instant\"),\n            windowMs: z\n"
       },
       {
         "key": "c5",
-        "label": "应用工厂的安全检查与服务装配",
-        "reason": "说明 main 调用的应用工厂负责非回环令牌检查，并实例化存储、运行和记忆服务。",
+        "label": "非回环绑定令牌校验",
+        "reason": "支持应用在监听前拒绝未配置令牌的非回环地址绑定。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 44,
-          "endLine": 64
+          "startLine": 46,
+          "endLine": 55
         },
         "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
       },
       {
         "key": "c6",
-        "label": "进程信号关闭逻辑",
-        "reason": "支持 SIGINT、SIGTERM 下等待应用关闭后正常退出的说明。",
+        "label": "进程信号关闭处理",
+        "reason": "支持收到 SIGINT 或 SIGTERM 后调用异步 close，并仅在成功完成后以状态码 0 退出的准确结论。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -56,27 +100,31 @@
           "endLine": 10
         },
         "quote": "for (const signal of [\"SIGINT\", \"SIGTERM\"] as const)\n  process.on(signal, () => {\n    void app.close().then(() => process.exit(0));\n  });"
+      },
+      {
+        "key": "c7",
+        "label": "入口完整生命周期范围",
+        "reason": "支持当前入口仅展示启动成功路径和关闭成功回调，未出现显式失败捕获、关闭超时或二次信号处理。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/main.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "import { buildApp } from \"./app.js\";\nimport { loadConfig } from \"./config.js\";\nconst config = loadConfig();\nconst { app } = await buildApp(config);\nawait app.listen({ port: config.port, host: config.host });\nconsole.log(`omem listening at http://${config.host}:${config.port}`);\nfor (const signal of [\"SIGINT\", \"SIGTERM\""
       }
     ],
     "questions": [
       {
-        "question": "应用监听或关闭 Promise 失败时，生产环境期望采用何种日志和退出码策略？",
-        "why": "入口只展示成功路径和信号关闭路径，没有显式捕获异常，无法由当前材料确认部署层是否统一处理未捕获拒绝。",
-        "nextStep": "查看进程管理及部署配置，确认是否已有统一错误日志、重启和非零退出策略。",
+        "question": "应用监听或关闭失败时，生产环境期望采用何种日志、退出码与超时策略？",
+        "why": "当前入口没有为配置加载、应用构建、监听或 close 失败提供显式处理，也没有展示二次信号与强制关闭超时；仅凭现有材料无法判断这些责任是否由部署层承担。",
+        "nextStep": "检查部署入口、进程管理配置和生命周期测试；若没有外层保障，再决定是否增加统一错误记录、非零退出码、关闭超时及二次信号策略。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c6"
-        ]
-      },
-      {
-        "question": "监听或关闭 Promise 失败时，生产环境采用何种日志和退出码策略？",
-        "why": "入口仅包含成功启动和信号关闭路径，没有显式异常处理；当前材料也未说明进程管理层的兜底行为。",
-        "nextStep": "检查部署和进程管理配置，确认未捕获拒绝的日志、退出码与重启策略。",
-        "blocking": false,
-        "citationKeys": [
-          "c4",
-          "c6"
+          "c3",
+          "c6",
+          "c7"
         ]
       }
     ]
@@ -84,28 +132,8 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/learning/refresh.ts",
-      "digest": "569529469b9b70c8dd5c3e4fd8a5818fd8192c36a0c8713a68d98c4c92fabd43"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/main.ts",
       "digest": "d3dd9ba5dda561eea00226e03d23fdb28467f8832fcb0da4ec0440cbb3eda285"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/evaluator.ts",
-      "digest": "4c6debef6cb90bdc11eb1004b1e1f3f6be43688d996416c2b523165829af2835"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     },
     {
       "kind": "material",
@@ -115,45 +143,39 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "e8a4ec3f6e8619195e7710c33738c95ae371a7aad7f8cef4368556452bbd072f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:21:38.476Z",
+    "at": "2026-10-01T02:16:40.970Z",
     "trace": {
-      "runId": "40569594-e5be-4783-924d-ec867c3736f7",
-      "roleId": "code-analyst",
+      "runId": "40df00fa-93b9-48eb-83f4-7b470d366e1f",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "ff984bdd7a2b79bf8336356c96eeb4472209829b14e32d5daa9852085dfbca94",
-      "contextHash": "a67a60e4c0be0cc961b703bad0da8d0a1052cd4cc0518312955b633a355b1e7c",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "af573b64aa4dc3531b9fac96c1f613beba933024047a92ffd6c097bd74d2c841",
+      "contextHash": "9d474812af3572fb5d92c0babae1700a0344bc7cc1c15720efb1c5069d4e6b68",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9ba0e3f202bd4e3e42d06821b87596269e3cd3aa36b2c3dfb7e73fe4cd81a72e",
+      "fingerprint": "1b5039afbec7c5f24128df3dc2d2e92759a44b4ffa52e51bd73c493375060001",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c2-12b5-77e0-ba65-98784f57576b",
-        "01a0f3c3-222d-7121-be28-1880e0ec72e6"
+        "01a0f53f-ac8d-7370-b64b-297c0e2acd3c"
       ],
       "usage": {
-        "used": 61104,
+        "used": 26676,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -162,29 +184,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 134510,
-          "utf8Bytes": 138016,
-          "estimatedTokens": 46006,
-          "budgetedTokens": 57508,
+          "chars": 18020,
+          "utf8Bytes": 21832,
+          "estimatedTokens": 7278,
+          "budgetedTokens": 9098,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 1
+      "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:22:18.558Z",
+    "at": "2026-10-01T02:16:59.064Z",
     "trace": {
-      "runId": "cf5c9254-33d8-4ec8-be0d-aa8d0f081698",
+      "runId": "bd825f2f-ea07-439a-905f-bad7139268c8",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "47e4c1e43f0da1a21160677e1a86096e2d4161e48d85ecf551e83e5fe0c6dd7f",
-      "contextHash": "fb77ecee520ee201b17040a44c157c0e302a63b8c68271709a769fa4dfee5b8d",
+      "promptHash": "5dce2fe938dd18ef1f1a2b88742bf9139f8dbd15d7f5890182fd805849bb46c3",
+      "contextHash": "1d98052f45d1eeb8e3d7ab7e0f90509076c9fe3925c59c689565be3e5a5c52b0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4d63e62fcddd9e6c3810530cb95895737ca73e583e89a9dc638f4495fe16a292",
+      "fingerprint": "bbb00bebf9d423d1bd99bdf03975170d88929e7a471eb81fb2fe62c33c9ed130",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -197,10 +219,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c3-feb2-7cf0-81da-0235c6c7e335"
+        "01a0f540-07ea-7d72-b8d0-844e809b3e84"
       ],
       "usage": {
-        "used": 63916,
+        "used": 24066,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -209,10 +231,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 146766,
-          "utf8Bytes": 156671,
-          "estimatedTokens": 52224,
-          "budgetedTokens": 65280,
+          "chars": 16301,
+          "utf8Bytes": 19149,
+          "estimatedTokens": 6383,
+          "budgetedTokens": 7979,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

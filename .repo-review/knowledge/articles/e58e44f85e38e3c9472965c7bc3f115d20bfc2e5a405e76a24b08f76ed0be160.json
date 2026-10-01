@@ -2,44 +2,57 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/code/dto.ts",
-    "title": "代码图的人类可读 DTO 投影",
-    "summary": "把快照、文件、符号和边的内部记录扩展为前端可展示、可深链的 DTO，同时保留内部动作键，并明确表达删除、缺失和过期状态。",
+    "title": "代码图谱的用户可见 DTO 投影",
+    "summary": "该模块把代码快照、文件、符号和关系边投影为前端可用对象：保留内部操作字段，补充人类可读标签、引用信息、深链及状态说明。文件仅在 removed 时不可操作；关系边仅在 confirmed 或 candidate 时可操作，而完整状态集合仍需合同材料补证。",
     "category": "implementation",
     "sections": [
       {
-        "key": "projection",
-        "title": "投影原则",
-        "body": "该模块解决“内部标识可用于路由、却不能直接充当界面文案”的问题。DTO 保留原始行的全部字段，以便前端继续使用文件、符号和边标识执行动作；同时补充 `displayTitle`、`displayPath`、`citationLabel`、`actionable` 与 `reason` 等人类可读字段。删除或不可解析对象不会被悄悄隐藏，而是显式变成不可操作状态。[[c1]]"
+        "key": "purpose",
+        "title": "职责与设计边界",
+        "body": "该文件位于可重建代码视图与用户界面之间。投影展开原始记录，保留文件、符号、范围和边端点等内部操作键，同时增加 `displayTitle`、`displayPath`、`citationLabel`、`actionable` 与 `reason` 等人读字段，避免把内部 ID 直接作为可见标签。[[c1]]\n\n此前“不可操作对象等同于已移除文件及 missing/stale 边”的笼统结论已被替代：文件确实只按 `removed` 判定，移除后关闭操作并给出原因；关系边则采用独立的正向状态白名单。[[c2]]"
       },
       {
-        "key": "nodes",
-        "title": "快照、文件与符号",
-        "body": "快照标题使用缩短后的提交号；无提交时区分脏工作区和无提交状态，并生成 API 与 trail 深链。[[c2]] 文件标题取路径末段，但完整路径仍用于展示和引用；已删除文件保留记录并附带原因。符号通常展示限定名，路由和测试则展示简短名称；若有文件上下文，源码链接会携带声明起止行，否则退回符号详情接口。[[c3]]"
+        "key": "projection-flow",
+        "title": "快照、文件与符号的投影流程",
+        "body": "快照投影把提交号缩为七位；没有提交号时，`shortCommit` 根据工作区状态返回 `dirty` 或 `no-commit`。这一结果用于展示标题、短提交字段和引用标签，但摘要独立由解析器版本与文件数量组成，API 深链是固定的当前快照路径，trail 链接则由快照 ID 构成。此前声称提交状态同时决定摘要和链接的结论已被替代。[[c3]]\n\n文件投影以路径末段为标题，以完整路径作为展示路径和引用标签，并附带语言、大小及可选快照版本；其 API 与 trail 链接均携带文件 ID。[[c2]] 符号投影对 route/test 使用短名称，其他类型使用限定名；起始范围会进入引用标签和源码深链，结束范围缺失时回退到起始行，再缺失则回退到第 1 行。存在文件时链接源码范围，否则进入符号详情。[[c4]]"
       },
       {
-        "key": "edges",
-        "title": "关系展示与边界",
-        "body": "边类型通过固定映射转成人类可读短语，再由两端标签组合标题。`confirmed` 与 `candidate` 均允许交互，`missing` 和 `stale` 则不可操作，并分别说明目标未解析或已被新快照取代。[[c4]] 这里仅负责表现已有状态，不验证边是否真实，也不解析端点；若调用方没有提供标签，界面会显示问号，因此完整可读性依赖上游端点展开。"
+        "key": "edges-and-limits",
+        "title": "关系边状态、跳转与限制",
+        "body": "关系边将已知种类映射成人读动词，并用两端标签组成标题；端点缺失时显示问号，未知种类回退为原始类型。仅 `confirmed` 与 `candidate` 被标为可操作；`missing` 的原因是目标无法解析，`stale` 表示已被较新快照替代。跳转优先进入来源文件，否则回到全局代码图。[[c5]]\n\n因此，`candidate` 可操作不等于关系已经确认。其他可能状态若不在白名单中也会不可操作，但原因函数只明确解释 missing 与 stale；当前材料没有给出 `CodeEdge` 的完整状态 schema，也没有消费端或行为测试，不能进一步断言状态集合封闭、候选关系有独立视觉提示，或异常回退分支已被测试覆盖。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "DTO 展示字段约定",
-        "reason": "说明原始动作键与人类可读字段并存，以及缺失或过期对象的处理原则。",
+        "label": "DTO 投影职责说明",
+        "reason": "支持投影保留内部操作字段、增加人读展示字段，并避免将内部 ID 渲染为可见标签。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/dto.ts",
           "startLine": 1,
-          "endLine": 5
+          "endLine": 11
         },
         "quote": "/** User-facing DTO projection. The code_* tables are a rebuildable typed view over\n * the authoritative Capture->Source/Revision/Fragment chain. We SPREAD the original\n * row so every internal action key (fileId/name/kind/range/endpoints/...) stays for\n * the UI, and ADD human display* fields on top. IDs are never ren"
       },
       {
         "key": "c2",
-        "label": "快照 DTO",
-        "reason": "支持提交缩写、快照摘要及深链的生成方式。",
+        "label": "文件 DTO 投影",
+        "reason": "支持文件标题、完整路径、摘要、版本、链接以及仅按 removed 状态决定可操作性和原因的结论。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "startLine": 35,
+          "endLine": 51
+        },
+        "quote": "export function fileDTO(f: CodeFile, snap?: CodeSnapshot | null) {\n  const base = f.path.split(\"/\").pop() ?? f.path;\n  return {\n    ...f,\n    type: \"file\",\n    symbolName: null,\n    displayTitle: base,\n    displayPath: f.path,\n    summary: `${f.language} · ${f.sizeBytes} bytes`,\n    version: snap ? shortCommit(snap.com"
+      },
+      {
+        "key": "c3",
+        "label": "快照展示元数据",
+        "reason": "支持分别描述短提交状态对标题和引用标签的影响，以及摘要、固定 API 深链和基于快照 ID 的 trail 链接各自独立的生成规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -50,22 +63,22 @@
         "quote": "export function shortCommit(commit: string | null, dirty = false): string {\n  if (commit) return commit.slice(0, 7);\n  return dirty ? \"dirty\" : \"no-commit\";\n}\n\nexport function snapshotMeta(s: CodeSnapshot) {\n  return {\n    ...s,\n    type: \"snapshot\",\n    displayTitle: `@${shortCommit(s.commit, s.dirty)}`,\n    displayPa"
       },
       {
-        "key": "c3",
-        "label": "文件与符号 DTO",
-        "reason": "支持文件删除状态、符号显示名称以及源码范围链接的说明。",
+        "key": "c4",
+        "label": "符号标签与源码深链",
+        "reason": "支持符号名称选择、引用范围生成、源码行回退，以及有无文件时采用不同深链目标的结论。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/dto.ts",
-          "startLine": 35,
+          "startLine": 54,
           "endLine": 75
         },
-        "quote": "export function fileDTO(f: CodeFile, snap?: CodeSnapshot | null) {\n  const base = f.path.split(\"/\").pop() ?? f.path;\n  return {\n    ...f,\n    type: \"file\",\n    symbolName: null,\n    displayTitle: base,\n    displayPath: f.path,\n    summary: `${f.language} · ${f.sizeBytes} bytes`,\n    version: snap ? shortCommit(snap.com"
+        "quote": "export function symbolDTO(sym: CodeSymbol, file?: CodeFile | null) {\n  const label =\n    sym.kind === \"route\" || sym.kind === \"test\" ? sym.name : sym.qualifiedName;\n  const range = sym.rangeStart\n    ? `:${sym.rangeStart.line}${sym.rangeStart.col ? \":\" + sym.rangeStart.col : \"\"}`\n    : \"\";\n  return {\n    ...sym,\n    ty"
       },
       {
-        "key": "c4",
-        "label": "边 DTO 与状态原因",
-        "reason": "支持边标签映射、可操作状态判定和缺失或过期原因。",
+        "key": "c5",
+        "label": "关系边展示与跳转",
+        "reason": "支持边类型文案、端点占位、confirmed/candidate 可操作规则、missing/stale 原因及跳转目标。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -74,16 +87,55 @@
           "endLine": 114
         },
         "quote": "const EDGE_LABEL: Record<string, string> = {\n  defines: \"defines\",\n  imports: \"imports\",\n  exports: \"exports\",\n  module_of: \"in module\",\n  calls: \"calls\",\n  route: \"exposes route\",\n  test_of: \"tests\",\n  vue_component: \"is component\",\n  uses_component: \"uses component\",\n};\n\nexport function edgeReason(status: string): st"
+      },
+      {
+        "key": "c6",
+        "label": "关系边状态正向白名单",
+        "reason": "说明实现只对 confirmed 和 candidate 开放操作，而原因函数仅明确处理 missing 与 stale，支持对完整状态范围保持保守结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/dto.ts",
+          "startLine": 90,
+          "endLine": 112
+        },
+        "quote": "export function edgeReason(status: string): string | null {\n  switch (status) {\n    case \"missing\": return \"unresolved target (bare/outside repo)\";\n    case \"stale\": return \"superseded by a newer snapshot\";\n    default: return null;\n  }\n}\n\nexport function edgeDTO(\n  e: CodeEdge,\n  endpoints: { fromLabel?: string | null"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "CodeEdge 的 status 是否由封闭枚举限定为 confirmed、candidate、missing、stale 四种值？",
+        "why": "当前固定材料只展示 DTO 对字符串状态的比较，没有提供 CodeEdge 类型或状态 schema；因此不能确认完整状态集合，也不能断言所有不可操作边都有原因。",
+        "nextStep": "补充 CodeEdge 类型定义或状态 schema 的固定原文范围，再决定是否收紧状态范围结论。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "candidate 关系在消费端是否有独立徽标、提示或操作限制？",
+        "why": "实现只能证明 candidate 与 confirmed 均被 DTO 标为可操作，无法证明界面是否清楚区分候选与已确认关系。",
+        "nextStep": "补充 DTO 消费端及交互测试材料，核验候选状态的展示和允许操作。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "空路径、缺失端点标签、倒置源码范围和合同之外的边状态是否有行为测试覆盖？",
+        "why": "当前材料展示了路径拆分、问号占位、源码行回退和状态白名单等实现，但没有提供相应测试证据。",
+        "nextStep": "补充相关单元测试或 API/UI 行为测试的固定原文。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c4",
+          "c6"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/budget.ts",
-      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/code/dto.ts",
@@ -91,75 +143,40 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/parse.ts",
-      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/sync.ts",
-      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-model.ts",
-      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/source-text.ts",
-      "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/artifacts.ts",
-      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:13:42.776Z",
+    "at": "2026-10-01T03:42:15.796Z",
     "trace": {
-      "runId": "4ce77f62-1667-4abf-870f-cf3c8d98360b",
-      "roleId": "code-analyst",
+      "runId": "3f96fa82-085d-43bb-bc87-1ca74101067d",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "780554099280c05dfaaa99791ddf06a589488616fb3ef697669b48426b991c9c",
-      "contextHash": "c3b25520e5f1d70c6f9b8a3b82f4d466adb6c3c3cce4522766a727b7acf8b315",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "c3704bae74ece714601d394e4e4297e84017b2131533e7171d5817af14df64c2",
+      "contextHash": "083685ca0a45a04cd5b477120cadc41ce10c1101bf92a3c0aac4d391c14a2960",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a654284878331a7896106dbe72326bd12f9bfb17eab73dadc326c2b819b4b1ba",
+      "fingerprint": "42330b50f17be853c571743389f0ab1f90e1209ec1f09d40fd0e47ffdfb76fac",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bb-c0c5-7ac0-9e39-8e2c1e0f5e37"
+        "01a0f58d-f2f5-7400-935d-22a8089d5d87"
       ],
       "usage": {
-        "used": 55525,
+        "used": 26965,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -168,10 +185,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 106879,
-          "utf8Bytes": 108659,
-          "estimatedTokens": 36220,
-          "budgetedTokens": 45275,
+          "chars": 21022,
+          "utf8Bytes": 25921,
+          "estimatedTokens": 8641,
+          "budgetedTokens": 10802,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -180,17 +197,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:14:14.582Z",
+    "at": "2026-10-01T03:42:36.832Z",
     "trace": {
-      "runId": "0432c09b-b61b-4392-a7bd-d15e6482e55f",
+      "runId": "b90bc519-b1f1-45fa-b07a-71327513a9e7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "5d818e7301ebdcf1d6e61174580d73ed1f8e80ab400c1aaaa4224258cb71ea1c",
-      "contextHash": "beda91acd09fd6ec08f4e60c094450447081d5425bcf8632793e9319d7764c78",
+      "promptHash": "dcb6386b3bf1c4bdd3c8630fd396bc28f8772d12338d46e03fd51e89965b932b",
+      "contextHash": "275dec7dcc2920088db9fef116cb4ef3d4194e2e191db93eab70669a25218a2f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fb921ad9970bf2ce9ea61bf7425bdc50e69ee2e389dd2508d802bd58041a85b4",
+      "fingerprint": "a71a90f9845c756fce12e16d3bef2aa911ba65833307214334811bc84f02b7fc",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,10 +220,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bc-befa-7851-8b1d-877a7462ca90"
+        "01a0f58e-6264-7fd3-ba66-475f0e92da7c"
       ],
       "usage": {
-        "used": 58834,
+        "used": 24737,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -215,10 +232,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124881,
-          "utf8Bytes": 134002,
-          "estimatedTokens": 44668,
-          "budgetedTokens": 55835,
+          "chars": 17630,
+          "utf8Bytes": 21297,
+          "estimatedTokens": 7099,
+          "budgetedTokens": 8874,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

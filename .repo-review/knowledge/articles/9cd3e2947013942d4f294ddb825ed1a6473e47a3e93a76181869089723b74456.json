@@ -3,113 +3,87 @@
   "document": {
     "key": "module:agent-runtime:part-1",
     "title": "agent-runtime · 模块理解 · 专题 1",
-    "summary": "agent-runtime 是固定证据分析角色的共享执行层：验证版本化角色资产，隔离可信规则与不可信材料，按 ACP 或 CLI 传输，实施预算与能力检查，校验结构化输出并记录运行追踪；它已接入耐久作业，但交互审批、引用语义复核和外部 Agent 兼容性仍有待确认。",
+    "summary": "Agent 运行时把版本化角色制品、可信上下文、非可信材料、模型传输和持久任务连接为受控且可追踪的执行链：加载并核对角色资产，隔离组装提示，执行 ACP 或 CLI，按共享合同校验并有限修复输出，最后保存追踪和角色结果。当前交互请求仍以拒绝记录为主，角色输出保存与任务完成也不在同一事务。",
     "category": "architecture",
     "sections": [
       {
-        "key": "purpose",
-        "title": "职责与设计背景",
-        "body": "该模块把材料领域逻辑留在角色包中，把通用执行约束交给宿主。角色清单声明提示、技能、输出合同、工具策略、会话隔离和预算；代码分析角色例如使用固定内联技能、`KnowledgeBatch.v1`、无工具策略和不复用会话。[[c1]] 网关负责构造分层上下文，随后执行模型传输、结果校验和追踪；这一结论分别由提示构造、执行及验证代码支撑，替代此前仅引用运行前装配章节来概括全部职责的表述。[[c2]][[c9]][[c12]]"
+        "key": "bundle_and_trust",
+        "title": "角色制品与信任边界",
+        "body": "运行入口先加载版本化角色包。注册表校验角色与清单身份、读取输出 Schema 并仅核对其 `$id` 末段是否匹配清单中的输出 Schema 标识，同时验证技能名称和制品摘要；它并不在此处验证 Schema 内容或模型输出。角色包身份由清单、提示、Schema 和技能内容共同形成，原生技能则复制到隔离工作区。[[c1]] 目录摘要统一路径分隔符与 CRLF/LF，降低跨平台差异。[[c2]]\n\n提示构造把角色规则、内联技能、输出合同和来源元数据放入可信区，把派生知识及材料正文标为非可信数据。[[c3]] 图像会校验 Base64、摘要及格式标记，并在提示组装时累计字节数，超过 10 MB 即拒绝。[[c4]]"
       },
       {
-        "key": "assets-context",
-        "title": "资产验证与信任分层",
-        "body": "注册表限制角色与版本名称，核对清单身份、输出 schema 标识、技能名称及目录摘要，并以清单、提示、合同和技能内容形成包摘要。[[c3]] 文件解析后的真实路径必须仍在包内，普通资产及遍历到的目录项会拒绝符号链接；复制时若目标内容冲突则失败。[[c4]] 只有 `native` 技能会复制到按包摘要和运行 ID 隔离的工作区，并且存在 native 技能时要求 ACP；这两个条件改由其实际实现范围支持。[[c5]]\n\n提示把角色规则、内联技能、输出合同、可信元数据和材料索引置于可信区，将既有文章及材料正文标为不可信数据。图片还会校验编码、摘要、文件签名和累计容量，从而让捕获内容保持为证据而非工具指令。[[c6]]"
+        "key": "execution_and_validation",
+        "title": "预算、执行与结构化校验",
+        "body": "网关合并输入、输出和上下文预留预算，并要求各值为 1 至 1,000,000 的安全整数；文本令牌量按 UTF-8 字节数除以 3 后增加 25% 余量近似估算，并非模型专用 tokenizer。[[c5]]\n\n每轮尝试重新渲染提示并检查输入预算。ACP 可传图像、托管 MCP 和原生技能，CLI 仅接收文本。输出预算通过后，网关要求结果是单一 JSON 对象，再按清单指定的共享 Zod 合同解析，并执行可选的调用方附加校验；这才是实际结构化输出校验所在。[[c6]] 只有执行块内的输出类错误、语法错误或 Zod 错误会在次数允许时重试。成功 trace 保存运行审计字段，而指纹仅采用角色包、提示、上下文、技能、工具摘要及有效模型配置。[[c7]]"
       },
       {
-        "key": "execution",
-        "title": "执行、预算与结果校验",
-        "body": "网关合并调用覆盖值与角色默认预算，按 UTF-8 字节启发式估算 token 并增加余量；该方法适合保守控制，但不是模型精确 tokenizer。[[c7]] 运行前会校验 profile、禁止未实现的会话复用、核对托管工具供给并准备工作区。[[c8]] 随后按 transport 进入 ACP 或 CLI：ACP 接收工具、native 技能、输出及上下文预算，CLI 则拒绝图片；这替代此前用 ACP 能力发现代码支持全部网关分支约束的结论。[[c9]] ACP 自身还会发现 native 技能、验证模型与推理强度选项，并在元数据可用时检查上下文窗口及图片能力。[[c10]]\n\n模型结果须是单个 JSON 对象，通过清单对应的运行时合同，并在适用时核对作业或角色身份。[[c11]] 输出预算和可选后验验证通过后，网关汇集包、提示、上下文、技能、工具、实际模型、会话、用量及修复次数，并形成运行指纹。[[c12]] 只有输出类、语法或 Zod 校验错误会进入有限的完整重生成；取消和其他运行错误直接传播。[[c13]]"
+        "key": "durable_job_flow",
+        "title": "持久任务衔接与结果保存",
+        "body": "角色任务处理器按任务生成上下文、透传取消信号、调用网关并要求存在会话标识，随后保存结构化结果和完整 trace，把输出记录引用交还 worker。[[c8]] worker 负责租约领取、心跳、处理器分派及成功标记；失败会优先保留 `JobExecutionError` 明示的种类，否则普通异常默认归为 `permanent`，取消归为 `cancelled`，停机中断归为 `transient`。[[c9]] 仓库定义的失败种类还包括 `bad_output`、`auth` 与 `config`，其中仅 `bad_output` 和 `transient` 具有内建重试额度。[[c10]] 这替代了“异常仅按取消、瞬时或永久失败处理”的过窄结论。\n\n角色输出保存会在一个事务内校验运行中租约、更新尝试追踪并插入输出记录。[[c11]] 任务成功标记随后由 worker 在另一个事务完成，因此两者之间仍有崩溃窗口，当前材料未显示按任务尝试或输出摘要去重。"
       },
       {
-        "key": "integration-limits",
-        "title": "作业接入与当前限制",
-        "body": "作业适配器构造上下文、透传取消信号，并在成功后选择末次会话，将结果和完整 trace 按作业 ID 与 lease token 保存。[[c14]] 作业领取、心跳、取消、成功提交及失败分类由耐久 worker 管理。[[c15]] 因而模块已经形成从角色资产到耐久作业的连续实现链，但材料没有测试文件或真实外部 Agent 检查结果，不能据此宣称所有 CLI 均已验证。\n\n后台权限和补充输入请求目前不会暂停会话：ACP 回调记录事件后立即取消或拒绝。[[c16]] 仓储当前创建的是 `denied` 记录；虽然提供 `resolve`，它只接受既有 `pending`，材料未展示 pending 的创建或决定回传链路。[[c17]] 此外，结构合同只约束输出形状；网关虽允许调用方注入后验验证，哪些角色已执行跨字段引用检查及独立语义复核仍无法由当前材料确定。[[c12]][[c18]]"
+        "key": "progress_and_limits",
+        "title": "当前能力与边界",
+        "body": "共享知识合同统一约束文档、章节、引用、问题和批次形状，使多类分析角色复用同一输出结构。[[c12]] 代码分析角色清单声明无工具、会话不复用、不继承用户扩展，并设定上下文、输出和修复预算；这些是运行配置，并非质量或测试覆盖证明。[[c13]]\n\n交互请求尚未形成等待用户决策后恢复执行的闭环：网关收到 ACP 权限或询问请求时，仅通过可选仓库记录为 `denied`；仓库虽声明 `pending`、`expired`、`resolved` 并提供决议方法，但材料未展示暂停任务、持久化具体动作及恢复原会话的调用链。[[c14]] 所给材料也没有自动化测试或真实 ACP/CLI 运行结果，无法确认路径安全、预算拦截、修复分支、崩溃恢复及并发决议的实际覆盖。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "代码分析角色运行清单",
-        "reason": "支持角色包声明提示、技能、输出合同、工具与会话策略及预算的实例。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
-          "startLine": 2,
-          "endLine": 30
-        },
-        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"code-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-code-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"c690e2202b12a946dc9f48f94"
-      },
-      {
-        "key": "c2",
-        "label": "可信上下文与材料提示构造",
-        "reason": "支持网关对可信规则、上下文索引、派生知识及原始材料进行分层装配。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 106,
-          "endLine": 207
-        },
-        "quote": "export function renderRolePrompt(\n  bundle: RoleBundle,\n  manifestInput: ContextManifest,\n  repair?: string,\n) {\n  const context = contextManifestSchema.parse(manifestInput);\n  if (context.role_id !== bundle.manifest.role_id)\n    throw Error(\"ROLE_CONTEXT_MISMATCH\");\n  const inlineSkills = bundle.skills\n    .filter((sk"
-      },
-      {
-        "key": "c3",
-        "label": "角色资产加载与完整性验证",
-        "reason": "支持清单身份、输出合同、技能名称、目录摘要及包摘要的验证流程。",
+        "label": "角色包加载、标识核对与工作区准备",
+        "reason": "支持角色清单身份、输出 Schema 标识核对、技能摘要、角色包身份和隔离工作区的说明，并限定此处不执行结构化输出验证。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/bundles.ts",
           "startLine": 105,
-          "endLine": 167
+          "endLine": 191
         },
         "quote": "export class RoleBundleRegistry {\n  constructor(readonly root = resolve(\"packages/agent-runtime/roles\")) {}\n\n  load(roleId: string, version = \"1\"): RoleBundle {\n    if (!/^[a-z0-9-]+$/.test(roleId) || !/^[a-zA-Z0-9._-]+$/.test(version))\n      throw Error(\"ROLE_ID_OR_VERSION_INVALID\");\n    const directory = resolve(this"
       },
       {
-        "key": "c4",
-        "label": "资产路径与复制冲突保护",
-        "reason": "支持包内路径约束、符号链接拒绝、确定性目录遍历和复制时的内容冲突检查。",
+        "key": "c2",
+        "label": "跨平台技能目录摘要",
+        "reason": "支持目录摘要对路径分隔符和文本换行进行归一化的论断。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-          "startLine": 41,
-          "endLine": 102
+          "startLine": 73,
+          "endLine": 89
         },
-        "quote": "const inside = (root: string, candidate: string) => {\n  const path = relative(root, candidate);\n  return path === \"\" || (!path.startsWith(\"..\") && !isAbsolute(path));\n};\n\nfunction safeFile(root: string, path: string) {\n  const candidate = resolve(root, path);\n  if (!inside(resolve(root), candidate) || !existsSync(candi"
+        "quote": "export function directoryDigest(directory: string) {\n  const hash = createHash(\"sha256\");\n  for (const path of files(directory)) {\n    // Normalize the relative path to forward slashes so the digest does not\n    // depend on the platform path separator (Windows uses \"\\\\\", POSIX \"/\").\n    const normalizedPath = relative"
       },
       {
-        "key": "c5",
-        "label": "native 技能隔离工作区",
-        "reason": "直接支持仅复制 native 技能、按运行建立工作区，以及 native 技能要求 ACP 的条件。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-          "startLine": 170,
-          "endLine": 190
-        },
-        "quote": "  prepareWorkspace(\n    bundle: RoleBundle,\n    base: string,\n    profile: AgentProfile,\n    runId: string,\n  ) {\n    const workspace = resolve(base, \"roles\", bundle.bundleHash, runId);\n    if (!inside(resolve(base), workspace))\n      throw Error(\"ROLE_WORKSPACE_INVALID\");\n    mkdirSync(workspace, { recursive: true, mo"
-      },
-      {
-        "key": "c6",
-        "label": "提示信任分层与图片校验",
-        "reason": "支持可信提示、不可信派生知识和材料的区分，以及图片编码、摘要、类型和容量检查。",
+        "key": "c3",
+        "label": "可信提示与非可信材料分层",
+        "reason": "支持角色规则和来源索引进入可信区，而派生知识与材料正文作为非可信内容进入提示。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+          "startLine": 106,
+          "endLine": 188
+        },
+        "quote": "export function renderRolePrompt(\n  bundle: RoleBundle,\n  manifestInput: ContextManifest,\n  repair?: string,\n) {\n  const context = contextManifestSchema.parse(manifestInput);\n  if (context.role_id !== bundle.manifest.role_id)\n    throw Error(\"ROLE_CONTEXT_MISMATCH\");\n  const inlineSkills = bundle.skills\n    .filter((sk"
+      },
+      {
+        "key": "c4",
+        "label": "图像校验与累计字节限制",
+        "reason": "支持图像 Base64、摘要和格式标记校验，以及提示构造中超过一千万字节即拒绝的累计限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
           "startLine": 81,
-          "endLine": 207
+          "endLine": 193
         },
         "quote": "function validateImage(material: ContextManifest[\"materials\"][number]) {\n  if (!material.image) return null;\n  const bytes = Buffer.from(material.image.data_base64, \"base64\");\n  if (\n    !bytes.length ||\n    bytes.toString(\"base64\").replace(/=+$/, \"\") !==\n      material.image.data_base64.replace(/=+$/, \"\")\n  )\n    thro"
       },
       {
-        "key": "c7",
-        "label": "生成预算估算与配置",
-        "reason": "支持 UTF-8 字节启发式估算、25% 余量、覆盖优先级和预算整数范围校验。",
+        "key": "c5",
+        "label": "令牌估算与生成预算",
+        "reason": "支持 UTF-8 近似令牌估算、25% 余量、预算默认值和数值边界校验。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -120,179 +94,158 @@
         "quote": "/** An explicit estimate, not a model-specific tokenizer. UTF-8 bytes / 3 is a\n * practical code/mixed-CJK estimate; 25% headroom is charged to the budget. */\nexport function estimateTokens(text: string) {\n  const utf8Bytes = Buffer.byteLength(text, \"utf8\");\n  const estimatedTokens = Math.ceil(utf8Bytes / 3);\n  return "
       },
       {
-        "key": "c8",
-        "label": "网关运行前装配",
-        "reason": "支持 profile、会话策略、托管工具供给的检查，以及技能摘要和隔离工作区准备。",
+        "key": "c6",
+        "label": "执行分支与实际输出校验",
+        "reason": "支持每轮提示渲染、输入输出预算、ACP 与 CLI 分支、共享 Zod 合同解析、附加校验及有限修复边界。",
         "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 247,
-          "endLine": 294
-        },
-        "quote": "  async run(input: {\n    roleId: string;\n    roleVersion?: string;\n    profile: AgentProfile;\n    context: ContextManifest;\n    signal?: AbortSignal;\n    managedTools?: ManagedTool[];\n    emit?: Emit;\n    budget?: Partial<GenerationBudget>;\n    validateOutput?: (output: unknown) => unknown;\n  }) {\n    const originalBun"
-      },
-      {
-        "key": "c9",
-        "label": "ACP 与 CLI 执行分支",
-        "reason": "支持每次尝试的输入预算检查、ACP 参数传递、实际配置回读、CLI 图片限制和会话记录。",
-        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/gateway.ts",
           "startLine": 302,
-          "endLine": 364
+          "endLine": 410
         },
         "quote": "    for (\n      let repairAttempt = 0;\n      repairAttempt <= bundle.manifest.budget.max_repair_attempts;\n      repairAttempt++\n    ) {\n      let output = \"\";\n      const rendered = renderRolePrompt(\n        bundle,\n        context,\n        repairAttempt\n          ? `The prior response failed validation: ${lastError}. "
       },
       {
-        "key": "c10",
-        "label": "ACP 能力发现与配置检查",
-        "reason": "支持 native 技能发现、模型和推理强度支持性检查、上下文窗口校验及图片能力检查。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agents.ts",
-          "startLine": 259,
-          "endLine": 339
-        },
-        "quote": "    const initialized = await Promise.race([\n      connection.initialize({\n        protocolVersion: 1,\n        clientCapabilities: {\n          fs: { readTextFile: false, writeTextFile: false },\n          terminal: false,\n        },\n        clientInfo: { name: \"omem\", version: \"0.1.0\" },\n      }),\n      exited,\n    ]);\n"
-      },
-      {
-        "key": "c11",
-        "label": "结构化输出解析",
-        "reason": "支持单个 JSON 对象要求、运行时合同解析及作业和角色身份一致性检查。",
-        "relation": "implements",
+        "key": "c7",
+        "label": "运行追踪与指纹范围",
+        "reason": "支持 trace 保存的审计字段，以及运行指纹实际采用的摘要和模型配置范围。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 210,
-          "endLine": 237
-        },
-        "quote": "function parseOutput(\n  bundle: RoleBundle,\n  raw: string,\n  context: ContextManifest,\n) {\n  const trimmed = raw.trim();\n  if (!trimmed.startsWith(\"{\") || !trimmed.endsWith(\"}\"))\n    throw Error(\"ROLE_OUTPUT_NOT_JSON_OBJECT\");\n  let parsed: unknown;\n  try {\n    parsed = JSON.parse(trimmed);\n  } catch {\n    throw Error("
-      },
-      {
-        "key": "c12",
-        "label": "输出后验校验与运行追踪",
-        "reason": "支持输出预算、可选后验验证、trace 字段汇集以及运行指纹的构造。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 365,
+          "startLine": 368,
           "endLine": 395
         },
-        "quote": "        if (estimateTokens(output).budgetedTokens > limits.maxOutputTokens) throw Error(\"ROLE_OUTPUT_BUDGET_EXCEEDED\");\n        let result = parseOutput(bundle, output, context);\n        try { const normalized = input.validateOutput?.(result); if (normalized !== undefined) result = normalized as Record<string, unknown>"
+        "quote": "        const trace: RoleRunTrace = {\n          runId,\n          roleId: bundle.manifest.role_id,\n          roleVersion: bundle.manifest.role_version,\n          bundleHash: bundle.bundleHash,\n          promptHash: finalPromptHash,\n          contextHash: stableDigest(context),\n          skillHash,\n          toolHash,\n  "
       },
       {
-        "key": "c13",
-        "label": "有限输出修复边界",
-        "reason": "支持仅对指定输出、语法或合同错误重试，并在取消、其他错误或次数耗尽时终止。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 396,
-          "endLine": 409
-        },
-        "quote": "      } catch (error) {\n        lastError =\n          error instanceof Error ? error.message : \"unknown validation error\";\n        if (\n          signal.aborted ||\n          (!lastError.startsWith(\"ROLE_OUTPUT_\") &&\n            !(\n              error instanceof SyntaxError ||\n              (error as { name?: string })."
-      },
-      {
-        "key": "c14",
-        "label": "角色作业适配器",
-        "reason": "支持从作业上下文调用网关、选择末次会话，并以租约绑定保存结果及运行证据。",
+        "key": "c8",
+        "label": "角色任务处理器成功路径",
+        "reason": "支持上下文生成、网关调用、会话标识校验、角色输出保存和结果引用返回。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
-          "startLine": 9,
+          "startLine": 18,
           "endLine": 49
         },
-        "quote": "export function createRoleJobHandler(input: {\n  gateway: RoleRuntimeGateway;\n  jobs: JobRepository;\n  roleId: ContextManifest[\"role_id\"];\n  roleVersion?: string;\n  profile: AgentProfile;\n  context: (jobId: string) => ContextManifest | Promise<ContextManifest>;\n  managedTools?: ManagedTool[];\n}): JobHandler {\n  return a"
+        "quote": "  return async (job, signal) => {\n    const context = await input.context(job.id);\n    const run = await input.gateway.run({\n      roleId: input.roleId,\n      roleVersion: input.roleVersion,\n      profile: input.profile,\n      context,\n      signal,\n      managedTools: input.managedTools,\n    });\n    const sessionId = "
       },
       {
-        "key": "c15",
-        "label": "耐久作业执行流程",
-        "reason": "支持作业领取、心跳、取消、成功提交、失败分类和过期租约处理。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/jobs/worker.ts",
-          "startLine": 47,
-          "endLine": 145
-        },
-        "quote": "  async processOne() {\n    const now = this.options.now ?? (() => new Date());\n    const leaseMs = this.options.leaseMs ?? 60_000;\n    const lease = this.repository.claimNext({\n      workerId: this.workerId,\n      kinds: this.options.kinds,\n      jobIds: this.options.jobIds,\n      fingerprint: this.options.fingerprint("
-      },
-      {
-        "key": "c16",
-        "label": "后台请求立即拒绝",
-        "reason": "支持 ACP 权限和补充输入回调在通知宿主后立即取消或拒绝，而不暂停等待用户。",
+        "key": "c9",
+        "label": "Worker 的失败种类选择",
+        "reason": "支持显式 JobExecutionError 种类的保留，以及普通异常、取消和停机中断的默认分类方式。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/agents.ts",
-          "startLine": 181,
-          "endLine": 218
+          "key": "omem:apps/server/src/jobs/worker.ts",
+          "startLine": 97,
+          "endLine": 120
         },
-        "quote": "    connection = new ClientSideConnection(\n      () => ({\n        requestPermission: async (request) => {\n          await options.onRuntimeRequest?.({\n            kind: \"permission\",\n            sessionId: sessionId || request.sessionId,\n            turnId: request.toolCall.toolCallId,\n            providerRequestId: re"
+        "quote": "    } catch (error) {\n      const failure =\n        error instanceof JobExecutionError\n          ? error\n          : new JobExecutionError(\n              error instanceof Error ? error.message : \"Job execution failed\",\n              controller.signal.aborted ? \"cancelled\" : \"permanent\",\n            );\n      try {\n     "
       },
       {
-        "key": "c17",
-        "label": "运行时请求仓储边界",
-        "reason": "支持 denied 记录的幂等保存，以及 resolve 仅处理既有且未过期 pending 请求的限制。",
+        "key": "c10",
+        "label": "任务失败类型与重试规则",
+        "reason": "支持完整失败类型集合，并说明 bad_output 与 transient 的重试额度及其他类型直接结束的规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/repository.ts",
+          "startLine": 93,
+          "endLine": 99
+        },
+        "quote": "export type JobFailureKind =\n  | \"transient\"\n  | \"bad_output\"\n  | \"auth\"\n  | \"config\"\n  | \"permanent\"\n  | \"cancelled\";"
+      },
+      {
+        "key": "c11",
+        "label": "角色输出事务保存",
+        "reason": "支持保存时校验运行中租约，并在一个事务内更新运行追踪和插入角色输出；也用于说明该事务未同时完成任务状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/repository.ts",
+          "startLine": 452,
+          "endLine": 503
+        },
+        "quote": "  saveRoleOutput(input: {\n    jobId: string;\n    leaseToken: string;\n    model: string | null;\n    effort: string | null;\n    promptHash: string;\n    skillHash: string;\n    toolHash: string;\n    fingerprint: string;\n    roleBundleHash: string;\n    contextHash: string;\n    outputSchema: string;\n    sessionId: string;\n  "
+      },
+      {
+        "key": "c12",
+        "label": "共享知识输出合同",
+        "reason": "支持知识文档、章节、引用、问题和批次由统一 Zod 合同约束。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 3,
+          "endLine": 39
+        },
+        "quote": "const key = z.string().min(1).max(500);\nexport const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \""
+      },
+      {
+        "key": "c13",
+        "label": "分析角色隔离与预算配置",
+        "reason": "支持代码分析角色的无工具、会话不复用、禁止继承扩展能力及预算配置。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/code-analyst/1/manifest.json",
+          "startLine": 17,
+          "endLine": 30
+        },
+        "quote": "  \"output_schema\": \"KnowledgeBatch.v1\",\n  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },\n  \"budget\": {\n    \"max_context_tokens\": 96000,\n    \"max_output_tokens\": 24000,\n    \"max_repair_atte"
+      },
+      {
+        "key": "c14",
+        "label": "运行时交互请求仓储",
+        "reason": "支持请求状态模型、拒绝记录、决议方法和查询边界，并说明当前网关持久化路径主要记录 denied。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/requests.ts",
-          "startLine": 37,
-          "endLine": 103
+          "startLine": 7,
+          "endLine": 115
         },
-        "quote": "export class RuntimeRequestRepository {\n  constructor(private readonly db: DatabaseSync) {}\n\n  recordDenied(input: {\n    workspaceId: string;\n    jobId?: string | null;\n    sessionId: string;\n    turnId?: string | null;\n    providerRequestId: string;\n    kind: \"permission\" | \"elicitation\";\n    options: unknown;\n    now"
-      },
-      {
-        "key": "c18",
-        "label": "KnowledgeBatch 结构合同",
-        "reason": "支持输出合同对文档、章节、引用和问题字段形状的约束，同时界定其不能独自保证跨字段和语义一致性。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/agent-runtime/roles/code-analyst/1/output.schema.json",
-          "startLine": 78,
-          "endLine": 218
-        },
-        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+        "quote": "export type RuntimeRequest = {\n  id: string;\n  workspaceId: string;\n  jobId: string | null;\n  sessionId: string;\n  turnId: string | null;\n  providerRequestId: string;\n  kind: \"permission\" | \"elicitation\";\n  state: \"pending\" | \"denied\" | \"expired\" | \"resolved\";\n  options: unknown;\n  expiresAt: string;\n  createdAt: strin"
       }
     ],
     "questions": [
       {
-        "question": "是否计划让后台角色任务创建可交互的 pending 请求，并将用户决定回传到仍然存活的 ACP 会话？",
-        "why": "现有实现只展示 ACP 回调立即拒绝请求、网关保存 denied 记录，以及仓储对既有 pending 的 resolve；没有 pending 创建、会话暂停或决定回传链路。",
-        "nextStep": "明确产品选择；如需交互审批，补充会话保活、过期、租约、动作持久化和恢复设计，并覆盖并发及超时测试。",
+        "question": "角色输出保存后、任务成功标记前发生崩溃时，系统应复用已有输出还是重新执行并产生新输出？",
+        "why": "角色输出保存和任务成功标记分别位于处理器与 worker 的两个仓库事务中，存在已插入输出但任务仍可被重新领取的窗口；当前材料未显示按任务尝试或输出摘要进行唯一性去重。",
+        "nextStep": "补充“保存成功后进程退出”的故障注入测试，并依据期望语义增加同一任务尝试的唯一约束、已有输出复用或原子完成接口。",
         "blocking": false,
         "citationKeys": [
-          "c16",
-          "c17"
+          "c8",
+          "c9",
+          "c11"
         ]
       },
       {
-        "question": "哪些角色输出已经接入确定性的跨字段引用校验和独立语义复核？",
-        "why": "网关提供可选 validateOutput 并可修复其失败，但结构合同主要约束字段形状；材料没有列出各角色调用点实际传入的验证器，也不能证明引用范围在语义上支持论断。",
-        "nextStep": "盘点角色网关调用点及验证器，测试目标覆盖、行号、正文引用、悬空 citationKeys、引文抽取和语义不支持场景。",
+        "question": "ACP 权限或信息征询是否计划进入真正的等待决策与恢复执行流程？",
+        "why": "网关当前回调只记录已拒绝请求；仓库虽有 pending 与 resolve 分支，但材料没有展示任务转为等待决策、向用户暴露请求、持久化具体动作并恢复原会话的调用链。",
+        "nextStep": "检查 ACP 适配器、HTTP 路由和任务状态转换；若该能力属于当前目标，定义请求创建、作用域鉴权、决议审计、过期处理与会话恢复的端到端合同。",
         "blocking": false,
         "citationKeys": [
-          "c12",
-          "c18"
+          "c6",
+          "c14"
         ]
       },
       {
-        "question": "agent-runtime 的外部 ACP/CLI 兼容性和预算参数是否经过真实运行验证？",
-        "why": "材料展示了预算估算、ACP 能力发现和耐久作业实现，但没有测试文件、真实 CLI 检查结果、失败率或不同角色的上下文规模数据。",
-        "nextStep": "补充协议行为测试，并对支持的 Agent CLI 分别执行和标注 live check，覆盖模型发现、图片、取消、输出修复及超限场景。",
+        "question": "Agent 运行主链的关键边界目前有哪些真实行为测试和外部 CLI 活体验证？",
+        "why": "提供的源码能证明实现路径，但没有测试文件、退出码或真实 ACP/CLI 运行记录，无法确认路径逃逸、摘要稳定性、预算拦截、输出修复、租约失效和并发决议的实际覆盖。",
+        "nextStep": "汇总对应自动化测试与 live check，优先覆盖角色资产安全、ACP/CLI 配置发现、修复次数、输出保存崩溃窗口和请求并发决议，并分别记录测试与外部活体验证结果。",
         "blocking": false,
         "citationKeys": [
-          "c7",
+          "c1",
+          "c2",
+          "c6",
+          "c9",
           "c10",
-          "c15"
+          "c11",
+          "c14"
         ]
       }
     ]
@@ -305,18 +258,28 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
+      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/agent-runtime/gateway.ts",
       "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+      "key": "omem:apps/server/src/agent-runtime/requests.ts",
+      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
     },
     {
       "kind": "material",
@@ -330,8 +293,8 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/requests.ts",
-      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
     },
     {
       "kind": "material",
@@ -369,34 +332,29 @@
       "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
     },
     {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/prompt.md",
-      "digest": "95e5365efe5fc2b6acf74b1b4aa3436e115ee2b00f5bbb2bcf56398a2cf2d1fc"
-    },
-    {
       "kind": "article",
       "key": "omem:apps/server/src/agent-runtime/budget.ts",
-      "digest": "c529f31b2e276aac055b815bc9289f38ac951715d53cd51d112631d5bc5b2f50"
+      "digest": "148a99daf6fd6e7b6b82e54da6581a0ddc738737cc503050749183e6324e7569"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "9cfa34fbbb4a6e46227dcc0c5b39c37b148ae4e2a2ceb06ff026773de4b4d327"
+      "digest": "6c64e7413ae84b9d85d101b3507a6ed77e77c772907e39fec9a5b410968efef3"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-      "digest": "2f68adf3cd794d7e71d66f9c29fb11389343f5c6e8cec7e8cabe164bdf1480ff"
+      "digest": "6605d6c23eb9026f448b989376a57ab1b699a80a4c9b25a12aa33bbfed85300b"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
-      "digest": "f858c511d098ca3a49f8a7358384a01020fc43d1431fc44e0c89e71befd1daf0"
+      "digest": "5686e2bde7154a1b4f51c43d29ca940c9dee3a5394238fa1ca21017e3e4dc2ad"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/agent-runtime/requests.ts",
-      "digest": "931261e73530b9401d1aa58533d4dd1ac49ce2e3d1d7944e961ada6fb2ff7f19"
+      "digest": "703d5bcc729679e55373fd64e13e574ab67390d702b573129e491da27430b016"
     },
     {
       "kind": "article",
@@ -431,23 +389,23 @@
     {
       "kind": "article",
       "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
-      "digest": "e975a0656ad6ea0ab66aa523024392d4d895234381adb1ed6bf8796924a5688a"
+      "digest": "37c80359cc1a6ca563163d3f035ad9a043f304b1db318d3aa7730fb27a80ea79"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:30:22.920Z",
+    "at": "2026-10-01T04:07:40.945Z",
     "trace": {
-      "runId": "3c742e8f-b89b-4276-b482-db3dbeb10575",
+      "runId": "4e01aa47-5e52-4d3f-8632-7329bc688c1c",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "d674e8f415a077777dabaaaeb416bcabad0e8cc3bf5c66eb967a9932c7551ab2",
-      "contextHash": "25da6f843eaaa18e46f7ed52e7fe7424694307c8ff464d60e531b797ab33403d",
+      "promptHash": "493f7b0cd6853059042ff4332f0287391e4a35772fe68e808c4ae0988376b170",
+      "contextHash": "b51499d7f0c7d1a939da74e5023b1c56a468dfd07ebe020397ed7936b0129c6e",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f0d88d8d019a5c9da6db7c8b30e225af6a9c01661211abc84bad5cf5f31b0c32",
+      "fingerprint": "4911b3de13c0f251b4f502e245393603f79538faf5486beff5b6fcae3700face",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -460,11 +418,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eedc-0e79-7953-b62e-52c53efad1d9"
+        "01a0f5a5-1ba7-7df0-bde1-38fe8ba90912"
       ],
       "usage": {
-        "used": 64016,
-        "size": 760000,
+        "used": 80242,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -472,10 +430,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 151338,
-          "utf8Bytes": 180634,
-          "estimatedTokens": 60212,
-          "budgetedTokens": 75265,
+          "chars": 181970,
+          "utf8Bytes": 216544,
+          "estimatedTokens": 72182,
+          "budgetedTokens": 90228,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -484,17 +442,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:30:38.008Z",
+    "at": "2026-10-01T04:07:59.925Z",
     "trace": {
-      "runId": "173aa4ab-1c58-46e0-993c-ba196f808223",
+      "runId": "1807e6e0-9402-4019-91a7-43c7acf87ef3",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9e6f4acb933382e5e588a1a0ecccd11a5f3b29fbae876cbb9f64cdbe87d7cf4b",
-      "contextHash": "ca0c4df7b6b0958b1564cbe20c38a6ae93f3f75cc5cef130c2f644647bb36785",
+      "promptHash": "1b8a49ea9be5812346b4d6334bb9cdec89f6cc88702cc4adad3e0322c77e7918",
+      "contextHash": "dc0b03de937557f439208e74bbb5ab05eda934ba67a319b24858e18539217646",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "25ea8ba39087a3429f3c92a387132cdbe5b184f995c8315cefc066d2e48fac48",
+      "fingerprint": "80ce45a14c5b7497fa0c654ece96a5d42388ee3a87e4589721bb3da84f6caaf6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -507,11 +465,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eedc-83b8-7462-bcf5-6951ac9b13a0"
+        "01a0f5a5-98e8-7f63-8a75-1c06792d97d9"
       ],
       "usage": {
-        "used": 60904,
-        "size": 760000,
+        "used": 77981,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -519,10 +477,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 150101,
-          "utf8Bytes": 177483,
-          "estimatedTokens": 59161,
-          "budgetedTokens": 73952,
+          "chars": 179342,
+          "utf8Bytes": 212560,
+          "estimatedTokens": 70854,
+          "budgetedTokens": 88568,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

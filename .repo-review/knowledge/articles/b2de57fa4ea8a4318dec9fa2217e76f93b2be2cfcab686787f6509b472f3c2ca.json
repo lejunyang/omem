@@ -2,57 +2,57 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/code-understanding-model.test.ts",
-    "title": "代码理解模型接入与生成测试",
-    "summary": "验证显式模型配置、真实 HTTP 传输、生成结果落库，以及模型不可用、超时、格式错误和引用失效时的安全降级。",
+    "title": "代码理解模型端口与生成流程测试",
+    "summary": "该测试以临时 Git 仓库、隔离 SQLite Store 和本地 HTTP 模型夹具验证代码理解生成的宿主合同：模型需显式配置；合法输出经节点引用校验后成为当前理解；格式错误、未知引用和超时不会产生当前模型理解；配置入口对非法内容明确报错。它不证明真实 Agent CLI/ACP 链路可用，也尚未证明失败运行会保留既有有效理解。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose_flow",
-        "title": "生成输入与成功路径",
-        "body": "夹具创建并提交临时仓库，先执行评审同步和代码同步，再从数据库取得真实 Alpha 符号，因此模型输出引用当前代码图节点，而非任意伪造标识。[[c1]] 成功场景通过本地 HTTP 服务走真实 fetch 传输；返回叙述经封装和引用校验后成为当前 model-generated 结果，并保留响应实际给出的模型名，同时标记为非 seed、未经 agent 验证。[[c2]]"
+        "key": "purpose-fixture",
+        "title": "测试目标与夹具边界",
+        "body": "测试创建临时 Git 仓库，提交含 `Alpha` 的 TypeScript 文件，再执行材料同步与代码图同步，并从数据库取得实际符号 ID。每例使用隔离 Store，结束后关闭数据库并清理目录，因此覆盖的是“源码提交→仓库同步→代码图→理解生成”的最小集成链路，而非直接伪造图节点。[[c1]]\n\n模型端是监听随机回环端口的本地 HTTP 服务，调用确实经过 `fetch` 传输，但返回内容完全由测试处理器控制。它适合验证 HTTP 适配、响应解析与宿主校验，不等同于真实 Agent CLI、ACP 或外部模型现场检查。[[c2]]"
       },
       {
-        "key": "failure_boundaries",
-        "title": "不可用与失败隔离",
-        "body": "模型不是原始代码图的前置条件：未配置时状态接口报告不可用、生成返回 503，但图仍可读取；未知 transport 会显式报错。[[c3]] 畸形 JSON 返回 502，未知节点引用返回 422，二者都不会产生当前 model-generated 行。[[c4]] 请求超时同样中止运行、返回 502，且不留下当前模型理解。[[c5]] 这些测试证明失败隔离，不证明重试、并发取消或供应商兼容性。"
+        "key": "generation-contract",
+        "title": "生成、降级与失败隔离",
+        "body": "未配置模型时，状态接口标记不可用，生成接口返回 503，而原始代码图仍可读取；未知 transport 会明确抛错，`none` 或空配置则关闭模型，说明派生理解不是代码图可用性的前置条件。[[c3]]\n\n成功夹具返回叙事、已存在的符号引用及 `fixture-model-v1`。生成后出现一条 `model-generated` 记录，状态为 generated；响应提供的模型标识被持久化，同时记录不是 seed，也未标记为独立 agent 复核。此前“成功必须返回真实模型标识”的结论被替代：本文件仅证明提供的夹具标识会被记录，未证明该字段缺失必然被拒绝。[[c4]]\n\n畸形 JSON、未知节点引用和超时分别返回 502、422、502，且都不会形成当前模型理解。此前“失败不能覆盖有效知识”的结论也被收窄：这些用例都从没有模型理解的新 Store 开始，只能证明失败结果自身不会成为当前理解。[[c5]]"
       },
       {
-        "key": "configuration",
-        "title": "显式配置边界",
-        "body": "配置测试限定模型只从显式文件路径构建：空路径禁用模型，合法 HTTP 配置保留 endpoint 与 model，未知传输和畸形 JSON 都必须明确失败。[[c6]] 因而材料没有支持读取个人 Agent profile 的结论。测试使用本机无认证 HTTP 服务，尚未覆盖认证头、预算耗尽、真实外部模型、进程重启恢复及响应流式传输。"
+        "key": "config-and-gaps",
+        "title": "配置入口与尚未覆盖的行为",
+        "body": "配置测试确认空的显式路径会禁用模型；指定 JSON 文件时依据文件内容构建 HTTP 端口并保留配置模型名；不支持的 transport 与畸形 JSON 均抛出 `CodeModelUnavailableError`，避免静默接受无效配置。[[c6]]\n\n现有断言集中于接口状态、错误类别和当前理解列表，尚未检查失败审计行的状态与错误字段，也未覆盖成功后再次失败时旧理解是否保留、并发生成、服务断开及完整持久化内容。真实模型发现、能力协商、认证、运行 trace 和独立复核仍需另行 live-check；本地 HTTP 夹具不能替代这些证据。[[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "仓库与真实符号准备",
-        "reason": "支持模型测试先建立代码快照并从数据库取得真实符号标识。",
+        "label": "临时仓库与同步夹具",
+        "reason": "支持测试通过真实 Git 提交、材料同步、代码图同步和数据库符号查询构造最小集成链路。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-understanding-model.test.ts",
-          "startLine": 43,
+          "startLine": 29,
           "endLine": 104
         },
-        "quote": "function git(args: string[], cwd: string) {\n  return execFileSync(\"git\", args, { cwd, encoding: \"utf8\" });\n}\nfunction makeFixtureRepo(): string {\n  const root = mkdtempSync(join(tmpdir(), \"omem-cum-git-\"));\n  git([\"init\", \"-q\", root], root);\n  git([\"config\", \"user.email\", \"t@example.com\"], root);\n  git([\"config\", \"user"
+        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup() {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-cum-\"));\n  const store = new Store(dir);\n  stores.push({ store, dir });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    try { store.close(); } catch { /* close"
       },
       {
         "key": "c2",
-        "label": "HTTP 模型生成成功路径",
-        "reason": "支持模型叙述经接口生成、校验和持久化后成为当前结果，并保留返回模型身份。",
-        "relation": "supports",
+        "label": "本地 HTTP 模型夹具",
+        "reason": "说明测试实际经过本地 HTTP 传输，同时界定其返回由夹具控制，不能证明真实外部模型链路。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-understanding-model.test.ts",
-          "startLine": 136,
-          "endLine": 176
+          "startLine": 71,
+          "endLine": 90
         },
-        "quote": "  it(\"success path: real http model returns narrative, sealed & validated, becomes current\", async () => {\n    const { root, store, alphaId } = await preparedRepo();\n    const narrative = {\n      module_responsibilities: [\"holds Alpha\"],\n      boundaries: [\"read-only\"],\n      key_flows: [],\n      entry_points: [\"Alpha."
+        "quote": "// A real local HTTP \"model\" — exercises the real fetch() transport, not a fake.\nfunction startFakeModel(handler: (body: string) => { status?: number; body: unknown }) {\n  const server = http.createServer((req, res) => {\n    let data = \"\";\n    req.on(\"data\", (c) => (data += c));\n    req.on(\"end\", () => {\n      const ou"
       },
       {
         "key": "c3",
-        "label": "无模型降级与传输限制",
-        "reason": "证明模型不可用不阻断原始图，并说明未知传输会显式失败。",
+        "label": "无模型与非法传输配置",
+        "reason": "支持模型不可用时生成接口降级但原始代码图仍可访问，以及未知 transport 被明确拒绝。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -64,62 +64,86 @@
       },
       {
         "key": "c4",
-        "label": "畸形输出与未知引用拒绝",
-        "reason": "支持畸形 JSON 和未知节点引用分别失败，且不会成为当前模型理解。",
+        "label": "模型生成成功路径",
+        "reason": "支持合法叙事成为当前模型理解、响应中的夹具模型标识被记录，以及 seed 和复核标记的实际断言范围。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-understanding-model.test.ts",
+          "startLine": 136,
+          "endLine": 174
+        },
+        "quote": "  it(\"success path: real http model returns narrative, sealed & validated, becomes current\", async () => {\n    const { root, store, alphaId } = await preparedRepo();\n    const narrative = {\n      module_responsibilities: [\"holds Alpha\"],\n      boundaries: [\"read-only\"],\n      key_flows: [],\n      entry_points: [\"Alpha."
+      },
+      {
+        "key": "c5",
+        "label": "错误输出与超时用例",
+        "reason": "支持畸形 JSON、未知节点引用和超时不会产生当前模型理解，同时表明这些用例没有预先建立旧的有效理解。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-understanding-model.test.ts",
           "startLine": 178,
-          "endLine": 222
+          "endLine": 243
         },
         "quote": "  it(\"malformed model JSON -> failed row, zero current understanding\", async () => {\n    const { root, store } = await preparedRepo();\n    const model = await startFakeModel(() => ({ body: { text: \"not json at all\" } }));\n    const app = (await buildReviewApp({\n      store,\n      repoRoot: root,\n      codeUnderstanding"
       },
       {
-        "key": "c5",
-        "label": "模型请求超时",
-        "reason": "直接支持超时请求返回失败且不留下当前 model-generated 行。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-understanding-model.test.ts",
-          "startLine": 224,
-          "endLine": 243
-        },
-        "quote": "  it(\"request timeout aborts the run and records a failed row\", async () => {\n    const { root, store } = await preparedRepo();\n    const model = await startFakeModel(() => {\n      // never responds within the budget\n      return new Promise(() => {}) as never;\n    });\n    const app = (await buildReviewApp({\n      stor"
-      },
-      {
         "key": "c6",
-        "label": "显式模型配置约束",
-        "reason": "支持空路径禁用、显式配置文件读取，以及非法传输和坏 JSON 报错。",
+        "label": "显式模型配置文件测试",
+        "reason": "支持空路径禁用、显式 JSON 配置加载，以及非法 transport 和畸形配置被明确拒绝。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-understanding-model.test.ts",
           "startLine": 248,
-          "endLine": 279
+          "endLine": 278
         },
         "quote": "describe(\"review model config entry (REVIEW_CODE_MODEL_CONFIG)\", () => {\n  it(\"empty explicit path disables the model without reading personal config\", () => {\n    expect(loadReviewCodeModelConfig(\"\").transport).toBe(\"none\");\n    expect(buildReviewCodeModel(\"\")).toBeNull();\n  });\n\n  it(\"reads only the explicit config f"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "失败、拒绝或超时发生在已有有效理解之后时，旧的当前理解是否仍会保留？",
+        "why": "现有失败用例均从没有 `model-generated` 理解的新 Store 开始，只能证明失败结果自身不会成为当前理解，不能证明覆盖保护。",
+        "nextStep": "先生成一条有效理解，再依次触发 malformed JSON、UNKNOWN_NODE_REFS 和 timeout，断言旧理解仍为 current，并核对失败运行的审计状态与错误原因。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "模型响应中的 `model` 字段是否为成功生成的强制字段？",
+        "why": "成功用例只验证响应提供 `fixture-model-v1` 时该值会被保存，没有覆盖字段缺失时的行为。",
+        "nextStep": "增加缺少 `model` 字段的响应测试；若允许缺失，则将合同明确为仅在响应提供时记录模型标识。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "真实 Agent CLI/ACP 模型链路由哪一组现场检查负责？",
+        "why": "本文件使用本地 HTTP 夹具，配置测试也只验证显式 HTTP 配置文件，不能证明真实模型发现、能力协商、认证或外部进程异常处理可用。",
+        "nextStep": "使用实际 review 模型配置执行独立 live-check，记录模型身份、退出状态、运行 trace 与独立复核结果，并明确区别于本测试的夹具覆盖。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c6"
+        ]
+      },
+      {
+        "question": "模型响应中的 model 字段是否为成功生成的强制字段？",
+        "why": "成功用例只验证响应提供 fixture-model-v1 时该值会被保存，没有覆盖字段缺失时的行为。",
+        "nextStep": "增加缺少 model 字段的响应测试；若允许缺失，则将合同明确为仅在响应提供时记录模型标识。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge.test.ts",
-      "digest": "cb96bd023356e4fee4a129e29c9a3b295a3a83428e5c2c7cc5c7b5e1b4616688"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
-      "digest": "aeb1e454f5fe809dbfb9574bf9746feedb4997b631e6dab73a50c9e78897b089"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/code-understanding-model.test.ts",
@@ -127,29 +151,39 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/code-understanding.test.ts",
-      "digest": "b5c570dd1f8ad5739c6aab8b91ba994adbbfa3f69be346f4b33657e2b60ebab4"
+      "key": "omem:apps/server/src/code/understanding-store.ts",
+      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/connectors.test.ts",
-      "digest": "e503ee0adfb867b64b4f7ee7484a140375259da1c821e27ef8650f329bf99bfc"
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "b9d4fd78e9180e1d8d6d4b7ec092e15f38292d6c0f1346e2e6483c6dbeca3637"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:52:58.819Z",
+    "at": "2026-10-01T02:27:10.380Z",
     "trace": {
-      "runId": "8a3b7fb0-51e1-4a9b-bf32-cb1f5185c725",
+      "runId": "2eafeaa4-11d7-492e-9a5d-8af3eaf1094b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "fe60010e6f1505808717e6ce8a46d52bde9bae250ad8f4ba41bec21e00b71cd3",
-      "contextHash": "038e60537bfa9818224ec12710d06eadeabf151f79a8bec155dc32e92f39e5a9",
+      "promptHash": "844fd686d99aa5bdbe174d264477199d4a55299065190da8ca1ed4dd81cc9643",
+      "contextHash": "0ac5784a3aa38b46e1f0b03e82832081ad6dfb660138cf556637f5324cfda2c5",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3ae96d5c1a056d8991e67002dca19e09cb742ac3b4d67ff1b1cc7f7e92f1380a",
+      "fingerprint": "eee77d44aa6ca6aef1c0c2ef1bffaba86ef57467d767111d20df20870041c1f0",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -162,11 +196,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef0-6cc7-7da0-b740-fdea83e8624a"
+        "01a0f549-36db-7261-83a0-d5891026f872"
       ],
       "usage": {
-        "used": 55439,
-        "size": 760000,
+        "used": 32932,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -174,10 +208,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 121805,
-          "utf8Bytes": 131205,
-          "estimatedTokens": 43735,
-          "budgetedTokens": 54669,
+          "chars": 40877,
+          "utf8Bytes": 46231,
+          "estimatedTokens": 15411,
+          "budgetedTokens": 19264,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +220,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:53:31.900Z",
+    "at": "2026-10-01T02:27:29.793Z",
     "trace": {
-      "runId": "ed4b309c-eebd-48e9-bcde-ce028806dd50",
+      "runId": "78ffcdb3-f972-4010-8d29-696f14b1eb4e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "1cb8ea5949b7313ff8e1454804360b3f4f0ad9ee11ce446d737b227b8625437e",
-      "contextHash": "ebe434bf933a063afaf430f1e822157dafcf6f825978b04d0f20869665ccd74c",
+      "promptHash": "29a3b1ca681d73cd023a1624be236b272e2b0051cd0a7101357317c7570857dd",
+      "contextHash": "ac742e5bfb11491fcedcb8f3418e0aaf31652ccd85ed3e9a623faecbb59f7b0f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9f0df47b311a23c73d4a094a74490fa558f237f9ece3b0967c1102720fc0084e",
+      "fingerprint": "c7b5dffff0a2d94895fe60f9451dd468a1d53dc998d0e4591007c7af3c271270",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,11 +243,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef1-3126-74c1-912f-46756b3db620"
+        "01a0f549-9e16-7681-bced-a3ca7a3e9f21"
       ],
       "usage": {
-        "used": 53246,
-        "size": 760000,
+        "used": 31073,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -221,10 +255,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 125429,
-          "utf8Bytes": 135603,
-          "estimatedTokens": 45201,
-          "budgetedTokens": 56502,
+          "chars": 37137,
+          "utf8Bytes": 41031,
+          "estimatedTokens": 13677,
+          "budgetedTokens": 17097,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

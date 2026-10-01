@@ -2,58 +2,85 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/components/OmBadge.vue",
-    "title": "语义色调徽标组件",
-    "summary": "该 Vue 组件提供一个轻量内联徽标容器，通过 neutral、warning、danger 和 success 四种 tone 表达状态；内容完全由默认 slot 提供。",
+    "title": "OmBadge 徽标组件",
+    "summary": "一个轻量 Vue 3 展示组件，以默认插槽承载内容，并通过 tone 属性提供中性、警告、危险和成功四种可选色调。",
     "category": "implementation",
     "sections": [
       {
-        "key": "api",
-        "title": "组件接口与渲染",
-        "body": "组件只暴露可选 `tone` 属性，允许 neutral、warning、danger、success，默认 neutral；模板把 tone 作为附加 class，并通过默认 slot 渲染调用方内容。[[c1]] 因此它负责一致的视觉容器而不规定业务文案、图标或状态映射，具体语义仍由调用方选择。"
+        "key": "purpose-and-flow",
+        "title": "展示能力与渲染流程",
+        "body": "OmBadge 提供统一的行内徽标容器和可选色调。组件以 Vue 3 `<script setup>` 声明 `tone` 属性，将取值限制为 `neutral`、`warning`、`danger`、`success`；调用方未传入时使用 `neutral`。这只能确认组件直接提供的色调接口与默认行为，不能据此推断它专用于某类业务状态或风险提示。[[c1]]\n\n渲染时始终输出一个 `span`：固定应用 `om-badge` 基础类，同时把当前 tone 作为动态类；调用方提供的内容由默认插槽放入其中。[[c2]] 组件本身不生成文字、不解释 tone 的业务含义，也未包含点击等交互逻辑。"
       },
       {
-        "key": "styles",
-        "title": "基础样式与状态色",
-        "body": "徽标采用行内弹性布局、细边框、小内边距、圆角、12px 字号和不换行，基础文字色使用共享次要色变量。warning 与 danger 使用对应主题变量和浅色背景，success 使用固定前景色与背景色。[[c2]] neutral 没有独立规则，沿用基础样式；组件也未在材料中声明 ARIA 属性，不能只依靠颜色承载必须被辅助技术识别的状态。"
+        "key": "styles-and-boundaries",
+        "title": "视觉规则与实现边界",
+        "body": "基础样式把容器设为行内弹性布局并垂直居中，统一边框、内边距、圆角和 12px 字号；文字颜色及边框依赖 `--om-secondary`、`--om-line` 等外部 CSS 变量。`white-space: nowrap` 会阻止内容换行，但文件中没有最大宽度、溢出隐藏或省略号规则。[[c3]]\n\n`warning`、`danger`、`success` 分别覆盖文字色和背景色，`neutral` 没有独立选择器，因此只使用基础样式。[[c4]] 样式采用 `scoped`，其选择器影响被限定在该组件。当前固定材料未提供调用方、无障碍约定或测试，因而无法确认四种 tone、长内容和主题变量缺失时是否已有自动化或视觉覆盖；此前关于具体使用场景与设计动机的宽泛结论已被这一实现范围说明替代。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "徽标属性与插槽模板",
-        "reason": "支持 tone 的允许值、默认值、动态 class 绑定和默认 slot 内容接口。",
+        "label": "色调属性与默认值",
+        "reason": "支持组件提供四种 tone 取值以及默认采用 neutral 的接口说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmBadge.vue",
           "startLine": 1,
-          "endLine": 9
+          "endLine": 5
         },
-        "quote": "<script setup lang=\"ts\">\nwithDefaults(\n  defineProps<{ tone?: \"neutral\" | \"warning\" | \"danger\" | \"success\" }>(),\n  { tone: \"neutral\" },\n);\n</script>\n<template>\n  <span class=\"om-badge\" :class=\"tone\"><slot /></span>\n</template>"
+        "quote": "<script setup lang=\"ts\">\nwithDefaults(\n  defineProps<{ tone?: \"neutral\" | \"warning\" | \"danger\" | \"success\" }>(),\n  { tone: \"neutral\" },\n);"
       },
       {
         "key": "c2",
-        "label": "徽标基础与语义色样式",
-        "reason": "支持布局、尺寸、颜色变量以及 warning、danger、success 的具体视觉规则。",
+        "label": "徽标模板结构",
+        "reason": "支持固定基础类、动态色调类和默认插槽共同构成渲染结构的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmBadge.vue",
-          "startLine": 10,
-          "endLine": 33
+          "startLine": 7,
+          "endLine": 9
         },
-        "quote": "<style scoped>\n.om-badge {\n  display: inline-flex;\n  align-items: center;\n  border: 1px solid var(--om-line);\n  padding: 2px 8px;\n  border-radius: 5px;\n  font-size: 12px;\n  color: var(--om-secondary);\n  white-space: nowrap;\n}\n.warning {\n  color: var(--om-warning);\n  background: #f6f2e8;\n}\n.danger {\n  color: var(--om-da"
+        "quote": "<template>\n  <span class=\"om-badge\" :class=\"tone\"><slot /></span>\n</template>"
+      },
+      {
+        "key": "c3",
+        "label": "徽标基础样式",
+        "reason": "支持行内布局、尺寸规则、主题变量依赖以及内容不换行边界的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmBadge.vue",
+          "startLine": 10,
+          "endLine": 20
+        },
+        "quote": "<style scoped>\n.om-badge {\n  display: inline-flex;\n  align-items: center;\n  border: 1px solid var(--om-line);\n  padding: 2px 8px;\n  border-radius: 5px;\n  font-size: 12px;\n  color: var(--om-secondary);\n  white-space: nowrap;\n}"
+      },
+      {
+        "key": "c4",
+        "label": "三种专用色调样式",
+        "reason": "支持 warning、danger、success 具有专用颜色规则，而 neutral 仅沿用基础样式的结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmBadge.vue",
+          "startLine": 21,
+          "endLine": 32
+        },
+        "quote": ".warning {\n  color: var(--om-warning);\n  background: #f6f2e8;\n}\n.danger {\n  color: var(--om-danger);\n  background: #fff0f0;\n}\n.success {\n  color: #385f49;\n  background: #f1f6f2;\n}"
       }
     ],
     "questions": [
       {
-        "question": "success 色调是否也应使用主题变量，并是否需要统一的可访问状态文本约定？",
-        "why": "success 当前使用固定色值，而 warning 和 danger 使用主题变量；组件本身也不提供可访问语义，跨主题对比度和仅颜色表达状态的风险尚未说明。",
-        "nextStep": "结合视觉规范检查各主题对比度与调用场景；如需主题化，补充 success 变量，并在调用方或组件 API 中明确可访问标签要求。",
+        "question": "是否需要为 OmBadge 补充长文本、主题变量缺失以及四种 tone 的渲染测试？",
+        "why": "当前材料仅包含组件实现，无法确认这些边界是否已在其他材料中覆盖；neutral 没有独立样式，长内容也只有不换行规则而没有宽度或截断处理。",
+        "nextStep": "检查现有组件测试和实际调用场景，再决定是否增加渲染断言、视觉测试或长文本截断规则。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c2"
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -61,54 +88,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
-      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/code-modules.ts",
-      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/OmHashRoute.ts",
-      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/ui/src/components/OmBadge.vue",
       "digest": "21bbd9ccfbf48a0add0d4cf96e9a8e345c6b7c634b0585a692cb5cc1a01f2909"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:06:38.605Z",
+    "at": "2026-10-01T02:51:34.438Z",
     "trace": {
-      "runId": "8f775037-2343-4840-8586-a8d753fbbe36",
+      "runId": "833e55e5-fd80-4cde-8990-7df29d393c91",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "86d7c50dcd116572075ce6f25e7a1d2a2af771465de3d9948c11b4b212714a2f",
-      "contextHash": "8d4020c8ae65750230ab3c98c820d7d76faeb980615083be5d49a5d0e4916e07",
+      "promptHash": "85f7dc937172cd9a0e6334282473de4eb7fc8a54493ba07f6348eb45b98132bf",
+      "contextHash": "7b74679ddba30ef2e255a0cd998200914f80242539c1fef11c4f5d0330cd9489",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1f6b7fe9f162f8b7053a4c1087fc6a3397d816e0c2d17822a1347413bce1b890",
+      "fingerprint": "970e18c925cd812449161f756e9b5511037977dd10e7aa371e095b5ed0bb9429",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -121,11 +118,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-07ab-7630-bf68-a92b525c2a5f"
+        "01a0f55f-a2ff-7f80-a516-bb1354762aeb"
       ],
       "usage": {
-        "used": 48971,
-        "size": 760000,
+        "used": 22795,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -133,10 +130,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 100207,
-          "utf8Bytes": 106603,
-          "estimatedTokens": 35535,
-          "budgetedTokens": 44419,
+          "chars": 9980,
+          "utf8Bytes": 13442,
+          "estimatedTokens": 4481,
+          "budgetedTokens": 5602,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -145,17 +142,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:07:03.432Z",
+    "at": "2026-10-01T02:51:51.531Z",
     "trace": {
-      "runId": "2f8a3e0b-8cac-4dcd-9d9e-b4c0d1db53b9",
+      "runId": "f355e4eb-9ae7-48b0-a696-7720cf811ef3",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "82db61fb03d765d6c9509e7a5ab84b4e39f30b0f826f4ac629644bde2a169bdb",
-      "contextHash": "b675445ba277c957fa6f36e08a2a79c823eefc68c1c4c130e8a59e845aaf6f77",
+      "promptHash": "8c9254e5de06776cfd7cf016aeb621b9cf6400cee5564e4b46f835682d55adc8",
+      "contextHash": "0c41a01620422ba4be3449f68beb4d6ec96b8157992cae8becf1ce25593b8ef5",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a909d0c1343308633be720a6fe8b6a7e3bd757bb472dc8a7b642b7dc9f2ca0cc",
+      "fingerprint": "7496d8d18de128509acc215758564a16cb8865afb1cdf24d304b9872d8518b93",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -168,11 +165,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-c658-7591-b804-15d65b90c621"
+        "01a0f55f-f5aa-7d80-86a9-883a11a80546"
       ],
       "usage": {
-        "used": 48602,
-        "size": 760000,
+        "used": 21147,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -180,10 +177,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107260,
-          "utf8Bytes": 116860,
-          "estimatedTokens": 38954,
-          "budgetedTokens": 48693,
+          "chars": 7310,
+          "utf8Bytes": 9748,
+          "estimatedTokens": 3250,
+          "budgetedTokens": 4063,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

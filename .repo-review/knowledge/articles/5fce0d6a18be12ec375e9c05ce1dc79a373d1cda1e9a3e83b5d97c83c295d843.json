@@ -2,32 +2,37 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/agent-runtime/budget.ts",
-    "title": "生成预算估算与校验",
-    "summary": "为角色运行提供可解释但非模型精确的 token 估算，并合并输入、输出与上下文预留限制；网关和 ACP 在不同阶段执行这些限制。",
+    "title": "生成任务的令牌估算与预算校验",
+    "summary": "该模块提供轻量级令牌估算，并把模型默认限制与调用覆盖值合成为统一、经过数值边界校验的生成预算。当前材料未展示这些结果在运行时中的具体消费方式。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose",
-        "title": "估算方法与适用边界",
-        "body": "该模块不调用模型专属 tokenizer，而按 UTF-8 字节数除以 3 估算 token，再增加 25% 余量。结果保留字符数、字节数、原始估算和计费估算，便于追踪超限原因；它适合代码与中日韩混合文本的保守预算，但不能替代模型的精确分词结果。[[c1]]"
+        "key": "token-estimation",
+        "title": "令牌量的保守估算",
+        "body": "`estimateTokens` 先取得文本的 UTF-8 字节数，再按字节数除以 3 并向上取整，形成面向代码、中文及混合文本的近似令牌量；随后增加 25% 余量，得到 `budgetedTokens` 字段，供后续预算逻辑使用。返回结果还保留 JavaScript 字符长度、UTF-8 字节数、原始估算值和估算器名称，便于解释估算来源。该算法明确不是模型专用 tokenizer，因此只能作为低成本的保守估计，不能替代具体模型的精确分词。[[c1]]"
       },
       {
-        "key": "configuration",
-        "title": "预算合并与参数校验",
-        "body": "`generationBudget` 优先采用调用方覆盖值，否则读取角色清单中的上下文和输出上限；上下文预留默认是 16000。三个值都必须是 1 至 1,000,000 的安全整数，非法配置会在进入模型调用前失败。[[c2]]"
+        "key": "budget-resolution",
+        "title": "预算合并与默认值",
+        "body": "`GenerationBudget` 统一描述输入上限、输出上限和上下文预留量。`generationBudget` 接受部分覆盖配置：前两项未提供时分别采用模型默认的上下文限制和输出限制，上下文预留量未提供时使用 `16000`。这里采用空值合并，所以 `0`、负数或小数不会自动回退到默认值，而是保留到后续校验。[[c2]]"
       },
       {
-        "key": "enforcement",
-        "title": "运行时执行位置",
-        "body": "网关对每次初始或修复提示重新估算文本输入，超出 `maxInputTokens` 时拒绝运行，并在收到完整输出后检查 `maxOutputTokens`。[[c3]] ACP 路径还会把估算输入、最大输出及预留量相加；仅当模型配置暴露有效的上下文窗口元数据时，才据此执行总窗口校验，缺少元数据时不会作该项判断。[[c4]]"
+        "key": "validation-boundary",
+        "title": "函数调用时的显式校验",
+        "body": "预算合并完成后，函数逐项要求数值为安全整数且位于 1 至 1,000,000 之间；不满足条件时立即抛出包含字段名的错误，满足时返回统一预算。该校验仅约束三个字段各自的数值范围，没有检查输入、输出与预留量之间的组合关系，也不能据此判断某项配置是否受特定模型支持。[[c3]]"
+      },
+      {
+        "key": "integration-limits",
+        "title": "职责范围与证据边界",
+        "body": "当前文件只展示估算结果和预算对象的构造接口，可以确认它位于模型默认能力与调用方覆盖配置之间。材料没有提供直接调用方，因此无法确认 `budgetedTokens` 如何参与比较，也无法判断超限时会截断、拒绝还是降级，以及预留量是否会从可用输入上下文中扣除；同样不能确认这些分支是否已有自动化测试覆盖。[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "启发式 token 估算",
-        "reason": "支持 UTF-8 字节估算公式、25% 余量和返回的诊断字段。",
-        "relation": "explains",
+        "label": "UTF-8 令牌估算实现",
+        "reason": "支持附近关于 UTF-8 字节估算、两次向上取整、25% 余量及返回诊断字段的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/budget.ts",
@@ -38,112 +43,89 @@
       },
       {
         "key": "c2",
-        "label": "生成预算配置",
-        "reason": "支持覆盖优先级、默认上下文预留及整数范围校验。",
+        "label": "生成预算类型与默认值合并",
+        "reason": "支持附近关于三个预算字段、调用覆盖值、模型默认限制和 16000 预留默认值的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/budget.ts",
           "startLine": 9,
-          "endLine": 23
+          "endLine": 20
         },
         "quote": "export type GenerationBudget = {\n  maxInputTokens: number;\n  maxOutputTokens: number;\n  contextReserveTokens: number;\n};\n\nexport function generationBudget(overrides: Partial<GenerationBudget>, defaults: { max_context_tokens: number; max_output_tokens: number }): GenerationBudget {\n  const result = {\n    maxInputTokens:"
       },
       {
         "key": "c3",
-        "label": "网关输入与输出预算检查",
-        "reason": "支持网关在每次提示渲染后检查输入估算，并在模型返回后检查输出估算。",
-        "relation": "calls",
+        "label": "预算数值边界校验",
+        "reason": "支持附近关于安全整数、合法范围、按字段抛错及返回结果的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 302,
-          "endLine": 365
+          "key": "omem:apps/server/src/agent-runtime/budget.ts",
+          "startLine": 21,
+          "endLine": 23
         },
-        "quote": "    for (\n      let repairAttempt = 0;\n      repairAttempt <= bundle.manifest.budget.max_repair_attempts;\n      repairAttempt++\n    ) {\n      let output = \"\";\n      const rendered = renderRolePrompt(\n        bundle,\n        context,\n        repairAttempt\n          ? `The prior response failed validation: ${lastError}. "
+        "quote": "  for (const [name, value] of Object.entries(result))\n    if (!Number.isSafeInteger(value) || value < 1 || value > 1_000_000) throw new Error(`Invalid ${name}: expected an integer between 1 and 1000000`);\n  return result;"
       },
       {
         "key": "c4",
-        "label": "ACP 模型上下文窗口校验",
-        "reason": "支持仅在发现有效模型上下文窗口时，将输入、输出和预留之和与其比较。",
-        "relation": "depends_on",
+        "label": "预算模块公开职责",
+        "reason": "界定当前材料仅能确认估算与预算构造，支持对调用方式、超限策略和测试覆盖保持未知的判断。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/agents.ts",
-          "startLine": 74,
-          "endLine": 83
+          "key": "omem:apps/server/src/agent-runtime/budget.ts",
+          "startLine": 3,
+          "endLine": 23
         },
-        "quote": "export function assertContextBudget(configOptions: SessionConfigOption[], budget: NonNullable<AcpOptions[\"contextBudget\"]>): number | null {\n  const option = configOptions.find(o => o.category === \"model\" || o.id === \"model\");\n  if (!option) return null;\n  const selected = optionValues(option).find(o => o.value === opt"
+        "quote": "export function estimateTokens(text: string) {\n  const utf8Bytes = Buffer.byteLength(text, \"utf8\");\n  const estimatedTokens = Math.ceil(utf8Bytes / 3);\n  return { chars: text.length, utf8Bytes, estimatedTokens, budgetedTokens: Math.ceil(estimatedTokens * 1.25), estimator: \"utf8-bytes/3 + 25% headroom\" };\n}\n\nexport type"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "生成运行时具体如何消费 `budgetedTokens`、`maxInputTokens` 与 `contextReserveTokens`？",
+        "why": "当前材料只定义估算和预算构造，没有调用方源码，无法确认预算比较公式、超限策略、上下文预留扣除方式或运行 trace 的记录内容。",
+        "nextStep": "检查该模块的直接导入点及对应运行时测试，确认预算比较公式、超限行为和 trace 记录。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c4"
+        ]
+      },
+      {
+        "question": "是否存在针对多字节中文、代理对字符、边界值及非法覆盖配置的测试？",
+        "why": "本文件包含近似估算、向上取整和多个抛错边界，但本次没有提供测试材料，无法判断这些行为是否已被自动化断言覆盖。",
+        "nextStep": "补充相关测试材料，重点核对 UTF-8 字节计数、两次向上取整、25% 余量，以及 1 和 1,000,000 两端边界。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
       "key": "omem:apps/server/src/agent-runtime/budget.ts",
       "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
-      "digest": "e04ec19837c91b28dbbf28cbcda5bb6f6989dbc2b58c5c24ddaca4d006ea9a05"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/requests.ts",
-      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/worker.ts",
-      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:02:26.775Z",
+    "at": "2026-10-01T02:03:04.524Z",
     "trace": {
-      "runId": "4812f6e1-0853-45df-a7e1-4ca9eaf3a0ce",
+      "runId": "d59623c8-5a0e-488a-9472-2e9293b9c1c0",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "dc540cbd2b3ef1b8a6209c85f21c3ff6a9ab0d7d01bce6faeed7590a95a64c59",
-      "contextHash": "ee41cbe0e14f218db1947aadc31e6340082c22afa742a56843529fae0550ceb9",
+      "promptHash": "aff752a4719ee695fff3af5964d15925baa9b80f011df8af1996a26af64f4b6e",
+      "contextHash": "9cfde330500a648eb8de53cf7a7b3798b375f7d0a586f1f4ccc523e264be6dc6",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bfd7fed1519419aace7823cebffd320690e5852e8c2297ac6f93e0d4888ced56",
+      "fingerprint": "7c734ff731d19bd98eb50d86f6730678ff0380074579c7eceadb5bcc5fa80441",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -156,11 +138,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec2-272a-7701-a62e-29f4c8af74e2"
+        "01a0f533-3219-73e0-8d1e-580231e59d0a"
       ],
       "usage": {
-        "used": 43518,
-        "size": 760000,
+        "used": 23797,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -168,10 +150,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 87261,
-          "utf8Bytes": 92577,
-          "estimatedTokens": 30859,
-          "budgetedTokens": 38574,
+          "chars": 12037,
+          "utf8Bytes": 16669,
+          "estimatedTokens": 5557,
+          "budgetedTokens": 6947,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -180,17 +162,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:02:34.315Z",
+    "at": "2026-10-01T02:03:20.157Z",
     "trace": {
-      "runId": "124e5740-63b9-49a8-a7a5-23e8326b9035",
+      "runId": "4e6be351-57b2-4230-9798-9bcb36bbe9bf",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "48b5790258f9277cdb1421061c5e255b40f6cf201d7ffd1a48bd8f7b5841ece5",
-      "contextHash": "4a3fc51f70cd2c5eec6aff34f42aef421230244d18150c3bcffd3e93902f6afe",
+      "promptHash": "108ba259c3510ab8e7940a41bf5bdd3107786617aadf93a31545389a49b9a44e",
+      "contextHash": "e0d0344390fd001f6269482db5b71333d82a9d654d26fd62a3685c6586925241",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "61858947d8660017c799604abcbec2d39c4e0e6a64a753fbe7da9f92cef7c5ad",
+      "fingerprint": "ee75a34959b7ae1382f8e047655628ec58e314738faaf12099affb686d846efd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,11 +185,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec2-ed60-7f11-a0b0-d5e3524acdee"
+        "01a0f533-83fd-7501-8911-fff834b6afcc"
       ],
       "usage": {
-        "used": 41814,
-        "size": 760000,
+        "used": 21862,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -215,10 +197,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 96849,
-          "utf8Bytes": 105895,
-          "estimatedTokens": 35299,
-          "budgetedTokens": 44124,
+          "chars": 8822,
+          "utf8Bytes": 11870,
+          "estimatedTokens": 3957,
+          "budgetedTokens": 4947,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

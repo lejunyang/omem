@@ -2,39 +2,39 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
-    "title": "反馈整理角色提示词：认证反馈到纠正候选",
-    "summary": "该提示词要求把经过认证的所有者反馈转换为绑定原目标与证据的纠正候选，并区分不同反馈强度和语义类别。它禁止把重复反馈或生成摘要提升为独立权威，也禁止直接应用纠正或修改权限、采集范围、预算及自动批准规则。",
-    "category": "workflow",
+    "title": "反馈整理角色 v1 的职责与边界",
+    "summary": "该提示词规定如何把已认证所有者的反馈整理为可追溯的修正候选，并严格限制输出、权限与执行边界。它描述角色应遵循的合同，不足以证明相应流程已经实现或投入运行。",
+    "category": "requirements",
     "sections": [
       {
-        "key": "feedback-classification",
-        "title": "反馈分类与权威来源",
-        "body": "角色接收经过认证的所有者反馈，并将其整理为关联原始目标和证据的纠正候选。处理时需要区分强纠正、任务调整、范围约束、较弱的有用性信号和结果证据；重复反馈与生成摘要不能脱离原始材料成为新的独立权威。[[c1]] 该规则旨在避免派生内容因重复出现而被错误强化。"
+        "key": "role-purpose",
+        "title": "角色目的与反馈分类",
+        "body": "该角色面向已认证所有者的反馈，目标是形成绑定原始目标与证据的修正候选。处理时需区分强修正、任务调整、范围约束、弱有用性信号和结果证据，避免把性质不同的反馈压成同一种结论。重复反馈或生成式摘要不能因此升级为独立权威来源，修正仍须保持对原始证据的可追溯性。[[c1]]\n\n这是一份角色提示词所声明的行为要求，而非运行记录、测试结果或实现代码；仅凭该材料无法确认认证校验、证据绑定、冲突保存等能力已经在宿主流程中落地。"
       },
       {
-        "key": "output-and-guardrails",
-        "title": "输出边界与受保护策略",
-        "body": "角色只能返回一个 `CorrectionProposal.v1` JSON 对象，并须把纠正限制在给定范围内、保留未解决冲突。它不得修改权限、采集范围、预算或自动批准规则，也不得直接应用纠正。[[c2]] 因而其定位是提出受证据约束的纠正候选，而非执行变更；材料未说明认证反馈如何进入角色或候选如何复核。"
+        "key": "output-and-safety",
+        "title": "输出合同与不可越界事项",
+        "body": "角色必须只返回一个 `CorrectionProposal.v1` JSON 对象，不附带说明文字。候选修正只能处于调用方提供的范围内，未解决的冲突需要原样保留；角色不得改变权限、捕获范围、预算或自动批准规则，也不得直接应用修正。[[c2]]\n\n因此，该角色承担的是“整理并提出候选”，而不是“裁决并执行”。实际生效应由后续校验或应用流程负责，但本材料没有描述该流程的组件、审批条件、失败处理及审计方式。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "认证反馈的分类与权威限制",
-        "reason": "支持反馈须绑定原目标和证据、区分多类信号并禁止派生摘要成为独立权威。",
+        "label": "反馈整理角色的目标与证据原则",
+        "reason": "支持角色需要分类所有者反馈、绑定原始目标与证据，并防止重复反馈或生成摘要成为独立权威的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
-          "startLine": 3,
+          "startLine": 1,
           "endLine": 3
         },
-        "quote": "Turn authenticated owner feedback into a correction candidate tied to the original target and evidence. Separate strong corrections, task adjustments, scope constraints, weak usefulness signals, and outcome evidence. Never let repeated feedback or generated summaries become independent authority."
+        "quote": "# omem feedback curator role v1\n\nTurn authenticated owner feedback into a correction candidate tied to the original target and evidence. Separate strong corrections, task adjustments, scope constraints, weak usefulness signals, and outcome evidence. Never let repeated feedback or generated summaries become independent "
       },
       {
         "key": "c2",
-        "label": "纠正候选的输出与权限边界",
-        "reason": "支持仅输出纠正候选、保持范围和冲突，并禁止应用纠正或修改受保护策略。",
+        "label": "修正候选的输出与权限边界",
+        "reason": "支持仅输出修正提案 JSON、保留冲突、不得改变关键控制项且不得直接应用修正的约束。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -47,52 +47,17 @@
     ],
     "questions": [
       {
-        "question": "“经过认证的所有者反馈”在进入角色前由什么身份绑定证据确认？",
-        "why": "提示词依赖认证所有者这一前提，但材料没有提供 actor 绑定字段、认证方式或转发反馈的处理规则。",
-        "nextStep": "检查调用该角色的可信上下文和入口校验，确认 owner 身份、原目标与反馈证据如何绑定。",
+        "question": "CorrectionProposal.v1 的字段结构、校验规则以及候选修正的后续应用流程是什么？",
+        "why": "当前提示词只规定输出对象名称和不可直接应用的边界，没有给出合同定义、审批主体、冲突处理或应用成功的判定方式，因此不能据此确认端到端能力。",
+        "nextStep": "检查 CorrectionProposal.v1 schema、角色运行入口及负责校验和应用候选修正的实现与测试。",
         "blocking": false,
         "citationKeys": [
-          "c1"
-        ]
-      },
-      {
-        "question": "强纠正、任务调整、范围约束、弱有用性信号和结果证据如何映射到单一 `CorrectionProposal.v1`？",
-        "why": "提示词要求区分类别，但所给输出 schema 没有显式类别字段，可能导致信息只隐含在 reason 或 replacement 中。",
-        "nextStep": "核对技能包和宿主消费逻辑，确认是否存在结构化映射；若无，应决定扩展合同还是明确编码规则。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
           "c2"
         ]
       }
     ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
-      "digest": "8360aadfcdad2fb2f7f55a87fb069e9d35353b2c2eb6d6e965579c855f4c9b57"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
-      "digest": "2270241f396ff675d0d702907dfed9465c7f9078b9ece6ff532611cfaea37140"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
-      "digest": "1d51df6a2bf8a9efa743b139e36df5e37ba0eb7b79790635ff73cde54cbd7bb6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
-      "digest": "5a382d0ffad0f254164f51864bc530bc556a6231af09107d4194ec5feecf4039"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
-      "digest": "1fbb87e87e40252797492748cf8809f1a435df9e6db7546360f4b028f8c7b83e"
-    },
     {
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
@@ -102,17 +67,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:46:52.956Z",
+    "at": "2026-10-01T02:48:54.719Z",
     "trace": {
-      "runId": "b3e5ebb9-937c-47af-b51c-27975e731aa0",
+      "runId": "7a44f731-0156-4850-995b-cd1aa6b67ab7",
       "roleId": "material-analyst",
       "roleVersion": "1",
       "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "45d80c47306fa40772a2beea53b4869f3a0c7cea41c14f47683be2496c351c05",
-      "contextHash": "5af7dbc4645f7a96a96508b8943fe9158bf854159afa44ac3fa0c6177f5f9f09",
+      "promptHash": "d8f7766337a24f957173b9006660b07605378b939f536d87fab44287b2f4b5f8",
+      "contextHash": "8f89b0b8620f27b3eaecf8107e832cb1057d26d0a7fe1f38d3702794d7f6313f",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "92a84f389485d1e1a3999d57c480361df01eac264085e99663ec506e60988e16",
+      "fingerprint": "e52e34fef16e7b8c33eb5352fe99eb708f433e2c447bb415d4e3a61a2c1d448e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -125,11 +90,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-0aa3-7c33-8a24-575c2462578f"
+        "01a0f55d-32f8-73f2-98c1-ffb6c0ce7614"
       ],
       "usage": {
-        "used": 21331,
-        "size": 760000,
+        "used": 21032,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -137,10 +102,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 17071,
-          "utf8Bytes": 18691,
-          "estimatedTokens": 6231,
-          "budgetedTokens": 7789,
+          "chars": 6630,
+          "utf8Bytes": 8250,
+          "estimatedTokens": 2750,
+          "budgetedTokens": 3438,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -149,17 +114,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:47:06.872Z",
+    "at": "2026-10-01T02:49:08.150Z",
     "trace": {
-      "runId": "07c35bf7-55c9-49b8-9acc-4219908aaf45",
+      "runId": "ad589397-66c6-475a-a459-08a724d8819f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "08bdef014dcfc514e247672efda5c33a74b8acc092a37b3a77b1b373f03d8cda",
-      "contextHash": "bd9124667ded09be016e3a9db6dd23112c8b7bee3efe8fb7fd7ee657116971d0",
+      "promptHash": "fff5d1eb38f9228aff92d2448052984ec802e9b0e40e3f40c02912eb806fe3dd",
+      "contextHash": "bd6f3dde11dbde2ee29a738bd6bf140a4ace1527cec3a3e4b476637b26f6fdaa",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e227ae103c81dd60c9ad3a83f3953eb7cc151ec36e2f9129b6908676c120ce82",
+      "fingerprint": "2edcbcb13f83475848799139ea1146532a5a2da948e3a09513a2645e19ab8f63",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -172,11 +137,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-aea0-74b0-a4e0-8f10b624efb4"
+        "01a0f55d-7bc0-7c81-b318-8449c54add8b"
       ],
       "usage": {
-        "used": 22302,
-        "size": 760000,
+        "used": 20594,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -184,10 +149,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26150,
-          "utf8Bytes": 33998,
-          "estimatedTokens": 11333,
-          "budgetedTokens": 14167,
+          "chars": 6498,
+          "utf8Bytes": 8904,
+          "estimatedTokens": 2968,
+          "budgetedTokens": 3710,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

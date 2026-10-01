@@ -2,86 +2,205 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-    "title": "提取角色的提案批次合同",
-    "summary": "该文件定义 ProposalBatch.v1：顶层包含作业和角色身份、观察、提案及弃权；每项提案描述知识类型、操作、证据、不确定性、版本预期和来源。多个内部对象仅约束为普通对象，语义细节仍依赖其他合同或运行时验证。",
-    "category": "requirements",
+    "title": "提取器输出合同：观察、提案与弃权",
+    "summary": "该 JSON Schema 定义提取器角色的版本 1 输出合同：批次携带任务与角色身份，并将结果分成观察、四类记忆变更提案和弃权。合同严格限定作用域、证据定位、版本预期与派生来源，但不能单独证明提取、复核或应用已经成功执行。",
+    "category": "configuration",
     "sections": [
       {
-        "key": "batch-envelope",
-        "title": "批次信封与角色绑定",
-        "body": "合同采用封闭顶层对象，要求版本、作业标识、角色标识、观察、提案和弃权全部存在；版本固定为 1，角色固定为 `extractor`。[[c1]] 观察和弃权只被约束为数组，当前文件没有进一步规定其元素结构，因此不能从这里推断观察或弃权的标准字段。"
+        "key": "batch-contract",
+        "title": "批次结构与观察结果",
+        "body": "该合同的顶层对象必须包含版本、任务与角色标识，以及 `observations`、`proposals`、`abstentions` 三类结果集合，并禁止额外字段；它约束的是角色输出形状，而非一次任务已经成功完成。[[c1]]\n\n每条观察记录必须包含观察标识、可空主体、可空时间与意图、作用域、结果、至少一项证据及来源类型；结果限定为未知、部分成功、成功或失败。[[c2]] 作用域要求始终给出工作区，项目和主题字段也必须出现但允许为空，因此能表达个人或项目上下文，却不能据此推断租户权限隔离已经实现。[[c3]]"
       },
       {
-        "key": "proposal-model",
-        "title": "提案类型与变更操作",
-        "body": "每项提案同样禁止额外字段，并要求提案标识、知识类型、操作、范围、正文、证据、不确定性、理由、预期版本和来源。知识类型限定为任务、主张、事件和流程，操作限定为创建、更新和取代。[[c2]] 这说明输出是待处理的变更提案，而不是已经写入知识库的事实。"
+        "key": "proposal-variants",
+        "title": "提案类型与变更语义",
+        "body": "提案是以 `kind` 区分的联合结构，覆盖任务、主张、事件和流程。四个分支都把版本、提案标识、操作、作用域、证据、不确定项、理由、预期版本、来源、类型和正文列为必填，但 `target_id` 均未进入必填列表。[[c4]][[c5]][[c6]][[c7]] 操作只允许创建、更新或取代；证据至少一项，预期版本是名称到正整数版本号的映射。[[c8]] 来源对象还必须记录任务、角色包，并把产物类型固定为 `derived`。[[c9]]\n\n不同正文承载不同语义：任务记录负责人、期限和下一步，并定义了一个未被正文必填列表纳入的跟进对象；主张记录陈述、归因及有效期；事件记录触发、动作、验证引用与结果；流程记录触发条件、前置条件、步骤、验证、反例和不适用情形。[[c10]] 这替代了先前“所有已定义正文属性均必填”的宽泛理解，也仍不能证明提案已通过独立复核或被成功应用。"
       },
       {
-        "key": "evidence-concurrency",
-        "title": "证据、不确定性与并发信息",
-        "body": "提案必须至少含一项证据，同时显式携带不确定性、理由、预期版本和来源；可选目标标识允许字符串或空值。[[c3]] 这些字段为证据追溯和更新冲突处理预留位置，但 `scope`、`body`、`expected_versions` 与 `origin` 仅声明为对象，没有在本文件中限定内部结构，也未展示提案后续验证或应用流程。"
+        "key": "evidence-and-abstention",
+        "title": "证据可追溯与拒绝生成",
+        "body": "证据支持文本和图像两种形态。文本证据绑定片段修订、来源修订、精确引文及 Unicode 码点范围；图像证据绑定资源哈希、可选归一化区域和观察描述，并固定标记为推断。[[c11]] 这些字段为回到固定材料提供定位基础，但引用对论断的语义支持仍需另行核验。\n\n当材料没有持久价值、证据不足、身份或范围含糊、包含不安全指令，或与既有内容重复时，角色可以输出弃权记录，并附原因细节与证据标识。[[c12]] 因而该合同既允许提出结构化变更，也允许在依据不足时明确不生成提案。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "提案批次顶层结构",
-        "reason": "支持顶层封闭性、必填字段、版本和角色绑定的说明。",
+        "label": "顶层批次必填字段",
+        "reason": "支持顶层必须包含版本、任务与角色标识以及三类结果集合，并禁止额外字段的描述。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-          "startLine": 1,
-          "endLine": 20
+          "startLine": 647,
+          "endLine": 655
         },
-        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"https://omem.invalid/contracts/ProposalBatch.v1\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",\n    \"job_id\",\n    \"role_id\",\n    \"observations\",\n    \"proposals\",\n    \"abstentions\"\n  ],\n  \"properties\": {"
+        "quote": "  \"required\": [\n    \"schema_version\",\n    \"job_id\",\n    \"role_id\",\n    \"observations\",\n    \"proposals\",\n    \"abstentions\"\n  ],\n  \"additionalProperties\": false,"
       },
       {
         "key": "c2",
-        "label": "提案必填字段与枚举",
-        "reason": "支持提案封闭结构、知识类型及变更操作范围的说明。",
+        "label": "观察记录完整结构",
+        "reason": "支持观察记录的主体、时间、意图、作用域、结果、证据、来源类型及其必填关系。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-          "startLine": 21,
-          "endLine": 43
+          "startLine": 23,
+          "endLine": 105
         },
-        "quote": "      \"items\": {\n        \"type\": \"object\",\n        \"additionalProperties\": false,\n        \"required\": [\n          \"schema_version\",\n          \"proposal_id\",\n          \"kind\",\n          \"operation\",\n          \"scope\",\n          \"body\",\n          \"evidence\",\n          \"uncertainties\",\n          \"reason\",\n          \"expec"
+        "quote": "        \"type\": \"object\",\n        \"properties\": {\n          \"observation_id\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLength\": 500\n          },\n          \"actor_id\": {\n            \"anyOf\": [\n              {\n                \"type\": \"string\",\n                \"minLength\": 1,\n           "
       },
       {
         "key": "c3",
-        "label": "提案证据与版本字段",
-        "reason": "支持证据最小数量、不确定性、预期版本、来源和可选目标标识的说明。",
+        "label": "观察作用域定义",
+        "reason": "支持工作区、项目和主题字段的必填性以及后两者允许为空的边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-          "startLine": 44,
-          "endLine": 53
+          "startLine": 657,
+          "endLine": 695
         },
-        "quote": "          \"evidence\": { \"type\": \"array\", \"minItems\": 1 },\n          \"uncertainties\": { \"type\": \"array\" },\n          \"reason\": { \"type\": \"string\" },\n          \"expected_versions\": { \"type\": \"object\" },\n          \"origin\": { \"type\": \"object\" },\n          \"target_id\": { \"type\": [\"string\", \"null\"] }\n        }\n      }\n    }"
+        "quote": "    \"__schema0\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"workspace_id\": {\n          \"type\": \"string\",\n          \"minLength\": 1,\n          \"maxLength\": 300\n        },\n        \"project_id\": {\n          \"anyOf\": [\n            {\n              \"type\": \"string\",\n              \"minLength\": 1,\n              \"m"
+      },
+      {
+        "key": "c4",
+        "label": "任务提案必填字段",
+        "reason": "支持任务分支共享字段均为必填而 target_id 未列入必填列表的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 274,
+          "endLine": 287
+        },
+        "quote": "            \"required\": [\n              \"schema_version\",\n              \"proposal_id\",\n              \"operation\",\n              \"scope\",\n              \"evidence\",\n              \"uncertainties\",\n              \"reason\",\n              \"expected_versions\",\n              \"origin\",\n              \"kind\",\n              \"body\"\n"
+      },
+      {
+        "key": "c5",
+        "label": "主张提案必填字段",
+        "reason": "支持主张分支共享字段均为必填而 target_id 未列入必填列表的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 373,
+          "endLine": 386
+        },
+        "quote": "            \"required\": [\n              \"schema_version\",\n              \"proposal_id\",\n              \"operation\",\n              \"scope\",\n              \"evidence\",\n              \"uncertainties\",\n              \"reason\",\n              \"expected_versions\",\n              \"origin\",\n              \"kind\",\n              \"body\"\n"
+      },
+      {
+        "key": "c6",
+        "label": "事件提案必填字段",
+        "reason": "支持事件分支共享字段均为必填而 target_id 未列入必填列表的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 470,
+          "endLine": 483
+        },
+        "quote": "            \"required\": [\n              \"schema_version\",\n              \"proposal_id\",\n              \"operation\",\n              \"scope\",\n              \"evidence\",\n              \"uncertainties\",\n              \"reason\",\n              \"expected_versions\",\n              \"origin\",\n              \"kind\",\n              \"body\"\n"
+      },
+      {
+        "key": "c7",
+        "label": "流程提案必填字段",
+        "reason": "支持流程分支共享字段均为必填而 target_id 未列入必填列表的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 588,
+          "endLine": 601
+        },
+        "quote": "            \"required\": [\n              \"schema_version\",\n              \"proposal_id\",\n              \"operation\",\n              \"scope\",\n              \"evidence\",\n              \"uncertainties\",\n              \"reason\",\n              \"expected_versions\",\n              \"origin\",\n              \"kind\",\n              \"body\"\n"
+      },
+      {
+        "key": "c8",
+        "label": "提案操作与公共约束",
+        "reason": "支持三种操作枚举、至少一项证据、不确定项、理由和预期版本映射的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 829,
+          "endLine": 879
+        },
+        "quote": "    \"__schema2\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"__schema3\": {\n      \"type\": \"string\",\n      \"minLength\": 1,\n      \"maxLength\": 500\n    },\n    \"__schema4\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"create\",\n        \"update\",\n        \"supersede\"\n      ]\n    },\n    \"__schema5\": {\n      \"mi"
+      },
+      {
+        "key": "c9",
+        "label": "派生来源标识",
+        "reason": "支持来源必须记录任务、角色包并固定标记为派生产物的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 880,
+          "endLine": 903
+        },
+        "quote": "    \"__schema9\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"job_id\": {\n          \"type\": \"string\",\n          \"minLength\": 1,\n          \"maxLength\": 500\n        },\n        \"role_bundle\": {\n          \"type\": \"string\",\n          \"minLength\": 1,\n          \"maxLength\": 500\n        },\n        \"producer_kind\": {"
+      },
+      {
+        "key": "c10",
+        "label": "四类提案正文",
+        "reason": "支持任务、主张、事件和流程正文的差异，并显示任务 follow_up 已定义但未进入正文必填列表。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 150,
+          "endLine": 585
+        },
+        "quote": "              \"body\": {\n                \"type\": \"object\",\n                \"properties\": {\n                  \"title\": {\n                    \"type\": \"string\",\n                    \"minLength\": 1,\n                    \"maxLength\": 300\n                  },\n                  \"owner_id\": {\n                    \"anyOf\": [\n      "
+      },
+      {
+        "key": "c11",
+        "label": "文本与图像证据",
+        "reason": "支持两类证据的修订标识、精确文本定位、资源哈希、区域和推断标记说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 697,
+          "endLine": 827
+        },
+        "quote": "    \"__schema1\": {\n      \"anyOf\": [\n        {\n          \"type\": \"object\",\n          \"properties\": {\n            \"fragment_revision_id\": {\n              \"type\": \"string\",\n              \"minLength\": 1,\n              \"maxLength\": 500\n            },\n            \"source_revision_id\": {\n              \"type\": \"string\",\n      "
+      },
+      {
+        "key": "c12",
+        "label": "弃权原因合同",
+        "reason": "支持角色因价值、证据、身份、范围、安全或重复问题拒绝生成提案。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
+          "startLine": 606,
+          "endLine": 644
+        },
+        "quote": "    \"abstentions\": {\n      \"maxItems\": 100,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"reason_code\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"no_durable_value\",\n              \"insufficient_evidence\",\n              \"identity_ambiguous\""
       }
     ],
     "questions": [
       {
-        "question": "`observations`、`abstentions`、`scope`、`body`、`expected_versions` 和 `origin` 是否另有细化 schema？",
-        "why": "当前合同只约束它们为数组或对象，无法验证内部字段、作用域安全性和并发版本语义。",
-        "nextStep": "查找组合 schema 或宿主侧验证器；若不存在，为这些结构补充明确合同和负面测试。",
+        "question": "任务提案中的 `follow_up` 是否有意设计为可选字段？",
+        "why": "合同定义了完整的跟进对象，但任务正文的必填列表没有包含 `follow_up`；仅凭 Schema 无法判断这是允许普通任务不启用跟进，还是生成合同遗漏。",
+        "nextStep": "核对生成该 Schema 的源类型、任务消费端和合同测试，确认缺省 `follow_up` 时的预期行为。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
+          "c10"
         ]
       },
       {
-        "question": "ProposalBatch.v1 的提案由哪个阶段进行证据核验、冲突检查和最终应用？",
-        "why": "合同描述提案形状，不证明提案会被接受，也未说明失败提案是否会覆盖有效知识。",
-        "nextStep": "核对提案验证与应用流程、状态机及行为测试，并记录各失败路径。",
+        "question": "`update` 和 `supersede` 操作是否在 Schema 之外强制要求非空 `target_id`？",
+        "why": "四类提案都声明了可为字符串或 null 的 `target_id`，但各分支必填列表均未包含它，且该文件没有表达操作与目标标识之间的条件约束。",
+        "nextStep": "检查提案语义验证和应用流程，并为不同 operation 下的 `target_id` 约束补充实现证据或合同测试。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3"
+          "c4",
+          "c5",
+          "c6",
+          "c7",
+          "c8"
         ]
       }
     ]
@@ -89,66 +208,41 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
-      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/prompt.md",
-      "digest": "95e5365efe5fc2b6acf74b1b4aa3436e115ee2b00f5bbb2bcf56398a2cf2d1fc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/SKILL.md",
-      "digest": "b496b1119b4959702ca15ae7f04af55d900642813af3a614a4bb77cf6f4698b5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml",
-      "digest": "76401f4dbc5664a0393bb4935243faeb38c159fb1e0296c04e9457601cbecdf6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
-      "digest": "f292d7b1582aae1f2ac92c146cfa1adc98c71b4f3ee52ab4bac4fadc30e821fd"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-      "digest": "763b50103fdd95fef13b764dd1e7ca464c79fe7a860f6337e6dbbe2d56448b50"
+      "digest": "43863780080066474dafa4d294730fe44bb195fe6a1d63e82fcfafc6a1825237"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:46:31.562Z",
+    "at": "2026-10-01T02:48:55.056Z",
     "trace": {
-      "runId": "fd6934d0-7425-473c-bb8c-c2a05c3176cb",
-      "roleId": "material-analyst",
+      "runId": "ecf05845-9299-4995-b63b-84413798479b",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "24a2bdd5b82a50dcef62529139a824274131d6258e7fa6151636c47ea3c9afbf",
-      "contextHash": "794e2286e04e1e1101da64af54fe644ecebbb658e1fdcc3821f9af7f56831c7b",
-      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "03d4c64a521ff8d54e2c32339af9cfec9d081b3a1809266fa870cfbd1cfba877",
+      "contextHash": "cd5edf74fe40f1b84cc056911af51f35c825d9a0c231ed645af47983c0479694",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "49551b3df3c230fa79adcac1a9e70a3556e89cb3d4d180404458e7d649fe5dbd",
+      "fingerprint": "464013b91863d4fa1ab48c47fd7da4a5d872293e32f0bcb8e007471bbbf23ae6",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-material-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb3-9ba5-7c43-ba95-3acb0bf60f29"
+        "01a0f55d-0179-79f2-a4d2-3eee5a2fe32c"
       ],
       "usage": {
-        "used": 24511,
-        "size": 760000,
+        "used": 36786,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -156,10 +250,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 24713,
-          "utf8Bytes": 27959,
-          "estimatedTokens": 9320,
-          "budgetedTokens": 11650,
+          "chars": 47890,
+          "utf8Bytes": 53110,
+          "estimatedTokens": 17704,
+          "budgetedTokens": 22130,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -168,17 +262,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:46:59.017Z",
+    "at": "2026-10-01T02:49:10.313Z",
     "trace": {
-      "runId": "87d870ca-ff46-41fc-9c42-4eeee3e0f866",
+      "runId": "07f0ec40-a4c2-465e-9afb-3ba78fdbb6e3",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "6c0ced0bec75ba6bbf99d1ce67eaa051da842ccae342feecc6aa49be60c4594d",
-      "contextHash": "78371b25676653ad69abee0350800c615305e3e40f006695b500805da7024919",
+      "promptHash": "73f9ab38af8dcc69a54ee30af44544c39623611bca78621606a11ecdadf799f0",
+      "contextHash": "2200a84ef818d37e3fd6c50b328156152c9e970d8087a1be528331a424de1901",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "00060cd282b39344704d580d841edd3a30624b8bd6f3d949b1ae55c486a20625",
+      "fingerprint": "80736b87ab9312a43b350ca8bf9c41297337a4ae021a04423224af2ff92f5fdb",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -191,11 +285,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-59ca-7070-9b77-6bc267dd7841"
+        "01a0f55d-7da0-73e1-9715-bcc0da883afa"
       ],
       "usage": {
-        "used": 27897,
-        "size": 760000,
+        "used": 32292,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -203,10 +297,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 38202,
-          "utf8Bytes": 50488,
-          "estimatedTokens": 16830,
-          "budgetedTokens": 21038,
+          "chars": 46658,
+          "utf8Bytes": 50702,
+          "estimatedTokens": 16901,
+          "budgetedTokens": 21127,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

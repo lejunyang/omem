@@ -2,93 +2,112 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/AssetImage.vue",
-    "title": "受鉴权资产图片加载组件",
-    "summary": "AssetImage.vue 将受保护的资产接口响应转换为浏览器对象 URL，处理属性切换、请求取消、资源释放和可访问错误展示，并由材料阅读页按图片 part 的资产标识调用。",
+    "title": "资源图片异步加载组件",
+    "summary": "该 Vue 组件根据资源 ID 异步取得二进制响应并生成对象 URL，负责切换时取消旧请求、回收 URL、显示错误与图注。它确实导入并调用 api.ts 的 headers()，但现有固定范围未提供该函数定义，因而不能确认认证或具体请求头策略。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-flow",
-        "title": "作用与加载流程",
-        "body": "组件接收资产 id 与人读 label，通过共享 `headers()` 向 `/api/assets/{id}` 发起带请求头的 fetch；成功后把响应读取为 Blob，并创建临时 object URL 供 `<img>` 显示。非成功响应转为“图片读取失败”，模板用 `role=\"alert\"` 展示错误，同时将 label 用作替代文本和图注。[[c1]]"
+        "key": "purpose",
+        "title": "界面职责",
+        "body": "组件接收资源 `id` 与人类可读的 `label`，请求 `/api/assets/{id}`，将成功响应转为 Blob，再创建供浏览器显示的对象 URL。[[c1]] 模板在 URL 就绪后渲染图片，并把 `label` 同时用于替代文本和图注；失败信息通过 `role=\"alert\"` 呈现。图片还受到最大宽高、边框和圆角约束。[[c2]]"
       },
       {
-        "key": "race-and-cleanup",
-        "title": "切换竞态与资源清理",
-        "body": "对 id 的立即监听让首次挂载与后续切换走同一流程。每次切换先取消旧请求、撤销旧 object URL，并清空显示与错误；异步完成后检查 signal，避免已取消请求回写新状态。卸载时再次取消请求并释放 URL，降低 Blob URL 泄漏与陈旧图片闪现风险。[[c2]]"
+        "key": "flow",
+        "title": "加载、切换与竞态处理",
+        "body": "监听器在首次挂载时立即运行，并随 `id` 变化重新加载。每轮会先取消旧请求、回收旧对象 URL并清空状态，再创建新的 `AbortController` 发起请求；只有当前信号未被取消时，成功结果或异常才会写入界面状态，从而降低旧请求晚到后覆盖新资源的风险。[[c3]]"
       },
       {
-        "key": "boundaries",
-        "title": "边界与模块关系",
-        "body": "组件只负责取得和展示二进制资产：它不校验真实图片格式、不上传，也不实现组件级缓存、重试、加载占位或按状态码细分提示；fetch 未指定的浏览器 HTTP 缓存行为不在此结论内。[[c3]] 个人材料阅读页遍历 revision 的图片 part，并把 `assetId` 与 label 传入该组件。[[c4]] 服务端权限、响应内容类型与资产存在性仍是外部前提；样式仅限制宽高并保持自适应，没有缩放、下载或全屏预览。[[c3]]"
+        "key": "lifecycle",
+        "title": "生命周期与呈现边界",
+        "body": "组件卸载时会取消在途请求并回收已有对象 URL，避免无效更新和 URL 长期滞留。[[c4]] 当前响应流程只检查 HTTP 成功状态，随后直接读取 Blob；模板也只提供图片、错误信息和图注，没有独立的加载占位或重试控件，因此代码中看不到显式 MIME 校验与用户重试入口。[[c1]][[c2]]"
+      },
+      {
+        "key": "dependencies",
+        "title": "模块依赖与待确认事项",
+        "body": "组件从 `api.ts` 导入 `headers()`，[[c5]] 并在资源请求的 `headers` 字段中实际调用它。[[c1]] 现有材料只能确认这一依赖和调用关系，不能确认函数是否加入认证令牌、内容协商或其他配置。因此，先前把输入称为“受保护资源 ID”的结论已被替代：目前只能称其为资源 ID，保护机制仍待 `headers()` 定义佐证。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "鉴权图片读取与错误展示",
-        "reason": "支持资产请求、Blob 转换、对象 URL 创建，以及错误、替代文本和图注的展示流程。",
+        "label": "资源请求与 Blob 转换",
+        "reason": "支持资源接口请求、headers() 调用、HTTP 状态检查、Blob 转换及对象 URL 创建等附近论断。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/AssetImage.vue",
-          "startLine": 3,
-          "endLine": 40
+          "startLine": 18,
+          "endLine": 24
         },
-        "quote": "import { headers } from \"./api\";\nconst props = defineProps<{ id: string; label: string }>();\nconst url = ref(\"\");\nconst error = ref(\"\");\nlet controller: AbortController | undefined;\nwatch(\n  () => props.id,\n  async (id) => {\n    controller?.abort();\n    controller = new AbortController();\n    const signal = controller."
+        "quote": "      const r = await fetch(\"/api/assets/\" + id, {\n        headers: headers(),\n        signal,\n      });\n      if (!r.ok) throw Error(\"图片读取失败\");\n      const blob = await r.blob();\n      if (!signal.aborted) url.value = URL.createObjectURL(blob);"
       },
       {
         "key": "c2",
-        "label": "请求取消与对象 URL 回收",
-        "reason": "支持 id 切换和卸载时取消旧请求、清理旧 URL，并防止取消后的异步结果回写。",
-        "relation": "supports",
+        "label": "图片模板与展示样式",
+        "reason": "支持图片、错误提示和图注的渲染方式，以及替代文本、尺寸和外观约束；也说明模板没有加载占位或重试控件。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/AssetImage.vue",
-          "startLine": 7,
-          "endLine": 34
+          "startLine": 36,
+          "endLine": 57
         },
-        "quote": "let controller: AbortController | undefined;\nwatch(\n  () => props.id,\n  async (id) => {\n    controller?.abort();\n    controller = new AbortController();\n    const signal = controller.signal;\n    if (url.value) URL.revokeObjectURL(url.value);\n    url.value = \"\";\n    error.value = \"\";\n    try {\n      const r = await fetc"
+        "quote": "<template>\n  <figure>\n    <img v-if=\"url\" :src=\"url\" :alt=\"label\" />\n    <p v-if=\"error\" role=\"alert\">{{ error }}</p>\n    <figcaption>{{ label }}</figcaption>\n  </figure>\n</template>\n<style scoped>\nfigure {\n  margin: 20px 0;\n}\nimg {\n  display: block;\n  max-width: 100%;\n  max-height: 450px;\n  border: 1px solid var(--om-"
       },
       {
         "key": "c3",
-        "label": "组件实现与呈现边界",
-        "reason": "支持组件仅执行 fetch、Blob URL 展示和基础尺寸样式，未实现组件级缓存、重试、加载占位或高级查看交互的判断。",
-        "relation": "explains",
+        "label": "资源监听与请求竞态控制",
+        "reason": "支持立即监听、切换资源时取消旧请求、清理状态以及仅在请求未取消时更新结果的流程。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/AssetImage.vue",
-          "startLine": 17,
-          "endLine": 58
+          "startLine": 8,
+          "endLine": 30
         },
-        "quote": "    try {\n      const r = await fetch(\"/api/assets/\" + id, {\n        headers: headers(),\n        signal,\n      });\n      if (!r.ok) throw Error(\"图片读取失败\");\n      const blob = await r.blob();\n      if (!signal.aborted) url.value = URL.createObjectURL(blob);\n    } catch (e) {\n      if (!signal.aborted) error.value = Strin"
+        "quote": "watch(\n  () => props.id,\n  async (id) => {\n    controller?.abort();\n    controller = new AbortController();\n    const signal = controller.signal;\n    if (url.value) URL.revokeObjectURL(url.value);\n    url.value = \"\";\n    error.value = \"\";\n    try {\n      const r = await fetch(\"/api/assets/\" + id, {\n        headers: hea"
       },
       {
         "key": "c4",
-        "label": "材料阅读页的图片资产装配",
-        "reason": "直接支持上层阅读页以图片 part 的 assetId 和 label 调用 AssetImage。",
+        "label": "卸载阶段资源清理",
+        "reason": "支持组件卸载时中止在途请求并释放对象 URL 的生命周期行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/AssetImage.vue",
+          "startLine": 31,
+          "endLine": 34
+        },
+        "quote": "onBeforeUnmount(() => {\n  controller?.abort();\n  if (url.value) URL.revokeObjectURL(url.value);\n});"
+      },
+      {
+        "key": "c5",
+        "label": "公共请求头函数导入",
+        "reason": "支持组件从 api.ts 导入 headers() 的模块依赖；其实际调用另由资源请求引用证明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 551,
-          "endLine": 556
+          "key": "omem:apps/web/src/AssetImage.vue",
+          "startLine": 2,
+          "endLine": 4
         },
-        "quote": "        <template v-for=\"(p, i) in revision.parts\" :key=\"i\"\n          ><AssetImage\n            v-if=\"p.type === 'image'\"\n            :id=\"p.assetId\"\n            :label=\"p.label\"\n        /></template>"
+        "quote": "import { ref, watch, onBeforeUnmount } from \"vue\";\nimport { headers } from \"./api\";\nconst props = defineProps<{ id: string; label: string }>();"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "`headers()` 是否负责资源接口认证，以及它具体返回哪些请求头？",
+        "why": "现有固定材料能够证明 AssetImage.vue 导入并调用该函数，但提供的 api.ts 范围没有给出其定义，无法据此确认共享令牌、内容协商或其他认证配置。",
+        "nextStep": "补充 api.ts 中 `headers()` 定义及其相关配置的固定行范围，再核验资源接口的认证与请求头合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c5"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/store.test.ts",
-      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/App.vue",
-      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
-    },
     {
       "kind": "material",
       "key": "omem:apps/web/src/AssetImage.vue",
@@ -96,54 +115,24 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/codewiki/modules.ts",
-      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:42:53.654Z",
+    "at": "2026-10-01T02:37:55.266Z",
     "trace": {
-      "runId": "8132503e-01db-4d9c-a01f-bdc09bceea4f",
+      "runId": "b77f5896-9400-4c81-a549-253b0f32c3ec",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "81cdfaf87d7db44c9e69fcb42ac36af3ad45b65b804f8b8d66cf19bb21a78c7a",
-      "contextHash": "db256dd7d2a2016879fe74ce0fdeed08ecaa11f1aa0983abc18bf954b8ebaabc",
+      "promptHash": "59d71596ead0c3385d2619605461d417e039392ea1935ebae48064c47154c757",
+      "contextHash": "9af48f7ea43ff2ebb34887e234bb2045bac9fb64e924e6145eb0c6c18e67be1e",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9602cc71221031664e36416489b85dac2e7bcf5f72de472deba812ea67ae13b2",
+      "fingerprint": "87b6dd9ff05a763958ed156b920f41aa1cc230e94124474b6bade07be3835243",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -156,11 +145,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-b249-7f93-9447-d0b8da32ab20"
+        "01a0f553-13c6-7981-8a72-35d38fc8ae02"
       ],
       "usage": {
-        "used": 44578,
-        "size": 760000,
+        "used": 24694,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -168,10 +157,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 94176,
-          "utf8Bytes": 102581,
-          "estimatedTokens": 34194,
-          "budgetedTokens": 42743,
+          "chars": 14114,
+          "utf8Bytes": 18188,
+          "estimatedTokens": 6063,
+          "budgetedTokens": 7579,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -180,17 +169,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:43:05.948Z",
+    "at": "2026-10-01T02:38:11.328Z",
     "trace": {
-      "runId": "4dc8e1b5-a993-430f-abfd-a7860f33c3c8",
+      "runId": "26a4a21e-195c-456f-bdbf-23eaa4ddf889",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c6726d6957daf035b34e6b4453f41c6ee44b5ea4744793d7e3c4f22a5ad8d495",
-      "contextHash": "e5f7fb12d79243a18de1dd0c8513b6d65e70688f153cc5a90abda8dd2ede4aab",
+      "promptHash": "2c7797a7cb5bcad00992afc2006f3cf8c3076e7065f8db3d345e55c8a96eb148",
+      "contextHash": "4480fb9858497248753704351e0a8fa8e10e61ae09db9f8a9dc7332418b34268",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6b0cfa3730d7450d3b30debcbd3e0abc315f7b2c9e2436010393d0e988fa37fa",
+      "fingerprint": "ba8e5d2d44da1ab032abeadb282b9faec32a193183f58e97074588b0fc0d96d3",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,11 +192,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb1-0683-7f11-8e37-ad3a085d065e"
+        "01a0f553-6a90-7761-ab28-fdc85b4ea824"
       ],
       "usage": {
-        "used": 42552,
-        "size": 760000,
+        "used": 22718,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -215,10 +204,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 93487,
-          "utf8Bytes": 101102,
-          "estimatedTokens": 33701,
-          "budgetedTokens": 42127,
+          "chars": 11537,
+          "utf8Bytes": 14301,
+          "estimatedTokens": 4767,
+          "budgetedTokens": 5959,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

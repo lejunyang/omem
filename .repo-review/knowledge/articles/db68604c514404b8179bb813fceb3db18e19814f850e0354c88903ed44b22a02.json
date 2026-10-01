@@ -2,101 +2,193 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/conversation/router.ts",
-    "title": "会话身份与可恢复轮次状态机",
-    "summary": "在 SQLite 中管理按主体、渠道、聊天和线程区分的会话，并以先入队、可幂等、可恢复的轮次状态支撑异步助理执行与回复投递。",
+    "title": "会话身份与回合持久化路由",
+    "summary": "该模块以 SQLite 持久化会话和回合，按工作区、主体、渠道、聊天及线程识别会话，并提供确定性回合 ID、状态写入与重启恢复能力。旧稿关于“必定以 pending 入队”和“重复事件必然不会再次执行或回复”的结论已被限定：调用方 refs 可覆盖初始元数据，而 duplicate 仅为上层提供跳过处理的信号。",
     "category": "implementation",
     "sections": [
       {
         "key": "identity",
-        "title": "会话身份与可见性",
-        "body": "路由器以 workspace、principal、channel、chat 和 thread 的组合查找或创建会话；默认 workspace 为 personal，空线程被规范化为空字符串。项目身份不会从 chat ID 推断。会话另存 private/group 可见性、当前目标和待处理 case，为后续检索范围与任务连续性提供状态，但本文件本身不执行证据过滤。[[c1]]"
+        "title": "会话身份与隔离边界",
+        "body": "`ConversationRouter` 保存工作区、主体、渠道、聊天、线程及 `private/group` 可见性，并记录当前目标和待处理事项。[[c1]] `open` 使用这些身份字段查询会话，缺省工作区为 `personal`、缺省线程为空串；未命中时创建记录，因此不会仅凭聊天标识推断项目身份。[[c2]]\n\n这里持久化了可见性边界，但没有执行证据权限过滤；实际检索仍需上层遵守该字段。`setGoal` 也只是更新目标与时间戳，未在本方法内验证记录存在性或调用者权限。[[c3]]"
       },
       {
-        "key": "enqueue",
-        "title": "先持久化与幂等入队",
-        "body": "轮次在任何模型调用前以 `pending` 状态写入，序号取当前会话最大值加一。若外部 transport event ID 存在，轮次 ID 由其稳定摘要生成；重复投递会返回既有记录并标记 duplicate，避免再次执行或重复回复。没有外部事件 ID 时使用随机 UUID。[[c2]]\n\n`recordTurn` 是已经持有完整结果的同步捷径，本质仍先 enqueue 再 complete；异步调用方则可分别切换 running、done、failed、pending 或 cancelled。完成时写入证据选择、工具动作、结果和可选 outbox ID。[[c3]]"
+        "key": "turn-lifecycle",
+        "title": "回合入队、去重与状态流转",
+        "body": "传入外部事件标识时，模块用稳定摘要派生确定性回合 ID；若该 ID 已存在，只返回既有回合及 `duplicate: true`，供调用方跳过再次执行或回复。[[c4]] 摘要实现会规范化对象键后计算 SHA-256，使相同输入得到稳定结果。[[c5]] 旧稿所称“重复投递必然避免二次执行和回复”已被替代：本类自身只报告重复，端到端幂等取决于调用方是否处理该标志。\n\n新回合按当前最大序号加一并写入空证据、空工具动作和空结果。虽然构造 refs 时先放入 `pending` 与外部事件标识，但随后展开的 `input.refs` 可以覆盖这两个键，因此只有调用方未传入同名字段时，初始状态和事件标识才保持默认值。[[c6]] 后续方法通过合并 JSON 元数据写入 `running`、`done`、`failed`、`pending` 或 `cancelled`，完成时另写结果、证据、工具动作及可选发件箱；这些更新没有校验前置状态。[[c7]]"
       },
       {
-        "key": "recovery",
-        "title": "失败、取消与恢复边界",
-        "body": "模型暂不可用时可把轮次重新标为 pending，普通失败记录截断后的错误；取消不会写回复正文或绑定 outbox，从状态层阻止被中断轮次产生通知。重启恢复通过查询 JSON 文本中仍为 pending/running 的记录实现，并按创建时间返回。[[c4]]\n\n状态存于 `input_message_refs` JSON 而非独立列，这避免本模块拥有额外迁移，却使恢复查询依赖序列化文本形态。`nextOrdinal` 的读取与插入未在本文件中显式包裹事务；是否存在并发序号冲突，要结合表约束和上层串行策略判断。[[c5]]"
+        "key": "recovery-boundaries",
+        "title": "恢复机制与实现限制",
+        "body": "模块可按序读取会话回合，并跨会话查找状态文本为 `pending` 或 `running` 的记录，作为重启恢复候选。[[c8]] 查询使用 SQL `LIKE` 匹配序列化 JSON，依赖紧凑且固定的文本格式；读取时又直接解析多个 JSON 列，损坏内容会抛错，当前没有降级路径。[[c9]]\n\n序号采用“查询最大值再加一”，会话创建也采用“先查后插”，本文件未展示唯一约束或外层事务，并发安全仍需结合迁移与调用方确认。状态更新、完成及发件箱绑定同样未限制合法迁移，因此取消后是否还能完成、重复回合是否会继续运行，都不能仅由本模块证明。"
+      },
+      {
+        "key": "direct-recording",
+        "title": "同步记录路径",
+        "body": "`recordTurn` 将入队与完成串联，适合调用方已经拥有完整结果、不需要异步队列的场景。它仍复用相同的入队和状态更新逻辑，因此也继承 refs 可覆盖默认元数据、状态迁移无条件以及并发序号分配等边界。[[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "会话复合身份规则",
-        "reason": "支持会话键、可见性含义以及不从聊天 ID 推断项目身份的说明。",
+        "label": "会话与回合数据合同",
+        "reason": "支持会话身份、可见性、目标字段及回合持久化结构的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/conversation/router.ts",
-          "startLine": 67,
-          "endLine": 121
+          "startLine": 7,
+          "endLine": 49
         },
-        "quote": "/**\n * Owns conversation identity and persistence. The conversation key is\n * principal + channel + chat + thread; project identity is never inferred from\n * chat_id. A conversation may be private (p2p with the bound owner / web) or\n * group (@-mentioned in a group), which bounds evidence visibility.\n *\n * Turns are en"
+        "quote": "export type AssistantChannel = \"lark_p2p\" | \"lark_group\" | \"web\";\nexport type Visibility = \"private\" | \"group\";\n\nexport type Conversation = {\n  id: string;\n  workspaceId: string;\n  principalId: string;\n  channel: AssistantChannel;\n  chatId: string;\n  threadId: string;\n  visibility: Visibility;\n  currentGoal: string | n"
       },
       {
         "key": "c2",
-        "label": "轮次幂等入队",
-        "reason": "说明 pending 先持久化、外部事件确定性 ID 和重复投递处理。",
+        "label": "会话打开与创建逻辑",
+        "reason": "支持复合身份查询、默认工作区和线程处理以及未命中时创建记录的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 81,
+          "endLine": 122
+        },
+        "quote": "  open(input: {\n    principalId: string;\n    channel: AssistantChannel;\n    chatId: string;\n    threadId?: string | null;\n    visibility: Visibility;\n    workspaceId?: string;\n  }): Conversation {\n    const workspaceId = input.workspaceId ?? \"personal\";\n    const threadId = input.threadId ?? \"\";\n    const existing = th"
+      },
+      {
+        "key": "c3",
+        "label": "会话目标更新",
+        "reason": "支持目标更新只是直接数据库写入，方法内没有权限或存在性检查的边界判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 124,
+          "endLine": 135
+        },
+        "quote": "  get(conversationId: string): Conversation | null {\n    const row = this.db\n      .prepare(\"SELECT * FROM conversations WHERE id=?\")\n      .get(conversationId) as Row | undefined;\n    return row ? rowToConversation(row) : null;\n  }\n\n  setGoal(conversationId: string, goal: string | null) {\n    this.db\n      .prepare(\"U"
+      },
+      {
+        "key": "c4",
+        "label": "确定性回合标识与重复返回",
+        "reason": "支持外部事件生成确定性回合 ID，以及命中既有回合时仅返回 duplicate 标志的准确限定。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/conversation/router.ts",
           "startLine": 146,
-          "endLine": 192
+          "endLine": 163
         },
         "quote": "  /**\n   * Persist a pending turn before any model call. When `transportEventId` is\n   * provided the turn id is derived from it, so re-delivering the same event\n   * returns the already-persisted turn (`duplicate: true`) instead of running\n   * a second turn or issuing a second reply.\n   */\n  enqueueTurn(input: {\n    "
       },
       {
-        "key": "c3",
-        "label": "轮次完成流程",
-        "reason": "支持同步记录捷径以及完成时写入结果、证据、工具动作和 outbox 的行为。",
+        "key": "c5",
+        "label": "稳定摘要实现",
+        "reason": "说明规范化 JSON 和 SHA-256 如何为确定性回合 ID 提供稳定摘要。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+      },
+      {
+        "key": "c6",
+        "label": "回合序号与初始元数据写入",
+        "reason": "支持最大序号加一、初始持久化流程，并证明 input.refs 位于默认状态和事件标识之后、可覆盖同名键。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/conversation/router.ts",
-          "startLine": 195,
-          "endLine": 259
+          "startLine": 137,
+          "endLine": 192
         },
-        "quote": "  /**\n   * One-shot direct recording (enqueue + complete). Kept for callers that\n   * already have a fully-formed turn result and do not need the async queue.\n   */\n  recordTurn(input: {\n    conversationId: string;\n    inputText: string;\n    inputMessageRefs?: Record<string, unknown>;\n    selectedEvidence: unknown;\n   "
+        "quote": "  nextOrdinal(conversationId: string): number {\n    const row = this.db\n      .prepare(\n        \"SELECT COALESCE(MAX(ordinal),0) AS maxOrdinal FROM conversation_turns WHERE conversation_id=?\",\n      )\n      .get(conversationId) as { maxOrdinal: number };\n    return Number(row.maxOrdinal) + 1;\n  }\n\n  /**\n   * Persist a "
       },
       {
-        "key": "c4",
-        "label": "轮次失败、待重试与取消",
-        "reason": "说明各终态或待重试状态，以及取消轮次不产生通知的设计。",
+        "key": "c7",
+        "label": "回合状态与结果更新",
+        "reason": "支持状态通过 JSON 合并更新、完成结果写入及各更新方法未检查前置状态的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 220,
+          "endLine": 284
+        },
+        "quote": "  private patchRefs(turnId: string, patch: Partial<TurnMessageRefs>) {\n    const turn = this.turn(turnId);\n    if (!turn) return;\n    const refs: TurnMessageRefs = { ...turn.inputMessageRefs, ...patch };\n    this.db\n      .prepare(\"UPDATE conversation_turns SET input_message_refs=? WHERE id=?\")\n      .run(JSON.stringif"
+      },
+      {
+        "key": "c8",
+        "label": "未完成回合恢复查询",
+        "reason": "支持按序读取回合以及通过 JSON 文本 LIKE 匹配恢复 pending、running 记录的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/conversation/router.ts",
+          "startLine": 286,
+          "endLine": 318
+        },
+        "quote": "  turn(turnId: string): ConversationTurn | null {\n    const row = this.db\n      .prepare(\"SELECT * FROM conversation_turns WHERE id=?\")\n      .get(turnId) as Row | undefined;\n    return row ? this.rowToTurn(row) : null;\n  }\n\n  turns(conversationId: string): ConversationTurn[] {\n    return (\n      this.db\n        .prepa"
+      },
+      {
+        "key": "c9",
+        "label": "数据库行反序列化",
+        "reason": "支持多个 JSON 列被直接解析且没有损坏数据兜底的限制分析。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/conversation/router.ts",
-          "startLine": 262,
-          "endLine": 284
+          "startLine": 320,
+          "endLine": 334
         },
-        "quote": "  failTurn(turnId: string, error: string) {\n    this.patchRefs(turnId, { status: \"failed\", error: error.slice(0, 500) });\n  }\n\n  /** H-G20: leave a turn pending (e.g. model unavailable) so it can be retried. */\n  markPending(turnId: string, error: string) {\n    this.patchRefs(turnId, { status: \"pending\", error: error.s"
+        "quote": "  private rowToTurn(row: Row): ConversationTurn {\n    const refs = JSON.parse(String(row.input_message_refs)) as TurnMessageRefs;\n    return {\n      id: String(row.id),\n      conversationId: String(row.conversation_id),\n      ordinal: Number(row.ordinal),\n      inputText: String(row.input_text),\n      inputMessageRefs:"
       },
       {
-        "key": "c5",
-        "label": "未完成轮次恢复查询",
-        "reason": "支持 pending/running 恢复依赖 JSON 文本查询的实现边界。",
-        "relation": "explains",
+        "key": "c10",
+        "label": "同步回合记录路径",
+        "reason": "支持 recordTurn 复用 enqueueTurn 与 completeTurn、将入队和完成串联的说明。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/conversation/router.ts",
-          "startLine": 303,
-          "endLine": 333
+          "startLine": 195,
+          "endLine": 218
         },
-        "quote": "  /**\n   * Recoverable unfinished turns across all conversations (e.g. after restart):\n   * anything still pending/running that never reached a terminal state.\n   */\n  unfinishedTurns(): ConversationTurn[] {\n    return (\n      this.db\n        .prepare(\n          `SELECT * FROM conversation_turns\n           WHERE input_"
+        "quote": "  /**\n   * One-shot direct recording (enqueue + complete). Kept for callers that\n   * already have a fully-formed turn result and do not need the async queue.\n   */\n  recordTurn(input: {\n    conversationId: string;\n    inputText: string;\n    inputMessageRefs?: Record<string, unknown>;\n    selectedEvidence: unknown;\n   "
       }
     ],
     "questions": [
       {
-        "question": "同一会话并发入队时，ordinal 是否由数据库唯一约束或上层串行执行保护？",
-        "why": "本文件先查询最大 ordinal 再单独插入，未展示事务或冲突重试；并发调用可能得到相同序号。",
-        "nextStep": "检查 conversation_turns 的迁移定义及调用方调度策略；若没有保护，可在事务内分配序号并增加唯一约束与并发测试。",
+        "question": "数据库表是否对会话复合身份或 `(conversation_id, ordinal)` 设置唯一约束，并由外层事务串行化 `open` 与 `enqueueTurn`？",
+        "why": "本文件采用先查询后插入和最大序号加一，并发请求可能创建重复会话或取得相同序号；材料未包含迁移、索引和事务边界。",
+        "nextStep": "检查 conversations 与 conversation_turns 的建表迁移、索引及调用方事务，并增加真实并发行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c2",
+          "c6"
+        ]
+      },
+      {
+        "question": "上层运行器是否检查 `duplicate`、限制 refs 中的保留键，并强制合法状态迁移？",
+        "why": "本类只返回重复标志，input.refs 可覆盖默认状态和外部事件标识，完成、取消及发件箱绑定也未校验当前状态；端到端幂等和取消语义依赖调用方。",
+        "nextStep": "检查入队调用点、回合 worker、取消协调器与 outbox 投递代码，并覆盖重复事件、保留键覆盖以及取消与完成竞争。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c6",
+          "c7"
+        ]
+      },
+      {
+        "question": "未完成回合查询是否应改为 SQLite JSON 查询或独立状态列？",
+        "why": "当前 LIKE 匹配依赖固定的紧凑 JSON 序列化格式，元数据格式变化或损坏可能造成恢复漏项或解析失败。",
+        "nextStep": "确认 SQLite JSON 能力和迁移兼容要求，再评估状态列或 json_extract，并补充格式变化与损坏 JSON 测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c8",
+          "c9"
         ]
       }
     ]
@@ -104,85 +196,45 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-store.ts",
-      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/config.ts",
-      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/conversation/router.ts",
       "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/hook-forward.ts",
-      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/inputs/aggregator.ts",
-      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/budget.ts",
-      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
-      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:16:27.883Z",
+    "at": "2026-10-01T02:10:03.971Z",
     "trace": {
-      "runId": "08b3c67a-511e-4e0a-ab96-6d683e31ced8",
-      "roleId": "code-analyst",
+      "runId": "ebb9638b-89ad-4c13-ab57-cdd71c30700a",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6d1bc1dc254b1dba6cd3d1158e5518bc45887fb9bc258e06a1ba1cf84fd1ffab",
-      "contextHash": "7176c6b851a4f51cc5e17f9b1806557d076016f7cd6b65408d5f661a315d4405",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "5c1db20ef0fc4295412c582f869da6dc11e0ccf67e55e7af89cb7e8be1f9776f",
+      "contextHash": "e64d99e565bda6b4b7e16494e457a0d7f0ae462d2d7743ca867bc6e9b16ddd70",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d94aaa29705d85919e78b9d45e269177203b1a913ae7bb0cf30082b4cf183f14",
+      "fingerprint": "a4fb0afe148c103e386141afa3abab8a116d9e20840a87ccd309a4fe9b29a097",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3be-1d1a-7343-9ec9-6976e8e782d1"
+        "01a0f539-811f-7250-8c6d-cb533fd0b001"
       ],
       "usage": {
-        "used": 57170,
+        "used": 31956,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -191,10 +243,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 109830,
-          "utf8Bytes": 111649,
-          "estimatedTokens": 37217,
-          "budgetedTokens": 46522,
+          "chars": 28813,
+          "utf8Bytes": 34861,
+          "estimatedTokens": 11621,
+          "budgetedTokens": 14527,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -203,17 +255,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:17:13.951Z",
+    "at": "2026-10-01T02:10:19.753Z",
     "trace": {
-      "runId": "f951543a-792d-47ac-977c-b51b48c41578",
+      "runId": "e7933624-5c1c-410a-9b89-5333f9080e3c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "842b18b3a0ad0b0007b8677ab1af6708303f59d30057f6cdf8e9a7eb095a3eb4",
-      "contextHash": "eeeb8421ab62588778834bc6ef9eea44f9f0559c6b76b9d546b48aa57cd2e73c",
+      "promptHash": "c88e59486c909739a47162c5e862f9f5caddbebd379bd238daab55dcec83a474",
+      "contextHash": "03d62dfbf98d479e22c2258b6c8d722690a0dfaa569af8e0aa70b7382d32e906",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f802994fd82e5db3a74fc2f285ba8348668e6c5786525a8d4526a023e94b4bd4",
+      "fingerprint": "9263d3c1b9f698d546a70c536a0c6ccc8e4e4ee7771aacf498571365177ee681",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -226,10 +278,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bf-4091-7c93-aedc-57e273436f4f"
+        "01a0f539-eab3-7151-910d-0ab8501fe5a8"
       ],
       "usage": {
-        "used": 62703,
+        "used": 27909,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -238,10 +290,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 133695,
-          "utf8Bytes": 144960,
-          "estimatedTokens": 48320,
-          "budgetedTokens": 60400,
+          "chars": 25882,
+          "utf8Bytes": 30138,
+          "estimatedTokens": 10046,
+          "budgetedTokens": 12558,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

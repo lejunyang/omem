@@ -2,45 +2,58 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/live-pipeline-smoke.ts",
-    "title": "LearningPipeline 端到端实时冒烟验证",
-    "summary": "在临时数据库中捕获带可信 provenance 的任务文本，启动真实 LearningPipeline 排空作业，要求提取与复核两个作业成功、提案已应用且产生一个任务，并保存模型、尝试和通知诊断报告。",
+    "title": "真实模型学习流水线冒烟验证",
+    "summary": "该脚本以临时 SQLite 数据库和真实 TraeX 配置运行一次受控学习流水线，验证一条带负责人和截止时间的中文捕获能经过两个作业，形成并自动应用一个任务，同时保存模型、作业、提案和任务的可审计报告。",
     "category": "tests",
     "sections": [
       {
-        "key": "setup",
-        "title": "受控输入与流水线组装",
-        "body": "脚本从配置选择 `traex` 实时 profile，在临时目录创建 Store，并捕获一条支付重试任务。输入带应用上下文以及经过本地测试标记的 owner、事件时间、时区和 original provenance，使流水线从真实 Capture/Revision 入口开始。[[c1]]\n\n随后它组合 Store、MemoryService、FeedbackService、profile、工作区根目录和独立 worker id 来构造 `LearningPipeline`，体现流水线依赖持久化、记忆策略、反馈服务和 Agent 运行配置，而不是在脚本中手动调用 extractor/verifier。[[c2]]"
+        "key": "purpose",
+        "title": "解决的问题与验证范围",
+        "body": "该脚本不是普通单元测试，而是面向真实 Agent 配置的端到端冒烟检查：加载配置后查找 `traex` profile，并通过 live profile 选择逻辑取得实际可运行的模型；缺少该配置时立即失败。随后创建隔离的临时 `Store`，避免污染正式数据。[[c1]]\n\n输入是一条人工捕获的中文任务陈述，包含负责人、明确截止时间、预备动作、应用上下文和完整来源信息。这使验证目标聚焦于“原始材料能否被学习链路识别为可执行事项”，而非只检查协议解析或固定 fixture。[[c2]]"
       },
       {
-        "key": "assertions",
-        "title": "排空与端到端断言",
-        "body": "`drain(10)` 处理有限数量作业，随后主动停止流水线。脚本读取 jobs、每个 job 的 attempts、proposals 和 tasks，并联合断言：恰好处理 2 个作业、所有作业均 succeeded、恰好一个 proposal 且状态为 applied、恰好生成一个任务；任一条件不满足都会失败。[[c3]] 这比手工角色脚本更侧重调度与持久状态，间接覆盖 capture 后的提取、复核和应用流程。"
+        "key": "flow",
+        "title": "核心执行流程与模块关系",
+        "body": "捕获写入后，脚本用同一 `Store` 构造 `MemoryService`、`FeedbackService` 和 `LearningPipeline`，并把选定 profile、工作区根目录及 worker 标识注入流水线。这里与配置、持久化、记忆策略和学习执行模块的关系均由显式导入与构造调用确认；材料未展示流水线内部如何拆分两个作业，因此不能进一步断言具体角色或调用顺序。[[c3]]\n\n脚本调用 `drain(10)` 主动处理队列并停止 pipeline，然后从存储中读取作业、尝试记录、提案和任务。验收条件要求恰好处理两个作业、所有作业成功、恰好一个提案且已应用，并最终生成一个任务；任一条件不满足都会抛错。[[c4]]"
       },
       {
-        "key": "report",
-        "title": "诊断证据与未覆盖行为",
-        "body": "报告记录请求与实际模型/effort、捕获修订、作业及尝试、提案、任务和通知数量，并写入可配置路径；控制台输出压缩摘要。[[c4]] 最后无条件关闭 Store 并删除临时目录。[[c5]]\n\n测试没有断言任务具体字段、attempt 次数、通知数量或模型必须与请求一致，也没有覆盖失败重试、暂停恢复、重复 capture 幂等和超过 drain 上限的积压。它依赖真实模型输出稳定地产生单一可自动应用任务，因此失败既可能来自流水线缺陷，也可能来自外部模型或 Agent CLI 状态。"
+        "key": "evidence-limits",
+        "title": "报告、清理与未覆盖边界",
+        "body": "成功后生成审计报告，记录请求与实际生效的模型和 effort、捕获 revision、逐作业尝试、提案、任务及通知数量。报告路径可由环境变量覆盖，默认写入验证目录；目录和文件分别使用较严格权限，控制台只输出摘要。[[c5]]\n\n`finally` 无条件关闭数据库并递归删除临时目录，所以失败路径也会清理运行数据，而已写到临时目录之外的报告可保留。[[c6]] 断言只验证数量和状态，没有核对任务标题、负责人、截止时间、证据引用或通知内容；通知数量也只是记录而非成功条件。因此它能证明受控 live 链路产出了一个已应用任务，但不能单独证明语义提取完全正确，也未覆盖缺少凭据、模型超时、坏输出、重试上限及多条输入等异常行为。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时 Store 与任务捕获",
-        "reason": "支持测试从真实捕获入口构造带上下文和 provenance 的受控输入。",
+        "label": "真实配置选择与临时存储初始化",
+        "reason": "支持脚本依赖 traex 配置、选择 live profile，并以临时目录隔离 Store 的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
           "startLine": 13,
-          "endLine": 45
+          "endLine": 18
         },
         "quote": "const config = loadConfig();\nconst configured = config.profiles.find((profile) => profile.id === \"traex\");\nif (!configured) throw Error(\"TraeX profile is not configured\");\nconst { profile } = await selectLiveProfile(configured, config.agentCwd);\nconst directory = mkdtempSync(join(tmpdir(), \"omem-live-pipeline-\"));\ncons"
       },
       {
         "key": "c2",
-        "label": "LearningPipeline 依赖组装",
-        "reason": "支持流水线与 Store、MemoryService、FeedbackService、profile 和 worker 的模块关系。",
-        "relation": "depends_on",
+        "label": "中文任务捕获样本",
+        "reason": "支持输入包含截止时间、动作、上下文和来源元数据，以及验证目标面向真实捕获链路的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-pipeline-smoke.ts",
+          "startLine": 20,
+          "endLine": 45
+        },
+        "quote": "  const captured = store.capture({\n    source: \"manual\",\n    externalId: \"live-pipeline-source\",\n    title: \"支付重试任务\",\n    observedAt: \"2026-09-22T08:00:00Z\",\n    parts: [\n      {\n        type: \"text\",\n        text: \"我负责在本周五18:00前补齐支付重试方案，先核对现有接口。\",\n      },\n    ],\n    context: { application: \"payments\" },\n    provenanc"
+      },
+      {
+        "key": "c3",
+        "label": "学习流水线依赖组装",
+        "reason": "支持 MemoryService、FeedbackService、LearningPipeline、profile、工作区和 worker 共享同一 Store 运行的流程描述。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
@@ -50,9 +63,9 @@
         "quote": "  const memory = new MemoryService(store, { ownerId: \"owner\" });\n  const pipeline = new LearningPipeline({\n    store,\n    memory,\n    feedback: new FeedbackService(store),\n    profile,\n    workspaceRoot: config.agentCwd,\n    workerId: \"live-pipeline-worker\",\n  });"
       },
       {
-        "key": "c3",
-        "label": "端到端状态断言",
-        "reason": "支持处理两个作业、作业成功、单一提案已应用及生成一个任务的验收条件。",
+        "key": "c4",
+        "label": "流水线执行与结果断言",
+        "reason": "支持 drain、stop、结果查询及对两个成功作业、一个已应用提案和一个任务的硬性断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -63,41 +76,50 @@
         "quote": "  const processed = await pipeline.drain(10);\n  await pipeline.stop();\n  const jobs = store.jobs.list();\n  const proposals = memory.proposals();\n  const tasks = store.tasks();\n  const attempts = jobs.flatMap((job) => store.jobs.attempts(job.id));\n  if (\n    processed !== 2 ||\n    jobs.some((job) => job.state !== \"succe"
       },
       {
-        "key": "c4",
-        "label": "流水线验证报告",
-        "reason": "支持报告保存请求/实际模型、attempt、提案、任务和通知等诊断信息。",
+        "key": "c5",
+        "label": "验证报告生成与落盘",
+        "reason": "支持报告记录模型、effort、作业尝试和业务产物，并允许覆盖输出路径及设置文件权限的说明。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
           "startLine": 69,
-          "endLine": 112
+          "endLine": 107
         },
         "quote": "  const report = {\n    createdAt: new Date().toISOString(),\n    requestedModel: profile.model ?? null,\n    requestedEffort: profile.effort ?? null,\n    effectiveModels: [...new Set(attempts.map((attempt) => attempt.model))],\n    effectiveEfforts: [...new Set(attempts.map((attempt) => attempt.effort))],\n    capturedRevi"
       },
       {
-        "key": "c5",
-        "label": "流水线临时数据清理",
-        "reason": "支持测试结束时关闭 Store 并删除隔离目录的说明。",
+        "key": "c6",
+        "label": "临时资源清理",
+        "reason": "支持无论成功或失败都会关闭 Store 并删除临时运行目录的边界说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
           "startLine": 113,
-          "endLine": 116
+          "endLine": 115
         },
-        "quote": "} finally {\n  store.close();\n  rmSync(directory, { recursive: true, force: true });\n}"
+        "quote": "} finally {\n  store.close();\n  rmSync(directory, { recursive: true, force: true });"
       }
     ],
     "questions": [
       {
-        "question": "是否需要把通知结果和最终任务语义纳入该端到端检查的硬断言？",
-        "why": "报告记录 notificationCount 和完整 tasks，但当前条件只检查任务数量及提案状态，无法证明通知已按预期产生，也无法证明任务字段忠于输入。",
-        "nextStep": "明确 LearningPipeline live smoke 的验收边界；若通知和任务语义属于该切片，加入稳定的字段与数量断言，否则在测试名称或说明中标明不覆盖。",
+        "question": "是否应把任务语义字段和证据链纳入 live 冒烟断言？",
+        "why": "当前成功条件只检查处理数、作业状态、提案状态和任务数量；即使负责人、截止时间或任务内容提取错误，测试仍可能通过。",
+        "nextStep": "为生成的任务增加标题或描述、负责人、截止时间、来源 revision/fragment 引用等稳定字段断言，并明确哪些字段允许模型措辞变化。",
         "blocking": false,
         "citationKeys": [
-          "c3",
+          "c2",
           "c4"
+        ]
+      },
+      {
+        "question": "通知是否属于该冒烟测试的验收目标？",
+        "why": "脚本记录并输出 notificationCount，却没有对其数量、类型或关联任务作断言，无法区分“仅供观测”与“必须产生通知”。",
+        "nextStep": "根据产品预期决定将通知保留为诊断指标，或增加通知数量、类别及任务关联的行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
         ]
       }
     ]
@@ -105,69 +127,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:scripts/live-acp-smoke.ts",
-      "digest": "77bb1bae7fda3921075810520871f00b36bba21f3cbd38dec173f39c18af1afe"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-connectors-smoke.ts",
-      "digest": "56767351dc19db5f9be9f5bae5e33d378d427d8e53d56ee1d024075ea6c38e72"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-lark-host-smoke.ts",
-      "digest": "da10fc75972adf6fa64420e3c76a2084abe9b5bc928dbdc330d5085f95a72ad3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-learning-smoke.ts",
-      "digest": "f88a7289400e9f805776100fea75384a55628e822fc9ee11e90a9594dc7b0ac9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-model.ts",
-      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/live-pipeline-smoke.ts",
       "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "411512447121280c38d11a4c5aa7c8b67916a7ec8e540d59c746101bc13e2e3e"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:28:47.480Z",
+    "at": "2026-10-01T02:53:55.966Z",
     "trace": {
-      "runId": "2123580b-2d7e-4b1e-97fc-83f59db5349f",
+      "runId": "7dc65574-c40a-4641-bf8f-b723891d4c69",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "b9a8ac8e56fa85230244de54a03ac0c16b8cd000f66c577241cd41197c90a5d3",
-      "contextHash": "63979c2e4296b1ebcd9eda5826f00ede54d26465ebe74d2c21a701fdb603a571",
+      "promptHash": "bb96761dfa4d871ba540c8eb20961124b8ce87113b5855aa6da423e40da358cf",
+      "contextHash": "0565c01d0516a50488a31733270976ca728fb5b6af61bd1f7e468049d6d9f316",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "79e83ee8547c0b8a9db1230852edd362ece5e1fe27b9d918c7fd9ed6ae2e874a",
+      "fingerprint": "2ba091675fd271653dbd8d061dd93dc953cfb86c28f753248b22639cd7d3cd68",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -180,11 +177,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-4b6f-7f51-aae2-fee504968ba5"
+        "01a0f561-b77a-7f61-a5cb-dfc190927241"
       ],
       "usage": {
-        "used": 31129,
-        "size": 760000,
+        "used": 28797,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -192,10 +189,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 43457,
-          "utf8Bytes": 45461,
-          "estimatedTokens": 15154,
-          "budgetedTokens": 18943,
+          "chars": 24708,
+          "utf8Bytes": 26534,
+          "estimatedTokens": 8845,
+          "budgetedTokens": 11057,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -204,17 +201,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:29:16.286Z",
+    "at": "2026-10-01T02:54:32.310Z",
     "trace": {
-      "runId": "7d181020-4f6c-41d0-bfd8-c4620b5caea1",
+      "runId": "ca8144d9-90e0-48b6-a94b-4126a448ff10",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "711df273712ba84692a4f05f84cc855f851cbc3b9ebeb62b76fbf890e291c676",
-      "contextHash": "c677c030f3469f41c9535021c919516c766bdce66c6107a299ede985f5f1c8cf",
+      "promptHash": "9b05386bbae11d7dbbb0a16043cc59d669f0f17029e7709a4fc88a35c70eb384",
+      "contextHash": "ba3b29f3b23c70189daaf4129bcce8d11a26d3d3bfe068826551938efa66fd87",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f2c5d8d9398f8ea44754585a10a865a39dfce7aea45a64a32b9895226d8a7ed2",
+      "fingerprint": "3ad5a3fee5612e52e9a92a9303bbc585f7588e5518df365eb03730da0261b5c8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -227,11 +224,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea4-1dbe-75f1-8694-a6e87c823229"
+        "01a0f562-1b1a-7300-9922-7a21747854ba"
       ],
       "usage": {
-        "used": 34664,
-        "size": 760000,
+        "used": 28055,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -239,10 +236,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 61184,
-          "utf8Bytes": 71202,
-          "estimatedTokens": 23734,
-          "budgetedTokens": 29668,
+          "chars": 27250,
+          "utf8Bytes": 30884,
+          "estimatedTokens": 10295,
+          "budgetedTokens": 12869,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

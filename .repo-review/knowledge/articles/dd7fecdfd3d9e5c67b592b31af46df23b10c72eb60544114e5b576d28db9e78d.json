@@ -2,32 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/live-assistant-smoke.ts",
-    "title": "真实 ACP 助手端到端冒烟脚本",
-    "summary": "该脚本用于在隔离的临时 Store 中，以合成记忆和任务请求驱动指定的真实 ACP 模型，并在成功运行时检查跨语言证据召回、任务创建、改期和完成。现有固定材料只描述脚本流程，未提供运行退出码或成功 trace，因此不能据此断言验证已经通过。",
+    "title": "实时助理端到端冒烟验证",
+    "summary": "该脚本以临时数据库和合成材料驱动真实 ACP 助理，验证记忆检索、原始证据引用以及任务创建、改期、完成的完整行为链，并将过程报告持久化；它是有外部模型依赖的现场检查，不等同于隔离单元测试。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose-and-setup",
-        "title": "验证目标与隔离方式",
-        "body": "脚本面向协议 fixture 之外的真实模型链路：它加载配置，在系统临时目录创建独立 Store，并声明只使用合成材料、真实 ACP 调用，不发送外部消息或写入用户数据库。随后从 `traex` 基础配置选择实时 profile，要求所选模型为 `gpt-5.6-sol`，并把模型与 effort 写入报告。[[c1]]\n\n运行时由 Store、MemoryService、关键词检索、ACP 模型适配器和 AssistantRuntime 组成，用来贯通捕获、检索、生成、对话及任务写入。[[c2]] ACP 适配器只接受 ACP transport；缺少 profile 或使用 CLI transport 时会明确报模型不可用，不生成伪造回退答案。[[c3]]"
+        "key": "purpose_setup",
+        "title": "验证目标与隔离环境",
+        "body": "脚本解决的是“各组件单独可用，但真实模型参与后整条助理链是否仍能工作”的验收问题。它加载服务器配置，在系统临时目录创建独立 Store，并明确使用合成材料，避免写入用户数据库或发送外部消息。随后从 `traex` 基础配置选择现场 profile，并强制模型为 `gpt-5.6-sol`，因此这是一项依赖真实 ACP 能力、认证和模型可用性的现场冒烟检查。[[c1]]\n\n测试先捕获一条英文 CircuitBreaker 事实，再把 Store、MemoryService、KeywordRetrieval 与 AcpAssistantModel 注入 AssistantRuntime；会话固定为 owner、web、private，时区为上海，单轮超时三分钟。这里的跨模块关系有直接构造依据，但各模块内部实现不在本材料完整范围内。[[c2]]"
       },
       {
-        "key": "core-flow",
-        "title": "核心场景与业务断言",
-        "body": "脚本先捕获一条英文熔断器说明，再建立私有 Web 会话。统一的 `turn` 包装器调用运行时，要求输入消息引用状态为 `done`，并在该轮成功返回后记录回答、工具动作和所选证据。[[c4]] 中文提问需要选中原始英文 fragment，回答还必须包含“7 次失败”和“41 秒”，从而在脚本成功执行时验证跨语言召回及证据落点。[[c5]]\n\n后三轮依次创建英语复习任务、改期并标记完成，检查任务数量、换算为 UTC 的到期时间和最终 `done` 状态。[[c6]] 时间写入还受运行时约束：时间表达必须实际出现在用户消息中，`dueAt` 必须带时区且可解析，之后才转换为 ISO 时间。[[c7]]"
+        "key": "behavior_flow",
+        "title": "核心行为链与断言",
+        "body": "统一的 `turn` 包装器向同一会话发送中文请求，要求输入消息引用处理状态为 `done`，并把回答、工具动作和选中证据写入报告。第一轮询问英文材料中的熔断参数：断言选中证据包含刚捕获的原始 fragment，并检查回答同时表达“7 次”和“41 秒”，从而验证跨语言召回、证据落点与答案内容，而不只验证模型返回了文本。[[c3]]\n\n随后三轮依次要求创建英语复习任务、将其改期、再标记完成。脚本直接检查任务数量、上海本地时间换算后的 UTC 截止时间，以及最终 `done` 状态，覆盖了自然语言到结构化任务写操作的连续上下文流程。[[c4]]"
       },
       {
-        "key": "boundaries-and-reporting",
-        "title": "报告、清理与证据边界",
-        "body": "主流程抛错时，脚本把报告标为失败并设置非零退出码；`finally` 再尝试写入 `verification/live-assistant.json`、输出摘要、关闭 Store 并删除临时目录。由于这些操作顺序执行，目录创建、报告写入或日志输出若再次抛错，后续资源释放并无无条件保证。[[c8]]\n\n此前“该冒烟测试已经证明指定模型下真实 ACP 成功链路”的结论被替代：当前材料只能证明脚本**用于**执行这项验证，以及全部断言通过时会把状态设为 `passed`；没有实际运行报告、退出码或 trace，不能确认本次链路已经成功。[[c1]] 它也不覆盖其他模型、认证失败、超时、通知发送、多任务歧义、版本冲突或越权场景。"
+        "key": "reporting_limits",
+        "title": "结果记录、清理与边界",
+        "body": "成功时报告标记为 `passed`；任何异常都会记录错误并设置非零退出码。无论结果如何，脚本都把带时间戳、模型配置及逐步行为的 JSON 写入配置数据目录下的 verification 目录，然后关闭 Store 并递归清理临时工作区。[[c5]]\n\n该检查只断言一个固定事实问答和一条任务的创建、改期、完成；没有覆盖删除、并发更新、权限拒绝、无证据回答、时间歧义、模型不可用或超时后的具体退化表现。它还只检查证据集合含目标 fragment，没有断言最终自然语言中的可见引用格式；报告写入真实配置目录，也意味着“无用户数据库写入”不等于完全无持久化副作用。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "隔离初始化与模型约束",
-        "reason": "支持脚本使用临时 Store、选择实时 profile、约束目标模型并准备报告；同时说明材料只有流程定义，没有运行结果。",
-        "relation": "explains",
+        "label": "现场模型与临时环境初始化",
+        "reason": "支持脚本使用合成材料、临时 Store、真实 profile，并强制指定现场模型的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
@@ -38,9 +38,9 @@
       },
       {
         "key": "c2",
-        "label": "助手运行时组件装配",
-        "reason": "支持脚本把存储、记忆服务、关键词检索、ACP 模型和助手运行时串成同一验证链路。",
-        "relation": "depends_on",
+        "label": "助理运行时组装与私有会话",
+        "reason": "支持 Store、记忆、检索、ACP 模型和 AssistantRuntime 的显式装配关系及会话边界。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
@@ -51,47 +51,21 @@
       },
       {
         "key": "c3",
-        "label": "ACP 模型适配器边界",
-        "reason": "支持适配器只接受 ACP profile，并对缺少配置或 CLI transport 明确失败而不伪造答案。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 10,
-          "endLine": 21
-        },
-        "quote": "/**\n * Production assistant model adapter. It reuses the project's real ACP transport\n * (`acp()` from agents.ts) against a configured AgentProfile.\n *\n * G: transport routing is enforced here:\n *  - profile.transport === \"acp\" → real ACP session;\n *  - any CLI transport (codex-cli / trae-cli / claude-cli) → ModelUnava"
-      },
-      {
-        "key": "c4",
-        "label": "统一对话执行与步骤记录",
-        "reason": "说明每轮如何调用运行时、检查消息引用状态，并在成功返回后记录回答、动作和证据。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/live-assistant-smoke.ts",
-          "startLine": 29,
-          "endLine": 35
-        },
-        "quote": "  const turn = async (text: string) => {\n    console.log(`Live: ${text}`);\n    const result = await runtime.turn({ conversationId: conversation.id, userText: text });\n    assert.equal(result.turn.inputMessageRefs.status, \"done\", JSON.stringify(result.turn.inputMessageRefs));\n    (report.steps as unknown[]).push({ input"
-      },
-      {
-        "key": "c5",
-        "label": "跨语言召回断言",
-        "reason": "支持中文问题必须命中原始英文材料，并回答两个关键数值。",
+        "label": "跨语言记忆召回断言",
+        "reason": "支持统一轮次执行、处理完成状态、原始 fragment 证据及参数答案断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
-          "startLine": 36,
+          "startLine": 29,
           "endLine": 38
         },
-        "quote": "  const recalled = await turn(\"之前记录的熔断器连续失败几次会打开，冷却多久？\");\n  assert.ok(JSON.stringify(recalled.turn.selectedEvidence).includes(revision.fragments[0]!.id), \"Must cite original English source\");\n  assert.match(recalled.turn.result, /7|七|seven/i); assert.match(recalled.turn.result, /41|四十一/);"
+        "quote": "  const turn = async (text: string) => {\n    console.log(`Live: ${text}`);\n    const result = await runtime.turn({ conversationId: conversation.id, userText: text });\n    assert.equal(result.turn.inputMessageRefs.status, \"done\", JSON.stringify(result.turn.inputMessageRefs));\n    (report.steps as unknown[]).push({ input"
       },
       {
-        "key": "c6",
-        "label": "任务创建改期与完成断言",
-        "reason": "支持脚本检查任务数量、两次 UTC 到期时间以及最终完成状态。",
+        "key": "c4",
+        "label": "任务创建、改期与完成断言",
+        "reason": "支持连续对话驱动任务写操作，以及 UTC 截止时间和完成状态的行为断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -102,23 +76,10 @@
         "quote": "  await turn(\"帮我记一下：2030年10月2日上午9点提醒我复习英语面试词汇。\");\n  assert.equal(store.tasks().length, 1);\n  assert.equal(store.tasks()[0]!.dueAt, \"2030-10-02T01:00:00.000Z\");\n  await turn(\"把刚才的英语复习任务改到2030年10月3日上午10点。\");\n  assert.equal(store.tasks()[0]!.dueAt, \"2030-10-03T02:00:00.000Z\");\n  await turn(\"刚才的英语复习任务已经做完了，标记完成。\");\n  asser"
       },
       {
-        "key": "c7",
-        "label": "任务时间校验规则",
-        "reason": "支持服务端要求时间表达来自原消息，且到期时间必须带时区并可解析。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/runtime.ts",
-          "startLine": 42,
-          "endLine": 47
-        },
-        "quote": "export function validatedDueAt(dueAt: string | null | undefined, expression: string | null | undefined, userText: string) {\n  if (!dueAt) return null;\n  if (!expression?.trim() || !userText.includes(expression.trim()) ||\n    !/T.*(?:Z|[+-]\\d{2}:\\d{2})$/.test(dueAt) || !Number.isFinite(Date.parse(dueAt)))\n    throw Erro"
-      },
-      {
-        "key": "c8",
-        "label": "失败报告与资源清理顺序",
-        "reason": "支持异常状态、报告写入、日志输出和资源释放的实际排列，并揭示前序失败可能阻断清理。",
-        "relation": "explains",
+        "key": "c5",
+        "label": "失败传播、报告输出与资源清理",
+        "reason": "支持脚本通过退出码表达失败、持久化验证报告并清理临时 Store 的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
@@ -126,25 +87,40 @@
           "endLine": 54
         },
         "quote": "  report.status = \"passed\";\n} catch (error) {\n  report.status = \"failed\"; report.error = String(error); process.exitCode = 1;\n} finally {\n  report.finishedAt = new Date().toISOString();\n  const output = join(config.dataDir, \"verification\"); mkdirSync(output, { recursive: true });\n  writeFileSync(join(output, \"live-assi"
+      },
+      {
+        "key": "c6",
+        "label": "当前冒烟场景的断言范围",
+        "reason": "通过脚本现有的固定问答、任务断言和报告位置界定已覆盖行为与尚未覆盖的异常、权限及引用展示边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-assistant-smoke.ts",
+          "startLine": 31,
+          "endLine": 54
+        },
+        "quote": "    const result = await runtime.turn({ conversationId: conversation.id, userText: text });\n    assert.equal(result.turn.inputMessageRefs.status, \"done\", JSON.stringify(result.turn.inputMessageRefs));\n    (report.steps as unknown[]).push({ input: text, answer: result.turn.result, actions: result.turn.toolActions, evide"
       }
     ],
     "questions": [
       {
-        "question": "`selectLiveProfile` 在模型不可用、effort 不受支持或环境变量未设置时具体如何选择和报错？",
-        "why": "现有材料只有该函数的调用点和最终模型断言，无法确认能力探测、设置拒绝及回退策略。",
-        "nextStep": "补充 `scripts/live-model.ts` 的固定材料及相关测试，核对模型和 effort 发现、校验与错误报告路径。",
+        "question": "模型不可用、认证失败或单轮超时时，是否还需要断言 AssistantRuntime 的具体降级结果与报告结构？",
+        "why": "当前脚本只由通用 catch 记录异常并置非零退出码，没有验证用户可见答复、错误分类或是否避免任务写入；因此不能从该材料确认退化合同已被现场覆盖。",
+        "nextStep": "增加独立失败场景，使用明确不可用的 profile 或受控超时，断言错误类别、用户可见结果、零任务副作用及报告字段。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c2",
+          "c5"
         ]
       },
       {
-        "question": "报告目录创建或文件写入失败时，是否仍应保证关闭 Store 并清理临时目录？",
-        "why": "报告写入、日志输出和资源释放位于同一个 `finally` 中；前序操作抛错可能阻止后续清理。",
-        "nextStep": "明确所需清理保证；若要求可靠释放，将清理放入独立或嵌套的 `finally`，并增加报告目录不可写或写入失败的行为测试。",
+        "question": "现场报告写入 config.dataDir 是否符合运行隔离要求，还是应允许显式输出目录？",
+        "why": "业务 Store 位于临时目录且会清理，但验证报告写入真实配置数据目录；在并行运行或受限环境中可能发生覆盖、权限失败或残留。",
+        "nextStep": "确认报告的保留策略；若需并行和完全隔离，为输出路径增加运行标识或显式配置，并补充相应断言。",
         "blocking": false,
         "citationKeys": [
-          "c8"
+          "c1",
+          "c5"
         ]
       }
     ]
@@ -163,49 +139,49 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
+      "digest": "efa43a2948fcae9611fe88e8ae00d6421136e04e43ba1761bda2a2fa0047665a"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
+      "digest": "17df8759d854439c570682baacfc9fca8589ebf402c35720af881a8a20bb0589"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+      "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:39:35.523Z",
+    "at": "2026-10-01T02:53:15.079Z",
     "trace": {
-      "runId": "f9443402-1f63-44f8-9295-d8a88f537975",
-      "roleId": "knowledge-refresher",
+      "runId": "af8c8e3a-dbd1-4b99-97a1-3a74932a00da",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "b3c8ba39945e1d57fb3cdfd657fe674001069467c7f3db90df8c9d265dd18748",
-      "contextHash": "d42f90e2523cd461b4ed233588faa03f3b5a3d1a69ecd932088c39123ba0190b",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "9acab945bde28f5cec2089b2adb9f58d3c2e8e892b3ba71c21cf132af11da949",
+      "contextHash": "e67e4f1c79936c815aeab711e8f04662ece9c306d4f909939d5a0c54e4fdfae5",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1ff68ab441e3b2af52d1cdbb97bdd57fd780a10df9e467a72f50eb298ff84726",
+      "fingerprint": "469a92d6a7965775a17fcf9b0443bc33e86596aea4e2a9c518a44cee4439ec2a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e6-ac76-7431-b844-075bc514ba81"
+        "01a0f560-fa2b-7fd0-aa2b-c433871bc265"
       ],
       "usage": {
-        "used": 30319,
+        "used": 27365,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -214,10 +190,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 31787,
-          "utf8Bytes": 37301,
-          "estimatedTokens": 12434,
-          "budgetedTokens": 15543,
+          "chars": 24846,
+          "utf8Bytes": 26838,
+          "estimatedTokens": 8946,
+          "budgetedTokens": 11183,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -226,17 +202,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:39:51.881Z",
+    "at": "2026-10-01T02:53:31.855Z",
     "trace": {
-      "runId": "3e7597e7-2714-4def-8667-9e03dfa9de26",
+      "runId": "1e371776-8f9d-415a-bcb8-05cea031df4c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ccbe30e2daad1d8a3dc5bc79d8bab12b3b2616575508a4236063131820a02b3a",
-      "contextHash": "90d2c5cde930daa26f21b5b3b9669f9490c2d89188e2989b144570517f0508e0",
+      "promptHash": "634d81c513cb2055cc3fe19a6f8f32d074f65145c6d90e19951afd00d56b0eb5",
+      "contextHash": "be6b00a8cf59489592c5f2bc2ef2532d5aafcacfd1ac4d6f82b79dd9ea8d54b7",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0ca99d43b218e88b1ea9e3f0df49b93c327b78679f4dbb8b424ff6ccfce99af8",
+      "fingerprint": "668b737467230febc47c54e70050c2ea0fc8252ede65d1ffa4bbe6f004a3ae1a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -249,10 +225,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e7-16f7-7511-b5df-25bd8e55d7fc"
+        "01a0f561-7449-7940-bd26-be30cbe53b21"
       ],
       "usage": {
-        "used": 28013,
+        "used": 27719,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -261,10 +237,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 28683,
-          "utf8Bytes": 32727,
-          "estimatedTokens": 10909,
-          "budgetedTokens": 13637,
+          "chars": 27769,
+          "utf8Bytes": 31777,
+          "estimatedTokens": 10593,
+          "budgetedTokens": 13242,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

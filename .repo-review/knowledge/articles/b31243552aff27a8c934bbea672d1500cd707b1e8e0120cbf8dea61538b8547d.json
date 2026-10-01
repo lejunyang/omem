@@ -3,100 +3,126 @@
   "document": {
     "key": "omem:apps/server/tests/review-relations.test.ts",
     "title": "仓库评审关系的同步与查询测试",
-    "summary": "该测试以临时 Git 仓库和隔离 SQLite Store 验证人工关联 seed 的关系同步：明确覆盖独立意图片段、confirmed implements、完整 requirementRefs 生成的 requires、重复同步 ID 幂等、未登记同名文件不误连、无法解析引用的 missing 独立性、seed 删除后的有限 stale 现象，以及 implements、implemented_by、requires 的 HTTP 查询和列表筛选。正常 decided_by、tested_by 的目标正确性尚未被断言。",
+    "summary": "该测试以临时 Git 仓库和隔离 SQLite Store 验证人工 association seed 如何形成代码、意图、需求、决策与测试之间的关系，并覆盖多引用、幂等、缺失目标、删除失效以及 HTTP 双向查询。它重点防止同名文件误连、共享需求覆盖不同 seed、空端点关系碰撞，以及把整张需求总表错误展示为意图。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose_and_fixture",
-        "title": "测试目标与夹具设计",
-        "body": "该文件为关系同步中的覆盖、误连和错误成功状态提供回归保护。每个用例使用独立 `Store`，结束后关闭数据库并删除临时目录；夹具另建真实 Git 仓库，使提交状态、文件内容和持久化关系共同参与同步。[[c1]]\n\n夹具安排两个共享 G08 需求、但定位到不同函数的 association seed，其中一个 seed 同时引用 G08、G09；还创建未登记的同名函数文件，以及需求、决策和测试材料。这样的布局用于检验同步是否服从明确路径、符号与引用，而不会因共享需求或同名符号合并。[[c2]]"
+        "key": "purpose-fixture",
+        "title": "问题与测试夹具",
+        "body": "测试为每个用例建立临时 Git 仓库和独立 Store，并在结束后关闭数据库、递归清理目录；仓库夹具包含目标源码、同名诱饵文件、需求/决策/测试文档及人工 associations，从而在接近真实同步输入的环境中检验关系构建。[[c1]] 两条默认 seed 刻意共享 G08，但定位到不同符号，第二条还同时引用 G08、G09，用于发现按需求键覆盖 seed 或只处理首个引用的问题。[[c2]]\n\n测试通过 `runReviewSync` 驱动同步，通过 Store 直接读取关系和虚拟意图索引；HTTP 场景再用 `buildReviewApp` 注入请求。由导入关系可确认该文件同时连接通用存储、评审同步和评审 HTTP 层，但材料没有展示被调函数完整实现，不能据此断言其内部调用链。[[c3]]"
       },
       {
-        "key": "sync_invariants",
-        "title": "已验证的同步不变量",
-        "body": "首次同步产生两个彼此独立的意图片段，各自包含关联标识和对应 seed 文本，且不包含需求文档中的共享 G01、G02 表格。测试还确认生成两条源、目标均非空且状态为 `confirmed` 的 `implements` 关系。[[c3]] 但断言没有逐条比对每条边与具体 seed 意图的对应关系，也没有验证正常 `decided_by` 或 `tested_by` 的目标，因此不能把覆盖范围概括为所有代码、决策和测试关系均已正确连通。\n\n对需求引用，测试确认完整遍历 `requirementRefs`，生成三条从意图片段出发的 `requires` 边；相同仓库重复同步后关系 ID 集合保持不变，未登记的同名文件也不会产生关系。[[c4]]"
+        "key": "sync-invariants",
+        "title": "同步关系的核心断言",
+        "body": "首组断言要求“一条 seed 对应一个短意图片段”：两个 seed 生成两个不同 fragment，文本只包含各自意图与关联标识，不得混入 G01–G20 总表；代码片段以 `implements` 指向该意图，端点非空且状态为 confirmed。[[c4]] `requires` 则从意图片段出发，并为每个 requirementRef 独立建边，因此样例总数应为三条。[[c5]]\n\n重复同步后关系 ID 必须完全复用，说明测试把幂等性定义为稳定身份而非仅数量相同；未列入 seed 的同名文件不得产生关系，强调路径与显式 association 才是定位依据。[[c6]] 对无法解析的决策或测试引用，每个 seed 的 missing 边仍须独立存在，避免空端点导致覆盖；从列表删除 seed 后，其旧边应转为 stale，而不是继续显示为有效。[[c7]]"
       },
       {
-        "key": "missing_stale_and_api",
-        "title": "缺失、失效与查询方向",
-        "body": "当决策或测试引用无法解析时，各 seed 仍产生独立的 `missing` 关系，并以不同 seed identity 避免空端点碰撞。删除第二个 seed 后，测试只证明出现至少一条 `stale` 关系，并找到一条 identity 以 `assoc_` 开头的 stale `implements` 行；它没有保存删除前的具体 identity 来做精确归属比对。[[c5]]\n\nHTTP 用例确认代码片段可查询向外的 `implements`，意图片段可看到反向派生的 `implemented_by` 和向外的 `requires`；列表接口可按状态、类型筛选，汇总接口报告 seed 数量。[[c6]] Review 应用本身复用隔离 Store，并把职责限定在评审所需的读取、浏览和同步接口。[[c7]]"
+        "key": "api-api-limits",
+        "title": "查询行为、模块关系与未覆盖边界",
+        "body": "API 测试确认从代码 fragment 查询可得到外向 `implements`，从意图 fragment 查询可同时看到反向 `implemented_by` 与外向 `requires`；用户看到的关联对象仍是短意图，而非共享需求表。另一个用例验证关系列表可按 status/type 过滤，association 摘要返回 seed 数量。[[c8]] 这表明评审应用复用隔离 Store，并公开浏览、同步所需的有限 HTTP 面；应用注释还限定其默认只绑定本机，并不承载业务 worker 或业务状态。[[c9]]\n\n这些是进程内 fixture 测试：它们未断言 `decided_by`、`researched_by`、`tested_by` 的成功目标内容，也未覆盖非法筛选参数、鉴权失败、并发同步、事务中断、Git 命令失败、非 UTF-8/超大文件或真实网络监听。同步材料声明扫描失败会降级、逐文件拒绝不安全输入，但本文件没有对这些边界作行为验证。[[c10]]"
       },
       {
-        "key": "coverage_limits",
-        "title": "覆盖边界与后续验证",
-        "body": "现有断言覆盖关系数量、方向、多需求引用、幂等、missing 独立性和有限 stale 行为，但没有证明复杂符号定位、重命名、跨 revision 身份续接或数据库故障策略。夹具中的 G08、G09 测试仅执行恒真断言，不能作为真实助手行为通过的证据。[[c8]]\n\nAPI 注入请求只使用本机 Host/Origin，尚未覆盖无效 Host、跨 Origin、有效或无效 token 及静态资源分支，而应用明确区分无 token 时的 loopback、same-origin 限制与设置 token 后的全 API 门禁。[[c9]] 同步模块还声明 Git 失败转为全量扫描、非法文件逐个拒绝，并通过 `failed` 返回无法读取、解码或导入的文件；这些是源码合同，尚非本测试已经验证的故障行为。[[c10]][[c11]]"
+        "key": "assertion-scope",
+        "title": "测试结论的证据边界",
+        "body": "测试中的需求和测试文档是人为构造的最小文本，甚至下游测试内容仅为恒真断言；因此这里证明的是 locator、关系状态、身份稳定性和 API 映射规则，而不是 G08 多轮回指或 G09 恢复功能本身正确。[[c11]] 同理，直接查询 SQLite 表会精确验证持久化结果，却可能绕过更上层 DTO 展示约束；当前 HTTP 断言只检查关系类型、状态和关联文本，没有验证 label、actionable、reason、排序、分页或内部 ID 是否泄露。[[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "隔离存储与清理",
-        "reason": "支持测试为每个用例创建独立 Store，并在结束后关闭数据库、删除临时目录。",
+        "label": "临时仓库与清理夹具",
+        "reason": "支持测试使用隔离 Store、临时 Git 仓库并在用例后清理资源的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
           "startLine": 15,
-          "endLine": 43
+          "endLine": 54
         },
         "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup(dir?: string) {\n  const d = dir ?? mkdtempSync(join(tmpdir(), \"omem-review-rel-\"));\n  const store = new Store(d);\n  stores.push({ store, dir: d });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    try {\n      st"
       },
       {
         "key": "c2",
-        "label": "双 seed 与同名诱饵夹具",
-        "reason": "支持夹具包含共享需求、不同符号、多需求引用及未登记同名文件的设计。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 69,
-          "endLine": 99
-        },
-        "quote": "/** Build a fixture repo: two seeds on the SAME requirement G08 but different\n * symbols (must not overwrite each other), one seed with two requirementRefs,\n * a decoy same-named file not listed, a requirement/decision/test doc. */\nfunction buildFixture(root: string, seeds: Seed[]) {\n  w(\n    root,\n    \"apps/server/src"
-      },
-      {
-        "key": "c3",
-        "label": "独立意图片段与 implements 断言",
-        "reason": "支持两个意图片段互不覆盖、不含共享表格，以及两条 implements 关系端点非空且状态为 confirmed。",
+        "label": "共享需求的默认关系种子",
+        "reason": "支持两条 seed 共享 G08、定位不同符号且包含多需求引用的夹具设计。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 208,
-          "endLine": 239
+          "startLine": 141,
+          "endLine": 171
         },
-        "quote": "  it(\"generates a per-seed intent index; implements points at it, not the G01-G20 table\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    const res = await runReviewSync(store, root);\n    expect(res.relations).toBeDefined();\n    expect(res.relations!.ass"
+        "quote": "function defaultSeeds(): Seed[] {\n  return [\n    {\n      codePath: \"apps/server/src/assistant/runtime.ts\",\n      symbol: \"priorWorkingContext\",\n      intent: \"G08 多轮回指：前轮 selected evidence 支持纯回指\",\n      requirementRefs: [\"G08\"],\n      decisionRefs: [\"docs/reviews/g08-decision.md::G08 decision\"],\n      researchRefs: [],"
+      },
+      {
+        "key": "c3",
+        "label": "测试连接的服务模块",
+        "reason": "说明测试直接使用 Store、评审同步入口与评审 HTTP 应用，但不能单凭导入推断更深调用链。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 10,
+          "endLine": 20
+        },
+        "quote": "import { execFileSync } from \"node:child_process\";\nimport { Store } from \"../src/store.js\";\nimport { runReviewSync } from \"../src/review/sync.js\";\nimport { buildReviewApp } from \"../src/review/app.js\";\n\nconst stores: { store: Store; dir: string }[] = [];\nfunction setup(dir?: string) {\n  const d = dir ?? mkdtempSync(joi"
       },
       {
         "key": "c4",
-        "label": "多需求、幂等与精确路径",
-        "reason": "支持为每个 requirementRef 生成 requires、重复同步复用关系 ID，以及未登记同名文件不产生关系。",
+        "label": "每种子意图与 implements 断言",
+        "reason": "支持独立短意图片段、避免共享总表污染以及 confirmed implements 端点的核心断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 207,
+          "endLine": 240
+        },
+        "quote": "describe(\"repo-review relations\", () => {\n  it(\"generates a per-seed intent index; implements points at it, not the G01-G20 table\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    const res = await runReviewSync(store, root);\n    expect(res.relations).to"
+      },
+      {
+        "key": "c5",
+        "label": "多需求引用建边断言",
+        "reason": "支持每个 requirementRef 分别生成 requires 边，且关系源是意图片段而非代码片段。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
           "startLine": 245,
-          "endLine": 290
+          "endLine": 259
         },
         "quote": "  it(\"builds a requires edge per requirementRef (multi-ref not just [0])\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n\n    const requires = relRows(store).filter((r) => r.type === \"requires\");\n    // seed1 -> G08 (1"
       },
       {
-        "key": "c5",
-        "label": "missing 独立性与有限 stale 断言",
-        "reason": "支持无法解析引用保持为不同 missing 行，并界定删除 seed 后 stale 断言只能确认有限事实。",
+        "key": "c6",
+        "label": "幂等与同名文件隔离",
+        "reason": "支持重复同步复用关系 ID，并排除未列入 association 的同名文件。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 263,
+          "endLine": 290
+        },
+        "quote": "  it(\"is idempotent: repeated sync reuses relation ids\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n    const idsBefore = relRows(store).map((r) => r.id).sort();\n\n    await runReviewSync(store, root);\n    const idsA"
+      },
+      {
+        "key": "c7",
+        "label": "缺失边与删除 seed 失效",
+        "reason": "支持 missing 边按 seed 独立保留，以及移除 seed 后旧关系转为 stale。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
           "startLine": 294,
-          "endLine": 334
+          "endLine": 335
         },
         "quote": "  it(\"keeps every missing edge independently visible (no empty-endpoint collision)\", async () => {\n    const root = makeRepo();\n    const seeds = defaultSeeds();\n    // Point both seeds at a decision/test that does NOT exist, so both produce\n    // missing edges; they must not collapse into one row on source='' target="
       },
       {
-        "key": "c6",
-        "label": "关系查询与汇总接口",
-        "reason": "支持 implements、implemented_by、requires 的查询方向，以及状态和类型筛选与 seed 数量汇总。",
+        "key": "c8",
+        "label": "关系双向查询与列表过滤",
+        "reason": "支持 fragment 关系的正反向类型映射、状态确认、筛选和 association 数量摘要。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -107,9 +133,9 @@
         "quote": "  it(\"GET /fragments/:id/relations returns code→intent outgoing and implemented_by incoming\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n\n    const impl = relRows(store).find((r) => r.type === \"implements\")!;\n    co"
       },
       {
-        "key": "c7",
-        "label": "Review HTTP 应用边界",
-        "reason": "说明评审应用复用隔离 Store，并聚焦读取、浏览和同步能力。",
+        "key": "c9",
+        "label": "评审应用职责与安全边界",
+        "reason": "解释 HTTP 测试所连接应用的隔离 Store、有限路由、本机绑定和非业务运行时定位。",
         "relation": "background",
         "target": {
           "kind": "material",
@@ -120,36 +146,10 @@
         "quote": "/** review knowledge-base HTTP surface. It reuses MemoryService /\n * KeywordRetrieval against the isolated review Store and registers only the\n * read/browse/sync routes a code-review workflow needs. No AssistantRuntime,\n * Lark host, learning pipeline, notification workers or business token gating:\n * the app binds lo"
       },
       {
-        "key": "c8",
-        "label": "恒真运行时测试夹具",
-        "reason": "支持夹具中的 G08、G09 用例只做恒真断言，不能证明真实运行时行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 120,
-          "endLine": 131
-        },
-        "quote": "  w(\n    root,\n    \"apps/server/tests/runtime-rel.test.ts\",\n    `describe(\"runtime\", () => {\n  it(\"G08: two-turn anaphora reuses prior evidence\", () => {\n    expect(true).toBe(true);\n  });\n  it(\"G09: retry recovers pending turn\", () => {\n    expect(true).toBe(true);\n  });\n});\n`,"
-      },
-      {
-        "key": "c9",
-        "label": "本机与令牌访问边界",
-        "reason": "支持应用存在 loopback、same-origin 与 REVIEW_TOKEN 的不同安全分支，并说明当前测试未覆盖这些分支。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 12,
-          "endLine": 14
-        },
-        "quote": " * Security: without REVIEW_TOKEN it answers only on loopback Hosts and accepts\n * same-origin browser requests from the local Vite/dev origin; with REVIEW_TOKEN\n * set the token gates every /api route. Absolute host paths are never returned. */"
-      },
-      {
         "key": "c10",
-        "label": "同步扫描故障降级",
-        "reason": "支持 Git 失败转为全量扫描，以及非法、非 UTF-8 或过大文件按文件拒绝而不中止整体同步。",
-        "relation": "explains",
+        "label": "同步扫描声明的容错边界",
+        "reason": "列出同步模块声称处理的 Git 降级、安全路径、编码和文件大小边界，用于指出本测试未覆盖之处。",
+        "relation": "background",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
@@ -160,47 +160,60 @@
       },
       {
         "key": "c11",
-        "label": "逐文件失败结果合同",
-        "reason": "支持同步结果通过 failed 单独记录无法读取、解码或导入的文件，并声明其余同步不受影响。",
-        "relation": "explains",
+        "label": "最小下游测试夹具",
+        "reason": "支持夹具中的所谓 G08/G09 测试仅作文本定位且断言恒真的判断，限制对业务正确性的外推。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 60,
-          "endLine": 70
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 100,
+          "endLine": 131
         },
-        "quote": "export type SyncResult = Omit<SyncStats, \"failedCount\"> & {\n  lastSyncCommit: string | null;\n  lastSyncAt: string;\n  dirty: boolean;\n  /** Files that could not be read/decoded/imported; the rest of the sync is\n   * unaffected. */\n  failed: FailedFile[];\n  warnings: string[];\n  /** Relation build stats from the human-ma"
+        "quote": "  // Requirement doc with a shared G01-G20 style overview TABLE that must never be\n  // bound wholesale to an intent fragment.\n  w(\n    root,\n    \"docs/implementation/assistant-v3/migration-and-acceptance.md\",\n    `# acceptance\n\n## coverage\n\n| G01 | bootstraps | done |\n| G02 | capture | done |\n| G08 | two-turn anaphora"
+      },
+      {
+        "key": "c12",
+        "label": "HTTP 响应断言范围",
+        "reason": "支持现有 API 用例仅检查关系类型、状态、文本和数量，未覆盖完整展示合同。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-relations.test.ts",
+          "startLine": 349,
+          "endLine": 407
+        },
+        "quote": "    // Code fragment: outgoing implements -> intent.\n    const codeRes = await app.inject({\n      method: \"GET\",\n      url: `/api/review/fragments/${impl.sf}/relations`,\n      headers: hdr,\n    });\n    expect(codeRes.statusCode).toBe(200);\n    const codeBody = codeRes.json() as {\n      relations: { relationType: string"
       }
     ],
     "questions": [
       {
-        "question": "复杂符号定位、文件或符号重命名后，已有关系应保持身份、重新生成，还是先标记为 missing 或 stale？",
-        "why": "现有材料只验证固定路径、简单函数名和删除 seed 后的有限 stale 现象，没有给出跨 revision 身份续接合同。",
-        "nextStep": "补充重命名前后两次提交与同步的集成测试，分别断言 source fragment、seed identity 和 relation ID 的预期变化。",
+        "question": "成功解析的 decision、research 与 test 引用是否都应增加与 requires 同等级别的目标内容和方向断言？",
+        "why": "当前材料只明确验证 requires 数量，以及 API 中 implemented_by/requires；缺失引用虽有覆盖，但成功的 decided_by、researched_by、tested_by 没有逐类核验，可能遗漏解析或方向映射回归。",
+        "nextStep": "为每种引用准备唯一文档锚点，分别断言目标 fragment、关系类型、状态及反向查询结果。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c5"
+          "c5",
+          "c7",
+          "c8"
         ]
       },
       {
-        "question": "是否需要为 REVIEW_TOKEN、非 loopback Host 和跨 Origin 请求增加独立安全测试？",
-        "why": "当前 HTTP 用例只使用本机 Host/Origin，而应用声明有无 token 时采用不同访问控制分支。",
-        "nextStep": "为无 token 的非法 Host/Origin、有效 token、无效 token及静态资源路由分别增加状态码与响应断言。",
+        "question": "关系 API 是否承诺 DTO 中的人类可读 label、actionable、reason 以及不泄露内部 ID？",
+        "why": "现有 HTTP 测试只读取 relationType、relationStatus 和 other.text，材料不足以确认完整响应合同与 UI 展示边界。",
+        "nextStep": "查看关系路由的完整 DTO 实现与前端消费合同，再补充响应结构及可见文本断言。",
         "blocking": false,
         "citationKeys": [
-          "c6",
-          "c9"
+          "c8",
+          "c12"
         ]
       },
       {
-        "question": "Git 读取失败、部分文件不可解析或数据库写入失败时，关系同步应保留哪些旧关系和统计状态？",
-        "why": "当前测试未覆盖故障路径；同步模块声明 Git 失败转为全量扫描并隔离逐文件失败，但数据库写入失败后的关系保留策略无法由材料确认。",
-        "nextStep": "构造 Git 命令失败、损坏或不可访问文件及数据库写入失败场景，断言扫描范围、failed 统计、旧关系保留和成功状态。",
+        "question": "同步失败或并发执行时，旧的有效关系应保持、整体回滚还是允许部分更新？",
+        "why": "同步模块声明逐文件失败不影响其余同步并会对 Git 失败降级，但当前测试未覆盖关系构建阶段的事务性和并发一致性，无法从给定材料确定期望。",
+        "nextStep": "确认关系表写入的事务边界，并增加 Git 失败、解析中断和两个同步并发运行的行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c10",
-          "c11"
+          "c10"
         ]
       }
     ]
@@ -224,39 +237,39 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:34:52.031Z",
+    "at": "2026-10-01T02:35:35.672Z",
     "trace": {
-      "runId": "6caf7437-a71b-4853-94c1-91cdbd572858",
-      "roleId": "knowledge-refresher",
+      "runId": "eda760b8-3284-4659-a625-9b0ca0319d5b",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9c7d175fb4e2340fc7ea1d4fc4858e23bb6ca9c7b3989cdc5888e6e6e401551e",
-      "contextHash": "2cf07908bc6465065ebc0da46686df4144b9efde656221342a095cf20745e793",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "96b4ec673d5a7de061868f462abc4339356b4ca594b4b188e46ff747f093afbc",
+      "contextHash": "d66c70dc62db8e577d84864dd690ec4e2e4f1f3ea3d47aa5c15ca18cb3449f83",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b841b6f19211ce76c0b87e540b4b83ebe10efc8d12b135662f8261c3298908e9",
+      "fingerprint": "c1e96d2afc4b5ec03e8c9c7c83a7c784ef7e7e6eb90c090a1c85ae65a4b654a8",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e2-5c3d-7c31-ba3a-17d3fe8ef7a8"
+        "01a0f550-bab3-7031-8a58-5babe0e15c32"
       ],
       "usage": {
-        "used": 34499,
+        "used": 31084,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -265,10 +278,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 43813,
-          "utf8Bytes": 50005,
-          "estimatedTokens": 16669,
-          "budgetedTokens": 20837,
+          "chars": 33770,
+          "utf8Bytes": 35594,
+          "estimatedTokens": 11865,
+          "budgetedTokens": 14832,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -277,17 +290,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:35:13.981Z",
+    "at": "2026-10-01T02:35:58.049Z",
     "trace": {
-      "runId": "7a18611d-7779-42c9-9551-a7e89925d9fd",
+      "runId": "6b0bb146-0925-4e0c-ab85-a6c442a489d0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "1c20271e447a6199b9dedb314ebfd1e3317e49ad7d46114cb7808b1cb3308eec",
-      "contextHash": "0191486f770a709ca2de76678a3d7ef6a9102e46f33b4761965134f8b94d96d3",
+      "promptHash": "b397179f43da72248f6aca8e2b04a060b90de744a459b7e717da9e9f6b8ce65e",
+      "contextHash": "fb6ab87058c4613af5c7d334f060631f19208524e8d72e87635f9d08d8ce44c6",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "47ccdc3adc1ab5d05be1dcfa6587f1f4d0d1e0d0eb227f36e7758790674a4f85",
+      "fingerprint": "f9f154b4ca2ce34fe8c5c50ca77b8dc5768397e0b2f051343e9f628948bcb8ab",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -300,10 +313,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e2-c2bc-7862-b70c-642d1a4206c5"
+        "01a0f551-4a62-71e3-9173-8be27aaea610"
       ],
       "usage": {
-        "used": 32081,
+        "used": 32427,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -312,10 +325,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 40248,
-          "utf8Bytes": 44734,
-          "estimatedTokens": 14912,
-          "budgetedTokens": 18640,
+          "chars": 41078,
+          "utf8Bytes": 45804,
+          "estimatedTokens": 15268,
+          "budgetedTokens": 19085,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

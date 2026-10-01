@@ -2,93 +2,141 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/registration.ts",
-    "title": "飞书应用注册与能力核验",
-    "summary": "封装飞书应用设备注册并维持同一设备码下的有限网络重试；通过 OpenAPI 核对权限、回调和机器人身份，同时把事件订阅留给运行时投递验证。",
+    "title": "Lark 应用注册与能力核验适配",
+    "summary": "该模块封装飞书/Lark 官方应用注册 SDK，为设备码轮询补充瞬时故障重试，并通过真实 OpenAPI 查询应用权限、回调和机器人身份。公开接口无法确认事件订阅，因此事件仍需在配对期间通过 WebSocket 投递核验；未配置真实探针时，拒绝型实现会返回用于失败关闭的缺项结果，但是否阻止激活取决于上层调用方。",
     "category": "implementation",
     "sections": [
       {
-        "key": "registration",
-        "title": "设备注册与有限重试",
-        "body": "注册适配器把内部创建模式、既有应用 ID、预设及附加能力映射给飞书 SDK，并将二维码和轮询状态转换为稳定回调。为避免一次临时网络故障终止设备码流程，它只拦截注册路径上的 5xx 与指定传输错误，沿用原请求和同一 device code 做指数退避；取消信号、非目标接口、非瞬时错误或超过次数的请求会直接拒绝。[[c1]]"
+        "key": "purpose-contracts",
+        "title": "职责与输入合同",
+        "body": "模块把上层配置合同转换为官方注册 SDK 所需的请求：输入包含创建模式、可选应用标识、配置、取消信号，以及二维码和状态回调；输出统一为客户端凭据与可选用户信息。配置类型直接从共享合同的 Zod schema 推导，因此此处复用公共输入模型，而未另建配置定义。[[c1]]\n\n这一适配边界使调用方不必直接处理 SDK 的字段命名和回调形状，同时保留 `AbortSignal`，以便外部取消可能持续轮询的注册过程。"
       },
       {
-        "key": "capability",
-        "title": "能力探测与封闭失败",
-        "body": "能力探测先从固定的 `open.feishu.cn` 获取 tenant access token，再并行查询机器人和应用信息，整理实际 scopes、callbacks 与 bot open ID，并与请求配置比较。公共应用接口不暴露事件订阅列表，因此 events 保持为空，事件能力必须由配对期间真实收到的 WebSocket 投递补证。[[c2]]\n\n若调用方没有配置真实探针，拒绝型实现返回明确缺失项，不会把请求中的 addons 当成已生效能力。[[c3]] 实时消息处理确实会从当前连接版本的 capability profile 读取 botOpenId 以过滤机器人自发消息，但所给材料没有展示探测结果写入该字段的持久化链路；因此不再断言二者已经确定接通。[[c4]]"
+        "key": "registration-flow",
+        "title": "注册流程与故障恢复",
+        "body": "正式适配器调用官方 `registerApp`，逐项传递 source、preset、addons 与取消信号；二维码回调把 SDK 的 `expireIn` 映射为内部的 `expiresInSeconds`，代码本身没有执行单位换算。注册结果中的客户端凭据和用户信息也会转换为内部命名。[[c2]]\n\n构造适配器时会全局安装一次响应拦截器。它只重试注册路径上的 HTTP 5xx 或列明的网络错误，并复用原请求以维持同一个设备码；退避从 500 毫秒指数增长，最高 4 秒。请求已取消、达到重试上限、路径不匹配或错误不可重试时，原错误继续向上抛出。[[c3]] 模块级安装标志意味着多个适配器实例共享这套重试策略。"
+      },
+      {
+        "key": "capability-probe",
+        "title": "真实能力探针流程",
+        "body": "能力探针先用应用凭据换取 tenant access token；HTTP 状态、业务码或令牌任一不符合预期，都会抛出带阶段标识的错误。取得令牌后，探针并行查询机器人信息与应用详情，任一查询失败都不会返回部分成功结果。[[c4]]\n\n应用响应中的权限和回调可能采用多种字段形状，探针会抽取字符串、去重并排序，再合并租户与用户所需权限，与实际权限及回调逐项比较，生成稳定排序的 `missing`；结果还包含机器人 open ID 和修复提示。[[c5]] 响应体采用宽松类型读取，可兼容部分字段差异，但字段漂移主要通过运行时错误或缺项暴露，未见独立的结构化响应校验。"
+      },
+      {
+        "key": "limits-relations",
+        "title": "验证边界与安全降级",
+        "body": "公开应用接口不能列出事件订阅，因此 OpenAPI 探针把 `actual.events` 留空，并以 `eventVerification: \"runtime\"` 标记事件需要在运行时核验；注释说明，配对所需事件应由首次匹配的 WebSocket 投递确认。[[c6]] 这不表示核验已经完成：即使权限和回调没有缺项，也不能据此证明事件订阅已经验证成功；本文件同样没有记录匹配投递、验证状态保存、超时或失败处理。\n\n`LarkCapabilityProbe` 是上层装配能力检查的接口。没有真实探针时，拒绝型实现返回空的实际能力、`live_capability_probe_not_configured` 缺项及配置提示，为上层采取失败关闭策略提供明确信号，并表达拒绝直接信任请求中 addons 的设计意图。[[c7]] 但材料没有展示激活调用方，无法确认该缺项是否必然中止激活或阻止状态变更。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "注册轮询重试与 SDK 映射",
-        "reason": "支持注册参数转换、二维码和状态回调，以及仅对目标注册请求的瞬时失败进行有限重试。",
+        "label": "注册请求与共享配置类型",
+        "reason": "支持注册适配器的输入、回调和返回合同，并说明配置类型由共享合同 schema 推导。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/registration.ts",
+          "startLine": 3,
+          "endLine": 26
+        },
+        "quote": "import type { larkRequestedConfigSchema } from \"../../../../../packages/contracts/src/index.js\";\n\nexport type LarkRequestedConfig = z.infer<typeof larkRequestedConfigSchema>;\nexport type LarkRegistrationCredentials = {\n  clientId: string;\n  clientSecret: string;\n  userInfo?: { openId?: string; tenantBrand?: \"feishu\" | "
+      },
+      {
+        "key": "c2",
+        "label": "官方注册 SDK 字段映射",
+        "reason": "支持注册参数和回调的转发、二维码有效期字段映射，以及凭据字段向内部命名的转换。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/registration.ts",
+          "startLine": 73,
+          "endLine": 103
+        },
+        "quote": "export class OfficialLarkRegistrationAdapter\n  implements LarkRegistrationAdapter\n{\n  constructor(private readonly sdkRegister: typeof registerApp = registerApp) {\n    installLarkRegistrationRetry();\n  }\n\n  async register(request: LarkRegistrationRequest) {\n    const result = await this.sdkRegister({\n      createOnly: "
+      },
+      {
+        "key": "c3",
+        "label": "注册轮询重试拦截器",
+        "reason": "支持重试适用路径、可重试错误、终止条件、退避上限、原请求复用和全局单次安装等边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/registration.ts",
           "startLine": 29,
-          "endLine": 103
+          "endLine": 70
         },
         "quote": "const registrationPath = \"/oauth/v1/app/registration\";\nconst retryMarker = \"__omemRegistrationRetry\";\nlet registrationRetryInstalled = false;\n\n/** Keep the same RFC 8628 device_code alive across transient poll failures.\n * The upstream SDK treats one network error as terminal; retrying its Axios\n * request here preserv"
       },
       {
-        "key": "c2",
-        "label": "OpenAPI 能力探测",
-        "reason": "支持 token 获取、应用与机器人信息查询、缺失权限比较，以及事件订阅只能由运行时投递验证的边界。",
+        "key": "c4",
+        "label": "令牌获取与并行能力查询",
+        "reason": "说明探针先鉴权，再并行获取机器人和应用信息，并在各阶段失败时抛出明确错误。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/registration.ts",
+          "startLine": 141,
+          "endLine": 186
+        },
+        "quote": "  async probe(\n    credentials: { appId: string; clientSecret: string },\n    requested: LarkRequestedConfig,\n  ): Promise<LarkCapabilityResult> {\n    const base = \"https://open.feishu.cn\";\n    const tokenResponse = await this.request(\n      `${base}/open-apis/auth/v3/tenant_access_token/internal`,\n      {\n        metho"
+      },
+      {
+        "key": "c5",
+        "label": "权限、回调与缺项计算",
+        "reason": "支持响应字段抽取、去重排序、必需权限合并、缺项比较、机器人身份和修复提示的生成。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/registration.ts",
+          "startLine": 187,
+          "endLine": 221
+        },
+        "quote": "    const app = appBody?.data?.app ?? appBody?.data?.application ?? {};\n    const scopes = [...new Set(stringList(app?.scopes, \"scope\"))].sort();\n    const callbacks = [\n      ...new Set(\n        stringList(app?.callback_info?.subscribed_callbacks).concat(\n          stringList(app?.callbacks),\n        ),\n      ),\n    ]"
+      },
+      {
+        "key": "c6",
+        "label": "事件订阅的运行时核验边界",
+        "reason": "说明公开应用接口不暴露事件列表，运行时标记表示事件仍需通过配对期间首次匹配的 WebSocket 投递核验，而非核验已经完成。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/registration.ts",
           "startLine": 135,
-          "endLine": 221
+          "endLine": 137
         },
-        "quote": "/** Public OpenAPI capability probe. Event subscriptions are confirmed by the\n * first matching WebSocket delivery (pairing requires im.message.receive_v1),\n * because the public application endpoint does not expose the event list. */\nexport class OfficialLarkCapabilityProbe implements LarkCapabilityProbe {\n  construct"
+        "quote": "/** Public OpenAPI capability probe. Event subscriptions are confirmed by the\n * first matching WebSocket delivery (pairing requires im.message.receive_v1),\n * because the public application endpoint does not expose the event list. */"
       },
       {
-        "key": "c3",
-        "label": "未配置探针时拒绝激活",
-        "reason": "支持缺少真实能力探针时返回封闭失败结果，而非信任请求配置。",
-        "relation": "supports",
+        "key": "c7",
+        "label": "未配置真实探针时的缺项结果",
+        "reason": "支持拒绝型探针返回明确缺项和修复提示，并表达不直接信任请求能力的失败关闭意图；实际激活门禁仍取决于未提供的上层调用方。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/registration.ts",
           "startLine": 225,
-          "endLine": 242
+          "endLine": 240
         },
         "quote": "export interface LarkCapabilityProbe {\n  probe(\n    credentials: { appId: string; clientSecret: string },\n    requested: LarkRequestedConfig,\n  ): Promise<LarkCapabilityResult>;\n}\n\n/** Live capability checks depend on tenant/admin state and are wired by B2-05 callers.\n * Refuse activation when no real probe is configur"
-      },
-      {
-        "key": "c4",
-        "label": "实时路由读取机器人身份",
-        "reason": "说明实时消息处理会读取 capability profile 中的 botOpenId，但该片段本身不能证明探测结果如何写入该字段。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-          "startLine": 503,
-          "endLine": 522
-        },
-        "quote": "    const connection = this.store.db\n      .prepare(\n        `SELECT c.id,v.capability_profile,b.id AS binding_id,b.binding_version,b.owner_open_id AS binding_owner_open_id\n         FROM lark_connections c\n         JOIN lark_connection_versions v ON v.connection_id=c.id\n           AND v.version=c.active_version\n       "
       }
     ],
     "questions": [
       {
-        "question": "国际版 Lark 租户的能力探测是否也应切换到对应开放平台域名？",
-        "why": "注册结果可以携带 tenantBrand，但当前能力探测把基地址固定为 open.feishu.cn；材料未展示国际版场景是否会注入其他 request 实现或由调用方切换域名。",
-        "nextStep": "检查能力探针的构造与调用路径，并增加 Feishu、Lark 两类租户的端点断言。",
+        "question": "WebSocket 配对流程具体如何记录并消费事件订阅的运行时验证结果？",
+        "why": "现有材料只说明事件应由首次匹配的 WebSocket 投递确认，并让 OpenAPI 探针返回空事件列表及运行时核验标记；没有展示验证状态持久化、超时、失败处理或激活门禁。",
+        "nextStep": "检查配对调用方及 WebSocket 事件处理材料，确认事件名称匹配、验证状态写入和激活门禁。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c6"
         ]
       },
       {
-        "question": "能力探测得到的 botOpenId 是否确定写入实时连接读取的 capability_profile？",
-        "why": "探针会返回 botOpenId，实时路由也会读取该字段，但当前材料没有展示 onboarding 或连接版本持久化如何把前者写入后者。",
-        "nextStep": "补充 onboarding 或连接版本写入实现的固定材料与引用；若不存在该链路，则继续把两者视为尚未确认接通。",
+        "question": "上层是否保证未配置真实探针或能力缺失时一定阻止应用激活？",
+        "why": "拒绝型探针会返回明确缺项和修复提示，但当前材料没有展示调用方如何解释 `missing`，因此无法确认它必然中止激活或阻止状态变更。",
+        "nextStep": "补充能力探针的装配点与激活流程材料，核对 `missing` 的判断、错误传播及状态变更条件。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c4"
+          "c7"
         ]
       }
     ]
@@ -96,69 +144,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/registration.ts",
       "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/repository.ts",
-      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/worker.ts",
-      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/lark-annotations.ts",
-      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:19:41.933Z",
+    "at": "2026-10-01T02:14:04.475Z",
     "trace": {
-      "runId": "f13c1c0a-0651-4440-9c08-01f63c663811",
+      "runId": "aff93193-345d-4a94-9b93-3a39af92dddd",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "68140354ac835bfeb4fb710d755aaa5757056b9937d43d6469480763c53c11ca",
-      "contextHash": "41aa7ef27f80ddc71f038bb81c13e72b9885d77e246cb425c268efdb18bef8e2",
+      "promptHash": "b3b4a28194536bcb1f3dfd5ee54c41f3e5bd25bfe32c1ab6d096e9deb3c25c3d",
+      "contextHash": "57f12b9b66e483760f3907f28496613962dbff238a3c9c39707f40bb494a45f1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3e3e090fa3b6e4cbca79e38a63075ca0dabe7c28391d33a949cfc5497fac347c",
+      "fingerprint": "ace5e2d4769db2bb9093917cadcf808920a3a7f836cca4f32eb697d40530759e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -171,10 +179,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c1-a29d-7b02-9738-f8212a0e1520"
+        "01a0f53d-3626-7ed2-a990-babc4d59e66f"
       ],
       "usage": {
-        "used": 62553,
+        "used": 28840,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -183,10 +191,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 138201,
-          "utf8Bytes": 145603,
-          "estimatedTokens": 48535,
-          "budgetedTokens": 60669,
+          "chars": 26788,
+          "utf8Bytes": 32316,
+          "estimatedTokens": 10772,
+          "budgetedTokens": 13465,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -195,17 +203,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:20:20.280Z",
+    "at": "2026-10-01T02:14:21.509Z",
     "trace": {
-      "runId": "6784b0db-3a48-46ce-b667-59804936a9e4",
+      "runId": "882fa469-8d23-4c4e-a450-29800ec11364",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2c50e6afadc2c99cbd28b18fbf231521fd7e77fdc05803dad5795a916e80ce80",
-      "contextHash": "52fe86b5d413ae3c76e5fe4ca9afdda8f9d1abe8c94e0fb6fe6023c7ca5c703b",
+      "promptHash": "d7aaa807de4928d07461b62c63eaa85c735f9a939276ef75780261b66667a06c",
+      "contextHash": "1999a108ab05b224c4efd38962d61e9754386fcac7ef5711da965aaaa0c8ec62",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "431cc3ddea0558ca2f5bd7d70cc254ddfeaf94b63558b483a9bfb417c8afdafd",
+      "fingerprint": "531be0f7e21a00546b7984e48f391bd371cc337bd58eef6c138d3ce267aa3f2e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -218,10 +226,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c2-3857-75b2-b21d-0f7f2ab7368c"
+        "01a0f53d-9789-72e2-a32b-e78fc3ff3c71"
       ],
       "usage": {
-        "used": 60824,
+        "used": 26439,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -230,10 +238,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 134937,
-          "utf8Bytes": 141077,
-          "estimatedTokens": 47026,
-          "budgetedTokens": 58783,
+          "chars": 23663,
+          "utf8Bytes": 27935,
+          "estimatedTokens": 9312,
+          "budgetedTokens": 11640,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,88 +2,62 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-    "title": "Lark 接入验收测试",
-    "summary": "该测试以临时 SQLite、加密凭据目录及可控的注册和能力探测依赖，验收 Lark 应用接入、能力门禁、安全存储、配对绑定与版本切换。它证明本地协议映射和持久化不变量，但不等同于真实飞书环境联调；此前“已验证官方适配器暴露二维码元数据”的结论已被更精确的覆盖边界替代。",
+    "title": "飞书接入验收测试",
+    "summary": "该测试以协议替身和服务层临时 SQLite 装置，验收飞书应用注册、能力核验、凭据保护、owner 配对、版本切换和既有应用导入。它主要证明本地参数映射、状态转换与持久化约束；真实飞书网络、Windows ACL 和外部事件入口仍缺少直接验收证据。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose_and_fixture",
-        "title": "目标与测试夹具",
-        "body": "测试覆盖从应用注册到绑定激活的完整本地状态链，而不只检查能否取得凭据。每个用例结束后都会关闭数据库并删除临时目录。[[c1]] `setup` 创建真实 `Store` 和随机密钥的加密秘密目录，同时注入注册器、能力探针、时钟及既有应用提供者。[[c2]] `Store` 会建立单用户 SQLite、执行迁移并收紧数据库和资产目录权限，因此后续断言面向实际持久化结构。[[c3]]"
+        "key": "purpose-fixtures",
+        "title": "测试范围与隔离装置",
+        "body": "这组测试回答“取得飞书应用凭据后，连接能否在能力核验、秘密保护和 owner 配对完成前保持不可用”。其中，服务层状态机相关用例通过 `setup()` 创建临时目录、独立 `Store`、32 字节秘密密钥，并注入注册器、探测器和时钟；资源在用例结束后关闭和清理。能力探测与 HTTP 重试两个适配器级用例不调用该装置，而是分别替换 `fetch` 与 SDK HTTP adapter。[[c1]]\n\n`Store` 初始化会执行迁移，创建受限的数据与资产目录，并把 SQLite 文件权限设为 `0600`，因此服务层测试使用真实的单用户持久化结构，而非纯内存状态。[[c2]]"
       },
       {
-        "key": "registration_and_verification",
-        "title": "注册、能力门禁与重试",
-        "body": "能力探针用预置 HTTP 响应模拟 tenant token、机器人身份和应用配置，断言已授予权限、回调、缺失能力及授权头。[[c4]] SDK 适配测试确认 `createOnly`、应用预设、addons 和默认权限集合的映射，并排除若干群管理、批量发送与 ACL 高风险权限。注入的 SDK 函数确实触发 `onQRCodeReady`，但传给适配器的 `onQrCode` 是空函数，测试没有捕获或断言 URL 及 `expireIn` 到 `expiresInSeconds` 的转换；后半段二维码断言来自 `FakeRegistration`。[[c5]] 因而此前“已验证官方适配器暴露二维码元数据”的结论被替代为“已驱动回调，但尚未验证映射”。设备码轮询则明确证明一次超时后复用相同请求体重试。[[c6]] 实现仅对注册路径、未取消且属于 5xx 或列明网络错误的请求在次数上限内重试。[[c7]]"
+        "key": "registration-security",
+        "title": "注册、能力核验与秘密保护",
+        "body": "注册适配测试核对 `createOnly`、应用预设和 addons 到官方 SDK 的映射，并验证默认配置覆盖消息、文档、日历、会议和任务能力，同时排除若干群成员变更、批量消息和 ACL 删除权限。[[c3]] 瞬时 `ETIMEDOUT` 测试直接证明第二次请求复用了相同的 `device_code` 请求体。[[c4]] 注册模块还把该机制限定于注册地址、未中止请求、可重试的服务端或传输错误，并设置最多重试次数及最高 4 秒的指数退避。[[c5]]\n\n凭据返回不等于连接可用：缺少事件或回调时，状态经历 `credentials_received`、`checking` 后进入 `failed`，且连接没有活动版本。[[c6]] 成功路径断言 `client_secret` 不出现在状态、连接或数据库行中，数据库只保存秘密引用；磁盘内容为密文，POSIX 下权限为 `0600`，并能经秘密仓库解密还原。[[c7]]"
       },
       {
-        "key": "state_security_pairing",
-        "title": "状态、安全与配对边界",
-        "body": "取消、拒绝和过期保持终态，迟到凭据不会建立连接或写入秘密；能力缺失会留下从草稿到失败的事件序列。[[c8]] client secret 不进入状态、连接列表或数据库行，只以秘密引用关联加密文件，并可由秘密存储恢复。[[c9]] 即使注册结果带有用户信息，仍须完成同应用配对；测试覆盖随机码强度、过期、应用与操作者校验以及一次性消费。[[c10]] 既有应用更新先暂存新版本，确认配对后才把旧绑定和连接版本标为 superseded，并激活新目标。[[c11]]"
+        "key": "pairing-versioning",
+        "title": "配对约束、终态与版本切换",
+        "body": "扫码返回的 `user_info` 不会自动成为 owner，连接仍停留在 `awaiting_pair`。配对测试证明码值至少含 16 字节随机内容，并约束有效期、应用身份、发送者身份和一次性消费；错误应用、错误码、错误 actor、过期或重复确认都会失败。[[c8]]\n\n取消、拒绝和过期均保持终态且不创建连接；只有取消分支额外注入迟到凭据，证明其不会写入秘密，并标记 `late_credentials_needs_review`。[[c9]] 更新既有应用时，新凭据先成为 staged version，owner 再次确认后活动版本切换为 2，旧连接版本与旧绑定被标为 `superseded`；Botmux 导入可跳过注册调用，但仍须配对且不得暴露原始秘密。[[c10]]"
       },
       {
-        "key": "coverage_limits",
-        "title": "模块关系与覆盖限制",
-        "body": "这些用例的主要边界是外部交互均可控：注册器与能力探针包含测试替身，[[c12]] 能力查询依赖注入的模拟 `fetch`，[[c13]] 官方注册流程由注入函数代替，[[c14]] 瞬时超时也由自定义 Axios adapter 制造。[[c15]] 因此结果证明协议映射和本地状态处理，不能替代真实租户的授权、回调配置与 WebSocket 投递验收。Windows 分支只确认秘密路径为可读文件，并未自动核验 NTFS ACL。[[c16]] 当前也只覆盖顺序配对、版本切换和单次瞬时失败，尚不能证明并发确认、重试耗尽、进程崩溃或持久化中断下的原子性。"
+        "key": "assertion-limits",
+        "title": "断言边界与待补证据",
+        "body": "官方能力探测以伪造 HTTP 响应核对 token、bot 信息和应用详情请求，以及 scope、callback、缺失能力和运行时事件验证标记的归一化；它证明本地请求拼装和协议映射，不等同于真实飞书联调。[[c11]] Windows 分支仅断言秘密路径是普通文件且当前进程可读取；严格权限位断言只在 POSIX 执行，源码注释提到的目录 ACL 未在本测试中验证。[[c12]]\n\n此外，配对用例直接调用 `receivePairing` 和 `confirmPairing`，所以只能证明服务层状态机，不能确认留作外部事件入口的签名校验、重放去重与路由安全证据。[[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时资源清理",
-        "reason": "支持每个用例关闭 Store 并删除临时测试目录的说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 34,
-          "endLine": 40
-        },
-        "quote": "const resources: { store: Store; directory: string }[] = [];\nafterEach(() => {\n  for (const { store, directory } of resources.splice(0)) {\n    store.close();\n    rmSync(directory, { recursive: true, force: true });\n  }\n});"
-      },
-      {
-        "key": "c2",
-        "label": "接入服务测试构造",
-        "reason": "支持真实 Store、加密秘密目录以及注册器、探针、时钟和既有应用提供者的注入关系。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 111,
-          "endLine": 137
-        },
-        "quote": "function setup(\n  registration = new FakeRegistration(),\n  probe: LarkCapabilityProbe = new FakeProbe(),\n  clock: () => Date = () => new Date(\"2026-09-27T00:00:00.000Z\"),\n  existingApps?: ExistingLarkAppProvider,\n) {\n  const directory = mkdtempSync(join(tmpdir(), \"omem-lark-\"));\n  const store = new Store(directory);\n  "
-      },
-      {
-        "key": "c3",
-        "label": "SQLite 存储初始化",
-        "reason": "支持建库、迁移、目录权限收紧及持久化仓储初始化的说明。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 36,
-          "endLine": 67
-        },
-        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
-      },
-      {
-        "key": "c4",
-        "label": "官方能力探针断言",
-        "reason": "支持通过模拟 HTTP 响应核对 token、机器人身份、应用能力、缺失项与授权头的结论。",
+        "label": "测试替身、服务层装置与适配器级用例",
+        "reason": "支持服务层用例可创建临时 Store 和可注入依赖，同时表明能力探测与重试用例采用各自的适配器替换方式，不能概括为每个用例都调用 setup。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 157,
-          "endLine": 222
+          "startLine": 34,
+          "endLine": 185
         },
-        "quote": "describe(\"B2-05 Lark onboarding acceptance\", () => {\n  it(\"probes public app scopes, callbacks and bot identity without exposing credentials\", async () => {\n    const requests: { url: string; init?: RequestInit }[] = [];\n    const responses = [\n      { code: 0, tenant_access_token: \"fixture-tenant-token\" },\n      { cod"
+        "quote": "const resources: { store: Store; directory: string }[] = [];\nafterEach(() => {\n  for (const { store, directory } of resources.splice(0)) {\n    store.close();\n    rmSync(directory, { recursive: true, force: true });\n  }\n});\n\n// On POSIX, encrypted secret files must be owner-only (0o600). Windows NTFS\n// does not expose "
       },
       {
-        "key": "c5",
-        "label": "SDK 注册映射与二维码覆盖边界",
-        "reason": "支持注册参数和默认能力集合断言，同时表明 SDK 回调虽被触发，但 onQrCode 为空函数，后续二维码状态来自测试替身，未验证官方适配器的元数据转换。",
+        "key": "c2",
+        "label": "单用户 SQLite 存储初始化",
+        "reason": "支持 Store 执行数据库迁移、创建受限目录并设置 SQLite 文件权限的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 38,
+          "endLine": 69
+        },
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+      },
+      {
+        "key": "c3",
+        "label": "官方注册映射与默认权限断言",
+        "reason": "支持 SDK 参数映射、默认能力集合及高风险权限排除的测试结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -94,9 +68,9 @@
         "quote": "  it(\"A-L01 maps createOnly/preset/addons to the official SDK and exposes QR metadata\", async () => {\n    let sdkOptions: Record<string, unknown> | undefined;\n    const adapter = new OfficialLarkRegistrationAdapter((async (options) => {\n      sdkOptions = options as unknown as Record<string, unknown>;\n      options.onQ"
       },
       {
-        "key": "c6",
-        "label": "相同设备码请求重试",
-        "reason": "支持瞬时超时后恰好重试一次，并复用完全相同请求体的测试结论。",
+        "key": "c4",
+        "label": "相同设备码的超时重试测试",
+        "reason": "支持一次瞬时超时后发生第二次请求，且两次使用相同注册轮询请求体的直接测试结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -107,35 +81,35 @@
         "quote": "  it(\"retries the same SDK registration request after a transient timeout\", async () => {\n    installLarkRegistrationRetry();\n    const originalAdapter = defaultHttpInstance.defaults.adapter;\n    let attempts = 0;\n    const requestBodies: unknown[] = [];\n    defaultHttpInstance.defaults.adapter = (async (config: any) ="
       },
       {
-        "key": "c7",
-        "label": "注册轮询重试条件",
-        "reason": "解释重试只适用于注册路径、未取消请求、可重试状态或网络错误且未超过次数上限。",
-        "relation": "implements",
+        "key": "c5",
+        "label": "注册轮询有限退避策略",
+        "reason": "支持重试适用条件、最大次数、指数退避上限以及复用原请求的实现说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/registration.ts",
-          "startLine": 29,
-          "endLine": 70
+          "startLine": 33,
+          "endLine": 69
         },
-        "quote": "const registrationPath = \"/oauth/v1/app/registration\";\nconst retryMarker = \"__omemRegistrationRetry\";\nlet registrationRetryInstalled = false;\n\n/** Keep the same RFC 8628 device_code alive across transient poll failures.\n * The upstream SDK treats one network error as terminal; retrying its Axios\n * request here preserv"
+        "quote": "/** Keep the same RFC 8628 device_code alive across transient poll failures.\n * The upstream SDK treats one network error as terminal; retrying its Axios\n * request here preserves the exact poll request instead of issuing a new QR. */\nexport function installLarkRegistrationRetry(maxRetries = 5) {\n  if (registrationRetr"
       },
       {
-        "key": "c8",
-        "label": "终态与失败事件序列",
-        "reason": "支持取消后隔离迟到凭据、拒绝与过期终态，以及能力缺失时的数据库状态序列。",
+        "key": "c6",
+        "label": "能力不足时的失败状态序列",
+        "reason": "支持凭据在能力检查通过前不被视为可用，以及失败连接没有活动版本的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 372,
+          "startLine": 407,
           "endLine": 443
         },
-        "quote": "  it(\"A-L02 keeps cancellation/denial/expiry terminal and ignores late credentials\", async () => {\n    const cancelled = setup();\n    const started = await cancelled.service.start({\n      mode: \"new\",\n      config: requestedConfig,\n    });\n    cancelled.service.cancel(started.id);\n    cancelled.registration.complete({\n"
+        "quote": "  it(\"A-L03 treats credentials as unverified until actual capability checks pass\", async () => {\n    const x = setup(\n      new FakeRegistration(),\n      new FakeProbe({\n        actual: {\n          scopes: [\"im:message:send_as_bot\"],\n          events: [],\n          callbacks: [],\n        },\n        missing: [\"im.messag"
       },
       {
-        "key": "c9",
-        "label": "凭据加密与数据库防泄露",
-        "reason": "支持 client secret 不出现在响应、连接或数据库行中，并能从加密秘密文件恢复的断言。",
+        "key": "c7",
+        "label": "客户端秘密的加密持久化断言",
+        "reason": "支持秘密不进入公开状态或数据库、磁盘只保存密文且可由秘密引用解密读取的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -146,87 +120,61 @@
         "quote": "  it(\"A-L04 stores client_secret only as encrypted owner-only data\", async () => {\n    const x = setup();\n    const clientSecret = \"never-log-this-client-secret\";\n    const status = await ready(x, {\n      clientId: \"cli_secret1\",\n      clientSecret,\n      userInfo: { tenantBrand: \"feishu\" },\n    });\n    expect(JSON.str"
       },
       {
-        "key": "c10",
-        "label": "配对身份与一次性消费",
-        "reason": "支持注册后仍需配对，以及配对码强度、过期、应用与操作者绑定和一次性消费约束。",
+        "key": "c8",
+        "label": "配对码与 actor 绑定约束",
+        "reason": "支持配对码随机长度、过期、同应用、同 actor 和一次性消费规则；也表明测试直接调用服务层配对方法。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 476,
+          "startLine": 488,
           "endLine": 560
         },
-        "quote": "  it(\"A-L05 requires same-app pairing even when registration returns user_info\", async () => {\n    const x = setup();\n    const status = await ready(x);\n    expect(status).toMatchObject({\n      status: \"awaiting_pair\",\n      userInfo: { openId: \"ou_scan_user\", tenantBrand: \"feishu\" },\n      ownerOpenId: null,\n      act"
+        "quote": "  it(\"A-L06 enforces long-lived random pairing, app/actor binding, expiry and one-time use\", async () => {\n    let clock = new Date(\"2026-09-27T00:00:00.000Z\");\n    const x = setup(new FakeRegistration(), new FakeProbe(), () => clock);\n    const status = await ready(x);\n    const expired = x.service.issuePairingCode(st"
       },
       {
-        "key": "c11",
-        "label": "既有应用版本切换",
-        "reason": "支持新版本先暂存、确认后切换、旧版本被替代及新目标被激活的结论。",
+        "key": "c9",
+        "label": "终态与取消后的迟到凭据处理",
+        "reason": "支持取消、拒绝和过期的终态行为，并把无秘密写入和人工复核标记限定在取消后迟到凭据场景。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-onboarding.test.ts",
+          "startLine": 372,
+          "endLine": 405
+        },
+        "quote": "  it(\"A-L02 keeps cancellation/denial/expiry terminal and ignores late credentials\", async () => {\n    const cancelled = setup();\n    const started = await cancelled.service.start({\n      mode: \"new\",\n      config: requestedConfig,\n    });\n    cancelled.service.cancel(started.id);\n    cancelled.registration.complete({\n"
+      },
+      {
+        "key": "c10",
+        "label": "既有应用换版与 Botmux 导入",
+        "reason": "支持活动版本切换、旧版本与旧绑定被替代，以及导入既有应用仍需配对且隐藏秘密的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-onboarding.test.ts",
           "startLine": 562,
-          "endLine": 662
+          "endLine": 720
         },
         "quote": "  it(\"A-L07 stages existing-app updates and switches binding versions only after confirmation\", async () => {\n    const x = setup();\n    const firstStatus = await ready(x, {\n      clientId: \"cli_existing1\",\n      clientSecret: \"first-secret\",\n      userInfo: { tenantBrand: \"feishu\" },\n    });\n    const firstCode = x.se"
       },
       {
-        "key": "c12",
-        "label": "注册与能力测试替身",
-        "reason": "说明注册器和能力探针是记录调用并返回预置结果的测试实现。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 56,
-          "endLine": 107
-        },
-        "quote": "class FakeRegistration implements LarkRegistrationAdapter {\n  requests: LarkRegistrationRequest[] = [];\n  private resolve?: (credentials: LarkRegistrationCredentials) => void;\n  private reject?: (error: Error) => void;\n\n  register(request: LarkRegistrationRequest) {\n    this.requests.push(request);\n    request.onQrCode"
-      },
-      {
-        "key": "c13",
-        "label": "能力查询模拟响应",
-        "reason": "支持能力探针测试通过注入 fetch 和预置响应模拟官方 HTTP 接口的覆盖限制。",
+        "key": "c11",
+        "label": "官方能力探测的模拟 HTTP 验证",
+        "reason": "支持能力探测测试验证接口请求和结果转换，同时界定响应来自测试替身而非线上服务。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-onboarding.test.ts",
           "startLine": 157,
-          "endLine": 185
+          "endLine": 222
         },
         "quote": "describe(\"B2-05 Lark onboarding acceptance\", () => {\n  it(\"probes public app scopes, callbacks and bot identity without exposing credentials\", async () => {\n    const requests: { url: string; init?: RequestInit }[] = [];\n    const responses = [\n      { code: 0, tenant_access_token: \"fixture-tenant-token\" },\n      { cod"
       },
       {
-        "key": "c14",
-        "label": "SDK 注册函数替身",
-        "reason": "支持注册映射测试以注入函数代替真实官方 SDK 注册过程的覆盖限制。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 224,
-          "endLine": 244
-        },
-        "quote": "  it(\"A-L01 maps createOnly/preset/addons to the official SDK and exposes QR metadata\", async () => {\n    let sdkOptions: Record<string, unknown> | undefined;\n    const adapter = new OfficialLarkRegistrationAdapter((async (options) => {\n      sdkOptions = options as unknown as Record<string, unknown>;\n      options.onQ"
-      },
-      {
-        "key": "c15",
-        "label": "Axios 重试适配器",
-        "reason": "支持瞬时超时测试通过自定义 Axios adapter 产生失败和成功响应的覆盖限制。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-          "startLine": 331,
-          "endLine": 355
-        },
-        "quote": "  it(\"retries the same SDK registration request after a transient timeout\", async () => {\n    installLarkRegistrationRetry();\n    const originalAdapter = defaultHttpInstance.defaults.adapter;\n    let attempts = 0;\n    const requestBodies: unknown[] = [];\n    defaultHttpInstance.defaults.adapter = (async (config: any) ="
-      },
-      {
-        "key": "c16",
-        "label": "Windows 文件权限检查边界",
-        "reason": "支持 Windows 仅断言秘密路径为文件，而 POSIX 才直接检查 0600 模式的结论。",
+        "key": "c12",
+        "label": "跨平台秘密文件权限断言",
+        "reason": "支持 POSIX 检查 0600，而 Windows 仅检查文件存在和可读取这一覆盖差异。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -239,47 +187,32 @@
     ],
     "questions": [
       {
-        "question": "真实飞书环境中，注册、授权范围、回调配置及 WebSocket 事件投递是否已有独立的 live 验收记录？",
-        "why": "当前能力 HTTP、SDK 注册及轮询失败均由模拟响应、注入函数或替换适配器驱动，只能证明协议映射和本地状态处理。",
-        "nextStep": "在隔离测试应用中执行真实注册与配对，记录 scope、回调、事件投递和失败恢复，并明确标记为 live check。",
+        "question": "真实飞书环境下，注册、能力探测及 WebSocket 事件验证是否有独立的 live 验收记录？",
+        "why": "注册流程和能力探测响应均使用 SDK 或 HTTP 测试替身，只能证明本地参数及协议映射，不能证明线上权限字段、限流、域名切换和事件投递兼容。",
+        "nextStep": "在隔离测试应用上执行 live 检查，记录注册、scope 与 callback 查询及至少一次 WebSocket 事件到达，并确认日志不含 client_secret。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c12",
-          "c13",
-          "c14",
-          "c15"
-        ]
-      },
-      {
-        "question": "是否需要为官方注册适配器补充二维码元数据转换断言？",
-        "why": "现有测试触发了 SDK 的 onQRCodeReady，却把请求侧 onQrCode 设为空函数，未证明 URL 与 expireIn 到 expiresInSeconds 的映射；已有二维码状态断言来自 FakeRegistration。",
-        "nextStep": "传入可记录的 onQrCode 回调，明确断言 URL 和过期秒数，再保留 onboarding 层的 FakeRegistration 状态测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c5",
-          "c14"
-        ]
-      },
-      {
-        "question": "Windows 上秘密文件的 owner-only ACL 是否需要自动化验证？",
-        "why": "Windows 分支只确认秘密路径是文件，没有读取或断言实际 NTFS ACL。",
-        "nextStep": "若 Windows 属于支持平台，在 Windows CI 增加 ACL 与非当前用户访问限制验证；否则记录该保证依赖部署环境。",
-        "blocking": false,
-        "citationKeys": [
-          "c16"
-        ]
-      },
-      {
-        "question": "是否需要补充并发配对、重试耗尽、进程崩溃和持久化中断恢复测试？",
-        "why": "现有材料覆盖一次瞬时超时、顺序状态转换、一次性消费和顺序版本切换，不能证明竞态及故障中断下的原子性。",
-        "nextStep": "增加并发与故障注入用例，断言仅激活一个版本、失败可追踪，并且旧有效版本不会被不完整写入覆盖。",
-        "blocking": false,
-        "citationKeys": [
-          "c6",
-          "c8",
-          "c10",
+          "c3",
           "c11"
+        ]
+      },
+      {
+        "question": "Windows 部署时，秘密目录的 owner-only ACL 由哪个组件创建并验证？",
+        "why": "Windows 分支只验证文件存在，后续读取仅证明当前进程可访问；提供材料没有展示 ACL 设置或权限隔离断言。",
+        "nextStep": "补充 Windows ACL 实现依据和平台测试，验证秘密目录及文件只允许当前用户访问。",
+        "blocking": false,
+        "citationKeys": [
+          "c12",
+          "c7"
+        ]
+      },
+      {
+        "question": "真实飞书消息入口对配对事件的签名校验、重放去重和路由是否另有覆盖？",
+        "why": "配对测试直接调用服务方法，只覆盖服务层配对状态机，未覆盖外部事件进入服务前的安全边界。",
+        "nextStep": "定位消息接入层源码与测试，核验签名、appId 来源、事件幂等键和 senderOpenId 传递；若无覆盖，增加端到端入口测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
         ]
       }
     ]
@@ -293,7 +226,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
@@ -314,17 +247,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:32:30.144Z",
+    "at": "2026-10-01T02:33:06.311Z",
     "trace": {
-      "runId": "979d4036-dee5-4281-84ac-5c91528c3aa1",
+      "runId": "b97f6674-5bf4-403b-906b-1bd7914c1356",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "d0a06283e35cf4f8f1f5772596bf75535f8a8accd408b5a421ee8efaf2ea1fa8",
-      "contextHash": "45ed1bf1687ba4a8f7295c3520b40e3592b41542745048aa7fe26a3a7f130798",
+      "promptHash": "a10c4bb643592ae7bbe9bf306aff8ba92ff670ec5d15bafa00d0cff3068a4c08",
+      "contextHash": "b99f4bec0e393c6fad511f8d04474d41c2aa8f6dbc96e3a986bec6f14cf15071",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e5cece07849e0ece2f2e32162d073bc31eefe6dac4f6786490729d01bce6dcbc",
+      "fingerprint": "fca83533d6e6599357f6c903519580e1904e7db00206ebaf5ba7f3acfdd48122",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -337,10 +270,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e0-2065-7d22-b24e-35d7d85ef779"
+        "01a0f54e-91aa-7fa1-8ba8-5abb361e8ba8"
       ],
       "usage": {
-        "used": 42683,
+        "used": 38991,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -349,10 +282,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 60415,
-          "utf8Bytes": 66777,
-          "estimatedTokens": 22259,
-          "budgetedTokens": 27824,
+          "chars": 58403,
+          "utf8Bytes": 65041,
+          "estimatedTokens": 21681,
+          "budgetedTokens": 27102,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -361,17 +294,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:32:53.619Z",
+    "at": "2026-10-01T02:33:23.187Z",
     "trace": {
-      "runId": "5dd3782c-a2af-499f-a701-669e2abecf45",
+      "runId": "71ca41df-968b-49f9-8aa8-2fd8be0b6e32",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "7cbc5564a3739d7fd3daa18a8264f67af88805a1835b1abfd1050144eb045819",
-      "contextHash": "f8aa82f6d216c6108fd3bb0330edd32fe0f33441a2a8512b088d7f68ca3b915c",
+      "promptHash": "51092d732dd3591a29bdbec813f313cd37cd4b57997aa24d6ceec67a522916a8",
+      "contextHash": "e8c9d76ed71df23c24aad31e3f7ff96f36ce53717ca1e68e6d14232a49a14077",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "00acfd4a842bfa4b9734074eab78acee785f9a16442acd1194d30a5761ddafaf",
+      "fingerprint": "e80c50cda506abdcb0809bd3784c791c8812e53f79b72b264031bc6ec7c03625",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -384,10 +317,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e0-9858-7330-a11b-e3fea2a7c580"
+        "01a0f54f-026a-7483-b274-6e7e50b12ca8"
       ],
       "usage": {
-        "used": 37233,
+        "used": 36871,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -396,10 +329,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 57328,
-          "utf8Bytes": 62388,
-          "estimatedTokens": 20796,
-          "budgetedTokens": 25995,
+          "chars": 55315,
+          "utf8Bytes": 60205,
+          "estimatedTokens": 20069,
+          "budgetedTokens": 25087,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

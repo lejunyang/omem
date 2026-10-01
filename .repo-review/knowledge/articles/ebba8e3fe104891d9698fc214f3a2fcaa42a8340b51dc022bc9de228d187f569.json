@@ -3,30 +3,30 @@
   "document": {
     "key": "omem:docs/2026-10-01/README.md",
     "title": "omem 目标、当前能力与调研导航",
-    "summary": "该文档是 2026-10-01 调研包的总入口：先以个人助手的日常场景说明统一证据系统的目标和本轮已验证能力，再列出检索、主动跟进与英语学习的剩余缺口，最后导航至详细调研章节。它明确要求以当前实施状态和代码判断真实能力，后续章节主要解释历史方案与选型依据。",
+    "summary": "该文档以日常场景说明 omem 的统一证据系统定位，区分已验证的检索、事项、手动等待和来源更新闭环，以及仍待实现的语义重排、自动监听回复、周期治理、外部投递和英语学习能力；后半部分是旧基线调研目录，不能视为当前实现清单。",
     "category": "overview",
     "sections": [
       {
-        "key": "product_positioning",
+        "key": "product_direction",
         "title": "产品定位与统一证据主线",
-        "body": "omem 的目标是成为“先记得住、再帮你办事”的个人助手：文档、代码、聊天和图片进入同一材料库，代码仅增加 AST 定位层；回答、Code Wiki 与学习卡都是基于原始材料生成的派生内容，而非彼此独立的事实库。用户阅读引用的深度与检索、模型的计算预算被明确分开，前者不应因成本控制而被静默截断。[[c1]]\n\n这一定位与统一证据内核相呼应：长期记忆是受治理的视图，回答、Wiki 和学习卡属于版本化 Artifact，事项则属于具有责任、状态和触发语义的 Action；它们共享来源与证据，但不被强行塑造成同一种对象。[[c2]]"
+        "body": "omem 是“先记得住、再帮你办事”的个人助手：文档、代码、聊天和图片进入同一材料库，代码只增加 AST 定位能力；回答、Code Wiki 和学习卡都是原始材料的派生视图，不另建事实库。引用可以逐层阅读，而检索和模型预算独立控制。[[c1]] 这与总体决策一致：记忆、事项、学习和代码知识共享证据底座，但保留各自的对象语义与操作流程。[[c2]]"
       },
       {
-        "key": "current_progress",
-        "title": "已验证切片与尚未完成的闭环",
-        "body": "首页用四个场景概括本轮进展：跨材料代码问答保留引用链但尚无精确跨文件调用；中文问题召回英文原文已有真实样例；一次性站内提醒已验证创建、改期和完成，但重复安排及外部投递未接通；来源更新已验证同一记忆从“3 次”更新为“5 次”，且旧原文保留。[[c3]]\n\n更细的当前状态记录显示，检索已加入固定版中文 BGE 分窗向量，并保留模型缺失时的词法降级；来源更新已形成 extractor、独立 verifier 和原子应用闭环；日常助手也完成一次补搜及带时间事项操作。不过 reranker、ANN、历史时点检索、周期巡检、跨来源冲突修订、重复提醒和学习卡仍未实现，因此这些验证应视为具体功能切片，而非全产品完成。[[c4]]"
+        "key": "verified_and_limited",
+        "title": "已验证场景与能力边界",
+        "body": "四个场景体现当前切片：代码问答已有统一引用链，但精确跨文件调用仍缺失；中文问法召回英文材料已有真实结果；带时间事项已验证创建、改期、完成；来源内容变化后可更新同一记忆并保留旧原文，且只有实际应用成功才算闭环。[[c3]] 最新状态还记录了中文向量检索和来源重核验，但 reranker、历史时点检索、周期全库巡检等仍未完成，因此这些结果不能外推为完整产品验收。[[c4]]"
       },
       {
-        "key": "archive_and_reading",
-        "title": "调研档案的作用与阅读口径",
-        "body": "第 22 行之后是以固定旧基线为背景的详细调研档案，作用是解释机制选择、迁移顺序、风险和证据来源；首页明确规定，实际能力必须以当前实施进度和代码为准。目录将内容分为决策、证据内核、数据流、检索、AST、治理、事项、学习、质量与迁移等十三章及两份验证附录，并给出按主题阅读的路径。[[c5]]\n\n阅读这些材料时应区分实码事实、本轮行为验证、文档历史与推断建议。旧测试、模型调用或浏览器记录不能自动当成本轮新验证，针对性复现也不等于完整产品验收；因此调研中的规划表述不能被概括为已经交付的能力。[[c6]]"
+        "key": "remaining_work",
+        "title": "后续工作与被替代的旧概括",
+        "body": "主动跟进已不再只是“来源变更和站内提醒”：网页日常助理现已支持手动创建等待事项、记录等待对象、暂缓、取消，并在重启后离线补发一次；这部分已通过真实 ACP 流程验证。仍未接入的是**自动监听对方回复**、周期回顾、重复提醒和外部到期投递。[[c5]] 因而旧 README 将“等待别人回复”整体列为待接入的概括已被上述结论收窄，不再代表当前边界。[[c6]] 其余主线仍包括语义重排与英语学习卡；后半部分十三章和附录是基于 `94aafe9` 的调研档案，当前能力应以实施状态和代码为准。[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "README：产品目标与四类日常场景",
-        "reason": "支持 omem 统一材料库、派生内容共用事实来源，以及阅读深度与计算预算分离的定位。",
+        "label": "统一材料库与引用阅读原则",
+        "reason": "支持多类输入汇入同一材料库、派生内容不另建事实库，以及阅读深度与计算预算分离的产品定位。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,47 +38,73 @@
       },
       {
         "key": "c2",
-        "label": "统一证据内核：Memory、Artifact 与 Action",
-        "reason": "解释不同产品对象如何共享证据，同时保持各自治理和执行语义。",
+        "label": "统一证据系统总体决策",
+        "reason": "说明 Code Wiki、记忆、事项和学习共享证据系统，但不被强行建模为同一种对象。",
         "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:docs/2026-10-01/03-统一证据内核.md",
-          "startLine": 15,
-          "endLine": 23
+          "key": "omem:docs/2026-10-01/01-决策摘要.md",
+          "startLine": 3,
+          "endLine": 15
         },
-        "quote": "**Claim**：有主体、谓词/内容、范围、时间、模态、attribution的最小可核验主张。可以是“文档说X”“测试实测Y”，不能把他说的自动升级为客观真。保留支持集、反证、评估与假设。优先利用现有claim型memory及proposal，不先复制第二张事实权威；只有检索、失效和正文断言确需独立粒度时增claim revision层。\n\n**Memory**：为长期使用而选出的状态、偏好、经验、程序或重要经历，是经过治理的记忆视图。它有有效范围、适用条件、用途与撤销记录，不是无限追加的摘要仓库。频繁点击不是事实真实性，用户一句“谢谢”也不是程序成功验证。\n\n**Artifact**：由证据生成的回答、Code Wiki、专题"
+        "quote": "**建议继续当前 TypeScript/Fastify/SQLite/Vue + ACP 路线，下一阶段从“有材料、有角色、有页面”推进到两个可持续闭环：任何回答可追溯，现行知识会随来源更新，历史回答保留原版本并标明是否过期；任何交办事项都能从理解一直跟到提醒与完成。** Code Wiki、记忆、事项和学习属于同一证据系统上的不同视图与操作，不新建一个代码知识孤岛，也不把它们硬塞成同一种对象。\n\n优先顺序：\n\n1. 修正已出现的引用→原片段映射、AST调用归属、时间/版本与真实接线断点，建立冻结评测和本轮可复现基线\n2. 在既有 RetrievalPort 上接混合召回、权限与时间过滤、重排及可解释查询计划；同时打通日常交办→时间"
       },
       {
         "key": "c3",
-        "label": "README：场景化进展与后续缺口",
-        "reason": "支持四类场景的已验证进展、明确限制及后续三块工作。",
+        "label": "四个日常场景及进展",
+        "reason": "支持代码问答、跨语言召回、事项闭环和来源更新四类场景的已验证范围及限制。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/2026-10-01/README.md",
-          "startLine": 7,
-          "endLine": 22
+          "startLine": 5,
+          "endLine": 14
         },
-        "quote": "| 你做什么 | 助手应该做什么 | 本轮进展 |\n| --- | --- | --- |\n| 问“这个函数为什么这样写？” | 找到代码、相关设计说明、决定和测试，给出能逐层打开的引用 | 保留统一引用链；检索已融合原文、记忆和 Wiki，补齐跨段引用；精确跨文件调用仍未实现 |\n| 中文问一份英文资料 | 换同义词或英文搜索，再回到原文作答 | 已真实验证：中文问熔断阈值，找到英文原文中的 7 次和 41 秒 |\n| 说“10 月 2 日上午 9 点提醒我复习英语”，随后改期、说完成 | 记录明确时间，改同一个事项，完成后不再提醒 | 创建→改期→完成已真实验证；当前为站内一次性提醒，重复安排和外部到期发送未接通 |\n| 某篇说"
+        "quote": "可以用四个日常场景理解它：\n\n| 你做什么 | 助手应该做什么 | 本轮进展 |\n| --- | --- | --- |\n| 问“这个函数为什么这样写？” | 找到代码、相关设计说明、决定和测试，给出能逐层打开的引用 | 保留统一引用链；检索已融合原文、记忆和 Wiki，补齐跨段引用；精确跨文件调用仍未实现 |\n| 中文问一份英文资料 | 换同义词或英文搜索，再回到原文作答 | 已真实验证：中文问熔断阈值，找到英文原文中的 7 次和 41 秒 |\n| 说“10 月 2 日上午 9 点提醒我复习英语”，随后改期、说完成 | 记录明确时间，改同一个事项，完成后不再提醒 | 创建→改期→完成已真实验证；当前为站内一次性提醒，重复安排和外部"
       },
       {
         "key": "c4",
-        "label": "当前实施进度：2026-10-01 更新",
-        "reason": "补充首页概览背后的最新实现事实、真实验证范围和仍未实现能力。",
+        "label": "检索与来源更新最新状态",
+        "reason": "补充中文向量检索、来源重核验的当前实现证据，并限定尚未交付的重排、历史检索和周期巡检能力。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 5,
+          "endLine": 13
+        },
+        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手"
+      },
+      {
+        "key": "c5",
+        "label": "手动等待事项闭环",
+        "reason": "支持等待对象、暂缓、取消、离线补发一次已经实现，并准确列出自动监听回复等剩余缺口。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
           "startLine": 1,
-          "endLine": 11
+          "endLine": 1
         },
-        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify -- --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个"
+        "quote": "> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既有助手/提炼管线。schema 18 保存等待对象、独立跟进时间、暂缓时间与事项版本；等待/暂缓/取消使用同一应用回执，提醒与发生记录原子提交、离线补发一次。真实 `traex acp / gpt-5.6-sol / medium` 已验证等待创建→暂缓→重启只补发一次→回顾不修改→取消停止。全量检查通过（59 文件 / 351 用例、typecheck/build），个人浏览器覆盖新会话与等待控件，Wiki 浏览器递归引用回归通过；三个视口为 1440/768/390。仍未接入自动监听回复、周期回顾、重复提醒或外部到期投递。"
       },
       {
-        "key": "c5",
-        "label": "README：调研目录与建议阅读顺序",
-        "reason": "说明后半部分是历史调研档案，并支持章节结构和主题化阅读路径的概括。",
+        "key": "c6",
+        "label": "主动跟进旧概括",
+        "reason": "标出 README 中将等待回复整体列为待接入的旧表述，说明其已被最新实施状态收窄和替代。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/2026-10-01/README.md",
+          "startLine": 16,
+          "endLine": 20
+        },
+        "quote": "接下来仍有三块实质工作：\n\n- **更强召回**：当前是 FTS5/BM25、中文短词、记忆/Wiki 路由和一次模型补搜；已加入 osdk 管理的中文 BGE embedding 与原片段分窗索引，尚无语义重排。沿用已有调研中的可替换检索提供方，不迁移原件和事实存储。\n- **更主动跟进**：当前有来源变更触发的重核验和到期站内提醒；等待别人回复、临近截止追踪、周期治理和外部提醒仍要逐项接入。\n- **英语学习**：学习材料沿用 Capture，卡片引用固定原文；卡片内容与复习进度分开。调度复用已调研的 FSRS，导出采用稳定 omem ID 的 Anki 文本格式。卡片、评分和复习页面目前尚未实现，也不会拿普通待办冒充间隔重复。"
+      },
+      {
+        "key": "c7",
+        "label": "调研档案目录与当前状态入口",
+        "reason": "说明后半部分是旧基线调研档案，选型背景与当前已实现能力需要分开判断。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -87,32 +113,9 @@
           "endLine": 55
         },
         "quote": "下面是此前的详细调研档案，基线为 `94aafe9`。它解释为什么选这些机制；实际能力以 [当前实施进度](../implementation/status.md) 和代码为准。\n\n## 分章节阅读目录\n\n本包包含完整方案的13章和2份附录。各篇均可独立打开，外部资料和固定代码版本的引用链接保留。文件名按原章节顺序编号，正文、表格、代码示例与证据等级保留。\n\n### 正文\n\n- [一、决策摘要](01-决策摘要.md)\n- [二、审查范围与证据口径](02-审查范围与证据口径.md)\n- [三、统一内核：共享证据，不强求所有对象同形](03-统一证据内核.md)\n- [四、端到端数据流与多模态接入](04-端到端数据流与多模态接入."
-      },
-      {
-        "key": "c6",
-        "label": "审查范围与证据口径",
-        "reason": "支持区分实码事实、行为验证、历史记录和建议，防止把旧计划或局部验证写成现有完整能力。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/2026-10-01/02-审查范围与证据口径.md",
-          "startLine": 7,
-          "endLine": 14
-        },
-        "quote": "明确四种标签：\n\n- **实码事实**：在当前基线实际存在的合同、分支、调用路径与SQL\n- **本轮行为验证**：针对性离线临时数据库/纯函数复现，注明命令、输入与结果；不代表完整产品验收\n- **文档历史**：过去的测试、模型调用、浏览器或飞书live记录，不能当本次新验证\n- **推断/建议**：据代码路径判断的风险或拟议设计，不写成已发生事故/现有能力\n\n本次没有修改产品源码，没有部署、推送或扩大采集权限，没有调用真实模型批量重生成，也没有重新完成真实飞书网络收发/图片下载/服务重启/完整浏览器与全量check。旧的测试通过数、旧主助手失败记录和不同机器的ACP能力不能混为一个“生产已验证”的状态。"
       }
     ],
-    "questions": [
-      {
-        "question": "当前全库知识生成与复核的实际覆盖率是多少，哪些材料仍处于 stale、pending 或 failed？",
-        "why": "当前状态明确说全库知识尚未完整，覆盖与失败应以最新验证报告为准；提供的材料没有包含该报告的具体结果，不能从首页推断整体完成度。",
-        "nextStep": "读取当前 `.repo-review/knowledge/coverage.json` 与 `verification.json`，按 reviewed、stale、pending、failed 汇总，并核对报告对应的源码和题集指纹。",
-        "blocking": false,
-        "citationKeys": [
-          "c4"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
     {
@@ -123,7 +126,7 @@
     {
       "kind": "material",
       "key": "omem:docs/implementation/status.md",
-      "digest": "8fe3da97df7a3b7143b4b17ffb8daee3c01cf1c2919fb3edf2628b638e551ccd"
+      "digest": "6f300567fb45ec1cd275528d00ea60384f90f01d55f0af228c818ef4bf1bd240"
     },
     {
       "kind": "material",
@@ -144,33 +147,33 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:35:12.383Z",
+    "at": "2026-10-01T02:44:21.359Z",
     "trace": {
-      "runId": "6faacb33-d7b8-484f-b544-c1a3dcbeff47",
-      "roleId": "material-analyst",
+      "runId": "c8ccc9e3-a049-4340-8219-c1b0845fedb1",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "3e26db684c1c0997de39df07dff5c0136bd12dc30ef9d72f3b39dcf37ddd4dd3",
-      "contextHash": "8441135e8e8200a9c59b7c04055e6bd9c26ba470dcd97b5842170bfb487d338c",
-      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "6f6f5536ba6a57adf14eb53e20c3dc6cfb62d27be916332f5e07767125006299",
+      "contextHash": "0a7a01188dea99f3dee7cedc650454902c4b8587ebadd1736f2c82cf59efb5fe",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0321eb8341b8d6244947b9e880119bba0778f3d424c7ee5760a0de60d551e7d3",
+      "fingerprint": "0db3f71a42cfd37c5a050512ad018bae04ae31ec4c563d872c886c04aa972c7a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-material-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e2-a092-7472-8101-5d70f4a16c92"
+        "01a0f558-f132-7021-8810-cd2b796971a5"
       ],
       "usage": {
-        "used": 35636,
+        "used": 38607,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -179,10 +182,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 33924,
-          "utf8Bytes": 54449,
-          "estimatedTokens": 18150,
-          "budgetedTokens": 22688,
+          "chars": 38852,
+          "utf8Bytes": 65835,
+          "estimatedTokens": 21945,
+          "budgetedTokens": 27432,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -191,17 +194,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:35:30.106Z",
+    "at": "2026-10-01T02:44:46.499Z",
     "trace": {
-      "runId": "3eb01fb4-a3c3-45fa-b718-0ee37226aa3d",
+      "runId": "387906d4-20b9-4936-b9de-b8e04bf39ee0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ab2d7b525c65ad7f867dfe292e9a385521b751ffdb80d362f6b4aa0fae17deaf",
-      "contextHash": "be24394b73e28e941fb29419d0551e4147161b16a1a12e1bff2d67f7fb8d64dc",
+      "promptHash": "869656a15bdc3b8c30f406ad031bcc5c66cfcff8a8c9e1556b91702394009676",
+      "contextHash": "ffdd4a6dd237b11daefcecd29b739008745383ae9df90462724d87aa7192925e",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3a20c01d2e7701dfb98482e212dc2edcae2aae6edec85dfd9116807ec4d1a27f",
+      "fingerprint": "5a6b49d5f564e2835db269c62e39039006d63e896019fa33f3d88cdfc0940f45",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -214,10 +217,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4e3-12bb-7003-9716-94605e30af3d"
+        "01a0f559-7279-79c3-8651-5df875ec58ae"
       ],
       "usage": {
-        "used": 36257,
+        "used": 36059,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -226,10 +229,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36619,
-          "utf8Bytes": 61724,
-          "estimatedTokens": 20575,
-          "budgetedTokens": 25719,
+          "chars": 35708,
+          "utf8Bytes": 60911,
+          "estimatedTokens": 20304,
+          "budgetedTokens": 25380,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

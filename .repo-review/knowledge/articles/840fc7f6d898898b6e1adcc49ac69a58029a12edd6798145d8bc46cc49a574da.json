@@ -2,45 +2,71 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/defaults.ts",
-    "title": "omem Lark 助理默认能力配置",
-    "summary": "集中定义创建或接入 Lark 应用时请求的名称、租户与用户权限、事件订阅和卡片回调，并通过共享合同在模块加载时校验配置结构。",
+    "title": "Lark 个人助理默认能力配置",
+    "summary": "该文件集中定义 omem 的 Lark 应用资料、租户与用户权限、事件订阅及卡片回调，并在导出时交由共享合同解析。修订后的说明分别依据完整的 tenant 与 user 清单描述能力，替代先前由局部行范围支撑全部租户权限的结论。",
     "category": "configuration",
     "sections": [
       {
-        "key": "profile_scope",
-        "title": "配置定位与能力范围",
-        "body": "该常量是可复用的个人助理应用预设，目标覆盖群聊材料记录、文档、日历、会议、任务及 owner 通知。源码说明它源于指定 botmux 修订，并意图排除批量消息、聊天所有权或成员变更以及权限管理；这属于配置设计声明，实际能力仍取决于平台审批和租户授权。[[c1]]"
+        "key": "purpose",
+        "title": "用途与授权边界",
+        "body": "该模块提供可复用的 Lark 个人助理申请配置，统一应用名称、描述和开放能力。文件注释表明其面向文档、日历、会议、任务及富内容场景，同时有意排除批量消息、会话所有权或成员变更、权限与 ACL 管理等能力。[[c1]] 配置关闭通用预设，改为显式枚举权限，因此实际申请边界以本文件清单为准。[[c2]]"
       },
       {
-        "key": "permissions",
-        "title": "租户级与用户级权限",
-        "body": "租户权限面覆盖消息、卡片、文档与云盘、知识库、多维表格、白板、电子表格、幻灯片、日历、任务、会议辅助、语音转写、OCR、翻译和文档 AI，其中也包含文档权限读取与日历 ACL 读取。[[c2]] 用户权限单独配置离线访问、联系人、文档与云盘、知识库、内容工具、日历、搜索和会议事件，并包含文档成员申请能力；两组列表体现机器人身份与用户身份不同的授权边界。[[c3]]"
+        "key": "configuration-flow",
+        "title": "配置构造与权限分层",
+        "body": "模块导入 `larkRequestedConfigSchema`，并在导出默认对象时调用 `parse`，说明配置会先经过共享合同解析；但现有材料未包含该 schema 的定义，不能进一步断言其全部校验和归一化规则。[[c3]] 租户权限从消息、联系人延伸到文档、云盘、知识库、白板、表格、幻灯片、日历、任务、会议、OCR、翻译和文档智能。[[c4]] 用户权限则单独包含离线访问、文档与知识空间操作、日历、搜索和会议事件读取。[[c5]] 这一分层表述替代了此前仅引用后半段权限清单、却概括完整租户能力的依据不足结论。"
       },
       {
-        "key": "events_and_validation",
-        "title": "事件入口与合同约束",
-        "body": "事件配置订阅消息接收与更新、机器人或成员进出群、消息表情、文档评论以及会议活动，用户侧另订阅参会事件；卡片回调只声明 `card.action.trigger`。整个对象由共享配置 schema 解析，因此结构错误会在加载配置时暴露。[[c4]]"
+        "key": "events-and-limits",
+        "title": "事件入口与验证限制",
+        "body": "配置订阅消息接收和更新、机器人或用户进出群、表情反应、文档评论及会议邀请、活动和结束等租户事件；用户侧订阅参会者入会事件，卡片交互通过 `card.action.trigger` 回调声明。[[c6]] 这些条目只能证明计划申请的权限和订阅入口，不能证明对应处理器均已实现、管理员已批准权限，或外部 API 已完成真实联调；当前材料也没有提供相关测试证据。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "个人助理预设说明",
-        "reason": "支持默认配置的来源、用途和设计上排除的高风险能力。",
-        "relation": "background",
+        "label": "个人助理能力边界说明",
+        "reason": "支持该配置面向个人助理场景，并明确列出保留能力和排除的高风险能力。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/defaults.ts",
           "startLine": 3,
-          "endLine": 14
+          "endLine": 8
         },
-        "quote": "/**\n * Reusable personal-assistant profile derived from botmux source revision\n * 597ffb10172ea9ac2b50b75507d52a8cf5fb0cd7. It reserves document, calendar,\n * meeting, task and rich-content capabilities while excluding bulk messaging,\n * chat ownership/membership mutation and permission/ACL administration.\n */\nexport c"
+        "quote": "/**\n * Reusable personal-assistant profile derived from botmux source revision\n * 597ffb10172ea9ac2b50b75507d52a8cf5fb0cd7. It reserves document, calendar,\n * meeting, task and rich-content capabilities while excluding bulk messaging,\n * chat ownership/membership mutation and permission/ACL administration.\n */"
       },
       {
         "key": "c2",
-        "label": "租户权限集合",
-        "reason": "支持租户身份申请的消息、内容、日历、任务、会议及智能处理能力范围。",
-        "relation": "explains",
+        "label": "显式权限配置入口",
+        "reason": "支持关闭通用预设并由本文件显式维护授权范围的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+          "startLine": 9,
+          "endLine": 18
+        },
+        "quote": "export const OMEM_LARK_DEFAULT_CONFIG = larkRequestedConfigSchema.parse({\n  source: \"omem\",\n  appPreset: {\n    name: \"{user}的 omem 助理\",\n    desc: \"在加入的群聊中记录工作材料，并为文档、日历、会议、任务和 owner 通知提供可复用的个人助理能力。\",\n  },\n  addons: {\n    preset: false,\n    scopes: {\n      tenant: ["
+      },
+      {
+        "key": "c3",
+        "label": "共享合同解析入口",
+        "reason": "支持模块导入共享 schema，并通过 parse 构造导出配置；同时限定现有证据只覆盖调用关系。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
+          "startLine": 1,
+          "endLine": 9
+        },
+        "quote": "import { larkRequestedConfigSchema } from \"../../../../../packages/contracts/src/index.js\";\n\n/**\n * Reusable personal-assistant profile derived from botmux source revision\n * 597ffb10172ea9ac2b50b75507d52a8cf5fb0cd7. It reserves document, calendar,\n * meeting, task and rich-content capabilities while excluding bulk mes"
+      },
+      {
+        "key": "c4",
+        "label": "完整租户权限范围",
+        "reason": "以完整 tenant 清单支持消息、文档、云盘、知识库、日历、任务、会议及内容处理能力的概括，修复先前引用范围不足。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/defaults.ts",
@@ -50,10 +76,10 @@
         "quote": "      tenant: [\n        \"im:message\",\n        \"im:message:send_as_bot\",\n        \"im:message:update\",\n        \"im:message.p2p_msg:readonly\",\n        \"im:message.group_at_msg:readonly\",\n        \"im:message.group_at_msg.include_bot:readonly\",\n        \"im:message.group_msg\",\n        \"im:message.group_msg.include_bot:read\","
       },
       {
-        "key": "c3",
-        "label": "用户权限集合",
-        "reason": "支持用户身份的离线访问、内容、日历、搜索、会议及成员申请权限范围。",
-        "relation": "explains",
+        "key": "c5",
+        "label": "用户授权权限范围",
+        "reason": "支持 user scope 包含离线访问、内容操作、搜索、日历和会议事件读取等能力的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/defaults.ts",
@@ -63,40 +89,38 @@
         "quote": "      user: [\n        \"offline_access\",\n        \"contact:contact.base:readonly\",\n        \"contact:user.employee_id:readonly\",\n        \"docs:component\",\n        \"docs:document.comment:create\",\n        \"docs:document.comment:read\",\n        \"docs:document.comment:update\",\n        \"docs:document.comment:write_only\",\n      "
       },
       {
-        "key": "c4",
+        "key": "c6",
         "label": "事件订阅与卡片回调",
-        "reason": "支持默认订阅的租户和用户事件类别、唯一卡片动作回调及 schema 校验。",
+        "reason": "支持租户事件、用户参会事件以及卡片动作回调的具体配置说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/defaults.ts",
           "startLine": 216,
-          "endLine": 237
+          "endLine": 235
         },
         "quote": "    events: {\n      items: {\n        tenant: [\n          \"im.message.receive_v1\",\n          \"im.message.updated_v1\",\n          \"im.chat.member.bot.added_v1\",\n          \"im.chat.member.bot.deleted_v1\",\n          \"im.chat.member.user.added_v1\",\n          \"im.chat.member.user.deleted_v1\",\n          \"im.message.reaction.cr"
       }
     ],
     "questions": [
       {
-        "question": "注释所称“排除权限或 ACL 管理”与配置中的文档权限读取、日历 ACL 读取及成员申请能力应如何划分？",
-        "why": "配置没有展示通用授权管理操作，却包含权限信息读取和用户侧成员申请；需要明确“排除”是禁止修改授权，还是也应排除权限读取与申请。",
-        "nextStep": "由产品和安全负责人确认最小权限口径，并逐项审计租户与用户权限是否有当前功能依据。",
+        "question": "`larkRequestedConfigSchema` 对重复 scope、未知权限名以及空事件集合采取何种校验或归一化策略？",
+        "why": "现有材料只显示 schema 被导入并调用 `parse`；提供的共享合同片段未包含其定义，无法确定具体失败条件和输出变换。",
+        "nextStep": "补充 `larkRequestedConfigSchema` 的定义及相关单元测试，再核对默认配置在成功与失败路径上的行为。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
           "c3"
         ]
       },
       {
-        "question": "源码注释所称排除“权限或 ACL 管理”，具体是仅排除授权修改，还是也应排除权限读取和成员申请？",
-        "why": "配置确实包含文档权限读取、日历 ACL 读取和文档成员申请权限；草稿已将排除范围表述为设计声明并明确指出这一待澄清边界。",
-        "nextStep": "由产品与安全负责人确定最小权限口径，并逐项审计租户和用户权限是否有当前功能依据。",
+        "question": "这些权限、事件和卡片回调是否都有对应的服务端消费者及真实 Lark 联调验证？",
+        "why": "默认配置只能证明申请范围和订阅项，不能证明事件已被消费、权限已获批准或外部接口实际可用。",
+        "nextStep": "检查事件路由、回调处理器和 Lark 集成测试，将订阅项映射到实际消费者，并说明无消费者项目的保留理由。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c3"
+          "c4",
+          "c5",
+          "c6"
         ]
       }
     ]
@@ -104,69 +128,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/inputs/spool.ts",
-      "digest": "6e815455823d4befbba2dcce822d0c1b3e12b4b08f7f86def8945493dabe3039"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
-      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/defaults.ts",
       "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
-      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:18:23.636Z",
+    "at": "2026-10-01T02:11:27.286Z",
     "trace": {
-      "runId": "ca926296-6f48-478c-b9fd-1f45cd1b1b2c",
+      "runId": "6a73089f-1702-4e7f-a1ab-5fd82f422ce1",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "73f8393b2a3266923bfb901322318cc20260eb9b87e557a814a138da8d99d4ea",
-      "contextHash": "60f1aad2512cf1cd2a3ee687639b12928f04439c6fcfd622904e33e74f684914",
+      "promptHash": "ba301b1f6710971447e1ed40d6999c29d0f2259c0d341090e04ef6bddf53ea60",
+      "contextHash": "967c6f21ad5b060d5de01de6cb656b4eda1c50b4fbe9f5bb46a3295a314bcd92",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "553eecd81c0260f129dcbf814e34fe60068148fba4ff9cdbea393193b0d05b8e",
+      "fingerprint": "4f45af4ef8771d23330207337effa7d7e76edfbd6708a1c991ae105f7ed79987",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -179,10 +163,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c0-302d-7140-9a84-3fa43938bb01"
+        "01a0f53a-ca5c-78b3-8997-bd00ec3c4de8"
       ],
       "usage": {
-        "used": 67029,
+        "used": 27778,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -191,10 +175,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 142897,
-          "utf8Bytes": 155351,
-          "estimatedTokens": 51784,
-          "budgetedTokens": 64730,
+          "chars": 25363,
+          "utf8Bytes": 30055,
+          "estimatedTokens": 10019,
+          "budgetedTokens": 12524,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -203,17 +187,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:18:56.903Z",
+    "at": "2026-10-01T02:11:43.920Z",
     "trace": {
-      "runId": "14e7fbf0-0a5c-4321-bab5-11ff05d3f153",
+      "runId": "3a052e73-9599-488d-8891-47c0c6365da0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "251330589348a0fb87b75eb7b279d156404e30c763d03cb3625d35b838f8f245",
-      "contextHash": "83fd6fd450d1f0028a4fcd903c8aa7b1e57071fab8e87eeb7f4db85c402747cb",
+      "promptHash": "fefaf3810369bcaf1b5b315256b1c94c84fbedb3abe1564e6d63393b02b9ec7b",
+      "contextHash": "cb7187a5347c63f7835ae0f677d99c004518248a21d46f526e990f6bbe093711",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "82d8d648b62c150da18ac8960c42899f3676a6de922305533541197e9a661911",
+      "fingerprint": "35d122a0171f53f23a3f8627c412b9839c2f7516436743824509aefc98fe0c7d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -226,10 +210,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c1-051b-7d91-b044-d7405d2081bf"
+        "01a0f53b-33b4-7b70-b676-c68cea59135a"
       ],
       "usage": {
-        "used": 62446,
+        "used": 25781,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -238,10 +222,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 143307,
-          "utf8Bytes": 152973,
-          "estimatedTokens": 50991,
-          "budgetedTokens": 63739,
+          "chars": 22751,
+          "utf8Bytes": 26085,
+          "estimatedTokens": 8695,
+          "budgetedTokens": 10869,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

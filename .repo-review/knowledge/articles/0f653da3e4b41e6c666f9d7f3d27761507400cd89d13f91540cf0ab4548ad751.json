@@ -2,57 +2,127 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/batch2-fixes.test.ts",
-    "title": "批次二修复：来源保真、身份解析与派生隔离测试",
-    "summary": "该测试集验证聚合输入不会丢失逐段说话人信息，Lark 外部身份只有经绑定后才映射为规范 owner，并确保派生 Agent 内容不会再次触发事实提取。",
+    "title": "Batch2 来源保真、Lark 身份绑定与派生会话回流测试",
+    "summary": "该测试文件验证三项关键边界：聚合输入保留逐片段来源；仅将已绑定的 Lark 身份解析为规范 owner；派生 Agent 会话不再次触发事实抽取。测试向策略评估直接注入 fixture 复核结果，并未运行真实 verifier、执行任务应用或验证通知发送。",
     "category": "tests",
     "sections": [
       {
         "key": "part-provenance",
-        "title": "聚合后的逐段来源保真",
-        "body": "测试先构造带说话人、事件时间和事件编号的聊天输入，再通过 `InputAggregator` 聚合并交给 `Store.capture`。当两名说话人进入同一修订时，顶层 actor 被置空，但每个 part 仍保存各自的外部身份、时间与事件编号；即使两人文本都为“同意”，也不得按文本去重而损失一份证据。[[c1]]\n\n这覆盖了多说话人聚合的关键回归，但没有验证图片、链接、引用或转发 part，也未覆盖历史数据缺少逐段 provenance 时的兼容表现。"
+        "title": "聚合时保留每位说话者的证据身份",
+        "body": "测试将两名说话者的聊天输入聚合为同一 revision。聚合后顶层 `actorId` 为空，各 part 分别保留外部身份、事件时间和事件号，避免多人内容被错误归给单一主体。[[c1]] 即使两人说出完全相同的“同意”，系统仍留下两个 part，说明证据不能只按文本去重。[[c2]]\n\n合同为文本、图片和链接 part 提供可选的逐片段来源字段，并允许历史数据缺少这些元数据，从而兼顾来源保真与向后兼容。[[c3]]"
       },
       {
         "key": "lark-owner-resolution",
-        "title": "Lark 身份与自动应用策略",
-        "body": "测试直接写入连接、版本、绑定和目标记录，然后让 `LarkEventInbox.processMessage` 处理群消息。绑定 owner 的 `ou_*` 身份会同时保留外部标识并解析为规范主体，随后任务提案可进入 `auto_apply`；普通群成员只保留外部用户身份，主体为空，策略必须包含 `owner_not_verified` 且不能自动应用。[[c2]]\n\n这证明收件箱、捕获聚合与 `MemoryService.evaluate` 之间的身份链路，但数据库夹具绕过了真实建连流程，也未验证 Lark SDK 网络事件、绑定轮换、伪造签名或失效连接。"
+        "title": "Lark 外部身份到规范所有者的安全映射",
+        "body": "fixture 以随机 32 字节本地密钥创建加密凭据，并直接写入 active connection、版本 1、active binding 和群目标。[[c4]] 已绑定的 `ou_owner` 被解析为规范主体 `owner`，同时保留外部身份和绑定验证来源；随后测试向 `MemoryService.evaluate` 直接注入一份 `semantic_verdict: supported` 的 fixture 复核结果，得到 `auto_apply` 策略。[[c5]]\n\n这替代此前“经 fixture verifier 判为 supported”的不准确结论：该用例只是模拟 supported 复核结论，没有实例化或调用 verifier。未绑定成员仍保留普通用户身份，但规范主体与验证来源为空，并因 `owner_not_verified` 不能自动应用。[[c6]] 该边界符合合同中“始终保留外部身份，仅在确认绑定后填写规范主体”的约束。[[c7]]"
       },
       {
-        "key": "derived-loop",
-        "title": "原始与派生 Agent 会话隔离",
-        "body": "同样内容分别以 `producerKind=original` 和 `derived` 捕获：原始会话产生处理 job，派生会话不产生 job，最终仅存在一个 `extract_claims` 作业。该断言用于阻断模型生成内容被重新当作独立原始证据而形成递归提取。[[c3]]\n\n测试只检查作业数量及是否为空，没有断言作业载荷、幂等键、重试行为，也没有覆盖其他来源类型的 derived 输入。"
+        "key": "agent-loop-boundary",
+        "title": "阻断派生内容回流并明确测试范围",
+        "body": "Agent capture 仅改变 `producerKind`：原始会话创建 `extract_claims` 作业，派生会话不创建，最终作业列表只有一项。[[c8]] 这可阻止模型或 Agent 的派生内容再次被当作独立原始证据抽取，降低自我强化风险。\n\n本文件覆盖临时 SQLite、手工 seed、合成事件以及注入复核结果后的策略评估；它没有执行 proposal apply，也未查询任务实体或通知 outbox。[[c5]] Lark 模块虽定义真实连接适配器和媒体下载端口，但这些接口未在本测试中实例化。[[c9]] 环境密钥加载由 `fromEnvironment` 提供，而 fixture 直接向构造器传入随机密钥，因此该用例也不证明环境密钥加载可用。[[c10]]"
+      },
+      {
+        "key": "remaining-gaps",
+        "title": "尚待验证的行为边界",
+        "body": "现有断言能确认身份解析和策略选择，却不能证明 `auto_apply` 后的任务写入、通知发送及失败状态处理。[[c5]] 此外，fixture 只覆盖 active、版本 1 且目标存在的绑定，未展示 inactive、superseded、连接版本不匹配或目标缺失时应采用哪个绑定快照。[[c4]][[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "逐段说话人与重复文本断言",
-        "reason": "支持多说话人聚合时顶层身份置空、逐段 provenance 保留以及相同文本不去重的说明。",
+        "label": "多人聚合来源断言",
+        "reason": "支持多人输入聚合后顶层身份为空、各 part 分别保留说话者和事件信息。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/batch2-fixes.test.ts",
           "startLine": 60,
-          "endLine": 139
+          "endLine": 107
         },
         "quote": "describe(\"Batch2 F4: per-part provenance survives aggregation\", () => {\n  it(\"G04 keeps each speaker's actor/time on its own part (top-level actorId null)\", () => {\n    const store = new Store(temporary(\"omem-f4-g04-\"));\n    const start = new Date(\"2026-09-27T00:00:00.000Z\");\n    try {\n      store.inputs.ingest(\n      "
       },
       {
         "key": "c2",
-        "label": "Lark owner 与群成员策略对照",
-        "reason": "支持绑定 owner 可规范化并自动应用、普通成员必须保持未验证状态的论断。",
+        "label": "同文不同说话者断言",
+        "reason": "支持文本相同时仍按不同证据主体保留两个 part。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+          "startLine": 109,
+          "endLine": 139
+        },
+        "quote": "  it(\"G05 keeps both speakers when two actors say the same thing\", () => {\n    const store = new Store(temporary(\"omem-f4-g05-\"));\n    const start = new Date(\"2026-09-27T00:00:00.000Z\");\n    try {\n      store.inputs.ingest(chatEvent(\"a-agree\", \"ou_alice\", \"同意\", start), start);\n      store.inputs.ingest(\n        chatEve"
+      },
+      {
+        "key": "c3",
+        "label": "逐片段来源合同",
+        "reason": "解释各类 part 的来源字段及其历史兼容设计。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 4,
+          "endLine": 48
+        },
+        "quote": "// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .object({\n    actorExternalI"
+      },
+      {
+        "key": "c4",
+        "label": "Lark 绑定测试装配",
+        "reason": "支持测试使用随机本地密钥并手工建立 active connection、版本、绑定和群目标的范围说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+          "startLine": 144,
+          "endLine": 190
+        },
+        "quote": "const seedLarkBinding = (store: Store) => {\n  const at = \"2026-09-27T00:00:00.000Z\";\n  const secrets = new EncryptedSecretStore(\n    join(temporary(\"omem-f7-secrets-\"), \"secrets\"),\n    randomBytes(32),\n  );\n  const secretRef = secrets.put({\n    appId: \"cli_f7\",\n    clientSecret: \"fixture-secret\",\n  });\n  store.db\n    ."
+      },
+      {
+        "key": "c5",
+        "label": "已绑定所有者策略评估",
+        "reason": "支持已绑定身份解析为 owner，并明确测试直接向 evaluate 注入 fixture 复核结果、只断言策略而未调用 verifier 或 apply。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/batch2-fixes.test.ts",
           "startLine": 253,
-          "endLine": 346
+          "endLine": 297
         },
         "quote": "describe(\"Batch2 F7: lark real identity resolves to canonical owner\", () => {\n  it(\"G06 bound owner's ou_* message maps to canonical owner and auto-applies\", async () => {\n    const store = new Store(temporary(\"omem-f7-g06-\"));\n    try {\n      seedLarkBinding(store);\n      const inbox = new LarkEventInbox(store, { owne"
       },
       {
-        "key": "c3",
+        "key": "c6",
+        "label": "未绑定群成员安全边界",
+        "reason": "支持未绑定成员不获得规范主体，且策略包含 owner_not_verified 的对照结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+          "startLine": 299,
+          "endLine": 346
+        },
+        "quote": "  it(\"G07 a non-owner group member's task clue is NOT treated as owner's own task\", async () => {\n    const store = new Store(temporary(\"omem-f7-g07-\"));\n    try {\n      seedLarkBinding(store);\n      const inbox = new LarkEventInbox(store, { ownerId: \"owner\" });\n      const event = groupEvent({\n        eventId: \"evt-me"
+      },
+      {
+        "key": "c7",
+        "label": "外部身份与规范主体合同",
+        "reason": "解释外部身份保留与规范主体仅在绑定确认后写入的设计约束。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 49,
+          "endLine": 69
+        },
+        "quote": "export const captureProvenanceSchema = z\n  .object({\n    collectorId: z.string().min(1).max(300),\n    actorId: z.string().min(1).max(300).nullable(),\n    actorType: z.enum([\"owner\", \"user\", \"bot\", \"system\", \"unknown\"]),\n    actorVerifiedBy: z.string().min(1).max(300).nullable(),\n    sourceUri: z.string().max(2000).null"
+      },
+      {
+        "key": "c8",
         "label": "原始与派生会话作业断言",
-        "reason": "支持只有 original Agent 会话进入 extract_claims、derived 会话被隔离的说明。",
+        "reason": "支持只有原始 Agent 会话创建 extract_claims 作业、派生会话不重复入列。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -61,9 +131,57 @@
           "endLine": 387
         },
         "quote": "describe(\"Batch2 F8: original vs derived agent sessions\", () => {\n  it(\"G14 original agent session enters extract_claims; derived does not\", () => {\n    const store = new Store(temporary(\"omem-f8-g14-\"));\n    try {\n      const base = (\n        producerKind: \"original\" | \"derived\",\n        externalId: string,\n      ): C"
+      },
+      {
+        "key": "c9",
+        "label": "Lark 实时连接与媒体端口",
+        "reason": "说明生产连接和媒体下载另有独立接口，从而界定本测试未覆盖真实网络适配器。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 38,
+          "endLine": 66
+        },
+        "quote": "/**\n * Inbound media download port. The production implementation calls Lark's\n * message-resource API; tests inject a fake that returns fixture bytes without\n * touching the network.\n */\nexport interface LarkMediaPort {\n  downloadImage(input: {\n    appId: string;\n    messageId: string;\n    imageKey: string;\n  }): Prom"
+      },
+      {
+        "key": "c10",
+        "label": "环境密钥加载入口",
+        "reason": "支持环境变量密钥由 fromEnvironment 读取，并与测试直接传入随机密钥的做法区分。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 47,
+          "endLine": 50
+        },
+        "quote": "  static fromEnvironment(dataDir: string) {\n    const key = process.env.OMEM_SECRET_KEY;\n    if (!key) throw Error(\"OMEM_SECRET_KEY is required for Lark credentials\");\n    return new EncryptedSecretStore(join(dataDir, \"secrets\"), key);"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "`auto_apply` 策略产生后，任务是否会由其他流程可靠地写入并发送通知？",
+        "why": "现有用例只向 `MemoryService.evaluate` 注入 fixture 复核结果并断言策略值，没有执行 proposal apply，也没有检查任务持久化、通知 outbox 或应用失败状态。",
+        "nextStep": "补充从 evaluate 到 apply、任务查询和通知 outbox 的行为测试，并覆盖应用失败时的状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
+        ]
+      },
+      {
+        "question": "Lark owner 绑定失效、被替代、版本不匹配或连接停用时，既有消息会按哪个绑定快照解析？",
+        "why": "fixture 只建立 active connection、版本 1、active binding 和 active target；现有正反用例不足以确认生命周期变化及并发版本切换的处理规则。",
+        "nextStep": "增加 inactive、superseded、连接版本不匹配和无 target 场景，并断言规范主体及验证来源不会被错误继承。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c6",
+          "c7"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
@@ -73,38 +191,13 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/code-artifacts.test.ts",
-      "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-budget.test.ts",
-      "digest": "2d0812ca8592b2a3702ce8ee0f6cf4568af9356037cb64be6e731d0a949c9fb3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-      "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
-      "digest": "87f1cf57fca10d4cb0a5db8b64e0713611d0a304054c4ffc973bad34c7eb7132"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-      "digest": "d04e8dca741772db0fd43565fb9fd906fb69a09070a5581161a3dcbf0da24140"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
@@ -120,34 +213,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:09:13.991Z",
+    "at": "2026-10-01T02:25:13.634Z",
     "trace": {
-      "runId": "161767d8-9f1a-4014-b3e2-a5519e4a6349",
-      "roleId": "code-analyst",
+      "runId": "89cba316-b841-4dbb-8b52-9b7f4a2042e9",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "726468f442488bf98c0d322ffcd85662d4e11aa2707394fbf5ab54cb8e9929dd",
-      "contextHash": "9af6b2612942385a3550bdc42cd7a278c001615d5f3518e0d49ca169147f2ffd",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "f7d3885857d15c4fe0a81c8016921ad47430546fd7d89f18c3edccaac6a4f2b0",
+      "contextHash": "2c3621ad845f33199aedbbc30ded0b0729f4abffe9a02f0e57287e7d3e527e55",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2792dfab74511e4d9c3d1fad66847b610b0dcf2771d06ced662a74a03afc7db3",
+      "fingerprint": "5cb92456ff25468fd0755ae1bccbcc9dd403b156dbc3d8f9e73aeb32acaf9e3d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee91-89ed-7981-a74d-c976fa675121"
+        "01a0f547-5bca-77b2-aa6f-1b096a3c7eac"
       ],
       "usage": {
-        "used": 35138,
-        "size": 760000,
+        "used": 34479,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -155,10 +248,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 63078,
-          "utf8Bytes": 64970,
-          "estimatedTokens": 21657,
-          "budgetedTokens": 27072,
+          "chars": 44127,
+          "utf8Bytes": 49231,
+          "estimatedTokens": 16411,
+          "budgetedTokens": 20514,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -167,17 +260,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:09:19.214Z",
+    "at": "2026-10-01T02:25:31.073Z",
     "trace": {
-      "runId": "53bcd91e-3bbc-4771-8b13-e0f49b12862d",
+      "runId": "bd6e3eb8-a915-4c75-a30f-f10bbaf32968",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "bfffdc00a294a0fc9ba2841d7550ed3b91d3edeb17283ca616a10e25557ebdb6",
-      "contextHash": "c592a9202f07dece3bb2c820a5af776e3e76addbe2b695d9b7bdbef8d25776e9",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "8eb155f1d2fe61f2c42607adcb55c6b6345ea1c1407489208cc85eb10b0e77df",
+      "contextHash": "10ee736fa857dc8e004293ba4dbe78f92e3ba7232483f389defa8cadd3b8d934",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "98ae544d15bad2554e652df2c80081b4bd50a13819b2456c0275d0c0b3489b96",
+      "fingerprint": "423ed27c85d452b79ef88ac83c932df07f3865b8dedee926ebaa03e07b050447",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -190,11 +283,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee92-354d-7ca0-ba75-018248807a3a"
+        "01a0f547-cd59-7190-9d29-28343d80708e"
       ],
       "usage": {
-        "used": 35630,
-        "size": 760000,
+        "used": 32595,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -202,10 +295,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 74182,
-          "utf8Bytes": 81700,
-          "estimatedTokens": 27234,
-          "budgetedTokens": 34043,
+          "chars": 40832,
+          "utf8Bytes": 44696,
+          "estimatedTokens": 14899,
+          "budgetedTokens": 18624,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

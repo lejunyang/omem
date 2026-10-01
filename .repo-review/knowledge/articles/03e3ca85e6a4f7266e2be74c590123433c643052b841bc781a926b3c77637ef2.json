@@ -2,21 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/code/budget.ts",
-    "title": "代码理解预算的兼容出口",
-    "summary": "该文件不实现预算算法，只把通用 Agent Runtime 的令牌估算、生成预算函数及类型从代码知识命名空间重新导出，使代码理解模块复用统一预算合同。",
+    "title": "代码预算能力重新导出入口",
+    "summary": "该文件从 Agent Runtime 的预算模块重新导出令牌估算函数、生成预算函数及相关类型；当前材料只能确认导出关系，不能确定算法实现、调用方或接口稳定性要求。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose",
-        "title": "作用与边界",
-        "body": "该模块是一个极薄的兼容层：代码理解相关代码可以从本目录导入 `estimateTokens`、`generationBudget` 和 `GenerationBudget`，但真正的计算逻辑与类型定义仍归属于通用 Agent Runtime。[[c1]] 因此这里不会读取配置、执行模型或改变预算；预算算法的精度、上下文裁剪规则及输出上限均需到被转出的模块中判断。"
+        "key": "exports",
+        "title": "公开内容",
+        "body": "该文件从 `../agent-runtime/budget.js` 重新导出 `estimateTokens`、`generationBudget` 和 `GenerationBudget`。因此，调用方可以通过当前模块路径导入这两个函数和一个类型；材料未显示该文件包含其他状态、配置或本地计算逻辑。[[c1]]"
+      },
+      {
+        "key": "dependency",
+        "title": "依赖与执行边界",
+        "body": "当前路径公开的符号来自 Agent Runtime 预算模块，具体行为仍取决于上游实现。仅凭这条导出语句，无法说明令牌估算方式、生成预算的计算规则、默认值、上下限、模型差异、错误处理或降级策略，也不能据此建立实际调用链。[[c1]]"
+      },
+      {
+        "key": "evidence_limits",
+        "title": "证据范围与待验证事项",
+        "body": "固定材料只覆盖一条重新导出语句，能够确认符号名称及其来源，但没有提供调用点、测试、变更历史或设计说明。因此，不能断言该入口承担目录隔离、兼容性维护或长期稳定接口等设计目的；这些判断需要结合上游实现及实际消费者进一步验证。[[c1]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "预算能力重导出",
-        "reason": "支持该文件仅转出通用运行时预算函数和类型、没有本地实现的判断。",
+        "label": "预算符号重新导出语句",
+        "reason": "该行直接支持三个公开符号及其上游来源，并界定当前材料只能证明重新导出关系。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -27,90 +37,64 @@
         "quote": "export { estimateTokens, generationBudget, type GenerationBudget } from \"../agent-runtime/budget.js\";"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "上游 `agent-runtime/budget.js` 如何估算令牌并计算生成预算？",
+        "why": "当前材料只有重新导出语句，无法确认算法、默认值、上下限、模型差异或错误处理。",
+        "nextStep": "提供上游预算模块及其测试材料，核对函数实现与真实断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "哪些模块通过该入口消费预算能力，是否存在需要维持的兼容接口？",
+        "why": "当前材料没有调用点、变更历史或接口约定，无法确认实际消费者及稳定性要求。",
+        "nextStep": "提供对 `code/budget`、`estimateTokens` 或 `generationBudget` 的源码引用与相关测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
       "key": "omem:apps/server/src/code/budget.ts",
       "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/dto.ts",
-      "digest": "0213903ededa1ffee899a545cac340492ca4230ca75a5b8ef4ed02eef69949e7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/parse.ts",
-      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/sync.ts",
-      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-model.ts",
-      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/source-text.ts",
-      "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/artifacts.ts",
-      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:13:42.776Z",
+    "at": "2026-10-01T02:05:52.674Z",
     "trace": {
-      "runId": "4ce77f62-1667-4abf-870f-cf3c8d98360b",
-      "roleId": "code-analyst",
+      "runId": "bd695301-156f-4f7a-8823-a591bd3ae873",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "780554099280c05dfaaa99791ddf06a589488616fb3ef697669b48426b991c9c",
-      "contextHash": "c3b25520e5f1d70c6f9b8a3b82f4d466adb6c3c3cce4522766a727b7acf8b315",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "8e3771740ae3d602658873e0820fe83df1b54b7cdaee8505a3b39a7c9a5a090b",
+      "contextHash": "655177be8c48a1efb73d8c6a5fadf2d14dd4f5d6b1a27adf5541ab17a066a1ca",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a654284878331a7896106dbe72326bd12f9bfb17eab73dadc326c2b819b4b1ba",
+      "fingerprint": "1d3c8dfdd760336399b68e8fffb2018ab573d7e6216be5882ccc974bb698c4fc",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bb-c0c5-7ac0-9e39-8e2c1e0f5e37"
+        "01a0f535-d6b8-7cc1-b177-e38cf2fa87de"
       ],
       "usage": {
-        "used": 55525,
+        "used": 22499,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -119,10 +103,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 106879,
-          "utf8Bytes": 108659,
-          "estimatedTokens": 36220,
-          "budgetedTokens": 45275,
+          "chars": 8409,
+          "utf8Bytes": 12045,
+          "estimatedTokens": 4015,
+          "budgetedTokens": 5019,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -131,17 +115,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:14:14.582Z",
+    "at": "2026-10-01T02:06:04.782Z",
     "trace": {
-      "runId": "0432c09b-b61b-4392-a7bd-d15e6482e55f",
+      "runId": "be77446b-5964-479c-a310-f9a7e99f736d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "5d818e7301ebdcf1d6e61174580d73ed1f8e80ab400c1aaaa4224258cb71ea1c",
-      "contextHash": "beda91acd09fd6ec08f4e60c094450447081d5425bcf8632793e9319d7764c78",
+      "promptHash": "08ea5db50d30d10d54edf26d30d762f93f2413809abb433fbc9899d33dc507e4",
+      "contextHash": "307e563471f7c3e9d5296b6104a5136ef2bf9e316065b4fe9e850d5791eefc70",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fb921ad9970bf2ce9ea61bf7425bdc50e69ee2e389dd2508d802bd58041a85b4",
+      "fingerprint": "9acc8c8480fb73197583bd2e9195401b12abdc4531f06c716f458859fe6087f3",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -154,10 +138,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bc-befa-7851-8b1d-877a7462ca90"
+        "01a0f536-14c1-7bd1-8372-a19da3042c68"
       ],
       "usage": {
-        "used": 58834,
+        "used": 20258,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -166,10 +150,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124881,
-          "utf8Bytes": 134002,
-          "estimatedTokens": 44668,
-          "budgetedTokens": 55835,
+          "chars": 5264,
+          "utf8Bytes": 7422,
+          "estimatedTokens": 2474,
+          "budgetedTokens": 3093,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,54 +2,95 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
-    "title": "CorrectionProposal.v1 的顶层输出结构",
-    "summary": "该 JSON Schema 定义反馈纠正候选的封闭顶层对象，要求版本、纠正标识、目标、范围、停止使用内容、替代内容、证据、原因与来源。当前材料只对部分字段给出宽泛类型，因此能约束字段存在性，却不足以证明内部对象语义和证据定位得到严格验证。",
-    "category": "requirements",
+    "title": "反馈修正提案输出合同",
+    "summary": "该文件定义 CorrectionProposal.v1 的 JSON Schema 外层合同，用于约束反馈整理角色输出修正标识、作用目标与范围、停用内容、替代内容、证据、理由和来源。它能保证顶层字段齐备且禁止额外属性，但对多个嵌套对象及多数文本字段仅作基础类型声明，不能据此确认运行时已完成语义校验、证据核验或修正应用。",
+    "category": "configuration",
     "sections": [
       {
-        "key": "closed-contract",
-        "title": "封闭对象与必需字段",
-        "body": "Schema 使用 JSON Schema 2020-12，标识自身为 `CorrectionProposal.v1`，要求输出是对象且禁止未声明的顶层属性。九个字段均为必需项，覆盖版本、纠正目标与范围、被停止采用的内容、替代内容、证据、原因及来源。[[c1]] 这与角色清单声明的输出合同相呼应，构成静态格式入口。"
+        "key": "contract-purpose",
+        "title": "合同定位与输出边界",
+        "body": "该材料声明一个基于 JSON Schema 2020-12 的 `CorrectionProposal.v1` 对象合同，并禁止未声明的顶层属性，说明其用途是稳定反馈整理角色与宿主之间的修正提案结构，而不是描述修正如何执行。[[c1]] 文件本身只提供数据格式；是否有运行时加载、校验、持久化或应用该提案，不能由这份 Schema 单独证明。"
       },
       {
-        "key": "validation-depth",
-        "title": "字段类型与校验深度限制",
-        "body": "版本固定为 1；纠正标识、停止使用内容、替代内容和原因是字符串，目标、范围与来源仅被约束为对象，证据仅要求是至少含一项的数组。[[c2]] 因此当前材料未显示这些嵌套结构的必需字段、引用定位格式、字符串最小长度或对象附加属性限制，不能据此认定语义级纠正合同完整。"
+        "key": "proposal-flow",
+        "title": "修正提案的表达流程",
+        "body": "提案必须同时给出修正标识、目标、范围、应停止使用的内容、替代内容、证据、理由和来源。[[c2]] 这一组合表达了一条清晰的信息链：先定位受影响对象和边界，再陈述旧内容与替代内容，最后用证据、理由及来源支撑变更。它适合承载“建议如何纠正”的结构化结果，但队列入列、审核通过或实际覆盖旧知识仍属于合同之外的后续状态。"
+      },
+      {
+        "key": "validation-limits",
+        "title": "当前校验强度与限制",
+        "body": "字段级约束目前较宽：`correction_id`、`stop_using`、`replacement` 和 `reason` 只要求字符串，未规定非空、长度或格式；`target`、`scope`、`origin` 仅要求对象，未定义内部必填键。[[c3]] `evidence` 至少包含一项，但数组元素的结构、引用目标和支持关系也未在此处限定。[[c4]] 因此该合同能拦截缺失顶层字段和额外顶层字段，却不足以独立保证修正可定位、证据可追溯或替换内容具备语义有效性。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "纠正候选顶层合同",
-        "reason": "支持 schema 版本、封闭顶层对象以及九个必需字段的说明。",
+        "label": "合同标识与顶层约束",
+        "reason": "支持附近关于 Schema 版本、CorrectionProposal.v1 标识、对象类型及禁止额外顶层属性的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
           "startLine": 1,
-          "endLine": 16
+          "endLine": 5
         },
-        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"https://omem.invalid/contracts/CorrectionProposal.v1\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",\n    \"correction_id\",\n    \"target\",\n    \"scope\",\n    \"stop_using\",\n    \"replacement\",\n    \"evidence\",\n"
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"https://omem.invalid/contracts/CorrectionProposal.v1\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,"
       },
       {
         "key": "c2",
-        "label": "纠正候选字段类型",
-        "reason": "支持字段当前仅具基础类型和证据最小项数约束，并揭示嵌套校验深度有限。",
+        "label": "修正提案必填字段",
+        "reason": "支持附近对提案信息链及全部必填组成部分的概括。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
-          "startLine": 17,
+          "startLine": 6,
+          "endLine": 16
+        },
+        "quote": "  \"required\": [\n    \"schema_version\",\n    \"correction_id\",\n    \"target\",\n    \"scope\",\n    \"stop_using\",\n    \"replacement\",\n    \"evidence\",\n    \"reason\",\n    \"origin\"\n  ],"
+      },
+      {
+        "key": "c3",
+        "label": "目标与文本字段类型",
+        "reason": "支持附近关于对象内部未展开、多个文本字段仅受基础字符串类型约束的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+          "startLine": 18,
+          "endLine": 23
+        },
+        "quote": "    \"schema_version\": { \"const\": 1 },\n    \"correction_id\": { \"type\": \"string\" },\n    \"target\": { \"type\": \"object\" },\n    \"scope\": { \"type\": \"object\" },\n    \"stop_using\": { \"type\": \"string\" },\n    \"replacement\": { \"type\": \"string\" },"
+      },
+      {
+        "key": "c4",
+        "label": "证据、理由与来源字段",
+        "reason": "支持附近关于证据数组只有最小数量约束，以及理由和来源仅有基础类型声明的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
+          "startLine": 24,
           "endLine": 26
         },
-        "quote": "  \"properties\": {\n    \"schema_version\": { \"const\": 1 },\n    \"correction_id\": { \"type\": \"string\" },\n    \"target\": { \"type\": \"object\" },\n    \"scope\": { \"type\": \"object\" },\n    \"stop_using\": { \"type\": \"string\" },\n    \"replacement\": { \"type\": \"string\" },\n    \"evidence\": { \"type\": \"array\", \"minItems\": 1 },\n    \"reason\": { \""
+        "quote": "    \"evidence\": { \"type\": \"array\", \"minItems\": 1 },\n    \"reason\": { \"type\": \"string\" },\n    \"origin\": { \"type\": \"object\" }"
       }
     ],
     "questions": [
       {
-        "question": "`target`、`scope`、`evidence` 和 `origin` 是否另有被宿主组合进来的严格 schema？",
-        "why": "当前文件仅将这些关键字段定义为一般对象或数组；若无额外校验，错误作用域或不可定位证据仍可能通过。",
-        "nextStep": "检查宿主 schema 注册和验证代码；若没有组合合同，应为嵌套对象补充明确字段、封闭属性和证据格式。",
+        "question": "`target`、`scope`、`origin` 和 `evidence` 项是否由其他共享 Schema、宿主代码或独立校验器进一步约束？",
+        "why": "当前文件没有定义这些结构的内部字段，无法仅据此确认修正目标能否稳定定位、证据能否回到固定原文，以及来源信息是否足以审计。",
+        "nextStep": "检查角色运行时的 Schema 装载与校验路径，以及这些字段对应的共享类型或测试，并记录实际拒绝无效提案的行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "修正提案生成后由哪个流程审核和应用，失败结果是否会保留旧的有效知识？",
+        "why": "该材料只定义提案输出形状，没有描述状态转换、独立复核、应用成功条件或失败保护，因此不能把“生成提案”视为“修正已生效”。",
+        "nextStep": "关联反馈整理角色的实现、复核与应用流程及其状态测试，区分提案生成、验证通过和实际应用三个阶段。",
         "blocking": false,
         "citationKeys": [
           "c1",
@@ -61,49 +102,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
-      "digest": "8360aadfcdad2fb2f7f55a87fb069e9d35353b2c2eb6d6e965579c855f4c9b57"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
-      "digest": "2270241f396ff675d0d702907dfed9465c7f9078b9ece6ff532611cfaea37140"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/agents/openai.yaml",
-      "digest": "1d51df6a2bf8a9efa743b139e36df5e37ba0eb7b79790635ff73cde54cbd7bb6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/manifest.json",
-      "digest": "5a382d0ffad0f254164f51864bc530bc556a6231af09107d4194ec5feecf4039"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/feedback-curator/1/output.schema.json",
       "digest": "1fbb87e87e40252797492748cf8809f1a435df9e6db7546360f4b028f8c7b83e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/feedback-curator/1/prompt.md",
-      "digest": "986867580df9cfc41b753de7e718bba3e1c6d2fe55a25f86e17ae6da8b57ec8f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:46:52.956Z",
+    "at": "2026-10-01T02:48:48.879Z",
     "trace": {
-      "runId": "b3e5ebb9-937c-47af-b51c-27975e731aa0",
+      "runId": "4b1039cd-6626-40f9-812d-2d3a821894ef",
       "roleId": "material-analyst",
       "roleVersion": "1",
       "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "45d80c47306fa40772a2beea53b4869f3a0c7cea41c14f47683be2496c351c05",
-      "contextHash": "5af7dbc4645f7a96a96508b8943fe9158bf854159afa44ac3fa0c6177f5f9f09",
+      "promptHash": "31cce0ecc707049dee577f6b58732ae2174ebce9cad689e2a51b40d5ae4b42cf",
+      "contextHash": "2eff7e7582ba266ea9a17e2f71cfa6c0bcbf4d9ef98903b251fe161ed5fcc5ff",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "92a84f389485d1e1a3999d57c480361df01eac264085e99663ec506e60988e16",
+      "fingerprint": "f13a69469071cbf4148ae0ef477e0ba461282c018ac781ff55c94ee1dab4f17a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -116,11 +132,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-0aa3-7c33-8a24-575c2462578f"
+        "01a0f55d-0387-7710-9c32-cff989ef4b93"
       ],
       "usage": {
-        "used": 21331,
-        "size": 760000,
+        "used": 21679,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -128,10 +144,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 17071,
-          "utf8Bytes": 18691,
-          "estimatedTokens": 6231,
-          "budgetedTokens": 7789,
+          "chars": 7056,
+          "utf8Bytes": 8676,
+          "estimatedTokens": 2892,
+          "budgetedTokens": 3615,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -140,17 +156,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:47:06.872Z",
+    "at": "2026-10-01T02:49:06.030Z",
     "trace": {
-      "runId": "07c35bf7-55c9-49b8-9acc-4219908aaf45",
+      "runId": "289509a2-d5bc-4751-adec-2b7cde3ae041",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "08bdef014dcfc514e247672efda5c33a74b8acc092a37b3a77b1b373f03d8cda",
-      "contextHash": "bd9124667ded09be016e3a9db6dd23112c8b7bee3efe8fb7fd7ee657116971d0",
+      "promptHash": "1fb64c7d5641288e895cf8cc7848f38cc85bdda8f019fa80a7cdef6a84abc0b0",
+      "contextHash": "65c82c5dde7bad1f0b0ab8d11a911335a2dd3e6886fe589688bc23612c62a313",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e227ae103c81dd60c9ad3a83f3953eb7cc151ec36e2f9129b6908676c120ce82",
+      "fingerprint": "23c789216598f64f561ef227c7edd171ca29f592e9aa8708c9a0876ab0bf8b81",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -163,11 +179,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-aea0-74b0-a4e0-8f10b624efb4"
+        "01a0f55d-65b7-7202-9db5-2b5af34e2731"
       ],
       "usage": {
-        "used": 22302,
-        "size": 760000,
+        "used": 21619,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -175,10 +191,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26150,
-          "utf8Bytes": 33998,
-          "estimatedTokens": 11333,
-          "budgetedTokens": 14167,
+          "chars": 8201,
+          "utf8Bytes": 11189,
+          "estimatedTokens": 3730,
+          "budgetedTokens": 4663,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,111 +2,131 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-    "title": "知识写入并发等待测试",
-    "summary": "该测试以子进程持有 SQLite 写事务，验证 Store.capture 面对短暂跨进程写锁时能够等待并完成捕获，同时检查写入结果、锁持有方退出状态及资源清理。",
+    "title": "知识捕获的 SQLite 写锁竞争测试",
+    "summary": "该测试证明：子进程取得 SQLite 写锁后，主进程启动 Store 初始化及后续捕获流程，最终仍返回完整片段，且竞争事务正常退出。它是端到端成功场景，但现有观测不能确认 capture 调用本身与写锁直接重叠，也不能定位等待发生在迁移、初始化还是捕获写入阶段。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose",
-        "title": "测试目的与存储背景",
-        "body": "该用例制造真实的 SQLite 跨进程写竞争，用于确认知识捕获遇到短暂写锁时会等待锁释放，而不会立即失败或静默丢失操作。子进程对同一数据库执行 `BEGIN IMMEDIATE`，发出就绪信号后约 250 毫秒提交，因此竞争来自实际数据库事务而非 mock。[[c1]] `Store` 当前以 SQLite 作为单用户存储基础；团队级约束仍属于后续迁移范围。[[c2]]"
+        "title": "测试目的与真实数据库背景",
+        "body": "该用例关注知识捕获遇到真实 SQLite 写竞争时是否最终成功，而不是仅验证协议桩。它先在临时目录创建并关闭一次 `Store`，使后续子进程与主进程共享同一数据库文件。[[c1]] `Store` 构造会打开 `omem.sqlite`、执行迁移并初始化多个仓库服务，因此重新构造 Store 本身也是被测端到端流程的一部分。[[c2]]"
       },
       {
         "key": "flow",
-        "title": "执行流程与初始化边界",
-        "body": "测试先创建临时目录并构造、关闭一次 `Store`，随后启动子进程占有写事务，并等待其标准输出后再进行主进程写入，保证锁竞争的先后关系。[[c1]] `Store` 构造函数负责创建数据目录和数据库、执行迁移，并初始化应用、任务、输入、运行请求及来源配置等仓储；这替代了先前仅凭文件说明笼统推断其初始化职责的结论。[[c3]] 主进程再构造 `Store`、实例化 `KnowledgeRepository`，并调用 `store.capture` 写入固定文本。[[c4]]"
+        "title": "竞争时序与被替代结论",
+        "body": "子进程执行 `BEGIN IMMEDIATE`，发出 `ready` 后约 250 毫秒提交；主进程收到信号后才开始重新构造 `Store`，随后实例化 `KnowledgeRepository` 并调用 `store.capture`。[[c3]] 因而原先“竞争者持锁后主进程直接发起捕获”的结论应被替代为：**竞争者持锁后，主进程开始 Store 初始化及后续捕获流程，最终捕获成功**。由于构造阶段会执行迁移和服务初始化，材料无法证明写锁一直保持到 `capture` 真正开始，也无法判断等待具体发生在哪一步。[[c2]]"
       },
       {
-        "key": "assertions_limits",
-        "title": "断言、清理与覆盖限制",
-        "body": "用例断言返回 revision 的首个 fragment 保留完整文本，并等待子进程以退出码 0 结束，证明该次短锁竞争下捕获成功且持锁事务正常提交。[[c4]] `finally` 会终止仍存活的子进程、关闭数据库连接并删除临时目录，覆盖成功和异常路径的资源回收。[[c5]] 但它只覆盖一次约 250 毫秒的单写者竞争，未验证更长等待、多写者、公平性、回滚、进程崩溃或重新连接后的读取；现有材料也不足以确认未调用方法的 `KnowledgeRepository` 实例是否具有必要副作用。"
+        "key": "coverage",
+        "title": "断言、清理与覆盖边界",
+        "body": "测试只直接断言返回 revision 的首个 fragment 保留完整输入文本，并确认子进程以退出码 0 结束；这支持端到端流程未丢失本次材料，但不等同于证明 capture 写事务自身发生过锁等待。[[c4]] `finally` 会终止残留子进程、关闭 Store 并删除临时目录，覆盖成功与失败路径的资源清理。[[c5]] 此外，`KnowledgeRepository` 在测试中仅被实例化，后续操作仍直接调用 `Store.capture`；给出的仓库实现片段展示材料读取与缓存逻辑，不能据此确认它参与锁等待。[[c6]]"
+      },
+      {
+        "key": "limits",
+        "title": "尚未验证的机制",
+        "body": "现有场景只有一个竞争者、一次捕获和约 250 毫秒持锁时间，未观测 Store 构造完成时刻、capture 开始时刻或 SQLite 等待配置。因此它没有覆盖锁长期不释放、超时阈值、多写者公平性，也没有区分迁移等待、初始化等待与捕获事务等待。要把结论收紧到 capture 与写锁直接重叠，需要增加锁状态和阶段时序断言。[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "跨进程写锁的建立与时序",
-        "reason": "支持临时目录、初始 Store、子进程 BEGIN IMMEDIATE、延迟提交及退出监听共同构成真实并发场景的论断。",
+        "label": "临时数据库准备",
+        "reason": "支持测试先创建临时目录并初始化、关闭 Store，使两个进程随后操作同一数据库文件。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
           "startLine": 9,
-          "endLine": 16
+          "endLine": 12
         },
-        "quote": "it(\"waits for a real concurrent writer instead of losing a knowledge operation\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-busy-\"));\n  const initial = new Store(dir); initial.close();\n  let store: Store | undefined;\n  const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", \"import {D"
+        "quote": "it(\"waits for a real concurrent writer instead of losing a knowledge operation\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-busy-\"));\n  const initial = new Store(dir); initial.close();\n  let store: Store | undefined;"
       },
       {
         "key": "c2",
-        "label": "SQLite 单用户存储定位",
-        "reason": "支持 Store 当前采用 SQLite 单用户基础、团队级 enforcement 尚待迁移的背景说明。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 2,
-          "endLine": 4
-        },
-        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";"
-      },
-      {
-        "key": "c3",
-        "label": "Store 构造与仓储初始化",
-        "reason": "支持 Store 创建数据库、执行迁移并初始化多个应用仓储的具体职责，修正此前引用范围不足的结论。",
+        "label": "Store 初始化流程",
+        "reason": "说明 Store 构造包含打开 SQLite、执行迁移及初始化服务，支持初始化阶段本身可能受到写锁影响的限制判断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
-          "startLine": 43,
-          "endLine": 63
+          "startLine": 45,
+          "endLine": 65
         },
         "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
       },
       {
-        "key": "c4",
-        "label": "捕获调用与结果断言",
-        "reason": "支持主进程初始化、调用 Store.capture、检查 fragment 文本及等待子进程正常退出的流程和结果。",
-        "relation": "calls",
+        "key": "c3",
+        "label": "写锁与主流程时序",
+        "reason": "支持子进程先取得写锁并发出 ready，主进程随后构造 Store、实例化仓库并执行捕获的实际时序。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-          "startLine": 17,
+          "startLine": 13,
+          "endLine": 18
+        },
+        "quote": "  const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", \"import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.argv[1]);db.exec('BEGIN IMMEDIATE');process.stdout.write('ready\\\\n');setTimeout(()=>{db.exec('COMMIT');db.close();},250);\", join(dir, \"omem.sqlite\")], { stdio: [\"ignore\", \"pi"
+      },
+      {
+        "key": "c4",
+        "label": "捕获结果与进程退出断言",
+        "reason": "支持最终片段文本完整且竞争子进程正常退出，但不提供等待发生阶段的观测。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
+          "startLine": 18,
           "endLine": 20
         },
-        "quote": "    store = new Store(dir); new KnowledgeRepository(store);\n    const result = store.capture({ source: \"manual\", externalId: \"waited\", title: \"Concurrent capture\", parts: [{ type: \"text\", text: \"Fixed material remains available.\" }], context: {} });\n    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material re"
+        "quote": "    const result = store.capture({ source: \"manual\", externalId: \"waited\", title: \"Concurrent capture\", parts: [{ type: \"text\", text: \"Fixed material remains available.\" }], context: {} });\n    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material remains available.\");\n    expect(await exited).toBe(0);"
       },
       {
         "key": "c5",
         "label": "并发测试资源清理",
-        "reason": "支持无论测试成功或异常都清理子进程、数据库连接和临时目录的边界说明。",
-        "relation": "explains",
+        "reason": "支持测试在 finally 中处理残留子进程、数据库连接和临时目录。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-          "startLine": 21,
-          "endLine": 21
+          "startLine": 20,
+          "endLine": 22
         },
-        "quote": "  } finally { if (child.exitCode === null) child.kill(); store?.close(); rmSync(dir, { recursive: true, force: true }); }"
+        "quote": "    expect(await exited).toBe(0);\n  } finally { if (child.exitCode === null) child.kill(); store?.close(); rmSync(dir, { recursive: true, force: true }); }\n});"
+      },
+      {
+        "key": "c6",
+        "label": "KnowledgeRepository 的材料读取逻辑",
+        "reason": "所给实现片段展示材料缓存、revision 转换和当前材料查询，结合测试调用可说明目前没有证据证明该实例参与锁等待或 capture。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 8,
+          "endLine": 39
+        },
+        "quote": "const materialCache = new WeakMap<Store, Map<string, KnowledgeMaterial | null>>();\nexport type KnowledgeArticle = KnowledgeArtifact & { revision: string; current: boolean };\n\nexport function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if ("
       }
     ],
     "questions": [
       {
-        "question": "`new KnowledgeRepository(store)` 在此测试中是否承担必须的建表或配置副作用？",
-        "why": "测试仅实例化该对象而未调用其方法，提供的 repository 材料也未包含类定义或构造函数，无法确认它是否是并发捕获成功的必要条件。",
-        "nextStep": "检查 KnowledgeRepository 的类定义、构造函数和相关迁移，并通过移除该实例化的对照测试确认依赖关系。",
+        "question": "Store 依靠哪项 SQLite busy timeout、重试或事务配置使该端到端流程在写锁释放后继续成功？",
+        "why": "现有材料只显示 Store 打开数据库并执行迁移，以及流程最终成功；它没有暴露等待配置，也无法定位等待发生在构造、迁移还是 capture 写入。",
+        "nextStep": "检查数据库迁移、连接初始化和 capture 写事务实现，并增加构造开始、构造完成、capture 开始及锁提交的时序观测。",
         "blocking": false,
         "citationKeys": [
+          "c2",
+          "c3",
           "c4"
         ]
       },
       {
-        "question": "写锁等待的超时和重试策略具体由哪一层配置？",
-        "why": "当前用例只证明约 250 毫秒的一次写锁竞争能够成功完成，没有给出 busy timeout、重试次数或失败阈值的实现依据。",
-        "nextStep": "检查数据库连接和迁移中的 busy timeout 或重试配置，并补充超过阈值及多写者场景的行为测试。",
+        "question": "实例化 KnowledgeRepository 对此并发场景是否具有实际作用？",
+        "why": "测试创建该对象后仍直接调用 Store.capture；提供的仓库片段仅展示材料读取与校验相关逻辑，没有证明实例化会配置锁等待或介入捕获。",
+        "nextStep": "查看 KnowledgeRepository 的完整构造实现，并增加移除该实例化的对照测试；若行为不变，应简化测试或说明其场景化目的。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
+          "c3",
+          "c6"
         ]
       }
     ]
@@ -125,23 +145,23 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:28:36.621Z",
+    "at": "2026-10-01T02:30:22.230Z",
     "trace": {
-      "runId": "41c079f8-8836-488f-b8bd-c08402abf49a",
+      "runId": "49454f3f-b39d-4f4b-a30f-02ea8ce1a066",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "0533bab393a83a252f977d245c590ae2d149aa84074345e87b6a3638d99cc802",
-      "contextHash": "05ecf23fe9d57fc69e013d9078f4606d1d76760ef71234ec1dd1d07e19e525c6",
+      "promptHash": "1890e5d7726bae2274c6ded9d2a0d913a3346dca90d18f6a29e39957870b2d58",
+      "contextHash": "399cbbeb5cb35b55d412dd2dc59ca5163d463c26d50c9799f7910822539294df",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9cf85ac5af821028ac83a2d9021464b66366ce56c8999a831a3dd5fcc2be8238",
+      "fingerprint": "4981a4e119b6f078ed5f102ef1183ff6cea4eff7555a8c5b60351771d9278ead",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -154,10 +174,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4dc-af59-7b03-8275-b70131a0dbb6"
+        "01a0f54c-1ffc-7353-a675-18179cafce0d"
       ],
       "usage": {
-        "used": 26863,
+        "used": 27369,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -166,10 +186,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23049,
-          "utf8Bytes": 27493,
-          "estimatedTokens": 9165,
-          "budgetedTokens": 11457,
+          "chars": 23594,
+          "utf8Bytes": 28394,
+          "estimatedTokens": 9465,
+          "budgetedTokens": 11832,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -178,17 +198,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:28:56.134Z",
+    "at": "2026-10-01T02:30:38.711Z",
     "trace": {
-      "runId": "3db106ed-b7ba-4a4c-8b56-04c7f112857d",
+      "runId": "2b42dff5-e2b2-493f-9826-41b071a52d1f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "d8345c927520abbe6639862d9193e362898b1c15a3d34d33bcd14f585cfe04bd",
-      "contextHash": "4d266c8bc98ffc5d420d8dca8cfcaaa3b3b6a6a506194f978470313f27e63546",
+      "promptHash": "55cd959b176f971f69e611b6ced0af8aed6fdb956cb26f76612022f04d0ca81e",
+      "contextHash": "16f8176659ca8db9d86a5621b669abc98814900d27b7ca423d0f10d428b4f31c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d2e74aa7dfc8f3104880129e20b1a9ef68067f7c0cfff83b8922096a4f8fe35e",
+      "fingerprint": "d6ddb3efe195890589e5f6dd5a94bfcd1a49edca6f586d570e271593114fc079",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -201,10 +221,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4dd-0d89-7023-b941-8a65f278faf5"
+        "01a0f54c-81b9-7412-bd83-c6808f496d11"
       ],
       "usage": {
-        "used": 24982,
+        "used": 25410,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -213,10 +233,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 19707,
-          "utf8Bytes": 22655,
-          "estimatedTokens": 7552,
-          "budgetedTokens": 9440,
+          "chars": 20827,
+          "utf8Bytes": 24285,
+          "estimatedTokens": 8095,
+          "budgetedTokens": 10119,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

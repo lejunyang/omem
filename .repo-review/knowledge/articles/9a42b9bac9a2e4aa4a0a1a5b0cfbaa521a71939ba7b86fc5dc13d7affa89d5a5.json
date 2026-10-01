@@ -2,44 +2,44 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
-    "title": "基础 ACP 协议测试替身",
-    "summary": "一个通过标准输入输出模拟 ACP 会话的确定性进程，用于测试能力发现、模型与推理强度配置、文本和图片提示、超时、取消及权限拒绝。",
+    "title": "ACP 协议测试代理桩",
+    "summary": "该文件是通过标准输入输出模拟 ACP/JSON-RPC 代理的确定性测试替身，覆盖初始化、动态会话配置、文本与图片提示处理、超时、取消及权限请求取消等交互；它不是真实模型，也不能单独证明服务器测试或外部 Agent CLI 的实际覆盖范围。",
     "category": "tests",
     "sections": [
       {
-        "key": "protocol",
-        "title": "协议握手与动态配置",
-        "body": "该文件明确是协议测试替身而非生产模型。它逐行读取 JSON-RPC 消息，在初始化时声明图片提示和会话关闭能力，新建会话时返回固定会话标识及配置选项。[[c1]] 模型可选 alpha/beta；推理强度默认 low，只有切到 beta 后才出现 high，因此可检验调用方是否重新读取并校验动态能力。[[c2]]"
+        "key": "purpose-and-state",
+        "title": "用途与状态模型",
+        "body": "该脚本让服务器无需启动真实模型即可演练协议交互：它逐行读取 JSON，向标准输出写出 JSON-RPC 消息，并明确声明自己是默认不启用的非生产测试替身。进程仅保存模型、推理强度、当前提示 ID 和权限等待标志，因此实现的是单进程全局状态，而非完整的多会话代理。[[c1]]\n\n配置列表随当前模型变化：初始模型为 `alpha`、强度为 `low`，切换到 `beta` 后才出现 `high`。[[c2]] 配置写入时只单独识别 `model`，其他配置 ID 一律更新 effort，也没有值域校验；这是夹具的简化行为，不能外推为真实 ACP 实现的配置合同。[[c3]]"
       },
       {
-        "key": "prompt-flow",
-        "title": "提示处理与可见输出",
-        "body": "收到提示后，替身拼接所有文本块；包含 `TIMEOUT` 时故意不响应。普通路径先发送私有思考块，再发送包含当前模型、强度和图片数量的可见消息，最后以 `end_turn` 完成。[[c3]] 这可用于验证调用方区分思考与答案、传递图片并等待终止响应，但替身本身不验证图片内容或真实模型质量。"
+        "key": "protocol-flow",
+        "title": "核心协议流程",
+        "body": "初始化响应声明协议版本、代理身份、图片提示能力和关闭会话能力；新建会话固定返回 `test-session`，配置更新后重新生成选项。[[c4]] 收到提示后，夹具拼接其中的文本片段：文本包含 `TIMEOUT` 时故意不响应，包含 `ASK_PERMISSION` 时则发出带 `allow_once` 和 `reject_once` 选项的权限请求，并暂停原提示。[[c5]]\n\n普通提示依次发送 `agent_thought_chunk` 和 `agent_message_chunk`，再以 `end_turn` 完成。消息文本在日常消息前缀场景返回固定 JSON，否则返回当前模型、强度及图片片段数量；它没有计算文本片段数量。[[c6]] `session/cancel` 会用已保存的提示 ID 返回 `cancelled`；权限响应分支也只接受 outcome 为 `cancelled`，随后发送 `Permission declined` 并结束原提示。[[c7]]"
       },
       {
-        "key": "permission",
-        "title": "权限与取消边界",
-        "body": "包含 `ASK_PERMISSION` 时，替身主动请求写受保护文件的权限并暂停提示。它只接受调用方返回 `cancelled`；其他结果以退出码 8 暴露错误，拒绝后再输出提示并结束。[[c4]] 会话取消则直接把挂起提示标记为 `cancelled`。[[c5]] 未覆盖允许工具执行、多次并发提示、畸形 JSON 或完整 ACP 错误对象。"
+        "key": "coverage-and-limits",
+        "title": "可验证行为与未覆盖边界",
+        "body": "该夹具提供确定性的配置选项、文本响应、图片计数、事件顺序、正常结束、无响应超时、提示取消和权限请求取消场景。此前“提供配置、文本与图片计数”的结论已被替代：源码只拼接文本用于分支和响应内容，并仅对图片片段计数，因此准确表述应为“配置、文本响应与图片计数”。[[c5]][[c6]]\n\n固定会话 ID 和固定文案便于调用方断言，但当前材料没有展示启动夹具的测试文件或断言，无法确认上述分支是否都被实际执行。分派器也未模拟多会话隔离、并发提示、错误 JSON、未知方法错误、权限允许结果或进程恢复；权限选项虽含允许一次和拒绝一次，结果处理却只接受取消。[[c7]] 因而本文件只能说明测试替身定义了什么，不能证明真实 ACP CLI 的完整合同或端到端覆盖。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "ACP 初始化与会话创建",
-        "reason": "支持该替身通过 JSON-RPC 声明能力并建立固定测试会话。",
-        "relation": "supports",
+        "label": "测试替身声明与进程状态",
+        "reason": "支持该文件属于非生产协议替身，以及其通过少量全局变量维护简化状态的论断。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
           "startLine": 1,
-          "endLine": 43
+          "endLine": 7
         },
-        "quote": "// Protocol test double: not a production model and never enabled by default.\nimport readline from \"node:readline\";\nconst send = (value) => process.stdout.write(JSON.stringify(value) + \"\\n\");\nlet model = \"alpha\";\nlet effort = \"low\";\nlet promptId;\nlet permission = false;\nconst options = () => [\n  {\n    id: \"model\",\n    "
+        "quote": "// Protocol test double: not a production model and never enabled by default.\nimport readline from \"node:readline\";\nconst send = (value) => process.stdout.write(JSON.stringify(value) + \"\\n\");\nlet model = \"alpha\";\nlet effort = \"low\";\nlet promptId;\nlet permission = false;"
       },
       {
         "key": "c2",
-        "label": "模型与推理强度选项",
-        "reason": "支持 beta 模型才提供 high 强度以及配置可动态更新的说明。",
+        "label": "动态模型与推理强度选项",
+        "reason": "支持配置选项随模型变化，以及 beta 模型才提供 high 强度的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -51,129 +51,142 @@
       },
       {
         "key": "c3",
-        "label": "提示响应事件序列",
-        "reason": "支持超时触发、思考块、可见答案和结束原因的核心流程说明。",
+        "label": "配置写入与返回逻辑",
+        "reason": "支持仅 model 被单独识别、其他配置 ID 写入 effort 且没有值域校验的行为判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 42,
+          "endLine": 47
+        },
+        "quote": "  else if (msg.method === \"session/new\")\n    reply({ sessionId: \"test-session\", configOptions: options() });\n  else if (msg.method === \"session/set_config_option\") {\n    if (msg.params.configId === \"model\") model = msg.params.value;\n    else effort = msg.params.value;\n    reply({ configOptions: options() });"
+      },
+      {
+        "key": "c4",
+        "label": "初始化与固定会话响应",
+        "reason": "支持初始化能力、固定会话标识及配置响应的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
+          "startLine": 30,
+          "endLine": 47
+        },
+        "quote": "readline.createInterface({ input: process.stdin }).on(\"line\", (raw) => {\n  const msg = JSON.parse(raw);\n  const reply = (result) => send({ jsonrpc: \"2.0\", id: msg.id, result });\n  if (msg.method === \"initialize\")\n    reply({\n      protocolVersion: 1,\n      agentInfo: { name: \"test-fixture\", version: \"1\" },\n      agentC"
+      },
+      {
+        "key": "c5",
+        "label": "文本拼接、超时与权限请求",
+        "reason": "支持提示文本被拼接用于分支判断、TIMEOUT 无响应及 ASK_PERMISSION 暂停提示的流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
           "startLine": 48,
-          "endLine": 97
+          "endLine": 70
         },
         "quote": "  } else if (msg.method === \"session/prompt\") {\n    promptId = msg.id;\n    const text = msg.params.prompt\n      .filter((p) => p.type === \"text\")\n      .map((p) => p.text)\n      .join(\"\");\n    if (text.includes(\"TIMEOUT\")) return;\n    if (text.includes(\"ASK_PERMISSION\")) {\n      permission = true;\n      send({\n        "
       },
       {
-        "key": "c4",
-        "label": "权限请求与拒绝处理",
-        "reason": "支持权限必须被取消以及拒绝后继续完成提示的边界说明。",
-        "relation": "supports",
+        "key": "c6",
+        "label": "提示更新、文本响应与图片计数",
+        "reason": "支持普通提示的事件顺序、固定或参数化文本响应、仅统计图片片段数量以及最终正常结束的准确表述。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
-          "startLine": 55,
-          "endLine": 70
+          "startLine": 72,
+          "endLine": 97
         },
-        "quote": "    if (text.includes(\"ASK_PERMISSION\")) {\n      permission = true;\n      send({\n        jsonrpc: \"2.0\",\n        id: \"permission-1\",\n        method: \"session/request_permission\",\n        params: {\n          sessionId: \"test-session\",\n          toolCall: { toolCallId: \"call-1\", title: \"Write protected file\" },\n         "
+        "quote": "    send({\n      jsonrpc: \"2.0\",\n      method: \"session/update\",\n      params: {\n        sessionId: \"test-session\",\n        update: {\n          sessionUpdate: \"agent_thought_chunk\",\n          content: { type: \"text\", text: \"PRIVATE_THOUGHT\" },\n        },\n      },\n    });\n    send({\n      jsonrpc: \"2.0\",\n      method: \""
       },
       {
-        "key": "c5",
-        "label": "取消与权限响应分支",
-        "reason": "支持会话取消和权限结果处理的终止行为。",
+        "key": "c7",
+        "label": "提示取消与权限取消结果",
+        "reason": "支持 session/cancel 返回 cancelled，并证明权限响应分支只接受 cancelled、随后发送提示消息并结束原提示。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
           "startLine": 98,
-          "endLine": 114
+          "endLine": 115
         },
         "quote": "  } else if (msg.method === \"session/close\") reply({});\n  else if (msg.method === \"session/cancel\")\n    send({ jsonrpc: \"2.0\", id: promptId, result: { stopReason: \"cancelled\" } });\n  else if (msg.id === \"permission-1\" && permission) {\n    if (msg.result.outcome.outcome !== \"cancelled\") process.exit(8);\n    send({\n     "
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "哪些服务器测试实际启动该夹具，并分别断言了哪些协议分支？",
+        "why": "当前材料只有测试代理实现，没有测试文件、进程启动代码或断言，无法确认动态配置、超时、取消和权限请求取消是否均被实际覆盖。",
+        "nextStep": "检查启动该夹具的测试源码，将断言逐项映射到对应协议分支，并记录未触达场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c7"
+        ]
+      },
+      {
+        "question": "真实 ACP 合同如何区分权限结果中的 cancelled、reject_once 与 allow_once？",
+        "why": "夹具发出的选项包含 reject_once 和 allow_once，但响应处理只接受 cancelled；当前材料不足以证明 cancelled 等同于用户选择拒绝一次。",
+        "nextStep": "对照 ACP 协议定义与客户端适配器，统一权限结果术语，并判断夹具是否缺少允许和明确拒绝分支。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c7"
+        ]
+      },
+      {
+        "question": "真实 ACP 客户端对非法配置和并发会话的预期合同是什么？",
+        "why": "该夹具把 model 之外的配置 ID 都写入 effort，并使用全局单会话状态；这些可能只是测试简化，不能代表真实代理合同。",
+        "nextStep": "检查客户端适配器和协议定义，决定补充行为测试，还是把未知配置与并发会话明确列为夹具不支持的场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/dev-ports.test.ts",
-      "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/fixtures/acp-agent.mjs",
-      "digest": "313ea67e92b023f8a3ca1a3a9e12d60362719e018b559c88f3da0fae95646c18"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
-      "digest": "a80387c3275a18b723d172cb098d35795c43926956a4459dd30b0cbf478f7c32"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
-      "digest": "5c03480e00216e0a3bf25e65281ef68fd3bdc0293273cb9c843452046505d381"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/inputs.test.ts",
-      "digest": "724912caf7ff6c35aff905bbad784c410d9874e72d8223c57c063d2d716ecbec"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/jobs.test.ts",
-      "digest": "78c38d182c888dfb374df4597a667f368867b28528fa2e31bb78d34271f1077d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/dev-ports.ts",
-      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/import.ts",
-      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "e8e660c57da3a30ff706140e6836d699f3cca576a26b372c1d5a23ae722d1a9d"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:39:16.387Z",
+    "at": "2026-10-01T02:29:11.024Z",
     "trace": {
-      "runId": "2c56f7f9-f4c8-4ab6-8685-15ffa93174f3",
-      "roleId": "code-analyst",
+      "runId": "2fefd361-5ba0-4dab-8244-1122a01a8c03",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "86db881e64a38d45f336ef3899e1f69b71ff7cc0ad8df3c97d2a288125c2de46",
-      "contextHash": "5696168557661b789e00e320ddfa62ee6d6cfcdea1613e31e446bc2821147294",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "89b652258a7de0a6f178c1373424c8e4e846b4c3b80372150876145e0201dc86",
+      "contextHash": "0e0d6bb782ea4cc3f23ea8b044be9d169a932906856931bdf348f9a186bbfbd4",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "65e4573078435087a934cdc4e401966a5cc1271f3577ed9c0a9bbef3093dc5af",
+      "fingerprint": "e63fdb3576859a37be02d3d0c11673787e7d995b0bd9ae6d0133ef93488fa3b6",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeac-de8a-7c32-b82e-2c462809564e"
+        "01a0f54b-0cb6-78f0-b261-268f5be989e3"
       ],
       "usage": {
-        "used": 41746,
-        "size": 760000,
+        "used": 26233,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -181,10 +194,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 79974,
-          "utf8Bytes": 81998,
-          "estimatedTokens": 27333,
-          "budgetedTokens": 34167,
+          "chars": 17814,
+          "utf8Bytes": 23282,
+          "estimatedTokens": 7761,
+          "budgetedTokens": 9702,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -193,17 +206,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:39:47.787Z",
+    "at": "2026-10-01T02:29:27.287Z",
     "trace": {
-      "runId": "96fbeffc-ae70-41fd-9c57-89469077d331",
+      "runId": "f7d285da-c237-4ea9-85b6-6733996f3135",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "321e744f2e758a2c88a17a3513e7a818656e340ec73b48ef3536dcd33a2e2108",
-      "contextHash": "b1f6f24246698dd50a922c4db85c855cc4a4b0f81294fa128ac63f7508c058a2",
+      "promptHash": "753cb4e1d754a21ebf9e6a0a02295d419a7f9991d28be481cf199bbfeed259f5",
+      "contextHash": "54c7db2d7b12547197c662bc35bebd58d7cfb043ed8c7c0739b8468e722b361e",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2bc2bbfc80a8eab78d491eecc4488cbbb8dbbb8ad7b82e23a18f3655ed8fd008",
+      "fingerprint": "a0d421486dc8acb923a9ec4fab66bbcac8c6f90950faf6a26aeda764acb499a7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -216,11 +229,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eead-b5f2-76f0-86d5-dc9716988634"
+        "01a0f54b-6b16-7641-8aa9-624b7ed5c5a9"
       ],
       "usage": {
-        "used": 46428,
-        "size": 760000,
+        "used": 23879,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -228,10 +241,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101463,
-          "utf8Bytes": 111059,
-          "estimatedTokens": 37020,
-          "budgetedTokens": 46275,
+          "chars": 14444,
+          "utf8Bytes": 18386,
+          "estimatedTokens": 6129,
+          "budgetedTokens": 7662,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

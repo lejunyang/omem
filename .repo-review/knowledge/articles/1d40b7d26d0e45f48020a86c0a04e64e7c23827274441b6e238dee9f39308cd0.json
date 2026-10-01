@@ -3,126 +3,178 @@
   "document": {
     "key": "module:review",
     "title": "review · 模块理解",
-    "summary": "review 模块把当前仓库接入统一的 Capture→Revision→Fragment→Knowledge 链路，以隔离 SQLite、增量同步、可追溯关系、检索、代码图谱和显式模型生成组成 repo-review 服务。它是仓库输入与 HTTP 编排层，不是独立知识库；过期、缺失或生成失败的结果不能冒充当前事实。",
+    "summary": "review 模块是 omem 在当前仓库上的隔离应用适配层：它把仓库文件捕获为统一、不可变的证据，恢复可追溯知识，构建人工策划的关系链与确定性代码图，并通过本地 HTTP 接口提供检索、浏览、同步和显式模型生成能力。",
     "category": "architecture",
     "sections": [
       {
         "key": "role-and-boundary",
-        "title": "定位与运行边界",
-        "body": "review 复用通用 Store、捕获和检索能力，但将数据库与运行状态放在 `.repo-review/runtime`，不接入个人工作区、Lark 或学习 worker。[[c1]] 进程固定监听回环地址，并在提供 HTTP 服务前依次执行材料同步、知识恢复和代码投影。[[c2]] 请求配置令牌时校验 Bearer token；未配置时限制 loopback Host 与本地 Origin。[[c3]] 因此当前实现适合本机单用户评审，不能据此宣称具备租户隔离或任意远程部署能力。"
+        "title": "模块定位与运行边界",
+        "body": "review 不是独立事实库，而是将 omem 的 Store、捕获、检索和知识能力组合成仓库评审入口；它不装配个人助手、Lark、学习或通知运行时。[[c1]] 评审数据写入独立运行目录，不触碰个人工作区 SQLite；评审专用元数据补充来源删除、重命名和旧身份迁移状态。[[c2]] 当前底层仍是单用户 SQLite，团队级权限执行尚未实现，因此 token、回环 Host 与 Origin 检查属于本地访问保护，不能解释为租户隔离。[[c3]]"
       },
       {
-        "key": "capture-and-retrieval",
-        "title": "材料、知识恢复与检索",
-        "body": "增量扫描只遍历固定根目录和根级白名单文件，并按扩展名与文档位置分类；`.repo-review`、依赖、部分构建输出、私有环境文件及指定 fixture 会被排除。[[c4]] 单文件还须通过真实路径、大小和 UTF-8 校验，随后按正则边界分片并以路径作为稳定来源身份捕获；这不是完整 AST 分片。[[c5]]\n\n知识恢复先捕获材料再导入文章；文章依赖的材料 digest 或子文章 revision 不一致时才标记 stale。[[c6]] 用户回答会更新问题状态，但正文尚未依赖该回答的当前 digest 时仍登记待重核验。[[c7]] 这补足并替代了旧稿仅凭恢复入口概括 stale 判定的表述。搜索只使用当前 revision 候选，默认排除 removed，并在 top-N 前应用类别、可见性和路径权重；语义检索未启用时使用关键词检索。[[c8]][[c9]]"
+        "key": "capture-to-knowledge",
+        "title": "从仓库捕获到知识恢复",
+        "body": "增量同步以 `omem:<相对路径>` 作为稳定 Source 身份，内容变化追加 revision；它记录真实提交与脏状态，覆盖未提交材料，并在 Git 失败时退化为全量扫描，同时逐文件拒绝路径逃逸、非 UTF-8 与超限输入。[[c4]] 两个 HTTP 同步入口都按“材料同步→知识恢复→代码同步”执行并相互互斥，但 `/sync` 返回材料同步结果，[[c5]] `/code/sync` 返回代码同步结果。[[c6]]\n\n恢复阶段重新装入用户补充、仓库材料和文章；回答会把问题标为 answered，但若尚未进入目标文章依赖，仍记录待重核验状态。[[c7]] 派生 revision 被知识仓库排除，不会因总结或意图索引而获得新的原始证据地位。[[c8]]"
       },
       {
-        "key": "relations-and-code",
-        "title": "关系追踪、代码视图与理解结果",
-        "body": "关系由人工 association seed 驱动，词义相似但未登记的命中不会自动成为 confirmed。[[c10]] 同步构造“代码片段→派生意图片段→需求、决策、调研、测试材料”的确定性关系链，解析不到的端点保留为 missing。[[c11]] 读取时还会依据对端是否仍属当前 revision、是否 removed 计算展示状态，默认隐藏 stale 而保留 missing。[[c12]]\n\n代码图谱是已捕获 fragment 上的确定性投影；相同输入复用快照，未重现结构转为 stale。[[c13]] 源码接口读取快照绑定的固定文本，而不是实时工作树。[[c14]] 理解列表和详情能够读取 seed 与已保存结果；生成则是另一条显式入口，未配置模型返回不可用，失败或拒绝结果不会晋升为当前理解。[[c15]][[c16]] 这替代了旧稿用生成接口单独支持“可读取已保存结果”的不充分论证。"
+        "key": "relations-search-and-code",
+        "title": "关系、检索与代码视图",
+        "body": "关系图只接受人工维护的 association seed，未登记的语义相似结果不会成为 confirmed。[[c9]] 同步把代码片段连接到派生意图片段，再连接需求、决策、调研和测试材料；目标无法定位时保留 missing，确定性种子身份保证重复构建幂等。[[c10]] 关系状态存储在 `review_relations` 中；查询会把指向非当前 revision 或已移除来源的关系视为 stale，默认隐藏 stale，同时保留另一端为空的 missing 行。[[c11]]\n\n搜索在 top-N 前筛选当前 head、移除状态和可选类别，再交给统一检索排序；这里实施的是当前性、移除状态与类别过滤，不是用户权限过滤。[[c12]] 代码图则是在已捕获 fragment 上生成的确定性投影；相同输入复用 snapshot，树变化后未重新产生的结构转为 stale。[[c13]] 源码接口读取 snapshot 绑定的固定文本，不回退实时工作树。[[c14]]"
       },
       {
         "key": "progress-and-limits",
-        "title": "已串联流程与可见限制",
-        "body": "应用层分别装配材料与关系查询、检索、同步、代码图谱、固定源码和理解接口；代码同步完成后还可挂载静态站点，关闭时释放检索服务与 Store。[[c17]] 该结论由各流程的就近证据共同支持，而不再把单一关闭片段扩张成全部能力证明。\n\n当前限制包括：符号定位在声明或方法匹配失败后会退化为首个普通词元命中，可能把同名调用或注释当作端点。[[c18]] 关系重建异常只追加 warning，随后仍持久化并返回同步结果；旧稿错误地用符号定位引用支持这一行为，现已改由实际同步收尾逻辑证明。[[c19]] 此外，有效 association 集合为空时，旧 seed 关系不会由失效函数自动转为 stale；汇总又把 stale 等非 confirmed、非 candidate 状态计入 missing。[[c20]][[c21]] 这些语义仍需由接口合同和真实行为测试确认。"
+        "title": "生成能力、已替代结论与限制",
+        "body": "模型能力保持显式启用：仓库配置或明确覆盖不存在时即为无模型，配置只开放显式生成，不会在启动时自动推理。[[c15]] 当前材料捕获侧的代码分片基于正则而非完整 AST，允许前导空白，因此嵌套声明也可能形成边界；这替代了“只按顶层声明切分”的旧结论。[[c16]] association 的符号定位会优先声明或方法行，再回退到普通 token，但这种定位不能证明跨文件调用解析能力。[[c17]]\n\n关系生命周期仍有明确缺口：有效 association 集合为空时，旧种子关系不会被全量标为 stale；[[c18]] 汇总又把 confirmed、candidate 以外的状态统一计入 missing，因此 stale 也落入 missing 桶。[[c19]] 知识发布依次写入运行期 staging 与可提交目录，现有代码未展示跨目录事务或回滚；这只说明可能出现部分写入，不代表该失败已经被行为测试证实。[[c20]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审存储隔离职责",
-        "reason": "支持 review 复用通用能力、使用独立运行目录且不接入个人工作区和业务 worker 的定位。",
+        "label": "评审 HTTP 应用职责",
+        "reason": "支持 review 复用统一能力且不启动个人业务运行时的模块定位。",
         "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 6,
+          "endLine": 14
+        },
+        "quote": "/** review knowledge-base HTTP surface. It reuses MemoryService /\n * KeywordRetrieval against the isolated review Store and registers only the\n * read/browse/sync routes a code-review workflow needs. No AssistantRuntime,\n * Lark host, learning pipeline, notification workers or business token gating:\n * the app binds lo"
+      },
+      {
+        "key": "c2",
+        "label": "评审数据隔离与来源元数据边界",
+        "reason": "支持评审 Store 使用独立数据目录，并补充来源删除、重命名及旧身份迁移元数据；不用于证明关系状态。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/store.ts",
           "startLine": 1,
-          "endLine": 26
+          "endLine": 10
         },
         "quote": "/** repo-review is a code-review-only knowledge base that shares omem's Store,\n * capture and retrieval primitives but points at an isolated data directory. It\n * never touches the personal workspace SQLite/state, runs no Lark/learning workers,\n * and never reads secrets.\n *\n * This module also owns the review-specific"
       },
       {
-        "key": "c2",
-        "label": "评审服务启动顺序",
-        "reason": "支持回环监听以及材料同步、知识恢复和代码投影先于 HTTP 服务启动。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/main.ts",
-          "startLine": 15,
-          "endLine": 27
-        },
-        "quote": "const repoRoot = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst port = Number(process.env.REVIEW_PORT || 5180);\nconst host = \"127.0.0.1\";\n\nconsole.log(\"repo-review: starting incremental sync...\");\nconst store = createReviewStore(repoRoot);\ncreateReviewKnowledgeRepository(store);\ntry {\n  const stats = await runRev"
-      },
-      {
         "key": "c3",
-        "label": "评审请求访问门禁",
-        "reason": "支持令牌校验以及无令牌时的 loopback Host 与本地 Origin 限制。",
-        "relation": "implements",
+        "label": "单用户 SQLite 基础",
+        "reason": "支持当前为单用户存储且团队权限仍待迁移的限制。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 97,
-          "endLine": 123
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 5
         },
-        "quote": "  const reviewToken = process.env.REVIEW_TOKEN || \"\";\n\n  // ---------------------------------------------------------------------\n  // Request gate: token if configured, otherwise loopback + allowed Origin.\n  // ---------------------------------------------------------------------\n  app.addHook(\"onRequest\", async (req,"
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */"
       },
       {
         "key": "c4",
-        "label": "扫描白名单与分类规则",
-        "reason": "支持固定扫描根、根级白名单、目录排除和材料分类规则。",
+        "label": "增量捕获与输入安全",
+        "reason": "支持稳定路径身份、工作树覆盖、Git 失败降级和逐文件安全拒绝规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 94,
-          "endLine": 150
+          "startLine": 1,
+          "endLine": 14
         },
-        "quote": "/** Top-level directories the scanner is allowed to descend into. Keeping this\n * list fixed means node_modules / .git / build output are never walked. */\nconst SCAN_ROOTS = [\"apps\", \"packages\", \"docs\", \"scripts\"];\n\n/** Root-level files explicitly admitted to the read whitelist. */\nconst ROOT_FILES = [\n  \"design.md\",\n "
+        "quote": "/** Incremental scanner that turns the omem repo itself into a code-review\n * knowledge base. Each file is one source whose identity is its repo-relative\n * path (`omem:<path>`), NOT a content hash: editing the same file appends a new\n * revision on the same source, while two files that happen to share bytes stay\n * in"
       },
       {
         "key": "c5",
-        "label": "单文件校验与捕获",
-        "reason": "支持真实路径、大小、UTF-8、正则分片、内容摘要及共享捕获流程。",
-        "relation": "implements",
+        "label": "材料同步 HTTP 入口",
+        "reason": "支持 `/sync` 的互斥检查、三个执行阶段以及返回材料同步结果。",
+        "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 427,
-          "endLine": 503
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 319,
+          "endLine": 336
         },
-        "quote": "function captureOne(\n  store: Store,\n  repoRoot: string,\n  rel: string,\n  category: ReviewCategory,\n  snapshot: Snapshot,\n  recordFailed: (path: string, reason: string) => void,\n): CaptureOutcome {\n  const abs = join(repoRoot, rel);\n  if (isUnsafeLink(abs, repoRoot)) {\n    recordFailed(rel, \"symlink/junction escapes wh"
+        "quote": "  app.get(P + \"/sync/status\", async () => ({\n    ...readSyncStatus(repoRoot),\n    running: syncing,\n    lastResult: lastSync,\n  }));\n\n  app.post(P + \"/sync\", async (_req, reply) => {\n    if (syncing || codeSyncing) return reply.code(409).send({ error: \"Sync already running\" });\n    syncing = true;\n    try {\n      lastS"
       },
       {
         "key": "c6",
-        "label": "文章依赖与过期判定",
-        "reason": "支持文章恢复时按材料 digest 或子文章 revision 判断 stale。",
-        "relation": "implements",
+        "label": "代码同步 HTTP 入口",
+        "reason": "支持 `/code/sync` 执行相同阶段并返回代码同步结果。",
+        "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/knowledge/artifacts.ts",
-          "startLine": 40,
-          "endLine": 52
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 607,
+          "endLine": 618
         },
-        "quote": "  const sources = new Map(repository.materials().map(m => [m.key, m.digest]));\n  for (let pass = 0; pending.length && pass < 100; pass++) {\n    let progress = false;\n    for (let i = pending.length - 1; i >= 0; i--) {\n      const { file, artifact } = pending[i]!;\n      if (artifact.dependencies?.some(d => d.kind === \"a"
+        "quote": "  app.post(CP + \"/sync\", async (_req, reply) => {\n    if (codeSyncing || syncing) return reply.code(409).send({ error: \"Code sync already running\" });\n    codeSyncing = true;\n    try {\n      lastSync = await runReviewSync(store, repoRoot);\n      restoreReviewKnowledge(store, repoRoot);\n      lastCodeSync = await code.s"
       },
       {
         "key": "c7",
-        "label": "知识恢复与回答失效",
-        "reason": "支持材料捕获、文章恢复、问题回答状态更新以及尚未用于正文时的失效登记。",
+        "label": "知识恢复与回答重核验",
+        "reason": "支持恢复材料和文章、更新回答状态并在依赖未纳入时记录失效。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 9,
-          "endLine": 24
+          "endLine": 25
         },
         "quote": "export function restoreReviewKnowledge(store: Store, root: string) {\n  const notes = join(root, \".repo-review/knowledge/user-notes.json\");\n  if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, \"utf8\")) as CaptureInput[]) {\n    if (input.source !== \"manual\" || !input.externalId?.startsWith(\"knowled"
       },
       {
         "key": "c8",
-        "label": "当前证据候选与搜索过滤",
-        "reason": "支持检索限定当前 revision、默认排除 removed，并在检索前应用类别、可见性与路径权重。",
+        "label": "原始材料筛选规则",
+        "reason": "支持派生 revision 不被转换为独立知识材料。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 11,
+          "endLine": 30
+        },
+        "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
+      },
+      {
+        "key": "c9",
+        "label": "人工关联种子原则",
+        "reason": "支持关系由人工维护且未登记的相似命中不会升级为确认关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/associations.ts",
+          "startLine": 1,
+          "endLine": 11
+        },
+        "quote": "/** Human-maintained seed associations between code fragments and the\n * intent / decision / research / test fragments that justify them.\n *\n * This is NOT an automatic semantic matcher: every entry is hand-curated and\n * must cite concrete requirement ids, decision docs, research docs and test\n * cases. The sync step "
+      },
+      {
+        "key": "c10",
+        "label": "评审关系构建流程",
+        "reason": "支持代码到意图及原始依据的边形、missing 处理和幂等构建。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 699,
+          "endLine": 831
+        },
+        "quote": "/** Build review_relations from the human-maintained seed. Idempotent: repeat\n * syncs reuse deterministic seed_identity ids.\n *\n * Edge shape (code → intent → raw material):\n *   code fragment  ──implements──▶  intent fragment (this seed's own index row)\n *   intent fragment ──requires──▶    requirement doc fragment ("
+      },
+      {
+        "key": "c11",
+        "label": "关系存储与有效状态视图",
+        "reason": "支持关系状态由 review_relations 行承载，并说明非当前或已移除目标转为 stale、默认隐藏 stale 及保留 missing 行。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 506,
+          "endLine": 640
+        },
+        "quote": "/** One relation as returned to the API. `direction` is \"outgoing\" when the\n * queried fragment is the source, \"incoming\" when it is the target (and\n * relationType is then the inverse display name). For unresolved (missing)\n * links the other-side fields are null.\n *\n * `status` is the stored row; `relationStatus` is "
+      },
+      {
+        "key": "c12",
+        "label": "检索前材料筛选",
+        "reason": "支持检索前按当前 head、移除状态和类别筛选，并明确该范围不包含用户权限。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -133,62 +185,10 @@
         "quote": "  // The same evidence retrieval as the personal assistant; filters run before top-N.\n  const searchWeight = loadReviewSearchPolicy(repoRoot);\n  const reviewSearch = async (q: string, opts: { category?: string; includeRemoved?: boolean }) => {\n    const eligible = store.db.prepare(`SELECT f.id,r.title,r.version,f.text,"
       },
       {
-        "key": "c9",
-        "label": "关键词与语义检索选择",
-        "reason": "支持未启用配置时使用关键词检索，启用后才启动语义检索及其后台资源。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/factory.ts",
-          "startLine": 9,
-          "endLine": 18
-        },
-        "quote": "export const retrievalConfigSchema = z.object({ enabled: z.boolean().default(false), osdkModel: z.string().regex(/^[a-zA-Z0-9_-]+$/).default(\"memory-zh\") }).strict();\nexport type RetrievalConfig = z.input<typeof retrievalConfigSchema>;\nexport function readRetrievalConfig(path: string) {\n  return retrievalConfigSchema.p"
-      },
-      {
-        "key": "c10",
-        "label": "人工关联种子原则",
-        "reason": "支持关系必须由人工 seed 明确登记，语义相似不会自动成为 confirmed。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/associations.ts",
-          "startLine": 1,
-          "endLine": 7
-        },
-        "quote": "/** Human-maintained seed associations between code fragments and the\n * intent / decision / research / test fragments that justify them.\n *\n * This is NOT an automatic semantic matcher: every entry is hand-curated and\n * must cite concrete requirement ids, decision docs, research docs and test\n * cases. The sync step "
-      },
-      {
-        "key": "c11",
-        "label": "关系链构建流程",
-        "reason": "支持派生意图索引、代码到意图及意图到原始依据的关系形状、确定性身份和 missing 处理。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 682,
-          "endLine": 831
-        },
-        "quote": "/** Virtual source holding one curated intent fragment per association. It is a\n * DERIVED index (curated=true, derived=true), never independent raw evidence:\n * each fragment contains only that seed's intent line + requirement ids, so a\n * code fragment's \"implements\" target is never the whole G01-G20 status table. */"
-      },
-      {
-        "key": "c12",
-        "label": "关系有效展示状态",
-        "reason": "支持依据对端当前性和删除状态计算 stale，以及默认隐藏 stale、保留 missing 的读取规则。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 506,
-          "endLine": 640
-        },
-        "quote": "/** One relation as returned to the API. `direction` is \"outgoing\" when the\n * queried fragment is the source, \"incoming\" when it is the target (and\n * relationType is then the inverse display name). For unresolved (missing)\n * links the other-side fields are null.\n *\n * `status` is the stored row; `relationStatus` is "
-      },
-      {
         "key": "c13",
-        "label": "确定性代码投影",
-        "reason": "支持代码图谱依赖已捕获 fragment、快照幂等及旧结构转 stale。",
-        "relation": "explains",
+        "label": "确定性代码知识投影",
+        "reason": "支持代码图依附已捕获 fragment、相同输入复用快照及未再产生结构转为 stale。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
@@ -200,7 +200,7 @@
       {
         "key": "c14",
         "label": "固定快照源码读取",
-        "reason": "支持源码来自快照绑定的固定文本，并对缺失绑定和越界范围显式报错。",
+        "reason": "支持源码接口使用 snapshot 固定文本且不回退实时工作树。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -212,48 +212,35 @@
       },
       {
         "key": "c15",
-        "label": "代码理解读取接口",
-        "reason": "支持列表和详情接口读取 seed、状态、已保存输出、替代关系、未知项与引用。",
-        "relation": "implements",
+        "label": "显式模型配置入口",
+        "reason": "支持仓库级配置、缺省无模型以及配置不会触发启动推理。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 513,
-          "endLine": 577
+          "key": "omem:apps/server/src/review/model-config.ts",
+          "startLine": 1,
+          "endLine": 17
         },
-        "quote": "  // Read-only Code Understanding surface. Curated seeds are projected onto the\n  // head graph; there is no generation endpoint here (no production model).\n  app.get<{ Querystring: { all?: string } }>(CP + \"/understandings\", async (req) => {\n    const rows = listUnderstandings(store, { all: req.query.all === \"true\" })"
+        "quote": "/** Review uses the checked-in config/review-code-model.json as its actual\n * profile. REVIEW_CODE_MODEL_CONFIG explicitly overrides it; personal profiles\n * and secrets are never consulted. A missing project profile means no model.\n * Configuring a profile enables explicit generation, never inference on boot. */\nimpor"
       },
       {
         "key": "c16",
-        "label": "显式代码理解生成",
-        "reason": "支持无模型时返回不可用，以及生成失败或拒绝不会晋升为当前理解。",
-        "relation": "implements",
+        "label": "正则代码分片边界",
+        "reason": "支持当前捕获侧按允许前导空白的正则切分，而非完整 AST 或严格顶层声明切分。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 579,
-          "endLine": 604
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 210,
+          "endLine": 258
         },
-        "quote": "  // Explicit, opt-in generation entry point. Without a configured port this is\n  // a 503; the raw graph and curated seeds remain usable. Any transport/validation\n  // failure records a failed/rejected row and never promotes it to current.\n  app.post<{ Body: { targetId?: string; timeoutMs?: number } }>(\n    CP + \"/und"
+        "quote": "// ---------------------------------------------------------------------------\n// Fragment splitters. The store later splits each text part on blank lines; we\n// emit one part per detected section so symbol/heading boundaries are stable.\n// ---------------------------------------------------------------------------\n\nco"
       },
       {
         "key": "c17",
-        "label": "代码同步与资源关闭",
-        "reason": "支持代码同步编排、可选静态站点挂载以及关闭时释放检索服务和 Store；其他能力由前文各自引用支持。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 607,
-          "endLine": 627
-        },
-        "quote": "  app.post(CP + \"/sync\", async (_req, reply) => {\n    if (codeSyncing || syncing) return reply.code(409).send({ error: \"Code sync already running\" });\n    codeSyncing = true;\n    try {\n      lastSync = await runReviewSync(store, repoRoot);\n      restoreReviewKnowledge(store, repoRoot);\n      lastCodeSync = await code.s"
-      },
-      {
-        "key": "c18",
-        "label": "符号定位退化规则",
-        "reason": "支持符号定位在声明和方法匹配失败后退化为首个普通词元命中的限制。",
-        "relation": "explains",
+        "label": "关联符号定位回退",
+        "reason": "支持符号定位优先声明或方法行、随后回退到普通 token 的具体行为。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
@@ -263,22 +250,9 @@
         "quote": "/** Earliest head fragment whose text defines `symbol`. Prefers real\n * declaration/method lines over bare token occurrences. */\nfunction matchSymbolFragment(\n  fragments: { id: string; ordinal: number; text: string }[],\n  symbol: string,\n): { id: string; text: string } | null {\n  const esc = escapeRegExp(symbol);\n  co"
       },
       {
-        "key": "c19",
-        "label": "关系构建警告与同步返回",
-        "reason": "支持关系构建异常只追加 warning，随后仍形成、持久化并返回同步结果。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 997,
-          "endLine": 1025
-        },
-        "quote": "  // Rebuild relations from the hand-maintained seed after scanning. Skipped for\n  // ad-hoc `only` captures (those are partial, fixture-style imports).\n  let relations: RelationBuildStats | undefined;\n  if (!options.only) {\n    try {\n      relations = buildReviewRelations(store, repoRoot);\n    } catch (e) {\n      warn"
-      },
-      {
-        "key": "c20",
-        "label": "空种子失效边界",
-        "reason": "支持有效 association 集合为空时旧 seed 关系不会由该函数自动失效。",
+        "key": "c18",
+        "label": "空种子集合失效边界",
+        "reason": "支持有效 association 集合为空时直接返回、不失效旧关系的当前实现。",
         "relation": "tracks",
         "target": {
           "kind": "material",
@@ -289,9 +263,9 @@
         "quote": "/** After a sync, any seed-derived edge whose assoc id is no longer in the seed\n * list is flipped to stale (never silently kept green). */\nexport function invalidateRemovedSeeds(\n  store: Store,\n  validAssocIds: Set<string>,\n): number {\n  ensureReviewRelationsTable(store);\n  if (validAssocIds.size === 0) return 0;\n  c"
       },
       {
-        "key": "c21",
-        "label": "关系状态汇总",
-        "reason": "支持汇总只有 confirmed、candidate、missing 三个桶，其他状态会累计到 missing。",
+        "key": "c19",
+        "label": "关系状态汇总规则",
+        "reason": "支持 confirmed、candidate 以外的状态均计入 missing，因此 stale 也进入该桶。",
         "relation": "tracks",
         "target": {
           "kind": "material",
@@ -300,45 +274,50 @@
           "endLine": 872
         },
         "quote": "/** Counts for GET /associations: total relation rows plus per-status buckets. */\nexport function relationsSummary(store: Store): {\n  total: number;\n  confirmed: number;\n  candidate: number;\n  missing: number;\n  byType: Record<string, number>;\n} {\n  ensureReviewRelationsTable(store);\n  const rows = store.db\n    .prepar"
+      },
+      {
+        "key": "c20",
+        "label": "知识双目录发布顺序",
+        "reason": "支持文章依次写入 staging 和正式目录，并据此说明代码未展示跨目录事务。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/knowledge.ts",
+          "startLine": 35,
+          "endLine": 37
+        },
+        "quote": "export function publishReviewArticle(root: string, article: KnowledgeArticle) {\n  writeKnowledgeArticle(join(root, \".repo-review/runtime/knowledge-staging\"), article);\n  writeKnowledgeArticle(join(root, \".repo-review/knowledge/articles\"), article);"
       }
     ],
     "questions": [
       {
-        "question": "association 从非空变为空时，是否应将全部既有 seed 派生关系标记为 stale？",
-        "why": "当前失效函数在有效 seed 集合为空时直接返回，可能让已删除的全部关联继续保留原状态，影响关系追踪可信度。",
-        "nextStep": "明确空文件表示“没有关联”还是“跳过关系更新”，并增加从非空到空的数据库行为测试。",
+        "question": "空的 associations 文件应表示“权威清空全部关系”，还是表示“本轮没有可用种子输入”？",
+        "why": "当前失效函数在有效种子集合为空时直接返回，旧关系可能继续显示为非 stale；两种解释会产生相反的数据生命周期行为。",
+        "nextStep": "明确空集合语义，并据此增加全量失效或显式的“未加载”状态及行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c18"
+        ]
+      },
+      {
+        "question": "代码图需要达到何种跨文件调用解析精度？",
+        "why": "当前材料能确认捕获侧的正则分片、association 符号回退和确定性代码投影，但不能证明跨文件导入、别名、重导出及动态调用都能准确解析。",
+        "nextStep": "结合代码解析器与真实行为测试，分别定义 confirmed、candidate 和不生成边的条件。",
+        "blocking": false,
+        "citationKeys": [
+          "c13",
+          "c16",
+          "c17"
+        ]
+      },
+      {
+        "question": "知识发布到运行期 staging 和可提交目录时，部分写入失败应采用何种恢复策略？",
+        "why": "发布流程是连续的独立写入，现有材料没有展示跨目录事务、原子替换或失败回滚，两个目录可能暂时不一致。",
+        "nextStep": "确定正式目录或 staging 中哪一方是权威，并补充部分失败、旧版本保留和重试恢复测试。",
         "blocking": false,
         "citationKeys": [
           "c20"
-        ]
-      },
-      {
-        "question": "普通词元退化命中的符号是否允许继承 seed 的 confirmed 状态？",
-        "why": "声明和方法定位失败后会选择首个词元出现处，同名符号、注释或调用点可能被当作代码端点。",
-        "nextStep": "以 AST locator 替换或约束退化路径；至少为同名符号、仅调用和注释命中增加测试，并决定降为 candidate 还是 missing。",
-        "blocking": false,
-        "citationKeys": [
-          "c18",
-          "c11"
-        ]
-      },
-      {
-        "question": "关系汇总是否需要把 stale 与 missing 分开呈现？",
-        "why": "当前汇总将 stale 等所有非 confirmed、非 candidate 状态计入 missing，会混淆“从未解析成功”和“历史上有效但已过期”。",
-        "nextStep": "核对 API 与前端合同；若两类状态需不同处置，增加 stale 计数并补充接口断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c12",
-          "c21"
-        ]
-      },
-      {
-        "question": "关系构建 warning 是否应阻止同步被视为成功？",
-        "why": "材料捕获完成后关系重建可能失败，但同步仍持久化并返回结果；当前证据未说明覆盖报告、API 或调用方如何标记这种部分成功。",
-        "nextStep": "检查同步结果消费方和覆盖记录，明确 partial、failed 或 retry 语义，并用损坏 association 文件做真实行为测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c19"
         ]
       }
     ]
@@ -351,13 +330,18 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/code/sync.ts",
       "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
@@ -371,18 +355,13 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/knowledge.ts",
-      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/artifacts.ts",
       "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     },
     {
       "kind": "material",
@@ -406,13 +385,8 @@
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
     },
     {
       "kind": "material",
@@ -425,9 +399,14 @@
       "digest": "541160c3f34bbe5d6ac194c24b7075a6509d2fd75d4882d82e397b20fbacecdc"
     },
     {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
+    },
+    {
       "kind": "article",
       "key": "omem:apps/server/src/review/app.ts",
-      "digest": "516249287aa4871436a109f8e0c503c3ace978aa28a6aab57a1a475c28b8c2be"
+      "digest": "551d21f47ae92c0d92513c84dc293572311160de1c96e8b3a29b70f3f6540d8d"
     },
     {
       "kind": "article",
@@ -437,7 +416,7 @@
     {
       "kind": "article",
       "key": "omem:apps/server/src/review/knowledge.ts",
-      "digest": "b5288e45e18b9d9681026f41da71f9fb599f8b70608bf16accd7c326c72707db"
+      "digest": "8c3bc62e36b68a9a02683d879c907269d89006bf43bf1062398f2e19140d46ac"
     },
     {
       "kind": "article",
@@ -447,7 +426,7 @@
     {
       "kind": "article",
       "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "7408bf20692c4c7128d92d36c0be294dcea0e187fe78004cdc283f244d935805"
+      "digest": "b637b02e20453eaacd46f0081c5c13761cc74e6d65ac4f7080584d4408de0a6f"
     },
     {
       "kind": "article",
@@ -462,28 +441,28 @@
     {
       "kind": "article",
       "key": "omem:apps/server/src/review/store.ts",
-      "digest": "eddcb298d605caf51bdd89ec7d7979c19e01d703b45ee15232196bc1736a199b"
+      "digest": "60e6039b3419c0a21a5f94c2050a963d754cb010183e0bc423a64bed9722bcde"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "d48823636f60e89383ca90ddcdf345d5cf4619cc4fb6567ca83df05c57f29711"
+      "digest": "9fef2f51abad8776e60d0ca285104b95b519e8b7352f769328791e44451d7f8a"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:47:59.840Z",
+    "at": "2026-10-01T03:46:51.077Z",
     "trace": {
-      "runId": "7627b09c-2fbf-44d3-bb06-4951799ec8d1",
+      "runId": "fd3fa8c5-575a-4c2b-80eb-ddfb3f2c3ef3",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "77f7f53730ad86e1cdf0ca0b85a2899125231c8acf60c53ead41e7ad1266d7f8",
-      "contextHash": "5b5fce8290fcd2026e653386e2aaa6d060e187e57cee16a3bab748705f1f4910",
+      "promptHash": "27d30d818854bf00265e39b9a8ea9c25cd0edc4e4ca3f0385e80b1a2fe1b043d",
+      "contextHash": "1fe450cec2f3cb93309d8cfbf281466cbe1364e8712ed410a2f4d09cafcd81b9",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2be2d2ef15403292f8590eca6ada1775937f55c6d996953884010e2dfaa9cc59",
+      "fingerprint": "4756823fd2a3d3c6a4cea210d085f5a805b414ab5e2f301efbdccd0146371115",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -496,10 +475,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4ee-3b2c-7583-8ea6-753af3b335be"
+        "01a0f591-e432-7323-859c-c33e09b0091b"
       ],
       "usage": {
-        "used": 101334,
+        "used": 98609,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -508,10 +487,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 249062,
-          "utf8Bytes": 287378,
-          "estimatedTokens": 95793,
-          "budgetedTokens": 119742,
+          "chars": 244019,
+          "utf8Bytes": 278945,
+          "estimatedTokens": 92982,
+          "budgetedTokens": 116228,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -520,17 +499,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:48:29.601Z",
+    "at": "2026-10-01T03:47:17.500Z",
     "trace": {
-      "runId": "f641fd33-bf53-48c4-80cc-2b204efbfd5c",
+      "runId": "9cc7dce2-ac01-45fc-953d-9845ff746a15",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "14795507d9d668e5f2ce52f8b499172b9b1fe96f93685a9eb9378498b75be106",
-      "contextHash": "a30b09fdde83a6600d98c15a7d5c2c0580babf6978bdfa518da22f8112b669e5",
+      "promptHash": "5e5e58e1350bcedaddfabcb0cd8ba97adfceb176cc0430a1d85aae0a01321a22",
+      "contextHash": "763b1f63424cb7686f8df58db51826dfe67b467f558960cfbf627266b7abdd53",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4eebba31f28a520ffc0c88d421f8c9d0c1b39ecae15c03ff34616655e101c36f",
+      "fingerprint": "7e12e7f75a1be7cd0fc918513922d4eaa687f09e0ec716851cde2949f2e73844",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -543,10 +522,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4ee-d6b7-7f60-b650-e0074f3cf6bd"
+        "01a0f592-8a6a-7693-a8bd-342563d54584"
       ],
       "usage": {
-        "used": 98551,
+        "used": 96103,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -555,10 +534,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 247562,
-          "utf8Bytes": 284707,
-          "estimatedTokens": 94903,
-          "budgetedTokens": 118629,
+          "chars": 240675,
+          "utf8Bytes": 274054,
+          "estimatedTokens": 91352,
+          "budgetedTokens": 114190,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

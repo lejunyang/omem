@@ -2,62 +2,75 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/codewiki/modules.ts",
-    "title": "Code Wiki 模块图聚合与导航辅助函数",
-    "summary": "modules.ts 是无 Vue/DOM 依赖的纯函数层：将代码文件归入稳定模块、聚合可信 import 边、匹配模块理解、解析下钻目标，并统一生成人读标签与不可操作原因。",
+    "title": "Code Wiki 模块图与导航辅助逻辑",
+    "summary": "该文件提供与 Vue、DOM 解耦的纯函数：按共享路径规则构建稳定的模块依赖图，整理符号提纲，匹配模块理解，解析代码边的下钻目标，并确保界面使用人类可读标签。当前仍有聚合状态优先级、stale 边交互语义和测试覆盖范围等待确认。",
     "category": "implementation",
     "sections": [
       {
-        "key": "graph-aggregation",
-        "title": "模块图聚合",
-        "body": "文件路径先交给 contracts 中的 `moduleForPath` 映射到稳定桶；已删除文件不进入图，符号数按所属文件累计，模块及文件按名称排序以获得确定输出。[[c1]] 模块依赖只采纳 `edgeKind=imports` 且两端文件都已解析的仓库内边，同模块边和外部/缺失目标被丢弃。相同模块对合并计数与 evidence；若后续边为 candidate 或 missing，聚合状态会被该值覆盖，但这里没有定义多种非确认状态的严格优先级。[[c2]]"
+        "key": "module-aggregation",
+        "title": "模块归类与依赖图聚合",
+        "body": "文件先把未删除的仓库文件按共享的 `moduleForPath` 规则归入模块桶，建立文件到模块的映射并统计符号数；桶内文件按路径排序，模块按标识排序，因此相同输入会形成稳定的模块列表。[[c1]] 路径分组并非本文件私有逻辑：web、ui、contracts、agent-runtime、Lark、服务端子目录和 scripts 等映射由 contracts 包统一提供，其他路径归入 `other`。[[c2]]\n\n模块依赖只聚合具备源、目标文件定位的 `imports` 边，并排除模块内部边；相同模块对之间的导入会合并计数和证据。[[c3]] 未解析的外部包导入不会进入模块图，而应保留在文件级视图。聚合时 candidate 或 missing 会直接覆盖已有状态，二者并存时尚无显式严重度规则。"
       },
       {
-        "key": "understanding-and-outline",
-        "title": "大纲与模块理解匹配",
-        "body": "文件大纲只保留函数、类、方法、组件、路由、测试、接口和类型，并按起始行排序；变量等符号不会进入该紧凑视图。[[c3]] 模块理解候选限定为 module 类型、curated-seed 或 model-generated 来源、未 stale，且状态为 seed/generated/verified。匹配会检查模块内每一个文件，并选覆盖路径的最长 targetId 前缀，避免浅层文件遮蔽更具体的目录理解；同前缀选择还受 seed 标记和生成时间排序影响。[[c4]]"
+        "key": "outline-understanding",
+        "title": "代码提纲与模块理解匹配",
+        "body": "`outlineSymbols` 仅保留函数、类、方法、组件、路由、测试、接口和类型等适合构成阅读提纲的符号，并按源码起始行排序；变量、字段等其他节点不会出现在该提纲中。[[c4]]\n\n模块理解先过滤出未过期、来源为策展 seed 或模型生成、且状态为 seed、generated 或 verified 的记录，再检查模块内任一文件是否落在目标目录前缀下，最终选择最长匹配前缀。[[c5]] 这避免浅层文件遮蔽更具体的目录说明。候选会先按 seed 标记和生成时间排序；相同前缀长度不会替换既有结果，因此排序同时决定同长度候选的选择。"
       },
       {
-        "key": "navigation-and-labels",
-        "title": "边下钻与人读展示",
-        "body": "`resolveEdgeTarget` 把同文件目标视为不可解析跳转，而较新的 `edgeDrillTarget` 会把同文件符号解析成 symbol frame，跨文件符号则转成带行号的 file frame；同文件的纯文件边仍不下钻，缺失映射返回 none。[[c5]] 标签函数优先 DTO 的 display 字段，再退回文件名、路径或符号名，绝不以内部 id 充当可见文本；不可操作原因优先使用服务端 reason，否则为 missing/stale 给出人读回退。[[c6]]"
+        "key": "navigation-labels",
+        "title": "边下钻、路径回查与可见标签",
+        "body": "边下钻优先解析目标符号：同文件符号进入具体 symbol/range 帧，跨文件符号进入目标文件并携带行号；只有跨文件的文件目标可直接下钻，纯同文件文件边及外部或缺失目标返回 `none`。[[c6]] 另一个 `resolveEdgeTarget` 会把同文件目标统一标为不可解析，因此两个辅助函数对同文件符号边的语义不同，调用方需按界面场景选择。[[c7]] `fileByPath` 则以精确仓库相对路径把关系记录恢复为代码文件。[[c8]]\n\n可见文本遵循 DTO 优先策略：文件、路径和符号优先使用服务端提供的 display 字段，再退回 basename、原始路径或名称，最终使用“未命名”占位，避免把内部 ID 渲染为标签。[[c9]] 边的原因与禁用状态优先采用 `actionable` 和 `reason`；兼容旧 DTO 时，missing 和 stale 都可推导提示，但只有 missing 会被 `edgeDisabled` 自动禁用。[[c10]]"
       },
       {
-        "key": "boundaries",
-        "title": "能力边界",
-        "body": "本文件只聚合解析器已经提供的结构，不读取源码，也不证明 calls 或 imports 的语义正确性；外部包依赖被有意排除在模块图外。`fileByPath` 还是线性精确匹配，不处理路径别名或 revision 间身份续接。两套 target 解析函数对同文件符号的语义不同，调用方必须选择正确合同，不能互换推断。[[c7]]"
+        "key": "api-context",
+        "title": "输入 DTO 的接口背景",
+        "body": "这些纯函数依赖 review API 的代码文件、符号、边和理解项 DTO；该 API 客户端服务于本机 repo-review 的读取、浏览和同步界面，类型形状与服务端保持一致。[[c11]] 这也解释了本文件为何同时兼容较新的 display/actionable 字段与旧状态回退：辅助逻辑处在服务端数据和 Code Wiki 展示、导航之间。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "稳定模块归类与节点统计",
-        "reason": "支持已删除文件过滤、路径归类、符号计数及确定性排序流程。",
-        "relation": "implements",
+        "label": "模块节点构建与稳定排序",
+        "reason": "支持过滤已删除文件、统计模块文件与符号数量以及稳定排序的流程说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/modules.ts",
-          "startLine": 7,
+          "startLine": 60,
           "endLine": 87
         },
-        "quote": "/** Map a repo-relative path to a stable module bucket id. The required modules\n * (assistant / memory / retrieval / lark / web) all resolve here. */\nimport { moduleForPath } from \"../../../../packages/contracts/src/code-modules\";\nexport { moduleForPath };\n\nexport const MODULE_LABELS: Record<string, string> = {\n  assis"
+        "quote": "export function aggregateGraph(\n  files: CodeFile[],\n  symbols: CodeSymbol[],\n  edges: CodeEdge[],\n): { modules: AggModule[]; edges: AggEdge[] } {\n  const fileModule = new Map<string, string>();\n  const modFiles = new Map<string, CodeFile[]>();\n  const modSymCount = new Map<string, number>();\n  for (const f of files) {"
       },
       {
         "key": "c2",
-        "label": "模块依赖边聚合规则",
-        "reason": "支持只采纳已解析 imports、过滤同模块边并合并证据和状态。",
-        "relation": "implements",
+        "label": "共享仓库路径分组规则",
+        "reason": "支持模块归类由 contracts 包统一提供及各主要路径的映射与兜底行为。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/code-modules.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/** Shared repository-path grouping for the Wiki index and Vue reader. */\nexport function moduleForPath(path: string): string {\n  if (path.startsWith(\"apps/web/\")) return \"web\";\n  if (path.startsWith(\"packages/ui/\")) return \"ui\";\n  if (path.startsWith(\"packages/contracts/\")) return \"contracts\";\n  if (path.startsWith(\"p"
+      },
+      {
+        "key": "c3",
+        "label": "跨模块导入边聚合",
+        "reason": "支持仅聚合可定位的跨模块 imports 边、合并计数与证据，以及状态覆盖行为的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/modules.ts",
           "startLine": 89,
-          "endLine": 115
+          "endLine": 114
         },
         "quote": "  // Aggregate import edges between modules.\n  const edgeMap = new Map<string, AggEdge>();\n  for (const e of edges) {\n    if (e.edgeKind !== \"imports\") continue;\n    if (!e.fromFileId || !e.toFileId) continue;\n    const from = fileModule.get(e.fromFileId);\n    const to = fileModule.get(e.toFileId);\n    if (!from || !to"
       },
       {
-        "key": "c3",
-        "label": "紧凑符号大纲",
-        "reason": "支持符号种类筛选和按源码起始行排序的说明。",
+        "key": "c4",
+        "label": "符号提纲筛选与排序",
+        "reason": "支持提纲允许的符号类别及按源码起始行排序的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -68,66 +81,135 @@
         "quote": "/** Group a file's symbols into a compact outline. */\nexport function outlineSymbols(symbols: CodeSymbol[]): CodeSymbol[] {\n  return symbols\n    .filter((s) => [\"function\", \"class\", \"method\", \"component\", \"route\", \"test\", \"interface\", \"type\"].includes(s.kind))\n    .sort((a, b) => (a.rangeStart?.line ?? 0) - (b.rangeSta"
       },
       {
-        "key": "c4",
-        "label": "模块理解最长前缀匹配",
-        "reason": "支持候选过滤、检查所有文件及最长目录前缀优先策略。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/modules.ts",
-          "startLine": 149,
-          "endLine": 182
-        },
-        "quote": "/** Pick the curated module-architect understanding that best describes a module\n * bucket. The curated `targetId` is a repo directory (e.g.\n * `apps/server/src/memory`); we match it by longest prefix against the module's\n * files, preferring the current (non-stale, non-rejected) row. Pure. */\nexport function matchModu"
-      },
-      {
         "key": "c5",
-        "label": "关系目标与下钻目标解析",
-        "reason": "支持两种解析函数对同文件符号、跨文件和缺失目标的不同处理。",
+        "label": "模块理解选择算法",
+        "reason": "支持理解项的资格过滤、全部文件前缀匹配、最长前缀选择和同长度候选决胜方式。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/modules.ts",
-          "startLine": 124,
-          "endLine": 147
+          "startLine": 149,
+          "endLine": 181
         },
-        "quote": "export interface ResolvedTarget {\n  fileId?: string;\n  line?: number;\n  symbolName?: string;\n  resolvable: boolean;\n}\n\nexport function resolveEdgeTarget(\n  edge: CodeEdge,\n  fileMap: Map<string, CodeFile>,\n  symbolMap: Map<string, CodeSymbol>,\n  selfFileId: string,\n): ResolvedTarget {\n  if (edge.toFileId && fileMap.has"
+        "quote": "/** Pick the curated module-architect understanding that best describes a module\n * bucket. The curated `targetId` is a repo directory (e.g.\n * `apps/server/src/memory`); we match it by longest prefix against the module's\n * files, preferring the current (non-stale, non-rejected) row. Pure. */\nexport function matchModu"
       },
       {
         "key": "c6",
-        "label": "DTO 优先的人读标签",
-        "reason": "支持显示字段回退策略以及 missing/stale 的不可操作原因。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/modules.ts",
-          "startLine": 222,
-          "endLine": 251
-        },
-        "quote": "// ---- Human label resolution (DTO-first; never leaks an internal id) --------\n// Prefer the server DTO display fields; fall back to a readable raw field\n// (basename / name / path). If nothing readable exists, say \"未命名{type}\" —\n// the internal id must NEVER appear as a DOM label.\n\nexport function fileLabel(f: Partial"
-      },
-      {
-        "key": "c7",
-        "label": "文件路径精确查找与下钻合同",
-        "reason": "支持路径查找仅为精确线性匹配，并界定下钻只基于已有 CodeEdge 数据。",
+        "label": "边的下钻目标解析",
+        "reason": "支持符号优先、同文件符号下钻、跨文件导航以及不可导航目标边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/modules.ts",
           "startLine": 184,
-          "endLine": 219
+          "endLine": 213
         },
         "quote": "/** Resolve an edge to a drill target. Same-file symbol edges DO drill (to a\n * symbol/range frame) rather than being swallowed; only truly external /\n * unresolved targets are non-navigable. */\nexport type EdgeDrill =\n  | { kind: \"file\"; fileId: string; line?: number }\n  | { kind: \"symbol\"; fileId: string; symbolId: s"
+      },
+      {
+        "key": "c7",
+        "label": "基础边目标解析",
+        "reason": "支持 resolveEdgeTarget 将同文件目标标为不可解析，并说明其与 edgeDrillTarget 的语义差异。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 131,
+          "endLine": 146
+        },
+        "quote": "export function resolveEdgeTarget(\n  edge: CodeEdge,\n  fileMap: Map<string, CodeFile>,\n  symbolMap: Map<string, CodeSymbol>,\n  selfFileId: string,\n): ResolvedTarget {\n  if (edge.toFileId && fileMap.has(edge.toFileId)) {\n    const f = fileMap.get(edge.toFileId)!;\n    return { fileId: f.fileId, resolvable: f.fileId !== s"
+      },
+      {
+        "key": "c8",
+        "label": "按仓库路径回查文件",
+        "reason": "支持通过精确仓库相对路径把关系目标恢复为代码文件的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 215,
+          "endLine": 219
+        },
+        "quote": "/** Find a code file by its repo-relative path (used to turn a fragment\n * relation's filePath back into a code-file trail frame). */\nexport function fileByPath(fileMap: Map<string, CodeFile>, path: string): CodeFile | undefined {\n  for (const f of fileMap.values()) if (f.path === path) return f;\n  return undefined;"
+      },
+      {
+        "key": "c9",
+        "label": "人类可读标签回退",
+        "reason": "支持 display 字段优先、可读原始字段回退和禁止内部 ID 成为界面标签的合同。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 222,
+          "endLine": 236
+        },
+        "quote": "// ---- Human label resolution (DTO-first; never leaks an internal id) --------\n// Prefer the server DTO display fields; fall back to a readable raw field\n// (basename / name / path). If nothing readable exists, say \"未命名{type}\" —\n// the internal id must NEVER appear as a DOM label.\n\nexport function fileLabel(f: Partial"
+      },
+      {
+        "key": "c10",
+        "label": "边原因与禁用判定",
+        "reason": "支持新旧 DTO 的兼容逻辑，以及 stale 有原因提示但不会自动禁用的边界判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 239,
+          "endLine": 250
+        },
+        "quote": "export function edgeReason(e: Partial<Pick<CodeEdge, \"actionable\" | \"reason\" | \"status\">>): string | null {\n  if (e.actionable === false) return e.reason || \"不可解析\";\n  if (e.actionable == null) {\n    if (e.status === \"missing\") return \"仓库内未解析\";\n    if (e.status === \"stale\") return \"已过期\";\n  }\n  return null;\n}\n\nexport fun"
+      },
+      {
+        "key": "c11",
+        "label": "仓库评审 API 客户端边界",
+        "reason": "说明输入 DTO 所属客户端面向本机 repo-review 读取、浏览与同步，并与服务端类型保持一致。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "/** Client for the repo-review knowledge-base API (/api/review/*). This surface is\n * read/browse/sync only, bound to loopback, and has no token gating, so unlike the\n * personal workspace api.ts it sends no Authorization header. Shapes mirror\n * apps/server/src/review/app.ts exactly. */"
       }
     ],
     "questions": [
       {
-        "question": "模块聚合边同时出现 candidate 与 missing 时，最终状态应采用何种稳定优先级？",
-        "why": "当前实现按输入顺序让后遇到的 candidate 或 missing 覆盖已有状态；若上游 edges 顺序变化，同一模块对的显示状态可能变化。",
-        "nextStep": "在产品合同中明确 confirmed、candidate、missing 的严重度或混合状态规则，并增加不同输入顺序的纯函数测试。",
+        "question": "聚合后的边状态同时包含 candidate 与 missing 时，是否需要固定优先级？",
+        "why": "当前逻辑每遇到 candidate 或 missing 都覆盖已有状态，最终结果会受输入边顺序影响；材料没有给出两种状态的严重度约定。",
+        "nextStep": "确认产品期望的严重度顺序，并为 candidate 与 missing 的两种输入排列增加行为测试；若 missing 应更强，则改用显式状态排序。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c3"
+        ]
+      },
+      {
+        "question": "stale 边是否应像 missing 边一样禁止交互？",
+        "why": "旧 DTO 兼容逻辑会为 stale 返回“已过期”原因，但禁用判断只把 missing 视为禁用；现有材料不足以判断这是允许访问旧目标的设计，还是遗漏。",
+        "nextStep": "核对调用界面与产品约定，并为 stale、missing、actionable=false 三种情况补充交互断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
+        ]
+      },
+      {
+        "question": "这些纯函数的关键分支目前有哪些自动化测试覆盖？",
+        "why": "提供的材料不包含测试文件，无法确认模块排序、同长度理解匹配、同文件与跨文件下钻、旧 DTO 回退及标签不泄露内部 ID 等行为是否已有断言。",
+        "nextStep": "检查相关测试文件，并针对输入顺序、缺失映射、同文件与跨文件目标以及旧 DTO 回退分支补证。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c5",
+          "c6",
+          "c9"
+        ]
+      },
+      {
+        "question": "聚合后的边状态同时包含 candidate 与 missing 时，产品是否要求固定优先级？",
+        "why": "c3 显示两种状态都会覆盖已有聚合状态，最终值取决于输入顺序；材料未定义严重度顺序。",
+        "nextStep": "确认状态优先级约定，并为 candidate 与 missing 的不同输入顺序增加行为测试；若要求固定优先级，改用显式排序。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
         ]
       }
     ]
@@ -135,86 +217,51 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/store.test.ts",
-      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/App.vue",
-      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/AssetImage.vue",
-      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/codewiki/modules.ts",
       "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:42:03.262Z",
+    "at": "2026-10-01T02:42:45.063Z",
     "trace": {
-      "runId": "0b34c2ee-cc37-4898-a3b0-3c45af7c716f",
-      "roleId": "code-analyst",
+      "runId": "52af80ca-d041-4220-9e97-e669eed60305",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "5472c0246700819a084eb9b5112f3cab41c7cd887a9a982e2163c85d71ff23a4",
-      "contextHash": "364388f74400b7566dbf7577b1f1fc17afb50415dc518f330deef424de88b084",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "ff8e519fe10d5c7ca993dec87ca1d971c5f24533a0fa57f339dd5a9edeff6ca6",
+      "contextHash": "f53b90d15a8720c7c7030734c367fa6f143e73ca359af578453e58789cecf9ec",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "de351e4b4d6b07adf806b89a89dc2a996aa6e2c2872ca383c8afc6bd4dbabb66",
+      "fingerprint": "07a406c2b2dfa6502fbd8fbac0827d94748fa0a2844fd898a80a0766c3be61c9",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaf-64e6-7921-9472-d7eeeec6806b"
+        "01a0f557-671a-7ba2-9996-28e2e66b7311"
       ],
       "usage": {
-        "used": 44865,
-        "size": 760000,
+        "used": 30453,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -222,10 +269,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 86049,
-          "utf8Bytes": 90813,
-          "estimatedTokens": 30271,
-          "budgetedTokens": 37839,
+          "chars": 30298,
+          "utf8Bytes": 35958,
+          "estimatedTokens": 11986,
+          "budgetedTokens": 14983,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -234,17 +281,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:42:31.660Z",
+    "at": "2026-10-01T02:43:04.362Z",
     "trace": {
-      "runId": "83fb26b3-7530-407f-b33d-06482620964c",
+      "runId": "0b93eb92-d4b9-466e-8b00-547aa50d29bb",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c1cfa58e2b965d8f14c421193cebb2b5e4a68464425b0990985624d18d0699d0",
-      "contextHash": "9d45216bf97d33f7fe9fa2870144d574d1888a04ddb2ae3f01d72e9fcd052af4",
+      "promptHash": "f10f4a5d385ee4741e145a124eccb5339b31d29be3f2714d313154b137038778",
+      "contextHash": "cdce2618646f89797979c51fdba5e821ee2d0e345449ac7c39174880c63c7940",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "92cab9424d0317d2bcf680db489b543cfde8b9301ed5f2774ee909f246058b26",
+      "fingerprint": "81229deb33ee847dd4842089fef1750c53093a5dab4a89212039ef40e1c742b7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -257,11 +304,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-421a-7423-91c2-657cce7e86df"
+        "01a0f557-d8ad-7d13-ad34-cbccefc7ab31"
       ],
       "usage": {
-        "used": 48976,
-        "size": 760000,
+        "used": 28221,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -269,10 +316,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107223,
-          "utf8Bytes": 120168,
-          "estimatedTokens": 40056,
-          "budgetedTokens": 50070,
+          "chars": 27623,
+          "utf8Bytes": 32105,
+          "estimatedTokens": 10702,
+          "budgetedTokens": 13378,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,32 +2,63 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
-    "title": "评审片段与代码关系追踪帧",
-    "summary": "展示不可变的需求、决策或调研片段，并沿正向和反向关系在原始材料与代码文件之间继续下探。",
+    "title": "FragmentFrame：评审片段阅读与关系下钻",
+    "summary": "该 Vue 组件在 Code Wiki 的证据 trail 中展示不可变评审片段，将关系分为反向代码影响和正向依据，并把可定位目标转换为文件或片段下钻事件。详情与关系采用不同降级策略；已有详情重新加载失败时，错误横幅可能与旧正文同时出现。",
     "category": "implementation",
     "sections": [
       {
-        "key": "loading",
-        "title": "原文与关系装载",
-        "body": "片段帧并行读取片段详情和关系列表；关系读取失败时降级为空，但片段本身失败会显示错误和重试入口。fragmentId 变化会重新装载。[[c1]] 成功后以经过处理的 Markdown 展示仓库文档原文，并显式标注为不可变原始材料，使它与后续派生关系保持来源区分。[[c2]]"
+        "key": "purpose",
+        "title": "界面职责与可见表达",
+        "body": "该组件是评审片段的阅读帧：正文区域展示所属修订标题、标注“仓库文档原文 · 不可变”，并通过共享 `OmMarkdown` 渲染片段内容，因此它承担证据阅读而非编辑职责。[[c1]] 关系枚举不会直接作为可见文本输出，而会转换成“实现”“决策依据”“测试覆盖”等人类标签；`confirmed`、`candidate` 与其他状态分别映射为成功、警告和中性色调。[[c2]]"
       },
       {
-        "key": "relation-groups",
-        "title": "双向关系视角",
-        "body": "关系被分为三组：`implemented_by`、`required_by`、`tested_for` 用于从规则反查实现或测试；`implements`、`requires`、`decided_by`、`researched_by`、`tested_by` 用于继续追踪正向依据；其余关系单独保留。状态色区分 confirmed 与 candidate，显示文本使用“被实现”“决策依据”等人类标签。[[c3]]"
+        "key": "loading-flow",
+        "title": "加载流程与错误降级",
+        "body": "组件在挂载及 `fragmentId` 变化时重新加载，详情和关系请求并行执行。关系请求失败会被转换为空数组，详情仍可成功显示；详情请求失败则设置错误信息，但不会清空此前的 `detail`。[[c3]] 因而旧稿中“加载中—错误—正文互斥”和“详情失败进入整体错误态”的结论已被替代：首次加载失败时通常只有错误横幅，而已有详情的重新加载失败后，错误横幅可与旧正文同时出现。模板中的错误提示是独立 `v-if`，正文仅受 `loading` 与 `detail` 分支控制。[[c7]]"
       },
       {
-        "key": "drill",
-        "title": "从材料返回代码",
-        "body": "打开关系时优先检查另一端的代码路径，并用当前代码图解析到文件帧；无法解析为文件时，若另一端有 fragmentId，再进入另一个片段。[[c4]] 界面展示反向实现/测试和正向依据的数量、摘要及证据说明，但关系面板本身没有根据 missing 状态或无目标情况显示禁用样式，点击无可解析目标时会静默停留。[[c5]]"
+        "key": "relations-and-navigation",
+        "title": "关系分类与下钻流程",
+        "body": "关系分为三类：`implemented_by`、`required_by`、`tested_for` 用于从规则反查代码；`implements`、`decided_by`、`researched_by`、`tested_by`、`requires` 用于继续指向依据或依赖；剩余类型进入 `otherRelations`。[[c4]] 点击关系时，组件优先用另一端的文件路径和调用方提供的 `fileMap` 查找代码文件，成功后发出文件下钻；否则在存在片段目标时发出片段下钻，无可用目标则不触发事件。[[c5]] `fileByPath` 的来源应以本组件的导入语句为准；旧稿用模块文件开头证明其来源并不充分。现有材料未提供该函数实现，仍无法确认路径规范化和大小写行为。[[c6]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "展示边界与待验证风险",
+        "body": "模板目前只消费反向和正向关系列表，已计算的 `otherRelations` 没有渲染入口；反向关系有专门空态，正向关系没有对应空态，摘要分别截断至 200 和 160 个字符。[[c7]] 此外，加载逻辑没有请求代次或取消机制，快速切换片段时可能发生旧响应覆盖新状态；关系请求异常又会被表现为空关系，与真实“尚未登记”难以区分。[[c8]] 这些行为是否符合产品预期，以及外围是否已有串行保护，不能仅凭当前材料确定。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "片段和关系列表读取",
-        "reason": "支持并行请求、关系降级、片段错误处理及参数变化重载。",
-        "relation": "calls",
+        "label": "修订标题与不可变原文展示",
+        "reason": "支持组件展示修订标题、不可变原文状态和 Markdown 正文的界面职责。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 93,
+          "endLine": 103
+        },
+        "quote": "<template>\n  <div class=\"fragment-frame\">\n    <div v-if=\"loadError\" class=\"error-banner\" role=\"alert\">\n      片段加载失败：{{ loadError }}\n      <OmButton variant=\"ghost\" @click=\"load\">重试</OmButton>\n    </div>\n    <div v-if=\"loading\" class=\"muted\">正在加载片段…</div>\n    <template v-else-if=\"detail\">\n      <small class=\"muted\">{{ d"
+      },
+      {
+        "key": "c2",
+        "label": "关系标签与状态色调",
+        "reason": "支持关系类型转换为人类标签以及不同关系状态的色调映射。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 63,
+          "endLine": 76
+        },
+        "quote": "function tone(r: ReviewRelation) {\n  if (r.relationStatus === \"confirmed\") return \"success\" as const;\n  if (r.relationStatus === \"candidate\") return \"warning\" as const;\n  return \"neutral\" as const;\n}\n\n/** Human label for a relation type; never shows the raw enum. */\nconst REL_WORD: Record<string, string> = {\n  implemen"
+      },
+      {
+        "key": "c3",
+        "label": "片段与关系并行加载",
+        "reason": "支持加载触发时机、并行请求、关系失败降级以及详情失败不清空旧数据的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
@@ -37,36 +68,23 @@
         "quote": "const detail = ref<ReviewFragmentDetail | null>(null);\nconst relations = ref<ReviewRelation[]>([]);\nconst loading = ref(true);\nconst loadError = ref(\"\");\n\nconst REVERSE = new Set([\"implemented_by\", \"required_by\", \"tested_for\"]);\nconst POSITIVE = new Set([\"implements\", \"decided_by\", \"researched_by\", \"tested_by\", \"requir"
       },
       {
-        "key": "c2",
-        "label": "不可变片段原文",
-        "reason": "证明详情标题、原始材料状态和 Markdown 正文的展示方式。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
-          "startLine": 93,
-          "endLine": 104
-        },
-        "quote": "<template>\n  <div class=\"fragment-frame\">\n    <div v-if=\"loadError\" class=\"error-banner\" role=\"alert\">\n      片段加载失败：{{ loadError }}\n      <OmButton variant=\"ghost\" @click=\"load\">重试</OmButton>\n    </div>\n    <div v-if=\"loading\" class=\"muted\">正在加载片段…</div>\n    <template v-else-if=\"detail\">\n      <small class=\"muted\">{{ d"
-      },
-      {
-        "key": "c3",
-        "label": "关系分组与人类标签",
-        "reason": "支持正反向关系集合、状态色和可读关系名称。",
-        "relation": "implements",
+        "key": "c4",
+        "label": "关系方向分类规则",
+        "reason": "支持反向、正向和其他关系的分类边界。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
           "startLine": 31,
-          "endLine": 76
+          "endLine": 60
         },
         "quote": "const REVERSE = new Set([\"implemented_by\", \"required_by\", \"tested_for\"]);\nconst POSITIVE = new Set([\"implements\", \"decided_by\", \"researched_by\", \"tested_by\", \"requires\"]);\n\nasync function load() {\n  loading.value = true;\n  loadError.value = \"\";\n  try {\n    const [d, r] = await Promise.all([\n      reviewFragment(props.f"
       },
       {
-        "key": "c4",
-        "label": "关系目标下探",
-        "reason": "说明代码路径优先解析为文件，随后才尝试片段导航。",
-        "relation": "calls",
+        "key": "c5",
+        "label": "关联目标下钻决策",
+        "reason": "支持优先下钻代码文件、随后退回片段目标以及无目标时不发事件的流程。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
@@ -76,28 +94,74 @@
         "quote": "function openRelation(r: ReviewRelation) {\n  // If the other side is a code file (implemented_by points at a runtime/test\n  // file), drill into the code file frame — not just another doc fragment.\n  if (r.other?.filePath && props.fileMap) {\n    const cf = fileByPath(props.fileMap, r.other.filePath);\n    if (cf) {\n    "
       },
       {
-        "key": "c5",
-        "label": "正反关系界面",
-        "reason": "支持关系数量、摘要和证据展示，也反映面板未声明禁用条件。",
-        "relation": "implements",
+        "key": "c6",
+        "label": "文件路径查询函数导入",
+        "reason": "直接证明 fileByPath 从同目录 modules 模块导入，修正旧稿引用范围不足的问题。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
-          "startLine": 105,
-          "endLine": 135
+          "startLine": 14,
+          "endLine": 17
         },
-        "quote": "      <h4>这条决策影响了哪些代码 <small>{{ reverseRelations().length }}</small></h4>\n      <p class=\"muted small\">反向追踪：哪些实现/测试由这条规则驱动。</p>\n      <OmEmpty v-if=\"!reverseRelations().length\" title=\"尚未登记到任何代码\"\n        description=\"可在 docs/repo-review/associations.json 补充实现边。\" />\n      <OmPanel\n        v-for=\"r in reverseRelations()\"\n"
+        "quote": "} from \"../review-api\";\nimport { fileByPath } from \"./modules\";\n\nconst props = defineProps<{ fragmentId: string; fileMap?: Map<string, CodeFile> }>();"
+      },
+      {
+        "key": "c7",
+        "label": "错误横幅与关系列表模板",
+        "reason": "支持错误横幅可与正文共存、模板仅渲染两类关系以及空态和摘要截断边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 93,
+          "endLine": 136
+        },
+        "quote": "<template>\n  <div class=\"fragment-frame\">\n    <div v-if=\"loadError\" class=\"error-banner\" role=\"alert\">\n      片段加载失败：{{ loadError }}\n      <OmButton variant=\"ghost\" @click=\"load\">重试</OmButton>\n    </div>\n    <div v-if=\"loading\" class=\"muted\">正在加载片段…</div>\n    <template v-else-if=\"detail\">\n      <small class=\"muted\">{{ d"
+      },
+      {
+        "key": "c8",
+        "label": "异步重载与未渲染关系",
+        "reason": "支持快速切换可能产生竞态、关系失败退化为空数组以及其他关系仅被计算未被模板消费的风险分析。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
+          "startLine": 34,
+          "endLine": 60
+        },
+        "quote": "async function load() {\n  loading.value = true;\n  loadError.value = \"\";\n  try {\n    const [d, r] = await Promise.all([\n      reviewFragment(props.fragmentId),\n      reviewFragmentRelations(props.fragmentId).catch(() => ({ fragmentId: props.fragmentId, relations: [] as ReviewRelation[] })),\n    ]);\n    detail.value = d;"
       }
     ],
     "questions": [
       {
-        "question": "missing、无 filePath 且无 fragmentId 的关系是否应显示为不可操作，并给出人类可读原因？",
-        "why": "当前所有关系面板都绑定点击处理，但找不到代码文件或片段目标时不会导航，也没有禁用或失败反馈。",
-        "nextStep": "明确 ReviewRelation 的 actionable/reason 合同，并为缺失代码路径、候选关系和无目标关系增加组件测试。",
+        "question": "`otherRelations()` 收集的未知或反向派生关系是否应在界面增加“其他关联”分组？",
+        "why": "脚本明确计算未分类关系，但模板只消费反向和正向关系；当前材料不能判断这是刻意过滤还是遗漏。",
+        "nextStep": "核对关系 DTO 的完整枚举和产品交互预期，并补充包含未知关系类型的组件测试。",
         "blocking": false,
         "citationKeys": [
           "c4",
-          "c5"
+          "c7"
+        ]
+      },
+      {
+        "question": "快速切换 `fragmentId` 时，是否需要用请求序号或取消机制阻止旧请求覆盖新片段？",
+        "why": "属性变化会启动新的异步加载，现有实现没有响应代次或取消保护，乱序响应可能写回旧片段状态。",
+        "nextStep": "检查父级是否保证串行切换；若无保证，增加请求代次校验，并用延迟可控的请求测试覆盖乱序响应。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c8"
+        ]
+      },
+      {
+        "question": "关系请求失败是否应与“没有登记关系”区分展示？",
+        "why": "关系异常被转换为空数组，模板随后可能显示“尚未登记到任何代码”，会把服务故障呈现为数据为空。",
+        "nextStep": "确认降级体验要求；如需可观测性，保留独立关系错误状态并提供局部重试，同时维持正文可读。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c7"
         ]
       }
     ]
@@ -105,49 +169,34 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/api.ts",
-      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-      "digest": "6bf08120dbba105389b257dbc604f8501fd6b0717ba2bd055340e8fd165e2565"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
       "digest": "085ceb881ef2506da6bc0d4c20fd17b636a650f2276dd2c6d4f5f9dfb1d360f4"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-      "digest": "89b59531ff437aff27e5ef45f8f284f311ce13d221e97ef219867ed21f7106bb"
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
-      "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:35:26.443Z",
+    "at": "2026-10-01T02:41:55.458Z",
     "trace": {
-      "runId": "7d8ddacf-8b88-427b-a425-fa3e56e89b3d",
+      "runId": "4945eb18-f624-49dc-8b26-30ff8b5fdf8d",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "2ce5899ddec7788628b169f037327499ab734a35f50be94ff8f40c9f568c04b0",
-      "contextHash": "ea170d15b74a4fd8fa824b4d002a080fab08ed8d5a2877e81f5ee3046c80c258",
+      "promptHash": "6cd5b11c1fec1f0530e912315c81a641c8e0d9395f0827f8fa5b840608a30225",
+      "contextHash": "fc017ebd419bb3b5a78c8f811bc3bebc8f9ae4b8c5ff11029d3a0027b96dcbe3",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "145bdfb491e0e96ad78d102a85fe3c19552b78948f21e7b2ac8d80ceb5cf0ae5",
+      "fingerprint": "5e83b5d165a064952a7edd724b300e91d77bff244de3b6b93d552a829ff17078",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -160,11 +209,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef17-3ae8-7113-977a-fb8df1959a68"
+        "01a0f556-ad4d-7662-9102-3d0addab6599"
       ],
       "usage": {
-        "used": 45185,
-        "size": 760000,
+        "used": 29676,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -172,10 +221,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 84425,
-          "utf8Bytes": 91595,
-          "estimatedTokens": 30532,
-          "budgetedTokens": 38165,
+          "chars": 27652,
+          "utf8Bytes": 34351,
+          "estimatedTokens": 11451,
+          "budgetedTokens": 14314,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -184,17 +233,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:36:02.593Z",
+    "at": "2026-10-01T02:42:26.702Z",
     "trace": {
-      "runId": "d1dbf1a4-1475-4c42-82f9-8681e18c0f5c",
+      "runId": "5f7d2c57-4329-461a-8579-3b5aa07605b1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "3da33f93d09651a60749fd579291f7855732e376c208d49d50ee5c3c1db1656a",
-      "contextHash": "9d07f5e4c10901efeb4f385376f898e2cf8dae276023b0af188599f6e7919133",
+      "promptHash": "d6e36de5afa6129fae25c686d7a2d47a13c29dca52df10a13386146b4eb1a3f0",
+      "contextHash": "048bde8ef6a938576d005272b0e2e8a97e8bb1321b79c23c0aa02e87626f9d5a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "06f4e4d4fafe377a82433e1e52a6ea8d8f3b8ba024ac1486e3d390b07c27e71a",
+      "fingerprint": "11a82eea6c26e2c31f501fb7fd98ad509f01597f4a885416cf03d39c0bd0216b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -207,11 +256,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef18-1101-7683-9b7d-a8754a1b5472"
+        "01a0f557-1729-7fa3-b4bf-238126ac3624"
       ],
       "usage": {
-        "used": 46959,
-        "size": 760000,
+        "used": 27434,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -219,10 +268,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 96241,
-          "utf8Bytes": 107800,
-          "estimatedTokens": 35934,
-          "budgetedTokens": 44918,
+          "chars": 23372,
+          "utf8Bytes": 27600,
+          "estimatedTokens": 9200,
+          "budgetedTokens": 11500,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

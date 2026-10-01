@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/agent-runtime/requests.ts",
-    "title": "运行时请求记录仓储",
-    "summary": "保存 Agent 在后台运行中提出但被拒绝的权限或补充输入请求，提供幂等冲突检测、状态解析入口和按作业查询能力。",
+    "title": "运行时交互请求仓储",
+    "summary": "该文件用 SQLite 持久化 Agent 运行期间的权限请求或信息征询，提供拒绝记录、请求决议和按任务查询，并以稳定摘要约束重复请求的一致性。当前材料仍无法确定并发决议、动作后续消费以及工作区隔离的完整语义。",
     "category": "implementation",
     "sections": [
       {
-        "key": "model",
-        "title": "记录模型与行转换",
-        "body": "运行时请求保留工作区、作业、会话、轮次、提供方请求标识、请求类型、选项、状态和时间字段。数据库行在读出时转换为领域对象，其中选项从 JSON 恢复；状态类型允许 pending、denied、expired 与 resolved，但该类型声明本身不代表本文件会创建全部状态。[[c1]]"
+        "key": "purpose_and_model",
+        "title": "职责与数据模型",
+        "body": "该仓储将权限请求与信息征询统一映射为 `RuntimeRequest`，保存工作区、任务、会话、轮次、供应方请求号、选项、状态和时间信息。状态类型包含 `pending`、`denied`、`expired`、`resolved`；`fromRow` 可读取并转换数据库中的任一声明状态。[[c1]] 先前“本文件只转换 denied 与 resolved”的结论已被替代：准确边界是本文件的写操作只明确产生 `denied` 与 `resolved`。"
       },
       {
-        "key": "denied",
-        "title": "拒绝记录与幂等性",
-        "body": "`recordDenied` 对请求类型、选项和轮次计算稳定摘要，以会话 ID 与提供方请求 ID 对既有记录进行查询。插入使用 `INSERT OR IGNORE` 且状态直接写为 denied；若相同幂等键对应的载荷摘要不同，则抛出冲突。默认过期时间为创建后五分钟，但记录在创建时已同时写入解决时间。[[c2]]"
+        "key": "denial_and_idempotency",
+        "title": "拒绝记录与幂等约束",
+        "body": "`recordDenied` 根据请求种类、选项和轮次生成载荷摘要，以随机 UUID 写入一条已拒绝记录，并把创建与解决时间设为当前时刻；未传 `ttlMs` 时，`expires_at` 默认为当前时间五分钟后。[[c2]] 这只是默认过期时间，材料没有清理或删除逻辑，因此替代此前“默认保留期五分钟”的表述。插入采用 `INSERT OR IGNORE`，随后按会话号与供应方请求号读取记录；摘要不同则抛出幂等冲突。摘要会递归规范化数据、排序对象键、过滤 `undefined`，再计算 SHA-256，避免对象键顺序造成误判。[[c3]]"
       },
       {
-        "key": "resolve",
-        "title": "解决与查询边界",
-        "body": "`resolve` 只接受当前仍为 pending 且未过期的请求，将其条件更新为 resolved，并返回调用方选择的 approve 或 reject；动作本身没有写入所示字段。`list` 可返回全部请求或按作业过滤，并按创建时间排序。[[c3]] 网关目前调用的是 `recordDenied`，因此后台权限和补充输入请求不会在这里进入可等待批准的 pending 流程。[[c4]]"
+        "key": "resolution_query_boundaries",
+        "title": "请求决议与查询边界",
+        "body": "`resolve` 先按内部 ID 取出请求，仅允许仍为 `pending` 且未过期的记录继续；随后以 `state='pending'` 为条件更新为 `resolved`，并返回传入的 `approve` 或 `reject` 动作。[[c4]] 因而此前“人工决议”已改为更准确的“请求决议”：本材料未证明调用者一定是人工。动作没有落入该表，更新结果也未检查影响行数，并发唯一成功及后续执行语义仍待调用链证据确认。`list` 仅支持全表或按 `job_id` 查询，并按创建时间排序，未显示工作区过滤或分页。[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "运行时请求数据结构",
-        "reason": "支持请求身份、来源、类型、状态、选项和时间字段及数据库行转换。",
+        "label": "运行时请求类型与行映射",
+        "reason": "支持请求字段、完整状态集合，以及 fromRow 可把数据库状态转换为声明状态的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,54 +38,83 @@
       },
       {
         "key": "c2",
-        "label": "拒绝请求的幂等保存",
-        "reason": "支持载荷摘要、拒绝状态、默认有效期、查询幂等键及摘要冲突检查。",
+        "label": "拒绝记录与幂等校验",
+        "reason": "支持拒绝记录的写入状态、默认过期时间、读取既有记录及摘要冲突检查流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/requests.ts",
-          "startLine": 37,
-          "endLine": 86
+          "startLine": 40,
+          "endLine": 85
         },
-        "quote": "export class RuntimeRequestRepository {\n  constructor(private readonly db: DatabaseSync) {}\n\n  recordDenied(input: {\n    workspaceId: string;\n    jobId?: string | null;\n    sessionId: string;\n    turnId?: string | null;\n    providerRequestId: string;\n    kind: \"permission\" | \"elicitation\";\n    options: unknown;\n    now"
+        "quote": "  recordDenied(input: {\n    workspaceId: string;\n    jobId?: string | null;\n    sessionId: string;\n    turnId?: string | null;\n    providerRequestId: string;\n    kind: \"permission\" | \"elicitation\";\n    options: unknown;\n    now?: Date;\n    ttlMs?: number;\n  }) {\n    const now = input.now ?? new Date();\n    const payloa"
       },
       {
         "key": "c3",
-        "label": "请求解决与列表查询",
-        "reason": "支持 pending 和过期条件、resolved 更新，以及全部或按作业查询。",
+        "label": "稳定摘要实现",
+        "reason": "支持摘要对数组和对象递归规范化、过滤未定义值、排序键并使用 SHA-256 的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+      },
+      {
+        "key": "c4",
+        "label": "请求决议状态转换",
+        "reason": "支持决议前的存在性、状态和过期校验，以及条件更新与动作返回的行为边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agent-runtime/requests.ts",
           "startLine": 88,
-          "endLine": 116
+          "endLine": 102
         },
         "quote": "  resolve(input: { id: string; action: \"approve\" | \"reject\"; now?: Date }) {\n    const row = this.db\n      .prepare(\"SELECT * FROM runtime_requests WHERE id=?\")\n      .get(input.id) as Row | undefined;\n    if (!row) throw Error(\"RUNTIME_REQUEST_NOT_FOUND\");\n    const request = fromRow(row);\n    const now = input.now ??"
       },
       {
-        "key": "c4",
-        "label": "网关记录拒绝事件",
-        "reason": "说明当前角色网关收到运行时请求时调用拒绝记录，而非创建等待处理的请求。",
-        "relation": "calls",
+        "key": "c5",
+        "label": "运行时请求列表查询",
+        "reason": "支持列表仅按可选任务 ID 过滤、按创建时间排序且未体现工作区过滤和分页的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-          "startLine": 330,
-          "endLine": 341
+          "key": "omem:apps/server/src/agent-runtime/requests.ts",
+          "startLine": 105,
+          "endLine": 115
         },
-        "quote": "            {\n              mcpServers: allowed.map((name) => supplied.get(name)!),\n              expectedSkills: nativeSkills.map((skill) => skill.canonical_name),\n              maxOutputChars: limits.maxOutputTokens * 4,\n              contextBudget: { estimatedInputTokens: estimate.budgetedTokens, maxOutputTokens: li"
+        "quote": "  list(jobId?: string) {\n    const rows = jobId\n      ? this.db\n          .prepare(\n            \"SELECT * FROM runtime_requests WHERE job_id=? ORDER BY created_at\",\n          )\n          .all(jobId)\n      : this.db\n          .prepare(\"SELECT * FROM runtime_requests ORDER BY created_at\")\n          .all();\n    return (ro"
       }
     ],
     "questions": [
       {
-        "question": "由哪个已提供或计划中的入口创建 `pending` 运行时请求，并把用户决定安全地送回仍在运行的 Agent 会话？",
-        "why": "本文件的 `resolve` 只处理 pending，但所给材料只展示 `recordDenied` 创建 denied 记录；当前证据无法确认 pending 的生产者、会话暂停机制及动作回传路径。",
-        "nextStep": "检查调用 `resolve` 的 API/UI 与数据库写入点；若尚未实现，应明确当前仓储仅用于拒绝审计，或另行设计带租约和过期处理的待批准流程。",
+        "question": "并发调用 `resolve` 时，是否要求只有一个调用方获得成功结果？",
+        "why": "更新语句虽然以 `state='pending'` 为条件，但实现没有检查受影响行数；当前材料无法证明事务或调用层保证唯一成功。",
+        "nextStep": "检查调用点、事务边界和并发测试，并考虑依据更新影响行数判定决议是否成功。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3",
           "c4"
+        ]
+      },
+      {
+        "question": "批准或拒绝动作应由哪个模块持久化并驱动后续运行？",
+        "why": "当前表只写入统一的 `resolved` 状态，动作仅出现在返回值中，本文件不能证明其审计、恢复和后续消费方式。",
+        "nextStep": "沿 `resolve` 调用链核对动作的持久化、审计、恢复及后续执行行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "请求列表是否需要强制工作区隔离和分页？",
+        "why": "现有查询只支持全表或按 `job_id` 过滤，材料未显示 `workspace_id` 条件、分页或上层作用域约束。",
+        "nextStep": "检查路由层鉴权和作用域绑定，再依据实际部署边界决定是否下沉工作区过滤及分页。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
         ]
       }
     ]
@@ -93,69 +122,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/budget.ts",
-      "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/bundles.ts",
-      "digest": "b93029997420f720cc8da396e4ed9c476fff66ca90447a9a35ffc144de84cbd7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
-      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/job-handler.ts",
-      "digest": "e04ec19837c91b28dbbf28cbcda5bb6f6989dbc2b58c5c24ddaca4d006ea9a05"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/agent-runtime/requests.ts",
       "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/storage/digest.ts",
       "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/worker.ts",
-      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:02:26.775Z",
+    "at": "2026-10-01T02:03:49.349Z",
     "trace": {
-      "runId": "4812f6e1-0853-45df-a7e1-4ca9eaf3a0ce",
+      "runId": "7de9a3e1-e6cf-406a-aa76-742708847b05",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "dc540cbd2b3ef1b8a6209c85f21c3ff6a9ab0d7d01bce6faeed7590a95a64c59",
-      "contextHash": "ee41cbe0e14f218db1947aadc31e6340082c22afa742a56843529fae0550ceb9",
+      "promptHash": "1f8a18278ec97fd9e168bd3907988139b9dce793912522608a9f6c12b1cf9d13",
+      "contextHash": "10ac4ac06c30b5d47d2fd6883293d76709eaee50c28309e796c5d0716780a73e",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bfd7fed1519419aace7823cebffd320690e5852e8c2297ac6f93e0d4888ced56",
+      "fingerprint": "1bd2fe30b26072f353ded16327a287216cd3c28ee30954ab92c80feb31ddb234",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -168,11 +157,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec2-272a-7701-a62e-29f4c8af74e2"
+        "01a0f533-e144-7060-b519-8c54e3820820"
       ],
       "usage": {
-        "used": 43518,
-        "size": 760000,
+        "used": 25678,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -180,10 +169,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 87261,
-          "utf8Bytes": 92577,
-          "estimatedTokens": 30859,
-          "budgetedTokens": 38574,
+          "chars": 17804,
+          "utf8Bytes": 22776,
+          "estimatedTokens": 7592,
+          "budgetedTokens": 9490,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -192,17 +181,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:02:34.315Z",
+    "at": "2026-10-01T02:04:03.391Z",
     "trace": {
-      "runId": "124e5740-63b9-49a8-a7a5-23e8326b9035",
+      "runId": "65474240-23c5-4c50-9941-cfa1743b0482",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "48b5790258f9277cdb1421061c5e255b40f6cf201d7ffd1a48bd8f7b5841ece5",
-      "contextHash": "4a3fc51f70cd2c5eec6aff34f42aef421230244d18150c3bcffd3e93902f6afe",
+      "promptHash": "c246b05243bb862fc3756196ae152b7f5354fba36674682ff2c15a83bd2c6cb6",
+      "contextHash": "08083393ecfc6e5c8e174a95ed80ce71df7ada884935693d8b82243ee38519b2",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "61858947d8660017c799604abcbec2d39c4e0e6a64a753fbe7da9f92cef7c5ad",
+      "fingerprint": "e4ce3e34f87c4bce7703602557a30b45e095df4ad9cb94bd0246322415aa1294",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -215,11 +204,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec2-ed60-7f11-a0b0-d5e3524acdee"
+        "01a0f534-33e4-7043-b989-7d84c519d13e"
       ],
       "usage": {
-        "used": 41814,
-        "size": 760000,
+        "used": 24017,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -227,10 +216,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 96849,
-          "utf8Bytes": 105895,
-          "estimatedTokens": 35299,
-          "budgetedTokens": 44124,
+          "chars": 14298,
+          "utf8Bytes": 17464,
+          "estimatedTokens": 5822,
+          "budgetedTokens": 7278,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

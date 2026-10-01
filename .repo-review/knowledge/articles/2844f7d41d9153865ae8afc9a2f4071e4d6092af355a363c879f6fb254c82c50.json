@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/config.ts",
-    "title": "服务端配置加载与运行环境派生",
-    "summary": "使用严格 schema 校验用户配置，并从环境变量派生数据目录、Agent 工作目录、鉴权令牌和监听地址；显式配置文件不存在时直接使用示例配置。",
+    "title": "服务端配置加载与运行时参数组装",
+    "summary": "该模块以 Zod 校验本地配置文件，补齐通知、学习、飞书与捕获目录等默认值，再叠加数据目录、鉴权令牌、监听地址和端口等环境变量，形成服务端统一运行时配置。它复用共享 profile 合同与检索配置 schema，并阻止重复 profile 标识。",
     "category": "configuration",
     "sections": [
       {
-        "key": "schema",
-        "title": "配置合同与默认值",
-        "body": "配置以 Zod 严格对象定义，至少需要一个 Agent profile，并覆盖通知、检索、捕获根目录、学习任务和飞书轮询。外部通知支持即时、时间窗或定时模式；当地时间和 IANA 时区在加载阶段校验。学习与飞书集成默认关闭，体现这些外部能力需要显式启用。[[c1]]"
+        "key": "purpose-and-schema",
+        "title": "配置边界与默认策略",
+        "body": "模块集中定义服务端配置：至少需要一个 agent profile；通知支持即时或摘要模式，外部通知可按窗口或本地时间调度；学习和飞书默认关闭，轮询周期受上下限约束。时区会通过 `Intl.DateTimeFormat` 验证 IANA 名称，定时时刻限定为 `HH:mm`。根对象、`notifications.external`、`learning` 和 `lark` 明确使用严格 schema，会拒绝未声明字段；但 `notifications` 对象本身未调用 `.strict()`，其额外字段按 Zod 默认行为被剥离，这是严格边界中的例外。[[c1]]\n\n检索配置复用 retrieval factory 导出的严格 schema，统一约束启用标志、模型名格式及默认模型；未提供 retrieval 时保持可选。[[c2]]"
       },
       {
-        "key": "loading",
-        "title": "文件选择与运行时字段",
-        "body": "加载器只先确定一个候选文件：若设置 `OMEM_CONFIG` 就使用该路径，否则使用工作目录的 `omem.local.json`；该候选不存在时直接读取示例配置。它不会在“显式路径不存在”后再尝试本地配置，这一表述取代此前的三级顺序说法。JSON 通过 schema 后还会检查 profile ID 唯一性。[[c2]]\n\n数据目录、Agent 工作目录、token、host 和 port 从环境派生，数据目录会以私有权限创建。[[c3]] 数据库打开、迁移、资源目录创建及数据库文件权限收紧由 `Store` 构造过程负责，而不是本配置模块。[[c4]]"
+        "key": "load-flow",
+        "title": "加载流程与运行时补充",
+        "body": "`loadConfig` 优先解析 `OMEM_CONFIG` 指向的文件；若该路径不存在，则回退到示例配置。内容先经过 JSON 解析与 schema 校验，再检查 profile ID 是否重复，重复时立即失败，避免后续按 ID 选择代理配置产生歧义。[[c3]]\n\n校验完成后，函数解析 `OMEM_DATA_DIR` 或默认 `.omem`，递归创建权限模式为 `0700` 的目录，并派生 agent 工作目录。令牌、监听地址和端口来自环境变量，默认监听回环地址与 4317 端口。[[c4]]"
       },
       {
-        "key": "boundaries",
-        "title": "边界条件",
-        "body": "schema 使用 `.strict()`，未知顶层键以及学习、飞书子项中的未知键会被拒绝。`captureRoots` 本身只是字符串数组；实际导入时，connector 会解析目标与根目录的真实路径并检查包含关系。[[c5]]\n\n端口目前仅经 `Number(...)` 转换，材料中没有显示有限数、整数或 1–65535 范围校验，因此配置成功并不等同于监听端口一定有效。[[c3]]"
+        "key": "relations-and-limits",
+        "title": "模块关系与边界条件",
+        "body": "profiles 由共享 contracts 中的 `profileSchema` 校验，表明其结构权威位于跨包合同层；但当前获准材料只覆盖 contracts 文件前 70 行，未展示该 schema 的定义，因而无法确认 profile 的完整字段、默认值及约束。[[c5]] 检索配置关闭或缺失时创建关键词检索，启用后才加载中文 embedding、启动语义检索，并提供关闭生命周期。[[c6]]\n\n`OMEM_PORT` 目前只经过 `Number` 转换，没有整数、有限值或合法端口范围校验；非法字符串可能得到 `NaN`。此外，文件存在但 JSON 或 schema 无效时不会回退示例配置，读取、解析和目录创建错误也会直接抛出。[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "服务配置 schema",
-        "reason": "支持通知策略、时区校验、捕获根目录以及学习和飞书默认关闭等配置合同。",
+        "label": "服务端配置结构与严格边界",
+        "reason": "支持通知、时区、学习和飞书的约束及默认值，并准确区分显式 strict 的对象与未启用 strict 的 notifications 层。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -38,8 +38,21 @@
       },
       {
         "key": "c2",
-        "label": "配置文件选择与 profile 去重",
-        "reason": "支持单一候选配置文件、候选不存在时使用示例配置及 profile ID 唯一性检查。",
+        "label": "检索配置定义",
+        "reason": "说明检索配置的字段、默认模型、模型名格式及严格对象边界来自检索模块。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/factory.ts",
+          "startLine": 9,
+          "endLine": 12
+        },
+        "quote": "export const retrievalConfigSchema = z.object({ enabled: z.boolean().default(false), osdkModel: z.string().regex(/^[a-zA-Z0-9_-]+$/).default(\"memory-zh\") }).strict();\nexport type RetrievalConfig = z.input<typeof retrievalConfigSchema>;\nexport function readRetrievalConfig(path: string) {\n  return retrievalConfigSchema.p"
+      },
+      {
+        "key": "c3",
+        "label": "配置文件解析与 profile 去重",
+        "reason": "支持配置文件选择、JSON 与 schema 解析，以及重复 profile ID 被拒绝的加载流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -50,10 +63,10 @@
         "quote": "export function loadConfig() {\n  const file = resolve(process.env.OMEM_CONFIG || \"omem.local.json\");\n  const config = schema.parse(\n    JSON.parse(\n      readFileSync(\n        existsSync(file) ? file : resolve(\"config/omem.example.json\"),\n        \"utf8\",\n      ),\n    ),\n  );\n  if (new Set(config.profiles.map((p) => p.i"
       },
       {
-        "key": "c3",
-        "label": "运行环境字段派生",
-        "reason": "支持数据目录、工作目录、token、host 和 port 的具体派生方式。",
-        "relation": "supports",
+        "key": "c4",
+        "label": "运行时环境参数组装",
+        "reason": "支持数据目录创建、工作目录派生，以及令牌、主机和端口的环境变量来源与默认值。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/config.ts",
@@ -63,40 +76,63 @@
         "quote": "  const dataDir = resolve(process.env.OMEM_DATA_DIR || \".omem\");\n  mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n  return {\n    ...config,\n    dataDir,\n    agentCwd: join(dataDir, \"agent-workspace\"),\n    token: process.env.OMEM_TOKEN,\n    host: process.env.OMEM_HOST || \"127.0.0.1\",\n    port: Number(process.env."
       },
       {
-        "key": "c4",
-        "label": "存储初始化与权限",
-        "reason": "支持数据库创建、迁移、资产目录建立及数据库文件权限收紧由 Store 完成。",
+        "key": "c5",
+        "label": "共享 profile 合同依赖",
+        "reason": "证明服务端配置导入共享 profileSchema，同时界定当前材料无法核验其具体定义。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 43,
-          "endLine": 66
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 1,
+          "endLine": 5
         },
-        "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
+        "quote": "import { retrievalConfigSchema } from \"./retrieval/factory.js\";\nimport { readFileSync, existsSync, mkdirSync } from \"node:fs\";\nimport { resolve, join } from \"node:path\";\nimport { z } from \"zod\";\nimport { profileSchema } from \"../../../packages/contracts/src/index.js\";"
       },
       {
-        "key": "c5",
-        "label": "文件导入根目录约束",
-        "reason": "说明 captureRoots 的安全语义在 connector 中通过真实路径解析实施。",
-        "relation": "depends_on",
+        "key": "c6",
+        "label": "检索实例创建分支",
+        "reason": "解释 retrieval 配置如何决定关键词检索或语义检索，并支持语义检索的启动与关闭生命周期。",
+        "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/connectors.ts",
-          "startLine": 10,
-          "endLine": 17
+          "key": "omem:apps/server/src/retrieval/factory.ts",
+          "startLine": 14,
+          "endLine": 18
         },
-        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
+        "quote": "export function createRetrieval(db: DatabaseSync, config?: RetrievalConfig, cwd = process.cwd()): { retrieval: RetrievalPort; close: () => Promise<void> } {\n  if (!config?.enabled) return { retrieval: new KeywordRetrieval(db), close: async () => {} };\n  const retrieval = new SemanticRetrieval(db, () => loadChineseEmbed"
+      },
+      {
+        "key": "c7",
+        "label": "加载函数失败边界",
+        "reason": "支持端口仅经过 Number 转换，并说明文件回退、解析和目录创建所在的执行边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 95,
+          "endLine": 116
+        },
+        "quote": "export function loadConfig() {\n  const file = resolve(process.env.OMEM_CONFIG || \"omem.local.json\");\n  const config = schema.parse(\n    JSON.parse(\n      readFileSync(\n        existsSync(file) ? file : resolve(\"config/omem.example.json\"),\n        \"utf8\",\n      ),\n    ),\n  );\n  if (new Set(config.profiles.map((p) => p.i"
       }
     ],
     "questions": [
       {
-        "question": "服务监听端口是否应在配置层增加有限整数范围校验？",
-        "why": "当前实现只对环境变量执行 Number 转换，材料中未显示对 NaN、非整数、负数或超出 TCP 端口范围的拒绝。",
-        "nextStep": "检查服务启动入口是否另有端口验证；若没有，在配置派生处增加 1–65535 的有限整数约束和相应测试。",
+        "question": "是否应为 OMEM_PORT 增加整数、有限值及合法端口范围校验？",
+        "why": "当前实现只调用 Number；非空非法字符串会产生 NaN，负数、非整数或超过 65535 的值也不会在配置加载阶段被拒绝。",
+        "nextStep": "确认端口的预期范围与失败策略，并在配置加载层增加显式校验及对应测试。",
         "blocking": false,
         "citationKeys": [
-          "c3"
+          "c4",
+          "c7"
+        ]
+      },
+      {
+        "question": "profileSchema 的具体字段约束和默认值是什么？",
+        "why": "目标文件依赖共享合同校验 profiles，但提供的 contracts 材料仅覆盖第 1 至 70 行，未包含 profileSchema 定义，无法据此确认 profile 的完整结构。",
+        "nextStep": "补充 profileSchema 定义所在行及相关测试材料，再核对 profiles 的完整约束以及 Config 类型关系。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
         ]
       }
     ]
@@ -104,69 +140,34 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-store.ts",
-      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/config.ts",
       "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/conversation/router.ts",
-      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/hook-forward.ts",
-      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/inputs/aggregator.ts",
-      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/budget.ts",
-      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
-      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:18:10.914Z",
+    "at": "2026-10-01T02:09:35.423Z",
     "trace": {
-      "runId": "79591dfe-8707-4bd6-8fb4-eebb58e057a6",
+      "runId": "226ec57d-65fa-4e52-8c91-3a90b0150c86",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "875ac26190509463c54f4b2e0581016cc369433c884d6117bc1835fa1a3c8d26",
-      "contextHash": "8e0c650ddf3cd7fae414f132c5bf910aca8a55f6481d48b6992440ff5b6695fe",
+      "promptHash": "9a36439131d6a1fbac7ba79639bdfecd640c9c4530864771e3cfbe87ed06d816",
+      "contextHash": "82a8a5d806db36376836027369b10720586a64fb2b9b83c809691122b8d21e9b",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "33355e1bfdcd99b5139274bc7eb55ff817545542005658274cb8524c5f6bb3b4",
+      "fingerprint": "1cfdb3f02eb4dcb2265a80f75d91d18537a9df6d37e42b7ff23e4feb1f05c3a3",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -179,10 +180,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bf-f43e-7882-a2ec-1336c55fdb9d"
+        "01a0f539-2b64-7a92-bffb-69da647861c8"
       ],
       "usage": {
-        "used": 66109,
+        "used": 28763,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -191,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 135446,
-          "utf8Bytes": 148147,
-          "estimatedTokens": 49383,
-          "budgetedTokens": 61729,
+          "chars": 22695,
+          "utf8Bytes": 27161,
+          "estimatedTokens": 9054,
+          "budgetedTokens": 11318,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -203,17 +204,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:18:45.635Z",
+    "at": "2026-10-01T02:09:51.255Z",
     "trace": {
-      "runId": "8a3bf8bf-f5da-4269-9719-59d1091ea116",
+      "runId": "4d922817-f825-436a-8d1e-09d927cf902f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4f298715ec3ddc7d6763375d2944cc78d7d5d37698adc3aa347f2499fb0f48d0",
-      "contextHash": "22e886304543001e276c798ee0cab0e1a2f5a8f54dd563d9ea527021385efb71",
+      "promptHash": "c1b8161b3f6c4516f46b6efba947f2b03e0d973dde3d5416f38f87f1ca92fcb3",
+      "contextHash": "4a8e4a3c7311f28056f70f1856d4af3dca5866de11d04f1c889bf86e8267ce82",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bba85daba6a36c5b14ac91e16f1786d2afd9a56ff73a3547c5eea59eaef3746d",
+      "fingerprint": "9df3b4a4088b89d462fd678d91bf0a8292807591141e8f2f8fb61e28755fadf0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -226,10 +227,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c0-d34f-73a1-a93e-ee3c8a573b32"
+        "01a0f539-7d28-7983-804e-c2494c7ca375"
       ],
       "usage": {
-        "used": 60459,
+        "used": 25138,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -238,10 +239,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 131016,
-          "utf8Bytes": 140643,
-          "estimatedTokens": 46881,
-          "budgetedTokens": 58602,
+          "chars": 19656,
+          "utf8Bytes": 22906,
+          "estimatedTokens": 7636,
+          "budgetedTokens": 9545,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,134 +2,142 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/dev-review-vite.ts",
-    "title": "Repo Review 专用 Vite 子进程",
-    "summary": "为 review 开发模式创建独立 Vite 服务，绕开个人应用代理配置，严格绑定选定 Web 端口并把 API 请求代理到同次编排选定的 review 后端。",
-    "category": "configuration",
+    "title": "仓库评审环境的 Vite 子进程",
+    "summary": "该脚本为 dev:review 单独启动 Vue 前端开发服务器，隔离个人后端代理配置，支持可配置端口、端口冲突失败和受控退出；其与上层编排器的具体启动、清理及退出码传播关系仍需结合对应源码与集成测试确认。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "isolation",
-        "title": "配置隔离",
-        "body": "该脚本刻意不读取共享的 `apps/web/vite.config.ts`，因为其中 `/api` 指向个人后端；它以 `configFile: false`、Web 根目录和 Vue 插件构造 review 专用服务，并从环境变量读取 Web/API 端口。[[c1]] 因而同一前端源码可以连接隔离的 review 后端，而无需修改个人开发配置。"
+        "key": "purpose",
+        "title": "解决的问题与运行边界",
+        "body": "该脚本用于为仓库评审环境建立独立的前端开发服务配置。它刻意不读取 `apps/web/vite.config.ts`，以免沿用指向个人后端 4317 端口的 `/api` 代理，而是在脚本中配置评审 API 代理和严格端口策略。脚本被设计为由 `scripts/dev-review.ts` 直接作为 Node 子进程启动，背景之一是便于上层编排器在 Windows 上终止整个进程树。[[c1]]"
       },
       {
-        "key": "lifecycle",
-        "title": "端口和生命周期边界",
-        "body": "Vite 只监听 `127.0.0.1`，`strictPort` 保证端口占用时非零退出，避免控制台宣告与实际监听地址不一致；`/api` 被代理到明确的本地 API 端口。启动后输出解析出的地址，收到 SIGINT 或 SIGTERM 时关闭 Vite 再退出。[[c2]] 本文件不校验端口数字范围、不探测 API 健康，也没有独立重启逻辑，这些职责由上层编排器承担。"
+        "key": "startup",
+        "title": "启动与请求流程",
+        "body": "启动时从 `REVIEW_WEB_PORT` 与 `REVIEW_API_PORT` 读取端口，未设置时分别使用 5181 和 5180；随后以 `apps/web` 为根目录，通过 Vite 和 Vue 插件创建仅监听 `127.0.0.1` 的前端服务，并将 `/api` 请求代理到同机评审 API。材料能确认使用 Vue 插件，但不能据此断言 Vue 的具体主版本。[[c2]]\n\n`strictPort` 禁止 Web 端口冲突时自动改用其他端口。监听成功后，脚本优先输出 Vite 解析出的本地地址；若没有解析结果，则使用配置端口拼出回环地址。注释声称端口冲突产生的非零退出码会由上层编排器传播，但该跨文件行为尚未在当前材料中得到实现证据。[[c3]]"
+      },
+      {
+        "key": "shutdown_limits",
+        "title": "退出处理与验证限制",
+        "body": "进程收到 `SIGINT` 或 `SIGTERM` 时，会请求关闭 Vite，并在关闭完成后以成功状态退出，形成显式的信号清理路径。[[c4]] 不过，Windows 上由编排器强制终止进程树时是否会进入该处理器、启动异常能否可靠传递，以及代理、端口冲突和端口释放是否已有真实集成测试覆盖，都不能仅由本文件确认。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Review Vite 配置隔离",
-        "reason": "支持绕过个人代理配置并通过环境变量建立 review 专用前后端连接的说明。",
-        "relation": "implements",
+        "label": "评审 Vite 子进程的设计背景",
+        "reason": "支持脚本绕过个人 Web 代理配置、为评审环境提供独立代理，并作为直接 Node 子进程便于 Windows 进程树清理的论断。",
+        "relation": "background",
         "target": {
           "kind": "material",
           "key": "omem:scripts/dev-review-vite.ts",
           "startLine": 1,
-          "endLine": 21
+          "endLine": 11
         },
         "quote": "/** Vite child for `dev:review`. Spawned by scripts/dev-review.ts as a direct node\n * process so the orchestrator can terminate the whole tree with\n * `taskkill /PID <pid> /T /F` on Windows instead of relying on SIGTERM delivery\n * to a cmd/npx wrapper.\n *\n * It deliberately does NOT read apps/web/vite.config.ts (that "
       },
       {
         "key": "c2",
-        "label": "严格端口、代理与信号退出",
-        "reason": "支持监听范围、strictPort、API 代理和优雅关闭行为的论断。",
-        "relation": "supports",
+        "label": "Vite 服务与评审 API 配置",
+        "reason": "支持端口来源、应用根目录、Vue 插件、本机监听地址以及 /api 代理目标等启动流程，并界定材料只能证明使用 Vue 插件。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/dev-review-vite.ts",
-          "startLine": 22,
+          "startLine": 12,
+          "endLine": 30
+        },
+        "quote": "import { createServer } from \"vite\";\nimport vue from \"@vitejs/plugin-vue\";\n\nconst webPort = Number(process.env.REVIEW_WEB_PORT || 5181);\nconst apiPort = Number(process.env.REVIEW_API_PORT || 5180);\n\nconst vite = await createServer({\n  configFile: false,\n  root: \"apps/web\",\n  plugins: [vue()],\n  server: {\n    host: \"127"
+      },
+      {
+        "key": "c3",
+        "label": "严格端口与监听地址输出",
+        "reason": "支持端口冲突不自动回退、开始监听以及输出解析后或回退本地地址的行为，同时表明退出码传播目前只见于注释。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review-vite.ts",
+          "startLine": 25,
+          "endLine": 35
+        },
+        "quote": "    // Never silently fall back to another port: if 5181 (or the configured\n    // REVIEW_WEB_PORT) is busy, Vite exits non-zero and the orchestrator\n    // propagates that code instead of printing a URL we are not serving on.\n    strictPort: true,\n    proxy: { \"/api\": `http://127.0.0.1:${apiPort}` },\n  },\n});\n\nawait v"
+      },
+      {
+        "key": "c4",
+        "label": "开发服务器信号关闭处理",
+        "reason": "支持收到中断或终止信号后关闭 Vite，并在关闭完成后以成功状态退出的清理流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review-vite.ts",
+          "startLine": 37,
           "endLine": 40
         },
-        "quote": "  server: {\n    host: \"127.0.0.1\",\n    port: webPort,\n    // Never silently fall back to another port: if 5181 (or the configured\n    // REVIEW_WEB_PORT) is busy, Vite exits non-zero and the orchestrator\n    // propagates that code instead of printing a URL we are not serving on.\n    strictPort: true,\n    proxy: { \"/ap"
+        "quote": "for (const signal of [\"SIGINT\", \"SIGTERM\"] as const)\n  process.on(signal, () => {\n    void vite.close().then(() => process.exit(0));\n  });"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "上层 dev-review 编排器是否会可靠传播 Vite 的启动失败与退出码？",
+        "why": "当前材料仅以注释描述编排器会传播端口冲突产生的非零退出码，没有提供 `scripts/dev-review.ts` 的子进程创建、错误监听和最终退出码处理实现，无法独立核验跨文件错误传播。",
+        "nextStep": "检查 `scripts/dev-review.ts` 的子进程创建、exit/error 监听、进程树清理和最终退出码处理，并用端口占用集成测试验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "现有测试是否覆盖真实代理转发、端口冲突和优雅关闭？",
+        "why": "当前材料只包含实现及关于集成测试用途的注释，没有提供测试断言，不能确认 `/api` 请求确实到达目标端口，也不能确认冲突时非零退出和信号后的端口释放。",
+        "nextStep": "补充相关测试材料，核对是否启动真实 API 与 Vite 子进程，并断言代理响应、冲突时非零退出及信号后的端口释放。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c4"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:scripts/browser-smoke.ts",
-      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/dev-ports.ts",
-      "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/dev-review-vite.ts",
       "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/dev-review.ts",
-      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/dev.ts",
-      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
-      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:28:13.545Z",
+    "at": "2026-10-01T02:52:30.999Z",
     "trace": {
-      "runId": "624a480a-bdbb-476c-bb88-34b3ac1c7222",
-      "roleId": "code-analyst",
+      "runId": "ce75e0ec-9325-47a6-86ce-883cf816802a",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "4e30c8e45c6568c904704e25cf6c4bd29d41d78c0e6b4937a5034c8866063316",
-      "contextHash": "99c033e8447b0ad9c4acea8408e5136373b34985ce9720e38dc0b9c129bc987b",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "4111218e6747e8fc543ca4634c976d9c4855603d0d3df2cd323b5cf45bb7d4b4",
+      "contextHash": "884a33e8d65c2734785fd355449d724451f89448a86afcb4132b926790134344",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c0a57486a7d6ae325006f45b1e78acb77cde0ac2c9d633928060a6f26714f1e2",
+      "fingerprint": "3dadaab76ecb834fa52ef3d8c5925c03d54c37a01c02b6cc6064aabf519d4787",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-ff7e-70b3-bbfb-5db9a9ad201a"
+        "01a0f560-7c17-7b03-8ee9-60cc7ec92874"
       ],
       "usage": {
-        "used": 40233,
-        "size": 760000,
+        "used": 23714,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -137,10 +145,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 80000,
-          "utf8Bytes": 83367,
-          "estimatedTokens": 27789,
-          "budgetedTokens": 34737,
+          "chars": 12074,
+          "utf8Bytes": 16124,
+          "estimatedTokens": 5375,
+          "budgetedTokens": 6719,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -149,17 +157,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:28:35.528Z",
+    "at": "2026-10-01T02:52:45.809Z",
     "trace": {
-      "runId": "59cc2e06-ca37-4201-b450-565c01204c21",
+      "runId": "39b0c31f-f405-4c27-a5c9-88fe0330ae62",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "406f49dd53f97ecf5b936cbd97b1a63b1c98784f9066df3ddabb1e222792912a",
-      "contextHash": "99995f2e2774965b94c5ab40b5781a0fa7aa972dac28b495b1c8196b1558915b",
+      "promptHash": "6c125378dca55950ea04d32f18bca17208f5a1dda490c3ba2742020c2dfdf00e",
+      "contextHash": "e22bd710357cab146a7edc7bd583b7a3687b7e2f78a15f5ffccfc5456b01d903",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "314eacf2ab4c471142f027a93656ada4f2f827bea446c5011d327d8bf4d7b973",
+      "fingerprint": "e2186ea517bba390fc5a170e129860d1a79bc6200cff49eb171ad68564feefc8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -172,11 +180,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-9921-7533-bedc-adb7aac4feee"
+        "01a0f560-c98a-7290-92f6-833b3888f09b"
       ],
       "usage": {
-        "used": 42547,
-        "size": 760000,
+        "used": 21907,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -184,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 91314,
-          "utf8Bytes": 99817,
-          "estimatedTokens": 33273,
-          "budgetedTokens": 41592,
+          "chars": 9184,
+          "utf8Bytes": 12222,
+          "estimatedTokens": 4074,
+          "budgetedTokens": 5093,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

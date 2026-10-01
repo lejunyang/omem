@@ -2,110 +2,193 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/storage/repository.ts",
-    "title": "应用结果原子落库与通知投递仓库",
-    "summary": "该仓库将已确认的记忆或任务变更作为一次事务应用：检查请求幂等性和实体版本，追加修订，记录变更、通知、投递意图与应用回执。此前“不可变修订”的表述已收窄为“追加修订”：本文件只证明当前流程插入新修订，不能证明数据库或全系统禁止修改既有修订。仓库负责编排持久化与通知排程，不负责实际发送、证据真实性验证或投递重试。",
+    "title": "应用结果持久化与通知意图仓库",
+    "summary": "该仓库把已确认的记忆或任务应用转换为带版本的实体、修订记录、变更、通知、按应用元数据创建的投递意图、可用飞书目标的附加投递意图及幂等回执，并以 SQLite 事务保证写入共同成功或回滚。此前将应用元数据对应意图限定为“站内投递”的结论已被替代：其渠道和目标由调用方元数据决定。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-contract",
-        "title": "职责与应用合同",
-        "body": "`ApplicationRepository` 统一接收记忆和任务的应用结果。输入包含工作区、应用标识、提案摘要与代次、实体内容及投递绑定；回执返回实体类型、版本、变更记录和重复命中状态。[[c1]] 因而一次“应用”不仅修改业务实体，还留下可追踪的修订、变更、通知和投递记录。\n\n幂等查询接受相同 `applicationId`，或相同 `proposalDigest + generation`；若查到回执但请求摘要不同，则报 `APPLICATION_IDEMPOTENCY_CONFLICT`。[[c2]] 请求摘要直接使用 `JSON.stringify` 后计算 SHA-256，键插入顺序可能改变结果，与 Lark 载荷使用的规范化摘要并非同一算法。[[c3]]"
+        "key": "application-transaction",
+        "title": "统一提交与幂等边界",
+        "body": "`ApplicationRepository` 用 `BEGIN IMMEDIATE` 包裹应用过程，异常时回滚。提交前按“工作区 + applicationId”或“提案摘要 + generation”查找既有回执；请求摘要相同则返回标记为重复的原回执，摘要不同则抛出幂等冲突。[[c1]]\n\n首次提交先执行 `before` 钩子并创建实体，再写入 change 与通知。[[c2]] 随后生成应用回执并执行 `after` 钩子，而真正的数据库 `COMMIT` 要等整个回调返回后才发生。[[c3]] 因而这些数据库写入共享事务边界，但材料未证明钩子只包含可回滚操作。"
       },
       {
-        "key": "transaction-flow",
-        "title": "事务提交与通知意图",
-        "body": "公共提交由 `BEGIN IMMEDIATE`、`COMMIT` 和异常时的 `ROLLBACK` 包裹。[[c4]] 事务主体依次检查既有回执、执行 `before` 钩子和实体写入，再创建变更、站内通知及站内投递意图。[[c5]] 随后它为有效的 Lark owner notification 目标构造卡片、校验 30,000 字节上限、写入待发送意图，最终保存应用回执并调用 `after` 钩子。[[c6]] 因此这些数据库写入及钩子异常会影响整笔提交；但若钩子执行不可回滚的外部 I/O，数据库回滚不能撤销外部副作用。\n\nLark 载荷摘要依赖 `stableDigest`，其递归过滤 `undefined`、排序对象键并生成 SHA-256，使等价对象较少受键插入顺序影响。[[c7]] 本文件只生成 `pending` 投递意图和下次尝试时间，没有展示发送、重试或送达确认。"
+        "key": "memory-flow",
+        "title": "记忆修订流程",
+        "body": "记忆同时维护当前头部和不可变修订。新建时写入 `memories` 与首个 `memory_revisions`；更新时要求 kind 不变且 `expectedVersion` 精确匹配，再以旧版本为条件推进 head、scope、状态和版本。新修订通过 `supersedes_revision_id` 指向旧 head，统一提交层据此记录变更前后的修订。[[c4]]\n\n证据依赖仅从结构完整的 evidence 项生成：必须具有字符串 `sourceId`、`sourceRevisionId` 和整数 `validityEpoch`。不合格项仍存在于修订保存的原始 evidence JSON 中，但不会进入 `memory_dependencies`，所以依赖表是最低结构校验后的派生索引，而非 evidenceSet 的完整镜像。[[c5]]"
       },
       {
-        "key": "entities-and-boundaries",
-        "title": "修订追加、证据依赖与边界",
-        "body": "记忆更新先核对 kind 和 `expectedVersion`，然后插入新 `memory_revisions`，令其指向旧 head，并以旧版本为条件推进主表 head。[[c8]] 此处将先前的“不可变修订”结论替换为“追加修订”：材料证明当前路径不更新旧修订，但未提供表约束或其他写入路径，不能据此断言全局不可变。\n\n完整 `evidenceSet` 会经 JSON 序列化写入新修订。[[c9]] 之后只有同时含字符串 `sourceId`、字符串 `sourceRevisionId` 和整数 `validityEpoch` 的条目才写入 `memory_dependencies`；其他条目被跳过，本流程也不验证目标来源是否存在。[[c10]]\n\n任务更新同样使用版本条件，并在新建或更新后追加 `task_revisions`；截止时间会规范化为 ISO 时间。[[c11]] 外部通知支持即时、延迟窗口和指定时区的每日时间，若当天目标已过则排至次日。[[c12]] 表结构唯一约束、投递 worker 以及夏令时异常时刻的产品规则均不在现有材料中。"
+        "key": "task-flow",
+        "title": "任务更新、随访与历史",
+        "body": "任务应用同样采用乐观版本控制：已有任务缺少或错用 `expectedVersion` 会失败，新任务默认状态为 `open`。截止时间被规范化为 ISO 字符串；当前任务行完成插入或更新后，还会追加 `task_revisions`，保存标题、详情、状态、下一步、证据和随访快照。[[c6]]\n\n随访对象由共享合同校验，合同约束等待对象、带偏移量的日期时间、IANA 时区及严格字段集合。[[c7]] 未提供 `followUp` 时沿用旧值，显式传入 `null` 时清除；但现有材料不包含上层入口，不能据此断言所有任务输入都经过完整的命令合同校验。"
+      },
+      {
+        "key": "delivery-boundaries",
+        "title": "通知调度与投递边界",
+        "body": "每次首次应用都会按 `metadata.delivery` 创建一个 `pending` 投递意图，其 `channelBindingVersion`、`channel`、`target` 和可选 payload 摘要均来自应用元数据。[[c8]][[c9]] 因此此前称其为“站内投递意图”的结论已被替代：局部变量名虽然是 `inAppIntentId`，实际存储逻辑并未限定渠道为站内。\n\n除此之外，只有工作区下连接、绑定和目标均为 active 的 owner notification 才会产生飞书意图；卡片内容会截断并检查序列化大小，仓库只写入待投递记录，不负责实际发送。[[c10]] 飞书调度支持立即、延迟窗口及指定时区的每日时间，已错过当天时间时顺延至次日。[[c11]]\n\n飞书 payload 使用递归排序对象键并过滤 `undefined` 的稳定摘要，而记忆和任务应用请求直接对 `JSON.stringify` 结果哈希。[[c12]][[c13]] 因而键顺序不同但语义相同的应用输入可能得到不同请求摘要。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "应用输入、回执与钩子合同",
-        "reason": "说明仓库接收的应用元数据、记忆与任务内容，以及返回回执和可用钩子的结构。",
+        "label": "事务与幂等回执查询",
+        "reason": "支持事务提交回滚、重复回执返回以及摘要冲突处理的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 7,
-          "endLine": 67
+          "startLine": 178,
+          "endLine": 217
         },
-        "quote": "export type ApplicationMetadata = {\n  workspaceId: string;\n  applicationId: string;\n  proposalId?: string;\n  proposalDigest: string;\n  generation: number;\n  title: string;\n  details: string;\n  notificationBody?: string;\n  delivery: {\n    channelBindingVersion: number;\n    channel: string;\n    target: string;\n    payloa"
+        "quote": "  private transaction<T>(work: () => T): T {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      throw error;\n    }\n  }\n\n  private existingReceipt(\n    metadata: ApplicationMetadata,\n  "
       },
       {
         "key": "c2",
-        "label": "应用幂等回执检查",
-        "reason": "支持按应用标识或提案摘要与代次查询回执，以及请求摘要不一致时报冲突的论断。",
+        "label": "应用实体与变更写入",
+        "reason": "支持首次提交在事务中执行前置钩子、创建实体并记录变更和通知。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 188,
-          "endLine": 214
-        },
-        "quote": "  private existingReceipt(\n    metadata: ApplicationMetadata,\n    requestDigest: string,\n  ): ApplicationReceipt | null {\n    const row = this.db\n      .prepare(\n        `SELECT * FROM application_receipts\n         WHERE workspace_id=? AND\n           (application_id=? OR (proposal_digest=? AND application_generation=?)"
-      },
-      {
-        "key": "c3",
-        "label": "请求摘要计算",
-        "reason": "证明应用请求摘要直接基于 JSON.stringify 和 SHA-256，支持键顺序边界的说明。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 83,
-          "endLine": 85
-        },
-        "quote": "const timestamp = () => new Date().toISOString();\nconst digest = (value: unknown) =>\n  createHash(\"sha256\").update(JSON.stringify(value)).digest(\"hex\");"
-      },
-      {
-        "key": "c4",
-        "label": "数据库事务包装器",
-        "reason": "支持提交使用 BEGIN IMMEDIATE，并在成功时提交、异常时回滚。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 176,
-          "endLine": 186
-        },
-        "quote": "  private transaction<T>(work: () => T): T {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      throw error;\n    }\n  }"
-      },
-      {
-        "key": "c5",
-        "label": "应用提交前半流程",
-        "reason": "支持事务内依次执行重复检查、钩子、实体写入、变更记录和站内投递意图的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 229,
-          "endLine": 293
+          "startLine": 231,
+          "endLine": 260
         },
         "quote": "    return this.transaction(() => {\n      const existing = this.existingReceipt(metadata, requestDigest);\n      if (existing) return existing;\n\n      hooks.before?.();\n      const entity = createEntity();\n      const changeId = randomUUID();\n      const createdAt = timestamp();\n      this.db\n        .prepare(\"INSERT IN"
       },
       {
-        "key": "c6",
-        "label": "Lark 意图、回执与提交后钩子",
-        "reason": "支持 Lark 卡片生成、载荷限制、投递意图、应用回执以及 after 钩子执行位置的说明。",
+        "key": "c3",
+        "label": "应用回执与后置钩子",
+        "reason": "支持回执写入及 after 钩子位于事务提交之前的判断。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 294,
-          "endLine": 397
+          "startLine": 366,
+          "endLine": 399
+        },
+        "quote": "      const receiptId = randomUUID();\n      this.db\n        .prepare(\n          `INSERT INTO application_receipts(\n             id,workspace_id,application_id,proposal_id,proposal_digest,\n             application_generation,request_digest,entity_type,entity_id,\n             entity_version,change_id,created_at\n         "
+      },
+      {
+        "key": "c4",
+        "label": "记忆版本与不可变修订",
+        "reason": "支持记忆新建、kind 检查、乐观锁、修订链和 head 更新流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 402,
+          "endLine": 498
+        },
+        "quote": "  applyMemory(\n    input: MemoryApplication,\n    hooks: ApplicationHooks = {},\n  ): ApplicationReceipt {\n    const requestDigest = digest(input);\n    return this.commitApplication(\n      input.metadata,\n      requestDigest,\n      \"memory\",\n      () => {\n        const date = timestamp();\n        const status = input.mem"
+      },
+      {
+        "key": "c5",
+        "label": "记忆证据依赖写入",
+        "reason": "支持 evidenceSet 的结构筛选规则以及依赖表只记录合格引用的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 499,
+          "endLine": 526
+        },
+        "quote": "        for (const evidence of input.memory.evidenceSet) {\n          if (!evidence || typeof evidence !== \"object\") continue;\n          const item = evidence as Record<string, unknown>;\n          if (\n            typeof item.sourceId !== \"string\" ||\n            typeof item.sourceRevisionId !== \"string\" ||\n            !"
+      },
+      {
+        "key": "c6",
+        "label": "任务当前态与修订写入",
+        "reason": "支持任务日期规范化、乐观版本更新、新建默认值及历史修订追加流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 532,
+          "endLine": 648
+        },
+        "quote": "  applyTask(\n    input: TaskApplication,\n    hooks: ApplicationHooks = {},\n  ): ApplicationReceipt {\n    const requestDigest = digest(input);\n    return this.commitApplication(\n      input.metadata,\n      requestDigest,\n      \"task\",\n      () => {\n        const date = timestamp();\n        const dueAt = input.task.dueAt"
+      },
+      {
+        "key": "c7",
+        "label": "任务随访共享合同",
+        "reason": "说明任务随访日期、时区及严格字段校验来自共享合同。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/task-flow.ts",
+          "startLine": 3,
+          "endLine": 24
+        },
+        "quote": "export const taskStatusSchema = z.enum([\"open\", \"waiting\", \"done\", \"cancelled\"]);\nexport type TaskStatus = z.infer<typeof taskStatusSchema>;\nexport const taskFollowUpSchema = z.object({\n  waiting_on: z.string().min(1).max(500).nullable(),\n  next_check_at: z.iso.datetime({ offset: true }).nullable(),\n  snoozed_until: z."
+      },
+      {
+        "key": "c8",
+        "label": "应用投递元数据合同",
+        "reason": "证明通用投递意图的渠道和目标由应用元数据提供，没有类型级的站内渠道限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 8,
+          "endLine": 23
+        },
+        "quote": "export type ApplicationMetadata = {\n  workspaceId: string;\n  applicationId: string;\n  proposalId?: string;\n  proposalDigest: string;\n  generation: number;\n  title: string;\n  details: string;\n  notificationBody?: string;\n  delivery: {\n    channelBindingVersion: number;\n    channel: string;\n    target: string;\n    payloa"
+      },
+      {
+        "key": "c9",
+        "label": "按元数据创建投递意图",
+        "reason": "支持应用时创建 pending 意图，并直接写入 metadata.delivery 的渠道、目标和绑定版本。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 261,
+          "endLine": 295
+        },
+        "quote": "      const inAppIntentId = randomUUID();\n      this.db\n        .prepare(\n          `INSERT INTO delivery_intents(\n             id,workspace_id,change_id,channel_binding_version,channel,target,\n             payload_digest,provider_uuid,state,created_at,updated_at,\n             aggregation_mode,aggregate_after,next_atte"
+      },
+      {
+        "key": "c10",
+        "label": "飞书投递意图创建",
+        "reason": "支持 active 目标筛选、卡片内容限制、pending 状态以及本层只形成投递意图的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 296,
+          "endLine": 365
         },
         "quote": "      const larkTargets = this.db\n        .prepare(\n          `SELECT t.chat_id,t.binding_version,b.id AS binding_id\n           FROM lark_targets t JOIN lark_bindings b\n             ON b.connection_id=t.connection_id\n            AND b.binding_version=t.binding_version\n           JOIN lark_connections c ON c.id=t.connec"
       },
       {
-        "key": "c7",
-        "label": "规范化载荷摘要",
-        "reason": "解释 stableDigest 如何递归规范化对象后生成稳定摘要。",
-        "relation": "depends_on",
+        "key": "c11",
+        "label": "外部通知时间计算",
+        "reason": "支持立即、窗口和按本地时区定时三种调度语义。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 127,
+          "endLine": 159
+        },
+        "quote": "export function externalDeliveryTiming(\n  createdAt: string,\n  policy: ExternalNotificationPolicy = defaultNotificationPolicy,\n) {\n  const created = new Date(createdAt);\n  if (policy.mode === \"instant\")\n    return { mode: policy.mode, after: created.toISOString() };\n  if (policy.mode === \"window\")\n    return {\n      mo"
+      },
+      {
+        "key": "c12",
+        "label": "应用请求摘要实现",
+        "reason": "支持应用请求摘要直接依赖 JSON.stringify、可能受对象键顺序影响的判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 85,
+          "endLine": 87
+        },
+        "quote": "const timestamp = () => new Date().toISOString();\nconst digest = (value: unknown) =>\n  createHash(\"sha256\").update(JSON.stringify(value)).digest(\"hex\");"
+      },
+      {
+        "key": "c13",
+        "label": "规范化稳定摘要",
+        "reason": "对照说明稳定摘要会递归排序对象键并过滤 undefined。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/digest.ts",
@@ -113,101 +196,36 @@
           "endLine": 19
         },
         "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
-      },
-      {
-        "key": "c8",
-        "label": "记忆版本检查与修订追加",
-        "reason": "支持 kind 校验、乐观锁、插入新修订、关联旧 head 和条件推进新 head；同时限定只能证明当前流程采用追加写入。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 419,
-          "endLine": 495
-        },
-        "quote": "        if (input.memory.id && !existing && input.memory.expectedVersion)\n          throw Error(\"MEMORY_NOT_FOUND\");\n        if (existing && input.memory.kind !== existing.kind)\n          throw Error(\"MEMORY_KIND_MISMATCH\");\n        const memoryId = existing\n          ? String(existing.id)\n          : (input.memory.id "
-      },
-      {
-        "key": "c9",
-        "label": "完整证据集合写入修订",
-        "reason": "证明 evidenceSet 在插入 memory_revisions 时被完整 JSON 序列化保存。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 452,
-          "endLine": 473
-        },
-        "quote": "        this.db\n          .prepare(\n            `INSERT INTO memory_revisions(\n               id,workspace_id,memory_id,version,body,valid_from,valid_to,status,\n               evidence_set,supersedes_revision_id,created_at\n             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,\n          )\n          .run(\n            revisionId"
-      },
-      {
-        "key": "c10",
-        "label": "结构化证据依赖提取",
-        "reason": "支持证据依赖字段筛选、合格条目写入依赖表及不合格条目被跳过的边界。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 497,
-          "endLine": 517
-        },
-        "quote": "        for (const evidence of input.memory.evidenceSet) {\n          if (!evidence || typeof evidence !== \"object\") continue;\n          const item = evidence as Record<string, unknown>;\n          if (\n            typeof item.sourceId !== \"string\" ||\n            typeof item.sourceRevisionId !== \"string\" ||\n            !"
-      },
-      {
-        "key": "c11",
-        "label": "任务更新与修订追加",
-        "reason": "支持任务截止时间规范化、乐观锁更新以及追加任务修订的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 540,
-          "endLine": 633
-        },
-        "quote": "        const date = timestamp();\n        const dueAt = input.task.dueAt\n          ? new Date(input.task.dueAt).toISOString()\n          : null;\n        const existing = input.task.id\n          ? (this.db\n              .prepare(\"SELECT * FROM tasks WHERE id=? AND workspace_id=?\")\n              .get(input.task.id, input."
-      },
-      {
-        "key": "c12",
-        "label": "外部通知排程算法",
-        "reason": "支持即时、窗口和每日定时三种排程模式，以及当天时间已过时顺延的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 125,
-          "endLine": 157
-        },
-        "quote": "export function externalDeliveryTiming(\n  createdAt: string,\n  policy: ExternalNotificationPolicy = defaultNotificationPolicy,\n) {\n  const created = new Date(createdAt);\n  if (policy.mode === \"instant\")\n    return { mode: policy.mode, after: created.toISOString() };\n  if (policy.mode === \"window\")\n    return {\n      mo"
       }
     ],
     "questions": [
       {
-        "question": "`application_receipts` 是否为工作区内的 `application_id`，以及 `proposal_digest + application_generation` 建立了与查询身份一致的唯一约束？",
-        "why": "当前材料只展示查询、冲突判断和事务包装，没有表结构；无法确认其他连接、进程或绕过本仓库的写入是否仍受数据库唯一性保护。",
-        "nextStep": "检查 `application_receipts` 的建表及迁移定义，并增加并发应用同一身份的真实数据库测试。",
+        "question": "应用请求的幂等摘要是否也应采用规范化 JSON？",
+        "why": "应用请求直接对 JSON.stringify 结果哈希，而飞书 payload 使用会排序对象键并过滤 undefined 的稳定摘要；语义相同但键插入顺序不同的重试可能得到不同摘要并触发幂等冲突。",
+        "nextStep": "增加对象键重排的行为测试并确认产品语义；若应视为同一请求，再设计迁移到 stableDigest 时对既有 application_receipts 的兼容策略。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c4"
+          "c12",
+          "c13"
         ]
       },
       {
-        "question": "`after` 钩子是否约定为仅执行可随事务失败而安全重试的本地操作？",
-        "why": "`after` 在事务函数返回并执行 COMMIT 之前调用；若其中产生不可回滚的外部副作用，后续异常会造成外部状态与数据库状态不一致。",
-        "nextStep": "检查所有钩子调用方；若可能执行外部 I/O，应明确失败语义，或改为消费提交后的 outbox。",
+        "question": "事务内的 after 钩子是否被约束为仅执行可回滚的本地操作？",
+        "why": "回执写入后会调用 after 钩子，数据库 COMMIT 则在事务回调返回之后执行；当前材料没有钩子调用方，无法确认其中是否可能发生不可回滚的外部副作用。",
+        "nextStep": "检查钩子调用点及相关测试；若允许外部副作用，应明确改为提交后执行或采用持久化 outbox 意图。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c6"
+          "c1",
+          "c3"
         ]
       },
       {
-        "question": "每日定时通知对夏令时造成的不存在或重复本地时间采用什么策略？",
-        "why": "当前算法基于一次时区偏移换算目标时间，但材料没有给出 DST 跳变日应跳过、顺延还是选择某个重复时刻的产品规则。",
-        "nextStep": "为采用夏令时的时区补充 spring-forward 与 fall-back 用例，并明确异常本地时间的选择规则。",
+        "question": "定时通知在夏令时跳变和非法 scheduleLocalTime 下的预期行为是什么？",
+        "why": "实现手工换算指定时区时间并直接拆分 scheduleLocalTime；材料未展示该字符串的配置校验，也没有夏令时重叠或不存在本地时间的行为证据。",
+        "nextStep": "补充非法时间、跨日及 DST 跳变用例，并根据产品语义明确取早、取晚、顺延或拒绝配置。",
         "blocking": false,
         "citationKeys": [
-          "c12"
+          "c11"
         ]
       }
     ]
@@ -216,7 +234,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/storage/repository.ts",
-      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
+      "digest": "ca0f56db3b0749ae2cbbe77260a6022a3e6c9efb724729d62e80575ea333b990"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/task-flow.ts",
+      "digest": "40b7552c6f7ced8e0838773d5e9e4dd7ebff2d813d674f3624e0a1e0e87fa076"
     },
     {
       "kind": "material",
@@ -227,17 +250,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:22:33.615Z",
+    "at": "2026-10-01T02:22:29.749Z",
     "trace": {
-      "runId": "28b5ea00-8f9d-4000-b825-8885f7a823eb",
+      "runId": "53edbdff-692e-4d28-ac40-852481698691",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "963fc57db39f00f0bc6cbfe34977ccff48add7c2dff9741fdd40e112019a32f4",
-      "contextHash": "f8c5506326088151cfe84ff7f5dc1fbf0fc3d2d133f6f3cbcc3b4a05ac0d7873",
+      "promptHash": "3511c69eddd218d0c45f0e6aac0d6fa648e979e26a0d1176088e8d67bdcb893b",
+      "contextHash": "573f1ba97221d8e14c5b4eff142b8e303e3bd72bd024a235ffc1cd0257f5abc3",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "dec46d8a68fe65a06e725484b5fb193d17181c8e728cf47c6553da3375f1fcbd",
+      "fingerprint": "83627e464e51315df28fb57557324bda11d06e8dba156441065562d5d9856cec",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -250,10 +273,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4d7-02ce-7251-b9fe-cdf006aea5d3"
+        "01a0f544-d07f-7071-85c8-fa7d232af7a2"
       ],
       "usage": {
-        "used": 32819,
+        "used": 33887,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -262,10 +285,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 40138,
-          "utf8Bytes": 46096,
-          "estimatedTokens": 15366,
-          "budgetedTokens": 19208,
+          "chars": 43266,
+          "utf8Bytes": 49168,
+          "estimatedTokens": 16390,
+          "budgetedTokens": 20488,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -274,17 +297,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:22:47.009Z",
+    "at": "2026-10-01T02:22:55.833Z",
     "trace": {
-      "runId": "2cb168f6-e15e-4066-8930-9e05833f302b",
+      "runId": "09f8f069-ed0c-4086-ad76-89316c99fb69",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "343788fcbe71e1f60e6428b81dc71e2e9f2340d91f55bdc3aadd8dd3226208a0",
-      "contextHash": "c2689e7a59e608aa44285c22dd0fd27a4585a45cf441bf91b72ad810ae2f5ab7",
+      "promptHash": "a301ad73e46613bb6048dca0901b998af692a3f74b83fb7f20828d1507738ddb",
+      "contextHash": "a122f8fda9fa3ff688c629f54ac63570fb0fda5646742adb0ccfbc9fd3d44feb",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c0ff68d8216abe6c987833e129d9cc0f31e079695cf63a7202cf57ca6a78971d",
+      "fingerprint": "f1118c3f92e759bed9eb7cea10c984bf2be5b736c0331deb1ac5a037e2e54d3b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -297,10 +320,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4d7-7dbe-72f2-abed-d95567d9750f"
+        "01a0f545-5bc0-7961-92bd-11a95998f0ab"
       ],
       "usage": {
-        "used": 29641,
+        "used": 32342,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -309,10 +332,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37808,
-          "utf8Bytes": 42164,
-          "estimatedTokens": 14055,
-          "budgetedTokens": 17569,
+          "chars": 41549,
+          "utf8Bytes": 46079,
+          "estimatedTokens": 15360,
+          "budgetedTokens": 19200,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

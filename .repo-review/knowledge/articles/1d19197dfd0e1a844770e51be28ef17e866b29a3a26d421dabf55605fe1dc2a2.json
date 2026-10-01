@@ -2,26 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/DecisionsView.vue",
-    "title": "待判断提案的审核与提交界面",
-    "summary": "集中呈现需要人工判断的提案，展示状态、影响、证据与不确定性，并携带提案摘要和请求标识提交确认、拒绝或补充背景操作。",
+    "title": "待判断决策交互界面",
+    "summary": "该 Vue 组件集中呈现需要人工判断的提案，并允许用户请求补充背景、拒绝或确认应用。前端会随动作提交提案摘要和独立请求标识，供后端实施版本校验与幂等处理；组件本身只提供过期状态提示和操作入口，不能证明服务端已经完成相应校验。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose",
-        "title": "解决的问题与呈现范围",
-        "body": "该组件把歧义、冲突或影响较大的变化集中为人工审核列表。它接收上层提供的决策集合，将待处理、已确认、已拒绝、过期和来源变化等内部状态翻译为中文；标题依次取提案标题、陈述或种类。[[c1]] 卡片进一步展示有效期、处理回执、提案原因、动作、对象、影响数量、原始内容和不确定项，让用户在判断前看到实际变化范围。[[c2]]"
+        "key": "purpose-and-presentation",
+        "title": "作用与信息呈现",
+        "body": "组件接收决策数组，把歧义、冲突或影响较大的提案集中为待判断面板。标题依次取提案正文的 `title`、`statement` 或提案种类，并将常见状态转换为中文。[[c1]] 状态徽标按 pending、approved、stale/expired 选择警告、成功或危险色调，同时展示有效期及已有处理回执。[[c2]]\n\n每个面板展示提案原因、动作、对象、影响范围、正文和不确定项；具体变化位于默认展开但可由用户收起的 `details` 中。证据项截取短引文作为标签，点击后仅向父级发出固定 fragment revision 标识，原文读取与核验不在本组件内完成。[[c3]]"
       },
       {
         "key": "decision-flow",
-        "title": "提交流程、证据与边界",
-        "body": "用户可以确认、拒绝或要求补充背景。提交请求携带动作、当前提案摘要、随机请求标识和决策记录中的执行者标识；成功后发出对应通知并要求父层刷新，失败时上报错误后同样刷新，最终解除忙碌状态。[[c3]] 提案证据通过片段修订标识交给父组件打开；只有 `pending` 状态呈现操作按钮，`stale` 状态明确提示旧判断不可再提交。空列表文案还说明高置信、小范围变化可能已被自动处理，但自动处理机制不在本文件中。[[c4]]"
+        "title": "提交决策的核心流程",
+        "body": "动作处理函数调用组件从本地模块导入的 `api`；所给材料能够确认这一依赖，但没有提供该请求函数的封装实现。[[c7]] 用户触发动作后，组件以“决策 ID + 动作”记录忙碌状态，并向 `/decisions/{id}` 提交动作、`proposalDigest`、随机 `requestId` 与 `actorId`。成功时发送对应通知并刷新，失败时上报错误后也刷新，最终清理忙碌状态。[[c4]]\n\n这里应以新结论替代旧稿中的“通过摘要校验”：材料只证明前端提交摘要供后端校验，并未证明服务端一定拒绝来源变化后的旧提案。`requestId` 同样只是请求身份输入，幂等、冲突响应和事务边界仍需结合后端实现确认。"
+      },
+      {
+        "key": "boundaries",
+        "title": "状态保护与界面限制",
+        "body": "只有 `pending` 状态会渲染补充背景、拒绝和确认应用按钮；`stale` 还会明确提示原件已更新、旧判断不能提交。其他非 pending 状态同样没有动作入口，空数组则显示无待判断变化。[[c5]]\n\n忙碌状态只匹配当前决策的单个动作，代码没有显式禁用同一面板中的其他按钮，是否可能并发提交还取决于 `OmButton` 和后端。提案正文以格式化 JSON 显示，可滚动、换行，并能随整个 `details` 收起；因此旧稿所称“没有折叠”被替代为更准确的限制：没有字段级结构化展示或单字段折叠。窄屏下三列摘要会改为单列。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "状态与标题映射",
-        "reason": "支持组件输入输出合同、决策状态中文映射和标题回退顺序。",
+        "label": "标题与中文状态映射",
+        "reason": "支持组件输入、事件合同、标题回退规则以及状态中文名称的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -33,21 +38,34 @@
       },
       {
         "key": "c2",
-        "label": "提案变化详情",
-        "reason": "支持有效期、回执、原因、动作、对象、影响数量、原始内容及不确定项的展示说明。",
-        "relation": "explains",
+        "label": "状态徽标、有效期与回执",
+        "reason": "支持不同状态的徽标色调以及有效期和处理回执的界面呈现。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 85,
-          "endLine": 110
+          "startLine": 58,
+          "endLine": 92
         },
-        "quote": "        <small\n          >有效至\n          {{ new Date(decision.expiresAt).toLocaleString(\"zh-CN\") }}</small\n        >\n        <small v-if=\"decision.requestId\" class=\"receipt-id\"\n          >处理回执 {{ decision.requestId }}</small\n        >\n      </div>\n      <p>{{ decision.proposal.reason }}</p>\n      <details open>\n        "
+        "quote": "<template>\n  <section class=\"page decisions-page\">\n    <span class=\"eyebrow\">只把歧义、冲突和较大影响交给你</span>\n    <h1>待判断</h1>\n    <p class=\"muted\">\n      每个动作都有独立 request receipt；来源变化或判断过期后不会沿用旧批准。\n    </p>\n    <OmPanel\n      v-for=\"decision in decisions\"\n      :key=\"decision.id\"\n      class=\"stack\"\n      :title=\"title(decision"
       },
       {
         "key": "c3",
-        "label": "决策提交函数",
-        "reason": "支持三类动作及 proposalDigest、requestId、actorId 的提交和成功、失败刷新流程。",
+        "label": "提案详情与证据入口",
+        "reason": "支持可折叠变更详情、正文、不确定项和证据打开事件的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 93,
+          "endLine": 119
+        },
+        "quote": "      <p>{{ decision.proposal.reason }}</p>\n      <details open>\n        <summary>查看具体变化</summary>\n        <div class=\"diff-grid\">\n          <div>\n            <small>动作</small><b>{{ decision.proposal.operation }}</b>\n          </div>\n          <div>\n            <small>对象</small><b>{{ decision.proposal.kind }}</b>\n     "
+      },
+      {
+        "key": "c4",
+        "label": "决策请求处理流程",
+        "reason": "支持请求载荷、通知与错误事件、刷新行为及忙碌状态清理流程，同时限定前端材料只能证明参数被提交。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -58,28 +76,62 @@
         "quote": "async function decide(\n  decision: Decision,\n  action: \"approve\" | \"reject\" | \"request_context\",\n) {\n  busy.value = decision.id + action;\n  try {\n    await api(`/decisions/${decision.id}`, {\n      action,\n      proposalDigest: decision.proposalDigest,\n      requestId: crypto.randomUUID(),\n      actorId: decision.actorI"
       },
       {
-        "key": "c4",
-        "label": "证据入口与操作限制",
-        "reason": "支持证据跳转、失效提示、仅待处理状态可操作及空列表语义。",
+        "key": "c5",
+        "label": "过期提示与待处理动作",
+        "reason": "支持 stale 阻断提示、仅 pending 状态渲染动作按钮以及空列表呈现。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/DecisionsView.vue",
-          "startLine": 112,
-          "endLine": 146
+          "startLine": 120,
+          "endLine": 145
         },
-        "quote": "      <div class=\"evidence-list\">\n        <OmCitation\n          v-for=\"(item, index) in decision.proposal.evidence\"\n          :key=\"item.fragment_revision_id\"\n          :label=\"`依据 ${index + 1}${item.exact_quote ? `：${item.exact_quote.slice(0, 36)}` : ''}`\"\n          @open=\"emit('open', item.fragment_revision_id)\"\n    "
+        "quote": "      <p v-if=\"decision.state === 'stale'\" class=\"inline-error\" role=\"alert\">\n        原件已更新，这个判断不能再提交。请等待基于新版本重新核验。\n      </p>\n      <template v-if=\"decision.state === 'pending'\" #actions>\n        <OmButton\n          :loading=\"busy === decision.id + 'request_context'\"\n          @click=\"decide(decision, 'request_context"
+      },
+      {
+        "key": "c6",
+        "label": "正文样式与窄屏布局",
+        "reason": "支持 JSON 正文的滚动换行行为以及小屏幕下变更摘要改为单列的限制说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 150,
+          "endLine": 194
+        },
+        "quote": "<style scoped>\n.diff-grid {\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 10px;\n  margin: 4px 0 12px;\n}\n.diff-grid div {\n  display: flex;\n  flex-direction: column;\n  gap: 5px;\n  padding: 12px;\n  background: var(--om-soft);\n  border-radius: 5px;\n}\npre {\n  max-width: 100%;\n  overflow: auto;\n  padding: "
+      },
+      {
+        "key": "c7",
+        "label": "组件导入的 API 函数",
+        "reason": "支持组件调用从本地 API 模块导入的函数，同时不扩展为对请求封装内部实现的断言。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/DecisionsView.vue",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "<script setup lang=\"ts\">\nimport { ref } from \"vue\";\nimport { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel } from \"@omem/ui\";\nimport { api, type Decision } from \"./api\";"
       }
     ],
     "questions": [
       {
-        "question": "服务端是否强制校验 proposalDigest、actorId、requestId 与过期状态，而不只依赖前端隐藏按钮？",
-        "why": "材料只能确认这些字段被提交以及 stale 状态在界面上不可操作，无法证明服务端的并发、防重放和授权规则。",
-        "nextStep": "检查决策端点实现及其并发、过期、重复请求测试，确认旧摘要或伪造执行者会被拒绝。",
+        "question": "后端是否以 requestId 保证幂等，并以 proposalDigest 拒绝来源变化后的旧提案？",
+        "why": "当前材料只证明前端提交这两个字段，无法确认服务端的摘要比较、重复请求处理、冲突状态码和事务边界。",
+        "nextStep": "检查 `/decisions/:id` 的服务端路由、决策应用服务以及并发、幂等和摘要冲突测试。",
         "blocking": false,
         "citationKeys": [
-          "c3",
           "c4"
+        ]
+      },
+      {
+        "question": "一次决策请求进行中，同一面板的其他动作是否仍可点击并产生并发请求？",
+        "why": "组件只为与 `busy` 精确匹配的按钮设置 loading，没有显式禁用其余动作；实际行为还取决于 `OmButton` 的 loading 语义和后端竞争处理。",
+        "nextStep": "核对 `OmButton` 的 loading 与 disabled 实现，并补充快速点击不同动作的组件测试或服务端竞争测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
         ]
       }
     ]
@@ -92,83 +144,41 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/LarkSetup.vue",
-      "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/LearningView.vue",
-      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ReviewApp.vue",
-      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/AssetImage.vue",
-      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/review-api.ts",
-      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:16:37.262Z",
+    "at": "2026-10-01T02:38:22.970Z",
     "trace": {
-      "runId": "d6aa69c6-5d9b-4efa-8759-4fc06c0f72fb",
-      "roleId": "code-analyst",
+      "runId": "f99681f7-8640-4dc1-8f1c-0eccefd43437",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "43e04907e63ceac45132d3cb6693ccdf8b2d3b9f42392b3b64dfcb9f7578479b",
-      "contextHash": "fc3c7cd75514abae88d5177381834e52e3531c5c7b4a853e6421dc2a7ba4dbb9",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "0172c5351ebe390f40f5aac74bdb36441af3524c9b718dcfa352cb26a9ae7272",
+      "contextHash": "64a0feb930a5720f17201a0c10d0a94d389495cba0418bdf7e4e4714bae4ac27",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "839fa807bd510435d3f330acf0dd6d1093bfbe3f159fb8aa7d652f57515ec892",
+      "fingerprint": "e2dfbeb2770748fe109d11d390b54de823097f4405bafaa1e65725bbee89984c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee97-27c7-7903-9ccf-2a817f6755a1",
-        "01a0ee97-c35e-7b02-b29c-89cb07fa8fbb",
-        "01a0ee98-555c-7bb2-a6bb-c08fcde3c787"
+        "01a0f553-69dd-7c02-8c2d-94bd30ac0f1b"
       ],
       "usage": {
-        "used": 57830,
-        "size": 760000,
+        "used": 27603,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -176,29 +186,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 122838,
-          "utf8Bytes": 139688,
-          "estimatedTokens": 46563,
-          "budgetedTokens": 58204,
+          "chars": 21243,
+          "utf8Bytes": 27187,
+          "estimatedTokens": 9063,
+          "budgetedTokens": 11329,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 2
+      "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:16:55.623Z",
+    "at": "2026-10-01T02:38:41.671Z",
     "trace": {
-      "runId": "93b21d88-f347-4cb1-93ec-0c9dba8183e9",
+      "runId": "e81938d1-c345-4174-abc1-96670c51bcee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "4d5b1811f813ede91e5cfd403803e148f513ef6912e23793f813ba20f7c9646b",
-      "contextHash": "4226dfbebd3003a0b52b664fe48a25d3b964cc23391d60eb7b6559bbd45c1ea2",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "0c320cf9aff1030a1df27bb779f4cf5faa4d1cf6d76e31225f179078fe2a2e03",
+      "contextHash": "e26e1f696b25f74dd9f5e43cd27632e2bc1a07ce92be2c753336d18f15c2025c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "05504554777485c19bc41ab2ac837bbba73c0777dc1afe984094002a78a43aca",
+      "fingerprint": "2348b38e95fb2758ed02e36e0e3b781d6a210eca29658341ddbad2c301cc0bf7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -211,11 +221,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee98-f8c4-7de2-b9a7-95b7eef2030d"
+        "01a0f553-d7c5-7401-9321-f037e12e1999"
       ],
       "usage": {
-        "used": 53078,
-        "size": 760000,
+        "used": 25688,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -223,10 +233,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 121288,
-          "utf8Bytes": 135480,
-          "estimatedTokens": 45160,
-          "budgetedTokens": 56450,
+          "chars": 17937,
+          "utf8Bytes": 22063,
+          "estimatedTokens": 7355,
+          "budgetedTokens": 9194,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

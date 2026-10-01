@@ -2,72 +2,131 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
-    "title": "代码侧表历史保留迁移测试",
-    "summary": "该测试模拟旧版单主键符号与图边表，验证迁移到支持快照历史的新结构时不会丢失旧快照、符号或关系，并清理临时遗留表。",
+    "title": "代码知识侧表迁移的历史保留测试",
+    "summary": "该测试构造旧版单主键代码图表，调用正式迁移入口后验证快照、符号和边均被保留，临时遗留表已清除，并且旧快照仍可通过图查询读取。它覆盖迁移结果与历史可用性，但未覆盖复合主键细节、重复迁移、失败回滚及多快照冲突。",
     "category": "tests",
     "sections": [
       {
-        "key": "legacy-fixture",
-        "title": "旧结构与迁移背景",
-        "body": "测试手工建立迁移前数据库：仓库、快照和文件表包含一份旧快照，符号与图边分别仅以 symbol_id、edge_id 为主键，同时记录所属 snapshot。该夹具刻意复现“一种标识只能有一行”的旧结构，为迁移到复合快照结构提供输入。[[c1]]\n\n随后直接调用 `ensureCodeTables`，因此可以确认被测迁移入口；不过材料没有展示该函数实现，不能据此断言事务、锁策略或每个中间 SQL 步骤。"
+        "key": "purpose-and-fixture",
+        "title": "问题与测试夹具",
+        "body": "测试针对代码知识侧表从“仅以 ID 为主键”的旧结构升级时可能丢失历史数据的问题。每个用例在独立临时目录创建 `Store`，结束后关闭数据库并递归清理目录，从而隔离 SQLite 状态。[[c1]] `Store` 构造时会创建数据目录、打开 `omem.sqlite` 并执行通用数据库迁移；初始化失败则关闭连接后重新抛错。[[c2]]"
       },
       {
-        "key": "preservation",
-        "title": "保留历史并移除临时表",
-        "body": "迁移后，旧快照仍可由 `listSnapshots` 列出，符号与边的计数各为一；临时 `code_symbols_legacy` 表应已删除。更关键的是，以旧 snapshotId 调用 `graphView` 仍返回原符号和图边，说明验证目标不仅是行数不变，还包括历史查询可用。[[c2]]\n\n该测试只包含单仓库、单快照、单符号和单边，未覆盖重复 ID 跨快照、空字段、半迁移数据库、迁移失败回滚、索引与外键是否正确，也未验证迁移后继续同步新快照。"
+        "key": "migration-flow",
+        "title": "迁移流程与核心断言",
+        "body": "用例直接创建旧形态的仓库、快照、文件、符号与边表，并插入一个相互关联的历史快照、符号和 `defines` 边，随后显式调用 `ensureCodeTables`。[[c3]] 迁移后先通过 `listSnapshots` 确认旧快照仍存在，再查询新表行数，断言符号和边各保留一行；同时访问临时表 `code_symbols_legacy` 必须抛错，证明迁移暂存表已被删除。[[c4]] 最后按旧快照调用 `graphView`，确认返回的符号与边仍具原 ID，验证的不只是行数保存，还包括历史图查询可用。[[c5]]"
+      },
+      {
+        "key": "relations-and-limits",
+        "title": "模块关系与覆盖边界",
+        "body": "测试通过 `Store.db` 准备旧数据库状态，并直接依赖代码知识存储模块的建表、快照列表和图视图接口，属于通用 SQLite 存储与代码图派生层之间的集成测试。代码图侧表被设计为同一评审数据库中的附加投影，不保存文件正文，旧解析结果失效时也倾向标记而非删除。[[c6]] 当前断言没有检查新复合主键的具体列定义、多个快照中相同符号或边 ID 的共存、重复执行迁移的幂等性、事务失败回滚、其他临时表是否清除，以及迁移后新增当前快照的读写行为；因此不能据此推断这些场景均已受保障。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "迁移前单主键数据库夹具",
-        "reason": "支持旧符号和图边结构以单独 ID 为主键并携带 snapshot 字段的背景说明。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
-          "startLine": 22,
-          "endLine": 48
-        },
-        "quote": "describe(\"code side-table migration preserves history\", () => {\n  it(\"copies old single-PK symbols/edges into composite schema without dropping rows\", () => {\n    const store = setup();\n    // Simulate a pre-migration database: old-shape tables keyed by id alone.\n    store.db.exec(`CREATE TABLE code_repositories(\n     "
-      },
-      {
-        "key": "c2",
-        "label": "迁移后历史查询断言",
-        "reason": "支持旧行未丢失、临时表已清理且旧快照图仍可读取的论断。",
+        "label": "临时数据库创建与清理",
+        "reason": "支持测试为每次运行创建隔离 Store，并在用例后关闭数据库、清理临时目录的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
-          "startLine": 50,
+          "startLine": 8,
+          "endLine": 20
+        },
+        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup() {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-mig-\"));\n  const store = new Store(dir);\n  stores.push({ store, dir });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    try { store.close(); } catch {}\n    rmS"
+      },
+      {
+        "key": "c2",
+        "label": "Store 的 SQLite 初始化流程",
+        "reason": "说明测试所用 Store 如何打开数据库、执行通用迁移以及处理初始化失败。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 45,
+          "endLine": 69
+        },
+        "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
+      },
+      {
+        "key": "c3",
+        "label": "旧版代码图表构造与迁移入口",
+        "reason": "支持用例模拟旧单主键表、插入历史数据并调用 ensureCodeTables 的核心流程。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
+          "startLine": 22,
+          "endLine": 51
+        },
+        "quote": "describe(\"code side-table migration preserves history\", () => {\n  it(\"copies old single-PK symbols/edges into composite schema without dropping rows\", () => {\n    const store = setup();\n    // Simulate a pre-migration database: old-shape tables keyed by id alone.\n    store.db.exec(`CREATE TABLE code_repositories(\n     "
+      },
+      {
+        "key": "c4",
+        "label": "历史行保留与临时表清除断言",
+        "reason": "支持迁移后快照、符号、边仍存在且符号遗留临时表已删除的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
+          "startLine": 53,
+          "endLine": 61
+        },
+        "quote": "    // Rows preserved: old snapshot still listed, symbols/edges survive.\n    const snaps = listSnapshots(store);\n    expect(snaps.map((s) => s.snapshotId)).toContain(\"snap_old\");\n    const sym = store.db.prepare(\"SELECT COUNT(*) AS n FROM code_symbols\").get() as { n: number };\n    expect(Number(sym.n)).toBe(1);\n    con"
+      },
+      {
+        "key": "c5",
+        "label": "旧快照图查询断言",
+        "reason": "支持迁移后的 graphView 仍能按旧快照返回历史符号和边。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
+          "startLine": 62,
           "endLine": 65
         },
-        "quote": "    // Run migration.\n    ensureCodeTables(store);\n\n    // Rows preserved: old snapshot still listed, symbols/edges survive.\n    const snaps = listSnapshots(store);\n    expect(snaps.map((s) => s.snapshotId)).toContain(\"snap_old\");\n    const sym = store.db.prepare(\"SELECT COUNT(*) AS n FROM code_symbols\").get() as { n: "
+        "quote": "    // Graph for the old snapshot still serves the historical rows.\n    const g = graphView(store, { snapshotId: \"snap_old\" });\n    expect(g.symbols.map((x) => x.symbolId)).toContain(\"sym_a\");\n    expect(g.edges.map((x) => x.edgeId)).toContain(\"e1\");"
+      },
+      {
+        "key": "c6",
+        "label": "代码知识侧表的定位与历史策略",
+        "reason": "解释代码图是同库附加投影、不保存文件正文，并保留旧快照数据而非直接删除的设计背景。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 1,
+          "endLine": 16
+        },
+        "quote": "/** Code Knowledge side tables. These live in the SAME isolated review SQLite as\n * review_source_meta / review_relations 鈥?they are additive, CREATE-IF-NOT-EXISTS\n * only, and never touch sources/revisions/fragments/review_relations rows. The\n * code graph is a deterministic projection over the already-captured fragme"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "迁移是否允许同一 symbol_id 或 edge_id 在多个快照中共存，并以哪些列组成新复合主键？",
+        "why": "测试标题提到复合结构，但现有材料只展示旧表定义与迁移后的行数、查询结果，没有提供 ensureCodeTables 的实现或新表结构断言。",
+        "nextStep": "检查 ensureCodeTables 的迁移 SQL，并补充两个快照复用同一稳定 ID 的结构与查询测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "ensureCodeTables 重复执行或迁移中途失败时，是否保证幂等与事务回滚？",
+        "why": "当前用例仅执行一次成功迁移，无法确认重复启动、部分改名或复制失败时是否会留下不一致的新旧表。",
+        "nextStep": "增加连续执行两次的测试，并通过可控失败点验证事务回滚及遗留表恢复策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/batch2-fixes.test.ts",
-      "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-artifacts.test.ts",
-      "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-budget.test.ts",
-      "digest": "2d0812ca8592b2a3702ce8ee0f6cf4568af9356037cb64be6e731d0a949c9fb3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-      "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
@@ -75,44 +134,29 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-      "digest": "d04e8dca741772db0fd43565fb9fd906fb69a09070a5581161a3dcbf0da24140"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:09:13.991Z",
+    "at": "2026-10-01T02:25:22.510Z",
     "trace": {
-      "runId": "161767d8-9f1a-4014-b3e2-a5519e4a6349",
+      "runId": "9eea0ccb-6279-45f7-9f49-2258d3b59755",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "726468f442488bf98c0d322ffcd85662d4e11aa2707394fbf5ab54cb8e9929dd",
-      "contextHash": "9af6b2612942385a3550bdc42cd7a278c001615d5f3518e0d49ca169147f2ffd",
+      "promptHash": "f5c9854e891271e986b9ba9a949e9e16b0a943b1fe5482eed27ae72ea4d4697a",
+      "contextHash": "f746f264017eab6681346110a5370e27ba2caa20f46b08df6a21715afd7f4df1",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2792dfab74511e4d9c3d1fad66847b610b0dcf2771d06ced662a74a03afc7db3",
+      "fingerprint": "f7a263271c91f8bfd133856efb99374a5c69d4732710e8a96696b3bcb574c217",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -125,11 +169,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee91-89ed-7981-a74d-c976fa675121"
+        "01a0f547-8cec-7f53-9076-4db0cece85db"
       ],
       "usage": {
-        "used": 35138,
-        "size": 760000,
+        "used": 25150,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -137,10 +181,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 63078,
-          "utf8Bytes": 64970,
-          "estimatedTokens": 21657,
-          "budgetedTokens": 27072,
+          "chars": 17307,
+          "utf8Bytes": 19073,
+          "estimatedTokens": 6358,
+          "budgetedTokens": 7948,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -149,17 +193,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:09:19.214Z",
+    "at": "2026-10-01T02:25:37.698Z",
     "trace": {
-      "runId": "53bcd91e-3bbc-4771-8b13-e0f49b12862d",
+      "runId": "40cc4173-d0c8-472f-8fcc-5570cd9e08a2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "bfffdc00a294a0fc9ba2841d7550ed3b91d3edeb17283ca616a10e25557ebdb6",
-      "contextHash": "c592a9202f07dece3bb2c820a5af776e3e76addbe2b695d9b7bdbef8d25776e9",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "83a76cf8f2deac1e1569478f5f47e624cc4948a2094bd1fc9700491ef8eaa403",
+      "contextHash": "d716e683a762b2de2719b34f7ce90777d09106697b779c1f7748c313ae8ea712",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "98ae544d15bad2554e652df2c80081b4bd50a13819b2456c0275d0c0b3489b96",
+      "fingerprint": "ce34c13cdaa7fd5c34cbee5acd5af2b205ef6d0066877151c73326c905216b5b",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -172,11 +216,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee92-354d-7ca0-ba75-018248807a3a"
+        "01a0f547-f02c-7733-aaf0-a417380cbe08"
       ],
       "usage": {
-        "used": 35630,
-        "size": 760000,
+        "used": 25141,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -184,10 +228,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 74182,
-          "utf8Bytes": 81700,
-          "estimatedTokens": 27234,
-          "budgetedTokens": 34043,
+          "chars": 19902,
+          "utf8Bytes": 23076,
+          "estimatedTokens": 7692,
+          "budgetedTokens": 9615,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
