@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-01T18:07:25.323Z",
-  "implementationCommit": "e3ed2d5a47d7826629ec5809dfa14a16c3e4fd8e",
-  "sourceDigest": "f0a302ed3c9b3c0b9068035b59688969aa1c7734e77b887e76f426e78a6506c3",
+  "recordedAt": "2026-10-01T16:21:24.404Z",
+  "implementationCommit": "554225dc461622003a768a5d5f4885cf79fbac75",
+  "sourceDigest": "c0f428ac6c9a03261b86611d37f346b134e0367d82766e302edceb85dbb356b9",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T18-07-25-323Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-01T16-21-24-404Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T18-07-25-323Z/project.log",
-        "sha256": "634c931a744a2f105bebc3abac1e6c4b2855461834ddb1dbfd3d5b4542c1d392"
+        "log": ".repo-review/runtime/verification/2026-10-01T16-21-24-404Z/project.log",
+        "sha256": "a3ac54e24176e9b63015cb7d6b5d65eefb922bd2a562870ff90d6a2196dfea43"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T18-07-25-323Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-01T16-21-24-404Z/liveChineseRetrieval.log",
         "sha256": "3f9f7a5452dcd3e9c0b7f46783ca607ed550f01cf0e7a5f7b57dfff17361d92f"
       }
     },
@@ -51,8 +51,8 @@
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 168,
-        "citations": 1076,
+        "articles": 209,
+        "citations": 1327,
         "errors": []
       }
     },
@@ -65,7 +65,7 @@
         "semantic": {
           "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 11165,
+          "indexed": 11362,
           "pending": 0,
           "error": null
         }
@@ -75,7 +75,7 @@
       "name": "repositorySearch",
       "state": "failed",
       "details": {
-        "passed": 3,
+        "passed": 4,
         "total": 6
       }
     },
@@ -87,16 +87,16 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
   "knowledge": {
-    "materials": 555,
-    "reviewedMaterials": 154,
-    "pendingMaterials": 401,
-    "currentArticles": 168,
-    "citations": 1076,
-    "articleLinks": 6,
+    "materials": 551,
+    "reviewedMaterials": 192,
+    "pendingMaterials": 359,
+    "currentArticles": 209,
+    "citations": 1327,
+    "articleLinks": 7,
     "errors": [],
     "restore": {
-      "stale": 310,
-      "restored": 175,
+      "stale": 270,
+      "restored": 215,
       "missing": 4
     },
     "incomplete": true,
@@ -112,58 +112,55 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "docs/reader-first/validation.md",
           "docs/archive/2026-10-01-baseline/PROJECT-README.md",
-          "docs/archive/2026-10-01-baseline/implementation/status.md",
           "apps/web/src/App.vue",
-          "docs/archive/2026-10-01-baseline/prototype/app.jsx"
+          "docs/archive/2026-10-01-baseline/implementation/status.md",
+          "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "docs/archive/2026-10-01-baseline/research/mempalace/README.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": null,
+        "firstExpectedRank": 14,
         "uniquePathsAt5": 5,
-        "elapsedMs": 7397,
+        "elapsedMs": 6747,
         "top5": [
-          {
-            "path": "docs/reader-first/validation.md",
-            "routes": [
-              "fulltext",
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "- “中文语义检索怎样处理长代码片段？”的预期实现首次出现在第 14 位，前面混入 UI 和角色清单，属于实际排序失败。\n- “如何保证本地模型不在启动时联网下载？”第三项命中了新的 `operations.md` 说明，但题集仍只接受原 README、AGENTS 或实现文件。这一项同时暴露题集随文档迁移未完整更新，"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
-            "routes": [
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "## 中文语义检索"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/implementation/status.md",
-            "routes": [
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，"
-          },
           {
             "path": "apps/web/src/App.vue",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "idence?.open(r.id)\" /></OmPanel\n      ><OmEmpty\n        v-if=\"!searching && !searchError && !results.length\"\n        title=\"未找到相关片段\"\n        description=\"试试原文关键"
+            "snippet": ".section.endLine }} 行</p><p class=\"excerpt\">{{ r.text }}</p>\n        <OmCitation\n          label=\"查看固定片段\"\n          :version=\"r.version\"\n          @open=\"eviden"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+            "path": "docs/reader-first/progress.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "on>\n          </select>\n        </label>\n        <div className=\"compose-box\">\n          <textarea\n            aria-label={inline ? \"追问当前片段\" : \"输入问题\"}\n         "
+            "snippet": "- 检索首片：复用 marked 和现有 TS/Vue 解析器建立阅读结构投影，保留原 Fragment；补充片段逐一检查可见性。针对性 37 项检查与类型检查通过。中文词组问题已通过真实 HTTP handler 返回结果（非生成模型验证）；实际运行库与中文模型检查待整体验收。"
+          },
+          {
+            "path": "apps/web/src/ReviewApp.vue",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "    <!-- search -->\n    <section v-else-if=\"view === 'search'\" class=\"page\">\n      <h1>搜索“{{ searchQuery }}”</h1>\n      <p class=\"muted\">精确关键词检索片段文本；点击结果打开对应版本并"
+          },
+          {
+            "path": "packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "{ \"schema_version\": 1, \"role_id\": \"knowledge-writer\", \"role_version\": \"1\", \"profile_ref\": \"traex\", \"prompt_templates\": [ \"prompt.md\" ], \"skill_bundles\": [ { \"ca"
+          },
+          {
+            "path": "packages/ui/src/components/OmRelationGraph.vue",
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "export type GraphModule = { id: string; label: string; fileCount: number; symbolCount: number; };"
           }
         ]
       },
@@ -177,57 +174,56 @@
         "status": 200,
         "baselineTop5": [
           "docs/archive/2026-10-01-baseline/AGENTS.md",
-          "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/archive/2026-10-01-baseline/research/integration-readiness.md",
-          "docs/reader-first/validation.md",
-          "apps/web/src/App.vue"
+          "docs/archive/2026-10-01-baseline/AGENTS.md",
+          ".claude/skills/osdk-guide/reference/model/guide.md",
+          ".agents/skills/osdk-guide/reference/model/guide.md"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": null,
-        "uniquePathsAt5": 4,
-        "elapsedMs": 5975,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 5953,
         "top5": [
           {
-            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "path": ".claude/skills/osdk-guide/reference/model/guide.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "合中文的模型，通过 osdk CLI 声明、下载和锁定，运行时禁止隐式联网下载。当前 memory-zh 为 BGE-small-zh-v1.5；换模型必须更换向量身份，不能混用旧索引。\n- Personal-first, server or local. Preserve team scope in architec"
+            "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "Agent profile。启动只恢复知识，不自动调用生成式模型；启用的本地向量索引可后台补建。显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模"
+            "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任要求：模型字节是内容，osdk 不执行它们，下载仍按锁定摘要校验。`model "
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/research/integration-readiness.md",
+            "path": "docs/reader-first/operations.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "- **官方文档明确支持本地 Ollama**：「本地 Ollama 和远程模型可以组合使用，例如由本地模型生成向量、远程模型生成回答」。来源：https://weknora.weixin.qq.com/docs/03-features/06-models\n- 仍需至少一个 embedding + 一个 chat LL"
+            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
           },
           {
-            "path": "docs/reader-first/validation.md",
+            "path": ".claude/skills/osdk-guide/reference/global-options/guide.md",
             "routes": [
-              "fulltext",
               "short-keyword",
               "semantic"
             ],
-            "snippet": "- “中文语义检索怎样处理长代码片段？”的预期实现首次出现在第 14 位，前面混入 UI 和角色清单，属于实际排序失败。\n- “如何保证本地模型不在启动时联网下载？”第三项命中了新的 `operations.md` 说明，但题集仍只接受原 README、AGENTS 或实现文件。这一项同时暴露题集随文档迁移未完整更新，"
+            "snippet": "| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` "
           },
           {
-            "path": "apps/web/src/App.vue",
+            "path": "scripts/code-wiki-viewport.ts",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "ff\"\n            placeholder=\"仅保存在当前浏览器会话\" /></label\n        ><OmButton @click=\"saveToken\">保存令牌并重新连接</OmButton></details\n        ></OmPanel\n      >\n      <p clas"
+            "snippet": "Text(\"正在连接 Agent，读取支持的模型与思考强度…\")).toBeVisible();\n    expect((await response).ok()).toBe(true);\n    await expect(page.getByText(\"已读取此 Agent 支持的模型与思考强度\")).toBeVis"
           }
         ]
       },
@@ -240,17 +236,17 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "docs/reader-first/validation.md",
           "config/wiki-pages.json",
+          "docs/reader-first/validation.md",
           "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
           "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
           "docs/archive/2026-10-01-baseline/prototype/app.jsx"
         ],
         "baselineUniquePathsAt5": 5,
-        "passed": false,
-        "firstExpectedRank": 12,
+        "passed": true,
+        "firstExpectedRank": 5,
         "uniquePathsAt5": 5,
-        "elapsedMs": 6138,
+        "elapsedMs": 7629,
         "top5": [
           {
             "path": "docs/reader-first/validation.md",
@@ -261,36 +257,35 @@
             "snippet": "| 问法 | 实际结果 | 判断 |\n| --- | --- | --- |\n| 知识文章是怎样生成的 | 知识检索前五个章节包含入门、检索、材料旅程；原始材料侧仍有前端组件排在架构说明前 | 能找到相关讲解，机制入口排序仍可改善 |\n| 规则修改后旧记忆怎么处理 | 前五个章节大部分来自概览，专项记忆页没有出现；原始"
           },
           {
-            "path": "config/wiki-pages.json",
+            "path": "apps/web/src/App.vue",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n      \"scenario\": \"项目约定从重试三次改为五次；另一条独立消息让助手明早跟进评审。不要把约定文本直接当用户交办。\",\n      \"questions\": [\n        \"一条原始记录怎样成为可用记忆？\",\n        \"来源变化后"
+            "snippet": "openRevision(h.id)\"\n              >v{{ h.version }}</OmButton\n            >\n          </div>\n        </details></template\n      ><OmEmpty\n        v-else\n       "
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+            "path": "apps/web/src/LearningView.vue",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "明从“重试 3 次”改成“5 次” | 停用旧结论，重新分析新材料，独立复核后更新原记忆，保留旧历史 | 已用真实 GPT-5.6-sol 验证同 ID 从 3 次更新为 5 次；旧原文保留，不能只排队就算完成 |"
+            "snippet": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
+            "path": "packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "knowledge"
             ],
-            "snippet": "历史片段可以被用户显式查看或用于历史回答；不应因“能读到”就作为当前有效依据。先前轮次selectedEvidence也必须重新验证状态，不能绕开新版召回过滤。"
+            "snippet": "{ \"schema_version\": 1, \"role_id\": \"knowledge-writer\", \"role_version\": \"1\", \"profile_ref\": \"traex\", \"prompt_templates\": [ \"prompt.md\" ], \"skill_bundles\": [ { \"ca"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+            "path": "docs/reader-first/architecture.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
-            "snippet": "       )}\n                  </div>\n                </div>\n              )}\n              {panelView === \"sources\" && (\n                <div className=\"managemen"
+            "snippet": "原始记录 → 经历 → 当前事实/偏好/经验 → 人物、项目、主题综合理解 → 行动。维护变化与来源，避免每轮问答从孤立事实重新拼凑。来源更新已有重核验可复用；周期整合、事件时间检索、自动回复跟进和学习卡另列后续阶段，不写成已实现。"
           }
         ]
       },
@@ -304,14 +299,14 @@
           "apps/server/src/knowledge/pipeline.ts",
           "AGENTS.md",
           "README.md",
-          "apps/server/src/knowledge/api.ts",
+          "docs/archive/2026-10-01-baseline/implementation/knowledge-pipeline.md",
           "docs/archive/2026-10-01-baseline/2026-10-01/README.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 7319,
+        "elapsedMs": 8253,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -329,18 +324,11 @@
             "snippet": "# omem：以读懂、找回和行动为目标"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/implementation/knowledge-pipeline.md",
-            "routes": [
-              "fulltext"
-            ],
-            "snippet": "`KnowledgePipeline` 先运行材料角色，再使用独立会话复核。只有通过的正文才发布；同批已通过内容可以先保存，未通过内容继续修订。模型选择引用行范围，宿主复制精确短引文，复核角色判断其是否支持正文。持久任务和角色输出支持重建投影后复用，分析期间来源变化会拒绝当前发布。"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+            "path": "docs/reader-first/progress.md",
             "routes": [
               "semantic"
             ],
-            "snippet": "可以用四个日常场景理解它："
+            "snippet": "- 检索首片：复用 marked 和现有 TS/Vue 解析器建立阅读结构投影，保留原 Fragment；补充片段逐一检查可见性。针对性 37 项检查与类型检查通过。中文词组问题已通过真实 HTTP handler 返回结果（非生成模型验证）；实际运行库与中文模型检查待整体验收。"
           },
           {
             "path": "README.md",
@@ -348,6 +336,13 @@
               "semantic"
             ],
             "snippet": "# omem"
+          },
+          {
+            "path": ".claude/skills/osdk-guide/reference/run/lua.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "结果字段："
           }
         ]
       },
@@ -368,7 +363,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 7257,
+        "elapsedMs": 6899,
         "top5": [
           {
             "path": "apps/server/src/retrieval/semantic.ts",
@@ -376,7 +371,7 @@
               "code-symbol",
               "fulltext"
             ],
-            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */ async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> { const lexica"
+            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */ async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {"
           },
           {
             "path": "AGENTS.md",
@@ -384,13 +379,6 @@
               "semantic"
             ],
             "snippet": "# omem：以读懂、找回和行动为目标"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
-            "routes": [
-              "semantic"
-            ],
-            "snippet": "可以用四个日常场景理解它："
           },
           {
             "path": "docs/reader-first/progress.md",
@@ -405,6 +393,13 @@
               "fulltext"
             ],
             "snippet": "const raw=built.retrieval.searchSourcesAsync?await built.retrieval.searchSourcesAsync(rawQuery):built.retrieval.searchSources(rawQuery);"
+          },
+          {
+            "path": "README.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "# omem"
           }
         ]
       },
@@ -416,16 +411,16 @@
         "status": 200,
         "baselineTop5": [
           "docs/archive/2026-10-01-baseline/prototype/app.jsx",
-          "design.md",
           "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
+          "docs/archive/2026-10-01-baseline/prototype/README.md",
           "docs/archive/2026-10-01-baseline/prototype/README.md",
           "docs/archive/2026-10-01-baseline/prototype/README.md"
         ],
-        "baselineUniquePathsAt5": 4,
+        "baselineUniquePathsAt5": 3,
         "passed": true,
         "firstExpectedRank": 1,
-        "uniquePathsAt5": 4,
-        "elapsedMs": 8263,
+        "uniquePathsAt5": 3,
+        "elapsedMs": 7387,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
@@ -434,14 +429,6 @@
               "semantic"
             ],
             "snippet": "\n                      ) : (\n                        <p className=\"muted\">本例没有记录其他直接引用。</p>\n                      )}\n                    </>\n                  )"
-          },
-          {
-            "path": "design.md",
-            "routes": [
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "改 UI 前阅读 `.agents/skills/omem-design/SKILL.md`，复用 token 与组件；之后执行 `osdk run check` 和浏览器检查，验证引用层级、恢复焦点、窄屏、错误态。历史离线原型保留在 docs/archive/2026-10-01-baseline/prototype"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
@@ -466,6 +453,14 @@
               "semantic"
             ],
             "snippet": "## 浏览器检查"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/prototype/README.md",
+            "routes": [
+              "fulltext",
+              "semantic"
+            ],
+            "snippet": "# omem 交互原型"
           }
         ]
       }
