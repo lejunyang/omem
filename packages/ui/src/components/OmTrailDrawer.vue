@@ -48,6 +48,7 @@ watch(
       if (target?.isConnected) target.focus({ preventScroll: true });
     }
   },
+  { immediate: true },
 );
 
 // Restore scroll + move focus to the frame title when switching layers.

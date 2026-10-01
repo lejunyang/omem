@@ -15,7 +15,8 @@
     "A-U04 768px layout and keyboard focus",
     "390px mobile viewport and full-screen dialog",
     "100 persisted evidence nodes and bounded current rendering",
-    "A-U05 offline, model, delivery failure and restart truthfulness"
+    "A-U05 offline, model, delivery failure and restart truthfulness",
+    "Markdown tables and Mermaid diagrams render through the real reader"
   ],
   "errors": [],
   "agent": "deterministic ACP protocol fixture",
