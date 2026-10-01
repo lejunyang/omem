@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ChangeHistory from "./ChangeHistory.vue";
 import DailyAssistant from "./DailyAssistant.vue";
 import TaskFollowUpControls from "./TaskFollowUpControls.vue";
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
@@ -38,15 +39,15 @@ import LarkSetup from "./LarkSetup.vue";
 const navigation = [
   ["daily", "spark", "日常助理"], ["knowledge", "book", "知识库"],
   ["read", "layers", "原始材料"], ["capture", "plus", "输入材料"],
-  ["learning", "spark", "学习流程"], ["decisions", "check", "待判断"],
+  ["learning", "spark", "材料处理"], ["decisions", "check", "待判断"],
   ["tasks", "check", "事项与待办"], ["changes", "clock", "变更历史"],
   ["notifications", "spark", "通知中心"], ["lark", "layers", "飞书机器人"],
-  ["settings", "layers", "能力与连接"], ["design", "book", "设计系统"],
+  ["settings", "layers", "能力与连接"],
 ];
-function hashView() { const key = location.hash.replace(/^#\//, "").split(/[/?]/)[0]; return navigation.some(([id]) => id === key) ? key! : "knowledge"; }
+function hashView() { const key = location.hash.replace(/^#\//, "").split(/[/?]/)[0]; return key === "design" || navigation.some(([id]) => id === key) ? key! : "knowledge"; }
 const view = ref(location.hash ? hashView() : sessionStorage.getItem("omem-view") || "knowledge");
 function syncView() { view.value = hashView(); }
-const pageTitle = computed(() => navigation.find(([id]) => id === view.value)?.[2] ?? "知识库");
+const pageTitle = computed(() => navigation.find(([id]) => id === view.value)?.[2] ?? (view.value === "design" ? "组件预览" : "知识库"));
 const sources = ref<Source[]>([]);
 const revision = ref<Revision | null>(null);
 const focus = ref<Fragment | null>(null);
@@ -72,6 +73,11 @@ const connectionError = ref("");
 let bootRetryTimer: ReturnType<typeof setTimeout>;
 const booting = ref(false);
 const busy = ref(false);
+const probing = ref(false);
+const probeError = ref("");
+const probeNote = ref("");
+const accessProtected = ref(false);
+const processing = ref({ running: false, enabled: false });
 const toast = ref("");
 const token = ref("");
 const evidence = ref<InstanceType<typeof EvidenceReader>>();
@@ -202,7 +208,9 @@ async function boot() {
     // Only a real missing review route identifies the personal server. A proxy
     // failure while the API is syncing must never start personal API polling.
     if (r.status !== 404) throw Error(r.status === 401 ? "服务需要访问令牌" : `服务暂未就绪（HTTP ${r.status}）`);
-    const health = await api<{ notificationMode: string }>("/health");
+    const health = await api<{ notificationMode: string; accessProtected: boolean; processingEnabled: boolean; learning: { running: boolean; enabled: boolean } }>("/health");
+    accessProtected.value = health.accessProtected;
+    processing.value = { ...health.learning, enabled: health.processingEnabled };
     notificationMode.value = health.notificationMode;
     connecting.value = false;
   } catch (e) {
@@ -215,6 +223,7 @@ async function boot() {
     profiles.value = await api("/profiles");
     if (!profiles.value.some((p) => p.id === profileId.value))
       profileId.value = profiles.value[0]?.id || "";
+    setProfile();
     await refresh();
     if (sources.value[0] && !revision.value)
       await openRevision(sources.value[0].id, false);
@@ -398,9 +407,14 @@ async function restore(c: Change) {
     error.value = String(e);
   }
 }
+let probeGeneration = 0;
 async function probe() {
-  busy.value = true;
-  error.value = "";
+  const requestedProfile = profileId.value;
+  if (!requestedProfile) return;
+  const run = ++probeGeneration;
+  probing.value = true;
+  probeError.value = "";
+  probeNote.value = "";
   try {
     const response = await api<{
       configOptions?: {
@@ -413,7 +427,8 @@ async function probe() {
         )[];
       }[];
       note?: string;
-    }>("/profiles/" + profileId.value + "/probe", {});
+    }>("/profiles/" + requestedProfile + "/probe", {});
+    if (run !== probeGeneration) return;
     options.value = (response.configOptions || [])
       .filter((o) => o.type === "select")
       .map((o) => ({
@@ -423,18 +438,23 @@ async function probe() {
           "options" in v ? v.options : [v],
         ),
       }));
-    say(response.note || "已读取 Agent 公布的模型与配置");
+    probeNote.value = response.note || "已读取此 Agent 支持的模型与思考强度";
   } catch (e) {
-    error.value = String(e);
+    if (run === probeGeneration) probeError.value = String(e);
   } finally {
-    busy.value = false;
+    if (run === probeGeneration) probing.value = false;
   }
 }
 function setProfile() {
   model.value = selectedProfile.value?.model || "";
   effort.value = selectedProfile.value?.effort || "";
   options.value = [];
+  probeNote.value = "";
+  probeGeneration++;
+  probing.value = false;
+  if (view.value === "settings") void probe();
 }
+watch(view, v => { if (v === "settings" && !probeNote.value && !probing.value) void probe(); });
 function saveToken() {
   sessionStorage.setItem("omem-token", token.value);
   token.value = "";
@@ -462,7 +482,7 @@ onBeforeUnmount(() => {
     </OmPanel>
   </OmShell>
   <OmPanel v-else-if="reviewMode" title="知识库已合并到主应用"><p>请使用 osdk run dev 启动统一的个人助理。仓库知识将在同一个知识库中展示。</p></OmPanel>
-  <OmShell v-else :class="{ 'reading-shell': view === 'knowledge' }"
+  <OmShell v-else
     ><template #top
       ><div class="top-controls">
         <input
@@ -495,26 +515,7 @@ onBeforeUnmount(() => {
           <OmIcon :name="icon" />{{ label }}
         </button>
       </nav>
-      <h4 v-if="view === 'read'" class="nav-heading">
-        材料目录 <small>{{ sources.length }}</small>
-      </h4>
-      <input v-if="view === 'read'" v-model="sourceQuery" aria-label="查找原始材料" placeholder="查找原始材料" class="source-filter" />
-      <button
-        v-for="s in (view === 'read' ? sources.filter(s => s.title.toLowerCase().includes(sourceQuery.toLowerCase())).slice(0, 80) : [])"
-        :key="s.id"
-        class="source-link"
-        :class="{ selected: revision?.sourceId === s.sourceId }"
-        @click="
-          openRevision(s.id);
-          query = '';
-        "
-      >
-        <span>{{ s.title }}</span
-        ><small>{{ s.source }} · v{{ s.version }}</small>
-      </button>
-      <p v-if="view === 'read' && !sources.length" class="muted">
-        导入第一份材料，开始积累记忆。
-      </p></template
+</template
     >
     <div class="page-bar">
       <span
@@ -541,7 +542,26 @@ onBeforeUnmount(() => {
         description="试试原文关键词，或先导入材料。"
       />
     </section>
-    <section v-else-if="view === 'read'" class="page reader">
+    <section v-else-if="view === 'read'" class="materials-layout"><aside class="materials-directory" aria-label="材料目录">      <h4 class="nav-heading">
+        材料目录 <small>{{ sources.length }}</small>
+      </h4>
+      <input v-model="sourceQuery" aria-label="查找原始材料" placeholder="查找原始材料" class="source-filter" />
+      <button
+        v-for="s in sources.filter(s => s.title.toLowerCase().includes(sourceQuery.toLowerCase())).slice(0, 80)"
+        :key="s.id"
+        class="source-link"
+        :class="{ selected: revision?.sourceId === s.sourceId }"
+        @click="
+          openRevision(s.id);
+          query = '';
+        "
+      >
+        <span>{{ s.title }}</span
+        ><small>{{ s.source }} · v{{ s.version }}</small>
+      </button>
+      <p v-if="!sources.length" class="muted">
+        导入第一份材料，开始积累记忆。
+      </p><small v-if="sources.length > 80">显示前 80 项，可输入名称筛选。</small></aside><div class="page reader">
       <template v-if="revision"
         ><div class="row">
           <OmBadge>{{ revision.source }}</OmBadge
@@ -589,7 +609,7 @@ onBeforeUnmount(() => {
           >输入材料</OmButton
         ></OmEmpty
       >
-    </section>
+    </div></section>
     <section v-else-if="view === 'capture'" class="page">
       <span class="eyebrow">记忆的起点</span>
       <h1>输入材料</h1>
@@ -689,6 +709,8 @@ onBeforeUnmount(() => {
     <LearningView
       v-else-if="view === 'learning'"
       :jobs="jobs"
+      :processing="processing"
+      :sources="sources"
       :proposals="proposals"
       @refresh="refresh"
       @open="(id) => evidence?.open(id)"
@@ -742,28 +764,7 @@ onBeforeUnmount(() => {
             @open="evidence?.open(t.evidenceId)" /></template
       ></OmPanel>
     </section>
-    <section v-else-if="view === 'changes'" class="page">
-      <h1>每次变化，都有来路</h1>
-      <p class="muted">
-        录入、引用、问答和事项状态变化会记录通知。恢复创建新版本，不覆盖历史。
-      </p>
-      <OmPanel v-for="c in changes" :key="c.id" :title="c.title" class="stack"
-        ><small
-          >{{ c.kind }} ·
-          {{ new Date(c.createdAt).toLocaleString("zh-CN") }}</small
-        >
-        <p>{{ c.details }}</p>
-        <template #actions
-          ><OmButton v-if="c.beforeId" @click="openRevision(c.beforeId)"
-            >查看变更前</OmButton
-          ><OmButton v-if="c.afterId" @click="openRevision(c.afterId)"
-            >查看变更后</OmButton
-          ><OmButton v-if="c.beforeId && c.afterId" @click="restore(c)"
-            >恢复为新版本</OmButton
-          ></template
-        ></OmPanel
-      ><OmEmpty v-if="!changes.length" title="暂无变更" />
-    </section>
+    <ChangeHistory v-else-if="view === 'changes'" :changes="changes" @open="openRevision" @restore="restore" />
     <section v-else-if="view === 'notifications'" class="page">
       <h1>通知中心</h1>
       <p class="muted">
@@ -772,7 +773,7 @@ onBeforeUnmount(() => {
             ? "每次变更即时提示，完整记录保留在这里。"
             : "变更保留在通知中心，当前关闭逐条浮动提示。"
         }}
-        打开详情可核对应用回执、原始证据和各渠道的真实投递状态。
+        标为已读仅清除未读提醒，不会批准变更、完成待办或取消后续提醒。
       </p>
       <OmPanel
         v-for="n in notifications"
@@ -780,7 +781,7 @@ onBeforeUnmount(() => {
         :title="n.title"
         class="stack"
         ><OmBadge>{{ n.readAt ? "已读" : "未读" }}</OmBadge>
-        <p>{{ n.body }}</p>
+        <p>{{ n.body === "已保存新的知识正文、固定引用与独立模型复核记录。" ? "旧版知识整理通知，未记录可比较的正文版本。" : n.body.includes("之前：") && n.body.includes("当前：") ? "原始材料已更新，打开详情查看完整内容差异。" : n.body }}</p>
         <small>{{ new Date(n.createdAt).toLocaleString("zh-CN") }}</small
         ><template #actions
           ><OmButton v-if="!n.readAt" @click="readNotification(n)"
@@ -796,8 +797,7 @@ onBeforeUnmount(() => {
     <section v-else-if="view === 'settings'" class="page">
       <h1>能力与连接</h1>
       <p class="muted">
-        使用服务器上已登录的 Agent。模型与 effort 不固定枚举，ACP
-        按实际能力协商；后续可增加 API provider。
+        使用运行 omem 的电脑上已登录的 Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。
       </p>
       <OmPanel title="问答运行配置"
         ><div class="form">
@@ -845,7 +845,7 @@ onBeforeUnmount(() => {
             >上下文上限
             {{ selectedProfile?.maxContextChars }}
             字符；超限明确拒绝，不静默截断焦点。</small
-          ><OmButton :loading="busy" @click="probe">读取 Agent 能力</OmButton>
+          ><p v-if="probing" role="status">正在连接 Agent，读取支持的模型与思考强度…</p><p v-else-if="probeError" role="alert">能力读取失败：{{ probeError }}</p><p v-else-if="probeNote" class="muted">{{ probeNote }}</p><OmButton :loading="probing" @click="probe">重新读取 Agent 能力</OmButton>
           <details v-if="options.length">
             <summary>已发现的配置选项</summary>
             <p v-for="o in options" :key="o.id">
@@ -853,15 +853,14 @@ onBeforeUnmount(() => {
             </p>
           </details>
         </div></OmPanel
-      ><OmPanel class="stack" title="服务器访问"
-        ><label
-          >访问令牌<input
+      ><OmPanel class="stack" title="浏览器与 omem 的连接"
+        ><p>{{ accessProtected ? "此服务已启用访问保护，浏览器使用服务访问令牌连接。" : "当前已连接本地服务，未启用访问令牌，无需填写。" }}</p><details><summary>更换服务访问令牌</summary><p class="muted">令牌由 omem 服务的 token 配置或 OMEM_TOKEN 设置，用来防止其他人访问你的材料。它不是模型 API Key 或飞书令牌；仅保存在当前浏览器会话中。</p><label
+          >omem 服务访问令牌<input
             v-model="token"
             type="password"
             autocomplete="off"
             placeholder="仅保存在当前浏览器会话" /></label
-        ><template #actions
-          ><OmButton @click="saveToken">连接服务器</OmButton></template
+        ><OmButton @click="saveToken">保存令牌并重新连接</OmButton></details
         ></OmPanel
       >
       <p class="muted">
@@ -929,7 +928,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-@media(min-width:701px){.reading-shell :deep(.om-nav){width:76px;padding:20px 8px;}.reading-shell .workspace-title,.reading-shell .nav-heading,.reading-shell .source-link{display:none;}.reading-shell .navigation button{font-size:0;justify-content:center;gap:0;padding:12px;}.reading-shell .navigation button svg{width:22px;height:22px;}}
+.materials-layout{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100%;}.materials-directory{padding:20px 16px;border-right:1px solid var(--om-line);min-width:0;align-self:start;position:sticky;top:0;max-height:calc(100dvh - 140px);overflow:auto;}.materials-layout .reader{min-width:0;padding:28px;}.materials-directory .source-link{width:100%;}.materials-directory .nav-heading{margin-top:0;}@media(max-width:1000px){.materials-layout{grid-template-columns:190px minmax(0,1fr);}}@media(max-width:700px){.materials-layout{display:block;}.materials-directory{position:static;max-height:260px;border-right:0;border-bottom:1px solid var(--om-line);}.materials-layout .reader{padding:20px;}}
+
 </style>
 
 <style scoped>.source-filter{width:100%;min-height:44px;padding:8px;border:1px solid var(--om-line);border-radius:6px;}</style>

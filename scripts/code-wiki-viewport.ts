@@ -17,6 +17,8 @@ try {
     await page.getByRole("button", { name: "知识库", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "知识目录" })).toBeVisible();
     await expect(page.locator(".book-content .article-body > h2")).toBeVisible({ timeout: 30000 });
+    await expect(page.locator(".navigation")).not.toContainText("设计系统");
+    expect(await page.locator(".navigation button").first().evaluate(el => getComputedStyle(el).fontSize)).not.toBe("0px");
     const catalog = await api("/api/knowledge/articles");
     expect(catalog.materials.some((m: any) => m.path === "README.md")).toBe(true);
     expect(catalog.articles.filter((a: any) => a.key.startsWith("topic:")).length).toBeGreaterThan(4);
@@ -38,9 +40,14 @@ try {
     await page.getByLabel("查找章节", { exact: true }).fill("apps/server/src/agent-runtime/gateway.ts");
     await page.getByRole("button", { name: meta.title, exact: true }).click();
     const article = await api("/api/knowledge/articles/" + encodeURIComponent(meta.key));
+    const groups = await page.locator(".book-content .om-paragraph-references").evaluateAll(nodes => nodes.map(n => [...n.querySelectorAll("a")].map(a => decodeURIComponent(a.getAttribute("href")!.split("/").pop()!))));
+    for (const keys of groups) {
+      const targets = keys.map(key => JSON.stringify(article.citations.find((c: any) => c.key === key).target));
+      expect(new Set(targets).size).toBe(targets.length);
+    }
     const c = article.citations.find((c: any) => c.actionable && c.resolved?.kind === "material" && c.resolved.key.endsWith("gateway.ts") && c.resolved.startLine > 20);
     expect(c).toBeTruthy();
-    const trigger = page.locator(".book-content").getByRole("link", { name: c.label, exact: true }).first();
+    const trigger = page.locator(".book-content").getByRole("link", { name: c.label }).first();
     await trigger.click();
     const drawer = page.locator("dialog[open]");
     await expect(drawer.locator(".code-table tr")).toHaveCount(c.resolved.endLine - c.resolved.startLine + 1);
@@ -54,6 +61,22 @@ try {
     await trigger.click();
     await drawer.getByRole("button", {name:/阅读这份材料的知识解读/}).click();
     await expect(drawer.locator(".layer-chip")).toContainText("第 2 层");
+    await expect(drawer.locator(".article-body .md-body p").first()).toBeVisible();
+    const innerLink = drawer.locator(".om-inline-citation[href]").last();
+    await innerLink.scrollIntoViewIfNeeded();
+    const scroller = drawer.locator(".trail-scroll");
+    // A real wheel gesture gives the reader control after async restoration.
+    const beforeWheel = await scroller.evaluate(el => el.scrollTop);
+    await scroller.hover(); await page.mouse.wheel(0, -80);
+    await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeLessThan(beforeWheel);
+    await innerLink.scrollIntoViewIfNeeded();
+    const saved = await scroller.evaluate(el => el.scrollTop);
+    await innerLink.click();
+    await expect(drawer.locator(".layer-chip")).toContainText("第 3 层");
+    await page.keyboard.press("Escape");
+    await expect(drawer.locator(".layer-chip")).toContainText("第 2 层");
+    await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeCloseTo(saved, -1);
+
     expect(page.url()).toContain("/trail/");
     await page.reload();
     await expect(page.locator("dialog[open] .layer-chip")).toContainText("第 2 层");
@@ -66,6 +89,7 @@ try {
   });
   await check("README reads as a document with intact code fences", async () => {
     await page.getByRole("button", { name: "原始材料", exact: true }).click();
+    await expect(page.locator(".om-nav .source-link")).toHaveCount(0);
     await page.getByLabel("查找原始材料").fill("README.md");
     await page.locator(".source-link").filter({ has: page.locator("span", { hasText: /^README\.md$/ }) }).click();
     await expect(page.locator(".reader .md-body h1")).toBeVisible();
@@ -73,6 +97,28 @@ try {
     await expect(page.locator(".reader")).not.toContainText("片段 1");
     await page.getByRole("button", { name: "知识库", exact: true }).click();
     await page.getByLabel("查找章节", { exact: true }).fill("");
+  });
+  await check("material changes show real differences and notifications omit empty internals", async () => {
+    await page.getByRole("button", { name: "变更历史", exact: true }).click();
+    await page.getByLabel("查看范围").selectOption("capture");
+    await page.getByText("查看内容差异", { exact: true }).first().click();
+    await expect(page.locator(".change-comparison .diff-hunk").first()).toBeVisible();
+    expect(await page.locator(".change-comparison .added,.change-comparison .removed").count()).toBeGreaterThan(0);
+    await page.screenshot({ path: `${OUT}/changes-1440.png`, fullPage: true });
+    await page.getByRole("button", { name: "材料处理", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "材料处理", exact: true })).toBeVisible();
+    await expect(page.locator(".learning-page")).not.toContainText("学习任务");
+    await page.getByRole("button", { name: "知识库", exact: true }).click();
+  });
+  await check("Agent capabilities load automatically and local access needs no token", async () => {
+    const response = page.waitForResponse(r => /\/profiles\/[^/]+\/probe$/.test(r.url()), { timeout: 60000 });
+    await page.getByRole("button", { name: "能力与连接", exact: true }).click();
+    await expect(page.getByText("正在连接 Agent，读取支持的模型与思考强度…")).toBeVisible();
+    expect((await response).ok()).toBe(true);
+    await expect(page.getByText("已读取此 Agent 支持的模型与思考强度")).toBeVisible();
+    await expect(page.getByText("当前已连接本地服务，未启用访问令牌，无需填写。")).toBeVisible();
+    await page.screenshot({ path: `${OUT}/settings-1440.png`, fullPage: true });
+    await page.getByRole("button", { name: "知识库", exact: true }).click();
   });
   for (const width of [1440, 768, 390]) await check(`readable layout at ${width}px`, async () => {
     await page.setViewportSize({ width, height: 1000 });

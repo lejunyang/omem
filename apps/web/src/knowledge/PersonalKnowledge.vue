@@ -27,6 +27,6 @@ onBeforeUnmount(() => window.removeEventListener("hashchange", restoreRoute));
 <template>
   <section class="library-page"><p v-if="linkNotice" role="status">{{ linkNotice }}</p><KnowledgeHome prefix="/api/knowledge" :selected-key="selectedKey" @select="select" @navigate="push" /></section>
   <OmTrailDrawer :open="open" :frames="frames" :current="current" :loop-at="loopAt" :return-focus-to="trigger" @close="close" @back="back" @jump="jump" @dismiss-loop="loopAt = null">
-    <KnowledgeFrame v-if="active" :frame="active" prefix="/api/knowledge" @navigate="push" @loaded="active.title = $event" />
+    <KeepAlive v-if="open"><KnowledgeFrame v-if="active" :key="active.kind + active.id" :frame="active" prefix="/api/knowledge" @navigate="push" @loaded="(title, id) => { const frame = frames.find(f => f.id === id); if (frame) frame.title = title; }" /></KeepAlive>
   </OmTrailDrawer>
 </template>

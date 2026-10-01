@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ChangeComparison from "./ChangeComparison.vue";
 import { OmBadge, OmButton, OmCitation, OmDialog, OmEmpty } from "@omem/ui";
 import type { NotificationDetail } from "./api";
 
@@ -34,36 +35,18 @@ const tone = (state: string, supersededBy?: string | null) =>
     <p v-if="loading" class="muted">正在读取持久状态…</p>
     <template v-else-if="detail">
       <div class="row">
-        <OmBadge>{{ detail.changeKind || "通知" }}</OmBadge>
+        <OmBadge>{{ ({knowledge:"知识更新",capture:"材料更新",task:"事项",decision:"需要判断"} as Record<string,string>)[detail.changeKind || ""] || "通知" }}</OmBadge>
         <small>{{ new Date(detail.createdAt).toLocaleString("zh-CN") }}</small>
       </div>
       <h3>{{ detail.title }}</h3>
-      <p>{{ detail.body }}</p>
-      <section class="detail-block">
-        <h4>已生效记录</h4>
-        <p v-if="detail.receipt">
-          {{ detail.receipt.entityType }} · {{ detail.receipt.entityId }} · v{{
-            detail.receipt.entityVersion
-          }}
-        </p>
-        <p v-else class="muted">
-          此通知没有 application receipt，不会把通知本身当作事实已生效。
-        </p>
-        <p v-if="detail.details">{{ detail.details }}</p>
-        <div class="row">
-          <OmButton
-            v-if="detail.beforeId"
-            @click="emit('openRevision', detail.beforeId)"
-            >查看变更前</OmButton
-          >
-          <OmButton
-            v-if="detail.afterId && detail.changeKind !== 'decision'"
-            @click="emit('openRevision', detail.afterId)"
-            >查看变更后</OmButton
-          >
-        </div>
+      <p>{{ detail.changeKind === "capture" ? "原始材料已保存，可在下方查看本次内容变化。" : detail.changeKind === "knowledge" && !detail.afterId ? "旧版知识整理通知，当时未记录可比较的正文版本。新产生的更新会提供章节变化和内容差异。" : detail.body }}</p><p class="muted">已读仅表示你看过这条消息，不改变待办或判断结果。</p>
+      <p v-if="detail.receipt" class="muted">已更新{{ ({task:'事项',claim:'事实记忆',episode:'经历',procedure:'流程'} as Record<string,string>)[detail.receipt.entityType] || '记忆' }} · 第 {{ detail.receipt.entityVersion }} 版</p>
+      <section v-if="detail.changeId && detail.afterId && ['knowledge','capture','restore'].includes(detail.changeKind || '')" class="detail-block">
+        <h4>本次改动</h4><ChangeComparison :change-id="detail.changeId" />
+        <OmButton v-if="detail.changeKind !== 'knowledge'" @click="emit('openRevision', detail.afterId)">阅读此版本</OmButton>
       </section>
-      <section class="detail-block">
+      <p v-else-if="detail.details && detail.details !== detail.body">{{ detail.details }}</p>
+      <section v-if="detail.evidenceIds.length" class="detail-block">
         <h4>原始证据</h4>
         <div class="evidence-list">
           <OmCitation
@@ -78,8 +61,8 @@ const tone = (state: string, supersededBy?: string | null) =>
           title="本条变化没有提案证据"
         />
       </section>
-      <section class="detail-block">
-        <h4>投递状态</h4>
+      <section v-if="detail.deliveries.length" class="detail-block">
+        <h4>外部提醒发送情况</h4>
         <div
           v-for="delivery in detail.deliveries"
           :key="delivery.id"
@@ -90,7 +73,7 @@ const tone = (state: string, supersededBy?: string | null) =>
             <small>尝试 {{ delivery.attemptCount }} 次</small>
           </div>
           <OmBadge :tone="tone(delivery.state, delivery.supersededBy)">{{
-            delivery.supersededBy ? "已合并" : delivery.state
+            delivery.supersededBy ? "已合并" : ({pending:"等待发送",sending:"正在发送",retry_wait:"等待重试",delivered:"已发送",failed:"发送失败",cancelled:"已取消",unknown:"发送结果待确认"} as Record<string,string>)[delivery.state] || delivery.state
           }}</OmBadge>
           <p v-if="delivery.changeCount > 1" class="batch-count">
             该次摘要包含 {{ delivery.changeCount }} 条变化
