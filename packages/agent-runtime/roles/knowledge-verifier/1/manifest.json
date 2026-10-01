@@ -11,7 +11,7 @@
       "canonical_name": "omem-knowledge-verifier",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "81367af3b08c57d04190e0cdab85d7216dc4e5537b43c9f40000a7f382d36a76"
+      "artifact_digest": "9011c938cd2d3f4630b013e276a83a5d0ccef29f62f32458aa0f37b6910720e2"
     }
   ],
   "output_schema": "KnowledgeReview.v1",
