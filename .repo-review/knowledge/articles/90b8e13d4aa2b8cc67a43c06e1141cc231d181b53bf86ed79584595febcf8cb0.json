@@ -2,32 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/store.test.ts",
-    "title": "Store 的版本化证据、事务通知与任务状态测试",
-    "summary": "该测试以临时 SQLite 数据目录实例化真实 Store，验证捕获重试去重、不可变历史修订、恢复冲突、循环引用、图片校验失败、任务提醒幂等与搜索转义。它主要证明可观察行为；现有 Store 源码只展示定位说明和构造过程，具体方法的事务与 SQL 实现仍待核对。",
+    "title": "版本化证据与任务状态的存储行为测试",
+    "summary": "该测试以隔离的临时 SQLite 存储验证 Store 的关键外部行为：捕获重试去重且历史证据保持不变、恢复生成新修订、引用边写入幂等、无效图片不产生半成品、逾期提醒按任务状态版本去重，以及百分号搜索按字面量匹配。现有断言主要描述公开行为，尚未覆盖更广泛的事务故障与搜索转义边界。",
     "category": "tests",
     "sections": [
       {
-        "key": "setup-and-contract",
-        "title": "测试装配与输入合同",
-        "body": "测试为每个场景创建独立临时目录和 `Store`，并在用例结束后关闭数据库、清理目录，以隔离持久化状态。输入先经共享 `captureSchema` 解析，携带文本、来源、操作者、时间及生产者类型等 provenance，因此测试同时覆盖服务端存储入口与捕获合同的运行时约束。[[c1]] [[c2]]\n\n`Store` 构造时创建 SQLite 文件、执行迁移、建立资产目录并初始化仓储和服务。源码明确将 SQLite 定位为单用户基础，团队级 Postgres 与租户强制仍属后续迁移，所以这些测试不能作为团队隔离已经实现的证据。[[c3]]"
+        "key": "purpose-and-fixture",
+        "title": "测试场景与存储基础",
+        "body": "这组测试检查个人记忆存储在重复捕获、内容更新、恢复和失败输入下能否保持可信。每个用例都在独立临时目录中创建 `Store`，结束后关闭数据库并清理目录，避免测试之间共享状态。参考 [[c1]]\n\n捕获夹具经共享 `captureSchema` 解析，并携带来源、操作者、事件时间与时区等溯源字段。参考 [[c2]] 但当前存储断言只明确确认旧修订保留了 `actorId`，不能据此推断夹具中的其余元数据都已写入版本记录。参考 [[c4]]\n\nStore 的当前基础被明确限定为**单用户 SQLite**，团队级约束留待后续迁移。参考 [[c3]] 构造过程创建数据库与资产目录、执行迁移，并初始化应用仓储、作业仓储、输入聚合器、运行请求仓储和来源配置服务。参考 [[c11]]"
       },
       {
-        "key": "evidence-behavior",
-        "title": "版本证据、恢复与引用关系",
-        "body": "相同输入重试会被标记为重复，内容变化则生成版本 2；旧 fragment 仍保留原文，旧 revision 不再是当前版本，同时保存 actor provenance。有效发布增加通知，体现“当前状态可演进、历史证据保持固定”的外部合同。[[c4]]\n\n恢复不会覆盖历史，而是把旧内容发布为版本 3；再次基于过期版本恢复会抛出 `REBASE_REQUIRED`。循环引用测试还表明双向边可导航，同一方向的重复链接会被去重，通知只随有效关系写入增长。[[c5]] [[c6]]"
+        "key": "verified-behaviors",
+        "title": "被验证的核心行为",
+        "body": "相同输入重试会被标记为重复；内容变化产生第二版，而旧片段仍可读取、旧修订不再是当前版本。参考 [[c4]] 恢复不会覆写历史，而是创建新修订；再次用过期基线恢复会触发 `REBASE_REQUIRED`。参考 [[c5]]\n\n片段之间可以形成循环引用，重复写入同一方向的边不会增加结果数量。参考 [[c6]] 当内容并非真实 PNG 却声明为 PNG 时，捕获失败且修订列表与通知均为空；输入合同同时限定了可接受的图片类型、数据大小、标签和可选的部件溯源。参考 [[c7]] [[c8]]\n\n逾期提醒在同一任务状态版本只发送一次，状态修改要求匹配当前版本，重新打开后可以再次提醒。参考 [[c9]] 搜索 `%` 只命中真实包含百分号的内容，说明该字符未被当作任意匹配通配符。参考 [[c10]]"
       },
       {
-        "key": "atomicity-tasks-search",
-        "title": "失败原子性、任务提醒与搜索边界",
-        "body": "把普通字节伪装成 PNG 会在 revision 对外发布前失败，公开列表和通知均为空；这证明没有留下可见记录，但尚未直接验证资产文件或底层数据库中间行是否残留。[[c7]]\n\n过期任务连续提醒两次只产生一次对应提醒；状态更新使用旧版本号会抛出 `STALE_TASK_VERSION`，完成态不再提醒，重新打开并递增状态版本后才可再次提醒，说明提醒去重至少与任务状态版本相关。[[c8]] 搜索 `%` 仅命中正文确实含百分号的记录，证明百分号按字面量处理；其他通配符与转义字符不在本用例覆盖范围内。[[c9]]"
+        "key": "coverage-limits",
+        "title": "当前覆盖边界",
+        "body": "这些测试证明的是公开方法的结果，并未展示捕获、恢复、提醒和搜索的完整内部实现。当前源码范围只能确认 SQLite、资产目录以及应用、作业、输入、运行请求和来源配置等依赖的初始化方式。参考 [[c11]]\n\n失败原子性只覆盖图片类型不匹配这一条路径，尚不能确认资产写入、数据库提交或通知写入中途失败时是否整体回滚。参考 [[c7]] 搜索测试也只覆盖 `%`，不能推出下划线、反斜杠、空查询和大小写规则。参考 [[c10]] 任务测试覆盖过期版本冲突与重复提醒，但没有说明未来截止时间、无截止时间或并发提醒者的行为。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时 Store 装配与清理",
-        "reason": "支持测试使用隔离临时目录、真实 Store 实例并在每个用例后释放资源的说明。",
-        "relation": "explains",
+        "label": "临时存储测试夹具",
+        "reason": "支持每个测试创建独立临时 Store，并在用例结束后关闭数据库和清理目录。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/store.test.ts",
@@ -38,8 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "捕获测试输入及来源信息",
-        "reason": "支持测试输入通过共享合同解析，并携带文本和 provenance 元数据的说明。",
+        "label": "捕获夹具的溯源字段",
+        "reason": "支持测试夹具通过共享合同解析，并携带来源、操作者、事件时间及时区等字段。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -51,21 +51,21 @@
       },
       {
         "key": "c3",
-        "label": "Store 的单用户 SQLite 定位与初始化",
-        "reason": "支持 SQLite 是当前单用户基础，以及构造阶段创建数据库、迁移、资产目录和各仓储服务的论断。",
+        "label": "单用户 SQLite 边界",
+        "reason": "直接支持当前存储基础是单用户 SQLite，团队级约束仍属后续迁移的结论。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
           "startLine": 4,
-          "endLine": 69
+          "endLine": 5
         },
-        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */"
       },
       {
         "key": "c4",
-        "label": "捕获去重与不可变历史断言",
-        "reason": "支持重复捕获、版本递增、旧证据固定、来源保留和通知数量的行为结论。",
+        "label": "捕获去重与历史证据",
+        "reason": "支持重复捕获去重、内容变化生成新版本、旧证据保持固定，并明确只有 actorId 得到存储断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -77,8 +77,8 @@
       },
       {
         "key": "c5",
-        "label": "恢复生成新版本与过期恢复拒绝",
-        "reason": "支持恢复生成版本 3、历史内容不被覆盖以及陈旧恢复触发重基错误的结论。",
+        "label": "恢复与过期基线拒绝",
+        "reason": "支持恢复创建新版本、保留被恢复前版本，并拒绝基于过期修订的再次恢复。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -90,8 +90,8 @@
       },
       {
         "key": "c6",
-        "label": "循环引用与重复边去重",
-        "reason": "支持双向循环仍可导航、同向重复链接被去重及通知数量变化的结论。",
+        "label": "循环引用与边去重",
+        "reason": "支持循环引用仍可双向导航，且重复写入同一引用边不会增加边数量。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -103,8 +103,8 @@
       },
       {
         "key": "c7",
-        "label": "图片类型不匹配时拒绝发布",
-        "reason": "支持无效图片导致捕获失败且不产生公开列表记录或通知的可见原子性结论。",
+        "label": "无效图片的发布前拒绝",
+        "reason": "支持图片内容与声明类型不匹配时捕获失败，且不留下修订列表项或通知。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -116,8 +116,21 @@
       },
       {
         "key": "c8",
-        "label": "按任务状态版本去重提醒",
-        "reason": "支持提醒幂等、任务状态乐观并发以及重新打开后允许再次提醒的行为说明。",
+        "label": "图片输入合同",
+        "reason": "说明图片部件允许的 MIME 类型、数据长度、标签和可选溯源字段。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 27,
+          "endLine": 35
+        },
+        "quote": "export const imagePart = z\n  .object({\n    type: z.literal(\"image\"),\n    mimeType: z.enum([\"image/png\", \"image/jpeg\", \"image/webp\"]),\n    data: z.string().min(1).max(8_000_000),\n    label: z.string().max(200).default(\"图片\"),\n    provenance: partProvenanceSchema.optional(),\n  })\n  .strict();"
+      },
+      {
+        "key": "c9",
+        "label": "任务版本与提醒去重",
+        "reason": "支持逾期提醒按状态版本去重、任务更新采用乐观版本检查，并允许重新打开后再次提醒。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -128,9 +141,9 @@
         "quote": "  it(\"reminds an overdue task once per state version\", () => {\n    const s = setup();\n    const t = s.createTask({\n      title: \"task\",\n      detail: \"do it\",\n      dueAt: \"2020-01-01T00:00:00Z\",\n    });\n    s.remind();\n    s.remind();\n    expect(s.notifications()).toHaveLength(2);\n    s.setTaskStatus(t.id, \"done\", 1);"
       },
       {
-        "key": "c9",
-        "label": "百分号按字面量搜索",
-        "reason": "支持百分号不会被解释为搜索通配符的断言，并界定该用例只覆盖百分号。",
+        "key": "c10",
+        "label": "百分号字面搜索",
+        "reason": "支持百分号不会被解释为任意匹配通配符，同时界定当前搜索测试只覆盖该字符。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -139,31 +152,48 @@
           "endLine": 123
         },
         "quote": "  it(\"keeps a literal percent search from becoming a wildcard\", () => {\n    const s = setup();\n    s.capture(input(\"100% checked\"));\n    s.capture({ ...input(\"other\"), externalId: \"other\" });\n    expect(s.search(\"%\")).toHaveLength(1);\n  });"
+      },
+      {
+        "key": "c11",
+        "label": "SQLite 与存储依赖初始化",
+        "reason": "支持 Store 创建数据库和资产目录、执行迁移，并初始化应用仓储、作业仓储、输入聚合器、运行请求仓储和来源配置服务。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 45,
+          "endLine": 65
+        },
+        "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
       }
     ],
     "questions": [
       {
-        "question": "捕获、恢复、链接、提醒和搜索分别如何实现事务、并发检查与转义？",
-        "why": "现有 Store 引用范围只展示定位说明、构造和依赖初始化；测试能证明外部结果，但不能确认这些方法内部的 SQL、事务提交顺序、提醒幂等键或搜索转义算法。",
-        "nextStep": "补充 Store 对应方法及其直接调用模块的源码范围，再核对事务边界、失败回滚、版本条件和 SQL 参数化实现。",
+        "question": "除图片类型不匹配外，捕获过程中发生资产写入、数据库提交或通知写入异常时，修订与通知是否也保证整体回滚？",
+        "why": "当前材料只证明一种发布前校验失败不会留下列表项或通知；虽然 Store 会初始化 SQLite 与资产目录，但没有提供完整捕获事务及其他失败阶段的行为证据。",
+        "nextStep": "检查 Store.capture 及相关仓储的事务实现，并通过故障注入分别验证资产落盘、数据库提交和通知写入失败后的持久化状态。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4",
-          "c5",
-          "c6",
           "c7",
-          "c8",
-          "c9"
+          "c11"
         ]
       },
       {
-        "question": "图片校验失败后是否同时清除了磁盘临时文件和数据库中间行？",
-        "why": "现有用例只断言公开列表与通知为空，没有检查 assets 目录、底层表或进程中断时的恢复行为。",
-        "nextStep": "增加对资产目录和相关数据库表的断言，并覆盖写文件后、提交前失败或进程中断的场景。",
+        "question": "搜索接口是否也会将下划线和反斜杠按字面量处理，并明确空查询及大小写规则？",
+        "why": "现有断言只覆盖 SQL LIKE 中的百分号，无法推断其他特殊字符或查询边界。",
+        "nextStep": "检查搜索 SQL 的构造与转义逻辑，并补充下划线、反斜杠、空字符串及大小写行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c7"
+          "c10"
+        ]
+      },
+      {
+        "question": "搜索接口是否也会将下划线和反斜杠按字面量处理，并如何定义空查询及大小写规则？",
+        "why": "现有断言只覆盖百分号，不能据此推断其他特殊字符和查询边界。",
+        "nextStep": "检查搜索 SQL 的构造与转义逻辑，并补充下划线、反斜杠、空字符串及大小写行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
         ]
       }
     ]
@@ -177,7 +207,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -187,21 +217,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:36:47.849Z",
+    "effort": "high",
+    "at": "2026-10-01T12:06:46.497Z",
     "trace": {
-      "runId": "adc1d00a-244d-4c68-8568-788cf20e3614",
+      "runId": "9712b2c6-c907-4c69-add0-c7bbb599ecca",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "57bde46664857861b3426f071810555c9781dfcef8513eb860bcf29a3bb97ad0",
-      "contextHash": "f0cc8ea126a27ed72aa31793acb77f11389c2029031709172b75bdcc9697e567",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "012c7553fb0f2f676035939a635b847d9edc61cd7f6ea84cb9793489f299435a",
+      "contextHash": "a11169c79ee42ce73dd3636a265432e76e4b70850f77a0e4c5899c19e88b6eb1",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0ecf89057149dca437bd2d6b046f80b76a72efe748b3ef86228379f40bc43bff",
+      "fingerprint": "7854974d1ed37cc6dc6a6521eba224115184c2f6cc3017915054c1a8f96bbcb2",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -211,10 +241,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f552-0cac-7c80-ab3d-68b6fd0fc537"
+        "01a0f75b-dda9-75e3-9710-75cd32c3ffcd"
       ],
       "usage": {
-        "used": 28588,
+        "used": 32392,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -223,10 +253,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 25976,
-          "utf8Bytes": 31186,
-          "estimatedTokens": 10396,
-          "budgetedTokens": 12995,
+          "chars": 28064,
+          "utf8Bytes": 35434,
+          "estimatedTokens": 11812,
+          "budgetedTokens": 14765,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -235,20 +265,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:37:03.309Z",
+    "at": "2026-10-01T12:07:03.185Z",
     "trace": {
-      "runId": "eb54e45a-f0b0-4c6b-827b-53471b75b810",
+      "runId": "c10ee523-c439-4c74-b460-d4e5429b35bc",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "59cf7a71ebbdb8ae2121f67e33578b54ca78f970d5083754df79b04c72545a89",
-      "contextHash": "86e7439c462af2cd8620504f1b4bbf4b02788d2a5f1142c9c55fe41712a805e0",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "28ee75739a5105946c54329d80edee1bdfc91d6f0bc9eac6018101abb866e033",
+      "contextHash": "f6337a1b5160dfe11ca8108d639674ac6c56464fdeac163dd11536eb71ca4c08",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f93c81f0f0cc10fed63e42e451fd7eefb32b203b84694648f3d544a7570870cc",
+      "fingerprint": "2b8485127dbea4b6ca94f803bd806d991cb4d3587cf772ad0ae5f484350d06a5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -258,10 +288,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f552-6380-7661-abf9-8357e818de61"
+        "01a0f75c-379e-7710-9337-09a8c6f72467"
       ],
       "usage": {
-        "used": 27057,
+        "used": 28423,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -270,10 +300,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 22855,
-          "utf8Bytes": 26535,
-          "estimatedTokens": 8845,
-          "budgetedTokens": 11057,
+          "chars": 24961,
+          "utf8Bytes": 31013,
+          "estimatedTokens": 10338,
+          "budgetedTokens": 12923,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

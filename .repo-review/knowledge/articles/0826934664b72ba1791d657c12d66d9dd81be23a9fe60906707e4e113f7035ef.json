@@ -2,153 +2,88 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-    "title": "受控学习流水线的集成与恢复测试",
-    "summary": "该测试以临时 SQLite 数据目录和受控 ACP fixture 验证捕获内容经过独立提取、复核与原子应用后形成任务，并覆盖 Store 与流水线重建后的恢复、重复回放、输入过期、优雅停机、批量变更门控及 worker 类型隔离。此前“进程重启”的表述由材料无法支持，现已替换为组件和存储重开后的持久化恢复；测试也不等同于真实外部 Agent CLI 的在线兼容性检查。",
+    "title": "受控学习流水线的端到端行为验证",
+    "summary": "该测试验证捕获内容如何经过独立提取与复核、原子应用、重启恢复、过期输入拒绝、批量影响控制及任务类型隔离。它重点证明持久化副作用不会因重放而重复，并区分大量独立变更与同实体重复提案；测试使用本地 ACP 夹具，不代表真实外部 Agent CLI 已通过联调。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose",
-        "title": "验证范围与测试边界",
-        "body": "这组测试验证学习任务在异步执行中能否自动落地，并避免恢复、重复消费或批量输出造成重复副作用。每个用例使用临时目录隔离数据库，结束后统一清理；Agent profile 实际调用本地 Node fixture，因此结果可重复，但不代表真实外部 CLI 已通过认证和兼容性检查。参考 [[c1]]\n\n测试直接组合应用构建、存储、记忆服务与学习流水线，覆盖 HTTP 接入、持久化、角色运行和应用结果之间的集成边界，而不是单个函数的孤立单元测试。参考 [[c2]]"
+        "key": "pipeline-flow",
+        "title": "从捕获到原子应用",
+        "body": "这组测试解决的核心风险是：学习任务虽然经过多个异步阶段，但最终记忆或待办不能半应用、重复应用。测试用临时数据库、受控 ACP 进程和真实 `LearningPipeline` 组合出隔离环境。参考 [[c1]]\n\n```mermaid\nflowchart LR\n  A[提交捕获] --> B[提取提案]\n  B --> C[独立复核]\n  C --> D[策略判断]\n  D --> E[原子应用]\n```\n\nHTTP 场景断言提取与复核形成两个成功作业、分别使用独立会话，随后提案进入已应用状态，并且只产生一条应用回执；健康接口还应报告流水线正在运行且无错误。这证明了主路径的阶段隔离与单次落地，而不是只检查接口返回成功。参考 [[c2]]"
       },
       {
-        "key": "happy_path",
-        "title": "从 HTTP 捕获到原子应用",
-        "body": "成功路径明确启用 learning worker、注册受控 ACP profile，并向 `/api/captures` 提交带来源信息的手工捕获。参考 [[c3]] 随后应出现 `extract_claims` 与 `verify_proposals` 两个成功 job；两阶段使用不同 session，复核后的 proposal 才进入 `applied`，策略结果为自动应用。参考 [[c4]]\n\n最终只允许生成一条应用回执，健康接口还应显示 worker 正在运行且没有遗留错误。这从结果侧区分了“已入列”“角色执行成功”和“副作用已经原子落地”。参考 [[c5]]"
+        "key": "recovery-boundaries",
+        "title": "重启、重放与中断边界",
+        "body": "持久化作业允许进程在提取完成、复核尚未完成时重启。测试重新打开同一存储后继续排空队列，并人为追加一次复核重放；两次处理后仍只有一个待办和一条应用回执，说明幂等边界落在持久化应用结果上。参考 [[c3]]\n\n输入版本变化时，旧作业会以 `STALE_JOB_INPUT` 失败，新版本仍可继续处理；若 worker 正在执行超时任务时被正常停止，作业转入可重试等待并标为瞬时错误，而非误判成功或永久失败。参考 [[c4]]"
       },
       {
-        "key": "recovery",
-        "title": "持久化恢复、幂等与失败状态",
-        "body": "恢复用例先完成提取，再停止流水线、关闭 Store，并从同一目录重新创建 Store 与流水线；持久化的 verifier job 随后继续执行，只产生一个任务和一条回执。参考 [[c6]] 这证明的是组件与存储重开后的恢复，替代此前证据不足的“实际进程重启”结论。再次入列同一提取结果后，任务和回执数量仍不增加，说明回放具备幂等约束。参考 [[c7]]\n\n若同一来源已产生新 revision，旧 job 会以 `STALE_JOB_INPUT` 失败，而当前版本仍可继续处理。参考 [[c8]] worker 执行超时任务时被停止，则 job 回到 `retry_wait` 并标记为 `transient`，为后续恢复保留状态。参考 [[c9]]"
+        "key": "batch-policy",
+        "title": "批量变更的整体风险控制",
+        "body": "批量策略按去重后的实际影响评估整个 ChangeSet。十二个不同实体的创建请求会全部停在等待决定状态，只生成一个汇总决策事项，且不写入应用回执或活动记忆，避免把一次高影响操作拆成许多看似安全的小操作。参考 [[c5]]\n\n相反，十二个指向同一实体、同一陈述的创建请求被视为影响量一：仅一项应用，其余十一项保留为重复记录，不生成决策事项，最终只有一条活动 claim。这个对照验证了门控依据是去重后的影响，而非原始提案数量。参考 [[c6]]"
       },
       {
-        "key": "batch_and_boundaries",
-        "title": "批量门控与 worker 隔离",
-        "body": "批量策略按去重后的整体影响决策：十二个不同实体的创建请求全部停在 `awaiting_decision`，合并为一个 AttentionCase，且不生成记忆或应用回执。参考 [[c10]] 十二个相同实体的创建则只应用一次，其余十一条保留为重复项，也不会产生决策卡。参考 [[c11]]\n\nlearning worker 不领取 `knowledge:code-analyst` 工作，该 job 保持排队且没有 attempt，证明当前方向的类型隔离。参考 [[c12]] 实现还区分 `bad_output`、`auth`、`transient`、`config` 与 `permanent` 错误，但本文件仅直接覆盖部分失败路径，其余分类仍需补充集成或 live check。参考 [[c13]]"
+        "key": "scope-and-gaps",
+        "title": "职责隔离与测试范围",
+        "body": "学习 worker 只领取自身支持的作业类型；知识角色作业保持排队且没有执行尝试，防止不同 worker 争抢任务。参考 [[c7]]\n\n这些用例覆盖成功、重启、重放、过期、停止和两类批量决策，但 Agent 行为来自仓库内夹具进程，因此不能据此推断真实 CLI、认证、网络故障或模型输出质量已经验证。夹具配置明确以当前 Node 进程启动固定脚本。参考 [[c1]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时环境与受控 ACP 配置",
-        "reason": "支持测试使用临时目录、自动清理和 Node fixture profile，并界定其不是实际外部 CLI 验证。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-          "startLine": 11,
-          "endLine": 31
-        },
-        "quote": "const directories: string[] = [];\nconst temporary = (prefix: string) => {\n  const directory = mkdtempSync(join(tmpdir(), prefix));\n  directories.push(directory);\n  return directory;\n};\nafterEach(() => {\n  for (const directory of directories.splice(0))\n    rmSync(directory, { recursive: true, force: true });\n});\n\nconst "
-      },
-      {
-        "key": "c2",
-        "label": "学习流水线集成模块入口",
-        "reason": "支持测试直接组合合同、应用、记忆服务、学习流水线与存储层的集成测试定位。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-          "startLine": 5,
-          "endLine": 9
-        },
-        "quote": "import { profileSchema } from \"../../../packages/contracts/src/index.js\";\nimport { buildApp } from \"../src/app.js\";\nimport { FeedbackService, MemoryService } from \"../src/memory/service.js\";\nimport { LearningPipeline } from \"../src/learning/pipeline.js\";\nimport { Store } from \"../src/store.js\";"
-      },
-      {
-        "key": "c3",
-        "label": "HTTP 捕获与 learning worker 配置",
-        "reason": "支持成功路径启用 learning worker、选择受控 ACP profile，并通过 HTTP 提交捕获的论断。",
+        "label": "受控测试环境",
+        "reason": "说明测试通过固定 ACP 夹具、临时存储和真实流水线服务构造隔离运行环境，也界定其不是外部 CLI 联调。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-          "startLine": 66,
-          "endLine": 103
+          "startLine": 22,
+          "endLine": 63
         },
-        "quote": "  it(\"runs capture through independent extractor/verifier sessions and atomic application\", async () => {\n    const directory = temporary(\"omem-learning-app-\");\n    const built = await buildApp({\n      dataDir: directory,\n      agentCwd: join(directory, \"agent\"),\n      host: \"127.0.0.1\",\n      port: 0,\n      token: und"
+        "quote": "const fixtureAgent = resolve(\"apps/server/tests/fixtures/role-acp-agent.mjs\");\nconst profile = (args: string[] = [fixtureAgent]) =>\n  profileSchema.parse({\n    id: \"traex\",\n    name: \"Learning pipeline fixture\",\n    transport: \"acp\",\n    command: process.execPath,\n    args,\n    timeoutMs: 3000,\n  });\n\nconst capture = ("
       },
       {
-        "key": "c4",
-        "label": "独立提取复核与自动应用断言",
-        "reason": "支持两个 job 成功、阶段使用不同 session，以及 proposal 经复核后自动应用的结果。",
+        "key": "c2",
+        "label": "捕获到应用的主路径断言",
+        "reason": "支持提取与复核使用两个独立会话、提案自动应用、单次回执及健康状态正常的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 104,
-          "endLine": 132
+          "endLine": 144
         },
         "quote": "      expect(response.statusCode).toBe(200);\n      for (let index = 0; index < 200 && !built.store.tasks().length; index++)\n        await new Promise((resolve) => setTimeout(resolve, 20));\n      expect(built.store.tasks()).toMatchObject([\n        {\n          title: \"完成受控 worker 集成\",\n          ownerId: \"owner\",\n        "
       },
       {
-        "key": "c5",
-        "label": "应用回执与健康状态",
-        "reason": "支持成功路径只生成一条应用回执，并保持 learning worker 健康运行。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-          "startLine": 133,
-          "endLine": 144
-        },
-        "quote": "      expect(\n        Number(\n          (\n            built.store.db\n              .prepare(\"SELECT count(*) AS count FROM application_receipts\")\n              .get() as { count: number }\n          ).count,\n        ),\n      ).toBe(1);\n      expect(\n        (await built.app.inject(\"/api/health\")).json().learning,\n      "
-      },
-      {
-        "key": "c6",
-        "label": "Store 与流水线重建后的恢复",
-        "reason": "支持关闭并重新创建 Store 和流水线后继续持久化 verifier job；该范围不证明操作系统级进程重启。",
+        "key": "c3",
+        "label": "重启与幂等重放",
+        "reason": "支持持久化复核作业可在重启后恢复，并在再次重放时不重复创建待办或应用回执。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 150,
-          "endLine": 178
+          "endLine": 208
         },
         "quote": "  it(\"resumes a persisted verifier job after restart without duplicate effects\", async () => {\n    const directory = temporary(\"omem-learning-restart-\");\n    let store = new Store(directory);\n    const captured = capture(store, \"pipeline-restart\");\n    const first = pipeline(store, join(directory, \"agent-first\"));\n    "
       },
       {
-        "key": "c7",
-        "label": "验证任务重复回放幂等性",
-        "reason": "支持再次入列同一提取结果后任务数和应用回执数仍保持不变。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-          "startLine": 179,
-          "endLine": 207
-        },
-        "quote": "      const extraction = store.jobs\n        .list()\n        .find((job) => job.kind === \"extract_claims\")!;\n      store.jobs.enqueue({\n        kind: \"verify_proposals\",\n        inputRefs: [\n          {\n            roleOutputId: extraction.resultRef,\n            extractionJobId: extraction.id,\n            replay: true,\n"
-      },
-      {
-        "key": "c8",
-        "label": "过期 revision 拒绝",
-        "reason": "支持旧 revision 对应 job 以 STALE_JOB_INPUT 失败，而流水线继续处理当前来源版本。",
+        "key": "c4",
+        "label": "过期输入与正常停机",
+        "reason": "支持旧版本输入被拒绝，以及执行中停止后作业进入瞬时错误的可重试状态。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 214,
-          "endLine": 250
+          "endLine": 278
         },
         "quote": "  it(\"rejects stale input and preserves graceful shutdown as retryable\", async () => {\n    const directory = temporary(\"omem-learning-stale-\");\n    const store = new Store(directory);\n    try {\n      const stale = capture(store, \"pipeline-stale\");\n      store.capture({\n        source: \"manual\",\n        externalId: \"pip"
       },
       {
-        "key": "c9",
-        "label": "优雅停机后的重试状态",
-        "reason": "支持运行中任务在停止后进入 retry_wait，并被归类为 transient。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-          "startLine": 252,
-          "endLine": 278
-        },
-        "quote": "      const timeoutCapture = store.capture({\n        source: \"manual\",\n        externalId: \"pipeline-timeout\",\n        title: \"Interrupted worker\",\n        parts: [{ type: \"text\", text: \"TIMEOUT\" }],\n        context: {},\n      });\n      const stopping = pipeline(\n        store,\n        join(directory, \"agent-stop\"),\n  "
-      },
-      {
-        "key": "c10",
-        "label": "不同实体批量门控",
-        "reason": "支持超预算批次整体停放、合并为一个 AttentionCase，且不产生应用副作用。",
+        "key": "c5",
+        "label": "独立批量变更门控",
+        "reason": "支持十二项不同创建被整体暂存、汇总为单个决策事项且没有任何物化结果。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -159,9 +94,9 @@
         "quote": "  it(\"gates 12 distinct creates as one ChangeSet: parked, one AttentionCase, nothing applied\", async () => {\n    const directory = temporary(\"omem-batch-distinct-\");\n    const store = new Store(directory);\n    try {\n      captureBatch(store, \"BATCH_CREATE_DISTINCT\", \"batch-distinct\");\n      const p = pipeline(store, jo"
       },
       {
-        "key": "c11",
+        "key": "c6",
         "label": "同实体批量去重",
-        "reason": "支持相同实体批次按一次影响处理，仅应用一条、保留其余重复项且不创建决策卡。",
+        "reason": "支持十二项同实体创建按影响量一处理，仅应用一项并保留其余重复项。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -172,61 +107,36 @@
         "quote": "  it(\"dedupes 12 same-entity creates to impact=1: auto-applied, no AttentionCase\", async () => {\n    const directory = temporary(\"omem-batch-same-\");\n    const store = new Store(directory);\n    try {\n      captureBatch(store, \"BATCH_CREATE_SAME\", \"batch-same\");\n      const p = pipeline(store, join(directory, \"agent-sam"
       },
       {
-        "key": "c12",
-        "label": "learning worker 类型隔离",
-        "reason": "支持 learning worker 不领取知识角色 job，且该 job 没有产生执行 attempt。",
+        "key": "c7",
+        "label": "worker 类型隔离",
+        "reason": "支持学习流水线不领取知识角色作业、也不创建执行尝试的职责边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 407,
-          "endLine": 416
+          "endLine": 415
         },
         "quote": "it(\"leaves knowledge-role work for the knowledge worker\", async () => {\n  const directory = temporary(\"omem-learning-kind-isolation-\");\n  const store = new Store(directory);\n  const p = pipeline(store, join(directory, \"agents\"));\n  try {\n    const { job } = store.jobs.enqueue({ kind: \"knowledge:code-analyst\", inputRefs"
-      },
-      {
-        "key": "c13",
-        "label": "流水线错误分类",
-        "reason": "说明实现包含多类错误归因，支持识别当前测试材料尚未覆盖的分类分支。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/learning/pipeline.ts",
-          "startLine": 40,
-          "endLine": 56
-        },
-        "quote": "const classify = (error: unknown) => {\n  if (error instanceof JobExecutionError) return error;\n  const message = publicError(error);\n  const kind = /ROLE_OUTPUT_|LEARNING_ASSESSMENT_|ZodError|invalid.*json/i.test(\n    message,\n  )\n    ? \"bad_output\"\n    : /auth|unauthorized|forbidden|login|credential/i.test(message)\n  "
       }
     ],
     "questions": [
       {
-        "question": "认证失败、配置错误、非法角色输出和永久错误是否都需要对应的流水线集成测试？",
-        "why": "实现区分 bad_output、auth、transient、config 和 permanent，但当前材料只直接验证过期输入失败及停机后的 transient 重试状态，尚不能确认其他类别的持久化状态与重试策略。",
-        "nextStep": "扩展受控 ACP fixture，分别触发认证错误、非法 JSON、合同校验失败和不支持配置，并断言持久化的 errorKind、job 状态与重试行为。",
+        "question": "真实 ACP CLI 的认证、超时和异常输出是否另有现场集成测试？",
+        "why": "当前文件使用固定 Node 夹具模拟角色进程，只能证明宿主协议和流水线编排，不能证明外部 CLI、账号状态或真实模型输出可用。",
+        "nextStep": "查找或补充带明确环境前提的 live 测试，并将结果与夹具测试分开报告。",
         "blocking": false,
         "citationKeys": [
-          "c9",
-          "c13"
+          "c1"
         ]
       },
       {
-        "question": "知识 worker 是否也明确拒绝领取 learning job？",
-        "why": "当前材料只证明 learning worker 不领取知识角色 job，尚未提供反方向的 worker 类型隔离证据。",
-        "nextStep": "在知识 worker 测试中入列 extract_claims 或 verify_proposals job，并确认其保持 queued 且不产生 attempt。",
+        "question": "多个学习 worker 并发领取同一作业时，租约竞争和恰好一次应用由哪些测试覆盖？",
+        "why": "当前重启和手工重放验证了串行幂等性，但材料没有展示多进程或并发 worker 的竞争场景。",
+        "nextStep": "增加并发 worker 针对同一持久化队列的行为测试，断言租约唯一性、失败接管及应用回执不重复。",
         "blocking": false,
         "citationKeys": [
-          "c12"
-        ]
-      },
-      {
-        "question": "真实 Agent CLI 的 profile、认证和独立会话行为是否已有单独的 live check？",
-        "why": "本测试使用本地 Node fixture 模拟 ACP 角色输出，只能验证受控协议及宿主持久化流程，不能证明真实外部 CLI 在实际环境中可运行。",
-        "nextStep": "使用受支持的真实 profile 执行独立 live check，记录 CLI 可用性、认证、能力发现及两个独立 session 的运行证据。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c3",
-          "c4"
+          "c3"
         ]
       }
     ]
@@ -245,7 +155,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "e331447e1286c4fa7c12a3e8a9e87ad83cec034057dd8ad12b866e43b3becf1f"
+      "digest": "d0a0d20d427cae9cce2887dda081d6569bd3601a4ae7ca99d30ff0f3afc4ddd3"
     },
     {
       "kind": "material",
@@ -260,34 +170,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T06:50:58.884Z",
+    "effort": "high",
+    "at": "2026-10-01T12:00:57.404Z",
     "trace": {
-      "runId": "7fd236e7-0f76-4619-970b-6d3679e2e4d5",
-      "roleId": "knowledge-refresher",
+      "runId": "450858b0-7dea-4fa8-9312-ed1d012200f7",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "aa07e8f088f4cac746f95b39016bfd70b863ab62ca37b94ae03e3a8889af7286",
-      "contextHash": "b5dbad487978c38b71f1088fee72d7f82d15f9d3ff38c2ba3e2ed4cea84662b5",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "f77862cf6b8e3415dbaf6a9ae6a20f6582bc9f02672719df1f345150a76963f3",
+      "contextHash": "dc153acd72a3cd846a297a7c26446b790e7d086c9ad35251e3b2b33ee993fc0f",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9e7dfddcf1fd79b88d04dff439d97c090a38d5894b44a86f5a2dc146923e4a5b",
+      "fingerprint": "1a4cd845f72ba02409fbe21efda41a170b5e5e975290c4538a5013d65ac9fd26",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63a-a6b6-7863-b2bc-c7307052f248"
+        "01a0f756-67c9-7723-bb63-53df1bd4a4cd"
       ],
       "usage": {
-        "used": 36107,
+        "used": 32567,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -296,10 +206,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 49546,
-          "utf8Bytes": 55386,
-          "estimatedTokens": 18462,
-          "budgetedTokens": 23078,
+          "chars": 39505,
+          "utf8Bytes": 42641,
+          "estimatedTokens": 14214,
+          "budgetedTokens": 17768,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -308,20 +218,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:51:14.035Z",
+    "at": "2026-10-01T12:01:21.229Z",
     "trace": {
-      "runId": "ce605a18-15d0-4677-8b2e-ff1e235933d5",
+      "runId": "41248b8d-af6b-4d9f-9e12-7bb7fbf89074",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ae53c682b92c88b6ed0197af012c131995e004a7e03766b8bf59ba4113a89101",
-      "contextHash": "5f772980ee13403a7e4444b17c3de7ed862fbb0dfd6d727fdef8f4e08aa1faf5",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "2301b6655cc115eb96713b7c794d905667d2d10841362fd061e0f706bfaa7bd0",
+      "contextHash": "582889c744ef32d8a33e097baf1c172d169c0a99068595f76e133e9c112337d6",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "18d3c62281822f6ce1bed3b4e1d8c93a79872e6d6454aa681b07faa581b81129",
+      "fingerprint": "19ce13c4c1d84bf7ca17601d54d594e33715f7cff751575a5e383166c69e70e9",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -331,10 +241,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63b-1b05-75c3-babe-49251d65c8f5"
+        "01a0f756-e484-7352-8b49-25bcb93438c0"
       ],
       "usage": {
-        "used": 33669,
+        "used": 33268,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -343,10 +253,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 46484,
-          "utf8Bytes": 50838,
-          "estimatedTokens": 16946,
-          "budgetedTokens": 21183,
+          "chars": 43254,
+          "utf8Bytes": 48824,
+          "estimatedTokens": 16275,
+          "budgetedTokens": 20344,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

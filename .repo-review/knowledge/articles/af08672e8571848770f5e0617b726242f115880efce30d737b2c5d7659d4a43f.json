@@ -2,104 +2,143 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/learning-refresh.test.ts",
-    "title": "学习刷新与逐片段来源信息测试",
-    "summary": "该测试文件使用临时 SQLite 数据目录和固定 ACP fixture，验证逐片段来源信息能够抵达模型上下文、源修订会触发依赖刷新、证据不足时保持待复核，以及验证作业处理后原位更新记忆并保留旧修订证据。测试确认了状态与结果，但尚未证明 extractor 与 verifier 的角色隔离方式，也未覆盖连续修订竞争。",
+    "title": "学习刷新与来源追踪的集成测试",
+    "summary": "验证捕获材料的片段级来源信息能够进入学习流程，并覆盖来源修订后两种关键结果：证据不足时保留人工复核状态，重新验证通过时更新原有记忆且保留历史证据。",
     "category": "tests",
     "sections": [
       {
-        "key": "test_setup",
-        "title": "测试环境与隔离",
-        "body": "每个用例创建独立临时目录，并在结束后递归清理；ACP profile 指向固定 fixture，使用当前 Node 进程启动，并设置 3 秒超时。这样的装配隔离了数据库与代理工作目录，使测试结果不依赖持久的本机状态。[[c1]] `Store`、记忆服务和学习流水线的组合则分别出现在后续具体用例中，不能仅由这段公共初始化推出。"
+        "key": "purpose",
+        "title": "测试解决的核心风险",
+        "body": "该文件把捕获合同、SQLite Store、记忆与反馈服务、学习流水线组合起来，验证“捕获材料 → 模型处理 → 记忆刷新”的完整行为，而非只测试单个函数。重点防止两类问题：多人或图片材料的来源信息在送入模型前丢失，以及来源更新后旧记忆被错误覆盖或重复创建。参考 [[c1]]"
       },
       {
-        "key": "provenance_manifest",
-        "title": "逐片段来源信息进入模型",
-        "body": "多模态场景捕获 Alice、Bob 两段文本和一张由 Bob 提供的图片。各 part **可以**携带自己的 provenance：两个文本片段分别保存参与者、时间和事件信息，Bob 文本回复 Alice；图片仍保留 Bob 身份，但时间、事件与回复字段为空。处理抽取作业后，测试从角色输出确认 Alice、Bob、一个图片资产引用和 `projectTrusted=false` 已抵达模型侧上下文。[[c2]] 这证明了关键来源信息的传播结果，但没有断言每个片段都具备完整且彼此独立的事件字段。"
+        "key": "provenance",
+        "title": "片段来源信息如何到达模型",
+        "body": "合同允许每个文本、图片或链接片段携带独立的参与者、事件、时间、回复关系及转发状态；这些字段保持可选，以兼容缺少元数据的历史材料。参考 [[c2]]\n\n测试捕获 Alice、Bob 两段文本和一张图片，运行一次学习任务后检查任务成功且类型为声明提取；夹具模型返回的详情必须同时出现两位参与者、一个图片资源引用，并明确会话标识没有被提升为可信项目。这证明的是上下文清单的传递结果，不代表模型已正确理解其语义。参考 [[c3]]"
       },
       {
-        "key": "refresh_abstention",
-        "title": "刷新派发与诚实弃权",
-        "body": "待刷新场景先创建依赖 v1 修订的记忆，再以相同外部来源捕获内容完全不同的 v2。系统产生 `refresh_dependents` 作业，并再次使用 `extract_claims` 路径处理新证据；当模型没有足够依据修复原记忆时，派发作业虽成功，刷新记录仍保持 `needs_review`，受影响数量及记忆标识继续可追踪。[[c3]] 因而队列处理成功只代表刷新流程已被调度，不能等同于知识已经重新应用。"
+        "key": "abstention",
+        "title": "证据不足时保留待复核状态",
+        "body": "测试先让一条记忆依赖来源 v1，再以同一外部来源捕获内容完全不同的 v2；新修订会产生 `refresh_dependents` 作业。参考 [[c4]]\n\n随后流水线可以成功分派刷新并复用声明提取流程，但当模型不支持修复时，刷新记录仍为 `needs_review`，受影响数量为 1，且记录保留原记忆标识。这里区分了“刷新作业已成功执行”和“记忆已经成功修复”，避免把入队或调度成功误算为应用成功。参考 [[c5]]"
       },
       {
-        "key": "verified_in_place_update",
-        "title": "验证作业处理后的原位更新",
-        "body": "成功路径把“重试上限为 3”更新为“重试上限为 5”。新修订到达后，原记忆先变为 `invalidated`；流水线继续处理后，同一记忆 ID 升至版本 2、恢复 `active`，正文包含新值，旧修订原文仍可读取，刷新记录转为 `applied`，并可见两项 `verify_proposals` 作业。[[c4]] 这些断言证明了验证作业处理后的原位更新和证据保留，但没有证明 extractor 与 verifier 使用相互独立的角色，也未覆盖复核失败、连续修订、重试耗尽或事务中断。"
+        "key": "successful-refresh",
+        "title": "重新验证通过后原位更新记忆",
+        "body": "另一场景先从“重试上限为 3”生成活跃记忆，再捕获“上限为 5”。新来源出现后，同一记忆先变为失效状态；流水线完成独立验证后，数据库中仍只有这一条记忆，其标识不变、版本升至 2、状态恢复为活跃，正文包含新值。同时旧来源片段仍可读取，刷新记录变为 `applied`。参考 [[c6]]\n\n这些断言覆盖单来源、单依赖记忆的成功与拒绝修复路径，但使用的是 Node 启动的角色夹具，不能证明真实外部 Agent CLI 的认证、超时和模型兼容性。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时目录与 ACP fixture 配置",
-        "reason": "支持公共测试环境如何创建、清理临时目录，以及固定 ACP profile 的命令和超时配置；不用于证明后续服务组合。",
-        "relation": "explains",
+        "label": "学习刷新测试依赖",
+        "reason": "说明测试直接组合捕获合同、Store、记忆服务、反馈服务与学习流水线。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-refresh.test.ts",
-          "startLine": 15,
-          "endLine": 35
+          "startLine": 5,
+          "endLine": 12
         },
-        "quote": "const directories: string[] = [];\nconst temporary = (prefix: string) => {\n  const directory = mkdtempSync(join(tmpdir(), prefix));\n  directories.push(directory);\n  return directory;\n};\nafterEach(() => {\n  for (const directory of directories.splice(0))\n    rmSync(directory, { recursive: true, force: true });\n});\n\nconst "
+        "quote": "import {\n  profileSchema,\n  captureSchema,\n  type CaptureInput,\n} from \"../../../packages/contracts/src/index.js\";\nimport { MemoryService, FeedbackService } from \"../src/memory/service.js\";\nimport { LearningPipeline } from \"../src/learning/pipeline.js\";\nimport { Store } from \"../src/store.js\";"
       },
       {
         "key": "c2",
-        "label": "多参与者与图片来源传播场景",
-        "reason": "支持 Alice、Bob 和图片各自实际携带的来源字段，以及角色输出对参与者、图片资产和非可信项目标记的断言。",
-        "relation": "supports",
+        "label": "片段级来源合同",
+        "reason": "支持片段来源字段及其兼容历史材料的可选设计。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/learning-refresh.test.ts",
-          "startLine": 67,
-          "endLine": 145
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 4,
+          "endLine": 18
         },
-        "quote": "            {\n              type: \"text\",\n              text: \"alice unique turn body\",\n              provenance: {\n                actorExternalId: \"ou_alice\",\n                actorPrincipalId: null,\n                observedAt: \"2026-09-27T09:00:00+08:00\",\n                eventId: \"evt-alice\",\n                replyTo:"
+        "quote": "// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .object({\n    actorExternalI"
       },
       {
         "key": "c3",
-        "label": "源刷新派发与待复核状态",
-        "reason": "支持 v1 到 v2 的单次源更新会派发刷新作业、复用抽取任务，并在证据不足时保留 needs_review 状态。",
+        "label": "上下文传递断言",
+        "reason": "支持参与者、图片资源引用和项目可信状态进入模型输出的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-refresh.test.ts",
-          "startLine": 152,
-          "endLine": 245
+          "startLine": 131,
+          "endLine": 145
         },
-        "quote": "describe(\"source refresh dispatch and honest abstention\", () => {\n  it(\"reuses the capture extraction job and retains needs_review when new evidence does not support a repair\", async () => {\n    const directory = temporary(\"omem-refresh-job-\");\n    const store = new Store(directory);\n    try {\n      const v1 = store.ca"
+        "quote": "      const job = store.jobs.get(captured.job!.id)!;\n      expect(job.state).toBe(\"succeeded\");\n      expect(job.kind).toBe(\"extract_claims\");\n      const output = store.jobs.roleOutput(job.resultRef!)!;\n      const batch = output.output as {\n        abstentions: { detail: string }[];\n      };\n      const detail = batc"
       },
       {
         "key": "c4",
-        "label": "验证作业后的记忆版本更新",
-        "reason": "支持记忆先失效、随后以相同 ID 升级版本并恢复 active，同时保留旧修订、应用刷新记录和产生验证作业的断言。",
+        "label": "来源更新触发刷新",
+        "reason": "支持捕获 v2 后产生依赖刷新作业的流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-refresh.test.ts",
-          "startLine": 253,
-          "endLine": 275
+          "startLine": 196,
+          "endLine": 211
         },
-        "quote": "it(\"updates the same invalidated memory only after independent source re-verification\", async () => {\n  const directory = temporary(\"omem-refresh-applied-\");\n  const store = new Store(directory);\n  const pipe = new LearningPipeline({ store, memory: new MemoryService(store), feedback: new FeedbackService(store),\n    pro"
+        "quote": "      // Advance the source: deterministically invalidates dependents and enqueues\n      // a refresh_dependents job.\n      store.capture(\n        captureSchema.parse({\n          source: \"manual\",\n          externalId: \"refresh-job-src\",\n          title: \"v2\",\n          parts: [{ type: \"text\", text: \"refresh changed co"
+      },
+      {
+        "key": "c5",
+        "label": "拒绝修复后的状态",
+        "reason": "支持作业成功但刷新记录仍需复核，并保留受影响记忆标识的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-refresh.test.ts",
+          "startLine": 221,
+          "endLine": 245
+        },
+        "quote": "      // The dispatcher succeeds at queuing. Model abstention keeps the memory\n      // invalidated and the refresh record unresolved.\n      for (let i = 0; i < 10; i++) {\n        const r = await pipe.processOne();\n        if (!r.processed) break;\n      }\n      await pipe.stop();\n\n      const refreshJob = store.jobs.ge"
+      },
+      {
+        "key": "c6",
+        "label": "原位更新与历史保留",
+        "reason": "支持记忆失效、同标识升版恢复、旧片段保留及刷新应用成功等断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-refresh.test.ts",
+          "startLine": 261,
+          "endLine": 274
+        },
+        "quote": "    const old = captureFact(\"REFRESH_FACT retry limit is 3\");\n    await pipe.drain(5);\n    const before = store.db.prepare(\"SELECT id,version FROM memories WHERE status='active'\").get() as { id: string; version: number };\n    expect(before).toBeTruthy();\n    const next = captureFact(\"REFRESH_FACT retry limit is 5\");\n  "
+      },
+      {
+        "key": "c7",
+        "label": "角色运行夹具",
+        "reason": "说明测试通过本地 Node 夹具模拟 ACP 角色，界定其并非真实外部 CLI 验证。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-refresh.test.ts",
+          "startLine": 26,
+          "endLine": 35
+        },
+        "quote": "const fixtureAgent = resolve(\"apps/server/tests/fixtures/role-acp-agent.mjs\");\nconst profile = () =>\n  profileSchema.parse({\n    id: \"traex\",\n    name: \"Provenance fixture\",\n    transport: \"acp\",\n    command: process.execPath,\n    args: [fixtureAgent],\n    timeoutMs: 3000,\n  });"
       }
     ],
     "questions": [
       {
-        "question": "ACP fixture 是否确实以独立 extractor 与 verifier 角色产生两个阶段的判断？",
-        "why": "现有材料只显示最终记忆状态和两项 `verify_proposals` 作业，没有展示 fixture 的角色分支、运行 trace 或角色隔离断言，因此不能把成功路径确定表述为“独立复核”。",
-        "nextStep": "补充并引用 `role-acp-agent.mjs`、相应角色输出和运行 trace，或增加对 extractor/verifier 角色标识、输入证据及执行隔离的行为断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c4"
-        ]
-      },
-      {
-        "question": "刷新期间连续产生多个新修订时，系统如何处理较旧的刷新作业？",
-        "why": "现有刷新场景仅覆盖一次 v1→v2 更新，无法确认 v1→v2→v3 快速连续捕获时的执行顺序、取消、并行、幂等和证据归属。",
-        "nextStep": "补充连续修订用例，检查最终 head、旧刷新记录状态、作业幂等性以及每次更新所引用的固定修订。",
+        "question": "真实 Agent CLI/ACP 是否能稳定传递同样的片段来源清单？",
+        "why": "当前测试使用本地角色夹具，只证明宿主到夹具的协议与数据路径，未覆盖真实 CLI 的认证、能力协商、超时和输出差异。",
+        "nextStep": "增加明确标注为 live check 的真实 ACP 测试，检查多人来源、图片资源引用和不可信项目标记。",
         "blocking": false,
         "citationKeys": [
           "c3",
-          "c4"
+          "c7"
+        ]
+      },
+      {
+        "question": "多个依赖记忆、并发来源更新或刷新中途失败时是否仍能保持幂等和一致状态？",
+        "why": "现有断言只覆盖单个受影响记忆，以及顺序执行的拒绝修复和成功修复路径。",
+        "nextStep": "补充多依赖、重复入队、并发修订及 worker 失败重试场景，并断言记忆版本、刷新记录和作业数量不会重复增长。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
         ]
       }
     ]
@@ -113,7 +152,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -133,34 +172,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:33:19.612Z",
+    "effort": "high",
+    "at": "2026-10-01T12:01:51.099Z",
     "trace": {
-      "runId": "47a11e77-bc7d-4fbd-a684-d4c1ededfc0c",
-      "roleId": "knowledge-refresher",
+      "runId": "953f8ab9-a348-4937-9845-8d97cb98a62a",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "64633c130df2893e2e9e11dd4bcd297ab40b385d10a190178deeccf1d035dbe7",
-      "contextHash": "2f5b030209f39045ae5aac88263cbc0b8fd37f1a02a955c7c44c4ece89b17838",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "d179708589ae16fee0cf9fb0176fadcdbb7d3aed2c505b61e7701c26143b639b",
+      "contextHash": "b813bc1ab5f859f83fe583bfa32bbceac07ef3629d7599b05b9dedde92c02831",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b8fa6283028bd1e7fa13aa0b361782c6390b75c5dee401fa23f47f3bd62ec159",
+      "fingerprint": "ff3018c51c8b071d0adc016096c9020e7bc200d4401e479a5cc808eae0b7f4f2",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54e-da92-7a32-a17e-7f5b23a3d26b"
+        "01a0f757-1fda-70b2-b550-fbded924812a"
       ],
       "usage": {
-        "used": 31948,
+        "used": 31732,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -169,10 +208,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 38598,
-          "utf8Bytes": 43638,
-          "estimatedTokens": 14546,
-          "budgetedTokens": 18183,
+          "chars": 33743,
+          "utf8Bytes": 36847,
+          "estimatedTokens": 12283,
+          "budgetedTokens": 15354,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -181,20 +220,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:33:38.473Z",
+    "at": "2026-10-01T12:02:04.143Z",
     "trace": {
-      "runId": "ad59a882-6565-43d2-8433-66a6f66ae870",
+      "runId": "94deb34c-8c3e-4d96-a9a7-8713a7f5dfcc",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c56c3d37feccc3a235fa5a57926cd85155c29176c02068f19d932ba6c2b65b45",
-      "contextHash": "6bb91a1f2f0959ab103fbce9442a41f5854e0b8521bbdeb69083ddbd571feb78",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "a9a45b9c091d68b0e756df8cc136ca062b8a60819f6a0f7d2c822186eac16f3b",
+      "contextHash": "f533bf4e60d3fd7d1c8d2b6b59e075036d140063c66cfdeed177ec9a4e29ec8d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c30efb1c3c8b5a135d784a0c831de5aaaa99ad6baebe22eaf2f38c1ac82994dd",
+      "fingerprint": "55d0eaae731507ab32d9bf68394c6c44f39932a610f9ebe2bfbf07ad2e7dbfd5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -204,10 +243,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54f-3d9c-7a43-8f46-1132344e9bdf"
+        "01a0f757-b6b6-7541-8ca4-1093f36b490a"
       ],
       "usage": {
-        "used": 29601,
+        "used": 30461,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -216,10 +255,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 34946,
-          "utf8Bytes": 38346,
-          "estimatedTokens": 12782,
-          "budgetedTokens": 15978,
+          "chars": 37128,
+          "utf8Bytes": 42360,
+          "estimatedTokens": 14120,
+          "budgetedTokens": 17650,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

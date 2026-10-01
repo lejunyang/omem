@@ -2,57 +2,70 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/TaskFollowUpControls.vue",
-    "title": "事项跟进控制组件",
-    "summary": "为开放或等待中的事项提供记录等待、稍后提醒和取消操作；组件在提交前校验输入，携带事项版本与随机请求标识调用命令接口，并通过事件要求父组件刷新或展示错误。",
+    "title": "事项等待、稍后提醒与取消控制",
+    "summary": "该组件为仍可处理的事项提供跟进设置入口，将记录等待、稍后提醒和取消事项转换为带版本与请求标识的统一任务命令，并通知父组件刷新结果或展示错误。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-state",
-        "title": "作用与状态边界",
-        "body": "该组件为事项进入“等待外部结果”或需要延后提醒提供轻量操作入口。它只在事项状态为 `open` 或 `waiting` 时显示，展开后收集等待对象和本地日期时间；界面明确说明跟进时间不会修改截止时间，也不会自动联系对方，因此其职责是记录跟进信息，而不是执行外部通知。[[c1]]\n\n组件通过本地 `expanded`、`busy`、`waitingOn` 和 `when` 管理交互。`busy` 既阻止命令函数重复进入，也禁用三个操作按钮；请求成功后只收起表单，并未清空已填写的等待对象和时间。[[c2]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "组件用于管理尚未结束事项的后续动作：仅当事项处于 `open` 或 `waiting` 状态时显示入口。用户可以记录正在等待的对象或结果、设置下次检查时间，或者取消事项；界面明确说明跟进时间不会改变截止时间，也不会自动联系对方。参考 [[c1]]\n\n组件接收统一的 `Task` 对象：`status` 控制入口可见性，`followUp` 保存跟进信息，`version` 用于命令提交。参考 [[c3]] `TaskFollowUp` 类型从共享任务流合同导入，因此组件没有另行定义跟进数据结构。参考 [[c2]]"
       },
       {
         "key": "command-flow",
-        "title": "命令构造与父组件协作",
-        "body": "三种操作统一进入 `command`：记录等待必须填写等待对象，稍后提醒必须设置时间，校验失败则通过 `error` 事件交由父组件展示。日期会从 `datetime-local` 值转换成 ISO 时间；随后组件向事项命令端点发送操作、当前事项版本、随机生成的请求标识以及跟进字段。`wait` 写入等待对象，`snooze` 写入延后时间，`cancel` 将 `followUp` 置空。成功后收起表单并发出 `refresh`，失败时发出字符串化错误，最后恢复可操作状态。[[c3]]\n\n组件依赖 API 模块中的 `Task` 合同，直接使用事项标识、状态和版本字段。该合同还表明事项可处于完成或取消状态，但这两种状态不会渲染本组件的控制入口。[[c4]]"
+        "title": "从表单输入到任务命令",
+        "body": "操作流程如下：\n\n```mermaid\nflowchart LR\n  A[展开跟进设置] --> B{选择动作}\n  B -->|记录等待| C[校验等待对象]\n  B -->|稍后提醒| D[校验跟进时间]\n  B -->|取消事项| E[清空跟进信息]\n  C --> F[提交任务命令]\n  D --> F\n  E --> F\n  F --> G[刷新事项或报告错误]\n```\n\n提交前，组件以 `busy` 阻止自身重复执行，并分别校验等待对象和提醒时间。输入时间会转换为 ISO 字符串；请求携带动作、当前任务版本及随机请求标识。成功后收起表单并通知父组件刷新，失败时上报错误，最后恢复可操作状态。参考 [[c4]]"
       },
       {
-        "key": "limits-and-coverage",
-        "title": "边界与验证缺口",
-        "body": "现有材料只证明客户端发送 `expectedVersion` 和随机 `requestId`，不能据此确认服务端一定执行版本冲突检测或幂等去重；同样，定时调度、状态合并以及 `next_check_at` 与 `snoozed_until` 的持久化语义均不在该组件中。此前把请求标识直接称为“幂等请求标识”的结论已被更正为“随机请求标识”，其服务端用途仍待验证。[[c5]]\n\n三个操作按钮位于会提交 `wait` 的表单内，其中只有“记录等待”显式声明 `type=\"submit\"`。“稍后提醒”和“取消事项”的最终按钮类型取决于未提供的 `OmButton` 实现，因此仅凭当前材料无法排除一次点击同时触发对应命令和表单提交；材料也未提供行为测试来证明按钮动作、忙碌态防重、时间转换和失败路径。[[c6]]"
+        "key": "boundaries",
+        "title": "动作差异与集成边界",
+        "body": "三个动作共用 `/tasks/{task.id}/commands` 接口，但负载不同：`wait` 要求等待对象，并可附带检查时间；`snooze` 要求时间，并将其同时作为下次检查点和暂缓截止点；`cancel` 发送空的跟进信息。非取消动作还会携带原始时间表达式和浏览器时区。参考 [[c5]]\n\n组件负责采集、校验和发送命令，不直接修改传入的任务，也不负责自动联络。当前材料没有给出服务端的版本冲突、幂等和时间校验语义。此外，“稍后提醒”和“取消事项”位于表单内但未显式声明按钮类型，其点击是否额外触发表单提交取决于 `OmButton` 的默认行为，仍需通过按钮实现与交互测试确认。参考 [[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "跟进入口与表单说明",
-        "reason": "支持组件仅面向开放或等待事项，并说明跟进时间不改变截止时间、不会自动联系对方。",
-        "relation": "supports",
+        "label": "跟进设置界面",
+        "reason": "支持入口的状态条件、三种用户操作以及不改变截止时间和不自动联络的界面说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/TaskFollowUpControls.vue",
-          "startLine": 24,
-          "endLine": 37
+          "startLine": 25,
+          "endLine": 35
         },
-        "quote": "<template>\n  <div v-if=\"task.status === 'open' || task.status === 'waiting'\">\n    <OmButton variant=\"ghost\" :aria-expanded=\"expanded\" @click=\"expanded = !expanded\">跟进设置</OmButton>\n    <form v-if=\"expanded\" class=\"form\" @submit.prevent=\"command('wait')\">\n      <label>等待对象或结果<input v-model=\"waitingOn\" placeholder=\"例如：张三的"
+        "quote": "  <div v-if=\"task.status === 'open' || task.status === 'waiting'\">\n    <OmButton variant=\"ghost\" :aria-expanded=\"expanded\" @click=\"expanded = !expanded\">跟进设置</OmButton>\n    <form v-if=\"expanded\" class=\"form\" @submit.prevent=\"command('wait')\">\n      <label>等待对象或结果<input v-model=\"waitingOn\" placeholder=\"例如：张三的评审回复\" /></l"
       },
       {
         "key": "c2",
-        "label": "本地交互状态与忙碌保护",
-        "reason": "说明展开、输入和忙碌状态的声明，以及命令期间的重复调用保护与状态恢复。",
-        "relation": "explains",
+        "label": "共享跟进类型",
+        "reason": "支持 TaskFollowUp 从共享任务流合同导入，而非由组件或页面接口文件自行定义。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/TaskFollowUpControls.vue",
-          "startLine": 7,
-          "endLine": 21
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 1,
+          "endLine": 1
         },
-        "quote": "const expanded = ref(false), busy = ref(false), waitingOn = ref(\"\"), when = ref(\"\");\nasync function command(action: \"wait\" | \"snooze\" | \"cancel\") {\n  if (busy.value) return;\n  if (action === \"wait\" && !waitingOn.value.trim()) { emit(\"error\", \"请填写等待谁或什么结果\"); return; }\n  if (action === \"snooze\" && !when.value) { emit(\"er"
+        "quote": "import type { TaskFollowUp } from \"../../../packages/contracts/src/task-flow.js\";"
       },
       {
         "key": "c3",
-        "label": "跟进命令执行流程",
-        "reason": "支持输入校验、时间转换、随机请求标识生成、命令载荷构造、成功刷新和失败上报流程。",
+        "label": "事项数据合同",
+        "reason": "支持 Task 的状态、跟进信息和版本字段构成组件输入合同。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 40,
+          "endLine": 48
+        },
+        "quote": "export type Task = {\n  id: string;\n  title: string;\n  detail: string;\n  dueAt: string | null;\n  evidenceId: string | null;\n  status: \"open\" | \"waiting\" | \"done\" | \"cancelled\";\n  followUp?: TaskFollowUp | null;\n  version: number;"
+      },
+      {
+        "key": "c4",
+        "label": "命令提交流程",
+        "reason": "支持输入校验、忙碌状态保护、时间转换、命令提交、成功刷新、错误上报和状态恢复的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -63,72 +76,49 @@
         "quote": "async function command(action: \"wait\" | \"snooze\" | \"cancel\") {\n  if (busy.value) return;\n  if (action === \"wait\" && !waitingOn.value.trim()) { emit(\"error\", \"请填写等待谁或什么结果\"); return; }\n  if (action === \"snooze\" && !when.value) { emit(\"error\", \"请设置下次跟进时间\"); return; }\n  busy.value = true;\n  try {\n    const instant = when.v"
       },
       {
-        "key": "c4",
-        "label": "事项数据合同",
-        "reason": "说明组件依赖的事项标识、状态、跟进信息和版本字段，以及完整合法状态集合。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 40,
-          "endLine": 49
-        },
-        "quote": "export type Task = {\n  id: string;\n  title: string;\n  detail: string;\n  dueAt: string | null;\n  evidenceId: string | null;\n  status: \"open\" | \"waiting\" | \"done\" | \"cancelled\";\n  followUp?: TaskFollowUp | null;\n  version: number;\n};"
-      },
-      {
         "key": "c5",
-        "label": "命令接口载荷边界",
-        "reason": "证明前端发送当前版本、随机请求标识及跟进时间字段，同时支持对服务端冲突、去重和调度语义保持不确定。",
+        "label": "三类跟进负载",
+        "reason": "支持三个动作共用命令接口，以及取消、等待和稍后提醒各自的跟进字段差异。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/TaskFollowUpControls.vue",
           "startLine": 14,
-          "endLine": 20
+          "endLine": 18
         },
         "quote": "    const instant = when.value ? new Date(when.value).toISOString() : null;\n    await api(`/tasks/${props.task.id}/commands`, { action, expectedVersion: props.task.version, requestId: crypto.randomUUID(),\n      followUp: action === \"cancel\" ? null : { waiting_on: action === \"wait\" ? waitingOn.value.trim() : null,\n     "
       },
       {
         "key": "c6",
-        "label": "表单按钮行为",
-        "reason": "指出两个非提交操作按钮位于表单中但未显式声明类型，其真实提交行为依赖未提供的按钮组件实现。",
+        "label": "表单按钮定义",
+        "reason": "支持记录等待使用显式提交按钮，而另外两个表单内按钮未显式声明类型的边界分析。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/TaskFollowUpControls.vue",
           "startLine": 27,
-          "endLine": 35
+          "endLine": 34
         },
         "quote": "    <form v-if=\"expanded\" class=\"form\" @submit.prevent=\"command('wait')\">\n      <label>等待对象或结果<input v-model=\"waitingOn\" placeholder=\"例如：张三的评审回复\" /></label>\n      <label>下次跟进时间<input v-model=\"when\" type=\"datetime-local\" /></label>\n      <small>跟进时间不改变截止时间；不会自动联系对方。未设置时间时只记录等待。</small>\n      <div class=\"follow-up-action"
       }
     ],
     "questions": [
       {
-        "question": "`OmButton` 在未指定 `type` 时是否默认为 `button`？",
-        "why": "“稍后提醒”和“取消事项”位于会提交 `wait` 的表单内；当前材料未包含 `OmButton` 实现，无法排除其最终渲染为默认 HTML `submit` 按钮后额外触发表单提交。",
-        "nextStep": "检查 `packages/ui` 中 `OmButton` 的默认类型，并增加真实点击测试，分别断言三个按钮只产生一次且 action 正确的请求。",
+        "question": "表单内“稍后提醒”和“取消事项”按钮是否会同时触发表单的默认提交？",
+        "why": "两个按钮没有显式设置 `type=\"button\"`，而表单提交处理器固定执行 `command('wait')`；最终行为取决于当前材料未提供的 `OmButton` 默认按钮类型。",
+        "nextStep": "检查 `OmButton` 的渲染实现，并用交互测试分别确认三个按钮每次点击只产生一次且动作正确的命令请求。",
         "blocking": false,
         "citationKeys": [
           "c6"
         ]
       },
       {
-        "question": "服务端对 `expectedVersion`、`requestId` 和两类跟进时间字段的具体语义是什么？",
-        "why": "当前材料只能确认客户端发送这些字段，不能确认版本冲突处理、重复请求去重、状态合并或提醒调度行为。",
-        "nextStep": "查阅事项命令端点实现及其行为测试，核对冲突响应、重复请求处理和时间字段持久化规则。",
+        "question": "后端如何处理版本冲突、重复请求以及无效时间或时区？",
+        "why": "组件会提交 `expectedVersion`、随机 `requestId`、ISO 时间和浏览器时区，但当前材料只展示统一的异常上报，没有提供服务端命令合同及具体错误语义。",
+        "nextStep": "核对任务命令接口实现和测试；如需在文章中说明冲突、幂等或时间校验行为，再补充相应固定材料。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c5"
-        ]
-      },
-      {
-        "question": "服务端对 `expectedVersion`、`requestId` 和跟进时间字段的具体语义是什么？",
-        "why": "现有材料只证明客户端发送这些字段，不能证明服务端的版本冲突处理、重复请求去重、状态合并、持久化或提醒调度行为。",
-        "nextStep": "核对事项命令端点实现及行为测试，确认冲突响应、重复请求处理和各时间字段的持久化规则。",
-        "blocking": false,
-        "citationKeys": [
-          "c3",
+          "c4",
           "c5"
         ]
       }
@@ -143,26 +133,26 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
+      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:40:02.451Z",
+    "effort": "high",
+    "at": "2026-10-01T12:11:35.344Z",
     "trace": {
-      "runId": "b61b17ae-dd71-4a4a-ab40-be7274cbf6ec",
+      "runId": "e4c31af0-9dd7-495d-96d2-33aa04a9aa5b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9fda477629479248b2590f8cda2eb87cc03fa2410012fcb4c96c073a298e91fe",
-      "contextHash": "9f09ad9f7683354589c2775aa12af16c781c494db10082428c37c97dc55a6c42",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "d8db1c53101a3201d850644e9c9193b7ff2ad6da849266fdc534d8016f75c834",
+      "contextHash": "b31764ceabf5c5fcfb25cb0ab546a336f0a77927fbe2cee1834fbdf255830aab",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4b723155d5c704df71a3573c4f6867f48bcf0caaea2e68524756a4c831c7e66f",
+      "fingerprint": "b28ad2000c51c4648b1661d215835b26da5dd3e022cc4a85bc5a530aa01b10f7",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -172,10 +162,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f554-fae1-75a3-9a0c-b272c82c3c18"
+        "01a0f760-4b3f-7780-aa0e-51a42572a890"
       ],
       "usage": {
-        "used": 25643,
+        "used": 28185,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -184,10 +174,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 16727,
-          "utf8Bytes": 21763,
-          "estimatedTokens": 7255,
-          "budgetedTokens": 9069,
+          "chars": 17357,
+          "utf8Bytes": 24219,
+          "estimatedTokens": 8073,
+          "budgetedTokens": 10092,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -196,20 +186,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:40:18.862Z",
+    "at": "2026-10-01T12:11:54.332Z",
     "trace": {
-      "runId": "7f1d972c-e944-4122-a6ca-bb24c0efdabb",
+      "runId": "453a780f-4f0c-4e4a-b939-5fe0316aaab4",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "d709f43a97e18f603147883a79e8d163ec86305294b039cf3e1df4aeff58f113",
-      "contextHash": "be242b8d8d3877020e262d5cc8b8ced4d79a7b2c439b069f8bdc6894ad85484e",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "a2d042311b6f6e8a35bc0b06e65b83eda881dfc08d3b9c070010e1730a0edfa6",
+      "contextHash": "7d878b160efbfb074e77e1b52fc8dde5ba465140789be133070581889735da1f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5f5bca630f92e82c15dd64dba04703f4284d9d72a9f67dc41fd4f189ce188f2d",
+      "fingerprint": "26b12754e67edfac16c3c4b2776911b6cd49811d0c469b5c255ad10c80d54020",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -219,10 +209,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f555-5bda-7152-876e-c76e945d1721"
+        "01a0f760-a882-7f60-a232-00ebf6d9777a"
       ],
       "usage": {
-        "used": 24074,
+        "used": 25200,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -231,10 +221,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 13773,
-          "utf8Bytes": 17675,
-          "estimatedTokens": 5892,
-          "budgetedTokens": 7365,
+          "chars": 14396,
+          "utf8Bytes": 19836,
+          "estimatedTokens": 6612,
+          "budgetedTokens": 8265,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

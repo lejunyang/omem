@@ -2,203 +2,175 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/LearningView.vue",
-    "title": "学习任务状态、尝试记录与提案展示界面",
-    "summary": "该 Vue 组件集中呈现持久化学习任务、模型尝试、关联提案及取消或重试入口，区分等待、失败、完成和提案生效，并通过事件把刷新、错误与证据打开交给父组件。",
+    "title": "材料处理任务的状态追踪与人工控制",
+    "summary": "该视图集中展示原始材料进入记忆提炼流程后的任务状态、模型尝试、候选记忆与证据，并提供取消、重试和继续加载等操作；它是任务监控界面，不负责启动模型或直接审批候选结果。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-state",
-        "title": "任务状态与进度表达",
-        "body": "该组件让用户查看材料进入系统后的处理进度。后台状态被转换为中文文案及危险、警告、成功等视觉语气，但这种映射只负责展示，不等同于后台成功判定。[[c1]] 页面明确说明等待 worker 的任务保持“等待处理”，失败不会显示为完成；详情为空时也提示尚无模型尝试并不代表处理成功。[[c2]] [[c4]]\n\n四段轨迹依次表示材料保存、提炼与核验、形成提案、应用并通知；后三段分别按尝试次数、关联提案是否存在以及是否出现 `applied` 提案点亮。因此轨迹是面向用户的摘要，不能替代各后台阶段的独立完成证明。[[c3]]"
+        "key": "purpose",
+        "title": "让材料处理过程可见",
+        "body": "页面解决的是“材料保存后发生了什么”这一可见性问题：它说明材料会依次经历事实、经历、流程和待办的提炼与独立核验，同时明确自动处理关闭时原文仍能保存和检索，页面本身不会擅自开启模型调用。参考 [[c1]]\n\n任务标题优先采用任务携带的材料名称，其次根据输入引用在来源列表中寻找可读标题，最后才退回处理类型名称；这使后台任务尽量以材料而非技术标识呈现。参考 [[c2]]、[[c3]]"
       },
       {
-        "key": "details-and-actions",
-        "title": "提案关联、详情加载与任务控制",
-        "body": "提案通过 `origin.job_id` 与当前任务 ID 匹配；展开详情时调用 `/jobs/{id}`，并以 `job.id` 为键把返回结果写入本地 `details`。此前由详情渲染范围间接支撑这两项结论的表述已被替代，现由对应关联与请求代码直接证明。[[c11]] 界面随后逐项展示尝试次数、模型、effort、结果和可选错误信息，并对无尝试记录给出明确提示。[[c4]] API 类型还确认尝试包含 attempt、generation、model、effort 和 outcome 字段。[[c5]]\n\n取消与重试共用控制函数，请求携带当前 generation 和随机 requestId；成功后通知父组件刷新，失败发出错误事件，最终解除忙碌态。[[c6]] 模板限制可用动作：排队、已领取、运行、等待重试及等待判断状态可取消，失败或已取消状态可重新处理。[[c7]]"
+        "key": "status-flow",
+        "title": "从任务状态到候选记忆",
+        "body": "界面先按等待、失败或其他活动状态筛选任务，再依据任务状态生成面向用户的结果说明：排队只代表原文已保存，成功则区分是否形成并应用候选记忆，跳过也不会影响原材料阅读。参考 [[c4]]\n\n每个任务面板展示状态、结果、错误与更新时间；展开详情时才请求尝试记录，并显示实际模型、effort、结果或错误。没有尝试记录会明确提示“尚未产生模型尝试”，避免把空记录误解为成功。参考 [[c5]]、[[c6]]"
       },
       {
-        "key": "evidence-and-boundaries",
-        "title": "证据入口、依赖与已知边界",
-        "body": "每项提案展示状态、操作、影响数量、原因及策略原因，并将固定片段版本标识通过 `open` 事件交给父组件；证据阅读器、路由和权限判断不在本组件内。[[c8]] 组件复用共享 UI 包中的面板、徽标、按钮、引用和空状态组件，并使用本地导入的 `api` 发起请求；材料不足以证明整个应用都统一采用该封装。[[c9]]\n\n现有材料不含取消、重试端点的服务端实现或相关测试，因而不能确认 generation 冲突、requestId 幂等和详情请求竞态的最终语义。样式仅明确规定 700px 以下将四段轨迹改为两列、尝试记录改为单列；其他极窄屏及可访问性表现仍缺少测试证据。[[c10]]"
+        "key": "evidence-and-control",
+        "title": "证据回看与任务控制边界",
+        "body": "候选记忆按所属任务关联展示，包含操作类型、影响范围、理由、策略原因以及逐条原证据入口，因此用户可以从处理结论回到固定证据，而不是只看到派生文本。参考 [[c7]]\n\n该视图只提供任务级控制：处理中或等待中的任务可取消，失败或取消的任务可重试；请求携带当前 generation 和随机请求标识，完成后通知父级刷新，异常则交给父级展示。列表初始显示 40 条并可分批增加。参考 [[c8]]、[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "任务状态文案与视觉语气",
-        "reason": "支持后台状态到中文文案及视觉语气的映射，并界定其属于展示逻辑。",
+        "label": "材料处理页面说明",
+        "reason": "支持页面的实际使用场景、处理阶段以及不会自动开启模型调用的边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 15,
-          "endLine": 39
+          "startLine": 83,
+          "endLine": 87
         },
-        "quote": "const stateText: Record<string, string> = {\n  queued: \"等待处理\",\n  leased: \"已领取\",\n  running: \"正在学习\",\n  succeeded: \"处理完成\",\n  skipped: \"已跳过\",\n  awaiting_decision: \"等待判断\",\n  retry_wait: \"等待重试\",\n  failed: \"处理失败\",\n  cancelled: \"已取消\",\n  proposed: \"候选\",\n  validating: \"核验中\",\n  rejected: \"已拒绝\",\n  approved: \"已批准\",\n  applied: \"已生效\","
+        "quote": "    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入记忆，需要你判断的内容进入“待判断”。语言学习与记忆卡复习尚未接入。当前最多显示 200 条，优先展示运行中、需处理和已有结果的任务。</p>\n    <p role=\"status\">{{ processing.running ? '后台处理服务已启动' : processing.enabled ? '自动处理已启用，当前后台未运行' : '自动处理未启用' }} · {{ "
       },
       {
         "key": "c2",
-        "label": "等待与失败的页面说明",
-        "reason": "支持等待 worker 时保持等待状态以及失败不会显示为完成的用户提示。",
+        "label": "任务标题选择",
+        "reason": "支持任务标题优先使用材料名称并回退到来源标题或处理类型的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 68,
-          "endLine": 73
+          "startLine": 19,
+          "endLine": 20
         },
-        "quote": "    <span class=\"eyebrow\">材料进入后，每一步都保留状态</span>\n    <h1>学习流程</h1>\n    <p class=\"muted\">\n      这里显示真实持久任务、模型尝试和提案结果。等待 worker\n      的任务保持“等待处理”，失败不会显示为完成。\n    </p>"
+        "quote": "function title(job: Job) {\n  return job.materialTitle || props.sources.find(s => job.inputRefs.some(r => r.sourceId === s.sourceId || r.revisionId === s.id))?.title || names[job.kind] || \"材料处理\";"
       },
       {
         "key": "c3",
-        "label": "学习流程四段轨迹",
-        "reason": "支持四段进度名称及其依据尝试、提案和生效状态点亮的条件。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 86,
-          "endLine": 99
-        },
-        "quote": "      <div\n        class=\"status-track\"\n        :aria-label=\"`任务状态：${stateText[job.state] || job.state}`\"\n      >\n        <span class=\"done\">材料已保存</span\n        ><span :class=\"{ done: job.attempt > 0 }\">提炼与核验</span\n        ><span :class=\"{ done: jobProposals(job).length > 0 }\">形成提案</span\n        ><span\n          :class"
-      },
-      {
-        "key": "c4",
-        "label": "尝试记录与空记录提示",
-        "reason": "支持模型尝试字段的实际渲染，以及无尝试记录不代表成功的提示。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 107,
-          "endLine": 132
-        },
-        "quote": "      <details\n        @toggle=\"($event.currentTarget as HTMLDetailsElement).open && load(job)\"\n      >\n        <summary>运行详情与尝试记录</summary>\n        <p v-if=\"!details[job.id]\" class=\"muted\">正在读取…</p>\n        <div\n          v-for=\"attempt in details[job.id]?.attempts || []\"\n          :key=\"attempt.id\"\n          class=\"a"
-      },
-      {
-        "key": "c5",
-        "label": "任务尝试基础字段",
-        "reason": "支持 JobAttempt 类型中的次数、代次、模型、effort 和结果字段。",
+        "label": "来源数据结构",
+        "reason": "说明父级传入的来源数据具有标题、来源及版本等字段，是标题回退逻辑依赖的数据合同。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/api.ts",
-          "startLine": 64,
-          "endLine": 70
+          "startLine": 9,
+          "endLine": 17
         },
-        "quote": "export type JobAttempt = {\n  id: string;\n  attempt: number;\n  generation: number;\n  model: string | null;\n  effort: string | null;\n  outcome: string | null;"
+        "quote": "export type Source = {\n  id: string;\n  title: string;\n  source: string;\n  version: number;\n  sourceId: string;\n  externalId: string;\n  createdAt: string;\n};"
+      },
+      {
+        "key": "c4",
+        "label": "筛选与结果解释",
+        "reason": "支持任务筛选规则以及 queued、succeeded、skipped 等状态对应的用户说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 17,
+          "endLine": 27
+        },
+        "quote": "const waiting = computed(() => props.jobs.filter(j => j.state === \"queued\").length);\nconst filtered = computed(() => props.jobs.filter(j => filter.value === \"all\" || (filter.value === \"queued\" ? j.state === \"queued\" : filter.value === \"failed\" ? [\"failed\",\"retry_wait\"].includes(j.state) : j.state !== \"queued\")));\nfunct"
+      },
+      {
+        "key": "c5",
+        "label": "任务摘要面板",
+        "reason": "支持任务面板展示状态、处理结果、原始材料入口、错误和更新时间的描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 89,
+          "endLine": 109
+        },
+        "quote": "    <OmPanel v-for=\"job in filtered.slice(0, limit)\" :key=\"job.id\" class=\"stack\">\n      <template #heading>\n        <div class=\"panel-heading\">\n          <div>\n            <small>{{ names[job.kind] || \"后台处理\" }}</small>\n            <h3>{{ title(job) }}</h3>\n          </div>\n          <OmBadge :tone=\"tone(job.state)\">{{\n"
       },
       {
         "key": "c6",
-        "label": "取消与重试请求流程",
-        "reason": "支持控制请求携带 generation 和 requestId，以及刷新、错误上报和解除忙碌态的流程。",
-        "relation": "calls",
+        "label": "模型尝试详情",
+        "reason": "支持详情按展开加载，并显示模型、effort、结果、错误和无尝试提示的流程。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 50,
-          "endLine": 62
+          "startLine": 110,
+          "endLine": 135
         },
-        "quote": "async function control(job: Job, action: \"cancel\" | \"retry\") {\n  busy.value = job.id;\n  try {\n    await api(`/jobs/${job.id}/${action}`, {\n      expectedGeneration: job.generation,\n      requestId: crypto.randomUUID(),\n    });\n    emit(\"refresh\");\n  } catch (error) {\n    emit(\"error\", String(error));\n  } finally {\n    "
+        "quote": "      <details\n        @toggle=\"($event.currentTarget as HTMLDetailsElement).open && load(job)\"\n      >\n        <summary>运行详情与尝试记录</summary>\n        <p v-if=\"!details[job.id]\" class=\"muted\">正在读取…</p>\n        <div\n          v-for=\"attempt in details[job.id]?.attempts || []\"\n          :key=\"attempt.id\"\n          class=\"a"
       },
       {
         "key": "c7",
-        "label": "取消与重试按钮门禁",
-        "reason": "支持不同任务状态下取消或重新处理按钮的可见条件。",
+        "label": "候选记忆与原证据",
+        "reason": "支持候选记忆按任务展示理由、策略结果、影响范围和原证据入口的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 166,
-          "endLine": 186
-        },
-        "quote": "      <template #actions>\n        <OmButton\n          v-if=\"\n            [\n              'queued',\n              'leased',\n              'running',\n              'retry_wait',\n              'awaiting_decision',\n            ].includes(job.state)\n          \"\n          :loading=\"busy === job.id\"\n          @click=\"control("
-      },
-      {
-        "key": "c8",
-        "label": "提案展示与原证据入口",
-        "reason": "支持提案信息展示以及通过固定片段版本标识触发父组件打开原证据。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 134,
-          "endLine": 165
+          "startLine": 137,
+          "endLine": 167
         },
         "quote": "      <OmPanel\n        v-for=\"proposal in jobProposals(job)\"\n        :key=\"proposal.id\"\n        class=\"proposal-card\"\n        :title=\"\n          String(\n            proposal.body.title || proposal.body.statement || proposal.kind,\n          )\n        \"\n      >\n        <div class=\"row\">\n          <OmBadge :tone=\"tone(pro"
       },
       {
+        "key": "c8",
+        "label": "任务控制请求",
+        "reason": "支持取消或重试请求携带 generation 与请求标识，并在成功后刷新、失败后上报错误的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 58,
+          "endLine": 77
+        },
+        "quote": "async function load(job: Job) {\n  try {\n    details.value[job.id] = await api<Job>(`/jobs/${job.id}`);\n  } catch (error) {\n    emit(\"error\", String(error));\n  }\n}\nasync function control(job: Job, action: \"cancel\" | \"retry\") {\n  busy.value = job.id;\n  try {\n    await api(`/jobs/${job.id}/${action}`, {\n      expectedGene"
+      },
+      {
         "key": "c9",
-        "label": "共享界面组件与 API 导入",
-        "reason": "支持该组件复用共享 UI 组件并通过导入的 api 发起请求，同时限制结论只覆盖当前组件。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 2,
-          "endLine": 4
-        },
-        "quote": "import { ref } from \"vue\";\nimport { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel } from \"@omem/ui\";\nimport { api, type Job, type Proposal } from \"./api\";"
-      },
-      {
-        "key": "c10",
-        "label": "窄屏响应式布局",
-        "reason": "支持 700px 以下状态轨迹和尝试记录的明确布局变化。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 250,
-          "endLine": 263
-        },
-        "quote": "@media (max-width: 700px) {\n  .status-track {\n    grid-template-columns: 1fr 1fr;\n  }\n  .status-track span:nth-child(2) {\n    border-right: 0;\n  }\n  .status-track span:nth-child(-n + 2) {\n    border-bottom: 1px solid var(--om-line);\n  }\n  .attempt-row {\n    grid-template-columns: 1fr;\n  }\n}"
-      },
-      {
-        "key": "c11",
-        "label": "任务提案关联与详情请求缓存",
-        "reason": "直接支持提案按 origin.job_id 关联任务，以及展开后请求任务详情并按 job.id 写入 details；用于替代此前引用范围不足的结论。",
+        "label": "取消重试与分批展示",
+        "reason": "支持不同状态下可用的取消、重试操作以及每次增加 40 条任务的界面边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LearningView.vue",
-          "startLine": 40,
-          "endLine": 49
+          "startLine": 169,
+          "endLine": 192
         },
-        "quote": "const jobProposals = (job: Job) =>\n  props.proposals.filter((proposal) => proposal.origin.job_id === job.id);\n\nasync function load(job: Job) {\n  try {\n    details.value[job.id] = await api<Job>(`/jobs/${job.id}`);\n  } catch (error) {\n    emit(\"error\", String(error));\n  }\n}"
+        "quote": "      <template #actions>\n        <OmButton\n          v-if=\"\n            [\n              'queued',\n              'leased',\n              'running',\n              'retry_wait',\n              'awaiting_decision',\n            ].includes(job.state)\n          \"\n          :loading=\"busy === job.id\"\n          @click=\"control("
       }
     ],
     "questions": [
       {
-        "question": "后端如何处理 generation 已变化的取消或重试请求，以及 requestId 重复提交？",
-        "why": "组件只证明会发送 expectedGeneration 与 requestId，现有材料没有端点实现或错误合同，无法确认冲突状态、幂等保证和前端恢复策略。",
-        "nextStep": "检查 `/jobs/:id/cancel` 与 `/jobs/:id/retry` 的服务端实现及集成测试，并补充固定原文引用。",
+        "question": "页面文案所称“当前最多显示 200 条”是否由父级查询或服务端接口保证？",
+        "why": "本文件只对传入的任务数组进行筛选，并允许每次增加 40 条，没有看到本地 200 条上限；仅凭该材料无法确定限制来自哪里。",
+        "nextStep": "检查父组件获取 jobs 的请求参数及对应服务端列表接口，确认实际分页和上限策略。",
         "blocking": false,
         "citationKeys": [
-          "c6"
+          "c1",
+          "c9"
         ]
       },
       {
-        "question": "该页面是否已有覆盖详情竞态、动作状态门禁和证据打开行为的组件或浏览器测试？",
-        "why": "提供的材料不含测试代码，无法确认快速展开多个任务、请求乱序、操作期间状态变化以及无效证据标识等情形已有行为断言。",
-        "nextStep": "定位 LearningView 的组件测试或浏览器测试；若存在则纳入材料，若不存在则将这些交互保留为明确测试缺口。",
+        "question": "需要用户判断的候选记忆在哪里执行批准或拒绝？",
+        "why": "本视图能展示候选状态和证据，但可见操作只有任务取消与重试，未出现候选审批动作。",
+        "nextStep": "检查“待判断”入口及 Proposal 审批组件，确认该页面与人工决策流程的导航关系。",
         "blocking": false,
         "citationKeys": [
-          "c4",
           "c7",
-          "c8",
-          "c11"
+          "c9"
         ]
       },
       {
-        "question": "该页面是否已有覆盖详情请求竞态、动作状态门禁和证据打开行为的组件或浏览器测试？",
-        "why": "所提供材料不含测试代码，无法确认快速展开多个任务、请求乱序、操作期间状态变化及无效证据标识等情形已有行为断言。",
-        "nextStep": "定位 LearningView 的组件测试或浏览器测试；若不存在，将这些交互继续保留为明确测试缺口。",
+        "question": "任务筛选、懒加载详情和取消重试是否已有组件测试覆盖？",
+        "why": "提供的材料不含测试文件，因而无法确认失败请求、generation 冲突、空尝试记录及分批加载等行为是否被自动断言。",
+        "nextStep": "查找 LearningView 的 Vitest 或浏览器测试，并补充上述交互与错误分支的行为断言。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c7",
+          "c6",
           "c8",
-          "c11"
+          "c9"
         ]
       }
     ]
@@ -207,44 +179,44 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/LearningView.vue",
-      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
+      "digest": "0b18c7e95c118580d32641cebf60d85844d73ba8fd74153b32ebcf44be13897e"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
+      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:40:13.651Z",
+    "effort": "high",
+    "at": "2026-10-01T12:09:24.626Z",
     "trace": {
-      "runId": "e2447296-637b-4773-8b8d-fdf66018469c",
-      "roleId": "knowledge-refresher",
+      "runId": "67ed38fa-0e43-47e1-a3d6-399724691534",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "6b595ec8aa31e79892ee5ff26fcf2042d6de2a201482c08d92055f98a8f1f64b",
-      "contextHash": "d3fd6d1266566543e6480b07a8851e248a14a8d05349c5bda1003ac2aad1accf",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "7bc4fb9326b97178105a51045938cd4d0cdaaad941f5543acc608372b58ab2e2",
+      "contextHash": "9bd6349327d64713c01dd6814d1f126b54ef58435b48e69a6e6cfcc86297629e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9acfdd2659b9a13e8617182968085e0df32d34dee0ddce6a861bd5f3274434c8",
+      "fingerprint": "9ba8569816dd17f01682f136d3808b550b5ea293436cbfef22c9eff3eb52a6bd",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f555-2bd3-7c30-bf1f-0dc465cc96b4"
+        "01a0f75e-27a4-7e32-9704-41e22f2b172a"
       ],
       "usage": {
-        "used": 30937,
+        "used": 27581,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -253,10 +225,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 24855,
-          "utf8Bytes": 30829,
-          "estimatedTokens": 10277,
-          "budgetedTokens": 12847,
+          "chars": 19631,
+          "utf8Bytes": 23938,
+          "estimatedTokens": 7980,
+          "budgetedTokens": 9975,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -265,20 +237,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:40:34.649Z",
+    "at": "2026-10-01T12:09:42.586Z",
     "trace": {
-      "runId": "7ae023ce-6b5c-42b6-a201-767079101c2d",
+      "runId": "3b7c2759-425b-456c-a641-b7c202bd4b42",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "7630f4a8cfbeda34c5522af4b65f0648631b16d5fd709524618e4c1ca0a355e0",
-      "contextHash": "4906a633be90a720378d4f561143388155cd47aa018711fda5d3f6fe02022e3b",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "2be04bfe8d679313f5d9a0b86155b9eddab258c5a14567f0e48b451403523574",
+      "contextHash": "bd86d2a33679a0b8413747d38108b3c09bc8bc5536bc1b7af47910ef8d0008ec",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "8aa62d5c4d4e7dad41a3c7c4074733812b61eb90cb0a84b3481e39f6021ad9ca",
+      "fingerprint": "e4b35a9a87528d3cafabd8970e1b0f9e7146c8fcc8204b68cf7d60d1aa69ea46",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -288,10 +260,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f555-8b3c-7613-9cc1-45c28219c1eb"
+        "01a0f75e-aa80-7c30-a944-18e2a0395def"
       ],
       "usage": {
-        "used": 26548,
+        "used": 27346,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -300,10 +272,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 22236,
-          "utf8Bytes": 26924,
-          "estimatedTokens": 8975,
-          "budgetedTokens": 11219,
+          "chars": 23846,
+          "utf8Bytes": 30780,
+          "estimatedTokens": 10260,
+          "budgetedTokens": 12825,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

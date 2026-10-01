@@ -2,114 +2,140 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-    "title": "统一检索与轻量来源画像的行为测试",
-    "summary": "该测试以临时 SQLite Store 为真实边界，验证原始材料捕获后自动生成来源画像、进入关键词检索，并覆盖语篇时态、代码示例隔离、已应用记忆召回、固定证据读取、可见性与时间过滤、派生答案排除等关键行为。它证明的是当前规则画像与 SQLite 关键词检索的集成语义，不代表外部检索后端、模型画像或所有排序策略均已验证。",
+    "title": "原始证据检索与来源画像的集成测试",
+    "summary": "这组进程内集成测试验证手工捕获的原始材料会生成来源画像并立即参与关键词检索，同时覆盖篇章与时态识别、代码示例隔离、活跃记忆查询、固定证据读取、部分降级、结果过滤和派生内容排除等行为。",
     "category": "tests",
     "sections": [
       {
-        "key": "fixture_and_primary_flow",
-        "title": "测试夹具与主流程",
-        "body": "测试为每个用例创建独立临时目录和 `Store`，结束后关闭数据库并递归清理；捕获辅助函数先用共享 `captureSchema` 校验输入，再携带固定来源信息写入文本材料。由此测试贯穿合同校验、持久化、画像与检索，而非只验证孤立函数。[[c1]]\n\nG01 断言业务 Markdown 捕获后立即产生派生画像，识别标题层级和语篇片段；原始 fragment 同时可按“仓储系统”检索。流程不会按句创建决策或质量数据集，只产生一次通知，并报告 SQLite FTS5/RRF 后端可用。[[c2]] Store 构造时初始化迁移、应用仓库、任务、输入聚合、运行请求和来源画像服务，说明该集成路径依赖统一存储装配。[[c3]]"
+        "key": "purpose-and-fixture",
+        "title": "测试目标与运行环境",
+        "body": "这组测试关注材料捕获后的两项基础能力：保存可回溯的原始证据，以及生成帮助理解内容结构的来源画像。每个场景在独立临时目录中创建 `Store`，结束后关闭数据库并清理目录。参考 [[c1]]\n\n测试通过统一辅助函数校验手工文本与来源信息后执行捕获；`Store` 初始化 SQLite、仓储和画像服务，测试再直接读取画像或调用关键词检索。参考 [[c2]]、[[c3]]"
       },
       {
-        "key": "profile_semantics",
-        "title": "来源画像的语义边界",
-        "body": "G02 用“当前”“未来可能”和“上述三种”验证规则画像不会把全文压平成同一种事实：当前陈述标为 present，规划标为 plan/future，回指段落保留最近标题“重试策略”，并在 temporalNotes 中留下时态线索。[[c4]] 这与 `SourceProfile` 明确定义的语篇类别、时态、父标题、覆盖缺口和状态字段相对应。[[c5]]\n\nG03 进一步要求 SQL、TODO 和代码字面量带 `code` 标签且归为 example，不能解释成 owner instruction，也不能生成待办；普通客服要求在该夹具中同样未触发任务。[[c6]] 表格样式材料则被记录为 coverage gap，使画像状态成为 partial，但原始 fragments 仍可读取；这里验证的是降级保留证据，并未实际构造画像服务抛错或 `failed` 状态。[[c7]]"
+        "key": "profile-and-recall",
+        "title": "从捕获到理解与召回",
+        "body": "```mermaid\nflowchart LR\n  A[捕获原始文本] --> B[保存修订与片段]\n  B --> C[生成来源画像]\n  B --> D[建立关键词检索]\n  D --> E[返回原始证据]\n```\n\nMarkdown 捕获后，画像应识别标题和篇章结构，原始片段可立即按中文关键词命中，且不会产生逐句确认决策。参考 [[c4]] 画像还区分当前事实与未来计划，为回指保留父标题；SQL、TODO 和代码对象被视为示例，不转成所有者任务。参考 [[c5]]、[[c6]]\n\n对于已应用的活跃记忆，直接以复用相关关键词的文本查询时可以命中，无关查询不命中。该场景只证明词法查询行为，并未捕获一份新材料来验证自动触发召回。参考 [[c7]]"
       },
       {
-        "key": "memory_and_evidence",
-        "title": "记忆召回与固定证据读取",
-        "body": "G12 先通过应用仓库写入 active claim，再以复用词语检索，要求返回 claim、active 状态及相关摘要，同时排除无关查询。它覆盖“已应用记忆可被词法召回”，但没有断言多条候选的具体排序或分数。[[c8]]\n\n`readEvidence` 用 revision 与可选 fragment 定位固定文本：给定 fragment 返回对应段落，不给 fragment 时返回该 revision 的首段，未知 revision 或 fragment 返回 null。[[c9]] 实现侧确实直接查询 fragments，并按 ordinal 选择首段，说明测试覆盖的是原始固定证据读取接口，而不是派生答案读取。[[c10]]"
+        "key": "evidence-boundaries",
+        "title": "原始证据优先与检索边界",
+        "body": "固定修订和片段可读取精确原文，未知目标返回 `null`。表格等未完整处理的内容会形成覆盖缺口并使画像进入 `partial`，但原始片段仍被保留。参考 [[c8]]、[[c9]]\n\n记忆别名可作为召回路线，最终结果仍指向关联的原始片段；可见性、时间范围和来源新修订会过滤旧结果。参考 [[c10]] 标题与短中文词可以命中，派生答案被排除，过滤发生在结果上限之前。参考 [[c11]] 检索入口还会规范化数量、分词并执行时间与可见性判断；画像结构保存篇章类型、父标题、时态、覆盖缺口和处理状态。参考 [[c12]]、[[c13]]"
       },
       {
-        "key": "fusion_filters_limits",
-        "title": "融合路由、过滤与未覆盖范围",
-        "body": "后续用例验证 active memory 可作为别名路由召回其证据集所指向的原始 fragment：查询 “Aurora” 返回含 E42 的原文，并标记 memory 路由；可见性和时间范围过滤都在结果限额前生效。当同一外部来源捕获新 revision 后，旧证据不再从当前 source head 返回。[[c11]]\n\n最后一组断言覆盖标题检索、两个汉字的中文查询、派生 capture 排除，以及大量不可见同名结果不会挤占 `limit: 1`。[[c12]] 检索实现也明确先限制 limit、分词，并以时间和 fragment 可见性判定候选资格，同时声明只返回 original evidence。[[c13]] 不过测试名中的 “restore” 未在所给用例正文中出现显式关闭并重开 Store 的步骤，因此不能据此认定数据库恢复路径已被行为验证。"
+        "key": "coverage-and-limits",
+        "title": "已验证范围与待补场景",
+        "body": "这些用例直接实例化 `Store` 和 `KeywordRetrieval`，结论限于 SQLite、画像与词法检索的进程内集成路径，并不直接覆盖 HTTP 或外部采集链路。参考 [[c1]]、[[c2]]\n\n名称含“restore”的用例只在同一个 `Store` 中于捕获后立即查询，没有重开数据库，因此不能证明进程重启后的索引恢复。参考 [[c11]] “profile failure”场景实际验证的是表格引起的覆盖缺口和 `partial` 状态，没有模拟画像器抛出异常或进入 `failed`。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时 Store 与捕获夹具",
-        "reason": "支持测试使用隔离数据库、清理资源，并通过共享捕获合同写入带来源信息的文本。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-          "startLine": 1,
-          "endLine": 62
-        },
-        "quote": "import { describe, it, expect, afterEach } from \"vitest\";\nimport { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join } from \"node:path\";\nimport { createHash } from \"node:crypto\";\nimport { Store } from \"../src/store.js\";\nimport { KeywordRetrieval } from \"../src/retrieval/keyword.js\";\n"
-      },
-      {
-        "key": "c2",
-        "label": "业务文档画像与即时检索断言",
-        "reason": "支持 G01 对 Markdown 画像、原始片段检索、零逐句确认、单次通知及健康状态的断言。",
+        "label": "临时存储隔离与清理",
+        "reason": "支持各场景使用独立 Store，并在测试后关闭数据库、清理临时目录。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-          "startLine": 64,
-          "endLine": 115
+          "startLine": 11,
+          "endLine": 23
         },
-        "quote": "describe(\"V3-03 unified retrieval port and lightweight source profile\", () => {\n  it(\"G01: importing a business doc profiles it, makes it keyword-searchable, asks zero per-sentence confirmations\", () => {\n    const store = setup();\n    const doc = [\n      \"# 订单同步说明\",\n      \"\",\n      \"订单同步是核心后台任务，负责把店铺订单同步到仓储系统。\",\n     "
+        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup() {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-retrieval-\"));\n  const store = new Store(dir);\n  stores.push({ store, dir });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    store.close();\n    rmSync(dir, { "
+      },
+      {
+        "key": "c2",
+        "label": "统一捕获辅助函数",
+        "reason": "支持测试通过共享输入合同校验手工文本和来源信息后调用 Store.capture。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 39,
+          "endLine": 53
+        },
+        "quote": "const capture = (\n  store: Store,\n  externalId: string,\n  title: string,\n  text: string,\n) =>\n  store.capture(\n    captureSchema.parse({\n      source: \"manual\",\n      externalId,\n      title,\n      parts: [{ type: \"text\", text }],\n      provenance,\n    }),\n  );"
       },
       {
         "key": "c3",
-        "label": "Store 服务装配",
-        "reason": "说明测试中的 Store 会初始化 SQLite、迁移及来源画像等相关仓库和服务。",
+        "label": "存储与画像服务装配",
+        "reason": "支持 Store 创建 SQLite 数据库并装配相关仓储和 SourceProfileService。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
           "startLine": 38,
-          "endLine": 69
+          "endLine": 65
         },
         "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       },
       {
         "key": "c4",
-        "label": "时态、规划与父标题断言",
-        "reason": "支持画像区分当前状态、未来规划和回指父上下文的行为。",
+        "label": "捕获后的画像与即时检索",
+        "reason": "支持 Markdown 标题和篇章结构被识别、原始片段立即可检索且不产生逐句确认决策。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-          "startLine": 117,
-          "endLine": 159
+          "startLine": 93,
+          "endLine": 114
         },
-        "quote": "  it(\"G02: keeps parent context for anaphora and separates present-state from planning discourse\", () => {\n    const store = setup();\n    const doc = [\n      \"# 订单同步\",\n      \"\",\n      \"当前订单同步每小时执行一次，失败后自动重试。\",\n      \"\",\n      \"未来可能会引入增量同步，减少全量拉取。\",\n      \"\",\n      \"## 重试策略\",\n      \"\",\n      \"上述三种重试方式均已上线运行。\",\n    ].joi"
+        "quote": "    const profile = latestProfile(store, revision.id);\n    expect(profile.derived).toBe(true);\n    expect(profile.carrierType).toBe(\"markdown\");\n    expect(profile.titlePath.map((h) => h.text)).toEqual(\n      expect.arrayContaining([\"订单同步说明\", \"触发方式\", \"失败处理\"]),\n    );\n    expect(profile.discourseSegments.length).toBeGre"
       },
       {
         "key": "c5",
-        "label": "来源画像数据结构",
-        "reason": "解释测试所断言的语篇类别、时态、父标题、覆盖缺口与状态字段来自何种服务合同。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/source-profile/service.ts",
-          "startLine": 6,
-          "endLine": 55
-        },
-        "quote": "export const PROFILER_VERSION = \"rule-based@1\";\n\nexport type DiscourseKind =\n  | \"definition\"\n  | \"claim\"\n  | \"constraint\"\n  | \"history\"\n  | \"plan\"\n  | \"question\"\n  | \"instruction\"\n  | \"example\"\n  | \"noise\";\n\nexport type Tense = \"present\" | \"future\" | \"past\" | \"unknown\";\n\nexport type DiscourseSegment = {\n  ordinal: num"
-      },
-      {
-        "key": "c6",
-        "label": "代码示例不得成为指令或任务",
-        "reason": "支持 SQL、TODO、代码字面量均归为 example，且不生成 owner task 的断言。",
+        "label": "时态与父级语境",
+        "reason": "支持画像区分当前状态和未来计划，并为回指内容保留最近父标题。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-          "startLine": 161,
-          "endLine": 187
+          "startLine": 133,
+          "endLine": 158
         },
-        "quote": "  it(\"G03: code, SQL examples and TODOs are parsed as code examples, not owner instructions\", () => {\n    const store = setup();\n    const doc = [\n      \"SELECT * FROM orders WHERE status = 'pending';\",\n      \"\",\n      \"// TODO: retry on HTTP 503 before surfacing the error\",\n      \"\",\n      \"const fixture = { expected:"
+        "quote": "    const present = profile.discourseSegments.find((s) =>\n      s.snippet.includes(\"当前订单同步\"),\n    )!;\n    expect(present.tense).toBe(\"present\");\n\n    const planned = profile.discourseSegments.find((s) =>\n      s.snippet.includes(\"未来可能\"),\n    )!;\n    expect(planned.kind).toBe(\"plan\");\n    expect(planned.tense).toBe(\"fut"
+      },
+      {
+        "key": "c6",
+        "label": "代码示例不转为任务",
+        "reason": "支持代码、SQL 和 TODO 被归类为示例，且不会生成所有者任务。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 175,
+          "endLine": 186
+        },
+        "quote": "    const codeSegments = profile.discourseSegments.filter((s) =>\n      s.tags.includes(\"code\"),\n    );\n    expect(codeSegments.length).toBe(3);\n    for (const segment of codeSegments)\n      expect(segment.kind).toBe(\"example\");\n    expect(\n      profile.discourseSegments.every((s) => s.kind !== \"instruction\"),\n    ).to"
       },
       {
         "key": "c7",
-        "label": "部分画像仍保留原始证据",
-        "reason": "支持表格覆盖缺口导致 partial 状态，但原始 fragments 不被隐藏的降级行为。",
+        "label": "活跃记忆关键词查询",
+        "reason": "支持直接使用复用关键词的查询文本命中活跃记忆、无关查询不命中，同时界定该用例没有捕获新材料。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 210,
+          "endLine": 229
+        },
+        "quote": "      memory: {\n        kind: \"claim\",\n        scope: { workspace_id: \"personal\" },\n        body: { statement: \"订单同步重试策略：失败后自动重试最多三次\" },\n        evidenceSet: [],\n      },\n    });\n\n    // New material that reuses the same keywords must recall the existing object.\n    const hits = retrieval.searchMemories({\n      text: \""
+      },
+      {
+        "key": "c8",
+        "label": "固定证据读取",
+        "reason": "支持按固定修订和片段读取原文，以及未知修订或片段返回空值。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
+          "startLine": 232,
+          "endLine": 247
+        },
+        "quote": "  it(\"readEvidence returns fixed fragment text and null for unknown ids\", () => {\n    const store = setup();\n    const { revision } = capture(\n      store,\n      \"evidence-read\",\n      \"证据读取\",\n      \"第一段内容\\n\\n第二段独特内容\",\n    );\n    const retrieval = new KeywordRetrieval(store.db);\n    const first = revision.fragments[0]!"
+      },
+      {
+        "key": "c9",
+        "label": "画像部分降级",
+        "reason": "支持表格形成覆盖缺口、画像进入 partial 状态且原始片段仍保留，也表明该场景未模拟异常抛出。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -120,61 +146,22 @@
         "quote": "  it(\"profile failure cannot hide the original source\", () => {\n    const store = setup();\n    const { revision } = capture(\n      store,\n      \"partial-profile\",\n      \"含表格的文档\",\n      \"# 标题\\n\\n| 列A | 列B |\\n| --- | --- |\\n| 1 | 2 |\\n\\n正常段落。\",\n    );\n    const profile = latestProfile(store, revision.id);\n    // Table-li"
       },
       {
-        "key": "c8",
-        "label": "已应用记忆的关键词召回",
-        "reason": "支持 active claim 能以复用词语召回、无关查询不命中的行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-          "startLine": 189,
-          "endLine": 230
-        },
-        "quote": "  it(\"G12: recalling an already-applied memory by keyword when new material reuses its terms\", () => {\n    const store = setup();\n    const retrieval = new KeywordRetrieval(store.db);\n\n    // Seed an existing active memory about order-sync retries.\n    store.applications.applyMemory({\n      metadata: {\n        workspac"
-      },
-      {
-        "key": "c9",
-        "label": "固定片段读取断言",
-        "reason": "支持指定片段、默认首片段及未知标识返回 null 的测试结论。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-          "startLine": 232,
-          "endLine": 248
-        },
-        "quote": "  it(\"readEvidence returns fixed fragment text and null for unknown ids\", () => {\n    const store = setup();\n    const { revision } = capture(\n      store,\n      \"evidence-read\",\n      \"证据读取\",\n      \"第一段内容\\n\\n第二段独特内容\",\n    );\n    const retrieval = new KeywordRetrieval(store.db);\n    const first = revision.fragments[0]!"
-      },
-      {
         "key": "c10",
-        "label": "证据读取实现",
-        "reason": "说明 readEvidence 如何按 revision、fragment 和 ordinal 查询原始 fragments。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/keyword.ts",
-          "startLine": 21,
-          "endLine": 51
-        },
-        "quote": "/** Indexed lexical + memory + knowledge retrieval, always returning original evidence. */\nexport class KeywordRetrieval implements RetrievalPort {\n  constructor(private readonly db: DatabaseSync) {}\n\n  health(): RetrievalHealth {\n    return { available: true, backend: \"sqlite-fts5-rrf@2\" };\n  }\n\n  readEvidence(\n    re"
-      },
-      {
-        "key": "c11",
-        "label": "记忆路由融合与过滤",
-        "reason": "支持别名记忆指向原始证据、可见性和时间过滤，以及新 head 使旧证据退出结果的断言。",
+        "label": "记忆路线与结果过滤",
+        "reason": "支持记忆别名召回原始片段，以及可见性、时间范围和来源新修订对结果的过滤作用。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
           "startLine": 268,
-          "endLine": 287
+          "endLine": 286
         },
         "quote": "it(\"fuses active memory routes with original evidence and filters before the result limit\", () => {\n  const store = setup();\n  const { revision } = capture(store, \"route\", \"实测记录\", \"错误码 E42 表示供应商没有回应。\");\n  store.applications.applyMemory({\n    metadata: { workspaceId: \"personal\", applicationId: \"recall-alias\", proposalDi"
       },
       {
-        "key": "c12",
-        "label": "标题、短中文与派生排除测试",
-        "reason": "支持标题和短中文可检索、派生答案被排除、过滤先于 limit 生效；同时暴露未显式执行 restore 的范围。",
+        "key": "c11",
+        "label": "短中文、标题与派生排除",
+        "reason": "支持标题和短中文词命中、派生答案排除及过滤先于结果上限，同时显示查询发生在同一 Store 中。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -185,47 +172,49 @@
         "quote": "it(\"indexes capture and restore, matches short Chinese and title, and excludes derived answers\", () => {\n  const store = setup();\n  const original = capture(store, \"fts\", \"CircuitBreaker\", \"熔断机制限制持续失败。\").revision;\n  const retrieval = new KeywordRetrieval(store.db);\n  expect(retrieval.searchSources({ text: \"CircuitBreak"
       },
       {
-        "key": "c13",
-        "label": "原始证据检索入口与资格过滤",
-        "reason": "解释关键词检索的 limit 约束、分词、时间范围、可见性过滤及只返回原始证据的设计。",
+        "key": "c12",
+        "label": "检索入口过滤逻辑",
+        "reason": "解释关键词检索如何限制返回数量、分词，并按时间范围和可见性筛选候选。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/keyword.ts",
-          "startLine": 16,
-          "endLine": 65
+          "startLine": 53,
+          "endLine": 66
         },
-        "quote": "export const ORIGINAL = \"COALESCE(json_extract(r.body, '$.provenance.producerKind'),'original') != 'derived' AND COALESCE(json_extract(r.body, '$.context.derived'),0) != 1\";\nconst SOURCE_COLUMNS = `f.id AS fragment_id,f.revision_id,f.text AS fragment_text,\n  r.title,r.created_at AS revision_created_at,s.namespace,\n  js"
+        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRan"
+      },
+      {
+        "key": "c13",
+        "label": "来源画像数据结构",
+        "reason": "解释画像显式保存篇章类型、父标题、时态、覆盖缺口、证据引用和处理状态。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-profile/service.ts",
+          "startLine": 21,
+          "endLine": 53
+        },
+        "quote": "export type DiscourseSegment = {\n  ordinal: number;\n  kind: DiscourseKind;\n  /** Nearest preceding markdown heading, kept so anaphoric paragraphs (上述…)\n   *  can recover their parent context without asking the owner. */\n  parentHeading: string | null;\n  tense: Tense;\n  refParent: boolean;\n  tags: string[];\n  snippet: s"
       }
     ],
     "questions": [
       {
-        "question": "测试名所称的 capture and restore 是否还应增加关闭 Store、用同一 dataDir 重开并再次检索的断言？",
-        "why": "现有可见代码只在同一 Store 生命周期内完成捕获与检索，没有直接证明进程重启或数据库重新打开后索引仍可恢复。",
-        "nextStep": "增加一个显式 close/reopen 的持久化恢复用例，并分别断言标题、中文正文和派生排除行为。",
+        "question": "用例名称中的“restore”是否要求验证关闭并重新打开 Store 后仍可检索？",
+        "why": "现有用例只在捕获后通过同一个 Store 查询，没有关闭数据库、按相同数据目录重建 Store 或执行显式恢复，因此不能证明进程重启后的恢复行为。",
+        "nextStep": "若 restore 指进程重启恢复，增加关闭 Store、使用相同数据目录重建 Store 并再次查询的行为断言；否则调整用例名称以避免误解。",
         "blocking": false,
         "citationKeys": [
-          "c12"
+          "c11"
         ]
       },
       {
-        "question": "是否需要单独覆盖 SourceProfile 的真正失败状态，而不仅是表格导致的 partial？",
-        "why": "当前用例标题写“profile failure”，实际断言仅为 coverage gap 与 partial，无法证明异常路径会写入 failed/error，或捕获事务在画像异常时如何处理。",
-        "nextStep": "构造可控的 profiler 异常或失败注入，断言原始 revision/fragment 已提交、画像状态与错误字段符合预期。",
+        "question": "画像生成真正抛出异常时，原始来源是否仍能读取和检索？",
+        "why": "现有场景只覆盖表格导致的 coverage gap 和 partial 状态，没有构造画像器异常或 failed 状态，也没有在异常后执行关键词查询。",
+        "nextStep": "提供可控的画像器故障注入点，并分别验证捕获结果、原始片段读取和关键词检索在异常后仍然可用。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c5"
-        ]
-      },
-      {
-        "question": "融合检索的多候选排序与去重是否已有其他行为测试？",
-        "why": "这里验证单个 memory 路由能映射到原始 fragment，却未覆盖 lexical、memory、knowledge 多路同时命中时的 RRF 次序、重复证据合并和稳定性。",
-        "nextStep": "查找或补充多路候选夹具，断言排序、routes 合并、同 fragment 去重及 limit 后的稳定结果。",
-        "blocking": false,
-        "citationKeys": [
-          "c11",
-          "c13"
+          "c9"
         ]
       }
     ]
@@ -244,7 +233,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -259,34 +248,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:34:13.147Z",
+    "effort": "high",
+    "at": "2026-10-01T12:05:18.899Z",
     "trace": {
-      "runId": "ea68fad7-714d-4e29-99ad-efdea2374a50",
-      "roleId": "code-analyst",
+      "runId": "f4b64ecb-713d-4dc0-b1d9-66e5e7008c59",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "b0e49eb99374b859fca09cf59d791c88a10487b09492b132958d47c2daeb35ea",
-      "contextHash": "d71f79601e349d6a09553cd56032b3857ad83f14bc1a47a186b19a1ff2120023",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "846d9479405d93fe6e75183b5bcc866424b4a6312bc5cb93510067d29a165e93",
+      "contextHash": "b4f02f0ac64e7f071c32b6d475c89a70241e8caa11c25951dadd08951a7252b9",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f786523ab20d8e5c57f394538b9e11cdec610906fcc4a29447c3a7d38e8c4a18",
+      "fingerprint": "eaeea99a4368781dd06c19614ccb0aebb5645b467f8d1e89317457fdf5f3627c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54f-7fd1-7891-91a7-deee8ee6503f"
+        "01a0f75a-655b-70c3-a20c-7915500939ce"
       ],
       "usage": {
-        "used": 31396,
+        "used": 36175,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -295,10 +284,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 33485,
-          "utf8Bytes": 36117,
-          "estimatedTokens": 12039,
-          "budgetedTokens": 15049,
+          "chars": 45017,
+          "utf8Bytes": 53871,
+          "estimatedTokens": 17957,
+          "budgetedTokens": 22447,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -307,20 +296,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:34:32.886Z",
+    "at": "2026-10-01T12:05:38.077Z",
     "trace": {
-      "runId": "eded5ebc-072d-41fd-a8e1-6f5c3d79592a",
+      "runId": "20144c77-61e8-4621-b35b-70358ce985ea",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "8513a2397a8fd54058d17bb6de4cb1ca17949cc18c7c4bde335dde47165e14cd",
-      "contextHash": "ca178a7a9abc4168db76a871506dcba19a84dd64113915b458277971a4587a5d",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "56ae3316056c599e6731ec4694fc47b50eb254b4149023dec2c0119e592ddf50",
+      "contextHash": "b37fcec192842a66aa3a672a50c05fac19a1fb394fd775dcdfe6c963d6a26307",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6f4ed5c486a6ea835fe5cfa0f190f24d387363aa63abedc24e85e15fe962d810",
+      "fingerprint": "6b77a330724b1dbbc5c2eaf6da7ab22e1f40deb79b19f1204173133c41f9600c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -330,10 +319,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f550-0737-7830-bcdb-d785ada17718"
+        "01a0f75a-e335-7030-ac37-4366f907d317"
       ],
       "usage": {
-        "used": 32326,
+        "used": 32911,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -342,10 +331,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 41503,
-          "utf8Bytes": 47351,
-          "estimatedTokens": 15784,
-          "budgetedTokens": 19730,
+          "chars": 41608,
+          "utf8Bytes": 48678,
+          "estimatedTokens": 16226,
+          "budgetedTokens": 20283,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

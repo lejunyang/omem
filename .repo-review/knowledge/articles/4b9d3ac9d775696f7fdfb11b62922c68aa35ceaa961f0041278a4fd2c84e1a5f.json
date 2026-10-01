@@ -2,57 +2,44 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-    "title": "固定原始材料阅读与引用跳转",
-    "summary": "该组件读取知识引用所指向的固定原始材料，区分当前与历史版本，并为代码、Markdown、图片及指定行范围提供相应阅读方式；关联目标会转换为上层可管理的知识或原文导航帧。",
+    "title": "固定原始材料阅读与知识跳转",
+    "summary": "该组件用于在知识阅读界面展示当前或历史版本的固定原文，并根据材料类型提供代码摘录、Markdown 连贯阅读、图片展示及关联知识跳转。它处理异步切换竞态和引用行范围，但不负责材料解析、权限校验或服务端版本选择。",
     "category": "implementation",
     "sections": [
       {
         "key": "purpose",
-        "title": "让知识结论回到固定原文",
-        "body": "组件用于核查知识文章背后的原始证据。材料键变化时，它会携带可选摘要读取指定版本；成功后保存材料并把可读标题通知上层，失败则记录异常。只有最新请求可以更新这些状态。参考 [[c1]]\n\n页面把请求状态明确呈现为“正在读取”、可见错误或材料正文；加载完成后显示材料标题、当前或历史版本标识，并在存在知识解读时提供返回文章的入口。参考 [[c2]]\n\n请求统一经过知识 API：它从会话存储读取令牌、按需设置请求头，将非成功响应转换为异常，再解析 JSON 结果。参考 [[c3]]"
+        "title": "从知识结论回到固定证据",
+        "body": "组件接收材料键、可选摘要标识和引用行范围，用于把知识文章中的论断重新落到固定原文。加载完成后，它展示材料标题及“当前版本/历史版本”状态；若已有知识解读，还可回到对应知识文章，从而连接派生知识与原始证据。参考 [[c1]]\n\n材料数据通过统一请求函数获取；该函数从会话存储读取令牌、附加认证头，并把非成功响应转成可读错误。因此本组件只组织阅读交互，实际鉴权与材料版本解析仍由服务端接口决定。参考 [[c2]]"
       },
       {
-        "key": "loading-and-window",
-        "title": "定位引用行并隔离过期响应",
-        "body": "每轮材料请求都有递增标记，因此快速切换材料时，较慢的旧响应不会覆盖当前页面；网络请求本身不会被取消，只在结果落地时判断是否仍属最新一轮。参考 [[c1]]\n\n代码阅读窗口把材料按行拆分，并依据传入的起止行计算摘录。未指定范围时默认从首行开始、最多展示前 80 行；起点和终点分别受全文长度约束，但代码没有保证终点不小于起点。参考 [[c4]]"
+        "key": "loading-flow",
+        "title": "加载、竞态控制与跳转流程",
+        "body": "当材料键或摘要标识变化时，组件先清空旧内容，再请求新材料。递增的 `generation` 相当于请求代次：只有最后一次请求可以写入页面或显示错误，避免快速切换材料时较慢的旧响应覆盖新结果。加载成功后还会向父组件报告标题。参考 [[c3]]\n\n关联跳转会先尝试取得文章元信息并构造知识阅读帧；若文章不可用，则退回原始材料帧。Markdown 内部链接则以当前材料路径为基准处理 `.`、`..`，忽略锚点后转换为 `omem:` 材料键，再复用同一跳转流程。参考 [[c4]]"
       },
       {
-        "key": "render-and-navigation",
-        "title": "按材料类型阅读并追踪关联",
-        "body": "代码或非 Markdown 文件通过代码查看器展示当前窗口，可向上或向下扩展 20 行，并把引用锚点与关联链接交给查看器。Markdown 连贯渲染全文；同时给出起止行时会显示对应摘录，材料图片排列在正文之后。参考 [[c5]]\n\n打开关联目标时，组件先请求知识文章，成功后进入知识阅读；任意请求异常都会回退为原始材料帧。Markdown 内链以当前材料目录为基准，移除片段并处理 `.`、`..` 后生成材料键。该逻辑没有区分文章不存在、鉴权失败、服务端错误或网络故障，也未专门识别外部 URL 与绝对路径。参考 [[c6]]"
+        "key": "rendering-boundaries",
+        "title": "按材料类型阅读及其边界",
+        "body": "代码或非 Markdown 文件默认只显示引用附近的摘录，可每次向上、向下扩展 20 行，并把引用起始行交给代码查看器定位；Markdown 则保持全文连续渲染，同时在有完整起止行时额外显示引用块。附带图片会在正文后依次展示。参考 [[c5]]\n\n引用范围会被限制在材料总行数内，默认从首行展示到第 80 行；不过源码未显式纠正“结束行早于起始行”的输入。内部路径解析也只是字符串级归一化，没有展示对绝对路径、URL、查询参数或越过根目录的专门处理，这些输入的最终语义需由上游约束。参考 [[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "材料加载与竞态保护",
-        "reason": "支持按材料键和摘要发起请求、仅接纳最新响应、发送已加载标题以及记录最新请求错误的说明。",
+        "label": "原文阅读状态与知识入口",
+        "reason": "支持组件展示材料版本状态，并在存在知识解读时提供跳转入口的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 16,
-          "endLine": 21
+          "startLine": 37,
+          "endLine": 40
         },
-        "quote": "let generation = 0;\nwatch(() => [props.materialKey, props.digest], async () => {\n  const current = ++generation; material.value = null; error.value = \"\";\n  try { const m = await knowledgeApi<Material>(props.prefix, \"/materials/\" + encodeURIComponent(props.materialKey) + (props.digest ? \"?digest=\" + encodeURIComponent(p"
+        "quote": "    <template v-else>\n      <h2>{{ material.title }}</h2>\n      <div class=\"source-actions\"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if=\"material.knowledge\" variant=\"secondary\" @click=\"emit('navigate', knowledgeFrame(material.key, material.knowledge.title))\">阅读这份材料的知识解读 ↗</OmButton>"
       },
       {
         "key": "c2",
-        "label": "材料阅读状态与版本入口",
-        "reason": "支持加载、错误、材料标题、版本状态和知识解读入口的可见界面说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 33,
-          "endLine": 40
-        },
-        "quote": "<template>\n  <section class=\"knowledge-source\">\n    <OmEmpty v-if=\"error\" title=\"原始材料不可用\" :description=\"error\" />\n    <p v-else-if=\"!material\">正在读取固定原文…</p>\n    <template v-else>\n      <h2>{{ material.title }}</h2>\n      <div class=\"source-actions\"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmBu"
-      },
-      {
-        "key": "c3",
         "label": "知识接口请求封装",
-        "reason": "支持会话令牌注入、非成功响应转为异常及 JSON 返回行为。",
+        "reason": "说明材料请求所依赖的认证头注入、错误转换和 JSON 响应流程。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -63,35 +50,22 @@
         "quote": "export async function knowledgeApi<T>(prefix: string, path: string, init?: RequestInit): Promise<T> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, headers: { ...(init?.body !== undefined ? { \"content-type\": \"application/json\" } : {}), ...(token ? { Autho"
       },
       {
+        "key": "c3",
+        "label": "材料异步加载与竞态保护",
+        "reason": "支持按材料键或摘要重新加载，并仅接受最新请求结果的核心流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 16,
+          "endLine": 21
+        },
+        "quote": "let generation = 0;\nwatch(() => [props.materialKey, props.digest], async () => {\n  const current = ++generation; material.value = null; error.value = \"\";\n  try { const m = await knowledgeApi<Material>(props.prefix, \"/materials/\" + encodeURIComponent(props.materialKey) + (props.digest ? \"?digest=\" + encodeURIComponent(p"
+      },
+      {
         "key": "c4",
-        "label": "引用行窗口计算",
-        "reason": "支持引用起止行的默认值、边界约束和窗口摘录方式，并揭示反向范围未被统一纠正的限制。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 9,
-          "endLine": 15
-        },
-        "quote": "const from = ref(1), to = ref(1);\nconst lines = computed(() => material.value?.text.split(\"\\n\") ?? []);\nconst excerpt = computed(() => lines.value.slice(from.value - 1, to.value).join(\"\\n\"));\nwatch(() => [material.value, props.startLine, props.endLine], () => {\n  from.value = Math.max(1, Math.min(props.startLine ?? 1, "
-      },
-      {
-        "key": "c5",
-        "label": "代码、文档与图片展示",
-        "reason": "支持代码窗口扩展、Markdown 连贯渲染、指定行摘录和图片展示流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 41,
-          "endLine": 51
-        },
-        "quote": "      <template v-if=\"material.codeLanguage || (material.path && !/\\.(?:md|markdown)$/.test(material.path))\">\n      <OmButton v-if=\"from > 1\" variant=\"ghost\" @click=\"from = Math.max(1, from - 20)\">向上展开 20 行</OmButton>\n      <OmCodeViewer :code=\"excerpt\" :start-line=\"from\" :language=\"material.codeLanguage || material.pa"
-      },
-      {
-        "key": "c6",
-        "label": "关联目标与相对路径解析",
-        "reason": "支持知识文章跳转、异常时回退原文，以及 Markdown 相对路径解析行为和相关限制。",
+        "label": "关联知识与内部路径跳转",
+        "reason": "支持文章优先、原始材料回退，以及相对 Markdown 路径解析的交互说明。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -100,27 +74,51 @@
           "endLine": 30
         },
         "quote": "async function reference(key: string) {\n  try { const a = await knowledgeApi<ArticleMeta>(props.prefix, \"/articles/\" + encodeURIComponent(key)); emit(\"navigate\", knowledgeFrame(key, a.title)); }\n  catch { emit(\"navigate\", { kind: \"source\", id: JSON.stringify({ key }), title: \"关联原始材料\" }); }\n}\nfunction internal(path: str"
+      },
+      {
+        "key": "c5",
+        "label": "代码、Markdown 与图片呈现",
+        "reason": "支持不同材料类型的渲染分支、代码行展开和图片展示行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 41,
+          "endLine": 51
+        },
+        "quote": "      <div class=\"code-excerpt\" v-if=\"material.codeLanguage || (material.path && !/\\.(?:md|markdown)$/.test(material.path))\">\n      <OmButton v-if=\"from > 1\" variant=\"ghost\" @click=\"from = Math.max(1, from - 20)\">向上展开 20 行</OmButton>\n      <OmCodeViewer :code=\"excerpt\" :start-line=\"from\" :language=\"material.codeLanguag"
+      },
+      {
+        "key": "c6",
+        "label": "引用范围计算",
+        "reason": "支持默认展示范围及上下界限制，同时暴露结束行未保证不早于起始行的边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 9,
+          "endLine": 15
+        },
+        "quote": "const from = ref(1), to = ref(1);\nconst lines = computed(() => material.value?.text.split(\"\\n\") ?? []);\nconst excerpt = computed(() => lines.value.slice(from.value - 1, to.value).join(\"\\n\"));\nwatch(() => [material.value, props.startLine, props.endLine], () => {\n  from.value = Math.max(1, Math.min(props.startLine ?? 1, "
       }
     ],
     "questions": [
       {
-        "question": "空材料以及反向或越界的起止行组合，产品期望如何显示？",
-        "why": "起点和终点分别受到约束，但现有逻辑没有保证终点不小于起点；提供的材料也没有说明这些边界应显示空窗口、自动纠正还是错误提示。",
-        "nextStep": "补充组件和浏览器测试，覆盖空字符串、反向范围、负数及超过全文长度的参数，再依据产品约定统一边界处理。",
+        "question": "引用结束行早于起始行时，预期是自动纠正、显示空摘录，还是由调用方拒绝该输入？",
+        "why": "当前范围计算分别约束起止值，却没有建立 `to >= from` 的不变量；这会影响代码摘录和行数提示的表现。",
+        "nextStep": "检查调用该组件的参数校验及相关浏览器测试；若上游没有保证，应补充明确的范围规范和行为断言。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c5"
+          "c6"
         ]
       },
       {
-        "question": "关联文章请求失败时是否应始终回退到原始材料？",
-        "why": "统一 API 会把所有非成功响应转为异常，而关联跳转捕获所有异常，因此文章不存在、鉴权失败、服务端错误和网络故障目前都会进入同一回退分支。",
-        "nextStep": "确认接口错误语义；若仅文章不存在时允许回退，应保留响应状态或结构化错误，并把其他故障呈现为可见错误。",
+        "question": "相对链接中的绝对路径、查询参数或连续上溯越过材料根目录是否属于支持场景？",
+        "why": "现有实现仅处理路径片段、`.`、`..` 和井号锚点，提供的材料没有说明其合法输入合同。",
+        "nextStep": "核对 Markdown 链接生成端和路由接口约定，并为受支持与拒绝的路径形式增加测试。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c6"
+          "c4"
         ]
       }
     ]
@@ -129,7 +127,7 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-      "digest": "2a96e1802c6165776ac3964d10d14662a940f1f39ea81a3f29d71e860e330f26"
+      "digest": "908fa60afaec9d3067731ce8c1bf34b842e15fe09ba30d70adff77b74d97e4fe"
     },
     {
       "kind": "material",
@@ -139,34 +137,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T06:54:43.972Z",
+    "effort": "high",
+    "at": "2026-10-01T12:11:23.972Z",
     "trace": {
-      "runId": "a2b3aa13-cf1d-4f45-b6a9-030b7b80e1ad",
-      "roleId": "knowledge-refresher",
+      "runId": "3d14e9cc-9d8f-4255-8081-aa4382890b91",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "a1cc0b00d13dea8a23ae113c29c70d0b779ac4f9d48a6574a5b18e839d2ffbcd",
-      "contextHash": "2fd047cd090fd89d416a8846651c88a755201bd1a191600ca4e5f34834ce67d6",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "f705177b951896fc2c0c1d389e8406920e7ca40d09eaf9e9129a7ac12b0e950f",
+      "contextHash": "46f0859a819aa5bdcc8b9e79a80908f37626917ce3297d405d63db2e860643c1",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5f8d0d46b0553da932eeb13b3662b7a4c80ad1ed3438de54d262b9a0a36e72cc",
+      "fingerprint": "abf3b3460518ffc66f02f3b781b1b093ef23eb2efbfee7857b745c66e9b26112",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63e-2d39-76b3-a3e9-236a2c8c3889"
+        "01a0f760-0769-7ac1-b1c5-da4fabaf37f7"
       ],
       "usage": {
-        "used": 28890,
+        "used": 24771,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -175,10 +173,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 20385,
-          "utf8Bytes": 27731,
-          "estimatedTokens": 9244,
-          "budgetedTokens": 11555,
+          "chars": 14156,
+          "utf8Bytes": 17403,
+          "estimatedTokens": 5801,
+          "budgetedTokens": 7252,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -187,20 +185,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:55:02.011Z",
+    "at": "2026-10-01T12:11:44.737Z",
     "trace": {
-      "runId": "5b131cab-def2-4616-96e6-9601d2a8f04a",
+      "runId": "2120e6f7-d32e-4a3d-bc66-c48e42d649c1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "fa347726bc65d85e7d59d346eb543a5bf22cec5068006a1f2b76e02cdbfb1855",
-      "contextHash": "2783f6e51d74e1725595d61a10abb10a11ece67969d45bbd4b2c1c91b105f775",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "19ad46336c3aa6a2f839e3f09fded74c352ab9b361d8b1f439abcf2621b3dc8f",
+      "contextHash": "da8396fd59adcd2f32b0e32c5e0f571fe6ffdf1aaaa76cfc31d3002d18af3e01",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "eea579b24e6c0aa30fdde56a756f285b17684fc0ca156c4052778e677302d9b6",
+      "fingerprint": "ffdb6b9f7a3c649511a53c1b4388d9fbd21afccc6374d3a8b60c62d62c767f1e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -210,10 +208,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63e-8a17-7893-a347-71a0c566bcdb"
+        "01a0f760-741c-7b22-a75c-0c65365ffdcd"
       ],
       "usage": {
-        "used": 24596,
+        "used": 25244,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -222,10 +220,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 15847,
-          "utf8Bytes": 19495,
-          "estimatedTokens": 6499,
-          "budgetedTokens": 8124,
+          "chars": 16954,
+          "utf8Bytes": 22308,
+          "estimatedTokens": 7436,
+          "budgetedTokens": 9295,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

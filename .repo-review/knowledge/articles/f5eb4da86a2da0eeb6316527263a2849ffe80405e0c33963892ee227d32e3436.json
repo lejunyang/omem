@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/quality-lark-annotate.ts",
-    "title": "飞书质量数据集人工标注流程",
-    "summary": "该脚本是显式启动的研究评测入口：从飞书文档生成待人工判断的质量样本，启动卡片标注会话，并观察当前会话的卡片消息与数据库全局标注事件计数。由于全局计数增长会先于投递终态检查触发退出，它只能验证有限的在线链路信号，不能单独确认本次会话已成功收到有效标注。",
+    "title": "飞书质量数据集的人工标注联调入口",
+    "summary": "该脚本把指定飞书文档转换为研究用质量样本，启动真实飞书卡片标注会话，并持续等待卡片送达及首次人工标注。它是显式运行的联调与评测工具，不属于普通材料捕获链路。",
     "category": "workflow",
     "sections": [
       {
-        "key": "purpose",
-        "title": "解决什么问题",
-        "body": "该脚本用于联通一次真实的**飞书人工质量标注实验**：操作者提供飞书文档地址和加密密钥，脚本读取文档、准备本地运行环境，并通过飞书卡片发起人工标注。它适合观察外部应用、卡片投递和反馈数据库是否产生了链路信号。参考 [[c1]]\n\n样本生成器被明确限定为评测用途：规则切分得到的候选内容和草拟标签只供人工判断，不属于普通捕获、学习或知识生产链路，也不能直接作为可信知识写入。参考 [[c2]]"
+        "key": "purpose-and-boundary",
+        "title": "解决的问题与使用边界",
+        "body": "该脚本用于验证“飞书文档生成研究样本—发送标注卡片—接收人工判断”整条真实链路。操作者必须提供文档 URL 和密钥；可选应用 ID 还会经过格式校验，避免以明显无效的凭据启动会话。参考 [[c1]]\n\n这里生成的样本只服务人工评测：导入器会用规则拆分文本并产生待审核草稿，明确不得接入普通 capture、CLI 导入或学习流程。因此它不是生产知识摄取入口，人工标注结果也不能被理解为普通材料已自动形成可信知识。参考 [[c2]]"
       },
       {
-        "key": "flow",
-        "title": "从文档到在线观察信号",
-        "body": "```mermaid\nflowchart LR\n  A[读取飞书文档] --> B[初始化本地存储与密钥]\n  B --> C[组装飞书接入和运行宿主]\n  C --> D[导入 dev 评测数据集]\n  D --> E[启动标注会话并发送卡片]\n  E --> F[轮询会话、全局事件数与投递状态]\n```\n参考 [[c3]]\n\n脚本将数据集导入 `dev` 分片，样本上限可配置；随后记录整个 `quality_annotation_events` 表的初始行数，创建会话并启动运行宿主。参考 [[c4]] 当前会话出现消息 ID 时，可确认该会话已有卡片消息；但“收到标注”仅由全表事件总数增长触发，查询没有按会话、数据集或当前样本过滤。其他并发标注活动也可能满足条件，因此该信号不能证明新增事件属于本次会话。参考 [[c5]]"
+        "key": "runtime-flow",
+        "title": "从文档到标注事件的运行流程",
+        "body": "脚本先读取飞书文档，建立 SQLite Store、加密密钥仓库、记忆服务和飞书运行宿主；Onboarding 同时接入官方注册能力与已有 Botmux 应用提供器，使运行时既可处理注册，也可复用已有应用凭据。参考 [[c3]] [[c4]]\n\n```mermaid\nflowchart LR\n  A[读取飞书文档] --> B[导入评测数据集]\n  B --> C[创建标注会话]\n  C --> D[启动飞书运行宿主]\n  D --> E[等待卡片送达]\n  E --> F[等待人工标注事件]\n```\n\n导入固定使用评测专用标识，随后记录事件表初始数量、创建会话并启动宿主。轮询中一旦会话获得消息 ID，就输出卡片已发送；事件总数增加后，再输出数据集进度并结束等待。参考 [[c5]] [[c6]]"
       },
       {
-        "key": "boundaries",
-        "title": "失败条件与验收边界",
-        "body": "启动前必须提供文档地址和加密密钥，可选飞书应用 ID 还需符合格式要求。参考 [[c1]] 轮询先检查全局事件计数，再检查当前会话关联投递的状态；因此，只有在未先因全局事件增长而退出的轮询中，检测到投递进入失败、未知或取消终态才会报错。等待结束时，若始终没有消息 ID，则判为卡片未送达；到达截止时间则判为等待超时。运行宿主和本地存储最终都会关闭。参考 [[c6]]\n\n一次零退出最多说明：当前会话曾出现卡片消息，并且等待期内全局标注事件数有所增加。并发事件增长甚至可能掩盖本会话的投递失败；脚本也不确认当前样本完成标注、标签合法、重复提交幂等或整批数据集处理完毕。参考 [[c5]]"
+        "key": "failure-and-limits",
+        "title": "失败处理、清理与未覆盖行为",
+        "body": "等待过程有三类显式失败：会话记录消失、最近一次投递进入 failed／unknown／cancelled，以及卡片始终未送达或等待超时。无论成功还是抛错，finally 都会停止运行宿主并关闭 Store，避免遗留轮询任务或数据库连接。参考 [[c7]] [[c8]]\n\n该文件是可执行联调脚本而非测试文件：它以真实消息 ID、数据库事件增长和退出码作为行为信号，但没有断言标注内容、标签正确性或多会话隔离。Store 的材料只证明底层为单用户 SQLite 基础，不能据此推断团队租户隔离已经实现。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "运行输入与凭据要求",
-        "reason": "支持脚本需要飞书文档地址、加密密钥，并校验可选应用 ID 的前置条件。",
+        "label": "启动参数校验",
+        "reason": "支持脚本要求文档地址、密钥并校验可选飞书应用 ID 的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -38,9 +38,9 @@
       },
       {
         "key": "c2",
-        "label": "评测样本隔离边界",
-        "reason": "说明文档切分与草拟标签仅服务人工研究评测，不得进入普通捕获、学习和知识生产流程。",
-        "relation": "depends_on",
+        "label": "评测导入边界",
+        "reason": "说明规则拆分器仅用于人工标注研究集，禁止进入普通捕获与学习流程。",
+        "relation": "background",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/import.ts",
@@ -51,8 +51,8 @@
       },
       {
         "key": "c3",
-        "label": "标注运行环境组装",
-        "reason": "支持读取文档后初始化存储、密钥、飞书接入服务与运行宿主的流程关系。",
+        "label": "运行依赖组装",
+        "reason": "支持脚本创建 Store、密钥仓库、Onboarding、记忆服务和飞书运行宿主的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -64,61 +64,91 @@
       },
       {
         "key": "c4",
+        "label": "已有飞书应用接入",
+        "reason": "说明 Botmux 提供器负责读取和校验可复用飞书应用凭据，是 Onboarding 的可选依赖。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+          "startLine": 26,
+          "endLine": 60
+        },
+        "quote": "export class BotmuxExistingAppProvider implements ExistingLarkAppProvider {\n  readonly configPath: string;\n\n  constructor(path?: string) {\n    const configured =\n      path || process.env.OMEM_BOTMUX_CONFIG || process.env.BOTS_CONFIG;\n    this.configPath = configured\n      ? resolve(configured)\n      : join(homedir(), "
+      },
+      {
+        "key": "c5",
         "label": "数据集与会话启动",
-        "reason": "支持导入 dev 评测数据集、配置目标样本数、记录事件基线并启动标注会话。",
-        "relation": "implements",
+        "reason": "支持评测专用导入、创建标注会话并启动运行宿主的顺序。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-lark-annotate.ts",
           "startLine": 52,
-          "endLine": 75
+          "endLine": 72
         },
         "quote": "try {\n  const imported = importQualityDatasetEval({\n    optIn: QUALITY_EVAL_ONLY,\n    repository: host.quality.repository,\n    document,\n    sourceUri,\n    name: process.env.OMEM_QUALITY_DATASET || \"merchant-center-dev-v1\",\n    split: \"dev\",\n    targetCount: Number(process.env.OMEM_QUALITY_TARGET || 40),\n  });\n  const "
       },
       {
-        "key": "c5",
-        "label": "卡片与全局事件判定",
-        "reason": "支持当前会话消息 ID 的观察方式，并表明成功退出判据是未按会话或数据集过滤的全表事件计数增长。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/quality-lark-annotate.ts",
-          "startLine": 76,
-          "endLine": 123
-        },
-        "quote": "  while (Date.now() < deadline) {\n    const row = store.db\n      .prepare(\n        `SELECT state,message_id AS messageId,current_sample_id AS currentSampleId\n         FROM quality_annotation_sessions WHERE id=?`,\n      )\n      .get(session.id) as\n      | {\n          state: string;\n          messageId: string | null;\n  "
-      },
-      {
         "key": "c6",
-        "label": "投递检查与资源清理",
-        "reason": "支持投递终态检查位于全局事件成功判定之后，以及卡片未送达、等待超时和最终资源清理的处理顺序。",
+        "label": "卡片送达检测",
+        "reason": "支持脚本轮询会话并在获得消息 ID 后报告卡片已发送。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-lark-annotate.ts",
-          "startLine": 125,
+          "startLine": 73,
+          "endLine": 100
+        },
+        "quote": "  let ready = false;\n  const timeoutMs = Number(process.env.OMEM_QUALITY_WAIT_MS || 3_600_000);\n  const deadline = Date.now() + timeoutMs;\n  while (Date.now() < deadline) {\n    const row = store.db\n      .prepare(\n        `SELECT state,message_id AS messageId,current_sample_id AS currentSampleId\n         FROM quality_a"
+      },
+      {
+        "key": "c7",
+        "label": "标注事件与投递失败",
+        "reason": "支持通过事件数变化判定收到标注，并处理投递终态和等待超时。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 102,
+          "endLine": 140
+        },
+        "quote": "    const eventCount = Number(\n      (\n        store.db\n          .prepare(\"SELECT count(*) AS count FROM quality_annotation_events\")\n          .get() as { count: number }\n      ).count,\n    );\n    if (eventCount > beforeEvents) {\n      console.log(\n        JSON.stringify(\n          {\n            state: \"annotation_rec"
+      },
+      {
+        "key": "c8",
+        "label": "运行资源清理",
+        "reason": "说明脚本无论正常完成还是失败都会停止宿主并关闭存储。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-lark-annotate.ts",
+          "startLine": 141,
           "endLine": 143
         },
-        "quote": "    const delivery = store.db\n      .prepare(\n        `SELECT state,last_error AS lastError FROM delivery_intents\n         WHERE annotation_session_id=? ORDER BY created_at DESC LIMIT 1`,\n      )\n      .get(session.id) as\n      | { state: string; lastError: string | null }\n      | undefined;\n    if (delivery && [\"faile"
+        "quote": "} finally {\n  await host.stop();\n  store.close();"
+      },
+      {
+        "key": "c9",
+        "label": "单用户 SQLite 基础",
+        "reason": "支持 Store 使用 SQLite、执行迁移并初始化仓储组件，同时明确团队权限仍属后续迁移。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 65
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
       }
     ],
     "questions": [
       {
-        "question": "新增的标注事件能否通过会话、数据集或样本字段与当前标注会话可靠关联，并据此替代全局计数判据？",
-        "why": "现有脚本只比较整个事件表的行数，无法排除其他并发标注会话造成的增长；所给材料也没有展示事件记录的关联字段及写入校验。",
-        "nextStep": "检查飞书运行宿主的卡片事件处理、质量仓储的事件表结构与写入测试，确认可用关联字段后，将等待条件改为查询当前会话或当前数据集的有效事件。",
+        "question": "收到标注的判定是否应按当前 session 或 dataset 过滤事件，而不是只比较全表事件总数？",
+        "why": "当前轮询查询的是 quality_annotation_events 全表计数；若同一数据库中另一个会话并发写入事件，本脚本也可能提前报告 annotation_received。现有材料不足以确认运行时是否保证该脚本独占数据库。",
+        "nextStep": "检查事件表字段及质量运行时写入逻辑，并增加并发会话行为测试；若事件包含会话或数据集关联，应把轮询条件限定到本次会话。",
         "blocking": false,
         "citationKeys": [
-          "c5"
-        ]
-      },
-      {
-        "question": "一次事件写入具体对应哪些卡片动作，是否已校验标签合法性并防止重复提交？",
-        "why": "当前材料只展示事件数量的轮询，没有提供事件语义、标签验证和幂等处理的实现依据。",
-        "nextStep": "补充检查卡片回调处理、质量标签校验及事件写入逻辑，并用行为测试覆盖非法标签和重复回调。",
-        "blocking": false,
-        "citationKeys": [
-          "c5"
+          "c7"
         ]
       }
     ]
@@ -147,39 +177,39 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T07:26:31.890Z",
+    "effort": "high",
+    "at": "2026-10-01T12:15:48.290Z",
     "trace": {
-      "runId": "ce361acd-c141-4f0b-a635-b4689557f241",
-      "roleId": "knowledge-refresher",
+      "runId": "8721a5cc-22d8-4ebd-a91e-5f5ce629341b",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "b0467c150b213d4faa4ab6b7f7b4580af19cfaaa577b751586386d029011ed61",
-      "contextHash": "8fbdabd02b6ac299c813d07af5681e50cc5863c90b484080c021e20824724140",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "9c0238353e275c4333661d1e17c6f748588ba7413e0f9f0328bc6a11de377706",
+      "contextHash": "c7b7d396f1c524d4c4045f219a3e18c58084adc0616d5d3dff7f46c041c0e961",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "35c66ab22c6870c8bfff520ea099520e1134c0591b557bc183230ba599d68b2b",
+      "fingerprint": "08cc4b6e5d975b3de5be60f59d7512bf26eeef5dd5f2b9b8451d57e6f2eb876d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f65b-43a7-7c40-bdc7-7e653d950fac"
+        "01a0f763-fdab-7992-8707-d7bada4e64a8"
       ],
       "usage": {
-        "used": 31218,
+        "used": 28889,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -188,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 32774,
-          "utf8Bytes": 39840,
-          "estimatedTokens": 13280,
-          "budgetedTokens": 16600,
+          "chars": 26664,
+          "utf8Bytes": 29768,
+          "estimatedTokens": 9923,
+          "budgetedTokens": 12404,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -200,20 +230,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T07:26:58.185Z",
+    "at": "2026-10-01T12:16:06.160Z",
     "trace": {
-      "runId": "b699e0ae-6a09-4789-a1b2-cac692fd7664",
+      "runId": "4fc55e23-255a-49cb-bce7-1b9ad1cad2ff",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
-      "promptHash": "ad1b68890e0b2ed4f768273abe7e5de765c2ea5a43e54f8fbc5d6c6208f14a0e",
-      "contextHash": "c35340a8277c814475767a0ab53e9064163a596b45a7f8f9db98a7919f511815",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "7077d21d00c4253ab8f63749e6f2377e75b2b8689517b0c9cf588285d6449d26",
+      "contextHash": "834a711756fbc74e4a714e2d5df2e3b4b65487e1b7bbd88c4d26604821edc95a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "16804608e7138ece4c439d4bbe3b0a6e4d6ac2d164dd57cce46df95093d20aeb",
+      "fingerprint": "bd580d0534a86cdc999d2e8866d7bde1da5749ae53d95146e46365c205fea92c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -223,10 +253,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f65b-bfae-7063-a85f-e469dab28684"
+        "01a0f764-7ce6-7533-a747-bb1743f63663"
       ],
       "usage": {
-        "used": 28803,
+        "used": 29197,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -235,10 +265,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 29202,
-          "utf8Bytes": 34002,
-          "estimatedTokens": 11334,
-          "budgetedTokens": 14168,
+          "chars": 30788,
+          "utf8Bytes": 35884,
+          "estimatedTokens": 11962,
+          "budgetedTokens": 14953,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

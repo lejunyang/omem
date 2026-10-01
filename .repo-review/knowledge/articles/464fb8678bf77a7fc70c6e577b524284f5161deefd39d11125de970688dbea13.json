@@ -2,221 +2,196 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/app.ts",
-    "title": "个人记忆服务的 HTTP 应用装配与运行入口",
-    "summary": "该文件是服务端组合根，集中装配单用户 SQLite 存储、知识与检索、助手、学习和飞书能力，并统一暴露捕获、记忆、事项及会话 API。更新后的结论把飞书初始化失败关闭 Store 严格限定在启用飞书且未注入 onboarding 服务的内建装配分支，并把未配置错误限定为调用 requireLark 的接入入口。",
+    "title": "个人记忆服务的 HTTP 组合入口",
+    "summary": "该文件是服务端组合根：创建 Fastify 应用，连接单用户 SQLite 存储、统一捕获、知识与检索、助理、学习流水线和飞书集成，并集中处理访问控制、HTTP 路由、后台任务及资源回收。",
     "category": "architecture",
     "sections": [
       {
-        "key": "purpose-and-bootstrap",
-        "title": "服务装配与当前存储边界",
-        "body": "`buildApp` 在非回环监听时强制要求访问令牌，随后创建 Fastify、`Store`、运行记录和记忆服务，并连接知识路由、检索、ACP 助手及可选学习管线。未配置可运行 ACP 或真实传输失败时，助手应明确报告不可用，而非生成伪造回答。[[c1]] [[c2]]\n\n当前持久化基础是单用户 SQLite：初始化过程创建受限权限的数据目录和数据库文件、执行迁移，并装配任务、输入聚合、运行请求和来源画像仓库。不可变修订、变更和通知 outbox 属于 Store 的总体设计；团队数据库及租户强制隔离仍是后续迁移。[[c3]]"
+        "key": "composition",
+        "title": "把存储、知识与助理组装成服务",
+        "body": "`buildApp` 把分散的能力组装成一个可运行的个人记忆服务。它创建 Fastify、`Store`、运行记录、记忆与反馈服务，注册知识接口和检索服务，并以固定的个人所有者和 60 秒轮次超时初始化助理。非回环地址若未配置令牌，应用会拒绝启动。参考 [[c1]]\n\n`Store` 是共享的持久化基础：它创建单用户 SQLite 数据库、执行迁移，并提供任务、输入聚合、运行时请求和来源画像等仓储。由此，组合入口主要负责协议适配和生命周期协调，具体数据规则仍由各服务承担。参考 [[c2]]"
       },
       {
-        "key": "capture-and-actions",
-        "title": "统一捕获入口与可追溯操作",
-        "body": "手工、文件、Git、飞书和 Hook 输入均经合同校验后交给 `Store.capture`。输入事件先进入聚合器，`flushReady` 产生的成熟批次也交给 `Store.capture`；现有范围只能确认这条调用链，不能据此断言 `capture` 内部如何创建固定修订。[[c4]]\n\n文件连接器限定真实路径必须位于配置根目录内，并约束大小、UTF-8 和纯文本；Git 连接器还校验 ref、仓库内相对路径与解析后的 commit，再以参数数组执行 `git show`。[[c5]] [[c6]] 事项状态命令先捕获为来源证据，再携带首个证据片段调用记忆服务，使操作依据可追溯。[[c7]]"
+        "key": "capture_api",
+        "title": "从多种入口汇入统一证据链",
+        "body": "服务接受规范化捕获，也支持文件、Git、飞书链接、TraeX hook 和输入事件。连接器先把外部内容转换成统一捕获结构，再交给 `store.capture`；输入事件则经过聚合器，在批次就绪后写入。参考 [[c3]]\n\n连接器执行的是**显式且有边界的读取**：文本中的 URL 只作为材料保留，不会被自动抓取；文件必须位于配置的根目录内，大小不超过 500 KB，并能以严格 UTF-8 解码且不含空字节。参考 [[c4]]\n\n捕获后可通过接口读取来源画像、固定修订、历史、证据、关系、搜索结果和资源，并查看或恢复变化。参考 [[c5]] 此外，服务还暴露通知、事项、作业、运行时请求、提案与决策、记忆版本及反馈接口，使后续处理仍围绕同一份材料和持久化边界展开。参考 [[c12]]"
       },
       {
-        "key": "security-boundaries",
-        "title": "访问控制与会话信任边界",
-        "body": "API 配置令牌时使用定时安全比较校验 Bearer token；未配置令牌时只接受本地主机，并拒绝非本地 Origin。冲突、活动占用和输入校验错误由统一错误处理映射为 HTTP 状态。[[c8]]\n\nWeb 调用方不能伪造飞书频道、群组可见性或主体，服务器固定以 `owner`、`web`、`private` 建立会话；可信飞书会话只能由飞书运行宿主打开。[[c9]] 先前“飞书组件初始化失败都会关闭 Store”的宽泛结论已被替代：只有启用飞书且未注入 onboarding 服务、因而进入内建飞书装配的分支，初始化异常才会关闭已创建的 Store；没有可用 onboarding 服务时，仅调用 `requireLark` 的飞书接入入口会明确报未配置错误。[[c11]]"
+        "key": "assistant_security",
+        "title": "助理操作由服务器重新约束",
+        "body": "Web 调用方不能自行声明飞书通道、群组可见性或其他主体；服务端把会话固定为个人所有者、Web 通道和私有可见性。会话随后支持执行、查询、取消和重试轮次，并对缺失会话或不可重试状态返回对应错误。参考 [[c6]]\n\n模型回复可以包含引用、补充检索词以及创建或更新事项的结构化请求，但这些请求并不自动获得写权限。运行时合同要求服务器重新检查证据可见性、所有者来源和事项约束。参考 [[c7]]\n\n用户控制已有事项时，服务先生成一条带来源信息的手动捕获，再以其证据片段执行完成、改期、等待、暂缓或取消等命令，使操作依据可以回溯。参考 [[c8]]"
       },
       {
-        "key": "runtime-lifecycle",
-        "title": "恢复、后台循环与有序关闭",
-        "body": "路由装配完成后，服务先恢复遗留的未完成助手轮次，再启动提醒和输入聚合定时器，并按配置启动学习与飞书运行时。聚合异常按消息去重记录，避免重复刷屏。关闭时清理定时器，停止助手、学习、飞书、运行管理与检索，最后关闭数据库，以降低后台任务访问已释放资源的风险。[[c10]]\n\n这些材料能够确认编排路径，但未提供相应测试文件，因此不能据此认定权限异常、轮次恢复、取消分支和关闭顺序均已有自动化行为验证。"
-      },
-      {
-        "key": "questions-and-limits",
-        "title": "仍待补充的实现与验证证据",
-        "body": "当前材料只展示成熟输入批次进入 `Store.capture` 的调用点，以及 Store 的单用户 SQLite 初始化边界，尚不足以确认捕获事务、修订与片段写入的具体原子性。[[c3]] [[c4]] 同样，访问控制、Web 会话限制和生命周期编排虽有实现证据，但缺少测试文件、实际退出码与 HTTP 响应记录，因而仍需独立行为验证。[[c8]] [[c9]] [[c10]]"
+        "key": "boundaries_lifecycle",
+        "title": "可选集成、访问边界与生命周期",
+        "body": "学习流水线只在启用且指定 profile 存在时创建；飞书启用后会装配密钥存储、注册与能力探测、已有应用提供器和运行宿主。初始化失败会关闭存储并终止启动。参考 [[c9]]\n\n所有 `/api/` 请求统一经过访问检查：配置令牌时采用定时安全比较；没有令牌时仅接受本机 Host 与本机 Origin。输入错误通常映射为 400，重基、过期或冲突映射为 409，重复活动映射为 429。参考 [[c10]]\n\n应用启动末尾会恢复未完成的助理轮次，周期性派发提醒和刷新输入批次，再启动学习及飞书运行时；关闭时停止定时器和各运行组件，最后关闭检索与数据库。构建后的静态前端仅在目录存在时注册。参考 [[c11]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "服务初始化入口",
-        "reason": "支持非回环监听必须配置令牌，以及 Fastify、Store、运行记录和记忆服务的初始化关系。",
+        "label": "服务依赖装配",
+        "reason": "支持应用创建、非回环访问前置条件，以及存储、知识、检索和助理运行时的组装说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
           "startLine": 47,
-          "endLine": 68
+          "endLine": 88
         },
         "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
       },
       {
         "key": "c2",
-        "label": "助手与检索装配",
-        "reason": "支持知识路由、ACP 助手模型、检索服务、AssistantRuntime 和可选学习管线的连接关系。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 74,
-          "endLine": 104
-        },
-        "quote": "  registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: \"/api/knowledge\", workspace: resolve(config.dataDir, \"knowledge-agents\"), profile: assistantProfile ?? undefined });\n  const assistantModel = new AcpAssistantModel({\n    profile: assistantProfile,\n    workspaceRoot: config.agentCwd,\n  "
-      },
-      {
-        "key": "c3",
-        "label": "单用户 SQLite 存储基础",
-        "reason": "支持当前单用户 SQLite 边界、不可变修订的总体设计，以及数据库迁移和持久化组件初始化。",
+        "label": "单用户存储基础",
+        "reason": "说明 Store 初始化 SQLite、执行迁移并提供多个共享仓储服务。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
-          "startLine": 4,
+          "startLine": 38,
           "endLine": 69
         },
-        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       },
       {
-        "key": "c4",
-        "label": "多来源捕获与输入聚合",
-        "reason": "支持各类捕获入口调用 Store.capture，并将结论准确限定为成熟输入批次由 flushReady 交给 Store.capture。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 202,
-          "endLine": 237
-        },
-        "quote": "  app.get(\"/api/sources\", async () => store.list());\n  app.post(\"/api/captures\", async (req) =>\n    store.capture(captureSchema.parse(req.body)),\n  );\n  app.post(\"/api/connectors/file\", async (req) => {\n    const b = z.object({ path: str }).parse(req.body);\n    return store.capture(\n      captureSchema.parse(await file"
-      },
-      {
-        "key": "c5",
-        "label": "文件读取边界",
-        "reason": "支持文件连接器对配置根目录、文件大小、UTF-8 解码和纯文本内容的限制。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/connectors.ts",
-          "startLine": 10,
-          "endLine": 34
-        },
-        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
-      },
-      {
-        "key": "c6",
-        "label": "Git 输入约束",
-        "reason": "支持 Git ref、仓库内路径、commit 摘要和受限 git show 参数的校验流程。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/connectors.ts",
-          "startLine": 36,
-          "endLine": 70
-        },
-        "quote": "export async function gitInput(\n  repo: string,\n  path: string,\n  ref: string,\n  roots: string[],\n): Promise<CaptureInput> {\n  const cwd = await allowedPath(repo, roots);\n  if (\n    !/^[a-zA-Z0-9_./-]+$/.test(ref) ||\n    ref.startsWith(\"-\") ||\n    ref.includes(\"..\")\n  )\n    throw Error(\"Invalid git ref\");\n  if (\n    is"
-      },
-      {
-        "key": "c7",
-        "label": "事项操作留痕",
-        "reason": "支持事项命令先被捕获为来源证据，再将证据片段交给 MemoryService 执行状态变化。",
+        "key": "c3",
+        "label": "统一捕获入口",
+        "reason": "支持直接捕获、各类连接器转换及输入事件聚合后写入 Store 的流程。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 313,
-          "endLine": 327
+          "startLine": 204,
+          "endLine": 239
         },
-        "quote": "  app.post<{ Params: { id: string } }>(\"/api/tasks/:id/commands\", async req => {\n    const command = taskCommandSchema.parse(req.body);\n    const task = store.tasks().find(t => t.id === req.params.id);\n    if (!task) throw Error(\"Task not found\");\n    const label = { complete: \"标记完成\", reopen: \"重新打开\", reschedule: \"修改截止时"
+        "quote": "  app.get(\"/api/sources\", async () => store.list());\n  app.post(\"/api/captures\", async (req) =>\n    store.capture(captureSchema.parse(req.body)),\n  );\n  app.post(\"/api/connectors/file\", async (req) => {\n    const b = z.object({ path: str }).parse(req.body);\n    return store.capture(\n      captureSchema.parse(await file"
+      },
+      {
+        "key": "c4",
+        "label": "连接器读取边界",
+        "reason": "支持 URL 不自动抓取，以及文件根目录、大小、UTF-8 和非二进制文本限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 1,
+          "endLine": 34
+        },
+        "quote": "/** Connectors are explicit, bounded reads. URLs in captured text are retained, never\n * automatically crawled. Server filesystem imports require configured roots. */\nimport { readFile, realpath, stat } from \"node:fs/promises\";\nimport { resolve, relative, isAbsolute } from \"node:path\";\nimport { execFile } from \"node:ch"
+      },
+      {
+        "key": "c5",
+        "label": "证据与变化接口",
+        "reason": "支持来源画像、修订、历史、证据、关系、搜索、资源以及变化查看和恢复能力。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 240,
+          "endLine": 315
+        },
+        "quote": "  app.get<{ Params: { revision: string } }>(\n    \"/api/source-profiles/:revision\",\n    async (req, reply) => {\n      const profile = store.profiles.latest(req.params.revision);\n      if (!profile)\n        return reply.code(404).send({\n          error: \"Source readable, smart profile pending\",\n          sourceReadable: "
+      },
+      {
+        "key": "c12",
+        "label": "记忆与处理接口",
+        "reason": "支持通知、事项、作业、运行时请求、提案、决策、记忆版本和反馈接口的概括。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 316,
+          "endLine": 451
+        },
+        "quote": "  app.get<{ Params: { id: string } }>(\n    \"/api/notifications/:id\",\n    async (req, reply) =>\n      store.notification(req.params.id) ??\n      reply.code(404).send({ error: \"Notification not found\" }),\n  );\n  app.get(\"/api/notifications\", async () => {\n    store.remind();\n    return store.notifications();\n  });\n  app."
+      },
+      {
+        "key": "c6",
+        "label": "Web 会话信任边界",
+        "reason": "支持 Web 调用方不能伪造飞书通道或群组可见性，以及轮次执行、取消和重试行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 575,
+          "endLine": 637
+        },
+        "quote": "  app.post(\"/api/assistant/conversations\", async (req) => {\n    const body = z\n      .object({\n        chatId: z.string().min(1).max(200),\n        threadId: z.string().max(200).nullish(),\n        // C: web callers cannot assert a Lark channel, group visibility, or choose\n        // the principal. The server owns these;"
+      },
+      {
+        "key": "c7",
+        "label": "助理结构化调用合同",
+        "reason": "说明模型产生的引用、检索词和事项工具调用仍须由服务器重新治理。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 23,
+          "endLine": 63
+        },
+        "quote": "export type AssistantCreateTaskCall = {\n  tool: \"create_task\";\n  title: string;\n  detail: string;\n  /** Evidence fragments the task is grounded on; the server re-validates both\n   *  visibility and owner provenance before creating anything. */\n  citationIds?: string[];\n  dueAt?: string | null;\n  dueExpression?: string "
       },
       {
         "key": "c8",
-        "label": "API 访问控制",
-        "reason": "支持令牌、本地主机和 Origin 校验，以及冲突、占用和输入错误的统一状态映射。",
+        "label": "事项操作留证",
+        "reason": "支持事项命令先形成带来源信息的捕获修订，再以证据片段驱动记忆服务执行。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 333,
+          "endLine": 350
+        },
+        "quote": "  app.get(\"/api/assistant/workflows\", async () => messageWorkflows.map(({ instruction: _instruction, ...recipe }) => recipe));\n  app.get(\"/api/tasks\", async () => store.tasks());\n  app.post<{ Params: { id: string } }>(\"/api/tasks/:id/commands\", async req => {\n    const command = taskCommandSchema.parse(req.body);\n    c"
+      },
+      {
+        "key": "c9",
+        "label": "学习与飞书初始化",
+        "reason": "支持学习 profile 校验、飞书组件装配以及初始化失败时关闭存储的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 89,
+          "endLine": 130
+        },
+        "quote": "  const learningConfig = config.learning;\n  const learningProfile = learningConfig?.enabled\n    ? config.profiles.find((profile) => profile.id === learningConfig.profileId)\n    : undefined;\n  if (learningConfig?.enabled && !learningProfile)\n    throw Error(`Learning profile not found: ${learningConfig.profileId}`);\n  c"
+      },
+      {
+        "key": "c10",
+        "label": "API 访问与错误处理",
+        "reason": "支持令牌或本机来源校验，以及冲突、限流和输入错误的统一状态码映射。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
           "startLine": 138,
-          "endLine": 181
+          "endLine": 182
         },
         "quote": "  app.addHook(\"onRequest\", async (req, reply) => {\n    if (!req.url.startsWith(\"/api/\")) return;\n    if (config.token) {\n      const candidate = String(req.headers.authorization || \"\").replace(\n        /^Bearer /,\n        \"\",\n      );\n      const a = Buffer.from(candidate),\n        b = Buffer.from(config.token);\n      "
       },
       {
-        "key": "c9",
-        "label": "Web 会话信任边界",
-        "reason": "支持 Web 请求不得声明飞书频道、群组可见性或任意主体，并由服务器固定会话作用域。",
+        "key": "c11",
+        "label": "启动与关闭流程",
+        "reason": "说明静态资源、未完成轮次恢复、周期任务、可选运行时启动及资源回收顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 555,
-          "endLine": 580
-        },
-        "quote": "  app.post(\"/api/assistant/conversations\", async (req) => {\n    const body = z\n      .object({\n        chatId: z.string().min(1).max(200),\n        threadId: z.string().max(200).nullish(),\n        // C: web callers cannot assert a Lark channel, group visibility, or choose\n        // the principal. The server owns these;"
-      },
-      {
-        "key": "c10",
-        "label": "服务生命周期管理",
-        "reason": "支持未完成轮次恢复、后台定时任务启动、可选运行时启动及关闭阶段的资源回收顺序。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 620,
-          "endLine": 651
+          "startLine": 640,
+          "endLine": 682
         },
         "quote": "  const web = resolve(\"apps/web/dist\");\n  if (existsSync(web))\n    await app.register(staticFiles, { root: web, prefix: \"/\" });\n  // G20: recover any pending/running turns from a previous process.\n  await assistant.recoverUnfinishedTurns();\n  const tick = setInterval(() => store.remind(), 30000);\n  tick.unref();\n  let "
-      },
-      {
-        "key": "c11",
-        "label": "飞书内建装配与配置检查",
-        "reason": "支持收窄后的飞书结论：仅启用飞书且未注入 onboarding 服务的内建初始化分支会在异常时关闭 Store；requireLark 在服务不可用时抛出明确的未配置错误。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 105,
-          "endLine": 137
-        },
-        "quote": "  let lark = dependencies.lark;\n  let larkRuntime = dependencies.larkRuntime ?? null;\n  if (config.lark?.enabled && !lark) {\n    try {\n      const secrets = EncryptedSecretStore.fromEnvironment(config.dataDir);\n      lark = new LarkOnboardingService(\n        store.db,\n        secrets,\n        new OfficialLarkRegistrati"
       }
     ],
-    "questions": [
-      {
-        "question": "Store.capture 如何把聚合后的输入落实为修订、片段及相关原子写入？",
-        "why": "现有引用只确认成熟批次被交给 Store.capture；Store 材料给出的范围仅说明总体采用不可变修订，尚未展示 capture 的具体实现，不能进一步确认其事务和修订创建细节。",
-        "nextStep": "补充 Store.capture 实现的固定行范围并独立复核；此前继续保留当前收窄表述。",
-        "blocking": false,
-        "citationKeys": [
-          "c3",
-          "c4"
-        ]
-      },
-      {
-        "question": "访问控制、未完成轮次恢复、轮次取消和服务关闭顺序分别有哪些自动化行为测试？",
-        "why": "现有材料展示了访问控制、会话限制和生命周期实现路径，但未提供测试材料，无法确认这些路径已被真实行为断言覆盖。",
-        "nextStep": "补充相关测试文件和实际退出码、HTTP 响应记录后复核。",
-        "blocking": false,
-        "citationKeys": [
-          "c8",
-          "c9",
-          "c10"
-        ]
-      },
-      {
-        "question": "访问控制、未完成轮次恢复、轮次取消和关闭顺序是否已有真实行为测试覆盖？",
-        "why": "当前材料能够支持这些实现和编排路径，但没有提供对应测试文件、实际退出码或 HTTP 行为记录，不能据此确认测试覆盖情况。",
-        "nextStep": "补充相关测试材料及实际运行结果，分别核验鉴权失败、恢复、取消和关闭场景。",
-        "blocking": false,
-        "citationKeys": [
-          "c8",
-          "c9",
-          "c10"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "e331447e1286c4fa7c12a3e8a9e87ad83cec034057dd8ad12b866e43b3becf1f"
+      "digest": "d0a0d20d427cae9cce2887dda081d6569bd3601a4ae7ca99d30ff0f3afc4ddd3"
     },
     {
       "kind": "material",
@@ -231,7 +206,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -241,21 +216,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T06:49:34.369Z",
+    "effort": "high",
+    "at": "2026-10-01T11:45:58.331Z",
     "trace": {
-      "runId": "a0c05aa7-ac4d-442f-8b44-a18c5164c06d",
+      "runId": "7fc91539-c491-4e2b-b3f2-878192343d04",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "7f6c87fc0b7c5c0b160b4a274d7a7bbb26c2f210d15f04d0c354de890c1b9bda",
-      "contextHash": "e05a4a0950aa6a76bc3e4bfc5b712c91637360dd5a225b91baa83aaba309f907",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "2132c908571e9a0bb3e21c3625cc9929b15adea72dbf63656b3883bbbba4b33e",
+      "contextHash": "1129905f53c94416d7defe2719b4cd37d4b18ba2f868b24bbe53e64ea6ae9882",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e80d612a2da00da43e25cfc84f5ec97e5055d6f1a726e2c50765f7064390ff33",
+      "fingerprint": "135f5ca6cf8c29a512545bba3c3ba50807378b27c77311fed500d09d648d0eaa",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -265,10 +240,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f639-6427-7be3-a254-2fa067afbb3f"
+        "01a0f748-bf34-7e60-b2b0-2e91edd617db"
       ],
       "usage": {
-        "used": 39307,
+        "used": 40411,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -277,10 +252,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 58394,
-          "utf8Bytes": 63952,
-          "estimatedTokens": 21318,
-          "budgetedTokens": 26648,
+          "chars": 62186,
+          "utf8Bytes": 69715,
+          "estimatedTokens": 23239,
+          "budgetedTokens": 29049,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -289,20 +264,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:49:56.865Z",
+    "at": "2026-10-01T11:46:19.253Z",
     "trace": {
-      "runId": "42dd164c-2af3-4704-b99d-487291e0d428",
+      "runId": "b904a383-ed9d-4239-b9a2-0848f0a8cce1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "f30e80b94130cee29e28a1835986cddeba153ae177d7369f0cafc145664707e6",
-      "contextHash": "f37c581e6dc852b88127ccfbaec410fcef671ac38ebebfe0b61c269d240e286b",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "e4ef18ead66d9c2c0d01b3988411633487202bd70a65ec2f74740275f7b6666c",
+      "contextHash": "049d4aa50e01d853cf3dbf56735e60b67a0495d4a77b9b1622d8d4c027499aac",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ca40a6006ffb8c1bff2429c176ddede868c2040ec27c4aa5c0a1ad4575d18986",
+      "fingerprint": "f880115c8099f8f907b7dc07129d27e41ae10eec4a8ebd7b0910c1a54bb7a816",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -312,10 +287,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f639-d0de-7413-b1b9-408320149f2c"
+        "01a0f749-2d3d-7c32-a351-f5b73fc3f3cb"
       ],
       "usage": {
-        "used": 38001,
+        "used": 38273,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -324,10 +299,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 56109,
-          "utf8Bytes": 60795,
-          "estimatedTokens": 20265,
-          "budgetedTokens": 25332,
+          "chars": 59616,
+          "utf8Bytes": 65721,
+          "estimatedTokens": 21907,
+          "budgetedTokens": 27384,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

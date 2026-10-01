@@ -2,36 +2,41 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/browser-smoke.ts",
-    "title": "浏览器端到端验收：从材料捕获到故障恢复",
-    "summary": "该脚本在临时 SQLite 工作区中启动真实应用与无头 Chromium，以确定性 Agent、飞书注册及能力探测夹具稳定复现用户流程。它覆盖材料捕获、提案应用、证据阅读、待办跟进、人工决策、飞书接入、响应式布局、故障展示、重启恢复及富文本安全渲染；但不等价于真实 Agent CLI、飞书网络或通知渠道的在线验收。",
+    "title": "真实浏览器产品流程验收",
+    "summary": "该脚本以真实 Vue 页面、Fastify API 和临时 SQLite 数据库执行端到端验收，覆盖材料、证据、事项、判断、飞书接入、响应式阅读、异常展示、重启恢复与富文本安全。Agent、提案评估结果和飞书外部能力使用确定性替身，因此其结果不等同于独立模型复核或真实外部服务联调。",
     "category": "tests",
     "sections": [
       {
-        "key": "test_scope",
-        "title": "真实应用边界内的确定性浏览器验收",
-        "body": "脚本解决的是“各模块单测通过，但用户完整操作仍可能断裂”的问题：它直接引入应用构建、存储、飞书接入和共享合同，并明确采用真实 Vue、API 与 SQLite，同时用协议夹具稳定 Agent 输出。参考 [[c1]]\n\n测试在临时目录中组装 `Store`、飞书接入服务和加密凭据存储；注册二维码、已有应用及能力结果由内存夹具提供。随后启动真实 HTTP 服务和 Chromium，监听页面异常及关键控制台错误。参考 [[c2]] [[c3]] [[c4]]"
+        "key": "purpose",
+        "title": "验证用户真正走过的产品链路",
+        "body": "脚本用于发现“组件单测通过，但完整产品链路不可用”的问题：它启动真实 API 与 SQLite，通过无头 Chromium 按可访问名称操作 Vue 页面，并收集页面异常和关键控制台错误。Agent 响应使用固定 ACP fixture，以保持界面断言稳定；验收重点是前后端、持久化和交互集成，而不是模型回答质量。参考 [[c1]] [[c2]]\n\n测试数据放在临时目录，服务监听随机本地端口。结束时脚本关闭浏览器、服务和数据库并清理目录，同时记录浏览器版本、已通过检查及错误列表。参考 [[c12]]"
       },
       {
-        "key": "main_flow",
-        "title": "从原始材料到可追溯结果",
-        "body": "主路径先通过界面保存材料，并从存储确认捕获成功；辅助函数再以固定 Fragment 原文构造提案和独立评估结果，检查服务端接受该证据。参考 [[c5]] [[c6]]\n\n```mermaid\nflowchart LR\n  A[界面保存材料] --> B[生成版本与处理任务]\n  B --> C[评估并应用提案]\n  C --> D[学习流程显示结果]\n  D --> E[查看原证据与通知详情]\n```\n\n脚本随后完成任务租约、刷新页面，并验证“已生效”、原文证据和通知详情均可追溯。它还构造循环引用，检查层级跳转与追问保存；再次捕获同一来源后确认新版本成为当前内容，而旧版本仍可阅读。参考 [[c7]] [[c8]]"
+        "key": "main-flow",
+        "title": "从材料到可追溯行动",
+        "body": "主流程先由用户录入材料，再根据固定 revision 与 fragment 构造带精确文本范围的提案，并把预设为 `supported` 的确定性 assessment 一同提交评估接口。这里验证的是评估之后的策略和产品流程，包括高置信结果自动生效、处理任务完成、通知生成，以及从事项或通知返回原始证据；它没有实际运行独立 verifier，不能证明复核质量。参考 [[c3]] [[c4]]\n\n证据阅读覆盖递归跳转、循环返回既有层、基于当前原文追问，以及关闭全部后弹窗不再可见；材料产生新版本后仍可阅读旧 revision。事项侧还验证创建、完成、等待对象、暂缓与取消，日常助理的对话在页面切换后仍然保留。脚本没有断言弹窗关闭后焦点回到触发元素，因此焦点恢复不属于这里已验证的结论。参考 [[c5]] [[c6]]"
       },
       {
-        "key": "decisions_and_integrations",
-        "title": "待办、人工判断与飞书接入",
-        "body": "待办流程覆盖创建、完成、等待回复、暂缓提醒、取消以及跨页面保留的日常助理会话，并检查窄屏下无横向溢出和页面不暴露内部标识。参考 [[c9]]\n\n对于会改变既有声明的提案，脚本验证其进入待判断状态，并分别走补充背景、拒绝、确认应用三条分支；若来源已更新，旧判断必须失效且不能继续提交。参考 [[c10]]\n\n飞书路径覆盖生成二维码与外部授权链接、取消重配、复用已有应用、生成配对码和确认 owner；同时断言客户端页面及状态接口均不泄露夹具密钥。这里证明的是接入编排与 UI 合同，而非真实飞书网络可用性。参考 [[c11]]"
+        "key": "decisions-and-integrations",
+        "title": "需要判断的变更与飞书接入",
+        "body": "对于会覆盖既有事实的变更，脚本分别验证补充背景、拒绝和确认应用三条处理路径；如果来源在判断前产生新版本，旧判断会显示失效且不能继续提交。确认应用后，测试还直接查询 SQLite，核对获批事实已经持久化。参考 [[c7]]\n\n飞书场景覆盖复用已有应用、二维码与授权链接、取消后重配、导入凭据、生成配对码、确认 owner 和启用机器人，并断言密钥不会出现在页面或状态 API 中。注册器、能力探测和既有应用提供者均为脚本内替身，因此这些断言只验证本地接入流程和保密边界，不代表真实飞书开放平台当前可用。参考 [[c8]]"
       },
       {
         "key": "boundaries",
-        "title": "布局、容量、故障与安全边界",
-        "body": "界面边界包括 768 像素键盘操作、390 像素全屏对话框，以及连续打开 100 层证据后仍只渲染当前正文；这些断言覆盖可见性、焦点留在对话框内和渲染规模，但没有直接断言关闭后焦点回到原触发器。参考 [[c12]]\n\n故障场景通过写入失败任务和通知投递状态，验证模型不可用、投递失败、API 离线提示及应用重启后的数据恢复；因此它验证故障呈现和持久化结果，不覆盖生产渠道实际失败的产生过程。参考 [[c13]]\n\n最后，真实阅读器需渲染 Markdown 表格和 Mermaid SVG，同时移除 `foreignObject` 与脚本标签；全程收集的页面错误必须为空。参考 [[c14]]"
+        "title": "界面边界、故障与未覆盖范围",
+        "body": "界面验收覆盖桌面、768px 与 390px 视口无横向溢出；中窄屏与移动端均检查弹窗打开后 Tab 焦点仍处于弹窗内，并验证 Esc 可关闭弹窗。测试还走到 100 层持久证据链，并确认当前只渲染一个正文块，但未检查关闭后的焦点归还。参考 [[c9]]\n\n故障场景通过预置模型任务失败和通知投递永久失败，检查页面如实展示错误；脚本还单独中断 `/api/jobs` 请求，确认出现获取失败提示后“原始材料”导航仍可使用。随后重启真实服务，验证既有事项可从 SQLite 恢复；这里没有模拟整个 API 或网络全面断开。参考 [[c10]] 富文本阅读另行验证 Markdown 表格和 Mermaid SVG 可以显示，同时过滤脚本节点与 `foreignObject`。参考 [[c11]]\n\n因此，本脚本不能证明真实 Agent CLI、目标模型、飞书网络或通知渠道可用，也未覆盖多用户竞争、长期任务恢复、性能以及 Firefox、WebKit 等跨浏览器兼容性。"
+      },
+      {
+        "key": "test-oracle",
+        "title": "通过条件与断言方式",
+        "body": "每项检查只有在其中的 Playwright 可见性、文本、属性、焦点、布局或后端状态断言全部成功后，才会加入通过列表；最终还要求收集到的页面错误数组为空。中途异常会进入资源清理流程，但不会被记录为通过。参考 [[c13]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "浏览器验收范围",
-        "reason": "说明脚本使用真实 Vue、API、SQLite，并列出其直接依赖的应用、存储、飞书及合同模块。",
+        "label": "真实栈与固定 Agent",
+        "reason": "说明脚本使用真实 Vue、API 和 SQLite，而 fixture Agent 仅用于保持界面断言确定性。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -43,86 +48,47 @@
       },
       {
         "key": "c2",
-        "label": "注册流程夹具",
-        "reason": "支持二维码注册由确定性适配器模拟，并通过中止信号结束，而非调用真实授权服务。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 18,
-          "endLine": 35
-        },
-        "quote": "const dir = mkdtempSync(join(tmpdir(), \"omem-browser-\"));\nclass BrowserRegistration implements LarkRegistrationAdapter {\n  register(request: LarkRegistrationRequest) {\n    const url = new URL(\"https://accounts.feishu.cn/open-apis/authen/v1/index\");\n    if (request.appId) url.searchParams.set(\"clientID\", request.appId);"
-      },
-      {
-        "key": "c3",
-        "label": "飞书测试服务组装",
-        "reason": "支持已有应用、能力探测、存储、加密密钥库和接入服务在测试中的组合关系。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 37,
-          "endLine": 74
-        },
-        "quote": "const existingApps: ExistingLarkAppProvider = {\n  list: () => [\n    {\n      appId: larkAppId,\n      name: \"Browser botmux fixture\",\n      tenantBrand: \"feishu\",\n      source: \"botmux\",\n    },\n  ],\n  credentials: (appId) => {\n    if (appId !== larkAppId) throw Error(\"BOTMUX_APP_NOT_FOUND\");\n    return {\n      clientId: "
-      },
-      {
-        "key": "c4",
-        "label": "应用与浏览器启动",
-        "reason": "支持脚本使用确定性 ACP 夹具配置启动真实应用服务器及无头 Chromium，并采集页面错误。",
+        "label": "验收环境启动",
+        "reason": "支持临时数据目录、真实应用构建、本地随机端口和无头 Chromium 的启动方式。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 75,
-          "endLine": 109
+          "startLine": 66,
+          "endLine": 103
         },
-        "quote": "const appConfig = {\n  dataDir: dir,\n  agentCwd: join(dir, \"agent\"),\n  host: \"127.0.0.1\",\n  port: 0,\n  token: undefined,\n  captureRoots: [],\n  notifications: { mode: \"instant\" },\n  profiles: [\n    profileSchema.parse({\n      id: \"fixture\",\n      name: \"协议测试 Agent\",\n      transport: \"acp\",\n      command: process.execPath"
+        "quote": "const larkStore = new Store(dir);\nconst lark = new LarkOnboardingService(\n  larkStore.db,\n  new EncryptedSecretStore(join(dir, \"browser-secrets\"), randomBytes(32)),\n  new BrowserRegistration(),\n  capabilityProbe,\n  () => new Date(),\n  existingApps,\n);\nconst appConfig = {\n  dataDir: dir,\n  agentCwd: join(dir, \"agent\"),\n"
       },
       {
-        "key": "c5",
-        "label": "固定证据提案评估",
-        "reason": "说明测试如何从固定 Fragment 构造提案、证据定位和审核结论，并调用评估 API。",
+        "key": "c3",
+        "label": "固定提案与评估输入",
+        "reason": "表明测试直接向评估接口同时提交基于固定证据的提案和预设为 supported 的确定性 assessment，并未在此运行独立 verifier。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 127,
-          "endLine": 188
+          "startLine": 129,
+          "endLine": 180
         },
-        "quote": "  const fragment = input.revision.fragments[0]!;\n  const text = fragment.text;\n  const response = await app.inject({\n    method: \"POST\",\n    url: \"/api/proposals/evaluate\",\n    payload: {\n      proposal: {\n        schema_version: 1,\n        proposal_id: input.proposalId,\n        kind: input.kind ?? \"task\",\n        oper"
+        "quote": "  const response = await app.inject({\n    method: \"POST\",\n    url: \"/api/proposals/evaluate\",\n    payload: {\n      proposal: {\n        schema_version: 1,\n        proposal_id: input.proposalId,\n        kind: input.kind ?? \"task\",\n        operation: input.targetId ? \"supersede\" : \"create\",\n        ...(input.targetId ? { "
       },
       {
-        "key": "c6",
-        "label": "材料捕获入口",
-        "reason": "支持用户通过真实界面保存材料，并由底层 Store 确认捕获结果。",
+        "key": "c4",
+        "label": "材料到通知的产品流程",
+        "reason": "支持材料录入、自动应用提案、任务完成、查看原证据和通知详情等产品流程断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 193,
-          "endLine": 214
-        },
-        "quote": "  await page.goto(base);\n  await check(\"empty real workspace and material capture\", async () => {\n    await expect(\n      page.getByRole(\"heading\", { name: \"知识从你的材料开始\" }),\n    ).toBeVisible();\n    await page\n      .getByRole(\"button\", { name: \"输入材料\", exact: true })\n      .first()\n      .click();\n    await page.getByLab"
-      },
-      {
-        "key": "c7",
-        "label": "提案应用与证据回看",
-        "reason": "支持任务完成、提案生效、学习流程展示、原证据打开和通知详情检查组成完整闭环。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 228,
+          "startLine": 194,
           "endLine": 280
         },
-        "quote": "      const evaluated = await evaluateTask({\n        revision,\n        proposalId: \"browser-auto-proposal\",\n        title: \"提交发布前回滚验证报告\",\n        jobId: job.id,\n      });\n      expect(evaluated.policy).toBe(\"auto_apply\");\n      const lease = store.jobs.claimNext({\n        workerId: \"browser-worker\",\n        fingerprint"
+        "quote": "  await check(\"empty real workspace and material capture\", async () => {\n    await expect(\n      page.getByRole(\"heading\", { name: \"知识从你的材料开始\" }),\n    ).toBeVisible();\n    await page\n      .getByRole(\"button\", { name: \"输入材料\", exact: true })\n      .first()\n      .click();\n    await page.getByLabel(\"材料标题\").fill(\"发布前的回滚验证"
       },
       {
-        "key": "c8",
-        "label": "循环证据与版本历史",
-        "reason": "支持循环引用导航、基于原文追问，以及新旧版本并存和历史版本可读的断言。",
+        "key": "c5",
+        "label": "递归证据与版本历史",
+        "reason": "支持证据循环导航、基于原文追问、关闭后弹窗不可见，以及新旧 revision 均可阅读；该范围没有检查焦点恢复。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -133,115 +99,132 @@
         "quote": "  const [a, b] = revision.fragments;\n  store.link(a!.id, b!.id);\n  store.link(b!.id, a!.id);\n  await check(\"recursive evidence, cycle and return focus\", async () => {\n    await page.getByRole(\"button\", { name: \"原始材料\", exact: true }).click();\n    await page\n      .locator(\".source-link\")\n      .filter({ hasText: \"发布前的回滚"
       },
       {
-        "key": "c9",
-        "label": "待办与日常跟进",
-        "reason": "支持待办状态变更、持久会话、等待与暂缓控制，以及不同视口和内部标识隐藏的验证。",
+        "key": "c6",
+        "label": "事项与日常跟进",
+        "reason": "支持事项创建完成、持久对话、等待、暂缓、取消及窄屏布局行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
           "startLine": 333,
-          "endLine": 387
+          "endLine": 388
         },
         "quote": "  await check(\"task creation and persistent change notifications\", async () => {\n    await page.getByRole(\"button\", { name: \"事项与待办\", exact: true }).click();\n    await page.getByLabel(\"事项\", { exact: true }).fill(\"补充回滚验证记录\");\n    await page.getByLabel(\"到期时间\").fill(\"2020-01-01T09:00\");\n    await page.getByRole(\"button\", {"
       },
       {
-        "key": "c10",
-        "label": "人工判断分支",
-        "reason": "支持冲突提案需人工判断，以及补背景、拒绝、批准和来源过期失效四类行为。",
+        "key": "c7",
+        "label": "判断分支与过期保护",
+        "reason": "支持补背景、拒绝、确认应用，以及来源更新后旧判断失效和获批事实持久化的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 399,
+          "startLine": 389,
           "endLine": 487
         },
-        "quote": "      for (const [index, title] of [\n        \"补充支付方案背景\",\n        \"拒绝未经确认的排期\",\n        \"批准明确的复核事项\",\n        \"过期来源上的旧提案\",\n      ].entries()) {\n        // Current policy asks for decisions on conflicting active commitments;\n        // forwarded unknown-owner statements are retained as source, not cards.\n        const base"
+        "quote": "  await check(\n    \"A-U02 decision diff, evidence, receipts and stale state\",\n    async () => {\n      const pending: {\n        title: string;\n        proposalId: string;\n        decisionId: string;\n        digest: string;\n        externalId: string;\n      }[] = [];\n      for (const [index, title] of [\n        \"补充支付方案背景"
+      },
+      {
+        "key": "c8",
+        "label": "飞书接入与密钥保护",
+        "reason": "支持二维码授权、既有应用复用、owner 配对和密钥不暴露等断言，也显示相关外部能力由脚本内替身提供。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 489,
+          "endLine": 548
+        },
+        "quote": "  await check(\n    \"A-U03 QR, direct authorization link, reusable app and pairing\",\n    async () => {\n      await page\n        .getByRole(\"button\", { name: \"飞书机器人\", exact: true })\n        .click();\n      await expect(\n        page.getByRole(\"heading\", { name: \"飞书机器人\" }),\n      ).toBeVisible();\n      await expect(page.g"
+      },
+      {
+        "key": "c9",
+        "label": "响应式与深层证据",
+        "reason": "支持不同视口、弹窗内焦点约束、Esc 关闭、移动端全屏弹窗和 100 层证据导航；该范围未断言关闭后焦点恢复。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 550,
+          "endLine": 650
+        },
+        "quote": "  await check(\"page reload and desktop rendering\", async () => {\n    await page.getByRole(\"button\", {name:\"原始材料\",exact:true}).click();\n    await page.reload();\n    await expect(\n      page.locator(\".source-link\").filter({ hasText: \"发布前的回滚验证\" }),\n    ).toBeVisible();\n    await page\n      .locator(\".source-link\")\n      ."
+      },
+      {
+        "key": "c10",
+        "label": "故障展示与重启恢复",
+        "reason": "支持模型任务失败、通知失败、单独中断 /api/jobs 请求后的降级展示，以及服务重启后事项恢复；不支持将其解释为整个 API 断网。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 652,
+          "endLine": 725
+        },
+        "quote": "  await check(\n    \"A-U05 offline, model, delivery failure and restart truthfulness\",\n    async () => {\n      const failedJob = store.jobs.enqueue({\n        kind: \"browser_model_unavailable\",\n        inputRefs: [{ revisionId: revision.id }],\n        roleVersion: \"extractor@1\",\n        policyVersion: \"memory-policy@1\",\n"
       },
       {
         "key": "c11",
-        "label": "飞书授权与配对",
-        "reason": "支持二维码授权、复用应用、owner 配对及密钥不向页面和状态接口泄露的断言。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 490,
-          "endLine": 548
-        },
-        "quote": "    \"A-U03 QR, direct authorization link, reusable app and pairing\",\n    async () => {\n      await page\n        .getByRole(\"button\", { name: \"飞书机器人\", exact: true })\n        .click();\n      await expect(\n        page.getByRole(\"heading\", { name: \"飞书机器人\" }),\n      ).toBeVisible();\n      await expect(page.getByLabel(\"App "
-      },
-      {
-        "key": "c12",
-        "label": "响应式与深层证据",
-        "reason": "支持平板、手机的溢出和对话框焦点检查，以及 100 层证据导航的容量边界。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 567,
-          "endLine": 650
-        },
-        "quote": "  await check(\"A-U04 768px layout and keyboard focus\", async () => {\n    await page.setViewportSize({ width: 768, height: 900 });\n    await page.reload();\n    expect(\n      await page.evaluate(\n        () => document.documentElement.scrollWidth <= innerWidth,\n      ),\n    ).toBe(true);\n    await page.getByText(\"选择原文提问或"
-      },
-      {
-        "key": "c13",
-        "label": "故障展示与重启恢复",
-        "reason": "支持模型失败、通知失败、API 离线和服务重启后持久数据仍可读取的结论。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 653,
-          "endLine": 725
-        },
-        "quote": "    \"A-U05 offline, model, delivery failure and restart truthfulness\",\n    async () => {\n      const failedJob = store.jobs.enqueue({\n        kind: \"browser_model_unavailable\",\n        inputRefs: [{ revisionId: revision.id }],\n        roleVersion: \"extractor@1\",\n        policyVersion: \"memory-policy@1\",\n        cause: "
-      },
-      {
-        "key": "c14",
-        "label": "富文本安全渲染",
-        "reason": "支持 Markdown 表格、Mermaid SVG 正常呈现，同时危险脚本及 foreignObject 不进入阅读器。",
+        "label": "富文本渲染安全",
+        "reason": "支持 Markdown 表格与 Mermaid 正常渲染，同时过滤脚本和 foreignObject 的安全断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
           "startLine": 727,
-          "endLine": 739
+          "endLine": 738
         },
         "quote": "  await check(\"Markdown tables and Mermaid diagrams render through the real reader\", async () => {\n    store.capture({ source: \"manual\", externalId: \"rich-document\", title: \"结构化阅读验收\", context: {}, parts: [{type:\"text\", text: \"# 阅读流程\\n\\n| 阶段 | 说明 |\\n| --- | --- |\\n| 捕获 | 保存原文 |\\n\\n```mermaid\\nflowchart LR\\n  A[捕获] --> B"
+      },
+      {
+        "key": "c12",
+        "label": "验收记录与资源清理",
+        "reason": "支持错误汇总、验证记录写入，以及关闭资源并删除临时目录的行为。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 739,
+          "endLine": 760
+        },
+        "quote": "  expect(errors).toEqual([]);\n  writeFileSync(\n    resolve(\"docs/implementation/browser-verification.json\"),\n    JSON.stringify(\n      {\n        date: new Date().toISOString().slice(0, 10),\n        browser: browser.version(),\n        checks,\n        errors,\n        agent: \"deterministic ACP protocol fixture\",\n        b"
+      },
+      {
+        "key": "c13",
+        "label": "检查记录机制",
+        "reason": "说明检查函数仅在断言函数成功返回后记录通过，并由最终错误数组补充页面运行时判据。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 104,
+          "endLine": 115
+        },
+        "quote": "const errors: string[] = [];\npage.on(\"pageerror\", (e) => errors.push(e.message));\npage.on(\"console\", (m) => {\n  if (m.type() === \"error\" && /TypeError|render|Unhandled/.test(m.text()))\n    errors.push(m.text());\n});\nconst checks: string[] = [];\nasync function check(name: string, fn: () => Promise<void>) {\n  await fn();"
       }
     ],
     "questions": [
       {
-        "question": "是否需要把真实 Agent CLI 和真实飞书授权加入独立的在线验收？",
-        "why": "当前脚本明确使用确定性 ACP、注册、已有应用和能力探测夹具，只能证明应用编排及 UI 合同，不能证明外部 CLI、网络授权和上游服务当前可用。",
-        "nextStep": "增加显式启用、可跳过且单独标记结果的 live 检查，使用隔离测试账号验证真实 Agent 会话、飞书授权和能力探测。",
+        "question": "真实 Agent CLI、目标模型与飞书开放平台是否另有独立 live 验收？",
+        "why": "本脚本使用确定性 ACP fixture、预设 assessment、脚本内注册器、能力探测和既有应用提供者，不能据此确认独立复核质量或外部服务当前可用。",
+        "nextStep": "查找或补充单独标记为 live 的验收入口，记录实际命令、环境、模型配置、网络交互和退出码；不要把本脚本的通过结果当作外部联调证明。",
         "blocking": false,
         "citationKeys": [
           "c1",
           "c2",
           "c3",
-          "c4",
-          "c11"
+          "c8"
         ]
       },
       {
-        "question": "关闭证据阅读栈后，是否要求焦点必须回到最初的触发按钮？",
-        "why": "现有检查名称提到焦点返回，但正文只断言对话框关闭；平板和手机场景也仅检查打开时焦点位于对话框内部。",
-        "nextStep": "保存打开前的触发元素，在“关闭全部”和 Escape 两条路径后显式断言 `document.activeElement` 回到该元素。",
+        "question": "是否需要补充跨浏览器、并发和长时间运行验收？",
+        "why": "当前只启动 Chromium，并以单页面、单临时 SQLite 实例顺序执行场景；材料没有展示 Firefox、WebKit、多用户竞争、进程异常退出或长期任务恢复断言。",
+        "nextStep": "根据发布平台和明确的单用户边界，决定是否增加 Firefox/WebKit、并发写入、进程异常退出及长时间重试场景。",
         "blocking": false,
         "citationKeys": [
-          "c8",
-          "c12"
-        ]
-      },
-      {
-        "question": "故障状态是否还需要通过公开接口或可注入的仓储故障产生？",
-        "why": "模型失败和通知失败目前由测试直接更新数据库构造，能够验证界面呈现与重启持久化，却未覆盖生产代码如何把真实执行错误转换成这些状态。",
-        "nextStep": "保留当前浏览器断言，并补充仓储或投递器级故障注入测试，验证错误分类、重试耗尽和最终状态写入。",
-        "blocking": false,
-        "citationKeys": [
-          "c13"
+          "c2",
+          "c9",
+          "c10"
         ]
       }
     ]
@@ -250,12 +233,12 @@
     {
       "kind": "material",
       "key": "omem:scripts/browser-smoke.ts",
-      "digest": "9801f1a76ba44e64cb1bff5c95a3954a0eb4446bc0c72bfe91f7ab6fdb3ac451"
+      "digest": "ce08c50321f0a54409286d95f333c1fa77f55c849716b404b8c23de86608e93f"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -276,33 +259,33 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "high",
-    "at": "2026-10-01T08:30:14.480Z",
+    "at": "2026-10-01T12:15:15.693Z",
     "trace": {
-      "runId": "f09c0202-1e50-416a-9604-8e14688b8eb8",
-      "roleId": "code-analyst",
+      "runId": "c3573085-fcdd-43c1-8687-df63a72352c0",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
-      "promptHash": "1c96873114c6ff924d7e670dfa9ff4112e21d6de4b00fdbc48c36aa81cfba296",
-      "contextHash": "8e35249d07126be86100bc1f705092aaf85838edeec841a6a8f1b51f0021a035",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "9ed774831fec168fdbb3605fc88599100971c3b6c1a0e93b45e9369b1766de7c",
+      "contextHash": "cda4ded6c5a2268a6a1c1f7d0b3f1071a2a216e26b59b223b3cf4837e6a5a0c0",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4125411af44ba2ee0b7664d7356d8b10e1f46ccd9a936f5b187f6390fce35e53",
+      "fingerprint": "a2298b4665ec863b53aa6d724d498e054201c2f6a226cadf1daec6a5f0283980",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f695-403e-7423-a33f-fba2a3b6d4c7"
+        "01a0f763-9f91-79f2-ac1d-bb4d1a273f9b"
       ],
       "usage": {
-        "used": 40025,
+        "used": 42672,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -311,10 +294,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 55862,
-          "utf8Bytes": 60971,
-          "estimatedTokens": 20324,
-          "budgetedTokens": 25405,
+          "chars": 66615,
+          "utf8Bytes": 76988,
+          "estimatedTokens": 25663,
+          "budgetedTokens": 32079,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -323,17 +306,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T08:30:33.930Z",
+    "at": "2026-10-01T12:15:36.761Z",
     "trace": {
-      "runId": "bcbaa011-4f86-47c7-8223-7777a3a30953",
+      "runId": "74496e57-47d4-47fe-bbf6-e2d07d6cb644",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
-      "promptHash": "498699908a90efc26ed5b3f05380202a4d4c4cba286341ec9727575390b3264d",
-      "contextHash": "258c7b8fc96bba04a1027c3569d3f412bdcaf472d9e4e5a4c6c81780ac968d98",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "7e1d8cbe79ec595ec1e74ccc4e68d06c64d0ed14c55514af049ed1168cbc36ea",
+      "contextHash": "37d7204271beeb54cb5d92c84280e13a71ac555aa97e3bb4cd12898a02ced791",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "cfd06c2bfb8ee5b605e19a99dcf07c6b2fbe235cadc85aa84bf46157b50dab2c",
+      "fingerprint": "cfa78ceb39ad26480d9570f4c8d577c6073e1da827891bd085d37a34331a0871",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "high",
@@ -346,10 +329,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f696-011e-7c73-8962-a56bd75d0102"
+        "01a0f763-fd3b-77c0-99f6-667987d54abe"
       ],
       "usage": {
-        "used": 39791,
+        "used": 40876,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -358,10 +341,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 63450,
-          "utf8Bytes": 71621,
-          "estimatedTokens": 23874,
-          "budgetedTokens": 29843,
+          "chars": 63592,
+          "utf8Bytes": 72765,
+          "estimatedTokens": 24255,
+          "budgetedTokens": 30319,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

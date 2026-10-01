@@ -2,37 +2,37 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/review-relations.test.ts",
-    "title": "仓库评审关系的同步与查询测试",
-    "summary": "该测试以临时 Git 仓库和隔离 SQLite Store 验证人工 association seed 如何形成代码、意图、需求、决策与测试之间的关系，并覆盖多引用、幂等、缺失目标、删除失效以及 HTTP 双向查询。它重点防止同名文件误连、共享需求覆盖不同 seed、空端点关系碰撞，以及把整张需求总表错误展示为意图。",
+    "title": "仓库评审关系的同步与查询验证",
+    "summary": "该测试通过临时 Git 仓库和隔离 SQLite Store，验证关联种子如何生成独立意图片段及代码、需求之间的关系，并覆盖重复同步、缺失目标、种子移除和 HTTP 查询等边界。它验证的是关系同步与查询合同，不等同于真实业务能力的端到端验收。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose-fixture",
-        "title": "问题与测试夹具",
-        "body": "测试为每个用例建立临时 Git 仓库和独立 Store，并在结束后关闭数据库、递归清理目录；仓库夹具包含目标源码、同名诱饵文件、需求/决策/测试文档及人工 associations，从而在接近真实同步输入的环境中检验关系构建。[[c1]] 两条默认 seed 刻意共享 G08，但定位到不同符号，第二条还同时引用 G08、G09，用于发现按需求键覆盖 seed 或只处理首个引用的问题。[[c2]]\n\n测试通过 `runReviewSync` 驱动同步，通过 Store 直接读取关系和虚拟意图索引；HTTP 场景再用 `buildReviewApp` 注入请求。由导入关系可确认该文件同时连接通用存储、评审同步和评审 HTTP 层，但材料没有展示被调函数完整实现，不能据此断言其内部调用链。[[c3]]"
+        "key": "purpose-and-fixture",
+        "title": "测试要解决的问题",
+        "body": "这组测试用于防止仓库评审关系在同步时相互覆盖或连接到错误材料。每个用例创建临时 Git 仓库和独立 Store，并在结束后关闭数据库、删除临时目录，避免测试状态串扰。参考 [[c1]]\n\n夹具安排两个不同符号共享需求，其中一个引用多个需求；同时放入一个未登记、但含同名符号的文件。测试由此确认：未登记文件不会仅因存在同名符号而被建立关系。参考 [[c2]] 关联清单则明确记录代码路径、符号、需求、决策和测试引用，作为同步输入。参考 [[c3]]"
       },
       {
         "key": "sync-invariants",
-        "title": "同步关系的核心断言",
-        "body": "首组断言要求“一条 seed 对应一个短意图片段”：两个 seed 生成两个不同 fragment，文本只包含各自意图与关联标识，不得混入 G01–G20 总表；代码片段以 `implements` 指向该意图，端点非空且状态为 confirmed。[[c4]] `requires` 则从意图片段出发，并为每个 requirementRef 独立建边，因此样例总数应为三条。[[c5]]\n\n重复同步后关系 ID 必须完全复用，说明测试把幂等性定义为稳定身份而非仅数量相同；未列入 seed 的同名文件不得产生关系，强调路径与显式 association 才是定位依据。[[c6]] 对无法解析的决策或测试引用，每个 seed 的 missing 边仍须独立存在，避免空端点导致覆盖；从列表删除 seed 后，其旧边应转为 stale，而不是继续显示为有效。[[c7]]"
+        "title": "同步后的关系不变量",
+        "body": "每条关联种子会形成独立的短意图片段，代码以 `implements` 指向它，而不是指向包含多个需求编号的整张表；共享需求的两个种子也不会互相覆盖。参考 [[c4]]\n\n每个需求引用都会生成一条 `requires`，重复同步复用既有关系标识；未登记的同名文件没有关系记录。参考 [[c5]] 对于无法解析的目标，测试实际确认的是：来自不同种子的缺失关系保持为互不合并的记录，避免空端点碰撞；种子从清单移除后，其旧关系会转为 `stale`。参考 [[c6]]"
       },
       {
-        "key": "api-api-limits",
-        "title": "查询行为、模块关系与未覆盖边界",
-        "body": "API 测试确认从代码 fragment 查询可得到外向 `implements`，从意图 fragment 查询可同时看到反向 `implemented_by` 与外向 `requires`；用户看到的关联对象仍是短意图，而非共享需求表。另一个用例验证关系列表可按 status/type 过滤，association 摘要返回 seed 数量。[[c8]] 这表明评审应用复用隔离 Store，并公开浏览、同步所需的有限 HTTP 面；应用注释还限定其默认只绑定本机，并不承载业务 worker 或业务状态。[[c9]]\n\n这些是进程内 fixture 测试：它们未断言 `decided_by`、`researched_by`、`tested_by` 的成功目标内容，也未覆盖非法筛选参数、鉴权失败、并发同步、事务中断、Git 命令失败、非 UTF-8/超大文件或真实网络监听。同步材料声明扫描失败会降级、逐文件拒绝不安全输入，但本文件没有对这些边界作行为验证。[[c10]]"
+        "key": "api-contract",
+        "title": "关系查询接口的验证",
+        "body": "测试先运行同步，再构建本地 HTTP 应用，通过注入请求检查关系查询。代码片段应返回出向 `implements`；意图片段应返回反向 `implemented_by` 和出向 `requires`。列表接口支持按状态、类型过滤，关联摘要能够报告种子数量。参考 [[c7]]\n\n评审应用是隔离的读取、浏览和同步入口，复用记忆服务与检索能力，但不承载完整助理运行时、通知 worker 或业务状态；因此这里证明的是同步、存储和路由之间的合同。延伸阅读：[[c8]]"
       },
       {
-        "key": "assertion-scope",
-        "title": "测试结论的证据边界",
-        "body": "测试中的需求和测试文档是人为构造的最小文本，甚至下游测试内容仅为恒真断言；因此这里证明的是 locator、关系状态、身份稳定性和 API 映射规则，而不是 G08 多轮回指或 G09 恢复功能本身正确。[[c11]] 同理，直接查询 SQLite 表会精确验证持久化结果，却可能绕过更上层 DTO 展示约束；当前 HTTP 断言只检查关系类型、状态和关联文本，没有验证 label、actionable、reason、排序、分页或内部 ID 是否泄露。[[c12]]"
+        "key": "coverage-limits",
+        "title": "断言范围与限制",
+        "body": "夹具中的“跨轮证据复用”和“未完成轮次恢复”测试只有恒真断言，所以关系测试只能证明这些测试标题可被定位，不能证明相应业务行为已经正确执行。参考 [[c9]]\n\n此外，用例没有覆盖关联文件语法错误、并发同步、事务中途失败、真实网络监听或前端对 `missing`、`stale` 状态的展示。HTTP 注入适合验证路由响应，但不能替代浏览器交互和安全边界验收。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时仓库与清理夹具",
-        "reason": "支持测试使用隔离 Store、临时 Git 仓库并在用例后清理资源的说明。",
-        "relation": "explains",
+        "label": "隔离仓库与存储夹具",
+        "reason": "支持测试创建独立 Store、临时 Git 仓库并在每例后清理资源的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
@@ -43,34 +43,34 @@
       },
       {
         "key": "c2",
-        "label": "共享需求的默认关系种子",
-        "reason": "支持两条 seed 共享 G08、定位不同符号且包含多需求引用的夹具设计。",
+        "label": "未登记同名符号夹具",
+        "reason": "支持夹具刻意加入未登记的同名符号文件，以及测试不为该文件生成关系的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 141,
-          "endLine": 171
+          "startLine": 69,
+          "endLine": 99
         },
-        "quote": "function defaultSeeds(): Seed[] {\n  return [\n    {\n      codePath: \"apps/server/src/assistant/runtime.ts\",\n      symbol: \"priorWorkingContext\",\n      intent: \"G08 多轮回指：前轮 selected evidence 支持纯回指\",\n      requirementRefs: [\"G08\"],\n      decisionRefs: [\"docs/reviews/g08-decision.md::G08 decision\"],\n      researchRefs: [],"
+        "quote": "/** Build a fixture repo: two seeds on the SAME requirement G08 but different\n * symbols (must not overwrite each other), one seed with two requirementRefs,\n * a decoy same-named file not listed, a requirement/decision/test doc. */\nfunction buildFixture(root: string, seeds: Seed[]) {\n  w(\n    root,\n    \"apps/server/src"
       },
       {
         "key": "c3",
-        "label": "测试连接的服务模块",
-        "reason": "说明测试直接使用 Store、评审同步入口与评审 HTTP 应用，但不能单凭导入推断更深调用链。",
-        "relation": "depends_on",
+        "label": "人工关联清单",
+        "reason": "支持夹具写入关联清单，并为不同代码符号声明需求、决策和测试引用的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 10,
-          "endLine": 20
+          "startLine": 133,
+          "endLine": 170
         },
-        "quote": "import { execFileSync } from \"node:child_process\";\nimport { Store } from \"../src/store.js\";\nimport { runReviewSync } from \"../src/review/sync.js\";\nimport { buildReviewApp } from \"../src/review/app.js\";\n\nconst stores: { store: Store; dir: string }[] = [];\nfunction setup(dir?: string) {\n  const d = dir ?? mkdtempSync(joi"
+        "quote": "  w(\n    root,\n    \"docs/repo-review/associations.json\",\n    JSON.stringify({ version: 1, associations: seeds }),\n  );\n  commitAll(root, \"init\");\n}\n\nfunction defaultSeeds(): Seed[] {\n  return [\n    {\n      codePath: \"apps/server/src/assistant/runtime.ts\",\n      symbol: \"priorWorkingContext\",\n      intent: \"G08 多轮回指：前轮 "
       },
       {
         "key": "c4",
-        "label": "每种子意图与 implements 断言",
-        "reason": "支持独立短意图片段、避免共享总表污染以及 confirmed implements 端点的核心断言。",
+        "label": "独立意图片段断言",
+        "reason": "支持每条种子生成独立意图片段、避免绑定整张需求表以及 implements 端点有效的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -82,34 +82,21 @@
       },
       {
         "key": "c5",
-        "label": "多需求引用建边断言",
-        "reason": "支持每个 requirementRef 分别生成 requires 边，且关系源是意图片段而非代码片段。",
+        "label": "多引用与幂等同步",
+        "reason": "支持多需求引用生成多条关系、重复同步复用关系标识，以及未登记同名文件不产生关系的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
           "startLine": 245,
-          "endLine": 259
+          "endLine": 290
         },
         "quote": "  it(\"builds a requires edge per requirementRef (multi-ref not just [0])\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n\n    const requires = relRows(store).filter((r) => r.type === \"requires\");\n    // seed1 -> G08 (1"
       },
       {
         "key": "c6",
-        "label": "幂等与同名文件隔离",
-        "reason": "支持重复同步复用关系 ID，并排除未列入 association 的同名文件。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 263,
-          "endLine": 290
-        },
-        "quote": "  it(\"is idempotent: repeated sync reuses relation ids\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n    const idsBefore = relRows(store).map((r) => r.id).sort();\n\n    await runReviewSync(store, root);\n    const idsA"
-      },
-      {
-        "key": "c7",
-        "label": "缺失边与删除 seed 失效",
-        "reason": "支持 missing 边按 seed 独立保留，以及移除 seed 后旧关系转为 stale。",
+        "label": "缺失关系与过期处理",
+        "reason": "支持不同种子的缺失关系不会因空端点合并，以及种子移除后旧关系转为 stale 的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -120,22 +107,22 @@
         "quote": "  it(\"keeps every missing edge independently visible (no empty-endpoint collision)\", async () => {\n    const root = makeRepo();\n    const seeds = defaultSeeds();\n    // Point both seeds at a decision/test that does NOT exist, so both produce\n    // missing edges; they must not collapse into one row on source='' target="
       },
       {
-        "key": "c8",
-        "label": "关系双向查询与列表过滤",
-        "reason": "支持 fragment 关系的正反向类型映射、状态确认、筛选和 association 数量摘要。",
+        "key": "c7",
+        "label": "关系查询接口断言",
+        "reason": "支持片段关系方向、状态与类型过滤、关联摘要，以及使用 Fastify 注入请求验证接口的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
           "startLine": 338,
-          "endLine": 407
+          "endLine": 411
         },
         "quote": "  it(\"GET /fragments/:id/relations returns code→intent outgoing and implemented_by incoming\", async () => {\n    const root = makeRepo();\n    buildFixture(root, defaultSeeds());\n    const store = setup();\n    await runReviewSync(store, root);\n\n    const impl = relRows(store).find((r) => r.type === \"implements\")!;\n    co"
       },
       {
-        "key": "c9",
-        "label": "评审应用职责与安全边界",
-        "reason": "解释 HTTP 测试所连接应用的隔离 Store、有限路由、本机绑定和非业务运行时定位。",
+        "key": "c8",
+        "label": "评审应用职责边界",
+        "reason": "解释评审 HTTP 应用复用检索能力，但不承载完整助理运行时、业务 worker 或业务状态。",
         "relation": "background",
         "target": {
           "kind": "material",
@@ -146,74 +133,27 @@
         "quote": "/** review knowledge-base HTTP surface. It reuses MemoryService /\n * KeywordRetrieval against the isolated review Store and registers only the\n * read/browse/sync routes a code-review workflow needs. No AssistantRuntime,\n * Lark host, learning pipeline, notification workers or business token gating:\n * the app binds lo"
       },
       {
-        "key": "c10",
-        "label": "同步扫描声明的容错边界",
-        "reason": "列出同步模块声称处理的 Git 降级、安全路径、编码和文件大小边界，用于指出本测试未覆盖之处。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 7,
-          "endLine": 14
-        },
-        "quote": " * Snapshot honesty: every captured revision records the real HEAD commit, whether\n * the working tree was dirty, the content hash and the sync time — never mtime.\n * Incremental scans cover both committed changes and uncommitted/untracked work.\n * Git failures degrade to a full rescan instead of silently reporting suc"
-      },
-      {
-        "key": "c11",
-        "label": "最小下游测试夹具",
-        "reason": "支持夹具中的所谓 G08/G09 测试仅作文本定位且断言恒真的判断，限制对业务正确性的外推。",
+        "key": "c9",
+        "label": "占位业务测试",
+        "reason": "支持夹具中的跨轮复用与恢复测试仅为恒真占位、不能证明真实业务行为的限制说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 100,
-          "endLine": 131
+          "startLine": 122,
+          "endLine": 130
         },
-        "quote": "  // Requirement doc with a shared G01-G20 style overview TABLE that must never be\n  // bound wholesale to an intent fragment.\n  w(\n    root,\n    \"docs/implementation/assistant-v3/migration-and-acceptance.md\",\n    `# acceptance\n\n## coverage\n\n| G01 | bootstraps | done |\n| G02 | capture | done |\n| G08 | two-turn anaphora"
-      },
-      {
-        "key": "c12",
-        "label": "HTTP 响应断言范围",
-        "reason": "支持现有 API 用例仅检查关系类型、状态、文本和数量，未覆盖完整展示合同。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/review-relations.test.ts",
-          "startLine": 349,
-          "endLine": 407
-        },
-        "quote": "    // Code fragment: outgoing implements -> intent.\n    const codeRes = await app.inject({\n      method: \"GET\",\n      url: `/api/review/fragments/${impl.sf}/relations`,\n      headers: hdr,\n    });\n    expect(codeRes.statusCode).toBe(200);\n    const codeBody = codeRes.json() as {\n      relations: { relationType: string"
+        "quote": "    \"apps/server/tests/runtime-rel.test.ts\",\n    `describe(\"runtime\", () => {\n  it(\"G08: two-turn anaphora reuses prior evidence\", () => {\n    expect(true).toBe(true);\n  });\n  it(\"G09: retry recovers pending turn\", () => {\n    expect(true).toBe(true);\n  });\n});"
       }
     ],
     "questions": [
       {
-        "question": "成功解析的 decision、research 与 test 引用是否都应增加与 requires 同等级别的目标内容和方向断言？",
-        "why": "当前材料只明确验证 requires 数量，以及 API 中 implemented_by/requires；缺失引用虽有覆盖，但成功的 decided_by、researched_by、tested_by 没有逐类核验，可能遗漏解析或方向映射回归。",
-        "nextStep": "为每种引用准备唯一文档锚点，分别断言目标 fragment、关系类型、状态及反向查询结果。",
+        "question": "是否需要把关系定位测试扩展为真实业务行为的端到端验证？",
+        "why": "当前夹具中的跨轮证据复用和未完成轮次恢复只有恒真断言；关系能够定位到测试锚点，并不意味着对应业务能力已经被执行和验证。",
+        "nextStep": "在对应业务测试中构造真实的前后轮状态和未完成轮次，断言证据复用、恢复结果及失败路径，再保留现有测试标题作为关系锚点。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c7",
-          "c8"
-        ]
-      },
-      {
-        "question": "关系 API 是否承诺 DTO 中的人类可读 label、actionable、reason 以及不泄露内部 ID？",
-        "why": "现有 HTTP 测试只读取 relationType、relationStatus 和 other.text，材料不足以确认完整响应合同与 UI 展示边界。",
-        "nextStep": "查看关系路由的完整 DTO 实现与前端消费合同，再补充响应结构及可见文本断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c8",
-          "c12"
-        ]
-      },
-      {
-        "question": "同步失败或并发执行时，旧的有效关系应保持、整体回滚还是允许部分更新？",
-        "why": "同步模块声明逐文件失败不影响其余同步并会对 Git 失败降级，但当前测试未覆盖关系构建阶段的事务性和并发一致性，无法从给定材料确定期望。",
-        "nextStep": "确认关系表写入的事务边界，并增加 Git 失败、解析中断和两个同步并发运行的行为测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c10"
+          "c9"
         ]
       }
     ]
@@ -237,39 +177,39 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:35:35.672Z",
+    "effort": "high",
+    "at": "2026-10-01T12:06:00.794Z",
     "trace": {
-      "runId": "eda760b8-3284-4659-a625-9b0ca0319d5b",
-      "roleId": "code-analyst",
+      "runId": "7b80dd96-941b-4cc9-a42d-05fb2f4fe9ba",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "96b4ec673d5a7de061868f462abc4339356b4ca594b4b188e46ff747f093afbc",
-      "contextHash": "d66c70dc62db8e577d84864dd690ec4e2e4f1f3ea3d47aa5c15ca18cb3449f83",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "3b87d84a93842149e8368215c05ca57528e05f8dcceb243fb5746fada0b0ee02",
+      "contextHash": "a58ea963355f1a0c511d7fded1a073fdd405343b389fefadcf1e8a7a72a726bb",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c1e96d2afc4b5ec03e8c9c7c83a7c784ef7e7e6eb90c090a1c85ae65a4b654a8",
+      "fingerprint": "de039b3a234a90f97682703958f6b62f95fdd3ae2a74e8301bd6cb0fe1e713ff",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f550-bab3-7031-8a58-5babe0e15c32"
+        "01a0f75b-2598-7633-a69b-3bb03307fdea"
       ],
       "usage": {
-        "used": 31084,
+        "used": 35821,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -278,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 33770,
-          "utf8Bytes": 35594,
-          "estimatedTokens": 11865,
-          "budgetedTokens": 14832,
+          "chars": 41065,
+          "utf8Bytes": 47831,
+          "estimatedTokens": 15944,
+          "budgetedTokens": 19930,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -290,20 +230,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:35:58.049Z",
+    "at": "2026-10-01T12:06:26.387Z",
     "trace": {
-      "runId": "6b0bb146-0925-4e0c-ab85-a6c442a489d0",
+      "runId": "74d65bdf-6ab6-4100-89e9-12a8f16eb0e9",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b397179f43da72248f6aca8e2b04a060b90de744a459b7e717da9e9f6b8ce65e",
-      "contextHash": "fb6ab87058c4613af5c7d334f060631f19208524e8d72e87635f9d08d8ce44c6",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "3afda6e85525b68840baaf9a82efcedb23ad1525b7806f7b19b55b601faae15f",
+      "contextHash": "d0d59262ce0bc03e2f98e0967e26f13a2c6354f96b9b02eb9abff6a1ac2ff18b",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f9f154b4ca2ce34fe8c5c50ca77b8dc5768397e0b2f051343e9f628948bcb8ab",
+      "fingerprint": "008d823dc4d01453abccfc92e93805db70eaa9c22e541977d4f8003bc6ead960",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -313,10 +253,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f551-4a62-71e3-9173-8be27aaea610"
+        "01a0f75b-8c4e-7421-bac1-9bcbd5cc5a0c"
       ],
       "usage": {
-        "used": 32427,
+        "used": 31987,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -325,10 +265,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 41078,
-          "utf8Bytes": 45804,
-          "estimatedTokens": 15268,
-          "budgetedTokens": 19085,
+          "chars": 39118,
+          "utf8Bytes": 44666,
+          "estimatedTokens": 14889,
+          "budgetedTokens": 18612,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

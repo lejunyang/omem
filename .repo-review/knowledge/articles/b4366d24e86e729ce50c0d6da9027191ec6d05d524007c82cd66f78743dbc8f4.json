@@ -2,84 +2,84 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/live-refresh-smoke.ts",
-    "title": "实时来源刷新冒烟验证",
-    "summary": "该脚本以真实 ACP 模型和临时 SQLite 存储验证同一来源从“重试 3 次”更新为“重试 5 次”时，旧记忆会先失效，再经学习管线复核并原位升级，同时保留旧修订证据和刷新记录。",
+    "title": "记忆更新与历史保留的在线冒烟验证",
+    "summary": "该脚本通过真实 ACP 模型配置和临时 SQLite 存储，验证同一来源从“重试 3 次”更新为“重试 5 次”后，旧记忆会先失效，再以相同身份形成新版本，同时保留旧原文并记录刷新成功。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose",
-        "title": "解决的问题与验证背景",
-        "body": "该脚本是一项真实模型冒烟验证，针对“来源内容更新后，系统是否会把已有记忆安全刷新，而非新增重复事实”这一问题。它直接组合配置、存储、记忆/反馈服务、学习管线与实时模型选择器，说明验证跨越捕获、抽取复核、记忆应用和刷新追踪多个模块。[[c1]] 运行前还明确要求所选模型为 `gpt-5.6-sol`，因此结论依赖 ACP 实际暴露并成功选择该模型，而不是纯本地夹具。[[c2]]"
+        "title": "验证什么问题",
+        "body": "该脚本验证一个关键使用场景：用户已经形成的记忆所依赖的来源发生变化时，系统应更新现有记忆，而不是并存两条互相冲突的有效结论。它创建临时存储，组合 `Store`、记忆与反馈服务、学习流水线，并从 ACP 能力探测结果中选择运行配置；随后明确断言实际模型为 `gpt-5.6-sol`。参考 [[c1]]\n\n模型选择会优先采用环境变量指定的可用模型，否则尝试基础配置或 ACP 当前默认值；请求了不可用模型时直接报错。因此，这是一项依赖外部 Agent CLI/ACP 可用性的在线冒烟检查，不是完全隔离的单元测试。参考 [[c2]]"
       },
       {
-        "key": "flow",
-        "title": "核心流程与断言",
-        "body": "脚本在临时目录创建独立 Store，并用固定外部标识捕获一条“个人实验项目 Aurora 的重试上限”材料；首次写入 3 次后排空学习任务，断言只产生一条已应用记忆。[[c3]] 随后以相同来源标识捕获 5 次，先断言原记忆立即变为 `invalidated`，再排空管线；最终要求仍只有同一记忆 ID、版本升为 2、状态恢复为 `active`，正文包含 5，同时旧来源修订仍保留 3。刷新记录还必须达到 `applied`，共同验证了失效、重新分析、独立复核和原位换版链路。[[c4]]"
+        "key": "refresh-flow",
+        "title": "从旧结论到新版本",
+        "body": "脚本以相同外部来源标识捕获两次声明。第一次写入“重试上限是 3 次”，排空流水线后要求数据库中恰有一条有效记忆；第二次改为“5 次”，并在再次处理前断言旧记忆已进入 `invalidated` 状态。参考 [[c3]]\n\n再次排空后，它要求记忆数量仍为一条、记忆 ID 不变、版本升至 2、状态恢复为 `active`，且新正文包含 5；与此同时，旧来源修订中的原始片段仍包含 3，刷新记录必须标记为 `applied`。这些断言共同覆盖了**身份续接、版本推进、旧证据保留和刷新落地**，但没有证明流水线内部每个抽取或复核步骤的具体实现。参考 [[c4]]"
       },
       {
-        "key": "boundaries",
-        "title": "边界、产物与未覆盖行为",
-        "body": "异常会被转为失败报告并设置非零退出码；无论成功失败，脚本都会停止管线，收集任务、刷新记录和提案，写出 `live-refresh.json`，关闭数据库并删除临时目录。[[c5]] 因而它验证的是单次顺序刷新和数据库终态，不覆盖并发更新、刷新任务重试耗尽、模型输出歧义或拒绝、进程中断后的恢复，也未断言报告内任务与提案的具体结构。脚本通过源码导入关系可确认依赖 Store、MemoryService、FeedbackService、LearningPipeline 与模型选择器，但所给材料不足以进一步确认管线内部各阶段的跨文件调用顺序。"
+        "key": "reporting-limits",
+        "title": "结果留痕与覆盖边界",
+        "body": "无论成功还是失败，脚本都会停止流水线，收集任务、刷新记录和提案，向配置数据目录写入 `verification/live-refresh.json`；失败时设置非零退出码。最后关闭数据库并递归删除临时工作目录，因此业务测试数据不会长期残留，而验证报告会保留供人工检查。参考 [[c5]]\n\n现有断言只覆盖一次从 3 到 5 的顺序更新。它没有覆盖模型不可用、验证结果含糊或拒绝、连续多次刷新、并发捕获、报告写入失败等行为；`drain(8)` 中数字 8 的语义以及“独立复核”如何执行，也无法仅由该脚本确认。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "冒烟脚本的模块依赖",
-        "reason": "支持该验证由配置、存储、记忆服务、学习管线和实时模型选择共同组成。",
+        "label": "在线流水线装配",
+        "reason": "支持脚本创建临时存储、装配学习相关服务并断言实际模型配置的说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-refresh-smoke.ts",
           "startLine": 5,
-          "endLine": 10
+          "endLine": 19
         },
         "quote": "import { Store } from \"../apps/server/src/store.js\";\nimport { loadConfig } from \"../apps/server/src/config.js\";\nimport { MemoryService, FeedbackService } from \"../apps/server/src/memory/service.js\";\nimport { LearningPipeline } from \"../apps/server/src/learning/pipeline.js\";\nimport { selectLiveProfile } from \"./live-mod"
       },
       {
         "key": "c2",
-        "label": "实时模型选择与限定",
-        "reason": "支持脚本调用实时模型探测，并明确断言所选模型为 gpt-5.6-sol。",
-        "relation": "calls",
+        "label": "ACP 模型选择规则",
+        "reason": "解释在线检查如何从 ACP 暴露的选项中选择模型，以及不可用请求为何会失败。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/live-refresh-smoke.ts",
-          "startLine": 16,
-          "endLine": 19
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 12,
+          "endLine": 28
         },
-        "quote": "  const { profile } = await selectLiveProfile(config.profiles.find(p => p.id === \"traex\")!, join(directory, \"agent\"));\n  assert.equal(profile.model, \"gpt-5.6-sol\");\n  report.model = profile.model; report.effort = profile.effort;\n  pipeline = new LearningPipeline({ store, memory: new MemoryService(store), feedback: new "
+        "quote": "  const modelOption = probe.configOptions.find(\n    (option) => option.id === \"model\",\n  );\n  if (!modelOption || modelOption.type !== \"select\")\n    throw Error(\"ACP did not expose selectable models\");\n  const availableModels = optionValues(modelOption).map(\n    (option) => option.value,\n  );\n  const requestedModel = p"
       },
       {
         "key": "c3",
-        "label": "合成来源与首次应用",
-        "reason": "支持固定来源标识、初始值为 3，以及首次处理后仅有一条有效记忆的论断。",
+        "label": "首次捕获与失效断言",
+        "reason": "支持首次生成有效记忆以及来源变化后旧记忆立即失效的流程描述。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-refresh-smoke.ts",
           "startLine": 20,
-          "endLine": 27
+          "endLine": 30
         },
         "quote": "  const capture = (limit: number) => store.capture({ source: \"manual\", externalId: \"synthetic:retry-limit\", title: \"个人实验项目固定配置\",\n    parts: [{ type: \"text\", text: `我的个人实验项目 Aurora 当前固定重试上限是 ${limit} 次。这是已生效的配置。` }],\n    provenance: { collectorId: \"live-refresh\", actorId: \"owner\", actorType: \"owner\", actorVerifiedBy: \"s"
       },
       {
         "key": "c4",
-        "label": "来源变更后的刷新断言",
-        "reason": "支持旧记忆先失效、同一记忆原位升级到版本 2、旧修订保留且刷新记录成功应用。",
+        "label": "刷新应用与历史保留",
+        "reason": "支持相同记忆身份升级到版本 2、新正文生效、旧原文保留及刷新记录成功的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-refresh-smoke.ts",
-          "startLine": 28,
+          "startLine": 31,
           "endLine": 36
         },
-        "quote": "  console.log(\"Live refresh: source changes from 3 to 5; re-analyze and independently verify\");\n  const next = capture(5);\n  assert.equal((store.db.prepare(\"SELECT status FROM memories WHERE id=?\").get(before[0]!.id) as { status: string }).status, \"invalidated\");\n  await pipeline.drain(8);\n  const after = store.db.prep"
+        "quote": "  await pipeline.drain(8);\n  const after = store.db.prepare(\"SELECT m.id,m.version,m.status,r.body FROM memories m JOIN memory_revisions r ON r.id=m.head_revision_id\").all();\n  assert.equal(after.length, 1); assert.equal(after[0]!.id, before[0]!.id); assert.equal(after[0]!.version, 2); assert.equal(after[0]!.status, \"a"
       },
       {
         "key": "c5",
-        "label": "失败处理与清理报告",
-        "reason": "支持失败退出码、运行信息归档、报告写出以及临时资源清理等边界行为。",
-        "relation": "explains",
+        "label": "验证报告与资源清理",
+        "reason": "支持失败退出、报告持久化、流水线停止以及临时目录清理的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-refresh-smoke.ts",
@@ -91,23 +91,13 @@
     ],
     "questions": [
       {
-        "question": "并发到达的多个来源修订是否仍能保证同一记忆按修订顺序刷新？",
-        "why": "当前脚本只依次提交 3 和 5，并在两次捕获之间等待管线排空，无法证明任务并发或乱序时的行为。",
-        "nextStep": "增加连续捕获多个版本且延迟或并发处理的真实模型场景，断言最终 head、版本序列及各 refresh_record 的状态。",
+        "question": "`LearningPipeline.drain(8)` 的参数 8 具体限制什么，以及独立复核失败或结果含糊时刷新记录会进入何种状态？",
+        "why": "当前材料只展示调用及成功路径断言，没有提供 `LearningPipeline` 的实现，不能据此确认任务轮次、重试预算或失败状态转换。",
+        "nextStep": "检查学习流水线的 `drain` 实现及刷新相关测试，补充失败、含糊和拒绝路径的行为证据。",
         "blocking": false,
         "citationKeys": [
           "c3",
           "c4"
-        ]
-      },
-      {
-        "question": "刷新被模型判为歧义、无效或处理失败时，旧记忆和刷新记录应处于什么状态？",
-        "why": "当前材料只覆盖成功应用路径，catch 仅记录脚本级失败，没有展示业务级拒绝或重试语义。",
-        "nextStep": "补充歧义、拒绝及任务失败输入，分别断言旧记忆是否恢复有效、是否保留 invalidated，以及刷新记录的失败原因。",
-        "blocking": false,
-        "citationKeys": [
-          "c4",
-          "c5"
         ]
       }
     ]
@@ -131,7 +121,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -141,21 +131,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:54:32.406Z",
+    "effort": "high",
+    "at": "2026-10-01T12:14:55.923Z",
     "trace": {
-      "runId": "923f1c62-72fa-4102-8f34-fc21bac8e392",
+      "runId": "585a9fbe-8d12-49c9-8c01-1e5651748ea6",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "6c88e7af15da486d5e60c913f23059c47a207a116fb9daf2d857e3da5cc36b24",
-      "contextHash": "09f837adb02c9871f53909333a72f15e09248d7c04785531aa625ce50340e209",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "6c42a1fc5c7bd255aaede0723d5f687c84bc4b5962410a180dcffb5c6264ee76",
+      "contextHash": "04190bb4ba0ca3df1fca8822e192326258df281213a546a9a91d78cac269a286",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a7fdfefbb18b13bcfc25163a697e9d552171d437c118d1c1bfd8eeb83583c731",
+      "fingerprint": "8d5351b33bbed1377e72b147e430dd6234d5d72c5dce39c76b592ae8b6e1eccd",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-code-analyst",
@@ -165,10 +155,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f562-1100-7233-8a54-e6897de8c654"
+        "01a0f763-424f-7c00-90ee-fc9948fff5a1"
       ],
       "usage": {
-        "used": 26534,
+        "used": 27614,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -177,10 +167,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 22802,
-          "utf8Bytes": 24642,
-          "estimatedTokens": 8214,
-          "budgetedTokens": 10268,
+          "chars": 23632,
+          "utf8Bytes": 26804,
+          "estimatedTokens": 8935,
+          "budgetedTokens": 11169,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -189,20 +179,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:54:50.495Z",
+    "at": "2026-10-01T12:15:15.889Z",
     "trace": {
-      "runId": "11a4cb25-878a-4f29-ba43-6e5d9c4c5b39",
+      "runId": "4b3ae25b-236d-4b9d-8339-8c64bd8804c9",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "8de1dc2cd7fce1f08c163043f4bfae9f8141c95ac8793794607f67f65a67fea6",
-      "contextHash": "0d8b13f182a34295ba0f79a00b7446b74c6e344147eb59ac55dc25a5a51b14c7",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "8da2528a16d22cf1ca85b6da8374f8a0ed8b38eb6d67ac0fd9e0c994a13cde00",
+      "contextHash": "f8c0b4d3f5dc12b5f1fb105d5a0200538a7431476a8407466d17df1e1928ab40",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "dd35f41b23ec9051a4e81bea3b90377240edcf261c589d5693f4da28c21de163",
+      "fingerprint": "5f0ddf38fa412d7e167ba7c9abcac15d7f5794fefa8460af35c44b4cebe1ba6c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -212,10 +202,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f562-a157-7d20-baa7-fc0b1ae19a04"
+        "01a0f763-b02a-74a0-be1d-12d71d6d4989"
       ],
       "usage": {
-        "used": 27413,
+        "used": 27525,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -224,10 +214,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 24799,
-          "utf8Bytes": 28079,
-          "estimatedTokens": 9360,
-          "budgetedTokens": 11700,
+          "chars": 25742,
+          "utf8Bytes": 30750,
+          "estimatedTokens": 10250,
+          "budgetedTokens": 12813,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

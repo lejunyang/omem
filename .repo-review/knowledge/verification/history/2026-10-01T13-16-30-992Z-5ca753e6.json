@@ -1,0 +1,479 @@
+{
+  "version": 4,
+  "recordedAt": "2026-10-01T13:16:30.992Z",
+  "implementationCommit": "fe825bdbd027493b0befeb6b93c5562e4f4f9a64",
+  "sourceDigest": "cf6957bab53d333f863a5ecac8720dd6ac98e6bd0353be91944b508fba6c1f50",
+  "queryDigest": "9674c93985d290286444594c30b1d1dcb69834b931ed101e6390e5d7e74e542d",
+  "mode": "full",
+  "checks": [
+    {
+      "name": "dependencies",
+      "state": "passed",
+      "details": {
+        "command": [
+          "osdk",
+          "deps",
+          "--frozen"
+        ],
+        "exitCode": 0,
+        "log": ".repo-review/runtime/verification/2026-10-01T13-16-30-992Z/dependencies.log",
+        "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
+      }
+    },
+    {
+      "name": "project",
+      "state": "failed",
+      "details": {
+        "command": [
+          "osdk",
+          "run",
+          "check"
+        ],
+        "exitCode": 1,
+        "log": ".repo-review/runtime/verification/2026-10-01T13-16-30-992Z/project.log",
+        "sha256": "514228ab2214e82b9303e5f8ea852d8c81c6f9a659bb44debebca0bab08e5c32"
+      }
+    },
+    {
+      "name": "liveChineseRetrieval",
+      "state": "passed",
+      "details": {
+        "command": [
+          "/Users/bytedance/Library/Application Support/osdk/installs/bun/1.4.2/bin/bun",
+          "scripts/live-retrieval-smoke.ts"
+        ],
+        "exitCode": 0,
+        "log": ".repo-review/runtime/verification/2026-10-01T13-16-30-992Z/liveChineseRetrieval.log",
+        "sha256": "3f9f7a5452dcd3e9c0b7f46783ca607ed550f01cf0e7a5f7b57dfff17361d92f"
+      }
+    },
+    {
+      "name": "currentKnowledgeReferences",
+      "state": "passed",
+      "details": {
+        "articles": 454,
+        "citations": 3450,
+        "errors": []
+      }
+    },
+    {
+      "name": "semanticIndex",
+      "state": "passed",
+      "details": {
+        "available": true,
+        "backend": "sqlite-fts5-bge-rrf@3",
+        "semantic": {
+          "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+          "state": "ready",
+          "indexed": 10245,
+          "pending": 0,
+          "error": null
+        }
+      }
+    },
+    {
+      "name": "repositorySearch",
+      "state": "passed",
+      "details": {
+        "passed": 6,
+        "total": 6
+      }
+    },
+    {
+      "name": "unchangedSourcesDuringVerification",
+      "state": "passed"
+    }
+  ],
+  "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
+  "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
+  "knowledge": {
+    "materials": 530,
+    "reviewedMaterials": 392,
+    "pendingMaterials": 138,
+    "currentArticles": 454,
+    "citations": 3450,
+    "articleLinks": 91,
+    "errors": [],
+    "restore": {
+      "restored": 455,
+      "stale": 25,
+      "missing": 4
+    },
+    "incomplete": true,
+    "note": "未覆盖或过期文章不计为通过；本检查只验证当前正文，不能代表全库已经生成。"
+  },
+  "retrieval": {
+    "cases": [
+      {
+        "query": "中文语义检索怎样处理长代码片段？",
+        "expectedPaths": [
+          "README.md",
+          "apps/server/src/retrieval/semantic.ts"
+        ],
+        "status": 200,
+        "baselineTop5": [
+          "README.md",
+          "docs/prototype/app.jsx",
+          "apps/web/src/App.vue",
+          "apps/web/src/ReviewApp.vue",
+          "docs/implementation/status.md"
+        ],
+        "baselineUniquePathsAt5": 5,
+        "passed": true,
+        "firstExpectedRank": 1,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 4862,
+        "top5": [
+          {
+            "path": "README.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "## 中文语义检索"
+          },
+          {
+            "path": "apps/web/src/App.vue",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": ":version=\"r.version\"\n          @open=\"evidence?.open(r.id)\" /></OmPanel\n      ><OmEmpty\n        v-if=\"!results.length\"\n        title=\"未找到相关片段\"\n        descripti"
+          },
+          {
+            "path": "docs/implementation/status.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，"
+          },
+          {
+            "path": "apps/web/src/ReviewApp.vue",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "    <!-- search -->\n    <section v-else-if=\"view === 'search'\" class=\"page\">\n      <h1>搜索“{{ searchQuery }}”</h1>\n      <p class=\"muted\">精确关键词检索片段文本；点击结果打开对应版本并"
+          },
+          {
+            "path": "packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
+            "routes": [
+              "short-keyword",
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "必须使用提供的完整 key。材料引用只选择真实 startLine/endLine，把 quote 置为空字符串；宿主会从固定材料中复制精确短引文，不要抄写整段代码。图片引用允许空 quote 和无行号。文章引用给真实 section key。\nlabel 用人读名称，不显示内部 id；reason 解释为何引用、支持"
+          }
+        ]
+      },
+      {
+        "query": "如何保证本地模型不在启动时联网下载？",
+        "expectedPaths": [
+          "AGENTS.md",
+          "apps/server/src/retrieval/embedding.ts",
+          "README.md"
+        ],
+        "status": 200,
+        "baselineTop5": [
+          "AGENTS.md",
+          ".claude/skills/osdk-guide/reference/model/guide.md",
+          ".agents/skills/osdk-guide/reference/model/guide.md",
+          "AGENTS.md",
+          "apps/web/src/App.vue"
+        ],
+        "baselineUniquePathsAt5": 4,
+        "passed": true,
+        "firstExpectedRank": 1,
+        "uniquePathsAt5": 4,
+        "elapsedMs": 4618,
+        "top5": [
+          {
+            "path": "AGENTS.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "合中文的模型，通过 osdk CLI 声明、下载和锁定，运行时禁止隐式联网下载。当前 memory-zh 为 BGE-small-zh-v1.5；换模型必须更换向量身份，不能混用旧索引。\n- Personal-first, server or local. Preserve team scope in architec"
+          },
+          {
+            "path": "AGENTS.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "Agent profile。启动只恢复知识，不自动调用生成式模型；启用的本地向量索引可后台补建。显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模"
+          },
+          {
+            "path": "apps/web/src/App.vue",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "omplete=\"off\"\n            placeholder=\"仅保存在当前浏览器会话\" /></label\n        ><OmButton @click=\"saveToken\">保存令牌并重新连接</OmButton></details\n        ></OmPanel\n      >\n   "
+          },
+          {
+            "path": "scripts/code-wiki-viewport.ts",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "xpect(page.getByText(\"已读取此 Agent 支持的模型与思考强度\")).toBeVisible();\n    await expect(page.getByText(\"当前已连接本地服务，未启用访问令牌，无需填写。\")).toBeVisible();\n    await page.screensh"
+          },
+          {
+            "path": ".agents/skills/osdk-guide/reference/model/guide.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
+          }
+        ]
+      },
+      {
+        "query": "原始资料修改后怎样重新验证记忆？",
+        "expectedPaths": [
+          "docs/2026-10-01/README.md",
+          "apps/server/src/learning/refresh.ts",
+          "README.md"
+        ],
+        "status": 200,
+        "baselineTop5": [
+          "docs/2026-10-01/README.md",
+          "docs/prototype/app.jsx",
+          "docs/2026-10-01/05-RAG与记忆检索.md",
+          "apps/web/src/LearningView.vue",
+          "apps/web/src/App.vue"
+        ],
+        "baselineUniquePathsAt5": 5,
+        "passed": true,
+        "firstExpectedRank": 1,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 4540,
+        "top5": [
+          {
+            "path": "docs/2026-10-01/README.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "明从“重试 3 次”改成“5 次” | 停用旧结论，重新分析新材料，独立复核后更新原记忆，保留旧历史 | 已用真实 GPT-5.6-sol 验证同 ID 从 3 次更新为 5 次；旧原文保留，不能只排队就算完成 |"
+          },
+          {
+            "path": "apps/web/src/LearningView.vue",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程"
+          },
+          {
+            "path": "apps/web/src/App.vue",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "plate\n      ><OmEmpty\n        v-else\n        title=\"让第一份材料，成为有来处的记忆\"\n        description=\"输入文本、图片或链接，也可以从飞书文档和 Git 导入。\"\n        ><OmButton variant=\"primary\" @cl"
+          },
+          {
+            "path": "docs/implementation/batch2/plan.md",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "# 核心实施方案：从材料到可治理的记忆"
+          },
+          {
+            "path": "docs/autonomous-learning.md",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "原始材料、任务经历、模型假设、验证后的记忆必须分开存。一次失败可记录为 Episode；只有结合纠正和实际结果，才有资格提炼为 Procedure。用户的“谢谢”是弱反馈，不等于外部任务已成功；工具返回 200 也不等于业务目标达到。"
+          }
+        ]
+      },
+      {
+        "query": "KnowledgePipeline",
+        "expectedPaths": [
+          "apps/server/src/knowledge/pipeline.ts"
+        ],
+        "status": 200,
+        "baselineTop5": [
+          "docs/implementation/knowledge-pipeline.md",
+          "apps/server/src/knowledge/pipeline.ts",
+          "docs/validation.md",
+          "docs/implementation/knowledge-pipeline.md",
+          "docs/2026-10-01/README.md"
+        ],
+        "baselineUniquePathsAt5": 4,
+        "passed": true,
+        "firstExpectedRank": 1,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 6171,
+        "top5": [
+          {
+            "path": "apps/server/src/knowledge/pipeline.ts",
+            "routes": [
+              "code-symbol",
+              "fulltext",
+              "knowledge"
+            ],
+            "snippet": "export class KnowledgePipeline { readonly registry = new RoleBundleRegistry(); private readonly running = new Set<DurableJobWorker>(); private stopping = false;"
+          },
+          {
+            "path": "docs/implementation/knowledge-pipeline.md",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "## 已完成：共用 Agent 运行时"
+          },
+          {
+            "path": "docs/validation.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "测试可复现："
+          },
+          {
+            "path": "docs/2026-10-01/README.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "可以用四个日常场景理解它："
+          },
+          {
+            "path": "README.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "## 中文语义检索"
+          }
+        ]
+      },
+      {
+        "query": "searchSourcesAsync",
+        "expectedPaths": [
+          "apps/server/src/retrieval/semantic.ts"
+        ],
+        "status": 200,
+        "baselineTop5": [
+          "apps/server/src/retrieval/semantic.ts",
+          "docs/validation.md",
+          "docs/2026-10-01/README.md",
+          "scripts/review-verify.ts",
+          "README.md"
+        ],
+        "baselineUniquePathsAt5": 5,
+        "passed": true,
+        "firstExpectedRank": 1,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 6297,
+        "top5": [
+          {
+            "path": "apps/server/src/retrieval/semantic.ts",
+            "routes": [
+              "code-symbol",
+              "fulltext"
+            ],
+            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */ async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {"
+          },
+          {
+            "path": "docs/validation.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "测试可复现："
+          },
+          {
+            "path": "docs/2026-10-01/README.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "可以用四个日常场景理解它："
+          },
+          {
+            "path": "scripts/review-verify.ts",
+            "routes": [
+              "fulltext"
+            ],
+            "snippet": "const raw=built.retrieval.searchSourcesAsync?await built.retrieval.searchSourcesAsync(rawQuery):built.retrieval.searchSources(rawQuery);"
+          },
+          {
+            "path": "README.md",
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "## 中文语义检索"
+          }
+        ]
+      },
+      {
+        "query": "历史原型 docs/prototype/app.jsx 检索",
+        "expectedPaths": [
+          "docs/prototype/app.jsx"
+        ],
+        "status": 200,
+        "baselineTop5": [
+          "docs/prototype/app.jsx",
+          "docs/implementation/code-wiki-prototype-gap.md",
+          "docs/prototype/README.md",
+          "docs/prototype/README.md",
+          "docs/implementation/code-wiki-prototype-gap.md"
+        ],
+        "baselineUniquePathsAt5": 3,
+        "passed": true,
+        "firstExpectedRank": 1,
+        "uniquePathsAt5": 3,
+        "elapsedMs": 5975,
+        "top5": [
+          {
+            "path": "docs/prototype/app.jsx",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "\n                      ) : (\n                        <p className=\"muted\">本例没有记录其他直接引用。</p>\n                      )}\n                    </>\n                  )"
+          },
+          {
+            "path": "docs/implementation/code-wiki-prototype-gap.md",
+            "routes": [
+              "fulltext",
+              "semantic"
+            ],
+            "snippet": "**这是 P0 的核心。** 原型用**单个原生 `<dialog>`**（`app.jsx:1290`），`showModal()` 打开（`app.jsx:388`），整棵路径栈共享一个焦点陷阱："
+          },
+          {
+            "path": "docs/prototype/README.md",
+            "routes": [
+              "fulltext",
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "此原型未连接 LLM、真实数据源、数据库或记忆引擎。问答使用确定性示例模板，范围选择只演示上下文/引用变化；学习和同步动作不会启动真实后台任务。恢复操作只改变演示历史，不修改正文中的静态知识 fixture。完整策略、权限和副作用语义见技术方案。"
+          },
+          {
+            "path": "docs/prototype/README.md",
+            "routes": [
+              "fulltext",
+              "semantic"
+            ],
+            "snippet": "`app.jsx` 是 React 交互逻辑，`data.js` 是虚构示例图，`styles.css` 是样式；`build.mjs` 将这些打包到单个 `index.html`。React/ReactDOM 18.3.1、esbuild 0.28.1 均固定在 lockfile。不需要运行 esbuild 才能打开"
+          },
+          {
+            "path": "docs/implementation/code-wiki-prototype-gap.md",
+            "routes": [
+              "fulltext",
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "- **restricted**：`OmStateBanner` danger 风，标题「当前无权查看」，正文说明，唯一动作「返回引用处」；「就这段追问」disabled（原型 `app.jsx:1405-1422,1556-1559`）。\n- **deleted**：标题「原始内容已删除」，不伪装高亮、不悄悄指向新目"
+          }
+        ]
+      }
+    ],
+    "limit": "六条公开的仓库回归问题，非完整相关性评测；top-5 命中不证明回答正确。"
+  },
+  "passed": false
+}

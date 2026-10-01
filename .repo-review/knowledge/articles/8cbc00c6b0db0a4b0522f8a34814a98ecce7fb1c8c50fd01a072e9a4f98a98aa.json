@@ -2,49 +2,44 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/inputs.test.ts",
-    "title": "输入缓冲、持久化与聚合的行为测试",
-    "summary": "该测试文件验证外部输入在服务不可达、重复投递、容量受限以及高频聊天或屏幕事件场景下，仍能受控进入 Capture→Revision→Job 流程。覆盖磁盘 spool 恢复与基础权限、事件幂等和冲突检测、字段裁剪与脱敏，以及聚合窗口、噪声去重和迟到事件追踪；结论仅限于实际断言，不代表所有平台权限、并发故障或外部协议均已验收。",
+    "title": "离线输入缓冲与事件聚合的行为验证",
+    "summary": "该测试验证输入链路在服务离线、重复投递、事件冲突、容量受限及高频聊天或屏幕事件下的关键行为：钩子事件可安全落盘并重试，只有匹配回执才会清除；采集配置会裁剪及脱敏字段；聚合器按有界窗口形成批次、压缩重复内容，并将迟到事件关联到原批次而不改写旧修订。",
     "category": "tests",
     "sections": [
       {
-        "key": "offline-spool",
-        "title": "离线缓冲与回执驱动的清理",
-        "body": "测试把 hook 事件交给真实转发入口，并将服务地址指向不可连接的本机端口；预期进程仍正常退出、标准输出为空，并提示事件已排队重试。再次入列同一 Capture 会被判定为重复，发送函数抛出离线错误后记录仍保留，证明暂时不可达不会直接丢弃输入。[[c1]]\n\n重新创建 `HookSpool` 模拟进程重启，重复判断依然成立。空 receipt 会产生 `CAPTURE_RECEIPT_MISMATCH` 且保留待处理项；改由 `Store.capture` 返回有效回执后才清理记录。再次投递同一事件，数据库仍只有一条回执、一份捕获结果和一个作业，覆盖跨重启恢复及成功路径的端到端幂等。[[c2]] 生产者、事件或负载摘要分别失配的非空回执未在本文件中逐项构造，不能视为已直接验证。"
+        "key": "offline-delivery",
+        "title": "离线投递不会丢失或误删事件",
+        "body": "测试让钩子转发进程连接不可达地址，确认进程仍正常退出、事件进入本地缓冲；相同事件再次入列会被识别为重复，投递失败后待处理文件继续保留。参考 [[c1]]\n\n缓冲实例重启后，无回执或回执不匹配都不能清除事件；接入真实采集存储并取得匹配回执后才标记投递成功。再次提交相同内容不会增加采集回执、材料或任务，说明该流程同时约束跨重启重试和存储层幂等。参考 [[c2]]\n\nPOSIX 环境还断言缓冲目录仅所有者可访问；Windows 分支只确认路径存在且可读取，并未直接验证 ACL。参考 [[c3]]"
       },
       {
-        "key": "limits-security",
-        "title": "采集边界、秘密保护与冲突处理",
-        "body": "第二组用例按只保留 `prompt` 的 profile 构造输入：令牌样式内容被替换为 `[REDACTED]`，工具响应、思维字段和额外 secret 均未进入序列化结果。相同事件身份若对应不同负载，spool 会报事件冲突；达到条目上限后抛出容量异常，并写入不含敏感正文的容量警告。[[c3]]\n\n权限检查落在实际对象上：测试检查 spool 目录为 POSIX `0700`、待处理 JSON 文件为 `0600`。辅助断言同时说明，Windows 分支只确认对象存在且当前用户可访问，并未直接读取或验证 ACL 的仅所有者语义。[[c4]][[c5]] 持久化层也拒绝不同负载复用同一事件身份，冲突后捕获和作业数量仍各为一。[[c6]]"
+        "key": "privacy-and-limits",
+        "title": "采集配置、冲突与容量边界",
+        "body": "`prompt-only-v1` 配置只保留提示词，并将令牌样式内容替换为脱敏标记；响应、思维内容和额外秘密字段不得进入序列化结果。参考 [[c4]]\n\n缓冲文件在 POSIX 下要求使用 `0600` 权限。同一事件标识对应不同载荷时必须报冲突；超过条目上限时抛出容量错误并记录告警，但告警不得泄露被拒载荷。参考 [[c5]] 存储层也独立拒绝同标识异内容，且冲突不会新增材料或任务。参考 [[c6]]"
       },
       {
-        "key": "aggregation",
-        "title": "有界聚合、去噪与迟到事件",
-        "body": "聚合测试构造带来源、参与者、事件时间和会话上下文的 chat/screen 输入。四条聊天事件在五分钟边界前不刷新，到达边界时合成一批；全部事件标识被保留，而重复文本被折叠，因此四个事件形成三个正文 part。窗口起止时间也写入聚合上下文，使内容去重不会抹掉事件级追踪信息。[[c7]]\n\n观察时间属于旧窗口但实际晚到的消息会形成新 revision，并以 `lateForBatchId` 关联原批次，而非改写既有 revision。两条内容相同的屏幕事件在 `maxEvents: 2` 时立即成批，保留两个事件标识但只生成一个 part；最终没有待处理输入，三个批次对应三个作业。[[c8]]"
-      },
-      {
-        "key": "module-relations",
-        "title": "模块关系与测试未覆盖范围",
-        "body": "该测试直接导入合同校验、hook 转换、磁盘缓冲和 `Store`，并据此串联输入转换、重试与落库场景；导入关系本身不证明这些模块的全部职责。[[c9]] 合同材料在已提供范围内明确展示了严格的 part provenance、文本、图片、链接和 capture provenance schema；其中 `captureSchema` 仅出现声明起点，因此这里不据此断言其完整字段或整体严格性。[[c10]] 连接器材料则证明文件适配器经路径、大小、UTF-8 与二进制检查后返回 `CaptureInput`。[[c11]] `Store` 在同一 SQLite 初始化中装配作业仓库和输入聚合器，为测试中的 `store.jobs` 与 `store.inputs` 调用提供实现依据。[[c12]]\n\n这些用例没有展示 spool 损坏隔离、跨进程并发刷新、保留期限淘汰、字节上限临界值或崩溃中断恢复，也未验证远程服务成功响应时的协议兼容性。聚合部分仅覆盖给定的单会话 chat/screen 样例与成功回调，不能外推到多分区交错、任意乱序或部分提交失败。"
+        "key": "bounded-aggregation",
+        "title": "有界聚合、降噪与迟到事件追踪",
+        "body": "聊天事件进入聚合器后，在五分钟窗口边界前调用刷新不会形成或保存聚合批次；到达边界后，即使会话仍活跃也会强制生成批次及其采集修订。批次保留全部事件标识和时间边界，但相同文本会被压缩，因此四个事件最终形成三个内容部分。参考 [[c7]]\n\n观测时间属于旧窗口、实际到达较晚的事件会生成独立的补充修订，并通过 `lateForBatchId` 指向原批次，从而避免改写已经保存的证据。参考 [[c8]] 屏幕事件达到显式数量上限时也会立即刷新；重复画面被压缩成一个内容部分，完成后没有待处理事件，并为三个批次分别产生任务。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "离线转发与首次重试断言",
-        "reason": "支持服务不可达时转发仍成功退出、事件进入重试队列、重复入列被识别以及发送失败后记录继续保留。",
+        "label": "离线入列与失败保留",
+        "reason": "支持连接失败时事件仍进入缓冲、重复事件被识别且失败刷新不会删除待处理项。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/inputs.test.ts",
-          "startLine": 48,
+          "startLine": 49,
           "endLine": 85
         },
-        "quote": "describe(\"B2-02 buffered input acceptance\", () => {\n  it(\"A-I01 persists offline hook input and clears only a matching capture receipt\", async () => {\n    const spoolDirectory = temporary(\"omem-spool-\");\n    const rawEvent = {\n      event_id: \"hook-event-1\",\n      hook_event_name: \"PostToolUse\",\n      session_id: \"sess"
+        "quote": "  it(\"A-I01 persists offline hook input and clears only a matching capture receipt\", async () => {\n    const spoolDirectory = temporary(\"omem-spool-\");\n    const rawEvent = {\n      event_id: \"hook-event-1\",\n      hook_event_name: \"PostToolUse\",\n      session_id: \"session-1\",\n      tool_name: \"Bash\",\n      tool_input: {"
       },
       {
         "key": "c2",
-        "label": "重启后的空回执与有效回执行为",
-        "reason": "支持跨实例恢复、空回执不清理、Store 返回有效回执后清理，以及相同事件重复投递只产生单份持久化结果和作业。",
+        "label": "回执校验与跨重启幂等",
+        "reason": "支持无匹配回执不清除事件、成功采集后清除，以及重复采集不增加回执、材料和任务。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -56,22 +51,9 @@
       },
       {
         "key": "c3",
-        "label": "字段裁剪、脱敏、冲突与容量限制",
-        "reason": "支持 profile 白名单、令牌脱敏、spool 负载冲突、条目容量异常及警告不泄露敏感正文。",
+        "label": "缓冲目录权限断言",
+        "reason": "说明权限辅助断言的跨平台差异，并支持测试对 POSIX 缓冲目录权限的检查。",
         "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/inputs.test.ts",
-          "startLine": 127,
-          "endLine": 178
-        },
-        "quote": "  it(\"A-I02 blocks event conflicts/capacity overflow and applies capture profiles\", () => {\n    const spoolDirectory = temporary(\"omem-spool-limits-\");\n    const spool = new HookSpool(spoolDirectory, {\n      maxEntries: 1,\n      maxBytes: 100_000,\n    });\n    const first = captureSchema.parse(\n      hookInput(\n        "
-      },
-      {
-        "key": "c4",
-        "label": "跨平台权限断言的边界",
-        "reason": "说明 POSIX 模式位检查及 Windows 分支只能确认对象存在和可访问，支持对平台权限结论的限定。",
-        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/inputs.test.ts",
@@ -81,141 +63,101 @@
         "quote": "// On POSIX, secret-bearing spool files/directories must be created owner-only\n// (0o600 / 0o700). Windows NTFS does not expose Unix mode bits through\n// fs.stat (it reports 0o666 for everything); the owner-only guarantee there\n// is enforced by ACLs on the per-user temp directory. On Windows we still\n// verify the pat"
       },
       {
-        "key": "c5",
-        "label": "目录与待处理文件的权限检查",
-        "reason": "支持测试对 spool 目录调用 0700 断言，并对写入后的 JSON 文件调用 0600 断言。",
+        "key": "c4",
+        "label": "字段裁剪与秘密脱敏",
+        "reason": "支持采集配置只保留指定字段、脱敏令牌并排除响应、思维和秘密字段。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/inputs.test.ts",
-          "startLine": 124,
-          "endLine": 155
+          "startLine": 133,
+          "endLine": 150
         },
-        "quote": "    expectOwnerOnlyMode(spoolDirectory, 0o700);\n  });\n\n  it(\"A-I02 blocks event conflicts/capacity overflow and applies capture profiles\", () => {\n    const spoolDirectory = temporary(\"omem-spool-limits-\");\n    const spool = new HookSpool(spoolDirectory, {\n      maxEntries: 1,\n      maxBytes: 100_000,\n    });\n    const"
+        "quote": "    const first = captureSchema.parse(\n      hookInput(\n        {\n          event_id: \"same-event\",\n          hook_event_name: \"UserPromptSubmit\",\n          prompt: \"keep this ghp_abcdefghijklmnopqrst\",\n          tool_response: \"must not be retained\",\n          thoughts: \"private chain\",\n          secret: \"raw-secret-v"
+      },
+      {
+        "key": "c5",
+        "label": "缓冲冲突与容量保护",
+        "reason": "支持缓冲文件权限、同事件异载荷冲突、容量溢出及告警不泄露载荷等断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/inputs.test.ts",
+          "startLine": 151,
+          "endLine": 178
+        },
+        "quote": "    spool.enqueue(first);\n    const pendingFile = readdirSync(spoolDirectory).find((name) =>\n      name.endsWith(\".json\"),\n    )!;\n    expectOwnerOnlyMode(join(spoolDirectory, pendingFile), 0o600);\n\n    const conflicting = captureSchema.parse({\n      ...first,\n      parts: [{ type: \"text\", text: \"different payload\" }],"
       },
       {
         "key": "c6",
-        "label": "存储层事件冲突与数量保持",
-        "reason": "支持 Store 拒绝不同负载复用事件身份，且冲突后捕获记录和作业数量仍各为一。",
+        "label": "存储层事件冲突",
+        "reason": "支持存储层拒绝相同事件标识的不同载荷，并保持材料和任务数量不变。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/inputs.test.ts",
           "startLine": 180,
-          "endLine": 187
+          "endLine": 188
         },
-        "quote": "    const store = new Store(temporary(\"omem-input-conflict-\"));\n    try {\n      store.capture(first);\n      expect(() => store.capture(conflicting)).toThrow(\n        \"CAPTURE_EVENT_CONFLICT\",\n      );\n      expect(store.list()).toHaveLength(1);\n      expect(store.jobs.list()).toHaveLength(1);"
+        "quote": "    const store = new Store(temporary(\"omem-input-conflict-\"));\n    try {\n      store.capture(first);\n      expect(() => store.capture(conflicting)).toThrow(\n        \"CAPTURE_EVENT_CONFLICT\",\n      );\n      expect(store.list()).toHaveLength(1);\n      expect(store.jobs.list()).toHaveLength(1);\n    } finally {"
       },
       {
         "key": "c7",
-        "label": "聊天窗口强制刷新与噪声折叠",
-        "reason": "支持五分钟边界、边界前不刷新、事件身份完整保留、重复文本折叠以及聚合窗口上下文记录。",
+        "label": "聊天窗口刷新与降噪",
+        "reason": "支持五分钟边界前刷新不形成批次、边界时生成批次，以及事件追踪、时间范围和重复文本压缩行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/inputs.test.ts",
-          "startLine": 193,
+          "startLine": 227,
           "endLine": 279
         },
-        "quote": "  it(\"A-I03 forces bounded chat/screen windows, deduplicates noise and traces late events\", () => {\n    const store = new Store(temporary(\"omem-aggregation-\"));\n    const start = new Date(\"2026-09-27T00:00:00.000Z\");\n    const event = (\n      source: \"chat\" | \"screen\",\n      id: string,\n      text: string,\n      observ"
+        "quote": "      store.inputs.ingest(event(\"chat\", \"c1\", \"same noise\", start), start);\n      store.inputs.ingest(\n        event(\"chat\", \"c2\", \"same noise\", new Date(start.getTime() + 100_000)),\n        new Date(start.getTime() + 100_000),\n      );\n      store.inputs.ingest(\n        event(\n          \"chat\",\n          \"c3\",\n       "
       },
       {
         "key": "c8",
-        "label": "迟到补充与屏幕事件聚合",
-        "reason": "支持迟到事件生成独立 revision 并关联原批次，以及屏幕重复内容按事件数成批但正文去重。",
+        "label": "迟到事件补充批次",
+        "reason": "支持迟到事件指向原批次但创建独立修订，不改写已有批次。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/inputs.test.ts",
           "startLine": 281,
-          "endLine": 326
+          "endLine": 294
         },
         "quote": "      const lateObserved = new Date(start.getTime() + 150_000);\n      store.inputs.ingest(\n        event(\"chat\", \"c-late\", \"late supplement\", lateObserved),\n        new Date(start.getTime() + 310_000),\n      );\n      const supplement = store.inputs.flushReady(\n        (input) => store.capture(input),\n        {\n        "
       },
       {
         "key": "c9",
-        "label": "输入测试的直接模块依赖",
-        "reason": "证明测试直接导入合同校验、hook 转换、spool 和 Store；附近文字据此仅陈述依赖与串联关系。",
-        "relation": "depends_on",
+        "label": "屏幕事件数量刷新",
+        "reason": "支持屏幕重复内容降噪、达到事件数上限即刷新，以及批次与任务数量断言。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/inputs.test.ts",
-          "startLine": 12,
-          "endLine": 19
+          "startLine": 296,
+          "endLine": 326
         },
-        "quote": "import { afterEach, describe, expect, it } from \"vitest\";\nimport {\n  captureSchema,\n  type CaptureInput,\n} from \"../../../packages/contracts/src/index.js\";\nimport { hookInput } from \"../src/connectors.js\";\nimport { HookSpool, SpoolCapacityError } from \"../src/inputs/spool.js\";\nimport { Store } from \"../src/store.js\";"
-      },
-      {
-        "key": "c10",
-        "label": "部件与来源字段约束",
-        "reason": "支持合同层对 part provenance、文本、图片、链接及 capture provenance 的字段和严格性约束，同时限定所给范围只展示了 captureSchema 的声明起点。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/index.ts",
-          "startLine": 4,
-          "endLine": 70
-        },
-        "quote": "// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .object({\n    actorExternalI"
-      },
-      {
-        "key": "c11",
-        "label": "连接器产生文件采集输入",
-        "reason": "支持文件连接器经过路径、大小、文本编码和二进制检查后返回 CaptureInput。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/connectors.ts",
-          "startLine": 19,
-          "endLine": 34
-        },
-        "quote": "export async function fileInput(\n  path: string,\n  roots: string[],\n): Promise<CaptureInput> {\n  const file = await allowedPath(path, roots);\n  if ((await stat(file)).size > 500000) throw Error(\"Text file exceeds 500 KB\");\n  const bytes = await readFile(file);\n  const text = new TextDecoder(\"utf-8\", { fatal: true }).de"
-      },
-      {
-        "key": "c12",
-        "label": "Store 对聚合器和作业仓库的装配",
-        "reason": "支持 Store 在同一 SQLite 初始化中创建 JobRepository 与 InputAggregator，并将其暴露给测试调用。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 38,
-          "endLine": 65
-        },
-        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+        "quote": "      store.inputs.ingest(\n        event(\n          \"screen\",\n          \"s1\",\n          \"unchanged screen\",\n          new Date(start.getTime() + 400_000),\n        ),\n        new Date(start.getTime() + 400_000),\n      );\n      store.inputs.ingest(\n        event(\n          \"screen\",\n          \"s2\",\n          \"unchanged s"
       }
     ],
     "questions": [
       {
-        "question": "Windows 上 spool 目录和文件是否有独立的 ACL 集成测试，能够证明只有当前用户可读写？",
-        "why": "当前材料中的 Windows 分支只断言对象类型与可访问性，注释提到的 ACL 保证没有被实际权限检查直接证明。",
-        "nextStep": "在 Windows CI 中读取并断言实际 ACL，或补充平台级安全验收记录，并与 POSIX mode 测试分开报告。",
+        "question": "Windows 上缓冲目录和文件的所有者专属 ACL 是否由其他集成测试验证？",
+        "why": "当前辅助断言在 Windows 只检查对象存在且可访问；注释说明安全性依赖每用户临时目录 ACL，但本测试没有直接检查 ACL。",
+        "nextStep": "检查 Windows 专用测试或在 Windows CI 中增加 ACL、非所有者访问验证。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c5"
-        ]
-      },
-      {
-        "question": "spool 的损坏记录隔离、并发 flush、保留期限、字节容量临界值及崩溃中断恢复分别由哪些行为测试覆盖？",
-        "why": "现有用例覆盖离线、重启、空回执、事件冲突和条目容量，但没有展示这些故障与并发边界；配置中虽存在字节和保留期限选项，仅凭定义不能视为已验收。",
-        "nextStep": "定位对应测试；若不存在，为损坏隔离、原子写入、跨进程竞争、retentionMs 和 maxBytes 边界增加真实行为断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c2",
           "c3"
         ]
       },
       {
-        "question": "聚合器在不同会话交错、乱序到达以及 capture 回调抛错时，如何保证批次与作业的一致性？",
-        "why": "当前样例集中于单一聊天会话、单一屏幕上下文和成功的 Store.capture 回调，无法确定多分区与失败路径的提交语义。",
-        "nextStep": "补充多 conversation/window key、乱序事件、回调失败与重试用例，并明确批次是否允许部分提交。",
+        "question": "按字节上限、保留期限以及损坏缓冲文件的行为是否有独立覆盖？",
+        "why": "本文件主要通过 `maxEntries: 1` 触发容量错误，未展示 `maxBytes` 精确边界、过期清理或异常文件恢复断言；缓冲配置还包含字节和保留期限选项。",
+        "nextStep": "查找相应测试；若不存在，补充字节边界、过期记录和部分写入文件的恢复场景。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c8",
-          "c12"
+          "c5"
         ]
       }
     ]
@@ -239,7 +181,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -249,21 +191,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:29:53.051Z",
+    "effort": "high",
+    "at": "2026-10-01T11:59:03.175Z",
     "trace": {
-      "runId": "98004015-585a-41ff-9231-3c7a842ec7a3",
+      "runId": "842a41bf-47fa-4b00-af81-02d8f9f04dfc",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "78d65b459b79eb927ebb6012801028fc4c2e197c7e94d869b3c495da45c3359f",
-      "contextHash": "2c10d144de10d3c72f3ef6ba0865c277fe451ad87157dc101ee6376f49255bcc",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "86c8e416d0603329f4607105c8e148d0b9a26c1e57500e6686b7a0c2416a227d",
+      "contextHash": "b4970a0060b3cc2ea574c67b1ed0924b6dd7577bf6950a2cf051df176773d03b",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d6b6281f94a200d4401f75182d12102410c2e6e66a5cfd9be55ec54ae96f2a29",
+      "fingerprint": "42a67104c3df7c481778e3878c08f7a0256fa70c998f7ed0756c4ae7e5a8af15",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -273,10 +215,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54b-9770-7922-b9aa-99bfae0b2f66"
+        "01a0f754-cccb-7dd2-b63f-6db948d96cd4"
       ],
       "usage": {
-        "used": 38224,
+        "used": 33708,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -285,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 43703,
-          "utf8Bytes": 50685,
-          "estimatedTokens": 16895,
-          "budgetedTokens": 21119,
+          "chars": 40851,
+          "utf8Bytes": 47091,
+          "estimatedTokens": 15697,
+          "budgetedTokens": 19622,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -297,20 +239,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:30:11.573Z",
+    "at": "2026-10-01T11:59:20.452Z",
     "trace": {
-      "runId": "5867b1c3-b5af-4cfa-8c56-a7d94089cc70",
+      "runId": "ee079057-fb0f-4b89-a784-6c05e7ca84a3",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "39162d2d300df1418a145f23dbd2d2e896041e5e4a63a99907003ec6f0d51107",
-      "contextHash": "918c84afb2035a70ea1a65de68ebf6eed8e794684e7589e25761993060de77b2",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "8c6fed28ec40d506a52b40f40ca9d4512f332546e1e454bd4868c7dc09eea703",
+      "contextHash": "4fe8622f7aa77fa8aad1ec887d027cf9e8d588e3c8cdae943a45b0c79c8f5167",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "63abf2556530bcdffb005314389c8551b86e47197bd39d52495afef309671713",
+      "fingerprint": "52edba699039779c3ed8a7aa3fbf18b655caa88eee82196b9772badbc6b930b2",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -320,10 +262,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54c-0f74-7e20-883c-1ac40194914e"
+        "01a0f755-26eb-7901-b5f2-37f67aaf740e"
       ],
       "usage": {
-        "used": 32148,
+        "used": 31644,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -332,10 +274,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 40262,
-          "utf8Bytes": 45472,
-          "estimatedTokens": 15158,
-          "budgetedTokens": 18948,
+          "chars": 38297,
+          "utf8Bytes": 43785,
+          "estimatedTokens": 14595,
+          "budgetedTokens": 18244,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

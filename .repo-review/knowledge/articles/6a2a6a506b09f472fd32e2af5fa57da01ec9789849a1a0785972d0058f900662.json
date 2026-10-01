@@ -2,50 +2,45 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/code-artifacts.test.ts",
-    "title": "代码理解产物的可移植恢复与失效保护测试",
-    "summary": "该测试以两个全新 SQLite 数据库模拟代码理解从生成、导出到恢复的生命周期，验证固定快照保留原始源码、派生理解可跨库重建、重复恢复保持幂等，并确保伪造定位器或源码变化不会让无效产物继续充当当前知识。",
+    "title": "代码理解产物的可移植性与失效保护",
+    "summary": "该测试验证代码快照、模型生成的派生理解和可提交 JSON 产物能否在全新数据库中一致恢复，并确保伪造符号定位或源码变化不会让旧理解继续冒充当前有效结果。它覆盖固定快照证据、导出前置条件、恢复幂等性、定位校验与依赖失效，但使用 fixture 模型，不能证明真实 Agent CLI、复杂依赖图或异常文件处理均可用。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose_and_setup",
-        "title": "测试目标与隔离环境",
-        "body": "测试在临时仓库写入包含 `alpha` 函数的源码，并创建两个相互独立的 `Store`：第一个负责生成和导出理解，第二个验证产物能否在新数据库恢复。[[c1]] `Store` 会创建 SQLite 文件、执行迁移并初始化各应用仓储，因此两个实例构成隔离的持久化环境。[[c2]] 无论断言成功与否，测试最终都会关闭数据库并递归清理临时目录。[[c9]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "代码理解属于可再生成的派生知识，但仍需跨数据库保存模型、预算和引用来源，同时不能脱离生成时的源码快照继续生效。本测试创建临时仓库和两个独立 `Store`：第一个数据库负责捕获源码并生成理解，第二个数据库模拟从零重建。它还确认快照绑定保存完整文本、普通文件表不重复存正文，而符号证据能够回到固定片段。参考 [[c1]]\n\n`Store` 在各自数据目录中初始化 SQLite、迁移表并建立运行时仓储，因此这里的双数据库确实构成相互独立的持久化环境，而不是共用内存状态。参考 [[c2]]"
       },
       {
-        "key": "fixed_snapshot_flow",
-        "title": "固定证据与生成导出流程",
-        "body": "首轮 review/code 同步后，`snapshotFileBinding` 能从固定快照证据取得源码全文，而 `code_snapshot_files` 对应行的 `content_text` 为 `null`；符号 `alpha` 的证据片段仍可回到函数文本。[[c3]] 此结论替代此前不准确的“文件主表不重复保存正文”：现有材料只能直接证明快照文件表该列为空，不能把它泛化为未提供结构的“文件主表”。随后 fixture 模型生成结构化理解并导出，第二个数据库同步后能恢复模型名、非 seed 标记和生成预算。[[c4]] 导出实现只接受当前快照中成功、非 seed、未过期的模型结果，并记录依赖摘要与稳定符号定位。[[c5]]"
+        "key": "flow",
+        "title": "生成、导出与恢复流程",
+        "body": "```mermaid\nflowchart LR\n  A[临时源码] --> B[评审与代码同步]\n  B --> C[固定代码快照]\n  C --> D[fixture 生成代码理解]\n  D --> E[导出 JSON 产物]\n  E --> F[全新数据库同步并恢复]\n  F --> G[校验模型与预算元数据]\n```\n流程由测试中的真实存储与同步组件串接，但生成阶段注入的是返回固定 JSON 的 fixture。恢复后断言只有一条模型产物，并保留模型名、非 seed、未独立验证及生成预算信息。参考 [[c3]]\n\n导出实现只接受属于当前快照、成功且非 seed、未过期的模型结果；它把目标依赖哈希和被引用符号的路径、限定名、类型一起写入产物，用于后续重新定位和一致性检查。参考 [[c4]] 恢复入口则以当前快照、符号集合和文件映射为校验上下文，说明恢复并非简单反序列化。参考 [[c5]]"
       },
       {
-        "key": "rejection_staleness_and_limits",
-        "title": "幂等、拒绝与过期边界",
-        "body": "重复恢复后仍只有一条模型理解，说明恢复具备幂等效果；把节点的 `qualifiedName` 篡改为不存在的 `ghost` 后，产物会被拒绝。磁盘文件的单独修改也不会反向改变第一个数据库中已经固定的快照证据。[[c6]] 当第二个数据库重新捕获变化并形成新输入后，旧产物被判为 `stale`，当前模型理解列表随之清空，避免过期知识继续生效。[[c7]] 现有用例尚未覆盖损坏 JSON、缺失依赖或多个产物部分失败，也不能以 fixture 证明真实外部模型 CLI 可用。"
-      },
-      {
-        "key": "module_relationships",
-        "title": "恢复入口及跨模块关系",
-        "body": "该用例串联仓库捕获、代码图同步、理解生成以及产物导出与恢复。恢复入口要求当前快照和产物目录存在，并基于快照构造理解输入、符号映射与文件映射，以重新核对依赖和定位器。[[c8]] 但提供材料未包含 `runCodeSync` 的实现，因此目前只能确认第二个数据库在依次执行 review/code 同步后出现恢复结果，不能确定自动恢复具体由哪一层触发。"
+        "key": "boundaries",
+        "title": "防伪、失效条件与未覆盖范围",
+        "body": "测试先重复恢复并确认没有新增重复记录；随后把导出节点的限定名改成不存在的 `ghost`，结果必须为 `rejected`。恢复原文件后，仅修改磁盘不会篡改第一个数据库已经固定的旧快照；第二个数据库重新同步新源码后，同一产物应标为 `stale`，且不再出现在有效模型理解列表中。参考 [[c6]]\n\n覆盖范围仍然有限：模型传输明确使用 fixture，因此没有验证真实 ACP/Agent CLI、模型能力协商或失败重试；用例也只包含单文件、单符号和一次字面量修改。产物模块还声明 JSON 是带生成溯源的可移植形式、Markdown 只是可读投影且不会作为独立证据重新接入，但本测试没有断言 Markdown 输出。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "双数据库测试环境",
-        "reason": "支持测试创建临时仓库、两个独立 Store 以及待分析源码的环境设置。",
+        "label": "固定快照与符号证据",
+        "reason": "支持测试使用两个数据库，并断言快照正文、文件表去重存储和符号证据可追溯。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-artifacts.test.ts",
           "startLine": 12,
-          "endLine": 20
+          "endLine": 27
         },
         "quote": "it(\"rebuilds fixed code and model knowledge in a fresh DB, rejects changed input and forged locators\", async () => {\n  const root = mkdtempSync(join(tmpdir(), \"omem-artifacts-\"));\n  const first = new Store(join(root, \"db1\"));\n  const second = new Store(join(root, \"db2\"));\n  const path = \"apps/server/src/a.ts\";\n  const "
       },
       {
         "key": "c2",
-        "label": "Store 的 SQLite 初始化",
-        "reason": "解释每个 Store 如何创建 SQLite、执行迁移并初始化应用仓储。",
-        "relation": "explains",
+        "label": "独立 SQLite 存储初始化",
+        "reason": "解释两个 Store 如何分别创建数据库、迁移结构并初始化仓储组件。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
@@ -55,35 +50,9 @@
         "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       },
       {
-        "key": "c9",
-        "label": "数据库与临时目录清理",
-        "reason": "支持 finally 块关闭两个数据库并删除临时目录的清理行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-artifacts.test.ts",
-          "startLine": 58,
-          "endLine": 58
-        },
-        "quote": "  } finally { first.close(); second.close(); rmSync(root, { recursive: true, force: true }); }"
-      },
-      {
         "key": "c3",
-        "label": "快照源码与符号证据断言",
-        "reason": "支持 code_snapshot_files 行的 content_text 为 null，同时快照绑定可取得源码全文、符号证据可回到函数文本；不再将该表泛称为文件主表。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-artifacts.test.ts",
-          "startLine": 21,
-          "endLine": 27
-        },
-        "quote": "    await runReviewSync(first, root); await runCodeSync(first, root);\n    const snap = currentSnapshotId(first)!;\n    const file = listFiles(first)[0]!;\n    expect(snapshotFileBinding(first, snap, file.fileId)!.contentText).toBe(text);\n    expect(first.db.prepare(\"SELECT content_text FROM code_snapshot_files WHERE file"
-      },
-      {
-        "key": "c4",
-        "label": "理解生成、导出与跨库恢复",
-        "reason": "支持 fixture 理解的生成与导出，以及第二个数据库中的恢复结果、模型元数据和预算断言。",
+        "label": "fixture 生成与新库恢复断言",
+        "reason": "支持从固定模型输出生成、导出，并在第二个数据库恢复模型及预算元数据的流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -94,10 +63,10 @@
         "quote": "    const result = await generateCodeUnderstanding(first, root, {\n      transport: \"fixture\",\n      run: async () => ({ model: \"fixture-only\", text: JSON.stringify({\n        module_responsibilities: [\"Returns a string\"], boundaries: [], key_flows: [], entry_points: [], exit_points: [],\n        risks_and_limits: [], cla"
       },
       {
-        "key": "c5",
-        "label": "当前成功结果的导出约束",
-        "reason": "解释导出对结果状态和当前快照的限制，以及依赖清单与稳定符号定位的记录。",
-        "relation": "explains",
+        "key": "c4",
+        "label": "产物导出约束与定位清单",
+        "reason": "说明导出仅接受当前有效模型结果，并记录依赖哈希及引用符号定位信息。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
@@ -107,36 +76,10 @@
         "quote": "export function exportGeneratedUnderstanding(store: Store, repoRoot: string, id: string, destination: string): string {\n  const detail = understandingDetail(store, id);\n  const snapId = currentSnapshotId(store);\n  if (!detail || !snapId || detail.status !== \"generated\" || detail.seed || detail.stale || detail.snapshot_"
       },
       {
-        "key": "c6",
-        "label": "伪造定位拒绝与快照不变性",
-        "reason": "支持重复恢复幂等、伪造 qualifiedName 被拒绝，以及磁盘编辑不会污染既有固定快照。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-artifacts.test.ts",
-          "startLine": 44,
-          "endLine": 54
-        },
-        "quote": "    restoreGeneratedUnderstandings(second, root);\n    expect(listUnderstandings(second).filter(r => r.source === \"model-generated\")).toHaveLength(1);\n    const original = readFileSync(join(dir, artifact), \"utf8\");\n    const forged = JSON.parse(original); forged.nodes[0].qualifiedName = \"ghost\";\n    writeFileSync(join(d"
-      },
-      {
-        "key": "c7",
-        "label": "源码变化后的过期处理",
-        "reason": "支持重新捕获源码变化后旧产物被标记 stale，并从当前模型理解列表移除。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-artifacts.test.ts",
-          "startLine": 51,
-          "endLine": 57
-        },
-        "quote": "    writeFileSync(join(root, path), text.replace(\"'<img>'\", \"'changed'\"));\n    // A disk edit alone cannot change the fixed snapshot's evidence.\n    await runCodeSync(first, root);\n    expect(snapshotFileBinding(first, currentSnapshotId(first)!, file.fileId)!.contentText).toBe(text);\n    await runReviewSync(second, roo"
-      },
-      {
-        "key": "c8",
-        "label": "产物恢复依赖当前快照",
-        "reason": "说明恢复入口要求当前快照和产物目录，并初始化快照、符号及文件映射。",
-        "relation": "depends_on",
+        "key": "c5",
+        "label": "恢复所用快照上下文",
+        "reason": "支持恢复过程读取当前快照、理解输入、符号和文件映射，而非无条件导入 JSON。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
@@ -144,27 +87,53 @@
           "endLine": 70
         },
         "quote": "export function restoreGeneratedUnderstandings(store: Store, repoRoot: string) {\n  const dir = join(repoRoot, GENERATED_DIR);\n  const report: { file: string; status: \"restored\" | \"stale\" | \"rejected\"; reason?: string }[] = [];\n  const snapId = currentSnapshotId(store);\n  if (!snapId || !existsSync(dir)) return report;\n"
+      },
+      {
+        "key": "c6",
+        "label": "重复恢复、防伪与过期断言",
+        "reason": "支持幂等恢复、伪造限定名被拒绝、磁盘修改不改旧快照以及新快照使旧产物过期。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-artifacts.test.ts",
+          "startLine": 44,
+          "endLine": 57
+        },
+        "quote": "    restoreGeneratedUnderstandings(second, root);\n    expect(listUnderstandings(second).filter(r => r.source === \"model-generated\")).toHaveLength(1);\n    const original = readFileSync(join(dir, artifact), \"utf8\");\n    const forged = JSON.parse(original); forged.nodes[0].qualifiedName = \"ghost\";\n    writeFileSync(join(d"
+      },
+      {
+        "key": "c7",
+        "label": "派生产物的证据边界",
+        "reason": "说明 JSON 与 Markdown 都是派生知识表现，不会被重新接入为独立原始证据，并据此指出测试未覆盖 Markdown 投影。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 1,
+          "endLine": 12
+        },
+        "quote": "/** Portable derived knowledge. JSON keeps generation provenance; Markdown is a\n * readable projection. Neither is re-ingested as independent source evidence. */\nimport { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { createHash } from \"node:"
       }
     ],
     "questions": [
       {
-        "question": "第二个数据库中的模型理解由哪一步自动恢复：`runCodeSync`、`runReviewSync`，还是其他初始化流程？",
-        "why": "测试仅证明依次执行两次同步后恢复结果存在；当前材料没有提供 `code/sync.ts` 的实现，无法确定跨文件调用位置。",
-        "nextStep": "检查 `runCodeSync` 及其直接调用链，定位 `restoreGeneratedUnderstandings` 的调用点，并补充自动恢复时机的断言或引用。",
+        "question": "第二个数据库在显式调用 restoreGeneratedUnderstandings 之前为何已经出现恢复后的模型理解？",
+        "why": "测试先执行 runReviewSync 与 runCodeSync，随后立即观察到模型产物，但提供材料不包含 runCodeSync 的实现，无法确认自动恢复由哪个调用触发及其失败传播方式。",
+        "nextStep": "检查 code/sync.ts 中恢复产物的调用位置，并增加断言区分同步阶段自动恢复与显式重复恢复。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c8"
+          "c3",
+          "c6"
         ]
       },
       {
-        "question": "损坏 JSON、缺失依赖以及多个产物混合成功与失败时，恢复是否逐文件隔离并保留已有有效结果？",
-        "why": "现有材料覆盖合法产物、伪造符号定位和依赖内容变化，但没有展示解析失败、缺失依赖或批量部分失败的完整行为。",
-        "nextStep": "补充混合产物测试，逐项断言恢复状态与原因，并确认坏产物不会中断其他恢复或覆盖已有有效理解。",
+        "question": "损坏 JSON、缺失依赖、多个文件或多个同名符号时分别应判定为 stale 还是 rejected？",
+        "why": "当前用例只覆盖伪造限定名和单文件内容变化；提供的恢复实现也在关键判定逻辑开始前截断，无法可靠归纳其他错误分类。",
+        "nextStep": "补充表驱动测试，分别覆盖解析失败、依赖缺失、哈希变化、定位歧义和多文件目标，并断言状态及可读原因。",
         "blocking": false,
         "citationKeys": [
-          "c6",
-          "c7"
+          "c5",
+          "c6"
         ]
       }
     ]
@@ -188,7 +157,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -198,34 +167,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:25:25.674Z",
+    "effort": "high",
+    "at": "2026-10-01T11:55:17.082Z",
     "trace": {
-      "runId": "108307b8-1286-4f90-9c84-fadb5c66c59b",
-      "roleId": "knowledge-refresher",
+      "runId": "63f6d7c6-5116-4024-9bac-ba3f00fa8bc6",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "58abdf810a25217b75e8c2b0299e6c50a4de0b00841882899b2ef26c98d888ab",
-      "contextHash": "1b0a05558d08b6fd63738ee9ee990b7f814ee8f1be7ef4cce1cfd7aa959ff029",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "d571364555aad8d63203aac3dbe3a546faa14cf167fa5f3bf79b4aec3d6c4916",
+      "contextHash": "bed74b6ac9cf7f7fcf2a75a2e7a67d841dbfba179a1cabb0799528d74dfe4503",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4b45a7695f98bd04deb181fa2daa56354c0770f68f7ad38775a9c5697fe77dff",
+      "fingerprint": "b3008576bc81e1c90ea6f15fd539e742a7a2f826f70d3c5afd80519c60889975",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f547-9944-73c0-b9d5-f95abe7110d2"
+        "01a0f751-2719-7e80-a532-44344064b402"
       ],
       "usage": {
-        "used": 31029,
+        "used": 29436,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -234,10 +203,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35004,
-          "utf8Bytes": 40420,
-          "estimatedTokens": 13474,
-          "budgetedTokens": 16843,
+          "chars": 28098,
+          "utf8Bytes": 31196,
+          "estimatedTokens": 10399,
+          "budgetedTokens": 12999,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -246,20 +215,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:25:41.232Z",
+    "at": "2026-10-01T11:55:37.230Z",
     "trace": {
-      "runId": "7042979f-7377-4a24-a2bc-a4aa550cbb96",
+      "runId": "b627e3f1-d183-4d6d-a27a-f80d49dc14b1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "211e424f3a5b6f6cc8e40383f8aa81ee9307d5d83702cde75deba04e583aa716",
-      "contextHash": "65af9fa14e49880a93c42c8502f624c27606811d98cd248f530eabc8345af3d9",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "dd667bb4cc96a005b892fba99561e5b049de49de9891cefba57b125390062606",
+      "contextHash": "7f635417c2927a1280dc55ee2300542bf287941b34afd09d90e82bf62a223cbe",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e60b11fb16edbfca85f1e438b4bee9f509c4ba502e006546a737d3f27b978e24",
+      "fingerprint": "8d015b27c051bfd2fd8d215e277a600a895c17d5c2f3105aba4fb72af55eef77",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -269,10 +238,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f547-fcbb-7fa2-8052-22e8a4470be2"
+        "01a0f751-b351-7510-8870-4e9b605a7cd3"
       ],
       "usage": {
-        "used": 28450,
+        "used": 29291,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -281,10 +250,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 31747,
-          "utf8Bytes": 35551,
-          "estimatedTokens": 11851,
-          "budgetedTokens": 14814,
+          "chars": 31881,
+          "utf8Bytes": 37477,
+          "estimatedTokens": 12493,
+          "budgetedTokens": 15617,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

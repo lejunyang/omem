@@ -3,35 +3,35 @@
   "document": {
     "key": "module:scripts:part-1",
     "title": "开发启动与分层真实链路验收",
-    "summary": "开发脚本用同一套编排管理个人应用与仓库评审环境的端口、API、Web 和进程生命周期；验收脚本分为确定性浏览器检查、仓库知识阅读检查和依赖外部 Agent、Lark 的在线冒烟。脚本源码证明检查入口与断言已定义，但不等同于当次执行成功或外部服务长期可用。",
+    "summary": "开发脚本用统一编排器启动个人或仓库评审模式的 API 与 Web，并负责端口传递、健康检查和进程清理。验收分为确定性浏览器流程、真实仓库知识阅读及依赖外部环境的 live 检查；各层证明范围不同，源码存在也不能替代实际命令、退出码和报告。",
     "category": "workflow",
     "sections": [
       {
-        "key": "development_startup",
-        "title": "统一启动个人应用与评审环境",
-        "body": "个人开发入口补充仓库根目录、固定 `personal` 模式，再把启动交给共享编排器。编排器按模式选择 API 入口和默认端口，预检 API、Web 端口后启动两个子进程，并把选定端口传给后端与前端代理。参考 [[c1]] [[c2]]\n\n```mermaid\nflowchart LR\n  A[探测 API 与 Web 端口] --> B[启动 API]\n  A --> C[启动 Vite]\n  C --> D[/api 代理到 API]\n  B --> E[轮询健康端点]\n  E --> F[输出访问地址]\n```\n\n评审前端采用独立 Vite 配置、回环监听和严格端口；编排器最长等待健康端点 60 秒，子进程报错或退出会触发整体关闭。参考 [[c3]] [[c5]]\n\n关闭流程可重入，并在 Windows 调用 `taskkill` 清理进程树、在其他平台向子进程组发送 `SIGTERM`，同时设置退出等待上限。参考 [[c4]] 端口探测会先关闭临时监听再返回，因此真实服务绑定前仍存在端口被抢占的竞态。参考 [[c18]]"
+        "key": "dev-startup",
+        "title": "一个入口拉起 API 与 Web",
+        "body": "个人开发入口先补充仓库根目录、固定为个人模式，再把启动交给共用编排器。参考 [[c1]] 编排器预检 API 与 Web 端口、拒绝两者相同，随后启动对应 API 和独立 Vite 子进程，并把选定端口同时传给后端与代理。参考 [[c3]] 延伸阅读：[[c2]]\n\n```mermaid\nflowchart LR\n  A[开发入口] --> B[端口预检]\n  B --> C[启动 API]\n  B --> D[启动 Vite]\n  D -->|API 代理| C\n  C --> E[健康检查通过后公布地址]\n```\n\nVite 使用独立配置和严格端口策略，避免沿用个人后端代理或在冲突时静默换址。参考 [[c5]] 编排器最多等待健康端点 60 秒，成功后才公布访问地址，超时则关闭子进程。参考 [[c4]]"
       },
       {
-        "key": "deterministic_browser",
-        "title": "确定性数据下验证完整用户闭环",
-        "body": "主浏览器验收在临时目录中组装真实应用、Store、HTTP 服务和无头 Chromium；文件明确将其界定为 Vue、API、SQLite 的真实测试，同时使用确定性 ACP、飞书注册、既有应用与能力探测夹具稳定外部输出。因此它验证应用编排和界面合同，不代表真实 Agent CLI 或飞书网络可用。参考 [[c6]]\n\n测试从界面保存材料开始，继续检查提案评估与应用、学习状态、原证据和通知详情，形成从捕获到可追溯结果的闭环。参考 [[c7]] 后续场景覆盖多视口布局、百层证据轨迹、模型与投递失败展示、API 离线、重启恢复，以及 Markdown、Mermaid 和危险标签过滤。参考 [[c8]]"
+        "key": "browser-layers",
+        "title": "确定性浏览器验收覆盖产品与知识阅读",
+        "body": "产品浏览器验收运行真实 Vue、API 与 SQLite，但 Agent 使用协议 fixture。参考 [[c7]] 提案评估还直接提交预设为 `supported` 的确定性 assessment，并未在该流程中运行独立 verifier。参考 [[c18]] 飞书注册器、既有应用提供器和能力探测器同样由脚本内替身提供。参考 [[c19]] 因此这层适合稳定检查材料录入、提案生效、任务、通知及原证据阅读，不证明模型质量或飞书平台可用。参考 [[c8]] 延伸阅读：[[c6]]\n\n知识阅读另有两条路径：临时仓库脚本验证多层引用、深链恢复、焦点归还、源码导航、待办转化和安全渲染；参考 [[c10]] 已运行应用上的视口脚本则检查真实仓库知识中的固定代码区间、上下文展开、分层轨迹和滚动恢复。参考 [[c11]] 两者分别提供可复现 fixture 与真实知识资产验收。延伸阅读：[[c9]]"
       },
       {
-        "key": "knowledge_reading",
-        "title": "仓库知识阅读的两类浏览器验收",
-        "body": "面向已运行个人应用的脚本从真实 API 动态取得文章和固定引用，检查代码行展开、焦点归还、多层阅读轨迹、深链刷新、README 连贯渲染及三种视口下的基本可读性，并保存截图与报告。参考 [[c9]]\n\n另一项隔离验收即时创建小型源码仓库，执行仓库、材料和代码同步，发布固定知识文章，再启动真实 Store、Review 应用和 Chromium；这些数据由脚本构造，不依赖 LLM。参考 [[c10]] 它进一步检查五层引用导航、源码到知识文章的跳转、问题由用户显式转为待办，以及 HTML 原文只展示而不执行。参考 [[c11]]\n\n两类检查相互补充：前者验证当前仓库知识在统一应用中的真实阅读路径，后者用可控材料深入验证阅读组件。现有断言不比较截图像素，也没有验证语义检索索引。"
+        "key": "live-validation",
+        "title": "真实外部链路按风险分层验证",
+        "body": "live 检查把外部依赖与浏览器 fixture 分开。ACP 冒烟会探测模型、发起真实中文问答并收集流式文本；参考 [[c12]] 学习冒烟进一步串联 extractor、独立 verifier 和策略评估，只有自动应用并取得回执才成功。参考 [[c13]]\n\n飞书连接器先校验受限 URL，再调用 `lark-cli`，将正文、原文链接和引用元信息转换为统一捕获输入。参考 [[c14]] 宿主冒烟要求真实加密密钥，并在存在待投递消息时默认拒绝启动。参考 [[c15]] 它还会选取一条活动连接、读取对应密钥并核对应用标识，不满足条件则在启动前失败。参考 [[c20]] 成功条件是观察到 `connected` 事件；脚本会输出能力和运行状态，但没有发送测试消息，也未验证入站捕获、记忆落库或出站送达。参考 [[c16]]"
       },
       {
-        "key": "live_validation",
-        "title": "外部 Agent、学习与 Lark 的在线检查",
-        "body": "在线模型辅助函数先通过 ACP 读取可选模型，再依次考虑显式环境变量、基础配置、ACP 当前值和首个候选；显式请求不可用时失败。推理强度则直接由环境变量覆盖，辅助函数本身没有发现其允许值。参考 [[c12]] 最小 ACP 冒烟发送一道答案为 12 的中文题，收集流式文本并输出实际配置。参考 [[c13]]\n\n真实学习脚本先在临时 Store 捕获中文责任承诺，再依次运行 extractor、独立 verifier 和策略评估；只有安全自动应用且产生回执才通过，并保存角色 trace、评估及任务报告。参考 [[c14]]\n\nLark 连接器冒烟读取固定 Wiki 页面，并用统一捕获合同解析后输出摘要。参考 [[c15]] 其底层实现限制文档主机和路径，通过 `lark-cli` 获取 Markdown，并保留原文链接及引用元信息。参考 [[c16]] Lark 宿主检查则要求真实密钥与活动连接，防止默认发送待投递消息，完成官方能力预检后等待 `connected` 事件，并在结束时停止宿主、关闭存储。参考 [[c17]]\n\n这些脚本定义了外部链路的检查入口，但材料没有提供本次运行报告；“返回可解析”或“产生 connected 事件”也不能证明完整消息送达、全部任务字段正确或长期稳定运行。"
+        "key": "progress-limits",
+        "title": "如何解读当前进展与限制",
+        "body": "当前验收结构覆盖启动生命周期、确定性产品流程、仓库知识阅读以及真实 Agent 和飞书连接。判断结果时必须保留层级：浏览器 fixture 通过不能证明外部服务可用，live 脚本存在也不代表当前环境已经执行成功，仍需核对实际命令、退出码与报告。\n\n端口预检通过临时监听发现冲突，但会在返回前释放端口；默认端口被占用时改用动态端口，显式端口冲突则报错。参考 [[c17]] 因而预检结束到子进程真正绑定之间仍有抢占窗口。现有浏览器检查主要使用 Chromium，ACP 最小问答断言较宽松，学习冒烟未核对任务字段，飞书宿主也只证明连接状态，这些都是扩展验收时需要单独补齐的边界。"
       }
     ],
     "citations": [
       {
         "key": "c1",
         "label": "个人开发入口",
-        "reason": "支持入口设置仓库根目录与 personal 模式，并将启动交给共享编排器。",
+        "reason": "支持个人模式先准备运行环境，再将具体启动交给共用编排器。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -43,8 +43,20 @@
       },
       {
         "key": "c2",
-        "label": "双进程启动与端口传递",
-        "reason": "支持端口预检、模式相关 API 入口、API 与 Web 子进程创建及端口环境变量传递。",
+        "label": "开发进程编排",
+        "reason": "补充端口预检、双进程启动与就绪判定的整体背景。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/dev-review.ts",
+          "section": "startup-flow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c3",
+        "label": "端口预检与子进程启动",
+        "reason": "支持模式相关端口选择、同端口拒绝、API 与 Vite 启动及端口传递。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -55,35 +67,22 @@
         "quote": "async function main(): Promise<void> {\n  // Preflight: fail fast with a clear message instead of letting the API/Vite\n  // child die with an opaque EADDRINUSE after a partial boot.\n  try {\n    API_PORT = await selectDevPort(review ? process.env.REVIEW_PORT : process.env.OMEM_PORT, review ? 5180 : 4317, `${label} API`);"
       },
       {
-        "key": "c3",
-        "label": "健康检查与故障传播",
-        "reason": "支持子进程退出触发整体关闭、健康端点轮询、超时失败及成功地址输出。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/dev-review.ts",
-          "startLine": 114,
-          "endLine": 154
-        },
-        "quote": "  const onChildExit =\n    (which: \"API\" | \"web\") =>\n    (code: number | null, signal: NodeJS.Signals | null) => {\n      console.log(\n        `${label}: ${which} exited code=${code ?? \"-\"} signal=${signal ?? \"-\"}`,\n      );\n      if (shuttingDown) return;\n      const exitCode = code ?? (signal ? 1 : 0);\n      void shutd"
-      },
-      {
         "key": "c4",
-        "label": "跨平台有界关闭",
-        "reason": "支持退出等待上限、Windows 进程树终止、非 Windows 进程组信号和可重入关闭流程。",
+        "label": "API 健康检查",
+        "reason": "支持健康端点选择、等待窗口、超时关闭和就绪后公布地址。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/dev-review.ts",
-          "startLine": 17,
-          "endLine": 75
+          "startLine": 131,
+          "endLine": 154
         },
-        "quote": "function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {\n  return new Promise((resolve) => {\n    if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return resolve();\n    let done = false;\n    const finish = () => {\n      if (done) return;\n      done = true;\n      c"
+        "quote": "  // Wait for the API health endpoint before printing ready URLs. The API does a\n  // (possibly incremental) sync on boot, so allow up to 60s.\n  const healthUrl = `http://127.0.0.1:${API_PORT}${review ? \"/api/review/health\" : \"/api/health\"}`;\n  const deadline = Date.now() + 60_000;\n  let healthy = false;\n  while (Date."
       },
       {
         "key": "c5",
         "label": "独立 Vite 代理",
-        "reason": "支持评审前端使用独立配置、严格端口、回环监听、API 代理及信号关闭。",
+        "reason": "支持独立 Vite 配置、严格端口、API 代理和信号关闭流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -95,138 +94,110 @@
       },
       {
         "key": "c6",
-        "label": "真实应用与确定性夹具",
-        "reason": "支持临时目录、真实 Vue/API/SQLite 边界、Store 与应用启动、确定性 Agent 和飞书夹具及 Chromium 初始化。",
+        "label": "真实浏览器验收",
+        "reason": "补充真实应用栈与确定性 Agent fixture 的验收分工。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "omem:scripts/browser-smoke.ts",
+          "section": "purpose"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c7",
+        "label": "浏览器验收运行栈",
+        "reason": "支持脚本采用真实 Vue、API、SQLite，同时使用协议 fixture Agent 稳定断言。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
           "startLine": 1,
-          "endLine": 109
+          "endLine": 17
         },
         "quote": "// Real Vue + API + SQLite test. Fixture Agent is used only to make UI assertions deterministic.\nimport { chromium, expect } from \"@playwright/test\";\nimport { randomBytes } from \"node:crypto\";\nimport { mkdtempSync, rmSync, mkdirSync, writeFileSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resol"
       },
       {
-        "key": "c7",
-        "label": "材料到可追溯结果",
-        "reason": "支持界面捕获材料、提案评估与应用、学习状态、原证据和通知详情组成的主闭环。",
+        "key": "c8",
+        "label": "材料到通知流程",
+        "reason": "支持从材料录入到提案应用、任务完成、通知和原证据阅读的产品路径。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 193,
+          "startLine": 194,
           "endLine": 280
         },
-        "quote": "  await page.goto(base);\n  await check(\"empty real workspace and material capture\", async () => {\n    await expect(\n      page.getByRole(\"heading\", { name: \"知识从你的材料开始\" }),\n    ).toBeVisible();\n    await page\n      .getByRole(\"button\", { name: \"输入材料\", exact: true })\n      .first()\n      .click();\n    await page.getByLab"
-      },
-      {
-        "key": "c8",
-        "label": "布局、容量与故障边界",
-        "reason": "支持多视口、百层证据、故障展示、重启恢复及富文本安全渲染的验收范围。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 567,
-          "endLine": 739
-        },
-        "quote": "  await check(\"A-U04 768px layout and keyboard focus\", async () => {\n    await page.setViewportSize({ width: 768, height: 900 });\n    await page.reload();\n    expect(\n      await page.evaluate(\n        () => document.documentElement.scrollWidth <= innerWidth,\n      ),\n    ).toBe(true);\n    await page.getByText(\"选择原文提问或"
+        "quote": "  await check(\"empty real workspace and material capture\", async () => {\n    await expect(\n      page.getByRole(\"heading\", { name: \"知识从你的材料开始\" }),\n    ).toBeVisible();\n    await page\n      .getByRole(\"button\", { name: \"输入材料\", exact: true })\n      .first()\n      .click();\n    await page.getByLabel(\"材料标题\").fill(\"发布前的回滚验证"
       },
       {
         "key": "c9",
-        "label": "真实仓库知识界面",
-        "reason": "支持动态取得真实文章与引用，并检查代码展开、阅读轨迹、README 渲染、多视口和报告产物。",
-        "relation": "supports",
+        "label": "知识阅读断言",
+        "reason": "补充多层引用、深链、源码导航和焦点归还的验收意义。",
+        "relation": "background",
         "target": {
-          "kind": "material",
-          "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 34,
-          "endLine": 85
+          "kind": "article",
+          "key": "omem:scripts/knowledge-browser.ts",
+          "section": "assertions"
         },
-        "quote": "  await check(\"citations open the fixed code range and expand context\", async () => {\n    const catalog = await api(\"/api/knowledge/articles\");\n    const meta = catalog.articles.find((a: any) => a.key === \"omem:apps/server/src/agent-runtime/gateway.ts\");\n    expect(meta).toBeTruthy();\n    await page.getByLabel(\"查找章节\", "
+        "quote": ""
       },
       {
         "key": "c10",
-        "label": "隔离知识环境构造",
-        "reason": "支持创建临时源码仓库、同步材料与代码、发布固定知识，并启动真实 Store、Review 应用和 Chromium。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/knowledge-browser.ts",
-          "startLine": 1,
-          "endLine": 45
-        },
-        "quote": "// Real Vue/API/SQLite navigation checks with explicit fixture knowledge. No LLM.\nimport { chromium, expect } from \"@playwright/test\";\nimport { mkdtempSync, mkdirSync, writeFileSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resolve } from \"node:path\";\nimport { Store } from \"../apps/serv"
-      },
-      {
-        "key": "c11",
-        "label": "隔离阅读交互验收",
-        "reason": "支持多层引用导航、深链与焦点恢复、源码跳转、待办创建和 HTML 转义检查。",
+        "label": "隔离知识阅读链路",
+        "reason": "支持临时知识文章的多层导航、深链刷新、焦点恢复、源码跳转、待办和安全渲染断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/knowledge-browser.ts",
           "startLine": 49,
-          "endLine": 92
+          "endLine": 90
         },
         "quote": "  await page.goto(base + \"/#/overview\");\n  const entry = page.locator(\".knowledge-home > .knowledge-document\").getByRole(\"link\", { name: \"架构说明 ↗\", exact: true });\n  await entry.click();\n  await expect(page.locator(\".om-trail .citation-reason\")).toContainText(\"当前段落\");\n  for (const label of [\"模块 A 的说明\", \"模块 B 的说明\", \"模块 C"
       },
       {
-        "key": "c12",
-        "label": "ACP 模型能力选择",
-        "reason": "支持运行前探测可选模型、模型选择优先级及推理强度覆盖行为。",
-        "relation": "implements",
+        "key": "c11",
+        "label": "真实仓库证据轨迹",
+        "reason": "支持固定代码区间、上下文展开、知识解读、内层引用、滚动恢复和 URL 深链行为。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/live-model.ts",
-          "startLine": 4,
-          "endLine": 36
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "startLine": 36,
+          "endLine": 89
         },
-        "quote": "export async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  );\n  const modelOption = probe.configOptions.find(\n    (option) => option.id === \"model\",\n  );\n  if (!modelOption || modelOption.type !== \""
+        "quote": "  await check(\"citations open the fixed code range and expand context\", async () => {\n    const catalog = await api(\"/api/knowledge/articles\");\n    const meta = catalog.articles.find((a: any) => a.key === \"omem:apps/server/src/agent-runtime/gateway.ts\");\n    expect(meta).toBeTruthy();\n    await page.getByLabel(\"查找章节\", "
       },
       {
-        "key": "c13",
-        "label": "最小 ACP 在线对话",
-        "reason": "支持真实 ACP 中文问题、流式文本收集、答案检查和实际运行配置输出。",
+        "key": "c12",
+        "label": "真实 ACP 最小问答",
+        "reason": "支持在线模型选择、真实 ACP 会话、流式文本收集和最小答案检查。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-acp-smoke.ts",
-          "startLine": 10,
-          "endLine": 42
+          "startLine": 5,
+          "endLine": 25
         },
-        "quote": "const live = await acp(\n  profile,\n  config.agentCwd,\n  [\n    {\n      type: \"text\",\n      text: \"这是 omem ACP 接入测试。不要调用任何工具、不要读取文件、不要修改任何东西。提供的材料：有 3 组，每组 4 件。请仅回答总共几件。\",\n    },\n  ],\n  (type, text) => {\n    events.push(type);\n    if (type === \"text\") answer += text;\n  },\n  new AbortController().signal,\n);\nif (!answer.in"
+        "quote": "const config = loadConfig();\nconst base = config.profiles.find((profile) => profile.id === \"traex\")!;\nconst { probe, profile } = await selectLiveProfile(base, config.agentCwd);\nlet answer = \"\";\nconst events: string[] = [];\nconst live = await acp(\n  profile,\n  config.agentCwd,\n  [\n    {\n      type: \"text\",\n      text: \""
       },
       {
-        "key": "c14",
-        "label": "真实模型学习闭环",
-        "reason": "支持临时材料捕获、extractor、独立 verifier、策略应用、回执检查和审计报告的完整在线流程。",
+        "key": "c13",
+        "label": "真实学习闭环",
+        "reason": "支持 extractor 产出、稳定摘要、独立 verifier 复核以及自动应用与回执断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-learning-smoke.ts",
-          "startLine": 17,
-          "endLine": 143
+          "startLine": 73,
+          "endLine": 113
         },
-        "quote": "const directory = mkdtempSync(join(tmpdir(), \"omem-live-learning-\"));\nconst store = new Store(directory);\ntry {\n  const text = \"我负责在本周五18:00前补齐支付重试方案，先核对现有接口。\";\n  const captured = store.capture({\n    source: \"manual\",\n    externalId: \"live-learning-source\",\n    title: \"支付重试任务\",\n    observedAt: \"2026-09-22T08:00:00Z\",\n "
+        "quote": "  const extraction = await gateway.run({\n    roleId: \"extractor\",\n    profile,\n    context,\n  });\n  const proposals = (\n    extraction.result as { proposals: Record<string, unknown>[] }\n  ).proposals;\n  if (proposals.length !== 1) throw Error(\"Expected one live proposal\");\n  const proposal = proposals[0]!;\n  const prop"
       },
       {
-        "key": "c15",
-        "label": "Lark 文档在线读取",
-        "reason": "支持连接器冒烟读取固定 Wiki 页面、用统一捕获合同解析并输出摘要字段。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/live-connectors-smoke.ts",
-          "startLine": 1,
-          "endLine": 23
-        },
-        "quote": "import { larkInput } from \"../apps/server/src/connectors.js\";\nimport { captureSchema } from \"../packages/contracts/src/index.js\";\nconst input = captureSchema.parse(\n  await larkInput(\n    \"https://bytedance.larkoffice.com/wiki/DwxIwD5RtiF5LFk2MNvc853znmc\",\n  ),\n);\nconsole.log(\n  JSON.stringify(\n    {\n      connector: \""
-      },
-      {
-        "key": "c16",
-        "label": "Lark 文档捕获实现",
-        "reason": "支持 Lark URL 限制、lark-cli 调用、响应校验及原文、链接和引用元信息的捕获。",
+        "key": "c14",
+        "label": "飞书文档受限读取",
+        "reason": "支持飞书 URL 校验、lark-cli 调用和统一捕获输入的构造方式。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -237,70 +208,103 @@
         "quote": "export async function larkInput(url: string): Promise<CaptureInput> {\n  const u = new URL(url);\n  if (\n    !/^\\/(docx|wiki)\\/[a-zA-Z0-9]+\\/?$/.test(u.pathname) ||\n    u.protocol !== \"https:\" ||\n    u.username ||\n    u.password\n  )\n    throw Error(\"Expected an HTTPS Lark docx/wiki URL\");\n  if (\n    ![\"larkoffice.com\", \""
       },
       {
-        "key": "c17",
-        "label": "Lark 宿主在线验证",
-        "reason": "支持密钥与活动连接要求、待投递保护、官方能力预检、connected 等待和资源清理。",
-        "relation": "supports",
+        "key": "c15",
+        "label": "飞书宿主启动保护",
+        "reason": "支持真实密钥要求、待投递消息保护以及默认拒绝潜在外部发送。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-lark-host-smoke.ts",
           "startLine": 15,
-          "endLine": 132
+          "endLine": 40
         },
         "quote": "const dataDir = resolve(process.env.OMEM_DATA_DIR || \".omem\");\nconst key = process.env.OMEM_SECRET_KEY\n  ? process.env.OMEM_SECRET_KEY\n  : process.env.OMEM_LARK_KEY_FILE\n    ? readFileSync(resolve(process.env.OMEM_LARK_KEY_FILE), \"utf8\").trim()\n    : null;\nif (!key)\n  throw Error(\n    \"OMEM_SECRET_KEY or OMEM_LARK_KEY_"
       },
       {
-        "key": "c18",
-        "label": "开发端口探测",
-        "reason": "支持端口输入校验、占用处理及探测服务器关闭后返回端口，由此说明真实绑定前的竞态边界。",
-        "relation": "depends_on",
+        "key": "c16",
+        "label": "飞书连接成功条件",
+        "reason": "支持宿主以 connected 事件作为成功条件，并界定输出与资源清理范围。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
+          "startLine": 93,
+          "endLine": 133
+        },
+        "quote": "const startedAt = new Date().toISOString();\ntry {\n  host.start();\n  let states: string[] = [];\n  for (let index = 0; index < 180; index++) {\n    states = (\n      store.db\n        .prepare(\n          `SELECT state FROM lark_connection_events\n           WHERE created_at>=? ORDER BY rowid`,\n        )\n        .all(startedA"
+      },
+      {
+        "key": "c17",
+        "label": "开发端口占用处理",
+        "reason": "支持临时绑定探测、默认端口动态回退和显式端口冲突报错，并揭示释放监听后的竞态。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/dev-ports.ts",
-          "startLine": 5,
+          "startLine": 9,
           "endLine": 23
         },
-        "quote": "export async function selectDevPort(value: string | undefined, fallback: number, label: string): Promise<number> {\n  const port = value === undefined ? fallback : Number(value);\n  if (!Number.isInteger(port) || port < 0 || port > 65535)\n    throw new Error(`${label}: invalid port ${value}`);\n  try {\n    return await ne"
+        "quote": "  try {\n    return await new Promise<number>((resolve, reject) => {\n      const server = createServer();\n      server.once(\"error\", reject);\n      server.listen(port, \"127.0.0.1\", () => {\n        const assigned = (server.address() as { port: number }).port;\n        server.close(() => resolve(assigned));\n      });\n    }"
+      },
+      {
+        "key": "c18",
+        "label": "确定性评估输入",
+        "reason": "支持浏览器验收直接提交固定提案和预设为 supported 的 assessment，而非运行独立 verifier。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 129,
+          "endLine": 180
+        },
+        "quote": "  const response = await app.inject({\n    method: \"POST\",\n    url: \"/api/proposals/evaluate\",\n    payload: {\n      proposal: {\n        schema_version: 1,\n        proposal_id: input.proposalId,\n        kind: input.kind ?? \"task\",\n        operation: input.targetId ? \"supersede\" : \"create\",\n        ...(input.targetId ? { "
+      },
+      {
+        "key": "c19",
+        "label": "飞书能力替身",
+        "reason": "支持浏览器验收中的注册器、既有应用凭据和能力探测均由脚本内 fixture 提供。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 19,
+          "endLine": 65
+        },
+        "quote": "class BrowserRegistration implements LarkRegistrationAdapter {\n  register(request: LarkRegistrationRequest) {\n    const url = new URL(\"https://accounts.feishu.cn/open-apis/authen/v1/index\");\n    if (request.appId) url.searchParams.set(\"clientID\", request.appId);\n    if (request.createOnly) url.searchParams.set(\"createO"
+      },
+      {
+        "key": "c20",
+        "label": "活动连接与凭据检查",
+        "reason": "支持宿主冒烟选择活动连接、读取密钥引用并校验凭据中的应用标识。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
+          "startLine": 42,
+          "endLine": 60
+        },
+        "quote": "const secrets = new EncryptedSecretStore(resolve(dataDir, \"secrets\"), key);\nconst activeConnection = store.db\n  .prepare(\n    `SELECT c.app_id,v.secret_ref FROM lark_connections c\n     JOIN lark_connection_versions v ON v.connection_id=c.id\n       AND v.version=c.active_version\n     WHERE c.state='active' ORDER BY c.cr"
       }
     ],
     "questions": [
       {
-        "question": "端口预检与真实子进程绑定之间的抢占竞态是否需要消除？",
-        "why": "端口选择器会在返回前关闭探测服务器，而编排器稍后才创建 API 与 Web 子进程；并发环境中可能出现预检成功但实际绑定失败。",
-        "nextStep": "增加并发抢占集成场景，再决定采用有限启动重试、监听句柄移交，还是将其明确为可诊断失败。",
+        "question": "是否需要为端口预检与真实子进程绑定之间的抢占竞态增加有限重试或集成测试？",
+        "why": "端口选择器在返回前关闭临时监听，编排器随后才启动 API 与 Web；现有材料没有展示间隙内再次出现端口占用时的恢复策略。",
+        "nextStep": "增加并发抢占场景，断言子进程启动失败能够传播并完整清理；再依据发生频率选择有限重试或端口保留方案。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c18"
-        ]
-      },
-      {
-        "question": "在线检查遇到未登录、网络不可用或固定外部页面失效时，应记录为失败还是环境跳过？",
-        "why": "ACP、固定 Lark Wiki 和真实 Lark 宿主均依赖仓库外部状态，目前脚本直接抛错，但材料没有统一的 live 验收结果分类合同。",
-        "nextStep": "为在线检查定义 passed、failed、skipped 及原因字段，并在验证报告中保存实际模型、目标和外部前置条件。",
-        "blocking": false,
-        "citationKeys": [
-          "c13",
-          "c15",
+          "c3",
           "c17"
         ]
       },
       {
-        "question": "多尺寸截图是否需要升级为自动视觉回归基线？",
-        "why": "知识库检查保存三种视口截图，但自动断言主要关注元素可见和无横向溢出，无法稳定发现遮挡、间距或样式退化。",
-        "nextStep": "根据页面样式稳定性选择 Playwright 截图基线，或明确把截图定位为人工抽查产物并记录审阅结论。",
+        "question": "真实链路验收是否应继续扩展到任务字段和飞书消息闭环？",
+        "why": "学习冒烟只要求自动应用与回执，未断言负责人、截止时间和下一步；飞书宿主只等待连接成功，未验证入站捕获、记忆落库或出站送达。",
+        "nextStep": "分别增加稳定的任务语义断言，以及具有专用测试会话和接收目标的飞书入站、持久化和投递回执检查，并继续标记为 live 验收。",
         "blocking": false,
         "citationKeys": [
-          "c9"
-        ]
-      },
-      {
-        "question": "真实学习冒烟是否应断言任务的负责人、截止时间和证据引用？",
-        "why": "脚本要求提案安全应用并记录任务列表，但核心成功条件没有核对从中文承诺中提取出的关键任务字段。",
-        "nextStep": "围绕稳定的结构字段增加行为断言，同时避免依赖模型的具体措辞，并单独记录模型波动诊断。",
-        "blocking": false,
-        "citationKeys": [
-          "c14"
+          "c13",
+          "c16"
         ]
       }
     ]
@@ -309,12 +313,12 @@
     {
       "kind": "material",
       "key": "omem:scripts/browser-smoke.ts",
-      "digest": "9801f1a76ba44e64cb1bff5c95a3954a0eb4446bc0c72bfe91f7ab6fdb3ac451"
+      "digest": "ce08c50321f0a54409286d95f333c1fa77f55c849716b404b8c23de86608e93f"
     },
     {
       "kind": "material",
       "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "0e4681ea5d6f9ca1243828c2a17cb2058f6c2a6e318ed12a5ba29d64b4bfaa65"
+      "digest": "d7f1d2817be1f2169233b1c4cd53b28da5795301528e508657f63b54f1c41a4b"
     },
     {
       "kind": "material",
@@ -399,12 +403,12 @@
     {
       "kind": "article",
       "key": "omem:scripts/browser-smoke.ts",
-      "digest": "005ad2858ea97296d59c01a6d2b0f39d6a69879a99dc99508dca89c23db050ab"
+      "digest": "4f128fceafd6ad69f69a23b670b90aa06c9212748e3e54950997e34b80008850"
     },
     {
       "kind": "article",
       "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "2c7fea0014bf91d72b1c2b52b2d2745539f3a4aa74b5cef55b4d7de444ab3c4d"
+      "digest": "ab0546309e71f0129b58a406f23b5c29e36043f82f3196c5b872bd6a46835bac"
     },
     {
       "kind": "article",
@@ -429,7 +433,7 @@
     {
       "kind": "article",
       "key": "omem:scripts/knowledge-browser.ts",
-      "digest": "6ec3fe6622e39eb3435d0b042081db3cc4c47f0f2930493c9617f3c5ac976c8b"
+      "digest": "db5b697550be408b118ffdaa5d85edad58d89ece159610847c13b52e4d27730a"
     },
     {
       "kind": "article",
@@ -460,17 +464,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "high",
-    "at": "2026-10-01T08:37:12.313Z",
+    "at": "2026-10-01T13:03:30.089Z",
     "trace": {
-      "runId": "8c08097c-d21f-40d0-b4d7-a8f6b5313e8f",
+      "runId": "6752908d-6aa9-4d09-8039-3b27cc27848b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "a526aab93ce5098fbf4286dec3ee27ec315e5896f4e9dc457652f9c5738f592c",
-      "contextHash": "8c6253f4264274a169ae99d791b2d7551c909d9f3f226208964564b1ffc5f109",
+      "promptHash": "98717f1d40cc3f2d6141b5b9c0d017593acf0929bcea37fd761e3effd8b4fdfe",
+      "contextHash": "2ebbf3f408ad0de240daf5df0987216583c30e4a39fb7d0c8241b07c33e89975",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3b9df4f94e964131f6a607a7138f122b3165bb61734bf09dbe1d9db9460cb237",
+      "fingerprint": "e3177c808f699a757c4e29444b142efefef8af2344619de81597960a9f54a797",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "high",
@@ -483,10 +487,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f69b-bd33-7ec1-8541-5d35f969e7d1"
+        "01a0f78f-9e91-73a2-9192-860318cad2d8"
       ],
       "usage": {
-        "used": 115929,
+        "used": 119359,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -495,10 +499,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 284531,
-          "utf8Bytes": 329131,
-          "estimatedTokens": 109711,
-          "budgetedTokens": 137139,
+          "chars": 287373,
+          "utf8Bytes": 330899,
+          "estimatedTokens": 110300,
+          "budgetedTokens": 137875,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -507,17 +511,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T08:37:35.532Z",
+    "at": "2026-10-01T13:03:54.839Z",
     "trace": {
-      "runId": "c3a9f9b3-a27f-4e4a-b7ae-408b2462f4f6",
+      "runId": "14057fca-db34-44cc-a6ee-169bc8dd190c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
-      "promptHash": "f19a7af967e714d718e9919ad7ed4acc6ac7fea020132ef3794db77d7eca827b",
-      "contextHash": "7c012e9f1ecaeecc2282e0c4a412e935a53896aeaacf932f09056ae977b726c2",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "8dde718c45303485746407c4d7ecad4a573f9f5d4376239574df83a6f299a576",
+      "contextHash": "b6cdd564df06be36fd9796cc900a181b388b0ddbd384e5ce0d85f6a7b4712886",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "27514c8a22003631f7d2d55fc327bec534621b9cef613bd848ef36b4dda3a248",
+      "fingerprint": "6f16a05e3e6428d60d0bbb3c17ef30476a19d48807c636ca3d7e559e71d125d0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "high",
@@ -530,10 +534,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f69c-5c8f-7000-af29-444d1685fc15"
+        "01a0f790-2880-7fa0-861e-be35587a7ff5"
       ],
       "usage": {
-        "used": 113118,
+        "used": 114321,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -542,10 +546,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 281679,
-          "utf8Bytes": 323941,
-          "estimatedTokens": 107981,
-          "budgetedTokens": 134977,
+          "chars": 286018,
+          "utf8Bytes": 328356,
+          "estimatedTokens": 109452,
+          "budgetedTokens": 136815,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

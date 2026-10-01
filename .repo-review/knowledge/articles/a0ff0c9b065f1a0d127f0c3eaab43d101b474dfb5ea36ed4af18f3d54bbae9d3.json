@@ -2,57 +2,49 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/store.ts",
-    "title": "仓库评审存储、迁移与关系视图",
-    "summary": "该模块在通用单用户 SQLite Store 之上建立隔离的 repo-review 运行时，维护稳定文件身份及删除、移动、迁移元数据，并将人工种子关系持久化为可双向查询、可识别缺失与历史失效状态的证据链。旧结论中关于播种失败清理、迁移标记和空端关系失效的过宽描述已被更精确的边界替代。",
+    "title": "仓库评审数据的隔离存储与证据关系追踪",
+    "summary": "仓库评审复用 omem 的通用 SQLite 与仓储能力，但使用独立运行目录；文件以路径维持稳定身份，旧快照保留为不可变历史，代码与需求、决策、研究和测试之间则通过可失效的确定性关系连接。",
     "category": "implementation",
     "sections": [
       {
-        "key": "runtime-isolation",
-        "title": "隔离运行时与稳定来源身份",
-        "body": "模块把仓库评审数据放在 `.repo-review/runtime/data`，与个人工作区数据库分离；来源使用 `omem:<仓库相对路径>` 作为稳定身份，使文件修改继续累积 revision，同时避免相同内容的不同文件被合并。默认启动直接创建隔离 Store，只有显式设置 `REVIEW_IMPORT_LEGACY=1` 才从旧快照播种。[[c1]]\n\n播种先复制旧 SQLite、WAL 和 SHM 到临时目录，再通过 `VACUUM INTO` 生成一致数据库快照。旧稿所称“失败会删除不完整目标”现限定为：一致快照生成抛错时删除目标数据库并保留旧快照；随后同步状态或 assets 的复制失败并没有同等的整体清理保证。[[c2]] 底层仍复用通用 `Store`，负责建目录、打开 SQLite、执行迁移并初始化资产目录和仓储服务，因此此处是隔离配置与评审扩展，而非独立事实库。[[c3]]"
+        "key": "isolated-review-store",
+        "title": "隔离评审数据，同时复用通用存储",
+        "body": "repo-review 面向仓库代码评审，复用 omem 的捕获、检索和 Store 基础，但数据库、状态与资源均位于仓库自己的运行目录，不接触个人工作区数据、密钥或无关 worker。参考 [[c1]]\n\n`createReviewStore` 将通用 Store 绑定到 `.repo-review/runtime/data`；Store 会创建 SQLite、执行迁移、准备资源目录并初始化各类仓储服务。默认启动不依赖旧快照，只有显式设置导入开关时才执行历史导入。参考 [[c2]] [[c3]]\n\n导入过程先复制数据库及 WAL 文件到临时目录，再通过 `VACUUM INTO` 生成一致快照；若失败会清理不完整目标，旧档案始终保持不变。参考 [[c4]]"
       },
       {
-        "key": "source-migration",
-        "title": "来源元数据与旧身份迁移",
-        "body": "共享 Store 未表达的删除、移动、迁移和旧别名状态存入 `review_source_meta` 边表；元数据采用默认值与幂等 upsert，检索可取得已删除来源集合以排除失效证据。[[c4]]\n\n旧内容哈希来源迁移会从最新 revision 的上下文恢复 `filePath` 并按路径分组：没有现存路径来源时，选择版本及创建时间最新的一行改为稳定路径身份，其余行降级为保留 revision/fragment 的历史别名；已有路径来源时，所有旧行都降级。无法解析正文或缺少路径的行被保留而不迁移。[[c5]] 迁移标记只提供快速跳过：若标记存在但数据库仍有非 `omem:` 且带 live head 的来源，系统会视为疑似未完成迁移并重新扫描；仅在这类来源为零时直接返回。[[c6]]"
+        "key": "source-lifecycle",
+        "title": "稳定文件身份与历史迁移",
+        "body": "文件来源使用 `omem:<仓库相对路径>` 作为稳定身份：同一路径内容变化时累积新的 revision，而内容相同但路径不同的文件仍属于不同来源。评审侧表记录删除、移动、迁移和旧来源别名；其中删除标记可由检索读取，用于默认排除已删除证据。参考 [[c5]] [[c6]] [[c7]]\n\n旧内容哈希来源迁移时，系统从最新 revision 的上下文提取文件路径并分组。若尚无对应路径身份，组选出的最新快照取得该身份；其余旧来源只摘除当前 head 并登记为历史别名，revision 与 fragment 不会被删除。参考 [[c9]] [[c11]]\n\n无法解析正文或缺少 `context.filePath` 的来源不会进入迁移分组。迁移完成后写入标记，正常情况下后续启动直接返回；只有仍存在关联当前 head 的旧身份时才重新扫描。参考 [[c10]] [[c8]]"
       },
       {
-        "key": "relation-lifecycle",
-        "title": "关系写入、查询与失效边界",
-        "body": "评审关系保存六类前向边，并从种子身份生成确定性 ID 后 upsert，使重复同步保持幂等；反向关系名仅在读取时派生。种子删除可将不再存在的边改为 stale，但当前有效 association 集合为空时函数直接返回，因此尚不能从此处确认“权威清空”是否会失效全部旧边。[[c7]]\n\n片段查询以 LEFT JOIN 保留未解析关系，并区分存储状态与有效展示状态：若已解析的另一端不再位于当前 head 或来源已删除，有效状态强制为 stale；默认隐藏 stale，而 `other: null` 的 missing 边仍可见。[[c8]] 代码路径查询进一步从当前代码片段沿 `implements` 展开到意图，再汇集需求、决策、研究和测试边；历史与 stale 是否出现由选项控制。[[c9]]\n\n同步前失效处理会检查关系两端：空端本身不会因为“无法解析”而触发 stale；但若该关系属于本次来源的已解析一端已不是当前 head，或另一已解析端失效、被删除，整条关系仍会标为 stale。这替代了旧稿“空端 missing 关系一律保留”的过宽结论。[[c10]] 汇总接口目前把 confirmed、candidate 单列，其余状态统一计入 missing，因此 stale 也会落入 missing 桶。[[c11]]"
+        "key": "relation-graph",
+        "title": "从代码追到需求、决策与测试",
+        "body": "评审关系保存 `implements`、`requires`、`decided_by`、`researched_by`、`tested_by` 等正向类型，反向名称在查询时派生。关系由 seed 身份生成稳定 ID并幂等更新；缺少新结构字段的旧派生表可以重建，因为权威输入仍是关联 seed。参考 [[c12]] [[c13]]\n\n```mermaid\nflowchart LR\n  C[代码片段] -->|implements| I[意图片段]\n  I --> R[需求]\n  I --> D[决策]\n  I --> S[研究]\n  I --> T[测试]\n```\n\n代码路径查询先取得文件当前 revision 的片段及其出边，再沿 `implements` 到达意图片段，并补充这些意图片段的一层出边。因此它提供代码到背景证据的两层追踪链，而不是任意深度的图遍历。参考 [[c14]]"
+      },
+      {
+        "key": "staleness-and-boundaries",
+        "title": "关系过期规则与待确认边界",
+        "body": "读取单个片段的关系时，系统同时检查存储状态、另一端是否仍属于来源当前 head，以及来源是否已删除。即使数据库中仍为 confirmed，只要另一端过期或被删除，对外状态就会降为 stale；默认查询过滤 stale，但保留无法解析另一端的 missing 关系。参考 [[c15]]\n\n同步前的失效逻辑会检查关系两端，将指向非当前 revision、无 head 或已删除来源的关系标为 stale，并保留明确的空端点，以便重建阶段重新写入仍有效的边。参考 [[c16]]\n\n两个边界仍需结合调用方与行为测试确认：有效 seed 集合为空时，removed-seed 失效函数直接返回；代码路径查询虽然构造了目标端当前性和删除状态条件，最终 SQL 却只直接应用了代码源 head 与存储状态条件。参考 [[c17]] [[c18]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审运行时目录与显式旧数据导入",
-        "reason": "支持隔离数据目录、稳定路径身份以及仅在显式环境开关下播种旧快照的论断。",
+        "label": "评审存储隔离边界",
+        "reason": "支持 repo-review 复用通用捕获和检索能力，同时隔离个人数据库、worker 与密钥的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 17,
-          "endLine": 108
+          "startLine": 1,
+          "endLine": 10
         },
-        "quote": "/** Relative (POSIX) directory, inside the repo, that holds review runtime data.\n *\n * Layout:\n *   .repo-review/runtime/   gitignored live runtime: omem.sqlite WAL, sync state,\n *                           assets. Created on demand and seeded once from the\n *                           tracked legacy snapshot below.\n *"
+        "quote": "/** repo-review is a code-review-only knowledge base that shares omem's Store,\n * capture and retrieval primitives but points at an isolated data directory. It\n * never touches the personal workspace SQLite/state, runs no Lark/learning workers,\n * and never reads secrets.\n *\n * This module also owns the review-specific"
       },
       {
         "key": "c2",
-        "label": "一致快照生成与局部失败清理",
-        "reason": "精确限定只有 VACUUM INTO 抛错时删除目标数据库，并显示后续状态和资产复制不在该 catch 清理范围内。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 67,
-          "endLine": 97
-        },
-        "quote": "  const scratch = mkdtempSync(join(reviewStateDir(repoRoot), \"seed-copy-\"));\n  const scratchDb = join(scratch, \"omem.sqlite\");\n  for (const suffix of [\"\", \"-wal\", \"-shm\"]) {\n    if (existsSync(legacyDb + suffix)) copyFileSync(legacyDb + suffix, scratchDb + suffix);\n  }\n  let src: DatabaseSync | null = null;\n  try {\n   "
-      },
-      {
-        "key": "c3",
         "label": "通用 Store 初始化",
-        "reason": "说明评审运行时复用通用 SQLite Store 的迁移、资产目录和仓储初始化能力。",
+        "reason": "说明通用 Store 如何创建 SQLite、执行迁移并初始化资源目录和仓储服务。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -63,23 +55,88 @@
         "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       },
       {
+        "key": "c3",
+        "label": "评审 Store 创建入口",
+        "reason": "支持评审数据库目录绑定及旧历史仅在显式开关下导入的结论。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 100,
+          "endLine": 108
+        },
+        "quote": "/** Build a Store bound to `.repo-review/runtime/data`: its own omem.sqlite and\n * assets dir, fully separate from the personal workspace under `.omem/`. On first\n * boot the runtime is seeded from the tracked legacy snapshot (see\n * {@link ensureReviewRuntimeSeeded}). */\nexport function createReviewStore(repoRoot: str"
+      },
+      {
         "key": "c4",
-        "label": "评审来源元数据",
-        "reason": "支持删除、移动、迁移、旧别名字段及其幂等读写和删除来源查询。",
+        "label": "一致快照导入",
+        "reason": "支持临时复制、SQLite 一致快照、失败清理以及旧档案保持不变的流程说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 51,
+          "endLine": 82
+        },
+        "quote": "/** One-time, idempotent seed: if the ignored runtime DB does not exist yet but the\n * tracked legacy snapshot does, take a consistent read-only SQLite backup\n * (`VACUUM INTO`, which captures WAL frames without writing the source) and\n * project the sync-state files. The legacy files are never modified, deleted, or\n *"
+      },
+      {
+        "key": "c5",
+        "label": "路径稳定身份",
+        "reason": "支持同一路径跨内容修改累积 revision、不同路径保持独立来源的身份规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 29,
+          "endLine": 35
+        },
+        "quote": "/** Stable external-id prefix. A source identity is `omem:<repo-relative-path>` so\n * that the same file across content edits accumulates revisions (head moves) while\n * two files that happen to share identical bytes stay independent sources. */\nexport const EXTERNAL_ID_PREFIX = \"omem:\";\n\nexport function reviewDataDir("
+      },
+      {
+        "key": "c6",
+        "label": "来源状态元数据",
+        "reason": "支持删除、移动、迁移和旧来源别名由评审侧表维护的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/store.ts",
           "startLine": 115,
-          "endLine": 226
+          "endLine": 140
         },
         "quote": "export type SourceMeta = {\n  removed: boolean;\n  movedTo: string | null;\n  migrated: boolean;\n  /** For a legacy content-hash source that lost its path to a newer snapshot:\n   * the `omem:<path>` it was demoted as an alias of. Null for path-identified\n   * sources and un-aliased legacy rows. */\n  legacyAliasOf: string "
       },
       {
-        "key": "c5",
-        "label": "旧来源按路径归并",
-        "reason": "支持从最新 revision 提取路径、选择当前来源、降级历史别名并跳过无路径行的迁移流程。",
-        "relation": "explains",
+        "key": "c7",
+        "label": "删除来源过滤集合",
+        "reason": "直接支持检索读取已删除来源集合，并默认排除过期或已删除证据的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 219,
+          "endLine": 226
+        },
+        "quote": "/** Set of source ids marked removed. Used by search to exclude stale/deleted\n * evidence unless the caller explicitly opts back in. */\nexport function removedSourceIds(store: Store): Set<string> {\n  ensureReviewMetaTable(store);\n  const rows = store.db\n    .prepare(\"SELECT source_id FROM review_source_meta WHERE remov"
+      },
+      {
+        "key": "c8",
+        "label": "迁移标记与快速返回",
+        "reason": "支持迁移标记避免常规重复扫描，同时允许异常遗留的活动旧来源再次迁移。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 261,
+          "endLine": 280
+        },
+        "quote": "export function migrateLegacySources(\n  store: Store,\n  stateDir: string,\n): number {\n  ensureReviewMetaTable(store);\n  mkdirSync(stateDir, { recursive: true });\n  const marker = join(stateDir, MIGRATION_MARKER);\n\n  // Fast path: once migrated, only re-run if an earlier broken migration left a\n  // legacy (content-hash"
+      },
+      {
+        "key": "c9",
+        "label": "旧来源迁移分组与选择",
+        "reason": "支持按文件路径分组、选择最新快照取得路径身份以及降级其余旧来源的流程。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/store.ts",
@@ -89,35 +146,74 @@
         "quote": "  // Collect every legacy content-hash source, grouped by the filePath recorded\n  // on its MOST RECENT revision. Revisions are immutable, so filePath stays\n  // available even after a source's head is detached for history.\n  const legacy = store.db\n    .prepare(\n      `SELECT s.id AS id, s.external_id AS oldId,\n      "
       },
       {
-        "key": "c6",
-        "label": "迁移标记的重新扫描例外",
-        "reason": "支持标记存在时仍检查带 live head 的旧身份，并仅在不存在疑似未完成迁移时快速返回。",
-        "relation": "contradicts",
+        "key": "c10",
+        "label": "缺少路径的迁移处理",
+        "reason": "说明正文无法解析或缺少文件路径时，该来源不会进入迁移分组。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 269,
-          "endLine": 280
+          "startLine": 305,
+          "endLine": 321
         },
-        "quote": "  // Fast path: once migrated, only re-run if an earlier broken migration left a\n  // legacy (content-hash) source still attached to a live head. Otherwise every\n  // sync start would re-scan for nothing.\n  if (existsSync(marker)) {\n    const live = store.db\n      .prepare(\n        `SELECT COUNT(*) AS n FROM sources s\n"
+        "quote": "  type LegacyRow = (typeof legacy)[number];\n  const groups = new Map<string, LegacyRow[]>();\n  for (const row of legacy) {\n    let filePath: string | null = null;\n    if (row.latest_body) {\n      try {\n        filePath = (JSON.parse(row.latest_body) as {\n          context?: { filePath?: string };\n        }).context?.fi"
       },
       {
-        "key": "c7",
-        "label": "关系幂等写入与移除种子失效",
-        "reason": "支持确定性关系身份、upsert 以及有效 association 集合为空时不执行旧边失效的当前边界。",
+        "key": "c11",
+        "label": "历史来源降级",
+        "reason": "支持降级操作只清除当前 head、记录路径别名，而不删除 revision 和 fragment。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 430,
-          "endLine": 503
+          "startLine": 238,
+          "endLine": 258
         },
-        "quote": "/** Deterministic relation id so repeated syncs never mint a duplicate row and\n * ids stay stable across restarts. seedIdentity makes each seed-derived edge\n * unique even when both fragment endpoints are unresolved (missing links). */\nexport function relationId(seedIdentity: string): string {\n  return (\n    \"rel_\" +\n "
+        "quote": "/** Detach a legacy source from current browsing/retrieval without touching its\n * revisions/fragments, and record which path identity it aliases. Idempotent:\n * a no-op once the source is already detached and aliased correctly. */\nfunction demoteLegacySource(\n  store: Store,\n  sourceId: string,\n  aliasOf: string,\n): v"
       },
       {
-        "key": "c8",
-        "label": "片段关系的有效状态与默认过滤",
-        "reason": "支持双向关系视图、另一端当前性检查、missing 空端保留及默认隐藏 stale 的行为。",
+        "key": "c12",
+        "label": "关系类型与反向名称",
+        "reason": "支持评审关系保存正向类型，并在反向查询时派生可读关系名称。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 367,
+          "endLine": 405
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Review relations: hand-maintained, bidirectional code↔intent↔decision↔\n// research↔test links. Forward relation types are stored; the inverse direction\n// is derived at query time (e.g. implements → implemented_by). Rows are\n// upserted f"
+      },
+      {
+        "key": "c13",
+        "label": "确定性关系写入",
+        "reason": "支持旧派生表可重建、关系 ID 由 seed 身份确定以及重复同步幂等更新的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 407,
+          "endLine": 482
+        },
+        "quote": "export function ensureReviewRelationsTable(store: Store): void {\n  // Older derived tables (pre seed_identity) are disposable: relations are rebuilt\n  // from the seed on every sync, so dropping a stale-shaped table loses nothing.\n  const cols = store.db\n    .prepare(\"PRAGMA table_info(review_relations)\")\n    .all() as"
+      },
+      {
+        "key": "c14",
+        "label": "代码证据追踪链",
+        "reason": "支持代码片段出边经 implements 扩展到意图片段出边的两层追踪流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 689,
+          "endLine": 750
+        },
+        "quote": "/** All relations on the trace chain for one code file: the code fragment's own\n * outgoing edges (implements → its intent fragment) PLUS every outgoing edge of\n * the reachable intent fragments (requires/decided_by/researched_by/tested_by →\n * the raw docs/tests). That yields the full intent→decision→research→test cha"
+      },
+      {
+        "key": "c15",
+        "label": "关系有效状态计算",
+        "reason": "支持依据另一端当前性与删除状态计算有效状态，以及普通片段查询默认过滤 stale、保留 missing 的行为。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -128,22 +224,9 @@
         "quote": "/** One relation as returned to the API. `direction` is \"outgoing\" when the\n * queried fragment is the source, \"incoming\" when it is the target (and\n * relationType is then the inverse display name). For unresolved (missing)\n * links the other-side fields are null.\n *\n * `status` is the stored row; `relationStatus` is "
       },
       {
-        "key": "c9",
-        "label": "代码路径证据链查询",
-        "reason": "支持从代码到意图再到需求、决策、研究和测试的一次查询，以及历史和 stale 过滤选项。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 680,
-          "endLine": 750
-        },
-        "quote": "/** Options for the code-path trace view. Default (both false) only shows\n * relations anchored to the CURRENT head of the file and to live, non-removed\n * targets. `includeHistorical` also surfaces relations built against older\n * revisions; `includeStale` additionally keeps dead/stale links. */\nexport type CodePathRe"
-      },
-      {
-        "key": "c10",
-        "label": "关系两端的陈旧失效规则",
-        "reason": "精确说明空端本身不触发失效，但本来源端或另一已解析端失效时关系仍会被标记 stale。",
+        "key": "c16",
+        "label": "同步前关系失效",
+        "reason": "支持关系任一端失去当前性或来源被删除时标记 stale，并保留未解析空端点的规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -154,36 +237,82 @@
         "quote": "/** Mark relations touching a source as stale (without deleting them) so that\n * links built against superseded fragments stop reading as live. Called by sync\n * before rebuild: a head bump, a seed removal, a deleted target or a replaced\n * head leaves old relation rows pointed at non-current fragments. We flip them to"
       },
       {
-        "key": "c11",
-        "label": "关系状态汇总",
-        "reason": "支持汇总只单列 confirmed 与 candidate、并将包括 stale 在内的其他状态计入 missing 的当前实现。",
-        "relation": "tracks",
+        "key": "c17",
+        "label": "空 seed 集合分支",
+        "reason": "支持有效 seed 集合为空时 removed-seed 失效函数直接返回的边界观察。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 847,
-          "endLine": 872
+          "startLine": 485,
+          "endLine": 503
         },
-        "quote": "/** Counts for GET /associations: total relation rows plus per-status buckets. */\nexport function relationsSummary(store: Store): {\n  total: number;\n  confirmed: number;\n  candidate: number;\n  missing: number;\n  byType: Record<string, number>;\n} {\n  ensureReviewRelationsTable(store);\n  const rows = store.db\n    .prepar"
+        "quote": "/** After a sync, any seed-derived edge whose assoc id is no longer in the seed\n * list is flipped to stale (never silently kept green). */\nexport function invalidateRemovedSeeds(\n  store: Store,\n  validAssocIds: Set<string>,\n): number {\n  ensureReviewRelationsTable(store);\n  if (validAssocIds.size === 0) return 0;\n  c"
+      },
+      {
+        "key": "c18",
+        "label": "代码路径过滤实现",
+        "reason": "支持目标端过滤条件虽被构造、最终查询却只直接拼接代码源 head 与存储 stale 条件的观察。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 680,
+          "endLine": 750
+        },
+        "quote": "/** Options for the code-path trace view. Default (both false) only shows\n * relations anchored to the CURRENT head of the file and to live, non-removed\n * targets. `includeHistorical` also surfaces relations built against older\n * revisions; `includeStale` additionally keeps dead/stale links. */\nexport type CodePathRe"
       }
     ],
     "questions": [
       {
-        "question": "当有效 association 集合为空时，是否应把所有已有种子关系标记为 stale？",
-        "why": "`invalidateRemovedSeeds` 在空集合时直接返回，无法区分“权威种子集合已清空”和“本次未加载到种子输入”，旧关系可能继续保持非 stale。",
-        "nextStep": "核对调用方对空集合的合同并增加行为测试；若空集合表示权威清空，则执行全量失效，否则显式建模“未加载种子”状态。",
+        "question": "当 associations seed 变为空集合时，是否应将所有已有 seed 派生关系标记为 stale？",
+        "why": "函数在有效集合为空时直接返回，可能使最后一批 seed 被删除后，既有关系仍保持原状态；现有材料没有说明调用方是否保证集合永不为空。",
+        "nextStep": "检查同步调用方与行为测试；若空集合代表有效的空 seed，应实现全量失效并增加回归断言，否则明确记录调用方约束。",
         "blocking": false,
         "citationKeys": [
-          "c7"
+          "c17"
         ]
       },
       {
-        "question": "关系汇总是否有意把 stale 行计入 missing？",
-        "why": "状态模型包含 stale，但汇总只分别累计 confirmed 和 candidate，所有其他状态都进入 missing，可能混淆历史失效与未解析关系。",
-        "nextStep": "核对 GET /associations 的产品合同并增加 stale 汇总用例；若需要区分，应增加 stale 桶或从 missing 中排除 stale。",
+        "question": "`relationsForCodePath` 默认模式是否应隐藏目标端已删除或非当前的关系？",
+        "why": "函数构造了目标端当前性与删除状态条件，但最终 SQL 没有使用该条件数组；返回值映射后也未按有效 relationStatus 再次过滤。",
+        "nextStep": "用存储层或接口测试覆盖非当前目标、已删除目标和 stored confirmed 的组合；若函数注释代表预期合同，应将目标端条件应用到查询或映射后的过滤。",
         "blocking": false,
         "citationKeys": [
-          "c11"
+          "c14",
+          "c18"
+        ]
+      },
+      {
+        "question": "迁移、关系失效与 seed 重建是否在所有同步入口中按预期顺序执行？",
+        "why": "当前材料只展示存储原语，无法确认端到端同步编排及其事务边界。",
+        "nextStep": "检查实际同步入口和集成测试，核验迁移、旧边失效、seed upsert 与 removed-seed 失效的调用顺序。",
+        "blocking": false,
+        "citationKeys": [
+          "c9",
+          "c16",
+          "c17"
+        ]
+      },
+      {
+        "question": "`relationsForCodePath` 的默认模式是否应隐藏目标端已删除或不再属于当前 head 的关系？",
+        "why": "函数构造了目标端当前性和删除状态条件，但实际查询仅直接应用代码源 head 与存储状态过滤，返回映射后也没有按有效 `relationStatus` 再过滤。这与函数注释描述的默认行为存在潜在差异。",
+        "nextStep": "通过存储层或接口行为测试覆盖目标端非当前、已删除以及存储状态为 confirmed 的组合；若注释是预期合同，则将目标端条件用于实际查询或映射后过滤。",
+        "blocking": false,
+        "citationKeys": [
+          "c14",
+          "c18"
+        ]
+      },
+      {
+        "question": "迁移、关系失效、seed 重建和 removed-seed 失效是否在所有同步入口中按预期顺序执行？",
+        "why": "所给材料能够证明各项存储原语，但没有展示端到端同步编排及事务边界。文章已将这一点保留为待确认事项，没有把它提升为已验证事实。",
+        "nextStep": "检查实际同步入口及集成测试，确认各步骤的调用顺序与失败时的事务行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c9",
+          "c16",
+          "c17"
         ]
       }
     ]
@@ -197,26 +326,26 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:20:07.611Z",
+    "effort": "high",
+    "at": "2026-10-01T11:52:33.119Z",
     "trace": {
-      "runId": "c54a342e-45a4-419d-8752-cabc1da5e1ef",
+      "runId": "ffa0fa5f-3117-4115-beef-4fd1f777fbbd",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "c3a9409eaf7ed182a3e004cc6921ecd37df6fa0d5de7cc378f58c892f7b23381",
-      "contextHash": "ff635e5a8cd3fff18b036adf608c5e3b85e8ec78d0528200cd5a9cc6767cc926",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "211eca6c74a5495ae9bdb20838cffd908872f5b604a19facfaa444aac3d58001",
+      "contextHash": "e9c22d8d407810db352245afba6e8256668007603aa65849dc3346815da62e3b",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "8a347cc2aab09925baf567096ac98fafa3e6f7538e65f4d1e45dcb90132124e5",
+      "fingerprint": "6fc2ad0000499e17a58834001ba3e20ca709633bd20daef0aef90b94e942fcee",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -226,10 +355,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f542-abe1-7182-b1a4-3dbdaf1abfe5"
+        "01a0f74e-a440-7ec0-8d16-b305a18f49f9"
       ],
       "usage": {
-        "used": 37017,
+        "used": 40720,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -238,10 +367,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 56564,
-          "utf8Bytes": 61974,
-          "estimatedTokens": 20658,
-          "budgetedTokens": 25823,
+          "chars": 61943,
+          "utf8Bytes": 70279,
+          "estimatedTokens": 23427,
+          "budgetedTokens": 29284,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -250,20 +379,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:20:30.901Z",
+    "at": "2026-10-01T11:52:54.680Z",
     "trace": {
-      "runId": "7bba977a-d285-4c8c-89b7-35ebbf4c4d9d",
+      "runId": "33b8f210-3310-4848-aeec-ad6d58f2cccd",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "a5067b5e165cd7dbb700068df3bea3d8dc42dfa1242431d74b820449e9f3e005",
-      "contextHash": "39043549d1bfefe974707bb3ffea8b7a0903626f3e2b07445b20204074a50fab",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "38a4ec07f1efc499db05cbc44ea48afd954aadd1ed425bd91c41d94133e55bf7",
+      "contextHash": "3878d9eee049e13e154e1e13e1d1769c338c382602f80c18453853faa71f775e",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1f8a98b25f3739614f0151eeb62465017cd08646882b4b3b9127e27d29d2bb6c",
+      "fingerprint": "cbe3640a728a9c12bbd5d24a3fb99f602e815b67b6905269fcdcc4befaf6c7d1",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -273,10 +402,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f543-33c5-7883-bdcc-82bf69e035c7"
+        "01a0f74f-3371-74b0-9af8-27f8e1fc3a8e"
       ],
       "usage": {
-        "used": 34981,
+        "used": 38679,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -285,10 +414,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 54938,
-          "utf8Bytes": 59344,
-          "estimatedTokens": 19782,
-          "budgetedTokens": 24728,
+          "chars": 60102,
+          "utf8Bytes": 66980,
+          "estimatedTokens": 22327,
+          "budgetedTokens": 27909,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

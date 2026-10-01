@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-    "title": "个人知识库阅读与引用路径导航",
-    "summary": "个人知识库页面负责衔接文章目录、正文阅读和多层证据抽屉，并把当前文章及引用路径编码进 URL。它复用共享的证据轨迹能力，支持深链恢复、浏览器地址同步和组件卸载清理；路径过长时保留当前阅读状态，但停止写入不完整链接。",
+    "title": "个人知识库的阅读入口与证据路径",
+    "summary": "该组件组合知识目录、文章阅读和多层证据抽屉，并负责保存、恢复当前文章及引用阅读路径，让用户深入证据时仍保留主阅读上下文。",
     "category": "implementation",
     "sections": [
       {
         "key": "purpose",
-        "title": "统一文章阅读与证据追溯",
-        "body": "该页面是个人知识库的组合入口：主区域交给 `KnowledgeHome` 展示文章目录和正文，用户从正文继续打开知识、引用或来源时，则把目标压入共享证据轨迹，由抽屉逐层呈现。这样既能连续阅读主题文章，也能沿论断追溯固定证据，而不必离开当前页面。参考 [[c1]]\n\n它直接复用 `@omem/ui` 的轨迹状态与抽屉组件，说明导航栈、回退、跳转、循环提示和焦点归还属于跨场景的通用交互能力，而非个人知识库自行维护的一套状态机。参考 [[c2]]"
+        "title": "在文章阅读中追溯证据",
+        "body": "个人知识库入口解决“阅读结论时继续查看依据，又不丢失正文位置”的问题。主区域由 `KnowledgeHome` 展示目录和当前文章，文章产生的导航帧进入共享轨迹抽屉，因此知识正文与证据阅读可以并存。参考 [[c1]]\n\n活动帧会交给 `KnowledgeFrame`，内容加载后再把可读标题回填到对应轨迹帧。该组件进一步按帧类型展示知识文章、原始材料或固定引用；固定引用解析成功后，还会根据目标类型打开文章或材料。参考 [[c2]]、[[c7]]"
       },
       {
-        "key": "routing",
+        "key": "route-flow",
         "title": "文章选择与深链恢复",
-        "body": "当前文章优先从会话存储恢复，缺省进入总览；文章被选择后，页面更新当前键并把“当前文章 + 完整引用轨迹”序列化到 `#/knowledge/` 地址。收到地址变化时，它反向解析路由，只接受知识、引用和来源三类轨迹帧，再恢复当前层级与抽屉开关。参考 [[c3]]\n\n恢复过程中先把帧标题设为“正在读取引用…”，随后 `KnowledgeFrame` 根据帧类型加载文章、来源或引用，并通过 `loaded` 事件回填可读标题。引用不可操作或解析失败时，下层组件会展示原因，而不会静默跳转。参考 [[c4]]"
+        "body": "初始文章优先采用会话中保存的选择，否则打开总览。用户切换文章时，入口更新当前键，并把文章位置和引用帧栈编码进 URL hash；地址更新使用替换历史记录的方式。参考 [[c3]]\n\n页面初始化及 hash 变化时会恢复路由：解析当前文章，只保留 `knowledge`、`citation`、`source` 三类帧，把栈顶设为当前项，并依据栈是否为空决定抽屉是否打开。恢复期间使用临时读取标题，待内容加载后再更新。参考 [[c4]]"
       },
       {
-        "key": "boundaries",
-        "title": "链接长度保护与生命周期边界",
-        "body": "当轨迹超过 `MAX_TRAIL` 时，页面不会截断正在显示的栈，而是保留阅读状态、提示链接无法完整保存，并停止改写地址；因此屏幕中的导航仍可继续，但此时复制出的 URL 不能代表最新完整路径。参考 [[c5]]\n\n页面启动时立即尝试恢复深链，挂载后监听 `hashchange`，卸载前移除监听器，避免组件销毁后继续响应地址变化。材料未展示 `MAX_TRAIL` 的具体数值、共享轨迹对循环的判定算法，也没有提供此页面的测试文件，因此无法据此确认刷新、浏览器前进后退和超长路径提示是否已有自动化覆盖。参考 [[c6]]"
+        "key": "limits",
+        "title": "职责边界与路径限制",
+        "body": "深链保存受 `MAX_TRAIL` 约束。帧数超限时，现有阅读栈仍然可用，但页面停止把完整路径写入链接，并显示状态提示；因此该限制控制的是可分享 URL 的长度预算，而非运行时可阅读的层数。参考 [[c5]]\n\n入口组件主要负责编排轨迹、路由和抽屉。文章列表的获取、选择持久化与定时刷新由 `KnowledgeHome` 完成。参考 [[c6]] 固定引用的数据请求由 `KnowledgeFrame` 在引用帧变化时发起，并用代次检查避免较早请求覆盖当前结果；其模板负责呈现加载、不可用状态及最终内容。参考 [[c8]]、[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识库页面组合入口",
-        "reason": "支持页面把文章目录、正文和证据抽屉组合为同一阅读入口的说明。",
+        "label": "知识库入口组合",
+        "reason": "支持主知识页面与共享证据抽屉并存，以及目录导航进入轨迹的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -38,47 +38,47 @@
       },
       {
         "key": "c2",
-        "label": "共享证据轨迹状态",
-        "reason": "说明页面复用共享轨迹能力，并接入回退、跳转、关闭及焦点归还等交互。",
-        "relation": "depends_on",
+        "label": "活动帧与标题回填",
+        "reason": "支持活动帧交给内容组件，并在加载完成后更新轨迹帧可读标题的说明。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-          "startLine": 3,
-          "endLine": 14
+          "startLine": 29,
+          "endLine": 30
         },
-        "quote": "import { OmTrailDrawer, useEvidenceTrail, parseHash, writeHash, MAX_TRAIL } from \"@omem/ui\";\nimport KnowledgeHome from \"./KnowledgeHome.vue\";\nimport KnowledgeFrame from \"./KnowledgeFrame.vue\";\nconst selectedKey = ref(sessionStorage.getItem(\"omem-knowledge-page\") || \"topic:overview\");\nconst linkNotice = ref(\"\");\nfunctio"
+        "quote": "  <OmTrailDrawer :open=\"open\" :frames=\"frames\" :current=\"current\" :loop-at=\"loopAt\" :return-focus-to=\"trigger\" @close=\"close\" @back=\"back\" @jump=\"jump\" @dismiss-loop=\"loopAt = null\">\n    <KeepAlive v-if=\"open\"><KnowledgeFrame v-if=\"active\" :key=\"active.kind + active.id\" :frame=\"active\" prefix=\"/api/knowledge\" @navigate"
       },
       {
         "key": "c3",
-        "label": "知识深链保存与恢复",
-        "reason": "支持当前文章和轨迹写入 URL、按允许类型恢复帧栈及抽屉状态的流程。",
+        "label": "文章状态与路由保存",
+        "reason": "支持默认文章、选择更新以及将当前文章和轨迹写入 URL hash 的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
           "startLine": 6,
-          "endLine": 23
+          "endLine": 15
         },
         "quote": "const selectedKey = ref(sessionStorage.getItem(\"omem-knowledge-page\") || \"topic:overview\");\nconst linkNotice = ref(\"\");\nfunction saveRoute() {\n  if (frames.value.length > MAX_TRAIL) { linkNotice.value = \"引用路径过长，当前阅读不受影响，但链接暂不保存完整路径。\"; return; }\n  linkNotice.value = \"\";\n  const hash = writeHash({ view: {name:\"module\", m"
       },
       {
         "key": "c4",
-        "label": "轨迹帧内容解析",
-        "reason": "解释下层组件如何按帧类型加载内容、回填标题并处理不可用引用。",
-        "relation": "calls",
+        "label": "知识深链恢复",
+        "reason": "支持解析知识路由、过滤允许的帧类型、定位当前帧和恢复抽屉状态。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 21,
-          "endLine": 30
+          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+          "startLine": 16,
+          "endLine": 25
         },
-        "quote": "  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event)\" />\n  <Knowledg"
+        "quote": "function restoreRoute() {\n  if (!location.hash.startsWith(\"#/knowledge/\")) return;\n  const route = parseHash(location.hash.replace(\"#/knowledge/\", \"#/module/\"));\n  if (route.view.name === \"module\") selectedKey.value = route.view.module;\n  frames.value = route.trail.filter(f => [\"knowledge\", \"citation\", \"source\"].includ"
       },
       {
         "key": "c5",
-        "label": "超长引用路径保护",
-        "reason": "支持超过轨迹长度预算时保留阅读状态但不保存不完整链接的边界行为。",
+        "label": "引用路径长度限制",
+        "reason": "支持轨迹超限时保留当前阅读、停止保存完整链接并显示提示的边界说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -90,42 +90,56 @@
       },
       {
         "key": "c6",
-        "label": "地址监听生命周期",
-        "reason": "支持首次恢复、监听地址变化以及卸载时清理监听器的生命周期说明。",
-        "relation": "implements",
+        "label": "知识目录职责",
+        "reason": "支持目录组件获取文章、保存选择、同步外部选择并定时刷新数据的说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
           "startLine": 16,
-          "endLine": 25
+          "endLine": 27
         },
-        "quote": "function restoreRoute() {\n  if (!location.hash.startsWith(\"#/knowledge/\")) return;\n  const route = parseHash(location.hash.replace(\"#/knowledge/\", \"#/module/\"));\n  if (route.view.name === \"module\") selectedKey.value = route.view.module;\n  frames.value = route.trail.filter(f => [\"knowledge\", \"citation\", \"source\"].includ"
+        "quote": "function select(key: string) { selected.value = key; sessionStorage.setItem(\"omem-knowledge-page\", key); emit(\"select\", key); }\nwatch(() => props.selectedKey, key => { if (key) selected.value = key; });\nasync function load() {\n  try {\n    const result = await knowledgeApi<{ articles: ArticleMeta[] }>(props.prefix, \"/ar"
+      },
+      {
+        "key": "c7",
+        "label": "知识与证据内容分派",
+        "reason": "支持知识、原始材料和固定引用三类内容的渲染分派，以及引用加载和不可用状态的呈现。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 21,
+          "endLine": 30
+        },
+        "quote": "  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event, frame.id)\" />\n "
+      },
+      {
+        "key": "c8",
+        "label": "固定引用请求",
+        "reason": "支持仅为引用帧发起固定引用请求、处理错误并防止过期异步结果覆盖当前状态的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 12,
+          "endLine": 16
+        },
+        "quote": "watch(() => props.frame.id, async () => {\n  const current = ++generation; citation.value = null; error.value = \"\";\n  if (props.frame.kind !== \"citation\") return;\n  try { const c = await knowledgeApi<Citation>(props.prefix, \"/citation?\" + new URLSearchParams({ document: String(parsed.value.document), revision: String(pa"
       }
     ],
-    "questions": [
-      {
-        "question": "共享轨迹的循环判定、最大深链长度以及超长路径恢复行为是否有独立测试覆盖？",
-        "why": "当前材料只展示调用结果和超长时的页面提示，没有提供 `useEvidenceTrail`、`MAX_TRAIL` 的实现或相关测试，无法确认边界算法及浏览器导航行为。",
-        "nextStep": "检查 `@omem/ui` 中证据轨迹实现及其测试，并补充覆盖刷新、前进后退、循环引用和超过长度预算的浏览器断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c5",
-          "c6"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-      "digest": "9bf848d1f3790ed20552e455d515e163ef3f5985eaa825a8de451f5d89c4e087"
+      "digest": "826b26c11a26eb00995d9a0add998e3c4de4f9fc874627882753d3bbbcb85812"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
+      "digest": "6e92d6bf702f386c61e1c9314b6d2474664b11ab9f28f897f99af15bcdc9bb8b"
     },
     {
       "kind": "material",
@@ -135,34 +149,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T06:53:53.670Z",
+    "effort": "high",
+    "at": "2026-10-01T12:12:14.874Z",
     "trace": {
-      "runId": "edc6cdea-b101-4c4e-b1b9-57f985e7df21",
-      "roleId": "code-analyst",
+      "runId": "1cfb6f1f-2ee7-405e-929b-ef0fd3371849",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
-      "promptHash": "ce70dea0046d2faae1193cbf9bb6b3fdc7ff4ac059cb4530333dedbf81be737a",
-      "contextHash": "046986f9be64a0a037946e3af2b124e0b7ddf11b94ef26292c4400895bc09933",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "2785eb53b44bb6b901dc991a066091098840797918cee16123ee79fd6d785177",
+      "contextHash": "01279f7fe1528619b2dbe65a185ed7a27c62bdbb2f61e88906e34f121587c297",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "93fb2ccd8c5ac6ef8424e86f2ebb7d583367c1b60c207a16a930b55a1a62e139",
+      "fingerprint": "90bc267b19b68b37c1a9b115085c2b4ad851486db5e19f7eff960eeca1e90a45",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63d-66ac-73e1-9f1d-f3de9fa0c5fc"
+        "01a0f760-e063-7bf1-a321-af995bbb7c9a"
       ],
       "usage": {
-        "used": 26076,
+        "used": 29574,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -171,10 +185,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 19454,
-          "utf8Bytes": 22922,
-          "estimatedTokens": 7641,
-          "budgetedTokens": 9552,
+          "chars": 25471,
+          "utf8Bytes": 31457,
+          "estimatedTokens": 10486,
+          "budgetedTokens": 13108,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -183,20 +197,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:54:14.029Z",
+    "at": "2026-10-01T12:12:29.998Z",
     "trace": {
-      "runId": "e6c7ede3-d39f-483f-bbe6-80ff885acfbc",
+      "runId": "3e423727-abd3-44ba-aec5-6080eaa00b0f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "24444845d5a4ad1165d9bd009d79880836fb622008f9da6cde7a45679951f9b4",
-      "contextHash": "33afa1f090634648a7d0847321de911506d59788cd14761db35b98a7f06acaaf",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "39944bfe8334cb6f11b7d67da7e0175afeb5dd1f85ea81f2de49308d5b83eae6",
+      "contextHash": "37c3a4d289725d83648b6bf2c94d44bd8470b9d5925bc3e770cea98d4cdde11d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "abc64c1e646456f411685b2577398b0803e8fb3b6629f21cbc3745b1aec33eed",
+      "fingerprint": "468ee33f7f4a047576cec9b7330f388774ce2895da395ded6efcabcbbf02d20d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -206,10 +220,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63d-c5dc-7ed0-9e46-b8d0426f0dc1"
+        "01a0f761-3bdc-7322-b4dc-4e30184845a8"
       ],
       "usage": {
-        "used": 25851,
+        "used": 26288,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -218,10 +232,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21152,
-          "utf8Bytes": 24806,
-          "estimatedTokens": 8269,
-          "budgetedTokens": 10337,
+          "chars": 23150,
+          "utf8Bytes": 28280,
+          "estimatedTokens": 9427,
+          "budgetedTokens": 11784,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

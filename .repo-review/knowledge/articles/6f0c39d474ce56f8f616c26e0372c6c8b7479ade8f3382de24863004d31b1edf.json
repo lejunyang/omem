@@ -1,0 +1,266 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/ChangeComparison.vue",
+    "title": "历史内容差异查看器",
+    "summary": "该组件按变更标识读取固定版本内容，将前后快照转换为带上下文的文本补丁，并明确呈现加载失败、历史不完整、无文字变化和逐块差异等状态。它依赖同目录 API 客户端，但当前材料未展示接口响应合同及请求竞态处理。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "组件用于查看一条历史变更前后的正文差异。调用方只需传入 `changeId`；组件会监听该值，并在首次挂载或标识变化时重新读取对应的固定版本内容。每次请求前都会清空旧内容和错误，避免把上一条变更继续显示为当前结果。参考 [[c1]]\n\n界面将“请求失败”“正在读取”和“历史版本关联不完整”分开呈现。其中错误使用 `role=\"alert\"`，加载提示使用 `role=\"status\"`；若服务端声明存在前序版本却未返回快照，则明确说明无法还原差异，而不是生成误导性的空对比。参考 [[c2]]"
+      },
+      {
+        "key": "comparison-flow",
+        "title": "从快照到可读差异",
+        "body": "拿到后置快照后，组件以旧正文和新正文生成结构化补丁；首次保存没有旧快照时，以空字符串作为比较起点。补丁保留三行上下文，使读者既能看到增删，也能理解修改所在位置。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[changeId 变化] --> B[读取固定版本]\n  B --> C{快照是否完整}\n  C -->|否| D[说明无法还原]\n  C -->|是| E[生成结构化补丁]\n  E --> F[按区块展示增删行]\n```\n\n界面先显示版本迁移关系，再逐个渲染补丁区块、原新行号及具体行；以 `+`、`-` 前缀识别新增和删除。若没有任何 hunk，则提示正文与引用没有文字变化，并把此次更新解释为复核或来源记录变化。参考 [[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界与模块关系",
+        "body": "差异区块限制最大高度并允许滚动，标题固定在区块顶部；长行会换行，从而适应窄屏和较长正文。新增与删除使用不同背景色，但材料中没有展示额外的颜色图例或高对比度主题适配。参考 [[c5]]\n\n组件通过同目录 `api` 客户端发起请求，但请求函数实现和 `/changes/:id/content` 的服务端合同不在给定材料中。API 层可见部分复用了共享 contracts 中的 `Revision`、`Fragment`、`Change` 类型，而本组件对比较接口的 `Snapshot` 与响应结构采用本地声明，材料未证明两者存在直接类型约束。参考 [[c6]]\n\n此外，监听回调没有可见的取消、序列号或结果去重逻辑；当 `changeId` 快速连续变化时，较早请求是否可能覆盖较晚结果，需结合 API 客户端行为进一步确认。参考 [[c1]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "变更内容读取流程",
+        "reason": "支持组件监听 changeId、请求前清理状态、调用 API 并捕获错误的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChangeComparison.vue",
+          "startLine": 5,
+          "endLine": 13
+        },
+        "quote": "const props = defineProps<{ changeId: string }>();\ntype Snapshot = { title: string; version: string; text: string };\nconst content = ref<{ before: Snapshot | null; after: Snapshot | null; hasBefore: boolean }>();\nconst error = ref(\"\");\nwatch(() => props.changeId, async id => {\n  content.value = undefined; error.value ="
+      },
+      {
+        "key": "c2",
+        "label": "加载与异常状态",
+        "reason": "支持界面对错误、加载中和历史快照不完整三类状态分别反馈的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChangeComparison.vue",
+          "startLine": 17,
+          "endLine": 20
+        },
+        "quote": "  <section class=\"change-comparison\" aria-label=\"内容差异\">\n    <p v-if=\"error\" role=\"alert\">{{ error }}</p>\n    <p v-else-if=\"!content\" role=\"status\">正在读取固定版本…</p>\n    <p v-else-if=\"!content.after || (content.hasBefore && !content.before)\" class=\"muted\">这条历史记录没有保存可比较的完整版本关联，无法还原差异。</p>"
+      },
+      {
+        "key": "c3",
+        "label": "结构化补丁生成",
+        "reason": "支持以新旧正文生成补丁、首次保存使用空旧文本并保留三行上下文的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChangeComparison.vue",
+          "startLine": 14,
+          "endLine": 14
+        },
+        "quote": "const patch = computed(() => content.value?.after ? structuredPatch(\"之前\", \"之后\", content.value.before?.text ?? \"\", content.value.after.text, \"\", \"\", { context: 3 }) : null);"
+      },
+      {
+        "key": "c4",
+        "label": "差异区块呈现",
+        "reason": "支持版本说明、无文字差异提示以及按区块和行渲染增删内容的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChangeComparison.vue",
+          "startLine": 22,
+          "endLine": 27
+        },
+        "quote": "      <p>{{ content.before?.version ?? '首次保存' }} → {{ content.after.version }} · − 删除 / ＋ 新增（保留上下文）</p>\n      <p v-if=\"!patch?.hunks.length\" class=\"muted\">正文与引用没有文字差异；本次更新的是复核或来源记录。</p>\n      <div v-for=\"(hunk, i) in patch?.hunks ?? []\" :key=\"i\" class=\"diff-hunk\">\n        <header>原 {{ hunk.oldStart }} 行 → 新 {{ hunk.new"
+      },
+      {
+        "key": "c5",
+        "label": "差异阅读样式",
+        "reason": "支持滚动区块、固定标题、长行换行和增删背景色等展示行为的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChangeComparison.vue",
+          "startLine": 31,
+          "endLine": 32
+        },
+        "quote": "<style scoped>\n.change-comparison{min-width:0;margin:16px 0;}.diff-hunk{border:1px solid var(--om-line);border-radius:6px;overflow:auto;margin:12px 0;max-height:600px;}.diff-hunk header{font-size:12px;padding:8px 12px;background:var(--om-soft);position:sticky;top:0;}.diff-hunk pre{margin:0;padding:2px 12px;font:12px/1."
+      },
+      {
+        "key": "c6",
+        "label": "共享 API 类型背景",
+        "reason": "支持 API 层从共享 contracts 引入并导出 Revision、Fragment、Change 类型，同时说明材料未显示比较响应与这些类型的直接约束。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "import type { TaskFollowUp } from \"../../../packages/contracts/src/task-flow.js\";\nimport type {\n  Revision,\n  Fragment,\n  Change,\n  RunEvent,\n} from \"../../../packages/contracts/src/index\";\nexport type { Revision, Fragment, Change };"
+      }
+    ],
+    "questions": [
+      {
+        "question": "快速切换 changeId 时，API 客户端或上层是否保证旧请求不会覆盖新请求结果？",
+        "why": "组件的监听回调直接写入共享的 content 和 error 状态，当前材料未显示请求取消、请求序号校验或 API 层的去重机制，因此竞态行为不能确定。",
+        "nextStep": "检查 api 函数实现，并增加快速连续切换 changeId 的组件测试；若无现成保障，可考虑 AbortController 或请求令牌校验。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "`/changes/:id/content` 的正式响应类型是否应进入共享合同？",
+        "why": "组件本地声明 Snapshot 和响应结构，而可见 API 类型层复用了共享 contracts；当前材料不足以确认该接口是否已有服务端合同或运行时校验。",
+        "nextStep": "核对服务端路由及 contracts 定义，确认字段、空值和 hasBefore 的一致性，再决定是否提取共享 DTO。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c6"
+        ]
+      },
+      {
+        "question": "现有测试是否覆盖首次保存、缺失前序快照、无文字差异、请求失败和异步竞态？",
+        "why": "提供的材料中没有测试文件，因此只能解释代码分支，无法确认这些用户可见行为是否已有断言。",
+        "nextStep": "查阅对应组件测试和 API 集成测试；若缺失，优先补充状态分支与快速切换标识的行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c4"
+        ]
+      },
+      {
+        "question": "快速连续切换 changeId 时，较早请求是否可能覆盖较晚请求的结果？",
+        "why": "监听回调会直接更新共享的 content 和 error，当前材料未显示请求取消、序号校验或 API 客户端提供的竞态保护；草稿已将这一点正确保留为不确定边界。",
+        "nextStep": "结合 api 函数实现或现有组件行为测试确认是否已有竞态保护；若没有，再评估请求令牌或取消机制。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
+        ]
+      },
+      {
+        "question": "`/changes/:id/content` 的响应结构是否已有共享合同或服务端运行时校验？",
+        "why": "组件在本地声明 Snapshot 和响应结构，而所给 API 类型材料仅显示 Revision、Fragment、Change 等共享类型，无法确认该比较接口的正式合同。",
+        "nextStep": "核对服务端路由和 contracts 定义，确认字段、空值及 hasBefore 语义是否由共享合同约束。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChangeComparison.vue",
+      "digest": "8195aaf8e9c4b1151c67cb805bc7a0657d9eb0b74e85877466e3a96107ae4f63"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "high",
+    "at": "2026-10-01T12:07:38.923Z",
+    "trace": {
+      "runId": "a645ba74-a2e2-4816-8206-2338d81212c3",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "ddeb987e182c7c973cd4920bd0702eb6ae9763da7a2eab661623f402e3ec9923",
+      "contextHash": "6e197b7247039daa97d69ea6e689f3572114db36f91a5ca3cd29f8982d55fbda",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "7fe88105d1c66cfd90eb7b6acdb5e5cfe6b91fe0f388af07397abc3da7988eb3",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "high",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f75c-2e95-7820-b8db-30d4fc7040eb",
+        "01a0f75c-9d4e-73f0-ab10-7133ab509dc2"
+      ],
+      "usage": {
+        "used": 26213,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 11828,
+          "utf8Bytes": 15113,
+          "estimatedTokens": 5038,
+          "budgetedTokens": 6298,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 1
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T12:08:03.079Z",
+    "trace": {
+      "runId": "9e442143-9883-423b-a91e-ff1a93e3be39",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "15108cc867c27ffbcfe7d56702ced2d3fcefacd117534f293a244c3786c535f2",
+      "contextHash": "a39e259947711bd4cbf61eb152cbad00b7adf73c707f13e0d4c7589323d49474",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "b26a34e2a6a1faeb1bd654bec5d8c6a8333cffba4bb1b945367bb04c20034bcc",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "high",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f75d-0601-7400-baef-be9a6cad1392"
+      ],
+      "usage": {
+        "used": 25066,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 14696,
+          "utf8Bytes": 20534,
+          "estimatedTokens": 6845,
+          "budgetedTokens": 8557,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -2,40 +2,27 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/index.html",
-    "title": "Web 应用 HTML 入口",
-    "summary": "该文件是 omem Web 前端的最小 HTML 外壳：声明中文页面环境与移动端视口，提供 Vue 应用挂载节点，并通过 ES 模块加载 TypeScript 入口。材料仅能证明启动结构与页面标题，不能据此判断具体界面、路由或业务能力已经实现。",
+    "title": "Web 应用启动页",
+    "summary": "该文件是 omem Web 前端的最小 HTML 宿主：声明中文页面、适配移动端视口，提供应用挂载容器，并通过 ES 模块加载 TypeScript 入口。它能证明浏览器启动链的入口约定，但不能单独证明所用前端框架、具体界面、业务能力或运行状态。",
     "category": "implementation",
     "sections": [
       {
-        "key": "entry-structure",
-        "title": "页面入口结构",
-        "body": "文件以 HTML5 文档启动，在同一行设置 UTF-8 编码、响应式 viewport，并把页面语言标记为 `zh-CN`。页面可见标题是“omem · 个人工作记忆”，说明产品定位在个人工作记忆场景；但标题属于界面元数据，不能单独证明记忆采集、检索或助理流程已经实现。[[c1]]"
+        "key": "page-shell",
+        "title": "浏览器页面的基础外壳",
+        "body": "这个页面解决的是 Web 应用进入浏览器时的**基础装载问题**。文档声明为 HTML5，页面语言设置为简体中文，字符集采用 UTF-8，并配置与设备宽度一致的视口，为中文内容显示和移动端页面缩放建立基础环境。浏览器标签标题为“omem · 个人工作记忆”，表明该入口面向个人工作记忆场景。参考 [[c1]]"
       },
       {
-        "key": "vue-bootstrap",
-        "title": "应用挂载与启动边界",
-        "body": "`body` 只提供 `#app` 容器，并以 `type=\"module\"` 加载 `/src/main.ts`，呈现典型的客户端应用启动方式。实际组件树、状态管理、接口连接和错误处理都位于未提供的 TypeScript 源码或其他模块中，因此本材料只能确认启动契约，不能确认运行后的功能范围。[[c2]]"
+        "key": "application-bootstrap",
+        "title": "应用代码的加载入口",
+        "body": "页面主体提供一个名为 `app` 的容器，并以模块脚本加载 `/src/main.ts`；具体界面没有直接写在这份 HTML 中，而应由后续入口代码负责。现有材料只能确认容器和 TypeScript 模块入口的存在，不能据此断定该容器由 Vue 挂载，也无法确认页面结构、业务功能、构建结果或浏览器中的实际运行状态。参考 [[c1]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "HTML 文档头与产品标题",
-        "reason": "支持页面语言、字符集、移动端视口以及“个人工作记忆”标题的判断，同时界定这些内容仅是入口元数据。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/index.html",
-          "startLine": 1,
-          "endLine": 1
-        },
-        "quote": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>omem · 个人工作记忆</title></head><body><div id=\"app\"></div><script type=\"module\" src=\"/src/main.ts\"></script></body></html>"
-      },
-      {
-        "key": "c2",
-        "label": "Vue 挂载容器与模块入口",
-        "reason": "解释浏览器如何从空挂载节点进入 `/src/main.ts`，并支持对该文件职责边界的说明。",
-        "relation": "explains",
+        "label": "Web 应用 HTML 入口",
+        "reason": "支持页面语言、字符集、视口、标题、应用容器和 TypeScript 模块入口等事实，同时界定这份 HTML 能够证明的范围。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/index.html",
@@ -47,12 +34,12 @@
     ],
     "questions": [
       {
-        "question": "`/src/main.ts` 当前挂载了哪些根组件、路由和全局能力？",
-        "why": "入口文件只给出模块路径，没有提供该模块内容，无法确认页面启动后的实际功能，也不能把产品标题推断成已完成的业务能力。",
-        "nextStep": "补充 `apps/web/src/main.ts` 及其直接导入的根组件材料，再梳理真实初始化流程和已实现界面。",
+        "question": "`/src/main.ts` 是否实际创建并挂载了 Vue 应用，且当前页面能否完成浏览器启动？",
+        "why": "现有材料只给出 HTML 宿主和脚本引用，缺少 TypeScript 入口源码、构建配置及运行结果，不能据此判断前端框架及当前可运行状态。",
+        "nextStep": "检查 `apps/web/src/main.ts` 及相关构建配置，并通过项目检查与浏览器启动验证挂载结果。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c1"
         ]
       }
     ]
@@ -62,55 +49,50 @@
       "kind": "material",
       "key": "omem:apps/web/index.html",
       "digest": "9eba05b8514ffe71592094d06a723f5e8775521106e4d68b9b871d87dbc4b1b1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/package.json",
-      "digest": "85268e48064a45b61d7e07e1b2bcbab67fc0d323ff79ed09eb38864c67ea3845"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-09-29T12:50:28.187Z",
+    "effort": "high",
+    "at": "2026-10-01T12:33:59.997Z",
     "trace": {
-      "runId": "7fe25cf0-ab78-4c8e-96ec-7675cd17601d",
-      "roleId": "material-analyst",
+      "runId": "86db1d9e-52cb-4ba1-b7fd-641709d6732a",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
-      "promptHash": "256f4f53ac26a7ce40b9823fddb624719bdb49a6faf7598d5294df8bfa09934d",
-      "contextHash": "aa9ce5410003a0312ba799e3bea681e0f021303022884951bf59ab83c538faa7",
-      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "9280faf749d02b671b11a2a453ee1f04091a69c664a7862a7a4615492ea9c1bf",
+      "contextHash": "d4322df4ee6f5163f08cd55dbd1da9eaafc116ec1e814cabd81d4915e0b5438b",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3b274c24b06d8f32c6789d113c0e471ca9dc37d32efbe2a399dfce27c8ee3684",
+      "fingerprint": "a82f29988bf4993e455e102479721448ba3d1eb639a3ce51f45954a6bbc7f1d6",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-material-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed37-22b6-72a1-a988-3f173e318878"
+        "01a0f774-e5c7-7352-bcbc-97e7f55d493b"
       ],
       "usage": {
-        "used": 15827,
-        "size": 760000,
+        "used": 22521,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 7087,
-          "utf8Bytes": 8656,
-          "estimatedTokens": 2886,
-          "budgetedTokens": 3608,
+          "chars": 9161,
+          "utf8Bytes": 14056,
+          "estimatedTokens": 4686,
+          "budgetedTokens": 5858,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -119,20 +101,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T12:50:33.972Z",
+    "at": "2026-10-01T12:34:12.908Z",
     "trace": {
-      "runId": "5edcb9a3-f44c-4133-bc85-75f0c91bc55d",
+      "runId": "c1fd84a4-5435-4723-ad77-8f6b4caf46ed",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
-      "promptHash": "ca12a7cf3aba042a398e6883960f1f317d28840b88e90016abb196bb22140e7e",
-      "contextHash": "e14970c18c926a8171b24ad25395288a07bc1c1d42197cfecbd759d0324314ce",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "a8c015d3ef15ecf718eb9aa8074ab4788d2f8b3c6c326434eaf4a45342a3a762",
+      "contextHash": "d2ecfd00a286df468291f4c214a22c0fb6384aff6cf5c1c9ad31401b7853fe30",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "70bbe123abe0ee0bba567357803b74ec83b50221714e9004e436fc380f6f6bb9",
+      "fingerprint": "2e2eb52d80da16284a31e223de67ae2ff9e184b7e11bcc92f4cdc3f4cffce902",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -142,22 +124,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed37-70e9-7cb2-8a0c-63de974c01bb"
+        "01a0f775-243e-7f92-aa9d-32daf11eb8ff"
       ],
       "usage": {
-        "used": 15529,
-        "size": 760000,
+        "used": 21194,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 9795,
-          "utf8Bytes": 13486,
-          "estimatedTokens": 4496,
-          "budgetedTokens": 5620,
+          "chars": 6351,
+          "utf8Bytes": 10166,
+          "estimatedTokens": 3389,
+          "budgetedTokens": 4237,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

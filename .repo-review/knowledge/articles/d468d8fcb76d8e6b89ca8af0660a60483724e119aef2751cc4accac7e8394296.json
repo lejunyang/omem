@@ -2,88 +2,70 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/lark-delivery.test.ts",
-    "title": "Lark 通知投递验收测试",
-    "summary": "该测试以临时 SQLite、加密凭据仓库和可编程消息替身覆盖 Lark 通知的持久化、重试、即时映射、聚合、定时调度、绑定隔离及恢复通知。它验证的是组件状态机和数据库结果，并不等同于真实 Lark SDK、网络故障或并发 worker 的端到端验收。",
+    "title": "飞书通知投递的持久化、重试与绑定安全验收",
+    "summary": "这组验收测试验证应用变更进入飞书通知后，在进程重启、发送结果不确定、限流、鉴权失败、聚合发送、定时摘要和连接换绑等场景中的持久化与安全边界。测试通过真实 SQLite 仓储和加密密钥存储运行，但以 FakeMessages 替代飞书网络接口，因此证明的是本地投递状态机及数据映射，不代表真实飞书 API 已完成联调。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose_fixture",
-        "title": "测试目标与隔离夹具",
-        "body": "本文件验证业务变更落库后，外部通知在延迟、失败和进程重启条件下仍可追踪。每个用例创建临时 `Store`、SQLite 文件和加密 secret，种入连接、绑定及通知目标，结束后关闭数据库并删除目录。[[c1]] `FakeMessages` 记录 `send`、`update` 参数并按序返回成功或错误，因此测试可以精确观察投递状态机，但不会访问真实飞书服务。[[c2]]\n\n任务入口通过 `Store.applications.applyTask` 制造业务变更，随后按 `change_id` 查询 Lark intent；这证明该测试如何把应用结果与投递记录关联起来，而不只是依赖模块导入。[[c3]]"
+        "key": "purpose-and-boundary",
+        "title": "解决通知不可靠与重复执行问题",
+        "body": "业务变更不能因服务重启而丢失，也不能为了补发通知重新执行任务。测试先应用一次任务，确认生成待投递记录；关闭并重新打开 Store 后，worker 继续处理同一 outbox，最终只发送一条消息、任务仍只有一条，并保存平台消息号。参考 [[c1]]\n\n这与 Store 所声明的单用户 SQLite 基础一致：不可变修订、变更和通知 outbox 被设计为共同提交，团队级数据库与租户约束仍是后续迁移事项。参考 [[c2]]"
       },
       {
-        "key": "delivery_states",
-        "title": "持久化、重试与失败状态",
-        "body": "重启用例先写入任务和 pending intent，再关闭并重开同一数据目录，由单个 `LarkDeliveryWorker` 继续处理；最终 intent 为 delivered、保存消息 ID，任务数仍为一，说明恢复投递没有重放业务应用。[[c4]] 模糊发送在一小时窗口内复用同一 provider UUID 重试，超过窗口的 sending 记录转为 unknown，且不产生额外发送。[[c5]]\n\n限流错误按照 `retryAfterMs` 推迟下一次尝试；后续认证失败会使 intent 失败、连接转为 failed、目标被禁用，同时持久化错误不得泄露 secret。[[c6]] 这些断言验证的是已分类错误进入 worker 后的状态迁移，不能直接证明真实 SDK 错误一定会被正确分类。"
+        "key": "retry-and-failure",
+        "title": "按错误性质收敛投递状态",
+        "body": "投递器把外部失败区分为限流、鉴权、永久失败和结果不确定，并通过适配器携带稳定 UUID 发送卡片。参考 [[c3]]\n\n当响应丢失时，一小时内的重试沿用同一 UUID，以降低重复消息风险；超过窗口的悬挂发送被标为 `unknown`，且不再盲目重发。参考 [[c4]] 限流错误遵循返回的等待时间，随后若遇到鉴权错误则投递失败、连接失效、目标禁用，同时断言错误记录不会泄露密钥。参考 [[c5]]\n\n这些断言覆盖状态迁移和脱敏结果，但没有证明真实飞书服务是否按 UUID 幂等，也没有覆盖 worker 并发竞争、网络超时组合及消息更新接口的实际行为。"
       },
       {
-        "key": "aggregation_binding",
-        "title": "即时映射、聚合策略与绑定隔离",
-        "body": "即时模式为五次变更保留五个独立 intent：每条拥有对应 change、唯一 provider UUID、64 位 payload digest，并各有一条映射记录。[[c7]] 这项契约与窗口聚合相互独立；窗口模式到期后才把五个待处理项合成一个摘要 intent、取消四个被替代项、保留全部 change 映射，并只发送一次。[[c8]] 定时模式另行验证上海时区下一次 09:00 边界，以及摘要生成后恢复为可立即投递的 instant 状态。[[c9]]\n\n绑定替换后，旧目标上的 intent 被取消且不会转发到新会话；`MemoryService.restoreMemory` 产生的新变更则使用当前绑定，卡片载荷也不得含 localhost 或回环地址。[[c10]]"
-      },
-      {
-        "key": "relations_limits",
-        "title": "模块协作与未覆盖边界",
-        "body": "测试中的职责由实际调用分别体现：`Store` 初始化 `ApplicationRepository`，为应用入口提供数据库依赖；[[c11]] `applyTask` 产生可查询的变更与 intent，[[c3]] repository 和 worker 领取并完成投递，[[c4]] batcher 合并到期通知，[[c8]] 而 `restoreMemory` 触发恢复版本后的新投递记录。[[c10]] 这取代了仅凭导入列表推断全部模块职责的旧结论。\n\n边界上，生产适配器合同同时声明 `send` 与 `update`，[[c12]] 但当前夹具只是记录两类调用，现有验收路径主要断言发送结果。[[c2]] 各可靠性用例展示的也是单 worker 顺序执行，[[c4]][[c5]] 因而尚不能据此确认真实 SDK 鉴权与 HTTP 错误映射、消息更新失败策略、多个 worker 的租约竞争，或远端成功而本地确认前崩溃时的端到端结果。"
+        "key": "aggregation-and-binding",
+        "title": "聚合通知仍保留逐项追踪",
+        "body": "即时模式为每项变更建立独立 intent、摘要指纹、平台 UUID 和变更映射，确保通知可追溯。参考 [[c6]] 窗口模式则在截止后把五项变更合成一条摘要，将其余 intent 标为已被取代，但仍保留全部 change 映射；worker 最终只发送一次。参考 [[c7]] 定时模式还验证上海时区的下一次摘要边界，并在到期后形成一条即时可发送摘要。参考 [[c8]]\n\n换绑是明确的安全边界：旧绑定产生的 intent 不会被转发到新会话，而是取消；记忆恢复产生的新通知使用新绑定，卡片中也不得出现 localhost 或回环地址。参考 [[c9]] 该测试由 `ApplicationRepository` 产生变更与投递记录，并通过 `MemoryService.restoreMemory` 验证恢复流程，但提供材料未展示这些模块内部如何原子写入或构造卡片，因此这里只确认可观察结果。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时存储与连接夹具",
-        "reason": "支持每个测试创建临时 Store、加密凭据、连接、绑定和通知目标，并在结束后清理资源的说明。",
-        "relation": "explains",
+        "label": "重启后继续投递",
+        "reason": "支持 outbox 跨进程重启保留、任务不重放且投递结果被持久化的断言。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-delivery.test.ts",
-          "startLine": 62,
-          "endLine": 137
+          "startLine": 172,
+          "endLine": 210
         },
-        "quote": "const setup = (\n  target = \"oc_owner_1\",\n  externalNotifications?: Partial<ExternalNotificationPolicy>,\n) => {\n  const directory = mkdtempSync(join(tmpdir(), \"omem-lark-delivery-\"));\n  const key = randomBytes(32);\n  const store = new Store(directory, { externalNotifications });\n  const secrets = new EncryptedSecretStor"
+        "quote": "describe(\"B2-06 Lark delivery acceptance\", () => {\n  it(\"A-N01 persists the outbox across a process restart without replaying the application\", async () => {\n    const resource = setup();\n    const receipt = applyTask(resource.store, \"1\");\n    const intentBefore = larkIntent(resource.store, receipt.changeId);\n    expec"
       },
       {
         "key": "c2",
-        "label": "可编程消息替身",
-        "reason": "支持测试记录发送与更新调用、注入结果且不访问真实 Lark 网络的说明。",
-        "relation": "explains",
+        "label": "SQLite 持久化边界",
+        "reason": "说明 Store 当前以单用户 SQLite 为基础，并将变更与通知 outbox 共同提交。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/lark-delivery.test.ts",
-          "startLine": 40,
-          "endLine": 60
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 5
         },
-        "quote": "class FakeMessages implements LarkMessageAdapter {\n  readonly sends: Parameters<LarkMessageAdapter[\"send\"]>[0][] = [];\n  readonly updates: Parameters<LarkMessageAdapter[\"update\"]>[0][] = [];\n  sendResults: Array<{ messageId: string } | Error> = [];\n  updateResults: Array<void | Error> = [];\n\n  async send(input: Paramet"
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */"
       },
       {
         "key": "c3",
-        "label": "任务应用与投递记录关联",
-        "reason": "支持 applyTask 通过应用仓库创建任务变更，并按 change ID 查询对应 Lark intent 的测试流程。",
-        "relation": "supports",
+        "label": "投递错误与消息适配器",
+        "reason": "定义错误分类以及发送、更新消息时使用的适配器合同。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/lark-delivery.test.ts",
-          "startLine": 141,
-          "endLine": 170
+          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+          "startLine": 24,
+          "endLine": 50
         },
-        "quote": "const applyTask = (store: Store, suffix = String(++sequence)) =>\n  store.applications.applyTask({\n    metadata: {\n      workspaceId: \"personal\",\n      applicationId: `application-${suffix}`,\n      proposalDigest: suffix.padStart(64, \"0\").slice(-64),\n      generation: 1,\n      title: `通知 ${suffix}`,\n      details: `变更详情"
+        "quote": "export class LarkDeliveryError extends Error {\n  constructor(\n    message: string,\n    readonly kind: \"rate_limit\" | \"auth\" | \"permanent\" | \"ambiguous\",\n    readonly retryAfterMs?: number,\n  ) {\n    super(message);\n    this.name = \"LarkDeliveryError\";\n  }\n}\n\nexport interface LarkMessageAdapter {\n  send(input: {\n    app"
       },
       {
         "key": "c4",
-        "label": "重启后继续投递",
-        "reason": "支持数据库重开后由 repository 和单个 worker 完成投递、保存消息 ID且不重复创建任务的结论。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-delivery.test.ts",
-          "startLine": 173,
-          "endLine": 210
-        },
-        "quote": "  it(\"A-N01 persists the outbox across a process restart without replaying the application\", async () => {\n    const resource = setup();\n    const receipt = applyTask(resource.store, \"1\");\n    const intentBefore = larkIntent(resource.store, receipt.changeId);\n    expect(intentBefore.state).toBe(\"pending\");\n    expect(\n"
-      },
-      {
-        "key": "c5",
-        "label": "模糊发送重试窗口",
-        "reason": "支持一小时内复用 UUID 重试以及超时后转为 unknown、不再发送的状态边界。",
+        "label": "不确定发送的重试窗口",
+        "reason": "支持同一 UUID 重试及超时后转为 unknown、不继续发送的行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -94,9 +76,9 @@
         "quote": "  it(\"A-N02 retries ambiguous sends with one uuid inside one hour and becomes unknown after it\", async () => {\n    const resource = setup();\n    applyTask(resource.store, \"2\");\n    const messages = new FakeMessages();\n    messages.sendResults.push(\n      new LarkDeliveryError(\"response lost\", \"ambiguous\"),\n      { mess"
       },
       {
-        "key": "c6",
-        "label": "限流、认证失败与脱敏",
-        "reason": "支持限流退避、认证失败禁用连接和目标，以及持久化错误隐藏 secret 的断言。",
+        "key": "c5",
+        "label": "限流、鉴权与脱敏",
+        "reason": "支持限流延迟、鉴权失败禁用连接和目标，以及错误信息不泄露密钥的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -107,9 +89,9 @@
         "quote": "  it(\"A-N03 bounds rate-limit retries and disables a connection on auth failure\", async () => {\n    const resource = setup();\n    applyTask(resource.store, \"4\");\n    const messages = new FakeMessages();\n    messages.sendResults.push(\n      new LarkDeliveryError(\"slow down\", \"rate_limit\", 5_000),\n      new LarkDeliveryE"
       },
       {
-        "key": "c7",
-        "label": "即时通知独立映射",
-        "reason": "直接支持即时模式生成五个独立 intent、唯一 provider UUID、64 位摘要及逐变更映射的结论。",
+        "key": "c6",
+        "label": "即时通知逐项映射",
+        "reason": "支持每个变更拥有独立 intent、UUID、摘要和追踪映射。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -120,9 +102,9 @@
         "quote": "  it(\"A-N04 keeps a distinct traceable delivery mapping for every immediate change\", () => {\n    const resource = setup();\n    const receipts = Array.from({ length: 5 }, (_, index) =>\n      applyTask(resource.store, `batch-${index}`),\n    );\n    const rows = resource.store.db\n      .prepare(\n        `SELECT change_id,p"
       },
       {
-        "key": "c8",
-        "label": "窗口聚合与变更保留",
-        "reason": "支持 batcher 将到期通知合成单个摘要、取消被替代 intent、保留全部映射并只发送一次。",
+        "key": "c7",
+        "label": "窗口聚合与发送",
+        "reason": "支持窗口内多项变更合并、旧 intent 取消但映射保留，以及最终单次发送。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -133,9 +115,9 @@
         "quote": "  it(\"A-N04 merges a short window while preserving every change mapping\", async () => {\n    const resource = setup(\"oc_window\", {\n      mode: \"window\",\n      windowMs: 60_000,\n      scheduleLocalTime: \"09:00\",\n      timezone: \"Asia/Shanghai\",\n    });\n    const receipts = Array.from({ length: 5 }, (_, index) =>\n      ap"
       },
       {
-        "key": "c9",
-        "label": "本地时间定时摘要",
-        "reason": "支持上海时区调度边界、定时 intent 属性及到期聚合后恢复即时投递状态的说明。",
+        "key": "c8",
+        "label": "定时摘要边界",
+        "reason": "支持按上海本地时间计算下一次发送边界并聚合到单条摘要。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -146,9 +128,9 @@
         "quote": "  it(\"A-N04 schedules the next local digest boundary\", () => {\n    const policy: ExternalNotificationPolicy = {\n      mode: \"scheduled\",\n      windowMs: 300_000,\n      scheduleLocalTime: \"09:00\",\n      timezone: \"Asia/Shanghai\",\n    };\n    expect(\n      externalDeliveryTiming(\"2026-09-27T00:30:00.000Z\", policy).after,\n"
       },
       {
-        "key": "c10",
-        "label": "替换绑定与记忆恢复",
-        "reason": "支持旧 intent 不跨绑定转发，以及 restoreMemory 产生的新 intent 使用当前绑定且载荷无本地地址。",
+        "key": "c9",
+        "label": "换绑与恢复通知隔离",
+        "reason": "支持旧绑定消息取消、新通知使用新绑定，以及卡片不包含本地地址的安全边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -157,64 +139,38 @@
           "endLine": 564
         },
         "quote": "  it(\"A-N05 never forwards an old intent to a replacement binding and restoration cards contain no localhost URL\", async () => {\n    const resource = setup(\"oc_old\");\n    const first = resource.store.applications.applyMemory({\n      metadata: {\n        workspaceId: \"personal\",\n        applicationId: \"memory-v1\",\n      "
-      },
-      {
-        "key": "c11",
-        "label": "Store 的应用仓库装配",
-        "reason": "支持 Store 创建 SQLite 数据库并初始化 ApplicationRepository 等运行组件的职责说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 38,
-          "endLine": 65
-        },
-        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
-      },
-      {
-        "key": "c12",
-        "label": "Lark 消息适配器合同",
-        "reason": "支持生产适配器同时具有 send 与 update 方法，并界定测试尚需验证更新行为的背景。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-          "startLine": 35,
-          "endLine": 50
-        },
-        "quote": "export interface LarkMessageAdapter {\n  send(input: {\n    appId: string;\n    clientSecret: string;\n    tenantBrand: \"feishu\" | \"lark\";\n    chatId: string;\n    card: Record<string, unknown>;\n    uuid: string;\n  }): Promise<{ messageId: string }>;\n  update(input: {\n    appId: string;\n    clientSecret: string;\n    tenantB"
       }
     ],
     "questions": [
       {
-        "question": "多个 LarkDeliveryWorker 同时争抢同一 intent 时，租约是否能保证只产生一次有效远端发送？",
-        "why": "现有可靠性用例均由单个 worker 顺序调用 `processOne`，只能证明串行状态迁移，不能证明并发领取、租约过期及旧 worker 回写时的行为。",
-        "nextStep": "增加两个独立数据库连接和两个 worker 的并发测试，断言 lease token、发送次数以及最终 intent 状态。",
+        "question": "真实飞书 API 是否已验证 UUID 幂等、错误码分类和卡片更新行为？",
+        "why": "当前测试使用 FakeMessages 记录调用并注入异常，能够验证本地状态机，但不会经过飞书 SDK、网络、租户权限或服务端幂等实现。",
+        "nextStep": "增加明确标注的 live integration 检查，在隔离测试租户中验证重复 UUID、限流响应、鉴权失效和 update 接口，并记录实际退出结果。",
         "blocking": false,
         "citationKeys": [
+          "c3",
           "c4",
           "c5"
         ]
       },
       {
-        "question": "真实 Lark SDK 错误能否稳定映射为 rate_limit、auth、permanent 和 ambiguous？",
-        "why": "当前测试通过 FakeMessages 直接注入 `LarkDeliveryError`，绕过 SDK、HTTP 响应形状和鉴权交互，只验证分类完成后的 worker 状态迁移。",
-        "nextStep": "补充 SDK 响应形状的适配器测试，并把需要真实凭据的网络验证单独标记为 live integration。",
+        "question": "多 worker 同时领取同一投递任务时的租约互斥与崩溃恢复是否已有并发验收？",
+        "why": "材料只展示单个 worker 顺序调用和人工构造过期租约，尚不能确认数据库争用、租约续期及发送过程中崩溃的并发行为。",
+        "nextStep": "补充两个独立数据库连接或进程竞争同一 intent 的测试，并覆盖领取后崩溃、租约到期和重复完成回写。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c6",
-          "c12"
+          "c1",
+          "c4"
         ]
       },
       {
-        "question": "已投递消息的 update 路径及更新失败后的恢复策略是什么？",
-        "why": "消息合同和测试替身都声明了 update，但当前材料没有给出触发更新、成功确认或错误恢复的行为断言。",
-        "nextStep": "定位生产 update 分支并增加成功、限流、认证失败和永久失败用例；若产品策略尚未确定，先明确是否重试、降级重发或转人工处理。",
+        "question": "多 worker 竞争同一投递任务及发送中崩溃后的恢复行为是否已有独立验收？",
+        "why": "现有材料展示单 worker 顺序处理和人工构造过期租约；文章已正确将并发竞争列为未覆盖范围，但当前证据仍不能确认实际数据库争用和崩溃恢复行为。",
+        "nextStep": "使用两个独立数据库连接或进程验证同一 intent 的领取互斥，并覆盖领取后崩溃、租约到期和重复完成回写。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c12"
+          "c1",
+          "c4"
         ]
       }
     ]
@@ -228,7 +184,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -248,34 +204,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:31:04.853Z",
+    "effort": "high",
+    "at": "2026-10-01T12:00:00.018Z",
     "trace": {
-      "runId": "19ce0261-5d96-40e1-968f-3d729d5e00b4",
-      "roleId": "knowledge-refresher",
+      "runId": "756cb192-fcdc-4c44-865f-9b043c9060f5",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "e031847e0dae93ec92a93d75672ceb53c34aa973dd6fa9236c91baef2ab8e1b0",
-      "contextHash": "2059d077a35ab0c5eb8d2353b43dc6e60a929ff781b5f47ad542099c8589ad38",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "814a3d226655bb2bc64074fc0a84b4d258c63e739ff9ad55021b82426514c179",
+      "contextHash": "acc449c22f4eb78ac323a3422b5e99c65430e593221ad5685442c7bc97127391",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9d401e8e5f31eeafc668534fb76957294a67794557f332f05dfeb6564850a432",
+      "fingerprint": "617811e8e54587551ab726b04645c415d9c4d2b83ba8942e3f264e462fbb3999",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54c-94ff-7370-b9c6-508c3e9bf118"
+        "01a0f755-914f-7411-95bd-704c75e26b9c"
       ],
       "usage": {
-        "used": 37295,
+        "used": 33614,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -284,10 +240,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 51263,
-          "utf8Bytes": 57009,
-          "estimatedTokens": 19003,
-          "budgetedTokens": 23754,
+          "chars": 42504,
+          "utf8Bytes": 45638,
+          "estimatedTokens": 15213,
+          "budgetedTokens": 19017,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -296,20 +252,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:31:21.653Z",
+    "at": "2026-10-01T12:00:25.235Z",
     "trace": {
-      "runId": "b22aef6e-5f91-4e72-b714-d9b9b3177d25",
+      "runId": "5e4746de-da81-4186-b7f1-c6ddbdea47c7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "edb696687c8fc5ae58ada369badac93b7e568174e7b7e9e3ce5391f45f150994",
-      "contextHash": "600c69d5998e56558f9c6d5688a82390b7c3b2e831507a205d662aacf5975db7",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "975dfbad9ddfa5efd7f6453756427862d80bf3082feece785f9dfe8a9dcf90b0",
+      "contextHash": "2c88e2c7973e19749f1011172068a59ddca14bee3fb263b1585fdf5011ea4b6e",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "7f9ae96dad083e3de8d562384b6567128824864b41613e30ceb5ef2a7a4adcfc",
+      "fingerprint": "236b41d83e625902a03343d838dab2ac392110f3a4b4df9d8c8a7607c3a7dd43",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -319,10 +275,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54d-2848-7342-aa55-96f276f35615"
+        "01a0f756-0513-7242-8cbe-41ba1282b38e"
       ],
       "usage": {
-        "used": 33855,
+        "used": 34699,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -331,10 +287,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 49018,
-          "utf8Bytes": 53478,
-          "estimatedTokens": 17826,
-          "budgetedTokens": 22283,
+          "chars": 47191,
+          "utf8Bytes": 52741,
+          "estimatedTokens": 17581,
+          "budgetedTokens": 21977,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

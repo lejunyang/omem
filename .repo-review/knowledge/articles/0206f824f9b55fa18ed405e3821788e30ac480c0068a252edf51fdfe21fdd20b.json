@@ -2,128 +2,123 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/NotificationDetail.vue",
-    "title": "通知与变化详情对话框",
-    "summary": "该 Vue 组件把通知关联的已生效记录、原始证据和外部投递状态集中展示，并通过事件把关闭、证据阅读和版本查看交给父组件处理；它明确区分“收到通知”与“事实已应用”，同时覆盖加载态、空数据、合并投递和错误状态。",
+    "title": "通知、变化与投递结果详情",
+    "summary": "该组件用统一对话框展示通知的持久状态、内容变化、原始证据和外部提醒投递结果，并通过事件把关闭、阅读证据与打开固定版本交给父组件处理。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-contract",
-        "title": "作用与组件合同",
-        "body": "该组件是通知详情的只读对话框，接收开关、详情对象与加载状态，并向父组件发出关闭、打开证据、打开版本三个事件；自身不获取数据、不改变通知状态。它复用 UI 包中的对话框、徽标、按钮、引用和空状态组件，以统一交互与视觉语义。[[c1]] `NotificationDetail` 从 API 类型模块导入，但给定 API 片段只展示了通知摘要类型，因此详情对象的完整静态合同无法从当前材料独立核对。[[c2]]"
+        "key": "purpose",
+        "title": "把通知还原为可追溯详情",
+        "body": "组件接收打开状态、通知详情和加载状态，在对话框中区分知识更新、材料更新、事项与待判断通知；关闭和返回都交由父层处理。它还按通知时间、标题、正文和记忆更新回执组织信息，并明确“已读”不会改变待办或判断结果，从而把消息阅读与业务状态变更分开。参考 [[c1]] [[c2]]"
       },
       {
-        "key": "detail-flow",
-        "title": "详情呈现与证据跳转",
-        "body": "渲染流程先显示“读取持久状态”的加载提示，随后在详情存在时展示变化类型、创建时间、标题与正文。组件把 application receipt 作为“已生效”的明确凭据；没有 receipt 时直接声明不能把通知本身视为事实已经生效。变更前版本始终按 `beforeId` 条件开放，变更后版本还会排除 `decision` 类型。[[c3]] 原始证据按 `evidenceIds` 逐项生成可打开的引用入口，列表为空则显示“没有提案证据”，实际阅读行为由父组件收到事件后完成。[[c4]]"
+        "key": "change-flow",
+        "title": "按变化类型展示固定版本差异",
+        "body": "当通知带有变化标识、更新后版本，并且属于知识、材料或恢复类型时，组件嵌入变化比较器；非知识更新还可请求父层打开该固定版本。比较器会依据变化标识读取前后快照，生成保留三行上下文的补丁；缺少完整版本关联、请求失败或正文无文字变化时分别给出说明。参考 [[c3]] [[c4]]"
       },
       {
-        "key": "delivery-states",
-        "title": "投递状态与边界条件",
-        "body": "投递记录逐项展示渠道、尝试次数和状态。状态映射将失败、未知及普通取消标为危险，等待、发送中与重试等待标为警告，成功投递标为成功；若取消记录带有 `supersededBy`，则显示“已合并”并采用中性色，避免把摘要合并误报为失败。[[c5]] 批次包含多条变化时会显示数量；只有未被合并的记录才呈现最后错误，完全没有投递则显示空状态。[[c6]] 当前材料没有测试文件，因而无法确认日期本地化、未知状态回退、事件参数及这些条件分支是否已有自动化断言。"
+        "key": "evidence-delivery",
+        "title": "追溯证据与判断外部投递状态",
+        "body": "通知携带证据时，每条证据显示为可打开的引用入口，但这里只上报证据标识，具体阅读界面由外层提供。外部投递按渠道列出尝试次数、合并状态、批量变化数量和未被合并的错误；等待、成功、失败等状态映射为不同徽标语气。两个空状态组件位于各自的非空条件块内，因此在当前模板条件下不会显示，这是现有界面边界。参考 [[c5]] [[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "组件输入、事件与 UI 依赖",
-        "reason": "支持该组件是受控只读视图、复用公共 UI，并把导航动作交由父组件处理的说明。",
-        "relation": "depends_on",
+        "label": "详情组件输入与事件",
+        "reason": "支持组件接收打开、详情、加载状态，并将关闭、证据和版本阅读操作交给父层的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/NotificationDetail.vue",
-          "startLine": 1,
-          "endLine": 24
+          "startLine": 6,
+          "endLine": 15
         },
-        "quote": "<script setup lang=\"ts\">\nimport { OmBadge, OmButton, OmCitation, OmDialog, OmEmpty } from \"@omem/ui\";\nimport type { NotificationDetail } from \"./api\";\n\ndefineProps<{\n  open: boolean;\n  detail: NotificationDetail | null;\n  loading: boolean;\n}>();\nconst emit = defineEmits<{\n  close: [];\n  openEvidence: [id: string];\n  op"
+        "quote": "defineProps<{\n  open: boolean;\n  detail: NotificationDetail | null;\n  loading: boolean;\n}>();\nconst emit = defineEmits<{\n  close: [];\n  openEvidence: [id: string];\n  openRevision: [id: string];\n}>();"
       },
       {
         "key": "c2",
-        "label": "前端 API 类型模块",
-        "reason": "说明详情类型来自 API 模块，同时当前所给范围只明确展示通知摘要等基础类型。",
-        "relation": "depends_on",
+        "label": "通知基础信息展示",
+        "reason": "支持通知类型、时间、正文、回执以及已读语义的界面行为。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 26,
-          "endLine": 39
+          "key": "omem:apps/web/src/NotificationDetail.vue",
+          "startLine": 29,
+          "endLine": 43
         },
-        "quote": "export type Evidence = {\n  fragment: Fragment;\n  revision: Revision;\n  outgoing: Edge[];\n  backlinks: Edge[];\n};\nexport type Notification = {\n  id: string;\n  title: string;\n  body: string;\n  changeId: string | null;\n  createdAt: string;\n  readAt: string | null;\n};"
+        "quote": "  <OmDialog\n    :open=\"open\"\n    title=\"通知与变化详情\"\n    @close=\"emit('close')\"\n    @back=\"emit('close')\"\n  >\n    <p v-if=\"loading\" class=\"muted\">正在读取持久状态…</p>\n    <template v-else-if=\"detail\">\n      <div class=\"row\">\n        <OmBadge>{{ ({knowledge:\"知识更新\",capture:\"材料更新\",task:\"事项\",decision:\"需要判断\"} as Record<string,string>)"
       },
       {
         "key": "c3",
-        "label": "已生效记录与版本入口",
-        "reason": "支持加载流程、receipt 语义以及变更前后版本按钮的条件判断。",
-        "relation": "implements",
+        "label": "变化详情入口",
+        "reason": "支持按变化类型嵌入比较器，以及非知识更新可打开固定版本的流程。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/NotificationDetail.vue",
-          "startLine": 34,
-          "endLine": 65
+          "startLine": 44,
+          "endLine": 48
         },
-        "quote": "    <p v-if=\"loading\" class=\"muted\">正在读取持久状态…</p>\n    <template v-else-if=\"detail\">\n      <div class=\"row\">\n        <OmBadge>{{ detail.changeKind || \"通知\" }}</OmBadge>\n        <small>{{ new Date(detail.createdAt).toLocaleString(\"zh-CN\") }}</small>\n      </div>\n      <h3>{{ detail.title }}</h3>\n      <p>{{ detail.body }}"
+        "quote": "      <section v-if=\"detail.changeId && detail.afterId && ['knowledge','capture','restore'].includes(detail.changeKind || '')\" class=\"detail-block\">\n        <h4>本次改动</h4><ChangeComparison :change-id=\"detail.changeId\" />\n        <OmButton v-if=\"detail.changeKind !== 'knowledge'\" @click=\"emit('openRevision', detail.after"
       },
       {
         "key": "c4",
-        "label": "原始证据列表",
-        "reason": "支持证据引用逐项发出打开事件以及无证据时展示空状态的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/NotificationDetail.vue",
-          "startLine": 66,
-          "endLine": 80
-        },
-        "quote": "      <section class=\"detail-block\">\n        <h4>原始证据</h4>\n        <div class=\"evidence-list\">\n          <OmCitation\n            v-for=\"(id, index) in detail.evidenceIds\"\n            :key=\"id\"\n            :label=\"`查看原证据 ${index + 1}`\"\n            @open=\"emit('openEvidence', id)\"\n          />\n        </div>\n        <OmE"
-      },
-      {
-        "key": "c5",
-        "label": "投递状态色调规则",
-        "reason": "支持失败、等待、成功、取消及已合并状态的视觉语义映射。",
+        "label": "固定版本差异生成",
+        "reason": "说明变化比较器如何请求快照、生成补丁并处理错误、缺失版本和无文字差异。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/NotificationDetail.vue",
-          "startLine": 15,
-          "endLine": 24
+          "key": "omem:apps/web/src/ChangeComparison.vue",
+          "startLine": 9,
+          "endLine": 27
         },
-        "quote": "const tone = (state: string, supersededBy?: string | null) =>\n  state === \"cancelled\" && supersededBy\n    ? \"neutral\"\n    : [\"failed\", \"unknown\", \"cancelled\"].includes(state)\n      ? \"danger\"\n      : [\"pending\", \"sending\", \"retry_wait\"].includes(state)\n        ? \"warning\"\n        : state === \"delivered\"\n          ? \"su"
+        "quote": "watch(() => props.changeId, async id => {\n  content.value = undefined; error.value = \"\";\n  try { content.value = await api(`/changes/${encodeURIComponent(id)}/content`); }\n  catch (e) { error.value = String(e); }\n}, { immediate: true });\nconst patch = computed(() => content.value?.after ? structuredPatch(\"之前\", \"之后\", co"
       },
       {
-        "key": "c6",
-        "label": "投递记录条件渲染",
-        "reason": "支持投递渠道、尝试次数、批次数量、错误隐藏规则与空投递状态的说明。",
+        "key": "c5",
+        "label": "原始证据入口",
+        "reason": "支持证据列表只发出打开事件，并揭示空状态被外层非空条件包围的边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/NotificationDetail.vue",
-          "startLine": 81,
-          "endLine": 103
+          "startLine": 49,
+          "endLine": 63
         },
-        "quote": "      <section class=\"detail-block\">\n        <h4>投递状态</h4>\n        <div\n          v-for=\"delivery in detail.deliveries\"\n          :key=\"delivery.id\"\n          class=\"delivery-row\"\n        >\n          <div>\n            <b>{{ delivery.channel }}</b>\n            <small>尝试 {{ delivery.attemptCount }} 次</small>\n          </"
+        "quote": "      <section v-if=\"detail.evidenceIds.length\" class=\"detail-block\">\n        <h4>原始证据</h4>\n        <div class=\"evidence-list\">\n          <OmCitation\n            v-for=\"(id, index) in detail.evidenceIds\"\n            :key=\"id\"\n            :label=\"`查看原证据 ${index + 1}`\"\n            @open=\"emit('openEvidence', id)\"\n       "
+      },
+      {
+        "key": "c6",
+        "label": "外部提醒投递状态",
+        "reason": "支持渠道、尝试次数、合并、批量数量、错误信息和投递空状态的展示说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/NotificationDetail.vue",
+          "startLine": 64,
+          "endLine": 85
+        },
+        "quote": "      <section v-if=\"detail.deliveries.length\" class=\"detail-block\">\n        <h4>外部提醒发送情况</h4>\n        <div\n          v-for=\"delivery in detail.deliveries\"\n          :key=\"delivery.id\"\n          class=\"delivery-row\"\n        >\n          <div>\n            <b>{{ delivery.channel }}</b>\n            <small>尝试 {{ delivery.at"
       }
     ],
     "questions": [
       {
-        "question": "NotificationDetail 的完整字段合同及其后端来源是什么？",
-        "why": "组件使用 receipt、beforeId、afterId、evidenceIds、deliveries 等字段，但给定 API 材料范围未包含该类型定义，无法验证字段是否可选、状态枚举是否封闭，也无法基于源代码确认具体请求链路。",
-        "nextStep": "补充 api.ts 中 NotificationDetail 定义及获取详情的请求函数，并提供调用该组件的父级材料，以核对数据来源和事件承接关系。",
+        "question": "NotificationDetail 数据由哪个接口或父组件加载，其字段是否始终满足模板中的数组访问？",
+        "why": "提供的材料只显示类型导入和展示逻辑，未包含 NotificationDetail 的完整定义、请求入口及默认值处理，因此无法确认 evidenceIds、deliveries 是否可能为空值，也无法确认加载失败如何传入该组件。",
+        "nextStep": "检查 api.ts 中 NotificationDetail 的完整定义，以及引用 NotificationDetail.vue 的父组件和对应接口实现。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c2",
-          "c3",
-          "c4",
-          "c6"
+          "c2"
         ]
       },
       {
-        "question": "这些状态分支和交互是否已有组件测试覆盖？",
-        "why": "当前只提供实现文件，没有测试材料，无法确认 receipt 缺失、decision 无变更后入口、合并投递隐藏错误、未知状态回退及事件参数等行为是否被断言。",
-        "nextStep": "检查或补充 NotificationDetail 的组件测试，覆盖加载态、空态、状态色调、条件按钮和三个 emit 的载荷。",
+        "question": "证据与投递区域的空状态是否应在数组为空时可见？",
+        "why": "当前两个 OmEmpty 都位于要求数组非空的 section 内，条件互斥使空状态不可达；仅凭材料无法判断这是遗漏还是产品有意隐藏空区块。",
+        "nextStep": "结合界面需求或组件测试确认预期；若应显示空状态，应调整外层 section 条件并补充空数组断言。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4",
           "c5",
           "c6"
         ]
@@ -134,31 +129,36 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
+      "digest": "2864d078d31af9d0c3704163e142cd8b8c2a69fa29627c9524b6b88343599998"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
+      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/ChangeComparison.vue",
+      "digest": "8195aaf8e9c4b1151c67cb805bc7a0657d9eb0b74e85877466e3a96107ae4f63"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:38:42.115Z",
+    "effort": "high",
+    "at": "2026-10-01T12:10:02.883Z",
     "trace": {
-      "runId": "75f0af6c-c597-408c-aa25-b4daa402fd87",
+      "runId": "41d2271d-56fe-47c9-b814-815003983fb9",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "ecd3913d47467b89fc0f81255cbbc8dadc02de9f8bafd486cd54921920a9ef45",
-      "contextHash": "56d16938df0e3f6911f84e4b9996daa0a2ae0558cb53748f73bc8ab941ea12b0",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "cf4ae50e1b8888ad25444d7cbea5a17c9ff77f185c50087fd657b315e1669c25",
+      "contextHash": "02f8c54166d4f2b9436bd154b1a620895629cf455e8884649ba08526fa8c1a4f",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4489519c1e37d5f24da7bb743c1a998542e5e489e59bf28bf7f7c4bb61eadb07",
+      "fingerprint": "2b7eae804e8fea6b5220bb50b96060f6bb713901f756397a024bef3ff52dd49e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-code-analyst",
@@ -168,10 +168,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f553-c994-75a2-8974-20d41c45b551"
+        "01a0f75e-d671-7b22-9ce4-3ef59d0d6c25"
       ],
       "usage": {
-        "used": 25307,
+        "used": 25841,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -180,10 +180,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 13225,
-          "utf8Bytes": 15189,
-          "estimatedTokens": 5063,
-          "budgetedTokens": 6329,
+          "chars": 17535,
+          "utf8Bytes": 21267,
+          "estimatedTokens": 7089,
+          "budgetedTokens": 8862,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -192,20 +192,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:39:00.257Z",
+    "at": "2026-10-01T12:10:20.090Z",
     "trace": {
-      "runId": "68996a02-f559-4664-94ca-31f0d8fb5da7",
+      "runId": "a0494e38-de2a-45f5-b39a-2567b512f574",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "281b7213ddd1d74780658405dd63bf89d85574a159515cd42d0bab10146d9777",
-      "contextHash": "a8b7a9cd01abffc90c1ad0c8632727760ffc964b4724217fb0c617d58da671d0",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "00198c388c81d27380fa0d0b2ba00e978c6d83475c457acaae9eb83c55e3b585",
+      "contextHash": "9647329f409fa7a628b62971e23e8e29b67a2c403f206d23bee064b5a5ec2e5d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "dd7caf31d4cbdc872f3eeb77f2b17756487257af4d754d313f5bdded8d5f61a9",
+      "fingerprint": "3ddd881226383d1e90b99a3c53d41004530af701c4c7a802dcfe942c156f4cf6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -215,10 +215,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f554-23ed-7cd2-9979-23014da6f737"
+        "01a0f75f-370a-71a3-9a97-cc9736a58719"
       ],
       "usage": {
-        "used": 24270,
+        "used": 26044,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -227,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 15927,
-          "utf8Bytes": 19425,
-          "estimatedTokens": 6475,
-          "budgetedTokens": 8094,
+          "chars": 20040,
+          "utf8Bytes": 25548,
+          "estimatedTokens": 8516,
+          "budgetedTokens": 10645,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

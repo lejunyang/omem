@@ -2,36 +2,36 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/review-verify.ts",
-    "title": "仓库知识与检索的一次性验收流程",
-    "summary": "该脚本把依赖检查、项目检查、知识引用校验、语义索引和真实 HTTP 检索串成一次可复现验收，记录当前源码与题集指纹、日志和退出状态，并归档旧报告。它验证当前快照与有限回归问题，不调用生成式模型，也不把历史结果或 top-5 命中解释为完整正确性证明。",
+    "title": "仓库验收与真实检索回归",
+    "summary": "该脚本把外部项目检查、知识有效性、语义索引和真实 HTTP 检索汇总为本次运行的验收报告；运行前固定源码与题集摘要，结束时检查输入漂移，但提交版本在外部检查之后采集。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose",
         "title": "解决什么问题",
-        "body": "脚本为仓库知识系统生成**仅代表本次运行**的验收报告。启动时固定源码与检索题集的摘要，并把报告、历史版本和运行日志分别写入知识目录与忽略提交的运行目录，从而能够判断检查期间输入是否变化，避免把旧结果混入当前结论。参考 [[c1]]\n\n`--full` 决定是否执行依赖锁定、项目全检和中文检索冒烟；非完整模式明确记为 skipped，而不是继承历史通过状态。每个子进程的退出码、命令、日志位置及内容摘要都会进入检查记录。参考 [[c2]]"
+        "body": "脚本为仓库生成**仅代表本次运行**的可追溯验收报告。启动阶段计算源码与检索题集摘要，并为日志和历史报告建立独立目录，使检查结果能够关联到明确输入。参考 [[c1]]\n\n报告中的提交版本并非与这些摘要同时固定：它在可选的外部检查完成后才读取。因此，`implementationCommit` 表示报告构造时的 HEAD，不能单独证明检查开始时也处于同一提交。参考 [[c2]]"
       },
       {
-        "key": "knowledge-flow",
-        "title": "知识正文与引用校验",
-        "body": "同步仓库材料和代码快照后，脚本恢复已发布知识并刷新仓库视图。它逐篇校验当前文章的结构与内联引用，要求独立复核结论为 accepted，还会比较材料摘要或文章修订号；依赖过期会判错，未覆盖材料则标记为 incomplete，不冒充全库已完成。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[同步材料与代码] --> B[恢复当前知识]\n  B --> C[校验引用与独立复核]\n  C --> D[写出知识索引]\n```\n\n这条流程直接调用既有的仓库同步、代码同步、知识恢复和通用文档校验能力，因此脚本承担验收编排，而不另建知识存储。参考 [[c4]]"
+        "key": "execution",
+        "title": "分层执行验收",
+        "body": "开启 `--full` 后，流程执行冻结依赖、全项目检查和中文检索冒烟，并保存真实命令、退出码、日志路径及日志摘要；普通模式则明确标记这些项目为 `skipped`，不会继承旧结果。参考 [[c3]]\n\n随后脚本同步仓库材料和代码结构，恢复当前知识文章，检查内联引用、独立复核结论与依赖摘要。未覆盖材料只计入不完整状态，过期依赖或未获接受的文章会形成错误。参考 [[c4]]"
       },
       {
-        "key": "retrieval-flow",
-        "title": "语义索引与真实搜索回归",
-        "body": "脚本按配置构建 review HTTP 应用；若启用语义检索，就分批补齐索引并记录健康状态，否则把语义索引检查标为 skipped。随后它在本机临时监听端口，对题集逐条请求 `/api/review/search`，并同时取得带可见性条件的底层检索结果作为基线，记录前五名路径、多样性、耗时和路由信息。参考 [[c5]]\n\n每个用例仅以**预期路径是否进入 API 返回结果前五名**作为通过条件。该检查证明真实 API 请求和路径 top-5 召回链路可运行，但没有逐项断言 API 返回项均属于 eligible 集合，也不证明摘要或最终回答的语义正确性。参考 [[c6]]"
+        "key": "retrieval",
+        "title": "验证真实检索链路",
+        "body": "配置语义检索时，脚本先补齐索引，再启动临时 review 服务，通过真实 `/api/review/search` 执行公开回归问题；预期路径进入前五名才算通过，同时记录底层检索基线。该结果验证基本召回链路，不等同于回答正确性或完整相关性评测。参考 [[c5]]"
       },
       {
         "key": "boundaries",
-        "title": "失败语义与覆盖边界",
-        "body": "任一检查失败都会令总结果失败并设置非零进程退出码；无论成功与否，服务或存储都会关闭。报告写入前，旧报告按时间和内容摘要归档，最后再次比较源码及题集摘要，以检测验收期间的输入漂移。参考 [[c7]]\n\n该脚本明确不调用生成式模型，知识的语义正确性依赖文章中已有的独立复核记录。检索部分只是六条公开问题的 top-5 回归，不代表完整相关性评测，也未覆盖生成式回答质量、外部部署安全或所有检索问法。参考 [[c8]]"
+        "title": "输入稳定性与结果边界",
+        "body": "运行结束后，脚本重新计算源码与题集摘要以发现期间漂移，归档旧报告，再写入本次结果；任一检查失败都会令总体失败并设置非零退出状态。参考 [[c6]]\n\n这套验收不调用生成式模型，知识语义复核结论来自已保存文章。由于提交号在外部检查后采集，即使输入摘要最终未变化，也应把提交号和起始输入摘要视为两个不同时间点的记录。参考 [[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "验收输入与输出指纹",
-        "reason": "支持脚本固定源码和题集摘要，并划分当前报告、历史报告与运行日志位置的说明。",
+        "label": "验收输入快照",
+        "reason": "支持脚本在启动阶段计算源码和题集摘要，并创建本次运行的日志与历史目录。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -43,8 +43,21 @@
       },
       {
         "key": "c2",
-        "label": "子进程检查记录",
-        "reason": "支持完整模式开关、退出码判定、日志保存，以及非完整模式不继承历史结果的说明。",
+        "label": "提交版本采集时点",
+        "reason": "支持外部检查先执行、随后才读取 HEAD 构造报告，以及报告不调用生成式模型的边界说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-verify.ts",
+          "startLine": 47,
+          "endLine": 54
+        },
+        "quote": "for(const [name,args] of [['dependencies',['deps','--frozen']],['project',['run','check']],['liveChineseRetrieval',['run','retrieval:verify']]] as const) {\n  // A Bun child uses the already selected executable, avoiding recursive osdk\n  // shim entry while preserving the exact managed runtime and its guard.\n  if(full) "
+      },
+      {
+        "key": "c3",
+        "label": "外部检查与日志",
+        "reason": "支持子进程检查依据真实退出码判定状态，并保存命令、日志位置及内容摘要。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -55,93 +68,53 @@
         "quote": "async function command(name:string,args:string[], executable=\"osdk\") {\n  console.log('CHECK',name);\n  const chunks:Buffer[]=[];\n  const result=await new Promise<{exitCode:number|null;error?:string}>(resolve=>{\n    const child=spawn(executable,args,{cwd:root,stdio:['ignore','pipe','pipe']});\n    child.stdout.on('data',c"
       },
       {
-        "key": "c3",
-        "label": "当前知识有效性检查",
-        "reason": "支持文章结构、独立复核、依赖新鲜度和覆盖不完整状态的判定流程。",
+        "key": "c4",
+        "label": "知识有效性检查",
+        "reason": "支持材料和代码同步、文章恢复、引用与依赖校验，以及未覆盖材料不计为完整通过。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-verify.ts",
-          "startLine": 59,
-          "endLine": 74
+          "startLine": 55,
+          "endLine": 75
         },
-        "quote": "  const restored=restoreReviewKnowledge(store,root), repo=restored.repository;repo.refresh();\n  const materials=new Map(repo.materials().map(m=>[m.key,m]));\n  const articles=new Map(repo.list().filter(a=>a.current).map(a=>[a.document.key,a]));\n  const errors:{key:string;error:string}[]=[];\n  let citations=0,articleLink"
-      },
-      {
-        "key": "c4",
-        "label": "同步与知识模块调用",
-        "reason": "证明验收脚本复用仓库同步、代码同步、知识恢复和通用文档校验模块。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/review-verify.ts",
-          "startLine": 9,
-          "endLine": 16
-        },
-        "quote": "import { createReviewStore } from \"../apps/server/src/review/store.js\";\nimport { runReviewSync } from \"../apps/server/src/review/sync.js\";\nimport { runCodeSync } from \"../apps/server/src/code/sync.js\";\nimport { restoreReviewKnowledge, writeReviewKnowledgeIndex } from \"../apps/server/src/review/knowledge.js\";\nimport { v"
+        "quote": "const store=createReviewStore(root);\nlet app: Awaited<ReturnType<typeof buildReviewApp>>['app'] | undefined;\ntry {\n  await runReviewSync(store,root);await runCodeSync(store,root);\n  const restored=restoreReviewKnowledge(store,root), repo=restored.repository;repo.refresh();\n  const materials=new Map(repo.materials().map"
       },
       {
         "key": "c5",
-        "label": "语义索引与搜索请求",
-        "reason": "支持语义索引补建、临时 HTTP 服务、真实搜索请求和带可见性条件的底层基线采集流程。",
+        "label": "真实 HTTP 检索回归",
+        "reason": "支持语义索引补齐、临时服务查询、top-5 命中判定及评测范围限制。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-verify.ts",
           "startLine": 76,
-          "endLine": 97
+          "endLine": 102
         },
         "quote": "  const configPath=process.env.REVIEW_RETRIEVAL_CONFIG ?? join(root,'config/retrieval.json');\n  const config=existsSync(configPath)?readRetrievalConfig(configPath):undefined;\n  const built=await buildReviewApp({store,repoRoot:root,retrievalConfig:config});app=built.app;\n  if(built.retrieval instanceof SemanticRetrieval"
       },
       {
         "key": "c6",
-        "label": "前五名路径断言",
-        "reason": "支持 API 用例以预期路径进入 top-5 为通过条件，并表明脚本未对 API 返回项逐项执行 eligible 可见性断言。",
+        "label": "漂移检查与报告归档",
+        "reason": "支持结束时复核输入摘要、归档旧报告、写入新结果并以非零退出码表示失败。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-verify.ts",
-          "startLine": 92,
-          "endLine": 102
-        },
-        "quote": "    const start=performance.now(), response=await fetch(`http://127.0.0.1:${port}/api/review/search?q=${encodeURIComponent(item.query)}`);\n    if(!response.ok)throw Error(`Search HTTP ${response.status}`);\n    const hits=await response.json() as {filePath:string;snippet:string;routes:string[]}[];\n    const rawQuery={te"
-      },
-      {
-        "key": "c7",
-        "label": "归档与退出状态",
-        "reason": "支持资源关闭、输入漂移检测、旧报告归档以及失败时返回非零退出码的说明。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/review-verify.ts",
-          "startLine": 103,
+          "startLine": 105,
           "endLine": 115
         },
-        "quote": "}catch(error){checks.push({name:'repositoryRun',state:'failed',details:String(error)});}\nfinally {if(app)await app.close();else store.close();}\nchecks.push({name:'unchangedSourcesDuringVerification',state:sourceDigest()===initialDigest&&hash(readFileSync(queryPath))===queryDigest?'passed':'failed'});\nreport.passed=chec"
-      },
-      {
-        "key": "c8",
-        "label": "验收范围声明",
-        "reason": "支持报告不调用生成式模型、不继承历史通过率，以及检索回归不等同于完整相关性评测的边界。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/review-verify.ts",
-          "startLine": 52,
-          "endLine": 54
-        },
-        "quote": "const report: Record<string,unknown>={version:4,recordedAt:at,implementationCommit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),sourceDigest:initialDigest,queryDigest,mode:full?'full':'repository',checks,\n  scope:'本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。',\n  history:'verification/history/"
+        "quote": "checks.push({name:'unchangedSourcesDuringVerification',state:sourceDigest()===initialDigest&&hash(readFileSync(queryPath))===queryDigest?'passed':'failed'});\nreport.passed=checks.every(c=>c.state!=='failed');\nif(existsSync(output)){\n  const old=readFileSync(output), previous=JSON.parse(old.toString());\n  const date=Str"
       }
     ],
     "questions": [
       {
-        "question": "六条公开检索问题具体覆盖哪些用户场景，是否包含同义改写、无答案问题和跨文件查询？",
-        "why": "当前材料只显示题集来自 queries.json，并声明它不是完整相关性评测；没有提供题目内容，因此无法核验具体场景覆盖面。",
-        "nextStep": "检查固定题集及其设计说明，按真实使用风险列出覆盖类别，并明确仍未覆盖的类别。",
+        "question": "六条公开检索回归问题具体覆盖哪些用户意图，是否包含同义改写、歧义查询和无结果场景？",
+        "why": "现有材料只说明题集结构、top-5 判定以及它不是完整相关性评测，未提供题目正文，无法确认实际行为覆盖面。",
+        "nextStep": "检查固定题集内容并按真实使用场景整理覆盖范围；继续将召回通过与回答正确性分开评估。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c8"
+          "c5"
         ]
       }
     ]
@@ -170,26 +143,26 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
+      "digest": "1cc007a5fd3cbc9208c80f6c54fd43cc766bae38f247e58b30659eff308a1f5e"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T07:04:09.171Z",
+    "effort": "high",
+    "at": "2026-10-01T12:16:49.153Z",
     "trace": {
-      "runId": "a61e9f56-c4e5-4fd4-9dc7-59dcb46580e7",
+      "runId": "026e7f11-1941-4571-9a63-3c4714dbb510",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "50c1f2fd0201366e7fa585664c28cbdcd1a078af2b4d877b57937333e360f9b3",
-      "contextHash": "2230e77723235c2f8f2b7f00c8442fb748e9afb8fba72c231da00903d5c97703",
+      "promptHash": "57c72f7425f66fda9537d4a50c620217fa20c4fbf2ff5348d7f467067bd44cc3",
+      "contextHash": "43ad811042888fd35b83133f9711a5188ca163a55a85509b27e6b7cd96a89b4d",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "131919cac4e9357aeb0a18f7d8031d36414c0a784b8f558e6455c39c16e35797",
+      "fingerprint": "1864f25e4b62dd872abfbf18a2fd33f63c3c86ee996a9d85cb54725a73975c5a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -199,10 +172,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f646-d5b2-7ed1-9055-f8beef29826c"
+        "01a0f765-11c8-7491-a969-8e610f6a7dad"
       ],
       "usage": {
-        "used": 33883,
+        "used": 34807,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -211,10 +184,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 44000,
-          "utf8Bytes": 51179,
-          "estimatedTokens": 17060,
-          "budgetedTokens": 21325,
+          "chars": 42531,
+          "utf8Bytes": 49010,
+          "estimatedTokens": 16337,
+          "budgetedTokens": 20422,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -223,20 +196,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T07:04:24.165Z",
+    "at": "2026-10-01T12:17:01.286Z",
     "trace": {
-      "runId": "41993fd9-3fe7-40b8-abde-6a96992b95e1",
+      "runId": "bda7985d-8e9e-4543-8898-679c8464b8fe",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "5a04fdd5ecbf7e7b3b0a40088ffb68c68cb8e64ec6333778b62764ef0067fb20",
-      "contextHash": "508b9aabafa76a660060029412e305b4a6f0107ce858bff74e582aaddfd06b26",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "2388d3173d10c5e981950df3747a63dcfb29eae4762f15fea23815aec311f3d2",
+      "contextHash": "0ef77f84ee28e53bbee28e31bc6cfd229ab41dc4e0a1d8de41f8e311f4385619",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "09406cdfbd2ba16dfb7318fe2ec914357e9e8563bb035fdd68ba32c329208ff9",
+      "fingerprint": "d9e722bc9e9077c039f48783228fc073eccfd1852a127ebc1b8b9293b653cd12",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -246,10 +219,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f647-2a4d-71f1-b55c-e2e53e7095c3"
+        "01a0f765-6afb-7bd0-b4e6-12df7c52b11f"
       ],
       "usage": {
-        "used": 31359,
+        "used": 30775,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -258,10 +231,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 40158,
-          "utf8Bytes": 44405,
-          "estimatedTokens": 14802,
-          "budgetedTokens": 18503,
+          "chars": 39669,
+          "utf8Bytes": 44898,
+          "estimatedTokens": 14966,
+          "budgetedTokens": 18708,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

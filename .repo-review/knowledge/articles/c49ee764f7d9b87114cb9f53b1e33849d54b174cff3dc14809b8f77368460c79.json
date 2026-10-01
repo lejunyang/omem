@@ -3,85 +3,47 @@
   "document": {
     "key": "topic:quality_validation",
     "title": "验证体系、质量评测与证据强度",
-    "summary": "项目以分层证据区分基础实现、用户流程、外部集成和模型质量：自动化检查验证依赖、类型、测试与构建，浏览器脚本验证真实应用边界，实机快照观察外部能力，冻结人工样本衡量输出质量。受控流程已有较完整证据，但真实外部运行、复杂中文语义、并发一致性和飞书投递回填仍需补强。",
+    "summary": "项目以研究专用金标数据集衡量知识提炼质量，并用单元与集成测试、真实浏览器流程、独立模型复核和窄范围实机快照验证不同层次的能力。各种证据的证明范围不可互换：引用可定位不代表语义正确，受控夹具通过不代表外部服务可用，历史快照也不代表当前版本持续通过。",
     "category": "tests",
     "sections": [
       {
-        "key": "validation_layers",
-        "title": "不同验证层分别回答什么问题",
-        "body": "“代码可构建”“用户流程可操作”“外部服务可调用”和“模型输出质量足够”是不同问题。历史记录显示依赖冻结、类型检查、全量测试与构建曾成功完成；在此基础上，确定性浏览器验收覆盖应用交互，在线冒烟观察真实模型和外部集成，冻结人工数据集则承担质量门禁。参考 [[c20]]\n\n```mermaid\nflowchart LR\n  A[自动化测试与构建] --> B[真实应用边界的浏览器验收]\n  B --> C[真实模型与外部集成冒烟]\n  C --> D[冻结人工样本质量门禁]\n```\n\n这些层次互补但不能相互替代。参考 [[c1]] [[c2]]\n\n浏览器脚本运行真实 Vue、API 与 SQLite，验收记录也确认后端使用真实 Fastify 和 SQLite；智能体响应则来自确定性 ACP 协议夹具。因此它能证明受控输出下的界面与应用编排，不能单独证明真实模型、网络或供应商服务可用。参考 [[c3]] [[c4]]"
+        "key": "why_layers",
+        "title": "为什么需要分层验证",
+        "body": "知识系统既要判断“有没有找到原文”，也要判断“陈述是否忠于原文、是否遗漏限制、是否值得长期保留，以及能否自动生效”。因此，质量标签把结果分为提炼、弃权和需要上下文；提炼结果必须携带对象，非提炼结果不得自动应用。参考 [[c1]]、[[c3]]\n\n研究样本生成与普通捕获严格隔离：规则切分产生的逐字主张和自动应用建议只是待人工确认的草稿，不能回流为生产知识。参考 [[c2]] 这形成了一条重要证据边界：**固定原文是事实依据，人工金标是评测基准，测试与报告只证明特定行为曾被观察到，派生文章用于解释和下钻而不是新增事实来源。**"
       },
       {
         "key": "quality_loop",
-        "title": "从研究样本到可复算质量指标",
-        "body": "质量样本生成与普通捕获明确隔离，只能通过研究标注入口显式启用。导入器仅聚合文本部件，跳过图片标记、表格等复杂布局，再按长度、规则词、否定和数字筛选排序候选；这条路径不得进入普通捕获或学习流程。参考 [[c5]] [[c6]]\n\n样本必须全部确认后才能冻结。清单摘要由样本序号、输入摘要和确认标签摘要组成，完整性检查会按相同结构复算；行为测试覆盖重复导入去重、未确认时拒绝冻结、摘要复算，以及冻结后标签被篡改时校验失败。参考 [[c7]] [[c8]]\n\n评估器把引文定位、语义支持、数字槽、必要证据覆盖、任务完成和不必要打断分开计算。引文可在原文中定位并不代表结论受支持：反向结论会被判为矛盾；没有预测对象时支持率为 `null`，但遗漏必要证据仍记为覆盖失败。参考 [[c9]] [[c10]]"
+        "title": "从人工金标到拆分质量指标",
+        "body": "```mermaid\nflowchart LR\n  A[研究材料] --> B[候选样本]\n  B --> C[人工确认]\n  C --> D[冻结清单]\n  D --> E[预测评估]\n  E --> F[定位、语义、事实槽与任务指标]\n```\n\n数据集只有在目标样本全部确认后才能冻结；冻结摘要绑定样本顺序、输入摘要和确认标签，之后可重新计算以发现内容漂移。参考 [[c4]] 但评估函数自身只选择已确认且带确认标签的样本，没有接收数据集状态或清单摘要，因此现有材料不能证明所有评估入口都会强制执行冻结校验。参考 [[c5]]\n\n评估不会把“引文是原文子串”当成完整支持，而是分别计算引用定位、规则式语义支持和数字事实槽一致性；必要证据覆盖、任务完成与不必要打断又从不同角度衡量遗漏和过度询问。参考 [[c6]]、[[c7]] 这使反向陈述即使引用位置正确也会被识别为矛盾，空预测也不会因零对象获得虚假的满分。"
       },
       {
-        "key": "knowledge_and_product_checks",
-        "title": "知识发布与产品流程的交叉验证",
-        "body": "知识草稿只有经过独立会话复核才会发布；复核拒绝或分析期间输入变化都会阻止晋升，被拒草稿可携带反馈继续修订。参考 [[c11]] [[c12]] 更高层文章保留对已复核下层文章的依赖，底层来源变化会使上层结果失效。参考 [[c13]]\n\n产品侧浏览器验收覆盖提案应用、学习结果、固定原证据和通知详情；还检查循环证据与不可变旧版本、人工判断及过期保护、移动布局与百层证据栈，以及故障展示和重启恢复。参考 [[c14]] [[c15]] [[c16]] [[c17]] [[c18]] 阅读器同时验证 Markdown 表格和 Mermaid 图表呈现，并排除脚本与 `foreignObject`。参考 [[c19]]\n\n这些证据表明受控环境中的关键用户路径可以追溯，但知识管线测试替换了角色运行器，浏览器测试也使用协议夹具，不能据此推断真实模型或外部渠道已经通过同等范围的验收。"
+        "key": "validation_layers",
+        "title": "各类验收分别证明什么",
+        "body": "项目把验证分为互补层次：类型检查、测试与构建验证代码合同；进程内集成测试验证路由、SQLite、作业和知识流水线编排；浏览器验收验证用户可见的完整交互；真实 ACP 或飞书检查则负责外部依赖。各层的职责关系可沿分层验收章节继续下钻。延伸阅读：[[c8]]\n\n浏览器脚本运行真实 Vue、API 和 SQLite，但 Agent 采用确定性协议夹具，以稳定材料录入、提案应用、通知、证据阅读、响应式布局和故障展示等断言。参考 [[c9]] 2026-10-01 的记录显示这些场景在指定 Chromium 版本下无错误完成，不过它是一次历史快照，不能外推到其他浏览器、后续提交或真实模型。参考 [[c10]]\n\n知识发布本身采用“生成—独立复核—接受后发布”的流程；被拒绝目标会携带旧草稿与反馈重试，未被接受的结果不会晋升。参考 [[c11]] 测试还覆盖复核会话隔离、来源运行中变化时拒绝发布，以及拒绝后续跑，但模拟角色网关并不能证明真实模型的普遍语义质量。参考 [[c12]]"
       },
       {
-        "key": "progress_and_limits",
-        "title": "当前证据与仍需补强的边界",
-        "body": "历史验证记录包含浏览器流程和小型模型校准，并明确不代表所有外部集成都已实测，也不证明普遍语义正确。参考 [[c21]] 现有实机证据仍较窄：ACP 快照只记录 Agent、模型、effort、回答和事件类型；飞书快照只记录连接器、文档版本、部件类型及文本规模，均缺少完整输入指纹、退出码和关键行为断言。参考 [[c22]] [[c23]]\n\n确定性评估基线包含两个独立维度：`semanticSupport` 以否定翻转、反义关系、时间错配、限定词丢失和二元词组重叠判断语义支持；`coreFactSlots` 则单独检查陈述中的数字或数量边界是否能在引文中找到。二者分别计算和汇总，数字变化不会被表述为语义支持规则自身的能力。参考 [[c24]] [[c32]] [[c33]] 短句测试覆盖同义改写、范围扩大、时间错配和否定翻转；数值变化用例只断言独立的数字槽检查。参考 [[c25]]\n\n一致性边界仍待验证：样本加入在事务开始前读取状态和最大序号；修订最终更新未再次约束允许状态；冻结更新只匹配 `labeling` 状态，却未检查实际命中行数。参考 [[c26]] [[c27]] [[c28]]\n\n飞书续发会把会话消息标识清空，新建会话也以空消息标识入库；回调则要求会话中的消息标识与事件完全一致。发送成功后的标识回填、重试与未知结果恢复协议在当前材料中尚未出现。参考 [[c29]] [[c30]] [[c31]]"
+        "key": "evidence_limits",
+        "title": "当前进展、证据强弱与剩余限制",
+        "body": "已有实现记录显示依赖冻结、类型检查、全量测试、构建和多条浏览器流程曾以退出码 0 完成，并做过一个 GPT-5.6-Sol 的小型复核校准；同一记录明确排除了嵌入检索、跨文件类型感知调用解析、真实飞书 WebSocket 验收和租户隔离等能力。参考 [[c13]]\n\n实机证据仍有强弱差异：ACP 快照记录了 Agent 版本、模型、思考强度、回答和事件类型，却没有输入、执行时间、退出码或正确性断言。参考 [[c14]] 飞书快照只记录文档标题、版本、part 类型和文本规模，未关联固定修订、授权范围或幂等验证。参考 [[c15]] 因此它们只能证明窄范围观察，不能替代可复现的端到端验收。\n\n当前存储基础明确是单用户 SQLite，不能把共享令牌或本地运行解释为团队租户隔离。参考 [[c16]] 飞书质量标注还有一处需要现场验证的衔接：会话创建时消息标识为空，而卡片回调要求该标识与入站事件完全一致；现有材料尚未展示发送成功后的回填步骤。参考 [[c17]]、[[c18]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "分层验证工作流",
-        "reason": "说明确定性浏览器验收、真实模型与外部集成冒烟、冻结数据集质量门禁之间的分层关系。",
+        "label": "质量评测闭环",
+        "reason": "提供质量标签用途、研究评测隔离和人工确认流程的子知识下钻入口；附近论断仍由原始代码引用支撑。",
         "relation": "explains",
         "target": {
           "kind": "article",
-          "key": "module:scripts",
-          "section": "layered_validation"
+          "key": "module:quality",
+          "section": "purpose"
         },
         "quote": ""
       },
       {
         "key": "c2",
-        "label": "质量门禁职责",
-        "reason": "说明冻结数据集评测与在线冒烟解决不同风险，不能互相替代。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "module:scripts",
-          "section": "quality_gate"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c3",
-        "label": "浏览器验收运行边界",
-        "reason": "支持脚本运行真实 Vue、API 与 SQLite，并以夹具稳定 Agent 输出。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 1,
-          "endLine": 17
-        },
-        "quote": "// Real Vue + API + SQLite test. Fixture Agent is used only to make UI assertions deterministic.\nimport { chromium, expect } from \"@playwright/test\";\nimport { randomBytes } from \"node:crypto\";\nimport { mkdtempSync, rmSync, mkdirSync, writeFileSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resol"
-      },
-      {
-        "key": "c4",
-        "label": "浏览器验收证据边界",
-        "reason": "支持后端为真实 Fastify 与 SQLite、智能体为确定性 ACP 协议夹具。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/browser-verification.json",
-          "startLine": 21,
-          "endLine": 23
-        },
-        "quote": "  \"errors\": [],\n  \"agent\": \"deterministic ACP protocol fixture\",\n  \"backend\": \"real Fastify + SQLite\""
-      },
-      {
-        "key": "c5",
-        "label": "研究导入隔离边界",
-        "reason": "支持质量样本构建只用于显式研究标注，不得进入普通捕获、导入或学习链路。",
+        "label": "研究样本隔离边界",
+        "reason": "证明规则切分样本只用于人工标注研究，不属于普通捕获、导入和学习链路。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -92,22 +54,22 @@
         "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
       },
       {
-        "key": "c6",
-        "label": "候选样本生成流程",
-        "reason": "支持文本聚合、复杂布局跳过、长度筛选、规则评分、排序截取及候选不足失败。",
-        "relation": "implements",
+        "key": "c3",
+        "label": "质量标签约束",
+        "reason": "支持提炼、弃权、需要上下文三种处置，并证明提炼必须包含对象、非提炼结果不得自动应用。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 46,
-          "endLine": 153
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 39,
+          "endLine": 74
         },
-        "quote": "  const markdown = document.parts\n    .filter(\n      (\n        part,\n      ): part is Extract<CaptureInput[\"parts\"][number], { type: \"text\" }> =>\n        part.type === \"text\",\n    )\n    .map((part) => part.text)\n    .join(\"\\n\\n\");\n  const blocks = markdown.split(/\\n\\s*\\n/);\n  let section = \"文档正文\";\n  const candidates: {"
+        "quote": "export const qualityLabelSchema = z\n  .object({\n    disposition: z.enum([\"extract\", \"abstain\", \"needs_context\"]),\n    objects: z\n      .array(\n        z\n          .object({\n            kind: z.enum([\"task\", \"claim\", \"episode\", \"procedure\"]),\n            statement: z.string().min(1).max(4000),\n            evidenceQuote:"
       },
       {
-        "key": "c7",
-        "label": "冻结清单与完整性复算",
-        "reason": "支持冻结前置条件、清单摘要组成，以及完整性检查按相同结构复算。",
+        "key": "c4",
+        "label": "冻结与完整性复算",
+        "reason": "支持全部样本确认后生成清单摘要，并通过重新计算发现冻结内容漂移。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -118,189 +80,125 @@
         "quote": "  freeze(datasetId: string) {\n    const dataset = this.db\n      .prepare(\"SELECT * FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    const samples = this.samples(datasetId);\n    if (\n      samples.length !== Number(dataset.target"
       },
       {
-        "key": "c8",
-        "label": "质量数据集生命周期测试",
-        "reason": "支持重复导入去重、未确认时拒绝冻结、人工确认、摘要复算和冻结后篡改检测。",
+        "key": "c5",
+        "label": "评估样本筛选",
+        "reason": "证明评估器只筛选已确认样本，函数自身没有检查数据集冻结状态或清单摘要。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-          "startLine": 50,
-          "endLine": 143
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 234,
+          "endLine": 252
         },
-        "quote": "describe(\"B2-08 quality dataset and evaluation\", () => {\n  it(\"imports deduplicated source samples, requires human labels and freezes a digest\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-quality-eval-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const"
+        "quote": "export function evaluateQuality(\n  samples: QualitySample[],\n  predictionsInput: unknown[],\n) {\n  const predictions = predictionsInput.map((prediction) =>\n    qualityPredictionSchema.parse(prediction),\n  );\n  const bySample = new Map(\n    predictions.map((prediction) => [prediction.sampleId, prediction]),\n  );\n  if (by"
+      },
+      {
+        "key": "c6",
+        "label": "对象与任务判定",
+        "reason": "支持引用定位、语义支持、事实槽和任务完成采用不同判定条件。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 285,
+          "endLine": 317
+        },
+        "quote": "    // Per-object evidence evaluation. Objects are only produced when the\n    // prediction actually extracts; an empty array contributes NOTHING to the\n    // support denominators (previously `every()` credited empty answers).\n    const objectEvals: PredictedObjectEval[] = actual.objects.map((object) => ({\n      locat"
+      },
+      {
+        "key": "c7",
+        "label": "拆分质量指标",
+        "reason": "支持引用定位、语义支持、事实槽、证据覆盖、任务完成、不必要打断和空分母语义。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 387,
+          "endLine": 457
+        },
+        "quote": "  return {\n    denominator: rows.length,\n    predictionCount: predictions.length,\n    missingPredictions: count((row) => row.missing),\n    exactMatches: count((row) => row.exact),\n    dispositionAgreements: count((row) => row.dispositionMatch),\n    autoApply: {\n      predicted: autoApplied,\n      correct: count((row) ="
+      },
+      {
+        "key": "c8",
+        "label": "分层验收说明",
+        "reason": "提供浏览器夹具、真实外部链路与质量评测之间职责分工的子知识入口。",
+        "relation": "background",
+        "target": {
+          "kind": "article",
+          "key": "module:scripts",
+          "section": "layered-validation"
+        },
+        "quote": ""
       },
       {
         "key": "c9",
-        "label": "可定位引文的矛盾反例",
-        "reason": "证明引文能够定位不等于语义支持，反向结论会被判为矛盾并导致任务未完成。",
+        "label": "真实应用浏览器栈",
+        "reason": "证明浏览器验收使用真实 Vue、API 和 SQLite，同时以 fixture Agent 保持界面断言确定性。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-          "startLine": 201,
-          "endLine": 232
+          "key": "omem:scripts/browser-smoke.ts",
+          "startLine": 1,
+          "endLine": 17
         },
-        "quote": "describe(\"G19 split evidence metrics\", () => {\n  it(\"judges a reverse statement as contradicted even when the quote is a substring\", () => {\n    const text =\n      \"当前甲系统与乙主体是单一关联关系，未来可能允许多对多绑定。\";\n    const sample = makeSample(\n      makeInput(text),\n      makeLabel([claim(text, text)], { autoApply: true }),\n    );\n   "
+        "quote": "// Real Vue + API + SQLite test. Fixture Agent is used only to make UI assertions deterministic.\nimport { chromium, expect } from \"@playwright/test\";\nimport { randomBytes } from \"node:crypto\";\nimport { mkdtempSync, rmSync, mkdirSync, writeFileSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resol"
       },
       {
         "key": "c10",
-        "label": "空预测分母语义",
-        "reason": "支持零预测对象时支持率为空，而必要证据遗漏仍按覆盖失败计算。",
-        "relation": "supports",
+        "label": "浏览器验收快照",
+        "reason": "支持指定日期、浏览器版本、覆盖场景、无错误结果以及确定性 ACP 夹具边界。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-          "startLine": 234,
-          "endLine": 260
+          "key": "omem:docs/implementation/browser-verification.json",
+          "startLine": 2,
+          "endLine": 23
         },
-        "quote": "  it(\"does not credit an empty answer as evidence support (null denominator)\", () => {\n    const text =\n      \"一个运营人最多关联五个手机号，每个手机号只能关联一个运营人。\";\n    const sample = makeSample(\n      makeInput(text),\n      makeLabel([claim(text, text)], { autoApply: true }),\n    );\n    // Prediction abstains with zero objects.\n    const "
+        "quote": "  \"date\": \"2026-10-01\",\n  \"browser\": \"145.0.7632.6\",\n  \"checks\": [\n    \"empty real workspace and material capture\",\n    \"A-U01 real job, applied proposal, notification and evidence flow\",\n    \"recursive evidence, cycle and return focus\",\n    \"version update and immutable prior revision\",\n    \"task creation and persiste"
       },
       {
         "key": "c11",
-        "label": "独立复核后发布",
-        "reason": "支持生成与复核使用不同会话，接受后才发布，并可复用持久结果。",
+        "label": "复核后发布流程",
+        "reason": "支持知识草稿经独立复核后才发布，并对拒绝目标携带反馈继续修订。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/pipeline.ts",
+          "startLine": 113,
+          "endLine": 142
+        },
+        "quote": "  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown) {\n    let repair: unknown = priorFeedback;\n    let remaining = targets;\n    const published: KnowledgeArticle[] = [];\n    for (let attempt = 0; attempt < 4; attempt++) {\n      const wr"
+      },
+      {
+        "key": "c12",
+        "label": "知识流水线行为测试",
+        "reason": "支持独立会话、复核后发布、来源变化保护和拒绝后续跑，同时表明测试使用模拟角色。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
           "startLine": 39,
-          "endLine": 50
+          "endLine": 70
         },
         "quote": "it(\"publishes only after independent review and reuses durable outputs after projection loss\", async () => {\n  const { store, repository, pipeline, run, captured } = setup();\n  expect((await pipeline.analyze(repository.materials())).failures).toEqual([]);\n  expect(run).toHaveBeenCalledTimes(2);\n  const article = reposi"
       },
       {
-        "key": "c12",
-        "label": "拒绝与输入变化保护",
-        "reason": "支持复核拒绝和分析期间来源变化时不发布，并从旧草稿与反馈继续修订。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-          "startLine": 53,
-          "endLine": 70
-        },
-        "quote": "it(\"does not promote rejected knowledge or a result whose source changed during analysis\", async () => {\n  const rejected = setup(true);\n  expect((await rejected.pipeline.analyze(rejected.repository.materials())).failures).toHaveLength(1);\n  expect(rejected.repository.list()).toEqual([]);\n  const stale = setup(false, t"
-      },
-      {
         "key": "c13",
-        "label": "上层知识失效传播",
-        "reason": "支持概览依赖已复核下层文章，并在底层来源变化后转为非当前状态。",
-        "relation": "supports",
+        "label": "实现验证记录",
+        "reason": "支持依赖、测试、构建、浏览器和小型模型校准的历史结果，并明确记录中的剩余限制。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-          "startLine": 123,
-          "endLine": 136
+          "key": "omem:docs/implementation/knowledge-verification.json",
+          "startLine": 7,
+          "endLine": 52
         },
-        "quote": "it(\"composes reviewed chapters without flattening descendant originals and preserves invalidation\", async () => {\n  const { repository, pipeline, capture, run } = setup();\n  capture(\"The release uses fixed evidence.\\nAdditional context is documented.\\n\" + \"Background line.\\n\".repeat(80) + \"DEEP_SOURCE_TAIL\");\n  await p"
+        "quote": "  \"checks\": [\n    {\n      \"command\": \"osdk deps --frozen\",\n      \"exitCode\": 0,\n      \"scope\": \"Application dependencies; no application dependencies were changed during this work.\"\n    },\n    {\n      \"command\": \"osdk run --no-deps check\",\n      \"exitCode\": 0,\n      \"testFiles\": 55,\n      \"tests\": 330,\n      \"includes\""
       },
       {
         "key": "c14",
-        "label": "提案应用与证据回看",
-        "reason": "支持提案应用后查看学习结果、固定原证据和通知详情的浏览器主路径。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 228,
-          "endLine": 280
-        },
-        "quote": "      const evaluated = await evaluateTask({\n        revision,\n        proposalId: \"browser-auto-proposal\",\n        title: \"提交发布前回滚验证报告\",\n        jobId: job.id,\n      });\n      expect(evaluated.policy).toBe(\"auto_apply\");\n      const lease = store.jobs.claimNext({\n        workerId: \"browser-worker\",\n        fingerprint"
-      },
-      {
-        "key": "c15",
-        "label": "循环证据与版本历史",
-        "reason": "支持循环引用导航、基于原文追问，以及新旧修订并存和旧版本可读。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 283,
-          "endLine": 332
-        },
-        "quote": "  const [a, b] = revision.fragments;\n  store.link(a!.id, b!.id);\n  store.link(b!.id, a!.id);\n  await check(\"recursive evidence, cycle and return focus\", async () => {\n    await page.getByRole(\"button\", { name: \"原始材料\", exact: true }).click();\n    await page\n      .locator(\".source-link\")\n      .filter({ hasText: \"发布前的回滚"
-      },
-      {
-        "key": "c16",
-        "label": "人工判断与过期保护",
-        "reason": "支持补充背景、拒绝、确认应用和来源变化后禁止提交旧判断。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 399,
-          "endLine": 487
-        },
-        "quote": "      for (const [index, title] of [\n        \"补充支付方案背景\",\n        \"拒绝未经确认的排期\",\n        \"批准明确的复核事项\",\n        \"过期来源上的旧提案\",\n      ].entries()) {\n        // Current policy asks for decisions on conflicting active commitments;\n        // forwarded unknown-owner statements are retained as source, not cards.\n        const base"
-      },
-      {
-        "key": "c17",
-        "label": "移动布局与深层证据",
-        "reason": "支持平板、手机布局、对话框焦点和一百层证据导航的容量检查。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 567,
-          "endLine": 650
-        },
-        "quote": "  await check(\"A-U04 768px layout and keyboard focus\", async () => {\n    await page.setViewportSize({ width: 768, height: 900 });\n    await page.reload();\n    expect(\n      await page.evaluate(\n        () => document.documentElement.scrollWidth <= innerWidth,\n      ),\n    ).toBe(true);\n    await page.getByText(\"选择原文提问或"
-      },
-      {
-        "key": "c18",
-        "label": "故障展示与重启恢复",
-        "reason": "支持模型失败、通知失败、API 离线及服务重启后持久数据仍可读取。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 653,
-          "endLine": 725
-        },
-        "quote": "    \"A-U05 offline, model, delivery failure and restart truthfulness\",\n    async () => {\n      const failedJob = store.jobs.enqueue({\n        kind: \"browser_model_unavailable\",\n        inputRefs: [{ revisionId: revision.id }],\n        roleVersion: \"extractor@1\",\n        policyVersion: \"memory-policy@1\",\n        cause: "
-      },
-      {
-        "key": "c19",
-        "label": "富文本安全渲染",
-        "reason": "支持 Markdown 表格与 Mermaid SVG 呈现，同时排除脚本和 foreignObject。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/browser-smoke.ts",
-          "startLine": 727,
-          "endLine": 739
-        },
-        "quote": "  await check(\"Markdown tables and Mermaid diagrams render through the real reader\", async () => {\n    store.capture({ source: \"manual\", externalId: \"rich-document\", title: \"结构化阅读验收\", context: {}, parts: [{type:\"text\", text: \"# 阅读流程\\n\\n| 阶段 | 说明 |\\n| --- | --- |\\n| 捕获 | 保存原文 |\\n\\n```mermaid\\nflowchart LR\\n  A[捕获] --> B"
-      },
-      {
-        "key": "c20",
-        "label": "自动化检查记录",
-        "reason": "支持依赖冻结、类型检查、全量测试和构建位于基础验证层，并记录其历史退出结果。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "omem:docs/implementation/knowledge-verification.json",
-          "section": "automated-checks"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c21",
-        "label": "浏览器与模型校准记录",
-        "reason": "说明浏览器流程和小型模型校准的历史结果，并限定其不代表全部外部集成或普遍语义正确。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "omem:docs/implementation/knowledge-verification.json",
-          "section": "browser-and-live"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c22",
         "label": "ACP 实机快照",
-        "reason": "支持现有 ACP 记录仅包含 Agent、模型、effort、回答及事件类型。",
+        "reason": "支持快照中已有的 Agent、模型、思考强度、回答与事件字段，也显示输入和退出状态等信息缺失。",
         "relation": "tracks",
         "target": {
           "kind": "material",
@@ -311,9 +209,9 @@
         "quote": "{\n  \"agent\": {\n    \"name\": \"traex-acp\",\n    \"title\": \"TraeCode CLI\",\n    \"version\": \"0.207.1\"\n  },\n  \"configuredModel\": \"gpt-6-astra\",\n  \"configuredEffort\": \"high\",\n  \"answer\": \"总共 12 件。\",\n  \"eventTypes\": [\n    \"status\",\n    \"text\"\n  ]\n}"
       },
       {
-        "key": "c23",
+        "key": "c15",
         "label": "飞书导入实机快照",
-        "reason": "支持现有飞书记录只包含连接器、文档版本、部件类型和文本规模。",
+        "reason": "支持文档标题、版本、part 类型和文本规模的窄范围记录，并界定未记录字段。",
         "relation": "tracks",
         "target": {
           "kind": "material",
@@ -324,181 +222,84 @@
         "quote": "{\n  \"connector\": \"lark-cli\",\n  \"title\": \"ACP 接入与使用指南\",\n  \"version\": \"15\",\n  \"partTypes\": [\n    \"text\",\n    \"link\"\n  ],\n  \"textCharacters\": 12245\n}"
       },
       {
-        "key": "c24",
-        "label": "确定性语义支持规则",
-        "reason": "支持语义支持裁决仅使用否定翻转、反义关系、时间错配、限定词丢失和二元词组重叠，不包含数字槽判断。",
-        "relation": "explains",
+        "key": "c16",
+        "label": "单用户存储基础",
+        "reason": "说明当前 SQLite 实现面向单用户，团队权限执行仍属于后续迁移。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 33,
-          "endLine": 182
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 6
         },
-        "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";"
       },
       {
-        "key": "c25",
-        "label": "中文语义与数字槽测试",
-        "reason": "支持同义改写、限制丢失、时间错配和否定翻转由语义支持指标断言，而数值变化由独立的数字槽函数断言。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-          "startLine": 262,
-          "endLine": 329
-        },
-        "quote": "  it(\"does not penalize a faithful synonymous paraphrase\", () => {\n    const text = \"一个主体只能拥有一个主账号，并且该主账号代表对应组织。\";\n    const sample = makeSample(makeInput(text), makeLabel([claim(text, text)]));\n    const metrics = evaluateQuality([sample], [\n      {\n        sampleId: sample.id,\n        prediction: makeLabel([\n        "
-      },
-      {
-        "key": "c26",
-        "label": "样本批量写入事务边界",
-        "reason": "支持数据集状态和最大序号在立即事务开始前读取，为并发加入样本的待验证边界提供依据。",
+        "key": "c17",
+        "label": "标注会话初始化",
+        "reason": "证明新建飞书质量标注会话时消息标识被写为空值。",
         "relation": "tracks",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/quality/repository.ts",
-          "startLine": 155,
-          "endLine": 215
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 289,
+          "endLine": 308
         },
-        "quote": "  addSamples(\n    datasetId: string,\n    samples: { input: QualitySampleInput; draftLabel: QualityLabel }[],\n  ) {\n    const dataset = this.db\n      .prepare(\"SELECT state FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    if (![\""
+        "quote": "    this.store.tx(() => {\n      this.store.db\n        .prepare(\n          `INSERT INTO quality_annotation_sessions(\n             id,dataset_id,binding_id,chat_id,owner_open_id,message_id,\n             current_sample_id,nonce_hash,expires_at,state,created_at,updated_at\n           ) VALUES(?,?,?,?,?,NULL,?,?,?,'active',?"
       },
       {
-        "key": "c27",
-        "label": "标签修订更新条件",
-        "reason": "支持修订先检查允许状态，但最终更新只约束样本标识和旧标签摘要。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/repository.ts",
-          "startLine": 328,
-          "endLine": 355
-        },
-        "quote": "  revise(input: {\n    sampleId: string;\n    expectedLabelDigest: string;\n    label: QualityLabel;\n  }) {\n    const sample = this.sample(input.sampleId);\n    if (!sample) throw Error(\"QUALITY_SAMPLE_NOT_FOUND\");\n    if (![\"pending\", \"needs_edit\", \"skipped\"].includes(sample.state))\n      throw Error(\"QUALITY_SAMPLE_ALREA"
-      },
-      {
-        "key": "c28",
-        "label": "冻结状态更新条件",
-        "reason": "支持冻结更新只匹配 labeling 状态，且没有检查更新命中行数。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/repository.ts",
-          "startLine": 358,
-          "endLine": 383
-        },
-        "quote": "  freeze(datasetId: string) {\n    const dataset = this.db\n      .prepare(\"SELECT * FROM quality_datasets WHERE id=?\")\n      .get(datasetId) as Row | undefined;\n    if (!dataset) throw Error(\"QUALITY_DATASET_NOT_FOUND\");\n    const samples = this.samples(datasetId);\n    if (\n      samples.length !== Number(dataset.target"
-      },
-      {
-        "key": "c29",
-        "label": "续发时清空消息标识",
-        "reason": "支持已有标注会话续发时明确把 message_id 更新为 NULL。",
+        "key": "c18",
+        "label": "卡片回调校验",
+        "reason": "证明回调要求会话消息标识与入站事件完全一致，支持指出回填流程仍需验证。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/lark-annotations.ts",
-          "startLine": 203,
-          "endLine": 204
-        },
-        "quote": "            `UPDATE quality_annotation_sessions SET message_id=NULL,\n               nonce_hash=?,expires_at=?,updated_at=? WHERE id=?`,"
-      },
-      {
-        "key": "c30",
-        "label": "新建会话的空消息标识",
-        "reason": "支持新建标注会话时 message_id 字段以 NULL 写入。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/lark-annotations.ts",
-          "startLine": 292,
-          "endLine": 295
-        },
-        "quote": "          `INSERT INTO quality_annotation_sessions(\n             id,dataset_id,binding_id,chat_id,owner_open_id,message_id,\n             current_sample_id,nonce_hash,expires_at,state,created_at,updated_at\n           ) VALUES(?,?,?,?,?,NULL,?,?,?,'active',?,?)`,"
-      },
-      {
-        "key": "c31",
-        "label": "质量卡片回调约束",
-        "reason": "支持回调联合校验会话、样本、身份、聊天、应用和时效，并要求会话消息标识与事件消息标识一致。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/lark-annotations.ts",
-          "startLine": 369,
+          "startLine": 378,
           "endLine": 394
         },
-        "quote": "    const action = parsed.data;\n    const session = this.store.db\n      .prepare(\n        `SELECT s.*,b.owner_open_id,c.app_id FROM quality_annotation_sessions s\n         JOIN lark_bindings b ON b.id=s.binding_id\n         JOIN lark_connections c ON c.id=b.connection_id WHERE s.id=?`,\n      )\n      .get(action.sessionId"
-      },
-      {
-        "key": "c32",
-        "label": "独立数字槽检查",
-        "reason": "支持数字或数量边界一致性由 judgeFactSlots 独立检查，而不是由语义支持函数处理。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 185,
-          "endLine": 195
-        },
-        "quote": "/**\n * Core fact-slot consistency: every number / quantified bound asserted in the\n * statement must also appear in the quote. A statement that introduces a new\n * number or changes a bound (最多五个 -> 最多三个) mismatches.\n */\nexport function judgeFactSlots(statement: string, quote: string): boolean {\n  const quantified = /\\"
-      },
-      {
-        "key": "c33",
-        "label": "语义与数字指标分开汇总",
-        "reason": "支持 semanticSupport 与 coreFactSlots 作为两个独立指标分别统计和报告。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 409,
-          "endLine": 426
-        },
-        "quote": "    // 2. Semantic support: does the statement actually follow from the quote?\n    //    Reverse statements and negation flips score 0; faithful paraphrases\n    //    score 1 regardless of verbatim mismatch.\n    semanticSupport: {\n      predictedObjects,\n      supported,\n      partial,\n      contradicted,\n      unsuppo"
+        "quote": "    const valid =\n      session &&\n      sample &&\n      session.state === \"active\" &&\n      session.current_sample_id === sample.id &&\n      session.owner_open_id === event.senderOpenId &&\n      session.chat_id === event.chatId &&\n      session.message_id === event.messageId &&\n      session.app_id === event.appId &&\n"
       }
     ],
     "questions": [
       {
-        "question": "飞书质量卡片发送成功后，messageId 如何可靠回填到标注会话，并处理远端成功但本地确认丢失的情况？",
-        "why": "续发与新建会话均把消息标识保存为空，而回调校验要求事件消息标识与会话记录一致；当前材料没有展示发送结果回填、未知结果重试和去重协议。",
-        "nextStep": "补充投递 worker 的发送结果持久化设计，并以成功发送、重复发送、回填失败和回调先到四类行为测试验证。",
+        "question": "实际质量评估入口是否会在读取预测前强制执行冻结清单完整性校验？",
+        "why": "仓储提供冻结与复算能力，但评估函数只筛选已确认样本；这决定冻结是推荐流程还是不可绕过的评测合同。",
+        "nextStep": "补充评估命令、runner 或服务调用方的固定材料，核对是否调用冻结校验，并为未冻结或摘要漂移的数据集增加入口级行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c29",
-          "c30",
-          "c31"
+          "c4",
+          "c5"
         ]
       },
       {
-        "question": "并发加入样本、修订与确认竞争、重复冻结时，预期的冲突优先级和幂等合同是什么？",
-        "why": "现有实现与测试覆盖顺序操作和完整性复算，但不足以证明并发序号、确认保护、重复冻结返回值及事务中断恢复。",
-        "nextStep": "先明确确认与修订的优先级及重复冻结语义，再增加真实 SQLite 并发和故障注入测试。",
+        "question": "规则式语义裁决在复杂中文否定、条件嵌套、数量单位转换和跨句指代上的误判率是多少？",
+        "why": "现有评估拆分了语义与定位，但语义裁决仍是有限显式规则；当前材料不足以说明其在真实长文本上的召回率和误报率。",
+        "nextStep": "从冻结人工数据集中建立困难样本分层，统计 supported、partial、contradicted、unsupported 的混淆情况，并为确认的误判补充反例测试。",
         "blocking": false,
         "citationKeys": [
-          "c8",
-          "c26",
-          "c27",
-          "c28"
+          "c6",
+          "c7"
         ]
       },
       {
-        "question": "语义支持规则和独立数字槽检查在真实中文困难样本上的误报与漏报是否达到可接受范围？",
-        "why": "当前证据主要来自少量手工短句；语义支持只覆盖有限的否定、反义、限定、时间和词面模式，数字槽也只检查量化文本是否能在引文中找到。",
-        "nextStep": "从冻结人工数据集中建立困难集，分别评估语义支持四类裁决与数字槽一致性，并为新增规则保留反例测试。",
+        "question": "ACP 与飞书实机快照能否补齐可复现的输入、时间、退出码、固定修订和业务断言？",
+        "why": "现有快照只能确认少量摘要字段，不能独立判断回答正确性、导入完整性、幂等性或整条调用是否成功结束。",
+        "nextStep": "将每次 live 运行关联到不可变 trace 或验证清单，记录输入摘要、授权范围、源码版本、能力协商、退出状态和预期内容断言。",
         "blocking": false,
         "citationKeys": [
-          "c24",
-          "c25",
-          "c32",
-          "c33"
+          "c14",
+          "c15"
         ]
       },
       {
-        "question": "ACP 与飞书实机验证是否应补充统一的可复现运行合同？",
-        "why": "现有快照缺少固定输入或材料指纹、执行时间、退出码、授权主体、能力协商和关键内容断言，无法独立判断结果正确或完整成功。",
-        "nextStep": "为两类 live 检查记录源码版本、固定输入、实际模型或连接器、授权范围、退出码、运行 trace 和行为断言，并明确 failed 与环境 skipped。",
+        "question": "飞书卡片成功投递后，哪个组件负责把平台消息标识回填到质量标注会话？",
+        "why": "会话创建时消息标识为空，而回调验证要求数据库值与入站消息完全一致；缺少回填会使合法人工标注被拒绝。",
+        "nextStep": "补充投递 worker 与发送回执的固定材料，并验证成功回填、重试、续发替换及失败后的回调行为。",
         "blocking": false,
         "citationKeys": [
-          "c21",
-          "c22",
-          "c23"
+          "c17",
+          "c18"
         ]
       }
     ]
@@ -516,13 +317,8 @@
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+      "key": "omem:apps/server/src/quality/evaluator.ts",
+      "digest": "4c6debef6cb90bdc11eb1004b1e1f3f6be43688d996416c2b523165829af2835"
     },
     {
       "kind": "material",
@@ -531,13 +327,13 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/quality/evaluator.ts",
-      "digest": "4c6debef6cb90bdc11eb1004b1e1f3f6be43688d996416c2b523165829af2835"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
       "key": "omem:scripts/browser-smoke.ts",
-      "digest": "9801f1a76ba44e64cb1bff5c95a3954a0eb4446bc0c72bfe91f7ab6fdb3ac451"
+      "digest": "ce08c50321f0a54409286d95f333c1fa77f55c849716b404b8c23de86608e93f"
     },
     {
       "kind": "material",
@@ -552,27 +348,17 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/app.test.ts",
-      "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
+      "digest": "97e939f4e33fec83c8adf7ea575681c04e7205e3c40be1baa6d2f3eec1599bad"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "e331447e1286c4fa7c12a3e8a9e87ad83cec034057dd8ad12b866e43b3becf1f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+      "digest": "d0a0d20d427cae9cce2887dda081d6569bd3601a4ae7ca99d30ff0f3afc4ddd3"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
       "digest": "8891a23929780d2b1a23371199040fe1cece1ddc87ad0c95c06a879be0d258c6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
     },
     {
       "kind": "material",
@@ -582,7 +368,7 @@
     {
       "kind": "material",
       "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "0e4681ea5d6f9ca1243828c2a17cb2058f6c2a6e318ed12a5ba29d64b4bfaa65"
+      "digest": "d7f1d2817be1f2169233b1c4cd53b28da5795301528e508657f63b54f1c41a4b"
     },
     {
       "kind": "material",
@@ -602,12 +388,12 @@
     {
       "kind": "article",
       "key": "module:quality",
-      "digest": "c1c064f2fdcbf21da5b70226277df05f984ffb4d697704a9adfd9c26c6077412"
+      "digest": "6b39b8e1b7d378cf0375ad03b74b1fd2edf0114e41bb03b7ae255bc9d5ca3f85"
     },
     {
       "kind": "article",
       "key": "module:scripts",
-      "digest": "a41b92e6d89a9fafd6625729edde94f22f730529b0426d2eb079cdc23616579d"
+      "digest": "1c14f8042e8447f5e6e6d5ffb32c81ef3acc49dde74f9b8496595c5b22efb888"
     },
     {
       "kind": "article",
@@ -622,22 +408,22 @@
     {
       "kind": "article",
       "key": "omem:apps/server/tests/app.test.ts",
-      "digest": "153f4be61865804afc0e20ee58f5b93733cdeaa4b3b0f0f0dc8e26e3127b4b9f"
+      "digest": "12421c7828df6b2a04127a36375cc799c6f11c919e017c59e6ac5d04b5414867"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "623c79f29606a56bf8142cd025018b165d5ebb71a76d105c8964f83876652370"
+      "digest": "45a59bf27559fa4df0587201cf122ffba18edfbe88b135d5acf109799e076443"
     },
     {
       "kind": "article",
       "key": "omem:scripts/browser-smoke.ts",
-      "digest": "005ad2858ea97296d59c01a6d2b0f39d6a69879a99dc99508dca89c23db050ab"
+      "digest": "4f128fceafd6ad69f69a23b670b90aa06c9212748e3e54950997e34b80008850"
     },
     {
       "kind": "article",
       "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "2c7fea0014bf91d72b1c2b52b2d2745539f3a4aa74b5cef55b4d7de444ab3c4d"
+      "digest": "ab0546309e71f0129b58a406f23b5c29e36043f82f3196c5b872bd6a46835bac"
     },
     {
       "kind": "article",
@@ -658,17 +444,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "high",
-    "at": "2026-10-01T09:02:30.013Z",
+    "at": "2026-10-01T13:15:03.859Z",
     "trace": {
-      "runId": "bc7cb217-0627-479e-a1c5-e423054bee61",
+      "runId": "e772f150-97de-4b25-86d8-ddcfc45f69fb",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "68b59db96d84f13e4099c1b105d69f4e489d0af56f01818d21db5f8164f47887",
-      "contextHash": "69dfd63fa571d8f1facd0703738e44cb5c6fc1a4fcf64ad8ae630e4307dd9cca",
+      "promptHash": "7120fcda8e9e7416a9934e086b46b5305da309cf31ab1958f2cfff42ba1f6872",
+      "contextHash": "126f09840e7026d1769d9d3f6d71fccd092bab410f4977eb5fdfd61c07ea9f1a",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c10c2eef72e7417fe4ade4520351c687a79f0f9dc38257c6ab8b64821d765633",
+      "fingerprint": "fa32c45f2dff5097cae5dc1cfcec58c833a41e6831dc48f93cfad6d9fc1c890b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "high",
@@ -681,10 +467,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f6b2-ddb0-7800-95ea-365947046382"
+        "01a0f79a-2edb-73d3-a0d4-dffd4f75eb2d"
       ],
       "usage": {
-        "used": 109512,
+        "used": 129099,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -693,10 +479,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 260014,
-          "utf8Bytes": 306478,
-          "estimatedTokens": 102160,
-          "budgetedTokens": 127700,
+          "chars": 339221,
+          "utf8Bytes": 384745,
+          "estimatedTokens": 128249,
+          "budgetedTokens": 160312,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -705,17 +491,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T09:03:02.370Z",
+    "at": "2026-10-01T13:15:28.834Z",
     "trace": {
-      "runId": "7dcdc003-8ed8-431e-90dd-bab3ec94ccf9",
+      "runId": "43231378-73e6-4660-a33d-157b270f08b7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "62a69e95057a0e238a4cdb13dfa04ec4d2dafbc27337bf6431ced4a625e3ccee",
-      "contextHash": "66ee86dd2e9dc1e21a52ee88550d8f18179c32487a039f11eb6fec662a01e1b9",
+      "promptHash": "dfc7976710967c23b44ba09e893a5a0cb130872d41929738dcadaffece865880",
+      "contextHash": "9cf3389e24e6bfcaa166f616c31da498eaee0100b96c4d9ef3db4b7e6be01ac7",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5e4021f5214a5f12e523a837016c99caa7601b0cb311ff1a415803062f224f73",
+      "fingerprint": "11454b53fd2fec16477671ac37cdcee312b7e13515ebe8e5d6bf210df07e6c1a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "high",
@@ -728,10 +514,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f6b3-86fc-7f12-b6c0-cb6065cdc003"
+        "01a0f79a-c38c-71d3-81b8-f15ef72f4c72"
       ],
       "usage": {
-        "used": 105880,
+        "used": 125409,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -740,10 +526,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 258247,
-          "utf8Bytes": 303917,
-          "estimatedTokens": 101306,
-          "budgetedTokens": 126633,
+          "chars": 336589,
+          "utf8Bytes": 381163,
+          "estimatedTokens": 127055,
+          "budgetedTokens": 158819,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

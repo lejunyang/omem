@@ -2,36 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-    "title": "知识生成管线的发布、恢复与失效测试",
-    "summary": "该测试以临时 SQLite 数据库和受控角色运行器验证知识管线：知识必须经独立复核才能发布；拒绝结果、分析期间变化的输入不得晋升；已保存产物可恢复；材料或文章依赖变化会使下游知识失效。它还覆盖分析角色路由、修订续跑以及分层综合，但不证明真实 ACP、并发和进程崩溃场景可用。",
+    "title": "知识生成流水线的发布、恢复与失效测试",
+    "summary": "这组测试用临时 SQLite 存储和模拟角色运行时，验证知识从原始材料分析、独立复核到发布的关键约束，并覆盖拒绝后续跑、输入变化防护、材料类型分派、依赖隔离、章节合成及递归失效。它证明的是流水线编排与持久化行为，不代表真实 Agent CLI、模型质量或并发执行已被端到端验证。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose",
-        "title": "测试解决什么风险",
-        "body": "知识文章由原始材料推导而来，若未经复核、引用未绑定固定来源或输入已变化，就可能把过期解释当成事实。本测试创建临时存储、知识仓库与角色网关，并以受控返回值模拟分析、复核和修订，使发布约束能够稳定断言。参考 [[c1]]\n\n仓库层校验每节必须包含行内引用，且所有声明的引用都必须进入叙述；两类目标随后分别处理：文章引用校验目标文章及可选章节存在，材料引用才校验行号范围与引文确实位于原材料。语义支持性则由独立模型角色复核。延伸阅读：[[c2]]"
+        "key": "fixture-and-publish",
+        "title": "从固定证据到复核后发布",
+        "body": "测试夹具创建隔离的临时数据库，捕获一条用户笔记，并把角色网关替换为可控制“接受、拒绝、运行中改源”的模拟实现；因此测试能稳定观察生成者与复核者的调用顺序、输出和 trace，而不会启动真实模型。参考 [[c1]]\n\n主场景要求分析无失败、生成与独立复核各运行一次，并确认引用中的空 `quote` 最终被绑定为原文。生成与复核必须具有不同会话，同时删除知识投影后再次分析不得重复调用角色，而应从耐久输出恢复同一修订；此外还检查捕获任务保持在既定队列状态。参考 [[c2]]"
       },
       {
-        "key": "publication",
-        "title": "复核后发布与失败续跑",
-        "body": "主流程是固定材料先生成草稿，再由独立会话复核；接受后才发布，拒绝则保留草稿与反馈供后续修订。测试确认生成与复核使用不同会话，宿主会绑定精确原文；即使知识头投影被删除，再次分析仍复用持久结果和原修订，不重复运行角色。参考 [[c3]]\n\n被语义复核拒绝的草稿不会进入知识列表；下一次尝试会把旧草稿及反馈交给刷新角色。若分析期间原始材料产生新修订，管线以输入变化失败并阻止发布，避免旧结论覆盖新证据。参考 [[c4]]"
+        "key": "rejection-routing",
+        "title": "拒绝恢复、输入竞争与分析角色选择",
+        "body": "当复核给出语义拒绝时，草稿不能晋升为当前知识；若分析期间同一来源产生新修订，则以 `KNOWLEDGE_INPUT_CHANGED` 失败，避免把基于旧输入的结果发布。拒绝原因解除后再次分析，应由刷新角色携带先前草稿与审阅反馈继续，而不是丢失修订上下文。参考 [[c3]]\n\n材料分派测试区分普通 Lark 文档与带会话标识的 Lark 对话，并把 Git 或文件来源中具有常见代码扩展名的标题识别为代码材料。该断言与流水线中的实际选择规则一致：图片优先走视觉分析，对话命名空间走会话分析，其余再按路径或标题扩展名选择代码分析。参考 [[c4]]，[[c5]]"
       },
       {
-        "key": "dependencies",
-        "title": "依赖隔离、综合与级联失效",
-        "body": "同级文章默认只依赖各自材料，因此一份笔记变化不会使无关文章过期；若调用方明确提供另一材料作为背景，该依赖会被记录，背景变化便使文章失效。参考 [[c5]]\n\n模块综合可从完整固定材料中引用此前未使用但真实存在的新行；综合章节被拒后，也会从匹配的已审草稿继续修订。更高层概览接收已复核文章而不展开全部深层原文，同时保留文章依赖；底层来源变化后，失效状态沿依赖传播。参考 [[c6]]、[[c7]]"
-      },
-      {
-        "key": "routing_limits",
-        "title": "角色路由与测试边界",
-        "body": "路由断言区分普通 Lark 文档与带会话标识的 Lark 对话，并把常见 Git 或文件来源代码扩展名交给代码分析角色；实际规则还优先把含图片的材料分派给视觉分析角色。参考 [[c8]]、[[c9]]\n\n这些用例验证的是单并发、受控角色输出和数据库行为。角色网关已被 mock，因此没有证明真实 ACP 进程、模型能力协商、CLI 故障或输出修复链路可用；也未覆盖多 worker 竞争、进程中断、图片资产异常以及非法引用输出的完整管线行为。参考 [[c1]]"
+        "key": "dependencies-and-synthesis",
+        "title": "依赖隔离与分层合成",
+        "body": "兄弟文章默认只依赖各自来源：第一条材料更新后，另一篇文章仍保持当前修订。只有调用方显式提供背景材料，目标文章才记录该额外依赖，并在背景材料变化后失效，说明失效传播由已记录依赖驱动。参考 [[c6]]\n\n章节合成还验证两类行为：当完整固定原文可容纳时，合成器能够引用新增行并绑定精确文本；被拒绝的合成章节也能从匹配的已审阅草稿恢复。参考 [[c7]]\n\n更高层概览以已复核文章作为派生背景，不展开其深层原文尾部，并继续由独立复核角色检查；概览记录文章依赖，底层来源变化后会递归变为非当前状态。这里没有覆盖真实 Agent CLI、真实模型语义表现、并发大于 1、重试耗尽、停机过程或图片材料路径，因为网关完全被模拟且夹具把并发固定为 1。参考 [[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "受控测试环境",
-        "reason": "说明测试创建临时数据库、替换角色运行方法并把管线并发固定为一，支持测试范围与局限的判断。",
+        "label": "隔离夹具与模拟角色",
+        "reason": "说明测试如何创建临时存储、捕获原文并模拟生成与复核角色，也支持这些用例不调用真实模型的边界判断。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -43,21 +38,8 @@
       },
       {
         "key": "c2",
-        "label": "知识引用校验边界",
-        "reason": "支持行内引用通用约束，以及文章目标与材料目标采用不同校验规则的准确表述。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 41,
-          "endLine": 69
-        },
-        "quote": "/** Validate the exact source/derived distinction and every inline reference.\n * Semantic correctness is checked separately by an independent model role. */\nexport function validateKnowledgeDocument(document: KnowledgeDocument, materials: Map<string, KnowledgeMaterial>, articles: Map<string, KnowledgeArticle>, offered?"
-      },
-      {
-        "key": "c3",
-        "label": "复核发布与持久恢复",
-        "reason": "支持独立会话复核、引文绑定、投影丢失后复用持久结果等断言。",
+        "label": "复核后发布与耐久恢复",
+        "reason": "支持独立复核、引用原文绑定、会话隔离以及投影丢失后复用既有输出的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -68,9 +50,9 @@
         "quote": "it(\"publishes only after independent review and reuses durable outputs after projection loss\", async () => {\n  const { store, repository, pipeline, run, captured } = setup();\n  expect((await pipeline.analyze(repository.materials())).failures).toEqual([]);\n  expect(run).toHaveBeenCalledTimes(2);\n  const article = reposi"
       },
       {
-        "key": "c4",
-        "label": "拒绝、输入变化与修订恢复",
-        "reason": "支持拒绝结果不发布、输入变化阻断发布，以及携带旧草稿和反馈继续修订的行为。",
+        "key": "c3",
+        "label": "拒绝与输入变化防护",
+        "reason": "支持拒绝结果不发布、运行中源变化会失败，以及后续通过刷新角色携带旧草稿恢复的行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -81,9 +63,35 @@
         "quote": "it(\"does not promote rejected knowledge or a result whose source changed during analysis\", async () => {\n  const rejected = setup(true);\n  expect((await rejected.pipeline.analyze(rejected.repository.materials())).failures).toHaveLength(1);\n  expect(rejected.repository.list()).toEqual([]);\n  const stale = setup(false, t"
       },
       {
+        "key": "c4",
+        "label": "材料分析角色断言",
+        "reason": "支持 Lark 文档、Lark 会话以及普通导入代码被分派到不同分析角色的测试结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
+          "startLine": 73,
+          "endLine": 78
+        },
+        "quote": "it(\"distinguishes Lark documents from conversations and recognizes ordinary imported code\", () => {\n  const { repository } = setup(); const base = repository.materials()[0]!;\n  expect(analystFor({ ...base, namespace: \"lark\", path: null })).toBe(\"material-analyst\");\n  expect(analystFor({ ...base, namespace: \"lark\", path"
+      },
+      {
         "key": "c5",
-        "label": "文章依赖隔离",
-        "reason": "支持同级文章默认隔离、显式背景依赖被记录并参与失效判断。",
+        "label": "分析角色选择规则",
+        "reason": "给出被测试的实际角色选择条件，说明图片、对话和代码扩展名的优先分派关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/pipeline.ts",
+          "startLine": 15,
+          "endLine": 18
+        },
+        "quote": "export function analystFor(m: KnowledgeMaterial) {\n  if (m.images.length) return \"visual-analyst\";\n  if ([\"chat\", \"hook\"].includes(m.namespace) || (m.namespace === \"lark\" && !!m.conversationId)) return \"conversation-analyst\";\n  return /\\.(?:[cm]?[jt]sx?|vue|css|py|go|rs|sh)$/.test(m.path ?? ([\"file\", \"git\"].includes(m."
+      },
+      {
+        "key": "c6",
+        "label": "兄弟文章与显式背景依赖",
+        "reason": "支持兄弟文章默认隔离、显式背景被记录为依赖，以及背景变化触发目标文章失效。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -94,9 +102,9 @@
         "quote": "it(\"isolates sibling articles while retaining explicitly supplied background dependencies\", async () => {\n  const { store, repository, pipeline, capture } = setup();\n  const other = (text: string) => store.capture({ source: \"manual\", externalId: \"other\", title: \"Other note\", parts: [{ type: \"text\", text }], context: {}"
       },
       {
-        "key": "c6",
-        "label": "固定材料综合与修订",
-        "reason": "支持综合阶段读取固定全文中的新引用行，以及被拒综合章节从匹配草稿继续修订。",
+        "key": "c7",
+        "label": "固定原文与合成恢复",
+        "reason": "支持合成阶段可引用新增原文行，并在语义拒绝后从匹配草稿继续生成。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -107,9 +115,9 @@
         "quote": "it(\"provides full fixed source to synthesis when it fits, enabling a new supported line citation\", async () => {\n  const { repository, pipeline, capture } = setup();\n  capture(\"The release uses fixed evidence.\\nThe next line supplies additional context.\");\n  expect((await pipeline.analyze(repository.materials())).failu"
       },
       {
-        "key": "c7",
-        "label": "分层综合与失效传播",
-        "reason": "支持概览使用已复核文章而不展开深层原文，并保留文章依赖和级联失效。",
+        "key": "c8",
+        "label": "分层文章合成与递归失效",
+        "reason": "支持上层合成不展开深层原文、以派生文章作为背景、再次独立复核并保留失效传播；同一范围也显示夹具使用模拟网关，支撑未覆盖真实模型的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -118,66 +126,9 @@
           "endLine": 136
         },
         "quote": "it(\"composes reviewed chapters without flattening descendant originals and preserves invalidation\", async () => {\n  const { repository, pipeline, capture, run } = setup();\n  capture(\"The release uses fixed evidence.\\nAdditional context is documented.\\n\" + \"Background line.\\n\".repeat(80) + \"DEEP_SOURCE_TAIL\");\n  await p"
-      },
-      {
-        "key": "c8",
-        "label": "材料分析角色断言",
-        "reason": "支持 Lark 文档、对话以及普通导入代码被分派到不同分析角色。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-          "startLine": 73,
-          "endLine": 79
-        },
-        "quote": "it(\"distinguishes Lark documents from conversations and recognizes ordinary imported code\", () => {\n  const { repository } = setup(); const base = repository.materials()[0]!;\n  expect(analystFor({ ...base, namespace: \"lark\", path: null })).toBe(\"material-analyst\");\n  expect(analystFor({ ...base, namespace: \"lark\", path"
-      },
-      {
-        "key": "c9",
-        "label": "分析角色选择规则",
-        "reason": "补充测试对应的实际路由优先级，包括图片、对话和代码扩展名判断。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/pipeline.ts",
-          "startLine": 15,
-          "endLine": 18
-        },
-        "quote": "export function analystFor(m: KnowledgeMaterial) {\n  if (m.images.length) return \"visual-analyst\";\n  if ([\"chat\", \"hook\"].includes(m.namespace) || (m.namespace === \"lark\" && !!m.conversationId)) return \"conversation-analyst\";\n  return /\\.(?:[cm]?[jt]sx?|vue|css|py|go|rs|sh)$/.test(m.path ?? ([\"file\", \"git\"].includes(m."
       }
     ],
-    "questions": [
-      {
-        "question": "真实 ACP 运行时是否也能完成生成、独立复核和拒绝后修订？",
-        "why": "现有测试替换了 RoleRuntimeGateway.run，只证明管线处理约定输出时的行为，不能证明外部 CLI、模型配置、会话或输出修复链路实际可用。",
-        "nextStep": "增加单独标记的真实 ACP 集成检查，覆盖生成、独立复核、拒绝后修订、schema 校验和失败诊断。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c3",
-          "c4"
-        ]
-      },
-      {
-        "question": "并发任务或进程中断后是否仍能保证只发布一次且正确恢复？",
-        "why": "测试环境把 concurrency 固定为 1；现有材料没有多 worker 竞争、重复领取、租约恢复或关键持久化节点崩溃的行为证据。",
-        "nextStep": "补充并发大于一、重复领取及关键持久化节点发生进程中断的行为测试，并核对发布回调和文章修订是否幂等。",
-        "blocking": false,
-        "citationKeys": [
-          "c1"
-        ]
-      },
-      {
-        "question": "图片材料和非法引用输出的端到端失败行为是什么？",
-        "why": "路由实现包含视觉分析分支，仓库校验又区分文章目标与材料目标，但当前管线测试只覆盖文本材料和合法模拟引用。",
-        "nextStep": "加入图片资产存在与缺失、材料行号越界、未使用引用、未知文章或章节等管线级用例，并确认失败结果不会覆盖既有有效知识。",
-        "blocking": false,
-        "citationKeys": [
-          "c2",
-          "c9"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
     {
@@ -193,12 +144,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
+      "digest": "1cc007a5fd3cbc9208c80f6c54fd43cc766bae38f247e58b30659eff308a1f5e"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -208,34 +159,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T06:50:41.048Z",
+    "effort": "high",
+    "at": "2026-10-01T11:59:44.184Z",
     "trace": {
-      "runId": "7543235a-4d0a-4a6b-a20c-a39eddc5c9aa",
-      "roleId": "knowledge-refresher",
+      "runId": "69745abc-7c85-434a-8711-4712ac8ddb6c",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "3895732651ad7530cff425d5e1d93a975458304198904ccc9bde7d2542ac3358",
-      "contextHash": "192baf4887a40a9f1da63c6e060631bd5ebae4fcbd6698d96a032a25ad791f8f",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "c0455d633bc3565c493cf89e7f4526f956046c603a1b53c9c4f920fa619edfb4",
+      "contextHash": "b85eb2b6ef66cac0c174f34766db768de6a3482bd32c9ebdd2053c69fdac0165",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "499a404a4d0dd3120809cb7fc7af579320841fb5dd2e73ee44166277c6caa801",
+      "fingerprint": "adc70a064a1b9d688e795ec36ca70dd02ee61be4f0c55b78284762f9558a9947",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63a-70eb-7c13-bdf3-163268b8a679"
+        "01a0f755-578b-75f0-88c5-e36cadabb40e"
       ],
       "usage": {
-        "used": 34430,
+        "used": 31681,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -244,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 46352,
-          "utf8Bytes": 52146,
-          "estimatedTokens": 17382,
-          "budgetedTokens": 21728,
+          "chars": 38862,
+          "utf8Bytes": 41958,
+          "estimatedTokens": 13986,
+          "budgetedTokens": 17483,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -256,20 +207,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:50:56.509Z",
+    "at": "2026-10-01T12:00:00.197Z",
     "trace": {
-      "runId": "89434c15-1641-468e-8a5d-445f395dc59e",
+      "runId": "b87790f3-6855-407e-b61d-8ad8b9473180",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "20549374ca2a857b6333730dcda4e60d4e84d2b5eb6e93f6800f4a332db7a3be",
-      "contextHash": "147c1fdb2d74bc8f7590f83cd1310c3b6ca1974f8d714bbd4dc357d4e1665171",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "33f598fba01e907e933dd648807a92f3e1b60f1079735622933ec8e527f8b128",
+      "contextHash": "d69988ae6b482e28df55e26d503be0322343afc39c99a1aef4f7b2fd9884e47f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "7aee0d64b171a93770e49a317e33b5f91a6bed0f8c123ebd027c9d86ce2ce109",
+      "fingerprint": "16685c4871ccb0111431aa7c4e1e786716f3fc45623777d954c512cbfc82a247",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -279,10 +230,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63a-d4a8-7c90-b55a-fe3ca4040c59"
+        "01a0f755-c78c-7ce0-a4ac-1927d5fc32c7"
       ],
       "usage": {
-        "used": 31641,
+        "used": 31455,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -291,10 +242,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 42806,
-          "utf8Bytes": 47130,
-          "estimatedTokens": 15710,
-          "budgetedTokens": 19638,
+          "chars": 42645,
+          "utf8Bytes": 47989,
+          "estimatedTokens": 15997,
+          "budgetedTokens": 19997,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
