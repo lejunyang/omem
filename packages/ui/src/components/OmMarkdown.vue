@@ -68,7 +68,7 @@ async function render() {
     // paragraph's end without rewriting the claim or its fixed target.
     const groups = new Map<Element, Element[]>();
     for (const link of doc.querySelectorAll(".om-inline-citation")) {
-      if (/(?:参考|参见|详见)[：:\s]*$/.test(link.previousSibling?.textContent ?? "")) continue;
+      if (/(?:参考|参见|详见|延伸阅读)[：:\s]*$/.test(link.previousSibling?.textContent ?? "")) continue;
       const parent = link.closest("p,li,td,blockquote");
       if (parent) groups.set(parent, [...(groups.get(parent) ?? []), link]);
     }
