@@ -210,6 +210,92 @@ try {
     ).toBeVisible();
     expect(store.list()).toHaveLength(1);
   });
+  await check(
+    "reading-first library and two-step article composer",
+    async () => {
+      await page.getByRole("button", { name: "知识库", exact: true }).click();
+      const trigger = page.getByRole("button", {
+        name: "整理文章",
+        exact: true,
+      });
+      await expect(page.locator(".library-overview form")).toHaveCount(0);
+      await trigger.click();
+      const dialog = page.getByRole("dialog", {
+        name: "整理成文章",
+        exact: true,
+      });
+      await expect(dialog).toBeVisible();
+      await expect(
+        dialog.getByRole("button", { name: "下一步", exact: true }),
+      ).toBeDisabled();
+      await dialog.getByLabel("筛选整理材料").fill("发布前的回滚验证");
+      const row = dialog
+        .locator(".material-option")
+        .filter({ hasText: "发布前的回滚验证" });
+      await expect(row).toHaveCount(1);
+      await row.click();
+      await expect(row.getByRole("checkbox")).toBeChecked();
+      const layout = await row.evaluate((el) => {
+        const box = el.querySelector("input")!.getBoundingClientRect(),
+          title = el.querySelector("strong")!.getBoundingClientRect();
+        return {
+          direction: getComputedStyle(el).flexDirection,
+          aligned:
+            Math.abs(
+              box.top + box.height / 2 - (title.top + title.height / 2),
+            ) < 4,
+        };
+      });
+      expect(layout).toEqual({ direction: "row", aligned: true });
+      await dialog.getByRole("button", { name: "下一步", exact: true }).click();
+      await dialog
+        .getByLabel("文章主题", { exact: true })
+        .fill("发布前如何验证回滚");
+      await dialog
+        .getByLabel("想弄懂什么", { exact: true })
+        .fill("解释镜像和配置如何一起回滚，方便我发布前检查。");
+      await dialog.getByRole("button", { name: "上一步", exact: true }).click();
+      await expect(row.getByRole("checkbox")).toBeChecked();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(
+        dialog.getByRole("button", { name: "下一步", exact: true }),
+      ).toBeInViewport();
+      expect(await dialog.evaluate((el) => el.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.screenshot({
+        path: join(out, "article-materials-mobile.png"),
+      });
+      await dialog.getByRole("button", { name: "下一步", exact: true }).click();
+      await expect(dialog.getByLabel("文章主题", { exact: true })).toHaveValue(
+        "发布前如何验证回滚",
+      );
+      // Inspect the submitted scope without running a generative model in this UI fixture.
+      let submitted: any;
+      await page.route("**/api/knowledge/pages", async (route) => {
+        submitted = route.request().postDataJSON();
+        await route.fulfill({
+          status: 202,
+          contentType: "application/json",
+          body: "{}",
+        });
+      });
+      await dialog
+        .getByRole("button", { name: "开始整理", exact: true })
+        .click();
+      await expect(dialog).not.toBeVisible();
+      expect(submitted.revisionIds).toEqual([
+        store.revision(store.list()[0]!.id)!.id,
+      ]);
+      expect(submitted.brief.goal).toContain("镜像和配置");
+      await expect(trigger).toBeFocused();
+      await page.unroute("**/api/knowledge/pages");
+      await trigger.click();
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    },
+  );
   await check("search loading, empty, failure and superseded requests", async () => {
     const input = page.getByRole("textbox", { name: "搜索材料", exact: true });
     let release: (() => void) | undefined;
