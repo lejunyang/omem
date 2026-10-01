@@ -2,76 +2,84 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/AssetImage.vue",
-    "title": "资源图片异步加载组件",
-    "summary": "该 Vue 组件根据资源 ID 异步取得二进制响应并生成对象 URL，负责切换时取消旧请求、回收 URL、显示错误与图注。它确实导入并调用 api.ts 的 headers()，但现有固定范围未提供该函数定义，因而不能确认认证或具体请求头策略。",
+    "title": "受控访问的图片资源展示",
+    "summary": "该组件根据资源 ID 从后端读取二进制图片，转换为浏览器对象 URL 后展示，并处理资源切换、请求取消、错误提示与内存释放。它通过公共 API 模块提供请求头，但现有材料不足以确认请求头的具体认证机制。",
     "category": "implementation",
     "sections": [
       {
         "key": "purpose",
-        "title": "界面职责",
-        "body": "组件接收资源 `id` 与人类可读的 `label`，请求 `/api/assets/{id}`，将成功响应转为 Blob，再创建供浏览器显示的对象 URL。[[c1]] 模板在 URL 就绪后渲染图片，并把 `label` 同时用于替代文本和图注；失败信息通过 `role=\"alert\"` 呈现。图片还受到最大宽高、边框和圆角约束。[[c2]]"
+        "title": "解决受保护图片的展示问题",
+        "body": "组件接收资源 `id` 与人类可读的 `label`，不把后端地址直接交给 `<img>`，而是先主动请求图片，再用生成的本地对象 URL 渲染。界面同时保留替代文本、图注和带 `alert` 语义的错误消息，适合在需要统一请求头或访问控制的页面中展示资源。参考 [[c1]]\n\n图片尺寸被限制在容器宽度和 450px 高度内，图注使用弱化样式，避免大图破坏阅读布局。参考 [[c2]]"
       },
       {
-        "key": "flow",
-        "title": "加载、切换与竞态处理",
-        "body": "监听器在首次挂载时立即运行，并随 `id` 变化重新加载。每轮会先取消旧请求、回收旧对象 URL并清空状态，再创建新的 `AbortController` 发起请求；只有当前信号未被取消时，成功结果或异常才会写入界面状态，从而降低旧请求晚到后覆盖新资源的风险。[[c3]]"
+        "key": "loading-flow",
+        "title": "资源切换时的加载流程",
+        "body": "组件立即监听 `id`：每次变化先取消上一请求、释放旧对象 URL，并清空显示与错误状态；随后请求 `/api/assets/{id}`，响应成功后读取 `Blob`，只有请求仍有效时才创建新的对象 URL。这个顺序避免快速切换资源时，较早完成的旧请求覆盖当前图片。参考 [[c3]]\n\n请求头来自共享 `api.ts` 的 `headers()`，说明资源读取复用了应用的 HTTP 配置入口；但所给 `api.ts` 片段没有该函数定义，无法据此确认它具体加入了共享令牌、内容类型还是其他字段。参考 [[c4]]"
       },
       {
-        "key": "lifecycle",
-        "title": "生命周期与呈现边界",
-        "body": "组件卸载时会取消在途请求并回收已有对象 URL，避免无效更新和 URL 长期滞留。[[c4]] 当前响应流程只检查 HTTP 成功状态，随后直接读取 Blob；模板也只提供图片、错误信息和图注，没有独立的加载占位或重试控件，因此代码中看不到显式 MIME 校验与用户重试入口。[[c1]][[c2]]"
-      },
-      {
-        "key": "dependencies",
-        "title": "模块依赖与待确认事项",
-        "body": "组件从 `api.ts` 导入 `headers()`，[[c5]] 并在资源请求的 `headers` 字段中实际调用它。[[c1]] 现有材料只能确认这一依赖和调用关系，不能确认函数是否加入认证令牌、内容协商或其他配置。因此，先前把输入称为“受保护资源 ID”的结论已被替代：目前只能称其为资源 ID，保护机制仍待 `headers()` 定义佐证。"
+        "key": "boundaries",
+        "title": "取消、失败与生命周期边界",
+        "body": "非成功 HTTP 响应会统一转成“图片读取失败”，网络或 Blob 处理异常则以字符串形式展示；如果请求已经被取消，异常不会写入界面。组件卸载时还会取消在途请求并释放当前对象 URL，降低异步回写和浏览器内存滞留风险。参考 [[c5]]\n\n当前实现没有显式加载占位、重试、按错误类型区分提示或校验响应 MIME 类型。材料中也未提供对应测试，因此只能确认代码中的防护路径，不能确认快速切换、卸载取消及失败展示已被自动化断言。延伸阅读：[[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "资源请求与 Blob 转换",
-        "reason": "支持资源接口请求、headers() 调用、HTTP 状态检查、Blob 转换及对象 URL 创建等附近论断。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/AssetImage.vue",
-          "startLine": 18,
-          "endLine": 24
-        },
-        "quote": "      const r = await fetch(\"/api/assets/\" + id, {\n        headers: headers(),\n        signal,\n      });\n      if (!r.ok) throw Error(\"图片读取失败\");\n      const blob = await r.blob();\n      if (!signal.aborted) url.value = URL.createObjectURL(blob);"
-      },
-      {
-        "key": "c2",
-        "label": "图片模板与展示样式",
-        "reason": "支持图片、错误提示和图注的渲染方式，以及替代文本、尺寸和外观约束；也说明模板没有加载占位或重试控件。",
+        "label": "图片与错误展示",
+        "reason": "支持组件以图片、可访问错误提示和图注组成展示界面的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/AssetImage.vue",
           "startLine": 36,
-          "endLine": 57
+          "endLine": 41
         },
-        "quote": "<template>\n  <figure>\n    <img v-if=\"url\" :src=\"url\" :alt=\"label\" />\n    <p v-if=\"error\" role=\"alert\">{{ error }}</p>\n    <figcaption>{{ label }}</figcaption>\n  </figure>\n</template>\n<style scoped>\nfigure {\n  margin: 20px 0;\n}\nimg {\n  display: block;\n  max-width: 100%;\n  max-height: 450px;\n  border: 1px solid var(--om-"
+        "quote": "<template>\n  <figure>\n    <img v-if=\"url\" :src=\"url\" :alt=\"label\" />\n    <p v-if=\"error\" role=\"alert\">{{ error }}</p>\n    <figcaption>{{ label }}</figcaption>\n  </figure>"
+      },
+      {
+        "key": "c2",
+        "label": "图片布局约束",
+        "reason": "支持图片最大尺寸、边框及弱化图注样式的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/AssetImage.vue",
+          "startLine": 47,
+          "endLine": 56
+        },
+        "quote": "img {\n  display: block;\n  max-width: 100%;\n  max-height: 450px;\n  border: 1px solid var(--om-line);\n  border-radius: 6px;\n}\nfigcaption {\n  font-size: 12px;\n  color: var(--om-muted);"
       },
       {
         "key": "c3",
-        "label": "资源监听与请求竞态控制",
-        "reason": "支持立即监听、切换资源时取消旧请求、清理状态以及仅在请求未取消时更新结果的流程。",
-        "relation": "implements",
+        "label": "资源加载与切换",
+        "reason": "支持监听资源 ID、取消旧请求、清理旧 URL、读取 Blob 并防止已取消请求回写的流程说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/AssetImage.vue",
           "startLine": 8,
-          "endLine": 30
+          "endLine": 29
         },
         "quote": "watch(\n  () => props.id,\n  async (id) => {\n    controller?.abort();\n    controller = new AbortController();\n    const signal = controller.signal;\n    if (url.value) URL.revokeObjectURL(url.value);\n    url.value = \"\";\n    error.value = \"\";\n    try {\n      const r = await fetch(\"/api/assets/\" + id, {\n        headers: hea"
       },
       {
         "key": "c4",
-        "label": "卸载阶段资源清理",
-        "reason": "支持组件卸载时中止在途请求并释放对象 URL 的生命周期行为。",
-        "relation": "implements",
+        "label": "共享请求头",
+        "reason": "支持资源请求调用共享 headers 函数的模块关系，同时界定现有材料无法说明其内部认证语义。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/AssetImage.vue",
+          "startLine": 18,
+          "endLine": 21
+        },
+        "quote": "      const r = await fetch(\"/api/assets/\" + id, {\n        headers: headers(),\n        signal,\n      });"
+      },
+      {
+        "key": "c5",
+        "label": "卸载清理",
+        "reason": "支持组件卸载时取消请求并释放对象 URL 的生命周期边界说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/AssetImage.vue",
@@ -79,30 +87,35 @@
           "endLine": 34
         },
         "quote": "onBeforeUnmount(() => {\n  controller?.abort();\n  if (url.value) URL.revokeObjectURL(url.value);\n});"
-      },
-      {
-        "key": "c5",
-        "label": "公共请求头函数导入",
-        "reason": "支持组件从 api.ts 导入 headers() 的模块依赖；其实际调用另由资源请求引用证明。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/AssetImage.vue",
-          "startLine": 2,
-          "endLine": 4
-        },
-        "quote": "import { ref, watch, onBeforeUnmount } from \"vue\";\nimport { headers } from \"./api\";\nconst props = defineProps<{ id: string; label: string }>();"
       }
     ],
     "questions": [
       {
-        "question": "`headers()` 是否负责资源接口认证，以及它具体返回哪些请求头？",
-        "why": "现有固定材料能够证明 AssetImage.vue 导入并调用该函数，但提供的 api.ts 范围没有给出其定义，无法据此确认共享令牌、内容协商或其他认证配置。",
-        "nextStep": "补充 api.ts 中 `headers()` 定义及其相关配置的固定行范围，再核验资源接口的认证与请求头合同。",
+        "question": "共享 headers() 为图片请求加入了哪些字段，资源接口依赖何种认证方式？",
+        "why": "组件明确依赖该函数，但提供的 api.ts 范围只有类型声明，没有函数实现，不能把共享请求头进一步解释为某种确定的认证方案。",
+        "nextStep": "补充 api.ts 中 headers() 的定义及资源接口处理代码，再核对令牌来源、匿名访问边界和失败状态映射。",
         "blocking": false,
         "citationKeys": [
-          "c1",
+          "c4"
+        ]
+      },
+      {
+        "question": "快速切换资源、组件卸载和请求失败路径是否已有自动化测试？",
+        "why": "当前材料只包含组件实现，没有测试文件，无法确认竞态防护和对象 URL 释放行为是否被实际断言。",
+        "nextStep": "检查该组件的单元或浏览器测试；若缺失，补充可控 fetch、AbortController、createObjectURL 与 revokeObjectURL 的行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
           "c5"
+        ]
+      },
+      {
+        "question": "共享 headers() 为图片请求加入了哪些字段，资源接口实际依赖何种认证方式？",
+        "why": "组件只证明资源请求复用了共享请求头入口；提供的 api.ts 范围未包含 headers() 的实现，因此文章正确保留了认证机制的不确定性。",
+        "nextStep": "补充 headers() 的定义及资源接口处理代码，再核对令牌来源、匿名访问边界和失败状态映射。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
         ]
       }
     ]
@@ -116,39 +129,39 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
+      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:37:55.266Z",
+    "effort": "high",
+    "at": "2026-10-01T12:06:51.167Z",
     "trace": {
-      "runId": "b77f5896-9400-4c81-a549-253b0f32c3ec",
-      "roleId": "knowledge-refresher",
+      "runId": "b17ed512-9a9f-4e66-97bf-b06af23f53d8",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "59d71596ead0c3385d2619605461d417e039392ea1935ebae48064c47154c757",
-      "contextHash": "9af48f7ea43ff2ebb34887e234bb2045bac9fb64e924e6145eb0c6c18e67be1e",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "5eab1ea06a7cc70985345f169fc0c8f0b3a03398dc85e88c86a13415e91e83d8",
+      "contextHash": "f1a0959473b5145c1a5a4f761ee142de739ad6912b61b4db72986fff67e4fc51",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "87b6dd9ff05a763958ed156b920f41aa1cc230e94124474b6bade07be3835243",
+      "fingerprint": "fffb792721466a05138568801df92e7a1dc530a44a01089d742857ae5153bd79",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f553-13c6-7981-8a72-35d38fc8ae02"
+        "01a0f75b-edde-78c1-a2fa-13990a55cf24"
       ],
       "usage": {
-        "used": 24694,
+        "used": 25122,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -157,10 +170,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 14114,
-          "utf8Bytes": 18188,
-          "estimatedTokens": 6063,
-          "budgetedTokens": 7579,
+          "chars": 10948,
+          "utf8Bytes": 14056,
+          "estimatedTokens": 4686,
+          "budgetedTokens": 5858,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -169,20 +182,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:38:11.328Z",
+    "at": "2026-10-01T12:07:12.239Z",
     "trace": {
-      "runId": "26a4a21e-195c-456f-bdbf-23eaa4ddf889",
+      "runId": "9082ea35-5939-4378-ac91-1becf82fb66f",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2c7797a7cb5bcad00992afc2006f3cf8c3076e7065f8db3d345e55c8a96eb148",
-      "contextHash": "4480fb9858497248753704351e0a8fa8e10e61ae09db9f8a9dc7332418b34268",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "f51ff05a533983b0ea7ba3dd1b6ce78c799de04f2d74f081724017c7b3c7c907",
+      "contextHash": "e31a2e33e9002dd9ad6e3eee92ede9b2ec79c1620335185b57936938a1edd87c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ba8e5d2d44da1ab032abeadb282b9faec32a193183f58e97074588b0fc0d96d3",
+      "fingerprint": "601b584437467bf6ade1c6e03d234e7818fa119804c52452a974a876dfdb4ffd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -192,10 +205,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f553-6a90-7761-ab28-fdc85b4ea824"
+        "01a0f75c-4b78-7562-a565-dd61ac44a40d"
       ],
       "usage": {
-        "used": 22718,
+        "used": 23927,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -204,10 +217,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 11537,
-          "utf8Bytes": 14301,
-          "estimatedTokens": 4767,
-          "budgetedTokens": 5959,
+          "chars": 12427,
+          "utf8Bytes": 17249,
+          "estimatedTokens": 5750,
+          "budgetedTokens": 7188,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

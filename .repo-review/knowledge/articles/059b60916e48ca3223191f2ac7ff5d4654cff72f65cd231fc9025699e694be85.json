@@ -2,37 +2,37 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
-    "title": "Lark 富消息统一 parts 适配测试",
-    "summary": "该测试以临时 SQLite、加密凭据和 Lark 连接绑定构造接近真实的数据入口，验证富文本、图片及引用回复被转换为统一 parts，并保留来源信息；它覆盖适配后的持久化结果，但不证明真实 Lark 网络下载、异常输入处理或全部消息类型可用。",
+    "title": "飞书富消息统一内容部件的行为验证",
+    "summary": "该测试验证飞书富文本、图片和引用回复进入实时收件箱后，会被转换为统一 parts，并保留参与者、时间、事件及回复关系等来源信息；图片还会在聚合刷新后落为按内容哈希寻址的资产。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose-and-fixture",
-        "title": "测试目标与运行夹具",
-        "body": "这组测试解决的是 Lark 不同消息形态能否进入统一捕获合同的问题。每个用例创建独立临时目录、`Store` 与使用随机 32 字节密钥的加密凭据仓库，并直接写入有效连接、版本和群聊绑定；结束后清理目录，从而隔离 SQLite 与资产副作用。[[c1]] `groupEvent` 再提供群消息默认值，各用例仅覆盖消息类型、内容和回复关系。[[c2]] 这里能确认测试依赖 `LarkEventInbox`、`EncryptedSecretStore` 和 `Store`，但材料没有展示 `processMessage` 的实现体，因此不能据此断言其跨文件内部调用链。"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "飞书消息不只有纯文本，还包含富文本段落、链接、提及、图片和引用回复。该测试关注这些异构输入能否统一转换成下游捕获流程可消费的 `parts`，同时保留发送者、事件时间和消息关系。测试使用临时目录、真实 `Store`、加密凭据存储以及连接和绑定记录搭建隔离环境，并在用例结束后清理数据库。参考 [[c1]]"
       },
       {
-        "key": "asserted-flow",
-        "title": "已断言的核心流程",
-        "body": "富文本用例把 post 标题、文本、链接和 @成员组合成三个有序文本 part，并逐项检查发送者、事件号和观察时间，验证内容转换没有丢失基本来源。[[c3]] 图片用例通过注入的媒体端口确认下载参数，随后检查生成单个 PNG image part；批次经 `flushReady` 交给 `store.capture` 后，再按固定字节的 SHA-256 查询资产，覆盖了“事件入箱—统一 part—资产落库”的可观察结果。[[c4]] 回复用例则确认 part 级 `replyTo/quoted` 与 envelope 级 quoted 标志同步存在，保证下游聚合仍能识别引用语境。[[c5]]"
+        "key": "rich_text",
+        "title": "富文本转为连续可读文本",
+        "body": "富文本用例把标题转换成带“标题”标记的文本部件，把同一段中的普通文字与链接拼接，并在可读文本中保留链接地址；提及节点则转换成 `@用户名`。每个转换结果还携带发送者、事件编号和观测时间，使正文能够追溯到原始事件。参考 [[c2]]\n\n当前断言覆盖标题、文本、链接和提及的组合，但没有说明其他富文本节点、空内容或格式错误载荷的处理方式。"
       },
       {
-        "key": "boundaries",
-        "title": "边界与未覆盖行为",
-        "body": "测试中的 `FakeMedia` 只返回固定 PNG 字节，不访问网络；这与媒体端口允许生产实现调用 Lark 资源 API、测试注入替身的合同一致。[[c6]] 因而当前断言没有覆盖鉴权、超时、限流、下载失败、错误 MIME、超大图片或重试。富文本也只覆盖一种结构良好的 JSON，没有验证畸形 JSON、空标题、未知 tag、多语言 post 结构及消息更新。测试直接插入连接与绑定数据，也未覆盖凭据环境变量解析、连接建立或权限校验；加密仓库要求 32 字节密钥这一边界仅由被测夹具满足，并未在本文件中断言失败路径。[[c7]]"
+        "key": "image_flow",
+        "title": "图片下载、聚合与资产落盘",
+        "body": "图片消息通过可注入的媒体端口下载；测试替身接收应用、消息和图片键并返回固定 PNG 字节，因此无需实际联网。参考 [[c3]] 下载结果先保存为带 MIME 类型和 Base64 数据的图片部件，随后经输入聚合刷新与 `store.capture`，按 SHA-256 内容哈希写入资产存储，并确认资产可查询。参考 [[c4]]\n\n这验证了成功路径上的“远端图片 → 统一部件 → 内容资产”链路，但未覆盖下载失败、超时、错误 MIME 类型或重复图片。"
       },
       {
-        "key": "test-limitations",
-        "title": "测试强度与可解释限制",
-        "body": "图片断言先确认内存 envelope 中存在字符串数据，再推进聚合静默窗口并验证哈希资产存在，因此验证了最终副作用，而非仅检查模拟调用。[[c8]] 不过测试没有断言输入事件的幂等性、重复事件处理、数据库中 part 的完整字段、资产内容回读或关闭过程中的错误；临时目录清理还明确容忍 Windows 短暂占用 SQLite 文件，意味着清理失败不会令用例失败。[[c9]] 这些缺口不否定现有三个场景，但限制了它们对生产可靠性的证明范围。"
+        "key": "reply_provenance",
+        "title": "引用回复的来源追踪",
+        "body": "回复消息会在部件级来源信息中记录父消息标识与 `quoted=true`，同时在信封级设置引用标志，供下游聚合识别引用状态，而不必重新解析原始飞书载荷。参考 [[c5]]\n\n测试仅确认父消息标识和引用状态得到保留，并未证明父消息会被抓取、解析，或被建立为可检索、可导航的消息关系。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时存储与 Lark 绑定夹具",
-        "reason": "支持测试为每个用例创建隔离 Store、加密凭据以及有效连接和群聊绑定的说明。",
-        "relation": "explains",
+        "label": "隔离测试环境",
+        "reason": "支持测试使用临时目录、真实存储、加密凭据及飞书连接和绑定记录构造隔离运行环境的说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
@@ -43,21 +43,8 @@
       },
       {
         "key": "c2",
-        "label": "群消息事件默认构造",
-        "reason": "支持各用例基于统一群消息模板覆盖少量字段的说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
-          "startLine": 68,
-          "endLine": 83
-        },
-        "quote": "const groupEvent = (patch: Partial<LarkInboundEvent>): LarkInboundEvent => ({\n  appId: \"cli_parts1\",\n  eventId: `evt-${Math.random()}`,\n  kind: \"im.message.receive_v1\",\n  eventTime: \"2026-09-27T00:00:00.000Z\",\n  senderOpenId: \"ou_member\",\n  senderType: \"user\",\n  chatId: \"oc_group\",\n  chatType: \"group\",\n  messageId: `om"
-      },
-      {
-        "key": "c3",
-        "label": "富文本转换与来源断言",
-        "reason": "支持 post 被转换为标题、正文、链接和提及文本，并携带 actor、事件及时间来源的论断。",
+        "label": "富文本转换断言",
+        "reason": "支持标题、段落、链接和提及的转换结果，以及每个部件保留事件来源信息的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -68,9 +55,22 @@
         "quote": "describe(\"H-G15 Lark rich messages adapt to unified parts\", () => {\n  it(\"parses a post (rich text) into title + paragraph text parts\", async () => {\n    const { store } = setup();\n    const inbox = new LarkEventInbox(store);\n    const ev = groupEvent({\n      eventId: \"evt-post\",\n      messageId: \"om_post\",\n      messa"
       },
       {
+        "key": "c3",
+        "label": "可注入媒体下载端口",
+        "reason": "说明生产媒体下载与测试替身通过同一端口隔离，测试可以使用固定字节而无需联网。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 38,
+          "endLine": 48
+        },
+        "quote": "/**\n * Inbound media download port. The production implementation calls Lark's\n * message-resource API; tests inject a fake that returns fixture bytes without\n * touching the network.\n */\nexport interface LarkMediaPort {\n  downloadImage(input: {\n    appId: string;\n    messageId: string;\n    imageKey: string;\n  }): Prom"
+      },
+      {
         "key": "c4",
-        "label": "图片下载与资产落库断言",
-        "reason": "支持图片下载参数、统一 image part 以及经捕获后形成哈希资产的流程说明。",
+        "label": "图片资产化流程",
+        "reason": "支持图片下载参数、统一图片部件、聚合刷新以及按 SHA-256 内容哈希确认资产落盘的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -82,98 +82,45 @@
       },
       {
         "key": "c5",
-        "label": "引用回复来源断言",
-        "reason": "支持回复关系同时保存在 part 与 envelope 来源字段中的论断。",
+        "label": "引用回复来源信息",
+        "reason": "支持部件级父消息标识和引用状态，以及信封级引用标志供下游聚合使用的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
           "startLine": 202,
-          "endLine": 227
+          "endLine": 225
         },
         "quote": "  it(\"carries reply_to / quoted provenance on parts for a quoted message\", async () => {\n    const { store } = setup();\n    const inbox = new LarkEventInbox(store);\n    const ev = groupEvent({\n      eventId: \"evt-reply\",\n      messageId: \"om_reply\",\n      parentMessageId: \"om_parent_123\",\n      text: \"回复内容\",\n      payl"
-      },
-      {
-        "key": "c6",
-        "label": "Lark 媒体下载端口合同",
-        "reason": "说明生产下载与测试替身之间的接口边界，支持真实网络行为未被本测试覆盖的判断。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-          "startLine": 38,
-          "endLine": 49
-        },
-        "quote": "/**\n * Inbound media download port. The production implementation calls Lark's\n * message-resource API; tests inject a fake that returns fixture bytes without\n * touching the network.\n */\nexport interface LarkMediaPort {\n  downloadImage(input: {\n    appId: string;\n    messageId: string;\n    imageKey: string;\n  }): Prom"
-      },
-      {
-        "key": "c7",
-        "label": "加密凭据密钥约束",
-        "reason": "支持凭据仓库要求精确 32 字节密钥，而目标测试只覆盖有效密钥路径的边界说明。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-          "startLine": 24,
-          "endLine": 50
-        },
-        "quote": "function parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexport class EncryptedSecretStore {\n  private readonly key: Buffer"
-      },
-      {
-        "key": "c8",
-        "label": "图片数据与哈希资产验证",
-        "reason": "支持图片测试不仅检查模拟调用，还推进聚合并验证最终资产副作用的说明。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
-          "startLine": 181,
-          "endLine": 199
-        },
-        "quote": "    const envelope = envelopeFor(store, \"evt-image\");\n    expect(envelope.parts).toHaveLength(1);\n    expect(envelope.parts[0]).toMatchObject({\n      type: \"image\",\n      mimeType: \"image/png\",\n    });\n    expect(typeof envelope.parts[0].data).toBe(\"string\");\n    // Flush the batch through store.capture: bytes are hash"
-      },
-      {
-        "key": "c9",
-        "label": "临时目录容错清理",
-        "reason": "支持 Windows 文件占用导致清理异常被忽略，以及清理失败不构成断言的说明。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
-          "startLine": 14,
-          "endLine": 23
-        },
-        "quote": "const directories: string[] = [];\nafterEach(() => {\n  for (const directory of directories.splice(0)) {\n    try {\n      rmSync(directory, { recursive: true, force: true });\n    } catch {\n      // windows may hold the sqlite file briefly\n    }\n  }\n});"
       }
     ],
     "questions": [
       {
-        "question": "图片下载失败、超时或返回不受支持的 MIME 类型时，事件应重试、保留待处理状态，还是降级为文本占位？",
-        "why": "当前媒体替身始终成功并返回 PNG，只能证明成功路径；错误策略会影响输入事件状态、幂等性和用户可见结果。",
-        "nextStep": "补充失败型 LarkMediaPort 替身，并依据产品策略断言数据库事件状态、重试次数以及是否产生降级 part。",
+        "question": "富文本中未识别节点、空内容或无法解析的 JSON 会被忽略、降级为文本，还是使整条消息失败？",
+        "why": "现有断言只覆盖结构正确的标题、文本、链接和提及，无法确定异常输入与其他节点的边界行为。",
+        "nextStep": "补充异常载荷及其他飞书富文本节点的行为测试，并结合完整解析实现确认预期降级策略。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c6"
+          "c2"
         ]
       },
       {
-        "question": "畸形 post JSON、未知富文本 tag 与空内容应如何规范化？",
-        "why": "现有用例只提供结构完整的标题和两段内容，无法判断解析器是跳过未知节点、保留原始内容还是拒绝整个事件。",
-        "nextStep": "先明确容错合同，再增加畸形 JSON、未知 tag、空标题及混合节点的表驱动测试。",
+        "question": "图片下载失败、返回不支持的 MIME 类型或相同内容重复到达时，系统如何重试和去重？",
+        "why": "材料只验证一次成功下载和资产可查询，没有覆盖媒体错误、重试及重复写入。",
+        "nextStep": "检查媒体下载与捕获实现，并增加失败、重试和重复内容的真实行为断言。",
         "blocking": false,
         "citationKeys": [
-          "c3"
+          "c3",
+          "c4"
         ]
       },
       {
-        "question": "重复接收相同 eventId 或 messageId 时是否保证不重复创建输入、part 与资产？",
-        "why": "当前三个场景均使用唯一标识，没有覆盖实时事件常见的重复投递与重试。",
-        "nextStep": "对同一事件连续调用两次 processMessage，并断言 input_events、捕获结果和哈希资产的数量及状态。",
+        "question": "父消息标识是否会进一步解析为可检索、可导航的消息关系？",
+        "why": "测试仅验证引用标记和父消息标识被保存，没有展示父消息解析或关系建立流程。",
+        "nextStep": "检查下游聚合、捕获和关系建模代码，并增加从回复消息回溯父消息的集成测试。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c8"
+          "c5"
         ]
       }
     ]
@@ -192,7 +139,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -202,34 +149,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:31:11.366Z",
+    "effort": "high",
+    "at": "2026-10-01T12:01:27.468Z",
     "trace": {
-      "runId": "5db1c582-57b8-4aab-975c-87d61e458e36",
-      "roleId": "code-analyst",
+      "runId": "b4d22060-cd4c-439c-a08e-ba8e0c012d7d",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "ac35a5f5e8a0dd0139162c2e9ebfb905d5cf00276b74aaa3becbe7a2df6db34a",
-      "contextHash": "3b77806bc6300c26339b314626c4c79a67ff884b7a52825cd18f01f2ddd9c8cb",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "592bbce13ab51d7cb203c4d62a0b63d76e3f71edf34cf73d06dc5ec57ac2ae14",
+      "contextHash": "f6b43cc29b8434afe7228ea22e1ba13de71f229eb783609e0422d24f9c0255ee",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "17a516e4da8e7eef0c5894fb13014b85e38b564e1d4eccdf3d01a22048694a5a",
+      "fingerprint": "809544082307fd4afd612c7f295c1f7974f22a4a3f1b6666f853d15412cb7e5b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54c-caf3-7881-98ec-5fc0e57ac627"
+        "01a0f757-0d60-7570-b0f0-aa0197b4f6e8"
       ],
       "usage": {
-        "used": 28047,
+        "used": 31841,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -238,10 +185,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 24610,
-          "utf8Bytes": 26470,
-          "estimatedTokens": 8824,
-          "budgetedTokens": 11030,
+          "chars": 30608,
+          "utf8Bytes": 36974,
+          "estimatedTokens": 12325,
+          "budgetedTokens": 15407,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -250,20 +197,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:31:29.719Z",
+    "at": "2026-10-01T12:01:48.211Z",
     "trace": {
-      "runId": "e472dbc4-cffc-4a42-ab48-651a94d1788a",
+      "runId": "431a217e-a662-42c7-b109-6130c359324a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "57faf6db95668786a0bb99007620b4d1e580c389f5e4870787769f4053a4b9cd",
-      "contextHash": "34c8a67f348c9e097593845fda2cbb64067c4cdbc5fed06176305483f1e57bf3",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "b8ea15fc544facfb6ca5dd6fa0b18f0073f3d4ee506913be367dc62333432b4a",
+      "contextHash": "122977cbd651efa1df2ba1168e7096ac62b04a4e24823b9e84d7618c2559268a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "369be82e097b59d96e02763baf918667fd32d39425d23ab6139c64841282c849",
+      "fingerprint": "1dfa249d95f57d6df6cc4f10f629d9fc69c645131eddf9eafda048e1b3c139ae",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -273,10 +220,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54d-43e2-76c1-92ee-1cb1255d0bca"
+        "01a0f757-650e-7c53-a6a4-267a64babb7a"
       ],
       "usage": {
-        "used": 28757,
+        "used": 28583,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -285,10 +232,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 29615,
-          "utf8Bytes": 33763,
-          "estimatedTokens": 11255,
-          "budgetedTokens": 14069,
+          "chars": 27903,
+          "utf8Bytes": 33273,
+          "estimatedTokens": 11091,
+          "budgetedTokens": 13864,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

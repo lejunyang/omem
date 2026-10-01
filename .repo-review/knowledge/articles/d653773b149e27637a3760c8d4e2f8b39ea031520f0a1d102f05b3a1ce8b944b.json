@@ -2,127 +2,44 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/quality-evaluate.ts",
-    "title": "冻结质量集的离线评估与门禁",
-    "summary": "该脚本读取已冻结的数据集和外部预测文件，计算抽取质量指标，生成带输入指纹的 JSON 报告，并用进程退出码表达整组质量门禁是否通过，适合用于发布前或持续集成中的可复现验收。",
+    "title": "离线质量评估与发布门禁",
+    "summary": "该命令读取冻结质量数据集与外部预测，生成带稳定指纹的指标报告并执行统一门禁，适合作为模型或规则版本上线前的离线验收入口。",
     "category": "workflow",
     "sections": [
       {
         "key": "purpose",
         "title": "解决什么问题",
-        "body": "脚本把“模型输出是否足够可靠”转化为可重复执行的离线验收：调用者提供数据集标识与预测 JSON；参数既可来自命令行，也可来自环境变量，缺少任一项就立即报错。它使用指定数据目录中的 SQLite 存储，因此评估对象是仓库已有的冻结质量集，而不是运行时临时拼出的样本。参考 [[c1]]\n\n存储层在初始化时创建数据库目录、执行迁移并构造多个仓储对象；当前实现明确以 SQLite 作为单用户基础，团队级隔离仍属后续迁移范围。延伸阅读：[[c2]]"
+        "body": "该脚本把“某批预测是否达到可用标准”转化为可重复执行的离线检查。调用者提供数据集标识与预测 JSON；缺少参数或预测顶层不是数组时立即报错，避免无效输入进入指标计算。参考 [[c1]]\n\n每条预测以 UUID 关联样本，包含符合质量标签合同的结果，并可附带耗时、Token 用量与错误信息。标签区分抽取、放弃和需要上下文，同时约束抽取对象及自动应用条件。参考 [[c2]]、[[c3]]"
       },
       {
-        "key": "flow",
-        "title": "从冻结样本到可追溯报告",
-        "body": "核心流程是先通过质量仓储校验并取得冻结数据集，再解析预测文件并要求顶层必须为数组，随后将冻结样本与预测交给统一评估器。报告记录数据集划分、清单摘要、预测摘要和指标，使一次结果可以追溯到确切的基准与预测内容。参考 [[c3]]\n\n预测摘要采用规范化 JSON 的 SHA-256：对象键排序、`undefined` 字段剔除、数组保持顺序，因此对象属性书写顺序不会改变摘要，但数组顺序仍会影响身份。参考 [[c4]]\n\n```mermaid\nflowchart LR\n  A[冻结质量集] --> C[统一评估器]\n  B[预测 JSON] --> C\n  C --> D[指标与门禁]\n  D --> E[评估报告]\n  D --> F[进程退出码]\n```\n参考 [[c3]]"
+        "key": "evaluation-flow",
+        "title": "从冻结数据到评估结果",
+        "body": "```mermaid\nflowchart LR\n  A[数据集标识] --> C[验证冻结数据集]\n  B[预测 JSON] --> D[解析预测]\n  C --> E[计算质量指标]\n  D --> E\n  E --> F[生成门禁报告]\n```\n脚本打开数据目录中的 SQLite，通过质量仓库验证冻结数据集，再把固定样本与预测交给评估器。参考 [[c4]]\n\n当前 SQLite 明确是单用户基础，团队权限仍属于后续迁移范围。`Store` 在这里负责创建数据目录、执行迁移并初始化应用所需的仓库与服务；构造失败时关闭数据库。参考 [[c5]]、[[c6]] 报告中的预测指纹会递归规范化对象键顺序、忽略 `undefined`，再计算 SHA-256，使等价 JSON 获得稳定摘要。参考 [[c7]]"
       },
       {
-        "key": "gates",
-        "title": "门禁、输出与边界",
-        "body": "门禁覆盖自动应用精确率、语义支持率、引用位置准确率、必要证据覆盖、显式样本覆盖、歧义归属误报以及预测完整性；前三项阈值为 0.95，两项覆盖率阈值为 0.8，任一指标为空也不会通过相应比例门禁。语义支持特意与“引文是否出现在原文中”分离，评估器以确定性规则识别否定翻转、反义概念、限制条件丢失、时间错配和低词汇重合，而非调用 LLM。参考 [[c5]] [[c6]]\n\n报告目录与文件分别以仅属主可访问、可读写的权限创建，路径可由环境变量覆盖；无论成功还是抛错，存储都会关闭。只要任一门禁失败，报告仍会落盘并打印，但进程退出码设为 1，便于 CI 拦截。参考 [[c7]]"
-      },
-      {
-        "key": "limits",
-        "title": "可确认与未覆盖的行为",
-        "body": "脚本只验证预测顶层是数组；单条预测的 UUID、标签结构、耗时与 token 字段约束由评估器定义的严格 schema 表达，但当前所给片段未展示 `evaluateQuality` 如何处理无效条目、重复 sampleId 或额外预测，因此不能据此断言这些情况会报错还是计入缺失/错误指标。参考 [[c8]]\n\n此外，脚本本身没有生成预测、联网调用模型或更新冻结数据集的逻辑；它是质量仓储、评估器、稳定摘要和通用 Store 之间的编排入口。参考 [[c9]]"
+        "key": "gates-and-output",
+        "title": "门禁、报告与已知边界",
+        "body": "报告记录数据集、分片、清单摘要、预测摘要和指标，并检查自动应用精确率、语义支持、引用位置、必要证据覆盖、显式覆盖、歧义负责人误报及预测完整性。参考 [[c8]] 任一门禁失败时，进程退出码会设为 1。参考 [[c10]]\n\n语义支持门禁要求达到 95%。其评估采用确定性规则基线，可识别否定反转、反义冲突、限制条件丢失、时间错配和内容无关，而不是仅做引文子串检查，也不是 LLM 裁判。参考 [[c9]]\n\n报告默认写入当前工作目录下的 `.omem/quality/<datasetId>-evaluation.json`，可由 `OMEM_QUALITY_REPORT` 覆盖；目录与文件权限分别收紧为 `0700` 和 `0600`，存储最终始终关闭。参考 [[c10]] 当前材料未覆盖评估器主体，因此不能确认重复、未知或缺失 `sampleId` 的具体计分规则。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评估入口参数",
-        "reason": "支持脚本从命令行或环境变量取得数据集与预测路径，并在参数缺失时终止的说明。",
-        "relation": "supports",
+        "label": "命令输入校验",
+        "reason": "支持脚本读取数据集与预测路径，并拒绝参数缺失或预测顶层非数组的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-evaluate.ts",
           "startLine": 8,
-          "endLine": 12
+          "endLine": 20
         },
         "quote": "const datasetId = process.argv[2] || process.env.OMEM_QUALITY_DATASET_ID;\nconst predictionPath = process.argv[3] || process.env.OMEM_QUALITY_PREDICTIONS;\nif (!datasetId || !predictionPath)\n  throw Error(\"Usage: quality-evaluate <dataset-id> <predictions.json>\");\nconst store = new Store(resolve(process.env.OMEM_DATA_DIR"
       },
       {
         "key": "c2",
-        "label": "单用户存储基础",
-        "reason": "说明 Store 当前采用 SQLite 单用户基础，并展示初始化数据库、迁移和仓储对象的过程。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 4,
-          "endLine": 65
-        },
-        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
-      },
-      {
-        "key": "c3",
-        "label": "评估与报告组装",
-        "reason": "支持冻结集校验、预测数组读取、统一评估以及报告记录清单和预测摘要的核心流程。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/quality-evaluate.ts",
-          "startLine": 14,
-          "endLine": 27
-        },
-        "quote": "  const repository = new QualityRepository(store.db);\n  const frozen = repository.verifyFrozen(datasetId);\n  const predictions = JSON.parse(\n    readFileSync(resolve(predictionPath), \"utf8\"),\n  ) as unknown[];\n  if (!Array.isArray(predictions)) throw Error(\"QUALITY_PREDICTIONS_NOT_ARRAY\");\n  const metrics = evaluateQua"
-      },
-      {
-        "key": "c4",
-        "label": "稳定摘要算法",
-        "reason": "解释预测摘要如何规范化对象后计算 SHA-256，以及键顺序和数组顺序的影响。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/digest.ts",
-          "startLine": 3,
-          "endLine": 19
-        },
-        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
-      },
-      {
-        "key": "c5",
-        "label": "质量门禁阈值",
-        "reason": "支持各项质量门禁、阈值以及缺失指标不会通过比例门禁的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/quality-evaluate.ts",
-          "startLine": 28,
-          "endLine": 48
-        },
-        "quote": "    gates: {\n      autoApplyPrecision:\n        metrics.autoApply.precision !== null &&\n        metrics.autoApply.precision >= 0.95,\n      // F6: evidence support is no longer a substring check. The gate now\n      // requires semantic entailment (reverse statements score 0), not just\n      // that evidenceQuote appears "
-      },
-      {
-        "key": "c6",
-        "label": "语义支持判定基线",
-        "reason": "支持语义支持与引用位置分离，以及判定器采用确定性规则而非 LLM 的边界说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/evaluator.ts",
-          "startLine": 33,
-          "endLine": 53
-        },
-        "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
-      },
-      {
-        "key": "c7",
-        "label": "报告写入与失败退出",
-        "reason": "支持报告路径、文件权限、控制台输出、失败退出码和最终关闭 Store 的行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/quality-evaluate.ts",
-          "startLine": 51,
-          "endLine": 64
-        },
-        "quote": "  const output = resolve(\n    process.env.OMEM_QUALITY_REPORT ||\n      `.omem/quality/${datasetId}-evaluation.json`,\n  );\n  mkdirSync(dirname(output), { recursive: true, mode: 0o700 });\n  writeFileSync(output, JSON.stringify(report, null, 2) + \"\\n\", {\n    mode: 0o600,\n  });\n  chmodSync(output, 0o600);\n  console.log(JSO"
-      },
-      {
-        "key": "c8",
-        "label": "预测结构约束",
-        "reason": "展示单条预测的严格 schema，同时界定当前材料未呈现 evaluateQuality 对异常集合的具体处置。",
+        "label": "预测记录合同",
+        "reason": "支持预测的样本标识、质量标签及可选运行信息字段说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -133,28 +50,119 @@
         "quote": "export const qualityPredictionSchema = z\n  .object({\n    sampleId: z.string().uuid(),\n    prediction: qualityLabelSchema,\n    durationMs: z.number().nonnegative().optional(),\n    inputTokens: z.number().int().nonnegative().nullable().optional(),\n    outputTokens: z.number().int().nonnegative().nullable().optional(),\n  "
       },
       {
-        "key": "c9",
-        "label": "脚本依赖关系",
-        "reason": "支持该文件作为 Store、质量仓储、评估器和摘要函数编排入口的说明。",
+        "key": "c3",
+        "label": "质量标签约束",
+        "reason": "支持处置类型、抽取对象字段和自动应用约束的说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/quality-evaluate.ts",
-          "startLine": 1,
-          "endLine": 6
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 39,
+          "endLine": 70
         },
-        "quote": "import { chmodSync, mkdirSync, readFileSync, writeFileSync } from \"node:fs\";\nimport { dirname, resolve } from \"node:path\";\nimport { evaluateQuality } from \"../apps/server/src/quality/evaluator.js\";\nimport { QualityRepository } from \"../apps/server/src/quality/repository.js\";\nimport { stableDigest } from \"../apps/server"
+        "quote": "export const qualityLabelSchema = z\n  .object({\n    disposition: z.enum([\"extract\", \"abstain\", \"needs_context\"]),\n    objects: z\n      .array(\n        z\n          .object({\n            kind: z.enum([\"task\", \"claim\", \"episode\", \"procedure\"]),\n            statement: z.string().min(1).max(4000),\n            evidenceQuote:"
+      },
+      {
+        "key": "c4",
+        "label": "冻结数据评估流程",
+        "reason": "支持打开存储、验证冻结数据集、读取预测并调用评估器的流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-evaluate.ts",
+          "startLine": 12,
+          "endLine": 20
+        },
+        "quote": "const store = new Store(resolve(process.env.OMEM_DATA_DIR || \".omem\"));\ntry {\n  const repository = new QualityRepository(store.db);\n  const frozen = repository.verifyFrozen(datasetId);\n  const predictions = JSON.parse(\n    readFileSync(resolve(predictionPath), \"utf8\"),\n  ) as unknown[];\n  if (!Array.isArray(predictions"
+      },
+      {
+        "key": "c5",
+        "label": "单用户存储边界",
+        "reason": "支持当前 SQLite 仅为单用户基础、团队权限留待后续迁移的边界说明。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 5
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */"
+      },
+      {
+        "key": "c6",
+        "label": "应用存储初始化",
+        "reason": "支持 Store 创建数据目录和 SQLite、执行迁移、初始化应用仓库与服务以及失败时关闭数据库的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 45,
+          "endLine": 68
+        },
+        "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
+      },
+      {
+        "key": "c7",
+        "label": "稳定摘要算法",
+        "reason": "支持预测指纹通过规范化 JSON 与 SHA-256 稳定生成的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+      },
+      {
+        "key": "c8",
+        "label": "质量门禁集合",
+        "reason": "支持报告字段、各项阈值、完整性门禁及失败判定集合的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-evaluate.ts",
+          "startLine": 21,
+          "endLine": 49
+        },
+        "quote": "  const report = {\n    createdAt: new Date().toISOString(),\n    datasetId,\n    split: frozen.dataset.split,\n    manifestDigest: frozen.manifestDigest,\n    predictionDigest: stableDigest(predictions),\n    metrics,\n    gates: {\n      autoApplyPrecision:\n        metrics.autoApply.precision !== null &&\n        metrics.auto"
+      },
+      {
+        "key": "c9",
+        "label": "语义支持规则",
+        "reason": "支持语义支持采用确定性规则并区分多类语义冲突，而非子串或 LLM 判断的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 33,
+          "endLine": 46
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
+      },
+      {
+        "key": "c10",
+        "label": "报告输出与退出状态",
+        "reason": "支持报告默认路径、路径覆盖、权限设置、门禁失败退出码以及最终关闭存储的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-evaluate.ts",
+          "startLine": 51,
+          "endLine": 64
+        },
+        "quote": "  const output = resolve(\n    process.env.OMEM_QUALITY_REPORT ||\n      `.omem/quality/${datasetId}-evaluation.json`,\n  );\n  mkdirSync(dirname(output), { recursive: true, mode: 0o700 });\n  writeFileSync(output, JSON.stringify(report, null, 2) + \"\\n\", {\n    mode: 0o600,\n  });\n  chmodSync(output, 0o600);\n  console.log(JSO"
       }
     ],
     "questions": [
       {
-        "question": "`evaluateQuality` 遇到 schema 不合法、重复 sampleId 或数据集之外的预测时，具体是拒绝执行、忽略记录，还是折算为某项指标？",
-        "why": "当前材料只展示预测 schema 和调用入口，没有提供 `evaluateQuality` 主体；这些行为直接影响报告对脏数据和重复结果的解释。",
-        "nextStep": "检查 `evaluateQuality` 的完整实现及对应测试，分别确认解析失败、重复标识、额外预测和缺失预测的断言。",
+        "question": "各质量指标如何匹配样本与预测，并如何处理重复、未知或缺失的 sampleId？",
+        "why": "当前材料只显示脚本调用评估器及预测结构，没有提供 evaluateQuality 主体，无法可靠说明指标分母与异常匹配规则。",
+        "nextStep": "补充 evaluator.ts 中 evaluateQuality 及相关辅助函数的完整行范围，并结合相关测试确认边界行为。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c8"
+          "c2",
+          "c4"
         ]
       }
     ]
@@ -168,7 +176,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -188,34 +196,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T07:24:26.113Z",
+    "effort": "high",
+    "at": "2026-10-01T12:17:24.034Z",
     "trace": {
-      "runId": "0c70ab58-1017-4a3c-b0f9-45ee55deab16",
-      "roleId": "code-analyst",
+      "runId": "fdb638ed-c2f1-4ed8-95bd-db34928ff22c",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
-      "promptHash": "34ff1e4b2ed7fd7875e7d6876deddb555146ee2046fa3f9016ed0971a0abcbc8",
-      "contextHash": "73a6993d0d3910b891e8b4e6e5d169234ea239d036cba6ef0a185e7b7df37cf4",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "2bf72c74ecc5db923e5befc15729a5b442a91049ceddc94daeced36728a2b3ef",
+      "contextHash": "aa8e2a29c19d8d2b3e777280005ffae517c4c9463d5431d82e232b151b474dac",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b538cccafec6a75b06ebd0de62a3fb01290bdb96c27f1944b6b30224a007fbfe",
+      "fingerprint": "a8da92222197ec1aa215fc4de657999402391ea1f662476966a60bf723254f69",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f659-5449-76f3-b9c6-87ddc991b40a"
+        "01a0f765-9a98-7dc3-87a2-e216238a9805"
       ],
       "usage": {
-        "used": 27219,
+        "used": 31827,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -224,10 +232,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21954,
-          "utf8Bytes": 25098,
-          "estimatedTokens": 8366,
-          "budgetedTokens": 10458,
+          "chars": 29327,
+          "utf8Bytes": 35631,
+          "estimatedTokens": 11877,
+          "budgetedTokens": 14847,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -236,20 +244,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T07:24:46.608Z",
+    "at": "2026-10-01T12:17:39.556Z",
     "trace": {
-      "runId": "559e3ee1-c2ae-446d-aa44-9aba81cc40b0",
+      "runId": "9ead2789-a7b0-4bf2-8838-5452b6cd30d5",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
-      "promptHash": "652a0fa53a7bdaa9017e42cdfbc717af85a610d07a45deb02f6fcef1702ddfc5",
-      "contextHash": "715dc0a6733d58fb434826e89590287132ff890927ef47c69f96ffed49684c98",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "474b52c6bf33376443189445941c970224bc71415c545a08aa8966f21da187be",
+      "contextHash": "487faa9c06f9baa654c69716201afd6c9128300465e206253d459f61affecbf3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "36e8bea5d723d86c831b80efd31d153e05c6ea2d7a06af95d617d0b18f183bdb",
+      "fingerprint": "4c1406f737bade884ecd5803c2c895542795c395a4594d66b7c14b6c6a55eac6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -259,10 +267,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f659-bdd9-7592-b687-475babc8114c"
+        "01a0f765-f403-7bf1-ab8f-eaf0a94ba0dd"
       ],
       "usage": {
-        "used": 28101,
+        "used": 27644,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -271,10 +279,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26169,
-          "utf8Bytes": 31047,
-          "estimatedTokens": 10349,
-          "budgetedTokens": 12937,
+          "chars": 26721,
+          "utf8Bytes": 31847,
+          "estimatedTokens": 10616,
+          "budgetedTokens": 13270,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

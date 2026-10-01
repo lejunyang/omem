@@ -2,114 +2,96 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-    "title": "代码知识 DTO 的字段兼容与人类可读展示测试",
-    "summary": "该集成测试在临时 Git 仓库中生成 TypeScript 文件，依次执行评审捕获、代码结构投影并启动评审 HTTP 应用；它验证快照、文件和符号 DTO 保留内部操作键并提供人类可读字段，在图响应确实包含边时进一步检查图边 DTO。",
+    "title": "代码知识 API 的 DTO 合同验证",
+    "summary": "该集成测试用临时 Git 仓库和隔离数据库跑通仓库捕获、代码解析与 HTTP 查询，验证快照、文件、符号和图边既保留内部操作键，又提供适合界面展示与阅读轨迹跳转的人类可读字段；同时暴露了图边断言可能空跑及部分响应状态未覆盖的限制。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose",
-        "title": "测试目标与背景",
-        "body": "测试针对 DTO 演进中的兼容风险：查询与深链仍需 `fileId`、`symbolId` 等内部操作键，但界面标签不能直接暴露内部 ID 或长哈希。测试定义坏标签检测规则，并以“保留合同字段、增加展示及 trail 链接”为目标。[[c1]] 场景会初始化临时 Git 仓库，写入并提交 `greet.ts`，因此使用的不是手写 DTO fixture。[[c2]]"
+        "key": "purpose-and-scenario",
+        "title": "防止 DTO 演进破坏界面与深链",
+        "body": "测试解决的是代码知识 DTO 在演进中“可操作但不可读”或“可读但丢失路由键”的兼容问题。它创建只含 `greet` 函数的临时 Git 仓库，初始化隔离 Store，依次执行仓库材料同步、代码结构同步并启动评审 HTTP 应用，因而覆盖的是接近真实服务链路的集成场景，而非单独构造 DTO。参考 [[c1]]\n\n其中 Store 会创建并迁移单用户 SQLite 数据库；评审应用则显式接入代码知识服务及文件、符号、边和快照 DTO 转换器。延伸阅读：[[c2]]、[[c3]]"
       },
       {
-        "key": "flow",
-        "title": "同步与查询流程",
-        "body": "测试创建独立 `Store` 后，依次运行评审捕获、代码同步和评审应用，再通过进程内 HTTP 注入查询接口。[[c3]] 这一顺序具有数据依赖：代码同步只投影 TS/Vue 结构，不捕获文件正文，并从已捕获的当前 fragment 关联符号。[[c4]] 随后依次请求当前快照、文件列表、文件符号和代码图，覆盖从仓库输入到对外序列化的主要成功路径。[[c5]]"
+        "key": "assertion-flow",
+        "title": "从快照到文件、符号和关系图",
+        "body": "验证按读取层级展开：先查询当前快照，要求提交、脏状态、解析器版本、文件数量等合同字段仍存在，并检查七位短提交号；再查询文件列表，确认内部定位字段未丢失，同时展示名、仓库相对路径和 trail 链接可直接供 UI 使用。参考 [[c4]]、[[c5]]\n\n随后通过文件标识查询符号，逐项检查名称、范围、导出状态等结构字段，并要求 `symbolName`、引用标签、API 深链和 trail 链接有效，展示标题不能是内部 ID 或长哈希。最后读取关系图：每条边需保留端点、状态和来源；`missing` 或 `stale` 边必须不可操作，展示标题也不得泄露内部标识。参考 [[c6]]、[[c7]]"
       },
       {
-        "key": "assertions",
-        "title": "实际断言覆盖",
-        "body": "快照检查合同字段及七位短提交号；文件检查身份、路径、语言等字段，以及展示标题、展示路径和 trail 链接。[[c6]] 符号列表明确要求非空，再逐项检查身份、范围、展示名称、引用标签和深链，并排除内部 ID 作为标题。[[c7]]\n\n图边检查位于对 `gBody.edges` 的循环中：仅当响应存在边时，才会验证端点、状态、来源、时间、`actionable`、展示标题与深链。因此，此处替代此前“已经验证图边 DTO”的无条件结论，应表述为条件性检查。[[c8]]"
-      },
-      {
-        "key": "limits",
-        "title": "限制、响应检查与清理风险",
-        "body": "该用例只覆盖单文件、干净提交的 TypeScript 成功路径；同步器声明的未提交文件、Git 失败退化、非 UTF-8、超限文件及路径逃逸等边界并未在此触发。[[c9]] 图接口未断言边数组非空，文件、符号和图请求也没有像快照请求那样逐一显式断言 HTTP 200。[[c5]][[c8]]\n\n`afterEach` 统一关闭 Store 并删除登记的数据库目录，[[c10]] 但临时 Git 仓库只在测试主体末尾删除；若此前断言或应用关闭失败，可能遗留该目录。[[c11]]"
+        "key": "boundaries",
+        "title": "测试边界与未覆盖行为",
+        "body": "这项测试明确验证 DTO 字段形状和标签卫生，但没有断言文件、符号、图接口的 HTTP 状态码，也没有验证链接实际打开后的内容或前端交互。更关键的是，测试仓库只有一个无调用关系的函数，图边断言位于遍历循环中；若 `edges` 为空，端点、状态、`actionable` 与深链检查会全部跳过，因此不能据此证明边 DTO 已被实际覆盖。参考 [[c7]]\n\n代码同步自身声明：结构行是已捕获原文之上的投影，符号通过声明行关联当前 Fragment；输入变化会创建新快照，并把未重新生成的结构标为 stale。当前测试只跑一次同步，未覆盖幂等复用、修改后重建及 stale 转换。参考 [[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "DTO 合同测试定义",
-        "reason": "支持测试同时保留操作字段、增加展示与 trail 链接，并检测内部 ID 标签的目标。",
+        "label": "临时仓库与服务链路",
+        "reason": "支持测试通过真实 Git 仓库、Store、两阶段同步和 HTTP 应用建立集成场景的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 25,
-          "endLine": 32
+          "startLine": 31,
+          "endLine": 50
         },
-        "quote": "const ID_RE = /^(file|sym|cedge|snap|cu)_[a-f0-9]{20,}$/;\nfunction hasBadLabel(v: unknown): boolean {\n  if (typeof v !== \"string\") return false;\n  return ID_RE.test(v) || /^[a-f0-9]{40,}$/.test(v);\n}\n\ndescribe(\"code DTO contract: action keys preserved + human labels\", () => {\n  it(\"keeps every contract field and adds d"
+        "quote": "describe(\"code DTO contract: action keys preserved + human labels\", () => {\n  it(\"keeps every contract field and adds display/trail links\", async () => {\n    const root = mkdtempSync(join(tmpdir(), \"omem-dto-\"));\n    git([\"init\", \"-q\", root], root);\n    git([\"config\", \"user.email\", \"t@e.com\"], root);\n    git([\"config\","
       },
       {
         "key": "c2",
-        "label": "临时 Git 仓库与示例源码",
-        "reason": "支持测试动态创建、提交真实 greet.ts 文件，而非使用手写 DTO fixture。",
-        "relation": "supports",
+        "label": "单用户 SQLite 初始化",
+        "reason": "说明测试所用 Store 会初始化、迁移并保护本地 SQLite 数据库。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 33,
-          "endLine": 42
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 38,
+          "endLine": 68
         },
-        "quote": "    const root = mkdtempSync(join(tmpdir(), \"omem-dto-\"));\n    git([\"init\", \"-q\", root], root);\n    git([\"config\", \"user.email\", \"t@e.com\"], root);\n    git([\"config\", \"user.name\", \"t\"], root);\n    git([\"config\", \"commit.gpgsign\", \"false\"], root);\n    const a = join(root, \"apps/server/src/greet.ts\");\n    mkdirSync(dirna"
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       },
       {
         "key": "c3",
-        "label": "同步与应用启动顺序",
-        "reason": "支持 Store、评审同步、代码同步和评审应用依次执行的流程说明。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 44,
-          "endLine": 50
-        },
-        "quote": "    const dir = mkdtempSync(join(tmpdir(), \"omem-dtodb-\"));\n    const store = setup(dir);\n    await runReviewSync(store, root);\n    await runCodeSync(store, root);\n    const { app } = await buildReviewApp({ store, repoRoot: root });\n    await app.ready();\n    const hdr = { host: \"127.0.0.1:5180\", origin: \"http://127.0."
-      },
-      {
-        "key": "c4",
-        "label": "代码知识投影的数据前置条件",
-        "reason": "说明代码同步不捕获正文，并依赖评审同步已生成的 fragment 来关联符号。",
+        "label": "代码 DTO 接入点",
+        "reason": "说明评审应用依赖代码知识服务以及文件、符号、边和快照 DTO 转换器。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 1,
-          "endLine": 10
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 41,
+          "endLine": 43
         },
-        "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
+        "quote": "import { CodeKnowledgeService } from \"../code/sync.js\";\nimport { currentSnapshotId, snapshotFileBinding } from \"../code/store.js\";\nimport { fileDTO, symbolDTO, edgeDTO, snapshotMeta } from \"../code/dto.js\";"
+      },
+      {
+        "key": "c4",
+        "label": "快照合同断言",
+        "reason": "支持快照基础字段与短提交号格式的验证说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+          "startLine": 52,
+          "endLine": 59
+        },
+        "quote": "    // Snapshot keeps commit/parserVersion/fileCount dirty.\n    const snap = await app.inject({ method: \"GET\", url: \"/api/review/code/current-snapshot\", headers: hdr });\n    expect(snap.statusCode).toBe(200);\n    const sb = JSON.parse(snap.body);\n    for (const k of [\"snapshotId\",\"commit\",\"dirty\",\"parserVersion\",\"fileC"
       },
       {
         "key": "c5",
-        "label": "HTTP 查询序列与状态断言",
-        "reason": "支持测试依次查询快照、文件、符号和图；该范围也显示只有快照请求显式断言状态码。",
+        "label": "文件展示字段断言",
+        "reason": "支持文件内部键、可读标题、展示路径和 trail 链接同时保留的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 52,
-          "endLine": 89
+          "startLine": 61,
+          "endLine": 70
         },
-        "quote": "    // Snapshot keeps commit/parserVersion/fileCount dirty.\n    const snap = await app.inject({ method: \"GET\", url: \"/api/review/code/current-snapshot\", headers: hdr });\n    expect(snap.statusCode).toBe(200);\n    const sb = JSON.parse(snap.body);\n    for (const k of [\"snapshotId\",\"commit\",\"dirty\",\"parserVersion\",\"fileC"
+        "quote": "    // File keeps fileId/path/language/removed.\n    const files = await app.inject({ method: \"GET\", url: \"/api/review/code/files\", headers: hdr });\n    const fileRows = JSON.parse(files.body);\n    const greet = fileRows.find((f: any) => f.path.endsWith(\"greet.ts\"));\n    for (const k of [\"fileId\",\"path\",\"language\",\"size"
       },
       {
         "key": "c6",
-        "label": "快照与文件 DTO 断言",
-        "reason": "支持快照合同字段、短提交号，以及文件字段、展示路径和 trail 链接的检查。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 52,
-          "endLine": 70
-        },
-        "quote": "    // Snapshot keeps commit/parserVersion/fileCount dirty.\n    const snap = await app.inject({ method: \"GET\", url: \"/api/review/code/current-snapshot\", headers: hdr });\n    expect(snap.statusCode).toBe(200);\n    const sb = JSON.parse(snap.body);\n    for (const k of [\"snapshotId\",\"commit\",\"dirty\",\"parserVersion\",\"fileC"
-      },
-      {
-        "key": "c7",
-        "label": "符号 DTO 非空与字段断言",
-        "reason": "支持符号列表非空、合同字段、人类标签、引用标签和深链格式的断言。",
+        "label": "符号可读性与链接断言",
+        "reason": "支持符号结构字段、引用标签、深链及内部 ID 不得作为标题的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -120,10 +102,10 @@
         "quote": "    // Symbol keeps symbolId/fileId/name/qualifiedName/kind/rangeStart/rangeEnd/signature/fragmentId.\n    const syms = await app.inject({ method: \"GET\", url: `/api/review/code/files/${greet.fileId}/symbols`, headers: hdr });\n    const symRows = JSON.parse(syms.body);\n    expect(symRows.length).toBeGreaterThan(0);\n    f"
       },
       {
-        "key": "c8",
-        "label": "条件执行的图边 DTO 断言",
-        "reason": "支持图边检查全部位于循环内且没有边数组非空断言，因此只能视为存在边时的条件性验证。",
-        "relation": "explains",
+        "key": "c7",
+        "label": "关系图边断言",
+        "reason": "支持边合同、不可操作状态规则，也表明断言位于可能不执行的边遍历中。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
@@ -133,72 +115,37 @@
         "quote": "    // Graph edges keep endpoints + status + actionable.\n    const g = await app.inject({ method: \"GET\", url: \"/api/review/code/graph\", headers: hdr });\n    const gBody = JSON.parse(g.body);\n    for (const e of gBody.edges) {\n      for (const k of [\"edgeId\",\"snapshotId\",\"edgeKind\",\"status\",\"origin\",\"fromSymbolId\",\"from"
       },
       {
-        "key": "c9",
-        "label": "评审同步的异常边界",
-        "reason": "说明同步器还处理工作区变化、Git 失败、路径逃逸、编码和大小限制，但本测试未覆盖这些分支。",
-        "relation": "background",
+        "key": "c8",
+        "label": "代码结构投影与快照语义",
+        "reason": "解释代码同步依赖已捕获 Fragment、快照幂等及旧结构转为 stale 的设计边界。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 7,
-          "endLine": 14
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 1,
+          "endLine": 10
         },
-        "quote": " * Snapshot honesty: every captured revision records the real HEAD commit, whether\n * the working tree was dirty, the content hash and the sync time — never mtime.\n * Incremental scans cover both committed changes and uncommitted/untracked work.\n * Git failures degrade to a full rescan instead of silently reporting suc"
-      },
-      {
-        "key": "c10",
-        "label": "Store 资源的 afterEach 清理",
-        "reason": "支持 afterEach 只统一关闭已登记 Store，并删除对应数据库临时目录。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 11,
-          "endLine": 22
-        },
-        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup(dir: string) {\n  const store = new Store(dir);\n  stores.push({ store, dir });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    try { store.close(); } catch {}\n    rmSync(dir, { recursive: true, force: true });\n "
-      },
-      {
-        "key": "c11",
-        "label": "测试末尾的仓库目录清理",
-        "reason": "支持临时 Git 仓库 root 仅在测试主体末尾删除，因而中途失败可能绕过该清理。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 100,
-          "endLine": 102
-        },
-        "quote": "    await app.close();\n    rmSync(root, { recursive: true, force: true });\n    rmSync(dir, { recursive: true, force: true });"
+        "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
       }
     ],
     "questions": [
       {
-        "question": "图接口在当前 `greet.ts` 场景中是否稳定产生至少一条边？",
-        "why": "材料没有提供实际运行响应，测试也未断言 `gBody.edges` 非空；若数组为空，所有图边 DTO 检查都会空跑。",
-        "nextStep": "运行该测试并检查图响应，或加入能确定产生边的最小源码及 `edges.length > 0` 断言，再验证具体边字段。",
+        "question": "是否应在夹具中加入可确定产生关系边的代码或 association，使图边断言至少执行一次？",
+        "why": "当前单函数夹具可能得到空的 edges 数组，循环内所有边 DTO 断言仍会让测试通过，无法证明边字段、不可操作规则与深链确实有效。",
+        "nextStep": "增加一个能被当前解析器识别的同文件调用或明确关系种子，并先断言 `gBody.edges.length > 0`，再验证具体边。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c7"
+        ]
+      },
+      {
+        "question": "是否需要补充二次同步场景，验证相同输入复用快照以及代码变化后旧边转为 stale？",
+        "why": "代码同步声明了幂等快照和 stale 失效语义，但本测试只同步一次，DTO 中与变化生命周期有关的状态没有行为证据。",
+        "nextStep": "在首次断言后再次同步确认快照复用，再修改并提交夹具文件、重新执行两阶段同步，验证新快照及旧关系状态。",
         "blocking": false,
         "citationKeys": [
           "c8"
-        ]
-      },
-      {
-        "question": "是否需要为文件、符号和图请求统一断言成功状态，并补充失败响应合同？",
-        "why": "当前只有快照请求显式断言 HTTP 200，其余请求主要依靠 JSON 解析和后续字段访问间接暴露错误。",
-        "nextStep": "为每个请求增加状态码和内容类型断言，并按需要补充无效文件标识、无快照或未同步状态的响应测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c5"
-        ]
-      },
-      {
-        "question": "是否要把临时 Git 仓库纳入 afterEach 的兜底清理？",
-        "why": "数据库目录已登记并在 afterEach 清理，但仓库 root 只在测试末尾删除，中途失败时可能遗留。",
-        "nextStep": "统一登记测试创建的临时目录，在 afterEach 中关闭应用和 Store 后逐项递归删除。",
-        "blocking": false,
-        "citationKeys": [
-          "c10",
-          "c11"
         ]
       }
     ]
@@ -217,7 +164,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -232,34 +179,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:26:24.893Z",
+    "effort": "high",
+    "at": "2026-10-01T11:55:32.321Z",
     "trace": {
-      "runId": "97cb5e3c-c380-4d40-a480-7b8e5fb845ee",
-      "roleId": "knowledge-refresher",
+      "runId": "b907f16a-0418-4c25-85e0-c9d036a1ea25",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "d7716dc56dba4144fc11290e898dd8211d9fbd4019988f5a8e86f670bb55ad46",
-      "contextHash": "2ce74a4dfbe740cf4487eec2c296727aa5c1dcdbfef1c815c390c230a4d19fab",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "a98a0978eb7e2fbb366cc1ed4f7be6c92bd4fb3392effaee34a608b2a47e72a1",
+      "contextHash": "1c33d53887af5611d2c766df2ada36a0fd7c2011cfffac4fd8ad7c5038f50472",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3cf4e1c68db576b7217d44e5d22276a2d512869d96b66ab583e58dd4302c24e6",
+      "fingerprint": "110de1d2ee650c582f9e11d46440bdc9e22498cfe4e7b4b2714571f7722b5e3b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f548-634d-7af1-b189-491111c951ee"
+        "01a0f751-793c-7e42-b9eb-66cc542cfd19"
       ],
       "usage": {
-        "used": 32053,
+        "used": 31070,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -268,10 +215,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35962,
-          "utf8Bytes": 41606,
-          "estimatedTokens": 13869,
-          "budgetedTokens": 17337,
+          "chars": 27009,
+          "utf8Bytes": 30109,
+          "estimatedTokens": 10037,
+          "budgetedTokens": 12547,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -280,20 +227,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:26:42.713Z",
+    "at": "2026-10-01T11:55:49.604Z",
     "trace": {
-      "runId": "e57e660b-65f3-4f35-86f0-d976ddf46758",
+      "runId": "8bf88ee9-bc22-4413-8038-adde3b128205",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "142adae6c4be16695737128ae35602ba17c68f96f37cb357b2144edf4d829395",
-      "contextHash": "db2cff4b0c46fc2469f402c81c31d2c96ebef5682b88040c560823cd51de9bc0",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "52cbba058cbb626f7efa2e64ee17b6499f2d6d466f314b11fdb45d610d12b722",
+      "contextHash": "6d5d3a71f0a54e8820d9e2da7d3a3fb329a2f4857d9ddf50c8fb5ffc65e6a107",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bde9671e673a8e22ff727adbc8f190c0138429af080842a3174938633070a50a",
+      "fingerprint": "7d2601d7331461b5ef071bd041b6eec955715a92db31b0371f2ecdd430d90e3d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -303,10 +250,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f548-e579-7e00-8d31-9790d3ae0c05"
+        "01a0f751-ef03-74b2-8d6e-efa4cc576e95"
       ],
       "usage": {
-        "used": 29868,
+        "used": 29114,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -315,10 +262,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 31913,
-          "utf8Bytes": 35789,
-          "estimatedTokens": 11930,
-          "budgetedTokens": 14913,
+          "chars": 31041,
+          "utf8Bytes": 36399,
+          "estimatedTokens": 12133,
+          "budgetedTokens": 15167,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

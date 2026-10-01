@@ -2,57 +2,70 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/code/artifacts.ts",
-    "title": "代码理解产物的导出与可信恢复",
-    "summary": "该模块把当前、成功且由模型生成的代码理解保存为可版本化 JSON，并在仓库重新同步后依据来源摘要和稳定符号定位器恢复到当前快照。它严格区分派生知识与原始证据，拒绝过期、越界、来源不合法或交叉引用失效的产物，但恢复时只完成结构与引用校验，不代表独立语义复核。",
+    "title": "代码理解成果的版本化导出与安全恢复",
+    "summary": "该模块把当前、有效的模型代码理解保存为可提交的 JSON 产物，并在仓库重新同步后依据源码摘要和稳定符号定位器恢复结果。它严格区分派生知识与原始证据，对过期依赖、越界引用、无法重定位的符号和伪造模型来源分别标记为 stale 或 rejected。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose_export",
-        "title": "解决的问题与导出流程",
-        "body": "模块用于在运行时数据库之外保存可携带的派生代码知识；JSON保留生成来源，且不会被重新当作独立原始证据。产物记录目标、依赖摘要、引用节点定位信息、模型输出及可选预算。[[c1]]\n\n导出只接受当前快照中成功、非 seed、未过期且属于当前快照的模型结果，否则立即拒绝。随后收集输出实际引用的节点，将内部符号 ID 转成“文件路径、限定名、类型”定位器，并为目标覆盖的源码及规则证据计算摘要；规则只哈希实际提供的摘录，避免无关位置修改使产物失效。最终文件名由目标标识摘要生成并写入指定目录。[[c2]][[c3]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "代码理解结果通常保存在运行时数据库中，难以随仓库版本携带。本模块将其导出成便携 JSON，并保留模型输出、生成预算、依赖摘要和符号定位信息；Markdown 仅是可读投影，二者都不会被重新摄取为独立原始证据。参考 [[c1]] [[c2]]\n\n这样既能提交和迁移派生知识，又不会把模型总结冒充新的事实来源。导出只接受当前快照上成功、非 seed、未过期的模型结果，避免把失败或旧结果固化。参考 [[c3]]"
       },
       {
-        "key": "restore_flow",
-        "title": "恢复、重绑定与持久化",
-        "body": "恢复过程扫描固定生成目录中的 JSON：先校验版本和模型来源，再比较当前依赖清单摘要。来源正文、证据摘录或目标文件集合变化时，产物被标记为 stale，并保留重新生成原因，而不是导入旧结论。[[c4]]\n\n依赖未变时，系统要求每个节点路径仍处于目标范围内，并按路径、限定名和符号类型在当前快照中重新解析；旧内部 ID 仅用于建立映射，不会直接沿用。重绑定后的输出换用当前输入摘要，再交给统一的 `validateCodeUnderstanding` 检查。[[c5]][[c6]] 通过后才以事务写入理解记录及节点、证据引用；相同生成时间的当前结果会幂等跳过，单个文件异常则进入 rejected 报告，不会中止其余文件。[[c7]]"
+        "key": "workflow",
+        "title": "导出与恢复流程",
+        "body": "```mermaid\nflowchart LR\n  A[当前模型理解] --> B[计算源码与规则摘要]\n  B --> C[保存符号稳定定位器]\n  C --> D[版本化 JSON]\n  D --> E[核对当前依赖]\n  E --> F[重定位符号并校验]\n  F --> G[恢复到数据库]\n```\n参考 [[c4]] [[c5]]\n\n导出时，模块从理解快照取得目标覆盖的源码以及规则证据，分别计算内容哈希；随后收集输出实际引用的节点，用“路径、限定名、种类”保存定位器。恢复时先比较依赖清单：内容或目标文件集合变化则标记为过期，不覆盖现有有效结果。依赖一致时再把旧节点编号映射到当前快照中的符号，并通过统一的交叉引用校验器验证完整输出。参考 [[c6]]"
       },
       {
-        "key": "relations_limits",
-        "title": "模块关系与边界",
-        "body": "该文件依赖代码图存储取得当前快照、文件路径、符号和捕获正文；代码图本身是既有 Fragment 的确定性投影，不另存文件正文，因此产物依赖最终仍锚定捕获材料。[[c8]] 它还复用理解存储构造与模型运行相同的固定快照，并调用 agent-runtime 的稳定摘要及交叉引用验证器；后者要求模型引用只能落在预先固定的文件、节点、边和证据集合中。[[c9]]\n\n恢复不是重新运行模型，也不会覆盖已提交产物中的原始模型输出与生成摘要；它只重绑定已检查的引用。数据库备注明确说明来源和引用已通过校验，但尚未进行独立语义复核。[[c10]] 此外，定位依赖路径、限定名和类型完全匹配，符号重命名或移出目标范围会被拒绝；源码或规则摘录改变则整体视为过期。当前材料未展示并发写文件、损坏文件修复或 Markdown 投影生成逻辑。"
+        "key": "boundaries",
+        "title": "失败边界与模块关系",
+        "body": "恢复具有明确的三态结果：依赖变化为 `stale`；来源声明非法、定位器越界、符号无法解析或合同校验失败为 `rejected`；已有同一生成结果或成功插入则为 `restored`。写入事务同时保存节点和证据引用，并明确注明“来源与引用已校验，但未进行独立语义复核”。参考 [[c7]]\n\n该模块直接依赖代码图存储提供当前快照、源码和符号；代码图本身是已捕获片段的确定性投影，不另存文件正文。参考 [[c8]] 它还依赖运行时的稳定摘要与 `CodeUnderstanding.v1` 校验器；后者只检查固定快照内的合同和交叉引用，不负责调用真实模型。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "产物结构与派生知识定位",
-        "reason": "支持产物是可携带派生知识、不会作为独立证据重新摄入，并说明其主要字段。",
+        "label": "派生知识边界",
+        "reason": "说明 JSON 与 Markdown 都是派生视图，不会作为独立原始证据重新摄取。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
           "startLine": 1,
-          "endLine": 21
+          "endLine": 2
         },
-        "quote": "/** Portable derived knowledge. JSON keeps generation provenance; Markdown is a\n * readable projection. Neither is re-ingested as independent source evidence. */\nimport { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { createHash } from \"node:"
+        "quote": "/** Portable derived knowledge. JSON keeps generation provenance; Markdown is a\n * readable projection. Neither is re-ingested as independent source evidence. */"
       },
       {
         "key": "c2",
-        "label": "当前模型结果导出门槛",
-        "reason": "支持导出仅允许当前快照中的成功模型结果，并展示引用节点的收集与定位器生成。",
+        "label": "版本化产物结构",
+        "reason": "支持产物包含目标、依赖、节点定位器、模型输出和可选预算的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 14,
+          "endLine": 21
+        },
+        "quote": "type Artifact = {\n  version: 1;\n  targetId: string;\n  dependencies: { path: string; hash: string }[];\n  nodes: { id: string; path: string; qualifiedName: string; kind: string }[];\n  output: CodeUnderstandingOutput;\n  budget?: unknown;\n};"
+      },
+      {
+        "key": "c3",
+        "label": "导出资格与产物写入",
+        "reason": "说明仅当前成功模型结果可以导出，以及节点定位器和 JSON 文件的生成过程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
           "startLine": 38,
-          "endLine": 55
+          "endLine": 60
         },
         "quote": "export function exportGeneratedUnderstanding(store: Store, repoRoot: string, id: string, destination: string): string {\n  const detail = understandingDetail(store, id);\n  const snapId = currentSnapshotId(store);\n  if (!detail || !snapId || detail.status !== \"generated\" || detail.seed || detail.stale || detail.snapshot_"
       },
       {
-        "key": "c3",
-        "label": "依赖清单与文件写出",
-        "reason": "支持源码和证据摘录摘要的构造方式，以及确定性文件名和 JSON 写出流程。",
+        "key": "c4",
+        "label": "依赖摘要生成",
+        "reason": "支持源码与规则证据按实际提供内容计算哈希的导出阶段。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -63,9 +76,9 @@
         "quote": "function dependencyManifest(store: Store, repoRoot: string, snapshotId: string, target: string) {\n  const { snapshot } = understandingSnapshot(store, repoRoot, snapshotId);\n  const paths = new Set(snapshot.files.filter(f => covers(f.path, target)).map(f => f.path));\n  const sources = [...paths].sort().map(path => {\n   "
       },
       {
-        "key": "c4",
-        "label": "恢复来源校验与过期判定",
-        "reason": "支持恢复时检查模型来源、比较依赖摘要，并将变化产物标记为 stale。",
+        "key": "c5",
+        "label": "恢复入口与过期判断",
+        "reason": "说明恢复前检查目录、快照、来源声明和依赖摘要，并把变化结果标为过期。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -76,35 +89,22 @@
         "quote": "export function restoreGeneratedUnderstandings(store: Store, repoRoot: string) {\n  const dir = join(repoRoot, GENERATED_DIR);\n  const report: { file: string; status: \"restored\" | \"stale\" | \"rejected\"; reason?: string }[] = [];\n  const snapId = currentSnapshotId(store);\n  if (!snapId || !existsSync(dir)) return report;\n"
       },
       {
-        "key": "c5",
-        "label": "稳定定位器重解析",
-        "reason": "支持目标范围约束，以及按路径、限定名、类型把旧节点引用映射到当前符号。",
+        "key": "c6",
+        "label": "符号重定位与合同校验",
+        "reason": "支持使用路径、限定名和种类重定位符号，并对重映射后的输出执行统一校验。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
           "startLine": 80,
-          "endLine": 86
+          "endLine": 96
         },
         "quote": "      const remap = new Map(artifact.nodes.map(n => {\n        if (!covers(n.path, artifact.targetId)) throw new Error(\"Out-of-scope locator\");\n        const symbol = symbols.find(s => files.get(s.fileId) === n.path && s.qualifiedName === n.qualifiedName && s.kind === n.kind);\n        if (!symbol) throw new Error(`Unres"
       },
       {
-        "key": "c6",
-        "label": "输出重绑定与统一验证",
-        "reason": "支持只替换当前输入摘要和节点引用，再执行严格的代码理解验证。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/artifacts.ts",
-          "startLine": 87,
-          "endLine": 96
-        },
-        "quote": "      // Rebind only checked references/digest. Original model output and original\n      // generation digest remain in the committed artifact, never overwritten.\n      const output: CodeUnderstandingOutput = {\n        ...artifact.output, input_digest: inputDigest,\n        referenced_node_ids: mapped(artifact.output.re"
-      },
-      {
         "key": "c7",
-        "label": "幂等恢复与事务持久化",
-        "reason": "支持重复结果跳过、理解及引用事务写入，以及逐文件 rejected 报告行为。",
+        "label": "恢复写入与结果分类",
+        "reason": "说明重复恢复、事务写入、引用保存、未独立语义复核声明和异常拒绝行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -116,8 +116,8 @@
       },
       {
         "key": "c8",
-        "label": "代码图存储身份与投影边界",
-        "reason": "解释 artifacts 所依赖的代码图来自已捕获 Fragment、具有确定性身份，且不自行保存文件正文。",
+        "label": "代码图存储边界",
+        "reason": "解释当前快照和符号来源于已捕获片段的确定性投影，且图存储不另存文件正文。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -129,8 +129,8 @@
       },
       {
         "key": "c9",
-        "label": "固定快照与交叉引用验证器",
-        "reason": "解释 agent-runtime 验证器的职责：模型只可引用运行前固定的可信集合，且验证模块本身不调用模型。",
+        "label": "代码理解校验职责",
+        "reason": "说明运行时校验器固定输入、检查交叉引用且自身不调用真实模型。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -139,39 +139,26 @@
           "endLine": 11
         },
         "quote": "// Bounded, deterministic Code Understanding subsystem.\n//\n// This module is intentionally self-contained: it owns its own versioned output\n// contract (CodeUnderstanding.v1), its own role-asset loader with digest/budget/\n// allowlist checks, and a deterministic cross-reference validator. It never calls\n// a real model"
-      },
-      {
-        "key": "c10",
-        "label": "恢复记录的语义复核声明",
-        "reason": "支持恢复会保留原生成信息，并明确标注尚未经过独立语义复核。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/artifacts.ts",
-          "startLine": 101,
-          "endLine": 110
-        },
-        "quote": "        store.db.prepare(`INSERT OR IGNORE INTO code_understandings\n          (understanding_id,target_type,target_id,snapshot_id,role_id,role_version,prompt_hash,schema_digest,input_hash,\n           output_schema,output_json,confidence,unknowns,evidence_refs,status,model,generated_at,seed,verified_by_agent,stale,sourc"
       }
     ],
     "questions": [
       {
-        "question": "恢复出的模型理解在被正式展示或用于回答前，是否必须再进入独立语义 verifier 流程？",
-        "why": "当前代码只执行结构、摘要和交叉引用验证，持久化备注也明确声明尚未独立语义复核；所给材料没有说明后续消费方是否会强制补做复核。",
-        "nextStep": "检查恢复调用方及理解结果的查询、发布状态转换逻辑，确认未复核结果的可见性和后续 verifier 入口。",
-        "blocking": false,
-        "citationKeys": [
-          "c6",
-          "c10"
-        ]
-      },
-      {
-        "question": "JSON 写入中断或同一目标并发导出时，是否由更上层提供原子发布与互斥保障？",
-        "why": "当前材料显示直接创建目录并写入最终文件，但未展示临时文件重命名、文件锁或并发协调；仅凭本文件无法确定外层是否串行化调用。",
-        "nextStep": "检查 exportGeneratedUnderstanding 的调用点及作业调度约束，并补充中断写入和并发导出的行为测试。",
+        "question": "导出文件是否需要采用临时文件加原子重命名，以避免进程中断留下半写入 JSON？",
+        "why": "当前材料只显示创建目录后直接写入目标文件，无法确认上层是否提供崩溃恢复或写入互斥保障。",
+        "nextStep": "检查该函数的调用方与相关测试；若产物可能并发生成或在写入时中断，应补充原子落盘和损坏文件测试。",
         "blocking": false,
         "citationKeys": [
           "c3"
+        ]
+      },
+      {
+        "question": "恢复成功后，独立语义复核由哪个流程触发？",
+        "why": "本模块明确只完成来源、定位器与合同校验，并把恢复结果标注为尚未独立语义复核；所给材料未展示后续调度关系。",
+        "nextStep": "查看知识生成或 verifier 的调用链，确认恢复结果是否会自动进入复核队列，以及未复核结果能否对外展示。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c9"
         ]
       }
     ]
@@ -190,7 +177,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -205,21 +192,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:05:29.205Z",
+    "effort": "high",
+    "at": "2026-10-01T11:45:02.162Z",
     "trace": {
-      "runId": "78669c17-c7a8-42cb-bf78-9e884b8e4b31",
+      "runId": "5da8e611-096e-424c-b568-bed303ac8596",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "216bce44766c96fda003d64158276b7a1934520cb0f649265d2a151bdb2f1a50",
-      "contextHash": "cd0205acc270b994487bfcae9fd537fabd57816ea9e3e3e195cf8383ca3aaf05",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "a67776614cb05fee9ec9d15d45117ac373284793057b4f78f14b154e277fb5fb",
+      "contextHash": "1da7f4f6c8e18b9958dfc6462e864dabc333d8a666e1c28371858d779dd33138",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b90cf2876e88a3fd5da3d29e6a79cdab688478ba4d7b50d15ff6768ae091c24b",
+      "fingerprint": "f6d747291ff7b8ad77b679b752ef7d54787c5870d9a9b1e05e6ccca2ec148f19",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-code-analyst",
@@ -229,10 +216,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f535-3cdd-7363-9973-c1320552dd39"
+        "01a0f747-ca22-7992-a714-f587d1c58843"
       ],
       "usage": {
-        "used": 29204,
+        "used": 30099,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -241,10 +228,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 29893,
-          "utf8Bytes": 31771,
-          "estimatedTokens": 10591,
-          "budgetedTokens": 13239,
+          "chars": 30723,
+          "utf8Bytes": 33933,
+          "estimatedTokens": 11311,
+          "budgetedTokens": 14139,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -253,20 +240,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:05:49.833Z",
+    "at": "2026-10-01T11:45:26.658Z",
     "trace": {
-      "runId": "a16fa3c5-d873-4f64-8330-7767d3f3fa48",
+      "runId": "9e890152-2eef-4bbe-8a18-eeb8ec46bbe4",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "f7c96b7caf5a44f2d00354ccfd62c753edc66b3e2df08fb5ed6a6362dddbbf57",
-      "contextHash": "64e4bd4f3c9dc4859e1a16943af59e64f25095bf7b5b178cd6bd9937c533a51e",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "4149e95b09c22038eb12861968930d2efa38154af36c1137e4846675712ba6e2",
+      "contextHash": "a80bfddf5f2192fdcc6ad5be18b0e7d8717fb936635ad0d4c5901aafac489397",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "85463a6400ed18ba8ca64e7fe09150ebee70c2a1230ebff1b4ddb83eaa01ea80",
+      "fingerprint": "bfe851974c94718801a297868757cdb5dc793a920df89723aaea04e95ac5ae4f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -276,10 +263,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f535-ba3f-7912-921d-f3efa17702fc"
+        "01a0f748-5089-7011-8a28-a98074ec90e7"
       ],
       "usage": {
-        "used": 29885,
+        "used": 30695,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -288,10 +275,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35002,
-          "utf8Bytes": 39358,
-          "estimatedTokens": 13120,
-          "budgetedTokens": 16400,
+          "chars": 34974,
+          "utf8Bytes": 40478,
+          "estimatedTokens": 13493,
+          "budgetedTokens": 16867,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

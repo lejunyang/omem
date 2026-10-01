@@ -2,136 +2,99 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-    "title": "SQLite 短暂写锁期间的 Store 初始化与捕获测试",
-    "summary": "该测试让独立子进程持有约 250 毫秒的 SQLite 写锁，并在持锁期间开始创建 Store，随后执行一次 manual capture；断言捕获返回的首个片段文本正确且子进程正常退出。现有时序不能确定等待发生在 Store 初始化还是 capture，因此它不单独证明 capture 本身的锁等待行为。",
+    "title": "SQLite 写锁下的知识捕获回归测试",
+    "summary": "该测试使用独立子进程制造真实的 SQLite 写锁，验证主进程在锁存在后开始重新初始化存储，并在初始化返回后仍能完成文本捕获。它覆盖从并发锁、存储初始化到捕获成功的端到端场景，但不直接证明捕获写语句本身与锁竞争，也未说明具体等待和超时策略。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose",
-        "title": "测试目的与真实存储背景",
-        "body": "用例在临时目录中先创建并关闭一个 `Store`，以生成后续父子进程共同访问的实际 `omem.sqlite` 文件。[[c1]] `Store` 构造过程会创建目录、打开数据库、执行迁移，并初始化应用、任务、输入、运行请求和来源配置等组件，因此测试覆盖的是真实启动路径，而非内存数据库或伪造仓储。[[c2]]"
+        "title": "验证真实进程竞争下的端到端结果",
+        "body": "这个回归测试关注单用户 SQLite 存储中的实际并发场景：另一个进程持有写锁时，主进程重新接入数据库并执行后续知识捕获，最终不应丢失固定材料。用例先创建临时数据库，再启动独立 Node 子进程，通过 `BEGIN IMMEDIATE` 取得写锁；子进程发出 `ready` 后延时提交，因此这里使用的是真实进程间锁，而非模拟错误。参考 [[c1]]"
       },
       {
         "key": "flow",
-        "title": "写锁、初始化与捕获流程",
-        "body": "子进程对同一数据库执行 `BEGIN IMMEDIATE`，发出 `ready` 后约 250 毫秒提交并关闭连接。父进程收到信号时写锁已经存在，随后才执行 `new Store(dir)`、构造 `KnowledgeRepository` 并调用一次 manual capture。[[c3]] 因为 `Store` 构造本身包含打开数据库和迁移，现有代码没有记录构造完成、进入 capture 与锁释放的先后关系；所以被替代的旧结论“capture 在锁释放前已经开始等待”证据不足。可确认的结论仅是：持锁期间开始 Store 初始化，之后 capture 成功返回。"
+        "title": "从写锁建立到捕获成功",
+        "body": "主进程收到 `ready` 后才开始构造新的 `Store`。构造过程同步打开同一 SQLite 文件、执行数据库迁移，并初始化应用、任务、输入、运行请求和来源配置等组件；材料没有表明构造何时返回，因此不能断言随后的捕获操作发生在子进程仍持锁期间。参考 [[c2]]\n\n只有 `Store` 构造返回后，用例才实例化 `KnowledgeRepository` 并调用 `store.capture`。成功标准是捕获结果中的首个片段完整保留输入文本，同时持锁子进程以退出码 0 正常结束。由此验证的是“并发锁已经存在时开始重新初始化，随后仍可完成捕获”的端到端行为，而不是直接证明捕获写语句自身等待了该锁。参考 [[c3]]"
       },
       {
-        "key": "assertions",
-        "title": "断言范围与覆盖边界",
-        "body": "测试断言返回 revision 的首个 fragment 文本等于输入文本，并等待持锁子进程以退出码 0 结束。[[c4]] 它没有重启 Store 后查询持久化结果，也未验证标题、来源、上下文、其他片段、长时间锁定、回滚或多个竞争写者；清理阶段会终止残留子进程、关闭 Store 并删除临时目录。[[c5]]\n\n提供的知识仓储代码展示了原始 revision 到知识材料的转换，以及对文档结构、内联引用、目标材料和引用行范围的校验；这些职责不能证明 `KnowledgeRepository` 构造会影响本测试的锁等待。[[c6]] 同样，现有材料没有给出 SQLite busy timeout、重试次数或超时错误转换策略。"
+        "key": "boundaries",
+        "title": "能够证明与尚未覆盖的边界",
+        "body": "该测试覆盖一次约 250 毫秒写锁、一次存储重开和一次手工文本捕获，没有测量初始化或捕获分别等待了多久，也没有断言等待上限、超时错误、长期持锁、多个写入者或失败重试语义。`KnowledgeRepository` 只被构造而未调用方法，因此现有材料也不足以证明它是场景成立的必要条件。参考 [[c1]] [[c3]]\n\n无论用例成功还是失败，清理逻辑都会终止仍存活的子进程、关闭存储并删除临时目录，避免并发测试留下数据库或进程资源。参考 [[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时数据库初始化",
-        "reason": "支持用例在临时目录创建并关闭初始 Store，使父子进程随后访问同一文件数据库。",
+        "label": "真实写锁建立过程",
+        "reason": "支持独立子进程通过即时事务取得 SQLite 写锁、发出就绪信号并延时提交的场景说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
           "startLine": 9,
-          "endLine": 12
+          "endLine": 16
         },
-        "quote": "it(\"waits for a real concurrent writer instead of losing a knowledge operation\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-busy-\"));\n  const initial = new Store(dir); initial.close();\n  let store: Store | undefined;"
+        "quote": "it(\"waits for a real concurrent writer instead of losing a knowledge operation\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-busy-\"));\n  const initial = new Store(dir); initial.close();\n  let store: Store | undefined;\n  const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", \"import {D"
       },
       {
         "key": "c2",
-        "label": "Store 的数据库启动流程",
-        "reason": "支持 Store 构造会打开 omem.sqlite、执行迁移并初始化多个应用组件，说明等待点可能位于初始化阶段。",
+        "label": "存储同步初始化流程",
+        "reason": "说明 Store 构造时打开数据库、执行迁移并初始化运行组件，支持初始化在收到就绪信号后开始且捕获需等待构造返回的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
-          "startLine": 38,
-          "endLine": 69
+          "startLine": 51,
+          "endLine": 65
         },
-        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+        "quote": "    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase(this.db);\n      mkdirSync(join(dataDir, \"assets\"), { recursive: true, mode: 0o700 });\n      chmodSync(file, 0o600);\n      this.applications = new"
       },
       {
         "key": "c3",
-        "label": "并发写锁与调用顺序",
-        "reason": "支持子进程取得写锁后，父进程依次创建 Store、构造知识仓储并执行 capture，同时表明代码缺少更细粒度时序观测。",
+        "label": "捕获与退出断言",
+        "reason": "支持 Store 构造返回后才执行捕获，并以片段文本和子进程退出码作为端到端成功标准。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-          "startLine": 13,
-          "endLine": 18
+          "startLine": 17,
+          "endLine": 20
         },
-        "quote": "  const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", \"import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.argv[1]);db.exec('BEGIN IMMEDIATE');process.stdout.write('ready\\\\n');setTimeout(()=>{db.exec('COMMIT');db.close();},250);\", join(dir, \"omem.sqlite\")], { stdio: [\"ignore\", \"pi"
+        "quote": "    store = new Store(dir); new KnowledgeRepository(store);\n    const result = store.capture({ source: \"manual\", externalId: \"waited\", title: \"Concurrent capture\", parts: [{ type: \"text\", text: \"Fixed material remains available.\" }], context: {} });\n    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material re"
       },
       {
         "key": "c4",
-        "label": "捕获结果与子进程断言",
-        "reason": "支持测试直接验证的两项结果：首个片段文本正确，以及持锁子进程正常退出。",
+        "label": "并发测试资源清理",
+        "reason": "支持用例最终终止残留子进程、关闭存储并删除临时目录的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-          "startLine": 18,
-          "endLine": 20
-        },
-        "quote": "    const result = store.capture({ source: \"manual\", externalId: \"waited\", title: \"Concurrent capture\", parts: [{ type: \"text\", text: \"Fixed material remains available.\" }], context: {} });\n    expect(result.revision.fragments[0]!.text).toBe(\"Fixed material remains available.\");\n    expect(await exited).toBe(0);"
-      },
-      {
-        "key": "c5",
-        "label": "单次操作与资源清理",
-        "reason": "支持该用例仅执行一次捕获，并在 finally 中关闭或清理子进程、Store 和临时目录。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-          "startLine": 15,
+          "startLine": 21,
           "endLine": 21
         },
-        "quote": "  try {\n    await new Promise<void>((resolve, reject) => { child.stdout.once(\"data\", () => resolve()); child.once(\"error\", reject); });\n    store = new Store(dir); new KnowledgeRepository(store);\n    const result = store.capture({ source: \"manual\", externalId: \"waited\", title: \"Concurrent capture\", parts: [{ type: \"tex"
-      },
-      {
-        "key": "c6",
-        "label": "知识材料转换与引用校验",
-        "reason": "支持知识仓储在所给范围内负责材料转换和知识文档引用校验，但未展示构造器或锁等待配置。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 11,
-          "endLine": 70
-        },
-        "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
+        "quote": "  } finally { if (child.exitCode === null) child.kill(); store?.close(); rmSync(dir, { recursive: true, force: true }); }"
       }
     ],
     "questions": [
       {
-        "question": "写锁释放前，父进程是否已经进入 `store.capture`，还是仍阻塞在 `new Store(dir)` 的迁移或初始化阶段？",
-        "why": "这是区分“capture 等待并发写者”和“Store 初始化等待后 capture 成功”的关键时序；当前测试没有记录 Store 构造完成、capture 开始和锁释放的相对时间。",
-        "nextStep": "增加可观察的同步点或事件记录，分别标记 Store 构造完成、capture 开始和子进程提交；也可让父进程先创建 Store，再由子进程取得写锁。",
+        "question": "SQLite 写锁的具体等待机制、等待上限和超时后的错误语义是什么？",
+        "why": "材料只能证明短暂写锁存在时，从重新打开 Store 到后续捕获可以完成；它没有展示 busy timeout、迁移内部重试或连接配置。",
+        "nextStep": "检查数据库迁移及连接初始化中的 SQLite pragma、重试配置，并补充针对超时或长期持锁的材料与行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3",
-          "c4"
-        ]
-      },
-      {
-        "question": "SQLite 的等待时长或重试策略在哪里配置，超过阈值后 capture 或 Store 初始化会返回什么错误？",
-        "why": "现有材料只展示约 250 毫秒持锁后的成功路径，没有说明 busy timeout、重试次数及错误转换。",
-        "nextStep": "检查迁移、数据库连接和存储仓储中的超时或重试配置，并补充超过阈值及回滚路径的行为测试。",
-        "blocking": false,
-        "citationKeys": [
+          "c1",
           "c2",
           "c3"
         ]
       },
       {
-        "question": "构造 `KnowledgeRepository` 是否是该测试成功所必需的步骤？",
-        "why": "测试创建了实例但未使用返回值，所提供的仓储范围也没有展示类构造器及其潜在副作用。",
-        "nextStep": "查看 `KnowledgeRepository` 的类定义与构造器，并比较保留和移除此构造步骤时的实际行为。",
+        "question": "KnowledgeRepository 的实例化是否是该回归场景所必需？",
+        "why": "测试创建了 KnowledgeRepository，但没有调用其方法；现有材料无法判断构造是否具有必要副作用，还是与 store.capture 无关的冗余设置。",
+        "nextStep": "核对 KnowledgeRepository 构造函数，或移除该实例化后重新运行测试，并在需要时增加仓储级断言。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c6"
+          "c3"
         ]
       }
     ]
@@ -145,31 +108,31 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
+      "digest": "1cc007a5fd3cbc9208c80f6c54fd43cc766bae38f247e58b30659eff308a1f5e"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T06:50:29.459Z",
+    "effort": "high",
+    "at": "2026-10-01T12:00:04.456Z",
     "trace": {
-      "runId": "d67caf04-1ce8-4d01-9692-43b44d65a180",
+      "runId": "ffdadc7d-6d93-4d86-ad82-75c42dae6481",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "b35544b0a66d885800c5fc1d0305ba178e6fd6bf454147788aadd1d885c1c815",
-      "contextHash": "4d9449eee5a3026a63496ed909e15a2d1da1ea920e350fc10547c3cd9f297bf5",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "3fe81e5d8cc2e534cdbb90d4836b98f04a119925d7475db30b076a79b2436544",
+      "contextHash": "cc73cb00b05d39dc9615ab4f758ccba94558f6045cb4ab965f21291161ee30e8",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4dc466c6a113a938982e0de55d0b20f1da3c2cacd59e7d72aa2e548cf9a8b872",
+      "fingerprint": "844d424377ddccc81eb9908a6746847a1f5bfde31179c22a4f2ab8117cf42917",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -179,10 +142,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63a-49de-78d2-8766-1f8d73a742c2"
+        "01a0f755-be6a-7f01-9e4b-079f70c8ff3b"
       ],
       "usage": {
-        "used": 27927,
+        "used": 27714,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -191,10 +154,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 24725,
-          "utf8Bytes": 29853,
-          "estimatedTokens": 9951,
-          "budgetedTokens": 12439,
+          "chars": 23784,
+          "utf8Bytes": 30110,
+          "estimatedTokens": 10037,
+          "budgetedTokens": 12547,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -203,20 +166,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:50:46.087Z",
+    "at": "2026-10-01T12:00:20.547Z",
     "trace": {
-      "runId": "bc7338fc-4b8f-4de0-9148-9b6550caba95",
+      "runId": "75bd0aeb-4caa-4d0c-9834-333a5368e7d2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2b0e2b832efcf800250607032463773fba13e0deaee95521b4ef493ae02e9f7c",
-      "contextHash": "2c4dc929238d880b057b18797750648a75aa94e0dee81e735db429a0894e8071",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "1c8f3f0eeb35fe4c7de0ef7266a5aaf4a8fb6369a618b7150562cd929250c76c",
+      "contextHash": "7c37e46c895ceb465282fbd18788f9288dbb4ad826940594e2081f8b4542e96e",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b742f7a42d46ad19a61bd9e1fe50b4a396e868ebef2d79b8cc8481aa97233ec7",
+      "fingerprint": "56596388e0dd6448e3c8988575b3ede8ace2ca136d067044fd70fea24e5b56ac",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -226,10 +189,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63a-a6dc-7b02-a891-d582b7597371"
+        "01a0f756-1792-7e53-9f09-5f4040cb40c4"
       ],
       "usage": {
-        "used": 25602,
+        "used": 25737,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -238,10 +201,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21210,
-          "utf8Bytes": 24656,
-          "estimatedTokens": 8219,
-          "budgetedTokens": 10274,
+          "chars": 20594,
+          "utf8Bytes": 25530,
+          "estimatedTokens": 8510,
+          "budgetedTokens": 10638,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

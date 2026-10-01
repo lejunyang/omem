@@ -2,31 +2,36 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/review-migration.test.ts",
-    "title": "仓库评审迁移与关系失效测试",
-    "summary": "该测试验证 repo-review 从内容哈希来源身份迁移到稳定路径身份时的冲突处理、历史数据保留与幂等性，并覆盖代码来源换版后旧关系转为 stale、默认查询隐藏历史关系的生命周期。",
+    "title": "仓库评审数据迁移与关系失效测试",
+    "summary": "该测试验证仓库评审数据从内容哈希身份迁移到稳定路径身份时保留历史证据，并验证代码来源产生新修订后，显式执行关系失效处理会将旧片段关系标为过期并移出默认查询。覆盖范围包括同路径冲突、同内容不同路径、历史可读性、同一数据库状态上的重复迁移、片段保留及关系失效。",
     "category": "tests",
     "sections": [
       {
-        "key": "migration-purpose",
-        "title": "迁移目标与历史保留",
-        "body": "旧数据以内容哈希标识文件来源；测试直接写入 source、revision、fragment 三层记录，构造迁移前数据库 [[c1]]。同一路径发生碰撞时，较新的来源取得 `omem:<路径>` 身份并保留当前 head，较旧来源解除 head、记录为该路径的历史别名 [[c4]]；旧来源仍能通过原 external id 找到，其非当前修订、片段和历史记录继续可读 [[c2]]。这符合稳定路径身份的设计：同一文件修改时累积修订，而内容相同但路径不同的文件仍是独立来源 [[c3]]。"
+        "key": "purpose",
+        "title": "防止身份迁移破坏历史证据",
+        "body": "repo-review 要把旧的“内容哈希即来源身份”迁移为稳定的 `omem:<仓库相对路径>` 身份，使同一文件修改后累积修订，而内容相同但路径不同的文件仍保持独立。测试直接写入旧式 source、revision 和 fragment，构造迁移前状态。参考 [[c1]]\n\n每个用例使用独立临时目录和真实 `Store`，结束后关闭数据库并递归清理目录，避免用例相互污染。参考 [[c10]] `Store` 构造时会创建 SQLite、执行数据库迁移并初始化仓储服务，因此这些断言检验的是实际存储行为。参考 [[c2]]"
       },
       {
-        "key": "asserted-behavior",
-        "title": "迁移断言与已知边界",
-        "body": "碰撞用例还验证同一路径最终只有一个当前来源，且迁移前后片段总数不变 [[c4]]；独立用例进一步证明相同正文位于不同路径时不会被错误合并 [[c5]]。再次执行迁移返回零，并且测试所检查的来源 external id、head 与历史别名状态保持不变 [[c6]]。因此这里确认的是这些选定字段上的幂等性，并非整个数据库快照不变。材料也未给出迁移函数的完整排序实现，现有用例只能证明版本号和创建时间均较新的记录在该场景中胜出。"
+        "key": "migration-cases",
+        "title": "同路径归并并保留旧历史",
+        "body": "同一路径存在两个旧哈希来源时，用例中的较新来源取得路径身份并继续持有当前 head；旧来源保留原 external id，但解除 head、登记为历史别名。当前浏览只留下一个路径来源，迁移前后片段总数不变。参考 [[c3]]\n\n路径才是新身份边界：正文完全相同但路径不同的文件会成为两个独立当前来源。被降级的旧来源仍能按旧 external id 找到，其修订、片段和历史记录继续可读，只是不再属于当前视图。参考 [[c4]] [[c5]]"
+      },
+      {
+        "key": "idempotence",
+        "title": "重复迁移保持已稳定状态",
+        "body": "首次迁移后，测试记录文件来源的 external id、head 与别名；在同一个 `Store` 和 stateDir 上再次调用迁移时，返回值为零且状态快照不变。这证明的是**同一数据库状态上的第二次执行**不会继续改写结果，并未模拟关闭后重新启动服务。参考 [[c6]]\n\n另一个用例单独比较迁移前后的 fragment 总数，确认身份调整不会删除片段行；但它没有逐字段验证正文、时间戳及全部修订属性。参考 [[c7]]"
       },
       {
         "key": "relation-lifecycle",
-        "title": "关系失效与查询可见性",
-        "body": "关系测试通过共享 `Store.capture` 写入同一路径的两版代码，再为旧版代码片段建立指向当前决策片段的 `implements` 关系 [[c7]]。按代码路径执行失效后，关系由 confirmed 变为 stale：默认片段查询隐藏它，启用 `includeStale` 才返回；路径查询还需同时启用历史与 stale 选项 [[c8]]。这体现了 repo-review 对通用 Store、捕获和检索能力的复用，同时将路径迁移及评审元数据保存在隔离的评审数据库中 [[c9]]。当前用例尚未覆盖目标片段换版、源目标同时换版、缺失关系、并发迁移或异常回滚。"
+        "title": "显式失效处理让旧片段关系退出默认视图",
+        "body": "测试先通过共享捕获接口让同一代码路径从 v1 前进到 v2，再创建当前的决策材料，并为 v1 片段与决策片段写入已确认的 `implements` 关系。参考 [[c8]]\n\nv2 已产生时，旧关系仍保持 `confirmed`；只有显式调用关系失效处理后，它才变为 `stale`。此后默认片段查询和当前路径追踪不再展示旧关系，而启用 stale 与 historical 选项仍可读取它。测试确认 v2 是当前修订，但没有证明系统会自动为 v2 建立新关系。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "旧式来源构造辅助函数",
-        "reason": "支持测试直接写入旧版来源、修订和片段记录以模拟迁移前状态。",
+        "label": "旧式来源构造",
+        "reason": "支持测试直接构造旧哈希来源、修订和片段以模拟迁移前状态。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -37,48 +42,48 @@
         "quote": "/** Hand-build a legacy content-hash source: one source row, one head revision\n * (with context.filePath) and one fragment. Mirrors the pre-path-identity era. */\nfunction insertLegacySource(\n  store: Store,\n  opts: {\n    externalId: string;\n    filePath: string;\n    version: number;\n    createdAt: string;\n    fragmentT"
       },
       {
-        "key": "c2",
-        "label": "历史来源仍可读取",
-        "reason": "支持被降级来源仍可由旧 external id 定位，且其非当前修订、片段和历史记录保持可读。",
+        "key": "c10",
+        "label": "测试存储隔离与清理",
+        "reason": "支持每个用例创建独立临时 Store，并在结束后关闭数据库和删除目录。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-migration.test.ts",
-          "startLine": 189,
-          "endLine": 217
+          "startLine": 22,
+          "endLine": 38
         },
-        "quote": "  it(\"3. demoted legacy source stays readable via its old external id\", () => {\n    const store = setup();\n    const stateDir = mkdtempSync(join(tmpdir(), \"omem-review-migstate-\"));\n    const loser = insertLegacySource(store, {\n      externalId: \"hashEEEE5555\",\n      filePath: \"apps/server/src/hist.ts\",\n      version: "
+        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup(dir?: string) {\n  const d = dir ?? mkdtempSync(join(tmpdir(), \"omem-review-mig-\"));\n  const store = new Store(d);\n  stores.push({ store, dir: d });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    try {\n      st"
+      },
+      {
+        "key": "c2",
+        "label": "共享存储初始化",
+        "reason": "说明真实 Store 会创建数据库、执行迁移并初始化相关仓储服务。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 45,
+          "endLine": 68
+        },
+        "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
       },
       {
         "key": "c3",
-        "label": "稳定路径来源身份",
-        "reason": "说明稳定路径身份使同一文件累积修订，并使相同内容的不同路径保持独立。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 29,
-          "endLine": 32
-        },
-        "quote": "/** Stable external-id prefix. A source identity is `omem:<repo-relative-path>` so\n * that the same file across content edits accumulates revisions (head moves) while\n * two files that happen to share identical bytes stay independent sources. */\nexport const EXTERNAL_ID_PREFIX = \"omem:\";"
-      },
-      {
-        "key": "c4",
-        "label": "同路径碰撞处理断言",
-        "reason": "支持较新来源取得路径身份、旧来源解除 head 并成为历史别名，以及唯一当前来源和片段保留等断言。",
+        "label": "同路径冲突迁移",
+        "reason": "支持较新来源取得路径身份、旧来源成为历史别名且片段数量保持不变。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-migration.test.ts",
-          "startLine": 131,
+          "startLine": 111,
           "endLine": 155
         },
-        "quote": "    const moved = migrateLegacySources(store, stateDir);\n    expect(moved).toBe(1);\n\n    // The newest source owns the path identity.\n    const pathId = \"omem:apps/server/src/same.ts\";\n    expect(sourceIdForExternalId(store, pathId)).toBe(winner.sourceId);\n    expect(sourceIdForExternalId(store, \"hashBBBB2222\")).toBeNu"
+        "quote": "describe(\"migrateLegacySources: collision handling\", () => {\n  it(\"1. same path: newest old-hash source becomes the path head, the rest demoted to aliases\", () => {\n    const store = setup();\n    const stateDir = mkdtempSync(join(tmpdir(), \"omem-review-migstate-\"));\n    const loser = insertLegacySource(store, {\n      e"
       },
       {
-        "key": "c5",
-        "label": "同内容不同路径保持独立",
-        "reason": "支持相同正文位于不同文件路径时仍保留两个独立当前来源。",
+        "key": "c4",
+        "label": "相同内容不同路径",
+        "reason": "支持相同正文位于不同路径时仍形成两个独立的当前来源。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -89,23 +94,49 @@
         "quote": "  it(\"2. identical content at different paths stays two independent current sources\", () => {\n    const store = setup();\n    const stateDir = mkdtempSync(join(tmpdir(), \"omem-review-migstate-\"));\n    insertLegacySource(store, {\n      externalId: \"hashCCCC3333\",\n      filePath: \"apps/server/src/one.ts\",\n      version: 1"
       },
       {
-        "key": "c6",
-        "label": "迁移重复执行检查",
-        "reason": "支持第二次迁移返回零，且查询覆盖的 external id、head 与历史别名字段保持不变。",
+        "key": "c5",
+        "label": "历史来源仍可读取",
+        "reason": "支持被降级来源继续通过旧身份访问修订、片段与历史记录。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-migration.test.ts",
-          "startLine": 239,
-          "endLine": 252
+          "startLine": 189,
+          "endLine": 217
         },
-        "quote": "    const snapshot = () =>\n      store.db\n        .prepare(\n          `SELECT s.external_id AS ext, s.head AS head,\n                  (SELECT legacy_alias_of FROM review_source_meta WHERE source_id=s.id) AS alias\n           FROM sources s WHERE s.namespace='file' ORDER BY s.external_id`,\n        )\n        .all() as { e"
+        "quote": "  it(\"3. demoted legacy source stays readable via its old external id\", () => {\n    const store = setup();\n    const stateDir = mkdtempSync(join(tmpdir(), \"omem-review-migstate-\"));\n    const loser = insertLegacySource(store, {\n      externalId: \"hashEEEE5555\",\n      filePath: \"apps/server/src/hist.ts\",\n      version: "
+      },
+      {
+        "key": "c6",
+        "label": "同一状态重复迁移",
+        "reason": "支持在同一个 Store 和 stateDir 上第二次迁移返回零且快照不变。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-migration.test.ts",
+          "startLine": 238,
+          "endLine": 258
+        },
+        "quote": "    migrateLegacySources(store, stateDir);\n    const snapshot = () =>\n      store.db\n        .prepare(\n          `SELECT s.external_id AS ext, s.head AS head,\n                  (SELECT legacy_alias_of FROM review_source_meta WHERE source_id=s.id) AS alias\n           FROM sources s WHERE s.namespace='file' ORDER BY s.ex"
       },
       {
         "key": "c7",
-        "label": "关系生命周期测试准备",
-        "reason": "支持测试通过共享捕获流程创建两版代码来源，并为旧代码片段写入 confirmed 关系。",
-        "relation": "explains",
+        "label": "片段数量保持",
+        "reason": "支持迁移前后 fragment 总数一致，并界定该断言只检查数量。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-migration.test.ts",
+          "startLine": 262,
+          "endLine": 283
+        },
+        "quote": "  it(\"5. never deletes data: fragment total is unchanged\", () => {\n    const store = setup();\n    const stateDir = mkdtempSync(join(tmpdir(), \"omem-review-migstate-\"));\n    insertLegacySource(store, {\n      externalId: \"hashIIII9999\",\n      filePath: \"apps/server/src/keep.ts\",\n      version: 1,\n      createdAt: \"2024-0"
+      },
+      {
+        "key": "c8",
+        "label": "旧片段关系建立",
+        "reason": "支持通过捕获接口产生两个代码修订，并为旧代码片段写入已确认关系的测试流程。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-migration.test.ts",
@@ -115,9 +146,9 @@
         "quote": "function captureText(\n  store: Store,\n  externalId: string,\n  filePath: string,\n  text: string,\n) {\n  return store.capture({\n    source: \"file\",\n    externalId,\n    title: filePath,\n    parts: [{ type: \"text\", text }],\n    context: { filePath, category: \"architecture\" },\n  } as unknown as CaptureInput);\n}\n\ndescribe(\"re"
       },
       {
-        "key": "c8",
-        "label": "旧关系失效与查询过滤",
-        "reason": "支持关系失效数量、stale 状态，以及默认、历史和 includeStale 查询模式的行为。",
+        "key": "c9",
+        "label": "显式关系失效行为",
+        "reason": "支持新修订产生后旧关系仍暂为 confirmed，以及显式失效后默认隐藏、历史模式仍可读取的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -126,40 +157,16 @@
           "endLine": 375
         },
         "quote": "    // Before invalidation the old relation still looks live.\n    const live = relationsForFragment(store, oldCodeFrag.id);\n    expect(live.length).toBe(1);\n    expect(live[0]!.relationStatus).toBe(\"confirmed\");\n    expect(live[0]!.otherCurrent).toBe(true);\n\n    // Code source advanced; invalidate relations for that so"
-      },
-      {
-        "key": "c9",
-        "label": "共享存储与评审隔离",
-        "reason": "说明 repo-review 复用通用 Store、捕获和检索能力，同时在隔离数据目录中维护评审专属元数据。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/store.ts",
-          "startLine": 1,
-          "endLine": 10
-        },
-        "quote": "/** repo-review is a code-review-only knowledge base that shares omem's Store,\n * capture and retrieval primitives but points at an isolated data directory. It\n * never touches the personal workspace SQLite/state, runs no Lark/learning workers,\n * and never reads secrets.\n *\n * This module also owns the review-specific"
       }
     ],
     "questions": [
       {
-        "question": "当同一路径的两个旧来源具有相同版本号和创建时间时，迁移以什么字段稳定决定赢家？",
-        "why": "现有碰撞测试中的版本号和创建时间都有明确先后，无法据此确认并列情况下的完整、确定性排序规则。",
-        "nextStep": "检查 migrateLegacySources 的排序实现，并补充并列版本、并列时间及不同插入顺序的测试。",
+        "question": "代码来源更新后，由哪个流程为新 head 重新解析并建立关系？",
+        "why": "现有材料只证明显式失效处理会隐藏旧关系，并显示新 head 暂无关系；不足以判断新关系由自动任务、显式同步还是模型复核建立。",
+        "nextStep": "检查关系同步或知识生成入口的实现与端到端测试，补充从新修订产生到新关系确认的完整流程证据。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c6"
-        ]
-      },
-      {
-        "question": "关系的目标片段也被新修订取代时，失效逻辑是否以相同方式处理并保留历史查询？",
-        "why": "当前用例只推进代码来源，作为关系目标的决策片段始终处于 current 状态，因此仅覆盖源端过期。",
-        "nextStep": "增加目标端换版以及源、目标同时换版的用例，分别验证默认、includeStale 与 includeHistorical 查询。",
-        "blocking": false,
-        "citationKeys": [
-          "c7",
-          "c8"
+          "c9"
         ]
       }
     ]
@@ -173,7 +180,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -183,21 +190,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:35:53.711Z",
+    "effort": "high",
+    "at": "2026-10-01T12:04:44.504Z",
     "trace": {
-      "runId": "3c04f7f8-5ab2-418a-804a-4cb4f63ef2bd",
+      "runId": "c6d3f28f-1aad-418d-8178-3397fb8d6b27",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "e195394937ec180a31fc3a2de0cc07b672d7f76c5abd924425aed0067b1fc735",
-      "contextHash": "b1fb0425bd26a6cfaa7b369bfcb96ce1c94b8ee304e73bd8123894625e778194",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "7ebc6ac6e5d3e84bf59eedc714cf41786fee329c6c827740f81b638e03b17a51",
+      "contextHash": "46766fa7f55bde634da55d8d54a125ab011e1c5aab2d263e40902aeb71578e85",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "aece403f46b9f8fa6eb0c79dd4856be5fc653b90ea8d49558cf0defa993a98a1",
+      "fingerprint": "456ac022024ac09f1584d43374e502f698e5f7e0f02ec3325faff2de89064de3",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -207,10 +214,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f551-35e1-79d0-8130-bf2551ca4cd8"
+        "01a0f759-f022-7613-b870-413466aee7bf"
       ],
       "usage": {
-        "used": 31362,
+        "used": 33219,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -219,10 +226,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36741,
-          "utf8Bytes": 41103,
-          "estimatedTokens": 13701,
-          "budgetedTokens": 17127,
+          "chars": 38688,
+          "utf8Bytes": 46332,
+          "estimatedTokens": 15444,
+          "budgetedTokens": 19305,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -231,20 +238,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:36:07.659Z",
+    "at": "2026-10-01T12:05:04.895Z",
     "trace": {
-      "runId": "94af61d3-6915-4d00-a2fd-4938b7547332",
+      "runId": "97cd4029-d12e-46ed-8f23-8007d73afc14",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "3f7130358749d384fe056ca7a7b009a946ff2a3fe833a9348d0afa386b94ba88",
-      "contextHash": "9b4b21a828a62a36af0cae30af5fca18cf57bf4987dce80db30faac72821ea66",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "92591ae759efece0ad57d2ae7290bb9367f75908733751d93f766063a094ce2a",
+      "contextHash": "9c9270372256a9836f56adcc076e584e50a3493fda55d16d0f4f2fcb7d9cd491",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a2911fbb6beabad2f9c2a7d90188421257b6e23b8a7524e2c171afa803204bf8",
+      "fingerprint": "31a082287731eec0b8d2cfe69ebf58c53a1a896e7ace1e7ace950ec6f2953476",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -254,10 +261,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f551-905d-7e41-aafd-5a3c7de2c698"
+        "01a0f75a-5ca3-7c91-ae7a-194de8f6ca06"
       ],
       "usage": {
-        "used": 29503,
+        "used": 31247,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -266,10 +273,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 33848,
-          "utf8Bytes": 37292,
-          "estimatedTokens": 12431,
-          "budgetedTokens": 15539,
+          "chars": 35440,
+          "utf8Bytes": 40836,
+          "estimatedTokens": 13612,
+          "budgetedTokens": 17015,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/lark-runtime.test.ts",
-    "title": "飞书运行时的装配、投递与事件接入测试",
-    "summary": "该测试验证两条正向运行路径：启用飞书并设置主密钥后，应用能够装配并启动飞书宿主；预置活动连接后，宿主能够建立实时连接、投递一条待办通知、记录入站事件能力并创建群聊采集目标。测试还确认运行状态不直接暴露 fixture 客户端密钥，停止宿主会关闭连接；禁用配置、缺失主密钥、失败重试、事件幂等和消息进入统一记忆链路仍未在本材料中得到验证。",
+    "title": "飞书运行宿主的装配、投递与事件接入测试",
+    "summary": "该测试验证飞书运行宿主在生产式配置下能够启动连接、投递待办通知、接收群聊事件并安全停止；同时检查健康接口暴露运行概要，并确认宿主运行状态不包含客户端密钥。它主要覆盖成功路径，尚未直接验证禁用、缺少主密钥、发送失败及重复事件等分支。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose-and-startup",
-        "title": "测试目的与启动场景",
-        "body": "这组测试覆盖飞书集成从应用装配到运行时处理的关键接缝。第一个场景设置随机主密钥并传入 `lark.enabled: true`，随后确认宿主存在、运行状态为已启动且连接数为零，健康接口也返回一致状态。[[c1]] 这只能证明“启用且提供主密钥时可以成功装配”的正向场景；此前“仅在这些条件下才装配”的排他性结论应由此表述替代，因为材料没有展示禁用飞书或缺少主密钥的反向测试。\n\n运行时宿主明确持有连接管理、通知投递、通知批处理、卡片动作、质量标注及可选助手等协作组件，并提供实时与消息适配器等测试注入点。[[c2]] 本文不再把事件收件箱描述为宿主的直接成员，因为给定类成员范围没有支持这一点。"
+        "key": "purpose",
+        "title": "验证生产宿主可以启用",
+        "body": "这组测试面向“应用启用飞书集成后，运行宿主是否真正工作”的场景。第一项用临时目录和随机主密钥构建应用，明确开启飞书功能，随后断言宿主正在运行、连接数为零且没有错误；健康接口也应返回运行中和连接数等概要。参考 [[c1]]\n\n测试通过 `buildApp` 进入应用装配层。运行宿主本身组合存储、记忆、接入服务、密钥仓库及可替换的实时和消息适配器，因此这里验证的是多个模块协作后的可运行性，而非单个类的孤立行为。参考 [[c2]]"
       },
       {
-        "key": "delivery-flow",
-        "title": "活动连接与通知投递",
-        "body": "第二个场景在隔离存储中写入活动连接、连接版本、所有者绑定和通知目标，并保存值为 `fixture-runtime-secret` 的测试客户端密钥；随后构造记忆服务、引导服务和假实时、假消息适配器。[[c3]] 测试应用一个待办并执行一次 `processOnce()`，断言建立一个连接、完成一次投递，且卡片、批次和变更处理数均为零；发送目标对应活动绑定中的所有者会话。[[c4]]\n\n消息适配器契约要求发送时携带应用标识、客户端密钥、租户品牌、聊天目标、卡片内容和幂等 UUID。[[c5]] 由于假适配器总是成功，该测试证明的是宿主编排和适配器入参，不证明官方 SDK、网络鉴权、限流恢复或不明确结果的处置。"
+        "key": "runtime-flow",
+        "title": "从活跃绑定到通知投递",
+        "body": "第二项预先写入活跃连接、连接版本、绑定和通知目标，再用伪实时适配器与伪消息适配器启动宿主。创建一项待通知任务并执行一次处理循环后，测试要求宿主建立一个连接、完成一次投递，并将消息发送到预置应用及会话，说明运行时会依据活跃绑定选择投递目标。参考 [[c3]]\n\n伪消息适配器遵循正式消息端口的 `send` 与 `update` 合同，记录应用、密钥、会话和卡片等出站参数，使流程可以在不访问真实飞书服务的情况下验证。参考 [[c4]]"
       },
       {
-        "key": "inbound-and-boundaries",
-        "title": "入站事件、安全断言与边界",
-        "body": "假实时连接接收一条群聊消息后，测试确认连接版本记录了 `im.message.receive_v1` 能力，并创建启用采集的 `group_monitoring` 目标；停止宿主时连接句柄关闭一次。[[c6]] 这些断言覆盖事件后的可观察配置结果，但没有检查消息正文是否形成 Source、Revision 或 Fragment，也没有重复投递与发送者权限场景。\n\n安全方面，测试使用的是 fixture 密钥，而非已证明符合真实飞书格式的凭据；它仅确认 `host.status()` 的序列化结果不包含该具体值。[[c7]] 运行时代码另有针对部分令牌样式、换行和长度的错误文本清理规则，[[c8]] 但当前测试没有触发异常路径，因此不能据此推断日志、数据库或适配器错误中的所有敏感信息均已受到覆盖。"
+        "key": "events-and-limits",
+        "title": "事件记录、动态目标与测试边界",
+        "body": "测试随后经已建立的实时连接注入一条群聊消息，断言连接能力档案记录该事件类型，并为群聊建立启用捕获的监控目标；停止宿主时，底层连接还必须恰好关闭一次。参考 [[c5]] 宿主状态序列化结果不得包含测试客户端密钥，覆盖了直接从运行状态泄密的风险。参考 [[c6]]\n\n现有用例主要证明正常启动、成功发送和单次事件接入。它没有直接覆盖飞书被禁用或缺少主密钥时的装配结果，也未验证鉴权失败、限流、投递重试、重复事件、消息更新和进程崩溃后的恢复，因此不能从这组成功路径推断这些语义。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "启用配置下的宿主装配与健康状态",
-        "reason": "支持设置主密钥并显式启用飞书后，应用成功装配运行时且健康接口报告运行状态的正向结论。",
+        "label": "应用启用与健康概要",
+        "reason": "支持显式开启飞书并提供主密钥后宿主能够装配，以及健康接口返回运行概要的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -38,9 +38,9 @@
       },
       {
         "key": "c2",
-        "label": "飞书运行时的协作组件与注入点",
-        "reason": "说明宿主持有连接、投递、批处理、卡片、质量和可选助手组件，并开放适配器等测试接缝。",
-        "relation": "explains",
+        "label": "运行宿主依赖组成",
+        "reason": "说明运行宿主组合存储、记忆、接入、密钥及可替换适配器等模块。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/runtime.ts",
@@ -51,21 +51,8 @@
       },
       {
         "key": "c3",
-        "label": "活动连接测试环境",
-        "reason": "支持测试写入活动连接、版本、绑定、通知目标和 fixture 密钥，并构造服务及假适配器的准备流程。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/lark-runtime.test.ts",
-          "startLine": 103,
-          "endLine": 173
-        },
-        "quote": "  it(\"starts active connections, records runtime events and drains outbox\", async () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-lark-host-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    const secrets = new EncryptedSecretStore(\n      join(directory, \"secrets\"),\n      r"
-      },
-      {
-        "key": "c4",
-        "label": "单轮通知处理结果",
-        "reason": "支持应用待办后单轮处理建立一个连接、完成一次通知发送，并核对应用与聊天目标的断言。",
+        "label": "通知处理循环",
+        "reason": "支持任务进入处理循环后完成一次投递、建立一个连接并选择预置会话目标的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -76,22 +63,22 @@
         "quote": "      store.applications.applyTask({\n        metadata: {\n          workspaceId: \"personal\",\n          applicationId: \"runtime-application\",\n          proposalDigest: \"a\".repeat(64),\n          generation: 1,\n          title: \"Runtime delivery\",\n          details: \"Deliver through the active binding\",\n          delivery:"
       },
       {
-        "key": "c5",
-        "label": "飞书消息适配器契约",
-        "reason": "说明消息发送依赖的应用凭据、租户品牌、聊天目标、卡片内容和 UUID 字段，也为尚未覆盖的失败投递问题提供边界。",
-        "relation": "depends_on",
+        "key": "c4",
+        "label": "消息适配器合同",
+        "reason": "说明测试伪实现遵循发送与更新接口，并记录投递所需的应用、密钥、会话和卡片参数。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-          "startLine": 24,
+          "startLine": 35,
           "endLine": 50
         },
-        "quote": "export class LarkDeliveryError extends Error {\n  constructor(\n    message: string,\n    readonly kind: \"rate_limit\" | \"auth\" | \"permanent\" | \"ambiguous\",\n    readonly retryAfterMs?: number,\n  ) {\n    super(message);\n    this.name = \"LarkDeliveryError\";\n  }\n}\n\nexport interface LarkMessageAdapter {\n  send(input: {\n    app"
+        "quote": "export interface LarkMessageAdapter {\n  send(input: {\n    appId: string;\n    clientSecret: string;\n    tenantBrand: \"feishu\" | \"lark\";\n    chatId: string;\n    card: Record<string, unknown>;\n    uuid: string;\n  }): Promise<{ messageId: string }>;\n  update(input: {\n    appId: string;\n    clientSecret: string;\n    tenantB"
       },
       {
-        "key": "c6",
-        "label": "群聊事件处理与连接关闭",
-        "reason": "支持入站事件更新能力记录、创建启用采集的群聊目标，以及停止时关闭实时连接的测试结果。",
+        "key": "c5",
+        "label": "入站事件与连接关闭",
+        "reason": "支持群聊事件更新能力档案、创建捕获目标，并在宿主停止时关闭实时连接的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -102,58 +89,49 @@
         "quote": "      const event: LarkInboundEvent = {\n        appId: \"cli_runtime1\",\n        eventId: \"event-runtime-1\",\n        kind: \"im.message.receive_v1\",\n        eventTime: new Date().toISOString(),\n        senderOpenId: \"ou_groupuser\",\n        senderType: \"user\",\n        chatId: \"oc_group\",\n        chatType: \"group\",\n        "
       },
       {
-        "key": "c7",
-        "label": "运行状态中的 fixture 密钥保护",
-        "reason": "支持状态序列化结果不包含测试所用客户端密钥这一有限安全断言。",
+        "key": "c6",
+        "label": "运行状态密钥保护",
+        "reason": "支持宿主状态序列化结果不得包含测试客户端密钥的安全断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-runtime.test.ts",
-          "startLine": 202,
+          "startLine": 208,
           "endLine": 210
         },
-        "quote": "      expect(realtime.connections).toHaveLength(1);\n      expect(messages.sends).toHaveLength(1);\n      expect(messages.sends[0]).toMatchObject({\n        appId: \"cli_runtime1\",\n        chatId: \"oc_owner\",\n      });\n      expect(JSON.stringify(host.status())).not.toContain(\n        \"fixture-runtime-secret\",\n      );"
-      },
-      {
-        "key": "c8",
-        "label": "运行时错误文本清理规则",
-        "reason": "提供运行时会替换部分令牌格式、移除换行并限制错误长度的背景，同时界定当前测试尚未覆盖的异常路径。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-          "startLine": 30,
-          "endLine": 34
-        },
-        "quote": "const safeError = (error: unknown) =>\n  (error instanceof Error ? error.message : \"Lark runtime failed\")\n    .replace(/\\b(?:cli_|sk-|ghp_)[A-Za-z0-9_-]{12,}/g, \"[REDACTED]\")\n    .replace(/[\\r\\n]+/g, \" \")\n    .slice(0, 1000);"
+        "quote": "      expect(JSON.stringify(host.status())).not.toContain(\n        \"fixture-runtime-secret\",\n      );"
       }
     ],
     "questions": [
       {
-        "question": "重复收到相同 eventId 时，运行时是否保证只采集和处理一次？",
-        "why": "当前场景只发送一个入站事件并检查能力记录和群聊目标，没有重复投递、收件箱状态或后续副作用的幂等断言。",
-        "nextStep": "补充使用相同 eventId 连续调用 onEvent 的行为测试，并断言收件记录、捕获结果及其他副作用均不重复。",
+        "question": "禁用飞书或未提供主密钥时，应用是否确实不会创建运行宿主？",
+        "why": "测试名称声称宿主仅在显式启用并提供主密钥时装配，但当前用例只执行并断言了两项条件同时满足的正向分支。",
+        "nextStep": "增加分别关闭飞书配置、移除主密钥的装配测试，并断言宿主字段与健康状态符合预期。",
         "blocking": false,
         "citationKeys": [
-          "c6"
+          "c1"
         ]
       },
       {
-        "question": "投递遭遇限流、鉴权失败、永久错误或结果不明确时，租约、重试和最终状态分别如何变化？",
-        "why": "消息适配器在本测试中始终成功；投递模块虽定义多类错误，但所给场景没有触发或验证这些失败分支。",
-        "nextStep": "为各错误类型配置会抛错的消息适配器，断言重试时间、尝试次数、租约释放以及永久失败状态。",
+        "question": "投递失败、重复入站事件和崩溃恢复是否由其他测试覆盖？",
+        "why": "本测试的实时与消息适配器始终成功，只证明一次正常投递和一次事件接入，无法确认重试、幂等及持久化恢复语义。",
+        "nextStep": "检查投递与实时接入模块的专项测试；若无覆盖，补充限流、鉴权失败、重复事件及提交后崩溃场景。",
         "blocking": false,
         "citationKeys": [
+          "c3",
+          "c4",
           "c5"
         ]
       },
       {
-        "question": "群聊消息正文是否会进入统一记忆链路，并受发送者权限与采集范围策略约束？",
-        "why": "测试只确认事件能力和群聊采集目标被记录，没有查询 Source、Revision 或 Fragment，也没有覆盖未授权发送者、关闭采集或重复消息。",
-        "nextStep": "增加从 onEvent 到记忆查询的行为测试，并覆盖未授权发送者、关闭采集及重复消息场景。",
+        "question": "投递失败、重复入站事件和崩溃恢复是否由其他专项测试覆盖？",
+        "why": "本稿引用的用例只证明伪适配器下的一次成功投递和一次事件接入，并已正确避免据此断言重试、幂等或恢复语义。",
+        "nextStep": "查阅投递与实时接入模块的专项测试或实现材料；仅在有直接证据后补充这些行为。",
         "blocking": false,
         "citationKeys": [
-          "c6"
+          "c3",
+          "c4",
+          "c5"
         ]
       }
     ]
@@ -182,26 +160,26 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "e331447e1286c4fa7c12a3e8a9e87ad83cec034057dd8ad12b866e43b3becf1f"
+      "digest": "d0a0d20d427cae9cce2887dda081d6569bd3601a4ae7ca99d30ff0f3afc4ddd3"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T06:50:44.065Z",
+    "effort": "high",
+    "at": "2026-10-01T12:01:34.986Z",
     "trace": {
-      "runId": "999f1f0a-e0b3-43e3-a0e2-11b18a1a4194",
+      "runId": "f99894cf-8dec-421c-8e95-bbb5db61e0ed",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "fae04db9b0e6baded1b3fe3e35c01f43d23a745ec57cf3e8bdfe133008ef2d4b",
-      "contextHash": "323347aeefead45248a3d51eec423adaa2d1cd26ce0beae47b71928a46340ecf",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "61115978c3fba126602487530e635afa4110e01e2cc1b485bf424156be583f2f",
+      "contextHash": "0a40ab2dfbece6fb3f3781501098090332d154db171f77fbf112aa856816b0cd",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6f63f2c13c1dbbbfbb0314654feca9d723820b2068340bd55f7d4252cd5d9177",
+      "fingerprint": "e287c850c404d283475ff7e30171a2a1302fa0f91dbc78986eceeb2212f17e6a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -211,10 +189,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63a-6df8-7920-b9d9-a66cd2dbc5fc"
+        "01a0f757-2383-76c2-a6db-c92c79c449e0"
       ],
       "usage": {
-        "used": 33028,
+        "used": 33706,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -223,10 +201,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 38774,
-          "utf8Bytes": 44898,
-          "estimatedTokens": 14966,
-          "budgetedTokens": 18708,
+          "chars": 37138,
+          "utf8Bytes": 43334,
+          "estimatedTokens": 14445,
+          "budgetedTokens": 18057,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -235,20 +213,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T06:51:03.223Z",
+    "at": "2026-10-01T12:01:54.879Z",
     "trace": {
-      "runId": "cdff4da5-3508-454b-ba15-9d70a5411962",
+      "runId": "edfeb7c3-5da8-4fb5-b314-3c86054b7ff7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "7ea6b5ef1ad7db6381a3f63135e74775ae9f227c4176a3c8ae13de5cbdf5056f",
-      "contextHash": "e1541d0518b814f7842b0ae7f60259cee1173326c7f34738bccbff4e850763ac",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "9265133d1618599da80f5993c9117a7573e1b60c98ce553c2918a4ba1016af01",
+      "contextHash": "12ba2cf453a0386c7595504b4a65c297a04628238c7c8f5de5979231e41e013d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6836926333ca2b2772d13039f4b156b188e4e1ab6a7567c0020f49be0ab39d22",
+      "fingerprint": "b75f0cca0135b7d29842dc409e0dc7d4acb0df8e84bff9d2b7694171980c6f1a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -258,10 +236,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f63a-e085-7293-97b2-3f7722889a6d"
+        "01a0f757-7799-7dd0-833d-c32748941ff1"
       ],
       "usage": {
-        "used": 30194,
+        "used": 30219,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -270,10 +248,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35172,
-          "utf8Bytes": 39608,
-          "estimatedTokens": 13203,
-          "budgetedTokens": 16504,
+          "chars": 34227,
+          "utf8Bytes": 39507,
+          "estimatedTokens": 13169,
+          "budgetedTokens": 16462,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

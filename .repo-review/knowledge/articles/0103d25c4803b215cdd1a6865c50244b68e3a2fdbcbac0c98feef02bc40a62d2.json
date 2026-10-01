@@ -2,88 +2,44 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-    "title": "知识阅读帧与固定引用导航",
-    "summary": "阅读帧统一承接知识正文、原始材料和固定引用，负责解析导航参数、分发阅读视图、呈现引用依据，并用请求代次避免晚到响应覆盖当前引用。",
+    "title": "知识、原文与固定引用的统一阅读帧",
+    "summary": "阅读帧根据当前类型展示知识文章、原始材料或固定引用，把继续导航交还上层，并处理固定引用解析、失效目标提示与帧切换时的异步请求隔离。",
     "category": "implementation",
     "sections": [
       {
-        "key": "unified-routing",
-        "title": "统一承接三类阅读目标",
-        "body": "阅读界面用统一帧结构表示知识正文、原始材料和固定引用。帧的 `id` 保存 JSON 参数；解析失败时得到空参数对象，组件仍会按当前帧类型继续分发或请求，但材料不足以保证服务端最终返回何种错误。参考 [[c1]]\n\n`knowledge` 帧把文档键、可选修订和章节交给正文视图，`source` 帧把材料键与可选 digest 交给原文视图；两类子视图产生的导航和已加载标题都会向上传递。参考 [[c2]]"
+        "key": "purpose",
+        "title": "在知识与证据之间连续阅读",
+        "body": "`KnowledgeFrame` 是阅读界面的内容分发器：它接收当前帧，装配知识正文或原文视图，并把子视图产生的导航和标题更新交还上层，因此自身不维护完整阅读栈。参考 [[c1]]\n\n知识正文中的可操作引用会生成固定引用帧。原文页可通过按钮直接打开已有知识解读；Markdown 内部路径会解析成材料键，代码查看器的关联引用则直接传入材料键，二者随后都先尝试打开知识文章，失败时回退到原文帧。参考 [[c2]]、[[c3]]、[[c4]]"
       },
       {
-        "key": "citation-resolution",
-        "title": "解析固定引用并隔离晚到响应",
-        "body": "引用帧根据文档、修订和引用键请求固定引用。每次 `frame.id` 变化都会清空旧状态并递增代次，只有当前代次的响应可以更新页面；成功后还会上报引用的人读标签。参考 [[c3]]\n\n页面先呈现引用关系和引用理由。不可操作或无法解析的引用显示 `unavailableReason`，缺失时使用通用的“目标不可用”；可操作目标若为文章则进入正文视图，其余目标进入原文视图。参考 [[c4]] 当前类型合同只允许 `article` 与 `material` 两种解析结果，因此这一兜底分支等价于材料目标，但运行时模板没有再次显式判断 `material`。参考 [[c10]]"
+        "key": "resolution-flow",
+        "title": "固定引用的解析与目标展示",
+        "body": "帧标识采用 JSON 保存。组件仅在 `frame.id` 变化时重新解析固定引用，并用递增序号隔离旧 ID 的异步结果；较早请求即使稍后返回，也不会覆盖新 ID 的引用或错误状态。参考 [[c5]]\n\n```mermaid\nflowchart LR\n  A[读取帧标识] --> B{帧类型}\n  B -->|知识| C[知识正文]\n  B -->|原文| D[原始材料]\n  B -->|固定引用| E[请求引用解析]\n  E --> F{解析结果}\n  F -->|文章| C\n  F -->|材料| D\n  F -->|不可用| G[显示原因]\n```\n参考 [[c6]]\n\n引用视图先展示关系和引用理由，再根据 `actionable` 与 `resolved` 决定是否打开目标；文章目标复用知识正文，材料目标复用原文阅读，不可操作或未解析的目标会显示明确原因。接口层统一注入会话令牌并把失败响应转换成错误。参考 [[c6]]、[[c7]]"
       },
       {
-        "key": "document-source-flow",
-        "title": "从知识论断回到固定原文",
-        "body": "知识正文只允许可操作引用继续导航，并将当前文档、文章修订和引用键封装成 citation 帧。参考 [[c5]] 原文视图则按材料键与可选 digest 读取固定版本，也通过请求代次阻止旧响应覆盖当前材料。参考 [[c6]]\n\n代码材料围绕引用行展示片段并支持上下扩展；Markdown 材料始终保留连贯全文，只有起止行同时存在时才额外显示对应引用区间。参考 [[c7]]"
-      },
-      {
-        "key": "api-and-fallbacks",
-        "title": "接口条件与关联导航降级",
-        "body": "知识接口仅在 `sessionStorage` 中存在 `omem-token` 时附带 Bearer 令牌，并把非成功响应转换为错误；辅助函数负责构造知识正文帧。参考 [[c8]]\n\n材料中的关联导航调用 `reference` 时会先尝试读取对应文章；任何读取异常都会降级为原始材料帧。内部 Markdown 路径会先解析为材料键，再复用同一流程。参考 [[c9]] 当前引用监听只观察 `frame.id`，因此只改变 `kind` 而保持相同 `id` 不会重新触发请求；网络请求也未主动取消，竞态隔离依赖本地代次。参考 [[c3]]"
+        "key": "boundaries",
+        "title": "帧输入与切换边界",
+        "body": "组件发出的导航帧受 `knowledge`、`citation`、`source` 联合类型约束，但接收的 `frame.kind` 仍是普通字符串。模板会把知识和原文之外的类型都送入引用分支，而请求逻辑只处理严格的 `citation`，所以未知类型可能停留在“正在解析固定引用”；解析失败或缺少字段时，也缺少显式的帧级校验。参考 [[c8]]、[[c5]]、[[c6]]\n\n请求监听只依赖 `frame.id`。若调用方在 ID 不变时改变帧类型，监听不会重新执行；先前的引用请求仍可能写回当前状态。因此现有隔离保证仅覆盖 **ID 变化**，不能据此推断同 ID 的类型变化同样安全。参考 [[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "帧参数解析",
-        "reason": "支持统一帧输入、从 id 解析 JSON，以及解析失败后使用空参数对象。",
+        "label": "阅读帧输入与事件",
+        "reason": "支持阅读帧装配知识和原文子视图，并把导航与加载结果交给上层的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 7,
-          "endLine": 9
+          "startLine": 4,
+          "endLine": 8
         },
-        "quote": "const props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}"
+        "quote": "import KnowledgeDocument from \"./KnowledgeDocument.vue\";\nimport KnowledgeSource from \"./KnowledgeSource.vue\";\nimport { knowledgeApi, type Citation, type KnowledgeFrame } from \"./api\";\nconst props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate"
       },
       {
         "key": "c2",
-        "label": "正文与原文分发",
-        "reason": "支持知识帧和原文帧的参数分发，以及导航和已加载标题事件的透传。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 21,
-          "endLine": 22
-        },
-        "quote": "  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event)\" />\n  <Knowledg"
-      },
-      {
-        "key": "c3",
-        "label": "引用请求代次保护",
-        "reason": "支持引用状态重置、请求代次校验、错误处理和成功后的标题上报。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 11,
-          "endLine": 17
-        },
-        "quote": "let generation = 0;\nwatch(() => props.frame.id, async () => {\n  const current = ++generation; citation.value = null; error.value = \"\";\n  if (props.frame.kind !== \"citation\") return;\n  try { const c = await knowledgeApi<Citation>(props.prefix, \"/citation?\" + new URLSearchParams({ document: String(parsed.value.document),"
-      },
-      {
-        "key": "c4",
-        "label": "引用目标状态分流",
-        "reason": "支持引用加载和错误状态、不可用原因展示，以及文章与其他解析目标的视图分流。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-          "startLine": 23,
-          "endLine": 30
-        },
-        "quote": "  <template v-else>\n    <OmEmpty v-if=\"error\" title=\"引用不可用\" :description=\"error\" />\n    <p v-else-if=\"!citation\">正在解析固定引用…</p>\n    <template v-else>\n      <aside class=\"citation-reason\"><OmBadge>{{ relationLabels[citation.relation] || '引用' }}</OmBadge><p>{{ citation.reason }}</p></aside>\n      <OmEmpty v-if=\"!citation."
-      },
-      {
-        "key": "c5",
         "label": "正文引用导航",
-        "reason": "支持正文仅对可操作引用创建 citation 帧，并携带文档、修订与引用键。",
+        "reason": "支持知识正文把可操作引用转换为固定引用帧的说明。",
         "relation": "calls",
         "target": {
           "kind": "material",
@@ -94,49 +50,23 @@
         "quote": "function cite(key: string) {\n  const c = article.value?.citations.find(c => c.key === key);\n  if (!c?.actionable || !article.value) return;\n  emit(\"navigate\", { kind: \"citation\", id: JSON.stringify({ document: props.documentKey, revision: article.value.revision, citation: key }), title: c.label });\n}"
       },
       {
-        "key": "c6",
-        "label": "固定材料读取",
-        "reason": "支持按材料键和可选 digest 读取固定版本，并通过代次检查隔离过期响应。",
-        "relation": "implements",
+        "key": "c3",
+        "label": "原文知识入口",
+        "reason": "支持原文页面通过明确按钮直接打开已有知识解读。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 16,
-          "endLine": 21
+          "startLine": 38,
+          "endLine": 40
         },
-        "quote": "let generation = 0;\nwatch(() => [props.materialKey, props.digest], async () => {\n  const current = ++generation; material.value = null; error.value = \"\";\n  try { const m = await knowledgeApi<Material>(props.prefix, \"/materials/\" + encodeURIComponent(props.materialKey) + (props.digest ? \"?digest=\" + encodeURIComponent(p"
+        "quote": "      <h2>{{ material.title }}</h2>\n      <div class=\"source-actions\"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if=\"material.knowledge\" variant=\"secondary\" @click=\"emit('navigate', knowledgeFrame(material.key, material.knowledge.title))\">阅读这份材料的知识解读 ↗</OmButton></div>\n      <p v-if=\""
       },
       {
-        "key": "c7",
-        "label": "代码与 Markdown 原文",
-        "reason": "支持代码片段展开、引用位置提示，以及起止行齐全时的 Markdown 引用区间和全文展示。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-          "startLine": 40,
-          "endLine": 50
-        },
-        "quote": "      <p v-if=\"startLine\" class=\"muted\">引用位置：第 {{ startLine }}{{ endLine && endLine !== startLine ? `–${endLine}` : '' }} 行</p>\n      <template v-if=\"material.codeLanguage || (material.path && !/\\.(?:md|markdown)$/.test(material.path))\">\n      <OmButton v-if=\"from > 1\" variant=\"ghost\" @click=\"from = Math.max(1, from - "
-      },
-      {
-        "key": "c8",
-        "label": "知识接口请求",
-        "reason": "支持令牌存在时附加认证头、接口错误转换和知识正文帧构造。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/api.ts",
-          "startLine": 6,
-          "endLine": 12
-        },
-        "quote": "export async function knowledgeApi<T>(prefix: string, path: string, init?: RequestInit): Promise<T> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, headers: { ...(init?.body !== undefined ? { \"content-type\": \"application/json\" } : {}), ...(token ? { Autho"
-      },
-      {
-        "key": "c9",
-        "label": "关联导航降级",
-        "reason": "支持关联导航优先读取文章、读取失败时降级到原始材料，以及内部路径复用该流程。",
-        "relation": "explains",
+        "key": "c4",
+        "label": "关联材料导航",
+        "reason": "支持内部路径与代码引用共用材料键导航，并在知识文章不可用时回退原文帧。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
@@ -146,29 +76,68 @@
         "quote": "async function reference(key: string) {\n  try { const a = await knowledgeApi<ArticleMeta>(props.prefix, \"/articles/\" + encodeURIComponent(key)); emit(\"navigate\", knowledgeFrame(key, a.title)); }\n  catch { emit(\"navigate\", { kind: \"source\", id: JSON.stringify({ key }), title: \"关联原始材料\" }); }\n}\nfunction internal(path: str"
       },
       {
-        "key": "c10",
-        "label": "解析目标类型",
-        "reason": "支持当前解析目标仅包含文章和材料两种联合类型的说明。",
-        "relation": "explains",
+        "key": "c5",
+        "label": "引用请求监听",
+        "reason": "支持帧标识解析、仅监听 frame.id、仅处理 citation 类型及用序号隔离旧 ID 请求结果的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 9,
+          "endLine": 17
+        },
+        "quote": "const parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}; } });\nconst citation = ref<Citation | null>(null), error = ref(\"\");\nlet generation = 0;\nwatch(() => props.frame.id, async () => {\n  const current = ++generation; citation.value = null; error."
+      },
+      {
+        "key": "c6",
+        "label": "三类内容分支",
+        "reason": "支持知识、原文、固定引用以及不可用目标的实际渲染流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 20,
+          "endLine": 30
+        },
+        "quote": "<template>\n  <KnowledgeDocument v-if=\"frame.kind === 'knowledge'\" :prefix=\"prefix\" :document-key=\"String(parsed.key)\" :revision=\"parsed.revision ? String(parsed.revision) : undefined\" :section=\"parsed.section ? String(parsed.section) : undefined\" @navigate=\"emit('navigate', $event)\" @loaded=\"emit('loaded', $event, fram"
+      },
+      {
+        "key": "c7",
+        "label": "知识接口处理",
+        "reason": "支持引用解析结果结构、会话令牌注入及 HTTP 失败转换机制。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/api.ts",
           "startLine": 3,
-          "endLine": 3
+          "endLine": 10
         },
-        "quote": "export type Citation = KnowledgeCitation & { actionable: boolean; unavailableReason?: string | null; current?: boolean; resolved?: { kind: \"article\" | \"material\"; key: string; revision?: string; digest?: string; section?: string; title: string; startLine?: number; endLine?: number } | null };"
+        "quote": "export type Citation = KnowledgeCitation & { actionable: boolean; unavailableReason?: string | null; current?: boolean; resolved?: { kind: \"article\" | \"material\"; key: string; revision?: string; digest?: string; section?: string; title: string; startLine?: number; endLine?: number } | null };\nexport type Article = Arti"
+      },
+      {
+        "key": "c8",
+        "label": "宽松的帧类型入参",
+        "reason": "支持组件输入使用普通字符串，而输出导航使用受限联合类型的边界判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "startLine": 6,
+          "endLine": 8
+        },
+        "quote": "import { knowledgeApi, type Citation, type KnowledgeFrame } from \"./api\";\nconst props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string, frameId: string] }>();"
       }
     ],
     "questions": [
       {
-        "question": "三类帧切换、旧请求晚到和不可操作引用是否已有浏览器级行为测试？",
-        "why": "现有材料能够确认基于 `frame.id` 的代次保护和不可用分支，但不能确认快速连续导航、焦点恢复、无效 JSON，以及仅改变 kind 而保持 id 不变时的行为已被自动化断言。",
-        "nextStep": "检查组件测试与端到端测试；至少覆盖旧响应不会覆盖新 id、仅 kind 变化且 id 不变、无效 JSON、不可操作原因，以及文章和材料目标收到的参数。",
+        "question": "调用方是否保证 `frame.kind` 只能是 `knowledge`、`source` 或 `citation`，并保证各类型的 `frame.id` 包含所需字段？",
+        "why": "当前组件的输入类型和运行时解析都未形成完整校验；未知类型会进入引用展示分支，缺失字段还可能被转换为字符串后用于请求。",
+        "nextStep": "检查阅读栈创建、URL 深链恢复和持久化反序列化入口；若没有完整保证，为帧增加联合类型及运行时字段校验，并为无效帧显示明确错误。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3",
-          "c4"
+          "c5",
+          "c6",
+          "c8"
         ]
       }
     ]
@@ -177,7 +146,7 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
+      "digest": "6e92d6bf702f386c61e1c9314b6d2474664b11ab9f28f897f99af15bcdc9bb8b"
     },
     {
       "kind": "material",
@@ -187,7 +156,7 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-      "digest": "2a96e1802c6165776ac3964d10d14662a940f1f39ea81a3f29d71e860e330f26"
+      "digest": "908fa60afaec9d3067731ce8c1bf34b842e15fe09ba30d70adff77b74d97e4fe"
     },
     {
       "kind": "material",
@@ -197,21 +166,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T07:19:43.494Z",
+    "effort": "high",
+    "at": "2026-10-01T12:12:33.967Z",
     "trace": {
-      "runId": "d82e4274-d704-449e-96ae-f89eabdce8c1",
+      "runId": "80ba87d2-f6d8-4d38-8629-c8f0769e2b95",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "0c1460f68947428d954b5552e3073f3608e31629e167f6f5ad66ef334b8ea157",
-      "contextHash": "3d80c5cdfdbbe7051ce5db790b5e7ab0fb9066d12ca3b65a80392982884b7a15",
+      "promptHash": "e31a06f4efa3124d4618eb05218cfaefafa115d7c9cd3a1ddea4b51ceadbaea1",
+      "contextHash": "3c2c306bee2cfe9823d61951f36d7346d94c2c7baf1e12d4a29c6839be05d643",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6c52ac6b173282a89164020a4fd3c02bf35e1f2dfdcadc9dbd5d44688f71018d",
+      "fingerprint": "715b3fd7ec77c6275ec466841f24e40aa0de0f4c11706c7ca820b869c9e867d8",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -221,10 +190,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f654-eb6e-7840-ad21-03ba2a99f0a1"
+        "01a0f761-1ef3-7d60-8d4a-9ea71151c60e"
       ],
       "usage": {
-        "used": 33115,
+        "used": 31112,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -233,10 +202,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 32599,
-          "utf8Bytes": 40423,
-          "estimatedTokens": 13475,
-          "budgetedTokens": 16844,
+          "chars": 32650,
+          "utf8Bytes": 40046,
+          "estimatedTokens": 13349,
+          "budgetedTokens": 16687,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -245,20 +214,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T07:19:56.742Z",
+    "at": "2026-10-01T12:12:52.790Z",
     "trace": {
-      "runId": "463fb002-7a50-4f0c-a970-0f78f1c5c2a1",
+      "runId": "27f700f7-2d88-4b6c-96d6-249b71f313ee",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
-      "promptHash": "b5863999f337013096fe5a66eaf2cb73a077fddd3c9e63bffe03345af9a455ca",
-      "contextHash": "3c71b79f4c03551e41543430ad94f2c01b23204a5fc5b86583d6464480731e29",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "3584e9190701e987f25dcd9c466f9fd7e963a650362d66090961d12a546e4828",
+      "contextHash": "b02ed7fc43eed4340125c74a4aae296cbbfbc830ea023befea727088fcce9414",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0dba5edf5449e2a2c66af426e7fe9898a3212837fbc37421e5a1bdbd3c58aa5b",
+      "fingerprint": "3d8f61cf4c0227d2f98fe35a72056fe03ea24b36aaa659da819419ea3a2d68a7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -268,10 +237,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f655-6cc0-74c0-b97d-7b661059aefb"
+        "01a0f761-8658-7771-b863-dd04fdc501a2"
       ],
       "usage": {
-        "used": 27804,
+        "used": 28708,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -280,10 +249,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 28715,
-          "utf8Bytes": 33783,
-          "estimatedTokens": 11261,
-          "budgetedTokens": 14077,
+          "chars": 28117,
+          "utf8Bytes": 33562,
+          "estimatedTokens": 11188,
+          "budgetedTokens": 13985,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

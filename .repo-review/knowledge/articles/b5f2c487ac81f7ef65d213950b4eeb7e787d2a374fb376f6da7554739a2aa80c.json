@@ -2,124 +2,113 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/live-pipeline-smoke.ts",
-    "title": "真实模型学习流水线冒烟验证",
-    "summary": "该脚本以临时 SQLite 数据库和真实 TraeX 配置运行一次受控学习流水线，验证一条带负责人和截止时间的中文捕获能经过两个作业，形成并自动应用一个任务，同时保存模型、作业、提案和任务的可审计报告。",
+    "title": "真实模型驱动的任务提取冒烟验证",
+    "summary": "该脚本在临时单用户存储中写入一条带截止时间的中文事项，调用实际 Agent 配置运行学习流水线，并以任务、提案和作业状态验证端到端链路，最后输出可审计报告并清理运行数据。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose",
-        "title": "解决的问题与验证范围",
-        "body": "该脚本不是普通单元测试，而是面向真实 Agent 配置的端到端冒烟检查：加载配置后查找 `traex` profile，并通过 live profile 选择逻辑取得实际可运行的模型；缺少该配置时立即失败。随后创建隔离的临时 `Store`，避免污染正式数据。[[c1]]\n\n输入是一条人工捕获的中文任务陈述，包含负责人、明确截止时间、预备动作、应用上下文和完整来源信息。这使验证目标聚焦于“原始材料能否被学习链路识别为可执行事项”，而非只检查协议解析或固定 fixture。[[c2]]"
+        "title": "验证什么问题",
+        "body": "脚本用于确认“捕获一句自然语言承诺后，系统能否经真实模型处理形成已应用任务”这一关键场景。它加载配置并选择 `traex` 实时 profile；若该 profile 不存在会立即失败。随后创建隔离的临时存储，写入一条“本周五 18:00 前补齐支付重试方案”的人工捕获，同时保留应用、时间、操作者与来源事件等上下文。参考 [[c1]]\n\n这属于**受控的端到端冒烟验证**：它覆盖真实配置、持久化、学习流水线和任务落库之间的连接，但输入只有一个固定中文样例，不能代表所有表达方式、时区或模型输出都已验证。"
       },
       {
         "key": "flow",
-        "title": "核心执行流程与模块关系",
-        "body": "捕获写入后，脚本用同一 `Store` 构造 `MemoryService`、`FeedbackService` 和 `LearningPipeline`，并把选定 profile、工作区根目录及 worker 标识注入流水线。这里与配置、持久化、记忆策略和学习执行模块的关系均由显式导入与构造调用确认；材料未展示流水线内部如何拆分两个作业，因此不能进一步断言具体角色或调用顺序。[[c3]]\n\n脚本调用 `drain(10)` 主动处理队列并停止 pipeline，然后从存储中读取作业、尝试记录、提案和任务。验收条件要求恰好处理两个作业、所有作业成功、恰好一个提案且已应用，并最终生成一个任务；任一条件不满足都会抛错。[[c4]]"
+        "title": "从捕获到任务的核心流程",
+        "body": "脚本把同一个 `Store` 注入 `MemoryService`、`FeedbackService` 与 `LearningPipeline`，并把选中的模型 profile、工作目录和 worker 标识交给流水线。之后调用 `drain(10)` 消费当前作业并显式停止流水线，再从存储中读取作业、执行尝试、记忆提案和任务用于统一判定。参考 [[c2]]\n\n```mermaid\nflowchart LR\n  A[写入人工捕获] --> B[学习流水线处理]\n  B --> C[生成并应用提案]\n  C --> D[形成任务]\n  D --> E[汇总执行报告]\n```\n\n这里与其他模块的关系有直接源码依据：`Store` 提供捕获和作业、任务、通知查询，`MemoryService` 提供提案读取，`LearningPipeline` 负责消费作业；但所给流水线材料未展示其构造器及任务生成分支，因此不能仅凭该脚本确定两个已处理作业各自对应的内部阶段。"
       },
       {
-        "key": "evidence-limits",
-        "title": "报告、清理与未覆盖边界",
-        "body": "成功后生成审计报告，记录请求与实际生效的模型和 effort、捕获 revision、逐作业尝试、提案、任务及通知数量。报告路径可由环境变量覆盖，默认写入验证目录；目录和文件分别使用较严格权限，控制台只输出摘要。[[c5]]\n\n`finally` 无条件关闭数据库并递归删除临时目录，所以失败路径也会清理运行数据，而已写到临时目录之外的报告可保留。[[c6]] 断言只验证数量和状态，没有核对任务标题、负责人、截止时间、证据引用或通知内容；通知数量也只是记录而非成功条件。因此它能证明受控 live 链路产出了一个已应用任务，但不能单独证明语义提取完全正确，也未覆盖缺少凭据、模型超时、坏输出、重试上限及多条输入等异常行为。"
+        "key": "assertions",
+        "title": "成功条件、报告与边界",
+        "body": "成功条件是：恰好处理两个作业、所有作业均为 `succeeded`、只产生一个提案且状态为 `applied`，并且最终只有一个任务；任一条件不满足都会抛错。这个断言证明固定样例形成了单个已应用任务，却没有核对任务标题、截止时间、证据引用、通知内容或重复运行的幂等性。参考 [[c3]]\n\n通过后，脚本记录请求与实际生效的模型和 effort、作业尝试、提案、任务及通知数量；报告路径可由环境变量覆盖，文件和目录使用受限权限。控制台只输出摘要，详细数据保存在 JSON 报告中。参考 [[c4]]\n\n无论成功或失败，`finally` 都会关闭数据库并递归删除临时目录，因此运行数据不会作为长期状态保留；报告写在临时目录之外时仍可留作验收证据。参考 [[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "真实配置选择与临时存储初始化",
-        "reason": "支持脚本依赖 traex 配置、选择 live profile，并以临时目录隔离 Store 的论断。",
-        "relation": "explains",
+        "label": "受控中文事项输入",
+        "reason": "支持脚本选择实时 profile、建立临时存储并捕获带上下文中文任务承诺的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
           "startLine": 13,
-          "endLine": 18
+          "endLine": 45
         },
         "quote": "const config = loadConfig();\nconst configured = config.profiles.find((profile) => profile.id === \"traex\");\nif (!configured) throw Error(\"TraeX profile is not configured\");\nconst { profile } = await selectLiveProfile(configured, config.agentCwd);\nconst directory = mkdtempSync(join(tmpdir(), \"omem-live-pipeline-\"));\ncons"
       },
       {
         "key": "c2",
-        "label": "中文任务捕获样本",
-        "reason": "支持输入包含截止时间、动作、上下文和来源元数据，以及验证目标面向真实捕获链路的说明。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/live-pipeline-smoke.ts",
-          "startLine": 20,
-          "endLine": 45
-        },
-        "quote": "  const captured = store.capture({\n    source: \"manual\",\n    externalId: \"live-pipeline-source\",\n    title: \"支付重试任务\",\n    observedAt: \"2026-09-22T08:00:00Z\",\n    parts: [\n      {\n        type: \"text\",\n        text: \"我负责在本周五18:00前补齐支付重试方案，先核对现有接口。\",\n      },\n    ],\n    context: { application: \"payments\" },\n    provenanc"
-      },
-      {
-        "key": "c3",
-        "label": "学习流水线依赖组装",
-        "reason": "支持 MemoryService、FeedbackService、LearningPipeline、profile、工作区和 worker 共享同一 Store 运行的流程描述。",
+        "label": "学习流水线执行流程",
+        "reason": "支持服务装配、作业消费、停止流水线以及读取提案和任务的核心流程。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
           "startLine": 46,
-          "endLine": 54
+          "endLine": 60
         },
-        "quote": "  const memory = new MemoryService(store, { ownerId: \"owner\" });\n  const pipeline = new LearningPipeline({\n    store,\n    memory,\n    feedback: new FeedbackService(store),\n    profile,\n    workspaceRoot: config.agentCwd,\n    workerId: \"live-pipeline-worker\",\n  });"
+        "quote": "  const memory = new MemoryService(store, { ownerId: \"owner\" });\n  const pipeline = new LearningPipeline({\n    store,\n    memory,\n    feedback: new FeedbackService(store),\n    profile,\n    workspaceRoot: config.agentCwd,\n    workerId: \"live-pipeline-worker\",\n  });\n  const processed = await pipeline.drain(10);\n  await p"
       },
       {
-        "key": "c4",
-        "label": "流水线执行与结果断言",
-        "reason": "支持 drain、stop、结果查询及对两个成功作业、一个已应用提案和一个任务的硬性断言。",
+        "key": "c3",
+        "label": "端到端成功断言",
+        "reason": "支持已处理作业数、作业状态、已应用提案和单个任务这组明确成功条件。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
-          "startLine": 55,
+          "startLine": 61,
           "endLine": 68
         },
-        "quote": "  const processed = await pipeline.drain(10);\n  await pipeline.stop();\n  const jobs = store.jobs.list();\n  const proposals = memory.proposals();\n  const tasks = store.tasks();\n  const attempts = jobs.flatMap((job) => store.jobs.attempts(job.id));\n  if (\n    processed !== 2 ||\n    jobs.some((job) => job.state !== \"succe"
+        "quote": "  if (\n    processed !== 2 ||\n    jobs.some((job) => job.state !== \"succeeded\") ||\n    proposals.length !== 1 ||\n    proposals[0]?.state !== \"applied\" ||\n    tasks.length !== 1\n  )\n    throw Error(\"Live controlled pipeline did not produce one applied task\");"
       },
       {
-        "key": "c5",
-        "label": "验证报告生成与落盘",
-        "reason": "支持报告记录模型、effort、作业尝试和业务产物，并允许覆盖输出路径及设置文件权限的说明。",
+        "key": "c4",
+        "label": "模型执行报告",
+        "reason": "支持报告包含模型、effort、作业尝试和产物，并写入可配置路径的说明。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
           "startLine": 69,
-          "endLine": 107
+          "endLine": 112
         },
         "quote": "  const report = {\n    createdAt: new Date().toISOString(),\n    requestedModel: profile.model ?? null,\n    requestedEffort: profile.effort ?? null,\n    effectiveModels: [...new Set(attempts.map((attempt) => attempt.model))],\n    effectiveEfforts: [...new Set(attempts.map((attempt) => attempt.effort))],\n    capturedRevi"
       },
       {
-        "key": "c6",
-        "label": "临时资源清理",
-        "reason": "支持无论成功或失败都会关闭 Store 并删除临时运行目录的边界说明。",
+        "key": "c5",
+        "label": "临时数据清理",
+        "reason": "支持脚本无论执行结果如何都会关闭存储并删除临时运行目录的边界说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
           "startLine": 113,
-          "endLine": 115
+          "endLine": 116
         },
-        "quote": "} finally {\n  store.close();\n  rmSync(directory, { recursive: true, force: true });"
+        "quote": "} finally {\n  store.close();\n  rmSync(directory, { recursive: true, force: true });\n}"
       }
     ],
     "questions": [
       {
-        "question": "是否应把任务语义字段和证据链纳入 live 冒烟断言？",
-        "why": "当前成功条件只检查处理数、作业状态、提案状态和任务数量；即使负责人、截止时间或任务内容提取错误，测试仍可能通过。",
-        "nextStep": "为生成的任务增加标题或描述、负责人、截止时间、来源 revision/fragment 引用等稳定字段断言，并明确哪些字段允许模型措辞变化。",
+        "question": "`processed === 2` 对应哪两类作业，它们是否分别代表提取与评估阶段？",
+        "why": "脚本只断言处理数量并汇总作业种类，所提供的流水线片段没有展示构造器、作业注册和分派逻辑，无法可靠还原两个阶段的确切职责。",
+        "nextStep": "检查 LearningPipeline 的 worker 注册、作业 kind 分支及对应测试，并将每个作业的预期 kind 纳入冒烟断言。",
         "blocking": false,
         "citationKeys": [
           "c2",
-          "c4"
+          "c3"
         ]
       },
       {
-        "question": "通知是否属于该冒烟测试的验收目标？",
-        "why": "脚本记录并输出 notificationCount，却没有对其数量、类型或关联任务作断言，无法区分“仅供观测”与“必须产生通知”。",
-        "nextStep": "根据产品预期决定将通知保留为诊断指标，或增加通知数量、类别及任务关联的行为断言。",
+        "question": "生成任务的标题、截止时间、来源证据和通知内容是否符合输入语义？",
+        "why": "当前断言只检查任务数量及提案状态；报告虽保存完整产物，脚本并未对这些关键业务字段作行为断言。",
+        "nextStep": "基于稳定合同增加字段级断言，并分别覆盖无截止时间、模糊日期、重复捕获和模型异常输出。",
         "blocking": false,
         "citationKeys": [
-          "c5"
+          "c1",
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -148,26 +137,26 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:53:55.966Z",
+    "effort": "high",
+    "at": "2026-10-01T12:14:22.134Z",
     "trace": {
-      "runId": "7dc65574-c40a-4641-bf8f-b723891d4c69",
+      "runId": "2f890b6d-7102-45bb-b13c-d722a73658e8",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "bb96761dfa4d871ba540c8eb20961124b8ce87113b5855aa6da423e40da358cf",
-      "contextHash": "0565c01d0516a50488a31733270976ca728fb5b6af61bd1f7e468049d6d9f316",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "f03a23ffd133ae7e8676435effe1c1e384d7cae2308f9c5be3fe9ba4d127ee1f",
+      "contextHash": "080ef0d649d24348e1c4fe99d88e822002f57d3ea426f77e2dfbe1532eb8274d",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2ba091675fd271653dbd8d061dd93dc953cfb86c28f753248b22639cd7d3cd68",
+      "fingerprint": "b5ce939f171072274674341c02896ea55f67eba766ec67daccb162c14b444d0b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-code-analyst",
@@ -177,10 +166,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f561-b77a-7f61-a5cb-dfc190927241"
+        "01a0f762-c62f-7210-8ed5-3cebec6c9f51"
       ],
       "usage": {
-        "used": 28797,
+        "used": 28209,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -189,10 +178,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 24708,
-          "utf8Bytes": 26534,
-          "estimatedTokens": 8845,
-          "budgetedTokens": 11057,
+          "chars": 25538,
+          "utf8Bytes": 28696,
+          "estimatedTokens": 9566,
+          "budgetedTokens": 11958,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -201,20 +190,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:54:32.310Z",
+    "at": "2026-10-01T12:14:39.621Z",
     "trace": {
-      "runId": "ca8144d9-90e0-48b6-a94b-4126a448ff10",
+      "runId": "20333c4d-e2c1-454b-9df7-ca7d7f96dfc7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9b05386bbae11d7dbbb0a16043cc59d669f0f17029e7709a4fc88a35c70eb384",
-      "contextHash": "ba3b29f3b23c70189daaf4129bcce8d11a26d3d3bfe068826551938efa66fd87",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "ba8e737b92f30ed88987aa8746b066bdb2707d0cc5471098cb0aed6c80b4a752",
+      "contextHash": "a73efc145f73ce0a0cf489da163851b5527c85e42b717d66b6aa4f2e49d9cdae",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3ad5a3fee5612e52e9a92a9303bbc585f7588e5518df365eb03730da0261b5c8",
+      "fingerprint": "bb8be354488e8d8249495e458c299a48b8ab10b02f05d7a02be10091678a6fee",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -224,10 +213,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f562-1b1a-7300-9922-7a21747854ba"
+        "01a0f763-2f8a-77c2-935e-3a6971d21e0a"
       ],
       "usage": {
-        "used": 28055,
+        "used": 28329,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -236,10 +225,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 27250,
-          "utf8Bytes": 30884,
-          "estimatedTokens": 10295,
-          "budgetedTokens": 12869,
+          "chars": 27755,
+          "utf8Bytes": 33053,
+          "estimatedTokens": 11018,
+          "budgetedTokens": 13773,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

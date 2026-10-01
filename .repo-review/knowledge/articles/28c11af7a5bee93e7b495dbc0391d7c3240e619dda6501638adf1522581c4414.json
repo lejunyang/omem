@@ -2,71 +2,128 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
-    "title": "普通材料捕获与质量标注导入的隔离回归测试",
-    "summary": "该测试验证普通 Store.capture 保存含预期文本的 revision 与 fragment，同时不创建质量数据集、质量样本或外发意图；研究导入器必须获得显式 opt-in 才能运行。此前由单一引用概括两个用例均采用独立临时目录的表述，现已替换为分别引用两个用例的准确说明。",
+    "title": "普通材料捕获与研究评测隔离",
+    "summary": "该回归测试确认普通业务文档捕获会保存材料版本及正文片段，但不会自动创建质量数据集、草稿样本或外发确认意图；研究评测导入器只有收到专用选择标识后才可生成样本。测试未直接验证检索接口及各类上层捕获入口。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose",
-        "title": "回归目标与隔离策略",
-        "body": "该文件防止普通业务材料被误送入人工质量标注流程。测试构造 40 段足以被研究拆分器选中的中文文本；第一个用例创建并登记自己的临时目录，公共 `afterEach` 会递归清理所有已登记目录。[[c1]] 第二个用例另行创建并登记独立临时目录。[[c2]] 这替代了此前仅凭第一个用例的引用便概括“每个用例均使用独立目录”的结论，使隔离策略的证据覆盖两个用例。"
+        "title": "防止业务材料误入人工标注",
+        "body": "规则切分器会从长文档中挑选研究样本，因此普通捕获若误接入该流程，可能把业务材料变成人工标注任务。本测试用 40 个足够长的业务段落制造敏感输入，要求捕获后只保留材料版本和片段，不产生质量数据集、草稿样本或确认卡。参考 [[c1]] [[c2]]\n\n质量导入器本身也声明仅供显式启动的研究标注流程使用；其候选标签具有较激进的默认行为，不应进入 HTTP、CLI、输入聚合器、学习流程或一般捕获路径。延伸阅读：[[c3]]"
       },
       {
-        "key": "ordinary_capture",
-        "title": "普通捕获的实际行为断言",
-        "body": "第一例把经 `captureSchema` 校验的手工材料传给 `store.capture`，确认返回 revision 含 fragment，且首段包含“三方核对”。随后直接查询数据库，断言 `quality_datasets`、`quality_samples` 与 `delivery_intents` 的记录数均为零；这能证明本次捕获未创建质量数据集、草稿样本或外发意图，但不能证明材料已通过检索接口召回，也未穷尽其他副作用。[[c3]] Store 会创建 SQLite 文件、执行迁移并初始化仓储，因此这些断言针对实际数据库而非模拟对象。[[c4]] 第一例最终关闭 Store，避免数据库句柄残留。[[c5]]"
+        "key": "ordinary-path",
+        "title": "普通捕获只保存材料",
+        "body": "第一项用例在临时 SQLite 目录中创建 `Store`，用公共捕获合同提交带来源信息的手工文档。断言仅确认返回版本含有片段，且首个片段保留“三方核对”正文；它没有调用检索接口，因此不能据此认定检索链路已通过行为验证。参考 [[c4]]\n\n用例随后直接查询质量数据集、质量样本和外发意图三张表，要求记录数全部为零。这证明当前直接捕获场景没有产生三类质量副作用。参考 [[c5]] Store 材料只展示数据库迁移和仓储初始化，未提供 `capture` 的内部调用链，相关实现细节不能由本组材料推出。延伸阅读：[[c8]]"
       },
       {
-        "key": "eval_guard",
-        "title": "研究导入器的显式准入与覆盖边界",
-        "body": "第二例直接创建 `QualityRepository`：缺少 `optIn` 时调用研究导入器会抛出 `QUALITY_IMPORT_IS_EVAL_ONLY`；传入固定判别值后才允许运行，并断言返回的 `sampleCount` 为 40，最后关闭 Store。[[c6]] 这与模块声明的研究专用边界一致：规则拆分器仅服务显式人工标注实验，普通 HTTP、CLI、输入聚合和学习捕获链路不应调用它。[[c7]] 不过，设计声明不能代替各入口的端到端验证，本文件也没有检查导入样本的定位、标签、数据集内容、幂等性或外发意图。"
+        "key": "eval-guard",
+        "title": "研究导入必须显式选择",
+        "body": "第二项用例直接调用研究导入器：缺少专用选择标识时必须抛出 `QUALITY_IMPORT_IS_EVAL_ONLY`；传入导出的评测常量后，同一文档可生成 40 条样本。这既让误接生产路径的调用明显失败，也保留了研究工具的合法入口。参考 [[c6]] [[c7]]\n\n该成功分支只核对样本数量，尚未检查样本正文、来源定位、标签约束、数据集记录及外发策略；本测试也未逐一运行 HTTP、CLI、输入聚合器或学习入口，因此结论限于两个被直接调用的入口。"
+      },
+      {
+        "key": "cleanup",
+        "title": "隔离临时运行数据",
+        "body": "每个用例都登记独立临时目录，并在 `finally` 中关闭各自数据库；`afterEach` 再递归移除所有登记目录。这样，正常完成和预期抛错都不会让数据库连接或临时数据影响后续用例。参考 [[c9]] [[c10]] [[c11]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "首例临时目录与统一清理",
-        "reason": "支持公共 afterEach 清理已登记目录、40 段测试文本构造及第一个用例创建独立临时目录的说明。",
+        "label": "普通捕获隔离目标",
+        "reason": "支持普通业务捕获只应保存材料版本和片段，不应自动创建质量数据或确认卡的测试目标。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
-          "startLine": 22,
-          "endLine": 40
+          "startLine": 1,
+          "endLine": 7
         },
-        "quote": "const directories: string[] = [];\nafterEach(() => {\n  for (const directory of directories.splice(0))\n    rmSync(directory, { recursive: true, force: true });\n});\n\n// 40 business paragraphs, each long enough that the eval splitter would pick it.\nconst paragraphs = Array.from(\n  { length: 40 },\n  (_, i) =>\n    `第${i + 1}"
+        "quote": "/** G01: ordinary material import must not become a human annotation task.\n *\n * Regression for Batch-2 review F1. The rule-based quality splitter may exist\n * for the opt-in research harness, but capturing a business document through the\n * normal store.capture path must only persist the immutable source revision and\n"
       },
       {
         "key": "c2",
-        "label": "第二例独立临时目录",
-        "reason": "补充证明第二个研究导入器用例也单独创建并登记临时目录，修正此前引用覆盖不足。",
-        "relation": "supports",
+        "label": "长业务文档构造",
+        "reason": "支持测试使用 40 个足够长的业务段落制造容易被评测切分器选中的输入。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
-          "startLine": 98,
-          "endLine": 101
+          "startLine": 28,
+          "endLine": 34
         },
-        "quote": "  it(\"guards the eval-only importer against accidental ordinary-path use\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-g01-guard-\"));\n    directories.push(directory);\n    const store = new Store(directory);"
+        "quote": "// 40 business paragraphs, each long enough that the eval splitter would pick it.\nconst paragraphs = Array.from(\n  { length: 40 },\n  (_, i) =>\n    `第${i + 1}段：本业务规则要求运营人员在提交前必须完成三方核对，` +\n    `且该限制仅适用于生产环境的人工审核流程，测试环境不受约束。`,\n).join(\"\\n\\n\");"
       },
       {
         "key": "c3",
-        "label": "普通捕获与三张表零记录断言",
-        "reason": "支持普通捕获产生 fragment、保留预期文本，并且质量数据集、质量样本和外发意图计数均为零的结论。",
+        "label": "研究导入器使用边界",
+        "reason": "说明规则切分器仅服务显式研究标注流程，并列出不得调用它的普通捕获入口。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c4",
+        "label": "材料版本与片段断言",
+        "reason": "支持用例执行普通捕获，并仅断言返回片段存在且包含指定正文；范围内没有检索接口调用。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
           "startLine": 42,
-          "endLine": 92
+          "endLine": 66
         },
         "quote": "      const receipt = store.capture(\n        captureSchema.parse({\n          source: \"manual\",\n          externalId: \"g01-doc\",\n          title: \"业务说明文档（40段）\",\n          parts: [{ type: \"text\", text: paragraphs }],\n          context: {},\n          provenance: {\n            collectorId: \"g01-test\",\n            actorId: "
       },
       {
-        "key": "c4",
-        "label": "Store 的 SQLite 初始化",
-        "reason": "说明测试使用的 Store 会创建真实 SQLite 数据库、执行迁移并初始化相关仓储。",
-        "relation": "depends_on",
+        "key": "c5",
+        "label": "质量副作用归零",
+        "reason": "支持普通捕获后质量数据集、质量样本和外发意图的记录数均为零。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+          "startLine": 68,
+          "endLine": 92
+        },
+        "quote": "      // No quality dataset / draft sample / outbound annotation card may exist.\n      const datasetCount = Number(\n        (\n          store.db\n            .prepare(\"SELECT count(*) AS n FROM quality_datasets\")\n            .get() as { n: number }\n        ).n,\n      );\n      const sampleCount = Number(\n        (\n      "
+      },
+      {
+        "key": "c6",
+        "label": "评测入口回归分支",
+        "reason": "支持缺少选择标识时抛错，以及显式选择后生成 40 条样本的两条行为断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+          "startLine": 98,
+          "endLine": 135
+        },
+        "quote": "  it(\"guards the eval-only importer against accidental ordinary-path use\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-g01-guard-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const repository = new QualityRepository(store.db);\n      const document = cap"
+      },
+      {
+        "key": "c7",
+        "label": "评测专用选择标识",
+        "reason": "说明专用字面量用于阻止普通生产路径意外调用研究导入器。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 26,
+          "endLine": 28
+        },
+        "quote": "/** Eval-only opt-in discriminator. Normal import paths never (and must never)\n *  pass this literal; it exists so an accidental production call fails loudly. */\nexport const QUALITY_EVAL_ONLY = \"EVAL_ONLY_RESEARCH\" as const;"
+      },
+      {
+        "key": "c8",
+        "label": "存储初始化范围",
+        "reason": "表明所给 Store 代码仅覆盖 SQLite、迁移和仓储初始化，不能支持对 capture 内部调用链的进一步判断。",
+        "relation": "background",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/store.ts",
@@ -76,69 +133,61 @@
         "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       },
       {
-        "key": "c5",
-        "label": "首例关闭 Store",
-        "reason": "支持第一个普通捕获用例在 finally 中关闭数据库句柄的说明。",
+        "key": "c9",
+        "label": "临时目录清理",
+        "reason": "支持每项测试结束后递归移除登记的临时目录。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
+          "startLine": 22,
+          "endLine": 25
+        },
+        "quote": "const directories: string[] = [];\nafterEach(() => {\n  for (const directory of directories.splice(0))\n    rmSync(directory, { recursive: true, force: true });"
+      },
+      {
+        "key": "c10",
+        "label": "普通捕获数据库关闭",
+        "reason": "支持第一项用例在 finally 中关闭 Store 数据库。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
           "startLine": 93,
-          "endLine": 96
+          "endLine": 95
         },
-        "quote": "    } finally {\n      store.close();\n    }\n  });"
+        "quote": "    } finally {\n      store.close();\n    }"
       },
       {
-        "key": "c6",
-        "label": "研究导入器准入与成功路径",
-        "reason": "支持缺少 opt-in 时抛错、显式 opt-in 后返回 40 条样本以及第二例关闭 Store 的陈述。",
+        "key": "c11",
+        "label": "评测用例数据库关闭",
+        "reason": "支持第二项用例在 finally 中关闭 Store 数据库。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/import-quality-isolation.test.ts",
-          "startLine": 102,
+          "startLine": 136,
           "endLine": 138
         },
-        "quote": "    try {\n      const repository = new QualityRepository(store.db);\n      const document = captureSchema.parse({\n        source: \"lark\",\n        externalId: \"g01-eval\",\n        title: \"eval\",\n        parts: [{ type: \"text\", text: paragraphs }],\n        context: {},\n      });\n      // Missing opt-in discriminator -> lou"
-      },
-      {
-        "key": "c7",
-        "label": "质量导入模块的研究专用边界",
-        "reason": "解释研究拆分器只用于显式人工标注实验，以及普通捕获、CLI、输入聚合和学习链路不得调用它的设计约束。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/import.ts",
-          "startLine": 1,
-          "endLine": 28
-        },
-        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+        "quote": "    } finally {\n      store.close();\n    }"
       }
     ],
     "questions": [
       {
-        "question": "HTTP、文件、Git、Lark、输入聚合及学习入口是否都有独立的端到端隔离验证？",
-        "why": "当前材料只实际执行 Store.capture 和研究导入器的直接调用；研究专用边界是设计约束，不能证明所有入口当前均遵守该约束。",
-        "nextStep": "检查各入口的实际调用链和集成测试；缺失时补充捕获后 quality_datasets、quality_samples 与 delivery_intents 仍为空的行为断言。",
+        "question": "HTTP、CLI、输入聚合器和学习流程是否都有独立的隔离回归测试？",
+        "why": "当前材料只直接调用 `Store.capture` 和研究评测导入器；虽然导入器注释声明多个普通入口不得调用它，但本测试没有实际执行这些入口。",
+        "nextStep": "检查各入口的集成测试；若尚未覆盖，可用同一份长文档逐一捕获，并断言质量数据集、样本和外发意图仍为零。",
         "blocking": false,
         "citationKeys": [
           "c3",
-          "c7"
+          "c4",
+          "c5"
         ]
       },
       {
-        "question": "显式研究导入的样本内容、标签约束与重复导入行为是否由其他测试覆盖？",
-        "why": "当前成功路径只断言 sampleCount 为 40，未验证样本定位、标签、数据集记录、幂等性或外发意图。",
-        "nextStep": "检查质量仓储及导入器的其他测试；若无覆盖，再补充基于真实数据库的内容、标签和重复导入行为断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c6"
-        ]
-      },
-      {
-        "question": "显式研究导入的样本内容、标签约束、数据集记录与重复导入行为是否由其他测试覆盖？",
-        "why": "c6 只证明缺少 opt-in 时抛错，并在显式 opt-in 后返回 sampleCount=40；它没有验证样本定位、标签、持久化内容、幂等性或外发意图。",
-        "nextStep": "检查质量仓储和导入器的其他测试；若无相应覆盖，补充基于真实数据库的内容、标签、重复导入及副作用断言。",
+        "question": "显式评测导入成功后，样本内容、标签和外发策略是否符合研究标注要求？",
+        "why": "当前成功分支只断言生成 40 条样本，没有检查来源定位、样本文本、标签约束、数据集记录或外发副作用。",
+        "nextStep": "补充读取质量仓储结果的行为断言，分别验证样本来源与正文、草稿标签、所属数据集以及外发意图。",
         "blocking": false,
         "citationKeys": [
           "c6"
@@ -165,7 +214,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -175,21 +224,21 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:30:09.095Z",
+    "effort": "high",
+    "at": "2026-10-01T11:58:59.313Z",
     "trace": {
-      "runId": "b3903d5a-1e08-4ddf-bb16-fed0bf4ff7e5",
+      "runId": "53ca7caf-1660-4ea0-8366-7731086f22f3",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "42d4ef82d6d506d7ba78a8822d80e513af8f2a9ce90c9ee9e0b0138fe5646d5a",
-      "contextHash": "60ce9f8028ae27f8c32d5dba3eb8f9875d2980119fdee8024c8d37358a433103",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "dc8178b567c121fec903da1b0136064eeca60a0bcce99f68e041fd1793ef9b70",
+      "contextHash": "a839866ec562e46f8a0717fdda33be6a0e618254e9913691932f67328cbcc399",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2eb329c596a5426628ef040934922fe9e4979d865d567167a88731a88afeac25",
+      "fingerprint": "77e2fd18e21c1042fb53109bbc49f38c6e0e9e33070db3f8c6e34b7c8f4ef901",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-refresher",
@@ -199,10 +248,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54b-f0db-7793-a6d7-0b1395ff6a83"
+        "01a0f754-a5f7-70a3-8ec8-9dd5e517c166"
       ],
       "usage": {
-        "used": 32025,
+        "used": 32207,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -211,10 +260,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 31965,
-          "utf8Bytes": 36545,
-          "estimatedTokens": 12182,
-          "budgetedTokens": 15228,
+          "chars": 34596,
+          "utf8Bytes": 41884,
+          "estimatedTokens": 13962,
+          "budgetedTokens": 17453,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -223,20 +272,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:30:26.240Z",
+    "at": "2026-10-01T11:59:14.663Z",
     "trace": {
-      "runId": "9976cf52-60f2-4d5e-ae7c-ebadc720cf77",
+      "runId": "d5def5a1-44fb-45b7-808b-d48fb7dc1224",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "9c6b4ca0e942ba7f91e352c93721102378c02a8e9cf82f77c4ffa6a1682e21ec",
-      "contextHash": "658889f967bbc0a738a902fad1ef0e6fdd24709ab711f13ea82d05f47da7a296",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "004814a3275069fbc79e201233fe2e68db8ee1e4014e6349e8f3d746a3925002",
+      "contextHash": "370682d5601476260423b12433e6c26bf899de4ff7720e9f30271c790ecd8cc0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2b4a033dc6d230749c069b686be0258d531d8c0fecd12d1c8506b7c864bef88b",
+      "fingerprint": "71577b5e9c728dfabdf3d61b935e30ba741eb1c15563fe0817d921d973bee604",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -246,10 +295,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54c-4f19-7a81-a575-d60052c11af3"
+        "01a0f755-17ca-7422-af11-b332602d2bdd"
       ],
       "usage": {
-        "used": 28897,
+        "used": 30120,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -258,10 +307,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 29219,
-          "utf8Bytes": 32729,
-          "estimatedTokens": 10910,
-          "budgetedTokens": 13638,
+          "chars": 31823,
+          "utf8Bytes": 37753,
+          "estimatedTokens": 12585,
+          "budgetedTokens": 15732,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

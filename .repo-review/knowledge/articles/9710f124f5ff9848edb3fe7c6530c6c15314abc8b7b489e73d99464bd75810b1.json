@@ -2,101 +2,101 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/development-knowledge.test.ts",
-    "title": "开发知识导入与固定证据保留",
-    "summary": "这组测试验证仓库知识并入个人记忆时不会替换已有捕获，重复导入保持幂等；来源更新后文章会失去当前性，但旧版固定证据仍可追溯。父子文章场景验证同次更新最终生效，而顺序无关的等待与多轮恢复能力由恢复器实现提供。",
+    "title": "仓库知识导入与历史证据保留测试",
+    "summary": "该测试以临时仓库和真实 SQLite Store 验证两项关键行为：仓库中的已复核知识可以幂等接入个人记忆且不覆盖个人捕获；材料或父子文章更新后，旧证据仍可追溯，并能按依赖顺序恢复新版知识。测试使用 fixture 模型信息，不代表真实模型链路已经验收。",
     "category": "tests",
     "sections": [
       {
-        "key": "personal-memory-import",
-        "title": "仓库知识并入个人记忆",
-        "body": "测试先从仓库 README 生成材料和已复核文章，再在另一套个人 Store 中创建日记并导入开发知识。导入后，仓库文章处于当前状态，固定摘要能够解析，个人日记也仍然存在。这说明该流程把仓库知识加入个人库，而不是用仓库内容替换已有捕获。参考 [[c1]]\n\n测试随后记录 revision 数量并重复导入，数量保持不变，验证相同输入在再次启动时不会不断制造重复修订。参考 [[c2]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "开发知识需要进入个人记忆，但不能覆盖用户原有内容，也不能因源文件更新而丢失文章曾引用的固定证据。首个场景创建仓库 README、仓库侧知识文章和个人日记，再把仓库知识导入个人 Store，用于验证这两类数据可以共存。参考 [[c1]]\n\n测试使用实际创建 SQLite 文件并初始化各仓储服务的 `Store`，因此覆盖的是持久化集成行为，而非纯内存替身。参考 [[c2]]"
       },
       {
-        "key": "fixed-evidence",
-        "title": "来源变化与历史证据",
-        "body": "当 README 更新后再次导入，原文章不再被视为当前版本；但通过旧材料键和摘要仍能读取文章当时引用的内容。重新恢复这份历史文章也不会把它错误提升为当前知识。由此可见，**当前性**反映文章是否仍匹配现有来源，**可追溯性**则保留文章形成时的固定证据，两者彼此独立。参考 [[c3]]"
+        "key": "evidence",
+        "title": "幂等导入与固定证据",
+        "body": "首次导入后，文章应处于当前状态，并可按材料键和原始摘要解析出“统一保存”的旧内容；再次导入时，修订总数不增加，个人日记仍然存在。随后 README 被改写，文章应转为非当前状态，但原摘要对应的历史材料仍可读取，手动恢复历史文章也不能把它误标为当前版本。参考 [[c3]]\n\n这组断言体现了**当前性与可追溯性分离**：源变化会使派生知识过期，却不会破坏文章生成时绑定的证据。材料对象本身由非派生修订组装，并以正文、图片及来源属性计算摘要，为固定引用提供身份依据。参考 [[c4]]"
       },
       {
-        "key": "article-dependencies",
-        "title": "父子文章的同次更新",
-        "body": "第二个场景建立两级依赖：子文章引用原始材料，父文章引用子文章的特定修订，并分别保存为子、父资产文件。参考 [[c4]]\n\n测试先导入旧版，再发布新版父子文章并重新导入；最终父文章摘要更新，父文章与子文章都处于当前状态。因此，这个场景验证的是**相关父子新版能够在同一次启动导入中最终生效**。参考 [[c5]]\n\n恢复器本身会把资产放入待处理集合：若父文章要求的子修订尚不可用、但对应子资产仍在等待恢复，就暂缓父文章；每轮有进展时继续扫描，直到处理完成、无进展或达到轮次上限。该实现提供了不依赖单次遍历先后顺序的恢复机制，但现有测试没有单独断言发生了等待或执行了多轮扫描。参考 [[c6]]"
+        "key": "dependency_order",
+        "title": "父子文章同批更新",
+        "body": "第二个场景先导入旧版父子文章，再把子文章和引用它的父文章同时更新。即使恢复过程先遇到父资产，最终父文章摘要仍为新版，父子两篇文章也都处于当前状态。参考 [[c5]]\n\n```mermaid\nflowchart LR\n  P[先遇到新版父文章] --> D{子文章修订是否匹配}\n  D -->|否且子资产待处理| W[暂缓父文章]\n  W --> C[恢复新版子文章]\n  C --> R[恢复新版父文章]\n```\n\n恢复器会在子依赖尚未达到目标修订时跳过父项，并通过多轮处理等待依赖就绪；无法推进的剩余项最终标记为缺少子知识。参考 [[c6]]"
       },
       {
-        "key": "test-boundary",
-        "title": "测试能够证明什么",
-        "body": "这些场景在临时目录和两套本地 Store 中执行，结束时关闭数据库并清理资源，证明的是单进程、本地存储条件下的行为。参考 [[c7]] Store 也明确以 SQLite 作为单用户基础，团队级权限隔离仍属于后续迁移范围，不能从本测试外推出租户安全能力。参考 [[c8]]\n\n测试中的生成与复核来源是 fixture，并未实际调用外部模型或 Agent CLI；同时尚未覆盖损坏资产、缺失子文章、循环依赖、超过轮次上限以及未通过复核的产物。恢复器会把无法继续处理的待定项作为 `missing` 返回，但当前实现片段只持久化已进入处理分支的结果，不能据此断言 `missing` 一定写入导入状态表。参考 [[c9]]"
+        "key": "limits",
+        "title": "断言范围与未覆盖行为",
+        "body": "测试只使用一个 README、一个个人文本捕获以及标记为 accepted 的 fixture 生成与复核信息；它没有调用真实模型，也没有证明语义复核质量。参考 [[c7]]\n\n当前还未断言损坏 JSON、缺少生成来源、文档结构非法、永久缺失子文章等拒绝路径，也未覆盖并发导入、进程中断或多来源冲突。知识合同虽然约束章节、内联引用和问题结构，但本文件主要验证导入后的状态与证据保留，并非对合同全部边界的穷举测试。参考 [[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "个人记忆与仓库知识共存",
-        "reason": "支持仓库文章导入后可读取，同时个人日记仍被保留的结论。",
+        "label": "仓库与个人数据场景",
+        "reason": "支持测试创建仓库材料、发布知识文章并保留个人日记的使用场景。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/development-knowledge.test.ts",
-          "startLine": 16,
-          "endLine": 27
+          "startLine": 11,
+          "endLine": 20
         },
-        "quote": "    const repository = importDevelopmentKnowledge(original, root).repository;\n    const material = repository.materials()[0]!;\n    const article = repository.publish({ version: 1, document: bindKnowledgeQuotes({ key: \"topic:overview\", title: \"统一记忆\", summary: \"保存与阅读\", category: \"overview\", sections: [{ key: \"reading\", t"
+        "quote": "it(\"restores repository articles into personal memory without replacing captures and keeps fixed evidence after updates\", () => {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-unified-\")), root = join(dir, \"repo\");\n  mkdirSync(root); writeFileSync(join(root, \"README.md\"), \"# 使用指南\\n\\n统一保存材料与知识。\\n\");\n  const original = "
       },
       {
         "key": "c2",
-        "label": "重复导入保持幂等",
-        "reason": "支持再次执行相同导入后 revision 数量不增加。",
-        "relation": "supports",
+        "label": "真实存储初始化",
+        "reason": "说明测试使用会创建 SQLite 文件并初始化仓储组件的实际 Store。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/development-knowledge.test.ts",
-          "startLine": 24,
-          "endLine": 27
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 45,
+          "endLine": 65
         },
-        "quote": "    const count = personal.db.prepare(\"SELECT count(*) n FROM revisions\").get()!.n;\n    importDevelopmentKnowledge(personal, root);\n    expect(personal.db.prepare(\"SELECT count(*) n FROM revisions\").get()!.n).toBe(count);\n    expect(personal.revision(mine.revision.id)?.title).toBe(\"我的日记\");"
+        "quote": "  constructor(\n    readonly dataDir: string,\n    options: {\n      externalNotifications?: Partial<ExternalNotificationPolicy>;\n    } = {},\n  ) {\n    mkdirSync(dataDir, { recursive: true, mode: 0o700 });\n    const file = join(dataDir, \"omem.sqlite\");\n    this.db = new DatabaseSync(file);\n    try {\n      migrateDatabase("
       },
       {
         "key": "c3",
-        "label": "旧证据保留与当前性变化",
-        "reason": "支持来源更新使文章失去当前性，但旧材料仍可解析且恢复历史文章不会改变当前性的结论。",
+        "label": "幂等与历史证据断言",
+        "reason": "直接支持重复导入不增加修订、个人捕获保留、源更新后文章过期且旧证据仍可解析。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/development-knowledge.test.ts",
-          "startLine": 28,
-          "endLine": 34
+          "startLine": 21,
+          "endLine": 35
         },
-        "quote": "    writeFileSync(join(root, \"README.md\"), \"# 新指南\\n\\n内容已经更新。\\n\");\n    importDevelopmentKnowledge(personal, root);\n    expect(imported.get(\"topic:overview\")?.current).toBe(false);\n    expect(imported.resolveMaterial(material.key, material.digest)?.material.text).toContain(\"统一保存\");\n    // Importing a reviewed historical "
+        "quote": "    const imported = importDevelopmentKnowledge(personal, root).repository;\n    expect(imported.get(\"topic:overview\")?.current).toBe(true);\n    expect(imported.resolveMaterial(material.key, material.digest)?.material.text).toContain(\"统一保存\");\n    const count = personal.db.prepare(\"SELECT count(*) n FROM revisions\").get("
       },
       {
         "key": "c4",
-        "label": "父子文章依赖构造",
-        "reason": "说明子文章依赖材料、父文章依赖子文章修订，并分别写入两个资产文件。",
+        "label": "材料身份构造",
+        "reason": "解释知识材料如何排除派生修订、汇总内容并计算稳定摘要。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/development-knowledge.test.ts",
-          "startLine": 47,
-          "endLine": 53
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 11,
+          "endLine": 33
         },
-        "quote": "    const publish = (summary: string) => {\n      const child: KnowledgeArtifact = { version: 1, ...provenance, document: bindKnowledgeQuotes({ key: \"article:child\", title: \"保存材料\", summary, category: \"implementation\", sections: [{ key: \"saving\", title: \"保存方式\", body: summary + \"参考 [[source]]\" }], citations: [{ key: \"sour"
+        "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
       },
       {
         "key": "c5",
-        "label": "父子新版最终生效",
-        "reason": "支持重新导入后父文章摘要更新，父子文章均处于当前状态。",
+        "label": "父子文章更新断言",
+        "reason": "支持同次导入后新版父文章摘要生效且父子文章均为当前版本。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/development-knowledge.test.ts",
-          "startLine": 55,
+          "startLine": 38,
           "endLine": 61
         },
-        "quote": "    publish(\"旧版说明。\");\n    importDevelopmentKnowledge(personal, root);\n    publish(\"新版说明。\");\n    const imported = importDevelopmentKnowledge(personal, root).repository;\n    expect(imported.get(\"topic:overview\")?.document.summary).toBe(\"新版说明。\");\n    expect(imported.get(\"topic:overview\")?.current).toBe(true);\n    expect(i"
+        "quote": "it(\"imports updated parent and child articles in one startup even when the parent asset is visited first\", () => {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-article-updates-\")), root = join(dir, \"repo\");\n  mkdirSync(root); writeFileSync(join(root, \"README.md\"), \"# 使用指南\\n\\n保存材料。\\n\");\n  const original = new Store(jo"
       },
       {
         "key": "c6",
-        "label": "依赖等待与多轮恢复",
-        "reason": "解释恢复器如何暂缓依赖未满足的父文章，并通过多轮扫描继续处理待定资产。",
+        "label": "依赖顺序恢复流程",
+        "reason": "解释恢复器为何暂缓依赖修订未匹配的父文章，并通过多轮恢复子项后继续处理。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -108,62 +108,41 @@
       },
       {
         "key": "c7",
-        "label": "临时存储测试环境",
-        "reason": "支持测试使用临时目录和两套 Store，并在结束时关闭与清理资源。",
+        "label": "Fixture 复核来源",
+        "reason": "表明测试文章使用 fixture 生成器和 fixture verifier，而不是真实模型调用。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/development-knowledge.test.ts",
-          "startLine": 39,
-          "endLine": 44
+          "startLine": 43,
+          "endLine": 50
         },
-        "quote": "  const dir = mkdtempSync(join(tmpdir(), \"omem-article-updates-\")), root = join(dir, \"repo\");\n  mkdirSync(root); writeFileSync(join(root, \"README.md\"), \"# 使用指南\\n\\n保存材料。\\n\");\n  const original = new Store(join(dir, \"original\")), personal = new Store(join(dir, \"personal\"));\n  const assets = join(root, \".repo-review/knowle"
+        "quote": "  const provenance = { generation: { model: \"fixture\", at: \"2026-10-01\", effort: null, trace: {} }, review: { model: \"fixture-verifier\", at: \"2026-10-01\", verdict: \"accepted\" as const, trace: {} } };\n  try {\n    const repository = importDevelopmentKnowledge(original, root).repository;\n    const material = repository.ma"
       },
       {
         "key": "c8",
-        "label": "单用户 SQLite 边界",
-        "reason": "说明 Store 当前是单用户 SQLite 基础，团队权限执行仍是后续迁移事项。",
+        "label": "知识文档合同",
+        "reason": "提供章节、引用和问题结构的合同背景，用于区分本测试覆盖的导入行为与未穷举的结构边界。",
         "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 4,
-          "endLine": 6
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 25,
+          "endLine": 39
         },
-        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";"
-      },
-      {
-        "key": "c9",
-        "label": "待定资产与导入状态记录",
-        "reason": "支持无进展时停止扫描、将剩余项作为 missing 返回，并区分已处理结果的数据库写入位置。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/artifacts.ts",
-          "startLine": 52,
-          "endLine": 65
-        },
-        "quote": "      let state = \"restored\", reason = \"\";\n      try {\n        if (artifact.version !== 1 || artifact.review?.verdict !== \"accepted\" || !artifact.generation?.model || !artifact.review.model) throw Error(\"Missing generation/review provenance\");\n        knowledgeDocumentSchema.parse(artifact.document);\n        if (artifa"
+        "quote": "export const knowledgeDocumentSchema = z.object({\n  key, title: z.string().min(1).max(240), summary: z.string().min(1).max(1600),\n  category: z.enum([\"overview\", \"architecture\", \"background\", \"requirements\", \"progress\", \"implementation\", \"tests\", \"configuration\", \"workflow\", \"research\", \"conversation\", \"visual\"]),\n  se"
       }
     ],
     "questions": [
       {
-        "question": "导入器如何发现仓库文件和文章资产，并把它们映射到个人 Store？",
-        "why": "当前材料包含调用方测试与文章恢复器，但没有提供 importDevelopmentKnowledge 的实现，无法确认扫描目录、捕获写入、幂等键和命名空间映射的完整规则。",
-        "nextStep": "补充 apps/server/src/knowledge/development.ts，核对其扫描范围、幂等标识以及调用 restoreKnowledgeArticles 的顺序。",
+        "question": "是否需要为知识资产恢复补充拒绝和永久缺失依赖的集成测试？",
+        "why": "现有测试覆盖成功导入、材料变更导致过期以及父子文章同批更新，但恢复器还存在损坏资产、来源缺失和依赖无法满足等可观察状态，当前文件未对这些行为作断言。",
+        "nextStep": "增加独立用例写入损坏 JSON、缺少复核来源及引用不存在子文章的资产，并断言导入记录分别为 rejected 或 missing，同时确认已有有效知识不被覆盖。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c6"
-        ]
-      },
-      {
-        "question": "未解决的父子依赖是否应持久化为导入状态？",
-        "why": "恢复器会把无进展或轮次耗尽后仍待定的资产作为 missing 放入返回结果，但现有代码只明确持久化已进入处理分支的 restored、stale 或 rejected 结果。",
-        "nextStep": "先明确 missing 的持久化合同；再补充缺失子文章、循环依赖和轮次上限测试，断言返回结果，并仅在合同要求时检查 knowledge_imports。",
-        "blocking": false,
-        "citationKeys": [
-          "c9"
+          "c6",
+          "c7",
+          "c8"
         ]
       }
     ]
@@ -177,7 +156,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     },
     {
       "kind": "material",
@@ -192,39 +171,39 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
+      "digest": "1cc007a5fd3cbc9208c80f6c54fd43cc766bae38f247e58b30659eff308a1f5e"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T07:20:30.560Z",
+    "effort": "high",
+    "at": "2026-10-01T11:58:19.557Z",
     "trace": {
-      "runId": "55a44536-d23c-433b-bbf5-26e3ea38a259",
-      "roleId": "knowledge-refresher",
+      "runId": "e39686d4-8586-4f08-a660-c3149e4030e7",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "6050ccd97ecb0289cb531e9a5b3c041898143e44b2c46dcbac0e5620c6b035a2",
-      "contextHash": "6ef4c1e7776b3164180f0655fac14c122d53a1eade8578c4917778e7462d99dc",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "55c47d4064316c1d7f5ef1173a998c98a90610edc805aa156d0139a28b5e6997",
+      "contextHash": "0a7dbaf16625eb7f8d7fd2b6ef5932e202e7a0d530997a1abe5a534a30ee6f85",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e8c08a2ae0821a6445709783911ef36573b75ec5472b2d403b8e129e46038d0b",
+      "fingerprint": "c6820436730d486293e7143d226946bc3e53810e0c5adfbca7c6054aa0f99a96",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f655-bb98-7380-86ba-ae5836b7c42b"
+        "01a0f753-de14-7271-9465-4f0c78fe01c1"
       ],
       "usage": {
-        "used": 35641,
+        "used": 31728,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -233,10 +212,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 41439,
-          "utf8Bytes": 49107,
-          "estimatedTokens": 16369,
-          "budgetedTokens": 20462,
+          "chars": 33775,
+          "utf8Bytes": 37283,
+          "estimatedTokens": 12428,
+          "budgetedTokens": 15535,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -245,20 +224,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T07:20:47.299Z",
+    "at": "2026-10-01T11:58:47.404Z",
     "trace": {
-      "runId": "ceaf3410-d2e6-4359-93e2-65a06cf5c043",
+      "runId": "f6e1f73c-4f97-4d83-adeb-36ae4880eb95",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
-      "promptHash": "254cf8e4eaec11173efe5db914fa4f0ce6a8c4dfc433da702f423509d0c31a16",
-      "contextHash": "851d58648fee55da7031697221ea2a1cb527314b45e1938c8710237a5c3cd976",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "78a05da0a18dcb89cdd02b30733f38461ec6a7e571c88ab1af51c65bbc04c9b6",
+      "contextHash": "649c0f42e780bee77bc57ef37f0a6f94301f0c0bcae0572f94a6658b882c6d3f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f04c464b987d9227ff5616400a73ed4f04f99b88c6ccdcaba6a5106d641fa55f",
+      "fingerprint": "3fd88c0b931cba8591deefc62759a1902f6931c8bb520b9454bc94512fdc7ea8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -268,10 +247,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f656-2c6d-71f2-a851-884a49369891"
+        "01a0f754-7ed2-7f71-a1f6-2968e5eee93c"
       ],
       "usage": {
-        "used": 30651,
+        "used": 31224,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -280,8 +259,8 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 38138,
-          "utf8Bytes": 43700,
+          "chars": 37833,
+          "utf8Bytes": 43701,
           "estimatedTokens": 14567,
           "budgetedTokens": 18209,
           "estimator": "utf8-bytes/3 + 25% headroom"

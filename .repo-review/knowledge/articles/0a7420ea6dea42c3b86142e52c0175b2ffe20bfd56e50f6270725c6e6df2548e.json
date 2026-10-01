@@ -2,96 +2,44 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/api.ts",
-    "title": "Web 前端 API 类型与请求适配层",
-    "summary": "该文件集中声明 Web 页面消费的后端数据形状，并封装带浏览器会话认证的 JSON 请求。它复用部分共享合同，但任务状态及多数页面 DTO 仍在本地声明；泛型响应仅提供编译期约束，未体现运行时结构校验。",
+    "title": "Web 前端的数据合同与统一请求入口",
+    "summary": "该文件集中描述 Web 界面消费的业务数据形状，并提供附带会话令牌、自动序列化请求体和统一处理服务端错误的轻量 API 客户端。它连接共享合同与界面层，但只提供 TypeScript 静态类型，不负责运行时响应校验。",
     "category": "implementation",
     "sections": [
       {
-        "key": "responsibility",
-        "title": "职责与数据边界",
-        "body": "该模块是 Web 前端访问 `/api` 的轻量适配层。它从共享合同引入 Revision、Fragment、Change、RunEvent 和 TaskFollowUp，并在本地定义 Source、Evidence、通知及任务等页面 DTO。[[c1]] Profile、Run、Job、Proposal 与 Decision 描述模型配置、运行状态、作业尝试、变更提案、策略评估和人工决策等流程数据。[[c2]]\n\n通知详情还包含投递尝试、回执和证据关联；飞书类型覆盖应用预设、连接、接入状态、配对信息及可复用应用。[[c3]] 这些声明主要形成 TypeScript 编译期边界；给定材料未显示本地 DTO 会从服务端 schema 自动生成或在响应进入页面前接受运行时校验。"
+        "key": "purpose",
+        "title": "为界面提供一致的数据视图",
+        "body": "该文件是 Web 前端与服务端之间的**类型门面**：它复用共享合同中的修订、片段、变更和运行事件，同时补充来源、证据、通知、任务、模型配置与运行状态等界面所需的数据形状。这样，页面可以围绕证据的正反向关系、任务状态和运行事件组织展示，而不必在各组件内重复声明接口。参考 [[c1]]\n\n任务的 `followUp` 直接引用共享 `TaskFollowUp`，其等待对象、下次检查时间、暂缓时间和时区约束由合同包定义；这表明前端模型有意与任务流程合同保持一致。参考 [[c2]]"
       },
       {
-        "key": "request-flow",
-        "title": "请求与错误处理流程",
-        "body": "`headers()` 从浏览器 `sessionStorage` 读取 `omem-token`，存在时生成 Bearer 认证头。`api<T>()` 根据 body 是否存在默认选择 GET 或 POST，也允许调用方覆盖方法；请求统一添加 `/api` 前缀、JSON Content-Type，并按需序列化正文。[[c4]]\n\n响应到达后，函数先无条件执行 `r.json()`，再依据 `r.ok` 抛出响应中的 `error` 或返回解析值。[[c5]] 泛型 `T` 只提供静态推断，并不验证实际 JSON。空响应或非 JSON 内容可能在统一错误分支之前触发解析异常；当前实现也未体现超时、取消、重试、去重或令牌刷新。"
+        "key": "business_views",
+        "title": "覆盖审核、通知与飞书接入流程",
+        "body": "除基础实体外，文件还为后台异步流程提供了较完整的读取模型：作业可处于排队、租约、运行、等待决定、重试或终止等状态，并可携带多次尝试；提案则记录操作类型、证据、不确定性、策略结论和独立评估，决定对象进一步封装审批生命周期。参考 [[c3]]\n\n通知详情把变更、投递尝试、应用回执和关联证据聚合在一起；飞书相关类型则描述应用配置、连接、扫码接入、能力缺口与配对状态。这些都是供界面呈现流程状态的 DTO，材料中没有显示它们会主动驱动后台执行。参考 [[c4]]"
       },
       {
-        "key": "contracts-boundaries",
-        "title": "任务合同复用与结论修正",
-        "body": "先前“任务 DTO 的状态和跟进信息都来自共享合同”的结论已被替代：本文件仅导入 `TaskFollowUp`，而 `Task.status` 本地重复声明为 `open | waiting | done | cancelled`。其取值与共享 `TaskStatus` 一致，但没有直接复用该类型。[[c1]]\n\n共享合同将跟进信息约束为严格对象：等待对象文本为非空可空字符串，检查与延后时间须为带偏移量的日期时间，`time_expression` 只是最长 500 字符的可空时间表达式字符串，时区须通过 IANA 时区校验。[[c6]] 本文件仅以 TypeScript 类型导入该结构，不能据此确认 `api<T>()` 返回值会自动执行这些 Zod 规则；是否扩大共享 DTO 复用或增加响应校验，仍需结合服务端路由与测试判断。"
+        "key": "request_flow",
+        "title": "统一请求与错误处理",
+        "body": "`api<T>` 根据是否传入请求体选择默认方法：无请求体使用 GET，有请求体使用 POST；随后统一添加 JSON 内容类型，并从 `sessionStorage` 读取令牌组成 Bearer 认证头。请求体存在时会被 JSON 序列化，响应也始终按 JSON 解析；非成功状态优先抛出服务端 `error`，否则使用“请求失败”。参考 [[c5]]\n\n这一封装保持轻量，但边界也很明确：泛型 `T` 只提供编译期提示，没有对响应做运行时 schema 校验；空响应或非 JSON 响应会在 `r.json()` 阶段失败。默认方法也只区分 GET 与 POST，PUT、PATCH、DELETE 必须由调用方显式传入。参考 [[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "基础 API 类型与任务声明",
-        "reason": "支持共享类型导入、本地页面 DTO、TaskFollowUp 复用，以及任务状态仍在本文件重复声明的结论。",
+        "label": "前端核心数据视图",
+        "reason": "支持该文件集中声明来源、证据、通知、任务、配置与运行状态等界面数据形状的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/api.ts",
           "startLine": 1,
-          "endLine": 49
+          "endLine": 63
         },
         "quote": "import type { TaskFollowUp } from \"../../../packages/contracts/src/task-flow.js\";\nimport type {\n  Revision,\n  Fragment,\n  Change,\n  RunEvent,\n} from \"../../../packages/contracts/src/index\";\nexport type { Revision, Fragment, Change };\nexport type Source = {\n  id: string;\n  title: string;\n  source: string;\n  version: num"
       },
       {
         "key": "c2",
-        "label": "运行、作业、提案与决策类型",
-        "reason": "支持模型运行配置、作业生命周期、变更提案、策略评估和人工决策的数据边界说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 50,
-          "endLine": 159
-        },
-        "quote": "export type Profile = {\n  id: string;\n  name: string;\n  transport: string;\n  model?: string;\n  effort?: string;\n  maxContextChars: number;\n};\nexport type Run = {\n  id: string;\n  state: \"running\" | \"done\" | \"error\" | \"cancelled\";\n  events: RunEvent[];\n  answerId?: string;\n};\nexport type JobAttempt = {\n  id: string;\n  at"
-      },
-      {
-        "key": "c3",
-        "label": "通知详情与飞书接入类型",
-        "reason": "支持通知投递、回执、证据关联，以及飞书应用配置、连接、接入和复用应用的类型说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 160,
-          "endLine": 240
-        },
-        "quote": "export type NotificationDetail = Notification & {\n  changeKind: string | null;\n  changeTitle: string | null;\n  beforeId: string | null;\n  afterId: string | null;\n  details: string | null;\n  deliveries: {\n    id: string;\n    channel: string;\n    state: string;\n    attemptCount: number;\n    errorKind: string | null;\n    "
-      },
-      {
-        "key": "c4",
-        "label": "认证头与请求构造",
-        "reason": "支持令牌来源、默认 HTTP 方法、API 前缀、认证头和请求正文序列化流程，也表明实现依赖浏览器环境。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 242,
-          "endLine": 255
-        },
-        "quote": "export function headers(): Record<string, string> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n): Promise<T> {\n  const r = await fetch("
-      },
-      {
-        "key": "c5",
-        "label": "JSON 响应与错误分支",
-        "reason": "支持响应先解析 JSON、再检查 HTTP 状态并将解析结果直接作为泛型返回的行为及其限制。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/api.ts",
-          "startLine": 256,
-          "endLine": 258
-        },
-        "quote": "  const value = await r.json();\n  if (!r.ok) throw Error(value.error || \"请求失败\");\n  return value;"
-      },
-      {
-        "key": "c6",
-        "label": "任务状态与跟进共享合同",
-        "reason": "支持共享任务状态取值，以及 TaskFollowUp 对可空字符串、带偏移时间、IANA 时区和严格对象结构的具体约束。",
+        "label": "任务跟进共享合同",
+        "reason": "支持 Task.followUp 复用共享类型，以及共享合同对跟进时间、等待对象和时区进行约束的论断。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
@@ -100,27 +48,79 @@
           "endLine": 14
         },
         "quote": "export const taskStatusSchema = z.enum([\"open\", \"waiting\", \"done\", \"cancelled\"]);\nexport type TaskStatus = z.infer<typeof taskStatusSchema>;\nexport const taskFollowUpSchema = z.object({\n  waiting_on: z.string().min(1).max(500).nullable(),\n  next_check_at: z.iso.datetime({ offset: true }).nullable(),\n  snoozed_until: z."
+      },
+      {
+        "key": "c3",
+        "label": "作业与提案审核状态",
+        "reason": "支持异步作业状态、多次尝试、提案证据、策略评估和决定生命周期的描述。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 64,
+          "endLine": 161
+        },
+        "quote": "export type JobAttempt = {\n  id: string;\n  attempt: number;\n  generation: number;\n  model: string | null;\n  effort: string | null;\n  outcome: string | null;\n  error: string | null;\n  errorKind: string | null;\n  startedAt: string;\n  endedAt: string | null;\n};\nexport type Job = {\n  materialTitle?: string | null;\n  eviden"
+      },
+      {
+        "key": "c4",
+        "label": "通知与飞书接入视图",
+        "reason": "支持通知投递和回执聚合，以及飞书配置、连接、接入和配对状态的数据结构说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 162,
+          "endLine": 243
+        },
+        "quote": "export type NotificationDetail = Notification & {\n  changeKind: string | null;\n  changeTitle: string | null;\n  beforeId: string | null;\n  afterId: string | null;\n  details: string | null;\n  deliveries: {\n    id: string;\n    channel: string;\n    state: string;\n    attemptCount: number;\n    errorKind: string | null;\n    "
+      },
+      {
+        "key": "c5",
+        "label": "统一 API 请求流程",
+        "reason": "支持令牌读取、默认方法选择、JSON 序列化、响应解析和错误抛出方式及其边界说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 244,
+          "endLine": 260
+        },
+        "quote": "export function headers(): Record<string, string> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n): Promise<T> {\n  const r = await fetch("
       }
     ],
     "questions": [
       {
-        "question": "后端是否保证所有 `/api` 响应，包括错误和无内容响应，都返回可解析的 JSON？",
-        "why": "请求函数在检查 HTTP 状态前无条件调用 `r.json()`；204、空正文或非 JSON 错误页可能产生解析异常，而当前材料没有提供后端统一 JSON 响应格式的证据。",
-        "nextStep": "核对后端响应中间件和接口测试；若没有统一保证，为 204、空正文及非 JSON 错误响应补充安全解析和行为测试。",
+        "question": "服务端是否保证所有成功与失败响应都包含 JSON 正文？",
+        "why": "当前封装无条件调用 r.json()；若接口返回 204、空正文或纯文本错误，调用方会收到解析异常，而不是统一的“请求失败”错误。现有材料未提供服务端响应合同，无法确认这一假设是否始终成立。",
+        "nextStep": "检查服务端 API 的响应构造与相关集成测试，确认 JSON 保证；若不能保证，再决定是否按状态码和 Content-Type 做兼容处理。",
         "blocking": false,
         "citationKeys": [
           "c5"
         ]
       },
       {
-        "question": "前端本地 DTO 是否计划由共享 contracts 派生，并在响应入口执行运行时校验？",
-        "why": "材料显示只有部分类型来自共享合同，`Task.status` 仍在本文件重复声明，而 `api<T>` 直接返回解析值；现有范围不能确认其他位置是否存在 DTO 同步或运行时校验机制。",
-        "nextStep": "检查服务端路由 schema、合同导出和调用侧封装，再决定直接复用 `TaskStatus`、共享或生成关键 DTO，或为关键响应增加 Zod 校验。",
+        "question": "这些前端 DTO 是否与全部服务端响应保持同步？",
+        "why": "文件中大部分类型是本地声明，只有少数核心实体和 TaskFollowUp 来自共享合同；材料未显示 Job、Proposal、Decision、通知和飞书 DTO 存在运行时共享 schema 或自动生成机制。",
+        "nextStep": "对照对应路由的响应 schema，并为关键接口补充合同级解析或类型生成验证。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c5",
-          "c6"
+          "c2",
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "这些前端本地 DTO 是否持续与对应的服务端响应保持同步？",
+        "why": "材料显示部分核心实体和 TaskFollowUp 复用了共享合同，但未显示 Job、Proposal、Decision、通知及飞书 DTO 存在运行时共享 schema 或自动生成机制。",
+        "nextStep": "对照对应路由的响应 schema，并检查关键接口是否已有合同级解析或类型生成验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -129,7 +129,7 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
+      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
     },
     {
       "kind": "material",
@@ -144,34 +144,34 @@
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T03:42:15.546Z",
+    "effort": "high",
+    "at": "2026-10-01T12:10:35.673Z",
     "trace": {
-      "runId": "6fcc13eb-2dad-4230-a2c3-b6c8bd2801fe",
-      "roleId": "knowledge-refresher",
+      "runId": "0aff05ad-4037-4bca-a814-7256a83488fb",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "2d979644ddfdfc1ab8b207dd19fe45836995e82a9fc0d97ef16013e7dc6656d9",
-      "contextHash": "38e430859ae4d611a9f76b678c2efd3d50308cee7ceabdb7fbc6a51ea11d62b6",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "ddb0add7b84bcdaccd71f558a3d767cefdc163b5554226399fd446e47174bb52",
+      "contextHash": "9b149bfb4a0594d9b79b3fd03896136e70e75aee6c7c95f0d941f07a7270766e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2bb9a623c2b60daf6704e324f4d15642be5f5f9c266a1e8fa87ee771487b82c8",
+      "fingerprint": "61a8aafccaa34c5e241cbbafb9a1b9422d1bde3b0d4daa9ef12d215a33229280",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f58d-f283-7632-a3f0-1c57fcc2fbe9"
+        "01a0f75f-4dec-7963-9622-39b5dba0872b"
       ],
       "usage": {
-        "used": 28624,
+        "used": 28577,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -180,10 +180,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26029,
-          "utf8Bytes": 31043,
-          "estimatedTokens": 10348,
-          "budgetedTokens": 12935,
+          "chars": 20579,
+          "utf8Bytes": 23691,
+          "estimatedTokens": 7897,
+          "budgetedTokens": 9872,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -192,20 +192,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T03:42:34.793Z",
+    "at": "2026-10-01T12:10:55.285Z",
     "trace": {
-      "runId": "e83a3f19-5c3d-4b29-b791-bc238b6336cd",
+      "runId": "1680a88e-d891-45b7-993c-706012769025",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c1b76467c2ddf6e0a4e64fe735cbbd6f3cb8fb2fa4808b64086888bb527293d6",
-      "contextHash": "e3fbd426c4ed69071be43b60936b1fd2bd3bc1db749684d61b26af79a988597b",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "1cc1b714feed4cce3a26657da4ab2bc0025793b74dbc48e4923e6b99d5775f08",
+      "contextHash": "a5ec80f9c708bd0d1e18066ad4152d6e67623b664298dfff8524021a23e958a5",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5163ef95917d461510b2d073df350c5324aeccc6d3f3653c00eb16c9825b9740",
+      "fingerprint": "f36f5a9b03778824bdf7b2e5418a32e68a8f7b0403c79abbfc6d71464a29c415",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -215,10 +215,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f58e-60b3-7661-a37f-51d6d7000bf1"
+        "01a0f75f-b71e-74c0-b372-b81acb42e59e"
       ],
       "usage": {
-        "used": 26353,
+        "used": 27149,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -227,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 22586,
-          "utf8Bytes": 26068,
-          "estimatedTokens": 8690,
-          "budgetedTokens": 10863,
+          "chars": 23022,
+          "utf8Bytes": 28192,
+          "estimatedTokens": 9398,
+          "budgetedTokens": 11748,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

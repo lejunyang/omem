@@ -2,44 +2,36 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/quality/lark-annotations.ts",
-    "title": "飞书质量标注会话服务",
-    "summary": "该服务把质量数据集中的待审核样本组织成飞书交互卡片，通过事务化投递意图启动或续发会话，并对回传动作执行身份、消息、时效、摘要和随机数校验；验证成功后原子记录标注、推进样本并更新卡片。",
+    "title": "飞书交互卡片驱动的质量标注会话",
+    "summary": "该服务把质量数据集中的待审样本组织为仅限已绑定 owner 操作的飞书卡片会话，并通过协议校验、事件去重、上下文绑定和事务更新，逐条记录确认、放弃、待修改或跳过结果。它负责生成投递意图与处理回调，不直接证明卡片已成功发送；当前目标选择和存储边界明确面向 personal 单用户场景。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-and-card",
-        "title": "作用与卡片协议",
-        "body": "该服务解决“由已绑定 owner 在飞书中逐条复核质量样本”的问题。卡片动作采用严格的 `omem.quality.v1` 结构，携带会话、样本、动作、随机数、标签摘要和过期时间；随机数哈希比较使用定时安全函数，降低伪造与重放风险。[[c1]] 卡片同时展示原始材料、建议提炼结果、数据集进度以及确认、不提炼、需修改、稍后处理四种动作；若证据与原文完全一致则避免重复展示全文。[[c2]]"
+        "key": "purpose",
+        "title": "把质量复核变成连续的卡片任务",
+        "body": "服务解决的是“让数据所有者在飞书中逐条复核自动提炼建议”的问题。卡片同时展示原始材料、建议处置、提炼对象和当前进度，并提供“标注正确、应不提炼、需要修改、稍后处理”四种动作；按钮值携带会话、样本、随机 nonce、标签摘要和过期时间，供回调时核验。参考 [[c1]]\n\n这里的进度来自质量仓库，服务只负责编排交互；样本输入本身包含固定来源位置、材料类别和来源可信度信息，因此人工判断仍能回到原始上下文。延伸阅读：[[c2]]"
       },
       {
-        "key": "session-and-delivery",
-        "title": "会话启动、续发与取消",
-        "body": "`start` 先检查同一数据集的活动会话：普通重复调用直接返回已有会话，显式 `resend` 则轮换 nonce、清空消息标识，并在同一事务中写入变更记录和新的飞书投递意图。[[c3]] 新会话必须存在待处理样本及有效的个人点对点 owner 通知目标；随后会话、变更、投递意图和二者关联被一次性提交。这里仅负责入队，实际网络发送属于投递模块。[[c4]] `cancel` 只允许取消活动会话，并同步撤销尚未发送或等待重试的意图；发送中和已送达记录会保留，以免虚构消息已被召回。[[c5]]"
+        "key": "session_flow",
+        "title": "启动、续发与取消如何落库",
+        "body": "启动时先查找同一数据集的活动会话：默认重复调用只返回既有会话；显式续发则为当前样本换新 nonce、清空消息标识，并在同一事务内写入变更记录和新的飞书投递意图。若没有活动会话，系统取得下一条待审样本，只选择 personal 工作区中处于活动状态的 owner 私聊目标，再创建会话和首个投递意图。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[待审样本] --> B[活动 owner 私聊目标]\n  B --> C[标注会话]\n  C --> D[变更记录与投递意图]\n  D --> E[飞书交互卡片]\n```\n参考 [[c4]]\n\n取消操作仅撤销尚未发送或等待重试的投递意图；已经发送、正在发送或结果未知的请求不会被伪装成已撤回，从而保留真实投递历史。参考 [[c5]]"
       },
       {
-        "key": "validation-and-advance",
-        "title": "回调验证、幂等与推进边界",
-        "body": "`handle` 只接受卡片动作事件，并先借助 `LarkEventInbox` 持久化收件；已经处理过的重复事件直接返回成功提示。[[c6]] 对新事件，服务同时核对会话状态、当前样本、owner、会话、消息、应用、过期时间、标签摘要和 nonce，任一不符都会把收件记录标为失败。[[c7]] 验证通过后，样本标注、审计事件、收件状态和会话游标在一个数据库事务内更新；仍有待审样本时轮换 nonce 并返回下一张卡，否则完成会话。[[c8]] 它明确依赖质量仓库管理样本和标签、加密密钥仓库派生 nonce 哈希、Store 提供 SQLite 事务；跨文件更深层的并发约束和投递行为无法仅凭当前材料确认。"
+        "key": "callback_validation",
+        "title": "回调的身份绑定、幂等与推进",
+        "body": "回调只接受卡片动作事件，并先写入事件收件箱。已处理过的重复事件会直接返回“已经记录”；新事件必须通过严格协议解析，再同时匹配活动会话、当前样本、owner 身份、会话聊天、消息、应用、有效期、标签摘要和 nonce。任何一项不符都会把收件记录标为失败并返回统一的无效提示。参考 [[c6]]\n\n校验通过后，服务在事务中写入人工标签和审计事件，将收件记录标为已处理，取得下一条待审样本并轮换 nonce；有下一条时返回更新后的卡片，没有时结束会话并显示汇总。这样一次点击同时推进样本状态、事件状态和会话游标。参考 [[c7]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "职责边界与已知限制",
+        "body": "该类依赖 `QualityRepository` 读取进度、样本并写入标签，依赖 `LarkEventInbox` 持久化入站事件，依赖加密秘密存储派生 nonce 哈希；数据库事务由共享 `Store` 提供。参考 [[c8]]\n\n当前实现具有明确边界：只选择 personal 工作区的活动 owner 私聊绑定；会话动作默认三十天过期；没有待审样本或合适目标时直接报错。底层 Store 也明确以 SQLite 单用户为现阶段基础，不能据此推断已有团队租户隔离。参考 [[c9]] [[c10]]\n\n此外，本文件生成的是 `delivery_intents`，并未包含实际网络发送过程；回调却要求数据库中的 `message_id` 与事件一致，因此消息发送后如何回填该字段属于其他模块职责，仅凭当前材料无法确认具体实现。参考 [[c11]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "动作协议与安全比较",
-        "reason": "支持卡片动作字段受到严格校验，以及 nonce 哈希采用定时安全比较的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/lark-annotations.ts",
-          "startLine": 12,
-          "endLine": 28
-        },
-        "quote": "const actionSchema = z\n  .object({\n    protocol: z.literal(\"omem.quality.v1\"),\n    sessionId: z.string().uuid(),\n    sampleId: z.string().uuid(),\n    action: z.enum([\"confirm\", \"abstain\", \"needs_edit\", \"skip\"]),\n    nonce: z.string().min(32).max(200),\n    labelDigest: z.string().regex(/^[a-f0-9]{64}$/),\n    expiresAt: "
-      },
-      {
-        "key": "c2",
-        "label": "质量标注卡片构造",
-        "reason": "支持卡片展示内容、进度和四种人工处置按钮的说明。",
+        "label": "质量标注卡片结构",
+        "reason": "支持卡片展示内容、四种人工动作以及回调值所携带校验字段的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -50,22 +42,35 @@
         "quote": "  private card(\n    sessionId: string,\n    sample: QualitySample,\n    nonce: string,\n    expiresAt: string,\n  ) {\n    const progress = this.repository.progress(sample.datasetId);\n    const total = Object.values(progress).reduce(\n      (sum, count) => sum + Number(count),\n      0,\n    );\n    const reviewed = total - Num"
       },
       {
+        "key": "c2",
+        "label": "质量样本输入约束",
+        "reason": "说明质量样本保存来源定位、类别、正文和来源可信度信息。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 8,
+          "endLine": 37
+        },
+        "quote": "export const qualitySampleInputSchema = z\n  .object({\n    source: z\n      .object({\n        uri: z.string().min(1).max(2000),\n        documentId: z.string().min(1).max(500),\n        revisionId: z.string().min(1).max(500),\n        fragmentId: z.string().min(1).max(500),\n        section: z.string().min(1).max(500),\n     "
+      },
+      {
         "key": "c3",
         "label": "活动会话续发流程",
-        "reason": "支持重复启动判定、续发时轮换凭证及事务化创建投递意图的说明。",
+        "reason": "支持重复启动判定、续发时轮换 nonce，以及事务写入变更和投递意图的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/lark-annotations.ts",
           "startLine": 180,
-          "endLine": 264
+          "endLine": 263
         },
         "quote": "  start(datasetId: string, appId?: string, options: { resend?: boolean } = {}) {\n    const existing = this.store.db\n      .prepare(\n        `SELECT s.*,b.binding_version FROM quality_annotation_sessions s\n         JOIN lark_bindings b ON b.id=s.binding_id\n         WHERE s.dataset_id=? AND s.state='active'\n         ORDE"
       },
       {
         "key": "c4",
-        "label": "新标注会话与投递意图",
-        "reason": "支持目标筛选、待处理样本检查，以及会话和投递记录共同入库的说明。",
+        "label": "新建标注会话流程",
+        "reason": "支持从待审样本和 owner 私聊目标创建会话、变更记录与投递意图的流程图。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -77,9 +82,9 @@
       },
       {
         "key": "c5",
-        "label": "会话取消语义",
-        "reason": "支持仅撤销未发送意图、保留发送中及已送达历史这一边界。",
-        "relation": "implements",
+        "label": "取消会话的投递边界",
+        "reason": "说明取消与待发送意图在同一事务更新，并保留发送中及已送达历史。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/lark-annotations.ts",
@@ -90,35 +95,22 @@
       },
       {
         "key": "c6",
-        "label": "飞书事件收件与去重",
-        "reason": "支持服务依赖收件箱持久化事件，并对已处理重复回调做幂等响应。",
-        "relation": "depends_on",
+        "label": "卡片回调完整校验",
+        "reason": "支持事件类型限制、收件箱去重、协议解析及会话上下文多条件校验。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/lark-annotations.ts",
           "startLine": 355,
-          "endLine": 368
+          "endLine": 394
         },
         "quote": "  handle(event: LarkInboundEvent) {\n    if (event.kind !== \"card.action.trigger\")\n      throw Error(\"QUALITY_CARD_EVENT_REQUIRED\");\n    const receipt = this.inbox.persist(event);\n    if (receipt.duplicate && receipt.state !== \"received\")\n      return {\n        accepted: true,\n        duplicate: true,\n        toast: { t"
       },
       {
         "key": "c7",
-        "label": "卡片动作完整校验",
-        "reason": "支持对身份、聊天、消息、应用、时效、标签摘要和 nonce 联合校验的说明。",
+        "label": "标注事务与下一条卡片",
+        "reason": "支持标签、审计事件、收件状态和会话游标在事务中更新，并返回下一张或完成卡片。",
         "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/quality/lark-annotations.ts",
-          "startLine": 369,
-          "endLine": 394
-        },
-        "quote": "    const action = parsed.data;\n    const session = this.store.db\n      .prepare(\n        `SELECT s.*,b.owner_open_id,c.app_id FROM quality_annotation_sessions s\n         JOIN lark_bindings b ON b.id=s.binding_id\n         JOIN lark_connections c ON c.id=b.connection_id WHERE s.id=?`,\n      )\n      .get(action.sessionId"
-      },
-      {
-        "key": "c8",
-        "label": "标注事务与下一样本推进",
-        "reason": "支持标注、审计、收件处理和会话推进原子完成，以及返回下一卡片或完成卡片的说明。",
-        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/quality/lark-annotations.ts",
@@ -126,18 +118,89 @@
           "endLine": 458
         },
         "quote": "    const nextNonce = randomBytes(24).toString(\"base64url\");\n    const at = new Date().toISOString();\n    let next: QualitySample | null = null;\n    this.store.tx(() => {\n      this.repository.label({\n        sampleId: sample.id,\n        action: action.action,\n        reviewerOpenId: event.senderOpenId!,\n        expect"
+      },
+      {
+        "key": "c8",
+        "label": "标注服务依赖关系",
+        "reason": "支持该服务对 Store、飞书事件收件箱、秘密存储和质量仓库的直接依赖。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 3,
+          "endLine": 40
+        },
+        "quote": "import type { Store } from \"../store.js\";\nimport { stableDigest } from \"../storage/digest.js\";\nimport type { LarkInboundEvent } from \"../integrations/lark/realtime.js\";\nimport { LarkEventInbox } from \"../integrations/lark/realtime.js\";\nimport type { EncryptedSecretStore } from \"../integrations/lark/secret-store.js\";\nim"
+      },
+      {
+        "key": "c9",
+        "label": "owner 私聊与有效期限制",
+        "reason": "支持 personal 工作区、owner 私聊目标筛选、活动状态要求和三十天有效期限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 265,
+          "endLine": 286
+        },
+        "quote": "    const sample = this.repository.nextPending(datasetId);\n    if (!sample) throw Error(\"QUALITY_DATASET_HAS_NO_PENDING_SAMPLES\");\n    const target = this.store.db\n      .prepare(\n        `SELECT t.chat_id,b.id AS binding_id,b.owner_open_id,b.binding_version\n         FROM lark_targets t JOIN lark_bindings b\n           "
+      },
+      {
+        "key": "c10",
+        "label": "单用户 SQLite 基础",
+        "reason": "说明当前共享存储明确是单用户基础，团队权限执行仍属于后续迁移。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 6
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";"
+      },
+      {
+        "key": "c11",
+        "label": "消息标识的创建与校验",
+        "reason": "启动时会话消息标识为空，而回调要求其与入站事件一致，支持指出发送后的回填职责不在当前文件中。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/lark-annotations.ts",
+          "startLine": 289,
+          "endLine": 345
+        },
+        "quote": "    this.store.tx(() => {\n      this.store.db\n        .prepare(\n          `INSERT INTO quality_annotation_sessions(\n             id,dataset_id,binding_id,chat_id,owner_open_id,message_id,\n             current_sample_id,nonce_hash,expires_at,state,created_at,updated_at\n           ) VALUES(?,?,?,?,?,NULL,?,?,?,'active',?"
       }
     ],
     "questions": [
       {
-        "question": "投递 worker 在成功发送卡片后，如何把飞书 messageId 回填到 quality_annotation_sessions，并如何处理发送成功但本地确认丢失的情况？",
-        "why": "启动和续发流程把 message_id 设为 NULL，而回调验证要求事件 messageId 与会话记录完全一致；当前材料没有展示两者之间的回填协议，这决定首个有效点击能否通过验证。",
-        "nextStep": "检查 delivery_intents 的飞书发送实现及其成功、重试和未知结果分支，确认是否在同一持久化流程中更新会话 message_id，并补充相应行为测试。",
+        "question": "投递成功后由哪个组件把飞书 message_id 回填到 quality_annotation_sessions？",
+        "why": "新会话插入时 message_id 为 NULL，但回调校验要求它与事件 messageId 完全一致；提供的当前文件未展示两者之间的回填步骤。",
+        "nextStep": "检查 delivery_intents 的飞书发送 worker 及其成功回执处理，确认回填事务、失败重试和续发消息替换规则。",
+        "blocking": false,
+        "citationKeys": [
+          "c11",
+          "c6"
+        ]
+      },
+      {
+        "question": "同一活动会话在并发 start 或 resend 请求下是否具有数据库级唯一约束？",
+        "why": "代码采用先查询再插入或更新的流程，但当前材料没有展示 quality_annotation_sessions 的表约束；仅凭该文件不能确认并发请求不会创建两个活动会话。",
+        "nextStep": "检查数据库迁移中的索引与约束，并补充并发启动的行为测试或事务级串行化说明。",
         "blocking": false,
         "citationKeys": [
           "c3",
-          "c4",
-          "c7"
+          "c4"
+        ]
+      },
+      {
+        "question": "同一数据集的并发 start 或 resend 请求是否受数据库级唯一约束或串行化保护？",
+        "why": "当前实现采用先查询活动会话、再更新或插入的流程，而所给材料没有包含 quality_annotation_sessions 的完整表约束，无法确认并发请求一定不会产生重复活动会话或相互覆盖续发状态。",
+        "nextStep": "检查数据库迁移中的索引与约束，并结合并发启动行为测试确认实际保证。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -166,26 +229,26 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-10-01T02:17:39.438Z",
+    "effort": "high",
+    "at": "2026-10-01T11:49:21.961Z",
     "trace": {
-      "runId": "474874e9-ed2b-45d0-a85f-ef071fd60917",
+      "runId": "057cd2b2-1118-453b-8382-daf563a11e8b",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "a574ccb9d92d5f36796c1951066a5d24f9dc58c8ef2e943097b6a5f40257a675",
-      "contextHash": "e19332697bdb5188cc50534d363124a4b50effc323e2ea41239081b51407cb6b",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "141b1c39abc9a96a78cb1c2a069b9e560a82ad5dee3441bf9a723832e8b238ce",
+      "contextHash": "ee6de5222f5330b8c089edc81f596038c4e2e6f5b3ce5d7e36c9263e8bd96b90",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c59c2e5a0d97fb13ae8674de2baa94c5672209fd930330d9a57e2522129e15e9",
+      "fingerprint": "a9ff145754177f3bb397098fd95c576c95776beae817eb32c0b94c096999d3fa",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-code-analyst",
@@ -195,10 +258,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f540-6a18-7fb1-b082-c1697a612166"
+        "01a0f74b-c362-7a63-95fa-5c57ad69ad5c"
       ],
       "usage": {
-        "used": 31645,
+        "used": 33041,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -207,10 +270,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 38473,
-          "utf8Bytes": 40708,
-          "estimatedTokens": 13570,
-          "budgetedTokens": 16963,
+          "chars": 39303,
+          "utf8Bytes": 42870,
+          "estimatedTokens": 14290,
+          "budgetedTokens": 17863,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -219,20 +282,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:18:03.562Z",
+    "at": "2026-10-01T11:49:48.431Z",
     "trace": {
-      "runId": "7d9a30eb-30a3-4996-9403-fa8b9566869c",
+      "runId": "c9ae2e2d-76a4-4871-bd90-ad725de751cc",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "031f358adc2cc954fd0f38001a309925186f463a44cefd1b78be3ac9d6c913d9",
-      "contextHash": "bf52338f76cf3b09022e24b36c960c5e331b916d02b5a8fff62cc50ad270bf41",
+      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
+      "promptHash": "34e5526d54563c35bdc2e8f808787a0b439f81d76c1fdc13418fd6d06e833c6f",
+      "contextHash": "9cb444d053361d7c3d9c79a2afc2465ba22393f31e5ff24e5996c984ee47c400",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "8ea808e0e6c98b52db5368220cf22bf336ec7cf71ca3b5858ab92d1767d55dd8",
+      "fingerprint": "b741c516fd0aa84b6dca2950d837b2cd367d1cc30c9681b8fda6d47806aa1368",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -242,10 +305,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f540-dfbc-7e13-bdb3-ffd5a6f19aa1"
+        "01a0f74c-4993-7472-ab84-9008b5a35e9e"
       ],
       "usage": {
-        "used": 32235,
+        "used": 34372,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -254,10 +317,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 42190,
-          "utf8Bytes": 45981,
-          "estimatedTokens": 15327,
-          "budgetedTokens": 19159,
+          "chars": 45524,
+          "utf8Bytes": 52193,
+          "estimatedTokens": 17398,
+          "budgetedTokens": 21748,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
