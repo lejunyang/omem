@@ -1,0 +1,47 @@
+{
+  "checkedAt": "2026-10-01T18:01:03.500Z",
+  "model": "gpt-5.6-sol",
+  "workflow": "reader-first",
+  "selection": [
+    "guide:overview",
+    "guide:capture",
+    "guide:retrieval",
+    "guide:memory",
+    "guide:contributing"
+  ],
+  "pages": [
+    {
+      "key": "guide:overview",
+      "title": "先认识 omem：把材料变成能找回的工作记忆",
+      "state": "reviewed"
+    },
+    {
+      "key": "guide:capture",
+      "title": "一份材料的旅程：从导入到阅读与引用",
+      "state": "reviewed"
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：搜索、上下文与 RAG",
+      "state": "reviewed"
+    },
+    {
+      "key": "guide:memory",
+      "title": "规则变了以后：原文、记忆与待办如何更新",
+      "state": "failed",
+      "error": "Error: Agent timed out"
+    },
+    {
+      "key": "guide:contributing",
+      "title": "改一条完整功能链：从搜索结果到界面",
+      "state": "reviewed"
+    }
+  ],
+  "failures": [
+    {
+      "key": "guide:memory",
+      "state": "failed",
+      "error": "Error: Agent timed out"
+    }
+  ]
+}

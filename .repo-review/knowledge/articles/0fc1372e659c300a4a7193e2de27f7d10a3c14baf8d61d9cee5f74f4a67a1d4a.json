@@ -2,77 +2,120 @@
   "version": 1,
   "document": {
     "key": "guide:contributing",
-    "title": "改一条完整功能链：让搜索结果说明所属章节",
-    "summary": "以顶部搜索结果中的章节提示为贯穿例子，从开发环境、前端请求、搜索 API、章节推导到页面展示，说明第一次修改 omem 时如何定位改动边界、补充测试，并在真实页面中确认结果。",
-    "category": "workflow",
+    "title": "改一条完整功能链：让搜索结果显示所属章节",
+    "summary": "以“搜索结果显示它属于哪一节”为例，从个人开发环境、前端搜索、HTTP API、检索上下文和章节结构投影一路定位到界面，并说明怎样选择修改层次、复用组件、更新相关知识，以及如何区分程序检查通过与真实阅读可用。",
+    "category": "开发指南",
+    "topicPath": [
+      "软件开发",
+      "omem"
+    ],
     "sections": [
       {
         "key": "scenario",
-        "title": "先看清要改变的用户体验",
-        "body": "假设读者搜索“消息 后台”，希望每条结果不仅显示命中的原文，还明确告诉他“这段内容属于哪一节”。当前页面已经具备这一体验：结果面板先显示材料标题，再显示章节标题与起止行，随后才是原文摘要和“查看固定片段”的入口。你可以把第一次改动限定为调整这条章节提示的文案、排版或显示条件，而不必重构整套搜索。参考 [[c1]]\n\n在代码中，搜索结果的 `section` 已声明为可空对象，包含标题和起止行；实际模板位于顶部搜索结果的 `OmPanel` 内。若需求只是把“章节标题 · 第 10–20 行”改得更易读，主要入口就是这里。参考 [[c2]]"
+        "title": "先看要完成的用户行为",
+        "body": "假设你第一次修改 omem，希望用户在顶部搜索“搜索结果属于哪一节”时，不只看到命中的文字，还能看到类似“如何启动 · 第 3–7 行”的章节提示，并且仍能打开固定原文。现有结果卡片已经具备这个行为：有章节时显示标题和行范围，随后呈现摘要及“查看固定片段”；请求完成但没有结果时才显示空态。参考 [[c1]]\n\n这项改动适合作为理解仓库的起点，因为它跨过了前端状态、HTTP 请求、统一检索、原文结构和视觉呈现，却不需要重构整个系统。页面计划也把它明确设为面向首次贡献者的贯穿场景。参考 [[c2]]"
       },
       {
-        "key": "start",
-        "title": "启动开发环境并理解材料从哪里来",
-        "body": "先在仓库根目录运行 `osdk install`、`osdk deps --frozen` 和 `osdk run dev`。开发入口会把当前目录设为仓库根，并以个人模式加载共享启动器；启动器分别运行带监听的服务端和 Vite，默认使用 API 4317、Web 5173，端口冲突时会选择空闲端口，因此应以终端打印的实际地址为准。参考 [[c3]] [[c4]]\n\n这不是一套只展示静态文档的演示环境。服务端检测到仓库根后，会导入当前仓库材料、已发布知识以及固定引用仍需要的历史材料，再用仓库检索策略包装原有个人检索；实时文件最后导入，避免历史版本覆盖当前内容。启动本身不会自动重新生成整库知识。参考 [[c5]] [[c6]]"
+        "key": "start_dev",
+        "title": "启动个人开发环境并接入仓库材料",
+        "body": "统一入口是 `osdk run dev`。入口脚本把当前目录声明为仓库根，将模式设为个人开发，再交给开发编排器；默认 API 和 Web 端口分别是 4317、5173，默认端口被占用时会选择空闲端口，因此应以终端打印的地址为准。参考 [[c3]] [[c4]]\n\n编排器分别启动服务端和 Vite，等待 API 健康后才报告可用地址，并让 Web 端的 `/api` 指向实际 API 端口。启动只接入当前仓库与已提交知识，不会自动重新生成整库文章。参考 [[c5]] [[c6]]\n\n服务端发现仓库根后，会把开发知识导入当前个人 Store，并用仓库输入适配器包装统一检索；知识路由和助手共用这套检索入口。导入时先从隔离评审 Store 补入发布文章所依赖的历史文章和历史材料；随后捕获当前仓库文件，使 live head 不会被较早材料倒退；再恢复历史及当前发布文章，最后刷新文章的 current、stale 等状态。整个过程是在个人数据库中追加仓库材料与知识，不会替换已有个人捕获。参考 [[c7]] [[c8]]"
       },
       {
-        "key": "request-flow",
-        "title": "从输入框追到搜索 API",
-        "body": "用户提交搜索后，`App.vue` 会递增 `searchVersion`，把查询编码后交给通用 `api()`；只有最后一次请求的版本仍匹配时才更新结果，因此较慢的旧响应不会盖掉新搜索。请求失败会写入页面已有的错误状态。通用请求函数统一补上 `/api` 前缀、访问令牌和 JSON 处理，所以这里传入的 `/search?q=...` 最终对应 `GET /api/search`。参考 [[c7]] [[c8]]\n\n```mermaid\nflowchart LR\n  A[顶部搜索输入] --> B[App.vue search]\n  B --> C[GET /api/search]\n  C --> D[共享检索服务]\n  D --> E[计算命中所属章节]\n  E --> F[结果面板显示章节与原文]\n```\n\n服务端会把查询限制在 300 字符内，最多取得 30 个命中；每个命中再结合固定 fragment 找到材料标题、版本、摘要、召回信息和章节信息，最后返回前端。参考 [[c9]]"
+        "key": "search_flow",
+        "title": "沿搜索链路定位数据",
+        "body": "输入搜索词后，`App.vue` 会取消前一次请求、递增版本、清空旧结果，并等待 250ms 再发起搜索。真正请求 `/search?q=...` 时使用 `AbortController`；只有响应版本仍是最新版本才写入结果，被取消的旧请求也不会覆盖当前错误状态。参考 [[c9]] [[c10]]\n\n```mermaid\nflowchart LR\n  A[顶部搜索输入] --> B[App.vue 防抖与取消旧请求]\n  B --> C[api 调用 /api/search]\n  C --> D[统一检索返回固定片段]\n  D --> E[evidenceSection 补充章节]\n  E --> F[OmPanel 显示章节与原文入口]\n```\n\n通用 `api()` 负责添加 `/api` 前缀、浏览器令牌和取消信号，并把非成功响应转换成可显示的错误。服务端则限制查询长度和结果数，调用异步或同步检索，再从每个固定片段恢复标题、版本、分数、召回路径及章节信息。参考 [[c11]] [[c12]]"
       },
       {
-        "key": "section-projection",
-        "title": "章节信息如何从原文中推导",
-        "body": "`section` 不是额外维护的一份事实，而是命中原文的**阅读结构投影**。服务端先把 fragment 映射回完整材料，找出它在原文中的起始行，再选择覆盖该行且范围最小的章节。Markdown 通过标题层级形成章节范围；TypeScript、JavaScript、TSX、Vue 等代码则复用解析器得到符号范围；没有可识别结构时，整份材料作为一个 document。参考 [[c10]]\n\n章节标题本身也属于内容。材料不存在、fragment 无法定位，或同一材料包含当前调用者不可见的 fragment 时，`evidenceSection` 会返回 `null`，避免章节标签泄露隐藏内容。前端因此必须保留 `v-if=\"r.section\"` 一类的空值处理，不能假定每条结果都有章节。参考 [[c11]]\n\n这套投影还被助手复用，用来为检索证据补充 `sectionTitle` 和相邻原文。因此，若你改变的是“哪一节”的判定算法，影响面不只包括顶部搜索，也包括助手得到的阅读上下文。参考 [[c12]]"
+        "key": "section_projection",
+        "title": "理解“所属章节”从哪里来",
+        "body": "章节提示不是模型生成的新事实，而是原材料阅读结构的投影。TS、JS、Vue 等文件使用现有解析器产生符号范围；Markdown 使用与阅读器一致的 lexer 提取标题层级，代码围栏里的伪标题不会成为章节；没有可识别结构时，整份材料作为一个文档范围。命中一行若同时落在多个范围中，会选择覆盖它的最小范围。参考 [[c13]]\n\n`evidenceSection` 从片段恢复其修订和材料，计算片段所在行，再返回章节标题和起止行。材料、片段或章节不存在时返回 `null`；如果材料含当前调用者不可见的片段，也不暴露章节标签，因为标题本身同样属于内容。前端因此必须把“没有章节”当作正常状态，而不是猜一个标题补上。参考 [[c14]]\n\n现有回归还验证了 Markdown 层级、围栏代码、相邻片段和可见性：命中“重试”段落时可以补到同节标题及相邻文字，但不会跨到下一节；不可见时不返回邻居。参考 [[c15]]"
       },
       {
-        "key": "change-boundaries",
-        "title": "按改动性质选择入口",
-        "body": "可以用下面的边界快速判断该改哪里：\n\n| 想改变的行为 | 主要入口 | 需要同步关注 |\n| --- | --- | --- |\n| 章节提示的文字、顺序或布局 | `apps/web/src/App.vue` 的搜索结果面板 | 空章节、长标题、窄屏换行 |\n| 搜索响应增加或调整字段 | `apps/server/src/app.ts` 的 `/api/search` | 前端结果类型、HTTP 测试 |\n| 改变章节归属算法 | `retrieval/context.ts`、`knowledge/structure.ts` | Markdown、代码符号、可见性、助手上下文 |\n| 改变仓库材料的召回资格或排序 | `knowledge/development.ts` | 个人材料仍保持原策略 |\n\n前端应继续复用 `@omem/ui` 的 `OmPanel`、`OmCitation` 等组件。通用交互行为放入公共 UI，业务请求和状态留在 `apps/web`；视觉上沿用黑白灰 token、统一间距和可辨识的辅助文字，不为这一条提示另造一套按钮或面板。参考 [[c13]]"
+        "key": "choose_layer",
+        "title": "按改动意图选择入口",
+        "body": "围绕这个例子，可以按责任边界选择修改位置：\n\n| 想改变什么 | 主要入口 | 应保持的边界 |\n| --- | --- | --- |\n| 章节提示的文案、位置或显隐 | `apps/web/src/App.vue` | 保留加载、失败、空结果与无章节状态 |\n| 提示的间距、字号或换行 | `apps/web/src/styles.css` | 使用既有 token 和间距节奏 |\n| API 返回字段或结果装配 | `apps/server/src/app.ts` | 继续从固定片段恢复来源信息 |\n| 代码或 Markdown 的章节边界 | `knowledge/structure.ts` | 这是通用阅读结构，不能按项目路径特判 |\n| 可见性与章节恢复规则 | `retrieval/context.ts` | 不泄露隐藏内容 |\n\n当前 `.search-section` 已使用次级文字色、13px 字号和 12px 下间距；只调整视觉节奏时通常无需触碰检索。参考 [[c16]]\n\n仓库专属的候选资格则属于 `developmentRetrieval`：它排除已移除材料和旧路径别名，同时保留个人材料原有行为；实际内容排序仍交给共享检索器。不要把仓库名、目录词或验收题写进通用章节判断。参考 [[c17]]"
       },
       {
-        "key": "verification",
-        "title": "先验证行为，再查看真实页面",
-        "body": "若只改展示，至少运行 `osdk deps --frozen` 和 `osdk run check`，然后启动真实服务检查搜索结果。若改了搜索或章节算法，应补两层验证：一层通过真实 Fastify handler 请求 `/api/search`，确认返回合同；另一层用结构测试确认 Markdown 标题、相邻片段和可见性仍按预期工作。现有测试已经展示了中文多词查询与章节内上下文的写法，可在相邻用例中扩展章节字段断言。参考 [[c14]]\n\n程序检查通过只说明回归、类型和构建没有失败，不能证明提示真的易读。页面验收要使用 `osdk run browser`，并在真实服务中检查桌面、768px 和 390px：章节标题是否与摘要拉开层次、长中文是否自然换行、是否出现横向滚动、固定片段入口是否仍可操作。现有视口脚本会切换三个宽度、检查横向溢出并保存截图和报告，可作为扩展搜索场景的落点。参考 [[c15]] [[c16]]"
+        "key": "ui_practice",
+        "title": "复用组件并在真实页面观察结果",
+        "body": "搜索结果区域已经使用 `OmPanel` 呈现每项结果、用 `OmCitation` 打开固定片段，并以 `OmEmpty` 表达确实没有命中的状态。新增通用交互时先检查 `packages/ui`；业务请求和搜索状态继续留在 `apps/web`，公共组件只通过 props、slots 和 events 接收数据。参考 [[c1]] [[c18]]\n\n视觉上沿用黑白灰阅读基线和统一 token。正文、元信息、代码及按钮组使用 4/8/12/16/24/32/48px 的节奏；错误不能只靠颜色表达，普通点击区域至少 44×44px。检查时不仅看元素是否存在，还要实际输入查询，观察加载、失败、重试、空结果、有章节和无章节，并覆盖 390、768、1440px、长标题及横向溢出。参考 [[c19]] [[c20]]"
       },
       {
-        "key": "knowledge-and-limits",
-        "title": "更新相关知识，并区分当前能力与后续空间",
-        "body": "如果改动改变了这篇开发指南所描述的真实流程，可运行 `osdk run review:guides contributing` 只更新本页；发布文章位于 `.repo-review/knowledge/`，研究、角色输出和 trace 留在 `.repo-review/runtime/`。启动开发环境不会替你自动生成这些知识。参考 [[c17]] [[c18]]\n\n当前统一搜索与上下文已经实现首个可用切片：顶部搜索、知识搜索和助手共享检索基础，助手能补章节标题与相邻片段；但完整意图路由和跨文件功能链仍是后续工作。因此，这次小改动应围绕“章节提示是否准确、可见、可读”验收，不要把单次搜索展示扩大成完整调用图或全仓库理解能力。最终判断也分两层：`check` 证明程序可运行，真实页面和实际问题则证明读者能理解、定位并开始行动。参考 [[c19]]"
+        "key": "verify_publish",
+        "title": "验证实现、更新知识并认识当前限制",
+        "body": "实现完成后先运行 `osdk deps --frozen` 和 `osdk run check`；涉及页面时再运行 `osdk run browser`，并用视口脚本查看实际开发页面。程序测试和构建通过只能说明实现层没有发现回归，不能证明搜索排序合理、章节提示易读或引用真的方便使用。参考 [[c21]]\n\n若改动影响这篇指南或其依据，页面计划中的 key 是 `guide:contributing`，可运行 `osdk run review:guides contributing`，让真实 ACP 重新调查、写作和独立复核该页。生成脚本会按目标筛选页面、发布成功产物、刷新目录，并把失败记录为失败而不是覆盖成成功；模型产物不应手工拼改。参考 [[c22]] [[c23]]\n\n最后在真实页面复现贯穿示例：输入查询，确认最新请求胜出、章节有依据时出现、没有依据时诚实省略，并打开固定片段核对行范围。当前系统已有结构投影和统一检索首片，但仍缺完整意图路由、跨文件调用与类型解析；一次结果卡片的小改动也不等于已经拥有任意功能的自动修改器或完整仓库功能目录。参考 [[c24]] [[c25]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "搜索结果章节展示",
-        "reason": "支持当前结果面板会显示章节标题、行范围、摘要和固定片段入口。",
+        "label": "搜索结果界面",
+        "reason": "支持结果卡片实际使用公共组件，并显示章节、摘要、固定片段入口及诚实空态。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 530,
-          "endLine": 538
+          "startLine": 538,
+          "endLine": 553
         },
-        "quote": "    <section v-if=\"query\" class=\"page\">\n      <h1>搜索“{{ query }}”</h1>\n      <p class=\"muted\">结合原文、代码名称与已有知识查找。已启用的中文语义索引也会参与召回。</p>\n      <OmPanel v-for=\"r in results\" :key=\"r.id\" :title=\"r.title\" class=\"stack\"\n        ><p v-if=\"r.section\" class=\"search-section\">{{ r.section.title }} · 第 {{ r.section.startLine }}–{{ r"
+        "quote": "    <section v-if=\"query.trim()\" class=\"page\" :aria-busy=\"searching\">\n      <h1>搜索“{{ query }}”</h1>\n      <p class=\"muted\">结合原文、代码名称与已有知识查找。已启用的中文语义索引也会参与召回。</p>\n      <p v-if=\"searching\" class=\"search-loading\" role=\"status\"><span class=\"search-spinner\" aria-hidden=\"true\" />正在搜索相关材料…</p>\n      <p v-else-if=\"searchErro"
       },
       {
         "key": "c2",
-        "label": "搜索结果数据合同",
-        "reason": "支持前端结果类型已经包含可空的章节标题和行范围。",
-        "relation": "implements",
+        "label": "贡献指南页面计划",
+        "reason": "说明本页的目标读者、功能链场景与改动范围。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 84,
-          "endLine": 96
+          "key": "omem:config/wiki-pages.json",
+          "startLine": 108,
+          "endLine": 115
         },
-        "quote": "const query = ref(\"\");\nconst sourceQuery = ref(\"\");\nconst results = ref<\n  { id: string; text: string; title: string; version: number; section?: { title: string; startLine: number; endLine: number } | null }[]\n>([]);\nconst history = ref<{ id: string; title: string; version: number }[]>([]);\nconst options = ref<\n  { id:"
+        "quote": "    {\n      \"key\": \"guide:contributing\",\n      \"title\": \"改一条完整功能链：从搜索结果到界面\",\n      \"order\": 4,\n      \"kind\": \"how-to\",\n      \"reader\": \"会 TypeScript，准备第一次修改 omem 的开发者\",\n      \"goal\": \"能从用户可见行为定位 API、检索与组件，完成小改动并通过真实页面确认结果。\",\n      \"scenario\": \"以“搜索结果显示它属于哪一节”为贯穿例子，解释现有实现、扩展位置和检查方法；不是要求读者执行大规模重构。\","
       },
       {
         "key": "c3",
-        "label": "开发运行方式",
-        "reason": "说明 osdk 启动命令、默认端口、开发材料接入及不会自动生成整库知识。",
+        "label": "个人开发入口",
+        "reason": "支持开发入口设置仓库根和个人模式后加载编排器。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev.ts",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "process.env.OMEM_REPO_ROOT ??= process.cwd();\nprocess.env.OMEM_DEV_MODE = \"personal\";\nawait import(\"./dev-review.js\");"
+      },
+      {
+        "key": "c4",
+        "label": "端口选择行为",
+        "reason": "验证默认端口占用时选择其他端口，而显式指定的占用端口会失败。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/dev-ports.test.ts",
+          "startLine": 5,
+          "endLine": 15
+        },
+        "quote": "it(\"moves an occupied default, rejects an occupied override and invalid ports\", async () => {\n  const occupied = createServer();\n  await new Promise<void>((resolve) => occupied.listen(0, \"127.0.0.1\", resolve));\n  const port = (occupied.address() as { port: number }).port;\n  try {\n    const chosen = await selectDevPort("
+      },
+      {
+        "key": "c5",
+        "label": "开发进程编排",
+        "reason": "支持服务端与 Web 分别启动、健康检查以及 API 代理端口的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 81,
+          "endLine": 153
+        },
+        "quote": "async function main(): Promise<void> {\n  // Preflight: fail fast with a clear message instead of letting the API/Vite\n  // child die with an opaque EADDRINUSE after a partial boot.\n  try {\n    API_PORT = await selectDevPort(review ? process.env.REVIEW_PORT : process.env.OMEM_PORT, review ? 5180 : 4317, `${label} API`);"
+      },
+      {
+        "key": "c6",
+        "label": "运行与启动说明",
+        "reason": "支持统一启动命令、端口约定、仓库知识接入及不自动生成整库知识的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -83,35 +126,9 @@
         "quote": "## 启动\n\n使用 osdk 管理 Bun、Node、pnpm 与应用依赖：`osdk install`、`osdk deps --frozen`、`osdk run dev`。开发模式把本仓库与已提交知识接入同一个个人库，默认 API 4317 / web 5173，占用时选择空闲端口；以终端输出为准。`OMEM_PORT`、`OMEM_WEB_PORT` 可指定端口。正式构建 `osdk run build` 后 `osdk run start`，默认空工作区。\n\n个人配置读取 `OMEM_CONFIG` 或忽略提交的 `omem.local.json`，没有时用 config/omem.example.json。profile"
       },
       {
-        "key": "c4",
-        "label": "开发进程启动器",
-        "reason": "支持个人模式下 API、Vite、动态端口和子进程的启动方式。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/dev-review.ts",
-          "startLine": 81,
-          "endLine": 112
-        },
-        "quote": "async function main(): Promise<void> {\n  // Preflight: fail fast with a clear message instead of letting the API/Vite\n  // child die with an opaque EADDRINUSE after a partial boot.\n  try {\n    API_PORT = await selectDevPort(review ? process.env.REVIEW_PORT : process.env.OMEM_PORT, review ? 5180 : 4317, `${label} API`);"
-      },
-      {
-        "key": "c5",
-        "label": "开发知识导入",
-        "reason": "解释当前材料、发布知识、引用依赖的历史材料及实时文件的恢复顺序。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/development.ts",
-          "startLine": 40,
-          "endLine": 87
-        },
-        "quote": "export function importDevelopmentKnowledge(store: Store, root: string) {\n  const repository = createReviewKnowledgeRepository(store);\n  const directory = join(root, \".repo-review/knowledge/articles\");\n  const artifacts: KnowledgeArtifact[] = existsSync(directory) ? readdirSync(directory).filter(f => f.endsWith(\".json\")"
-      },
-      {
-        "key": "c6",
-        "label": "仓库检索接入",
-        "reason": "支持服务端在开发模式导入仓库知识，并让知识 API 与助手使用包装后的共享检索。",
+        "key": "c7",
+        "label": "服务端开发知识接入",
+        "reason": "支持服务端导入仓库知识并让知识路由和助手共用包装后的检索。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -122,35 +139,61 @@
         "quote": "  const development = process.env.OMEM_REPO_ROOT ? importDevelopmentKnowledge(store, resolve(process.env.OMEM_REPO_ROOT)) : undefined;\n  const runs = new Runs(store, config);\n  const memory = new MemoryService(store);\n  const feedback = new FeedbackService(store);\n  // Production assistant uses the real ACP adapter aga"
       },
       {
-        "key": "c7",
-        "label": "前端搜索竞态处理",
-        "reason": "支持查询编码、最后请求生效和错误状态写入的行为。",
+        "key": "c8",
+        "label": "开发知识导入顺序",
+        "reason": "支持先补历史依赖材料、再捕获当前文件、随后恢复文章并刷新状态的准确顺序，也说明当前文件为何不会被历史材料倒退。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/development.ts",
+          "startLine": 36,
+          "endLine": 83
+        },
+        "quote": "export function importDevelopmentKnowledge(store: Store, root: string) {\n  const repository = createReviewKnowledgeRepository(store);\n  const directory = join(root, \".repo-review/knowledge/articles\");\n  const artifacts: KnowledgeArtifact[] = existsSync(directory) ? readdirSync(directory).filter(f => f.endsWith(\".json\")"
+      },
+      {
+        "key": "c9",
+        "label": "搜索防抖与取消",
+        "reason": "支持查询变化时取消旧请求、递增版本、清理状态并进行防抖。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 249,
-          "endLine": 258
+          "startLine": 96,
+          "endLine": 106
         },
-        "quote": "async function search() {\n  const v = ++searchVersion;\n  try {\n    const r = await api<typeof results.value>(\n      \"/search?q=\" + encodeURIComponent(query.value),\n    );\n    if (v === searchVersion) results.value = r;\n  } catch (e) {\n    error.value = String(e);\n  }"
+        "quote": "let searchVersion = 0;\nlet searchTimer: ReturnType<typeof setTimeout>;\nlet searchController: AbortController | undefined;\nconst searching = ref(false), searchError = ref(\"\");\nwatch(query, () => {\n  clearTimeout(searchTimer); searchController?.abort();\n  const version = ++searchVersion;\n  results.value = []; searchError"
       },
       {
-        "key": "c8",
-        "label": "通用 API 请求",
-        "reason": "支持统一添加 API 前缀、认证头、JSON 请求和错误处理。",
-        "relation": "calls",
+        "key": "c10",
+        "label": "搜索请求竞态处理",
+        "reason": "支持 URL 编码、AbortController、版本比较和取消请求不覆盖当前错误的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 259,
+          "endLine": 265
+        },
+        "quote": "async function search(version: number, text: string) {\n  const controller = new AbortController(); searchController = controller;\n  try {\n    const response = await api<typeof results.value>(\"/search?q=\" + encodeURIComponent(text), undefined, \"GET\", controller.signal);\n    if (version === searchVersion) results.value ="
+      },
+      {
+        "key": "c11",
+        "label": "前端 API 封装",
+        "reason": "支持 API 前缀、浏览器令牌、取消信号和错误转换的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/api.ts",
           "startLine": 245,
-          "endLine": 260
+          "endLine": 261
         },
-        "quote": "  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n): Promise<T> {\n  const r = await fetch(\"/api\" + path, {\n    method,\n    headers: { \"Content"
+        "quote": "  const token = sessionStorage.getItem(\"omem-token\");\n  return token ? { Authorization: \"Bearer \" + token } : {};\n}\nexport async function api<T>(\n  path: string,\n  body?: unknown,\n  method = body === undefined ? \"GET\" : \"POST\",\n  signal?: AbortSignal,\n): Promise<T> {\n  const r = await fetch(\"/api\" + path, {\n    method,"
       },
       {
-        "key": "c9",
-        "label": "搜索路由响应",
-        "reason": "支持查询长度、结果上限、共享检索调用及章节字段的响应组装。",
+        "key": "c12",
+        "label": "顶部搜索服务端路由",
+        "reason": "支持查询限制、统一检索调用以及固定片段与章节字段的结果装配。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -161,22 +204,22 @@
         "quote": "  app.get<{ Querystring: { q?: string } }>(\"/api/search\", async (req) => {\n    const query = { text: (req.query.q || \"\").slice(0, 300), limit: 30 };\n    const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ?? assistantRetrieval.searchSources(query));\n    return hits.flatMap(hit => {\n      const entry = st"
       },
       {
-        "key": "c10",
-        "label": "材料阅读结构",
-        "reason": "解释 Markdown 标题、代码符号和整篇文档如何形成可供章节投影使用的结构。",
+        "key": "c13",
+        "label": "材料章节结构投影",
+        "reason": "解释代码符号、Markdown 标题、文档退化范围和最小覆盖章节的计算规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/structure.ts",
           "startLine": 8,
-          "endLine": 28
+          "endLine": 42
         },
         "quote": "/** Reading structure is a projection; original fragments and their IDs never change. */\nexport function materialSections(material: KnowledgeMaterial): MaterialSection[] {\n  const saved = cache.get(material); if (saved) return saved;\n  const path = material.path ?? material.title;\n  let sections: MaterialSection[] = []"
       },
       {
-        "key": "c11",
-        "label": "章节可见性保护",
-        "reason": "支持从 fragment 定位章节以及不可见材料返回空章节的限制。",
+        "key": "c14",
+        "label": "命中章节恢复",
+        "reason": "支持章节从固定材料恢复以及隐藏内容不暴露章节标签的限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -187,48 +230,87 @@
         "quote": "export function evidenceSection(store: Store, fragmentId: string, visible: (id: string) => boolean = () => true) {\n  const evidence = store.evidence(fragmentId);\n  if (!evidence) return null;\n  const material = materialFromRevision(store, evidence.revision.id);\n  // Section labels are also content; don't expose one fro"
       },
       {
-        "key": "c12",
-        "label": "助手复用章节上下文",
-        "reason": "支持助手也使用相同章节投影，并补充相邻原文证据。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/runtime.ts",
-          "startLine": 684,
-          "endLine": 693
-        },
-        "quote": "      for (const c of candidates) {\n        const hit = this.enrichEvidence(c.fragmentId, c.routes?.includes(\"semantic\") ? c.snippet : undefined);\n        if (hit && visible(hit.fragmentId)) {\n          hit.sectionTitle = evidenceSection(this.store, hit.fragmentId, visible)?.title;\n          evidence.set(hit.fragmentId"
-      },
-      {
-        "key": "c13",
-        "label": "界面组件合同",
-        "reason": "支持复用公共 UI 组件，并将业务数据和网络状态留在业务页面。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:design.md",
-          "startLine": 28,
-          "endLine": 38
-        },
-        "quote": "## 组件合同\n\n从 `@omem/ui` 复用：OmButton、OmIcon、OmBadge、OmEmpty、OmPanel、OmShell、OmDialog、OmCitation。禁止业务页面重新创建不同配色/焦点/圆角的按钮和弹窗。业务数据只通过 props/slots/events 注入；UI 包不得连接 API 或读取密钥。\n\n- Button：primary/secondary/ghost；loading/disabled；显式 type，键盘 focus-visible。\n- Dialog：原生 dialog 顶层、单一焦点陷阱、Esc 发出 back、显式 close，关闭恢复触发焦点。\n- Citation：可键"
-      },
-      {
-        "key": "c14",
-        "label": "搜索与章节上下文测试",
-        "reason": "展示真实 HTTP 搜索以及 Markdown 章节、相邻片段和可见性测试的现有入口。",
-        "relation": "tracks",
+        "key": "c15",
+        "label": "章节上下文回归",
+        "reason": "验证 Markdown 章节、围栏伪标题、同节邻居和可见性行为。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/reading-context.test.ts",
-          "startLine": 33,
-          "endLine": 56
+          "startLine": 43,
+          "endLine": 55
         },
-        "quote": "it(\"retrieves a Chinese question through the global API without requiring a literal substring\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"reading-search-\"));\n  const { app, store } = await buildApp({ dataDir: dir, agentCwd: dir, host: \"127.0.0.1\", port: 4317, captureRoots: [], notifications: { mode: \"inst"
+        "quote": "it(\"expands a hit within its Markdown section, retaining original anchors and visibility\", () => {\n  const dir = mkdtempSync(join(tmpdir(), \"reading-context-\")), store = new Store(dir);\n  try {\n    const captured = store.capture({ source: \"file\", externalId: \"guide.md\", title: \"guide.md\", parts: [{ type: \"text\", text: "
       },
       {
-        "key": "c15",
-        "label": "分层检查要求",
-        "reason": "支持代码检查、真实浏览器检查与阅读验收需要分开判断。",
+        "key": "c16",
+        "label": "章节提示样式",
+        "reason": "支持当前章节提示的间距、颜色和字号说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 193,
+          "endLine": 203
+        },
+        "quote": ".excerpt {\n  max-height: 140px;\n  overflow: auto;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n.search-section {\n  margin: 0 0 12px;\n  color: var(--om-secondary);\n  font-size: 13px;\n}"
+      },
+      {
+        "key": "c17",
+        "label": "仓库检索输入适配",
+        "reason": "解释仓库材料的候选可见性由输入适配器处理，而内容排序继续复用统一检索。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/development.ts",
+          "startLine": 15,
+          "endLine": 33
+        },
+        "quote": "/** Input adapter eligibility only. Content ranking is shared with all captures. */\nexport function developmentRetrieval(store: Store, retrieval: RetrievalPort): RetrievalPort {\n  const policy = (query: SearchQuery): SearchQuery => {\n    const rows = store.db.prepare(`SELECT f.id,s.external_id AS key,m.removed,m.legacy"
+      },
+      {
+        "key": "c18",
+        "label": "公共组件职责",
+        "reason": "支持先复用 packages/ui，并把业务网络请求和状态保留在 apps/web 的职责边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:.agents/skills/omem-design/SKILL.md",
+          "startLine": 8,
+          "endLine": 17
+        },
+        "quote": "1. 先读仓库根 `design.md`；系统功能见 `docs/reader-first/architecture.md`，不要把架构文档当视觉 token。\n2. 在 `packages/ui/src` 搜索已有组件。使用 Vue 3 `<script setup lang=\"ts\">`，从 `@omem/ui` 复用控件与 tokens.css。公共组件只接收 props/slots/emits，网络与状态留给 apps/web。\n3. 沿用近黑主色、浅灰目录、白色面板、衬线标题和无衬线正文；不要新增任意渐变/品牌色。错误、冲突必须包含文本。\n4. 以完整文章、读者目的和当前问题为阅读中心，固定证据片段用于按需追溯。递归引用仅"
+      },
+      {
+        "key": "c19",
+        "label": "设计 token 与间距",
+        "reason": "支持黑白灰视觉基线、字体、间距和阅读行宽要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 5,
+          "endLine": 20
+        },
+        "quote": "## 视觉 token\n\n| 用途 | token | 值 |\n| --- | --- | --- |\n| 主文字/主动作 | `--om-ink` | `#202020` |\n| 次文字 | `--om-secondary` | `#606060` |\n| 辅助文字 | `--om-muted` | `#737373`（白底小字保持可辨） |\n| 页面/面板 | `--om-paper` / `--om-panel` | `#fafafa` / `#ffffff` |\n| 选中/引用背景 | `--om-soft` | `#eeeeee` |\n| 分隔线 | `--om-line` | `#dedede` |\n| 冲突/错误 | "
+      },
+      {
+        "key": "c20",
+        "label": "移动端与无障碍",
+        "reason": "支持点击区域、异步状态、视口尺寸、长标题和无横向溢出的验收要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:design.md",
+          "startLine": 44,
+          "endLine": 60
+        },
+        "quote": "## 移动端与无障碍\n\n断点：>1100px 三栏；701–1100px 右栏改可打开侧栏；≤700px 导航折叠、引用全屏、问答在当前视图内展开。窄屏信息按优先级换行，禁止缩小字号挤入桌面布局。\n\n所有可点击区域至少 44×44px（正文内联引用按文本可达性处理）；输入有 label；聚焦 outline 2px；弹窗 aria-labelledby；异步状态 aria-live；保持 Tab 顺序。触屏不依赖 hover 或圈选，始终提供“就这段追问”。尊重 prefers-reduced-motion。覆盖 390px、768px、1440px 和长中文标题。\n\n## 真实行为与验收\n\n按钮必须执行对应动作或明确禁用；服务未连"
+      },
+      {
+        "key": "c21",
+        "label": "分层检查方法",
+        "reason": "支持实现检查、浏览器实测以及机器报告不能代替阅读验收的区分。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -239,56 +321,56 @@
         "quote": "## 检查\n\n`osdk deps --frozen`、`osdk run check`；UI 使用 `osdk run browser` 和 scripts/code-wiki-viewport.ts 检查实际页面。`osdk run retrieval:verify` 使用真实本地模型。`osdk run review:verify --full` 生成机器报告，不能代替真实 ACP 写作及阅读验收。"
       },
       {
-        "key": "c16",
-        "label": "三档视口检查",
-        "reason": "支持在 1440、768、390 像素检查横向溢出、正文可见性并保存截图报告。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 123,
-          "endLine": 132
-        },
-        "quote": "  for (const width of [1440, 768, 390]) await check(`readable layout at ${width}px`, async () => {\n    await page.setViewportSize({ width, height: 1000 });\n    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);\n    await expect(page.locator(\".book-content .article-body > h"
-      },
-      {
-        "key": "c17",
-        "label": "单页指南生成任务",
-        "reason": "支持按 contributing 页面键单独运行读者指南生成。",
+        "key": "c22",
+        "label": "单页指南任务",
+        "reason": "支持通过 contributing 参数只更新本页的任务声明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:osdk.toml",
-          "startLine": 116,
-          "endLine": 123
+          "startLine": 117,
+          "endLine": 124
         },
         "quote": "[tasks.\"review:guides\"]\nrun = [{ argv = [\"bun\", \"scripts/review-guides.ts\", \"{{args}}\"] }]\ndescription = \"Investigate and write reader-oriented repository guides with real ACP\"\n\n[[tasks.\"review:guides\".args]]\nname = \"target\"\ndefault = \"\"\nhelp = \"Page key (overview, capture, retrieval, memory, contributing); omit for al"
       },
       {
-        "key": "c18",
-        "label": "知识生成与存放位置",
-        "reason": "说明读者指南命令以及运行 trace、发布文章各自的保存位置。",
+        "key": "c23",
+        "label": "指南生成与发布流程",
+        "reason": "解释页面筛选、模型流水线、发布、失败记录和目录刷新的实际流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-guides.ts",
+          "startLine": 16,
+          "endLine": 49
+        },
+        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst config = loadReviewCodeModelConfig();\nif (config.transport !== \"acp\" || !config.command) throw Error(\"Reader guides require the configured ACP agent\");\nconst plan = z.object({ version: z.literal(1), pages: z.array(wikiPageBriefSchema).min(1) }).parse(JSO"
+      },
+      {
+        "key": "c24",
+        "label": "阅读验收口径",
+        "reason": "支持以场景、处理链、可见结果、修改入口及可操作引用检查页面，而非只看程序通过。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:docs/reader-first/operations.md",
-          "startLine": 9,
-          "endLine": 13
+          "key": "omem:docs/reader-first/validation.md",
+          "startLine": 35,
+          "endLine": 46
         },
-        "quote": "## 模型与生成\n\n仓库模型读取 config/review-code-model.json，REVIEW_CODE_MODEL_CONFIG 可覆盖；使用真实 traex ACP 的 gpt-5.6-sol。`osdk run review:generate <路径> --modules` 是已有材料说明流程；读者指南用 `osdk run review:guides`，只更新一页可用 `osdk run review:guides retrieval`。页面计划在 config/wiki-pages.json；模型按问题请求搜索/读取固定材料，再写作与独立检查。`--retry` 可重试失败任务。角色输出、任务和 trace 保"
+        "quote": "## 阅读验收方法\n\n逐篇对照页面的读者、问题和场景，阅读正文而非只数标题/引用。检查输入示例、概念第一次出现时的解释、处理链、用户可见结果、修改入口以及当前/计划能力的区分。检查真实页面内联引用能打开固定原文，图表能正常阅读。\n\n页面目标：认识系统；材料从导入到引用；提问如何检索并补背景；规则变化与事项状态；修改搜索结果的完整链路。\n\n## 仍未完成\n\n- 五篇计划是明确配置的试点，尚未从任意仓库自动规划完整功能 Wiki 目录。\n- 结构投影与相邻原文扩展已接入；没有完成所有存储切片重建，也未接入复杂 PDF/Office 的成熟解析器。\n- 还没有完整问题意图路由、跨文件调用/类型解析、专用重排器或历史 as-of 推理。标题"
       },
       {
-        "key": "c19",
-        "label": "当前实现进度与验收口径",
-        "reason": "支持统一搜索与上下文仍是首个切片，并区分程序、阅读、检索和界面验收。",
+        "key": "c25",
+        "label": "功能链现状与限制",
+        "reason": "支持本页已串起搜索完整链，同时不代表自动修改任意功能或生成完整目录。",
         "relation": "tracks",
         "target": {
           "kind": "material",
-          "key": "omem:docs/reader-first/progress.md",
-          "startLine": 5,
-          "endLine": 24
+          "key": "omem:docs/reader-first/validation.md",
+          "startLine": 52,
+          "endLine": 60
         },
-        "quote": "| 阶段 | 状态 | 交付与验收 |\n| --- | --- | --- |\n| 文档基线 | 已完成 | 归档旧方案和历史记录，更新 README、AGENTS、视觉约定 |\n| 统一搜索与上下文 | 首片已实现 | 顶部搜索共用混合召回；知识搜索结合原文命中排序；助手补原始章节标题与相邻片段。尚未有完整意图路由和跨文件功能链扩展 |\n| 问题驱动的 Wiki | 首片已实现 | 五篇页面计划；模型请求搜索与按行补读；写作与独立复核。模型内容与可读性结果见本轮验收记录，不以协议测试代替 |\n| 阅读界面 | 首片已实现 | 学习目录、阅读目标、下一篇、参考资料折叠；统一段落/表格/代码/按钮间距；实际服务 390/768/144"
+        "quote": "## 已完成的正文抽读\n\n| 页面 | 可观察的改进 | 保留的限制 |\n| --- | --- | --- |\n| 认识 omem | 项目评审约定贯穿保存、找回、行动；四类对象使用同一案例对照；已去掉首轮的 claim/scope/epoch 与错误枚举 | 仍是本仓库的入门样板，不能代表所有知识文章的阅读质量 |\n| 材料旅程 | 两节 Markdown 修改前后的完整例子；明确保存、后台记忆处理和显式 Wiki 生成的分支；解释旧引用为何仍打开旧文字 | 主要覆盖当前文本/图片/代码链，复杂文档清洗尚未接入 |\n| 记忆更新 | 三次改五次与评审跟进分开；解释来源重核验、Wiki 更新和任务状态；对照跟进、截止、已读 | 后"
       }
     ],
     "questions": []
@@ -302,12 +384,12 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/App.vue",
-      "digest": "3cc9db64ebf4443678ed277ad2df3320ed9517b5c3336ffaf76af552fb3c6cca"
+      "digest": "26266f7c5ad0c2d5fe1a8a9c004dcd828c4a59b4b408dc06001d35ef5d789ef4"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae"
+      "digest": "e9560fb02af4b1a93872afb41e5395f1870ff9a93ec89a6b278147ebe7d076a1"
     },
     {
       "kind": "material",
@@ -317,17 +399,12 @@
     {
       "kind": "material",
       "key": "omem:docs/reader-first/operations.md",
-      "digest": "1ecbcc948134372278e9d11b5aeb711d2df5988c358a7643d9e7ea54198de0f0"
+      "digest": "dbfe0d70cc01e95c96f6a20a3d844c8351e5dc3af504e2b781cbe1068cc0a911"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/development.ts",
-      "digest": "54a8cc78f2966e8f4528afba10711f2c37cf0efbae1a8d82cc2147dec6da7a07"
+      "digest": "5b1fc796094157c6c689332d72eacf6d57c95025e92b39991ed4b0becc6cbb9a"
     },
     {
       "kind": "material",
@@ -336,13 +413,103 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/review/development.ts",
+      "digest": "7a042eb81ee14ed0d6d34b1ea3d7476f1894f43afb3dd0ab02d3f3177be3f989"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/knowledge/structure.ts",
       "digest": "c0abc5f51ae9aa2e62b47a7d3011cedc996953a9506ec574e2432b98e99aa6d3"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/agents.test.ts",
-      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
+      "key": "omem:.agents/skills/omem-design/SKILL.md",
+      "digest": "6991e36884f0a2343720655edaaa45effd15e1b93694da0a42a06b62031de27d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:design.md",
+      "digest": "bccb24e86882894c4e2231903054d51f7d7347ea94297db95de8d7aa75d557b5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/progress.md",
+      "digest": "ebc4e7594eca2b7afd8f694d7f8d129ab242ffeb1a447a6cba5488e4a4dbd583"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/validation.md",
+      "digest": "b2bc293c97dc8384f2e30c0a6b19a3175cac6fa95744638ebbef8c168d721a9e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/styles.css",
+      "digest": "7ab524d55ad59272259a7fe425cc8e6db62a780d471be5c7221533868ec0e198"
+    },
+    {
+      "kind": "material",
+      "key": "omem:config/wiki-pages.json",
+      "digest": "c38e4b5bc85b25eb76a5784404e1d3dca4006b4905d408db95ae2742f28d5f9c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/review-guides.ts",
+      "digest": "c288be1cd6bdb167c2cdd907eedfd498cdbabc84aa88406787e7e0b5e0d1f0ce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:osdk.toml",
+      "digest": "dd667ad4e92db12157284a8091a49cd77ff64ad533f7b5b9f55e7579f844acb7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "d9fce7fdfde0e615a88e68fa6ef1a64fb15244a83e4b53212e4df2ea1b92346f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "59a91489cb8d563f1a361d38796c15a0fc22b074794a2066ae2fb0f09b98e996"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/dev-ports.test.ts",
+      "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/development-knowledge.test.ts",
+      "digest": "ddbbbaf349d2112f7a9e2589a4c79560153972850a930e83d4c2443daecab08f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-dev.test.ts",
+      "digest": "a988ab9ce4ebc5c1b21b162de667931bbc994dc24600e0d069ca66b3dabc9bde"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-api.test.ts",
+      "digest": "b61ed37661eb32708e72c35ceebad961ee2a13829b2885e9e7f6c5ecfc38fe10"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/knowledge-research.test.ts",
+      "digest": "0095fdec4f1924d9db0dfc328cf9d34be534f4301c82fac826f7049b4763a7f3"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/reading-context.test.ts",
+      "digest": "8806cca81e216f348b5710c6f07c7ead7f010a8fe2c2423438101876793d7c6b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/review-sync.test.ts",
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
     },
     {
       "kind": "material",
@@ -351,63 +518,23 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/app.test.ts",
-      "digest": "97e939f4e33fec83c8adf7ea575681c04e7205e3c40be1baa6d2f3eec1599bad"
+      "key": "omem:apps/web/src/DecisionsView.vue",
+      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/development-knowledge.test.ts",
-      "digest": "631ff1f22a6adc059073d688d42f0583357e803285e22fa449985901f7d378c6"
+      "key": "omem:apps/web/src/LarkSetup.vue",
+      "digest": "1c17744de6c2381d9211ebdbc5222311f5bb6d36dfa9b10467743141df56624f"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
-      "digest": "11f1e4b8fc33705d5f254cd190c016641f5797d17fa11ad615be6d113554f2ed"
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "0b18c7e95c118580d32641cebf60d85844d73ba8fd74153b32ebcf44be13897e"
     },
     {
       "kind": "material",
-      "key": "omem:design.md",
-      "digest": "ee9933ce2c9a3fa6f08877327572ed85ef9a40c78e5ba8ec4a5b843b968e1994"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/tokens.css",
-      "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/reader-first/progress.md",
-      "digest": "9244eeb5bee20153550f0da0f2c429196e5a9f41038ad1fcacdcdba86779bac8"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "770504ecd25bca96794747bd325f2ac796a9a46fa387a0d48fbc88cfbc847fa5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/reading-context.test.ts",
-      "digest": "d1199e5e8c57769fbbc45bfc07002627f53af89faf59d5b59ebb98a75fd26433"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
-      "digest": "aeb1e454f5fe809dbfb9574bf9746feedb4997b631e6dab73a50c9e78897b089"
-    },
-    {
-      "kind": "material",
-      "key": "omem:osdk.toml",
-      "digest": "beeee24313f3a785d275eabe48de77e07ec5057c1c8cc1b1a1550113094e1cee"
-    },
-    {
-      "kind": "material",
-      "key": "omem:.claude/skills/omem-design/SKILL.md",
-      "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "6e9a634945fe6701aae11343ec4eda68ab2d68f79aa791afa85db866516d0874"
+      "key": "omem:apps/web/src/ReviewApp.vue",
+      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
     }
   ],
   "reading": {
@@ -431,38 +558,42 @@
       "apps/server/src/app.ts",
       "apps/server/src/retrieval/context.ts",
       "docs/reader-first/operations.md"
+    ],
+    "topicPath": [
+      "软件开发",
+      "omem"
     ]
   },
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T16:05:35.774Z",
+    "at": "2026-10-01T17:57:16.072Z",
     "trace": {
-      "runId": "061b5fae-4327-4e70-a8f0-fa26ad3b81f8",
-      "roleId": "knowledge-writer",
+      "runId": "00dbe87c-ae79-4f4e-95e6-2f660b85adab",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "95cd9948c1855051de2a021a077ea81d5b611dfd488455fd8e086ec464ccee7a",
-      "promptHash": "ffef30deea57b81bc69dd1fbeb8812c783682c554716390457963e4b8c47327f",
-      "contextHash": "191c3969a35351a89464c6bbb7b342a8295d697feb2f817c4e7fb1f9e3fce650",
-      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
+      "bundleHash": "0cfa9d4027da44fcd0fc3fab247127e3993c647de13b70f0cde89b9bb36bf42a",
+      "promptHash": "3ca42bd5c5bdd1b4ea201c8debecfa44181d6eea6de049a24e02e0a3a1707925",
+      "contextHash": "20df3c7aaa88aed61cfb2dc9f349b461fcddd0c6711ac4498f0d7a4857059f24",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a814b9be8bb875c0d6fad4cfd44533f4416b2e2395c8d60020d80af75acd0d24",
+      "fingerprint": "7f2e2ee0749922f423f3334b11ef18a34e41db1bbb78bf4812e3b08f6975a9b0",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-writer",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f836-3b9f-7002-b6e1-5b9403a156ab"
+        "01a0f89c-915b-7de0-a5fc-43e10ccfda12"
       ],
       "usage": {
-        "used": 62225,
+        "used": 76418,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -471,10 +602,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 117347,
-          "utf8Bytes": 139285,
-          "estimatedTokens": 46429,
-          "budgetedTokens": 58037,
+          "chars": 148706,
+          "utf8Bytes": 189084,
+          "estimatedTokens": 63028,
+          "budgetedTokens": 78785,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -483,15 +614,15 @@
         "rounds": [
           {
             "trace": {
-              "runId": "7995b2d2-f4b6-4187-b139-0435d11bc9d0",
+              "runId": "e60790c0-ec3c-4a3c-a728-e33dfaa8c556",
               "roleId": "knowledge-researcher",
               "roleVersion": "1",
-              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
-              "promptHash": "134db501af18f259ccbf1e1a54fb70c893142c4357291dc6c27cac81316740b7",
-              "contextHash": "6c3a7aa3a5b8f1b68855e32228d9b9160bcf7aa84b811d1b008a2ec4ea812abf",
+              "bundleHash": "4526a825c7177cddcdb5173c16666c28c9cd50d743d5f41459953271df9249e9",
+              "promptHash": "f86732c66033f0110646a14ef4ed06b1a01cdbec978520f23500f2a54758b70f",
+              "contextHash": "adba67084b3905d814f82766eb27d522936694034d1ff48dff4d0c722302cce9",
               "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
               "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-              "fingerprint": "8fec52b4e747e2ef17c7e465d35532892223d17947373fa8054fb03cef0f524a",
+              "fingerprint": "a6c6058ac2d4e33a661a1feec8908b9cde9d3fb621a1c6f938440beb8dff9a43",
               "outputSchema": "KnowledgeResearch.v1",
               "effectiveModel": "gpt-5.6-sol",
               "effectiveEffort": "medium",
@@ -504,10 +635,10 @@
               ],
               "allowedTools": [],
               "sessionIds": [
-                "01a0f834-7e2e-7a63-9e4a-087114e440a8"
+                "01a0f899-fec7-7c51-9bf0-ba36bdeaed2c"
               ],
               "usage": {
-                "used": 33528,
+                "used": 56613,
                 "size": 258400,
                 "cost": null,
                 "budget": {
@@ -516,58 +647,52 @@
                   "contextReserveTokens": 16000
                 },
                 "estimate": {
-                  "chars": 49107,
-                  "utf8Bytes": 52155,
-                  "estimatedTokens": 17385,
-                  "budgetedTokens": 21732,
+                  "chars": 128503,
+                  "utf8Bytes": 132783,
+                  "estimatedTokens": 44261,
+                  "budgetedTokens": 55327,
                   "estimator": "utf8-bytes/3 + 25% headroom"
                 }
               },
               "repairAttempts": 0
             },
-            "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，调查主线应是：开发模式如何接入仓库材料，用户在顶部输入搜索词后，前端如何调用 API，服务端如何检索并补充所属章节，最后界面如何展示章节提示。\n\n已确认的事实：\n1. `scripts/dev.ts` 将 `OMEM_REPO_ROOT` 默认设为当前工作目录，将 `OMEM_DEV_MODE` 设为 `personal`，随后加载 `dev-review.js`。这说明普通开发入口复用了仓库评审开发启动器，并显式把当前仓库根目录传给服务端。\n2. `buildApp` 在存在 `OMEM_REPO_ROOT` 时调用 `importDevelopmentKnowledge(store, resolve(repoRoot))`，并以 `developmentRetrieval(...)` 包装常规检索；知识 API 与 AssistantRuntime 都使用这个包装后的检索。因此仓库材料进入 dev 不只是前端静态展示，而是进入同一个个人库服务的知识与检索路径。具体导入哪些已提交产物、如何避免自动整库生成，仍需读取 `knowledge/development.ts` 和启动脚本。\n3. `App.vue` 已声明顶部搜索状态 `query`、结果数组和竞态保护变量 `searchVersion`。结果类型除 id、text、title、version 外，已有可空的 `section`，包含 `title/startLine/endLine`，说明“结果属于哪一节”已有前端数据合同落点。\n4. 服务端 `app.ts` 导入 `evidenceSection`；该函数从命中 fragment 找到所属 revision 的 material，经 `fragmentPositions` 和 `containingSection` 计算章节。若证据、material、命中位置或章节不存在则返回 null；若同一 material 有任一 fragment 对当前调用者不可见，也不会暴露章节标题。这表明章节提示是从原始材料结构补充到命中的上下文，不是新的独立事实，并受可见性约束。\n5. 当前运行文档规定以 `osdk install`、`osdk deps --frozen`、`osdk run dev` 启动；dev 将本仓库和已提交知识接入同一个个人库，默认 API 4317、web 5173，端口冲突时动态选择。启动不会自动生成整库知识。\n6. 当前检查合同区分程序检查和阅读验收：`osdk run check` 是代码检查；UI 要通过 `osdk run browser` 与 `scripts/code-wiki-viewport.ts` 查看真实页面；`review:verify --full` 的机器报告不能替代真实 ACP 写作和阅读验收。知识更新方面，读者指南使用 `osdk run review:guides`，可按页面键只更新一页，产物与运行 trace 分别落在发布目录和 `.repo-review/runtime/`。\n\n根据代码的解释：章节提示最可能是在搜索 API 组装响应时调用 `evidenceSection`，然后由 `App.vue` 的结果模板显示；下一轮需要定位准确路由、请求方法和模板位置，才能给出可靠的修改点与完整因果链。",
+            "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，实际任务是沿“搜索结果显示所属章节”走通开发启动、前端交互、HTTP API、检索命中补充上下文、组件呈现和真实页面验收。\n\n已确认的主线起点：`scripts/dev.ts` 把 `OMEM_REPO_ROOT` 默认设为当前目录，将 `OMEM_DEV_MODE` 设为 `personal`，随后加载 `dev-review`；因此仓库材料进入开发模式的关键实现还需继续追踪 `scripts/dev-review.ts`。运行文档说明统一入口是 `osdk install`、`osdk deps --frozen`、`osdk run dev`；开发模式会把当前仓库及已提交知识接到同一个个人库，API/Web 默认端口为 4317/5173，端口冲突时以终端输出为准，且启动不会自动生成整库知识（`docs/reader-first/operations.md:3-7`）。\n\n已确认的前端数据形状：`App.vue` 通过 `@omem/ui` 复用 OmShell、OmButton、OmPanel、OmEmpty 等组件；搜索结果状态包含 `id`、`text`、`title`、`version`，并已经带有可空的 `section: { title, startLine, endLine }`（`apps/web/src/App.vue:6-16,84-99`）。这表明“显示它属于哪一节”不是新建后端概念，而是查清现有 section 字段从请求到模板的完整使用位置，再决定章节提示应在结果映射、模板文案还是样式层调整。\n\n已确认的服务端上下文机制：应用启动时若存在 `OMEM_REPO_ROOT`，会调用 `importDevelopmentKnowledge` 导入仓库开发知识，并用 `developmentRetrieval` 包装正常检索；同一包装后的 retrieval 同时提供给知识路由和助手运行时（`apps/server/src/app.ts:61-88`）。`evidenceSection` 先由 fragment 找 evidence/revision，再恢复 material 与 fragment 行位置，调用 `containingSection` 得到章节，返回标题和起止行；如果材料不存在、命中不存在，或材料含任何对当前调用者不可见的 fragment，则返回 null，避免泄露隐藏内容的章节标签（`apps/server/src/retrieval/context.ts:21-29`）。这说明章节提示是对原始命中的上下文补充，不是独立事实；权限可见性是会改变 UI 是否显示章节的关键分支。\n\n已确认的交付口径：基础检查是 `osdk deps --frozen` 与 `osdk run check`；UI 还必须通过 `osdk run browser` 和 `scripts/code-wiki-viewport.ts` 查看实际页面。`review:verify --full` 产生机器报告，但不能代替真实 ACP 写作和阅读验收（`docs/reader-first/operations.md:15-17`）。知识更新方面，读者指南由 `osdk run review:guides` 生成，单页可指定 key；页面计划位于 `config/wiki-pages.json`，角色会围绕问题搜索/读取固定材料、写作并独立检查，产物与 trace 分别进入 runtime 和发布知识目录（`docs/reader-first/operations.md:9-13`）。尚需补清本页对应 key、实现改动后何时更新知识，以及 progress 中当前未验证项。",
             "gaps": [
-              "尚未定位 App.vue 中触发搜索、调用 API、处理竞态及渲染 section 的完整代码。",
-              "尚未定位服务端搜索路由如何调用 retrieval、执行可见性过滤并附加 evidenceSection。",
-              "尚未确认 apps/web/src/api.ts 中搜索返回类型和请求路径，无法判断调整字段时需要同步哪些合同。",
-              "尚未读清 development knowledge 的导入来源，以及 dev-review 如何协调 API/web 端口和进程。",
-              "尚未确认章节划分由哪些结构函数定义，以及 Markdown 标题或 fragment 边界如何影响结果。",
-              "尚未掌握 packages/ui 的复用规则、页面间距 token 与现有搜索结果样式。",
-              "尚缺覆盖章节提示、隐藏材料和真实搜索行为的测试例子。",
-              "尚需读取当前设计与进度文档，区分已经验证的行为和仍未完成的阅读验收。"
+              "尚未读到 App.vue 的搜索 watch、API 调用、结果模板及章节提示实际渲染位置。",
+              "尚未定位搜索 API 的客户端方法、服务端路由、retrieval.search 调用及 evidenceSection 拼接位置。",
+              "尚未追踪 dev-review 如何导入仓库材料、启动 API/Web 并选择端口。",
+              "尚未确认章节边界由 knowledge/structure.ts 如何识别，因而还不能解释哪些材料会有 section。",
+              "尚未掌握 packages/ui 与全局样式中应复用的间距、徽标或结果列表模式。",
+              "尚未核对 reader-first progress/validation 对知识更新、真实页面检查和“检查通过但阅读不可用”的当前表述。"
             ],
             "requests": [
               {
                 "kind": "search",
-                "query": "omem:apps/web/src/App.vue section"
+                "query": "apps/web/src/App.vue api.search section searching searchError"
               },
               {
                 "kind": "search",
-                "query": "omem:apps/web/src/App.vue searchVersion"
+                "query": "apps/web/src/App.vue result.section"
               },
               {
                 "kind": "search",
-                "query": "omem:apps/web/src/api.ts search"
+                "query": "apps/web/src/api.ts search section /api/search"
               },
               {
                 "kind": "search",
-                "query": "omem:apps/server/src/app.ts evidenceSection"
+                "query": "apps/server/src/app.ts /api/search evidenceSection"
               },
               {
                 "kind": "search",
-                "query": "omem:apps/server/src/app.ts /api/search"
+                "query": "apps/server/src/app.ts retrieval.search"
               },
               {
-                "kind": "read",
-                "materialKey": "omem:apps/server/src/knowledge/development.ts",
-                "startLine": 1,
-                "endLine": 89
+                "kind": "search",
+                "query": "scripts/dev-review.ts OMEM_REPO_ROOT port web"
               },
               {
-                "kind": "read",
-                "materialKey": "omem:scripts/dev-review.ts",
-                "startLine": 1,
-                "endLine": 164
+                "kind": "search",
+                "query": "apps/server/src/review/development.ts importDevelopmentKnowledge developmentRetrieval"
               },
               {
                 "kind": "read",
@@ -576,8 +701,10 @@
                 "endLine": 44
               },
               {
-                "kind": "search",
-                "query": "section evidenceSection tests"
+                "kind": "read",
+                "materialKey": "omem:.agents/skills/omem-design/SKILL.md",
+                "startLine": 1,
+                "endLine": 18
               },
               {
                 "kind": "read",
@@ -587,127 +714,29 @@
               },
               {
                 "kind": "read",
-                "materialKey": "omem:packages/ui/src/tokens.css",
-                "startLine": 1,
-                "endLine": 110
-              },
-              {
-                "kind": "read",
                 "materialKey": "omem:docs/reader-first/progress.md",
                 "startLine": 1,
-                "endLine": 41
-              }
-            ]
-          },
-          {
-            "trace": {
-              "runId": "8bd90dcc-9c9a-4aa4-8c46-47ed2d11bfc2",
-              "roleId": "knowledge-researcher",
-              "roleVersion": "1",
-              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
-              "promptHash": "cb55bd8746e4f724b67cb606f2a12082efd90c976b448be9599f97fb3204a705",
-              "contextHash": "ed941dcf9f473dec658e0fba0a01eabd8b3d1f79bdabd4453bf4d6e52173f632",
-              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
-              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-              "fingerprint": "932f2420bca49dbdead8788ab83f40534a649edc750b73b6cb7a1dab32ed0662",
-              "outputSchema": "KnowledgeResearch.v1",
-              "effectiveModel": "gpt-5.6-sol",
-              "effectiveEffort": "medium",
-              "loadedSkills": [
-                {
-                  "name": "omem-knowledge-researcher",
-                  "version": "1",
-                  "mode": "inline"
-                }
-              ],
-              "allowedTools": [],
-              "sessionIds": [
-                "01a0f834-e964-7211-b856-1afcb74adf69",
-                "01a0f835-60c1-77d2-9c2a-0ebbab6de973"
-              ],
-              "usage": {
-                "used": 56317,
-                "size": 258400,
-                "cost": null,
-                "budget": {
-                  "maxInputTokens": 192000,
-                  "maxOutputTokens": 24000,
-                  "contextReserveTokens": 16000
-                },
-                "estimate": {
-                  "chars": 113120,
-                  "utf8Bytes": 122777,
-                  "estimatedTokens": 40926,
-                  "budgetedTokens": 51158,
-                  "estimator": "utf8-bytes/3 + 25% headroom"
-                }
-              },
-              "repairAttempts": 1
-            },
-            "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，贯穿场景是让顶部搜索结果显示“它属于哪一节”。目前已经能确认从开发启动到服务端补充章节信息的主链大半。\n\n已确认事实：\n1. 开发入口 `scripts/dev.ts` 把 `OMEM_REPO_ROOT` 默认设为当前工作目录，把模式设为 `personal`，再加载共享启动器。`scripts/dev-review.ts` 在个人模式下启动带 watch 的 `apps/server/src/main.ts` 和 Vite 子进程，默认选择 API 4317、web 5173；端口占用时选择空闲端口，等待健康检查成功后输出实际地址，任一子进程退出会触发整组关闭。\n2. 服务端 `buildApp` 检测到 `OMEM_REPO_ROOT` 后调用 `importDevelopmentKnowledge`，并用 `developmentRetrieval` 包装基础检索。导入逻辑恢复当前仓库材料、已发布知识文章以及仍被固定引用依赖的历史材料；实时文件最后导入，避免历史修订覆盖当前 head。仓库材料与个人材料进入同一存储和搜索服务，但个人材料保留原有检索资格与权重。被移除或作为旧别名的仓库材料不会出现在普通开发搜索中。\n3. 顶部搜索服务端入口是 `GET /api/search`。它把查询截到 300 字符、限制 30 条结果，调用与知识 API、助手共用的 `assistantRetrieval`；每个命中通过 fragment 找到固定 revision，返回 fragment id、snippet、材料标题、版本、分数、路由和 `section`。\n4. `section` 由 `evidenceSection` 计算，不是另存一份章节事实。它把 fragment 映射回完整 material，计算 fragment 的起始行，再选取包含该行的最小阅读结构。Markdown 使用 marked 解析标题并按标题层级确定范围；TS、JS、TSX、Vue 等代码使用现有解析器的 symbol 范围；没有结构时退化为整篇 document。结果为章节标题及起止行。\n5. 章节标题本身也被视为内容。若 material 不存在、fragment 无法定位，或同一 material 中存在当前调用者不可见的 fragment，`evidenceSection` 返回 null，避免通过章节标签泄露隐藏内容。\n6. `App.vue` 已为搜索结果声明 `section?: { title; startLine; endLine } | null`，并维护 `query`、`results` 与 `searchVersion`。这说明前端合同已有章节提示落点，但现有材料尚未覆盖实际请求函数和结果模板，仍需定位它们才能准确说明 UI 改动点及竞态处理。\n7. 运行文档规定使用 `osdk install`、`osdk deps --frozen`、`osdk run dev`。启动不会自动生成整库知识。读者指南由 `osdk run review:guides` 更新，也可按页面键更新单页；发布文章与运行 trace 分别保存在 `.repo-review/knowledge/` 和 `.repo-review/runtime/`。\n8. 验收必须分层：`osdk run check` 只证明回归、类型检查和构建通过；UI 还要在实际服务中用 `osdk run browser` 与 `scripts/code-wiki-viewport.ts` 查看真实页面，覆盖桌面、768px 和 390px。`review:verify --full` 的机器报告也不能替代真实 ACP 写作和读者是否能理解、定位及行动的验收。\n9. UI 规范要求复用 `@omem/ui` 组件和 `packages/ui` token。间距采用 4/8/12/16/24/32/48px；按钮组使用 flex gap；辅助信息至少 12px且保持可辨；实际页面需检查焦点、窄屏换行和异步状态，不能只确认 DOM 元素存在。\n\n根据代码作出的解释：这个小改动的核心扩展面应包括四层：服务端搜索响应组装、`evidenceSection` 的结构投影、前端搜索结果类型与渲染、覆盖真实 HTTP 响应的测试。若只是调整章节提示文案或布局，通常只需改前端模板和样式；若要改变“所属章节”的判定，则应改 `retrieval/context.ts` 或 `knowledge/structure.ts` 并补结构与 API 测试。下一轮需要用实际函数和模板确认这一判断。",
-            "gaps": [
-              "尚未读到 App.vue 发起顶部搜索请求、使用 searchVersion 丢弃过期响应以及渲染 section 的完整代码。",
-              "尚未确认前端 api 封装如何拼接 `/api/search`、处理令牌和错误，因此不能准确给出请求层修改位置。",
-              "尚未找到覆盖 `/api/search` 的具体测试及其章节断言，无法指出最小回归测试改法。",
-              "尚未读到搜索结果相关样式，不能判断章节提示应复用现有 class 还是新增局部样式。",
-              "需要确认 osdk.toml 中 dev、check、browser、review:guides 与 viewport 脚本的准确任务声明，避免把文档概述当成完整执行合同。"
-            ],
-            "requests": [
-              {
-                "kind": "search",
-                "query": "omem:apps/web/src/App.vue searchVersion api(\"/search\""
-              },
-              {
-                "kind": "search",
-                "query": "omem:apps/web/src/App.vue result.section"
-              },
-              {
-                "kind": "search",
-                "query": "omem:apps/web/src/App.vue search-results"
-              },
-              {
-                "kind": "search",
-                "query": "omem:apps/web/src/api.ts function api"
-              },
-              {
-                "kind": "search",
-                "query": "omem:apps/server/tests/app.test.ts /api/search"
-              },
-              {
-                "kind": "search",
-                "query": "evidenceSection(\""
-              },
-              {
-                "kind": "search",
-                "query": "omem:apps/server/tests reading structure section title search"
-              },
-              {
-                "kind": "search",
-                "query": "omem:osdk.toml review:guides"
-              },
-              {
-                "kind": "search",
-                "query": "omem:osdk.toml code-wiki-viewport"
+                "endLine": 43
               },
               {
                 "kind": "read",
-                "materialKey": "omem:.claude/skills/omem-design/SKILL.md",
+                "materialKey": "omem:docs/reader-first/validation.md",
                 "startLine": 1,
-                "endLine": 18
+                "endLine": 77
               }
             ]
           },
           {
             "trace": {
-              "runId": "33ba2c69-06f1-41bd-9b8e-2445bedbf85a",
+              "runId": "eeb4a3c9-712a-420c-bcd4-9246aa8bcbf2",
               "roleId": "knowledge-researcher",
               "roleVersion": "1",
-              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
-              "promptHash": "22edf3abc4db1ce532a65c9ee122c2852f8737575c136e125b831933e66c9277",
-              "contextHash": "7db7c0c28b3be5f774fc4fa4d8f6db203f3e4f0549d21ed0c9dcc104cea72fe2",
+              "bundleHash": "4526a825c7177cddcdb5173c16666c28c9cd50d743d5f41459953271df9249e9",
+              "promptHash": "4679896b41fb8b67eb463dde2a85be0308bd5a72562cefe1002fd88959d4e0cc",
+              "contextHash": "e37fbd92c16471deb241b4b41e3c8f7c8fa25675e1456e29c1abb5d0b71d50ab",
               "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
               "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-              "fingerprint": "1bd4a9d5a951db560c97a86f3bc69fcc1bdbac1f45a3f4b92548320ab5d54e87",
+              "fingerprint": "43fc1eb0866d31d81a9c1e2ae6e7a34225c8c511d46893e0b511be5775135f82",
               "outputSchema": "KnowledgeResearch.v1",
               "effectiveModel": "gpt-5.6-sol",
               "effectiveEffort": "medium",
@@ -720,10 +749,10 @@
               ],
               "allowedTools": [],
               "sessionIds": [
-                "01a0f835-d077-7280-8bd4-8be70bc17272"
+                "01a0f89a-6521-7f21-a5cd-c0ca056147a7"
               ],
               "usage": {
-                "used": 59370,
+                "used": 73642,
                 "size": 258400,
                 "cost": null,
                 "budget": {
@@ -732,68 +761,159 @@
                   "contextReserveTokens": 16000
                 },
                 "estimate": {
-                  "chars": 125937,
-                  "utf8Bytes": 137230,
-                  "estimatedTokens": 45744,
-                  "budgetedTokens": 57180,
+                  "chars": 168523,
+                  "utf8Bytes": 185781,
+                  "estimatedTokens": 61927,
+                  "budgetedTokens": 77409,
                   "estimator": "utf8-bytes/3 + 25% headroom"
                 }
               },
               "repairAttempts": 0
             },
-            "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，贯穿场景是让顶部搜索结果显示“它属于哪一节”。目前已确认开发启动、材料导入、搜索 API、章节推导和验收原则，前端实际渲染位置仍需最后一轮补读。\n\n已确认事实：\n1. `scripts/dev.ts` 将 `OMEM_REPO_ROOT` 默认设为当前目录、将开发模式设为 `personal`，随后加载共享启动器。`scripts/dev-review.ts` 在个人模式下分别启动带 watch 的 `apps/server/src/main.ts` 和 Vite；默认 API/web 端口为 4317/5173，占用时选择空闲端口，健康检查成功后输出实际地址，任一子进程退出会关闭整组进程。\n2. `buildApp` 检测到 `OMEM_REPO_ROOT` 后调用 `importDevelopmentKnowledge`，并以 `developmentRetrieval` 包装基础检索。导入过程恢复仓库当前材料、发布知识及固定引用仍依赖的历史材料，最后导入实时文件以避免历史修订覆盖当前 head。仓库材料与个人材料共用存储和搜索入口；个人材料保留原资格与权重，被移除或作为旧别名的仓库材料不会进入普通开发搜索。\n3. 顶部搜索调用 `GET /api/search`。前端 `search()` 对查询做 URL 编码，经通用 `api()` 请求；`api()` 会统一添加 `/api` 前缀。`searchVersion` 只接纳最后一次请求的结果，避免较慢的旧请求覆盖新查询。\n4. 服务端将查询截断为 300 字符、最多取 30 条结果，并调用与知识 API、助手共用的 `assistantRetrieval`。每个命中由 fragment 找到固定 revision，返回 fragment id、snippet、材料标题、版本、分数、召回路由和 `section`。\n5. `section` 由 `evidenceSection` 即时计算，不是另一份章节事实。它把 fragment 映射回完整 material、找到 fragment 起始行，再选择包含该行且范围最小的阅读结构。Markdown 使用 marked 解析标题并按标题层级闭合范围；TS、JS、TSX、Vue 等代码使用既有解析器的 symbol 范围；没有结构时退化为整篇 document。\n6. 章节标题也被视作内容。material 缺失、fragment 无法定位，或同一 material 中存在当前调用者不可见的 fragment 时，`evidenceSection` 返回 null，防止章节标签泄露隐藏内容。助手也复用该函数写入 `sectionTitle`，并用同一阅读结构补标题和相邻原文，因此调整章节判定会同时影响搜索结果与助手背景。\n7. `App.vue` 已声明搜索结果的 `section?: { title; startLine; endLine } | null`，说明前后端合同已容纳章节提示；但现有材料没有给出搜索结果模板和相关样式，尚不能准确指出提示应插入的具体标签、类名及窄屏行为。\n8. 测试已有两种相关层级：`reading-context.test.ts` 通过真实 Fastify handler 请求 `/api/search`，验证中文词组无需连续字面子串也能召回；同文件还导入 `materialSections`、`evidenceNeighbors`，显然承担阅读结构与上下文行为测试。仍需补读完整测试，确认已有章节断言及最合适的扩展点。\n9. 开发与生成均通过 osdk：`osdk install`、`osdk deps --frozen`、`osdk run dev`；启动不会自动生成整库知识。读者指南用 `osdk run review:guides` 更新，单页目标键为 `contributing`；发布文章位于 `.repo-review/knowledge/`，运行任务与 trace 位于 `.repo-review/runtime/`。\n10. 验收要分层：`osdk run check` 证明回归、类型与构建通过，但不能证明阅读可用；UI 还要在真实服务中用 `osdk run browser` 和 `scripts/code-wiki-viewport.ts` 检查桌面、768px、390px。`review:verify --full` 的机器报告也不能替代真实 ACP 生成及读者能否理解、定位和行动的验收。\n11. UI 应复用 `@omem/ui` 与 `packages/ui` token，保持黑白灰阅读风格、至少 12px 的辅助信息、4/8/12/16/24/32/48px 间距和 flex gap。实际页面还应检查焦点、异步状态、长中文标题与窄屏换行。\n\n根据代码作出的解释：这个小改动有四层扩展面。只调整“属于哪一节”的显示文案或布局时，主要改 `App.vue` 的结果模板与样式；改变章节归属算法时，改 `retrieval/context.ts` 或 `knowledge/structure.ts`，并补结构测试；改变搜索返回合同或可见性策略时，改 `app.ts` 并补真实 HTTP 测试。由于助手复用 `evidenceSection`，算法改动不能只按顶部搜索的视觉效果验收。",
+            "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，实际任务是沿“搜索结果显示所属章节”走通开发启动、前端交互、HTTP API、检索命中补充上下文、组件呈现和真实页面验收。\n\n已确认的完整链路骨架如下：`scripts/dev.ts` 将当前目录设为 `OMEM_REPO_ROOT`、把 `OMEM_DEV_MODE` 设为 `personal`，再载入 `dev-review`。统一入口是 `osdk run dev`；个人开发模式接入当前仓库和已提交知识，默认 API/Web 端口为 4317/5173，冲突时选择空闲端口，启动本身不生成整库知识（`scripts/dev.ts:1-3`；`scripts/dev-review.ts:6-10,83-91`；`docs/reader-first/operations.md:3-7`）。服务端检测到 `OMEM_REPO_ROOT` 后调用 `importDevelopmentKnowledge`，并用 `developmentRetrieval` 包装常规检索；包装后的同一检索端口同时供知识路由、助手和顶部搜索使用（`apps/server/src/app.ts:61-88`）。\n\n顶部搜索的用户链路已经基本确认：`App.vue` 监听 query，清空旧结果、取消前一请求、递增版本并做 250ms 防抖；状态包含 loading、error 和可空的 `section`（`apps/web/src/App.vue:84-105`）。通用 `api()` 把业务路径拼到 `/api`，附带浏览器保存的 bearer token，并在非 2xx 时抛出服务端错误（`apps/web/src/api.ts:245-260`）。服务端 `/api/search` 把输入截到 300 字、限制 30 条，调用异步或同步 `searchSources`，再从固定 fragment 恢复 revision 标题、版本、score、routes，并通过 `evidenceSection` 增补章节（`apps/server/src/app.ts:273-280`）。模板以 `OmPanel` 呈现结果；章节存在时显示“标题 · 第起始–结束行”，随后显示摘要（`apps/web/src/App.vue:538-544`）。尚需补读 `search()` 的完整实现，确认请求路径、AbortError/版本竞争处理和空结果状态。\n\n章节并非检索器另造的事实，而是原材料阅读结构的投影。TS/JS/Vue 文件由现有解析器转成 symbol 范围，Markdown 用与阅读器相同的 marked lexer 提取标题层级，无结构材料退化为整个文档；`containingSection` 选择覆盖命中行的最小范围（`apps/server/src/knowledge/structure.ts:8-28,41-42`）。`evidenceSection` 从 fragment 找 evidence/revision/material，恢复 fragment 行号后返回章节标题与范围；材料或命中不存在时为 null，而且只要材料中存在调用者不可见的 fragment 就不暴露章节标签（`apps/server/src/retrieval/context.ts:21-29`）。因此调整章节提示有三类位置：只改显示文案/排版在 `App.vue` 与相关样式；改 API 字段组合在 `/api/search`；改“属于哪一节”的判断在 `knowledge/structure.ts` 或 `retrieval/context.ts`。权限分支必须保留为诚实的无章节状态。\n\n仓库材料进入 dev 的机制已见一部分：`importDevelopmentKnowledge` 创建评审知识 repository，读取 `.repo-review/knowledge/articles/*.json`，并在个人数据目录与隔离 review 数据目录不同时考虑已有 review SQLite；`developmentRetrieval` 被明确限定为输入适配与候选资格策略，通用内容排序仍与其他 capture 共用（`apps/server/src/review/development.ts:15-22,36-42`）。仍需完整函数才能准确说明已提交文章、当前仓库 Source 和历史数据怎样合并，以及被移除/旧别名如何影响搜索。\n\n界面修改应先查 `packages/ui` 并复用 `@omem/ui`；公共组件只收 props/slots/emits，网络和状态留在 `apps/web`。现有页面已复用 OmShell、OmButton、OmPanel、OmEmpty 等（`.agents/skills/omem-design/SKILL.md:8-17`；`apps/web/src/App.vue:6-16`）。设计基线是黑白灰阅读风格，使用统一 token、4/8/12/16/24/32/48px 间距和约 46 个汉字的正文行宽；业务页不得复制另一套按钮、弹窗或配色。UI 必须查看真实页面，覆盖 390/768/1440px、异步状态、错误态与无横向溢出，而不能只检查元素存在（`design.md:5-20,28-38,44-60`）。尚需定位 `.search-section` 等现有样式，才能给出这个贯穿例子的具体样式修改入口。\n\n检查与“阅读可用”必须分层陈述。实现层先跑 `osdk deps --frozen`、`osdk run check`；UI 再跑 `osdk run browser` 和 `scripts/code-wiki-viewport.ts` 看实际页面。知识层通过 `review:guides` 按页面计划真实调查、写作、独立复核；`review:verify --full` 是机器报告，不能代替真实 ACP 写作和阅读验收（`docs/reader-first/operations.md:9-17`）。当前记录显示程序检查、浏览器交互与三种视口可以分别通过，但最终 full verify 仍可能因真实 HTTP 检索排序不达预期而退出 1；这正说明“检查通过”和“读者能找到并理解内容”不是同一结论（`docs/reader-first/validation.md:9-23`）。阅读验收要对照页面读者、问题和场景，检查案例、概念解释、完整处理链、用户可见结果、修改入口与引用可操作性（`docs/reader-first/validation.md:35-39`）。",
             "gaps": [
-              "缺少 `App.vue` 搜索结果模板及相邻样式，无法给出章节提示的精确插入位置、现有点击行为和窄屏布局。",
-              "缺少 `search()` 的 catch/finally 与通用 `api()` 的响应处理，无法完整说明搜索错误态如何呈现。",
-              "缺少 `reading-context.test.ts` 全文，无法确认章节投影、可见性和 HTTP 响应已有的具体断言。",
-              "缺少 `scripts/code-wiki-viewport.ts` 的参数与实际覆盖范围，当前只能说明它用于页面视口检查，不能给出可靠调用示例。"
+              "尚未读到 App.vue 中 search() 的完整实现，无法确认请求 URL、响应赋值、竞态丢弃、取消请求和空结果行为。",
+              "尚未完整读到 dev-review 的子进程启动部分和 importDevelopmentKnowledge/developmentRetrieval 的后半段，无法精确描述 API、Vite、仓库 Source、发布文章及历史数据怎样接入同一 dev。",
+              "尚未定位 `.search-section`、`.excerpt`、搜索 loading/error 的样式定义，无法给出章节提示的具体排版修改点。",
+              "尚未确认 config/wiki-pages.json 中本页的实际 key，以及 osdk.toml 中 dev、check、browser、review:guides 等任务的准确声明与参数形式。",
+              "尚未查到针对 `/api/search` 章节字段或前端搜索竞态的现有测试入口；需要区分应补程序回归的位置和必须人工浏览器验收的内容。"
             ],
             "requests": [
               {
                 "kind": "read",
                 "materialKey": "omem:apps/web/src/App.vue",
-                "startLine": 249,
-                "endLine": 270
+                "startLine": 96,
+                "endLine": 145
               },
               {
-                "kind": "search",
-                "query": "omem:apps/web/src/App.vue v-for=\"result in results\""
-              },
-              {
-                "kind": "search",
-                "query": "omem:apps/web/src/App.vue section.title"
-              },
-              {
-                "kind": "search",
-                "query": "omem:apps/web/src/App.vue search-result"
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/App.vue",
+                "startLine": 535,
+                "endLine": 560
               },
               {
                 "kind": "read",
                 "materialKey": "omem:apps/web/src/api.ts",
                 "startLine": 245,
-                "endLine": 262
+                "endLine": 263
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:scripts/dev-review.ts",
+                "startLine": 78,
+                "endLine": 164
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/review/development.ts",
+                "startLine": 1,
+                "endLine": 85
+              },
+              {
+                "kind": "search",
+                "query": "apps/web/src/styles.css search-section"
+              },
+              {
+                "kind": "search",
+                "query": "apps/web/src/styles.css search-loading excerpt"
+              },
+              {
+                "kind": "search",
+                "query": "config/wiki-pages.json guide:contributing"
+              },
+              {
+                "kind": "search",
+                "query": "osdk.toml review:guides"
+              },
+              {
+                "kind": "search",
+                "query": "osdk.toml dev browser check"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/tests /api/search section"
+              },
+              {
+                "kind": "search",
+                "query": "apps/web/src App searchVersion AbortError"
+              }
+            ]
+          },
+          {
+            "trace": {
+              "runId": "29febe64-eec5-4679-aa07-76dc0b5bb116",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "4526a825c7177cddcdb5173c16666c28c9cd50d743d5f41459953271df9249e9",
+              "promptHash": "43bc34bed8193268c2cd323976c38bb23ccfc655f228ad7208e78bf8d5826c33",
+              "contextHash": "b8d96f6da95f657ba344285d07c9262eb18d7fb4ba571a1d8fae42ce1c6ce1bc",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "8caeaaca1bba1c4e876092b8f5fcaac89123d6abe1d111a0db271b469ce5f312",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f89a-e37d-7f30-a0f5-b2f8a43434fe"
+              ],
+              "usage": {
+                "used": 93070,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 237945,
+                  "utf8Bytes": 257186,
+                  "estimatedTokens": 85729,
+                  "budgetedTokens": 107162,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，实际任务是沿“搜索结果显示所属章节”走通开发启动、前端交互、HTTP API、检索命中补充上下文、组件呈现和真实页面验收。\n\n已确认的主流程如下。`scripts/dev.ts` 将当前目录设为 `OMEM_REPO_ROOT`，把 `OMEM_DEV_MODE` 设为 `personal`，再载入 `dev-review`。统一入口是 `osdk run dev`；个人开发模式接入当前仓库和已提交知识，默认 API/Web 端口为 4317/5173，默认端口冲突时自动选择空闲端口，而显式指定的占用端口会报错。服务端和 Vite 作为两个子进程启动，Vite 的 `/api` 指向选定 API 端口；编排器等健康检查成功后才打印可用地址。启动不会自动生成整库知识（`scripts/dev.ts:1-3`；`scripts/dev-review.ts:81-157`；`apps/server/tests/dev-ports.test.ts:5-15`；`docs/reader-first/operations.md:3-7`）。\n\n仓库材料进入个人 dev 的机制也已确认。`buildApp` 检测到 `OMEM_REPO_ROOT` 后调用 `importDevelopmentKnowledge`；它先建立评审知识 repository，读取 `.repo-review/knowledge/articles/*.json`，必要时从隔离 review SQLite 找回文章依赖的旧文章修订和固定材料修订，随后捕获当前仓库文件，恢复历史文章并刷新 current/stale 状态。当前文件最后写入，避免历史修订把 live head 倒退。该过程加入仓库材料和知识但不替换个人数据库，测试也保留了个人 capture（`apps/server/src/app.ts:61-82`；`apps/server/src/review/development.ts:36-83`；`apps/server/tests/development-knowledge.test.ts:11-22`）。`developmentRetrieval` 仅作为仓库输入适配器：默认隐藏已移除材料与旧路径别名，同时保留个人材料原有行为；内容排序继续复用统一检索器（`apps/server/src/review/development.ts:15-33`）。\n\n顶部搜索的用户链路基本完整。`App.vue` 的 query watcher 会清空旧结果与错误、取消前一请求、递增版本，并在 250ms 后搜索；状态包含 loading、error、空结果和可空的 `section`（`apps/web/src/App.vue:84-106`）。通用 `api()` 把业务路径拼到 `/api`，附带浏览器保存的 bearer token，传递 AbortSignal，并在非 2xx 时抛出服务端错误（`apps/web/src/api.ts:245-261`）。服务端 `/api/search` 把查询截到 300 字、限制 30 条，优先调用异步 `searchSourcesAsync`，否则调用同步 `searchSources`；然后从固定 fragment 恢复 revision 标题、版本、score、routes，并通过 `evidenceSection` 增补章节（`apps/server/src/app.ts:273-280`）。模板用 `OmPanel` 呈现每项；章节存在时显示“标题 · 第起始–结束行”，随后显示摘要与可打开固定片段的 `OmCitation`；请求完成且无结果时才显示诚实空态（`apps/web/src/App.vue:538-553`）。还需补读 `search()` 本体，确认 URL 编码、AbortError 和版本竞争的最终处理。\n\n“属于哪一节”不是模型或检索器新增事实，而是原材料阅读结构的投影。TS/JS/Vue 文件由现有解析器转成 symbol 范围；Markdown 用与阅读器一致的 marked lexer 提取标题层级，围栏代码中的伪标题不会成为章节；无结构材料退化为整个文档。`containingSection` 从覆盖命中行的候选中选择最小范围（`apps/server/src/knowledge/structure.ts:8-28,41-42`）。`evidenceSection` 从 fragment 找 evidence、revision 和 material，恢复 fragment 行号后返回章节标题与范围；材料或命中不存在时返回 null。章节标签本身也属于内容，因此只要该材料有调用者不可见的 fragment，就不暴露章节标签（`apps/server/src/retrieval/context.ts:21-29`）。这意味着无章节是正常且需要诚实呈现的状态，不能用猜测标题填充。\n\n围绕贯穿例子，修改入口可以分为三层。只调整章节提示文案、位置或视觉节奏，修改 `apps/web/src/App.vue` 的搜索结果模板与 `apps/web/src/styles.css`；现有 `.search-section` 使用 12px 下边距、次级文字色和 13px 字号（`apps/web/src/styles.css:193-203`）。调整 API 返回字段或结果装配，修改 `apps/server/src/app.ts` 的 `/api/search`。调整章节识别规则，修改 `apps/server/src/knowledge/structure.ts`；调整可见性与从证据恢复章节的规则，修改 `apps/server/src/retrieval/context.ts`。仓库候选资格属于 `review/development.ts` 的输入适配职责，不应把项目路径或题集词写入通用章节判断或排序。\n\n界面实现应先查 `packages/ui` 并从 `@omem/ui` 复用组件；公共组件只收 props、slots、emits，网络和业务状态留在 `apps/web`。当前搜索结果已经复用 `OmPanel`、`OmEmpty`、`OmCitation`，页面整体也使用 `OmShell`、`OmButton` 等（`.agents/skills/omem-design/SKILL.md:8-17`；`apps/web/src/App.vue:6-16,543-553`）。设计基线是黑白灰阅读风格、统一 token、4/8/12/16/24/32/48px 间距和约 46 个汉字的正文行宽；业务页不得复制另一套按钮、弹窗或配色（`design.md:5-20,28-38`）。异步状态须可感知，错误不能只靠颜色，普通点击区域至少 44px；真实页面需覆盖 390/768/1440px、长标题、错误态、空态和无横向溢出（`design.md:44-60`）。\n\n检查通过与阅读可用必须分层陈述。实现层运行 `osdk deps --frozen`、`osdk run check`；UI 再运行 `osdk run browser` 并用 `scripts/code-wiki-viewport.ts` 查看真实页面。知识更新由 `config/wiki-pages.json` 的页面计划驱动，本页 key 是 `guide:contributing`，目标读者、场景和贯穿例子均是持久配置；`osdk run review:guides contributing` 会通过真实 ACP 调查、写作和独立复核，而不是手改模型产物（`config/wiki-pages.json:108-115`；`osdk.toml:117-124`；`docs/reader-first/operations.md:9-17`）。`review:verify --full` 是机器报告，不能代替正文抽读和真实页面验收。\n\n现有验收记录给出了这种区分的实际例子：依赖、359 项测试、类型检查、构建、15 组浏览器交互和 390/768/1440px 视口检查均可退出 0，但最终 `review:verify --full` 仍因真实 HTTP 检索排序只有六题中的四题达到题集预期而退出 1（`docs/reader-first/validation.md:9-23`）。内容验收要对照读者、问题和场景，检查贯穿案例、概念首次解释、完整处理链、用户可见结果、修改入口和可操作引用，而不是只数引用或接受独立模型结论（`docs/reader-first/validation.md:35-39`）。当前记录还明确指出，本页应沿 App.vue、API、检索、结构投影和样式形成完整链；它不是任意功能的自动修改器，也不表示已经生成完整仓库功能目录（`docs/reader-first/validation.md:52-60`）。",
+            "gaps": [
+              "尚未读到 `App.vue` 中 `search()` 的完整函数，无法有依据地说明请求 URL、AbortError 是否静默处理、旧请求结果如何被版本号丢弃，以及重试如何复用该逻辑。",
+              "需要补读章节/可见性测试的完整断言，确认 Markdown 层级、相邻片段与隐藏 fragment 的行为如何被回归测试覆盖，便于给首次贡献者指出最小验证位置。",
+              "需要补读 `review-guides.ts` 的执行主体，准确说明只更新 contributing 页时从页面计划到发布产物的关键步骤及失败处理，而不只依据任务声明概括。"
+            ],
+            "requests": [
+              {
+                "kind": "search",
+                "query": "apps/web/src/App.vue async function search("
               },
               {
                 "kind": "read",
                 "materialKey": "omem:apps/server/tests/reading-context.test.ts",
-                "startLine": 1,
-                "endLine": 58
+                "startLine": 14,
+                "endLine": 57
               },
               {
                 "kind": "read",
-                "materialKey": "omem:scripts/code-wiki-viewport.ts",
-                "startLine": 1,
-                "endLine": 133
+                "materialKey": "omem:scripts/review-guides.ts",
+                "startLine": 15,
+                "endLine": 50
               }
             ]
           }
         ],
-        "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，贯穿场景是让顶部搜索结果显示“它属于哪一节”。目前已确认开发启动、材料导入、搜索 API、章节推导和验收原则，前端实际渲染位置仍需最后一轮补读。\n\n已确认事实：\n1. `scripts/dev.ts` 将 `OMEM_REPO_ROOT` 默认设为当前目录、将开发模式设为 `personal`，随后加载共享启动器。`scripts/dev-review.ts` 在个人模式下分别启动带 watch 的 `apps/server/src/main.ts` 和 Vite；默认 API/web 端口为 4317/5173，占用时选择空闲端口，健康检查成功后输出实际地址，任一子进程退出会关闭整组进程。\n2. `buildApp` 检测到 `OMEM_REPO_ROOT` 后调用 `importDevelopmentKnowledge`，并以 `developmentRetrieval` 包装基础检索。导入过程恢复仓库当前材料、发布知识及固定引用仍依赖的历史材料，最后导入实时文件以避免历史修订覆盖当前 head。仓库材料与个人材料共用存储和搜索入口；个人材料保留原资格与权重，被移除或作为旧别名的仓库材料不会进入普通开发搜索。\n3. 顶部搜索调用 `GET /api/search`。前端 `search()` 对查询做 URL 编码，经通用 `api()` 请求；`api()` 会统一添加 `/api` 前缀。`searchVersion` 只接纳最后一次请求的结果，避免较慢的旧请求覆盖新查询。\n4. 服务端将查询截断为 300 字符、最多取 30 条结果，并调用与知识 API、助手共用的 `assistantRetrieval`。每个命中由 fragment 找到固定 revision，返回 fragment id、snippet、材料标题、版本、分数、召回路由和 `section`。\n5. `section` 由 `evidenceSection` 即时计算，不是另一份章节事实。它把 fragment 映射回完整 material、找到 fragment 起始行，再选择包含该行且范围最小的阅读结构。Markdown 使用 marked 解析标题并按标题层级闭合范围；TS、JS、TSX、Vue 等代码使用既有解析器的 symbol 范围；没有结构时退化为整篇 document。\n6. 章节标题也被视作内容。material 缺失、fragment 无法定位，或同一 material 中存在当前调用者不可见的 fragment 时，`evidenceSection` 返回 null，防止章节标签泄露隐藏内容。助手也复用该函数写入 `sectionTitle`，并用同一阅读结构补标题和相邻原文，因此调整章节判定会同时影响搜索结果与助手背景。\n7. `App.vue` 已声明搜索结果的 `section?: { title; startLine; endLine } | null`，说明前后端合同已容纳章节提示；但现有材料没有给出搜索结果模板和相关样式，尚不能准确指出提示应插入的具体标签、类名及窄屏行为。\n8. 测试已有两种相关层级：`reading-context.test.ts` 通过真实 Fastify handler 请求 `/api/search`，验证中文词组无需连续字面子串也能召回；同文件还导入 `materialSections`、`evidenceNeighbors`，显然承担阅读结构与上下文行为测试。仍需补读完整测试，确认已有章节断言及最合适的扩展点。\n9. 开发与生成均通过 osdk：`osdk install`、`osdk deps --frozen`、`osdk run dev`；启动不会自动生成整库知识。读者指南用 `osdk run review:guides` 更新，单页目标键为 `contributing`；发布文章位于 `.repo-review/knowledge/`，运行任务与 trace 位于 `.repo-review/runtime/`。\n10. 验收要分层：`osdk run check` 证明回归、类型与构建通过，但不能证明阅读可用；UI 还要在真实服务中用 `osdk run browser` 和 `scripts/code-wiki-viewport.ts` 检查桌面、768px、390px。`review:verify --full` 的机器报告也不能替代真实 ACP 生成及读者能否理解、定位和行动的验收。\n11. UI 应复用 `@omem/ui` 与 `packages/ui` token，保持黑白灰阅读风格、至少 12px 的辅助信息、4/8/12/16/24/32/48px 间距和 flex gap。实际页面还应检查焦点、异步状态、长中文标题与窄屏换行。\n\n根据代码作出的解释：这个小改动有四层扩展面。只调整“属于哪一节”的显示文案或布局时，主要改 `App.vue` 的结果模板与样式；改变章节归属算法时，改 `retrieval/context.ts` 或 `knowledge/structure.ts`，并补结构测试；改变搜索返回合同或可见性策略时，改 `app.ts` 并补真实 HTTP 测试。由于助手复用 `evidenceSection`，算法改动不能只按顶部搜索的视觉效果验收。",
+        "findings": "页面面向第一次修改 omem 的 TypeScript 开发者，实际任务是沿“搜索结果显示所属章节”走通开发启动、前端交互、HTTP API、检索命中补充上下文、组件呈现和真实页面验收。\n\n已确认的主流程如下。`scripts/dev.ts` 将当前目录设为 `OMEM_REPO_ROOT`，把 `OMEM_DEV_MODE` 设为 `personal`，再载入 `dev-review`。统一入口是 `osdk run dev`；个人开发模式接入当前仓库和已提交知识，默认 API/Web 端口为 4317/5173，默认端口冲突时自动选择空闲端口，而显式指定的占用端口会报错。服务端和 Vite 作为两个子进程启动，Vite 的 `/api` 指向选定 API 端口；编排器等健康检查成功后才打印可用地址。启动不会自动生成整库知识（`scripts/dev.ts:1-3`；`scripts/dev-review.ts:81-157`；`apps/server/tests/dev-ports.test.ts:5-15`；`docs/reader-first/operations.md:3-7`）。\n\n仓库材料进入个人 dev 的机制也已确认。`buildApp` 检测到 `OMEM_REPO_ROOT` 后调用 `importDevelopmentKnowledge`；它先建立评审知识 repository，读取 `.repo-review/knowledge/articles/*.json`，必要时从隔离 review SQLite 找回文章依赖的旧文章修订和固定材料修订，随后捕获当前仓库文件，恢复历史文章并刷新 current/stale 状态。当前文件最后写入，避免历史修订把 live head 倒退。该过程加入仓库材料和知识但不替换个人数据库，测试也保留了个人 capture（`apps/server/src/app.ts:61-82`；`apps/server/src/review/development.ts:36-83`；`apps/server/tests/development-knowledge.test.ts:11-22`）。`developmentRetrieval` 仅作为仓库输入适配器：默认隐藏已移除材料与旧路径别名，同时保留个人材料原有行为；内容排序继续复用统一检索器（`apps/server/src/review/development.ts:15-33`）。\n\n顶部搜索的用户链路基本完整。`App.vue` 的 query watcher 会清空旧结果与错误、取消前一请求、递增版本，并在 250ms 后搜索；状态包含 loading、error、空结果和可空的 `section`（`apps/web/src/App.vue:84-106`）。通用 `api()` 把业务路径拼到 `/api`，附带浏览器保存的 bearer token，传递 AbortSignal，并在非 2xx 时抛出服务端错误（`apps/web/src/api.ts:245-261`）。服务端 `/api/search` 把查询截到 300 字、限制 30 条，优先调用异步 `searchSourcesAsync`，否则调用同步 `searchSources`；然后从固定 fragment 恢复 revision 标题、版本、score、routes，并通过 `evidenceSection` 增补章节（`apps/server/src/app.ts:273-280`）。模板用 `OmPanel` 呈现每项；章节存在时显示“标题 · 第起始–结束行”，随后显示摘要与可打开固定片段的 `OmCitation`；请求完成且无结果时才显示诚实空态（`apps/web/src/App.vue:538-553`）。还需补读 `search()` 本体，确认 URL 编码、AbortError 和版本竞争的最终处理。\n\n“属于哪一节”不是模型或检索器新增事实，而是原材料阅读结构的投影。TS/JS/Vue 文件由现有解析器转成 symbol 范围；Markdown 用与阅读器一致的 marked lexer 提取标题层级，围栏代码中的伪标题不会成为章节；无结构材料退化为整个文档。`containingSection` 从覆盖命中行的候选中选择最小范围（`apps/server/src/knowledge/structure.ts:8-28,41-42`）。`evidenceSection` 从 fragment 找 evidence、revision 和 material，恢复 fragment 行号后返回章节标题与范围；材料或命中不存在时返回 null。章节标签本身也属于内容，因此只要该材料有调用者不可见的 fragment，就不暴露章节标签（`apps/server/src/retrieval/context.ts:21-29`）。这意味着无章节是正常且需要诚实呈现的状态，不能用猜测标题填充。\n\n围绕贯穿例子，修改入口可以分为三层。只调整章节提示文案、位置或视觉节奏，修改 `apps/web/src/App.vue` 的搜索结果模板与 `apps/web/src/styles.css`；现有 `.search-section` 使用 12px 下边距、次级文字色和 13px 字号（`apps/web/src/styles.css:193-203`）。调整 API 返回字段或结果装配，修改 `apps/server/src/app.ts` 的 `/api/search`。调整章节识别规则，修改 `apps/server/src/knowledge/structure.ts`；调整可见性与从证据恢复章节的规则，修改 `apps/server/src/retrieval/context.ts`。仓库候选资格属于 `review/development.ts` 的输入适配职责，不应把项目路径或题集词写入通用章节判断或排序。\n\n界面实现应先查 `packages/ui` 并从 `@omem/ui` 复用组件；公共组件只收 props、slots、emits，网络和业务状态留在 `apps/web`。当前搜索结果已经复用 `OmPanel`、`OmEmpty`、`OmCitation`，页面整体也使用 `OmShell`、`OmButton` 等（`.agents/skills/omem-design/SKILL.md:8-17`；`apps/web/src/App.vue:6-16,543-553`）。设计基线是黑白灰阅读风格、统一 token、4/8/12/16/24/32/48px 间距和约 46 个汉字的正文行宽；业务页不得复制另一套按钮、弹窗或配色（`design.md:5-20,28-38`）。异步状态须可感知，错误不能只靠颜色，普通点击区域至少 44px；真实页面需覆盖 390/768/1440px、长标题、错误态、空态和无横向溢出（`design.md:44-60`）。\n\n检查通过与阅读可用必须分层陈述。实现层运行 `osdk deps --frozen`、`osdk run check`；UI 再运行 `osdk run browser` 并用 `scripts/code-wiki-viewport.ts` 查看真实页面。知识更新由 `config/wiki-pages.json` 的页面计划驱动，本页 key 是 `guide:contributing`，目标读者、场景和贯穿例子均是持久配置；`osdk run review:guides contributing` 会通过真实 ACP 调查、写作和独立复核，而不是手改模型产物（`config/wiki-pages.json:108-115`；`osdk.toml:117-124`；`docs/reader-first/operations.md:9-17`）。`review:verify --full` 是机器报告，不能代替正文抽读和真实页面验收。\n\n现有验收记录给出了这种区分的实际例子：依赖、359 项测试、类型检查、构建、15 组浏览器交互和 390/768/1440px 视口检查均可退出 0，但最终 `review:verify --full` 仍因真实 HTTP 检索排序只有六题中的四题达到题集预期而退出 1（`docs/reader-first/validation.md:9-23`）。内容验收要对照读者、问题和场景，检查贯穿案例、概念首次解释、完整处理链、用户可见结果、修改入口和可操作引用，而不是只数引用或接受独立模型结论（`docs/reader-first/validation.md:35-39`）。当前记录还明确指出，本页应沿 App.vue、API、检索、结构投影和样式形成完整链；它不是任意功能的自动修改器，也不表示已经生成完整仓库功能目录（`docs/reader-first/validation.md:52-60`）。",
         "gaps": [
-          "缺少 `App.vue` 搜索结果模板及相邻样式，无法给出章节提示的精确插入位置、现有点击行为和窄屏布局。",
-          "缺少 `search()` 的 catch/finally 与通用 `api()` 的响应处理，无法完整说明搜索错误态如何呈现。",
-          "缺少 `reading-context.test.ts` 全文，无法确认章节投影、可见性和 HTTP 响应已有的具体断言。",
-          "缺少 `scripts/code-wiki-viewport.ts` 的参数与实际覆盖范围，当前只能说明它用于页面视口检查，不能给出可靠调用示例。"
+          "尚未读到 `App.vue` 中 `search()` 的完整函数，无法有依据地说明请求 URL、AbortError 是否静默处理、旧请求结果如何被版本号丢弃，以及重试如何复用该逻辑。",
+          "需要补读章节/可见性测试的完整断言，确认 Markdown 层级、相邻片段与隐藏 fragment 的行为如何被回归测试覆盖，便于给首次贡献者指出最小验证位置。",
+          "需要补读 `review-guides.ts` 的执行主体，准确说明只更新 contributing 页时从页面计划到发布产物的关键步骤及失败处理，而不只依据任务声明概括。"
         ],
         "materials": [
           {
@@ -808,29 +928,25 @@
           },
           {
             "key": "omem:apps/web/src/App.vue",
-            "digest": "3cc9db64ebf4443678ed277ad2df3320ed9517b5c3336ffaf76af552fb3c6cca",
+            "digest": "26266f7c5ad0c2d5fe1a8a9c004dcd828c4a59b4b408dc06001d35ef5d789ef4",
             "ranges": [
               {
                 "start": 1,
-                "end": 102
+                "end": 145
               },
               {
-                "start": 247,
-                "end": 270
+                "start": 256,
+                "end": 265
               },
               {
-                "start": 307,
-                "end": 316
-              },
-              {
-                "start": 530,
-                "end": 539
+                "start": 535,
+                "end": 560
               }
             ]
           },
           {
             "key": "omem:apps/server/src/app.ts",
-            "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae",
+            "digest": "e9560fb02af4b1a93872afb41e5395f1870ff9a93ec89a6b278147ebe7d076a1",
             "ranges": [
               {
                 "start": 1,
@@ -838,11 +954,7 @@
               },
               {
                 "start": 270,
-                "end": 285
-              },
-              {
-                "start": 530,
-                "end": 539
+                "end": 281
               }
             ]
           },
@@ -858,35 +970,21 @@
           },
           {
             "key": "omem:docs/reader-first/operations.md",
-            "digest": "1ecbcc948134372278e9d11b5aeb711d2df5988c358a7643d9e7ea54198de0f0",
+            "digest": "dbfe0d70cc01e95c96f6a20a3d844c8351e5dc3af504e2b781cbe1068cc0a911",
             "ranges": [
               {
                 "start": 1,
-                "end": 26
+                "end": 32
               }
             ]
           },
           {
             "key": "omem:apps/web/src/api.ts",
-            "digest": "69fe95235892d959cfcf2e0f2e53d82aa4ab86d1866ea34869cf67fcc9fbbe71",
+            "digest": "5b1fc796094157c6c689332d72eacf6d57c95025e92b39991ed4b0becc6cbb9a",
             "ranges": [
-              {
-                "start": 1,
-                "end": 13
-              },
               {
                 "start": 245,
-                "end": 262
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/server/src/knowledge/development.ts",
-            "digest": "54a8cc78f2966e8f4528afba10711f2c37cf0efbae1a8d82cc2147dec6da7a07",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 89
+                "end": 263
               }
             ]
           },
@@ -895,8 +993,22 @@
             "digest": "dde7c0e6e375af50da5980679928c199db2dc564d05230ef9ab194fff85fd5b4",
             "ranges": [
               {
-                "start": 1,
+                "start": 6,
+                "end": 15
+              },
+              {
+                "start": 78,
                 "end": 164
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/review/development.ts",
+            "digest": "7a042eb81ee14ed0d6d34b1ea3d7476f1894f43afb3dd0ab02d3f3177be3f989",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 85
               }
             ]
           },
@@ -911,12 +1023,194 @@
             ]
           },
           {
-            "key": "omem:apps/server/tests/agents.test.ts",
-            "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7",
+            "key": "omem:.agents/skills/omem-design/SKILL.md",
+            "digest": "6991e36884f0a2343720655edaaa45effd15e1b93694da0a42a06b62031de27d",
             "ranges": [
               {
-                "start": 10,
+                "start": 1,
+                "end": 18
+              }
+            ]
+          },
+          {
+            "key": "omem:design.md",
+            "digest": "bccb24e86882894c4e2231903054d51f7d7347ea94297db95de8d7aa75d557b5",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 61
+              }
+            ]
+          },
+          {
+            "key": "omem:docs/reader-first/progress.md",
+            "digest": "ebc4e7594eca2b7afd8f694d7f8d129ab242ffeb1a447a6cba5488e4a4dbd583",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 43
+              }
+            ]
+          },
+          {
+            "key": "omem:docs/reader-first/validation.md",
+            "digest": "b2bc293c97dc8384f2e30c0a6b19a3175cac6fa95744638ebbef8c168d721a9e",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 77
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/styles.css",
+            "digest": "7ab524d55ad59272259a7fe425cc8e6db62a780d471be5c7221533868ec0e198",
+            "ranges": [
+              {
+                "start": 190,
+                "end": 205
+              }
+            ]
+          },
+          {
+            "key": "omem:config/wiki-pages.json",
+            "digest": "c38e4b5bc85b25eb76a5784404e1d3dca4006b4905d408db95ae2742f28d5f9c",
+            "ranges": [
+              {
+                "start": 2,
+                "end": 11
+              },
+              {
+                "start": 106,
+                "end": 115
+              }
+            ]
+          },
+          {
+            "key": "omem:scripts/review-guides.ts",
+            "digest": "c288be1cd6bdb167c2cdd907eedfd498cdbabc84aa88406787e7e0b5e0d1f0ce",
+            "ranges": [
+              {
+                "start": 4,
+                "end": 50
+              }
+            ]
+          },
+          {
+            "key": "omem:osdk.toml",
+            "digest": "dd667ad4e92db12157284a8091a49cd77ff64ad533f7b5b9f55e7579f844acb7",
+            "ranges": [
+              {
+                "start": 114,
+                "end": 124
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/review/app.ts",
+            "digest": "d9fce7fdfde0e615a88e68fa6ef1a64fb15244a83e4b53212e4df2ea1b92346f",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 9
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/review/associations.ts",
+            "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf",
+            "ranges": [
+              {
+                "start": 3,
+                "end": 15
+              }
+            ]
+          },
+          {
+            "key": "omem:scripts/browser-smoke.ts",
+            "digest": "59a91489cb8d563f1a361d38796c15a0fc22b074794a2066ae2fb0f09b98e996",
+            "ranges": [
+              {
+                "start": 15,
+                "end": 30
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/dev-ports.test.ts",
+            "digest": "fbe8f8aa952ed9d5589486337a19350f67ea84d710a7cfe347fb62424a0dd1a8",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 16
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/development-knowledge.test.ts",
+            "digest": "ddbbbaf349d2112f7a9e2589a4c79560153972850a930e83d4c2443daecab08f",
+            "ranges": [
+              {
+                "start": 3,
+                "end": 22
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/review-dev.test.ts",
+            "digest": "a988ab9ce4ebc5c1b21b162de667931bbc994dc24600e0d069ca66b3dabc9bde",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 7
+              },
+              {
+                "start": 102,
+                "end": 111
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/knowledge-api.test.ts",
+            "digest": "b61ed37661eb32708e72c35ceebad961ee2a13829b2885e9e7f6c5ecfc38fe10",
+            "ranges": [
+              {
+                "start": 19,
                 "end": 28
+              },
+              {
+                "start": 58,
+                "end": 67
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/knowledge-research.test.ts",
+            "digest": "0095fdec4f1924d9db0dfc328cf9d34be534f4301c82fac826f7049b4763a7f3",
+            "ranges": [
+              {
+                "start": 4,
+                "end": 15
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/reading-context.test.ts",
+            "digest": "8806cca81e216f348b5710c6f07c7ead7f010a8fe2c2423438101876793d7c6b",
+            "ranges": [
+              {
+                "start": 4,
+                "end": 57
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/review-sync.test.ts",
+            "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95",
+            "ranges": [
+              {
+                "start": 204,
+                "end": 215
               }
             ]
           },
@@ -931,159 +1225,75 @@
             ]
           },
           {
-            "key": "omem:apps/server/tests/app.test.ts",
-            "digest": "97e939f4e33fec83c8adf7ea575681c04e7205e3c40be1baa6d2f3eec1599bad",
+            "key": "omem:apps/web/src/DecisionsView.vue",
+            "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99",
             "ranges": [
               {
-                "start": 6,
-                "end": 15
+                "start": 13,
+                "end": 22
               },
               {
-                "start": 21,
-                "end": 30
+                "start": 27,
+                "end": 36
               }
             ]
           },
           {
-            "key": "omem:apps/server/tests/development-knowledge.test.ts",
-            "digest": "631ff1f22a6adc059073d688d42f0583357e803285e22fa449985901f7d378c6",
+            "key": "omem:apps/web/src/LarkSetup.vue",
+            "digest": "1c17744de6c2381d9211ebdbc5222311f5bb6d36dfa9b10467743141df56624f",
             "ranges": [
               {
-                "start": 15,
+                "start": 7,
                 "end": 24
-              },
-              {
-                "start": 45,
-                "end": 54
               }
             ]
           },
           {
-            "key": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
-            "digest": "11f1e4b8fc33705d5f254cd190c016641f5797d17fa11ad615be6d113554f2ed",
+            "key": "omem:apps/web/src/LearningView.vue",
+            "digest": "0b18c7e95c118580d32641cebf60d85844d73ba8fd74153b32ebcf44be13897e",
             "ranges": [
               {
-                "start": 1,
-                "end": 7
+                "start": 22,
+                "end": 31
               },
               {
-                "start": 50,
-                "end": 59
+                "start": 40,
+                "end": 49
               }
             ]
           },
           {
-            "key": "omem:design.md",
-            "digest": "ee9933ce2c9a3fa6f08877327572ed85ef9a40c78e5ba8ec4a5b843b968e1994",
+            "key": "omem:apps/web/src/ReviewApp.vue",
+            "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb",
             "ranges": [
               {
-                "start": 1,
+                "start": 52,
                 "end": 61
-              }
-            ]
-          },
-          {
-            "key": "omem:packages/ui/src/tokens.css",
-            "digest": "b64c9b5cc7ce88bbecec62f793984d53a979914eea87987d968c04604dbd5f91",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 110
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/reader-first/progress.md",
-            "digest": "9244eeb5bee20153550f0da0f2c429196e5a9f41038ad1fcacdcdba86779bac8",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 41
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/server/src/assistant/runtime.ts",
-            "digest": "770504ecd25bca96794747bd325f2ac796a9a46fa387a0d48fbc88cfbc847fa5",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 7
               },
               {
-                "start": 684,
-                "end": 693
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/server/tests/reading-context.test.ts",
-            "digest": "d1199e5e8c57769fbbc45bfc07002627f53af89faf59d5b59ebb98a75fd26433",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 58
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/server/tests/code-understanding-integration.test.ts",
-            "digest": "aeb1e454f5fe809dbfb9574bf9746feedb4997b631e6dab73a50c9e78897b089",
-            "ranges": [
-              {
-                "start": 69,
-                "end": 88
-              }
-            ]
-          },
-          {
-            "key": "omem:osdk.toml",
-            "digest": "beeee24313f3a785d275eabe48de77e07ec5057c1c8cc1b1a1550113094e1cee",
-            "ranges": [
-              {
-                "start": 113,
-                "end": 123
-              }
-            ]
-          },
-          {
-            "key": "omem:.claude/skills/omem-design/SKILL.md",
-            "digest": "00ef215ab19ecea51869c5472eb3c26ea52d4920b81516aa5c8bb63edad7d88d",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 18
-              }
-            ]
-          },
-          {
-            "key": "omem:scripts/code-wiki-viewport.ts",
-            "digest": "6e9a634945fe6701aae11343ec4eda68ab2d68f79aa791afa85db866516d0874",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 133
+                "start": 196,
+                "end": 205
               }
             ]
           }
         ]
       },
-      "writerVersion": "29f3ea78e530ff7b242f271e45475916ab314266b4c45c899a043cac24210e0e"
+      "writerVersion": "e6c104aa6cbea865f529ad91f2c49f9303a2d8299fdc96a24a478952747a41b3"
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T16:05:56.563Z",
+    "at": "2026-10-01T17:57:39.103Z",
     "trace": {
-      "runId": "098c895c-86ba-41d1-a66c-de617ef5233d",
+      "runId": "3daaddac-3932-4155-8214-00cd1b8d0fff",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "e9d0289f6a9ebcefcc1649bc58140312da70887f42c363b3a0b9130fd4a97ee2",
-      "promptHash": "1fe5f7ff1e4225d882a87d8aac7e6262b943af60004f2713b7c166b43f8a75fc",
-      "contextHash": "f0b0c272c58b2dbd495a5b9036e8e9bb5ed06d17a8114491c1024c814801db99",
+      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
+      "promptHash": "207c86ba0ea28026f44695d803a3cba6e36b246eee539a25c6d3daa942cb9ba4",
+      "contextHash": "c6724aa205fa1875e1aeb5cd110b69a946c431679da50cb710eee95cd4da9196",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4d676b119b091b536bf97332cb0f85f415a5a669dbd0010e1ebe2e4966c49847",
+      "fingerprint": "b1e90c7e7fa744cfa7cc87bbfbf65f01744d307332cc2c4beed3c32266245c0d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -1096,10 +1306,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f836-e789-7bf1-89b0-5680a4fb78d8"
+        "01a0f89d-1bac-74b1-91ab-d54ed0d1714f"
       ],
       "usage": {
-        "used": 55373,
+        "used": 61825,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -1108,10 +1318,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 109477,
-          "utf8Bytes": 127737,
-          "estimatedTokens": 42579,
-          "budgetedTokens": 53224,
+          "chars": 120508,
+          "utf8Bytes": 147351,
+          "estimatedTokens": 49117,
+          "budgetedTokens": 61397,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

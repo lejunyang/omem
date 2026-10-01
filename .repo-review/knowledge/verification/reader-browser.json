@@ -1,0 +1,15 @@
+{
+  "base": "http://127.0.0.1:65092",
+  "checks": [
+    "unified app has real repository chapters",
+    "menu and breadcrumbs agree; Lark errors stay on its page",
+    "citations open the fixed code range and expand context",
+    "README reads as a document with intact code fences",
+    "material changes show real differences and notifications omit empty internals",
+    "Agent capabilities load automatically and local access needs no token",
+    "readable layout at 1440px",
+    "readable layout at 768px",
+    "readable layout at 390px"
+  ],
+  "errors": []
+}
