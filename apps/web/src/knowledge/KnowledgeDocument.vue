@@ -30,12 +30,14 @@ function cite(key: string) {
     <template v-else>
       <div class="article-body"><h2>{{ article.title }}</h2>
       <p class="knowledge-summary">{{ article.summary }}</p>
-      <div class="knowledge-provenance"><OmBadge>{{ article.current ? '当前知识' : '待更新 · 原文已变化或部分证据缺失' }}</OmBadge><span>AI 分析并独立复核 · {{ article.model }}</span></div>
+      <div v-if="article.reading" class="reading-goal"><strong>读完这一篇</strong><p>{{ article.reading.goal }}</p></div>
+      <p v-if="!article.current" class="update-note" role="status">原始材料已有变化，这篇内容正在等待更新；引用仍指向写作时的版本。</p>
       <section v-for="section in article.document.sections" :key="section.key" :data-section="section.key" class="knowledge-section">
         <h3>{{ section.title }}</h3>
         <OmMarkdown :source="section.body" :citations="article.citations" @cite="cite" />
       </section>
-      <details><summary>有待确认的问题</summary><KnowledgeQuestions :prefix="prefix" :document-key="article.key" /></details>
+      <details v-if="article.questionCount" class="article-details"><summary>有待确认的问题</summary><KnowledgeQuestions :prefix="prefix" :document-key="article.key" /></details>
+      <details class="article-details provenance-details"><summary>来源与生成记录</summary><p>基于固定原始材料，由 {{ article.model }} 生成、{{ article.reviewedBy }} 独立复核。生成于 {{ new Date(article.generatedAt).toLocaleString() }}。正文引用可查看对应原文。</p></details>
       </div>
       <nav v-if="article.document.sections.length > 2" class="article-toc" aria-label="本篇目录">
         <a v-for="s in article.document.sections" :key="s.key" :href="'#' + s.key" @click.prevent="root?.querySelector(`[data-section='${s.key}']`)?.scrollIntoView({ block: 'start' })">{{ s.title }}</a>
@@ -59,3 +61,16 @@ summary { cursor: pointer; min-height: 44px; }
 </style>
 
 <style scoped>@media(max-width:1250px){.knowledge-document{display:flex;flex-direction:column;gap:16px;}.article-toc{order:-1;position:static;flex-direction:row;flex-wrap:wrap;border:0;border-bottom:1px solid var(--om-line);padding:0 0 12px;}.article-toc a{padding:6px;}.article-toc::before{width:100%;}}:global(.om-trail .knowledge-document){display:block;}:global(.om-trail .article-toc){display:none;}</style>
+
+<style scoped>
+.reading-goal { margin:24px 0 36px; padding:20px 24px; border-left:3px solid var(--om-ink); background:var(--om-paper); }
+.reading-goal strong { font-size:13px; }
+.reading-goal p { margin:8px 0 0; font-size:14px; color:var(--om-secondary); }
+.update-note { margin:24px 0; padding:16px; background:var(--om-soft); color:var(--om-secondary); }
+.knowledge-section { margin:36px 0; }
+.knowledge-section h3 { margin:0 0 18px; line-height:1.6; }
+.article-details { border-top:1px solid var(--om-line); margin-top:28px; padding-top:12px; }
+.provenance-details { color:var(--om-muted); font-size:12px; }
+.knowledge-summary { font-size:16px; margin:0 0 24px; }
+@media(max-width:700px) { .reading-goal { padding:16px; margin:20px 0 28px; } .knowledge-section { margin:28px 0; } }
+</style>

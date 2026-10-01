@@ -196,6 +196,12 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.search-section {
+  margin: 0 0 12px;
+  color: var(--om-secondary);
+  font-size: 13px;
+}
+.error-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .sample-quote {
   font: 20px/2 var(--om-serif);
   background: var(--om-soft);

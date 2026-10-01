@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount } from "vue";
 import { OmTrailDrawer, useEvidenceTrail, parseHash, writeHash, MAX_TRAIL } from "@omem/ui";
 import KnowledgeHome from "./KnowledgeHome.vue";
 import KnowledgeFrame from "./KnowledgeFrame.vue";
-const selectedKey = ref(sessionStorage.getItem("omem-knowledge-page") || "topic:overview");
+const selectedKey = ref(sessionStorage.getItem("omem-knowledge-page") || "guide:overview");
 const linkNotice = ref("");
 function saveRoute() {
   if (frames.value.length > MAX_TRAIL) { linkNotice.value = "引用路径过长，当前阅读不受影响，但链接暂不保存完整路径。"; return; }

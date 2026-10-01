@@ -1,5 +1,5 @@
-import type { KnowledgeDocument, KnowledgeCitation } from "../../../../packages/contracts/src/knowledge";
-export type ArticleMeta = { children?: string[]; key: string; title: string; summary: string; category: string; current: boolean; revision: string; model: string; reviewedBy: string; generatedAt: string; questionCount: number };
+import type { KnowledgeDocument, KnowledgeCitation, WikiPageBrief } from "../../../../packages/contracts/src/knowledge";
+export type ArticleMeta = { children?: string[]; key: string; title: string; summary: string; category: string; current: boolean; revision: string; model: string; reviewedBy: string; generatedAt: string; questionCount: number; reading?: WikiPageBrief };
 export type Citation = KnowledgeCitation & { actionable: boolean; unavailableReason?: string | null; current?: boolean; resolved?: { kind: "article" | "material"; key: string; revision?: string; digest?: string; section?: string; title: string; startLine?: number; endLine?: number } | null };
 export type Article = ArticleMeta & { document: KnowledgeDocument; citations: Citation[] };
 export type KnowledgeFrame = { kind: "knowledge" | "citation" | "source"; id: string; title: string };
