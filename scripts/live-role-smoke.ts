@@ -16,7 +16,7 @@ const { profile: liveProfile } = await selectLiveProfile(
 );
 const context = contextManifestSchema.parse(
   JSON.parse(
-    readFileSync("docs/implementation/batch2/examples/context.json", "utf8"),
+    readFileSync("docs/archive/2026-10-01-baseline/implementation/batch2/examples/context.json", "utf8"),
   ),
 );
 const gateway = new RoleRuntimeGateway(
@@ -47,7 +47,7 @@ const verification = await gateway.run({
 });
 const report = {
   createdAt: new Date().toISOString(),
-  fixture: "docs/implementation/batch2/examples/context.json",
+  fixture: "docs/archive/2026-10-01-baseline/implementation/batch2/examples/context.json",
   extraction: { result: extraction.result, trace: extraction.trace },
   verification: {
     result: verification.result,

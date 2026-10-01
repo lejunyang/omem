@@ -8,7 +8,7 @@ import {
 } from "../../../packages/contracts/src/index.js";
 
 const proposalFixture = JSON.parse(
-  readFileSync("docs/implementation/batch2/examples/proposal.json", "utf8"),
+  readFileSync("docs/archive/2026-10-01-baseline/implementation/batch2/examples/proposal.json", "utf8"),
 );
 
 describe("Batch 2 strict contracts", () => {
