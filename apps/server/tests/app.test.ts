@@ -409,3 +409,22 @@ it("HTTP cancel e2e: POST /api/assistant/conversations/:id/turns/:turnId/cancel 
     await a.close();
   }
 });
+
+it("returns complete fixed material versions for comparison and read status does not alter them", async () => {
+  const x = await setup();
+  try {
+    const input = { source: "manual" as const, externalId: "diff", title: "版本比较", context: {} };
+    const before = x.store.capture({ ...input, parts: [{ type: "text", text: "固定开头\n旧的约定\n固定结尾" }] }).revision;
+    const after = x.store.capture({ ...input, parts: [{ type: "text", text: "固定开头\n新的约定\n固定结尾" }] }).revision;
+    const change = x.store.changes().find(c => c.afterId === after.id)!;
+    const response = await x.app.inject(`/api/changes/${change.id}/content`);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().before.text).toBe("固定开头\n旧的约定\n固定结尾");
+    expect(response.json().after.text).toBe("固定开头\n新的约定\n固定结尾");
+    const notification = x.store.notifications().find(n => n.changeId === change.id)!;
+    expect((await x.app.inject({ method: "POST", url: `/api/notifications/${notification.id}/read`, payload: {} })).statusCode).toBe(200);
+    expect(x.store.revision(before.id)?.current).toBe(false);
+    expect(x.store.revision(after.id)?.current).toBe(true);
+    expect((await x.app.inject("/api/jobs")).json().some((j: {materialTitle:string}) => j.materialTitle === "版本比较")).toBe(true);
+  } finally { await x.close(); }
+});

@@ -135,7 +135,15 @@ export class KnowledgeRepository {
         const id = digest(artifact.document.key + ":" + question.question);
         this.store.db.prepare("INSERT INTO knowledge_questions(id,document_key,article_revision,body,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET article_revision=excluded.article_revision,body=excluded.body,state=CASE WHEN knowledge_questions.state='superseded' THEN 'open' ELSE knowledge_questions.state END,updated_at=excluded.updated_at").run(id, artifact.document.key, revision, JSON.stringify(question), new Date().toISOString());
       }
-      this.store.record("knowledge", "知识已整理：" + artifact.document.title, null, null, "已保存新的知识正文、固定引用与独立模型复核记录。" );
+      const changedSections = artifact.document.sections.filter(section => {
+        const previous = existing?.document.sections.find(s => s.key === section.key);
+        return !previous || previous.title !== section.title || previous.body !== section.body;
+      }).map(section => section.title);
+      const removed = existing?.document.sections.filter(section => !artifact.document.sections.some(s => s.key === section.key)).map(s => s.title) ?? [];
+      const details = existing
+        ? [changedSections.length ? "更新章节：" + changedSections.join("、") : "正文章节未改动", removed.length ? "移除章节：" + removed.join("、") : "", `本版包含 ${artifact.document.citations.length} 处引用；独立复核通过。`].filter(Boolean).join("。")
+        : `新增 ${artifact.document.sections.length} 个章节：${artifact.document.sections.map(s => s.title).join("、")}。独立复核通过。`;
+      this.store.record("knowledge", (existing ? "知识已更新：" : "新增知识：") + artifact.document.title, existing?.revision ?? null, revision, details);
     });
     this.refresh();
     return this.get(artifact.document.key)!;
