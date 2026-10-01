@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from "vue";
-import { OmDialog, OmButton, OmCitation, OmBadge, OmIcon } from "@omem/ui";
+import { OmDialog, OmButton, OmCitation, OmBadge, OmIcon, OmDisclosure } from "@omem/ui";
 import { api, type Evidence } from "./api";
 import ChatPane from "./ChatPane.vue";
 import AssetImage from "./AssetImage.vue";
@@ -145,8 +145,7 @@ defineExpose({ open });
         <div v-for="edge in current.e.backlinks" :key="edge.id" class="edge">
           <OmCitation :label="edge.title" @open="open(edge.targetId)" /></div
       ></template>
-      <details class="add-ref">
-        <summary>引用此片段 / 关联另一个片段</summary>
+      <OmDisclosure class="add-ref" title="引用此片段 / 关联另一个片段">
         <label
           >当前片段 ID<input
             readonly
@@ -157,7 +156,7 @@ defineExpose({ open });
             v-model="target"
             placeholder="从另一个片段复制 ID" /></label
         ><OmButton @click="link">添加引用</OmButton>
-      </details></template
+      </OmDisclosure></template
     ><template #aside
       ><ChatPane
         v-for="f in frames.filter((frame) => frame.ask)"
@@ -222,10 +221,6 @@ blockquote {
 }
 .add-ref {
   margin: 28px 0;
-}
-.add-ref summary {
-  cursor: pointer;
-  min-height: 44px;
 }
 .add-ref label {
   margin-bottom: 12px;

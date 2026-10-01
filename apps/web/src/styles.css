@@ -207,12 +207,7 @@
   background: var(--om-soft);
   padding: 22px;
 }
-summary {
-  cursor: pointer;
-  min-height: 44px;
-  line-height: 44px;
-}
-details > p {
+.disclosure-content > p {
   overflow-wrap: anywhere;
 }
 @media (max-width: 1100px) {

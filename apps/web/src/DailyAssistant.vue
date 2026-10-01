@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { OmButton, OmPanel, OmCitation, OmEmpty, OmBadge } from "@omem/ui";
+import { OmButton, OmPanel, OmCitation, OmEmpty, OmBadge, OmDisclosure } from "@omem/ui";
 import { api } from "./api";
 type Turn = { id: string; inputText: string; result: string; inputMessageRefs: { status: string }; selectedEvidence: { fragmentId: string; revisionTitle: string }[] };
 const emit = defineEmits<{ open: [id: string]; refresh: [] }>();
@@ -49,9 +49,9 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
   <section class="page daily-assistant">
     <span class="eyebrow">记下、找回、持续跟进</span><h1>日常助理</h1>
     <p class="muted">直接交办、回顾事项或查找记忆。等待与跟进时间会保存，完成和取消以实际操作结果为准。</p>
-    <details><summary>可以怎样使用</summary>
+    <OmDisclosure title="可以怎样使用">
       <p v-for="item in workflows" :key="item.id"><b>{{ item.title }}</b>：{{ item.trigger }}，整理为{{ item.output }}。</p>
-    </details>
+    </OmDisclosure>
     <form class="form" @submit.prevent="send">
       <label>发给日常助理<textarea v-model="draft" rows="3" maxlength="2000" required placeholder="帮我跟进张三的评审回复，明天上午9点提醒我检查。" /></label>
       <OmButton type="submit" variant="primary" :disabled="busy || !conversationId || !draft.trim()">{{ busy ? "正在处理" : "发送消息" }}</OmButton>
@@ -74,5 +74,5 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer); });
 </template>
 <style scoped>
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+
 </style>

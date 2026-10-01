@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel } from "@omem/ui";
+import { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel, OmDisclosure } from "@omem/ui";
 import { api, type Job, type Proposal, type Source } from "./api";
 
 const props = defineProps<{ jobs: Job[]; proposals: Proposal[]; sources: Source[]; processing: { enabled: boolean; running: boolean } }>();
@@ -107,10 +107,10 @@ async function control(job: Job, action: "cancel" | "retry") {
         {{ job.attempt }} 次尝试 · 更新于
         {{ new Date(job.updatedAt).toLocaleString("zh-CN") }}
       </small>
-      <details
-        @toggle="($event.currentTarget as HTMLDetailsElement).open && load(job)"
+      <OmDisclosure
+        @update:open="$event && load(job)"
+        title="运行详情与尝试记录"
       >
-        <summary>运行详情与尝试记录</summary>
         <p v-if="!details[job.id]" class="muted">正在读取…</p>
         <div
           v-for="attempt in details[job.id]?.attempts || []"
@@ -133,7 +133,7 @@ async function control(job: Job, action: "cancel" | "retry") {
         >
           尚未产生模型尝试；这不是处理成功。
         </p>
-      </details>
+      </OmDisclosure>
       <OmPanel
         v-for="proposal in jobProposals(job)"
         :key="proposal.id"

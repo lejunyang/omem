@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
-import { OmEmpty, OmButton, OmIcon } from "@omem/ui";
+import { OmEmpty, OmButton, OmIcon, OmDisclosure } from "@omem/ui";
 import KnowledgeDocument from "./KnowledgeDocument.vue";
 import KnowledgeTree from "./KnowledgeTree.vue";
 import KnowledgeFolder from "./KnowledgeFolder.vue";
@@ -231,10 +231,11 @@ onBeforeUnmount(() => {
                 @topic="selectTopic"
               />
             </ul>
-            <details v-if="tree.articles.length" :open="!tree.children.length">
-              <summary>
-                未分类 <small>{{ tree.articles.length }}</small>
-              </summary>
+            <OmDisclosure
+              v-if="tree.articles.length"
+              :default-open="!tree.children.length"
+              title="未分类"
+              ><template #meta>{{ tree.articles.length }}</template>
               <ul>
                 <KnowledgeTree
                   v-for="a in tree.articles"
@@ -245,7 +246,7 @@ onBeforeUnmount(() => {
                   @select="select"
                 />
               </ul>
-            </details>
+            </OmDisclosure>
           </template>
         </nav>
       </div>
@@ -444,17 +445,7 @@ nav ul {
   padding: 0;
   margin: 8px 0;
 }
-summary {
-  font: 13px/1.6 var(--om-sans);
-  color: var(--om-secondary);
-  padding: 12px 10px;
-  min-height: 44px;
-  cursor: pointer;
-}
-summary small {
-  margin-left: 6px;
-  font-size: 12px;
-}
+
 .scope-label,
 .search-status,
 .no-matches {
@@ -606,17 +597,7 @@ summary small {
   color: var(--om-ink);
   overflow-wrap: anywhere;
 }
-.article-summary {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-top: 8px;
-  font: 13px/1.85 var(--om-sans);
-  color: var(--om-secondary);
-  overflow-wrap: anywhere;
-}
-.article-list svg {
+.article- .article-list svg {
   width: 16px;
   flex-shrink: 0;
   color: var(--om-muted);
@@ -725,10 +706,7 @@ summary small {
   .article-copy > strong {
     font-size: 16px;
   }
-  .article-summary {
-    font-size: 12px;
-  }
-  .topic-breadcrumb {
+  .article- .topic-breadcrumb {
     margin-top: -8px;
   }
 }

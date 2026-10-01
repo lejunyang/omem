@@ -79,7 +79,7 @@ try {
   console.log("PASS 1440/768/390 without horizontal overflow");
   await page.locator(".om-trail button[aria-label='关闭全部']").click();
   const questions = page.locator(".knowledge-home > .knowledge-questions");
-  await questions.locator("summary").click();
+  await questions.getByRole("button", { name: /^待核对与后续调查/ }).click();
   await questions.getByRole("button", { name: "加入待办", exact: true }).click();
   await expect(questions).toContainText("已加入待办");
   expect(store.tasks()).toHaveLength(1);
