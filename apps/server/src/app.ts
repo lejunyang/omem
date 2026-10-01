@@ -186,6 +186,8 @@ export async function buildApp(
     mode: "personal",
     retrieval: assistantRetrieval.health(),
     notificationMode: config.notifications.mode,
+    accessProtected: !!config.token,
+    processingEnabled: !!learningConfig?.enabled,
     learning: learning?.status() ?? {
       running: false,
       processed: 0,
@@ -284,6 +286,26 @@ export async function buildApp(
       .send(bytes);
   });
   app.get("/api/changes", async () => store.changes());
+  app.get<{ Params: { id: string } }>("/api/changes/:id/content", async (req, reply) => {
+    const change = store.db.prepare("SELECT kind,before_id,after_id FROM changes WHERE id=?").get(req.params.id);
+    if (!change) return reply.code(404).send({ error: "变化记录不存在" });
+    function content(id: unknown) {
+      if (!id) return null;
+      if (change!.kind === "knowledge") {
+        const row = store.db.prepare("SELECT artifact FROM knowledge_revisions WHERE id=?").get(String(id));
+        if (!row) return null;
+        const { document, generation } = JSON.parse(String(row.artifact));
+        const citationNames = new Map(document.citations.map((c: { key: string; label: string }) => [c.key, c.label]));
+        const sections = document.sections.map((s: { title: string; body: string }) => "## " + s.title + "\n\n" + s.body.replace(/\[\[([^\]]+)\]\]/g, (_: string, key: string) => "〔参考：" + (citationNames.get(key) ?? "未找到引用") + "〕"));
+        const references = document.citations.map((c: { label: string; reason: string; target: { kind: string; key: string; startLine?: number; endLine?: number } }) => c.label + "：" + c.reason + (c.target.kind === "material" ? `（${c.target.key.replace(/^omem:/, "")}，第 ${c.target.startLine}–${c.target.endLine} 行）` : ""));
+        return { title: document.title, text: document.summary + "\n\n" + sections.join("\n\n") + "\n\n引用说明：\n" + references.join("\n"), version: "知识正文 · " + generation.at };
+
+      }
+      const revision = store.revision(String(id));
+      return revision ? { title: revision.title, version: "v" + revision.version, text: revision.parts.map(p => p.type === "text" ? p.text : p.type === "link" ? p.url : "[图片：" + p.label + "]").join("\n\n") } : null;
+    }
+    return { before: content(change.before_id), after: content(change.after_id), kind: change.kind, hasBefore: !!change.before_id };
+  });
   app.post<{ Params: { id: string } }>(
     "/api/changes/:id/restore",
     async (req) => {
@@ -336,7 +358,12 @@ export async function buildApp(
       ...store.setTaskStatus(req.params.id, b.status, b.expectedVersion),
     };
   });
-  app.get("/api/jobs", async () => store.jobs.list());
+  app.get("/api/jobs", async () => (store.db.prepare(`SELECT id FROM jobs WHERE workspace_id='personal'
+    ORDER BY CASE WHEN state IN ('running','leased') THEN 0 WHEN state IN ('failed','retry_wait','awaiting_decision') THEN 1 WHEN state='queued' THEN 3 ELSE 2 END, created_at DESC LIMIT 200`).all()).map(row => store.jobs.get(String(row.id))!).map(job => {
+    const ref = job.inputRefs.find((ref): ref is { revisionId: string } => !!ref && typeof ref === "object" && "revisionId" in ref && typeof ref.revisionId === "string");
+    const revision = ref?.revisionId ? store.revision(String(ref.revisionId)) : null;
+    return { ...job, materialTitle: revision?.title ?? null, evidenceId: revision?.fragments[0]?.id ?? null };
+  }));
   app.get<{ Params: { id: string } }>("/api/jobs/:id", async (req, reply) => {
     const job = store.jobs.get(req.params.id);
     return job
@@ -513,7 +540,7 @@ export async function buildApp(
       }),
     ),
   );
-  let probing = false;
+  const probes = new Map<string, ReturnType<typeof acp>>();
   app.post<{ Params: { id: string } }>(
     "/api/profiles/:id/probe",
     async (req) => {
@@ -522,21 +549,14 @@ export async function buildApp(
       if (p.transport !== "acp")
         return {
           configOptions: [],
-          note: "CLI profile; model and effort are validated by the installed CLI",
+          note: "此接入使用 CLI；模型与思考强度由已安装的 CLI 校验，未提供自动能力列表。",
         };
-      if (probing) throw Error("Probe already active");
-      probing = true;
-      try {
-        return await acp(
-          p,
-          config.agentCwd,
-          null,
-          () => {},
-          new AbortController().signal,
-        );
-      } finally {
-        probing = false;
-      }
+      const current = probes.get(p.id);
+      if (current) return current;
+      const pending = acp(p, config.agentCwd, null, () => {}, new AbortController().signal);
+      probes.set(p.id, pending);
+      try { return await pending; }
+      finally { if (probes.get(p.id) === pending) probes.delete(p.id); }
     },
   );
   app.post("/api/runs", async (req, reply) =>

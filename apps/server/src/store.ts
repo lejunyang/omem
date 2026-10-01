@@ -279,16 +279,7 @@ export class Store {
         input.title,
         head ? String(head.id) : null,
         revisionId,
-        `${input.source} 材料${head ? "更新" : "录入"}为第 ${Number(head?.version || 0) + 1} 版；${texts.length} 个固定片段。${
-          head
-            ? "之前：" +
-              this.fragments(String(head.id))
-                .map((f) => f.text)
-                .join(" ")
-                .slice(0, 160) +
-              "。"
-            : ""
-        }当前：${texts.join(" ").slice(0, 200)}`,
+        `材料${head ? "更新" : "录入"}为第 ${Number(head?.version || 0) + 1} 版。${head ? "可展开比较完整内容差异。" : "原始内容已保存，可查看原文。"}`,
       );
       const revision = this.revision(revisionId)!;
       const receipt = this.writeCaptureReceipt(
