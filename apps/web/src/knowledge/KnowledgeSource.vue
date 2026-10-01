@@ -4,8 +4,9 @@ import { OmCodeViewer, OmMarkdown, OmButton, OmBadge, OmEmpty } from "@omem/ui";
 import { knowledgeApi, knowledgeFrame, type ArticleMeta, type KnowledgeFrame } from "./api";
 const props = defineProps<{ prefix: string; materialKey: string; digest?: string; startLine?: number; endLine?: number }>();
 const emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();
-type Material = { key: string; title: string; text: string; path: string | null; codeLanguage?: string | null; current: boolean; knowledge: ArticleMeta | null; images: { url: string; label: string }[]; links: { line: number; label: string; reason: string; target: string }[] };
+type Material = { key: string; title: string; text: string; path: string | null; codeLanguage?: string | null; current: boolean; knowledge: ArticleMeta | null; images: { url: string; label: string }[]; links: { line: number; label: string; reason: string; target: string }[]; documentLinks?: { href: string; target: string }[] };
 const material = ref<Material | null>(null), error = ref("");
+const linkError = ref("");
 const from = ref(1), to = ref(1);
 const lines = computed(() => material.value?.text.split("\n") ?? []);
 const excerpt = computed(() => lines.value.slice(from.value - 1, to.value).join("\n"));
@@ -24,10 +25,9 @@ async function reference(key: string) {
   catch { emit("navigate", { kind: "source", id: JSON.stringify({ key }), title: "关联原始材料" }); }
 }
 function internal(path: string) {
-  if (!material.value?.path) return;
-  const base = material.value.path.split("/").slice(0, -1);
-  for (const p of path.split("#")[0]!.split("/")) { if (p === "..") base.pop(); else if (p && p !== ".") base.push(p); }
-  void reference("omem:" + base.join("/"));
+  const target = material.value?.documentLinks?.find(link => link.href === path)?.target;
+  linkError.value = target ? "" : "关联材料尚未导入，或存在多个同名来源，暂时无法定位。";
+  if (target) void reference(target);
 }
 </script>
 <template>
@@ -36,6 +36,7 @@ function internal(path: string) {
     <p v-else-if="!material">正在读取固定原文…</p>
     <template v-else>
       <h2>{{ material.title }}</h2>
+      <p v-if="linkError" role="status">{{ linkError }}</p>
       <div class="source-actions"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if="material.knowledge" variant="secondary" @click="emit('navigate', knowledgeFrame(material.key, material.knowledge.title))">阅读这份材料的知识解读 ↗</OmButton></div>
       <p v-if="startLine" class="muted">引用位置：第 {{ startLine }}{{ endLine && endLine !== startLine ? `–${endLine}` : '' }} 行</p>
       <div class="code-excerpt" v-if="material.codeLanguage || (material.path && !/\.(?:md|markdown)$/.test(material.path))">

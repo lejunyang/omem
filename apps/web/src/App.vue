@@ -94,6 +94,16 @@ const notificationMode = ref("instant");
 let pollTimer: ReturnType<typeof setInterval>;
 let toastTimer: ReturnType<typeof setTimeout>;
 let searchVersion = 0;
+let searchTimer: ReturnType<typeof setTimeout>;
+let searchController: AbortController | undefined;
+const searching = ref(false), searchError = ref("");
+watch(query, () => {
+  clearTimeout(searchTimer); searchController?.abort();
+  const version = ++searchVersion;
+  results.value = []; searchError.value = "";
+  searching.value = !!query.value.trim();
+  if (searching.value) searchTimer = setTimeout(() => void search(version, query.value.trim()), 250);
+}, { flush: "sync" });
 let lastNotificationId = "";
 let refreshing = false;
 const input = ref({
@@ -246,16 +256,14 @@ async function openRevision(id: string, navigate = true) {
     error.value = String(e);
   }
 }
-async function search() {
-  const v = ++searchVersion;
+async function search(version: number, text: string) {
+  const controller = new AbortController(); searchController = controller;
   try {
-    const r = await api<typeof results.value>(
-      "/search?q=" + encodeURIComponent(query.value),
-    );
-    if (v === searchVersion) results.value = r;
+    const response = await api<typeof results.value>("/search?q=" + encodeURIComponent(text), undefined, "GET", controller.signal);
+    if (version === searchVersion) results.value = response;
   } catch (e) {
-    error.value = String(e);
-  }
+    if (version === searchVersion && !controller.signal.aborted) searchError.value = String(e);
+  } finally { if (version === searchVersion) searching.value = false; }
 }
 async function upload(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -466,6 +474,7 @@ onBeforeUnmount(() => {
   clearTimeout(bootRetryTimer);
   clearInterval(pollTimer);
   clearTimeout(toastTimer);
+  clearTimeout(searchTimer); searchController?.abort(); searchVersion++;
 });
 </script>
 <template>
@@ -489,7 +498,6 @@ onBeforeUnmount(() => {
           v-model="query"
           aria-label="搜索材料"
           placeholder="搜索材料与经历…"
-          @input="search"
         /><OmButton
           variant="ghost"
           class="notification-button"
@@ -527,9 +535,11 @@ onBeforeUnmount(() => {
       {{ error || pollError
       }}<OmButton variant="ghost" @click="error = ''; pollError = ''">关闭提示</OmButton>
     </div>
-    <section v-if="query" class="page">
+    <section v-if="query.trim()" class="page" :aria-busy="searching">
       <h1>搜索“{{ query }}”</h1>
       <p class="muted">结合原文、代码名称与已有知识查找。已启用的中文语义索引也会参与召回。</p>
+      <p v-if="searching" class="search-loading" role="status"><span class="search-spinner" aria-hidden="true" />正在搜索相关材料…</p>
+      <p v-else-if="searchError" class="error" role="alert">搜索失败：{{ searchError }} <OmButton variant="secondary" @click="searching = true; search(++searchVersion, query.trim())">重试</OmButton></p>
       <OmPanel v-for="r in results" :key="r.id" :title="r.title" class="stack"
         ><p v-if="r.section" class="search-section">{{ r.section.title }} · 第 {{ r.section.startLine }}–{{ r.section.endLine }} 行</p><p class="excerpt">{{ r.text }}</p>
         <OmCitation
@@ -537,7 +547,7 @@ onBeforeUnmount(() => {
           :version="r.version"
           @open="evidence?.open(r.id)" /></OmPanel
       ><OmEmpty
-        v-if="!results.length"
+        v-if="!searching && !searchError && !results.length"
         title="未找到相关片段"
         description="试试原文关键词，或先导入材料。"
       />
@@ -933,3 +943,10 @@ onBeforeUnmount(() => {
 </style>
 
 <style scoped>.source-filter{width:100%;min-height:44px;padding:8px;border:1px solid var(--om-line);border-radius:6px;}</style>
+
+<style scoped>
+.search-loading { display:flex; align-items:center; gap:12px; min-height:96px; color:var(--om-secondary); }
+.search-spinner { width:18px; height:18px; border:2px solid var(--om-line); border-top-color:var(--om-ink); border-radius:50%; animation:search-turn .8s linear infinite; }
+@keyframes search-turn { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { .search-spinner { animation:none; } }
+</style>
