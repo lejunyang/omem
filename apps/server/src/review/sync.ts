@@ -125,6 +125,9 @@ function isExcluded(rel: string): boolean {
 
 function classify(rel: string): ReviewCategory | null {
   if (isExcluded(rel)) return null;
+  if (rel.startsWith("docs/archive/2026-10-01-baseline/")) return classify(rel.replace("docs/archive/2026-10-01-baseline/", "docs/"));
+  if (rel === "docs/reader-first/progress.md") return "progress";
+  if (rel.startsWith("docs/reader-first/")) return "architecture";
   // Tests are implementation evidence: split per test case under "architecture".
   if (/^(apps|packages|scripts)\//.test(rel) && /\.(ts|tsx|vue|mjs|js|json|toml|md)$/.test(rel)) return "architecture";
   if (["osdk.toml", "package.json"].includes(rel)) return "architecture";
@@ -657,6 +660,8 @@ function resolveRequirementFragment(
   reqId: string,
 ): LocatedFragment | null {
   const docs = [
+    "docs/archive/2026-10-01-baseline/implementation/status.md",
+    "docs/archive/2026-10-01-baseline/implementation/assistant-v3/migration-and-acceptance.md",
     "docs/implementation/status.md",
     "docs/implementation/assistant-v3/migration-and-acceptance.md",
   ];

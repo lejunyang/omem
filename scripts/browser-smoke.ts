@@ -187,7 +187,7 @@ async function evaluateTask(input: {
     receipt?: { entityId: string };
   };
 }
-const out = resolve("docs/implementation/screenshots");
+const out = resolve(".repo-review/runtime/browser/screenshots");
 mkdirSync(out, { recursive: true });
 try {
   await page.goto(base);
@@ -738,7 +738,7 @@ try {
   });
   expect(errors).toEqual([]);
   writeFileSync(
-    resolve("docs/implementation/browser-verification.json"),
+    resolve(".repo-review/runtime/browser/verification.json"),
     JSON.stringify(
       {
         date: new Date().toISOString().slice(0, 10),

@@ -1,12 +1,7 @@
 {
   "rules": [
-    { "prefix": "docs/2026-10-01/README.md", "weight": 1 },
-    { "prefix": "docs/implementation/status.md", "weight": 1 },
-    { "prefix": "docs/implementation/", "weight": 0.8 },
-    { "prefix": "docs/2026-10-01/", "weight": 0.65 },
-    { "prefix": "docs/research/", "weight": 0.7 },
-    { "prefix": "docs/prototype/", "weight": 0.35 },
-    { "prefix": ".agents/", "weight": 0.65 },
-    { "prefix": ".claude/", "weight": 0.45 }
+    { "prefix": "docs/reader-first/", "weight": 1 },
+    { "prefix": "docs/archive/", "weight": 0.45 },
+    { "prefix": ".agents/skills/", "weight": 0.35 }
   ]
 }
