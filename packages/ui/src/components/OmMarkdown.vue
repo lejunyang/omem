@@ -4,7 +4,7 @@
 import { ref, watch } from "vue";
 import { highlightCode } from "../highlight";
 
-const props = defineProps<{ source: string; citations?: { key: string; label: string; reason: string; actionable: boolean; unavailableReason?: string | null }[] }>();
+const props = defineProps<{ source: string; citations?: { key: string; label: string; reason: string; relation?: string; actionable: boolean; unavailableReason?: string | null }[] }>();
 const emit = defineEmits<{
   "navigate-internal": [path: string];
   cite: [key: string];
@@ -39,12 +39,18 @@ async function render() {
       const c = props.citations?.find(c => c.key === key);
       if (!c) return '<span class="om-inline-citation unavailable">引用不可用</span>';
       const label = escape(c.label), description = escape(c.reason);
-      return c.actionable ? `<a class="om-inline-citation" href="/__omem/citation/${encodeURIComponent(key)}" title="${description}">${label} ↗</a>` : `<span class="om-inline-citation unavailable" title="${escape(c.unavailableReason || c.reason)}">${label}（不可用）</span>`;
+      return c.actionable ? `<a class="om-inline-citation" href="/__omem/citation/${encodeURIComponent(key)}" title="${description}">${label}</a>` : `<span class="om-inline-citation unavailable" title="${escape(c.unavailableReason || c.reason)}">${label}（不可用）</span>`;
     });
+    const diagrams: string[] = [];
     const raw = await marked.parse(source, {
       async: true,
       walkTokens: async (token) => {
         if (token.type !== "code") return;
+        if (token.lang === "mermaid") {
+          const index = diagrams.push(token.text) - 1;
+          Object.assign(token, { type: "html", text: `<pre class="om-diagram-${index}">${escape(token.text)}</pre>` });
+          return;
+        }
         const value = await highlightCode(token.text, (token.lang || "").split(/\s/)[0] || "");
         Object.assign(token, { type: "html", text: `<pre><code>${value}</code></pre>` });
       },
@@ -56,7 +62,34 @@ async function render() {
       ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|\/|\.\/|\.\.\/)/i,
       ALLOW_DATA_ATTR: false,
     });
-    if (current === generation) html.value = clean;
+    const doc = new DOMParser().parseFromString(clean, "text/html");
+    // Old artifacts contain independent citation labels in mid-paragraph.
+    // Keep authored “参考 [[c]]” inline; move other evidence links to that
+    // paragraph's end without rewriting the claim or its fixed target.
+    const groups = new Map<Element, Element[]>();
+    for (const link of doc.querySelectorAll(".om-inline-citation")) {
+      if (/(?:参考|参见|详见)[：:\s]*$/.test(link.previousSibling?.textContent ?? "")) continue;
+      const parent = link.closest("p,li,td,blockquote");
+      if (parent) groups.set(parent, [...(groups.get(parent) ?? []), link]);
+    }
+    for (const [parent, links] of groups) {
+      const references = doc.createElement("span"); references.className = "om-paragraph-references";
+      references.append("参考：");
+      links.forEach((link, i) => { if (i) references.append(" · "); references.append(link); });
+      parent.append(references);
+    }
+    if (diagrams.length) {
+      const { default: mermaid } = await import("mermaid");
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", flowchart: { htmlLabels: false }, suppressErrorRendering: true });
+      for (const [i, diagram] of diagrams.entries()) {
+        const block = doc.querySelector(`.om-diagram-${i}`);
+        try {
+          const { svg } = await mermaid.render(`om-diagram-${crypto.randomUUID()}`, diagram);
+          if (block) { block.innerHTML = purify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, FORBID_TAGS: ["foreignObject", "a", "image", "style"], FORBID_ATTR: ["href", "xlink:href"] }); block.className = "om-diagram"; }
+        } catch { if (block) block.prepend("流程图暂无法渲染，保留原始描述：\n"); }
+      }
+    }
+    if (current === generation) html.value = doc.body.innerHTML;
   } catch {
     if (current === generation) { failed.value = true; html.value = ""; }
   } finally {
@@ -94,7 +127,7 @@ function onClick(ev: MouseEvent) {
 
 <style scoped>
 .om-markdown {
-  font: 14px/1.8 var(--om-sans);
+  font: 16px/1.9 var(--om-sans);
 }
 .md-body :deep(code) {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -118,7 +151,7 @@ function onClick(ev: MouseEvent) {
   text-decoration: underline;
 }
 .md-body :deep(.om-inline-citation) {
-  display: inline; padding: 1px 4px; margin: 0 2px; border-bottom: 1px solid var(--om-muted); border-radius: 3px; background: var(--om-soft); color: var(--om-ink); text-decoration: none; cursor: pointer;
+  display:inline; color:var(--om-secondary); text-decoration:underline; text-decoration-color:var(--om-line); text-underline-offset:3px; cursor:pointer;
 }
 .md-body :deep(.om-inline-citation.unavailable) { color: var(--om-muted); cursor: default; }
 .md-body :deep(blockquote) {
@@ -139,4 +172,18 @@ function onClick(ev: MouseEvent) {
 .md-failed pre {
   white-space: pre-wrap;
 }
+</style>
+
+<style scoped>
+.md-body :deep(.om-paragraph-references){display:block;margin-top:4px;color:var(--om-muted);font:12px/1.8 var(--om-sans);}
+.md-body :deep(.om-diagram){background:var(--om-panel);white-space:normal;text-align:center;}
+.md-body :deep(.om-diagram svg){max-width:100%;height:auto;}
+.md-body :deep(table){display:block;max-width:100%;overflow:auto;font-size:14px;}
+.md-body :deep(h2),.md-body :deep(h3){margin-top:1.7em;line-height:1.5;}
+</style>
+
+<style scoped>
+.md-body :deep(.om-diagram rect),.md-body :deep(.om-diagram polygon){fill:var(--om-paper);stroke:var(--om-secondary);}
+.md-body :deep(.om-diagram text){fill:var(--om-ink);font-family:var(--om-sans);}
+.md-body :deep(.om-diagram path){stroke:var(--om-secondary);}
 </style>

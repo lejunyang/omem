@@ -11,6 +11,8 @@ import {
 } from "./api";
 
 const emit = defineEmits<{ error: [text: string]; notice: [text: string] }>();
+const pageError = ref("");
+function reportError(text: string) { pageError.value = text.includes("LARK_ONBOARDING_NOT_CONFIGURED") ? "飞书连接尚未启用。请在能力与连接中查看配置说明；其他功能可正常使用。" : text; }
 const mode = ref<"new" | "update" | "import">("update");
 const credentialSource = ref<"botmux" | "manual">("botmux");
 const appId = ref("");
@@ -68,7 +70,7 @@ async function loadBase() {
     if (!appId.value)
       appId.value = apps[0]?.appId || nextConnections[0]?.appId || "";
   } catch (error) {
-    emit("error", String(error));
+    reportError(String(error));
   }
 }
 async function refreshOnboarding() {
@@ -79,7 +81,7 @@ async function refreshOnboarding() {
     );
     await loadConnections();
   } catch (error) {
-    emit("error", String(error));
+    reportError(String(error));
   }
 }
 async function loadConnections() {
@@ -88,13 +90,13 @@ async function loadConnections() {
       "/integrations/lark/status",
     );
   } catch (error) {
-    emit("error", String(error));
+    reportError(String(error));
   }
 }
 async function start() {
   if (!config.value) return;
   if (mode.value !== "new" && !/^cli_[a-zA-Z0-9]+$/.test(appId.value)) {
-    emit("error", "请输入有效的飞书 App ID（cli_…）");
+    reportError("请输入有效的飞书 App ID（cli_…）");
     return;
   }
   busy.value = true;
@@ -130,7 +132,7 @@ async function start() {
         : "已有应用凭据已接收，正在核验权限",
     );
   } catch (error) {
-    emit("error", String(error));
+    reportError(String(error));
   } finally {
     clientSecret.value = "";
     busy.value = false;
@@ -144,7 +146,7 @@ async function cancel() {
       {},
     );
   } catch (error) {
-    emit("error", String(error));
+    reportError(String(error));
   }
 }
 async function issuePairing() {
@@ -158,7 +160,7 @@ async function issuePairing() {
     pairingCode.value = result.code;
     await refreshOnboarding();
   } catch (error) {
-    emit("error", String(error));
+    reportError(String(error));
   } finally {
     busy.value = false;
   }
@@ -175,7 +177,7 @@ async function confirmPairing() {
     await refreshOnboarding();
     emit("notice", "owner 与应用已绑定；加入群后会自动开始监控群消息");
   } catch (error) {
-    emit("error", String(error));
+    reportError(String(error));
   } finally {
     busy.value = false;
   }
@@ -202,6 +204,7 @@ onBeforeUnmount(() => timer && clearInterval(timer));
 </script>
 
 <template>
+  <p v-if="pageError" role="status" class="lark-page-error">{{ pageError }}</p>
   <section class="page lark-page">
     <span class="eyebrow">同一个应用用于群消息、owner 通知与确认</span>
     <h1>飞书机器人</h1>
@@ -566,3 +569,5 @@ onBeforeUnmount(() => timer && clearInterval(timer));
   }
 }
 </style>
+
+<style scoped>.lark-page-error{margin:24px;padding:16px;background:var(--om-soft);color:var(--om-secondary);line-height:1.8;}</style>

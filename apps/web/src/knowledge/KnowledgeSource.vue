@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { OmCodeViewer, OmMarkdown, OmButton, OmBadge, OmEmpty } from "@omem/ui";
 import { knowledgeApi, knowledgeFrame, type ArticleMeta, type KnowledgeFrame } from "./api";
 const props = defineProps<{ prefix: string; materialKey: string; digest?: string; startLine?: number; endLine?: number }>();
 const emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();
 type Material = { key: string; title: string; text: string; path: string | null; codeLanguage?: string | null; current: boolean; knowledge: ArticleMeta | null; images: { url: string; label: string }[]; links: { line: number; label: string; reason: string; target: string }[] };
 const material = ref<Material | null>(null), error = ref("");
+const from = ref(1), to = ref(1);
+const lines = computed(() => material.value?.text.split("\n") ?? []);
+const excerpt = computed(() => lines.value.slice(from.value - 1, to.value).join("\n"));
+watch(() => [material.value, props.startLine, props.endLine], () => {
+  from.value = Math.max(1, Math.min(props.startLine ?? 1, lines.value.length));
+  to.value = Math.min(lines.value.length, props.endLine ?? (props.startLine ? from.value : 80));
+});
 let generation = 0;
 watch(() => [props.materialKey, props.digest], async () => {
   const current = ++generation; material.value = null; error.value = "";
@@ -31,7 +38,12 @@ function internal(path: string) {
       <h2>{{ material.title }}</h2>
       <div class="source-actions"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if="material.knowledge" variant="secondary" @click="emit('navigate', knowledgeFrame(material.key, material.knowledge.title))">阅读这份材料的知识解读 ↗</OmButton></div>
       <p v-if="startLine" class="muted">引用位置：第 {{ startLine }}{{ endLine && endLine !== startLine ? `–${endLine}` : '' }} 行</p>
-      <OmCodeViewer v-if="material.codeLanguage || (material.path && !/\.(?:md|markdown)$/.test(material.path))" :code="material.text" :language="material.codeLanguage || material.path?.split('.').pop()" :anchor-line="startLine" :links="material.links" @open-reference="reference" />
+      <template v-if="material.codeLanguage || (material.path && !/\.(?:md|markdown)$/.test(material.path))">
+      <OmButton v-if="from > 1" variant="ghost" @click="from = Math.max(1, from - 20)">向上展开 20 行</OmButton>
+      <OmCodeViewer :code="excerpt" :start-line="from" :language="material.codeLanguage || material.path?.split('.').pop()" :anchor-line="startLine" :links="material.links" @open-reference="reference" />
+      <OmButton v-if="to < lines.length" variant="ghost" @click="to = Math.min(lines.length, to + 20)">向下展开 20 行</OmButton>
+      <small class="muted">显示 {{ from }}–{{ to }} 行，共 {{ lines.length }} 行</small>
+      </template>
       <template v-else>
         <blockquote v-if="startLine && endLine">{{ material.text.split('\n').slice(startLine - 1, endLine).join('\n') }}</blockquote>
         <OmMarkdown v-if="material.text" :source="material.text" @navigate-internal="internal" />

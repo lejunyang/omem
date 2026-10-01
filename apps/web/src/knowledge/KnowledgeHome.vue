@@ -1,55 +1,53 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { OmButton, OmEmpty, OmBadge } from "@omem/ui";
+import { OmEmpty } from "@omem/ui";
 import KnowledgeDocument from "./KnowledgeDocument.vue";
-import KnowledgeQuestions from "./KnowledgeQuestions.vue";
-import { knowledgeApi, knowledgeFrame, type ArticleMeta, type KnowledgeFrame } from "./api";
+import KnowledgeTree from "./KnowledgeTree.vue";
+import { knowledgeApi, type ArticleMeta, type KnowledgeFrame } from "./api";
 const props = defineProps<{ prefix: string; compact?: boolean }>();
 const emit = defineEmits<{ navigate: [frame: KnowledgeFrame] }>();
-const articles = ref<ArticleMeta[]>([]), materials = ref<{ key: string; title: string; path: string | null; revisionId: string }[]>([]);
-const query = ref(""), selected = ref(""), error = ref(""), running = ref(false), limit = ref(40);
-const selectedByUser = ref(false);
+const loading = ref(true);
+const articles = ref<ArticleMeta[]>([]), query = ref(""), selected = ref(sessionStorage.getItem("omem-knowledge-page") || "topic:overview"), error = ref("");
 let timer: ReturnType<typeof setInterval> | undefined;
-const topics = computed(() => articles.value.filter(a => a.key.startsWith("topic:") && a.current));
+const topics = computed(() => articles.value.filter(a => a.key.startsWith("topic:")).sort((a,b) => a.key === 'topic:overview' ? -1 : b.key === 'topic:overview' ? 1 : 0));
+const modules = computed(() => articles.value.filter(a => a.key.startsWith("module:") && !a.key.includes(":part-")));
+const matches = computed(() => articles.value.filter(a => (a.title + a.summary + a.key).toLowerCase().includes(query.value.toLowerCase())));
 const current = computed(() => articles.value.find(a => a.key === selected.value));
-const matches = computed(() => {
-  const term = query.value.toLowerCase();
-  return articles.value.filter(a => !a.key.startsWith("topic:") && (a.title + a.key + a.summary).toLowerCase().includes(term));
-});
-const reviewed = computed(() => materials.value.filter(m => articles.value.some(a => a.key === m.key && a.current)).length);
+function select(key: string) { selected.value = key; sessionStorage.setItem("omem-knowledge-page", key); }
 async function load() {
-  try { const result = await knowledgeApi<{ articles: ArticleMeta[]; materials: typeof materials.value; running: boolean }>(props.prefix, "/articles"); articles.value = result.articles; materials.value = result.materials; running.value = result.running;
-    if (!selectedByUser.value && topics.value.some(t => t.key === "topic:overview")) selected.value = "topic:overview";
+  try {
+    const result = await knowledgeApi<{ articles: ArticleMeta[] }>(props.prefix, "/articles");
+    articles.value = result.articles;
+    if (!current.value && articles.value.length) select(topics.value[0]?.key ?? articles.value[0]!.key);
     error.value = "";
-  } catch (e) { error.value = String(e); }
-}
-async function analyze() {
-  try { await knowledgeApi(props.prefix, "/analyze", { method: "POST", body: JSON.stringify({ revisionIds: materials.value.filter(m => !articles.value.some(a => a.key === m.key && a.current)).map(m => m.revisionId) }) }); running.value = true; } catch (e) { error.value = String(e); }
+  } catch (e) { error.value = String(e); } finally { loading.value = false; }
 }
 onMounted(() => { void load(); timer = setInterval(() => void load(), 15000); });
 onBeforeUnmount(() => clearInterval(timer));
 </script>
 <template>
-  <section class="knowledge-home">
-    <header><span class="eyebrow">材料 · 理解 · 证据</span><h1>可追溯的知识</h1><p class="muted">从正文里的引用进入背景、需求、实现与原文；每一层都保留来路。</p></header>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <div class="coverage"><OmBadge>{{ reviewed }} / {{ materials.length }} 份材料已有当前解读</OmBadge><OmBadge v-if="running">正在分析与复核</OmBadge><OmButton v-if="reviewed < materials.length" variant="ghost" :disabled="running" @click="analyze">整理待处理材料</OmButton></div>
-    <nav v-if="topics.length" aria-label="知识主题" class="topics"><button v-for="topic in topics" :key="topic.key" :class="{ active: selected === topic.key }" @click="selected = topic.key; selectedByUser = true">{{ topic.title }}</button></nav>
-    <div v-if="topics.length" class="mobile-topic-picker"><label for="knowledge-topic">阅读主题</label><select id="knowledge-topic" v-model="selected" @change="selectedByUser = true"><option v-for="topic in topics" :key="topic.key" :value="topic.key">{{ topic.title }}</option></select></div>
-    <KnowledgeDocument v-if="current" :prefix="prefix" :document-key="current.key" :revision="current.revision" @navigate="emit('navigate', $event)" />
-    <OmEmpty v-else title="从材料解读开始阅读" description="主题章节会在材料分析和复核完成后形成；已完成的材料可从下方直接打开。" />
-    <section class="knowledge-index">
-      <h2>模块与材料</h2><label for="knowledge-filter">查找知识或文件</label><input id="knowledge-filter" v-model="query" placeholder="按标题、路径或摘要查找" @input="limit = 40" />
-      <div class="article-grid"><button v-for="a in matches.slice(0, limit)" :key="a.key" class="knowledge-card" @click="emit('navigate', knowledgeFrame(a.key, a.title))"><strong>{{ a.title }}</strong><span>{{ a.summary }}</span><small>{{ a.key.startsWith('omem:') ? a.key.slice(5) : a.key.startsWith('module:') ? '模块知识' : '主题知识' }} · {{ a.current ? '已复核' : '来源变化，待更新' }}</small></button></div>
-      <OmButton v-if="matches.length > limit" variant="secondary" @click="limit += 40">继续显示（还有 {{ matches.length - limit }} 篇）</OmButton>
-    </section>
-    <KnowledgeQuestions :prefix="prefix" />
+  <section class="knowledge-library">
+    <aside class="book-navigation">
+      <h1>知识库</h1>
+      <p class="muted">按主题阅读，沿引用深入</p>
+      <label for="knowledge-filter">查找章节</label><input id="knowledge-filter" v-model="query" placeholder="主题、功能、材料名称" />
+      <nav aria-label="知识目录">
+        <ul v-if="query"><KnowledgeTree v-for="a in matches" :key="a.key" :article="a" :articles="[]" :selected="selected" @select="select" /></ul>
+        <template v-else>
+          <h2 v-if="topics.length">总览与主题</h2><ul><KnowledgeTree v-for="a in topics" :key="a.key" :article="a" :articles="articles" :selected="selected" @select="select" /></ul>
+          <details v-if="modules.length"><summary>功能与实现</summary><ul><KnowledgeTree v-for="a in modules" :key="a.key" :article="a" :articles="articles" :selected="selected" @select="select" /></ul></details>
+          <details><summary>全部文章 · {{ articles.length }}</summary><ul><KnowledgeTree v-for="a in articles.filter(a => !a.key.startsWith('topic:') && !a.key.startsWith('module:'))" :key="a.key" :article="a" :articles="[]" :selected="selected" @select="select" /></ul></details>
+        </template>
+      </nav>
+    </aside>
+    <div class="book-content">
+      <p v-if="error" class="error" role="alert">{{ error }}</p>
+      <KnowledgeDocument v-if="current" :key="current.key" :prefix="prefix" :document-key="current.key" :revision="current.revision" @navigate="emit('navigate', $event)" />
+      <p v-else-if="loading" role="status">正在打开知识库…</p>
+      <OmEmpty v-else title="知识从你的材料开始" description="导入材料并完成分析后，这里会形成可阅读的主题文章。" />
+    </div>
   </section>
 </template>
 <style scoped>
-.mobile-topic-picker {display:none;}
-.mobile-topic-picker label {margin:0;}
-.mobile-topic-picker select {width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--om-line);border-radius:6px;background:var(--om-panel);color:var(--om-ink);font:inherit;}
-@media(max-width:700px){.knowledge-home .topics{display:none;}.mobile-topic-picker{display:grid;gap:8px;margin:20px 0 24px;}}
-.knowledge-home {padding:24px 0;max-width:1000px;min-width:0;margin:0 auto;}h1{font:32px/1.5 var(--om-serif);margin:10px 0 14px;}header p{line-height:1.8;}.coverage{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:20px 0;}.topics{display:flex;gap:8px;flex-wrap:wrap;padding:16px 0;border-block:1px solid var(--om-line);margin-bottom:24px;}.topics button{min-height:44px;border:0;background:transparent;color:var(--om-secondary);padding:8px 12px;cursor:pointer;border-radius:6px;}.topics button.active{background:var(--om-ink);color:var(--om-panel);}.knowledge-index{margin:40px 0;}.knowledge-index h2{font:25px/1.5 var(--om-serif);}label{display:block;font-size:14px;margin:12px 0 6px;}input{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--om-line);border-radius:6px;background:var(--om-panel);color:var(--om-ink);}.article-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:20px 0;}.knowledge-card{display:flex;flex-direction:column;gap:10px;text-align:left;padding:18px;background:var(--om-panel);border:1px solid var(--om-line);border-radius:8px;color:var(--om-ink);cursor:pointer;overflow-wrap:anywhere;}.knowledge-card strong{font-size:16px;}.knowledge-card span{color:var(--om-secondary);font-size:14px;line-height:1.8;}.knowledge-card small{color:var(--om-muted);font-size:12px;}.error{color:var(--om-danger);}@media(max-width:700px){.article-grid{grid-template-columns:1fr;}.knowledge-home{padding:12px 0;}h1{font-size:28px;}}
+.knowledge-library{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:calc(100dvh - 125px);background:var(--om-panel);}.book-navigation{padding:24px 14px;background:var(--om-paper);border-right:1px solid var(--om-line);min-width:0;}.book-navigation h1{font:24px/1.5 var(--om-serif);margin:0;}.book-navigation p{font-size:12px;margin:8px 0 20px;}label{display:block;font-size:12px;margin-bottom:6px;}input{width:100%;min-height:44px;border:1px solid var(--om-line);background:var(--om-panel);border-radius:6px;padding:8px;font:inherit;}nav ul{padding:0;margin:8px 0;}nav h2,summary{font:13px/1.7 var(--om-sans);color:var(--om-secondary);padding:12px 0;margin:8px 0 0;}summary{min-height:44px;cursor:pointer;}.book-content{min-width:0;padding:32px;}.error{color:var(--om-danger);}@media(max-width:1100px){.knowledge-library{grid-template-columns:200px minmax(0,1fr);}.book-content{padding:24px;}}@media(max-width:700px){.knowledge-library{display:block;}.book-navigation{border-right:0;border-bottom:1px solid var(--om-line);padding:16px;}.book-navigation nav{max-height:220px;overflow:auto;}.book-navigation h1{font-size:22px;}.book-content{padding:20px 16px;}}
 </style>

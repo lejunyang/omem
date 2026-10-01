@@ -15,7 +15,7 @@ osdk run build
 osdk run start
 ```
 
-浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 与 Vue（默认 4317 / 5173）。默认端口被占用时选择空闲端口，并将实际 API 地址传给前端代理；请打开终端打印的 web URL。可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定端口（显式指定且被占用会报错）。根 `tsconfig.json` 为编辑器提供与服务端检查一致的 Node 类型配置。
+浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 与 Vue（默认 4317 / 5173），把本仓库材料和 `.repo-review/knowledge` 中已复核的文章接入同一个个人知识库；已有个人材料和事项保留。启动恢复知识，不调用生成式模型。默认端口被占用时选择空闲端口，并将实际 API 地址传给前端代理；请打开终端打印的 web URL。可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定端口（显式指定且被占用会报错）。根 `tsconfig.json` 为编辑器提供与服务端检查一致的 Node 类型配置。
 
 ## 中文语义检索
 
@@ -43,8 +43,8 @@ osdk run retrieval:index --review
 知识处理复用 Capture → Source / Revision / Fragment、现有持久 jobs 和 RoleRuntimeGateway。代码、文档、对话、图像使用专门角色；分析后由独立角色复核，再由 AI 组织模块、架构、背景、需求、进展与概览章节。正文引用直接贴近论断，带名称、理由、固定位置，可逐层进入子知识、原文与代码。代码 AST 用于定位和明确的结构关系，语义说明与关系由模型分析和复核。
 
 ```bash
-# 本仓库阅读视图：恢复已提交知识，不调用模型
-osdk run dev:review
+# 统一个人助理：知识库内阅读本仓库的目录、文章与引用
+osdk run dev
 # 分析全部仓库材料，独立复核并生成章节；真实消耗模型调用
 osdk run review:analyze
 # 只处理一个文件或目录
@@ -198,3 +198,9 @@ OMEM_QUALITY_PREDICTIONS=.omem/quality/predictions.json osdk run quality-evaluat
 质量数据集、原文、人工标签、预测和逐项失败明细只保存在 `OMEM_DATA_DIR` 对应的 SQLite 与 `.omem/quality/`，不提交 Git。飞书标注由项目自己的应用发送一张可持续更新的 Card：owner 每次点击“标注正确 / 应不提炼 / 需要修改 / 稍后处理”后，服务校验 app、owner、chat、message、nonce、label digest 与有效期，再原子记录结果并在同一张卡展示下一条。只有全部人工确认后才能冻结；runner 在冻结 manifest 上计算自动应用精度、证据支持精度、明确样本覆盖率、歧义/转述误建数和 p50/p95。
 
 本仓库不提交真实会话、原件、token、模型权重和运行数据库。`docs/prototype` 保留此前经确认的离线视觉原型，它的演示数据和 React 构建不参与新 Vue 产品运行。
+
+## 知识阅读
+
+“知识库”按主题与功能展开目录，中央显示完整文章，右侧为本页章节。引用在正文末尾轻量展示，点击后在原处打开可逐层返回的阅读窗。代码默认展示被引用的行，可向上下各展开 20 行。“原始材料”保留完整 Markdown 和版本历史，不把存储片段当成文档章节。
+
+开发入口只有 `dev`。`.repo-review` 保留本仓库知识的生成资产、运行 trace 和验收报告；隔离 API 仅供检索与生成验收，不再提供另一个用户产品。首次迁入会补齐已有文章引用的历史原文；如果运行历史不存在，缺失证据保持不可用。来源变化的文章显示待更新，不算最新复核通过。
