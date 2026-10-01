@@ -6,6 +6,7 @@ import { Store } from "../src/store.js";
 import { importDevelopmentKnowledge } from "../src/knowledge/development.js";
 import { bindKnowledgeQuotes } from "../src/knowledge/repository.js";
 import { writeKnowledgeArticle } from "../src/knowledge/artifacts.js";
+import type { KnowledgeArtifact } from "../../../packages/contracts/src/knowledge.js";
 
 it("restores repository articles into personal memory without replacing captures and keeps fixed evidence after updates", () => {
   const dir = mkdtempSync(join(tmpdir(), "omem-unified-")), root = join(dir, "repo");
@@ -31,5 +32,32 @@ it("restores repository articles into personal memory without replacing captures
     // Importing a reviewed historical artifact preserves its original evidence.
     imported.restoreHistorical(article);
     expect(imported.get("topic:overview")?.current).toBe(false);
+  } finally { original.close(); personal.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it("imports updated parent and child articles in one startup even when the parent asset is visited first", () => {
+  const dir = mkdtempSync(join(tmpdir(), "omem-article-updates-")), root = join(dir, "repo");
+  mkdirSync(root); writeFileSync(join(root, "README.md"), "# 使用指南\n\n保存材料。\n");
+  const original = new Store(join(dir, "original")), personal = new Store(join(dir, "personal"));
+  const assets = join(root, ".repo-review/knowledge/articles"); mkdirSync(assets, { recursive: true });
+  const provenance = { generation: { model: "fixture", at: "2026-10-01", effort: null, trace: {} }, review: { model: "fixture-verifier", at: "2026-10-01", verdict: "accepted" as const, trace: {} } };
+  try {
+    const repository = importDevelopmentKnowledge(original, root).repository;
+    const material = repository.materials()[0]!;
+    const publish = (summary: string) => {
+      const child: KnowledgeArtifact = { version: 1, ...provenance, document: bindKnowledgeQuotes({ key: "article:child", title: "保存材料", summary, category: "implementation", sections: [{ key: "saving", title: "保存方式", body: summary + "参考 [[source]]" }], citations: [{ key: "source", label: "使用指南", reason: "说明保存方式", relation: "supports", target: { kind: "material", key: material.key, startLine: 1, endLine: 3 }, quote: "" }], questions: [] }, new Map([[material.key, material]])), dependencies: [{ kind: "material", key: material.key, digest: material.digest }] };
+      const published = repository.publish(child);
+      const parent: KnowledgeArtifact = { version: 1, ...provenance, document: { key: "topic:overview", title: "系统概览", summary, category: "overview", sections: [{ key: "overview", title: "从材料开始", body: summary + "参考 [[child]]" }], citations: [{ key: "child", label: "保存材料", reason: "说明保存流程", relation: "supports", target: { kind: "article", key: "article:child", section: "saving" }, quote: "" }], questions: [] }, dependencies: [{ kind: "article", key: "article:child", digest: published.revision }] };
+      repository.publish(parent);
+      writeFileSync(join(assets, "a-child.json"), JSON.stringify(child));
+      writeFileSync(join(assets, "z-parent.json"), JSON.stringify(parent));
+    };
+    publish("旧版说明。");
+    importDevelopmentKnowledge(personal, root);
+    publish("新版说明。");
+    const imported = importDevelopmentKnowledge(personal, root).repository;
+    expect(imported.get("topic:overview")?.document.summary).toBe("新版说明。");
+    expect(imported.get("topic:overview")?.current).toBe(true);
+    expect(imported.get("article:child")?.current).toBe(true);
   } finally { original.close(); personal.close(); rmSync(dir, { recursive: true, force: true }); }
 });
