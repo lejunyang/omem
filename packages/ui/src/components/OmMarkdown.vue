@@ -4,7 +4,7 @@
 import { ref, watch } from "vue";
 import { highlightCode } from "../highlight";
 
-const props = defineProps<{ source: string; citations?: { key: string; label: string; reason: string; relation?: string; actionable: boolean; unavailableReason?: string | null }[] }>();
+const props = defineProps<{ source: string; citations?: { key: string; target?: unknown; label: string; reason: string; relation?: string; actionable: boolean; unavailableReason?: string | null }[] }>();
 const emit = defineEmits<{
   "navigate-internal": [path: string];
   cite: [key: string];
@@ -39,7 +39,10 @@ async function render() {
       if (!props.citations) return _token;
       const c = props.citations?.find(c => c.key === key);
       if (!c) return '<span class="om-inline-citation unavailable">引用不可用</span>';
-      const label = escape(c.label), description = escape(c.reason);
+      const sameLabel = props.citations.filter(other => other.label === c.label);
+      const target = c.target as { startLine?: number; endLine?: number } | undefined;
+      const suffix = sameLabel.length > 1 && target?.startLine ? `（${target.startLine}–${target.endLine ?? target.startLine} 行）` : "";
+      const label = escape(c.label + suffix), description = escape(c.reason);
       return c.actionable ? `<a class="om-inline-citation" href="/__omem/citation/${encodeURIComponent(key)}" title="${description}">${label}</a>` : `<span class="om-inline-citation unavailable" title="${escape(c.unavailableReason || c.reason)}">${label}（不可用）</span>`;
     });
     const diagrams: string[] = [];
@@ -83,7 +86,15 @@ async function render() {
     for (const [parent, links] of groups) {
       const references = doc.createElement("span"); references.className = "om-paragraph-references";
       references.append("参考：");
-      links.forEach((link, i) => { if (i) references.append(" · "); references.append(link); });
+      const seen = new Set<string>();
+      links.forEach(link => {
+        const key = decodeURIComponent((link.getAttribute("href") || "").split("/").pop() || "");
+        const citation = props.citations?.find(c => c.key === key);
+        const identity = citation?.target ? JSON.stringify(citation.target) : key || link.textContent || "";
+        if (seen.has(identity)) { link.remove(); return; }
+        if (seen.size) references.append(" · ");
+        seen.add(identity); references.append(link);
+      });
       parent.append(references);
     }
     if (diagrams.length) {

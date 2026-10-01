@@ -38,12 +38,12 @@ function internal(path: string) {
       <h2>{{ material.title }}</h2>
       <div class="source-actions"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if="material.knowledge" variant="secondary" @click="emit('navigate', knowledgeFrame(material.key, material.knowledge.title))">阅读这份材料的知识解读 ↗</OmButton></div>
       <p v-if="startLine" class="muted">引用位置：第 {{ startLine }}{{ endLine && endLine !== startLine ? `–${endLine}` : '' }} 行</p>
-      <template v-if="material.codeLanguage || (material.path && !/\.(?:md|markdown)$/.test(material.path))">
+      <div class="code-excerpt" v-if="material.codeLanguage || (material.path && !/\.(?:md|markdown)$/.test(material.path))">
       <OmButton v-if="from > 1" variant="ghost" @click="from = Math.max(1, from - 20)">向上展开 20 行</OmButton>
       <OmCodeViewer :code="excerpt" :start-line="from" :language="material.codeLanguage || material.path?.split('.').pop()" :anchor-line="startLine" :links="material.links" @open-reference="reference" />
       <OmButton v-if="to < lines.length" variant="ghost" @click="to = Math.min(lines.length, to + 20)">向下展开 20 行</OmButton>
       <small class="muted">显示 {{ from }}–{{ to }} 行，共 {{ lines.length }} 行</small>
-      </template>
+      </div>
       <template v-else>
         <blockquote v-if="startLine && endLine">{{ material.text.split('\n').slice(startLine - 1, endLine).join('\n') }}</blockquote>
         <OmMarkdown v-if="material.text" :source="material.text" @navigate-internal="internal" />
@@ -53,5 +53,6 @@ function internal(path: string) {
   </section>
 </template>
 <style scoped>
+.code-excerpt { display:flex; flex-direction:column; align-items:stretch; gap:12px; margin:16px 0; }
 h2 { font: 24px/1.6 var(--om-serif); overflow-wrap: anywhere; }.source-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:16px 0; }img {max-width:100%;height:auto;border:1px solid var(--om-line);margin:16px 0;}blockquote{white-space:pre-wrap;border-left:3px solid var(--om-line);padding:12px;color:var(--om-secondary);margin:16px 0;}
 </style>

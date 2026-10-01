@@ -74,6 +74,8 @@ export type JobAttempt = {
   endedAt: string | null;
 };
 export type Job = {
+  materialTitle?: string | null;
+  evidenceId?: string | null;
   id: string;
   kind: string;
   inputRefs: Record<string, unknown>[];

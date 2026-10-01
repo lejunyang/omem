@@ -250,9 +250,9 @@ try {
         usage: { inputTokens: 12, outputTokens: 8 },
       });
       await page.reload();
-      await page.getByRole("button", { name: "学习流程", exact: true }).click();
+      await page.getByRole("button", { name: "材料处理", exact: true }).click();
       await expect(
-        page.getByRole("heading", { name: "学习流程" }),
+        page.getByRole("heading", { name: "材料处理" }),
       ).toBeVisible();
       await expect(page.getByText("处理完成", { exact: true })).toBeVisible();
       await expect(
@@ -274,9 +274,9 @@ try {
         .filter({ hasText: "提交发布前回滚验证报告" });
       await applied.getByRole("button", { name: "查看详情" }).click();
       const detail = page.locator("dialog[open]");
-      await expect(detail).toContainText("task");
+      await expect(detail).toContainText("事项");
       await expect(detail).toContainText("查看原证据 1");
-      await expect(detail).toContainText("pending");
+      await expect(detail).toContainText("等待发送");
       await detail.getByRole("button", { name: "关闭全部" }).click();
     },
   );
@@ -681,7 +681,7 @@ try {
 
       await page.setViewportSize({ width: 1440, height: 1000 });
       await page.reload();
-      await page.getByRole("button", { name: "学习流程", exact: true }).click();
+      await page.getByRole("button", { name: "材料处理", exact: true }).click();
       await expect(
         page.getByText("Configured model is unavailable"),
       ).toBeVisible();
@@ -691,7 +691,7 @@ try {
         .locator(".om-panel")
         .filter({ hasText: "提交发布前回滚验证报告" });
       await failedDelivery.getByRole("button", { name: "查看详情" }).click();
-      await expect(page.locator("dialog[open]")).toContainText("failed");
+      await expect(page.locator("dialog[open]")).toContainText("发送失败");
       await expect(page.locator("dialog[open]")).toContainText(
         "Notification channel unavailable",
       );

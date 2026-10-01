@@ -6,7 +6,7 @@
  *
  * Loop detection: the parent calls `noticeLoop(existingIndex)` when it tries
  * to push a frame already in the stack; we show a warning with jump/stay. */
-import { ref, watch, nextTick, onBeforeUnmount } from "vue";
+import { ref, watch, nextTick, onBeforeUnmount, onMounted } from "vue";
 import OmButton from "./OmButton.vue";
 import OmIcon from "./OmIcon.vue";
 import type { TrailFrame } from "../trail";
@@ -51,17 +51,35 @@ watch(
   { immediate: true },
 );
 
-// Restore scroll + move focus to the frame title when switching layers.
+// Hold the saved position while asynchronous Markdown/code grows back into place.
+// Scroll events caused by replacing content must not overwrite the previous frame.
+const contentEl = ref<HTMLElement>();
+let shownFrame: TrailFrame | undefined;
+let restoring: number | null = null;
+let resizeObserver: ResizeObserver | undefined;
+function restoreScroll() {
+  if (restoring === null || !scrollEl.value) return;
+  scrollEl.value.scrollTop = restoring;
+}
 watch(
-  () => props.current,
-  async (i) => {
+  () => props.frames[props.current],
+  async (frame) => {
+    if (shownFrame && scrollEl.value && restoring === null) shownFrame.scroll = scrollEl.value.scrollTop;
+    shownFrame = frame;
+    restoring = frame?.scroll ?? 0;
     await nextTick();
-    const target = props.frames[i];
-    if (scrollEl.value && target) scrollEl.value.scrollTop = target.scroll ?? 0;
+    restoreScroll();
     titleEl.value?.focus({ preventScroll: true });
   },
-  { immediate: true },
+  { immediate: true, flush: "pre" },
 );
+function takeScrollControl() {
+  restoring = null;
+}
+onMounted(() => {
+  resizeObserver = new ResizeObserver(restoreScroll);
+  if (contentEl.value) resizeObserver.observe(contentEl.value);
+});
 
 function onCancel(ev: Event) {
   // Native Esc fires cancel. Pop a layer if we can, else close.
@@ -72,10 +90,11 @@ function onCancel(ev: Event) {
 
 function onScroll() {
   const f = props.frames[props.current];
-  if (f && scrollEl.value) f.scroll = scrollEl.value.scrollTop;
+  if (f && scrollEl.value && restoring === null) f.scroll = scrollEl.value.scrollTop;
 }
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
   if (dialog.value?.open) dialog.value.close();
   if (previousFocus?.isConnected) previousFocus.focus();
 });
@@ -136,8 +155,8 @@ const parentTitle = () =>
 
       <h2 ref="titleEl" class="frame-title" tabindex="-1">{{ frames[current]?.title }}</h2>
 
-      <div ref="scrollEl" class="trail-scroll" @scroll="onScroll">
-        <slot />
+      <div ref="scrollEl" class="trail-scroll" @scroll="onScroll" @wheel.passive="takeScrollControl" @touchstart.passive="takeScrollControl" @pointerdown="takeScrollControl" @keydown="takeScrollControl">
+        <div ref="contentEl"><slot /></div>
       </div>
 
       <footer class="trail-foot">

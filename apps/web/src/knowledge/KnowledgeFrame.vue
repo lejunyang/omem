@@ -5,21 +5,21 @@ import KnowledgeDocument from "./KnowledgeDocument.vue";
 import KnowledgeSource from "./KnowledgeSource.vue";
 import { knowledgeApi, type Citation, type KnowledgeFrame } from "./api";
 const props = defineProps<{ prefix: string; frame: { kind: string; id: string; title: string } }>();
-const emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();
+const emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string, frameId: string] }>();
 const parsed = computed(() => { try { return JSON.parse(props.frame.id) as Record<string, string | number>; } catch { return {}; } });
 const citation = ref<Citation | null>(null), error = ref("");
 let generation = 0;
 watch(() => props.frame.id, async () => {
   const current = ++generation; citation.value = null; error.value = "";
   if (props.frame.kind !== "citation") return;
-  try { const c = await knowledgeApi<Citation>(props.prefix, "/citation?" + new URLSearchParams({ document: String(parsed.value.document), revision: String(parsed.value.revision), citation: String(parsed.value.citation) })); if (current === generation) { citation.value = c; emit("loaded", c.label); } }
+  try { const c = await knowledgeApi<Citation>(props.prefix, "/citation?" + new URLSearchParams({ document: String(parsed.value.document), revision: String(parsed.value.revision), citation: String(parsed.value.citation) })); if (current === generation) { citation.value = c; emit("loaded", c.label, props.frame.id); } }
   catch (e) { if (current === generation) error.value = String(e); }
 }, { immediate: true });
 const relationLabels: Record<string, string> = { supports: "支持论点", explains: "进一步解释", implements: "实现依据", depends_on: "依赖关系", calls: "调用关系 · AI 分析", contradicts: "相互矛盾", background: "背景依据", tracks: "进展依据" };
 </script>
 <template>
-  <KnowledgeDocument v-if="frame.kind === 'knowledge'" :prefix="prefix" :document-key="String(parsed.key)" :revision="parsed.revision ? String(parsed.revision) : undefined" :section="parsed.section ? String(parsed.section) : undefined" @navigate="emit('navigate', $event)" @loaded="emit('loaded', $event)" />
-  <KnowledgeSource v-else-if="frame.kind === 'source'" :prefix="prefix" :material-key="String(parsed.key)" :digest="parsed.digest ? String(parsed.digest) : undefined" @navigate="emit('navigate', $event)" @loaded="emit('loaded', $event)" />
+  <KnowledgeDocument v-if="frame.kind === 'knowledge'" :prefix="prefix" :document-key="String(parsed.key)" :revision="parsed.revision ? String(parsed.revision) : undefined" :section="parsed.section ? String(parsed.section) : undefined" @navigate="emit('navigate', $event)" @loaded="emit('loaded', $event, frame.id)" />
+  <KnowledgeSource v-else-if="frame.kind === 'source'" :prefix="prefix" :material-key="String(parsed.key)" :digest="parsed.digest ? String(parsed.digest) : undefined" @navigate="emit('navigate', $event)" @loaded="emit('loaded', $event, frame.id)" />
   <template v-else>
     <OmEmpty v-if="error" title="引用不可用" :description="error" />
     <p v-else-if="!citation">正在解析固定引用…</p>
