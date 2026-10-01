@@ -3,36 +3,61 @@
   "document": {
     "key": "module:storage",
     "title": "storage · 模块理解",
-    "summary": "storage 模块以 SQLite 模式迁移、原子应用仓储和结构化摘要为核心，把来源证据、版本化记忆与任务、变更通知、投递意图、作业记录及检索投影纳入同一持久化边界；当前模式演进至版本 17，但应用摘要一致性、时区边界及历史迁移测试覆盖仍待确认。",
+    "summary": "storage 模块以 SQLite 模式迁移、事务化应用仓库和稳定摘要工具为核心，承接来源证据、受治理记忆、任务、通知、外部接入、助手会话及检索索引的持久化。当前模式已演进至版本 17；应用流程具备幂等回执、乐观锁和追加修订，但全局不可变性、外部副作用一致性及跨运行环境兼容性仍需额外验证。",
     "category": "architecture",
     "sections": [
       {
-        "key": "role-and-scope",
-        "title": "职责与设计背景",
-        "body": "storage 是服务器状态的持久化底座：模式从来源、修订、片段、变更、通知和任务起步，逐步加入作业、提案与复核、版本化记忆、飞书集成、对话、争议处理及检索索引，当前支持到 schema 17。[[c1]] [[c2]] 这些结构让捕获证据、知识治理、应用结果与检索投影共享同一数据库关系。\n\n全文检索被明确设计为固定片段的可重建投影，并通过触发器跟随片段写入、删除和更新；语义向量则按模型、片段及分片保存，使模型身份参与索引隔离。[[c3]] [[c4]] 当前材料只明确说明全文投影可重建，不能把这一结论自动扩展到向量索引的运行流程。"
+        "key": "responsibility",
+        "title": "为什么需要这一层",
+        "body": "storage 是业务流程与 SQLite 之间的持久化边界：迁移文件定义数据结构怎样随能力增长而演进，应用仓库把已确认的记忆或任务变更连同修订、变更记录、通知意图和回执一起落库，摘要工具则为部分载荷提供可复现标识。[[c1]][[c2]]\n\n它保存的不只是最终实体，还包括来源修订、证据依赖、作业尝试、治理判断和投递状态，使后续追溯、重核验与重试有结构化依据。基础表从来源、修订、片段和关系开始，随后扩展到任务及通知；但这些 DDL 本身没有禁止修改旧修订，因此“不可变”仍主要依赖上层写入纪律。[[c3]]"
       },
       {
-        "key": "migration-lifecycle",
-        "title": "模式如何安全演进",
-        "body": "每项迁移在代码中包含版本、名称、SQL 语句集合及其校验和；校验和由语句按固定分隔符拼接后计算 SHA-256。[[c5]] 数据库迁移表只保存版本、名称、校验和与应用时间，并不保存 SQL 正文，这替代了“数据库为每个版本保存完整迁移语句”的旧结论。[[c1]]\n\n历史校验会拒绝记录超前、未知版本、校验和不匹配以及当前 schema 所需迁移缺失，但存在兼容例外：schema 为 0 或 1 且尚无迁移表时允许继续，版本 1 也接受旧版校验和。[[c6]] 因而“任何迁移历史缺失都会被拒绝”的旧结论已被替代。实际升级逐版本使用 `BEGIN IMMEDIATE`，要求从相邻版本推进；SQL、历史记录与 `user_version` 同事务提交，失败整体回滚。[[c7]] 入口还会拒绝高于程序支持版本的数据库，完成迁移并再次校验历史后才启用 WAL。[[c8]]"
+        "key": "schema-flow",
+        "title": "模式演进与当前进展",
+        "body": "数据库目前声明支持模式版本 17，迁移注册表覆盖治理记忆、角色运行时、飞书接入、质量标注、助手会话、全文检索和语义向量等能力；每组 SQL 都计算校验和，用于识别已应用历史是否与当前构建一致。[[c4]] 启动迁移时先开启外键，拒绝比程序更新的数据库，校验历史后按顺序补齐版本，最终启用 WAL。[[c5]]\n\n每个版本在 `BEGIN IMMEDIATE` 事务中执行，并要求只从紧邻的上一版本升级；迁移语句、历史记录、测试钩子和 `user_version` 任一环节失败都会回滚。[[c6]] 检索方面已建立 trigram FTS5 投影及同步触发器，向量则按模型、片段和分片分别存储，从结构上避免不同模型身份直接混写。[[c7]]"
       },
       {
         "key": "application-flow",
-        "title": "记忆、任务与通知的应用流程",
-        "body": "`ApplicationRepository` 把一次获准应用视为原子事务：先按应用标识或“提案摘要 + generation”查找收据；请求摘要一致时返回 duplicate，不一致时报告幂等冲突。首次执行会共同写入实体版本、变更、站内通知、投递意图和应用收据。[[c9]]\n\n记忆和任务更新都以期望版本阻止并发覆盖。记忆会新增修订、推进 head，并仅把字段完整的来源修订登记为依赖；任务会更新当前记录并追加历史修订。[[c10]] [[c11]] 活跃飞书目标会产生待投递卡片意图，保存调度时间、负载和稳定 payload 摘要；这证明的是投递意图可靠入库，并不证明外部消息已经送达。[[c12]]"
+        "title": "记忆、任务与通知如何落库",
+        "body": "一次应用先依据应用标识，或提案摘要与代次查找既有回执；相同身份但请求摘要不同会被判定为幂等冲突。数据库同时为这两种身份建立工作区内唯一约束，使正常并发写入也由存储层仲裁。[[c8]] 随后事务创建或更新实体、追加修订，记录变更与站内通知，并为站内及有效飞书目标写入待发送意图；实际发送和送达确认不在这个仓库中完成。[[c9]]\n\n记忆更新通过预期版本执行乐观锁，插入新修订并推进 head；完整证据集合写入修订，其中具备来源、来源修订和有效性代次的条目还会展开为依赖关系。任务也按版本更新并追加任务修订。[[c10]] 这让应用结果可追踪，但只能证明当前入口采用追加写入，不能证明其他代码路径绝不会修改历史行。"
       },
       {
-        "key": "constraints-and-open-edges",
-        "title": "一致性边界与当前限制",
-        "body": "稳定摘要工具递归排序对象键、过滤对象中的 `undefined`、保留数组顺序，再对规范 JSON 计算 SHA-256。[[c13]] 它用于飞书卡片 payload；记忆与任务的应用请求仍直接哈希 `JSON.stringify`，所以键插入顺序不同但语义相同的重试可能得到不同摘要。[[c14]] 这替代了“所有仓储摘要都具备键序稳定性”的旧结论。\n\n通知支持即时、延迟窗口和指定时区的每日时刻，若当天目标已错过则顺延一天。[[c15]] 材料没有定义夏令时跳变、无效时区或非法本地时间的合同，也没有提供从所有历史 schema 升级到 17 的实际测试结果。迁移钩子只说明实现提供了提交前抛错以检验整体回滚的测试接缝，不能代替真实测试矩阵。[[c16]]"
+        "key": "limits",
+        "title": "约束、差异与风险",
+        "body": "模块存在两种摘要语义：通用稳定摘要会递归排序对象键并过滤对象中的 `undefined`，而应用请求摘要直接对输入执行 `JSON.stringify`。[[c11]][[c12]] 因此逻辑内容相同但键插入顺序不同的应用请求，可能产生不同摘要；稳定摘要面对根级 `undefined`、函数、Symbol、循环、BigInt 或特殊对象时也没有完整防护。\n\n应用的 `after` 钩子仍在数据库提交前执行；若钩子产生不可回滚的外部副作用，之后失败只能回滚数据库，不能撤销外部状态。[[c13]] 此外，现有材料没有提供迁移测试、SQLite 编译能力或通知时区测试，尚不能确认真实旧库逐版升级、所有环境的 FTS5 trigram 支持，以及夏令时跳变日的每日排程行为。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "基础持久化结构与迁移历史表",
-        "reason": "支持模块初始覆盖的来源、修订、片段、变更、通知和任务结构，并说明迁移表保存的字段。",
-        "relation": "background",
+        "label": "应用仓库职责",
+        "reason": "子知识概括了记忆或任务应用时同时保存修订、变更、通知、投递意图与回执的模块职责；附近论断另由原始实现支持。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "section": "purpose-and-contract"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c2",
+        "label": "应用输入与回执合同",
+        "reason": "原始类型定义展示应用元数据、记忆与任务输入、回执以及钩子，支持 storage 作为业务应用持久化边界的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "startLine": 7,
+          "endLine": 67
+        },
+        "quote": "export type ApplicationMetadata = {\n  workspaceId: string;\n  applicationId: string;\n  proposalId?: string;\n  proposalDigest: string;\n  generation: number;\n  title: string;\n  details: string;\n  notificationBody?: string;\n  delivery: {\n    channelBindingVersion: number;\n    channel: string;\n    target: string;\n    payloa"
+      },
+      {
+        "key": "c3",
+        "label": "基础持久化结构",
+        "reason": "基础迁移直接定义来源、修订、片段、关系、变更、通知和任务表，同时可见其中没有禁止历史行更新的约束。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/migrations.ts",
@@ -42,87 +67,22 @@
         "quote": "const baselineStatements = [\n  `CREATE TABLE IF NOT EXISTS migrations(\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    checksum TEXT NOT NULL,\n    applied_at TEXT NOT NULL\n  )`,\n  \"CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, namespace TEXT NOT NULL, external_id TEXT NOT NULL, head TEXT, UNIQUE("
       },
       {
-        "key": "c2",
-        "label": "迁移版本清单",
-        "reason": "支持数据库能力按迁移逐步演进至版本 17。",
+        "key": "c4",
+        "label": "迁移版本注册表",
+        "reason": "迁移校验和函数及版本 1 至 17 的注册项支持当前模式进展和历史校验基础的说明。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 959,
+          "startLine": 943,
           "endLine": 1052
         },
-        "quote": "const migrations: readonly Migration[] = [\n  {\n    version: 1,\n    name: \"foundation\",\n    statements: baselineStatements,\n    checksum: checksum(baselineStatements),\n  },\n  {\n    version: 2,\n    name: \"batch-two-contracts\",\n    statements: batchTwoStatements,\n    checksum: checksum(batchTwoStatements),\n  },\n  {\n    ve"
-      },
-      {
-        "key": "c3",
-        "label": "全文检索投影",
-        "reason": "支持 FTS5 被定义为可重建的片段投影，并由触发器维护片段变化。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 915,
-          "endLine": 928
-        },
-        "quote": "// FTS is a rebuildable projection of immutable fragments; triggers cover capture\n// and restore, including writes from another process. Rank with SQLite BM25.\nconst retrievalIndexStatements = [\n  `CREATE VIRTUAL TABLE fragment_search USING fts5(text, title, tokenize='trigram')`,\n  `INSERT INTO fragment_search(rowid,te"
-      },
-      {
-        "key": "c4",
-        "label": "语义向量存储结构",
-        "reason": "支持向量按模型、片段和分片保存，模型身份参与主键约束。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 948,
-          "endLine": 957
-        },
-        "quote": "const embeddingStatements = [\n  `CREATE TABLE fragment_embeddings (\n    fragment_id TEXT NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,\n    model_id TEXT NOT NULL, part INTEGER NOT NULL, start_offset INTEGER NOT NULL,\n    end_offset INTEGER NOT NULL, vector BLOB NOT NULL,\n    PRIMARY KEY(model_id,fragment_id,part"
+        "quote": "const checksum = (statements: readonly string[]) =>\n  createHash(\"sha256\")\n    .update(statements.join(\"\\n-- statement --\\n\"))\n    .digest(\"hex\");\n\nconst embeddingStatements = [\n  `CREATE TABLE fragment_embeddings (\n    fragment_id TEXT NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,\n    model_id TEXT NOT NULL, pa"
       },
       {
         "key": "c5",
-        "label": "迁移校验和生成",
-        "reason": "支持迁移 SQL 语句按固定分隔符拼接后计算 SHA-256。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 943,
-          "endLine": 946
-        },
-        "quote": "const checksum = (statements: readonly string[]) =>\n  createHash(\"sha256\")\n    .update(statements.join(\"\\n-- statement --\\n\"))\n    .digest(\"hex\");"
-      },
-      {
-        "key": "c6",
-        "label": "迁移历史校验与旧版兼容",
-        "reason": "支持历史完整性检查，并明确 schema 0 或 1 无迁移表及版本 1 旧校验和的兼容例外。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 1054,
-          "endLine": 1101
-        },
-        "quote": "const legacyV1Checksum = createHash(\"sha256\")\n  .update(\"omem-foundation-user-version-1\")\n  .digest(\"hex\");\n\nconst userVersion = (db: DatabaseSync) =>\n  Number(\n    (db.prepare(\"PRAGMA user_version\").get() as { user_version: number })\n      .user_version,\n  );\n\nconst tableExists = (db: DatabaseSync, table: string) =>\n "
-      },
-      {
-        "key": "c7",
-        "label": "单版本事务迁移",
-        "reason": "支持相邻版本推进、执行 SQL、登记历史、更新 user_version 和失败回滚的流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 1104,
-          "endLine": 1140
-        },
-        "quote": "function applyMigration(\n  db: DatabaseSync,\n  migration: Migration,\n  hooks: MigrationHooks,\n) {\n  db.exec(\"BEGIN IMMEDIATE\");\n  try {\n    const currentVersion = userVersion(db);\n    if (currentVersion >= migration.version) {\n      db.exec(\"COMMIT\");\n      return;\n    }\n    if (currentVersion !== migration.version - 1"
-      },
-      {
-        "key": "c8",
         "label": "数据库迁移入口",
-        "reason": "支持拒绝过新 schema、迁移前后校验历史、顺序执行迁移及完成后启用 WAL。",
+        "reason": "迁移入口展示外键启用、未来版本拒写、历史校验、顺序升级和 WAL 设置流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -133,62 +93,75 @@
         "quote": "export function migrateDatabase(db: DatabaseSync, hooks: MigrationHooks = {}) {\n  db.exec(\"PRAGMA foreign_keys=ON\");\n  const initialVersion = userVersion(db);\n  if (initialVersion > SUPPORTED_SCHEMA_VERSION)\n    throw new UnsupportedSchemaVersionError(\n      initialVersion,\n      SUPPORTED_SCHEMA_VERSION,\n    );\n  vali"
       },
       {
+        "key": "c6",
+        "label": "单版本事务升级",
+        "reason": "该实现支持连续版本要求、迁移历史写入、提交前钩子、版本更新及异常回滚的原子升级说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 1104,
+          "endLine": 1141
+        },
+        "quote": "function applyMigration(\n  db: DatabaseSync,\n  migration: Migration,\n  hooks: MigrationHooks,\n) {\n  db.exec(\"BEGIN IMMEDIATE\");\n  try {\n    const currentVersion = userVersion(db);\n    if (currentVersion >= migration.version) {\n      db.exec(\"COMMIT\");\n      return;\n    }\n    if (currentVersion !== migration.version - 1"
+      },
+      {
+        "key": "c7",
+        "label": "全文与向量索引结构",
+        "reason": "FTS5 投影、同步触发器及按模型区分的向量表支持检索持久化已经落地到模式版本中的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 915,
+          "endLine": 957
+        },
+        "quote": "// FTS is a rebuildable projection of immutable fragments; triggers cover capture\n// and restore, including writes from another process. Rank with SQLite BM25.\nconst retrievalIndexStatements = [\n  `CREATE VIRTUAL TABLE fragment_search USING fts5(text, title, tokenize='trigram')`,\n  `INSERT INTO fragment_search(rowid,te"
+      },
+      {
+        "key": "c8",
+        "label": "应用回执身份与唯一约束",
+        "reason": "回执表为应用标识及提案摘要与代次分别建立工作区唯一约束，支持幂等查询身份与数据库仲裁相一致的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/migrations.ts",
+          "startLine": 256,
+          "endLine": 270
+        },
+        "quote": "  `CREATE TABLE application_receipts(\n    id TEXT PRIMARY KEY,\n    workspace_id TEXT NOT NULL,\n    application_id TEXT NOT NULL,\n    proposal_id TEXT,\n    proposal_digest TEXT NOT NULL,\n    application_generation INTEGER NOT NULL CHECK(application_generation >= 1),\n    request_digest TEXT NOT NULL,\n    entity_type TEXT"
+      },
+      {
         "key": "c9",
-        "label": "统一应用事务与幂等收据",
-        "reason": "支持应用查重，以及实体、变更、通知、投递意图和收据在同一事务内提交。",
+        "label": "事务化应用与投递意图",
+        "reason": "应用主体展示重复检查、实体写入、变更和通知创建、飞书投递意图、回执保存及钩子调用的实际顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 176,
+          "startLine": 217,
           "endLine": 397
         },
-        "quote": "  private transaction<T>(work: () => T): T {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      throw error;\n    }\n  }\n\n  private existingReceipt(\n    metadata: ApplicationMetadata,\n  "
+        "quote": "  private commitApplication(\n    metadata: ApplicationMetadata,\n    requestDigest: string,\n    entityType: \"memory\" | \"task\",\n    createEntity: () => {\n      id: string;\n      version: number;\n      beforeId: string | null;\n      afterId: string | null;\n    },\n    hooks: ApplicationHooks,\n  ): ApplicationReceipt {\n    "
       },
       {
         "key": "c10",
-        "label": "记忆版本与证据依赖",
-        "reason": "支持记忆的乐观并发、新修订、head 推进及来源依赖持久化。",
+        "label": "记忆修订与证据依赖",
+        "reason": "该段展示记忆版本检查、新修订插入、head 条件推进以及合格证据依赖的结构化写入。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 400,
-          "endLine": 524
+          "startLine": 419,
+          "endLine": 517
         },
-        "quote": "  applyMemory(\n    input: MemoryApplication,\n    hooks: ApplicationHooks = {},\n  ): ApplicationReceipt {\n    const requestDigest = digest(input);\n    return this.commitApplication(\n      input.metadata,\n      requestDigest,\n      \"memory\",\n      () => {\n        const date = timestamp();\n        const status = input.mem"
+        "quote": "        if (input.memory.id && !existing && input.memory.expectedVersion)\n          throw Error(\"MEMORY_NOT_FOUND\");\n        if (existing && input.memory.kind !== existing.kind)\n          throw Error(\"MEMORY_KIND_MISMATCH\");\n        const memoryId = existing\n          ? String(existing.id)\n          : (input.memory.id "
       },
       {
         "key": "c11",
-        "label": "任务版本应用",
-        "reason": "支持任务以期望版本更新当前状态并追加历史修订。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 530,
-          "endLine": 639
-        },
-        "quote": "  applyTask(\n    input: TaskApplication,\n    hooks: ApplicationHooks = {},\n  ): ApplicationReceipt {\n    const requestDigest = digest(input);\n    return this.commitApplication(\n      input.metadata,\n      requestDigest,\n      \"task\",\n      () => {\n        const date = timestamp();\n        const dueAt = input.task.dueAt"
-      },
-      {
-        "key": "c12",
-        "label": "飞书投递意图构建",
-        "reason": "支持活跃目标筛选、卡片大小限制、稳定 payload 摘要、调度字段及待投递状态入库。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 294,
-          "endLine": 362
-        },
-        "quote": "      const larkTargets = this.db\n        .prepare(\n          `SELECT t.chat_id,t.binding_version,b.id AS binding_id\n           FROM lark_targets t JOIN lark_bindings b\n             ON b.connection_id=t.connection_id\n            AND b.binding_version=t.binding_version\n           JOIN lark_connections c ON c.id=t.connec"
-      },
-      {
-        "key": "c13",
-        "label": "规范 JSON 与稳定摘要",
-        "reason": "支持对象键排序、undefined 过滤、数组顺序保留及 SHA-256 摘要规则。",
-        "relation": "implements",
+        "label": "稳定摘要规范化",
+        "reason": "原始摘要工具展示数组递归、对象键排序、undefined 属性过滤、JSON 序列化和 SHA-256 计算，支持其语义与边界说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/digest.ts",
@@ -198,9 +171,9 @@
         "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
       },
       {
-        "key": "c14",
-        "label": "应用请求摘要实现",
-        "reason": "支持记忆与任务应用摘要直接依赖 JSON.stringify，说明其与稳定摘要算法不同。",
+        "key": "c12",
+        "label": "应用请求摘要",
+        "reason": "应用仓库直接对 JSON.stringify 结果计算 SHA-256，支持其与稳定摘要采用不同规范化规则的论断。",
         "relation": "contradicts",
         "target": {
           "kind": "material",
@@ -211,66 +184,58 @@
         "quote": "const timestamp = () => new Date().toISOString();\nconst digest = (value: unknown) =>\n  createHash(\"sha256\").update(JSON.stringify(value)).digest(\"hex\");"
       },
       {
-        "key": "c15",
-        "label": "外部通知时间策略",
-        "reason": "支持即时、延迟窗口和按时区每日调度，以及错过当天目标后顺延的规则。",
-        "relation": "implements",
+        "key": "c13",
+        "label": "事务及钩子执行位置",
+        "reason": "事务包装器与应用主体共同表明 after 钩子在事务函数完成及 COMMIT 之前执行，支持外部副作用一致性风险的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/storage/repository.ts",
-          "startLine": 125,
-          "endLine": 157
+          "startLine": 176,
+          "endLine": 186
         },
-        "quote": "export function externalDeliveryTiming(\n  createdAt: string,\n  policy: ExternalNotificationPolicy = defaultNotificationPolicy,\n) {\n  const created = new Date(createdAt);\n  if (policy.mode === \"instant\")\n    return { mode: policy.mode, after: created.toISOString() };\n  if (policy.mode === \"window\")\n    return {\n      mo"
-      },
-      {
-        "key": "c16",
-        "label": "迁移回滚测试接缝",
-        "reason": "支持实现提供提交前钩子以检验整次迁移回滚，但不能证明历史升级组合已实际覆盖。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/storage/migrations.ts",
-          "startLine": 25,
-          "endLine": 28
-        },
-        "quote": "export type MigrationHooks = {\n  /** Acceptance-test seam. Throwing here must roll the whole migration back. */\n  beforeCommit?: (version: number, db: DatabaseSync) => void;\n};"
+        "quote": "  private transaction<T>(work: () => T): T {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      throw error;\n    }\n  }"
       }
     ],
     "questions": [
       {
-        "question": "记忆与任务的应用请求摘要是否应统一改用 stableDigest？",
-        "why": "应用摘要直接使用 JSON.stringify，同一幂等键下摘要不同会触发冲突；对象键序合同以及已有 application_receipts 的摘要兼容策略仍未确定。",
-        "nextStep": "确认 API 是否保证输入对象键序；若无此保证，补充键重排和 undefined 字段重放测试，并设计已有收据的兼容方案。",
+        "question": "迁移行为测试是否覆盖真实旧版数据库逐版升级、legacy 版本 1、历史校验和损坏、未来版本拒写及提交前异常回滚？",
+        "why": "迁移代码具备兼容、校验和事务回滚机制，但提供的材料没有测试实现，无法判断这些高风险路径是否已通过真实数据库行为验证。",
+        "nextStep": "检查迁移集成测试及旧库快照；缺失时为各兼容和失败路径补充实际 SQLite 测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "应用钩子是否被明确限制为无外部副作用、可安全重试的本地操作？",
+        "why": "after 钩子在 COMMIT 前运行；若调用网络或其他不可回滚系统，异常可能造成外部状态已经改变而数据库回滚。",
+        "nextStep": "审查全部钩子调用方并记录合同；如存在外部 I/O，改由提交后的持久化 outbox 消费。",
         "blocking": false,
         "citationKeys": [
           "c9",
-          "c13",
-          "c14"
+          "c13"
         ]
       },
       {
-        "question": "每日定时通知在夏令时跳变、无效时区或非法本地时间下应采用什么行为？",
-        "why": "材料只展示一次时区偏移校正及错过后顺延逻辑，没有定义不存在或重复的本地时刻以及无效配置的合同。",
-        "nextStep": "明确时间配置校验和错误策略，并为 DST 跳变、无效时区及非法 scheduleLocalTime 添加边界测试。",
+        "question": "是否需要统一应用请求摘要与载荷稳定摘要的规范化规则，并为不支持的输入类型提供显式校验？",
+        "why": "当前两种摘要算法对对象键顺序和 undefined 的处理不同，稳定摘要对循环、BigInt 及部分根值也没有结构化错误合同。",
+        "nextStep": "盘点摘要字段是否已成为长期幂等身份；在保持旧数据兼容的前提下确定统一算法、版本字段和输入约束。",
         "blocking": false,
         "citationKeys": [
-          "c15"
+          "c11",
+          "c12"
         ]
       },
       {
-        "question": "从哪些历史 schema 版本升级到 17 已经过真实数据库夹具验证？",
-        "why": "材料证明迁移实现、兼容分支、历史校验和回滚测试接缝存在，但没有提供各历史版本、表重建、FTS5 触发器及向量表的实际测试结果。",
-        "nextStep": "检查迁移测试矩阵，验证逐版本升级、版本 0/1 兼容路径、钩子抛错回滚、校验和篡改、过新版本拒写及 FTS 触发器同步。",
+        "question": "所有支持的 SQLite 运行环境是否都提供 FTS5 trigram tokenizer？",
+        "why": "模式版本 15 会直接创建采用 trigram tokenizer 的虚拟表，材料未展示能力探测或降级路径。",
+        "nextStep": "核对发布环境的 SQLite 版本与编译选项，并增加缺少 tokenizer 时的启动行为测试或明确最低运行要求。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3",
-          "c4",
-          "c6",
-          "c7",
-          "c8",
-          "c16"
+          "c7"
         ]
       }
     ]
@@ -283,60 +248,60 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/storage/repository.ts",
-      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/storage/migrations.ts",
       "digest": "2903273d887300b5407818c616dabb33402bb5657c83886b1eb9b34c6ec68e2e"
     },
     {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/repository.ts",
+      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
+    },
+    {
       "kind": "article",
       "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "de971db0fb738050133a9120246d8b4d02eefed0039831a1031b4f85d64d89c9"
+      "digest": "f5ec2772e7a8d9b1163350281ab99371873ab16fa42259ad296356ecd4af351f"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/storage/migrations.ts",
-      "digest": "3d547d15991b1fe18ee93dbeda8407f46cf9f7f70aa7bf518cb5ae788bc754ac"
+      "digest": "a882d744a365ca1aa02ab45766d6e5457f6da9b0edc1c81f9cb309f451e4beb2"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/storage/repository.ts",
-      "digest": "56640036ddd7a1414aca7af075eef6ea7b5934b8dada34e915cffc1ed56c35b1"
+      "digest": "46f32101ab36310bc766dc632ff955167eaad39dbe89b650e6332b5e2e0ea13b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:18:08.542Z",
+    "at": "2026-10-01T01:04:38.720Z",
     "trace": {
-      "runId": "c10a0bab-5ec7-484b-b8d8-2bfd1972b679",
-      "roleId": "knowledge-refresher",
+      "runId": "8476155c-308e-4764-9879-8c24b8b0b78f",
+      "roleId": "knowledge-writer",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "1b2168bd7fa7566a2634ee83ac03425f3c0698ee228e216f21e41e881febd681",
-      "contextHash": "53290da79fd13e134de295689804f8e5db3a3aa8e1ab8a7cf9412bb1c18505d8",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "b0cd9c1f52ea6d9e1a886561aa7b09c9557deca1792572b337e569d09916d514",
+      "contextHash": "fa124c5ef2e346fbd54a9ef49eba140a47c08ac50ba1a7061e022afd1f743e3e",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "be51e903efcc202c8cde8d7439af253486f0a32ac12324222558d048d273af21",
+      "fingerprint": "0f660eb2a11629520c976bebc3931f8e46a7c2dc1896586b44ff21c84ab23213",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-knowledge-writer",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3f7-3bb9-7153-8d39-3759389bca21"
+        "01a0f4fd-5f98-7e02-82e7-538e7b400c61"
       ],
       "usage": {
-        "used": 54929,
+        "used": 53226,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -345,10 +310,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 115735,
-          "utf8Bytes": 127987,
-          "estimatedTokens": 42663,
-          "budgetedTokens": 53329,
+          "chars": 109364,
+          "utf8Bytes": 120389,
+          "estimatedTokens": 40130,
+          "budgetedTokens": 50163,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -357,17 +322,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:18:29.798Z",
+    "at": "2026-10-01T01:05:01.249Z",
     "trace": {
-      "runId": "0cebd0a1-7185-4ae4-8c2a-de24f130b75d",
+      "runId": "91e82b13-7920-4647-96fe-08ee3055d74d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b0d6bb8ff50a2bc2963e332f785200b93498369df949004e5062d6e24463ecdd",
-      "contextHash": "aa673b524d5397f38c2b5af698c587fa119292cb122658714551e34be0970ea9",
+      "promptHash": "9b27c47db75930aec10fb96becbcef60cffd6fe5ca2f27e9424d5712401d6d66",
+      "contextHash": "c431d3f381969adc8a1bc3759d0a21ef3c1dc22cf0642213e049b726b5037b33",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3c1e2ea0551e5b19c75e6bf2f51c6d289c33d8df7eda478abdd23462d6786c09",
+      "fingerprint": "30747cd8750b05564540d4439ecb462bc4b37aa7d2692cfc90789127cdb54635",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -380,10 +345,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3f7-b958-7333-be33-e9049ca14a15"
+        "01a0f4fe-06a1-7013-8b77-ee15b06edf8d"
       ],
       "usage": {
-        "used": 51844,
+        "used": 53999,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -392,10 +357,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 112397,
-          "utf8Bytes": 123280,
-          "estimatedTokens": 41094,
-          "budgetedTokens": 51368,
+          "chars": 116601,
+          "utf8Bytes": 131316,
+          "estimatedTokens": 43772,
+          "budgetedTokens": 54715,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

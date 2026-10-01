@@ -2,83 +2,178 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/materials.ts",
-    "title": "仓库材料捕获与关联上下文适配",
-    "summary": "把仓库文件转换为统一 KnowledgeMaterial，并在安全过滤、内容去重和显式文档链接发现之间建立边界；它只负责输入适配，不承担知识分析或关系确认。",
+    "title": "仓库材料捕获与关联上下文适配器",
+    "summary": "该模块把仓库文件转换为统一知识管线可消费的固定材料，维护文件删除状态，并从显式本地文档链接中提供有限的分析上下文；它只负责输入适配和候选上下文选择，不负责解释内容或确认知识关系。",
     "category": "implementation",
     "sections": [
       {
         "key": "capture",
-        "title": "捕获职责与流程",
-        "body": "该模块把仓库视为统一知识流水线的一种输入源，而不是独立的代码知识库。捕获时优先通过 Git 枚举已跟踪与未忽略文件；Git 不可用时退化为目录遍历，并跳过依赖、构建产物和评审运行目录。随后逐文件校验普通文件、符号链接和真实路径，计算 SHA-256；仅当内容摘要或捕获格式变化时调用共享 `Store.capture`，从而让路径身份持续积累修订。[[c1]]\n\n文本按输入上限切片，PNG、JPEG、WebP 以图像部件保存；空文本、二进制文本、超大文件和私有配置会被排除或记录失败，而不会中断其他文件。返回的覆盖结果明确区分 captured、excluded、failed，便于上层展示真实覆盖情况。[[c2]]"
+        "title": "仓库捕获流程",
+        "body": "模块解决的是“如何将仓库内容稳定接入通用知识管线”的问题：它依赖共享的 `Store`、捕获合同和 `KnowledgeRepository`，自身仅充当输入生产者，不建立独立的代码知识库。[[c1]] 捕获时优先通过 Git 枚举已跟踪及未忽略的未跟踪文件；Git 不可用时递归遍历，并跳过仓库元数据、派生运行目录、依赖与构建目录。[[c2]]\n\n对每个候选文件，流程会拒绝非普通文件、符号链接、越出真实仓库根目录的路径以及超过 5 MB 的文件。随后按字节计算 SHA-256；只有内容哈希或捕获格式变化时才创建新捕获。支持 PNG、JPEG、WebP，其余内容必须是无 NUL 的 UTF-8 文本，长文本按 18 万字符切片；空文件被排除。[[c3]] 捕获输入的文本与图像形态对应共享合同，因此图片不是该适配器私设的数据结构。[[c4]]"
       },
       {
-        "key": "repository",
-        "title": "材料读取与上下文扩展",
-        "body": "`createReviewKnowledgeRepository` 复用通用 `KnowledgeRepository` 和当前材料查询，但过滤已删除来源及旧身份别名，因此评审知识只从当前有效原始材料生成。[[c3]]\n\n`linkedMaterialOffers` 只把 Markdown 本地链接及特定 HTML 配套文件作为候选上下文：它解析相对路径，可按标题锚点定位起始行，每个候选最多提供约 80 行且总数最多四个。这里的链接只是模型可见的上下文，不会自动成为已确认关系；含义仍需分析与独立复核。[[c4]]"
+        "key": "identity",
+        "title": "身份、变更与删除协调",
+        "body": "文件身份使用 `omem:<仓库相对路径>`，内容哈希只判断是否需要追加修订；这使同一路径修改后沿用同一来源，而不是随内容变化创建新来源。成功捕获会返回材料键与摘要，单文件异常则记录为 `failed`，不会中断整批扫描。[[c5]]\n\n扫描结束后，模块把本轮未处于 `captured` 状态的既有文件来源标记为 removed；创建评审知识仓库时，再过滤 removed 或 legacy alias 来源，只向通用知识仓库暴露当前材料。[[c6]] 这里直接操作共享 `Store` 的 SQLite 连接，而评审侧元数据表由 review store 模块管理；共享 Store 本身是单用户 SQLite 基础并聚合 jobs、inputs 等仓储能力。[[c7]]"
+      },
+      {
+        "key": "linked-context",
+        "title": "显式链接上下文与边界",
+        "body": "`linkedMaterialOffers` 从目标文本的 Markdown 链接提取相对文件引用，并为 HTML 额外尝试常见的构建脚本、应用脚本和样式文件。它排除外部 URL、目标自身、重复项与不存在的路径；带锚点时按标题 slug 寻找起始行，每份材料最多提供约 80 行，总共最多四份。[[c8]]\n\n这些结果只是供模型分析的候选上下文，不是已确认关系；含义仍需模型判断并由 verifier 核验。[[c9]] 当前实现只识别简单 Markdown 链接和少量 HTML 约定，未体现 import 解析、跨文件调用证明或引用存在性的语义校验，因此不能据此断言调用关系。所给材料也不含测试文件，无法确认上述失败、回退和删除路径已有何种行为断言。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "仓库文件枚举与增量捕获",
-        "reason": "支持模块通过 Git 或遍历枚举文件，并按路径身份和内容摘要调用共享捕获流程的说明。",
+        "label": "仓库适配器职责与依赖",
+        "reason": "支持该模块仅生产输入并复用共享捕获、知识仓库和评审元数据能力的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "/** The repository adapter is an input producer. Analysis itself lives in the\n * common knowledge pipeline and accepts any captured source, not file paths. */\nimport { execFileSync } from \"node:child_process\";\nimport { lstatSync, readFileSync, realpathSync, readdirSync } from \"node:fs\";\nimport { join, relative, posix }"
+      },
+      {
+        "key": "c2",
+        "label": "文件枚举与目录排除",
+        "reason": "说明 Git 枚举、递归回退以及基础目录过滤流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
           "startLine": 15,
-          "endLine": 54
+          "endLine": 30
         },
         "quote": "export function captureRepositoryMaterials(store: Store, repoRoot: string): RepositoryCoverage[] {\n  let paths: string[];\n  try { paths = [...new Set(execFileSync(\"git\", [\"ls-files\", \"--cached\", \"--others\", \"--exclude-standard\", \"-z\"], { cwd: repoRoot, encoding: \"utf8\", maxBuffer: 10_000_000, stdio: [\"ignore\", \"pipe\", "
       },
       {
-        "key": "c2",
-        "label": "文件安全与输入预算",
-        "reason": "支持对私有路径、符号链接、文件大小、编码、空内容及图像类型的边界说明。",
-        "relation": "supports",
+        "key": "c3",
+        "label": "文件校验与捕获构造",
+        "reason": "支持路径安全、大小限制、哈希去重、图像识别、UTF-8 校验、切片和分类捕获的描述。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 28,
+          "startLine": 32,
           "endLine": 55
         },
-        "quote": "  for (const path of paths) {\n    if (path.startsWith(\".repo-review/\") || /(^|\\/)(node_modules|dist|\\.git)(\\/|$)/.test(path) || /(^|\\/)\\.env(?!\\.example$)/.test(path) || /\\.local\\.json$/.test(path)) {\n      result.push({ path, state: \"excluded\", reason: path.startsWith(\".repo-review/\") ? \"派生知识或历史运行数据，不作为新的独立证据\" : \"依赖、构"
-      },
-      {
-        "key": "c3",
-        "label": "评审知识仓库过滤",
-        "reason": "说明评审仓库复用通用知识仓库，同时排除删除来源和旧别名。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 60,
-          "endLine": 65
-        },
-        "quote": "export function createReviewKnowledgeRepository(store: Store) {\n  ensureReviewMetaTable(store);\n  return new KnowledgeRepository(store, () => {\n    const removed = new Set((store.db.prepare(\"SELECT source_id FROM review_source_meta WHERE removed=1 OR legacy_alias_of IS NOT NULL\").all() as { source_id: string }[]).map(r"
+        "quote": "    try {\n      const absolute = join(repoRoot, path), stat = lstatSync(absolute);\n      if (!stat.isFile() || stat.isSymbolicLink() || relative(realRoot, realpathSync(absolute)).startsWith(\"..\")) { result.push({ path, state: \"excluded\", reason: \"非普通文件或符号链接\" }); continue; }\n      if (stat.size > 5_000_000) throw Error("
       },
       {
         "key": "c4",
-        "label": "本地文档链接候选上下文",
-        "reason": "支持链接解析、锚点定位、候选数量限制以及链接不等同确认关系的边界。",
+        "label": "共享文本与图像合同",
+        "reason": "说明捕获部件采用共享合同支持的文本和三种图像格式。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 18,
+          "endLine": 33
+        },
+        "quote": "export const textPart = z\n  .object({\n    type: z.literal(\"text\"),\n    text: z.string().min(1).max(200000),\n    provenance: partProvenanceSchema.optional(),\n  })\n  .strict();\nexport const imagePart = z\n  .object({\n    type: z.literal(\"image\"),\n    mimeType: z.enum([\"image/png\", \"image/jpeg\", \"image/webp\"]),\n    data: z"
+      },
+      {
+        "key": "c5",
+        "label": "路径身份与捕获结果",
+        "reason": "支持外部身份由仓库相对路径构造、哈希用于变更检测且错误按文件记录的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
-          "startLine": 68,
-          "endLine": 90
+          "startLine": 37,
+          "endLine": 55
         },
-        "quote": "/** Select explicit local document links as context, not as confirmed relations.\n * Models still decide what the material means and the verifier checks support. */\nexport function linkedMaterialOffers(all: KnowledgeMaterial[], targets: KnowledgeMaterial[]) {\n  const byPath = new Map(all.filter(m => m.path).map(m => [m."
+        "quote": "      const hash = createHash(\"sha256\").update(bytes).digest(\"hex\");\n      const externalId = `omem:${path}`;\n      const previous = store.db.prepare(\"SELECT r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='file' AND s.external_id=?\").get(externalId) as { body: string } | undefined;\n      const "
+      },
+      {
+        "key": "c6",
+        "label": "移除状态协调与当前材料过滤",
+        "reason": "说明扫描后如何标记缺失来源，以及知识仓库如何排除 removed 和 legacy alias 材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 57,
+          "endLine": 74
+        },
+        "quote": "  // The general material adapter also owns non-code files (for example JSON).\n  // Reconcile removals here; the code/docs synchronizer cannot see all of them.\n  ensureReviewMetaTable(store);\n  const present = new Set(result.filter(row => row.state === \"captured\").map(row => row.materialKey));\n  const sources = store.d"
+      },
+      {
+        "key": "c7",
+        "label": "共享 Store 的 SQLite 基础",
+        "reason": "支持材料适配器所依赖 Store 的数据库及仓储组件关系。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 36,
+          "endLine": 63
+        },
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+      },
+      {
+        "key": "c8",
+        "label": "本地链接候选选择",
+        "reason": "支持 Markdown 链接提取、HTML 补充引用、锚点定位、范围和数量上限的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 79,
+          "endLine": 99
+        },
+        "quote": "export function linkedMaterialOffers(all: KnowledgeMaterial[], targets: KnowledgeMaterial[]) {\n  const byPath = new Map(all.filter(m => m.path).map(m => [m.path!, m]));\n  const selected = new Map<string, { material: KnowledgeMaterial; ranges: { start: number; end: number }[] }>();\n  for (const target of targets) {\n    "
+      },
+      {
+        "key": "c9",
+        "label": "候选上下文而非确认关系",
+        "reason": "明确链接只用于提供分析上下文，关系含义仍需模型与独立复核确认。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 77,
+          "endLine": 78
+        },
+        "quote": "/** Select explicit local document links as context, not as confirmed relations.\n * Models still decide what the material means and the verifier checks support. */"
       }
     ],
     "questions": [
       {
-        "question": "Git 枚举失败后的递归遍历若遇到无权限目录，是否应继续按单路径失败记录，而不是使整个捕获调用抛错？",
-        "why": "回退遍历中的目录读取没有局部错误处理，而逐文件捕获才有错误隔离；实际权限异常下的整体行为由当前材料无法确认。",
-        "nextStep": "补充针对不可读子目录的行为测试，并据产品期望决定跳过、记录失败或终止。",
+        "question": "临时读取失败或文件因大小、编码问题被标记为 failed 时，是否应立即把已有来源标记为 removed？",
+        "why": "当前 present 集合只包含 captured 行，因此一次瞬时失败也会使既有来源进入 removed 过滤范围，可能把“暂时无法刷新”解释为“文件已删除”。",
+        "nextStep": "检查调用方和测试对 removed、failed 的预期；若需区分，考虑仅对确认不存在或明确排除的路径执行删除协调。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c3",
+          "c6"
+        ]
+      },
+      {
+        "question": "哪些测试覆盖 Git 枚举失败回退、符号链接逃逸、超限文件、无效 UTF-8、删除协调及链接锚点定位？",
+        "why": "提供的材料没有测试文件，无法从现有证据判断这些关键边界是否被断言，也无法说明尚未覆盖的具体行为。",
+        "nextStep": "补充相关测试材料，核对断言是否验证状态、原因、数据库 removed 标记以及候选范围，而不只是函数返回数量。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c6",
+          "c8"
+        ]
+      },
+      {
+        "question": "哪些测试覆盖 Git 枚举失败回退、符号链接或根目录逃逸、超限文件、无效 UTF-8、删除协调及链接锚点定位？",
+        "why": "所提供材料不包含测试文件，无法核实这些边界是否已有真实行为断言；正文已将此限制明确标为未知，没有把测试覆盖升级为确定事实。",
+        "nextStep": "补充相关测试材料，并核对断言是否覆盖状态、原因、数据库 removed 标记、锚点范围及四份候选上限。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3",
+          "c6",
+          "c8"
         ]
       }
     ]
@@ -87,32 +182,17 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/model-config.ts",
-      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/runs.ts",
-      "digest": "71feea2619b8263142f4285ed0a5a3e9798af8c7daf4881b6c1af41802566fa6"
+      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
       "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
     },
     {
       "kind": "material",
@@ -123,27 +203,22 @@
       "kind": "material",
       "key": "omem:packages/contracts/src/knowledge.ts",
       "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:23:45.931Z",
+    "at": "2026-10-01T00:16:14.075Z",
     "trace": {
-      "runId": "d266968c-608a-4722-9eaa-c1a636732b17",
+      "runId": "718699b5-0c4e-40ee-81e3-e88958e3e2f1",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "405937458b42135b45c1dffa365faa91b6f3b528d1cebdd33faf8ac06d050e7a",
-      "contextHash": "d1d7a1928c184a606de996e04dbb86e8b3a7751be9639420a7e1dd706b199402",
+      "promptHash": "b73a8ce81d6b85aee7220bfe99c0f54c763f35397ff866e2550bc76b414aeddc",
+      "contextHash": "40e9683cf07c3b89ce916bc546a5ea934c272f5bffdc3d9632753a493a7463d3",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b67c9c3c242649a9f34405c1be0352bccacf3addeec733973de838c5d66856fd",
+      "fingerprint": "1dce6a8f19497f9f7d7c5772686fc7b611dda81acf7a0dbd8e0ad7322eaf6103",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -156,10 +231,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-f30b-7cd1-90b4-7bc89050ee50"
+        "01a0f4d1-2ebc-7dd2-9823-ed303f6aa0d0"
       ],
       "usage": {
-        "used": 61646,
+        "used": 29766,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -168,10 +243,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129381,
-          "utf8Bytes": 131677,
-          "estimatedTokens": 43893,
-          "budgetedTokens": 54867,
+          "chars": 30780,
+          "utf8Bytes": 32738,
+          "estimatedTokens": 10913,
+          "budgetedTokens": 13642,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -180,17 +255,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:24:21.574Z",
+    "at": "2026-10-01T00:16:34.762Z",
     "trace": {
-      "runId": "bf28869a-42d4-45f6-9416-666075c899e6",
+      "runId": "22e87dcb-3832-4cc4-a2b8-1685a3aa91d7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2f422f1c639f379f3942ea6972352ac52ffd684ab44fb58b5cb6b8f2a0bbed43",
-      "contextHash": "4299ff84def1fbe0412cb2f468c092935c9741da846fc20dc267ae9c28c1f833",
+      "promptHash": "881528292d3fe9a44692759dbe38d8820f67b8346c2ef0953239be0e9c8e7cdf",
+      "contextHash": "3874f23bef7ac50182b7448388e83983ffe233754c81f635ebdf516eac4a0644",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6c3fdada9d4e194d56275ffcc1181e1df003d942c6ed528033d19598b11830a3",
+      "fingerprint": "cf7d6f310dc80be07d851d55937cb629d35e5f32bd38e1a9da133e9930b50938",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,10 +278,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c5-e339-7563-ad8b-518fee027a54"
+        "01a0f4d1-b75e-7b20-b2a7-ad04972c854f"
       ],
       "usage": {
-        "used": 65111,
+        "used": 30201,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -215,10 +290,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 146875,
-          "utf8Bytes": 157129,
-          "estimatedTokens": 52377,
-          "budgetedTokens": 65472,
+          "chars": 35287,
+          "utf8Bytes": 39355,
+          "estimatedTokens": 13119,
+          "budgetedTokens": 16399,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

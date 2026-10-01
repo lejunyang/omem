@@ -2,39 +2,83 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/knowledge-api.test.ts",
-    "title": "知识 API 的引用、历史材料与操作测试",
-    "summary": "验证手工材料形成的文章能够通过同一 API 暴露可操作引用和疑问，并保持固定修订、历史图像及无模型错误语义。",
+    "title": "知识 API 的固定证据与问题行动集成测试",
+    "summary": "该测试以临时 SQLite 存储和 Fastify 注入请求贯通知识发布、固定版本引用、历史材料读取、问题转任务、模型缺失及历史图片访问，验证同一 API 能同时提供可追溯证据和明确行动入口。",
     "category": "tests",
     "sections": [
       {
-        "key": "article-citation",
-        "title": "文章、引用与固定修订",
-        "body": "测试捕获一份手工发布计划，构造带行内引用和明确疑问的知识文档，经绑定原文及已接受复核后发布。文章接口必须返回可操作、带人读标签和理由的引用，引用解析接口还要定位到材料的固定摘要。[[c1]] 当同一外部来源产生新修订后，带旧摘要读取仍返回原始文本，并标记其不再是当前版本，证明引用没有漂移到新内容。[[c2]]"
+        "key": "purpose",
+        "title": "解决的问题与测试范围",
+        "body": "该测试针对一个关键风险：知识正文虽然引用了原始材料，但材料更新后引用可能漂移，问题项也可能无法进入实际任务流程。它创建临时 `Store`、注册知识路由，并捕获一份人工发布计划作为原始材料，形成完全隔离的端到端测试环境。[[c1]] 随后构造带内联引用和待确认责任人的知识文档，经固定 quote、依赖摘要、生成记录及独立复核记录发布，说明被测对象不是单一路由，而是“捕获—发布—读取—行动”的组合合同。[[c2]]"
       },
       {
-        "key": "actions-assets",
-        "title": "疑问操作、缺少模型与历史资产",
-        "body": "疑问列表中的条目可显式转成任务，并实际写入任务存储；未配置模型时，请求分析返回 503，而不是假装完成。[[c3]] 测试还先保存图像、再以文本替换同一来源，旧资产仍能按资产标识读取并保持 PNG 内容类型，说明历史修订的二进制证据仍可访问。[[c4]]"
+        "key": "flow",
+        "title": "核心断言与模块关系",
+        "body": "读取文章时，测试断言引用包含可操作标记、人类可读标签和引用理由；再调用 citation 路由，确认引用解析回带原材料 digest 的固定版本。[[c3]] 这与 API 中依据文章 dependencies 查找材料版本、返回 `actionable/current/resolved` 的流程一致：引用能否跳转取决于固定依赖是否仍可解析，而不是仅凭当前材料键。[[c4]]\n\n测试随后用相同 externalId 写入新版本并刷新仓库，再按旧 digest 请求原材料，断言仍返回旧文本且 `current=false`，直接覆盖“历史证据可读但已非最新”的语义。[[c5]] 对知识问题，则先从问题列表取得条目，再 POST 创建任务，并同时检查响应存在 taskId、Store 中确有一个任务，验证接口结果与持久状态一致。[[c6]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界条件与未覆盖行为",
+        "body": "测试明确覆盖两项降级行为：未配置模型时分析接口返回 503；图片材料被文本新版本替代后，旧 assetId 仍可读取，并保持 `image/png` 内容类型。[[c7]] 这证明生成能力不可用不会伪装成功，同时历史二进制证据不因 source head 前移而消失。\n\n其边界也很清楚：全文件只有一个综合用例，主要验证成功路径和一个无模型状态；没有断言文章、引用、材料或图片不存在时的 404，也没有覆盖缺失依赖导致 `actionable=false` 的响应。API 源码确实定义了引用不存在和固定材料不可用的 404 分支，但本测试未触发它们。[[c8]] 此外，测试使用 fixture 模型元数据直接发布已接受文章，并不证明真实 Agent CLI、生成器或独立复核模型能够运行。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文章引用 API 行为",
-        "reason": "支持已复核文章发布、引用的人读字段以及固定材料摘要解析。",
-        "relation": "supports",
+        "label": "临时存储与知识路由初始化",
+        "reason": "支持测试以隔离存储、Fastify 实例和人工捕获材料建立端到端环境的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-api.test.ts",
           "startLine": 11,
-          "endLine": 22
+          "endLine": 16
         },
         "quote": "it(\"serves fixed inline citations and explicit question actions through the same API for manual materials\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-api-\")), store = new Store(dir), app = Fastify();\n  const repository = registerKnowledgeRoutes(app, { store, prefix: \"/api/knowledge\", workspace: "
       },
       {
         "key": "c2",
-        "label": "旧材料修订读取",
-        "reason": "支持来源更新后仍可按旧摘要读取原始文本，并识别为非当前版本。",
+        "label": "知识文档发布与复核记录",
+        "reason": "支持文档包含内联引用、问题项、固定依赖以及生成和复核元数据的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-api.test.ts",
+          "startLine": 17,
+          "endLine": 18
+        },
+        "quote": "    const document: KnowledgeDocument = { key: m.key, title: \"发布准备\", summary: \"发布约束\", category: \"requirements\", sections: [{ key: \"release\", title: \"发布前\", body: \"先核对回滚步骤。[[source]]\" }], citations: [{ key: \"source\", label: \"发布计划原文\", reason: \"原文直接说明发布条件\", relation: \"supports\", target: { kind: \"material\", key: m.key, star"
+      },
+      {
+        "key": "c3",
+        "label": "文章引用与固定版本解析断言",
+        "reason": "支持文章读取结果保留可操作标签，并能通过引用接口解析到材料摘要的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/knowledge-api.test.ts",
+          "startLine": 19,
+          "endLine": 22
+        },
+        "quote": "    const read = await app.inject(\"/api/knowledge/articles/\" + encodeURIComponent(m.key));\n    expect(read.json().citations[0]).toMatchObject({ actionable: true, label: \"发布计划原文\", reason: \"原文直接说明发布条件\" });\n    const c = await app.inject(\"/api/knowledge/citation?\" + new URLSearchParams({ document: m.key, revision: article"
+      },
+      {
+        "key": "c4",
+        "label": "API 的引用依赖解析流程",
+        "reason": "解释引用为何依赖发布时记录的固定版本，并如何生成 actionable、current 与 resolved 状态。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 20,
+          "endLine": 32
+        },
+        "quote": "  const resolveCitation = (a: KnowledgeArticle, key: string) => {\n    const c = a.document.citations.find(c => c.key === key);\n    if (!c) return null;\n    const dependency = a.dependencies.find(d => d.kind === c.target.kind && d.key === c.target.key);\n    if (!dependency) return { ...c, actionable: false, unavailableR"
+      },
+      {
+        "key": "c5",
+        "label": "旧摘要材料读取断言",
+        "reason": "支持材料更新后仍可按旧 digest 读取原文且标记为非当前版本的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -45,50 +89,97 @@
         "quote": "    store.capture({ source: \"manual\", externalId: \"plan\", title: \"新计划\", parts: [{ type: \"text\", text: \"新的发布内容。\" }], context: {} }); repository.refresh();\n    const original = await app.inject(\"/api/knowledge/materials/\" + encodeURIComponent(m.key) + \"?digest=\" + m.digest);\n    expect(original.json()).toMatchObject({ te"
       },
       {
-        "key": "c3",
-        "label": "疑问转任务与无模型响应",
-        "reason": "支持显式问题操作创建任务，以及未配置模型时分析接口返回服务不可用。",
+        "key": "c6",
+        "label": "问题转任务持久化断言",
+        "reason": "支持问题操作既返回任务标识又实际写入 Store 的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-api.test.ts",
           "startLine": 26,
-          "endLine": 30
+          "endLine": 28
         },
-        "quote": "    const q = (await app.inject(\"/api/knowledge/questions\")).json()[0];\n    const task = await app.inject({ method: \"POST\", url: `/api/knowledge/questions/${q.id}/task` });\n    expect(task.json().taskId).toBeTruthy(); expect(store.tasks()).toHaveLength(1);\n    const noModel = await app.inject({ method: \"POST\", url: \"/a"
+        "quote": "    const q = (await app.inject(\"/api/knowledge/questions\")).json()[0];\n    const task = await app.inject({ method: \"POST\", url: `/api/knowledge/questions/${q.id}/task` });\n    expect(task.json().taskId).toBeTruthy(); expect(store.tasks()).toHaveLength(1);"
       },
       {
-        "key": "c4",
-        "label": "历史图像资产访问",
-        "reason": "支持图像来源被新修订替代后，旧资产仍可读取并保留正确媒体类型。",
+        "key": "c7",
+        "label": "无模型与历史图片边界断言",
+        "reason": "支持分析接口缺少模型时返回 503，以及被新版本替代的历史图片仍可访问并保持媒体类型的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-api.test.ts",
-          "startLine": 31,
-          "endLine": 37
+          "startLine": 29,
+          "endLine": 36
         },
-        "quote": "    const image = store.capture({ source: \"manual\", externalId: \"diagram\", title: \"历史图像\", parts: [{ type: \"image\", mimeType: \"image/png\", data: \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=\", label: \"原图\" }], context: {} });\n    const assetId = (image.revision.parts[0] as "
+        "quote": "    const noModel = await app.inject({ method: \"POST\", url: \"/api/knowledge/analyze\", payload: { revisionIds: [m.revisionId] } });\n    expect(noModel.statusCode).toBe(503);\n    const image = store.capture({ source: \"manual\", externalId: \"diagram\", title: \"历史图像\", parts: [{ type: \"image\", mimeType: \"image/png\", data: \"iV"
+      },
+      {
+        "key": "c8",
+        "label": "引用和材料不存在的 API 分支",
+        "reason": "证明实现包含引用不存在与固定材料不可用的 404 分支，从而界定当前测试尚未覆盖的行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 41,
+          "endLine": 49
+        },
+        "quote": "  app.get<{ Querystring: { document: string; revision?: string; citation: string } }>(prefix + \"/citation\", async (req, reply) => {\n    const a = repository.get(req.query.document, req.query.revision);\n    const c = a && resolveCitation(a, req.query.citation);\n    return c ?? reply.code(404).send({ error: \"引用不存在\" });\n "
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "缺失发布依赖或历史版本被清理时，文章读取是否应继续返回 200 并将引用标为不可操作？",
+        "why": "实现对缺失依赖返回 `actionable=false`，但当前测试只覆盖固定材料仍可解析的成功路径，未验证完整响应合同。",
+        "nextStep": "增加一例缺失 dependency 或不可解析 digest 的文章读取测试，断言 actionable、unavailableReason、resolved 和 HTTP 状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "不存在的文章、引用、材料和图片分别应稳定返回何种错误结构？",
+        "why": "当前综合用例没有触发主要 404 分支；材料中也未完整展示图片路由的未命中处理，因此不能确认所有资源采用一致错误合同。",
+        "nextStep": "为各 GET 路由补充独立未命中测试，并核对状态码与人类可读错误字段。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "真实模型生成与独立复核链路是否另有 live 测试覆盖？",
+        "why": "本测试直接以 fixture 生成和复核元数据发布文章，只能证明 API 与仓储集成，不能证明外部模型运行时可用。",
+        "nextStep": "查找或执行真实运行时的 live 检查，分别记录模型配置缺失、生成成功、复核拒绝及超时行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c7"
+        ]
+      },
+      {
+        "question": "缺失发布依赖或固定版本无法解析时，文章读取是否应继续返回 200，并将对应引用标记为不可操作？",
+        "why": "API 在依赖缺失或目标版本不可用时会生成 `actionable=false` 及人类可读原因，但现有测试仅覆盖固定材料可成功解析的路径。",
+        "nextStep": "补充缺失 dependency 和不可解析 digest 的文章读取测试，断言 HTTP 状态以及 actionable、unavailableReason、current、resolved 字段。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "不存在的文章、引用、材料和图片应分别返回什么稳定错误合同？",
+        "why": "当前综合用例没有触发主要未命中分支；所给 API 原文支持文章、引用和材料的 404 行为，但图片路由的完整未命中实现未包含在材料范围内。",
+        "nextStep": "为各 GET 路由增加未命中测试，并补充核验图片路由后续源码，以确认状态码和错误字段。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/knowledge.ts",
-      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/main.ts",
-      "digest": "82eb5847c2e790d30601c56f56510991f1469df01ee9c2cf2321fc0a2324e5b4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/knowledge-api.test.ts",
@@ -96,46 +187,56 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-concurrency.test.ts",
-      "digest": "f5e49b50ac988174f6bcc5d099d50228c29a8bc54ab02af13814683eec8bfd1b"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-pipeline.test.ts",
-      "digest": "3918eac125957b90822f9c407a819dd78144e4306668852f6d754380f129a6bc"
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:12:30.939Z",
+    "at": "2026-10-01T00:27:12.840Z",
     "trace": {
-      "runId": "a2d1d7d9-3682-484f-8352-ac9a43d618ce",
-      "roleId": "knowledge-refresher",
+      "runId": "21d642b7-5bae-47d3-84f0-2ac21fef23c0",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "84cf2a514ecbf23f1f3d667d3aaa74e7b91779d72e32d002a54a3ca12d0defa2",
-      "contextHash": "00388204774b99b06706e591a4625d31811d5bd5c6a2edcb98965d70d969737c",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "394b51a4fd595023fdd677112447270cbd136d44bbacb822483f76165a41b794",
+      "contextHash": "6f014cc2f8beee10d1d2ac4fd95ef088f16bbf827981a3ebf28141bfb115220e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "43d153891f6f0dcf497c344348c889c7a43da69a070cd59b63828eb49a8fe733",
+      "fingerprint": "87adfa76ab96029c0152957284991bd63d11c620785a99bf268768404ac8d227",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef02-7dcc-7162-a075-2bae7926b85d"
+        "01a0f4db-52f5-74e3-b905-e4a570b9970a"
       ],
       "usage": {
-        "used": 30867,
-        "size": 760000,
+        "used": 29524,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -143,10 +244,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 47191,
-          "utf8Bytes": 52906,
-          "estimatedTokens": 17636,
-          "budgetedTokens": 22045,
+          "chars": 31850,
+          "utf8Bytes": 34026,
+          "estimatedTokens": 11342,
+          "budgetedTokens": 14178,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -155,17 +256,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:13:01.836Z",
+    "at": "2026-10-01T00:27:26.985Z",
     "trace": {
-      "runId": "a7df62da-8ec6-459f-83db-a3f0eb67ca43",
+      "runId": "c4af86a9-7e75-409f-8f6e-a89dd26a186b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b7f2cfa776311934d77b98cfecdcf54eff2c4d21bd3d1046be9045a4e3b68b2c",
-      "contextHash": "dce6c30c912515b66ef0047583698a984bc6df5d6b1133961e2371eae05e40c0",
+      "promptHash": "867f3ddd8a8ccf319543383251485dd9bad06d264cb7fcdb72324f6d345a3d40",
+      "contextHash": "9ccf647cf99456ceda7366e200451ed89066547813b0ca981c01b3a49453625d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ddfdceaaad782484787eb91ebf09fc66cb6a69f400ac5e6df2311f5badb254bd",
+      "fingerprint": "97b3e755920bb4dbfe6c656e8d500ca8b6bc7fcc2ebc4cac6702338adc6c5f02",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -178,11 +279,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef03-13a7-7173-b5a1-9f8bb8cc2599"
+        "01a0f4db-c1c1-7fb1-8d43-c524c66fbf67"
       ],
       "usage": {
-        "used": 31806,
-        "size": 760000,
+        "used": 29835,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -190,10 +291,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 55585,
-          "utf8Bytes": 64193,
-          "estimatedTokens": 21398,
-          "budgetedTokens": 26748,
+          "chars": 36031,
+          "utf8Bytes": 40445,
+          "estimatedTokens": 13482,
+          "budgetedTokens": 16853,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

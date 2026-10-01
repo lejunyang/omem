@@ -2,26 +2,26 @@
   "version": 1,
   "document": {
     "key": "omem:config/retrieval.json",
-    "title": "统一检索模型配置",
-    "summary": "该文件以最小配置启用检索并固定使用 memory-zh；当前进展将其对应到 BGE-small-zh-v1.5 的隔离向量身份，同时保留模型缺失时的词法降级。",
+    "title": "检索配置",
+    "summary": "该配置声明启用检索能力，并将检索模型指向 osdk 管理的 memory-zh。它只表达期望的运行配置；材料未展示配置加载、模型锁定、索引构建或查询执行，因此不能据此认定检索链路已经实际可用。",
     "category": "configuration",
     "sections": [
       {
-        "key": "configured-provider",
-        "title": "配置含义",
-        "body": "检索配置只有两个有效字段：总开关为开启，osdk 模型身份为 `memory-zh`。[[c1]] 这个短文件不描述分窗、索引表、融合权重或重排策略；这些属于实现与运行状态，不能从配置本身外推。固定身份的意义在于让调用方引用同一套受管理的本地模型资产，并为索引隔离提供稳定键。"
+        "key": "purpose",
+        "title": "配置作用",
+        "body": "该文件是检索功能的简洁开关与模型选择入口：`enabled` 被设为 `true`，表示配置层期望启用检索；`osdkModel` 指向 `memory-zh`，表示相关模型应通过这一逻辑名称解析。[[c1]] 两个字段共同描述“是否启用”和“使用哪个模型”，但没有给出召回参数、索引位置、向量身份或重排策略。"
       },
       {
-        "key": "runtime-status",
-        "title": "当前实现与限制",
-        "body": "状态记录把 `memory-zh` 对应到固定版中文 BGE-small-zh-v1.5 q8，并说明 SQLite schema 17 按模型身份隔离原片段分窗向量；个人助手、飞书助手与 repo-review 共用检索，模型缺失时仍返回词法结果并标记降级。[[c2]] 四条中文同义问法 top-1 为 4/4 只是小样本行为验证，不代表总体质量；reranker、ANN 和历史时点检索仍未实现。[[c3]]"
+        "key": "limits",
+        "title": "可确认范围与限制",
+        "body": "从材料只能确认静态 JSON 中存在上述声明，不能进一步证明应用已经读取该文件、osdk 已下载并锁定对应模型，或索引与查询流程已成功运行。[[c2]] 同样无法从这五行配置判断 `memory-zh` 对应的具体模型版本、向量维度及旧索引兼容规则；这些属于需要结合依赖锁、运行代码和验证结果确认的实现事实。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "检索开关与模型身份",
-        "reason": "直接支持 enabled 与 memory-zh 两项配置事实。",
+        "label": "检索开关与模型配置",
+        "reason": "支持附近关于检索被声明为启用、模型逻辑名称为 memory-zh，以及该文件仅包含两个主要配置字段的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -33,40 +33,35 @@
       },
       {
         "key": "c2",
-        "label": "中文向量检索当前实现",
-        "reason": "说明 memory-zh 的实际模型、索引隔离、共用路径和降级行为。",
-        "relation": "implements",
+        "label": "静态检索配置声明",
+        "reason": "支持附近对证据边界的判断：材料展示的是 enabled 与 osdkModel 的静态声明，并未展示加载、下载、建索引或查询执行过程。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 1,
-          "endLine": 1
+          "key": "omem:config/retrieval.json",
+          "startLine": 2,
+          "endLine": 3
         },
-        "quote": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，模型缺失时保留词法结果并报告 degraded。真实四条中文同义问法 top-1 为 4/4，词法基线为 0/4；这是小样本，不是整体检索质量结论。`osdk deps --frozen` 与全量 `osdk run check` 通过（57 文件 / 343 用例、typecheck、build）；首轮真实仓库向量索"
-      },
-      {
-        "key": "c3",
-        "label": "语义检索验证边界",
-        "reason": "支持小样本结果不能外推及 reranker、ANN、历史查询仍缺失的判断。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 1,
-          "endLine": 1
-        },
-        "quote": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，模型缺失时保留词法结果并报告 degraded。真实四条中文同义问法 top-1 为 4/4，词法基线为 0/4；这是小样本，不是整体检索质量结论。`osdk deps --frozen` 与全量 `osdk run check` 通过（57 文件 / 343 用例、typecheck、build）；首轮真实仓库向量索"
+        "quote": "  \"enabled\": true,\n  \"osdkModel\": \"memory-zh\""
       }
     ],
     "questions": [
       {
-        "question": "是否需要为生产验收补充更大规模、分主题且含困难负例的中文检索集？",
-        "why": "现有四条同义问法验证了功能切片，但材料明确不把它视为整体检索质量结论。",
-        "nextStep": "建立带固定原文答案、时间条件和权限条件的 holdout，并分别记录词法、向量融合及未来重排结果。",
+        "question": "运行时是否实际加载此配置，并在 enabled 为 true 时完成模型解析、索引初始化和查询执行？",
+        "why": "当前材料只有静态配置，无法确认对应运行路径及真实可用状态。",
+        "nextStep": "检查配置加载代码和运行验证记录，并以实际检索请求的结果确认整条链路。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3"
+          "c2"
+        ]
+      },
+      {
+        "question": "memory-zh 当前锁定到哪个具体模型版本和向量身份，模型变更时如何阻止旧索引混用？",
+        "why": "配置只给出逻辑名称，没有版本、摘要、维度或索引兼容信息。",
+        "nextStep": "核对 osdk 依赖锁、模型元数据和索引身份校验实现。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
         ]
       }
     ]
@@ -74,69 +69,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:config/omem.example.json",
-      "digest": "f03a576e24e30589fc3ed538495d2d073ede3f42ec4101b8a702fd7c44578968"
-    },
-    {
-      "kind": "material",
       "key": "omem:config/retrieval.json",
       "digest": "b367efa304dd3bf3ef142072d307f8e560d43f7c3a52dfc358f04c75b892984a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.example.json",
-      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.json",
-      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/README.md",
-      "digest": "a84591c62c77df07dd1e380186bcf73e7e402b35957cd0ae125e3b475d3849b7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/status.md",
-      "digest": "7a5220a095c4e1d3f2d72794130b87b6493abad244cfa20589a2c260a4806d84"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/01-决策摘要.md",
-      "digest": "708e5785eaccdb91b07f6d1f65ddca81292b6544cef6fb15074fb64ae138e9ed"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/02-审查范围与证据口径.md",
-      "digest": "4c4e44a1cf4e2780da3e02d51a1a42af8ac162397ae7b389cd8e7eafd9ca4ab0"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/03-统一证据内核.md",
-      "digest": "3da0e1e8ef15387b562af03b078f276885651dba4a93e1ed5e656051c8bf48e7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/04-端到端数据流与多模态接入.md",
-      "digest": "8cbf1aacb6687e8f67a2f8b642856379b54f85c586f0b1de8d0ed7ee0fe6a212"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:27:49.238Z",
+    "at": "2026-10-01T00:33:48.956Z",
     "trace": {
-      "runId": "ab723195-dd6c-4f12-a138-a19a4db281a0",
+      "runId": "12d5a1d5-c497-4a2a-98d6-5d399c1994c1",
       "roleId": "material-analyst",
       "roleVersion": "1",
       "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "47696263d765eee0a16f2aaa4ba8aecd4002f987121a4cf952564f92a8daf142",
-      "contextHash": "240bf130da4803639bf78027c5d885d3146915aa14d827ab653745c687fa31df",
+      "promptHash": "7ccd9556315c88e0ca24fb5a40d40274b83fea5c1fe9839b8505454260fbc754",
+      "contextHash": "00e899065f074beb0f342461281a05c3153d67ecd68cb0311192bacf1055fe3c",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6eb9c8c32d9a540ee4344a02962aad121e8f0521a892f9c39cf8933d13f5e1f4",
+      "fingerprint": "4557b1cab50d974fa7b16145b920f1403775ff56921c3e07fc6c3a85a161b7cb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -149,10 +99,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c8-ba9e-7892-97f4-41ce44540912"
+        "01a0f4e1-8163-7e10-9ff9-98b64613032f"
       ],
       "usage": {
-        "used": 46366,
+        "used": 20849,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -161,10 +111,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 52123,
-          "utf8Bytes": 77923,
-          "estimatedTokens": 25975,
-          "budgetedTokens": 32469,
+          "chars": 5857,
+          "utf8Bytes": 7477,
+          "estimatedTokens": 2493,
+          "budgetedTokens": 3117,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -173,17 +123,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:28:20.308Z",
+    "at": "2026-10-01T00:34:05.612Z",
     "trace": {
-      "runId": "c4c62b14-415d-4d16-b343-56c5e47ed23b",
+      "runId": "247856ea-9348-4530-adb8-5cbb40cb0f03",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e662c1edb91075d890d779f1a3d3c845cdd1b8872396a65dba78e7ff4eaba04f",
-      "contextHash": "15abdf83ea0981a487dc12601a23b19b075427b8f7dfe95d662f3afac9129efe",
+      "promptHash": "8f5378b0de5d9b5971c3c004210c0c63d42d262e9e1054ef48367d5eb6ff1050",
+      "contextHash": "892a54dd1c737e4ee42d65c551dd5383809119ee2400aeb512ae16452a72117a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "49e6cb014434b707a2c7c3b4d31c05a582a4e8d3843108c4d407bdb4c86b170e",
+      "fingerprint": "01c9f2fe28774e262785f56eb3495e06cd71814327704efe67837cf63a68ce98",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -196,10 +146,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c9-a637-7ac1-b66a-d234bd24e562"
+        "01a0f4e1-d1b4-7bd2-9b9a-85b2f1a00d4a"
       ],
       "usage": {
-        "used": 51155,
+        "used": 20499,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -208,10 +158,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 68813,
-          "utf8Bytes": 107300,
-          "estimatedTokens": 35767,
-          "budgetedTokens": 44709,
+          "chars": 5257,
+          "utf8Bytes": 7485,
+          "estimatedTokens": 2495,
+          "budgetedTokens": 3119,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

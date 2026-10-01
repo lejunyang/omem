@@ -2,39 +2,57 @@
   "version": 1,
   "document": {
     "key": "omem:config/review-code-model.example.json",
-    "title": "仓库知识模型示例配置",
-    "summary": "示例规定 repo-review 通过只读 TraeX ACP 调用 gpt-5.6-sol，并给出 effort、超时及输入输出预算；它用于复制和说明配置形态，不单独证明模型可用。",
+    "title": "代码评审模型配置示例",
+    "summary": "该文件给出代码评审生成流程的示例模型配置：通过 traex 的 ACP 服务调用 gpt-5.6-sol，采用 medium 推理强度和只读沙箱，并明确超时、输入输出令牌及上下文预留预算。它仅是示例配置，不能据此断言当前实际运行配置或调用状态。",
     "category": "configuration",
     "sections": [
       {
         "key": "transport",
-        "title": "传输与模型选择",
-        "body": "示例选择 ACP 传输，命令为 `traex`，以只读沙箱启动 ACP 服务；模型指定为 `gpt-5.6-sol`，推理 effort 为 `medium`。[[c1]] 只读参数与知识分析场景相符：模型应处理宿主提供的固定材料，而不自行改动仓库。不过，示例文件只是声明预期组合，外部 CLI、模型和 effort 是否受支持仍需由 ACP 能力校验确认。"
+        "title": "调用通道与执行边界",
+        "body": "示例选择 `acp` 作为传输方式，并以 `traex -c sandbox_mode=\"read-only\" acp serve` 启动服务，表达了评审模型通过外部 Agent CLI/ACP 接入、且执行环境按只读模式约束的预期配置。[[c1]] 这是配置模板中的声明，不足以证明本机已安装对应命令、ACP 能成功握手，或实际任务确实使用了该文件。"
+      },
+      {
+        "key": "model",
+        "title": "模型与推理强度",
+        "body": "模型被指定为 `gpt-5.6-sol`，推理强度为 `medium`。[[c2]] 这组字段用于表达示例的模型选择，但材料没有包含能力发现或兼容性校验结果，因此无法确认当前 CLI 是否支持该模型与 effort 组合，也不能把示例值视为生产运行事实。"
       },
       {
         "key": "budgets",
-        "title": "超时与上下文预算",
-        "body": "单次超时设为 480 秒，最大输入 192000 tokens、最大输出 24000 tokens，并预留 16000 tokens 上下文。[[c2]] 这些值把输入、输出和内部预留分开，避免只按字符数粗略判断可容纳材料；它们是运行上限而非实际计费量。当前状态说明 review 已改为读取实际配置文件，环境变量仍可覆盖，因此示例不应被当作运行时权威。[[c3]]"
+        "title": "运行预算与限制",
+        "body": "配置将单次调用超时设为 480000 毫秒，并设置 192000 输入令牌、24000 输出令牌以及 16000 上下文预留。[[c3]] 这些值共同限定长材料分析的容量与收尾空间；它们是静态预算声明，材料未说明超限时的截断策略、重试机制或运行 trace 是否实际记录并执行这些限制。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "示例 ACP 与模型设置",
-        "reason": "支持只读 TraeX ACP、gpt-5.6-sol 和 medium effort 的配置说明。",
+        "label": "ACP 启动与只读沙箱配置",
+        "reason": "支持附近关于传输方式、启动命令以及只读执行边界的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:config/review-code-model.example.json",
-          "startLine": 1,
-          "endLine": 11
+          "startLine": 2,
+          "endLine": 9
         },
-        "quote": "{\n  \"transport\": \"acp\",\n  \"command\": \"traex\",\n  \"args\": [\n    \"-c\",\n    \"sandbox_mode=\\\"read-only\\\"\",\n    \"acp\",\n    \"serve\"\n  ],\n  \"model\": \"gpt-5.6-sol\",\n  \"effort\": \"medium\","
+        "quote": "  \"transport\": \"acp\",\n  \"command\": \"traex\",\n  \"args\": [\n    \"-c\",\n    \"sandbox_mode=\\\"read-only\\\"\",\n    \"acp\",\n    \"serve\"\n  ],"
       },
       {
         "key": "c2",
-        "label": "示例模型预算",
-        "reason": "说明超时、输入输出上限及上下文预留的具体配置。",
+        "label": "模型与推理强度配置",
+        "reason": "支持附近关于示例所选模型和推理强度的陈述。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-code-model.example.json",
+          "startLine": 10,
+          "endLine": 11
+        },
+        "quote": "  \"model\": \"gpt-5.6-sol\",\n  \"effort\": \"medium\","
+      },
+      {
+        "key": "c3",
+        "label": "超时与令牌预算配置",
+        "reason": "支持附近关于调用超时、输入输出令牌和上下文预留预算的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -43,89 +61,52 @@
           "endLine": 15
         },
         "quote": "  \"timeoutMs\": 480000,\n  \"maxInputTokens\": 192000,\n  \"maxOutputTokens\": 24000,\n  \"contextReserveTokens\": 16000"
-      },
-      {
-        "key": "c3",
-        "label": "review 实际配置来源",
-        "reason": "用于区分 example 与当前运行所读取的实际配置，并指出环境变量覆盖入口。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 11,
-          "endLine": 11
-        },
-        "quote": "> 本轮后续：实际 Agent 配置改为 `config/review-code-model.json`，生成及 review 服务默认读取它，环境变量仍可覆盖。启动默认直接重建 runtime，不依赖旧 `.repo-review/data/`；旧历史导入改为 `REVIEW_IMPORT_LEGACY=1` 显式选择。后续正文知识管线的进度与验收将另行补充。"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "实际代码评审运行是否采用这份示例中的模型、推理强度和预算？",
+        "why": "当前材料仅为 example 配置，没有提供实际生效配置、环境覆盖项或运行 trace，不能把模板声明当作已执行事实。",
+        "nextStep": "对照实际配置文件及最近一次 ACP 运行 trace，核验 transport、model、effort 与各项预算的最终解析值。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c3"
+        ]
+      },
+      {
+        "question": "当前 traex ACP 是否支持 gpt-5.6-sol 与 medium effort 的组合？",
+        "why": "材料只有静态字段，缺少能力发现或启动校验结果；若组合不受支持，示例无法直接用于真实生成。",
+        "nextStep": "通过 ACP 能力发现与一次独立的真实调用记录确认支持情况，并保留校验结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:config/omem.example.json",
-      "digest": "f03a576e24e30589fc3ed538495d2d073ede3f42ec4101b8a702fd7c44578968"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/retrieval.json",
-      "digest": "b367efa304dd3bf3ef142072d307f8e560d43f7c3a52dfc358f04c75b892984a"
-    },
-    {
-      "kind": "material",
       "key": "omem:config/review-code-model.example.json",
       "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.json",
-      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/README.md",
-      "digest": "a84591c62c77df07dd1e380186bcf73e7e402b35957cd0ae125e3b475d3849b7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/status.md",
-      "digest": "7a5220a095c4e1d3f2d72794130b87b6493abad244cfa20589a2c260a4806d84"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/01-决策摘要.md",
-      "digest": "708e5785eaccdb91b07f6d1f65ddca81292b6544cef6fb15074fb64ae138e9ed"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/02-审查范围与证据口径.md",
-      "digest": "4c4e44a1cf4e2780da3e02d51a1a42af8ac162397ae7b389cd8e7eafd9ca4ab0"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/03-统一证据内核.md",
-      "digest": "3da0e1e8ef15387b562af03b078f276885651dba4a93e1ed5e656051c8bf48e7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/2026-10-01/04-端到端数据流与多模态接入.md",
-      "digest": "8cbf1aacb6687e8f67a2f8b642856379b54f85c586f0b1de8d0ed7ee0fe6a212"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:27:49.238Z",
+    "at": "2026-10-01T00:33:56.176Z",
     "trace": {
-      "runId": "ab723195-dd6c-4f12-a138-a19a4db281a0",
+      "runId": "bc0004a9-4f3b-43dc-9083-a2edc816f112",
       "roleId": "material-analyst",
       "roleVersion": "1",
       "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "47696263d765eee0a16f2aaa4ba8aecd4002f987121a4cf952564f92a8daf142",
-      "contextHash": "240bf130da4803639bf78027c5d885d3146915aa14d827ab653745c687fa31df",
+      "promptHash": "d70830b325f1e304fa1f63daae120a3f4d94460f598157198759ba4620db3595",
+      "contextHash": "416e3010f635d6e2179a342fa2210e94f2cc62c0ea3d7d16b589946bb7b2a0ab",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6eb9c8c32d9a540ee4344a02962aad121e8f0521a892f9c39cf8933d13f5e1f4",
+      "fingerprint": "9c36a241eb093ca4141420d9aaf82151342997a9a8aa2196d2e5f777338a51d1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -138,10 +119,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c8-ba9e-7892-97f4-41ce44540912"
+        "01a0f4e1-9f2d-7de0-95fb-f6bf8c7a96ce"
       ],
       "usage": {
-        "used": 46366,
+        "used": 21114,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -150,10 +131,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 52123,
-          "utf8Bytes": 77923,
-          "estimatedTokens": 25975,
-          "budgetedTokens": 32469,
+          "chars": 6300,
+          "utf8Bytes": 7920,
+          "estimatedTokens": 2640,
+          "budgetedTokens": 3300,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -162,17 +143,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:28:20.308Z",
+    "at": "2026-10-01T00:34:12.248Z",
     "trace": {
-      "runId": "c4c62b14-415d-4d16-b343-56c5e47ed23b",
+      "runId": "acc3b894-4fb7-48b0-8d7b-3388eb979931",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e662c1edb91075d890d779f1a3d3c845cdd1b8872396a65dba78e7ff4eaba04f",
-      "contextHash": "15abdf83ea0981a487dc12601a23b19b075427b8f7dfe95d662f3afac9129efe",
+      "promptHash": "e3b17f38ae9019055c95fbb2c460de8d04acd6defb47c57ac828668d03dc2e42",
+      "contextHash": "e4665ca3bfd3aed89ce9088bd77fdb7f1343d1ae2de54bdeb19e9429253c8276",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "49e6cb014434b707a2c7c3b4d31c05a582a4e8d3843108c4d407bdb4c86b170e",
+      "fingerprint": "75efeb99569d7f22fbcf300d33a18568a510d422109d8f4d3912366fc85670dd",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -185,10 +166,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c9-a637-7ac1-b66a-d234bd24e562"
+        "01a0f4e1-f5cb-7333-ace3-9574c67ddcc1"
       ],
       "usage": {
-        "used": 51155,
+        "used": 21126,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -197,10 +178,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 68813,
-          "utf8Bytes": 107300,
-          "estimatedTokens": 35767,
-          "budgetedTokens": 44709,
+          "chars": 6394,
+          "utf8Bytes": 8794,
+          "estimatedTokens": 2932,
+          "budgetedTokens": 3665,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

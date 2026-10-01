@@ -2,32 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/live-assistant-smoke.ts",
-    "title": "真实 ACP 助理现场冒烟验证",
-    "summary": "在临时数据库和合成材料上调用选定的真实 ACP 模型，验证跨语言事实召回以及任务创建、改期、完成；报告写入配置数据目录，但不发送外部消息或写入用户数据库。",
+    "title": "真实 ACP 助手端到端冒烟脚本",
+    "summary": "该脚本用于在隔离的临时 Store 中，以合成记忆和任务请求驱动指定的真实 ACP 模型，并在成功运行时检查跨语言证据召回、任务创建、改期和完成。现有固定材料只描述脚本流程，未提供运行退出码或成功 trace，因此不能据此断言验证已经通过。",
     "category": "tests",
     "sections": [
       {
-        "key": "live-boundary",
-        "title": "现场验证边界与装配",
-        "body": "脚本声明只使用合成材料，但会发起真实 ACP 调用；它创建临时 Store，选择 live profile，并强制模型为 `gpt-5.6-sol`。[[c1]] 随后捕获一条英文熔断器事实，将 AcpAssistantModel、KeywordRetrieval、MemoryService 和时区配置装入 AssistantRuntime，所有对话都在临时私有 web 会话中执行。[[c2]]"
+        "key": "purpose-and-setup",
+        "title": "验证目标与隔离方式",
+        "body": "脚本面向协议 fixture 之外的真实模型链路：它加载配置，在系统临时目录创建独立 Store，并声明只使用合成材料、真实 ACP 调用，不发送外部消息或写入用户数据库。随后从 `traex` 基础配置选择实时 profile，要求所选模型为 `gpt-5.6-sol`，并把模型与 effort 写入报告。[[c1]]\n\n运行时由 Store、MemoryService、关键词检索、ACP 模型适配器和 AssistantRuntime 组成，用来贯通捕获、检索、生成、对话及任务写入。[[c2]] ACP 适配器只接受 ACP transport；缺少 profile 或使用 CLI transport 时会明确报模型不可用，不生成伪造回退答案。[[c3]]"
       },
       {
-        "key": "recall-and-tasks",
-        "title": "跨语言召回与任务生命周期",
-        "body": "中文提问必须选中原英文 fragment，回复还需包含连续失败次数 7 和冷却 41 秒。之后脚本以自然语言创建带明确时间的英语复习任务，断言北京时间被规范化为 UTC；再改期并标记完成，直接检查持久化任务的到期时间和状态。[[c3]] 这验证了真实模型参与下的端到端主路径，而不是仅验证模型输出文本。"
+        "key": "core-flow",
+        "title": "核心场景与业务断言",
+        "body": "脚本先捕获一条英文熔断器说明，再建立私有 Web 会话。统一的 `turn` 包装器调用运行时，要求输入消息引用状态为 `done`，并在该轮成功返回后记录回答、工具动作和所选证据。[[c4]] 中文提问需要选中原始英文 fragment，回答还必须包含“7 次失败”和“41 秒”，从而在脚本成功执行时验证跨语言召回及证据落点。[[c5]]\n\n后三轮依次创建英语复习任务、改期并标记完成，检查任务数量、换算为 UTC 的到期时间和最终 `done` 状态。[[c6]] 时间写入还受运行时约束：时间表达必须实际出现在用户消息中，`dueAt` 必须带时区且可解析，之后才转换为 ISO 时间。[[c7]]"
       },
       {
-        "key": "report-and-limits",
-        "title": "报告与未覆盖范围",
-        "body": "每轮输入、答案、工具动作和选中证据都会进入报告；失败设置非零退出码，最终报告写到配置数据目录的 verification 子目录，并关闭、删除临时 Store。[[c4]] 材料没有覆盖模型不可用后的重试、群聊权限、重复事件、取消栅栏、提醒实际投递或真实外部消息，因此这些能力仍需其他测试证明。"
+        "key": "boundaries-and-reporting",
+        "title": "报告、清理与证据边界",
+        "body": "主流程抛错时，脚本把报告标为失败并设置非零退出码；`finally` 再尝试写入 `verification/live-assistant.json`、输出摘要、关闭 Store 并删除临时目录。由于这些操作顺序执行，目录创建、报告写入或日志输出若再次抛错，后续资源释放并无无条件保证。[[c8]]\n\n此前“该冒烟测试已经证明指定模型下真实 ACP 成功链路”的结论被替代：当前材料只能证明脚本**用于**执行这项验证，以及全部断言通过时会把状态设为 `passed`；没有实际运行报告、退出码或 trace，不能确认本次链路已经成功。[[c1]] 它也不覆盖其他模型、认证失败、超时、通知发送、多任务歧义、版本冲突或越权场景。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "真实模型与临时环境",
-        "reason": "支持脚本使用合成数据、真实 ACP 调用、临时 Store，并限定实际模型。",
-        "relation": "supports",
+        "label": "隔离初始化与模型约束",
+        "reason": "支持脚本使用临时 Store、选择实时 profile、约束目标模型并准备报告；同时说明材料只有流程定义，没有运行结果。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
@@ -38,54 +38,113 @@
       },
       {
         "key": "c2",
-        "label": "助理运行时现场装配",
-        "reason": "支持英文材料捕获以及 ACP 模型、记忆、关键词检索和时区的运行时装配。",
-        "relation": "explains",
+        "label": "助手运行时组件装配",
+        "reason": "支持脚本把存储、记忆服务、关键词检索、ACP 模型和助手运行时串成同一验证链路。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
           "startLine": 23,
-          "endLine": 35
+          "endLine": 28
         },
         "quote": "  const revision = store.capture({ source: \"manual\", externalId: \"synthetic:breaker\", title: \"CircuitBreaker design\",\n    parts: [{ type: \"text\", text: \"The CircuitBreaker opens after exactly seven consecutive failures. Its cooldown is 41 seconds.\" }] }).revision;\n  const runtime = new AssistantRuntime(store, new AcpAs"
       },
       {
         "key": "c3",
-        "label": "召回与任务行为断言",
-        "reason": "支持跨语言证据命中、事实值检查及任务创建、改期和完成的持久化断言。",
+        "label": "ACP 模型适配器边界",
+        "reason": "支持适配器只接受 ACP profile，并对缺少配置或 CLI transport 明确失败而不伪造答案。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 10,
+          "endLine": 21
+        },
+        "quote": "/**\n * Production assistant model adapter. It reuses the project's real ACP transport\n * (`acp()` from agents.ts) against a configured AgentProfile.\n *\n * G: transport routing is enforced here:\n *  - profile.transport === \"acp\" → real ACP session;\n *  - any CLI transport (codex-cli / trae-cli / claude-cli) → ModelUnava"
+      },
+      {
+        "key": "c4",
+        "label": "统一对话执行与步骤记录",
+        "reason": "说明每轮如何调用运行时、检查消息引用状态，并在成功返回后记录回答、动作和证据。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-assistant-smoke.ts",
+          "startLine": 29,
+          "endLine": 35
+        },
+        "quote": "  const turn = async (text: string) => {\n    console.log(`Live: ${text}`);\n    const result = await runtime.turn({ conversationId: conversation.id, userText: text });\n    assert.equal(result.turn.inputMessageRefs.status, \"done\", JSON.stringify(result.turn.inputMessageRefs));\n    (report.steps as unknown[]).push({ input"
+      },
+      {
+        "key": "c5",
+        "label": "跨语言召回断言",
+        "reason": "支持中文问题必须命中原始英文材料，并回答两个关键数值。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
           "startLine": 36,
-          "endLine": 46
+          "endLine": 38
         },
-        "quote": "  const recalled = await turn(\"之前记录的熔断器连续失败几次会打开，冷却多久？\");\n  assert.ok(JSON.stringify(recalled.turn.selectedEvidence).includes(revision.fragments[0]!.id), \"Must cite original English source\");\n  assert.match(recalled.turn.result, /7|七|seven/i); assert.match(recalled.turn.result, /41|四十一/);\n  await turn(\"帮我记一下：2030年10月2日"
+        "quote": "  const recalled = await turn(\"之前记录的熔断器连续失败几次会打开，冷却多久？\");\n  assert.ok(JSON.stringify(recalled.turn.selectedEvidence).includes(revision.fragments[0]!.id), \"Must cite original English source\");\n  assert.match(recalled.turn.result, /7|七|seven/i); assert.match(recalled.turn.result, /41|四十一/);"
       },
       {
-        "key": "c4",
-        "label": "现场报告与清理",
-        "reason": "支持失败退出、验证报告落盘以及临时资源清理行为。",
-        "relation": "tracks",
+        "key": "c6",
+        "label": "任务创建改期与完成断言",
+        "reason": "支持脚本检查任务数量、两次 UTC 到期时间以及最终完成状态。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-assistant-smoke.ts",
-          "startLine": 47,
+          "startLine": 39,
+          "endLine": 45
+        },
+        "quote": "  await turn(\"帮我记一下：2030年10月2日上午9点提醒我复习英语面试词汇。\");\n  assert.equal(store.tasks().length, 1);\n  assert.equal(store.tasks()[0]!.dueAt, \"2030-10-02T01:00:00.000Z\");\n  await turn(\"把刚才的英语复习任务改到2030年10月3日上午10点。\");\n  assert.equal(store.tasks()[0]!.dueAt, \"2030-10-03T02:00:00.000Z\");\n  await turn(\"刚才的英语复习任务已经做完了，标记完成。\");\n  asser"
+      },
+      {
+        "key": "c7",
+        "label": "任务时间校验规则",
+        "reason": "支持服务端要求时间表达来自原消息，且到期时间必须带时区并可解析。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 42,
+          "endLine": 47
+        },
+        "quote": "export function validatedDueAt(dueAt: string | null | undefined, expression: string | null | undefined, userText: string) {\n  if (!dueAt) return null;\n  if (!expression?.trim() || !userText.includes(expression.trim()) ||\n    !/T.*(?:Z|[+-]\\d{2}:\\d{2})$/.test(dueAt) || !Number.isFinite(Date.parse(dueAt)))\n    throw Erro"
+      },
+      {
+        "key": "c8",
+        "label": "失败报告与资源清理顺序",
+        "reason": "支持异常状态、报告写入、日志输出和资源释放的实际排列，并揭示前序失败可能阻断清理。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-assistant-smoke.ts",
+          "startLine": 46,
           "endLine": 54
         },
-        "quote": "} catch (error) {\n  report.status = \"failed\"; report.error = String(error); process.exitCode = 1;\n} finally {\n  report.finishedAt = new Date().toISOString();\n  const output = join(config.dataDir, \"verification\"); mkdirSync(output, { recursive: true });\n  writeFileSync(join(output, \"live-assistant.json\"), JSON.stringify"
+        "quote": "  report.status = \"passed\";\n} catch (error) {\n  report.status = \"failed\"; report.error = String(error); process.exitCode = 1;\n} finally {\n  report.finishedAt = new Date().toISOString();\n  const output = join(config.dataDir, \"verification\"); mkdirSync(output, { recursive: true });\n  writeFileSync(join(output, \"live-assi"
       }
     ],
     "questions": [
       {
-        "question": "现场报告是否需要记录 ACP 命令版本、完整模型配置摘要和运行 trace 标识，以便结果可重复审计？",
-        "why": "当前材料只明确写入模型、effort、步骤和结果，未显示 ACP 客户端版本或 trace 定位信息。",
-        "nextStep": "检查 selectLiveProfile 与 AcpAssistantModel 的报告合同，并在现场产物中增加不含秘密的版本和 trace 字段。",
+        "question": "`selectLiveProfile` 在模型不可用、effort 不受支持或环境变量未设置时具体如何选择和报错？",
+        "why": "现有材料只有该函数的调用点和最终模型断言，无法确认能力探测、设置拒绝及回退策略。",
+        "nextStep": "补充 `scripts/live-model.ts` 的固定材料及相关测试，核对模型和 effort 发现、校验与错误报告路径。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c4"
+          "c1"
+        ]
+      },
+      {
+        "question": "报告目录创建或文件写入失败时，是否仍应保证关闭 Store 并清理临时目录？",
+        "why": "报告写入、日志输出和资源释放位于同一个 `finally` 中；前序操作抛错可能阻止后续清理。",
+        "nextStep": "明确所需清理保证；若要求可靠释放，将清理放入独立或嵌套的 `finally`，并增加报告目录不可写或写入失败的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
         ]
       }
     ]
@@ -93,43 +152,18 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/live-assistant-smoke.ts",
       "digest": "717ee10967b49593e5dbb5e764f0863bd1b30aba4aada54bd0b361adfd64896c"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-refresh-smoke.ts",
-      "digest": "18d18495727491cd7e1cb6fa8b9ae440269175d9ec4c3ce24e9a944e5aa7de11"
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-retrieval-smoke.ts",
-      "digest": "7b4c6cdfbc7b93a6883d060595ffde9c5bce21d7ca4d2358244c801293857a91"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/retrieval-index.ts",
-      "digest": "e00fa36bfb6fb2bcdf888653bc52f006be6a7d2527b967783c02c2bf52ee696f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/review-knowledge.ts",
-      "digest": "183b2bdd497d04202fd81a7e942c574fe56fb71f75b6049b5b456830d3515672"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
     },
     {
       "kind": "material",
@@ -138,24 +172,24 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:06:44.637Z",
+    "at": "2026-10-01T00:39:35.523Z",
     "trace": {
-      "runId": "32836daa-c91f-40bc-a055-07cb8a401b03",
+      "runId": "f9443402-1f63-44f8-9295-d8a88f537975",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9fbc6a19edb49918ad30e134f34111f4ec1a733de2643000abd5bb05cf9c58ea",
-      "contextHash": "4d0a6953f3c8d56701648816d4adb237ac17a2117183d456ccbc385a8f6118ba",
+      "promptHash": "b3c8ba39945e1d57fb3cdfd657fe674001069467c7f3db90df8c9d265dd18748",
+      "contextHash": "d42f90e2523cd461b4ed233588faa03f3b5a3d1a69ecd932088c39123ba0190b",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "373fbf149d393a5a56ee68643b6bfa3e883fe58908062e61a025424a75ee0d37",
+      "fingerprint": "1ff68ab441e3b2af52d1cdbb97bdd57fd780a10df9e467a72f50eb298ff84726",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -168,10 +202,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ec-4a83-7c30-98ac-b2ff2f4b589a"
+        "01a0f4e6-ac76-7431-b844-075bc514ba81"
       ],
       "usage": {
-        "used": 56841,
+        "used": 30319,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -180,10 +214,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 104779,
-          "utf8Bytes": 114182,
-          "estimatedTokens": 38061,
-          "budgetedTokens": 47577,
+          "chars": 31787,
+          "utf8Bytes": 37301,
+          "estimatedTokens": 12434,
+          "budgetedTokens": 15543,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -192,17 +226,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:07:17.512Z",
+    "at": "2026-10-01T00:39:51.881Z",
     "trace": {
-      "runId": "cd5c360d-6e31-436c-97e1-c50bf99e7280",
+      "runId": "3e7597e7-2714-4def-8667-9e03dfa9de26",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "de9a7fdfb89da3a5e1c8c2e12bd2d7578ea91468b9d96b0f49c6d9ed581ea25d",
-      "contextHash": "912127306e9f89455cfe1a2d00d9d1da6d31ce8fba623f03c7203ce1043d6584",
+      "promptHash": "ccbe30e2daad1d8a3dc5bc79d8bab12b3b2616575508a4236063131820a02b3a",
+      "contextHash": "90d2c5cde930daa26f21b5b3b9669f9490c2d89188e2989b144570517f0508e0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bcfb337843ae7651f08f563729b2637ec3c30eee31bfbdcfb35c448e04bc1084",
+      "fingerprint": "0ca99d43b218e88b1ea9e3f0df49b93c327b78679f4dbb8b424ff6ccfce99af8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -215,10 +249,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ed-4a7d-7481-ae91-112f53c809e7"
+        "01a0f4e7-16f7-7511-b5df-25bd8e55d7fc"
       ],
       "usage": {
-        "used": 56563,
+        "used": 28013,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -227,10 +261,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 115126,
-          "utf8Bytes": 128677,
-          "estimatedTokens": 42893,
-          "budgetedTokens": 53617,
+          "chars": 28683,
+          "utf8Bytes": 32727,
+          "estimatedTokens": 10909,
+          "budgetedTokens": 13637,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

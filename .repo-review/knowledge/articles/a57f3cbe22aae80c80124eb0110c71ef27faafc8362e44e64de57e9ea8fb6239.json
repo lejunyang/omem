@@ -2,101 +2,166 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/sync.ts",
-    "title": "仓库增量同步与关系重建主流程",
-    "summary": "限定范围扫描仓库并捕获不可变文件修订，维护 Git 增量基线与删除状态，再从人工 association seed 构建两级关系链；正则切片、普通方法定位、全量 seed 移除和关系异常处理均有明确限制。",
-    "category": "workflow",
+    "title": "仓库代码知识增量同步",
+    "summary": "该模块把白名单内的仓库文件捕获为路径身份稳定、修订不可变的知识来源，并结合 Git 状态选择增量或全量扫描。扫描规则、HEAD 缺失、重命名、关系重建和失败收敛均有明确边界：文件失败或脏工作区阻止基线推进，关系失败则仅形成 warning 并仍保存同步结果。此前关于排除所有构建目录、始终记录真实 HEAD、仅在完整扫描后重建关系的宽泛结论已被具体实现条件替代。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "scan",
-        "title": "扫描范围与正则切片",
-        "body": "常规扫描只遍历 apps、packages、docs、scripts 和少量根文件，并排除依赖目录、构建产物、运行目录、私有环境文件及测试 fixture。遍历会跳过符号链接和不安全根；只有路径进入实际捕获后，不可读、越界链接、超限或非 UTF-8 才记录为文件失败。[[c1]]\n\n代码切片依据允许前导空白的行首声明正则，并不验证声明位于语法树顶层；测试用例边界只适用于 `apps/server/tests/` 下以 `.test.ts` 结尾的文件，其他测试文件仍按普通代码切片。先前“按顶层声明、测试统一按用例入口切片”的概括已被这些实现范围替代。Markdown 则按标题行切片。[[c2]]"
+        "key": "purpose-and-scope",
+        "title": "用途、扫描范围与文件安全",
+        "body": "模块以仓库相对路径作为来源身份；同一路径修改会追加修订，相同内容的不同文件仍是独立来源。捕获上下文保存可取得的 Git 提交、工作区脏状态、内容摘要和同步时间，而不是文件修改时间。[[c1]]\n\n扫描仅从 `apps`、`packages`、`docs`、`scripts` 四个根和五个根级白名单文件收集候选项。实际通用目录排除项只有 `node_modules`、`dist`、`.git`、`.repo-review`；另外排除 `*.local.json`、文件名以 `.env` 开头的文件，以及 `apps/server/tests/fixtures/`。因此此前“排除所有构建目录和所有测试 fixture”的说法被替代，其他名为 `build` 或 `fixtures` 的目录不会仅因名称自动排除。[[c2]]\n\n候选路径还须通过真实路径检查：符号链接、解析失败或解析后越出仓库均视为不安全；目录遍历也不会跟随符号链接。[[c3]]"
       },
       {
-        "key": "capture",
-        "title": "修订捕获与增量基线",
-        "body": "每个文件以 `omem:<path>` 为来源身份，内容摘要用于避免重复修订；捕获记录 commit、dirty、摘要、同步时间、分类，以及有限的符号列表或文档中明确出现的决策日期。相同摘要不会因 syncedAt 改变而重复写入。[[c3]]\n\n完整流程综合 HEAD、上次基线、工作树状态和数据库身份选择增量或全量扫描。Git 调用或基线验证失败会退化为全量；首次运行、数据库不匹配或上次同步为 dirty 也会全扫。工作树脏或存在文件失败时仍保存结果，但不推进基线。[[c4]]"
+        "key": "capture-flow",
+        "title": "行级分片、捕获与幂等",
+        "body": "代码捕获采用允许前导空白的声明行正则切分，并非 AST 或严格的顶层声明切分，因此嵌套声明也可能开启新片段。服务端测试按 `describe`、`it`、`test` 行切分，Markdown 按标题切分；符号列表同样由声明正则提取。此前“按顶层声明边界分片”的结论由此被替代。[[c4]]\n\n单文件先拒绝不安全路径、不可读、超过 500000 字节或非 UTF-8 的内容，空文本计为 skipped。其余内容计算 SHA-256；若当前 head 已保存相同 `verbatim-v1` 摘要，则不再创建修订。发生变化时按类别构造文本 parts 和上下文，再调用共享 `Store.capture`，架构材料附带符号，决策材料只采用正文明确写出的日期。[[c5]]"
       },
       {
-        "key": "relations",
-        "title": "人工 seed 驱动的关系链及定位限制",
-        "body": "关系只由人工 associations 建立。符号定位先匹配有限形式的声明；方法优先匹配仅覆盖带 private、public、protected、async、readonly、static 或 override 修饰符的形式。普通 `foo()` 方法不会被该分支识别，可能直接落入最早同名 token 的回退，因此不能把方法命中概括为可靠的定义优先或 AST 级定位。文档锚点解析失败时保存 missing，不用语义相似度补边。[[c5]]\n\n每条 association 生成一个 derived、curated 的虚拟意图片段，再建立“代码 implements 意图”和“意图关联需求、决策、调研、测试”的两级链。构建末尾调用 seed 失效函数，但当 seed 集合为空时该函数不会更新任何旧边；因此仅能确认部分移除时会失效不再存在的 association，不能声称移除全部 seed 也会自动将旧边标为 stale。[[c6]]"
+        "key": "incremental-sync",
+        "title": "Git 降级、增量选择与状态收敛",
+        "body": "非 `only` 同步先尝试取得 `HEAD`；若 `rev-parse` 失败，快照提交值保持 `null`。由于后续在当前提交缺失时选择全部候选文件，这种情况仍会全量扫描，而不能表述为每次捕获都必然记录真实 HEAD。[[c6]] [[c7]]\n\n工作区变化来自 `git status --porcelain -z`，其中 rename 同时提供旧、新路径并形成 `movedTo` 映射；已提交差异使用 `git diff --name-only`，通常只表现为旧来源 removed 与新路径捕获。Git status 或 diff 失败、数据库身份变化、旧格式捕获、无有效基线或前次脏同步都会触发全量扫描或重新收敛。[[c8]] [[c9]]\n\n处理完目标文件后，文件失败或脏工作区会阻止基线推进；`only` 模式既不保存同步状态，也不重建关系。非 `only` 模式无论本次文件选择是全量、增量还是空集合，都会尝试关系重建；关系异常仅追加 warning，随后仍保存结果并正常返回。此前“完整扫描后才构建关系”的限定因此被替代。[[c10]]"
       },
       {
-        "key": "limits",
-        "title": "部分同步与关系失败语义",
-        "body": "`only` 模式只处理显式路径，不更新磁盘同步状态，也不重建关系，适合定向捕获而非完整验收。完整同步才协调来源、重建关系并持久化状态；然而关系构建异常只写入 warnings，不增加文件失败计数，也不阻止同步状态落盘。因此“同步完成”不等于关系链完整成功，上层必须显式检查 warnings 或关系统计。[[c7]]"
+        "key": "relations-and-limits",
+        "title": "人工关系构建与未确认边界",
+        "body": "关系由人工 association seed 驱动：每条 seed 先生成稳定身份的派生意图片段，再建立代码到意图以及意图到需求、决策、调研、测试材料的边；无法解析的端点记为 missing，被删除的 seed 会失效。关系不是由语义相似度自动确认。[[c11]]\n\n代码符号定位优先匹配声明或方法行，但失败后会退化为首个普通词元命中的片段；只要代码端和意图端均存在，关系状态便沿用 seed.status。因此调用点、注释或同名符号可能成为端点，现有材料不足以证明这类退化命中应当形成 confirmed 关系。[[c12]]\n\nassociation 文件不存在时返回空列表；JSON 损坏或缺少 `associations` 数组时抛错。该异常会在同步层转为 relation-build warning，但材料没有展示 API、任务状态、重试或覆盖记录如何解释这种结果。[[c13]] [[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "扫描候选与显式捕获失败",
-        "reason": "支持固定扫描根、排除规则、符号链接跳过以及捕获阶段才记录读取失败的区别。",
+        "label": "路径身份与快照原则",
+        "reason": "支持路径稳定来源身份，以及捕获上下文记录提交、脏状态、摘要和同步时间的设计目标。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/** Incremental scanner that turns the omem repo itself into a code-review\n * knowledge base. Each file is one source whose identity is its repo-relative\n * path (`omem:<path>`), NOT a content hash: editing the same file appends a new\n * revision on the same source, while two files that happen to share bytes stay\n * in"
+      },
+      {
+        "key": "c2",
+        "label": "候选扫描与具体排除规则",
+        "reason": "支持固定扫描根、根级白名单、四类目录排除项和三类额外文件路径排除条件。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
           "startLine": 94,
-          "endLine": 207
+          "endLine": 150
         },
         "quote": "/** Top-level directories the scanner is allowed to descend into. Keeping this\n * list fixed means node_modules / .git / build output are never walked. */\nconst SCAN_ROOTS = [\"apps\", \"packages\", \"docs\", \"scripts\"];\n\n/** Root-level files explicitly admitted to the read whitelist. */\nconst ROOT_FILES = [\n  \"design.md\",\n "
       },
       {
-        "key": "c2",
-        "label": "代码、测试与文档切片规则",
-        "reason": "支持行首声明正则，并明确测试专用切片仅适用于指定目录下的 `.test.ts` 文件。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 210,
-          "endLine": 257
-        },
-        "quote": "// ---------------------------------------------------------------------------\n// Fragment splitters. The store later splits each text part on blank lines; we\n// emit one part per detected section so symbol/heading boundaries are stable.\n// ---------------------------------------------------------------------------\n\nco"
-      },
-      {
         "key": "c3",
-        "label": "单文件不可变修订捕获",
-        "reason": "支持摘要判重、快照上下文、切片选择及通过共享 Store 保存修订的流程。",
+        "label": "真实路径与目录遍历安全",
+        "reason": "支持符号链接、真实路径解析失败、越出仓库以及遍历时不跟随链接的安全边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 399,
-          "endLine": 503
+          "startLine": 153,
+          "endLine": 207
         },
-        "quote": "type Snapshot = { commit: string | null; dirty: boolean };\ntype CaptureOutcome = \"imported\" | \"updated\" | \"unchanged\" | \"skipped\" | \"failed\";\n\n/** First explicit ISO date (YYYY-MM-DD) written in the decision document, or\n * null when the doc does not state one. Never infers a date from mtime/sync. */\nfunction extractDe"
+        "quote": "/** True when `abs` is a symlink/junction or resolves outside repoRoot. */\nfunction isUnsafeLink(abs: string, repoRoot: string): boolean {\n  let st;\n  try {\n    st = lstatSync(abs);\n  } catch {\n    return true;\n  }\n  if (st.isSymbolicLink()) return true;\n  let real: string;\n  try {\n    real = realpathSync(abs);\n  } cat"
       },
       {
         "key": "c4",
-        "label": "Git 增量选择与基线推进",
-        "reason": "支持数据库身份、dirty 状态、Git 失败降级、全量扫描条件及失败时不推进基线。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 838,
-          "endLine": 1025
-        },
-        "quote": "export async function runReviewSync(\n  store: Store,\n  repoRoot: string,\n  options: SyncOptions = {},\n): Promise<SyncResult> {\n  ensureReviewMetaTable(store);\n  store.db.exec(\"CREATE TABLE IF NOT EXISTS review_runtime_identity(id TEXT PRIMARY KEY)\");\n  let databaseId = (store.db.prepare(\"SELECT id FROM review_runtime_i"
-      },
-      {
-        "key": "c5",
-        "label": "符号与材料引用解析",
-        "reason": "支持有限声明和带修饰符方法的优先匹配、同名 token 回退及文档锚点解析限制。",
+        "label": "行级分片与符号提取",
+        "reason": "支持代码、测试和 Markdown 的正则分片方式，并说明代码规则允许前导空白而非严格限定顶层。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 564,
-          "endLine": 672
+          "startLine": 215,
+          "endLine": 257
         },
-        "quote": "/** Head revision fragments for a path-identified source, or null if never\n * synced. */\nfunction headFragments(\n  store: Store,\n  path: string,\n): { revisionId: string; fragments: { id: string; ordinal: number; text: string }[] } | null {\n  const sourceId = sourceIdForExternalId(store, EXTERNAL_ID_PREFIX + path);\n  if"
+        "quote": "const CODE_BOUNDARY =\n  /^\\s*(?:export\\s+)?(?:declare\\s+)?(?:abstract\\s+)?(?:async\\s+)?(?:function|class|const|let|var|enum|interface|type)\\s+[A-Za-z_$]/;\n\n/** Test files split per test case: each `it(`/`test(`/`describe(` opens a new\n * fragment so a failing case can be cited directly. */\nconst TEST_BOUNDARY = /^\\s*(?"
+      },
+      {
+        "key": "c5",
+        "label": "单文件校验与共享捕获",
+        "reason": "支持文件拒绝条件、空文件跳过、摘要幂等、分类分片、上下文构造及共享捕获调用。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 427,
+          "endLine": 503
+        },
+        "quote": "function captureOne(\n  store: Store,\n  repoRoot: string,\n  rel: string,\n  category: ReviewCategory,\n  snapshot: Snapshot,\n  recordFailed: (path: string, reason: string) => void,\n): CaptureOutcome {\n  const abs = join(repoRoot, rel);\n  if (isUnsafeLink(abs, repoRoot)) {\n    recordFailed(rel, \"symlink/junction escapes wh"
       },
       {
         "key": "c6",
-        "label": "两级关系构建与 seed 失效调用",
-        "reason": "支持派生意图索引、两级边结构、稳定 seed identity，以及构建结束时调用失效函数的实际范围。",
+        "label": "HEAD 获取与空提交快照",
+        "reason": "支持 rev-parse 失败时 current 和 snapshot.commit 保持 null，而非保证始终取得真实 HEAD。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 881,
+          "endLine": 884
+        },
+        "quote": "    const head = await git([\"rev-parse\", \"HEAD\"], repoRoot);\n    const current = head.ok ? head.stdout.trim() : null;\n    snapshot.commit = current || null;\n    const baseline = readLastCommit(stateDir);"
+      },
+      {
+        "key": "c7",
+        "label": "缺少当前提交时全量扫描",
+        "reason": "支持 current 缺失或基线无效时选择全部候选文件，说明 HEAD 获取失败后的实际降级结果。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 932,
+          "endLine": 969
+        },
+        "quote": "    let baselineValid = false;\n    if (baseline && current) {\n      const cat = await git([\"cat-file\", \"-t\", baseline], repoRoot);\n      baselineValid = cat.ok;\n      if (baseline && !baselineValid)\n        warnings.push(`baseline commit ${baseline} missing; full rescan`);\n    }\n\n    if (!fullRescan && baseline && curr"
+      },
+      {
+        "key": "c8",
+        "label": "工作区重命名解析",
+        "reason": "支持 porcelain 的 NUL 分隔解析以及只有工作区 rename 记录同时携带旧路径和新路径。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 283,
+          "endLine": 310
+        },
+        "quote": "/** Parse `git status --porcelain -z` output. With `-z` entries are NUL-separated\n * and paths are emitted verbatim (no C-quoting/escaping), so Chinese / spaces /\n * backslashes survive untouched. Renames consume two NUL fields: \"XY old\" then\n * the bare new path. */\nfunction parsePorcelain(stdout: string): GitChange[]"
+      },
+      {
+        "key": "c9",
+        "label": "Git 变化合并与重扫描条件",
+        "reason": "支持 status 失败降级、工作区 rename 映射、已提交 name-only 差异及多种全量扫描条件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 899,
+          "endLine": 971
+        },
+        "quote": "    const status = await git([\"status\", \"--porcelain\", \"-z\"], repoRoot);\n    if (!status.ok) {\n      warnings.push(`git status failed: ${status.error}`);\n      fullRescan = true;\n      advanceBaseline = false;\n    } else {\n      const parsed = parsePorcelain(status.stdout);\n      // The .repo-review state dir (sqlite +"
+      },
+      {
+        "key": "c10",
+        "label": "关系重建、警告与基线推进",
+        "reason": "支持每次非 only 同步在文件处理后尝试关系构建、异常转 warning、失败或脏状态阻止基线推进，以及结果继续持久化返回。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/sync.ts",
+          "startLine": 974,
+          "endLine": 1025
+        },
+        "quote": "  for (const target of targets) {\n    stats.totalScanned++;\n    switch (\n      captureOne(store, repoRoot, target.rel, target.category, snapshot, recordFailed)\n    ) {\n      case \"imported\":\n        stats.imported++;\n        break;\n      case \"updated\":\n        stats.updated++;\n        break;\n      case \"unchanged\":\n  "
+      },
+      {
+        "key": "c11",
+        "label": "人工关系图构建流程",
+        "reason": "支持派生意图索引、确定性 seed 身份、各类关系边、missing 端点和已删除 seed 失效的完整流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -107,38 +172,65 @@
         "quote": "/** Virtual source holding one curated intent fragment per association. It is a\n * DERIVED index (curated=true, derived=true), never independent raw evidence:\n * each fragment contains only that seed's intent line + requirement ids, so a\n * code fragment's \"implements\" target is never the whole G01-G20 status table. */"
       },
       {
-        "key": "c7",
-        "label": "关系重建与同步状态落盘",
-        "reason": "支持 only 模式跳过关系重建，并证明完整同步中的关系异常仅进入 warnings、不会阻止状态持久化。",
-        "relation": "tracks",
+        "key": "c12",
+        "label": "符号定位的普通词元退化",
+        "reason": "支持符号定位先匹配声明或方法、失败后选取首个普通词元命中这一未消歧边界。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/sync.ts",
-          "startLine": 997,
-          "endLine": 1025
+          "startLine": 581,
+          "endLine": 602
         },
-        "quote": "  // Rebuild relations from the hand-maintained seed after scanning. Skipped for\n  // ad-hoc `only` captures (those are partial, fixture-style imports).\n  let relations: RelationBuildStats | undefined;\n  if (!options.only) {\n    try {\n      relations = buildReviewRelations(store, repoRoot);\n    } catch (e) {\n      warn"
+        "quote": "/** Earliest head fragment whose text defines `symbol`. Prefers real\n * declaration/method lines over bare token occurrences. */\nfunction matchSymbolFragment(\n  fragments: { id: string; ordinal: number; text: string }[],\n  symbol: string,\n): { id: string; text: string } | null {\n  const esc = escapeRegExp(symbol);\n  co"
+      },
+      {
+        "key": "c13",
+        "label": "Association 加载失败语义",
+        "reason": "支持文件缺失返回空列表，以及 JSON 损坏或缺少 associations 数组时抛错。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/associations.ts",
+          "startLine": 55,
+          "endLine": 69
+        },
+        "quote": "/** Load and minimally validate the seed associations. Returns an empty list\n * when the file is absent (fresh checkouts / fixtures that supply their own).\n * Throws on malformed JSON so a broken seed never silently drops relations. */\nexport function loadAssociations(repoRoot: string): AssociationSeed[] {\n  const file"
       }
     ],
     "questions": [
       {
-        "question": "当前正则切片和符号匹配对箭头函数、无修饰符对象或类方法、重载声明及同名符号的定位准确率是否达到验收要求？",
-        "why": "实现只覆盖有限声明形式，普通方法可能直接进入最早同名 token 回退；材料没有提供真实仓库样本的准确率或歧义处理结果。",
-        "nextStep": "以真实仓库样本增加定位断言；对多义或不能可靠定位的 association 保留 rejected 或 missing，而非自动确认。",
+        "question": "正则符号定位退化为普通词元命中时，产品规则是否允许该命中沿用 seed.status，并可能形成 confirmed 关系？",
+        "why": "实现会在声明和方法均未匹配时选择首个普通词元命中，并在代码端和意图端存在时直接采用 seed.status；调用点、注释或同名符号因此可能被视为有效端点，但材料没有给出这一策略的验收依据。",
+        "nextStep": "补充同名符号、仅调用无定义和注释命中的行为测试，并决定退化命中应降为 candidate、记为 missing，还是必须由 AST 定位确认。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c5"
+          "c12",
+          "c11"
         ]
       },
       {
-        "question": "关系构建失败仅写入 warnings 时，上层是否会把同步误判为完整成功？",
-        "why": "文件失败会阻止基线推进，但关系重建异常不会增加 failed 计数，也不会阻止同步状态落盘。",
-        "nextStep": "核对 API、覆盖记录和 UI 如何展示关系缺失，并增加关系构建异常的端到端断言。",
+        "question": "关系构建失败后，调用方是否会把带 warning 的同步结果视为整体成功？",
+        "why": "当前实现只把关系异常转换为 warning，随后仍持久化同步状态并正常返回；现有材料未展示 API 状态码、任务完成判定、重试逻辑或覆盖记录如何解释该结果。",
+        "nextStep": "检查同步入口调用方和行为测试，确认 warning 是否显式暴露、是否触发重试，以及覆盖记录是否避免把关系更新标成成功。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c7"
+          "c10",
+          "c13"
+        ]
+      },
+      {
+        "question": "哪些真实测试断言覆盖了脏工作区、Git 失败、HEAD 获取失败、工作区与已提交重命名、非 UTF-8、超限文件和基线不推进？",
+        "why": "当前材料展示了实现分支，但没有测试文件、实际退出码、数据库来源状态或同步状态文件断言，不能确认这些行为已经通过真实验证。",
+        "nextStep": "提供相关测试文件或测试报告，逐项核对退出码、捕获修订、removed/movedTo、failed/warnings 以及基线文件的断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6",
+          "c7",
+          "c8",
+          "c9",
+          "c10"
         ]
       }
     ]
@@ -146,33 +238,13 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/model-config.ts",
-      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/review/sync.ts",
       "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/runs.ts",
-      "digest": "71feea2619b8263142f4285ed0a5a3e9798af8c7daf4881b6c1af41802566fa6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "key": "omem:apps/server/src/review/associations.ts",
+      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
     },
     {
       "kind": "material",
@@ -181,29 +253,29 @@
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:26:10.665Z",
+    "at": "2026-10-01T00:19:37.356Z",
     "trace": {
-      "runId": "281e9163-2066-4480-9a4a-1c6e573689f4",
+      "runId": "a81a26f5-2244-45c5-9a95-b8eb5ba67c1c",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "f06c52c0a1129848830f3148a0b6bab7aef127422e12061d52af46e3465abe4b",
-      "contextHash": "c3bc9022ca7305390888f64a61ed4d63c717f09c3f80b47e08072d16dcde99aa",
+      "promptHash": "fefa4e423f4cb49e0f6ffaef2af58387c1648642f943a1e46cdc778dcf373aa5",
+      "contextHash": "908bbe91ae201f6146ada57f87b487e23e7e14e911b0c612deca983fccb5d64c",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b325396a216f76ac60e370c901866fc1b1d310a8768165eba0f79a5edaa42609",
+      "fingerprint": "6af54c9a008e2892afff5bafe1e6d06a0bb020dd7859e38d99a35d82c7ed8c09",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -216,10 +288,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c7-9408-79a0-813b-fc4ec5bc4afa"
+        "01a0f4d4-4193-7ca2-b9b6-7e29fb2c3c29"
       ],
       "usage": {
-        "used": 64395,
+        "used": 45135,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -228,10 +300,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 142322,
-          "utf8Bytes": 151612,
-          "estimatedTokens": 50538,
-          "budgetedTokens": 63173,
+          "chars": 76860,
+          "utf8Bytes": 84036,
+          "estimatedTokens": 28012,
+          "budgetedTokens": 35015,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -240,17 +312,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:26:38.260Z",
+    "at": "2026-10-01T00:20:01.703Z",
     "trace": {
-      "runId": "ebd583a4-9abe-40c2-a3d5-43bfa5bb720f",
+      "runId": "673d9bc1-24bd-4ae6-a843-2a99c25392f2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b3ee2701d45ce4dabddac1dd34e0d4ac2441657b5ce173c34009fbdac38a698c",
-      "contextHash": "5199be12752e8295daa5ed4d9428094e2869fcd978fbd4609c6c2189ff26c51c",
+      "promptHash": "edd49375fbe692067a1cd118a857181f635abc3289fb42363ad9accc6ad64c07",
+      "contextHash": "9a0600e33d6b789c92cdff08f4959af94a1ea96bbd934f33674355030606daba",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "63a2be64598dc9f0464affbd7f500efb68ad946ebdc7b150f99cd640241b5520",
+      "fingerprint": "9f3e4533010db5a46d30f4fc2f64e27923a43f9762681d9ac998419a9fc20f72",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -263,10 +335,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c8-2598-7ed1-ad19-ff9e7742c89c"
+        "01a0f4d4-cfce-76a0-9fba-c87ccdc00d02"
       ],
       "usage": {
-        "used": 60916,
+        "used": 42323,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -275,10 +347,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 138002,
-          "utf8Bytes": 144862,
-          "estimatedTokens": 48288,
-          "budgetedTokens": 60360,
+          "chars": 74558,
+          "utf8Bytes": 80208,
+          "estimatedTokens": 26736,
+          "budgetedTokens": 33420,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

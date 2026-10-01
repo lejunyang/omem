@@ -2,98 +2,143 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/knowledge/retrieval.ts",
-    "title": "由派生知识回溯原始证据的检索桥接",
-    "summary": "用当前知识正文命中查询，再沿固定引用递归回到原始修订片段，使派生解释只充当召回导航。",
+    "title": "知识正文引导的原始证据召回",
+    "summary": "该模块用已生成的知识正文扩大检索入口，但最终只返回仍有效且与引用行区间重叠的原始 Fragment；它通过依赖摘要校验、文章引用递归、引文核对和结果去重，避免把派生知识直接当作证据。",
     "category": "implementation",
     "sections": [
       {
-        "key": "candidate-flow",
-        "title": "召回与证据回溯",
-        "body": "入口在无检索词或尚未建立知识表时直接返回空结果；否则只从 `current=1` 的知识 head 中用转义后的 SQL LIKE 查找最多 30 篇候选。[[c1]] 对命中的标题、摘要或章节，函数提取正文中的引用键并递归访问。文章引用可限定到指定章节，再继续沿该章节使用的引用下钻；材料引用则重新装配当前 source head 的文本与图片摘要，确认依赖摘要、行区间和绑定 quote 均仍匹配后，才把与证据字符区间重叠的固定 fragment 加入结果。[[c2]]"
+        "key": "purpose",
+        "title": "作用与数据边界",
+        "body": "`knowledgeEvidenceCandidates` 连接知识正文检索与原始证据召回：它先在当前知识修订的序列化内容中按词项模糊匹配，查询至多取 30 篇文章，再沿正文引用寻找原始 Fragment，而不把派生文章本身作为证据返回。检索词为空或知识表不存在时直接返回空数组。[[c1]]\n\n来源解析区分 `omem:` 文件键和其他命名空间，读取 source 的 head revision，并排除上下文或 provenance 标记为 derived 的材料。文本和链接被拼接为可定位文本；图片信息参与材料身份摘要，但不进入文本坐标。[[c2]]"
       },
       {
-        "key": "safety-limits",
-        "title": "边界、去重与失败隔离",
-        "body": "递归深度限制为 8，输出最多 100 个片段，并用“文章键+引用键”去重，避免循环引用反复遍历。任何文章的材料摘要或子文章 revision 不匹配时，整篇派生路径被跳过；派生 source、空 quote、越界行号和无法映射到文本坐标的图片占位也不会产生候选。[[c3]] 顶层逐篇解析 artifact 时吞掉异常，因此损坏的知识投影不会中断原始证据检索。最终返回的是 fragments 表中的原始片段及修订、标题、namespace、actor 等元数据，而不是知识文章正文。[[c4]]\n\n该实现负责候选回溯，不在本文件中执行最终可见性过滤或排序；注释明确说明助手侧可见性规则仍需后续运行。"
+        "key": "flow",
+        "title": "依赖校验与引用回溯",
+        "body": "遍历知识产物前会校验全部依赖：material 依赖重新计算稳定摘要，article 依赖比较当前修订 ID；任一依赖不一致便放弃该产物。材料摘要覆盖文本、图片、作者和引用或转发标志；摘要工具递归排序对象键、忽略 `undefined`，再以规范 JSON 计算 SHA-256，因此表达的是稳定内容身份，而非语义相似度。[[c3]][[c4]]\n\n遍历仅处理命中章节正文实际出现的引用键。文章引用可递归进入指定章节；材料引用必须具有非空 quote、有效行号，且固定行区间确实包含该引文。随后函数按字符区间选出与引文重叠的数据库 Fragment，并返回其原始文本、修订、标题、命名空间和作者信息。[[c5]]"
+      },
+      {
+        "key": "limits",
+        "title": "遍历限制、容错与待确认契约",
+        "body": "递归仅在深度不超过 8 且进入 `visit` 时结果数尚未达到 100 的情况下继续，并以“文章键加引用键”防止重复访问、以 Fragment ID 去重。这里的 100 不是严格输出上限：某次 `visit` 开始时若尚未达到阈值，其同一轮引用和 Fragment 循环仍可能把结果增加到 100 以上；达到阈值后只会阻止后续新的 `visit` 进入。无法按拼接文本定位的 Fragment 会被跳过，代码注明图片占位不属于文本坐标；无效 JSON 或投影异常也不会中断其他候选处理。[[c6]]\n\n现有材料未包含调用方或行为测试，因此无法确认 terms 是否始终预先转为小写，也无法证明注释所称的助手可见性过滤覆盖所有调用路径；本函数自身未实施该过滤。知识合同只约束引用目标、行号、section、quote 和疑问等数据形状，不能替代这些运行时契约的验证。[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "当前知识的文本候选查询",
-        "reason": "支持空输入处理、知识表检测、仅查询当前 head 和候选数量限制。",
-        "relation": "implements",
+        "label": "知识候选查询入口",
+        "reason": "支持空输入和缺表短路、知识正文模糊匹配以及 SQL 查询最多选取 30 篇候选文章的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
-          "startLine": 1,
+          "startLine": 8,
           "endLine": 13
         },
-        "quote": "/** Derived prose can guide retrieval, but the returned candidates are always\n * original fixed fragments. Assistant visibility rules still run afterwards. */\nimport type { DatabaseSync } from \"node:sqlite\";\nimport type { KnowledgeArtifact } from \"../../../../packages/contracts/src/knowledge.js\";\nimport { stableDigest "
+        "quote": "export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): Row[] {\n  if (!terms.length || !db.prepare(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_heads'\").get()) return [];\n  const rows = db.prepare(`SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON"
       },
       {
         "key": "c2",
-        "label": "文章与材料引用递归",
-        "reason": "支持从命中章节沿文章引用下钻，并按固定材料 quote 定位原始 fragment。",
+        "label": "原始来源解析与派生材料排除",
+        "reason": "支持 source head 解析、派生来源排除、文本与链接拼接及图片摘要输入的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 14,
+          "endLine": 25
+        },
+        "quote": "  function source(key: string) {\n    if (sourceCache.has(key)) return sourceCache.get(key)!;\n    const index = key.indexOf(\":\"), namespace = key.startsWith(\"omem:\") ? \"file\" : key.slice(0, index), external = key.startsWith(\"omem:\") ? key : key.slice(index + 1);\n    const row = db.prepare(\"SELECT r.*,s.namespace FROM so"
+      },
+      {
+        "key": "c3",
+        "label": "知识依赖有效性检查",
+        "reason": "支持遍历前按材料摘要或文章修订 ID 校验依赖、失效时停止使用整篇产物的论断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "startLine": 27,
+          "endLine": 36
+        },
+        "quote": "  function article(key: string) {\n    if (articleCache.has(key)) return articleCache.get(key)!;\n    const row = db.prepare(\"SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON r.id=h.revision_id WHERE h.document_key=? AND h.current=1\").get(key) as Row | undefined;\n    const value = row ? { id: S"
+      },
+      {
+        "key": "c4",
+        "label": "稳定摘要实现",
+        "reason": "解释摘要如何递归规范化数据、排序对象键、忽略未定义值并计算 SHA-256。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+      },
+      {
+        "key": "c5",
+        "label": "引用递归与原始 Fragment 映射",
+        "reason": "支持文章章节递归、材料引文行区间校验，以及按字符重叠映射回原始 Fragment 的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
-          "startLine": 34,
+          "startLine": 37,
           "endLine": 68
         },
-        "quote": "  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || output.size >= 100) return;\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) return;\n    for (const c of a.document.citations.filter(c => !keys "
+        "quote": "    for (const c of a.document.citations.filter(c => !keys || keys.has(c.key))) {\n      const visitKey = `${a.document.key}:${c.key}`;\n      if (seen.has(visitKey)) continue;\n      seen.add(visitKey);\n      if (c.target.kind === \"article\") {\n        const child = article(c.target.key);\n        if (child) {\n          co"
       },
       {
-        "key": "c3",
-        "label": "依赖校验与遍历上限",
-        "reason": "支持摘要不匹配即停止、深度与输出上限、引用访问去重等安全边界。",
-        "relation": "implements",
+        "key": "c6",
+        "label": "遍历阈值、去重与容错",
+        "reason": "支持深度与进入遍历时的数量阈值，并说明循环内没有再次检查结果数，因此 100 不是严格输出上限；同时支持去重、图片坐标跳过和异常容错的描述。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/retrieval.ts",
           "startLine": 33,
-          "endLine": 56
+          "endLine": 79
         },
         "quote": "  const seen = new Set<string>(), output = new Map<string, Row>();\n  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {\n    if (depth > 8 || output.size >= 100) return;\n    if (a.dependencies.some(d => d.kind === \"material\" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) "
       },
       {
-        "key": "c4",
-        "label": "命中章节选择与异常隔离",
-        "reason": "支持只遍历命中章节的引用、忽略损坏投影并返回去重后的原始候选。",
-        "relation": "implements",
+        "key": "c7",
+        "label": "知识引用与疑问合同",
+        "reason": "说明合同规定引用目标、位置、quote 与疑问字段的数据形状，但不证明调用链中的词项规范化或可见性过滤行为。",
+        "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/knowledge/retrieval.ts",
-          "startLine": 71,
-          "endLine": 80
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 4,
+          "endLine": 39
         },
-        "quote": "  for (const row of rows) {\n    try {\n      const a = JSON.parse(String(row.artifact)) as KnowledgeArtifact;\n      const titleHit = terms.some(t => (a.document.title + a.document.summary).toLowerCase().includes(t));\n      const sections = a.document.sections.filter(s => titleHit || terms.some(t => (s.title + s.body).to"
+        "quote": "export const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \"background\", \"tracks\"]),\n  target: z.obj"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "调用 `knowledgeEvidenceCandidates` 前是否保证所有 terms 已按与正文比较一致的规则转为小写？",
+        "why": "标题、摘要和章节内容在匹配前会执行 `toLowerCase()`，但 terms 被直接传给 `includes`；给定材料没有调用方，无法确认大小写规范化的前置契约。",
+        "nextStep": "检查该函数的调用点及相关行为测试，确认词项标准化位置，并补充大小写混合查询用例。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c6"
+        ]
+      },
+      {
+        "question": "所有返回候选的调用路径是否都会继续执行助手可见性过滤？",
+        "why": "文件头注释声明可见性规则会在之后执行，但本函数返回来源和作者相关字段时没有自行实施权限或可见性判断，且给定材料未包含调用方。",
+        "nextStep": "核对检索聚合器或 API 调用链，验证过滤发生在候选合并之后，并增加不可见来源不会进入最终结果的集成测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c6"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/api.ts",
-      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/artifacts.ts",
-      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/retrieval.ts",
@@ -101,61 +146,45 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/learning/pipeline.ts",
-      "digest": "7f869f973a9d6d42ce9f9600a4df0bbdb9b5aa80f8a6b395991d94f4c86069c8"
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/parse.ts",
-      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/budget.ts",
-      "digest": "3612165999855ab74bb09b8d42f0eb8febf33c101745a752c74d749a83c8408d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agent-runtime/requests.ts",
-      "digest": "22aaaf92cab3a4047ad3e9be87e175f1cbcbfe2c25c4ff6992c61ad1fd23936f"
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:21:01.519Z",
+    "at": "2026-10-01T00:07:17.875Z",
     "trace": {
-      "runId": "20dd6ede-6afb-4794-8f94-d8d038d5e691",
-      "roleId": "code-analyst",
+      "runId": "ae8d1e86-ee8a-4cd4-b98e-4efe73d78c7a",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "0740d7df159552203ec2007fa881b1a54c56fd4c8f6965124959b7dca6c87f13",
-      "contextHash": "043922e944e1f32941329d36e31ff0d1aced6fe49984505b8621b5efe061ad02",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "55cfca8efd55ea0b88fafdfec23b23ed1e685976dcd1de718eb8508cb989da50",
+      "contextHash": "9f470225b88f39ee0c21c2858814382643fd9f8f5b8c50f8336aaf03823e1a10",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3dbf0c807d0da91cb21198307fa883f1d449faaaa725893f8150a65892993530",
+      "fingerprint": "65b33db371e06f0d0f71c910f0f81f6035eb7bd6c2ad05f734ee77aecdbf8105",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c1-8933-79b1-8bc0-43718fcb135d",
-        "01a0f3c2-76ee-7ec1-b11c-8a04cbcb8db2"
+        "01a0f4c9-1f4f-7500-8fe3-18f1ba149b7c"
       ],
       "usage": {
-        "used": 55397,
+        "used": 28265,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -164,29 +193,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 111464,
-          "utf8Bytes": 113913,
-          "estimatedTokens": 37971,
-          "budgetedTokens": 47464,
+          "chars": 25078,
+          "utf8Bytes": 29992,
+          "estimatedTokens": 9998,
+          "budgetedTokens": 12498,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 1
+      "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:21:42.383Z",
+    "at": "2026-10-01T00:07:34.340Z",
     "trace": {
-      "runId": "43e1d043-1c6f-4a51-aab0-942209f5bce2",
+      "runId": "a05d0db5-58af-490f-a57e-07c0217d40fc",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "489bea9c785ce7a3f44f8a51bf8f5b056ae5a743828d859ab256d16a6aa4a48d",
-      "contextHash": "ef46a71cc270357dbf29d9670897e1cdd062239f5012e1abdf7a6401d11001b4",
+      "promptHash": "f0313ba42db7967757fc3cc2cd33e941ef0df34ec327eb53bc4e88c8ceeb1509",
+      "contextHash": "bfd79d2122216a65ed053b7154c9dbe9616d6aba7c722b08d9697dbc8dd3e924",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d24ae36c8c9af2d97a1ea40c035d72c6961aa6e665240328bf44f6129e36bfc7",
+      "fingerprint": "8a0318a8abac8716cabd5c4b73fe67fd6ab7692253e7ae94d71a23d523eaed2a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -199,10 +228,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c3-6e3f-7791-ac6c-26a495ceade1"
+        "01a0f4c9-8582-7ca2-b3c9-536dc40ee275"
       ],
       "usage": {
-        "used": 59950,
+        "used": 26042,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -211,10 +240,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 133282,
-          "utf8Bytes": 143629,
-          "estimatedTokens": 47877,
-          "budgetedTokens": 59847,
+          "chars": 22097,
+          "utf8Bytes": 25871,
+          "estimatedTokens": 8624,
+          "budgetedTokens": 10780,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

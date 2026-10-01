@@ -3,75 +3,175 @@
   "document": {
     "key": "omem:scripts/live-retrieval-smoke.ts",
     "title": "中文语义检索现场冒烟验证",
-    "summary": "通过中文 embedding 加载器和临时 Store 建立四类合成材料索引，验证意译式中文查询的语义 Top-1 命中、路线标记及可见性过滤；材料未证明模型一定本地加载。",
+    "summary": "该脚本以临时 SQLite 和真实中文向量模型验证捕获、索引、异步语义检索、可见性过滤与报告落盘。先前“异步混合检索”的结论被替代：现有固定材料只证明脚本分别执行关键词检索与异步检索，并要求后者的首条结果经过 semantic 路由。",
     "category": "tests",
     "sections": [
       {
-        "key": "setup-and-cases",
-        "title": "测试目的与语料设计",
-        "body": "脚本用于观察关键词不完全重合时的检索效果：它在临时 Store 上创建 SemanticRetrieval，并通过 `loadChineseEmbedding` 延迟取得中文 embedding。四组语料覆盖就诊、熔断、语言学习和报销，查询使用“看牙医”“避免一直重试”“巩固外语词汇”“旅途花销凭证”等改写，以检验语义召回。[[c1]] 仅凭导入和函数名无法确认模型是本地、离线或采用何种锁定版本。"
+        "key": "purpose-and-setup",
+        "title": "验证目标与真实依赖",
+        "body": "脚本创建临时 `Store`，并通过 `loadChineseEmbedding` 构造 `SemanticRetrieval`，因此覆盖实际存储、模型加载和检索组件，而非测试替身。[[c1]] `Store` 初始化 SQLite、执行迁移并限制数据文件权限，使冒烟从完整存储基础启动。[[c2]] 中文 embedding 还必须匹配锁定的 BGE 快照及文件校验和，且运行时关闭远程模型和文件缓存，可暴露模型未同步或快照损坏等环境问题。[[c3]]"
       },
       {
-        "key": "index-and-assertions",
-        "title": "索引与行为断言",
-        "body": "所有材料先经 captureSchema 校验并捕获，随后循环 `indexBatch` 直到无待处理项。脚本对每个查询同时记录词法 Top-1 和异步检索结果，强制要求异步结果首项为对应 fragment，且 routes 包含 `semantic`。[[c2]] 因而它证明这些固定样例在当前运行环境中的 Top-1 行为；词法结果只作对照，并未要求词法路线失败。"
+        "key": "capture-index-search",
+        "title": "捕获、建索引与查询流程",
+        "body": "脚本准备诊疗、故障处理、语言学习和报销四类中文材料，经共享 `captureSchema` 校验后捕获，并保存各自首个 fragment 标识。[[c4]] 文本 part 合同要求内容非空并限制长度，因此无效输入会在入库前被拒绝。[[c5]] 随后脚本反复执行 `indexBatch()`；索引器选择当前 head 中尚未按当前模型建索引的原始 fragment，按重叠窗口分批生成向量并检查批量数量一致。[[c6]]"
       },
       {
-        "key": "visibility-and-limits",
-        "title": "可见性与报告边界",
-        "body": "脚本通过 visible 回调排除首个 fragment，并断言返回结果均不含该 fragment；成功后把 retrieval health 和逐案例信息写入 `.omem/verification`，最终关闭检索器和临时 Store。[[c3]] 未覆盖模型加载失败、向量身份变化、增量更新或删除、并列分数、低相关查询及 Top-1 之外的排序质量。"
+        "key": "assertions-and-limits",
+        "title": "断言、报告与覆盖边界",
+        "body": "脚本分别调用同步关键词检索和异步检索，但只断言异步结果 top-1 命中预期 fragment，且路由包含 `semantic`；关键词是否命中仅写入报告。[[c7]] 因而现有材料支持“异步语义检索”，不足以确认融合策略或混合排序，替代先前“完成异步混合检索”的表述。它还断言 `visible` 能排除指定证据，并将健康状态与案例结果写入验证文件。[[c8]] `finally` 无条件关闭检索器和数据库并删除临时目录。[[c9]]\n\n当前用例未验证后台补建及故障恢复；实现中的 `start()` 会在成功后约一秒、出错后约三十秒再次尝试，而 `health()` 将状态区分为 indexing、ready 或 degraded。[[c10]] 这些实现存在并不等于已经被本脚本现场验证。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "中文语义检索样例集",
-        "reason": "支持中文 embedding 加载器的调用方式和四组意译式查询语料；不用于证明本地加载属性。",
-        "relation": "supports",
+        "label": "冒烟脚本的真实组件初始化",
+        "reason": "支持脚本使用临时 Store、中文 embedding loader 与 SemanticRetrieval 组成真实运行链路。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-retrieval-smoke.ts",
-          "startLine": 5,
-          "endLine": 16
+          "startLine": 1,
+          "endLine": 10
         },
-        "quote": "import { Store } from \"../apps/server/src/store.js\";\nimport { loadChineseEmbedding } from \"../apps/server/src/retrieval/embedding.js\";\nimport { SemanticRetrieval } from \"../apps/server/src/retrieval/semantic.js\";\nimport { captureSchema } from \"../packages/contracts/src/index.js\";\nconst dir = mkdtempSync(join(tmpdir(),\""
+        "quote": "import assert from \"node:assert/strict\";\nimport { mkdtempSync, rmSync, mkdirSync, writeFileSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { resolve, join } from \"node:path\";\nimport { Store } from \"../apps/server/src/store.js\";\nimport { loadChineseEmbedding } from \"../apps/server/src/retrieval/embedding"
       },
       {
         "key": "c2",
-        "label": "批量索引与 Top-1 断言",
-        "reason": "支持捕获后追平索引，并要求每个异步查询首项为预期 fragment 且包含 semantic 路线。",
+        "label": "Store 数据库初始化",
+        "reason": "支持临时存储会创建 SQLite、执行迁移并设置本地文件权限。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 36,
+          "endLine": 67
+        },
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+      },
+      {
+        "key": "c3",
+        "label": "中文向量模型快照校验",
+        "reason": "支持模型仓库与 revision 锁定、文件校验和验证以及禁止隐式联网加载。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 14,
+          "endLine": 40
+        },
+        "quote": "export const BGE_REVISION = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\";\nconst files = [\"config.json\", \"tokenizer.json\", \"tokenizer_config.json\", \"special_tokens_map.json\", \"vocab.txt\", \"onnx/model_quantized.onnx\"];\n\n/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async func"
+      },
+      {
+        "key": "c4",
+        "label": "中文案例捕获与固定标识",
+        "reason": "支持四类中文材料经 captureSchema 保存并记录预期 fragment 标识。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-retrieval-smoke.ts",
+          "startLine": 11,
+          "endLine": 20
+        },
+        "quote": "const cases = [\n  { title: \"诊疗安排\", text: \"周四上午十点去口腔门诊拔智齿，提前半小时到医院取号。\", query: \"我哪天去看牙医？\" },\n  { title: \"故障处理\", text: \"当下游连续失败时打开熔断器，短暂等待后放行少量请求探测恢复情况。\", query: \"依赖服务挂了怎么避免一直重试？\" },\n  { title: \"语言学习\", text: \"每天听一段英文播客，把不认识的单词做成记忆卡，并按遗忘曲线安排复习。\", query: \"如何巩固外语词汇？\" },\n  { title: \"出差材料\", text: \"去上海的高铁电子票和住宿发票已收齐，周五提交财务报销。\""
+      },
+      {
+        "key": "c5",
+        "label": "文本捕获合同",
+        "reason": "支持文本 part 的非空、长度及可选来源信息约束。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 5,
+          "endLine": 24
+        },
+        "quote": "export const partProvenanceSchema = z\n  .object({\n    actorExternalId: z.string().min(1).max(300).nullable(),\n    actorPrincipalId: z.string().min(1).max(300).nullable(),\n    observedAt: z.iso.datetime({ offset: true }).nullable(),\n    eventId: z.string().min(1).max(500).nullable(),\n    replyTo: z.string().min(1).max(5"
+      },
+      {
+        "key": "c6",
+        "label": "语义索引批处理",
+        "reason": "支持当前 head 选择、重叠窗口、向量分批生成和输出数量检查。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 45,
+          "endLine": 70
+        },
+        "quote": "  indexBatch(limit = 8): Promise<number> {\n    if (this.work) return this.work;\n    this.work = this.index(limit).catch(error => { this.error = String(error); throw error; }).finally(() => this.work = null);\n    return this.work;\n  }\n\n  private async index(limit: number) {\n    const model = await this.ready();\n    cons"
+      },
+      {
+        "key": "c7",
+        "label": "关键词记录与语义结果断言",
+        "reason": "支持同步关键词结果只进入报告，而异步结果必须 top-1 命中并包含 semantic 路由；也说明材料不足以断言混合排序。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-retrieval-smoke.ts",
-          "startLine": 17,
+          "startLine": 21,
           "endLine": 29
         },
-        "quote": "const ids: string[] = [];\ntry {\n  for (const c of cases) ids.push(store.capture(captureSchema.parse({ source: \"manual\", title: c.title, externalId: c.title, parts: [{ type: \"text\", text: c.text }] })).revision.fragments[0]!.id);\n  while (await retrieval.indexBatch()) {}\n  const results = [];\n  for (let i = 0; i < cases"
+        "quote": "  const results = [];\n  for (let i = 0; i < cases.length; i++) {\n    const c = cases[i]!;\n    const lexical = retrieval.searchSources({ text: c.query, limit: 1 });\n    const hits = await retrieval.searchSourcesAsync({ text: c.query, limit: 3 });\n    assert.equal(hits[0]?.fragmentId,ids[i],c.query);\n    assert.ok(hits[0"
       },
       {
-        "key": "c3",
-        "label": "可见性过滤与健康报告",
-        "reason": "支持排除指定 fragment、输出健康和案例报告以及清理临时资源。",
+        "key": "c8",
+        "label": "可见性过滤与验证报告",
+        "reason": "支持排除不可见 fragment 的断言，以及健康状态和案例结果落盘。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-retrieval-smoke.ts",
           "startLine": 30,
-          "endLine": 35
+          "endLine": 34
         },
         "quote": "  const excluded = await retrieval.searchSourcesAsync({ text: cases[0]!.query, visible: id => id !== ids[0] });\n  assert.ok(excluded.every(h => h.fragmentId !== ids[0]));\n  const report = { passed: true, health: retrieval.health(), cases: results };\n  mkdirSync(resolve(\".omem/verification\"),{recursive:true}); writeFile"
+      },
+      {
+        "key": "c9",
+        "label": "检索资源与临时目录清理",
+        "reason": "支持 finally 中关闭检索器和数据库并删除临时目录。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-retrieval-smoke.ts",
+          "startLine": 35,
+          "endLine": 35
+        },
+        "quote": "} finally { await retrieval.close(); store.close(); rmSync(dir,{recursive:true,force:true}); }"
+      },
+      {
+        "key": "c10",
+        "label": "后台重试与健康状态",
+        "reason": "支持索引健康状态的 indexing、ready、degraded 区分，以及后台成功和失败后的不同重试间隔。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 21,
+          "endLine": 40
+        },
+        "quote": "  override health() {\n    const modelId = this.model?.id ?? \"\";\n    const total = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT}`).get()!.n);\n    const indexed = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT} AND EXISTS (\n      SELECT 1 FROM fragment_embedding_heads h WHERE h.fragment_id=f"
       }
     ],
     "questions": [
       {
-        "question": "该现场测试使用的 embedding 向量身份和锁定模型版本是什么，报告能否发现旧索引混用？",
-        "why": "材料只显示调用 loadChineseEmbedding 和输出 health，未展示报告字段是否包含模型标识、维度或索引版本。",
-        "nextStep": "检查 SemanticRetrieval.health 与 embedding 配置合同，并增加模型身份变化后拒绝复用旧向量的现场断言。",
+        "question": "是否需要把关键词召回正确率或融合排序质量纳入冒烟测试的失败条件？",
+        "why": "当前脚本记录关键词 top-1 是否正确，但只对异步检索的 top-1 与 semantic 路由执行断言，无法据此评价关键词质量或证明混合排序。",
+        "nextStep": "先明确现场冒烟只保证语义召回，还是还需保证关键词或融合排序；若需要后者，增加独立、可量化的断言和路由结果。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
+          "c7"
+        ]
+      },
+      {
+        "question": "是否需要增加索引失败、模型不可用及后台增量补建后的降级与恢复用例？",
+        "why": "实现提供后台重试和 health 状态转换，但当前脚本主动循环调用 indexBatch，没有启动后台 start，也没有注入失败来观察 indexing、degraded 与恢复过程。",
+        "nextStep": "增加故障注入或现场用例，分别断言模型加载失败时的查询行为、健康状态、重试节奏，以及后续捕获能否由后台任务补建。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c10"
         ]
       }
     ]
@@ -79,69 +179,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-assistant-smoke.ts",
-      "digest": "717ee10967b49593e5dbb5e764f0863bd1b30aba4aada54bd0b361adfd64896c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-refresh-smoke.ts",
-      "digest": "18d18495727491cd7e1cb6fa8b9ae440269175d9ec4c3ce24e9a944e5aa7de11"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/live-retrieval-smoke.ts",
       "digest": "7b4c6cdfbc7b93a6883d060595ffde9c5bce21d7ca4d2358244c801293857a91"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/retrieval-index.ts",
-      "digest": "e00fa36bfb6fb2bcdf888653bc52f006be6a7d2527b967783c02c2bf52ee696f"
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "be42007fce29d70b9402637abb5fe64685b46872ae815a2285bbbc67303962e3"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/review-knowledge.ts",
-      "digest": "183b2bdd497d04202fd81a7e942c574fe56fb71f75b6049b5b456830d3515672"
+      "key": "omem:apps/server/src/retrieval/embedding.ts",
+      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:06:44.637Z",
+    "at": "2026-10-01T00:38:51.055Z",
     "trace": {
-      "runId": "32836daa-c91f-40bc-a055-07cb8a401b03",
+      "runId": "63c2bd48-21ff-4609-ad6b-ffa384fa7ba7",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9fbc6a19edb49918ad30e134f34111f4ec1a733de2643000abd5bb05cf9c58ea",
-      "contextHash": "4d0a6953f3c8d56701648816d4adb237ac17a2117183d456ccbc385a8f6118ba",
+      "promptHash": "22bc97ebf5566893afb8e5b57570bb2cc946f0ff2b546122a72cb2a3e9da47d6",
+      "contextHash": "59223566030bea26d95a384fcc3978fbb6745b3bd5549f48bd3712732f09a068",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "373fbf149d393a5a56ee68643b6bfa3e883fe58908062e61a025424a75ee0d37",
+      "fingerprint": "4213130a66ad1a17caa555ad1d9593eee9cb89f9a7330f423837736162e509a7",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -154,10 +229,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ec-4a83-7c30-98ac-b2ff2f4b589a"
+        "01a0f4e6-00a5-7922-8b08-7db661df4e7d"
       ],
       "usage": {
-        "used": 56841,
+        "used": 30740,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -166,10 +241,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 104779,
-          "utf8Bytes": 114182,
-          "estimatedTokens": 38061,
-          "budgetedTokens": 47577,
+          "chars": 31934,
+          "utf8Bytes": 37772,
+          "estimatedTokens": 12591,
+          "budgetedTokens": 15739,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -178,17 +253,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:07:17.512Z",
+    "at": "2026-10-01T00:39:14.268Z",
     "trace": {
-      "runId": "cd5c360d-6e31-436c-97e1-c50bf99e7280",
+      "runId": "f59f1e76-f94c-4861-a4e7-28c0a17385f1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "de9a7fdfb89da3a5e1c8c2e12bd2d7578ea91468b9d96b0f49c6d9ed581ea25d",
-      "contextHash": "912127306e9f89455cfe1a2d00d9d1da6d31ce8fba623f03c7203ce1043d6584",
+      "promptHash": "6d88412c66f89ca7d179e254e0e65d0210e3e49f120aa1ca1692359f7ed7d1a2",
+      "contextHash": "1bdce061dcf1248f3711885a1a1b113f030f77b2ee56fe7d54eb51aa460e7206",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bcfb337843ae7651f08f563729b2637ec3c30eee31bfbdcfb35c448e04bc1084",
+      "fingerprint": "18846968e5879ff51f4dd9a1525e76de208aab1440c3a1c8573dbaa2edc44e5c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -201,10 +276,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ed-4a7d-7481-ae91-112f53c809e7"
+        "01a0f4e6-7f26-7780-b351-75d9c8900325"
       ],
       "usage": {
-        "used": 56563,
+        "used": 29076,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -213,10 +288,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 115126,
-          "utf8Bytes": 128677,
-          "estimatedTokens": 42893,
-          "budgetedTokens": 53617,
+          "chars": 29375,
+          "utf8Bytes": 33599,
+          "estimatedTokens": 11200,
+          "budgetedTokens": 14000,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

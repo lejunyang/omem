@@ -2,136 +2,248 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/app.ts",
-    "title": "仓库评审服务的 HTTP 组合层",
-    "summary": "构建隔离的本地 Fastify 应用，组合材料知识、统一检索、关系与代码图接口，并通过令牌或回环来源限制访问。",
-    "category": "architecture",
+    "title": "仓库评审知识服务的 HTTP 入口",
+    "summary": "该文件是隔离仓库评审服务的组合根：复用通用记忆、检索与知识管线，提供材料浏览、关系查询、同步、代码图谱、固定源码和可选模型理解接口，并以本地来源或令牌限制访问。它主要负责路由、鉴权与资源生命周期，材料捕获、代码解析和知识持久化由其他模块完成。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "composition",
-        "title": "服务职责与组件装配",
-        "body": "`buildReviewApp` 面向仓库评审场景，在独立 Store 上组合 MemoryService、统一检索、代码知识服务和通用知识路由，不接入个人助手、Lark、通知 worker 或业务令牌体系。代码理解模型必须显式传入；默认只提供确定性代码图与既有知识，不主动调用生成模型。知识回答会保存为材料，发布结果则写入评审知识资产。[[c1]]"
+        "key": "role-and-security",
+        "title": "定位与访问边界",
+        "body": "`buildReviewApp` 是 repo-review 的 Fastify 组合根。它面向隔离的评审 Store，复用 `MemoryService` 和检索能力，同时明确不装配业务助手、Lark、学习与通知 worker，因此是仓库知识的 HTTP 外壳，而非完整个人助理运行时。[[c1]] 初始化时会创建评审元数据与关系表，组装检索、代码服务和可选理解模型端口，并把通用知识路由接入评审材料仓库、回答保存及文章发布回调。[[c2]]\n\n所有 `/api/review` 请求共享前置门禁：配置 `REVIEW_TOKEN` 时使用 Bearer token 和恒定时间比较；未配置时检查 loopback Host，并把浏览器 Origin 限制在本地 API、Web 开发端口或同源地址。[[c3]] 这一边界仍依赖实际监听与代理部署方式；当前材料只给出应用构建和“绑定 loopback”的设计声明，没有展示调用 `listen` 的启动入口。"
       },
       {
-        "key": "security",
-        "title": "访问、健康与数据边界",
-        "body": "所有 `/api/review` 请求在设置 `REVIEW_TOKEN` 时以定时安全比较校验 Bearer token；未设置时只接受回环 Host，并将浏览器 Origin 限制在本地 API、Web 端口或同源地址。该门禁适合本地单用户评审服务，不能据此宣称已实现租户级授权。[[c2]]\n\n健康接口的数据目录使用相对路径，同时返回运行模式、端口、最近同步提交、来源数、片段数及检索健康状态。此前“仅暴露相对数据目录和检索状态”的结论已被这一完整返回范围替代。[[c3]]"
+        "key": "materials-search-sync",
+        "title": "材料浏览、检索与同步",
+        "body": "材料浏览与关系查询具有不同数据路径：来源列表读取当前 head，版本接口枚举历史 revision，revision 与 fragment 接口返回固定证据及 provenance；关系接口查询已存关系，可按 fragment、状态、类型或代码路径筛选，而 association seed 数量由另一端点单独统计。[[c4]] 因此，先前将全部关系查询结果统称为“人工维护关系”的结论已被替代：当前路由本身不能证明每条关系都来自人工 seed。\n\n检索始终把候选限定为来源当前 revision，并在 top-N 前应用可见性与类别过滤。默认情况下会排除 `removed` 来源；只有调用者显式传入 `includeRemoved=true` 时，已移除材料才可进入候选集合，类别过滤则仅在给出 category 时启用。之后通用 retrieval 负责排序，路由再补回标题、版本、片段和路径信息。[[c5]] 这替代了此前“搜索总是筛出未移除 fragment”的不完整结论。\n\n完整同步以应用实例内状态位避免两类同步重叠，并依次执行材料捕获、知识恢复和代码投影构建。[[c6]] 材料适配器枚举仓库文件、排除派生目录和敏感或不安全输入，并按内容哈希保存固定材料；同步末尾只有本轮成功 `captured` 的来源被视为仍存在，其他既有 file source 会被标记 removed。[[c7]]"
       },
       {
-        "key": "flow",
-        "title": "检索、同步与固定源码流程",
-        "body": "搜索先从当前修订计算符合 category 和 removed 条件的候选集合，再把片段 ID 集合作为 `visible` 条件交给统一检索，确保过滤先于 top-N。同步端点以互斥状态拒绝并发任务，依次更新仓库材料、恢复知识并同步代码投影。[[c4]]\n\n源码读取绑定到指定或当前快照保存的固定文本；文件未捕获时返回不可用，而不会回退到实时工作树。因此历史快照读取保持可追溯，但行号非法、快照缺失和绑定缺失会形成不同失败响应。[[c5]]"
+        "key": "code-surface",
+        "title": "代码图谱与固定源码",
+        "body": "代码读取面提供仓库、快照、当前快照、模块、文件、文件内符号、单个符号及边查询；文件可按语言和移除状态过滤，边查询默认不包含 stale 数据。[[c8]] 整图接口汇总指定快照的文件、符号与边，并用符号名或文件名生成可读标签。[[c9]]\n\n这些结构来自确定性同步：TypeScript/Vue 解析结果投影到评审 SQLite，声明位置关联已捕获 fragment；相同输入复用快照，未在新解析中重现的旧结构转为 stale。[[c10]] 源码范围接口读取指定或当前快照绑定的固定文本，而不是实时工作树；文件、快照或捕获绑定缺失时返回 404，非法或越界行号返回 400。[[c11]] 因而旧快照仍可返回历史字节，未进入捕获链的源码也不会被临时猜测补全。"
       },
       {
-        "key": "understanding",
-        "title": "生成失败语义与资源关闭",
-        "body": "代码理解生成是显式 POST：未配置模型返回 503，缺少目标返回 400，校验拒绝与传输失败分别映射为 422 和 502；失败记录不会晋升为当前理解。[[c6]] 应用关闭时，`onClose` 钩子先等待检索服务关闭，再关闭 Store，统一承担正常关停时的资源回收。[[c7]]\n\n这些实现能说明路由语义，却不能证明每条分支已有请求级测试；鉴权、并发冲突、历史源码及模型失败仍需结合测试材料验证。"
+        "key": "understanding-lifecycle",
+        "title": "模型理解与资源生命周期",
+        "body": "代码理解列表与详情是只读接口：即使没有模型端口，也能读取投影到当前图谱的 seed 或已保存结果，并查看状态、来源、验证信息、替代关系、未知项、输出与引用。[[c12]] 生成是独立的显式操作；未配置模型返回 503，缺少目标返回 400，拒绝或传输失败映射为 422 或 502，失败记录不会晋升为当前理解。[[c13]] 因此确定性图谱和既有理解可独立使用，实时生成只是可选派生层。\n\n代码专用同步与完整同步共享实例内互斥状态，并同样先刷新材料、恢复知识，再构建代码投影。静态前端仅在构建目录存在时挂载；应用关闭时会关闭检索服务和 Store。[[c14]] 最近结果与互斥标志都位于单个 `buildReviewApp` 实例内，现有材料没有显示跨进程锁、任务租约或异常退出后的共享恢复机制。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审应用依赖装配",
-        "reason": "支持应用复用通用知识与检索组件、模型默认关闭以及知识发布回调的说明。",
+        "label": "评审服务职责说明",
+        "reason": "说明评审服务复用通用记忆与检索，并界定其不承担业务助手和 worker 职责。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 6,
+          "endLine": 14
+        },
+        "quote": "/** review knowledge-base HTTP surface. It reuses MemoryService /\n * KeywordRetrieval against the isolated review Store and registers only the\n * read/browse/sync routes a code-review workflow needs. No AssistantRuntime,\n * Lark host, learning pipeline, notification workers or business token gating:\n * the app binds lo"
+      },
+      {
+        "key": "c2",
+        "label": "评审应用初始化与知识路由装配",
+        "reason": "支持 Store、检索、代码服务、可选模型端口以及知识保存和发布回调的组装流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 74,
-          "endLine": 94
+          "startLine": 75,
+          "endLine": 95
         },
         "quote": "export async function buildReviewApp(deps: ReviewAppDeps) {\n  const { store, repoRoot } = deps;\n  const allowedOrigins = new Set([deps.port ?? 5180, deps.webPort ?? 5181].flatMap(\n    (port) => [`http://127.0.0.1:${port}`, `http://localhost:${port}`],\n  ));\n  ensureReviewMetaTable(store);\n  ensureReviewRelationsTable(s"
       },
       {
-        "key": "c2",
-        "label": "评审 API 请求门禁",
-        "reason": "说明 token 校验、回环 Host 与本地 Origin 限制。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 96,
-          "endLine": 122
-        },
-        "quote": "  const reviewToken = process.env.REVIEW_TOKEN || \"\";\n\n  // ---------------------------------------------------------------------\n  // Request gate: token if configured, otherwise loopback + allowed Origin.\n  // ---------------------------------------------------------------------\n  app.addHook(\"onRequest\", async (req,"
-      },
-      {
         "key": "c3",
-        "label": "健康接口返回内容",
-        "reason": "支持健康响应包含相对数据目录、端口、同步状态、材料计数和检索健康信息的修正结论。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 154,
-          "endLine": 170
-        },
-        "quote": "  app.get(P + \"/health\", async () => {\n    const sourceCount = Number(\n      (store.db.prepare(\"SELECT COUNT(*) AS n FROM sources\").get() as Row).n,\n    );\n    const fragmentCount = Number(\n      (store.db.prepare(\"SELECT COUNT(*) AS n FROM fragments\").get() as Row).n,\n    );\n    const status = readSyncStatus(repoRoot)"
-      },
-      {
-        "key": "c4",
-        "label": "检索过滤与同步编排",
-        "reason": "支持先筛选可见片段再检索，以及材料、知识和代码投影的同步顺序。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 289,
-          "endLine": 333
-        },
-        "quote": "  // The same evidence retrieval as the personal assistant; filters run before top-N.\n  const reviewSearch = async (q: string, opts: { category?: string; includeRemoved?: boolean }) => {\n    const eligible = store.db.prepare(`SELECT f.id,r.title,r.version,f.text,\n      json_extract(r.body,'$.context.category') AS categ"
-      },
-      {
-        "key": "c5",
-        "label": "快照固定源码读取",
-        "reason": "说明源码端点读取快照绑定文本、拒绝工作树回退以及行号和缺失状态的处理。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 397,
-          "endLine": 433
-        },
-        "quote": "  // Source range: return the FIXED text the given snapshot pinned for this file\n  // (default: the current head snapshot). We read the review revision bound when\n  // the snapshot was built, never the live working tree, so /source for an old\n  // snapshot returns its historical bytes. Out-of-range → 400.\n  app.get<{\n "
-      },
-      {
-        "key": "c6",
-        "label": "代码理解生成失败语义",
-        "reason": "支持显式生成入口、模型不可用、参数缺失和生成失败的响应规则。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 576,
-          "endLine": 601
-        },
-        "quote": "  // Explicit, opt-in generation entry point. Without a configured port this is\n  // a 503; the raw graph and curated seeds remain usable. Any transport/validation\n  // failure records a failed/rejected row and never promotes it to current.\n  app.post<{ Body: { targetId?: string; timeoutMs?: number } }>(\n    CP + \"/und"
-      },
-      {
-        "key": "c7",
-        "label": "应用关闭钩子",
-        "reason": "支持应用关闭时依次关闭检索服务和 Store 的资源回收行为。",
+        "label": "评审 API 请求门禁",
+        "reason": "支持令牌模式以及无令牌时的 loopback Host 和 Origin 校验行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/app.ts",
-          "startLine": 617,
-          "endLine": 624
+          "startLine": 97,
+          "endLine": 123
         },
-        "quote": "  const web = deps.webDistDir ?? resolve(repoRoot, \"apps/web/dist\");\n  if (existsSync(web))\n    await app.register(staticFiles, { root: web, prefix: \"/\" });\n\n  app.addHook(\"onClose\", async () => {\n    await retrievalService.close();\n    store.close();\n  });"
+        "quote": "  const reviewToken = process.env.REVIEW_TOKEN || \"\";\n\n  // ---------------------------------------------------------------------\n  // Request gate: token if configured, otherwise loopback + allowed Origin.\n  // ---------------------------------------------------------------------\n  app.addHook(\"onRequest\", async (req,"
+      },
+      {
+        "key": "c4",
+        "label": "材料证据与关系查询路由",
+        "reason": "支持来源、版本、固定证据和关系查询的不同数据路径，并表明 seed 数量与关系统计分别取得。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 195,
+          "endLine": 287
+        },
+        "quote": "  app.get<{ Querystring: { category?: string } }>(P + \"/sources\", async (req) =>\n    sourceList(req.query.category),\n  );\n\n  app.get<{ Params: { id: string } }>(\n    P + \"/sources/:id/versions\",\n    async (req, reply) => {\n      const rows = store.db\n        .prepare(\n          `SELECT r.id AS id, r.version AS version,"
+      },
+      {
+        "key": "c5",
+        "label": "检索候选过滤与结果组装",
+        "reason": "支持检索始终限定当前 revision、默认排除 removed、显式允许包含 removed，并在 top-N 前按类别和可见集合过滤的结论。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 290,
+          "endLine": 317
+        },
+        "quote": "  // The same evidence retrieval as the personal assistant; filters run before top-N.\n  const searchWeight = loadReviewSearchPolicy(repoRoot);\n  const reviewSearch = async (q: string, opts: { category?: string; includeRemoved?: boolean }) => {\n    const eligible = store.db.prepare(`SELECT f.id,r.title,r.version,f.text,"
+      },
+      {
+        "key": "c6",
+        "label": "完整评审同步入口",
+        "reason": "支持实例内同步互斥以及材料同步、知识恢复、代码同步的执行顺序。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 319,
+          "endLine": 336
+        },
+        "quote": "  app.get(P + \"/sync/status\", async () => ({\n    ...readSyncStatus(repoRoot),\n    running: syncing,\n    lastResult: lastSync,\n  }));\n\n  app.post(P + \"/sync\", async (_req, reply) => {\n    if (syncing || codeSyncing) return reply.code(409).send({ error: \"Sync already running\" });\n    syncing = true;\n    try {\n      lastS"
+      },
+      {
+        "key": "c7",
+        "label": "仓库材料捕获与 removed 对账",
+        "reason": "说明文件筛选、固定捕获和 removed 标记规则：只有本轮成功 captured 的来源被视为仍存在。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 15,
+          "endLine": 65
+        },
+        "quote": "export function captureRepositoryMaterials(store: Store, repoRoot: string): RepositoryCoverage[] {\n  let paths: string[];\n  try { paths = [...new Set(execFileSync(\"git\", [\"ls-files\", \"--cached\", \"--others\", \"--exclude-standard\", \"-z\"], { cwd: repoRoot, encoding: \"utf8\", maxBuffer: 10_000_000, stdio: [\"ignore\", \"pipe\", "
+      },
+      {
+        "key": "c8",
+        "label": "代码仓库与结构查询端点",
+        "reason": "支持仓库、快照、模块、文件、符号和边端点的清单及过滤行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 351,
+          "endLine": 472
+        },
+        "quote": "  app.get(CP + \"/repositories\", async () => code.listRepositories());\n\n  app.get(CP + \"/snapshots\", async () => code.listSnapshots().map(snapshotMeta));\n\n  app.get<{ Params: { id: string } }>(CP + \"/snapshots/:id\", async (req, reply) => {\n    const snap = code.listSnapshots().find((s) => s.snapshotId === req.params.id)"
+      },
+      {
+        "key": "c9",
+        "label": "代码图谱响应组装",
+        "reason": "支持整图接口读取代码服务结果，并通过 DTO 和人读标签组织文件、符号与边。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 474,
+          "endLine": 494
+        },
+        "quote": "  app.get<{ Querystring: { snapshotId?: string; includeStale?: string } }>(\n    CP + \"/graph\",\n    async (req) => {\n      const g = code.graph({\n        snapshotId: req.query.snapshotId,\n        includeStale: req.query.includeStale === \"true\",\n      });\n      const files = new Map(g.files.map((f) => [f.fileId, f]));\n  "
+      },
+      {
+        "key": "c10",
+        "label": "确定性代码同步设计",
+        "reason": "解释代码图谱的捕获依赖、快照幂等性和 stale 更新语义。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
+      },
+      {
+        "key": "c11",
+        "label": "快照固定源码范围接口",
+        "reason": "支持源码读取固定快照文本及文件、快照、捕获绑定和行号范围的错误边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 400,
+          "endLine": 435
+        },
+        "quote": "  // Source range: return the FIXED text the given snapshot pinned for this file\n  // (default: the current head snapshot). We read the review revision bound when\n  // the snapshot was built, never the live working tree, so /source for an old\n  // snapshot returns its historical bytes. Out-of-range → 400.\n  app.get<{\n "
+      },
+      {
+        "key": "c12",
+        "label": "代码理解列表与详情接口",
+        "reason": "支持不触发模型即可读取既有理解、seed、状态、替代关系、未知项和引用。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 513,
+          "endLine": 577
+        },
+        "quote": "  // Read-only Code Understanding surface. Curated seeds are projected onto the\n  // head graph; there is no generation endpoint here (no production model).\n  app.get<{ Querystring: { all?: string } }>(CP + \"/understandings\", async (req) => {\n    const rows = listUnderstandings(store, { all: req.query.all === \"true\" })"
+      },
+      {
+        "key": "c13",
+        "label": "显式代码理解生成入口",
+        "reason": "支持模型可选、目标与预算参数传递、错误状态映射以及失败结果不晋升的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 579,
+          "endLine": 604
+        },
+        "quote": "  // Explicit, opt-in generation entry point. Without a configured port this is\n  // a 503; the raw graph and curated seeds remain usable. Any transport/validation\n  // failure records a failed/rejected row and never promotes it to current.\n  app.post<{ Body: { targetId?: string; timeoutMs?: number } }>(\n    CP + \"/und"
+      },
+      {
+        "key": "c14",
+        "label": "代码同步与关闭清理",
+        "reason": "支持代码同步编排、静态资源条件挂载以及检索服务和 Store 的关闭生命周期。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 607,
+          "endLine": 627
+        },
+        "quote": "  app.post(CP + \"/sync\", async (_req, reply) => {\n    if (codeSyncing || syncing) return reply.code(409).send({ error: \"Code sync already running\" });\n    codeSyncing = true;\n    try {\n      lastSync = await runReviewSync(store, repoRoot);\n      restoreReviewKnowledge(store, repoRoot);\n      lastCodeSync = await code.s"
       }
     ],
     "questions": [
       {
-        "question": "评审 HTTP 路由的鉴权、并发冲突、历史快照源码和模型失败分支是否都有真实请求级测试？",
-        "why": "提供的材料只有应用实现，没有对应测试文件，无法判断 401、403、409、404、422、502、503 及成功关闭路径是否均被自动化断言。",
-        "nextStep": "检查该应用对应的 Fastify 注入测试或端到端测试，并分别验证各状态码、固定快照读取及正常关闭行为。",
+        "question": "评审服务是否保证始终直接绑定 loopback，还是允许部署在反向代理之后？",
+        "why": "文件声明应用只绑定 loopback，并实现了无令牌时的 Host 与 Origin 门禁，但所给材料没有实际 `listen` 地址或可信代理配置，无法确认部署层是否维持该安全前提。",
+        "nextStep": "检查服务启动入口和相关行为测试；若允许远程或代理部署，应要求令牌并覆盖转发 Host、Origin 与代理配置场景。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c4",
-          "c5",
+          "c1",
+          "c3"
+        ]
+      },
+      {
+        "question": "是否需要支持多个评审服务进程同时触发同步？",
+        "why": "完整同步与代码同步只使用单个 `buildReviewApp` 实例闭包中的布尔状态协调并发，材料未展示跨进程锁、任务租约或异常退出后的共享恢复。",
+        "nextStep": "确认部署模型；若可能多实例运行，为同步增加跨进程协调，并验证并发请求、异常退出和重启恢复。",
+        "blocking": false,
+        "citationKeys": [
           "c6",
-          "c7"
+          "c14"
+        ]
+      },
+      {
+        "question": "这些 HTTP 路由目前覆盖了哪些真实行为和错误分支测试？",
+        "why": "所给固定材料不含测试文件，无法确认门禁、includeRemoved 与类别过滤、top-N 前过滤、历史快照源码、理解读写分离、模型失败映射和资源关闭是否已有真实行为断言。",
+        "nextStep": "核对相关测试，重点检查 400、401、403、404、409、422、502、503 分支，分别验证默认排除与显式包含 removed、类别过滤、旧快照字节稳定性及关闭清理。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c5",
+          "c11",
+          "c12",
+          "c13",
+          "c14"
         ]
       }
     ]
@@ -139,23 +251,8 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/port.ts",
-      "digest": "5a197cee6431b1979a25323bde93e55e57010ec3cec3396cb4931595707740e8"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/semantic.ts",
-      "digest": "0dcc15f9b3db2f7aac89f22a8224d6df710c1ae93d8bc98e58e6f7b326ce71a4"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/review/app.ts",
-      "digest": "4bb8d39daf534dd77e00b8e51eccb6eb5f0a2dfed6f3adb803b6597993a76946"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/associations.ts",
-      "digest": "6005e5ef8d1b0d04e34e8030025df366880cca39e11cea744a6e478baeead0cf"
+      "digest": "b9d4fd78e9180e1d8d6d4b7ec092e15f38292d6c0f1346e2e6483c6dbeca3637"
     },
     {
       "kind": "material",
@@ -164,44 +261,34 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/main.ts",
-      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/embedding.ts",
-      "digest": "99b36209ccd66c1b84e6f4a13b6eb63dd35a7f8af3a50304cbcfa411081cb047"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
+      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
       "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:24:50.836Z",
+    "at": "2026-10-01T00:15:48.232Z",
     "trace": {
-      "runId": "1eb5c029-7afe-4d78-915d-5c43c1186df2",
+      "runId": "58f39181-c55d-4697-bdb4-07d10348b152",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "1d244360c16025417f11c83f6110cb891f3ae997447e67efd74d462bde610056",
-      "contextHash": "99759138fdb4aabca7a72c7b1c26f4a7312359600076a30c6e0f19ec0881a385",
+      "promptHash": "7a3367b610556e54461629f51b59d8cc1cc575bf841a0288c3422c721223d128",
+      "contextHash": "42a1d040baee9966c4377bd4f6f1bdfbc8cbb1fb60699dd948e7be823d3d445e",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "69981a745bb9820ed2c1ab4815ba73e1edf2cb7bb74571e41bc34125b8dd8d38",
+      "fingerprint": "1bac0a8640102e152d53bb3eff6a903fa2544f71150ca246dac64bf84ab3f048",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -214,10 +301,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c6-5c67-75d2-b8e1-8f13408a8875"
+        "01a0f4d0-dc4e-74e1-82ef-24f39368954c"
       ],
       "usage": {
-        "used": 48807,
+        "used": 41607,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -226,10 +313,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 90169,
-          "utf8Bytes": 97052,
-          "estimatedTokens": 32351,
-          "budgetedTokens": 40439,
+          "chars": 66047,
+          "utf8Bytes": 73524,
+          "estimatedTokens": 24508,
+          "budgetedTokens": 30635,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -238,17 +325,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:25:23.425Z",
+    "at": "2026-10-01T00:16:02.654Z",
     "trace": {
-      "runId": "ebed6294-0e74-4424-a2b7-a2813345982b",
+      "runId": "6d863460-7782-4c8d-8066-cb302f8d1a1d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "590ce447b18d7e2a20431e5e57b6a0b758cb1e44aad4504c87ed6ceeeee25fb7",
-      "contextHash": "e32b3f8c082ea3e7c058e523b0f8cd2062dd019ce4c490302cfe1f3b2c2ff0f3",
+      "promptHash": "99c530d808f1a97ad27f908130317c8b3e254cd64addabc1356e8c51d47d1618",
+      "contextHash": "8bdd8cffebc743df98d76ccf9a736ece388575b7a5fff5c44c18dc7d98d519c7",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "63282d21f59755e5958626368d0bf4f09fc1398c0df1a98bfad584257ad46340",
+      "fingerprint": "b587de22da53fd73935f85bce74d02060746be38fd29320515ab317dca7d8216",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -261,10 +348,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c6-ed33-7641-9001-f7d0876e6715"
+        "01a0f4d1-4e5b-7000-b5a4-3d28348b72ba"
       ],
       "usage": {
-        "used": 47428,
+        "used": 37782,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -273,10 +360,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 89776,
-          "utf8Bytes": 96307,
-          "estimatedTokens": 32103,
-          "budgetedTokens": 40129,
+          "chars": 62427,
+          "utf8Bytes": 68326,
+          "estimatedTokens": 22776,
+          "budgetedTokens": 28470,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

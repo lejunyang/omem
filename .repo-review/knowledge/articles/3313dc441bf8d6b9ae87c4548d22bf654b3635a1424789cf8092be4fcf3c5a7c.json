@@ -2,49 +2,62 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/app.test.ts",
-    "title": "服务器 HTTP 集成测试",
-    "summary": "覆盖应用装配后的来源端点认证示例、输入安全、采集与生成、证据持久化、作业控制、受治理任务应用及助手取消路由，是多模块 HTTP 合同的纵向集成测试。",
+    "title": "服务端 API 集成测试",
+    "summary": "该测试文件以临时数据目录和 ACP fixture 构建 Fastify 应用，通过注入 HTTP 请求验证认证、捕获与问答证据、连接器边界、图片传递、持久任务控制、提案成功应用、通知查询及助手取消接口。它覆盖多条关键纵向链路，但不能据此证明真实外部 CLI、并发竞争、重启恢复、失败回滚或完整输入净化语义。",
     "category": "tests",
     "sections": [
       {
-        "key": "app-boundary",
-        "title": "应用边界与输入安全",
-        "body": "`setup` 使用临时数据目录、回环地址和 ACP 夹具构建应用。认证用例具体证明 `/api/sources` 在配置 token 时无凭证返回 401、正确 Bearer 返回 200，并证明无 token 配置下该端点会拒绝跨源匿名请求；它没有逐一覆盖所有私有端点。文件导入不能越过允许根目录，运行请求中的 selection 必须匹配真实证据；hook 标准化则过滤 thoughts 和未知 secret。[[c1]] [[c2]] [[c3]]"
+        "key": "fixture-and-boundaries",
+        "title": "测试夹具与安全边界",
+        "body": "`setup` 为每个用例创建独立临时目录，以回环地址、空捕获根目录和 ACP fixture 构建应用，结束时关闭服务并删除数据；因此这些用例主要验证进程内集成，不代表生产部署或真实模型环境。[[c1]] 配置 token 后，匿名访问私有接口返回 401，Bearer token 可正常访问；未配置 token 时，带恶意跨域来源的匿名请求返回 403。[[c2]]\n\n文件连接器用例在捕获根目录为空时拒绝导入 `/etc/passwd`，且不产生捕获；这与连接器先解析真实路径、再确认目标位于允许根目录中的实现相符。[[c3]][[c4]] 同一用例还拒绝与焦点证据不匹配的选中文本，避免把伪造引文带入问答上下文。"
       },
       {
-        "key": "capture-answer",
-        "title": "采集、生成与证据链",
-        "body": "手工捕获证据后，`POST /api/runs` 异步启动生成；轮询完成后，测试确认回答作为新 revision 持久化，并从回答片段建立显式证据关系。图像场景进一步验证 base64 字节原样保存，且 ACP 夹具观察到 prompt 中包含一张图片。[[c4]] [[c5]]"
+        "key": "capture-run-and-jobs",
+        "title": "捕获、问答与持久任务流程",
+        "body": "问答链路先捕获文本证据，再提交 profile、焦点片段和问题；测试等待运行完成，并确认答案 revision 存在且答案片段具有显式证据出边。[[c5]] 图片用例验证保存后的字节与输入一致，并以运行事件中的 `images=1` 确认图片进入 ACP 提示上下文。[[c6]] 应用初始化时共同创建 `Store` 与 `Runs`，但这些断言没有验证真实 ACP CLI、认证配置或模型输出质量。[[c7]]\n\n捕获 API 返回初始为 `queued`、generation 为 1 的任务；携带相同期望代次和 requestId 的重复取消得到相同结果，随后重试使任务回到队列并推进至 generation 2。[[c8]] 这覆盖顺序调用下的幂等响应和代际控制结果，尚未覆盖 worker 领取、进程重启恢复或并发竞争。"
       },
       {
-        "key": "jobs-policy",
-        "title": "持久作业与受治理写入",
-        "body": "采集 API 返回排队作业，详情包含 generation 和 attempts；取消以 `expectedGeneration` 与 `requestId` 实现重复请求幂等，重试再把 generation 从 1 推进到 2。任务纵向流程提交带 owner provenance 和 Unicode selector 的提案，获得 `auto_apply` receipt，并断言任务、提案、通知、证据引用及待投递记录相互一致。[[c6]] [[c7]]"
+        "key": "policy-and-assistant",
+        "title": "提案成功路径、通知与助手取消",
+        "body": "策略用例从带已验证 owner 来源信息的中文承诺构造任务提案，证据明确指向固定 fragment、source、精确引文和 Unicode codepoint selector，并提供 `supported` 复核结论。[[c9]] 成功请求返回 `auto_apply` 与版本 1 回执；后续查询可观察到版本 1 任务、状态为 `applied` 的提案，以及包含提案回执、证据片段和待发送站内渠道的通知。[[c10]] 先前将这些结果表述为“原子地产生”超出了测试证据；现改为仅确认成功路径的最终可观察状态，是否跨任务、提案和通知事务回滚仍待失败用例或实现证据确认。\n\n助手取消用例创建会话、发送一轮消息，再调用含 conversation 与 turn 标识的取消路由：已有轮次返回成功，不存在的轮次返回 404。[[c11]] 由于 fixture 响应很快，它只证明路由接入及返回约定，不能证明长任务中的底层进程终止、事件停止或重复取消语义。"
       },
       {
-        "key": "assistant-cancel",
-        "title": "助手取消路由的覆盖范围",
-        "body": "测试先建立会话并让快速 ACP 夹具完成一轮，再调用 turn cancel，得到 `{ok:true}`；不存在的 turn 返回 404。因此它验证了 HTTP 路由与 runtime 的接线及错误映射，但没有制造真实在途生成，不能据此证明 AbortSignal 传播、迟到工具调用拦截或取消后的持久状态。[[c8]]"
+        "key": "normalization-and-contracts",
+        "title": "Hook 最小断言与合同关系",
+        "body": "Hook 单元测试只明确断言输出上下文中的事件名为 `PostToolUse`，且序列化结果不含输入中的 `thoughts` 和 `secret` 值。[[c12]] 先前声称会话和工具信息也被归一化到公开上下文缺少断言支持，现已被替代；现有材料不能确认 `session_id`、`tool_name` 或 `tool_input` 是否保留、转换或丢弃。\n\n测试文件直接导入应用构建器、共享合同和连接器入口，说明这些是实际测试依赖。[[c13]] 捕获合同对文本、图片和链接 part 使用严格对象校验，并限制图片 MIME 类型与数据长度。[[c14]] 不过这不能替代 `hookInput` 的完整实现证据，也未覆盖所有已知 hook 字段、畸形输入、超长负载或嵌套敏感字段。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "来源端点认证示例",
-        "reason": "支持 `/api/sources` 的 Bearer 成功与无凭证、跨源匿名拒绝；引用范围不足以推广到全部私有端点。",
-        "relation": "supports",
+        "label": "测试应用夹具",
+        "reason": "支持临时目录、回环地址、空捕获根目录、ACP fixture 以及测试结束清理方式的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/app.test.ts",
           "startLine": 8,
-          "endLine": 64
+          "endLine": 34
         },
         "quote": "async function setup(token?: string) {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-api-\"));\n  const result = await buildApp({\n    dataDir: dir,\n    agentCwd: join(dir, \"agent\"),\n    token,\n    host: \"127.0.0.1\",\n    port: 4317,\n    captureRoots: [],\n    notifications: { mode: \"instant\" },\n    profiles: [\n      profi"
       },
       {
         "key": "c2",
-        "label": "文件与选择文本校验",
-        "reason": "支持文件导入根目录限制以及 selection 必须匹配证据原文。",
+        "label": "私有接口认证与跨域拒绝测试",
+        "reason": "支持匿名请求 401、Bearer token 成功访问及恶意跨域匿名请求 403 的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 36,
+          "endLine": 64
+        },
+        "quote": "it(\"authenticates all private endpoints and rejects cross-origin anonymous requests\", async () => {\n  const a = await setup(\"secret\");\n  try {\n    expect((await a.app.inject(\"/api/sources\")).statusCode).toBe(401);\n    expect(\n      (\n        await a.app.inject({\n          url: \"/api/sources\",\n          headers: { autho"
+      },
+      {
+        "key": "c3",
+        "label": "文件导入与选中文本校验测试",
+        "reason": "支持越界文件导入不落库以及伪造选中文本被拒绝的安全边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -55,22 +68,22 @@
         "quote": "it(\"validates selected text and restricts filesystem imports\", async () => {\n  const x = await setup();\n  try {\n    expect(\n      (\n        await x.app.inject({\n          method: \"POST\",\n          url: \"/api/connectors/file\",\n          payload: { path: \"/etc/passwd\" },\n        })\n      ).statusCode,\n    ).toBe(400);\n  "
       },
       {
-        "key": "c3",
-        "label": "Hook 隐藏字段过滤",
-        "reason": "支持 hook 标准化仅保留预期数据，不持久化 thoughts 与未知 secret。",
-        "relation": "supports",
+        "key": "c4",
+        "label": "捕获根目录路径校验",
+        "reason": "解释文件导入测试所依赖的真实路径解析和允许根目录检查。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/app.test.ts",
-          "startLine": 180,
-          "endLine": 192
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 10,
+          "endLine": 27
         },
-        "quote": "it(\"normalizes hook events without persisting unknown hidden payloads\", () => {\n  const v = hookInput({\n    hook_event_name: \"PostToolUse\",\n    session_id: \"s\",\n    tool_name: \"Bash\",\n    tool_input: { command: \"git status\" },\n    thoughts: \"private\",\n    secret: \"never\",\n  });\n  expect(v.context.event).toBe(\"PostToolU"
+        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
       },
       {
-        "key": "c4",
-        "label": "回答与证据关系持久化",
-        "reason": "支持异步运行完成后保存回答 revision，并建立显式证据链接。",
+        "key": "c5",
+        "label": "答案持久化与证据链接测试",
+        "reason": "支持捕获证据、提交运行、等待完成及检查答案证据出边的流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -81,9 +94,9 @@
         "quote": "it(\"persists a generated answer and its explicit evidence links\", async () => {\n  const x = await setup();\n  try {\n    const captured = x.store.capture({\n      source: \"manual\",\n      externalId: \"x\",\n      title: \"Evidence\",\n      parts: [{ type: \"text\", text: \"Some evidence\" }],\n      context: {},\n    });\n    const r"
       },
       {
-        "key": "c5",
-        "label": "图像字节与 ACP 输入",
-        "reason": "支持图像资产字节不变以及生成输入包含图像。",
+        "key": "c6",
+        "label": "图片保存与 ACP 上下文测试",
+        "reason": "支持图片字节保持一致并通过事件确认图片进入 ACP 上下文的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -94,9 +107,22 @@
         "quote": "it(\"preserves image bytes and includes images in an ACP prompt\", async () => {\n  const x = await setup();\n  try {\n    const png =\n      \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6vO8AAAAASUVORK5CYII=\";\n    const c = x.store.capture({\n      source: \"screen\",\n      externalId: \"screenshot\",\n"
       },
       {
-        "key": "c6",
-        "label": "作业取消与重试合同",
-        "reason": "支持作业详情、generation 校验、取消幂等和重试代际推进。",
+        "key": "c7",
+        "label": "应用存储与运行器初始化",
+        "reason": "说明集成测试中的持久化和运行状态由应用初始化的 Store 与 Runs 承载。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 51,
+          "endLine": 64
+        },
+        "quote": "  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify({ bodyLimit: 12_000_000, logger: false });\n  const store = new Store(config.dataDir, {\n    externalNotifications: config.notifications.external,\n  });"
+      },
+      {
+        "key": "c8",
+        "label": "持久任务控制 API 测试",
+        "reason": "支持任务初始状态、相同请求取消的幂等结果及重试推进 generation 的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -107,22 +133,35 @@
         "quote": "it(\"exposes durable capture jobs with idempotent generation-checked controls\", async () => {\n  const x = await setup();\n  try {\n    const captured = await x.app.inject({\n      method: \"POST\",\n      url: \"/api/captures\",\n      payload: {\n        source: \"manual\",\n        externalId: \"job-api\",\n        title: \"Queued inp"
       },
       {
-        "key": "c7",
-        "label": "Owner 任务自动应用链路",
-        "reason": "支持提案评估、任务落库、receipt、通知、投递和证据引用的一致性断言。",
+        "key": "c9",
+        "label": "Owner 任务提案输入",
+        "reason": "支持已验证来源、固定证据定位、精确引文和 supported 复核输入的描述。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/app.test.ts",
           "startLine": 247,
-          "endLine": 368
+          "endLine": 327
         },
         "quote": "it(\"evaluates and atomically applies a supported owner task through HTTP\", async () => {\n  const x = await setup();\n  try {\n    const text = \"我负责在周五前提交验证报告。\";\n    const captured = (\n      await x.app.inject({\n        method: \"POST\",\n        url: \"/api/captures\",\n        payload: {\n          source: \"manual\",\n          "
       },
       {
-        "key": "c8",
-        "label": "HTTP 助手取消端点",
-        "reason": "支持现有 turn 取消成功与不存在 turn 返回 404，同时表明夹具回复很快、未形成真实在途取消。",
+        "key": "c10",
+        "label": "任务应用与通知成功结果",
+        "reason": "仅支持成功路径中 auto_apply、任务版本、提案状态和通知回执的最终可观察结果，不用于证明事务原子性。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 328,
+          "endLine": 364
+        },
+        "quote": "    expect(evaluated.statusCode).toBe(200);\n    expect(evaluated.json()).toMatchObject({\n      policy: \"auto_apply\",\n      receipt: { entityType: \"task\", entityVersion: 1 },\n    });\n    expect((await x.app.inject(\"/api/tasks\")).json()).toMatchObject([\n      { title: \"提交验证报告\", ownerId: \"owner\", version: 1 },\n    ]);\n   "
+      },
+      {
+        "key": "c11",
+        "label": "助手轮次取消端到端测试",
+        "reason": "支持创建会话、发送轮次、取消已有轮次成功及取消不存在轮次返回 404 的行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -131,25 +170,75 @@
           "endLine": 411
         },
         "quote": "it(\"HTTP cancel e2e: POST /api/assistant/conversations/:id/turns/:turnId/cancel wires to runtime\", async () => {\n  const a = await setup();\n  try {\n    // 1. Create a web conversation.\n    const convRes = await a.app.inject({\n      method: \"POST\",\n      url: \"/api/assistant/conversations\",\n      payload: { chatId: \"tes"
+      },
+      {
+        "key": "c12",
+        "label": "Hook 事件最小化断言",
+        "reason": "仅支持事件名等于 PostToolUse，以及结果不包含两个指定敏感值；不支持会话和工具字段已被保留的结论。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 180,
+          "endLine": 192
+        },
+        "quote": "it(\"normalizes hook events without persisting unknown hidden payloads\", () => {\n  const v = hookInput({\n    hook_event_name: \"PostToolUse\",\n    session_id: \"s\",\n    tool_name: \"Bash\",\n    tool_input: { command: \"git status\" },\n    thoughts: \"private\",\n    secret: \"never\",\n  });\n  expect(v.context.event).toBe(\"PostToolU"
+      },
+      {
+        "key": "c13",
+        "label": "被测模块直接导入",
+        "reason": "证明测试直接依赖应用构建器、共享合同和连接器入口。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 1,
+          "endLine": 7
+        },
+        "quote": "import { it, expect } from \"vitest\";\nimport { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resolve } from \"node:path\";\nimport { buildApp } from \"../src/app.js\";\nimport { profileSchema } from \"../../../packages/contracts/src/index.js\";\nimport { hookInput } from \"../src/connector"
+      },
+      {
+        "key": "c14",
+        "label": "捕获内容 Part 合同",
+        "reason": "解释文本、图片和链接输入所受的严格 schema、MIME 类型及长度约束。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 18,
+          "endLine": 46
+        },
+        "quote": "export const textPart = z\n  .object({\n    type: z.literal(\"text\"),\n    text: z.string().min(1).max(200000),\n    provenance: partProvenanceSchema.optional(),\n  })\n  .strict();\nexport const imagePart = z\n  .object({\n    type: z.literal(\"image\"),\n    mimeType: z.enum([\"image/png\", \"image/jpeg\", \"image/webp\"]),\n    data: z"
       }
     ],
     "questions": [
       {
-        "question": "HTTP 层是否需要覆盖真正处于生成中的 turn 取消？",
-        "why": "当前 ACP 夹具快速完成后才取消，只证明路由返回值，不能证明 AbortSignal 传播和晚到写入被阻断。",
-        "nextStep": "换用可阻塞模型夹具，经 HTTP 发起 turn，在模型挂起时调用 cancel，再释放带 `create_task` 的迟到回复并断言零任务写入及取消状态。",
+        "question": "助手取消是否必须保证底层 ACP 进程终止并停止后续事件写入？",
+        "why": "现有用例使用快速响应 fixture，只证明取消路由对已有轮次返回成功、对不存在轮次返回 404，无法观察真正运行中的取消效果。",
+        "nextStep": "增加可阻塞的 ACP fixture，并断言取消信号、运行状态收敛以及取消后不再追加事件。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c11"
+        ]
+      },
+      {
+        "question": "持久任务控制在进程重启及并发取消、重试竞争下应采用什么确定语义？",
+        "why": "当前只覆盖同一 requestId 的顺序重复取消和一次匹配 generation 的重试。",
+        "nextStep": "补充数据库重启恢复测试，并以并发请求验证 generation 冲突、幂等结果和相应状态码。",
         "blocking": false,
         "citationKeys": [
           "c8"
         ]
       },
       {
-        "question": "全部私有端点受 Bearer 保护的应用级合同由何处验证？",
-        "why": "本文件仅对 `/api/sources` 进行了认证断言，测试名称的全局范围大于实际参数化覆盖。",
-        "nextStep": "若要保留全局合同，补充认证中间件的实现证据或对代表性私有路由进行参数化测试。",
+        "question": "提案评估失败、版本冲突或通知创建失败时，任务、提案和通知是否要求全事务回滚？",
+        "why": "现有材料只展示 supported 提案成功应用后的最终状态，不能证明跨对象写入的事务边界或失败回滚。",
+        "nextStep": "为 unsupported、needs_review、expected_versions 冲突和通知写入故障增加行为断言，并检查各持久化对象的一致性。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c9",
+          "c10"
         ]
       }
     ]
@@ -157,86 +246,56 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/acp-model.test.ts",
-      "digest": "942f2dbe8220d012e8d1ab1427eec8313367c90470848697afc3a98c7f952a10"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/agents.test.ts",
-      "digest": "16f76b41f6243932053b8a472414dc94747d85372b52dacaf3de1d3c89e98fe7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
-      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/app.test.ts",
       "digest": "a462cbccb3d67a1e1b9e63b73d7a03c818a36f4ea4d10ecebb29954dffba4c27"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/attention-gate.test.ts",
-      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
       "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:08:58.104Z",
+    "at": "2026-10-01T00:25:43.660Z",
     "trace": {
-      "runId": "ce89aea8-00ae-4b7f-8bb0-e96fcc21bf87",
-      "roleId": "code-analyst",
+      "runId": "93236ed5-bd83-493f-b3cb-dfd4ea0bedbb",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "bf6677f6740f05519c730680c31b3ce4b87ff58b65ef3d9b1e48854a10c69fb7",
-      "contextHash": "8de262284abc31d113cce776abc01270bd72c2d7b1929609ff39c5bfe9feb04b",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "1f699e40d5ed3026b037b0de6f7bf3894557de46f6c730fc45120fedbe7413de",
+      "contextHash": "19c2c79fcb56138c1020694c260636a03ffd386bde8a94c2240693a147347796",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3baccbfb4c459ec7d3a3926540ac6c9177d3e0f54d6b64846747b9d2f303fa34",
+      "fingerprint": "bc5f26af6b1b8fdd506b5c87db8830614f30709cd763eeb7a5b7a8457e223ecb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee91-4666-7411-85e7-8abcb842bd5c"
+        "01a0f4d9-f0a3-7580-b85f-ff38935898df"
       ],
       "usage": {
-        "used": 61903,
-        "size": 760000,
+        "used": 35581,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -244,10 +303,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 144579,
-          "utf8Bytes": 156807,
-          "estimatedTokens": 52269,
-          "budgetedTokens": 65337,
+          "chars": 44585,
+          "utf8Bytes": 51381,
+          "estimatedTokens": 17127,
+          "budgetedTokens": 21409,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -256,17 +315,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:09:09.429Z",
+    "at": "2026-10-01T00:25:58.688Z",
     "trace": {
-      "runId": "f9c1b448-7451-47e3-9383-cb672e94f364",
+      "runId": "1dc660b0-7a93-4bac-ade2-e235e1a906ec",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "400acf43032375ca4d2e60a9ed5737396e51fa2048e9fbb2f07ffb3e80a9d4eb",
-      "contextHash": "e3d0b84b64d5a840cf56a76ad4aa5302065ad1ace05772ffdfd8b8720523dfbd",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "4e49381e76f93257eb02915dc83593db73a8c36d95563a1d132ca2a18e5ca032",
+      "contextHash": "34b856048e16cb1897275de3a5ce45010749096da518bbe3bee92a77d18ff4f8",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "83b4d5e16e54bb86a86dac8dbf877092b8ff4c4346a65091dcd19abfd5a21cb3",
+      "fingerprint": "78d218459eb54fea8868ed01c7210ce782f30beb5e7df36bb2135c77202835cf",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -279,11 +338,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee91-f732-76b2-a67e-d039692178d2"
+        "01a0f4da-6436-7143-b7ea-376abef311d2"
       ],
       "usage": {
-        "used": 55822,
-        "size": 760000,
+        "used": 32084,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -291,10 +350,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 141376,
-          "utf8Bytes": 152758,
-          "estimatedTokens": 50920,
-          "budgetedTokens": 63650,
+          "chars": 41107,
+          "utf8Bytes": 46135,
+          "estimatedTokens": 15379,
+          "budgetedTokens": 19224,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

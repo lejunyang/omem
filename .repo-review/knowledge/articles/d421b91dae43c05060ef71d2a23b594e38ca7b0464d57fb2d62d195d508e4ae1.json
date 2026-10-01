@@ -2,66 +2,125 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/review-materials.test.ts",
-    "title": "仓库评审材料捕获与用户澄清恢复测试",
-    "summary": "验证评审同步捕获源码关联文档、部署示例和图片，同时排除私有配置；用户澄清则作为带来源信息的原始材料发布并可恢复到独立数据库。",
+    "title": "仓库材料捕获与用户补充恢复测试",
+    "summary": "该测试验证 repo-review 的两条关键持久化路径：仓库文件按安全边界捕获为固定材料，并在删除、恢复及重复扫描时保持修订语义；用户澄清则作为带来源信息的原始材料导出，并可在全新数据库中恢复。",
     "category": "tests",
     "sections": [
       {
-        "key": "capture-boundary",
-        "title": "仓库材料的捕获边界",
-        "body": "测试构造 README、被其链接的部署示例、PNG 图片、`.env` 和本地设置文件。首次捕获只纳入 README、部署示例和图片，图片在知识仓库中具有图像内容，README 还能发现链接材料；重复捕获不会增加 revision 数量。私有 `.env` 与 `settings.local.json` 不出现在材料列表中，说明该用例同时检查多模态、链接发现、幂等性和私有配置排除。[[c1]]"
+        "key": "repository-capture",
+        "title": "仓库材料捕获与安全边界",
+        "body": "第一组用例在临时仓库中同时创建说明文档、部署示例、私有配置和图片，断言捕获结果只包含可公开分析的三项材料，并确认图片进入材料仓库、README 中的链接可关联到部署文件。[[c1]] 这对应捕获器对 `.env`、本地配置、派生目录和依赖目录的排除规则，以及对普通文件、大小、文本编码和受支持图片格式的检查；因此测试解决的是“哪些仓库内容可成为固定证据”，而不是一般文件遍历。[[c2]]"
       },
       {
-        "key": "clarification",
-        "title": "用户回答作为原始证据",
-        "body": "另一用例先把职责澄清以 manual source 捕获，记录 owner、local-ui 验证、时区及 `producerKind: original`，再保存为评审知识资产。新的、无 legacy 数据库的 Store 恢复后，仍能按固定 key 找到原文和 actor，并保持原始材料 provenance。[[c2]] 这验证了用户回答可跨运行库恢复，但只覆盖单条文本澄清，未展示冲突回答、撤回、图片回答或多个版本的裁决。"
+        "key": "revision-lifecycle",
+        "title": "幂等、删除与修订保留",
+        "body": "用例再次扫描未变化的仓库，并直接比较 `revisions` 数量，证明相同内容不会产生新修订；随后删除部署文件，当前材料视图不再返回它，但旧 revision 仍可查询。文件以相同内容恢复后，材料重新使用原 revisionId，验证固定证据按内容保持身份，而删除只改变当前可见状态。[[c3]] 源码依据表明捕获器以内容哈希和捕获格式决定是否重新捕获，并在扫描结束后把未出现的来源标为 removed，这解释了测试中的生命周期行为。[[c4]]"
+      },
+      {
+        "key": "user-note-restore",
+        "title": "用户澄清的跨库恢复",
+        "body": "第二组用例先把“仅供本地单用户使用”的澄清以 `manual` 来源捕获，显式记录所有者、验证方式与 `producerKind: original`，再将其保存到知识目录；随后使用另一套空数据库恢复，断言正文、actorId 和原始生产者属性均未丢失。[[c5]] 恢复实现只接受 `knowledge-answer:` 前缀的手工输入，经合同校验后重新捕获，并把对应问题标为已回答；若文章尚未依赖该补充，还会登记待重核对失效项。[[c6]] 测试覆盖了无旧数据库时的可移植恢复，但未断言非法笔记拒绝、问题状态更新或知识失效记录。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "仓库材料捕获与排除测试",
-        "reason": "支持文档、部署配置和图片捕获，链接材料发现、重复捕获幂等，以及私有配置不导入。",
+        "label": "仓库材料捕获测试场景",
+        "reason": "支持附近关于公开材料、私有配置、图片及文档链接关联断言的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-materials.test.ts",
           "startLine": 9,
-          "endLine": 29
+          "endLine": 27
         },
         "quote": "it(\"captures source, deployment configuration and image materials without importing runtime or private config\", () => {\n  const root = mkdtempSync(join(tmpdir(), \"review-materials-\"));\n  const store = new Store(join(root, \".repo-review/runtime/db\"));\n  try {\n    mkdirSync(join(root, \"deploy\"), { recursive: true });\n   "
       },
       {
         "key": "c2",
-        "label": "用户澄清保存与恢复测试",
-        "reason": "支持用户回答作为 original material 保存，并在独立运行数据库中恢复正文、actor 和 provenance。",
+        "label": "仓库文件筛选与捕获规则",
+        "reason": "解释测试所验证的排除边界、普通文件约束、大小限制及文本和图片处理流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 15,
+          "endLine": 55
+        },
+        "quote": "export function captureRepositoryMaterials(store: Store, repoRoot: string): RepositoryCoverage[] {\n  let paths: string[];\n  try { paths = [...new Set(execFileSync(\"git\", [\"ls-files\", \"--cached\", \"--others\", \"--exclude-standard\", \"-z\"], { cwd: repoRoot, encoding: \"utf8\", maxBuffer: 10_000_000, stdio: [\"ignore\", \"pipe\", "
+      },
+      {
+        "key": "c3",
+        "label": "修订生命周期断言",
+        "reason": "支持重复扫描幂等、删除后保留旧修订及同内容恢复复用 revisionId 的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-materials.test.ts",
-          "startLine": 31,
-          "endLine": 42
+          "startLine": 24,
+          "endLine": 35
+        },
+        "quote": "    const versions = store.db.prepare(\"SELECT count(*) n FROM revisions\").get();\n    captureRepositoryMaterials(store, root);\n    expect(store.db.prepare(\"SELECT count(*) n FROM revisions\").get()).toEqual(versions);\n    expect(repository.materials().some(m => m.path === \".env\" || m.path === \"settings.local.json\")).toBe"
+      },
+      {
+        "key": "c4",
+        "label": "内容哈希与移除对账",
+        "reason": "解释为何未变化内容不重复捕获，以及扫描缺失来源如何从当前材料视图移除。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 37,
+          "endLine": 65
+        },
+        "quote": "      const hash = createHash(\"sha256\").update(bytes).digest(\"hex\");\n      const externalId = `omem:${path}`;\n      const previous = store.db.prepare(\"SELECT r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='file' AND s.external_id=?\").get(externalId) as { body: string } | undefined;\n      const "
+      },
+      {
+        "key": "c5",
+        "label": "用户补充跨数据库恢复断言",
+        "reason": "支持用户澄清被保存、在新数据库恢复并保留 actor 与原始生产者属性的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/review-materials.test.ts",
+          "startLine": 39,
+          "endLine": 49
         },
         "quote": "it(\"persists user clarification as original material and restores it without a legacy database\", () => {\n  const root = mkdtempSync(join(tmpdir(), \"review-user-notes-\"));\n  const first = new Store(join(root, \".repo-review/runtime/first\"));\n  const second = new Store(join(root, \".repo-review/runtime/second\"));\n  try {\n "
+      },
+      {
+        "key": "c6",
+        "label": "用户补充保存与恢复流程",
+        "reason": "解释手工补充的格式校验、重新捕获、问题状态更新和知识失效登记机制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/knowledge.ts",
+          "startLine": 9,
+          "endLine": 32
+        },
+        "quote": "export function restoreReviewKnowledge(store: Store, root: string) {\n  const notes = join(root, \".repo-review/knowledge/user-notes.json\");\n  if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, \"utf8\")) as CaptureInput[]) {\n    if (input.source !== \"manual\" || !input.externalId?.startsWith(\"knowled"
       }
     ],
     "questions": [
       {
-        "question": "同一问题出现多次用户澄清、撤回或相互冲突的回答时，恢复过程如何保留版本并确定当前有效回答？",
-        "why": "材料只保存和恢复一条固定 key 的文本回答，没有覆盖同 key 多版本、撤回标记或冲突裁决。",
-        "nextStep": "增加同一问题多次回答与撤回的测试，断言不可变 revision、当前 head、历史可追溯性及正文重核对触发条件。",
+        "question": "非法或被篡改的 user-notes 输入是否应补充独立测试？",
+        "why": "恢复实现会拒绝非 manual 来源、错误 externalId 前缀或不符合 CaptureInput 合同的内容，但当前测试只覆盖合法输入的成功恢复。",
+        "nextStep": "增加分别包含错误来源、错误前缀和无效 provenance 的 user-notes.json 场景，断言恢复失败且不会产生部分写入。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c5",
+          "c6"
         ]
       },
       {
-        "question": "私有配置排除规则是否覆盖嵌套目录、其他常见密钥文件名和符号链接逃逸？",
-        "why": "当前用例只检查根目录下 `.env` 与 `settings.local.json`，不足以说明更广泛路径和链接边界。",
-        "nextStep": "增加嵌套 `.env.*`、密钥文件、gitignored 文件及指向仓库外部的符号链接夹具，逐项断言拒绝原因。",
+        "question": "材料删除与恢复时，review_source_meta 的 removed 状态是否需要直接断言？",
+        "why": "现有测试通过 repository.materials() 的可见性间接验证删除对账，没有验证元数据状态及再次恢复后的清除结果。",
+        "nextStep": "在删除和恢复扫描后查询 review_source_meta，断言 removed 依次为 1 和 0，并保留现有 revisionId 断言。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -69,86 +128,56 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
-      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/lark-delivery.test.ts",
-      "digest": "77aa882e9476a521c31857548c2d3cb7631b859867d375aa56c4c08157938ca9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-      "digest": "53ebb0531146d960d3e29d618eaaafff15e624746100a1cbc168f3bd5fef1488"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/review-materials.test.ts",
-      "digest": "c7aac5333878fa569148d29e0eda92d9830006444c5e89e96351205f2a88d348"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-migration.test.ts",
-      "digest": "aac9e5aded456d6287dfceaf8b674320541bf0aa19f1636e28c5135649096fee"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-relations.test.ts",
-      "digest": "712eb29abc8429b4ff8597d6054b37333d4d91d701542465465e2fa5cf449602"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+      "digest": "d000a1f578d531f3e58ece77b07a1e211d7f4a50f9e9ea9f14873821f25f1ff9"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+      "key": "omem:apps/server/src/review/materials.ts",
+      "digest": "f03dbb68799d774541d985d3ab9c2593d6f7d8f2d102134f8bcd5ae05550cb23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "dae706a43cf456d6f1129882e2322bc7da400d7ea741249d3f39109d90b2fa62"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:01.660Z",
+    "at": "2026-10-01T00:31:10.422Z",
     "trace": {
-      "runId": "4edb4b1d-549e-48f2-b368-3aa2fb5d5785",
-      "roleId": "knowledge-refresher",
+      "runId": "3fec4710-4d74-42f8-8712-b68681ce6040",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "50b624a98a57465c86ff848698749228f32932dda3164b56c7e3f1fa6bb8c30f",
-      "contextHash": "f5f31135c7009fa2d9758abda35806103f7ab7c7c891ee33489042cfb78aa5b0",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "9adbf9f705b71431777c8acfd633ddbde925b94c3b6dc9dcc48d381c002aa679",
+      "contextHash": "96e18ec571dc30bdde91101a0a0295e6d85c0a43c1c5b2c7887e5c221f9e7c9b",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "50abb2bab698468840298d5deac334d4b5bb5314738352a544e05fbc1da8671f",
+      "fingerprint": "374e83874ce520de741f5e2762a2e9b182dd79b1d49b7942df82be7998414259",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec3-858d-7b23-9303-33ce0a06772f"
+        "01a0f4de-fb6e-73e1-93e8-c6738527fc0e"
       ],
       "usage": {
-        "used": 63513,
-        "size": 760000,
+        "used": 28478,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -156,10 +185,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 143080,
-          "utf8Bytes": 153964,
-          "estimatedTokens": 51322,
-          "budgetedTokens": 64153,
+          "chars": 25214,
+          "utf8Bytes": 27355,
+          "estimatedTokens": 9119,
+          "budgetedTokens": 11399,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -168,17 +197,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:04:22.995Z",
+    "at": "2026-10-01T00:31:24.917Z",
     "trace": {
-      "runId": "74612ce0-414a-4476-b67e-476132ac74ea",
+      "runId": "6f46cf3b-d173-41a8-a8f2-fea80a4751dd",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "53aeefe6a4e64c6a12c42035d4eb24afb823ac106bbfc39171380460184dbf67",
-      "contextHash": "b2e6a82c3dac4e20cd2e445f66a8f5600f26782f8cf0bb5174099e2e1a3c2503",
+      "promptHash": "889c51d1824af605302d5095a4af8764817b458aded12c5a283fafe18f4d267e",
+      "contextHash": "d66d1fe61dc11a0b031e0dc0490da3988f1e835b75bf8c643cdd66856e194395",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5c74cceb6518bf17bc47b6f8fedc63b0944291a246ebb0b577e5785d52d27e5a",
+      "fingerprint": "a96114c20412196684bcc38d0410b339c2028e93a5a32f56d7b3429bb1aad2c4",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -191,11 +220,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-5fc4-7793-9ad9-f96c290d8107"
+        "01a0f4df-611f-7813-b0fa-ade27c1c7bfa"
       ],
       "usage": {
-        "used": 59759,
-        "size": 760000,
+        "used": 27344,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -203,10 +232,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 146050,
-          "utf8Bytes": 157432,
-          "estimatedTokens": 52478,
-          "budgetedTokens": 65598,
+          "chars": 27928,
+          "utf8Bytes": 31501,
+          "estimatedTokens": 10501,
+          "budgetedTokens": 13127,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

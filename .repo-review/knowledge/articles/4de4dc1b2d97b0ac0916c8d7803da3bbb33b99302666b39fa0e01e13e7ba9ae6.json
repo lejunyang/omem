@@ -2,44 +2,75 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/retrieval/factory.ts",
-    "title": "检索后端工厂",
-    "summary": "读取严格的检索配置，并在默认关键词检索与启用后的本地中文语义检索之间切换，同时向调用方统一暴露关闭钩子。",
-    "category": "configuration",
+    "title": "检索后端配置与工厂",
+    "summary": "该模块是统一检索端口的装配入口：读取并校验本地配置，在关键词基线与中文语义检索之间切换，并为所选后端提供一致的关闭回调。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "configuration",
-        "title": "配置合同",
-        "body": "配置只允许 `enabled` 和 `osdkModel` 两项：前者默认关闭语义检索，后者默认指向 `memory-zh`，且别名只能包含字母、数字、下划线和连字符。读取函数直接解析 JSON 并交给严格 schema，因此未知字段、非法别名或格式错误都会在启动配置阶段暴露。[[c1]]"
+        "key": "purpose",
+        "title": "职责与配置边界",
+        "body": "该文件集中处理检索后端的配置读取与实例选择，使上层只依赖统一的 `RetrievalPort`。配置 schema 采用严格对象：`enabled` 默认关闭，模型别名默认 `memory-zh`，且名称只允许字母、数字、下划线和连字符；`readRetrievalConfig` 同步读取文件，再执行 JSON 解析和 schema 校验，因此文件读取、JSON 解析或 schema 校验错误会在调用时同步抛出。[[c1]] 无论选择哪种后端，统一端口都要求候选结果回指不可变 fragment，保证回答仍可追溯到原始证据。[[c2]]"
       },
       {
-        "key": "selection",
-        "title": "后端选择与生命周期",
-        "body": "未提供配置或未启用时，工厂直接构造 SQLite 关键词检索，并返回无操作的异步关闭函数。启用后则构造 `SemanticRetrieval`，把中文 embedding 加载器作为延迟工厂传入，立即调用 `start()`，关闭时委托语义后端释放资源。[[c2]] 因而该模块是后端装配点：它依赖统一 `RetrievalPort`、关键词实现、语义实现和模型加载器，但不参与排序算法或向量计算本身。"
+        "key": "flow",
+        "title": "创建与生命周期流程",
+        "body": "`createRetrieval` 接收 SQLite 数据库、可选配置和工作目录。配置缺失或语义检索未启用时，它立即返回 `KeywordRetrieval` 与无操作的异步关闭函数；关键词实现声明使用 SQLite FTS5 融合检索，并始终返回原始证据。[[c3]] 启用后，工厂创建 `SemanticRetrieval`，将指定模型别名和工作目录封装进延迟加载回调，随后调用 `start()` 发起后台索引，并把语义实例的 `close()` 暴露给调用方。[[c4]]"
       },
       {
-        "key": "boundary",
-        "title": "可见边界",
-        "body": "这里的回退只由配置开关决定，并未出现“语义初始化失败后自动退回关键词检索”的处理。`start()` 是否同步抛错、后台失败如何反映到健康状态，取决于未提供的 `SemanticRetrieval` 实现，不能由本文件确认。[[c3]]"
+        "key": "semantic_dependency",
+        "title": "语义模式的依赖与状态",
+        "body": "语义模式依赖 `loadChineseEmbedding`：它通过 osdk 查询本地锁定快照，核对模型仓库、revision 和文件哈希，并关闭远程模型与文件缓存，因此工厂创建成功并不等同于模型已可用。[[c5]] `start()` 会异步运行索引批次；模型 Promise 被复用，同一时刻只保留一个索引任务，失败会记录错误并延迟重试。健康状态据此区分 `indexing`、`ready` 和 `degraded`，调用方应以健康接口判断语义就绪程度。[[c6]]"
+      },
+      {
+        "key": "limits",
+        "title": "已知边界与待确认事项",
+        "body": "工厂只负责选择实现、启动语义后台任务及返回关闭回调；当前材料没有展示服务器入口是否在退出或配置重载时调用该回调。[[c4]] 同时，语义类继承关键词实现，表明语义能力建立在词法基线之上，但已提供的语义材料只覆盖健康状态和索引前半段，尚不足以确认模型加载或查询失败时 `searchSources` 的完整回退行为。[[c7]] 因此这些生命周期与查询降级结论应保留为待验证问题，而不是视为工厂已保证的能力。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "检索配置解析",
-        "reason": "支持严格配置字段、默认值和模型别名格式的说明。",
-        "relation": "implements",
+        "label": "检索配置读取与校验",
+        "reason": "支持默认配置、严格字段规则，以及文件读取、JSON 解析和 schema 校验在 readRetrievalConfig 调用中同步发生的论断。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/factory.ts",
           "startLine": 9,
-          "endLine": 13
+          "endLine": 12
         },
         "quote": "export const retrievalConfigSchema = z.object({ enabled: z.boolean().default(false), osdkModel: z.string().regex(/^[a-zA-Z0-9_-]+$/).default(\"memory-zh\") }).strict();\nexport type RetrievalConfig = z.input<typeof retrievalConfigSchema>;\nexport function readRetrievalConfig(path: string) {\n  return retrievalConfigSchema.p"
       },
       {
         "key": "c2",
-        "label": "关键词与语义后端选择",
-        "reason": "说明关闭时采用关键词检索，启用时启动语义检索并提供关闭钩子。",
+        "label": "统一检索端口的证据合同",
+        "reason": "支持不同后端均应返回指向不可变原始片段的候选结果，上层无需依赖具体检索实现。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
+      },
+      {
+        "key": "c3",
+        "label": "关键词检索基线",
+        "reason": "支持未启用语义模式时采用关键词实现，以及该实现使用 SQLite FTS5 融合检索并返回原始证据。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 21,
+          "endLine": 27
+        },
+        "quote": "/** Indexed lexical + memory + knowledge retrieval, always returning original evidence. */\nexport class KeywordRetrieval implements RetrievalPort {\n  constructor(private readonly db: DatabaseSync) {}\n\n  health(): RetrievalHealth {\n    return { available: true, backend: \"sqlite-fts5-rrf@2\" };\n  }"
+      },
+      {
+        "key": "c4",
+        "label": "检索工厂分支与关闭回调",
+        "reason": "直接支持工厂在未启用时返回关键词实现，在启用时创建并启动语义实现，同时向调用方返回对应关闭函数。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -50,28 +81,65 @@
         "quote": "export function createRetrieval(db: DatabaseSync, config?: RetrievalConfig, cwd = process.cwd()): { retrieval: RetrievalPort; close: () => Promise<void> } {\n  if (!config?.enabled) return { retrieval: new KeywordRetrieval(db), close: async () => {} };\n  const retrieval = new SemanticRetrieval(db, () => loadChineseEmbed"
       },
       {
-        "key": "c3",
-        "label": "语义检索启动调用",
-        "reason": "支持本文件没有捕获 start 异常或声明自动降级策略这一边界判断。",
+        "key": "c5",
+        "label": "中文向量模型加载与完整性校验",
+        "reason": "支持语义模式通过 osdk 使用锁定本地快照、校验模型身份和文件哈希，并禁止隐式远程加载。",
         "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/retrieval/factory.ts",
-          "startLine": 14,
-          "endLine": 18
+          "key": "omem:apps/server/src/retrieval/embedding.ts",
+          "startLine": 17,
+          "endLine": 36
         },
-        "quote": "export function createRetrieval(db: DatabaseSync, config?: RetrievalConfig, cwd = process.cwd()): { retrieval: RetrievalPort; close: () => Promise<void> } {\n  if (!config?.enabled) return { retrieval: new KeywordRetrieval(db), close: async () => {} };\n  const retrieval = new SemanticRetrieval(db, () => loadChineseEmbed"
+        "quote": "/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async function loadChineseEmbedding(alias = \"memory-zh\", cwd = process.cwd()): Promise<EmbeddingModel> {\n  const { stdout } = await promisify(execFile)(\"osdk\", [\"model\", \"show\", alias, \"--json\"], { cwd, timeout: 30_000, maxBuf"
+      },
+      {
+        "key": "c6",
+        "label": "语义检索健康状态与后台调度",
+        "reason": "支持模型延迟复用、异步索引、任务互斥、失败重试，以及 indexing、ready、degraded 状态的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 21,
+          "endLine": 48
+        },
+        "quote": "  override health() {\n    const modelId = this.model?.id ?? \"\";\n    const total = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT}`).get()!.n);\n    const indexed = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT} AND EXISTS (\n      SELECT 1 FROM fragment_embedding_heads h WHERE h.fragment_id=f"
+      },
+      {
+        "key": "c7",
+        "label": "语义检索继承词法基线",
+        "reason": "支持语义实现继承关键词检索，并说明当前提供范围仅展示索引流程、未覆盖完整查询回退逻辑。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/semantic.ts",
+          "startLine": 11,
+          "endLine": 19
+        },
+        "quote": "/** Exact cosine is sufficient for a personal SQLite library; no separate vector authority. */\nexport class SemanticRetrieval extends KeywordRetrieval {\n  private model: EmbeddingModel | null = null;\n  private loading: Promise<EmbeddingModel> | null = null;\n  private work: Promise<number> | null = null;\n  private timer"
       }
     ],
     "questions": [
       {
-        "question": "语义模型加载或后台索引失败时，服务是否继续提供关键词检索？",
-        "why": "工厂启用语义模式后只创建并启动 SemanticRetrieval，没有可见的异常捕获或显式 fallback；缺少 semantic.ts 材料，无法判断其内部健康状态和降级策略。",
-        "nextStep": "检查 SemanticRetrieval.start、health 和 search 的错误路径，并验证模型缺失、摘要不符与索引失败三种场景。",
+        "question": "服务器入口是否保证在退出或重载配置时调用工厂返回的 close？",
+        "why": "当前材料只证明工厂返回关闭回调，没有提供调用方；因此无法确认后台定时器和语义模型在服务器生命周期结束时一定释放。",
+        "nextStep": "检查 createRetrieval 的调用点、服务器 shutdown 与配置重载路径，并补充生命周期测试或相应固定材料。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3"
+          "c4",
+          "c6"
+        ]
+      },
+      {
+        "question": "语义模型加载或查询阶段失败时，搜索是否始终安全回退到纯关键词结果？",
+        "why": "现有材料证明 SemanticRetrieval 继承关键词实现，且后台索引错误会进入 degraded 并重试，但未覆盖完整的 searchSources 实现，无法确认查询阶段的所有失败路径。",
+        "nextStep": "补充 semantic.ts 后续搜索实现材料，并以模型加载失败和查询嵌入失败场景验证返回结果及健康状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c6",
+          "c7"
         ]
       }
     ]
@@ -79,18 +147,13 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/quality/import.ts",
-      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/quality/lark-annotations.ts",
-      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/repository.ts",
-      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "be42007fce29d70b9402637abb5fe64685b46872ae815a2285bbbc67303962e3"
     },
     {
       "kind": "material",
@@ -99,65 +162,45 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/retrieval/factory.ts",
-      "digest": "cc15fa92628c3d7e6bd1bec2705228be45a24afc5298a140b642211c397ef7fd"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/retrieval/keyword.ts",
-      "digest": "4fda529623ccc3cecd70e12e459e7d9db1a034e1a927d0b4a7f1344e50fc6673"
+      "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "350cbe18e9f431c0e6eba3b0948c5b90e4b6e4270e67fbaea0a15b2914fbc48f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:22:13.917Z",
+    "at": "2026-10-01T00:10:43.565Z",
     "trace": {
-      "runId": "95952240-8704-4c12-a148-01b2eda26b5e",
-      "roleId": "code-analyst",
+      "runId": "403272f6-373b-419a-b8ef-9a5f77b21bc0",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "be6da817367d1a86a7b4b0af9b1c386d9447d8ee7527717dbc46cc361541556f",
-      "contextHash": "09439dfdad4c8480731d6fed0afe9c94afef82bc3d027b88c657593be0373a68",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "cadf8785eddaa925854b4cde91a09c5d491e99e375800160fa984ba00ffda247",
+      "contextHash": "4a1a5e345afa43a13f4fcd2ed251146ac9c064a6afb74a287c05cbe92c3931b3",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "7c288405af8b8ccc81152ede5119a055caa17bc4e461d640fe3404e55884ad81",
+      "fingerprint": "1480d97dade49d52d10e569e2d5676e1be06aa4934ee7b4db1bb0ada58e439ad",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c3-830a-71d3-a1ce-87178e464c5c"
+        "01a0f4cc-51b1-75a0-b327-d2154ae9d429"
       ],
       "usage": {
-        "used": 48527,
+        "used": 29165,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -166,10 +209,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 80570,
-          "utf8Bytes": 83287,
-          "estimatedTokens": 27763,
-          "budgetedTokens": 34704,
+          "chars": 29772,
+          "utf8Bytes": 34564,
+          "estimatedTokens": 11522,
+          "budgetedTokens": 14403,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -178,17 +221,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:22:42.369Z",
+    "at": "2026-10-01T00:10:59.416Z",
     "trace": {
-      "runId": "e81304b4-7d4d-4831-b8fb-5150b92bd223",
+      "runId": "5027edaa-9aed-4002-a8e6-597dae217cc0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2df70fb6611560dc5402454f98ede7b730c378a2f682a833de5fb985fa940fb0",
-      "contextHash": "4afb6779fab199f827bb783826a04463110145109152e9e2d1fd4f9d55de717c",
+      "promptHash": "544af038fe70940c75f0db477a18a3cee31139fb7d9c51fd275b811a70a44270",
+      "contextHash": "83feb8f4de608eb86ab17ae6dd84c3637d6fca34bb3e444394dfea145ca14994",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "52f50ed727bdd367ac2337e2f26c7131998f6960fffc72e955273c2beb67854e",
+      "fingerprint": "18bca194fc4d59190c3d57b29f4f3b13d7f939720d100d12a53ca796b6d0a6c9",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -201,10 +244,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-891f-7572-8e72-098925e922fa"
+        "01a0f4cc-a724-7500-956e-b3698b167d9f"
       ],
       "usage": {
-        "used": 51997,
+        "used": 27191,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -213,10 +256,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 103086,
-          "utf8Bytes": 113787,
-          "estimatedTokens": 37929,
-          "budgetedTokens": 47412,
+          "chars": 26818,
+          "utf8Bytes": 30436,
+          "estimatedTokens": 10146,
+          "budgetedTokens": 12683,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

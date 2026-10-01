@@ -2,39 +2,57 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/knowledge/api.ts",
-    "title": "知识阅读与整理 API",
-    "summary": "为知识文章、固定材料、引用、问题回答和显式分析提供 HTTP 接口，并在接口层维护单次知识整理任务的运行状态。",
+    "title": "知识服务 HTTP 路由与生成编排",
+    "summary": "该模块把知识仓库、固定版本引用解析、材料阅读、问答与异步知识整理统一暴露为 Fastify API，并在入口处校验材料版本、Agent 配置和并发状态。它也为代码材料生成确定性的相对 import 导航，但不据此推断跨文件调用。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-flow",
-        "title": "职责与核心流程",
-        "body": "该模块把知识仓库暴露为 Fastify 路由。文章列表和详情会先刷新新鲜度；详情中的引用按文章保存的依赖摘要解析到固定文章版本或原始材料版本，目标缺失时保留引用并返回不可操作原因。[[c1]] 材料详情会对代码文件做单文件解析，仅将相对 import 转成确定性的模块链接；这说明文件依赖，不证明被导入函数实际发生调用。[[c2]]\n\n显式分析接口要求已配置 Agent、当前没有另一分析任务，并校验 1–500 个 revisionId 都仍对应可用材料。通过后构造 `KnowledgePipeline` 异步执行并立即返回 202；结果或错误写入进程内的 `lastRun`，服务关闭时停止仍在运行的流水线。[[c3]]"
+        "key": "purpose-and-reading",
+        "title": "知识读取与可追溯引用",
+        "body": "`registerKnowledgeRoutes` 是知识子系统的 HTTP 入口：复用或创建仓库，并维护当前整理任务与最近结果。文章列表返回生成模型、复核模型、修订和问题数；读取单篇文章时，会逐条解析引用，而不是直接把模型给出的目标视为可访问。[[c1]]\n\n引用解析必须先匹配文章保存的依赖摘要：缺少固定版本依据时标记为不可操作；文章引用按指定摘要取知识修订，材料引用按摘要取原始材料，并同时返回 `current` 状态。这样既允许阅读历史版本，也会明确暴露目标已失效或不再最新的情况。[[c2]]"
       },
       {
-        "key": "boundaries",
-        "title": "输入边界与检索限制",
-        "body": "问题回答要求请求体中的 `answer` 是字符串、原始字符串长度不超过 20000，并且 `trim()` 后非空；保存时使用去除首尾空白后的文本，再通知可选的 `onAnswer` 回调。[[c4]] 因而先前“去空白后 1–20000 字”的结论已被替代：即使去空白后未超限，原始字符串超过 20000 仍会被拒绝。\n\n搜索端点对 `repository.list()` 返回的所有 head 文章逐节做大小写无关的空白分词子串匹配，最多返回 50 条派生正文结果；它没有先调用 `refresh()`，也没有按 `current` 过滤，因此结果可能包含尚未刷新或已标为非当前的 head，并不等同于语义检索或原始证据召回。图片接口则只返回数据库记录且资产存在的 PNG、JPEG 或 WebP。[[c5]]"
+        "key": "material-and-interaction",
+        "title": "材料阅读、问答与检索",
+        "body": "材料接口返回固定摘要、修订号、全文、图片和关联知识。对 TypeScript、JavaScript、Vue 等代码文件，它调用离线解析器提取 import，仅解析相对路径并按有限扩展名候选匹配已有材料；生成的是“确定性模块依赖”导航，不能据此确认跨文件调用。[[c3]] 解析器合同也说明其没有跨文件类型解析，调用只到名称级候选。[[c4]]\n\n图片接口会先确认修订正文中存在对应图片记录，再读取资产；只有 PNG、JPEG、WebP 三种 MIME 类型且资产字节确实存在时才返回，否则统一报图片不可用。[[c9]] 问题回答限制为去空白后 1–20000 字，成功后保存为修订并触发回调；问题也可转成任务。搜索只是对已生成文章章节做大小写不敏感的空白分词子串匹配，最多返回 50 条派生摘要，不是语义检索，也不直接检索原始材料。[[c5]]"
+      },
+      {
+        "key": "generation-lifecycle",
+        "title": "异步整理流程与边界",
+        "body": "整理入口要求已配置 Agent、当前没有运行中的管线，并要求提交 1–500 个材料修订号；服务端重新从仓库匹配这些固定版本，数量不一致即认为材料已更新或不可用。通过校验后，它把角色包注册表、运行时网关、请求仓库、Agent profile、预算和并发数 2 组装成 `KnowledgePipeline`，后台启动分析并立即返回 202。结果或错误写入 `lastRun`，结束后清空运行标记。[[c6]]\n\n该并发保护只由模块内的 `running` 变量提供，材料没有展示跨进程互斥。关闭 Fastify 时会等待当前管线停止，但这里未说明停止时的回滚、已发布结果处理或任务恢复语义。[[c7]] 运行时请求仓库被注入网关；其合同显示可记录 permission 或 elicitation 请求及其状态，不过本文件没有证明管线何时触发这些请求。[[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文章与固定引用解析",
-        "reason": "支持文章读取时刷新状态，以及引用按保存的依赖版本解析并显式返回不可用原因。",
+        "label": "路由注册与文章读取",
+        "reason": "支持该模块承担知识 HTTP 入口、维护运行状态并在文章详情中解析引用的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/api.ts",
-          "startLine": 18,
-          "endLine": 44
+          "startLine": 13,
+          "endLine": 40
         },
-        "quote": "  const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,\n    generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.leng"
+        "quote": "export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {\n  const repository = input.repositor"
       },
       {
         "key": "c2",
-        "label": "代码材料的 import 链接",
-        "reason": "支持材料页仅依据相对 import 建立确定性模块依赖链接、不据此断言调用关系。",
+        "label": "固定版本引用解析",
+        "reason": "支持引用依赖摘要、不可操作原因以及文章和材料历史版本解析规则。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 20,
+          "endLine": 33
+        },
+        "quote": "  const resolveCitation = (a: KnowledgeArticle, key: string) => {\n    const c = a.document.citations.find(c => c.key === key);\n    if (!c) return null;\n    const dependency = a.dependencies.find(d => d.kind === c.target.kind && d.key === c.target.key);\n    if (!dependency) return { ...c, actionable: false, unavailableR"
+      },
+      {
+        "key": "c3",
+        "label": "代码材料依赖导航",
+        "reason": "支持材料接口通过相对 import 和有限候选路径生成模块导航，并明确不把依赖等同于调用。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -45,77 +63,111 @@
         "quote": "  app.get<{ Params: { key: string }; Querystring: { digest?: string } }>(prefix + \"/materials/:key\", async (req, reply) => {\n    const entry = repository.resolveMaterial(req.params.key, req.query.digest);\n    if (!entry) return reply.code(404).send({ error: \"固定材料不可用\" });\n    const m = entry.material;\n    const knowledg"
       },
       {
-        "key": "c3",
-        "label": "显式知识分析入口",
-        "reason": "支持分析请求的配置、互斥与材料校验，以及异步状态记录和关闭清理流程。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/api.ts",
-          "startLine": 87,
-          "endLine": 98
-        },
-        "quote": "  app.post<{ Body: { revisionIds: string[] } }>(prefix + \"/analyze\", async (req, reply) => {\n    if (!input.profile) return reply.code(503).send({ error: \"未配置可用 Agent\" });\n    if (running) return reply.code(409).send({ error: \"知识整理正在进行\" });\n    if (!Array.isArray(req.body?.revisionIds) || !req.body.revisionIds.length |"
-      },
-      {
         "key": "c4",
-        "label": "问题回答接口",
-        "reason": "支持按原始字符串判断长度、按 trim 结果判断非空，并以去空白文本保存和通知可选回调。",
-        "relation": "implements",
+        "label": "离线单文件解析器边界",
+        "reason": "解释 parseFile 所依赖解析能力的单文件、无跨文件类型解析和名称级候选限制。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/knowledge/api.ts",
-          "startLine": 75,
-          "endLine": 81
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 1,
+          "endLine": 9
         },
-        "quote": "  app.get(prefix + \"/questions\", async () => repository.questions());\n  app.post<{ Params: { id: string }; Body: { answer: string } }>(prefix + \"/questions/:id/answer\", async (req, reply) => {\n    if (typeof req.body?.answer !== \"string\" || !req.body.answer.trim() || req.body.answer.length > 20000) return reply.code(40"
+        "quote": "/** Deterministic, offline TS/Vue parser. Zero model beyond the already-declared\n * @vue/compiler-sfc:\n *  - TypeScript Compiler AST (single-file, no Program, no cross-file type\n *    resolution; calls are name-level and marked candidate),\n *  - @vue/compiler-sfc for .vue blocks,\n *  - conservative regex for Fastify ro"
       },
       {
-        "key": "c5",
-        "label": "图片与章节搜索接口",
-        "reason": "支持图片类型限制，以及搜索遍历全部 head、未刷新也未按 current 过滤的实际边界。",
+        "key": "c9",
+        "label": "图片资产读取与类型限制",
+        "reason": "直接支持图片接口仅返回已登记且实际存在的 PNG、JPEG 或 WebP 资产这一论断。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/api.ts",
           "startLine": 69,
-          "endLine": 85
+          "endLine": 73
         },
         "quote": "  app.get<{ Params: { id: string } }>(prefix + \"/assets/:id\", async (req, reply) => {\n    const image = input.store.db.prepare(\"SELECT json_extract(p.value,'$.mimeType') mime FROM revisions r,json_each(r.body,'$.parts') p WHERE json_extract(p.value,'$.type')='image' AND json_extract(p.value,'$.assetId')=? LIMIT 1\").get"
+      },
+      {
+        "key": "c5",
+        "label": "问答、任务与章节搜索接口",
+        "reason": "支持回答长度校验、回答保存回调、任务创建以及简单子串检索的行为与上限。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 75,
+          "endLine": 86
+        },
+        "quote": "  app.get(prefix + \"/questions\", async () => repository.questions());\n  app.post<{ Params: { id: string }; Body: { answer: string } }>(prefix + \"/questions/:id/answer\", async (req, reply) => {\n    if (typeof req.body?.answer !== \"string\" || !req.body.answer.trim() || req.body.answer.length > 20000) return reply.code(40"
+      },
+      {
+        "key": "c6",
+        "label": "知识整理启动与校验",
+        "reason": "支持 Agent 配置、单实例运行、固定修订选择、管线组装、并发数和异步返回流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 87,
+          "endLine": 96
+        },
+        "quote": "  app.post<{ Body: { revisionIds: string[] } }>(prefix + \"/analyze\", async (req, reply) => {\n    if (!input.profile) return reply.code(503).send({ error: \"未配置可用 Agent\" });\n    if (running) return reply.code(409).send({ error: \"知识整理正在进行\" });\n    if (!Array.isArray(req.body?.revisionIds) || !req.body.revisionIds.length |"
+      },
+      {
+        "key": "c7",
+        "label": "服务关闭时停止管线",
+        "reason": "支持关闭阶段等待当前整理任务停止，同时界定本文件未展开具体停止与恢复语义。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 93,
+          "endLine": 98
+        },
+        "quote": "    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: \"traex\" }, { budget: input.budget, concurrency: 2, onPublish: input.onPublish });\n    const pipeline = running;\n    void pipeline.analy"
+      },
+      {
+        "key": "c8",
+        "label": "运行时请求记录合同",
+        "reason": "解释注入网关的 RuntimeRequestRepository 所管理的请求种类与状态；不据此推断实际触发时机。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agent-runtime/requests.ts",
+          "startLine": 7,
+          "endLine": 20
+        },
+        "quote": "export type RuntimeRequest = {\n  id: string;\n  workspaceId: string;\n  jobId: string | null;\n  sessionId: string;\n  turnId: string | null;\n  providerRequestId: string;\n  kind: \"permission\" | \"elicitation\";\n  state: \"pending\" | \"denied\" | \"expired\" | \"resolved\";\n  options: unknown;\n  expiresAt: string;\n  createdAt: strin"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "多进程或多实例部署时，是否另有数据库级任务锁来避免同一工作区重复整理？",
+        "why": "本文件的互斥仅由进程内 `running` 变量实现，提供的材料没有展示跨实例协调机制。",
+        "nextStep": "检查 KnowledgePipeline、作业仓库及服务启动部署代码中是否存在工作区级租约、唯一约束或恢复逻辑。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
+        ]
+      },
+      {
+        "question": "管线停止时，已发布文章、处理中间结果和待处理运行时请求如何收敛？",
+        "why": "路由只在 `preClose` 调用 `stop()`，没有提供停止实现、事务边界或重启恢复依据。",
+        "nextStep": "结合 KnowledgePipeline.stop、发布事务和 runtime_requests 清理逻辑验证取消与恢复语义。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c8"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/api.ts",
       "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/artifacts.ts",
-      "digest": "caeb4edcb0f6e861fd149c7c35adc807ff5c3981d4108389b97ddcd6c8fb1948"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/pipeline.ts",
-      "digest": "d691d841633a6c1f629899212c7293089b0ef8e84f6a68f1d95fb37d4912a057"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/retrieval.ts",
-      "digest": "75a226dad659fee68a8933f0db15c14c3cb27335b34f562fd687c4fc4e3e7962"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/learning/pipeline.ts",
-      "digest": "7f869f973a9d6d42ce9f9600a4df0bbdb9b5aa80f8a6b395991d94f4c86069c8"
     },
     {
       "kind": "material",
@@ -141,17 +193,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:22:18.068Z",
+    "at": "2026-10-01T00:04:45.919Z",
     "trace": {
-      "runId": "c24e3e70-5ade-4933-ac7f-0f16b9cb2c99",
+      "runId": "908cca25-7003-44c6-8eba-7297b05b9cbd",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "87158a403be8f5796aa68c4354f8d3da38cbe6890a664bb7cffac7a325be2e68",
-      "contextHash": "2412ebce76376e017fbf32c7da78b79c4bfc9696e23facc40f4c2eb3cc33f4ff",
+      "promptHash": "fce5ab172e00de2bbc2c374c8351a217787e5bbe6bef7b47cb0019bf343b3a42",
+      "contextHash": "40dc65ba5e938a3dcf42a664e6d56d2f9ee337e1c5dd0a2a75250a1e9fe99c8e",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5112a51cb4184a519040cb16a3ff9fe2a1753a63d33883549f958b156130ce52",
+      "fingerprint": "f957bf34cce346b34d97d80650290e562902b4d27464682fe570cd432135c0e4",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -164,10 +216,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-1057-7e00-9dc3-0e522d8f711e"
+        "01a0f4c6-dce5-7b51-9e19-df9eebabfda4"
       ],
       "usage": {
-        "used": 56813,
+        "used": 30872,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -176,10 +228,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 123347,
-          "utf8Bytes": 130598,
-          "estimatedTokens": 43533,
-          "budgetedTokens": 54417,
+          "chars": 34054,
+          "utf8Bytes": 38988,
+          "estimatedTokens": 12996,
+          "budgetedTokens": 16245,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -188,17 +240,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:22:41.059Z",
+    "at": "2026-10-01T00:05:08.199Z",
     "trace": {
-      "runId": "c3ba66ea-5c82-4678-a06d-931a3a826427",
+      "runId": "9a23e498-8226-4c16-9813-7a573aae5e02",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2fd63fa64f35c825e2a3fe9223a0472c21d6ce0710db6375e4fd4e35e7108f84",
-      "contextHash": "2c30b5b68c23823b2ce852c727b81bdeeba39f712dca05c4a288aeb8eb011089",
+      "promptHash": "10b2f7744d303de35929d516bf02a270a1b3e0fe3cb29f04ea9686ef09b08841",
+      "contextHash": "05ab047104771e438bc859228d37916db76d2a753d2823f3bb227c3504ed2881",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f0954e8892294137a7170f87812994eb052cdc777c203b04e862ebd692d9024d",
+      "fingerprint": "a50582b5d7200f3af9ec121dba9521910133b542456d6e5c445fbc373674da02",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -211,10 +263,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-9c1d-79d3-aef8-091c0ddfa8d1"
+        "01a0f4c7-3ea1-7440-b9a8-3794be2c5a76"
       ],
       "usage": {
-        "used": 54004,
+        "used": 29169,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -223,10 +275,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 121067,
-          "utf8Bytes": 127516,
-          "estimatedTokens": 42506,
-          "budgetedTokens": 53133,
+          "chars": 32059,
+          "utf8Bytes": 36243,
+          "estimatedTokens": 12081,
+          "budgetedTokens": 15102,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

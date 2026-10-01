@@ -2,70 +2,127 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/runs.ts",
-    "title": "基于固定证据的问答运行管理",
-    "summary": "管理短生命周期 Agent 问答任务：校验固定证据与上下文预算，选择 ACP 或 CLI 执行，流式保存事件，并把最终回答作为派生材料回写且链接原始证据。",
+    "title": "问答运行编排与证据约束",
+    "summary": "Runs 负责把固定证据、模型配置和问题组装为可取消的 Agent 运行，限制并发、上下文、图片及输出规模，维护事件流，并将有效回答作为派生材料保存且关联回原证据。",
     "category": "implementation",
     "sections": [
       {
-        "key": "prepare",
-        "title": "运行创建与证据约束",
-        "body": "`Runs` 在内存中维护任务状态、事件、取消控制器和回答修订，最多允许两个任务并发；累计达到 100 条时仅淘汰一个非运行任务。启动时必须找到 profile 和全部 evidence，选区还必须确实出现在首个固定片段中。模型与 effort 可由请求覆盖基础 profile，但此文件本身未展示能力校验。[[c1]]\n\n提示上下文只序列化所选证据的 ID、标题、版本、current 状态和原文，并限制总字符数。图片从固定修订资产加载、按 assetId 去重，总字节不得超过 10 MB；包含图片时必须使用 ACP，禁止静默退化为纯文本 CLI。[[c2]]"
+        "key": "purpose-and-input",
+        "title": "职责与输入校验",
+        "body": "`Runs` 是服务端问答任务的内存编排器：每次运行保存状态、事件、取消控制器和最终回答标识，并支持查询、取消以及关闭时等待任务收束。它最多允许两个运行并发；记录达到 100 条后仅清理一个已结束项，因此属于轻量运行缓存，而不是可恢复的持久任务队列。[[c1]]\n\n启动时先按请求选择配置档案，并允许覆盖模型与推理强度；随后对焦点证据和上下文证据去重并从 Store 读取。证据不存在、选区不属于首个固定证据，或文本与选区总长度超过档案预算时，运行会在创建前失败。[[c2]] 档案来自服务端配置中至少包含一项的 `profiles`，但给定范围没有展示模型与 effort 的能力协商。[[c3]]"
       },
       {
-        "key": "execute",
-        "title": "流式执行、取消与输出预算",
-        "body": "运行根据 transport 调用 ACP 或 CLI，并通过统一 emit 记录 status、text、permission 事件。累计事件超过 250000 字符会中止；权限请求同时写入 attention 记录。取消信号会阻止继续追加事件，关闭管理器时会取消所有运行任务并等待其 Promise 收敛。[[c3]]"
+        "key": "context-and-transport",
+        "title": "上下文构造与传输选择",
+        "body": "运行将每条证据序列化为包含证据标识、标题、版本、当前状态和正文的材料行，再与档案指令、选区及问题组合成提示。提示要求只能引用列出的证据标识，但这一约束本身不等于论断支持度已经核验。[[c4]]\n\n图片从固定修订的 parts 中收集，按资产标识去重并读取字节；全部图片累计不得超过 10 MB，缺失资产直接报错。非 ACP 档案遇到图片时也会拒绝执行，不会静默退化为纯文本。[[c5]] `Runs` 在自身执行分支中明确调用导入的 `acp` 或 `cli`，并把工作目录、内容、事件回调和同一取消信号交给传输层；这条依据替代了旧稿中由 `agents.ts` 进程基础设施推断调用关系的结论。[[c7]] `agents.ts` 的当前可见范围只能进一步说明子进程会过滤敏感环境变量、以非 shell 方式启动，并在停止时先 TERM 后 KILL。[[c6]]"
       },
       {
-        "key": "persist",
-        "title": "回答保存及证据关联边界",
-        "body": "任务只有在未取消且得到非空回答后才保存结果。回答以 `source: agent` 捕获，provenance 明确标记 bot 和 derived，再把每个回答片段链接到全部输入证据；完成事件同时提醒“引用不等于支持度已验证”。因此这里保存的是可追溯派生回答，并未执行独立语义核验。异常或取消只改变内存状态并追加 error 事件，不会保存半成品回答。[[c4]]"
+        "key": "execution-and-persistence",
+        "title": "事件、取消与回答保存",
+        "body": "运行创建后立即返回标识，实际工作保存在异步 promise 中。统一的 `emit` 为事件分配递增序号、累积文本回答，并将事件字符总量限制为 250,000；权限事件还会通过 Store 记录为需要关注的事项。取消后新的 emit 被忽略，传输层同时收到对应的 `AbortSignal`。[[c7]]\n\n传输结束后仍会检查取消状态和空回答。有效回答通过 `Store.capture` 保存为来源为 agent、生产者为 derived 的材料，并将新片段逐一关联至本次输入证据；随后状态变为完成，同时明确提示“引用不等于支持度已验证”。异常则统一转为 cancelled 或 error 终态。[[c8]] 这套流程建立在当前单用户 SQLite 与不可变修订基础上，但给定 Store 范围没有展示 capture、link、record 的具体事务边界。[[c9]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界条件与未覆盖行为",
+        "body": "运行表仅存在于进程内，重启后不能恢复；`get` 直接返回累计事件，也没有展示分页或订阅机制。关闭流程会取消仍在运行的任务并等待全部 promise 收束。清理策略每次只删除一个非运行项，而正常入口的双并发限制约束了活跃任务数量。[[c10]]\n\n材料中没有相关测试，因此尚不能确认并发拒绝、取消竞态、输出超限、图片累计、空回答和持久化失败是否已有自动化行为断言。回答虽然关联原证据，仍被明确标记为派生内容；合同层也区分 `original` 与 `derived`，避免把模型回答当成新的独立原始事实。[[c11]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "运行并发、profile 与证据校验",
-        "reason": "支持并发限制、profile 合并、固定证据存在性和选区一致性检查。",
+        "label": "运行状态、并发限制与缓存清理",
+        "reason": "支持 Runs 的内存状态、查询取消、关闭等待、双并发限制和已结束记录清理行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/runs.ts",
+          "startLine": 11,
+          "endLine": 51
+        },
+        "quote": "type Run = {\n  id: string;\n  state: \"running\" | \"done\" | \"error\" | \"cancelled\";\n  events: RunEvent[];\n  controller: AbortController;\n  answerId?: string;\n  promise?: Promise<void>;\n};\nexport class Runs {\n  private runs = new Map<string, Run>();\n  constructor(\n    private store: Store,\n    private config: Config,\n  ) {}"
+      },
+      {
+        "key": "c2",
+        "label": "档案、证据、选区与文本预算校验",
+        "reason": "支持启动前解析档案、覆盖模型参数、读取并去重证据、核对固定选区和限制上下文字符数。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/runs.ts",
-          "startLine": 19,
-          "endLine": 69
+          "startLine": 52,
+          "endLine": 85
         },
-        "quote": "export class Runs {\n  private runs = new Map<string, Run>();\n  constructor(\n    private store: Store,\n    private config: Config,\n  ) {}\n  get(id: string) {\n    const r = this.runs.get(id);\n    return r\n      ? { id: r.id, state: r.state, events: r.events, answerId: r.answerId }\n      : null;\n  }\n  cancel(id: string) {"
+        "quote": "    const base = this.config.profiles.find((p) => p.id === input.profileId);\n    if (!base) throw Error(\"Profile not found\");\n    const profile = {\n      ...base,\n      model: input.model || base.model,\n      effort: input.effort || base.effort,\n    };\n    const refs = [...new Set([input.focusId, ...input.contextIds])]"
       },
       {
-        "key": "c2",
-        "label": "文本与图像上下文预算",
-        "reason": "支持证据序列化、字符预算、图片总预算及 ACP 图像要求。",
+        "key": "c3",
+        "label": "服务端档案配置入口",
+        "reason": "说明 Runs 使用的 profiles 来自服务端配置且至少需要一项；当前范围未展示 profileSchema 的详细约束。",
         "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/config.ts",
+          "startLine": 1,
+          "endLine": 20
+        },
+        "quote": "import { retrievalConfigSchema } from \"./retrieval/factory.js\";\nimport { readFileSync, existsSync, mkdirSync } from \"node:fs\";\nimport { resolve, join } from \"node:path\";\nimport { z } from \"zod\";\nimport { profileSchema } from \"../../../packages/contracts/src/index.js\";\nconst timezoneSchema = z\n  .string()\n  .min(1)\n  .m"
+      },
+      {
+        "key": "c4",
+        "label": "固定证据提示构造",
+        "reason": "支持证据元数据和正文被序列化进提示，并要求回答只使用列出的证据标识。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/runs.ts",
           "startLine": 70,
-          "endLine": 109
+          "endLine": 87
         },
         "quote": "    const evidenceText = evidences\n      .map((e) =>\n        JSON.stringify({\n          evidenceId: e.fragment.id,\n          title: e.revision.title,\n          version: e.revision.version,\n          current: e.revision.current,\n          text: e.fragment.text,\n        }),\n      )\n      .join(\"\\n\");\n    if (\n      evide"
       },
       {
-        "key": "c3",
-        "label": "流式事件与取消控制",
-        "reason": "支持事件输出预算、权限记录以及 ACP/CLI 的统一执行和取消行为。",
+        "key": "c5",
+        "label": "图片收集与 ACP 限制",
+        "reason": "支持图片按资产去重、累计字节预算、缺失报错，以及非 ACP 传输不得静默忽略图片。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/runs.ts",
+          "startLine": 88,
+          "endLine": 109
+        },
+        "quote": "    let imageBytes = 0;\n    // Pictures belong to the fixed source revision; cap the whole payload, not just each image.\n    const seen = new Set<string>();\n    for (const e of evidences)\n      for (const p of e.revision.parts) {\n        if (p.type !== \"image\" || seen.has(p.assetId)) continue;\n        seen.add(p.assetI"
+      },
+      {
+        "key": "c6",
+        "label": "Agent 子进程启动基础",
+        "reason": "仅支持 agents 模块对子进程环境、启动方式与终止流程的处理，不用于证明 Runs 对 ACP 或 CLI 的调用关系。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 32,
+          "endLine": 68
+        },
+        "quote": "const env = () =>\n  Object.fromEntries(\n    Object.entries(process.env).filter(\n      ([key]) =>\n        !key.startsWith(\"BOTMUX_\") &&\n        ![\"OMEM_TOKEN\", \"CLAUDECODE\"].includes(key),\n    ),\n  );\nfunction stop(child: ChildProcessWithoutNullStreams) {\n  if (child.exitCode !== null) return;\n  try {\n    if (process.pl"
+      },
+      {
+        "key": "c7",
+        "label": "事件累计、权限记录与传输分派",
+        "reason": "直接支持事件预算、权限关注记录，以及 Runs 按 transport 调用 ACP 或 CLI 并传递取消信号的论断。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/runs.ts",
           "startLine": 110,
-          "endLine": 157
+          "endLine": 156
         },
         "quote": "    const run: Run = {\n      id: randomUUID(),\n      state: \"running\",\n      events: [],\n      controller: new AbortController(),\n    };\n    this.runs.set(run.id, run);\n    let answer = \"\";\n    let eventChars = 0;\n    const emit = (type: \"status\" | \"text\" | \"permission\", text: string) => {\n      if (run.controller.sign"
       },
       {
-        "key": "c4",
-        "label": "派生回答捕获与证据链接",
-        "reason": "支持非空回答保存、派生 provenance、输入证据链接及失败状态处理。",
+        "key": "c8",
+        "label": "回答捕获、证据关联与终态处理",
+        "reason": "支持非空回答作为派生材料保存、关联输入证据，并区分完成、取消和错误终态。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -74,27 +131,80 @@
           "endLine": 197
         },
         "quote": "        if (run.controller.signal.aborted) throw Error(\"CANCELLED\");\n        if (!answer.trim()) throw Error(\"Agent returned no answer\");\n        const saved = this.store.capture({\n          source: \"agent\",\n          externalId: \"answer:\" + run.id,\n          title: input.question.slice(0, 100),\n          parts: [{ typ"
+      },
+      {
+        "key": "c9",
+        "label": "Store 的单用户持久化基础",
+        "reason": "说明 Runs 依赖的 Store 使用 SQLite 和不可变修订作为当前单用户存储基础；具体写入方法不在给定范围。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 1,
+          "endLine": 68
+        },
+        "quote": "import { recordSourceRefresh } from \"./learning/refresh.js\";\n/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } fro"
+      },
+      {
+        "key": "c10",
+        "label": "内存运行查询与关闭行为",
+        "reason": "支持运行状态由类内 Map 保存，以及查询、取消、关闭等待和缓存清理的边界判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/runs.ts",
+          "startLine": 19,
+          "endLine": 51
+        },
+        "quote": "export class Runs {\n  private runs = new Map<string, Run>();\n  constructor(\n    private store: Store,\n    private config: Config,\n  ) {}\n  get(id: string) {\n    const r = this.runs.get(id);\n    return r\n      ? { id: r.id, state: r.state, events: r.events, answerId: r.answerId }\n      : null;\n  }\n  cancel(id: string) {"
+      },
+      {
+        "key": "c11",
+        "label": "原始与派生内容合同",
+        "reason": "支持合同层显式区分 original 和 derived，说明 Agent 回答不应被视为独立原始证据。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 5,
+          "endLine": 16
+        },
+        "quote": "export const partProvenanceSchema = z\n  .object({\n    actorExternalId: z.string().min(1).max(300).nullable(),\n    actorPrincipalId: z.string().min(1).max(300).nullable(),\n    observedAt: z.iso.datetime({ offset: true }).nullable(),\n    eventId: z.string().min(1).max(500).nullable(),\n    replyTo: z.string().min(1).max(5"
       }
     ],
     "questions": [
       {
-        "question": "请求覆盖的 model 与 effort 在进入 ACP/CLI 前由哪个模块验证其受 profile 和实际后端支持？",
-        "why": "本文件直接合并请求值后调用执行器，没有展示能力发现或拒绝逻辑；仅凭当前材料不能确认不受支持设置的处理。",
-        "nextStep": "检查 agents 执行层及 profile schema，并补充不支持 model/effort 的真实运行测试。",
+        "question": "模型与 effort 覆盖值是否在进入 Runs.start 前完成了能力发现和合法性校验？",
+        "why": "当前实现直接以请求值覆盖档案字段；给定材料只显示 profiles 配置入口和 Agent 启动基础，没有展示 questionSchema、profileSchema 或传输层的完整能力协商。",
+        "nextStep": "补充合同中 questionSchema、profileSchema 及 agents.ts 能力协商相关范围，并核验不支持的模型与 effort 组合是否会被明确拒绝。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
+          "c2",
+          "c3",
+          "c6"
         ]
       },
       {
-        "question": "已完成运行只保存在内存 Map 中，服务重启后是否预期仍可查询运行事件和回答映射？",
-        "why": "回答本身已进入 Store，但 run 状态、events 与 answerId 的查询索引未见持久化；当前材料无法判断这是明确的短生命周期设计还是待补能力。",
-        "nextStep": "核对 API 生命周期要求；若需要跨重启查询，应从持久化回答 provenance 重建或增加运行记录表。",
+        "question": "回答捕获、证据关联和权限关注记录是否具有预期的一致性事务边界？",
+        "why": "Runs 分别执行 capture、link 和权限 record；当前 Store 材料只展示初始化和总体存储基础，无法确认中途失败是否会留下未关联回答或部分记录。",
+        "nextStep": "补充 Store.capture、Store.link、Store.record 与 tx 的实现及失败测试，明确允许的部分结果和恢复策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c8",
+          "c9"
+        ]
+      },
+      {
+        "question": "并发限制、取消竞态和各类预算错误目前有哪些自动化测试覆盖？",
+        "why": "给定材料没有测试文件，无法确认双并发拒绝、关闭等待、取消后的延迟事件、空回答、图片累计超限和事件输出超限是否已有行为断言。",
+        "nextStep": "补充 runs 相关测试材料，逐项核对并发、关闭、取消、空回答以及输入输出预算边界。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c4"
+          "c5",
+          "c7",
+          "c8"
         ]
       }
     ]
@@ -102,33 +212,18 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/model-config.ts",
-      "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/runs.ts",
       "digest": "71feea2619b8263142f4285ed0a5a3e9798af8c7daf4881b6c1af41802566fa6"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "key": "omem:apps/server/src/config.ts",
+      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
     },
     {
       "kind": "material",
@@ -137,45 +232,40 @@
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:23:45.931Z",
+    "at": "2026-10-01T00:18:45.978Z",
     "trace": {
-      "runId": "d266968c-608a-4722-9eaa-c1a636732b17",
-      "roleId": "code-analyst",
+      "runId": "9cbd0f10-d8a0-4865-b3c1-cc53076f9fb2",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "405937458b42135b45c1dffa365faa91b6f3b528d1cebdd33faf8ac06d050e7a",
-      "contextHash": "d1d7a1928c184a606de996e04dbb86e8b3a7751be9639420a7e1dd706b199402",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "95e8a6f4dd20f5a270a026fbd697f9a8291056667f0cab90edf42eb63a951f1e",
+      "contextHash": "f5034dfe98d25a658e14ceb1db19c9d56fe382051dd0b6ac3a52405968f6e4de",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b67c9c3c242649a9f34405c1be0352bccacf3addeec733973de838c5d66856fd",
+      "fingerprint": "65b2a387a5103e7c3c43e02aa5cb0ca27f54f54d2cc80485fbc8c0392be5f667",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-f30b-7cd1-90b4-7bc89050ee50"
+        "01a0f4d3-95b2-76f2-82e6-07b1b133b5e0"
       ],
       "usage": {
-        "used": 61646,
+        "used": 33040,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -184,10 +274,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129381,
-          "utf8Bytes": 131677,
-          "estimatedTokens": 43893,
-          "budgetedTokens": 54867,
+          "chars": 37668,
+          "utf8Bytes": 44122,
+          "estimatedTokens": 14708,
+          "budgetedTokens": 18385,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -196,17 +286,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:24:21.574Z",
+    "at": "2026-10-01T00:19:05.155Z",
     "trace": {
-      "runId": "bf28869a-42d4-45f6-9416-666075c899e6",
+      "runId": "e585b5fc-b1ed-4dea-bdfe-d50082ee7420",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2f422f1c639f379f3942ea6972352ac52ffd684ab44fb58b5cb6b8f2a0bbed43",
-      "contextHash": "4299ff84def1fbe0412cb2f468c092935c9741da846fc20dc267ae9c28c1f833",
+      "promptHash": "b3c8ed748a85aed34427dc79ad62d9c5cef1377ace5697c976cd0e12a8e42be7",
+      "contextHash": "1e7bb26c0a127be5137b0e24a026a194552196e4e9462c058d9754e5b95620b0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6c3fdada9d4e194d56275ffcc1181e1df003d942c6ed528033d19598b11830a3",
+      "fingerprint": "590b022d028561111e6fcfad927b7e09a2f931ab8bd7681a7b92298b5beb76cf",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -219,10 +309,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c5-e339-7563-ad8b-518fee027a54"
+        "01a0f4d4-05c5-7702-97c3-013fb6446648"
       ],
       "usage": {
-        "used": 65111,
+        "used": 30151,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -231,10 +321,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 146875,
-          "utf8Bytes": 157129,
-          "estimatedTokens": 52377,
-          "budgetedTokens": 65472,
+          "chars": 34322,
+          "utf8Bytes": 39296,
+          "estimatedTokens": 13099,
+          "budgetedTokens": 16374,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

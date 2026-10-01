@@ -1,0 +1,1153 @@
+{
+  "version": 3,
+  "recordedAt": "2026-09-30T20:28:55.076973+00:00",
+  "implementationCommit": "f27523efd76b3309653048728182750476025a2e",
+  "implementationCommits": [
+    "94ff0da",
+    "953722a",
+    "f27523e"
+  ],
+  "scope": "中文语义检索、长片段证据窗口、受影响仓库知识维护。真实 ACP 复核不等于人工验收或全库检索质量已达标。",
+  "checks": [
+    {
+      "command": "osdk deps --frozen",
+      "exitCode": 0
+    },
+    {
+      "command": "osdk run check",
+      "exitCode": 0,
+      "testFiles": 57,
+      "tests": 344,
+      "includes": [
+        "typecheck",
+        "full Vitest suite",
+        "build"
+      ]
+    },
+    {
+      "command": "osdk run retrieval:verify",
+      "exitCode": 0,
+      "live": true,
+      "cases": [
+        {
+          "query": "我哪天去看牙医？",
+          "expected": "诊疗安排",
+          "top1": "周四上午十点去口腔门诊拔智齿，提前半小时到医院取号。",
+          "lexicalTop1Correct": false,
+          "routes": [
+            "semantic"
+          ]
+        },
+        {
+          "query": "依赖服务挂了怎么避免一直重试？",
+          "expected": "故障处理",
+          "top1": "当下游连续失败时打开熔断器，短暂等待后放行少量请求探测恢复情况。",
+          "lexicalTop1Correct": false,
+          "routes": [
+            "semantic"
+          ]
+        },
+        {
+          "query": "如何巩固外语词汇？",
+          "expected": "语言学习",
+          "top1": "每天听一段英文播客，把不认识的单词做成记忆卡，并按遗忘曲线安排复习。",
+          "lexicalTop1Correct": false,
+          "routes": [
+            "semantic"
+          ]
+        },
+        {
+          "query": "旅途花销的凭证要交给谁？",
+          "expected": "出差材料",
+          "top1": "去上海的高铁电子票和住宿发票已收齐，周五提交财务报销。",
+          "lexicalTop1Correct": false,
+          "routes": [
+            "semantic"
+          ]
+        }
+      ],
+      "semanticTop1": 4,
+      "lexicalTop1": 0,
+      "limit": "四条合成中文同义问法，不能代表完整日常语料。"
+    },
+    {
+      "command": "osdk exec --tool node --tool pnpm -- pnpm exec tsx .omem/verification/live-window.ts",
+      "exitCode": 0,
+      "live": true,
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "originalCharacters": 4523,
+      "answer": "看牙安排是周四上午十点就诊，预约码是72819。",
+      "scope": "真实 BGE 检索后将长原文尾部窗口交给 traex ACP 回答；后续轮次窗口保留另有行为测试。"
+    },
+    {
+      "command": "osdk run retrieval:index -- --review",
+      "exitCode": 0,
+      "result": {
+        "completed": true,
+        "available": true,
+        "backend": "sqlite-fts5-bge-rrf@3",
+        "semantic": {
+          "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+          "state": "ready",
+          "indexed": 9622,
+          "pending": 0,
+          "error": null
+        }
+      }
+    },
+    {
+      "command": "validateKnowledgeDocument on all current repository articles",
+      "exitCode": 0,
+      "scope": "合同、引用、依赖版本与独立 review verdict；不替代语义正确性判断。",
+      "result": {
+        "currentArticles": 314,
+        "materials": 507,
+        "citations": 1789,
+        "articleLinks": 30,
+        "selection": {
+          "targets": 83,
+          "reviewed": 82,
+          "pending": [
+            "omem:apps/server/src/assistant/runtime.ts"
+          ]
+        },
+        "hierarchy": [
+          {
+            "key": "module:web:part-1",
+            "current": false
+          },
+          {
+            "key": "topic:requirements",
+            "current": false
+          },
+          {
+            "key": "module:retrieval",
+            "current": true
+          },
+          {
+            "key": "module:learning",
+            "current": true
+          },
+          {
+            "key": "module:web",
+            "current": false
+          },
+          {
+            "key": "module:memory",
+            "current": true
+          },
+          {
+            "key": "module:ui:part-1",
+            "current": true
+          },
+          {
+            "key": "module:review",
+            "current": true
+          },
+          {
+            "key": "module:web:part-3",
+            "current": true
+          },
+          {
+            "key": "module:knowledge",
+            "current": true
+          },
+          {
+            "key": "module:agent-runtime:part-3",
+            "current": true
+          },
+          {
+            "key": "module:docs-implementation:part-1",
+            "current": true
+          },
+          {
+            "key": "topic:agent_governance",
+            "current": false
+          },
+          {
+            "key": "module:assistant",
+            "current": false
+          },
+          {
+            "key": "module:agent-runtime:part-5",
+            "current": true
+          },
+          {
+            "key": "module:docs-interaction-design.md",
+            "current": true
+          },
+          {
+            "key": "topic:architecture",
+            "current": false
+          },
+          {
+            "key": "topic:inputs_integrations",
+            "current": true
+          },
+          {
+            "key": "module:docs-prototype:part-2",
+            "current": true
+          },
+          {
+            "key": "topic:code_wiki",
+            "current": false
+          },
+          {
+            "key": "module:storage",
+            "current": true
+          },
+          {
+            "key": "module:other:part-2",
+            "current": false
+          },
+          {
+            "key": "module:ui:part-2",
+            "current": true
+          },
+          {
+            "key": "topic:evidence_knowledge",
+            "current": true
+          },
+          {
+            "key": "module:server-root",
+            "current": true
+          },
+          {
+            "key": "module:docs-design.md",
+            "current": true
+          },
+          {
+            "key": "module:lark",
+            "current": true
+          },
+          {
+            "key": "module:agent-runtime:part-7",
+            "current": false
+          },
+          {
+            "key": "module:scripts:part-2",
+            "current": false
+          },
+          {
+            "key": "module:other:part-3",
+            "current": false
+          },
+          {
+            "key": "module:other:part-4",
+            "current": false
+          },
+          {
+            "key": "module:conversation",
+            "current": true
+          },
+          {
+            "key": "module:docs-implementation:part-4",
+            "current": true
+          },
+          {
+            "key": "module:docs-repo-review",
+            "current": true
+          },
+          {
+            "key": "module:docs-research.md",
+            "current": true
+          },
+          {
+            "key": "module:web:part-2",
+            "current": false
+          },
+          {
+            "key": "module:project:part-2",
+            "current": false
+          },
+          {
+            "key": "module:agent-runtime:part-4",
+            "current": true
+          },
+          {
+            "key": "module:scripts",
+            "current": false
+          },
+          {
+            "key": "module:docs-prototype",
+            "current": true
+          },
+          {
+            "key": "module:agent-runtime:part-1",
+            "current": false
+          },
+          {
+            "key": "module:quality",
+            "current": true
+          },
+          {
+            "key": "module:other:part-5",
+            "current": false
+          },
+          {
+            "key": "module:docs-autonomous-learning.md",
+            "current": true
+          },
+          {
+            "key": "module:source-profile",
+            "current": true
+          },
+          {
+            "key": "module:docs-implementation:part-2",
+            "current": true
+          },
+          {
+            "key": "module:docs-validation.md",
+            "current": false
+          },
+          {
+            "key": "topic:overview",
+            "current": false
+          },
+          {
+            "key": "module:contracts",
+            "current": true
+          },
+          {
+            "key": "module:docs-reviews",
+            "current": false
+          },
+          {
+            "key": "topic:quality_validation",
+            "current": false
+          },
+          {
+            "key": "module:scripts:part-1",
+            "current": false
+          },
+          {
+            "key": "module:docs-contracts",
+            "current": true
+          },
+          {
+            "key": "module:project",
+            "current": false
+          },
+          {
+            "key": "module:docs-implementation",
+            "current": true
+          },
+          {
+            "key": "module:docs-implementation.md",
+            "current": true
+          },
+          {
+            "key": "module:docs-prototype:part-1",
+            "current": true
+          },
+          {
+            "key": "module:agent-runtime",
+            "current": false
+          },
+          {
+            "key": "module:ui",
+            "current": true
+          },
+          {
+            "key": "module:agent-runtime:part-2",
+            "current": false
+          },
+          {
+            "key": "module:code",
+            "current": false
+          },
+          {
+            "key": "module:other",
+            "current": false
+          },
+          {
+            "key": "module:project:part-1",
+            "current": false
+          },
+          {
+            "key": "module:project:part-3",
+            "current": false
+          },
+          {
+            "key": "topic:assistant_memory",
+            "current": false
+          },
+          {
+            "key": "module:agent-runtime:part-6",
+            "current": false
+          },
+          {
+            "key": "module:docs-decisions.md",
+            "current": true
+          },
+          {
+            "key": "module:other:part-1",
+            "current": false
+          },
+          {
+            "key": "topic:progress",
+            "current": false
+          },
+          {
+            "key": "module:jobs",
+            "current": true
+          },
+          {
+            "key": "module:docs-implementation:part-3",
+            "current": true
+          },
+          {
+            "key": "module:docs-research",
+            "current": true
+          },
+          {
+            "key": "module:docs-README.md",
+            "current": true
+          },
+          {
+            "key": "topic:background",
+            "current": false
+          },
+          {
+            "key": "module:inputs",
+            "current": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "command": "GET /api/review/search through a real listening review app",
+      "exitCode": 0,
+      "live": true,
+      "results": [
+        {
+          "query": "中文语义检索怎样处理长代码片段？",
+          "status": 200,
+          "results": [
+            {
+              "file": "README.md",
+              "title": "README.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "## 中文语义检索"
+            },
+            {
+              "file": "docs/implementation/status.md",
+              "title": "docs/implementation/status.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向"
+            },
+            {
+              "file": "docs/prototype/app.jsx",
+              "title": "docs/prototype/app.jsx",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "/article>\n              )}\n              {panelView === \"search\" && (\n                <div className=\"management\" data-s"
+            },
+            {
+              "file": "apps/web/src/App.vue",
+              "title": "apps/web/src/App.vue",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "te(revision.createdAt).toLocaleString(\"zh-CN\") }} ·\n          每个片段都有固定身份\n        </p>\n        <p class=\"reading-note\">\n "
+            },
+            {
+              "file": "docs/research/mempalace/README.md",
+              "title": "docs/research/mempalace/README.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "；MiniLM 英语训练 | 中文必须测试；同为384维也不能混用索引，需要 generation 重建 |\n| 会话摄入 | convo_miner 按问答 exchange/段落切片，超长再切 | 与 benchmark 拼整 sess"
+            },
+            {
+              "file": "apps/web/src/ReviewApp.vue",
+              "title": "apps/web/src/ReviewApp.vue",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "    <!-- search -->\n    <section v-else-if=\"view === 'search'\" class=\"page\">\n      <h1>搜索“{{ searchQuery }}”</h1>\n      "
+            },
+            {
+              "file": "docs/research/mempalace/README.md",
+              "title": "docs/research/mempalace/README.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "# MemPalace 调研：本地检索值得复用，但先验证片段身份和中文效果"
+            },
+            {
+              "file": "docs/2026-10-01/13-一手研究与选型取舍.md",
+              "title": "docs/2026-10-01/13-一手研究与选型取舍.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "- BGE-M3：已有研究候选，多语言且支持dense/sparse/multi-vector；首期只试dense，不因一个模型支持三种模式就维护三套检索栈\n- Qwen3-Embedding-0.6B：作者提供多语言/代码与instruc"
+            },
+            {
+              "file": "packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
+              "title": "packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
+              "routes": [
+                "short-keyword",
+                "knowledge",
+                "semantic"
+              ],
+              "snippet": "必须使用提供的完整 key。材料引用只选择真实 startLine/endLine，把 quote 置为空字符串；宿主会从固定材料中复制精确短引文，不要抄写整段代码。图片引用允许空 quote 和无行号。文章引用给真实 section ke"
+            },
+            {
+              "file": "docs/implementation/assistant-v3/processing-policy.md",
+              "title": "docs/implementation/assistant-v3/processing-policy.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "| 阶段 | 确定性处理 | AI处理 | 产物 | 是否联系用户 |\n| --- | --- | --- | --- | --- |\n| W0 收录 | 类型、编码、大小、重复event、hash、时间、权限、逐消息身份、结构/附件抓取 "
+            }
+          ]
+        },
+        {
+          "query": "如何保证本地模型不在启动时联网下载？",
+          "status": 200,
+          "results": [
+            {
+              "file": "AGENTS.md",
+              "title": "AGENTS.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "合中文的模型，通过 osdk CLI 声明、下载和锁定，运行时禁止隐式联网下载。当前 memory-zh 为 BGE-small-zh-v1.5；换模型必须更换向量身份，不能混用旧索引。\n- Personal-first, server o"
+            },
+            {
+              "file": "AGENTS.md",
+              "title": "AGENTS.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "Agent profile。启动只恢复知识，不自动调用生成式模型；启用的本地向量索引可后台补建。显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时"
+            },
+            {
+              "file": ".claude/skills/osdk-guide/reference/model/guide.md",
+              "title": ".claude/skills/osdk-guide/reference/model/guide.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模"
+            },
+            {
+              "file": ".agents/skills/osdk-guide/reference/model/guide.md",
+              "title": ".agents/skills/osdk-guide/reference/model/guide.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模"
+            },
+            {
+              "file": ".claude/skills/osdk-guide/reference/configuration/models.md",
+              "title": ".claude/skills/osdk-guide/reference/configuration/models.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任"
+            },
+            {
+              "file": ".agents/skills/osdk-guide/reference/configuration/models.md",
+              "title": ".agents/skills/osdk-guide/reference/configuration/models.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任"
+            },
+            {
+              "file": "docs/prototype/app.jsx",
+              "title": "docs/prototype/app.jsx",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "    </Btn>\n                        <Btn\n                          onClick={() => {\n                            setDecisi"
+            },
+            {
+              "file": "docs/research/integration-readiness.md",
+              "title": "docs/research/integration-readiness.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "- **官方文档明确支持本地 Ollama**：「本地 Ollama 和远程模型可以组合使用，例如由本地模型生成向量、远程模型生成回答」。来源：https://weknora.weixin.qq.com/docs/03-features/0"
+            },
+            {
+              "file": ".claude/skills/osdk-guide/reference/global-options/guide.md",
+              "title": ".claude/skills/osdk-guide/reference/global-options/guide.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK"
+            },
+            {
+              "file": ".agents/skills/osdk-guide/reference/global-options/guide.md",
+              "title": ".agents/skills/osdk-guide/reference/global-options/guide.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK"
+            }
+          ]
+        },
+        {
+          "query": "原始资料修改后怎样重新验证记忆？",
+          "status": 200,
+          "results": [
+            {
+              "file": "docs/2026-10-01/README.md",
+              "title": "docs/2026-10-01/README.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "明从“重试 3 次”改成“5 次” | 停用旧结论，重新分析新材料，独立复核后更新原记忆，保留旧历史 | 已用真实 GPT-5.6-sol 验证同 ID 从 3 次更新为 5 次；旧原文保留，不能只排队就算完成 |"
+            },
+            {
+              "file": "docs/prototype/app.jsx",
+              "title": "docs/prototype/app.jsx",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "       )}\n                  </div>\n                </div>\n              )}\n              {panelView === \"sources\" && (\n "
+            },
+            {
+              "file": "docs/2026-10-01/05-RAG与记忆检索.md",
+              "title": "docs/2026-10-01/05-RAG与记忆检索.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "历史片段可以被用户显式查看或用于历史回答；不应因“能读到”就作为当前有效依据。先前轮次selectedEvidence也必须重新验证状态，不能绕开新版召回过滤。"
+            },
+            {
+              "file": "apps/web/src/App.vue",
+              "title": "apps/web/src/App.vue",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "s=\"{ selected: revision?.sourceId === s.sourceId }\"\n        @click=\"\n          openRevision(s.id);\n          query = '';"
+            },
+            {
+              "file": "docs/implementation/batch2/plan.md",
+              "title": "docs/implementation/batch2/plan.md",
+              "routes": [
+                "knowledge",
+                "semantic"
+              ],
+              "snippet": "# 核心实施方案：从材料到可治理的记忆"
+            },
+            {
+              "file": "docs/implementation/batch2/plan.md",
+              "title": "docs/implementation/batch2/plan.md",
+              "routes": [
+                "knowledge",
+                "semantic"
+              ],
+              "snippet": "策略学习先 offline/shadow：固定任务集比较候选策略，再小范围启用/恢复。模型无权改 ACL、权限边界、预算上限或自身自动审批条件。此批最低验收是用户修正后相似输入正确体现修正，不能拿“新增记忆数”当学习收益。"
+            },
+            {
+              "file": "docs/prototype/data.js",
+              "title": "docs/prototype/data.js",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "验证回滚？\",\n    group: \"工程实践\",\n    kind: \"方法与依据\",\n    summary: \"从一条发布准入要求，回到一次发布问题应如何验证的完整证据链。\",\n    refs: [\"policy\", \"incid"
+            },
+            {
+              "file": "AGENTS.md",
+              "title": "AGENTS.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "d，抽查正文内联引用能回到固定原文。失败应保留旧历史、列明原因，不得手改模型产物冒充复核通过。上层章节受依赖变化影响也应重建，未覆盖部分明确标 stale。\n4. 语义检索相关修改运行 `osdk run retrieval:verify`"
+            },
+            {
+              "file": "docs/autonomous-learning.md",
+              "title": "docs/autonomous-learning.md",
+              "routes": [
+                "short-keyword",
+                "semantic"
+              ],
+              "snippet": "原始材料、任务经历、模型假设、验证后的记忆必须分开存。一次失败可记录为 Episode；只有结合纠正和实际结果，才有资格提炼为 Procedure。用户的“谢谢”是弱反馈，不等于外部任务已成功；工具返回 200 也不等于业务目标达到。"
+            },
+            {
+              "file": "docs/implementation/batch2/plan.md",
+              "title": "docs/implementation/batch2/plan.md",
+              "routes": [
+                "knowledge",
+                "semantic"
+              ],
+              "snippet": "本批先做 revision 级依赖：生成记忆时登记支持来源 revision 与 validity_epoch；source head 更新同事务增加 epoch 并入队 refresh_dependents。后台逐项判定是否仍支持；在完成"
+            }
+          ]
+        }
+      ],
+      "scope": "真实 SQLite、中文向量与知识召回，检查 HTTP 返回当前原始材料；未宣称排序全部相关。"
+    }
+  ],
+  "embedding": {
+    "alias": "memory-zh",
+    "repository": "Xenova/bge-small-zh-v1.5",
+    "revision": "75c43b069aac4d136ba6bc1122f995fedcfd2781",
+    "weight": "onnx/model_quantized.onnx",
+    "weightBytes": 24010842,
+    "weightSha256": "15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc",
+    "modelIdentity": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+    "dimensions": 512,
+    "backend": "Transformers.js 3.8.1 / ONNX CPU q8, CLS normalized",
+    "management": "osdk model use / sync / verify；模型文件不入 Git，运行时禁止隐式下载。",
+    "sources": [
+      "https://huggingface.co/BAAI/bge-small-zh-v1.5",
+      "https://huggingface.co/Xenova/bge-small-zh-v1.5"
+    ]
+  },
+  "knowledge": {
+    "transport": "traex acp serve",
+    "model": "gpt-5.6-sol",
+    "defaultEffort": "medium",
+    "targetedRepairEffort": "high",
+    "defaultConfigPreserved": true,
+    "pipeline": "原始材料分析 → 独立 verifier → 模块/主题组织；失败不发布。",
+    "selected": {
+      "targets": 83,
+      "reviewed": 82,
+      "pending": [
+        "omem:apps/server/src/assistant/runtime.ts"
+      ]
+    },
+    "coverageCounts": {
+      "pending": 233,
+      "not-applicable": 944,
+      "reviewed": 273,
+      "stale": 1
+    },
+    "currentArticles": 314,
+    "currentCitations": 1789,
+    "currentArticleLinks": 30,
+    "currentErrors": [],
+    "broadGeneration": {
+      "exitCode": 1,
+      "reviewed": 81,
+      "targets": 83,
+      "sourceFailures": 2,
+      "compositionFailures": [
+        "module:code"
+      ],
+      "note": "后续定向修订结果见 selected、latestFailures 和 hierarchy；不能把该轮退出码当成通过。"
+    },
+    "targetedGenerationExitCode": 1,
+    "remainingReviewFeedback": [
+      {
+        "at": "2026-09-30T20:26:48.973Z",
+        "documentKey": "omem:apps/server/src/assistant/runtime.ts",
+        "verdict": "needs_revision",
+        "issues": [
+          "`task-governance` 中“当前证据只要至少命中一个引用，就采用当前命中集合”不准确。[[c11]] 对应的 runtime.ts L821-L842 只用 `cited/contextCited` 判断显式引用是否至少有一个可解析；L847-L883 随后将提交用的 `allEvidence` 明确设为 `directEvidence`，解析出的当前或上一轮引用集合并未进入 proposal evidence。应改成“命中任一引用即可通过引用存在性校验”，不要声称该集合被采用为治理证据。",
+          "`task-governance` 中“运行时捕获 owner 当前原消息”遗漏了会改变行为的失败条件。runtime.ts L847-L881 将捕获放在 `try/catch` 中，捕获失败是非致命的；L883、L890-L941 显示此时仍会以空的 `directEvidence/allEvidence` 调用 `MemoryService.evaluate`。应改为“尝试捕获”，并说明捕获失败不会阻止治理提交。该事实主要位于 [[c11]] 的 L847-L883，而 [[c12]] 从 L890 才开始。"
+        ],
+        "questions": []
+      },
+      {
+        "at": "2026-09-30T20:14:42.109Z",
+        "documentKey": "module:code",
+        "verdict": "needs_revision",
+        "issues": [
+          "“定位、输入与快照语义”首段中“代码侧表保存仓库、快照、文件、符号、关系及理解结果，不把自身产物重新当作原始事实”未被紧邻的 [[c1]] 完整支持。c1 仅覆盖 apps/server/src/code/store.ts:1-16，能够证明代码图是 Capture 片段的派生投影且不自行保存文件正文，但没有说明理解结果，也没有说明派生产物不会重新摄取为原始证据。后一个约束实际见 apps/server/src/code/artifacts.ts:1-2；应增加指向该范围的引用，或把句子收窄为 c1 能直接支持的代码图边界。"
+        ],
+        "questions": []
+      }
+    ],
+    "latestFailures": [
+      {
+        "keys": [
+          "omem:apps/server/src/assistant/runtime.ts",
+          "omem:apps/server/tests/assistant-runtime.test.ts"
+        ],
+        "error": "Error: Semantic review still requests changes: omem:apps/server/src/assistant/runtime.ts"
+      }
+    ],
+    "latestCompositionFailures": [],
+    "hierarchy": [
+      {
+        "key": "module:web:part-1",
+        "current": false
+      },
+      {
+        "key": "topic:requirements",
+        "current": false
+      },
+      {
+        "key": "module:retrieval",
+        "current": true
+      },
+      {
+        "key": "module:learning",
+        "current": true
+      },
+      {
+        "key": "module:web",
+        "current": false
+      },
+      {
+        "key": "module:memory",
+        "current": true
+      },
+      {
+        "key": "module:ui:part-1",
+        "current": true
+      },
+      {
+        "key": "module:review",
+        "current": true
+      },
+      {
+        "key": "module:web:part-3",
+        "current": true
+      },
+      {
+        "key": "module:knowledge",
+        "current": true
+      },
+      {
+        "key": "module:agent-runtime:part-3",
+        "current": true
+      },
+      {
+        "key": "module:docs-implementation:part-1",
+        "current": true
+      },
+      {
+        "key": "topic:agent_governance",
+        "current": false
+      },
+      {
+        "key": "module:assistant",
+        "current": false
+      },
+      {
+        "key": "module:agent-runtime:part-5",
+        "current": true
+      },
+      {
+        "key": "module:docs-interaction-design.md",
+        "current": true
+      },
+      {
+        "key": "topic:architecture",
+        "current": false
+      },
+      {
+        "key": "topic:inputs_integrations",
+        "current": true
+      },
+      {
+        "key": "module:docs-prototype:part-2",
+        "current": true
+      },
+      {
+        "key": "topic:code_wiki",
+        "current": false
+      },
+      {
+        "key": "module:storage",
+        "current": true
+      },
+      {
+        "key": "module:other:part-2",
+        "current": false
+      },
+      {
+        "key": "module:ui:part-2",
+        "current": true
+      },
+      {
+        "key": "topic:evidence_knowledge",
+        "current": true
+      },
+      {
+        "key": "module:server-root",
+        "current": true
+      },
+      {
+        "key": "module:docs-design.md",
+        "current": true
+      },
+      {
+        "key": "module:lark",
+        "current": true
+      },
+      {
+        "key": "module:agent-runtime:part-7",
+        "current": false
+      },
+      {
+        "key": "module:scripts:part-2",
+        "current": false
+      },
+      {
+        "key": "module:other:part-3",
+        "current": false
+      },
+      {
+        "key": "module:other:part-4",
+        "current": false
+      },
+      {
+        "key": "module:conversation",
+        "current": true
+      },
+      {
+        "key": "module:docs-implementation:part-4",
+        "current": true
+      },
+      {
+        "key": "module:docs-repo-review",
+        "current": true
+      },
+      {
+        "key": "module:docs-research.md",
+        "current": true
+      },
+      {
+        "key": "module:web:part-2",
+        "current": false
+      },
+      {
+        "key": "module:project:part-2",
+        "current": false
+      },
+      {
+        "key": "module:agent-runtime:part-4",
+        "current": true
+      },
+      {
+        "key": "module:scripts",
+        "current": false
+      },
+      {
+        "key": "module:docs-prototype",
+        "current": true
+      },
+      {
+        "key": "module:agent-runtime:part-1",
+        "current": false
+      },
+      {
+        "key": "module:quality",
+        "current": true
+      },
+      {
+        "key": "module:other:part-5",
+        "current": false
+      },
+      {
+        "key": "module:docs-autonomous-learning.md",
+        "current": true
+      },
+      {
+        "key": "module:source-profile",
+        "current": true
+      },
+      {
+        "key": "module:docs-implementation:part-2",
+        "current": true
+      },
+      {
+        "key": "module:docs-validation.md",
+        "current": false
+      },
+      {
+        "key": "topic:overview",
+        "current": false
+      },
+      {
+        "key": "module:contracts",
+        "current": true
+      },
+      {
+        "key": "module:docs-reviews",
+        "current": false
+      },
+      {
+        "key": "topic:quality_validation",
+        "current": false
+      },
+      {
+        "key": "module:scripts:part-1",
+        "current": false
+      },
+      {
+        "key": "module:docs-contracts",
+        "current": true
+      },
+      {
+        "key": "module:project",
+        "current": false
+      },
+      {
+        "key": "module:docs-implementation",
+        "current": true
+      },
+      {
+        "key": "module:docs-implementation.md",
+        "current": true
+      },
+      {
+        "key": "module:docs-prototype:part-1",
+        "current": true
+      },
+      {
+        "key": "module:agent-runtime",
+        "current": false
+      },
+      {
+        "key": "module:ui",
+        "current": true
+      },
+      {
+        "key": "module:agent-runtime:part-2",
+        "current": false
+      },
+      {
+        "key": "module:code",
+        "current": false
+      },
+      {
+        "key": "module:other",
+        "current": false
+      },
+      {
+        "key": "module:project:part-1",
+        "current": false
+      },
+      {
+        "key": "module:project:part-3",
+        "current": false
+      },
+      {
+        "key": "topic:assistant_memory",
+        "current": false
+      },
+      {
+        "key": "module:agent-runtime:part-6",
+        "current": false
+      },
+      {
+        "key": "module:docs-decisions.md",
+        "current": true
+      },
+      {
+        "key": "module:other:part-1",
+        "current": false
+      },
+      {
+        "key": "topic:progress",
+        "current": false
+      },
+      {
+        "key": "module:jobs",
+        "current": true
+      },
+      {
+        "key": "module:docs-implementation:part-3",
+        "current": true
+      },
+      {
+        "key": "module:docs-research",
+        "current": true
+      },
+      {
+        "key": "module:docs-README.md",
+        "current": true
+      },
+      {
+        "key": "topic:background",
+        "current": false
+      },
+      {
+        "key": "module:inputs",
+        "current": true
+      }
+    ],
+    "history": "2026-09-29 的验收报告保留在 verification-2026-09-29.json；旧文章与旧结构理解历史保留，非当前正文不进入新的 wiki 索引。"
+  },
+  "remainingLimits": [
+    "全库仍有未复核或过期材料与上层章节；本次只维护目标功能涉及的材料，覆盖以本报告为准。",
+    "混合召回仍会混入历史方案、重复 skill 文档与原型代码，尚未接入语义 reranker；需要真实日常语料评测。",
+    "SQLite 精确向量扫描适用于当前个人规模，尚无大库 ANN 索引。",
+    "跨文件 type-aware calls 与跨 revision 符号身份续接未实现。",
+    "本轮未改 UI，因此未重复浏览器验收；旧报告的浏览器结果是历史记录。",
+    "无真实飞书收发验收；未安装系统监听器或外部通知集成。",
+    "当前是单用户 SQLite/shared-token，不宣称团队租户隔离。",
+    "英语 FSRS 卡片与复习页面、等待回复跟进、周期治理尚未在本轮实现。"
+  ],
+  "logs": [
+    {
+      "localPath": "/tmp/omem-check-evidence-window.log",
+      "sha256": "c5081613b5b2b4d9d26fcc830c764121e3cc1020561de2ebec8bdf20e7ea88d7"
+    },
+    {
+      "localPath": "/tmp/omem-live-retrieval.log",
+      "sha256": "8e520c9b8c87782c479d0865f52d4ccd74dcf7e89a130243b405c45bc267bd63"
+    },
+    {
+      "localPath": "/tmp/omem-live-window.log",
+      "sha256": "d3e1d22d413af3f844804949ad790087cb9177f04d0fc20d963fb1fc363f851f"
+    },
+    {
+      "localPath": "/tmp/omem-knowledge-regenerate.log",
+      "sha256": "8dfa87a0b167580781509e5083b656423bcce70dff87f694ebf2e06848d5b2c0"
+    },
+    {
+      "localPath": "/tmp/omem-knowledge-finish.log",
+      "sha256": "62ee93560590fcb87beb489b1facf395be19b18203781bd40564246d492b93eb"
+    },
+    {
+      "localPath": "/tmp/omem-knowledge-final.log",
+      "sha256": "90145eca0b4fd64caaef2dc9e4749079a840788a61bb8b6b84688c893248a758"
+    },
+    {
+      "localPath": "/tmp/omem-knowledge-targeted.log",
+      "sha256": "491830658b834760ff548892e58fc16585833a16c05527bf530fd00f2378ffef"
+    },
+    {
+      "localPath": "/tmp/omem-review-index-final.log",
+      "sha256": "e386f860dceb7f3456be347addde4deac73a1e7349ac2e7ec72309fde697a1b0"
+    },
+    {
+      "localPath": "/tmp/omem-review-search-final.jsonl",
+      "sha256": "01da9ba50e8d83c0e3dd75a82c8df65207e6908b081c2e8c13c8d3c44869a6eb"
+    }
+  ],
+  "publication": "实现和知识资产分别本地提交；未 push。运行数据库、模型权重和 ACP 临时工作目录不入 Git。"
+}

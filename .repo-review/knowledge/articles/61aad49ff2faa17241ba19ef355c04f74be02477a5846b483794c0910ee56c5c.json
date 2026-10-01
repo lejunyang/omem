@@ -2,71 +2,127 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/review/model-config.ts",
-    "title": "评审模型配置的显式加载边界",
-    "summary": "集中确定 repo-review 的模型配置来源、无模型默认值和错误报告策略，并把经过基础结构筛选的配置交给通用模型端口构造器。",
+    "title": "评审代码模型配置入口",
+    "summary": "该模块把仓库级显式配置转换为代码理解模型端口：支持环境变量覆盖与仓库默认路径，在未配置时安全返回无模型状态，对显式但损坏的配置立即报错，并将经过基础校验的传输参数交给通用模型适配层。",
     "category": "configuration",
     "sections": [
       {
-        "key": "source",
-        "title": "配置来源与默认行为",
-        "body": "评审模型只从显式环境变量路径或仓库内 `config/review-code-model.json` 读取；环境变量优先，仓库配置不存在时返回无配置。缺少配置被视为正常的“无模型”状态，因此启动本身不会被迫依赖生成式模型，也不会回退读取个人 profile 或秘密。[[c1]]"
+        "key": "purpose",
+        "title": "解决的问题与配置边界",
+        "body": "该文件为 repo-review 提供单一、可追踪的模型配置入口，避免隐式读取个人 Agent 配置或凭据。路径解析优先采用 `REVIEW_CODE_MODEL_CONFIG`，否则在 `REVIEW_REPO_ROOT` 或当前目录下寻找仓库内的 `config/review-code-model.json`；默认文件不存在时返回未配置，而不是启动模型。[[c1]] 这与通用代码理解端口的原则一致：模型默认不可用，只有宿主显式传入传输配置后才运行，适配层自身不读取环境变量或主动发起推理。[[c2]]"
       },
       {
-        "key": "validation",
-        "title": "解析、校验与端口构造",
-        "body": "加载器区分“没有配置”和“明确配置损坏”：前者返回 `transport: none`，后者在不可读、JSON 非法或 transport 不受支持时抛出 `CodeModelUnavailableError`，避免拼写错误被静默吞掉。允许的传输仅为 none、ACP、CLI、HTTP，其余预算、命令、模型、effort、超时和端点字段被转交给通用构造器。[[c2]]\n\n本文件只做来源选择和传输类型的浅层检查；模型与 effort 是否受实际后端支持，以及命令参数是否可执行，应由 `buildUnderstandingModelPort` 及其下游能力发现负责，当前材料没有展示该实现。[[c3]]"
+        "key": "loading",
+        "title": "加载、校验与失败语义",
+        "body": "加载流程先把缺失路径映射为 `transport: \"none\"`，使无模型成为正常状态。若路径已明确给出，则读取失败、JSON 语法错误或未知 transport 都抛出 `CodeModelUnavailableError`，从而区分“没有配置”和“配置损坏”。[[c3]] 当前基础校验只限定 transport 为 `none/acp/cli/http`，其余预算、命令、模型、effort、超时和 endpoint 字段按原值透传；不同 transport 所需字段的进一步检查属于下游端口构建逻辑，例如通用模块通过 `requireField` 要求非空字符串。[[c4]]"
+      },
+      {
+        "key": "integration",
+        "title": "与模型适配层的关系及限制",
+        "body": "`buildReviewCodeModel` 组合路径解析、配置加载与 `buildUnderstandingModelPort`，最终返回可运行端口或 `null`，因此本模块负责配置边界，不负责执行推理。[[c5]] 配置类型还承载生成预算，并约定 ACP、CLI 与 HTTP 的模型标识、命令、超时和端点；模型身份应来自显式配置或传输响应，不能把 seed 结果伪装成模型产物。[[c6]] 现有材料未展示端口构建函数后半段，因而无法确认各 transport 的全部运行时校验、effort 能力发现及错误映射细节。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "评审模型配置路径",
-        "reason": "支持环境变量覆盖、仓库配置回退以及缺失配置代表无模型的说明。",
+        "label": "评审模型配置路径规则",
+        "reason": "支持附近关于环境变量优先级、仓库默认配置路径以及缺失配置不启用模型的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/model-config.ts",
           "startLine": 1,
-          "endLine": 20
+          "endLine": 17
         },
         "quote": "/** Review uses the checked-in config/review-code-model.json as its actual\n * profile. REVIEW_CODE_MODEL_CONFIG explicitly overrides it; personal profiles\n * and secrets are never consulted. A missing project profile means no model.\n * Configuring a profile enables explicit generation, never inference on boot. */\nimpor"
       },
       {
         "key": "c2",
-        "label": "配置解析与传输白名单",
-        "reason": "支持损坏配置显式报错、允许的 transport 以及传递配置字段的说明。",
+        "label": "代码理解模型端口的显式启用原则",
+        "reason": "说明通用模型适配层默认不运行模型，也不会自行读取环境或凭据。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/** Configurable Code Understanding model port.\n *\n * Review mode has NO hard-wired model: by default `available` is false and only\n * curated seed projections are served. A model runs only when the host passes\n * an explicit `UnderstandingTransportConfig` into the review app. This module\n * performs NO inference, read"
+      },
+      {
+        "key": "c3",
+        "label": "配置加载与错误处理",
+        "reason": "支持无配置返回 none，以及读取失败、JSON 错误和不支持 transport 时显式报错的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/model-config.ts",
-          "startLine": 22,
-          "endLine": 62
+          "startLine": 20,
+          "endLine": 50
         },
-        "quote": "/** Load the explicit review model config. Defaults to no model; never throws on\n * missing config — only throws on an explicitly-broken file so the operator\n * notices a typo instead of silently running without a model. */\nexport function loadReviewCodeModelConfig(\n  path = reviewModelConfigPath(),\n): UnderstandingTra"
+        "quote": "const NONE: UnderstandingTransportConfig = { transport: \"none\" };\n\n/** Load the explicit review model config. Defaults to no model; never throws on\n * missing config — only throws on an explicitly-broken file so the operator\n * notices a typo instead of silently running without a model. */\nexport function loadReviewCod"
       },
       {
-        "key": "c3",
-        "label": "通用模型端口构造",
-        "reason": "表明本模块最终依赖通用 understanding model 端口构造器，能力校验细节不在本材料内。",
+        "key": "c4",
+        "label": "传输配置字段要求",
+        "reason": "支持配置字段由通用类型承载、部分必填字段在下游通过 requireField 进一步校验的论断。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 24,
+          "endLine": 58
+        },
+        "quote": "export type UnderstandingTransportConfig = Partial<GenerationBudget> & {\n  /** \"none\" = deliberately no model (default). acp/cli/http are opt-in. */\n  transport: \"none\" | \"acp\" | \"cli\" | \"http\";\n  /** acp/cli: executable to spawn. */\n  command?: string;\n  workspaceDir?: string;\n  /** acp/cli: extra argv. */\n  args?: st"
+      },
+      {
+        "key": "c5",
+        "label": "模型端口构建入口",
+        "reason": "说明该模块将加载后的配置交给通用构建器，并以端口或 null 作为结果。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
           "key": "omem:apps/server/src/review/model-config.ts",
-          "startLine": 65,
+          "startLine": 51,
           "endLine": 70
         },
-        "quote": "/** Build the port from the explicit config file (null = no model). */\nexport function buildReviewCodeModel(\n  path = reviewModelConfigPath(),\n): UnderstandingModelPort | null {\n  const config = loadReviewCodeModelConfig(path);\n  return buildUnderstandingModelPort(config);"
+        "quote": "  return {\n    transport,\n    maxInputTokens: object.maxInputTokens,\n    maxOutputTokens: object.maxOutputTokens,\n    contextReserveTokens: object.contextReserveTokens,\n    command: object.command,\n    args: object.args,\n    model: object.model,\n    effort: object.effort,\n    timeoutMs: object.timeoutMs,\n    endpoint: "
+      },
+      {
+        "key": "c6",
+        "label": "模型配置类型与来源约束",
+        "reason": "支持预算和各传输参数的字段范围，以及模型标识不得凭空生成的边界。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-model.ts",
+          "startLine": 11,
+          "endLine": 49
+        },
+        "quote": " * Provenance discipline: the model id returned to the strict schema comes from\n * the transport response (HTTP body) or the explicit config `model` string. We\n * never invent a model id, never claim seed output was model-produced, and never\n * mark a generated row as agent-verified.\n */\nimport type { GenerationBudget "
       }
     ],
     "questions": [
       {
-        "question": "`buildUnderstandingModelPort` 是否会逐项拒绝后端不支持的 model、effort 和预算组合？",
-        "why": "当前文件仅验证 transport 枚举并透传其余字段，无法据此确认运行时能力发现和拒绝策略。",
-        "nextStep": "检查通用模型端口实现及其真实 ACP/CLI 测试，确认错误发生在生成前且信息可操作。",
+        "question": "`buildUnderstandingModelPort` 对 ACP、CLI、HTTP 分支分别执行哪些必填字段、模型与 effort 能力校验？",
+        "why": "当前材料仅展示通用配置类型、`requireField` 和模型 profile 构造的开头，无法据此确认端口构建后半段的完整分支行为。",
+        "nextStep": "补充 `understanding-model.ts` 第 71 行之后的实现及相关测试，再核对每种 transport 的构建、拒绝条件和错误映射。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c3"
+          "c4",
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "该配置入口是否有测试覆盖环境变量优先级、损坏文件和未知 transport？",
+        "why": "提供的材料没有测试文件，无法确认这些边界是否通过真实断言验证，也无法判断预算字段或空字符串字段的未覆盖行为。",
+        "nextStep": "提供对应测试材料，检查成功路径、缺失配置、不可读文件、非法 JSON、未知 transport 及下游必填字段验证。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c3",
+          "c4"
         ]
       }
     ]
@@ -74,64 +130,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/materials.ts",
-      "digest": "773057b7f69c7cf11657959848869287bad08b46ba17840e7ed9ee62de902ba1"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/review/model-config.ts",
       "digest": "2971366b6ed274589aadc37ae83da3f1848c63877d28fb5ec3675d376356c9b6"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/review/store.ts",
-      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/review/sync.ts",
-      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/runs.ts",
-      "digest": "71feea2619b8263142f4285ed0a5a3e9798af8c7daf4881b6c1af41802566fa6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "1190566654a391d5ce2b4b2023a01e1567733c483bf92b26d2bf779fbb6fb01c"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:23:45.931Z",
+    "at": "2026-10-01T00:16:26.214Z",
     "trace": {
-      "runId": "d266968c-608a-4722-9eaa-c1a636732b17",
+      "runId": "824d2fea-440f-4f59-9165-2a013e000ad5",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "405937458b42135b45c1dffa365faa91b6f3b528d1cebdd33faf8ac06d050e7a",
-      "contextHash": "d1d7a1928c184a606de996e04dbb86e8b3a7751be9639420a7e1dd706b199402",
+      "promptHash": "6b94cef401d543af92e7853d4ffada5d859b5cc51de80db74a9fc6b7061d6e3e",
+      "contextHash": "93c4fcb6cd1c5d48e81dea0a12e6eb0def13d6fd713e4e5df24a74d2c258af88",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b67c9c3c242649a9f34405c1be0352bccacf3addeec733973de838c5d66856fd",
+      "fingerprint": "fe4ae269a2693f63eb075cd91efeb5062935e9af02b40775a85ebf95d0c5eb33",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -144,10 +165,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c4-f30b-7cd1-90b4-7bc89050ee50"
+        "01a0f4d1-8819-7181-a53b-f18999a55015"
       ],
       "usage": {
-        "used": 61646,
+        "used": 23524,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -156,10 +177,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129381,
-          "utf8Bytes": 131677,
-          "estimatedTokens": 43893,
-          "budgetedTokens": 54867,
+          "chars": 12958,
+          "utf8Bytes": 14726,
+          "estimatedTokens": 4909,
+          "budgetedTokens": 6137,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -168,17 +189,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:24:21.574Z",
+    "at": "2026-10-01T00:16:41.751Z",
     "trace": {
-      "runId": "bf28869a-42d4-45f6-9416-666075c899e6",
+      "runId": "f18879a9-2d2e-4548-bd08-a456b94f632d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2f422f1c639f379f3942ea6972352ac52ffd684ab44fb58b5cb6b8f2a0bbed43",
-      "contextHash": "4299ff84def1fbe0412cb2f468c092935c9741da846fc20dc267ae9c28c1f833",
+      "promptHash": "9c0f43ab4313c01a7949fd89b3581036b4b9d01c368d96137eefe56ca4eb6494",
+      "contextHash": "86892d42815c15de3e35e5b65c071e2759c27556cb2ac9d9af40e6970871945d",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6c3fdada9d4e194d56275ffcc1181e1df003d942c6ed528033d19598b11830a3",
+      "fingerprint": "800c5c8446e46bad2e6a61725a0805c2edd61a3afab45b7048ce3762c8bd68b7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -191,10 +212,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c5-e339-7563-ad8b-518fee027a54"
+        "01a0f4d1-e2cb-7881-bc67-ce2959b5d701"
       ],
       "usage": {
-        "used": 65111,
+        "used": 23651,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -203,10 +224,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 146875,
-          "utf8Bytes": 157129,
-          "estimatedTokens": 52377,
-          "budgetedTokens": 65472,
+          "chars": 15800,
+          "utf8Bytes": 18902,
+          "estimatedTokens": 6301,
+          "budgetedTokens": 7877,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

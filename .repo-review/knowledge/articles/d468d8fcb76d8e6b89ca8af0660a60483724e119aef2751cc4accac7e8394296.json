@@ -2,36 +2,62 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/lark-delivery.test.ts",
-    "title": "Lark 外部通知投递、重试与聚合验收测试",
-    "summary": "验证通知 outbox 跨进程恢复、模糊失败和认证失败处理、即时与聚合投递的可追踪性、定时边界，以及 binding 换代时不把旧通知误发至新目标。",
+    "title": "Lark 外部通知投递验收测试",
+    "summary": "该测试以临时 SQLite、加密密钥存储和可编程消息适配器验证 Lark 通知的持久化投递语义，覆盖进程重启、模糊失败重试、限流与鉴权失败、窗口及定时聚合、绑定替换和恢复通知安全；它验证的是应用、存储与投递模块的本地集成合同，并不等同于真实飞书网络联调。",
     "category": "tests",
     "sections": [
       {
-        "key": "durability-retry",
-        "title": "持久 outbox 与失败状态",
-        "body": "任务应用与 Lark delivery intent 持久化后，测试关闭并重开 Store，再由新 worker 投递；任务没有被重新应用，原 intent 转为 delivered 并记录消息 ID，说明恢复依赖持久 outbox。[[c1]] 模糊失败在一小时窗口内复用同一 UUID 重试，超窗的 sending 租约转为 unknown；限流错误遵守指定等待时间，随后出现认证失败时，intent 失败、连接失效、目标被禁用，错误文本也会脱敏。[[c2]]"
+        "key": "purpose_fixture",
+        "title": "问题与测试夹具",
+        "body": "这组验收测试解决“业务变更已落库，但外部通知是否可靠、可追踪且不会错投”的问题。夹具为每个用例创建临时 `Store` 与独立加密密钥目录，并在结束后关闭数据库、删除目录；连接、版本、绑定和通知目标则直接写入 SQLite，以构造明确的投递前置状态。[[c1]]\n\n`FakeMessages` 记录 send/update 参数，并可按顺序返回消息 ID 或抛出错误，因此测试能够精确控制模糊响应、限流和鉴权失败；这也意味着覆盖的是 `LarkMessageAdapter` 合同及 worker 状态机，而非真实 SDK、网络或飞书租户行为。[[c2]]"
       },
       {
-        "key": "aggregation",
-        "title": "即时、窗口与定时聚合",
-        "body": "即时模式为每个变更保存独立 intent、change 映射、摘要和 provider UUID。[[c3]] 窗口模式到期后把五项变更合成一个 active pending 摘要，按原顺序保留全部 change 映射；其余四条原 intent 标记为 cancelled，并以 `superseded_by` 指向合并后的 active intent，最终只发送一次。[[c4]] 这取代了“五条原 intent 全部取消”的旧结论，因为其中一条会成为合并后的活动行。定时模式则按 Asia/Shanghai 的下一次本地 09:00 计算触发点，到期后同样聚合成一条可投递摘要。[[c5]]"
+        "key": "durability_retry",
+        "title": "持久化、重试与失败隔离",
+        "body": "重启用例先应用任务并确认 outbox 为 pending，再关闭、重开同一数据目录，只运行投递 worker；断言任务仍只有一条、消息仅发送一次，intent 最终保存 delivered 与平台 message ID，证明恢复投递不需要重放业务应用。[[c3]]\n\n模糊发送失败在一小时内进入 retry_wait，重试复用同一个 provider UUID；超过窗口的遗留 sending intent 被标为 unknown，且不再次发送。[[c4]] 限流错误遵循 retry-after 设置下次尝试时间；随后鉴权失败会令 intent 失败、连接失败、目标禁用，并断言持久化错误不泄漏 client secret。[[c5]]"
       },
       {
-        "key": "binding-boundary",
-        "title": "换绑边界与限制",
-        "body": "旧 binding 被 supersede、旧目标禁用后，历史 intent 会取消，而不会被转发到替代聊天；此后新产生的恢复通知才绑定新版本，且卡片负载不含 localhost 或回环地址。[[c6]] 这些用例证明本地数据库中的路由、聚合和状态机行为，但 FakeMessages 不模拟供应商按 UUID 去重，也未覆盖真实限流头、真实认证撤销、采用夏令时的时区边界或批处理并发竞争。"
+        "key": "aggregation_traceability",
+        "title": "聚合策略与逐变更追踪",
+        "body": "即时模式为五次变更建立五个独立 intent、五个唯一 provider UUID 和五条 change 映射，并要求 payload digest 为固定长度，从而保持每次变化可追踪。[[c6]] 窗口模式最初存在五个待处理 intent；到期合并后只保留一个关联全部五项 change 的摘要 intent，其余四个 intent 被标记为 cancelled，且 `superseded_by` 指向该活动项，最终仅调用一次发送。测试只保证映射集合完整，不保证毫秒时间戳相同时的插入顺序。[[c7]] 这替代了“新 intent 关联全部 change、全部旧 intent 均被取消”的过度概括：材料既未证明活动项一定是新建记录，也明确只断言四项被取消。\n\n定时模式还验证上海时区 09:00 的下一边界：边界前安排当天发送，错过后安排次日；到期聚合后生成一个 instant 摘要，并保留所有 change 映射。[[c8]]"
       },
       {
-        "key": "scope",
-        "title": "测试结论的适用范围",
-        "body": "该文件把持久化恢复、失败分类、聚合策略和换绑隔离串成一组验收场景：恢复测试保证既有业务记录不被重复应用，聚合测试保证多个 change 仍可追踪，换绑测试则阻止旧通知越过目标边界。[[c1]] 不过，相同 UUID 的两次发送只是在替身调用参数层面相等，不能据此断言真实飞书或 Lark 服务端必然只创建一条消息。[[c2]]"
+        "key": "binding_boundary",
+        "title": "绑定边界、模块关系与未覆盖行为",
+        "body": "绑定替换场景先让旧绑定 superseded、旧目标 disabled，再建立新绑定。worker 不会把旧 intent 转发到新会话，而是取消旧目标上的待投递项；随后 `MemoryService.restoreMemory` 产生的新变更会使用新绑定，且卡片负载不得包含 localhost 或 127.0.0.1。[[c9]]\n\n现有断言未覆盖真实 Lark SDK 请求、update 路径、并发 worker 的租约竞争、数据库写入中途崩溃，以及夏令时地区的定时边界；测试通过可控适配器顺序驱动发送，因此它是本地集成验收，不应被解释为端到端线上可用性证明。[[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "进程重启后的 outbox 恢复",
-        "reason": "支持不重放业务应用、从持久 intent 恢复投递并记录 delivered 状态的论断。",
+        "label": "临时存储与连接种子夹具",
+        "reason": "支持测试创建并清理临时存储资源，以及构造独立 Store、密钥目录和连接前置状态的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 21,
+          "endLine": 138
+        },
+        "quote": "type Resource = {\n  directory: string;\n  store: Store;\n  secrets: EncryptedSecretStore;\n  key: Buffer;\n};\n\nconst resources: Resource[] = [];\nafterEach(() => {\n  for (const resource of resources.splice(0)) {\n    try {\n      resource.store.close();\n    } catch {\n      // A restart test may already have closed the previou"
+      },
+      {
+        "key": "c2",
+        "label": "可编程消息适配器",
+        "reason": "说明测试替身如何记录调用并注入发送或更新结果，也界定其不是真实网络联调。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 40,
+          "endLine": 60
+        },
+        "quote": "class FakeMessages implements LarkMessageAdapter {\n  readonly sends: Parameters<LarkMessageAdapter[\"send\"]>[0][] = [];\n  readonly updates: Parameters<LarkMessageAdapter[\"update\"]>[0][] = [];\n  sendResults: Array<{ messageId: string } | Error> = [];\n  updateResults: Array<void | Error> = [];\n\n  async send(input: Paramet"
+      },
+      {
+        "key": "c3",
+        "label": "进程重启后的 outbox 投递",
+        "reason": "支持重开数据库后无需重放应用即可完成投递，并保持任务唯一和记录消息 ID 的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -42,22 +68,35 @@
         "quote": "describe(\"B2-06 Lark delivery acceptance\", () => {\n  it(\"A-N01 persists the outbox across a process restart without replaying the application\", async () => {\n    const resource = setup();\n    const receipt = applyTask(resource.store, \"1\");\n    const intentBefore = larkIntent(resource.store, receipt.changeId);\n    expec"
       },
       {
-        "key": "c2",
-        "label": "模糊失败、限流与认证失败",
-        "reason": "支持相同 UUID 重试、一小时后转 unknown、限流退避、认证失败禁用连接及错误脱敏，同时界定替身测试不能证明供应商幂等。",
+        "key": "c4",
+        "label": "模糊发送的 UUID 重用与超时终止",
+        "reason": "支持一小时内复用 UUID 重试、超时后转为 unknown 且不继续发送的状态合同。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-delivery.test.ts",
           "startLine": 212,
-          "endLine": 298
+          "endLine": 258
         },
         "quote": "  it(\"A-N02 retries ambiguous sends with one uuid inside one hour and becomes unknown after it\", async () => {\n    const resource = setup();\n    applyTask(resource.store, \"2\");\n    const messages = new FakeMessages();\n    messages.sendResults.push(\n      new LarkDeliveryError(\"response lost\", \"ambiguous\"),\n      { mess"
       },
       {
-        "key": "c3",
-        "label": "即时通知逐项映射",
-        "reason": "支持每个即时变更拥有独立 change 映射、摘要和 provider UUID。",
+        "key": "c5",
+        "label": "限流与鉴权失败处理",
+        "reason": "支持 retry-after、连接失效、目标禁用以及错误信息脱敏的断言。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 260,
+          "endLine": 298
+        },
+        "quote": "  it(\"A-N03 bounds rate-limit retries and disables a connection on auth failure\", async () => {\n    const resource = setup();\n    applyTask(resource.store, \"4\");\n    const messages = new FakeMessages();\n    messages.sendResults.push(\n      new LarkDeliveryError(\"slow down\", \"rate_limit\", 5_000),\n      new LarkDeliveryE"
+      },
+      {
+        "key": "c6",
+        "label": "即时通知逐变更映射",
+        "reason": "支持每个即时变更具有独立 intent、UUID、摘要和映射记录的追踪性说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -68,71 +107,78 @@
         "quote": "  it(\"A-N04 keeps a distinct traceable delivery mapping for every immediate change\", () => {\n    const resource = setup();\n    const receipts = Array.from({ length: 5 }, (_, index) =>\n      applyTask(resource.store, `batch-${index}`),\n    );\n    const rows = resource.store.db\n      .prepare(\n        `SELECT change_id,p"
       },
       {
-        "key": "c4",
-        "label": "短窗口通知聚合",
-        "reason": "支持五项变更合并为一个 active pending intent、顺序保留全部映射，并明确只有其余四条原 intent 被取消且指向活动行。",
+        "key": "c7",
+        "label": "窗口通知聚合",
+        "reason": "支持合并前存在五个 pending intent，合并后保留一个关联全部 change 的活动摘要、四个取消项指向该活动项，并仅发送一次；同时限定不能断言活动项必为新建或全部原 intent 均被取消。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-delivery.test.ts",
           "startLine": 330,
-          "endLine": 411
+          "endLine": 413
         },
         "quote": "  it(\"A-N04 merges a short window while preserving every change mapping\", async () => {\n    const resource = setup(\"oc_window\", {\n      mode: \"window\",\n      windowMs: 60_000,\n      scheduleLocalTime: \"09:00\",\n      timezone: \"Asia/Shanghai\",\n    });\n    const receipts = Array.from({ length: 5 }, (_, index) =>\n      ap"
       },
       {
-        "key": "c5",
+        "key": "c8",
         "label": "本地时间定时摘要",
-        "reason": "支持 Asia/Shanghai 下一个 09:00 边界的计算以及到期后的五项聚合。",
+        "reason": "支持上海时区下一投递边界以及到期后聚合全部变更的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-delivery.test.ts",
-          "startLine": 413,
-          "endLine": 467
+          "startLine": 415,
+          "endLine": 469
         },
         "quote": "  it(\"A-N04 schedules the next local digest boundary\", () => {\n    const policy: ExternalNotificationPolicy = {\n      mode: \"scheduled\",\n      windowMs: 300_000,\n      scheduleLocalTime: \"09:00\",\n      timezone: \"Asia/Shanghai\",\n    };\n    expect(\n      externalDeliveryTiming(\"2026-09-27T00:30:00.000Z\", policy).after,\n"
       },
       {
-        "key": "c6",
-        "label": "旧绑定取消与新通知换绑",
-        "reason": "支持旧 intent 不转发至替代聊天、新恢复通知绑定新版本，以及负载排除本机地址。",
+        "key": "c9",
+        "label": "绑定替换与恢复通知",
+        "reason": "支持旧 intent 不跨绑定转发、恢复操作使用新绑定及卡片排除本机地址的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/lark-delivery.test.ts",
-          "startLine": 469,
-          "endLine": 562
+          "startLine": 471,
+          "endLine": 564
         },
         "quote": "  it(\"A-N05 never forwards an old intent to a replacement binding and restoration cards contain no localhost URL\", async () => {\n    const resource = setup(\"oc_old\");\n    const first = resource.store.applications.applyMemory({\n      metadata: {\n        workspaceId: \"personal\",\n        applicationId: \"memory-v1\",\n      "
+      },
+      {
+        "key": "c10",
+        "label": "消息替身暴露的测试边界",
+        "reason": "测试仅实例化可控适配器并记录 send/update，支持真实 SDK、并发和崩溃行为尚未由本文件验证的边界判断。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/lark-delivery.test.ts",
+          "startLine": 40,
+          "endLine": 59
+        },
+        "quote": "class FakeMessages implements LarkMessageAdapter {\n  readonly sends: Parameters<LarkMessageAdapter[\"send\"]>[0][] = [];\n  readonly updates: Parameters<LarkMessageAdapter[\"update\"]>[0][] = [];\n  sendResults: Array<{ messageId: string } | Error> = [];\n  updateResults: Array<void | Error> = [];\n\n  async send(input: Paramet"
       }
     ],
     "questions": [
       {
-        "question": "同一 UUID 在真实飞书或 Lark 接口中重试时，供应商是否保证只创建一条消息？",
-        "why": "测试只断言 FakeMessages 两次调用收到相同 UUID；替身每次成功调用都会返回消息 ID，没有模拟或证明供应商侧幂等语义。",
-        "nextStep": "在隔离测试租户中制造响应丢失并以同一 UUID 重试，记录供应商实际创建的消息数量和接口文档依据。",
+        "question": "真实飞书或 Lark 环境中，发送 UUID 的幂等性、限流响应和鉴权失效是否与本地适配器假设一致？",
+        "why": "当前测试通过 FakeMessages 注入结果，只验证内部状态转换；真实 SDK 的错误形态、网络超时和服务端去重没有在材料中执行。",
+        "nextStep": "增加使用隔离测试租户的 live check，记录真实错误分类、重试间隔与重复发送结果，并与当前适配器合同对照。",
         "blocking": false,
         "citationKeys": [
-          "c2"
-        ]
-      },
-      {
-        "question": "定时摘要在采用夏令时的时区跨越切换日时如何选择下一次本地边界？",
-        "why": "材料只覆盖 Asia/Shanghai 的普通日期，没有覆盖不存在或重复出现的本地时间。",
-        "nextStep": "增加含夏令时开始与结束日期的 IANA 时区用例，明确重复时间和跳过时间的产品规则。",
-        "blocking": false,
-        "citationKeys": [
+          "c2",
+          "c4",
           "c5"
         ]
       },
       {
-        "question": "定时摘要在采用夏令时的时区跨越切换日时如何确定下一次本地边界？",
-        "why": "现有材料只覆盖 Asia/Shanghai 的普通日期，未覆盖不存在或重复出现的本地时间；草稿已将此项明确保留为未决限制。",
-        "nextStep": "为具有夏令时的 IANA 时区增加切换日前后用例，并明确跳时和重复时间对应的产品规则。",
+        "question": "多个投递 worker 同时竞争同一 intent 时，租约是否能确保至多一个实际发送？",
+        "why": "用例均由单个 worker 顺序调用 processOne，材料没有并发竞争或租约续期断言。",
+        "nextStep": "补充两个独立 worker、数据库连接并发处理同一 pending intent 的行为测试，断言只有一个 send 调用且最终状态一致。",
         "blocking": false,
         "citationKeys": [
-          "c5"
+          "c3",
+          "c10"
         ]
       }
     ]
@@ -140,69 +186,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
-      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/lark-delivery.test.ts",
-      "digest": "77aa882e9476a521c31857548c2d3cb7631b859867d375aa56c4c08157938ca9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/lark-onboarding.test.ts",
-      "digest": "53ebb0531146d960d3e29d618eaaafff15e624746100a1cbc168f3bd5fef1488"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-materials.test.ts",
-      "digest": "c7aac5333878fa569148d29e0eda92d9830006444c5e89e96351205f2a88d348"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-migration.test.ts",
-      "digest": "aac9e5aded456d6287dfceaf8b674320541bf0aa19f1636e28c5135649096fee"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-relations.test.ts",
-      "digest": "712eb29abc8429b4ff8597d6054b37333d4d91d701542465465e2fa5cf449602"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "8b19a769dc0d2f0b04a8f3dbe09d7a457f5cd65a62af25fe08d0669e24febe50"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+      "digest": "1cc978e96eb0dfa4ab8a25960ac8005469c8f019f81abcd46cf49e64c9473c45"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
+      "key": "omem:apps/server/src/storage/repository.ts",
+      "digest": "d936dd65467183a792c33b8f8a16638d63377513145cfca1bcb31117d2b7df53"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:04:38.827Z",
+    "at": "2026-10-01T00:30:27.101Z",
     "trace": {
-      "runId": "0cb66ccf-3498-4e8d-9e1d-5ec01c2b938c",
+      "runId": "3a3f9e9f-d92e-490f-8735-5e3102c19bde",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "458b1372cf4aaf794e1ea461321d92120f1d0643f59845a6b3b0e65dd3412ece",
-      "contextHash": "f6358f8c63021d252d56073f4dc4b3502389a2beb2616997bc5009dbbfbc4731",
+      "promptHash": "af6c764b570664aa2de84af96ed4ce64aee83b9695c7d50f1151c0e96cbc1b79",
+      "contextHash": "2b2574f16232305e47e8e5c7293039f1e547ba65f02e7c03e797c43ad2b3f481",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2d3c1360a6445692399d1fcca6a425c6244fb95be92ffc0c390b52ef90cd3fd7",
+      "fingerprint": "50fc47be0e83958dad8a4c35fd7c5d86cb3846fb19098149c59b101900105b42",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -215,11 +236,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-b61c-70a3-bd01-0535eb5babd5"
+        "01a0f4de-4cc1-75e3-aac2-51f6a5da8847"
       ],
       "usage": {
-        "used": 52138,
-        "size": 760000,
+        "used": 36414,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -227,10 +248,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 127088,
-          "utf8Bytes": 131248,
-          "estimatedTokens": 43750,
-          "budgetedTokens": 54688,
+          "chars": 50287,
+          "utf8Bytes": 55701,
+          "estimatedTokens": 18567,
+          "budgetedTokens": 23209,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -239,17 +260,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:04:46.950Z",
+    "at": "2026-10-01T00:30:44.077Z",
     "trace": {
-      "runId": "1e4dd24a-8c3d-44fa-8045-eacdf4fcc8c2",
+      "runId": "324e24ad-5885-425a-90a3-9edd602a56ca",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ab97d3a84ae0002b062b0a761311c5804676af0eba40c66d3f44e25afabeaa94",
-      "contextHash": "830f83388dfba87f27c36dd8b53ff5be78bfe06412ff7ebc8ad11061b4db1b42",
+      "promptHash": "fcc4f1c4097785a779bf25c40e5c00174111c114e7440b0c7a110c41e2761fc6",
+      "contextHash": "ae9c7fcbb2101be26133d2f35b5a5bee042cab226eec979560338a4a1799ebcc",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0df3bf9941db8d8800c3d2f737af4123a1853d9c821aa42b8c7b6b96652b3536",
+      "fingerprint": "4d33c2c9caaa85a74a7bca4daf0f768bce54b0826692a71b4f10d74c2376dc0a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -262,11 +283,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec4-f10f-76c1-b078-70035fa69fe7"
+        "01a0f4de-b784-7062-aabd-236f3e916d8e"
       ],
       "usage": {
-        "used": 50172,
-        "size": 760000,
+        "used": 33666,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -274,10 +295,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124403,
-          "utf8Bytes": 127767,
-          "estimatedTokens": 42589,
-          "budgetedTokens": 53237,
+          "chars": 47135,
+          "utf8Bytes": 51375,
+          "estimatedTokens": 17125,
+          "budgetedTokens": 21407,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
