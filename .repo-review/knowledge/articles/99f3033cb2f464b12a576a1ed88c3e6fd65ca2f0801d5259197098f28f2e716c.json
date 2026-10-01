@@ -2,71 +2,45 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/ChatPane.vue",
-    "title": "基于固定证据的 Agent 问答面板",
-    "summary": "ChatPane.vue 围绕当前固定片段启动异步 Agent run，通过轮询展示文本及错误事件，支持取消、模型与 effort 透传，并在完成后通知父组件刷新持久化结果。",
+    "title": "基于固定证据的问答面板",
+    "summary": "ChatPane.vue 提供围绕当前记忆片段或引用路径发起 Agent 问答的界面：提交运行参数，轮询异步结果，聚合文本事件，并处理取消、错误、自动滚动与证据回查。它明确区分“材料可回查”和“回答主张已核验”，后者目前尚未实现。",
     "category": "implementation",
     "sections": [
       {
-        "key": "request-scope",
-        "title": "提问前提与上下文范围",
-        "body": "面板要求存在 focus、问题非空且当前不忙，因而每次运行至少绑定一个固定片段。请求 `/runs` 时提交问题、profileId 和 focusId；model、effort 仅在非空时透传。范围可选“当前片段”或“当前引用路径”，后者把父组件传入的 pathIds 放入 contextIds；组件本身不解析路径，也不验证这些 id 的含义。[[c1]]"
+        "key": "purpose-and-input",
+        "title": "作用与输入边界",
+        "body": "该组件承接“从正在阅读的记忆证据继续提问”的交互。父组件提供固定片段、Agent profile、模型、effort 和可选的引用路径片段 ID；组件向外发出打开证据及回答已保存事件。[[c1]]\n\n界面展示当前固定证据，并允许把回答范围切换为当前片段或当前引用路径。没有焦点片段时，文本框和发送按钮都会禁用；问题为空时也不能发送，从而避免启动缺少明确依据或有效问题的运行。[[c2]]"
       },
       {
         "key": "run-lifecycle",
-        "title": "运行生命周期",
-        "body": "服务端返回 running run 后，组件先建立空事件列表，再约每 450 毫秒读取 `/runs/{id}`。运行中继续调度，结束时解除 busy；只有 done 状态触发 `saved`，交由父组件刷新持久结果。轮询失败会显示错误并停止忙碌状态，卸载则设置 disposed 并清除定时器，防止离开页面后更新组件。取消操作只请求服务端，最终状态仍依赖后续轮询返回。[[c2]]"
+        "title": "异步运行流程",
+        "body": "提交时会拒绝空问题、缺少焦点或已有运行中的请求，再将问题、profile、焦点 ID、可选模型与 effort，以及按范围选出的 `contextIds` 发送到 `/runs`。创建成功后初始化空事件列表，并每 450 毫秒读取 `/runs/{id}`；运行离开 `running` 后解除忙碌状态，`done` 时通知父组件刷新已保存内容。[[c3]]\n\n回答由全部 `text` 事件按顺序拼接；事件数变化后等待 DOM 更新并滚动到底部。取消按钮只调用 cancel 端点。卸载时组件会设置终止标志并清除定时器，且成功返回的轮询结果会先检查该标志，因此不会在卸载后更新 `run`；但轮询失败的 `catch` 路径没有同样检查，迟到失败仍可能写入错误和忙碌状态。[[c4]]"
       },
       {
-        "key": "rendering-and-limits",
-        "title": "输出呈现与可信边界",
-        "body": "回答由所有 text 事件按顺序直接拼接，error 与 permission 事件另行显示；事件增加后自动滚动到底部。[[c3]] 完成时可以重新打开本次 focus 证据，但界面明确提示系统尚未自动核验回答中每个主张的支持度。因此引用按钮证明的是“运行获得了哪些材料”，并不证明生成文本逐句成立。该组件也未呈现多轮消息历史、结构化引用映射或客户端超时策略。[[c4]]"
+        "key": "limits-and-relations",
+        "title": "限制及模块关系",
+        "body": "组件依赖共享的 `Run` 与 `Fragment` 类型；其中 `Run` 只规定运行状态、事件和可选回答 ID，服务端保存、取消状态转换及事件生成不在本文件中。[[c5]] 证据引用被点击时也只是把焦点片段 ID 交给父组件处理。\n\n完成态提供“查看本次提供的依据”，同时明确提示系统尚未自动核验回答中每个主张的支持度。因此，这里实现的是固定输入证据的回查入口，并不等同于逐主张引用或语义验证。[[c6]] 现有材料也无法确定取消竞态、路径上下文预算及网络异常后的完整服务端行为。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "运行创建参数与上下文选择",
-        "reason": "支持提问门槛、固定焦点以及可选路径上下文的请求构造。",
-        "relation": "implements",
+        "label": "组件输入与对外事件",
+        "reason": "支持父组件传入焦点片段、运行配置和路径片段，并由组件发出打开证据及保存完成事件的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ChatPane.vue",
-          "startLine": 49,
-          "endLine": 67
+          "startLine": 5,
+          "endLine": 17
         },
-        "quote": "async function ask() {\n  if (!draft.value.trim() || !props.focus || busy.value) return;\n  error.value = \"\";\n  busy.value = true;\n  try {\n    const started = await api<{ id: string; state: \"running\" }>(\"/runs\", {\n      question: draft.value,\n      profileId: props.profileId,\n      focusId: props.focus.id,\n      ...(prop"
+        "quote": "const props = defineProps<{\n  focus: Fragment | null;\n  profileId: string;\n  model: string;\n  effort: string;\n  pathIds?: string[];\n}>();\nconst emit = defineEmits<{ open: [id: string]; saved: [] }>();\nconst draft = ref(\"\");\nconst scope = ref(\"focus\");\nconst run = ref<Run | null>(null);\nconst error = ref(\"\");\nconst busy"
       },
       {
         "key": "c2",
-        "label": "运行轮询、完成通知与取消",
-        "reason": "支持异步 run 的轮询状态机、saved 事件和卸载清理边界。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ChatPane.vue",
-          "startLine": 26,
-          "endLine": 79
-        },
-        "quote": "let timer: ReturnType<typeof setTimeout> | undefined;\nlet disposed = false;\nconst answer = () =>\n  run.value?.events\n    .filter((e) => e.type === \"text\")\n    .map((e) => e.text)\n    .join(\"\") || \"\";\nasync function poll(id: string) {\n  try {\n    const result = await api<Run>(\"/runs/\" + id);\n    if (disposed) return;\n  "
-      },
-      {
-        "key": "c3",
-        "label": "文本事件拼接与自动滚动",
-        "reason": "支持回答的客户端聚合规则及事件变化后的滚动行为。",
+        "label": "固定证据、回答范围与禁用条件",
+        "reason": "支持界面展示固定证据、选择回答范围，以及无焦点或问题为空时禁用输入和发送的论断。",
         "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ChatPane.vue",
-          "startLine": 19,
-          "endLine": 32
-        },
-        "quote": "watch(\n  () => run.value?.events.length,\n  async () => {\n    await nextTick();\n    scroll.value?.scrollTo({ top: scroll.value.scrollHeight });\n  },\n);\nlet timer: ReturnType<typeof setTimeout> | undefined;\nlet disposed = false;\nconst answer = () =>\n  run.value?.events\n    .filter((e) => e.type === \"text\")\n    .map((e) ="
-      },
-      {
-        "key": "c4",
-        "label": "完成状态、依据入口与核验提示",
-        "reason": "支持界面区分运行状态，并明确回答主张尚未被自动逐项核验。",
-        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ChatPane.vue",
@@ -74,26 +48,84 @@
           "endLine": 145
         },
         "quote": "    <div ref=\"scroll\" class=\"chat-content\">\n      <div v-if=\"focus\" class=\"focus-box\">\n        <small>本次固定证据</small>\n        <p>{{ focus.text }}</p>\n        <OmBadge>片段 {{ focus.ordinal + 1 }}</OmBadge>\n      </div>\n      <p v-else class=\"muted\">先打开材料，选择一个片段作为问答依据。</p>\n      <p v-if=\"error\" class=\"error\" role=\"alert\">{"
+      },
+      {
+        "key": "c3",
+        "label": "运行创建与轮询状态机",
+        "reason": "支持提交参数、初始化运行、按 450 毫秒轮询状态以及完成后通知父组件的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChatPane.vue",
+          "startLine": 33,
+          "endLine": 68
+        },
+        "quote": "async function poll(id: string) {\n  try {\n    const result = await api<Run>(\"/runs/\" + id);\n    if (disposed) return;\n    run.value = result;\n    if (run.value.state === \"running\")\n      timer = setTimeout(() => void poll(id), 450);\n    else {\n      busy.value = false;\n      if (run.value.state === \"done\") emit(\"saved\""
+      },
+      {
+        "key": "c4",
+        "label": "事件聚合、取消与卸载处理",
+        "reason": "支持文本事件聚合、自动滚动、取消请求和卸载清理，并揭示成功响应与失败路径对 disposed 检查不一致的限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChatPane.vue",
+          "startLine": 19,
+          "endLine": 79
+        },
+        "quote": "watch(\n  () => run.value?.events.length,\n  async () => {\n    await nextTick();\n    scroll.value?.scrollTo({ top: scroll.value.scrollHeight });\n  },\n);\nlet timer: ReturnType<typeof setTimeout> | undefined;\nlet disposed = false;\nconst answer = () =>\n  run.value?.events\n    .filter((e) => e.type === \"text\")\n    .map((e) ="
+      },
+      {
+        "key": "c5",
+        "label": "前端运行数据合同",
+        "reason": "说明 ChatPane 依赖的 Run 类型只包含状态、事件和可选回答标识，服务端运行细节不属于该组件。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 58,
+          "endLine": 63
+        },
+        "quote": "export type Run = {\n  id: string;\n  state: \"running\" | \"done\" | \"error\" | \"cancelled\";\n  events: RunEvent[];\n  answerId?: string;\n};"
+      },
+      {
+        "key": "c6",
+        "label": "证据回查与核验限制",
+        "reason": "支持完成后可打开本次固定依据，同时逐主张支持度尚未自动核验这一明确限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ChatPane.vue",
+          "startLine": 115,
+          "endLine": 121
+        },
+        "quote": "        <OmCitation\n          v-if=\"run.state === 'done' && focus\"\n          label=\"查看本次提供的依据\"\n          @open=\"emit('open', focus.id)\"\n        /><small v-if=\"run.state === 'done'\"\n          >材料可回查；系统尚未自动核验回答中每个主张的支持度。</small\n        >"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "取消请求成功后，运行是否保证迅速进入 cancelled 状态，并由现有轮询负责取得该状态？",
+        "why": "取消函数只调用端点，未主动停止轮询或修改本地状态；最终状态及竞态处理取决于未提供的服务端实现。",
+        "nextStep": "检查 `/runs/{id}/cancel` 与 `/runs/{id}` 的服务端实现，并补充覆盖取消期间竞态和迟到 done 响应的行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "引用路径模式下的 contextIds 是否需要在前端去重、限制长度或排除 focusId？",
+        "why": "组件会原样提交父组件提供的 pathIds，而现有材料没有给出服务端归一化规则或上下文预算处理方式。",
+        "nextStep": "核对运行创建接口的上下文归一化与上限规则，再决定由父组件、ChatPane 或服务端负责约束。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c3"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/store.test.ts",
-      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/App.vue",
-      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/AssetImage.vue",
-      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
-    },
     {
       "kind": "material",
       "key": "omem:apps/web/src/ChatPane.vue",
@@ -101,66 +133,42 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/codewiki/modules.ts",
-      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-      "digest": "b8a3fdb66bde7ba08323495b6e53a9c36a49baed06318c63283bb6c4ad4ded39"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+      "key": "omem:apps/web/src/api.ts",
+      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:42:03.262Z",
+    "at": "2026-10-01T02:37:59.983Z",
     "trace": {
-      "runId": "0b34c2ee-cc37-4898-a3b0-3c45af7c716f",
-      "roleId": "code-analyst",
+      "runId": "03bb413f-efa2-47ee-ad7a-788e8ad50f61",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "5472c0246700819a084eb9b5112f3cab41c7cd887a9a982e2163c85d71ff23a4",
-      "contextHash": "364388f74400b7566dbf7577b1f1fc17afb50415dc518f330deef424de88b084",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "12cd8d7090320fec4fd7f69d13d78bd3a1012e1218eb6fb3395e11dccb819f20",
+      "contextHash": "e70a01cfe661a7488125af8882b0a08e4b329e05f23664abd07c11224fbaa56d",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "de351e4b4d6b07adf806b89a89dc2a996aa6e2c2872ca383c8afc6bd4dbabb66",
+      "fingerprint": "5c44ce4a12500d09e3e3a31f86044e181969b57c884abaa1071302cb269e1779",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaf-64e6-7921-9472-d7eeeec6806b"
+        "01a0f552-cae2-7ee1-9110-d64f18554d95",
+        "01a0f553-2a42-7380-b0da-c0f25f18e6b1"
       ],
       "usage": {
-        "used": 44865,
-        "size": 760000,
+        "used": 28824,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -168,29 +176,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 86049,
-          "utf8Bytes": 90813,
-          "estimatedTokens": 30271,
-          "budgetedTokens": 37839,
+          "chars": 21147,
+          "utf8Bytes": 26436,
+          "estimatedTokens": 8812,
+          "budgetedTokens": 11015,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 0
+      "repairAttempts": 1
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:42:31.660Z",
+    "at": "2026-10-01T02:38:14.933Z",
     "trace": {
-      "runId": "83fb26b3-7530-407f-b33d-06482620964c",
+      "runId": "cfa86815-c785-40c1-a95b-3e72e580c5c1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c1cfa58e2b965d8f14c421193cebb2b5e4a68464425b0990985624d18d0699d0",
-      "contextHash": "9d45216bf97d33f7fe9fa2870144d574d1888a04ddb2ae3f01d72e9fcd052af4",
+      "promptHash": "3aacb495bccd148b270b695d68ddd013d6db66f7cc57491142aa5f641ab694fa",
+      "contextHash": "ff19f5c4a83e51c06382c7b79ea663139162bb353905eb2b4790a0214d599910",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "92cab9424d0317d2bcf680db489b543cfde8b9301ed5f2774ee909f246058b26",
+      "fingerprint": "cb0688daaac1f672868895b053ed6a7ba3389ef27cf5e66d9511725710772450",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,11 +211,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-421a-7423-91c2-657cce7e86df"
+        "01a0f553-8041-74c3-9d32-c589cb36ee9e"
       ],
       "usage": {
-        "used": 48976,
-        "size": 760000,
+        "used": 25328,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -215,10 +223,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107223,
-          "utf8Bytes": 120168,
-          "estimatedTokens": 40056,
-          "budgetedTokens": 50070,
+          "chars": 17343,
+          "utf8Bytes": 21178,
+          "estimatedTokens": 7060,
+          "budgetedTokens": 8825,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,81 +2,135 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-    "title": "飞书凭据加密存储",
-    "summary": "以环境主密钥和 AES-256-GCM 在本地持久化飞书凭据，提供受限引用、原子写入、认证解密与配对码 HMAC 摘要能力；调用方如何保存配对码尚未由材料证明。",
+    "title": "Lark 凭据加密存储",
+    "summary": "以本地文件加密保存 Lark 应用凭据，并提供受约束的引用、读取、删除和配对码摘要能力；实现强调密钥长度、文件权限、认证加密与落盘可靠性，但尚未体现密钥轮换、解密载荷结构校验及异常恢复策略。",
     "category": "implementation",
     "sections": [
       {
-        "key": "key-and-reference",
-        "title": "密钥与引用约束",
-        "body": "该模块把应用 ID 和 client secret 保存到独立秘密文件，并向调用方返回形如 `lark:<UUID>` 的引用。主密钥可使用 64 位十六进制或 Base64 表示，但解码后必须恰好 32 字节；生产构造要求环境变量存在。目录权限被收紧为仅所有者访问，引用还需通过严格格式校验后才能映射为文件路径，以限制任意路径访问。[[c1]]"
+        "key": "purpose-and-key",
+        "title": "用途与密钥边界",
+        "body": "该模块避免把 Lark 的 `appId` 和 `clientSecret` 直接写入业务数据：真实凭据存放在独立加密目录，调用方持有 `lark:` 引用。字符串密钥可按 64 位十六进制或 Base64 解析，最终必须恰好为 32 字节；构造时目录权限被收紧为 `0700`。[[c1]] 环境入口要求配置 `OMEM_SECRET_KEY`，并将存储位置固定为数据目录下的 `secrets`。引用校验只保证前缀后是由十六进制字符或连字符组成的 36 字符受限字符串，并不验证标准 UUID 分组；但该字符集结合固定后缀可阻止引用直接注入路径分隔符。[[c2]]"
       },
       {
-        "key": "persistence",
-        "title": "认证加密与持久化边界",
-        "body": "每次写入生成随机 12 字节 IV，使用 AES-256-GCM 保存格式版本、算法、IV、认证标签和密文。内容先写入独占临时文件并 fsync，再原子重命名、设置 0600 权限并尽力同步目录；读取时检查格式，并由 GCM 认证标签检测错误密钥或内容篡改。删除文件后也会尝试同步目录。[[c2]]\n\n模块另提供带 `omem-lark-pairing-v1` 用途域分隔的 HMAC-SHA256 配对码摘要方法。[[c3]] 这仅证明可生成摘要，不能证明配对流程只保存摘要、更不能据此断言明文码绝不落盘；该限定替代了此前过强的持久化结论。密文虽含格式版本，但接口只持有一个当前主密钥，尚未展示旧密钥回退或轮换事务。"
+        "key": "write-read-flow",
+        "title": "写入与读取流程",
+        "body": "`put()` 自身使用 `randomUUID()` 生成标准引用和临时文件名，以随机 12 字节 IV 执行 AES-256-GCM。版本、算法、IV、认证标签和密文先写入排他创建且权限为 `0600` 的临时文件，完成文件同步后再重命名、调整权限并尝试同步目录，以降低半写文件和目录项未持久化的风险。[[c3]] 读取端先检查版本与算法，再解码 IV、标签和密文并完成认证解密；有效形状数据发生密钥、密文或标签不匹配时通常会在认证过程中抛错，而格式畸形的数据也可能更早在解码或解密初始化阶段失败。成功解密后仅以类型断言将 JSON 视为凭据对象，没有运行时字段校验。[[c4]]"
+      },
+      {
+        "key": "boundaries-and-relations",
+        "title": "删除、持久化限制与配对码摘要",
+        "body": "目录同步通过打开目录并调用 `fsync` 实现，但异常被统一忽略，以兼容不支持该操作的平台，因此耐崩溃保证依赖具体文件系统与操作系统。[[c5]] 删除不存在的引用不会报错；文件存在时则删除并同步目录。配对码摘要使用同一主密钥执行 HMAC-SHA256，并在消息前加入带版本的域分隔前缀；这只隔离配对码摘要的消息域，不能证明摘要与凭据加密使用了独立派生密钥。[[c6]] 当前材料也未展示调用层如何处理解密、JSON 解析和文件系统错误。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "主密钥与安全引用",
-        "reason": "支持主密钥长度校验、环境变量要求、秘密目录权限和引用格式限制的说明。",
-        "relation": "explains",
+        "label": "密钥解析与存储目录初始化",
+        "reason": "支持密钥编码、32 字节长度约束以及存储目录权限边界的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
           "startLine": 22,
-          "endLine": 57
+          "endLine": 45
         },
         "quote": "type SecretPayload = { appId: string; clientSecret: string };\n\nfunction parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexp"
       },
       {
         "key": "c2",
-        "label": "AES-GCM 原子持久化",
-        "reason": "支持认证加密、临时文件写入、fsync、原子重命名、格式校验、解密和删除流程。",
+        "label": "环境密钥入口与引用路径校验",
+        "reason": "支持环境变量要求、secrets 目录位置，以及引用实际只校验受限字符集和固定长度的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 47,
+          "endLine": 56
+        },
+        "quote": "  static fromEnvironment(dataDir: string) {\n    const key = process.env.OMEM_SECRET_KEY;\n    if (!key) throw Error(\"OMEM_SECRET_KEY is required for Lark credentials\");\n    return new EncryptedSecretStore(join(dataDir, \"secrets\"), key);\n  }\n\n  private path(reference: string) {\n    if (!/^lark:[a-f0-9-]{36}$/.test(refere"
+      },
+      {
+        "key": "c3",
+        "label": "凭据认证加密与原子落盘",
+        "reason": "解释标准 UUID 引用、随机 IV、AES-256-GCM 封装、临时文件权限、文件同步和重命名组成的写入流程。",
         "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 72,
+          "endLine": 100
+        },
+        "quote": "  put(secret: SecretPayload) {\n    const reference = `lark:${randomUUID()}`;\n    const path = this.path(reference);\n    const temporary = join(this.directory, `.secret-${randomUUID()}`);\n    const iv = randomBytes(12);\n    const cipher = createCipheriv(\"aes-256-gcm\", this.key, iv);\n    const encrypted = Buffer.concat(["
+      },
+      {
+        "key": "c4",
+        "label": "密文格式检查与认证解密",
+        "reason": "支持读取端的版本与算法检查、解码和认证解密流程，并表明解密后的 JSON 仅通过类型断言成为凭据对象。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 102,
+          "endLine": 123
+        },
+        "quote": "  get(reference: string): SecretPayload {\n    const stored = JSON.parse(readFileSync(this.path(reference), \"utf8\")) as {\n      version: number;\n      algorithm: string;\n      iv: string;\n      tag: string;\n      ciphertext: string;\n    };\n    if (stored.version !== 1 || stored.algorithm !== \"aes-256-gcm\")\n      throw E"
+      },
+      {
+        "key": "c5",
+        "label": "目录同步兼容处理",
+        "reason": "说明目录 fsync 的实现，以及同步失败被忽略所形成的平台相关持久化限制。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
           "startLine": 59,
-          "endLine": 132
+          "endLine": 70
         },
-        "quote": "  private syncDirectory() {\n    try {\n      const descriptor = openSync(this.directory, \"r\");\n      try {\n        fsyncSync(descriptor);\n      } finally {\n        closeSync(descriptor);\n      }\n    } catch {\n      // Directory fsync is not available on every supported OS.\n    }\n  }\n\n  put(secret: SecretPayload) {\n    c"
+        "quote": "  private syncDirectory() {\n    try {\n      const descriptor = openSync(this.directory, \"r\");\n      try {\n        fsyncSync(descriptor);\n      } finally {\n        closeSync(descriptor);\n      }\n    } catch {\n      // Directory fsync is not available on every supported OS.\n    }\n  }"
       },
       {
-        "key": "c3",
-        "label": "配对码 HMAC 方法",
-        "reason": "支持该模块能够以当前主密钥和用途域分隔生成配对码摘要，但不证明调用方的保存策略。",
+        "key": "c6",
+        "label": "凭据删除与配对码摘要",
+        "reason": "支持幂等删除、删除后的目录同步，以及复用主密钥并加入消息域分隔前缀的 HMAC-SHA256 摘要行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-          "startLine": 134,
+          "startLine": 126,
           "endLine": 138
         },
-        "quote": "  hashPairingCode(code: string) {\n    return createHmac(\"sha256\", this.key)\n      .update(\"omem-lark-pairing-v1\\0\")\n      .update(code)\n      .digest(\"hex\");"
+        "quote": "  remove(reference: string) {\n    const path = this.path(reference);\n    if (existsSync(path)) {\n      unlinkSync(path);\n      this.syncDirectory();\n    }\n  }\n\n  hashPairingCode(code: string) {\n    return createHmac(\"sha256\", this.key)\n      .update(\"omem-lark-pairing-v1\\0\")\n      .update(code)\n      .digest(\"hex\");"
       }
     ],
     "questions": [
       {
-        "question": "主密钥轮换时，既有秘密文件和未完成配对码应如何迁移？",
-        "why": "密文格式包含版本字段，但接口只持有单个当前密钥；材料未展示旧密钥回退、批量重加密、轮换事务或配对码失效策略。",
-        "nextStep": "定义密钥版本与轮换流程，并测试中断恢复、旧文件读取及未完成配对的失效或迁移行为。",
+        "question": "主密钥需要轮换或泄露处置时，现有密文如何迁移？",
+        "why": "文件格式只记录版本和算法，没有密钥标识；给定材料也没有双密钥读取、批量重加密或轮换事务流程。",
+        "nextStep": "检查调用层配置和运维文档，并设计带 key id 的渐进式重加密、失败回滚与旧密钥退出方案。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c3"
+          "c3",
+          "c4"
         ]
       },
       {
-        "question": "配对流程是否只持久化 hashPairingCode 的结果而不会保存明文码？",
-        "why": "当前材料只展示摘要方法本身，没有覆盖配对码创建、保存和校验的调用链，因而无法确认实际持久化结构。",
-        "nextStep": "补充配对码创建、存储和校验调用链的固定材料与引用；若调用方还会保存明文，应明确保存期限和保护措施。",
+        "question": "是否有测试覆盖损坏密文、错误认证标签、崩溃残留临时文件及并发写入？",
+        "why": "当前材料只有实现文件，无法确认认证失败、权限、并发覆盖及临时文件恢复行为已经过测试。",
+        "nextStep": "核对相关测试中的异常、权限和并发断言，并确认临时文件残留的检测与恢复策略。",
         "blocking": false,
         "citationKeys": [
-          "c3"
+          "c3",
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "解密后的 JSON 是否应进行运行时结构校验？",
+        "why": "读取结果仅通过 TypeScript 类型断言视为 `SecretPayload`，运行时不保证 `appId` 和 `clientSecret` 存在且为字符串。",
+        "nextStep": "结合调用者的错误处理约定，决定是否加入显式载荷校验和稳定错误码。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
         ]
       }
     ]
@@ -84,69 +138,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "78e1a4e53868ad30a04d17c9da685c7b7fef4eb5936dc9125c89a2169e86f62c"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
       "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/repository.ts",
-      "digest": "31ab075ff447e50906d0fa5114ed966e401b1d3232c5a2e5115d6e7fa3aafa99"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/jobs/worker.ts",
-      "digest": "87162386c276f4e814df3cf6859be4b52d9ee42786b8e7ecb822893cebb8e6ff"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/quality/lark-annotations.ts",
-      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:19:41.933Z",
+    "at": "2026-10-01T02:14:50.845Z",
     "trace": {
-      "runId": "f13c1c0a-0651-4440-9c08-01f63c663811",
+      "runId": "22f6478e-6506-40a2-82ee-d6ef8e5fe56d",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "68140354ac835bfeb4fb710d755aaa5757056b9937d43d6469480763c53c11ca",
-      "contextHash": "41aa7ef27f80ddc71f038bb81c13e72b9885d77e246cb425c268efdb18bef8e2",
+      "promptHash": "f72c84400d333a4f44c6a293920b0251642d2e8c981c404336ca1ea3b5ea7b3c",
+      "contextHash": "3fa7057fdfb34665bb967dd022f656d9abd4125301eda0c9d93924c8142e0c22",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3e3e090fa3b6e4cbca79e38a63075ca0dabe7c28391d33a949cfc5497fac347c",
+      "fingerprint": "e2c23679cad51f3d275cdbd0f1a38469c90a690c4366a83f6b5502bb37839666",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -159,10 +168,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c1-a29d-7b02-9738-f8212a0e1520"
+        "01a0f53d-f89f-7f93-8372-d1bd00f0fab5"
       ],
       "usage": {
-        "used": 62553,
+        "used": 27616,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -171,10 +180,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 138201,
-          "utf8Bytes": 145603,
-          "estimatedTokens": 48535,
-          "budgetedTokens": 60669,
+          "chars": 17254,
+          "utf8Bytes": 22582,
+          "estimatedTokens": 7528,
+          "budgetedTokens": 9410,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -183,17 +192,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:20:20.280Z",
+    "at": "2026-10-01T02:15:08.748Z",
     "trace": {
-      "runId": "6784b0db-3a48-46ce-b667-59804936a9e4",
+      "runId": "281d11ca-1ea5-48cb-affb-1706f5146483",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "2c50e6afadc2c99cbd28b18fbf231521fd7e77fdc05803dad5795a916e80ce80",
-      "contextHash": "52fe86b5d413ae3c76e5fe4ca9afdda8f9d1abe8c94e0fb6fe6023c7ca5c703b",
+      "promptHash": "356cfb2cd3bb5b2e37f24a8cab223dd0bf1eb11db00ea3ff07baaf5f62752ac6",
+      "contextHash": "360d5493b2eab86157cfccd64ba28f3733db20954b97f7c7b2e428b55d5843dd",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "431cc3ddea0558ca2f5bd7d70cc254ddfeaf94b63558b483a9bfb417c8afdafd",
+      "fingerprint": "dc4a474ff29ce11be7ba43b1d26e780d07b01d754a45fd70a27fd39714c0c2a6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -206,10 +215,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c2-3857-75b2-b21d-0f7f2ab7368c"
+        "01a0f53e-4cb0-7220-821b-d7ca9b7dd7af"
       ],
       "usage": {
-        "used": 60824,
+        "used": 24345,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -218,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 134937,
-          "utf8Bytes": 141077,
-          "estimatedTokens": 47026,
-          "budgetedTokens": 58783,
+          "chars": 13625,
+          "utf8Bytes": 17159,
+          "estimatedTokens": 5720,
+          "budgetedTokens": 7150,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

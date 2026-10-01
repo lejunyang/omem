@@ -2,102 +2,151 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/live-lark-host-smoke.ts",
-    "title": "Lark Runtime Host 实时连接验证",
-    "summary": "在已有本地连接与加密凭据基础上，先执行发送安全门和官方能力探测，再启动 Lark Runtime Host，轮询事件直到确认 connected，并始终释放主机与数据库资源。",
+    "title": "Lark 运行宿主真实环境冒烟验证",
+    "summary": "该脚本使用现有数据目录、加密凭据和官方 Lark 能力探测器启动真实运行宿主，验证已激活连接能否进入 connected 状态；同时通过待发送消息保护、能力缺失检查、超时和 finally 清理控制真实外部副作用。",
     "category": "tests",
     "sections": [
       {
-        "key": "guards",
-        "title": "前置条件与安全门",
-        "body": "脚本使用指定数据目录打开 Store，并要求从环境变量直接取得密钥，或从指定密钥文件读取；缺少密钥会立即终止。它还查询尚处于 pending、retry_wait 或 sending 的 Lark 投递，默认拒绝在存在待发送消息时启动，只有显式设置允许投递的环境开关才继续，避免冒烟测试意外发送业务通知。[[c1]]\n\n随后脚本读取最早创建的 active 连接，从加密 secret store 取凭据，并核对凭据 appId 与数据库连接记录一致；缺连接或不匹配都关闭 Store 后失败。[[c2]]"
+        "key": "purpose-and-guards",
+        "title": "验证目标与启动保护",
+        "body": "这是面向真实配置的宿主冒烟脚本，不是隔离单元测试：它从指定数据目录打开数据库，并要求通过环境变量或密钥文件提供加密密钥。启动前会统计尚未完成的 Lark 投递；只要存在待发送记录且没有显式设置允许投递，脚本就关闭存储并拒绝继续，以避免一次“连通性检查”意外发送业务消息。[[c1]]\n\n随后脚本只选择最早创建的一条 active 连接，读取其当前版本的密钥引用，并校验解密所得 appId 与数据库记录一致；没有活动连接、密钥不可读或应用标识不匹配都会在启动宿主前失败。[[c2]] 密钥仓库还要求密钥恰好为 32 字节，并限制密钥引用格式，因此脚本依赖已有凭据文件满足这些约束。[[c3]]"
       },
       {
-        "key": "capability",
-        "title": "能力验证与主机组装",
-        "body": "官方能力探针使用凭据和默认 Lark 配置检查 scopes、callbacks、事件验证及机器人身份等运行条件；探测异常会先关闭数据库再上抛，任何 missing 项也会阻止启动。[[c3]] 通过后，脚本把 Store、MemoryService、onboarding、secret store 组合成 `LarkRuntimeHost`，使用 500 毫秒轮询间隔和独立 worker 标识，显示该验证覆盖连接注册、凭据、记忆服务与运行主机的集成关系。[[c4]]"
+        "key": "execution-flow",
+        "title": "核心执行流程与模块关系",
+        "body": "脚本先使用官方能力探测器检查现有凭据与默认配置；探测异常直接传播，任何缺失能力也会阻止宿主启动。[[c4]] 接着它把同一数据库、加密密钥仓库、官方注册适配器、能力探测器和 Botmux 既有应用提供器组装进 `LarkOnboardingService`；该服务的构造合同表明这些组件分别承担持久化、凭据、注册、能力检查与既有应用发现。[[c5]]\n\n运行宿主还接收面向固定 owner 的记忆服务、500 毫秒轮询周期和独立 worker 名称。脚本记录启动时间后调用 `host.start()`，最多轮询 180 次连接事件表，只读取该时间点之后产生的状态；一旦看到 `connected` 即成功，否则约 90 秒后抛出包含已观察状态的错误。[[c6]]"
       },
       {
-        "key": "assertions",
-        "title": "连接判定与未覆盖行为",
-        "body": "启动后最多轮询 180 次、每次等待 500 毫秒，读取开始时间之后的连接事件；只有出现 `connected` 才通过，否则报告已观察到的状态。成功输出能力摘要、启动前待投递数和 host 状态。无论成功或异常，`finally` 都停止 host 并关闭 Store。[[c5]]\n\n该检查证明主机在约 90 秒窗口内建立连接，但没有注入或断言真实消息收发、重连、回调处理和投递完成；若显式允许已有投递，测试可能产生外部发送副作用。"
+        "key": "assertions-and-limits",
+        "title": "断言、输出与未覆盖边界",
+        "body": "成功结果会输出结构化 JSON，包含连接状态、经历的状态序列、实际 scope 与 callback 数量、事件校验方式、机器人身份是否存在、启动前待投递数以及宿主状态，便于人工或外层任务保存真实运行证据。无论成功还是异常，`finally` 都会停止宿主并关闭数据库，降低残留 worker 和文件句柄风险。[[c7]]\n\n该脚本明确断言的是“能力无缺失且宿主产生 connected 事件”，并未直接创建测试消息、验证入站事件被捕获、确认记忆写入内容，或核对实际出站消息到达。允许投递开关只是放行已有队列，不能把投递成功等同于本脚本的连接成功；此外，它只验证一条 active 连接，多连接选择、公平性及失效连接恢复均不在当前流程内。[[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "密钥要求与待投递安全门",
-        "reason": "支持密钥前置条件及默认拒绝发送积压 Lark 投递的安全边界。",
-        "relation": "supports",
+        "label": "启动配置与待投递保护",
+        "reason": "支持脚本要求真实密钥，并在存在未完成 Lark 投递时默认拒绝启动的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-lark-host-smoke.ts",
           "startLine": 15,
-          "endLine": 41
+          "endLine": 40
         },
         "quote": "const dataDir = resolve(process.env.OMEM_DATA_DIR || \".omem\");\nconst key = process.env.OMEM_SECRET_KEY\n  ? process.env.OMEM_SECRET_KEY\n  : process.env.OMEM_LARK_KEY_FILE\n    ? readFileSync(resolve(process.env.OMEM_LARK_KEY_FILE), \"utf8\").trim()\n    : null;\nif (!key)\n  throw Error(\n    \"OMEM_SECRET_KEY or OMEM_LARK_KEY_"
       },
       {
         "key": "c2",
         "label": "活动连接与凭据一致性检查",
-        "reason": "支持选择 active 连接、读取加密凭据并核对 appId 的流程。",
-        "relation": "depends_on",
+        "reason": "支持仅选择一条活动连接、读取密钥引用并校验应用标识的流程。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-lark-host-smoke.ts",
           "startLine": 42,
-          "endLine": 61
+          "endLine": 60
         },
         "quote": "const secrets = new EncryptedSecretStore(resolve(dataDir, \"secrets\"), key);\nconst activeConnection = store.db\n  .prepare(\n    `SELECT c.app_id,v.secret_ref FROM lark_connections c\n     JOIN lark_connection_versions v ON v.connection_id=c.id\n       AND v.version=c.active_version\n     WHERE c.state='active' ORDER BY c.cr"
       },
       {
         "key": "c3",
-        "label": "官方 Lark 能力探测",
-        "reason": "支持能力探测失败或存在缺项时阻止 Runtime Host 启动的论断。",
-        "relation": "supports",
+        "label": "加密密钥仓库约束",
+        "reason": "说明脚本所依赖的密钥长度、环境变量和密钥引用格式边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 24,
+          "endLine": 56
+        },
+        "quote": "function parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexport class EncryptedSecretStore {\n  private readonly key: Buffer"
+      },
+      {
+        "key": "c4",
+        "label": "官方能力预检",
+        "reason": "支持能力探测在宿主启动前执行，且缺失能力会直接终止验证的论断。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-lark-host-smoke.ts",
           "startLine": 62,
-          "endLine": 76
+          "endLine": 75
         },
         "quote": "const capabilityProbe = new OfficialLarkCapabilityProbe();\nlet capability: Awaited<ReturnType<OfficialLarkCapabilityProbe[\"probe\"]>>;\ntry {\n  capability = await capabilityProbe.probe(\n    credentials,\n    OMEM_LARK_DEFAULT_CONFIG,\n  );\n} catch (error) {\n  store.close();\n  throw error;\n}\nif (capability.missing.length) {"
       },
       {
-        "key": "c4",
-        "label": "Lark Runtime Host 依赖组装",
-        "reason": "说明运行主机与 Store、MemoryService、onboarding、secret store 的关系。",
+        "key": "c5",
+        "label": "引导服务依赖合同",
+        "reason": "说明 LarkOnboardingService 接收数据库、密钥仓库、注册器、能力探测器和既有应用提供器。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/live-lark-host-smoke.ts",
-          "startLine": 77,
-          "endLine": 92
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 24,
+          "endLine": 37
         },
-        "quote": "const onboarding = new LarkOnboardingService(\n  store.db,\n  secrets,\n  new OfficialLarkRegistrationAdapter(),\n  capabilityProbe,\n  () => new Date(),\n  new BotmuxExistingAppProvider(),\n);\nconst host = new LarkRuntimeHost({\n  store,\n  memory: new MemoryService(store, { ownerId: \"owner\" }),\n  onboarding,\n  secrets,\n  poll"
+        "quote": "export class LarkOnboardingService {\n  private readonly active = new Map<\n    string,\n    { controller: AbortController; completion: Promise<void> }\n  >();\n\n  constructor(\n    private readonly db: DatabaseSync,\n    private readonly secrets: EncryptedSecretStore,\n    private readonly registration: LarkRegistrationAdapte"
       },
       {
-        "key": "c5",
-        "label": "连接事件轮询与资源清理",
-        "reason": "支持 connected 判定、超时窗口、诊断输出以及 finally 清理行为。",
+        "key": "c6",
+        "label": "宿主启动与连接等待循环",
+        "reason": "支持运行宿主的组件配置、事件轮询条件及约 90 秒超时边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-lark-host-smoke.ts",
+          "startLine": 77,
+          "endLine": 110
+        },
+        "quote": "const onboarding = new LarkOnboardingService(\n  store.db,\n  secrets,\n  new OfficialLarkRegistrationAdapter(),\n  capabilityProbe,\n  () => new Date(),\n  new BotmuxExistingAppProvider(),\n);\nconst host = new LarkRuntimeHost({\n  store,\n  memory: new MemoryService(store, { ownerId: \"owner\" }),\n  onboarding,\n  secrets,\n  poll"
+      },
+      {
+        "key": "c7",
+        "label": "成功报告与资源清理",
+        "reason": "支持脚本输出的观测字段，以及无论结果如何都会停止宿主并关闭存储。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
+          "startLine": 111,
+          "endLine": 132
+        },
+        "quote": "  console.log(\n    JSON.stringify(\n      {\n        connected: true,\n        states,\n        capability: {\n          scopeCount: capability.actual.scopes.length,\n          callbackCount: capability.actual.callbacks.length,\n          eventVerification: capability.actual.eventVerification,\n          botIdentityPresent: Bo"
+      },
+      {
+        "key": "c8",
+        "label": "连接冒烟测试的断言范围",
+        "reason": "脚本只等待 connected 事件并报告待投递数量，没有创建消息或断言消息处理结果，支持未覆盖行为分析。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
           "startLine": 93,
-          "endLine": 133
+          "endLine": 124
         },
         "quote": "const startedAt = new Date().toISOString();\ntry {\n  host.start();\n  let states: string[] = [];\n  for (let index = 0; index < 180; index++) {\n    states = (\n      store.db\n        .prepare(\n          `SELECT state FROM lark_connection_events\n           WHERE created_at>=? ORDER BY rowid`,\n        )\n        .all(startedA"
       }
     ],
     "questions": [
       {
-        "question": "允许投递开关开启时，是否还需要隔离或标记冒烟测试可能发送的既有 delivery intents？",
-        "why": "脚本只在默认情况下阻止待发送消息；显式放行后启动真实 host，材料没有证明这些投递会被沙箱化。",
-        "nextStep": "在运行说明中明确外部副作用，或为 live smoke 使用专用连接和独立数据目录。",
+        "question": "是否需要把真实入站事件、记忆落库和出站送达纳入同一项 live 验收？",
+        "why": "当前脚本的成功条件仅是观察到 connected，输出投递队列数量和宿主状态，但没有构造消息或断言消息处理结果，因此不能证明完整消息链路可用。",
+        "nextStep": "另建具有明确测试会话与接收目标的 live 场景，分别记录入站事件、固定记忆记录和 Lark API 送达回执；保留当前脚本作为低副作用的连接层检查。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c5"
+          "c6",
+          "c7",
+          "c8"
+        ]
+      },
+      {
+        "question": "多条 active 连接存在时应验证全部连接还是固定指定目标？",
+        "why": "当前 SQL 按创建时间只取第一条 active 连接，其他活动连接完全不参与验证，可能掩盖特定连接的凭据或能力问题。",
+        "nextStep": "明确 live 验收策略；若需指定连接，可增加显式 appId 或 connectionId 选择参数，若需全量则逐条隔离运行并分别报告结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
         ]
       }
     ]
@@ -105,69 +154,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:scripts/live-acp-smoke.ts",
-      "digest": "77bb1bae7fda3921075810520871f00b36bba21f3cbd38dec173f39c18af1afe"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-connectors-smoke.ts",
-      "digest": "56767351dc19db5f9be9f5bae5e33d378d427d8e53d56ee1d024075ea6c38e72"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/live-lark-host-smoke.ts",
       "digest": "da10fc75972adf6fa64420e3c76a2084abe9b5bc928dbdc330d5085f95a72ad3"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-learning-smoke.ts",
-      "digest": "f88a7289400e9f805776100fea75384a55628e822fc9ee11e90a9594dc7b0ac9"
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-model.ts",
-      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
+      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
+      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
     },
     {
       "kind": "material",
-      "key": "omem:scripts/live-pipeline-smoke.ts",
-      "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
+      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/agents.ts",
-      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/config.ts",
-      "digest": "5dc63b68428c90d33d183a1c09056c2fdb350c749034815cdb0a5ae92ee2b2c7"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:28:47.480Z",
+    "at": "2026-10-01T02:53:33.189Z",
     "trace": {
-      "runId": "2123580b-2d7e-4b1e-97fc-83f59db5349f",
+      "runId": "dcc6310c-264b-47ac-a6b7-7cfe515dfe86",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "b9a8ac8e56fa85230244de54a03ac0c16b8cd000f66c577241cd41197c90a5d3",
-      "contextHash": "63979c2e4296b1ebcd9eda5826f00ede54d26465ebe74d2c21a701fdb603a571",
+      "promptHash": "45bc3b630587507af95ee52e3fd1f876048954d7fa7ef2bf4d3e77d53bb0323d",
+      "contextHash": "baf2ac4fec344bc324078dbf9c14801e35c2f7f4e726c249320cd2141e4ad3ff",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "79e83ee8547c0b8a9db1230852edd362ece5e1fe27b9d918c7fd9ed6ae2e874a",
+      "fingerprint": "06b04898547a451c2212e66b8b46bcbab92e70d90823ca8d0cddf13e7de472d0",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -180,11 +204,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea3-4b6f-7f51-aae2-fee504968ba5"
+        "01a0f561-44cc-7973-96a4-a5ec86962cb8"
       ],
       "usage": {
-        "used": 31129,
-        "size": 760000,
+        "used": 27964,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -192,10 +216,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 43457,
-          "utf8Bytes": 45461,
-          "estimatedTokens": 15154,
-          "budgetedTokens": 18943,
+          "chars": 24598,
+          "utf8Bytes": 26362,
+          "estimatedTokens": 8788,
+          "budgetedTokens": 10985,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -204,17 +228,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:29:16.286Z",
+    "at": "2026-10-01T02:53:49.648Z",
     "trace": {
-      "runId": "7d181020-4f6c-41d0-bfd8-c4620b5caea1",
+      "runId": "08768f1d-c1f9-4ff5-8933-e71bc0fa75eb",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "711df273712ba84692a4f05f84cc855f851cbc3b9ebeb62b76fbf890e291c676",
-      "contextHash": "c677c030f3469f41c9535021c919516c766bdce66c6107a299ede985f5f1c8cf",
+      "promptHash": "d8890a9451c32a58e221f10ff5182f2764ba500317f1ea55f037f2103d446146",
+      "contextHash": "4503c83a3fbc33d52119e59c1ac96be7d76d0e58255845a08b184ccfd10aeba0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f2c5d8d9398f8ea44754585a10a865a39dfce7aea45a64a32b9895226d8a7ed2",
+      "fingerprint": "6dd17fd7acbc1b4a7bd78a739820203c6125cc22c0cdfa0c086b4d51f059e01a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -227,11 +251,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea4-1dbe-75f1-8694-a6e87c823229"
+        "01a0f561-bbed-7a70-97eb-b270ca387212"
       ],
       "usage": {
-        "used": 34664,
-        "size": 760000,
+        "used": 28516,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -239,10 +263,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 61184,
-          "utf8Bytes": 71202,
-          "estimatedTokens": 23734,
-          "budgetedTokens": 29668,
+          "chars": 28681,
+          "utf8Bytes": 32551,
+          "estimatedTokens": 10851,
+          "budgetedTokens": 13564,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

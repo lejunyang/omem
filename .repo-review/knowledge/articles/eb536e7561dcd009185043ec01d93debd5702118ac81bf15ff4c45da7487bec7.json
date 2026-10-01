@@ -2,44 +2,49 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/inputs/spool.ts",
-    "title": "Hook 捕获持久缓冲与可靠投递",
-    "summary": "以生产者、事件号和内容摘要建立本地磁盘缓冲，在上游暂不可用时保存 CaptureInput；通过容量保护、原子写入、回执核验和顺序停止降低静默丢失或错误确认风险。",
+    "title": "Hook 捕获输入的本地磁盘队列",
+    "summary": "`HookSpool` 为 `CaptureInput` 提供带容量约束的本地 JSON 队列：以生产者和事件标识确定文件身份，以稳定摘要识别重复与冲突，并在回执关键字段匹配后删除记录。本次修订替代“仅在平台不支持目录同步时忽略错误”的旧结论：实现实际会忽略目录同步过程中的任何异常，代码注释只将部分平台不支持目录 fsync 作为预期场景。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose_and_identity",
-        "title": "事件身份与幂等入列",
-        "body": "`HookSpool` 用生产者和事件号的稳定摘要确定记录路径，使事件身份与随机生成的记录编号分离。[[c1]] 入列要求捕获来源同时提供 `collectorId` 和 `eventId`；已有同路径记录且载荷摘要一致时返回重复结果，摘要不同时拒绝为事件冲突。该检查提供单进程常规幂等，但不能据此推断多进程竞争下严格的先写者胜出。[[c2]]"
+        "key": "identity-and-enqueue",
+        "title": "记录身份与入列语义",
+        "body": "队列记录保存生产者、事件标识、载荷摘要、完整捕获内容和创建时间；服务端回执另含 `revisionId`。[[c1]] 入列要求来源中同时存在 `collectorId` 与 `eventId`，否则抛出 `HOOK_EVENT_ID_REQUIRED`；同一身份且摘要相同会复用旧记录，摘要不同则报告事件冲突。[[c2]] 共享来源合同允许 `eventId` 为 `null`，所以事件标识必填是队列层附加约束。[[c3]] 这些事实能证明磁盘入列与幂等语义，但不能单独确定该类在整体架构中的调用时机。"
       },
       {
-        "key": "durability_and_capacity",
-        "title": "持久性与容量边界",
-        "body": "构造时把缓冲目录设为 `0700`；写入使用 `0600` 随机临时文件，完成文件级 `fsync` 后重命名并尝试同步目录。目录同步在部分平台不受支持时会被忽略，因此持久性仍受文件系统语义影响。[[c3]] 入列还会统计现有 JSON 记录数量和字节数，默认限制为 1000 条与 50 MB；超限时写容量告警并抛出专用错误。[[c4]]"
+        "key": "path-and-durability",
+        "title": "路径、摘要与耐久写入",
+        "body": "目标文件路径由生产者与事件标识的稳定摘要生成，而非由载荷摘要直接命名。[[c4]] 摘要函数递归排序对象键、忽略值为 `undefined` 的属性，再以规范化 JSON 计算 SHA-256，降低键顺序导致伪冲突的风险。[[c5]]\n\n构造时会创建队列目录并将权限收紧为 `0700`。[[c6]] 记录写入使用同目录排他创建的隐藏临时文件，完成文件同步后重命名，目标权限为 `0600`，最后尝试同步目录。目录同步过程中的任何异常——包括打开目录、执行 fsync 或关闭描述符失败——都会被无条件忽略；代码注释仅将部分平台不支持目录 fsync 描述为预期场景。因此，先前“只忽略平台不支持目录同步错误”的较窄结论已被替代。[[c7]]"
       },
       {
-        "key": "flush_semantics",
-        "title": "投递、回执与失败顺序",
-        "body": "待投递记录按创建时间排序，超过默认七天只产生告警而不自动删除。刷新逐条调用发送器，只有回执中的生产者、事件号和载荷摘要均与本地记录一致才删除文件；首个异常会终止本轮处理，保留失败项及后续项目供重试，因此保证顺序的同时存在队头阻塞。[[c5]]"
+        "key": "capacity-and-retention",
+        "title": "容量与保留期边界",
+        "body": "入列前统计可见 JSON 文件的数量和字节数：默认最多 1000 条、50 MB；条数达到上限即拒绝，而字节总量仅在加入新记录后严格超过上限时拒绝。超限路径先写告警，只有告警成功后才抛出 `SpoolCapacityError`；若告警文件的打开、写入或同步失败，底层文件异常会直接传播。[[c8]][[c9]]\n\n默认保留期为七天，但过期记录只追加 `retention_exceeded` 告警，随后仍按创建时间排序返回，因此当前 `retentionMs` 是告警阈值，并非自动清理或隔离策略。[[c10]]"
+      },
+      {
+        "key": "delivery-and-boundaries",
+        "title": "投递、删除与已知限制",
+        "body": "`flush` 最多按 `limit` 顺序发送记录。只有回执存在且 producer、eventId、payloadDigest 全部匹配时才删除文件；首次发送异常或回执不匹配会记录失败并终止本轮，可能形成头部阻塞。回执中的 `revisionId` 当前既不参与匹配，也未写入结果。[[c11]]\n\n现有材料还不能确认调度、退避、多进程协调与故障恢复策略。`pending()` 会直接解析全部可见 JSON，损坏记录可能阻断读取；原子写入没有展示失败后的临时文件清理。告警写入会传播自身文件错误，而目录同步阶段的全部异常又会被吞掉，两类失败具有不同的可见性。[[c7]][[c8]][[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "稳定事件路径",
-        "reason": "支持文件路径由生产者和事件号的稳定摘要确定。",
-        "relation": "implements",
+        "label": "队列记录与捕获回执",
+        "reason": "支持队列持久化字段以及回执包含 revisionId 的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 69,
-          "endLine": 77
+          "startLine": 20,
+          "endLine": 37
         },
-        "quote": "  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord, \"producer\" | \"eventId\">) {\n    return join(\n      this.directory,\n      this.key(record.producer, record.eventId) + \".json\",\n    );"
+        "quote": "export type SpoolRecord = {\n  schemaVersion: 1;\n  id: string;\n  producer: string;\n  eventId: string;\n  payloadDigest: string;\n  capture: CaptureInput;\n  createdAt: string;\n};\n\nexport type CaptureAcknowledgement = {\n  receipt: {\n    producer: string;\n    eventId: string;\n    payloadDigest: string;\n    revisionId: string"
       },
       {
         "key": "c2",
-        "label": "入列校验与重复检测",
-        "reason": "支持缺少事件身份时拒绝、相同载荷返回重复以及不同载荷报冲突。",
+        "label": "事件校验、重复与冲突处理",
+        "reason": "支持队列要求生产者和事件标识，并区分相同载荷重复与不同载荷冲突。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -51,53 +56,175 @@
       },
       {
         "key": "c3",
-        "label": "目录权限与原子写入",
-        "reason": "支持目录和文件权限、文件同步、重命名及目录同步降级的说明。",
+        "label": "捕获来源字段合同",
+        "reason": "说明共享来源合同要求 collectorId，但允许 eventId 为空，从而界定队列附加约束。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 49,
+          "endLine": 69
+        },
+        "quote": "export const captureProvenanceSchema = z\n  .object({\n    collectorId: z.string().min(1).max(300),\n    actorId: z.string().min(1).max(300).nullable(),\n    actorType: z.enum([\"owner\", \"user\", \"bot\", \"system\", \"unknown\"]),\n    actorVerifiedBy: z.string().min(1).max(300).nullable(),\n    sourceUri: z.string().max(2000).null"
+      },
+      {
+        "key": "c4",
+        "label": "队列文件路径构造",
+        "reason": "直接证明文件名由 producer 与 eventId 的摘要生成。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 61,
-          "endLine": 105
+          "startLine": 69,
+          "endLine": 77
         },
-        "quote": "    mkdirSync(directory, { recursive: true, mode: 0o700 });\n    chmodSync(directory, 0o700);\n  }\n\n  private now() {\n    return (this.options.now ?? (() => new Date()))();\n  }\n\n  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord,"
+        "quote": "  private key(producer: string, eventId: string) {\n    return stableDigest({ producer, eventId });\n  }\n\n  private path(record: Pick<SpoolRecord, \"producer\" | \"eventId\">) {\n    return join(\n      this.directory,\n      this.key(record.producer, record.eventId) + \".json\",\n    );"
       },
       {
-        "key": "c4",
-        "label": "容量统计与告警",
-        "reason": "支持默认条目数和字节上限、容量告警内容及超限错误。",
+        "key": "c5",
+        "label": "稳定摘要规范化",
+        "reason": "支持对象键排序、忽略 undefined、规范化 JSON 和 SHA-256 摘要的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+      },
+      {
+        "key": "c6",
+        "label": "队列目录权限",
+        "reason": "直接支持队列目录创建后设置为 0700 权限。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 51,
+          "endLine": 63
+        },
+        "quote": "export class HookSpool {\n  constructor(\n    readonly directory: string,\n    private readonly options: {\n      maxBytes?: number;\n      maxEntries?: number;\n      retentionMs?: number;\n      now?: () => Date;\n    } = {},\n  ) {\n    mkdirSync(directory, { recursive: true, mode: 0o700 });\n    chmodSync(directory, 0o700);\n "
+      },
+      {
+        "key": "c7",
+        "label": "原子写入与目录同步异常处理",
+        "reason": "支持临时文件写入、文件 fsync、重命名和目录同步流程，并证明目录同步代码的无条件 catch 会忽略该过程中的任何异常。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 80,
+          "endLine": 105
+        },
+        "quote": "  private syncDirectory() {\n    try {\n      const descriptor = openSync(this.directory, \"r\");\n      try {\n        fsyncSync(descriptor);\n      } finally {\n        closeSync(descriptor);\n      }\n    } catch {\n      // Directory fsync is unsupported on some platforms; file fsync still completed.\n    }\n  }\n\n  private atom"
+      },
+      {
+        "key": "c8",
+        "label": "告警文件写入实现",
+        "reason": "证明告警写入会执行可能失败的文件操作，且这些操作没有由 warn 捕获。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
-          "startLine": 139,
-          "endLine": 168
+          "startLine": 107,
+          "endLine": 124
         },
-        "quote": "    const pending = jsonFiles(this.directory);\n    const currentBytes = pending.reduce(\n      (total, name) => total + statSync(join(this.directory, name)).size,\n      0,\n    );\n    const record: SpoolRecord = {\n      schemaVersion: 1,\n      id: randomUUID(),\n      producer,\n      eventId,\n      payloadDigest,\n      ca"
+        "quote": "  private warn(summary: Record<string, unknown>) {\n    const path = join(this.directory, \"warnings.jsonl\");\n    if (existsSync(path) && statSync(path).size >= 1_000_000) return;\n    const descriptor = openSync(path, \"a\", 0o600);\n    try {\n      writeSync(\n        descriptor,\n        JSON.stringify({ at: this.now().toIS"
       },
       {
-        "key": "c5",
-        "label": "保留期与顺序刷新",
-        "reason": "支持超期告警、按时间排序、回执核验、成功删除及失败后停止。",
+        "key": "c9",
+        "label": "容量检查与异常顺序",
+        "reason": "支持精确容量条件，并证明超限时先写告警、告警成功后才抛出专用容量异常。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 139,
+          "endLine": 171
+        },
+        "quote": "    const pending = jsonFiles(this.directory);\n    const currentBytes = pending.reduce(\n      (total, name) => total + statSync(join(this.directory, name)).size,\n      0,\n    );\n    const record: SpoolRecord = {\n      schemaVersion: 1,\n      id: randomUUID(),\n      producer,\n      eventId,\n      payloadDigest,\n      ca"
+      },
+      {
+        "key": "c10",
+        "label": "过期告警与待处理排序",
+        "reason": "证明过期记录仍会返回并参与排序，同时支持损坏 JSON 可能中断读取的边界判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
           "startLine": 174,
-          "endLine": 229
+          "endLine": 195
         },
         "quote": "  pending() {\n    const records = jsonFiles(this.directory).map(\n      (name) =>\n        JSON.parse(\n          readFileSync(join(this.directory, name), \"utf8\"),\n        ) as SpoolRecord,\n    );\n    const cutoff =\n      this.now().getTime() - (this.options.retentionMs ?? 7 * 86_400_000);\n    for (const record of records"
+      },
+      {
+        "key": "c11",
+        "label": "顺序投递与回执校验",
+        "reason": "支持投递上限、回执字段匹配、成功删除、首次失败停止以及 revisionId 未被使用的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 197,
+          "endLine": 229
+        },
+        "quote": "  async flush(\n    sender: (capture: CaptureInput) => Promise<CaptureAcknowledgement>,\n    limit = 10,\n  ) {\n    const outcomes: {\n      eventId: string;\n      delivered: boolean;\n      error?: string;\n    }[] = [];\n    for (const record of this.pending().slice(0, Math.max(0, limit))) {\n      try {\n        const respon"
       }
     ],
     "questions": [
       {
-        "question": "同一生产者和事件号被多个进程同时入列时，是否要求严格的跨进程先写者胜出语义？",
-        "why": "当前流程先检查正式文件是否存在，再写随机临时文件并重命名；材料没有展示多进程竞争时的排他创建或冲突复核。",
-        "nextStep": "增加多进程并发测试并确认目标文件系统的重命名覆盖语义；若要求严格幂等，应在提交正式路径时增加排他机制并复核最终摘要。",
+        "question": "HookSpool 是否明确限定为外部 Hook 暂时无法交付时的缓冲层？",
+        "why": "类名和错误码体现 Hook 场景，但现有材料没有实例化位置或调用方，不能确认其架构定位、触发时机和生命周期。",
+        "nextStep": "补充 HookSpool 的实例化、enqueue 与 flush 调用方；在此之前继续只描述可验证的磁盘入列和投递行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c11"
+        ]
+      },
+      {
+        "question": "是否要求多个进程或实例同时向同一队列目录入列？",
+        "why": "实现先检查目标文件是否存在，再写随机临时文件并重命名到确定路径；材料没有文件锁或目标排他提交机制，并发处理同一事件的覆盖与竞争语义尚不明确。",
+        "nextStep": "核对部署拓扑并增加双实例并发测试；若允许共享目录，明确锁、排他提交或冲突复核策略。",
         "blocking": false,
         "citationKeys": [
           "c2",
-          "c3"
+          "c4",
+          "c7"
+        ]
+      },
+      {
+        "question": "过期记录应继续投递，还是需要自动隔离或删除？",
+        "why": "当前实现只记录过期告警，仍把记录返回给 flush；配置名 retentionMs 可能让使用者误解为自动清理期限。",
+        "nextStep": "依据数据保留要求选择继续投递、隔离或删除策略，并以行为测试固定语义。",
+        "blocking": false,
+        "citationKeys": [
+          "c10",
+          "c11"
+        ]
+      },
+      {
+        "question": "成功回执中的 revisionId 是否需要校验、返回或持久化？",
+        "why": "回执合同包含 revisionId，但 flush 只核对 producer、eventId 和 payloadDigest，现有材料无法判断忽略它是有意设计还是遗漏。",
+        "nextStep": "检查捕获 API 的审计与幂等合同；若 revisionId 用于后续追踪，将其纳入结果或持久化确认记录。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c11"
+        ]
+      },
+      {
+        "question": "损坏 JSON、遗留临时文件及告警写入失败应如何恢复？",
+        "why": "pending 会直接解析所有可见 JSON；原子写失败没有展示临时文件清理，warn 的文件异常也会传播，并可能使容量异常或过期扫描提前失败。目录同步阶段则会吞掉所有异常，尚不清楚这些不同失败是否需要统一监测。",
+        "nextStep": "补充故障注入测试，明确损坏记录隔离、启动清扫、临时文件回收、目录同步失败监测以及告警失败是否应影响主操作。",
+        "blocking": false,
+        "citationKeys": [
+          "c7",
+          "c8",
+          "c9",
+          "c10"
         ]
       }
     ]
@@ -110,64 +237,29 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
-      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/defaults.ts",
-      "digest": "fdee77ab1f832cf4b48ab459254f4934f1f049453114c11b02cfa5ab0f15999a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
-      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-      "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/storage/digest.ts",
       "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:18:23.636Z",
+    "at": "2026-10-01T02:13:13.675Z",
     "trace": {
-      "runId": "ca926296-6f48-478c-b9fd-1f45cd1b1b2c",
+      "runId": "88c7c3be-8605-4b9d-8cc4-f2bd3045542e",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "73f8393b2a3266923bfb901322318cc20260eb9b87e557a814a138da8d99d4ea",
-      "contextHash": "60f1aad2512cf1cd2a3ee687639b12928f04439c6fcfd622904e33e74f684914",
+      "promptHash": "f4583175406fed6a7b3226c4f39735ee947442957fe34b558eaecb09170587b0",
+      "contextHash": "fb787e3608b5cb91b72a8412148d5a94e8fd32cdd0fb212f4f6f7519b407110f",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "553eecd81c0260f129dcbf814e34fe60068148fba4ff9cdbea393193b0d05b8e",
+      "fingerprint": "c711dee259f0f1072b0de87a9b40d14bdd92313db6cd3448d2afea038ff096ea",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -180,10 +272,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c0-302d-7140-9a84-3fa43938bb01"
+        "01a0f53c-662c-7d52-9d32-45189b68462d"
       ],
       "usage": {
-        "used": 67029,
+        "used": 30175,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -192,10 +284,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 142897,
-          "utf8Bytes": 155351,
-          "estimatedTokens": 51784,
-          "budgetedTokens": 64730,
+          "chars": 28294,
+          "utf8Bytes": 33720,
+          "estimatedTokens": 11240,
+          "budgetedTokens": 14050,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -204,17 +296,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:18:56.903Z",
+    "at": "2026-10-01T02:13:37.363Z",
     "trace": {
-      "runId": "14e7fbf0-0a5c-4321-bab5-11ff05d3f153",
+      "runId": "c6392325-9ece-420e-9ca2-47e3bc7c22df",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "251330589348a0fb87b75eb7b279d156404e30c763d03cb3625d35b838f8f245",
-      "contextHash": "83fd6fd450d1f0028a4fcd903c8aa7b1e57071fab8e87eeb7f4db85c402747cb",
+      "promptHash": "e838fa7fb8335694fef00ac8a4b64985d60a87fb0de70dff4c78879abb5812e9",
+      "contextHash": "6ec285f4b604420a5b502b0f98cd1ddd05dd1caa076f5236c5554be9cec481df",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "82d8d648b62c150da18ac8960c42899f3676a6de922305533541197e9a661911",
+      "fingerprint": "ba5509ff9b1081ad8a713129b7495ae38f5b3abc79dc5e9d33ce1714d55747a9",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -227,10 +319,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c1-051b-7d91-b044-d7405d2081bf"
+        "01a0f53c-e859-7821-ba85-960985dfd34c"
       ],
       "usage": {
-        "used": 62446,
+        "used": 27696,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -239,10 +331,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 143307,
-          "utf8Bytes": 152973,
-          "estimatedTokens": 50991,
-          "budgetedTokens": 63739,
+          "chars": 25776,
+          "utf8Bytes": 30632,
+          "estimatedTokens": 10211,
+          "budgetedTokens": 12764,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -3,26 +3,31 @@
   "document": {
     "key": "omem:apps/server/src/assistant/default-model.ts",
     "title": "测试用确定性助手模型",
-    "summary": "为测试提供不执行推理的固定模型实现，仅展示运行时已经检索出的证据；生产装配不得用它替代真实 ACP 模型。",
+    "summary": "该文件实现一个仅供测试注入的确定性 AssistantModelPort：不执行模型推理，而是把运行时已检索的证据裁剪、格式化并返回固定片段引用；无证据时给出诚实的空结果提示。生产环境应注入真实 ACP 模型，配置或传输失败由运行时明确报错。",
     "category": "tests",
     "sections": [
       {
-        "key": "scope",
-        "title": "用途与生产边界",
-        "body": "`DeterministicAssistantModel` 是 `AssistantModelPort` 的测试替身，不承担语义推理。文件明确要求生产环境注入真实 `AcpAssistantModel`；模型未配置时应由运行时诚实报告不可用，而不是悄悄改用固定答案。因此它只能证明运行时的确定性编排与引用链路，不能证明真实模型效果。[[c1]]"
+        "key": "purpose",
+        "title": "解决的问题与使用边界",
+        "body": "`DeterministicAssistantModel` 为助手流程提供可重复的测试替身，使测试能够在不依赖真实 LLM、认证或网络状态的情况下观察“证据如何变成回答”。源码明确限定它只用于测试；生产装配应注入真实 `AcpAssistantModel`，模型不可用时应暴露错误，而不是用这段固定回答伪装成功。[[c1]] 这一定位也与运行时对 `ModelUnavailableError` 的说明一致，但所给材料没有展示实际装配代码，因此无法确认所有生产入口都已强制遵守该边界。[[c2]]"
       },
       {
-        "key": "behavior",
-        "title": "固定输出行为",
-        "body": "生成时最多取前五条已检索证据。没有证据便返回“当前材料中没有直接相关内容”且不附引用；有证据时按顺序展示标题和文本前缀，并把对应 fragment id 全部作为引用。若存在历史轮次，只追加轮次延续提示，不分析其内容。[[c2]] 这种行为便于测试断言稳定输出，但不应被解读为检索质量、回答正确性或外部 ACP 可用性的验收结果。"
+        "key": "flow",
+        "title": "核心生成流程",
+        "body": "`generate` 接收用户文本、历史轮次、可见性与已检索证据，但实际只消费前三者中的用户文本、历史轮次数量和证据；`visibility` 不参与二次过滤。它先截取最多 5 条证据：若为空，返回“没有直接相关内容”且引用列表为空；否则按顺序输出标题及每条正文前 160 个字符，并在存在历史轮次时附加当前轮次提示。[[c3]] 最终 `citationIds` 直接取自这批截断后证据的 `fragmentId`，符合运行时将引用定义为回答实际依赖片段的合同。[[c4]]"
+      },
+      {
+        "key": "limits",
+        "title": "边界条件、断言价值与模块关系",
+        "body": "该实现的确定性来自固定的数量上限、字符截断和模板拼接，适合断言证据顺序、最多五条、空结果、轮次提示及引用映射；它不验证语义正确性，也没有展示处理 Unicode 截断、重复片段或超长标题的专门逻辑。[[c5]] 它依赖 `runtime.ts` 提供的 `AssistantEvidence`、`AssistantModelPort` 与 `AssistantModelReply` 类型；运行时回复还允许工具调用和额外检索请求，但此替身始终不产生这些字段，所以不能证明任务创建、更新、二次检索或服务端权限复核行为已被覆盖。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "测试替身边界",
-        "reason": "支持该实现仅供测试、生产必须使用真实 ACP 且不可伪造兜底回答的结论。",
-        "relation": "explains",
+        "label": "测试替身的生产边界说明",
+        "reason": "支持该类只为测试存在、生产必须注入真实 ACP 模型且不得伪降级的论断。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/default-model.ts",
@@ -33,31 +38,106 @@
       },
       {
         "key": "c2",
-        "label": "确定性回答生成",
-        "reason": "支持无证据和有证据两种固定输出、五条上限、历史提示及 fragment 引用行为。",
+        "label": "运行时模型不可用语义",
+        "reason": "说明真实模型缺失、认证失败或超时时，运行时应明确报告不可用。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 66,
+          "endLine": 70
+        },
+        "quote": "/**\n * Raised when no assistant model is configured or the real transport cannot run\n * (missing CLI, auth failure, timeout). The runtime degrades honestly instead of\n * falling back to a canned fake answer.\n */"
+      },
+      {
+        "key": "c3",
+        "label": "证据格式化与空结果流程",
+        "reason": "支持最多取五条证据、空证据返回固定提示、正文截断及历史轮次提示的流程描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/default-model.ts",
           "startLine": 16,
-          "endLine": 40
+          "endLine": 37
         },
         "quote": "  async generate(input: {\n    userText: string;\n    priorTurns: { ordinal: number; userText: string; result: string }[];\n    evidence: AssistantEvidence[];\n    visibility: \"private\" | \"group\";\n  }): Promise<AssistantModelReply> {\n    const evidence = input.evidence.slice(0, 5);\n    if (!evidence.length) {\n      return "
+      },
+      {
+        "key": "c4",
+        "label": "回答引用合同与片段映射",
+        "reason": "运行时合同定义 citationIds 为回答实际依赖的片段，测试替身则把入选证据的 fragmentId 映射到该字段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 54,
+          "endLine": 63
+        },
+        "quote": "export type AssistantModelReply = {\n  /** Final natural-language reply shown to the user. */\n  answer: string;\n  /** Fragment ids the answer actually relies on (citations). */\n  citationIds: string[];\n  /** Structured, server-enforced tool requests. The model cannot grant itself\n   *  write permission: every call is re"
+      },
+      {
+        "key": "c5",
+        "label": "确定性输出的具体限制",
+        "reason": "支持证据数量上限、每条文本长度上限和固定模板等可测试边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/default-model.ts",
+          "startLine": 22,
+          "endLine": 39
+        },
+        "quote": "    const evidence = input.evidence.slice(0, 5);\n    if (!evidence.length) {\n      return {\n        answer: `已收到：“${input.userText}”。当前已收录材料中没有直接相关内容。`,\n        citationIds: [],\n      };\n    }\n    const lines = evidence.map(\n      (item, index) =>\n        `${index + 1}. 【${item.revisionTitle}】${item.text.slice(0, 160)}"
+      },
+      {
+        "key": "c6",
+        "label": "助手回复的扩展能力",
+        "reason": "说明完整运行时回复还可包含受服务端治理的工具调用和一次额外检索，而该替身未实现这些输出。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 54,
+          "endLine": 63
+        },
+        "quote": "export type AssistantModelReply = {\n  /** Final natural-language reply shown to the user. */\n  answer: string;\n  /** Fragment ids the answer actually relies on (citations). */\n  citationIds: string[];\n  /** Structured, server-enforced tool requests. The model cannot grant itself\n   *  write permission: every call is re"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "生产装配是否在所有入口都排除了 DeterministicAssistantModel？",
+        "why": "当前材料只有测试替身中的注释和运行时错误语义，没有提供依赖注入或启动装配源码，无法据此确认生产路径的实际约束。",
+        "nextStep": "检查服务器启动与助手模型工厂的装配代码，并用缺少模型配置的集成测试验证其返回 ModelUnavailableError。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "哪些测试已经覆盖证据上限、字符截断、空结果、历史轮次和引用一致性？",
+        "why": "提供的材料不含测试文件，因此只能推导适合断言的行为，不能声称这些边界已有自动化覆盖。",
+        "nextStep": "定位该类对应测试，核对上述分支，并补充工具调用与二次检索明确不由此替身覆盖的说明。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "哪些自动化测试已覆盖证据上限、字符截断、空结果、历史轮次提示和引用一致性？",
+        "why": "材料能够支持这些可断言行为，但未提供测试文件，不能据此认定它们已经获得自动化覆盖。",
+        "nextStep": "定位该类的测试用例，核对上述分支，并确认工具调用与额外检索不属于此替身的覆盖范围。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c5",
+          "c6"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/app.ts",
-      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/default-model.ts",
@@ -66,69 +146,39 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/cli.ts",
-      "digest": "b752f6849d98db0ea4a3d4f8df662ef117e5c0c3c9197fb1ae1ee2f6000eae9c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/artifacts.ts",
-      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "17df8759d854439c570682baacfc9fca8589ebf402c35720af881a8a20bb0589"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:05:27.602Z",
+    "at": "2026-10-01T02:04:31.559Z",
     "trace": {
-      "runId": "63ddaf9b-ed21-48fb-b8bc-ecf82acea82e",
-      "roleId": "knowledge-refresher",
+      "runId": "60e5aea7-e97b-455e-9adc-9f2b0e307f7a",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "8f665af77f822806976ec69d457a278e019300403133e4ca301442fb4644f993",
-      "contextHash": "2e81f20b3208704306b47d726cd3c7fc23b0bc5c098a16db723147a792223950",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "c78e64e33e2851298f14eb6b0f2b91685550fa74ae492ace9b17a9907a7e87ea",
+      "contextHash": "87723566d8ab6844baf1641a2003e4bc8eb33b5eae5f5c81ae53b74de5849099",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5b2bf36801c127adf6b6703b924bd05e7b3c4e221918e91f7ccedd193aa9d16a",
+      "fingerprint": "75984afcc4871466a062bf2f5f41048f89bb5e52266fbe4c61e5e5dcfbbd8fd7",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3eb-3ca5-7922-a4bf-cc0ad37b30af"
+        "01a0f534-6d08-7e51-85f8-f821c88738a8"
       ],
       "usage": {
-        "used": 59433,
+        "used": 23222,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -137,10 +187,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124533,
-          "utf8Bytes": 128483,
-          "estimatedTokens": 42828,
-          "budgetedTokens": 53535,
+          "chars": 11521,
+          "utf8Bytes": 13421,
+          "estimatedTokens": 4474,
+          "budgetedTokens": 5593,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -149,17 +199,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:05:52.827Z",
+    "at": "2026-10-01T02:04:45.648Z",
     "trace": {
-      "runId": "a7eced54-1981-4cf8-8c1a-56d01a988454",
+      "runId": "9cde7ce7-4fc1-4805-ba8b-e901daafcdc7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "02404342034fb3b525a467f02e3f95405377e081f66a2371e756633610be94e6",
-      "contextHash": "b68f47ccfdf205d686590d5eecd768e8e572c82d5deb42c2c94661a8c106b88a",
+      "promptHash": "5b842002da9525b4219613d9b821c3cd6d9c4e0fcc11b8b5f0c1753bfb454ba0",
+      "contextHash": "84fb850fd11a3d0e38270d5e45f666465459e411ad8c622e4dd492aa9c6a1f34",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1f58cac56e69fb61f0e61d45d16b245f5ef94d0c8ccd1c5cfd1469c34500526f",
+      "fingerprint": "ad721b1efe0867a8c1ab31953ba4fa928f79f8199daac58c3e1e2344f3092247",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -172,10 +222,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ec-2635-7ea0-bf90-d1d2243a4a16"
+        "01a0f534-d7cd-7950-afdd-6e11132686c7"
       ],
       "usage": {
-        "used": 60331,
+        "used": 23312,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -184,10 +234,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 137176,
-          "utf8Bytes": 146360,
-          "estimatedTokens": 48787,
-          "budgetedTokens": 60984,
+          "chars": 14102,
+          "utf8Bytes": 17532,
+          "estimatedTokens": 5844,
+          "budgetedTokens": 7305,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

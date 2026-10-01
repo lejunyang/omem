@@ -2,90 +2,170 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-    "title": "代码快照生命周期与固定源码测试",
-    "summary": "该集成测试验证显式 head 指针、内容相同时的快照复用、历史快照不可变，以及源码 API 必须按指定快照返回固定内容而不能猜测当前磁盘状态。",
+    "title": "代码快照生命周期与固定版本源码测试",
+    "summary": "该集成测试用真实临时 Git 仓库验证代码知识快照的不可变性、显式当前指针、相同内容复用、历史图可读性，以及 HTTP 源码接口按指定快照返回固定内容；同时确认被移除文件的理解会标记为过期。",
     "category": "tests",
     "sections": [
       {
-        "key": "head-lifecycle",
-        "title": "A→脏 B→A 的显式 head 切换",
-        "body": "测试从已提交的 V1 建立干净快照 A，再修改函数并添加临时文件形成脏快照 B。B 获得不同 ID、包含两个文件并成为当前 head；工作树恢复为 V1 且删除临时文件后，同步结果复用 A，而不是因 B 的 capturedAt 更晚就继续选择 B。A 的 capturedAt 保持不变，证明复用不会改写历史快照。[[c1]]\n\n当前 head 图不再显示临时文件，但文件目录将其标为 removed；显式查询 B 仍能看到该文件。这区分了“当前视图移除”和“历史数据删除”。[[c2]]"
+        "key": "purpose",
+        "title": "解决的问题与测试场景",
+        "body": "该测试针对一个容易混淆的生命周期：仓库先处于已提交版本 A，随后产生包含文件修改和临时文件的脏工作树 B，最后又恢复到与 A 完全相同的内容。它要证明“当前快照”由显式指针决定，而不是简单选择最近捕获时间；相同输入应复用旧快照，已经产生的 B 则继续作为不可变历史存在。测试通过临时目录创建真实 Git 仓库，并用真实提交构造基线，而非只伪造数据库记录。[[c1]]\n\n这一场景对应代码同步的内容寻址设计：快照身份综合仓库、提交、脏状态和排序后的内容哈希，相同输入可幂等复用；树发生变化时才生成新快照。[[c2]]"
       },
       {
-        "key": "pinned-source",
-        "title": "按快照固定的源码读取",
-        "body": "HTTP `/source` 接口携带 snapshotId 后，A 返回 `return 1`，B 返回 `return 2`。即便临时文件已从磁盘删除，查询 B 仍返回固定 blob；查询从未包含该文件的 A 则返回 404，不会退回实时磁盘或猜测其他快照内容。移除文件对应的 understanding 还必须被标记为 stale。[[c3]]\n\n测试覆盖单文件修改、未提交新增、回退和源码读取，但未覆盖 rename、二进制文件、并发同步、Git 分支切换、指定非法行号或未知 snapshotId，也没有断言过期理解的后续清理策略。"
+        "key": "flow",
+        "title": "核心流程与断言",
+        "body": "流程依次执行 `runReviewSync` 和 `runCodeSync`：A 首次生成且成为当前快照；修改 `a.ts` 并增加 `temp.ts` 后生成不同的 B；恢复原内容并删除临时文件后，第三次同步复用 A，同时保持 A 的捕获时间不变。当前图不再包含临时文件，但文件列表将其标为 removed；显式查询 B 的图仍能看到它。[[c3]]\n\n随后测试通过 Fastify 注入请求读取源码：同一文件在 A 返回 `return 1`，在 B 返回 `return 2`；已经从磁盘删除的 `temp.ts` 仍可从 B 的固定源码对象读取，而它在从未包含该文件的 A 中返回 404，不会猜测或退回实时磁盘内容。[[c4]] 最后直接查询 `code_understandings`，断言被移除文件的理解记录存在且 `stale=1`，验证历史保留与当前知识失效是两条独立语义。[[c5]]"
+      },
+      {
+        "key": "relations_limits",
+        "title": "模块关系、边界与未覆盖行为",
+        "body": "测试把通用 `Store`、评审材料同步、代码图同步、代码存储查询和评审 HTTP 应用串成一个集成切片；这些依赖由测试文件直接导入，说明断言横跨持久层、投影层和接口层。[[c6]] 代码图自身被定义为已捕获 fragment 的确定性投影，旧符号和边通过快照过滤或 stale 状态保留，这为测试中的历史可读与当前移除行为提供背景。[[c7]]\n\n覆盖范围仍有限：只有单文件 TypeScript、一次脏树往返和顺序执行；没有断言并发同步、跨进程重启、快照内容损坏、非法行号或未知文件标识。HTTP 部分使用本地 Host/Origin，只验证成功响应与缺失源码 404，没有覆盖令牌模式、非同源拒绝或其他安全分支；评审应用文档明确这些访问控制另有行为。[[c8]] 清理逻辑会关闭应用、数据库并递归删除临时目录，但异常中途发生时仓库目录并非由统一 `afterEach` 注册，因此失败路径下的资源回收也未被断言。[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "快照创建、脏态与复用流程",
-        "reason": "支持 A、B 的建立以及恢复工作树后显式 head 回到不可变 A 的说明。",
+        "label": "临时 Git 仓库与测试基线",
+        "reason": "支持测试使用真实临时仓库、Git 配置和提交来构造快照输入的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-          "startLine": 60,
-          "endLine": 100
+          "startLine": 22,
+          "endLine": 64
         },
-        "quote": "describe(\"code snapshot lifecycle: explicit head pointer + immutable snapshots\", () => {\n  it(\"A->B(dirty)->A: reused snapshot becomes head; B stays readable; /source pinned per snapshot\", async () => {\n    const root = makeRepo();\n    w(root, \"apps/server/src/a.ts\", V1);\n    commit(root, \"v1\");\n    const dir = mkdtemp"
+        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup(dir: string) {\n  const store = new Store(dir);\n  stores.push({ store, dir });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    try { store.close(); } catch {}\n    rmSync(dir, { recursive: true, force: true });\n "
       },
       {
         "key": "c2",
-        "label": "当前图与历史图的文件状态",
-        "reason": "支持临时文件从当前 head 消失但仍作为 removed 文件并保留在 B 历史图中的说明。",
+        "label": "代码同步的快照身份规则",
+        "reason": "解释快照为何在相同输入下复用、在工作树变化时新增。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
+      },
+      {
+        "key": "c3",
+        "label": "A-B-A 快照切换断言",
+        "reason": "支持新建 B、复用 A、移动当前指针并保留历史图的核心流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-          "startLine": 102,
+          "startLine": 68,
           "endLine": 111
         },
-        "quote": "    // Current head graph excludes the temp file.\n    let gHead = graphView(store, {});\n    expect(gHead.files.some((f) => f.path.endsWith(\"temp.ts\"))).toBe(false);\n    expect(\n      listFiles(store, { includeRemoved: true }).find((f) => f.path.endsWith(\"temp.ts\"))!.removed,\n    ).toBe(true);\n\n    // B snapshot STILL r"
+        "quote": "    // Snapshot A: clean baseline.\n    await runReviewSync(store, root);\n    const A = await runCodeSync(store, root);\n    expect(A.reused).toBe(false);\n    expect(A.fileCount).toBe(1);\n    const capturedA = getSnapshot(store, A.snapshotId)!.capturedAt;\n    expect(currentSnapshotId(store)).toBe(A.snapshotId);\n\n    // S"
       },
       {
-        "key": "c3",
-        "label": "固定源码与过期理解断言",
-        "reason": "支持源码按快照返回、缺失时不猜测，以及被移除文件理解标记为 stale 的论断。",
+        "key": "c4",
+        "label": "按快照固定读取源码",
+        "reason": "支持 HTTP 接口分别返回 A、B 内容，并对 A 中不存在的临时文件返回 404。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
           "startLine": 113,
-          "endLine": 159
+          "endLine": 151
         },
         "quote": "    // Through the HTTP API: /source pinned per snapshot.\n    const { app } = await buildReviewApp({ store, repoRoot: root });\n    await app.ready();\n    const hdr = { host: \"127.0.0.1:5180\", origin: \"http://127.0.0.1:5181\" };\n    const aFile = listFiles(store, { includeRemoved: true }).find((f) => f.path.endsWith(\"/a."
+      },
+      {
+        "key": "c5",
+        "label": "移除文件的理解过期断言",
+        "reason": "支持被移除文件对应理解记录被标记为 stale 的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+          "startLine": 153,
+          "endLine": 159
+        },
+        "quote": "    // Understanding of the removed temp file is flagged stale.\n    const tempFile = listFiles(store, { includeRemoved: true }).find((f) => f.path.endsWith(\"temp.ts\"))!;\n    const cu = store.db\n      .prepare(\"SELECT stale FROM code_understandings WHERE target_type='file' AND target_id=?\")\n      .get(tempFile.fileId) a"
+      },
+      {
+        "key": "c6",
+        "label": "测试涉及的服务模块",
+        "reason": "测试导入直接表明 Store、两类同步、代码存储查询和评审应用之间的集成关系。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+          "startLine": 11,
+          "endLine": 20
+        },
+        "quote": "import { Store } from \"../src/store.js\";\nimport { runReviewSync } from \"../src/review/sync.js\";\nimport { runCodeSync } from \"../src/code/sync.js\";\nimport {\n  currentSnapshotId,\n  getSnapshot,\n  graphView,\n  listFiles,\n} from \"../src/code/store.js\";\nimport { buildReviewApp } from \"../src/review/app.js\";"
+      },
+      {
+        "key": "c7",
+        "label": "代码图存储与历史保留规则",
+        "reason": "解释代码图作为捕获材料投影，以及消失符号和旧边通过过滤或 stale 状态保留的设计背景。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 1,
+          "endLine": 16
+        },
+        "quote": "/** Code Knowledge side tables. These live in the SAME isolated review SQLite as\n * review_source_meta / review_relations 鈥?they are additive, CREATE-IF-NOT-EXISTS\n * only, and never touch sources/revisions/fragments/review_relations rows. The\n * code graph is a deterministic projection over the already-captured fragme"
+      },
+      {
+        "key": "c8",
+        "label": "评审 HTTP 应用安全边界",
+        "reason": "支持测试未覆盖的令牌与同源访问控制确实属于该 HTTP 应用的既定边界。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/app.ts",
+          "startLine": 6,
+          "endLine": 14
+        },
+        "quote": "/** review knowledge-base HTTP surface. It reuses MemoryService /\n * KeywordRetrieval against the isolated review Store and registers only the\n * read/browse/sync routes a code-review workflow needs. No AssistantRuntime,\n * Lark host, learning pipeline, notification workers or business token gating:\n * the app binds lo"
+      },
+      {
+        "key": "c9",
+        "label": "测试清理路径",
+        "reason": "支持常规清理由 afterEach 和测试末尾分别承担，以及异常路径清理未被专门验证的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+          "startLine": 22,
+          "endLine": 33
+        },
+        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup(dir: string) {\n  const store = new Store(dir);\n  stores.push({ store, dir });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    try { store.close(); } catch {}\n    rmSync(dir, { recursive: true, force: true });\n "
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "是否需要补充进程重启后当前快照指针与历史源码仍可恢复的持久化测试？",
+        "why": "现有用例只在同一个 Store 和应用生命周期内完成 A-B-A 往返，尚不能证明关闭并重新打开数据库后的恢复行为。",
+        "nextStep": "在完成 B 和回切 A 后关闭 Store，以同一数据目录重新实例化 Store，再断言当前指针、B 图和两版固定源码。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c9"
+        ]
+      },
+      {
+        "question": "是否应为源码接口增加未知 snapshotId、非法行号及令牌或跨源拒绝用例？",
+        "why": "当前 HTTP 断言集中在合法快照的 200 响应和未绑定文件的 404，而应用还具有 Host、Origin 与 REVIEW_TOKEN 安全分支。",
+        "nextStep": "按接口约定补充错误状态与响应体断言，并分别在无令牌本地模式和启用令牌模式运行。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c8"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/batch2-fixes.test.ts",
-      "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-artifacts.test.ts",
-      "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-budget.test.ts",
-      "digest": "2d0812ca8592b2a3702ce8ee0f6cf4568af9356037cb64be6e731d0a949c9fb3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-      "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
-      "digest": "87f1cf57fca10d4cb0a5db8b64e0713611d0a304054c4ffc973bad34c7eb7132"
-    },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
@@ -93,39 +173,39 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "b9d4fd78e9180e1d8d6d4b7ec092e15f38292d6c0f1346e2e6483c6dbeca3637"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:09:13.991Z",
+    "at": "2026-10-01T02:26:04.617Z",
     "trace": {
-      "runId": "161767d8-9f1a-4014-b3e2-a5519e4a6349",
+      "runId": "7623fb4b-3b97-43f4-af54-7f6960247a20",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "726468f442488bf98c0d322ffcd85662d4e11aa2707394fbf5ab54cb8e9929dd",
-      "contextHash": "9af6b2612942385a3550bdc42cd7a278c001615d5f3518e0d49ca169147f2ffd",
+      "promptHash": "98fb70ae26bbf389a9443ac259d8b0cfd1259a4a1f88b18443aaa34d06f0f716",
+      "contextHash": "b6bb08f199c638ed8fc0f0e5fd5c5e389d490e1e680b833287a0ea080948fd17",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "2792dfab74511e4d9c3d1fad66847b610b0dcf2771d06ced662a74a03afc7db3",
+      "fingerprint": "466b515f21da19e4ecdcbeacdc60c7fc2d6fe9bf9179a955e148ba7a1f2d39e4",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -138,11 +218,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee91-89ed-7981-a74d-c976fa675121"
+        "01a0f548-164f-7760-ad96-fccc2bc2e7ef"
       ],
       "usage": {
-        "used": 35138,
-        "size": 760000,
+        "used": 28993,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -150,10 +230,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 63078,
-          "utf8Bytes": 64970,
-          "estimatedTokens": 21657,
-          "budgetedTokens": 27072,
+          "chars": 27828,
+          "utf8Bytes": 29598,
+          "estimatedTokens": 9866,
+          "budgetedTokens": 12333,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -162,17 +242,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:09:19.214Z",
+    "at": "2026-10-01T02:26:21.207Z",
     "trace": {
-      "runId": "53bcd91e-3bbc-4771-8b13-e0f49b12862d",
+      "runId": "90f8c18a-d6cc-4328-9023-02a3e6d8109e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "bfffdc00a294a0fc9ba2841d7550ed3b91d3edeb17283ca616a10e25557ebdb6",
-      "contextHash": "c592a9202f07dece3bb2c820a5af776e3e76addbe2b695d9b7bdbef8d25776e9",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "ff43cf838d3d50c57adfa549331a539e48edc4ae5a0f3a5620722c8cfda783e4",
+      "contextHash": "d39b2e56721cef41dcfd4ea87717a20bcdb9af04274094cc936fc64d538751fc",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "98ae544d15bad2554e652df2c80081b4bd50a13819b2456c0275d0c0b3489b96",
+      "fingerprint": "e191dacb414c502e6d2122cd9071967dc33478f6dc01c8f87478b80b24c628b2",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -185,11 +265,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee92-354d-7ca0-ba75-018248807a3a"
+        "01a0f548-9a2a-7650-88f1-7f78ff5a371e"
       ],
       "usage": {
-        "used": 35630,
-        "size": 760000,
+        "used": 29712,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -197,10 +277,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 74182,
-          "utf8Bytes": 81700,
-          "estimatedTokens": 27234,
-          "budgetedTokens": 34043,
+          "chars": 32523,
+          "utf8Bytes": 36441,
+          "estimatedTokens": 12147,
+          "budgetedTokens": 15184,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

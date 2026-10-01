@@ -2,31 +2,57 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/LarkSetup.vue",
-    "title": "飞书应用接入与 owner 配对流程",
-    "summary": "管理新建、更新或导入飞书应用的完整接入状态机，包括授权、权限探测、一次性配对、连接展示及凭据清理。",
-    "category": "workflow",
+    "title": "飞书机器人接入与 owner 配对界面",
+    "summary": "该 Vue 组件承载飞书应用的新建授权、已有应用更新、凭据导入、能力核验、owner 配对及连接状态展示，并通过轮询把服务端 onboarding 流程映射为可操作界面。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "entry-modes",
-        "title": "三种接入入口与敏感信息边界",
-        "body": "组件支持创建新应用、授权已有应用，以及直接导入凭据；导入又可选择复用本机 botmux 配置或手工输入 secret。启动前会校验非新建模式的 App ID 格式，然后按模式调用不同端点，并始终在请求结束后清空 `clientSecret`。[[c1]] 页面只展示可复用应用的名称和 App ID，并声明 secret 不返回浏览器；不过“服务端加密保存、日志不泄露”属于界面表达，单凭此文件不能验证后端实现。[[c2]]"
+        "key": "purpose-and-entry",
+        "title": "作用与接入入口",
+        "body": "组件提供三条接入路径：创建新应用、授权已有应用和直接导入凭据；导入时还可选择复用本机 botmux 配置或手工输入 App Secret。[[c1]] 初始化会并行读取默认能力配置、已有连接和可复用应用，并用已有 App ID 预填表单。[[c2]]\n\n提交时，更新与导入模式先校验 `cli_…` 格式；导入调用已有应用接口，仅手工来源携带 Secret，其他模式进入统一 onboarding 接口。Secret 在请求结束后无论成功或失败都会从组件状态清空。[[c3]] 这取代了旧正文中由初始化引用同时证明接入模式的宽泛表述。"
       },
       {
         "key": "state-machine",
-        "title": "授权、核验与轮询状态机",
-        "body": "接入对象从等待扫码、收到凭据、权限核验推进到等待 owner 配对或终态。非终态期间每 1.5 秒刷新接入状态，同时更新连接列表；进入 active、cancelled、denied、expired 或 failed 后停止轮询，组件卸载也清理定时器。[[c3]] 扫码页使用同一验证链接生成二维码和外部链接；收到凭据后仍显示核验中，强调 capability probe 完成前不能视为 active。[[c4]]"
+        "title": "状态推进与配对流程",
+        "body": "页面依据 onboarding 状态展示扫码授权、凭据核验、等待 owner 配对、启用成功或失败终态；“收到凭据不等于可用”和 capability probe 的约束目前属于界面呈现的服务端语义。[[c4]] 非终态每 1.5 秒刷新 onboarding 并重新加载连接，进入终态或卸载时清除定时器。[[c5]]\n\nowner 绑定先申请一次性配对码，待状态返回候选 Open ID 后，再提交 pairing ID 与预期 Open ID确认绑定。[[c6]] 旧结论所称“取消、刷新和重新配置都只改变前端流程”已被替代：取消会请求服务端 cancel 接口；刷新会读取服务端状态；只有 reset 明确仅清空本地 onboarding、配对码和 Secret。[[c7]] 失败页也并非始终声明不会删除平台应用，只有服务端未返回错误消息和错误码时才显示该默认说明。[[c8]]"
       },
       {
-        "key": "owner-pairing",
-        "title": "owner 绑定与失败边界",
-        "body": "等待配对时，用户先申请一次性配对码，再由同一应用收到私聊消息并回传候选 open ID；确认请求同时提交配对记录和预期 open ID，成功后刷新状态。[[c5]] 终态失败会展示错误与缺失能力，但重新配置不会自动删除平台侧可能已经创建的应用。已有连接单独列出应用、租户、版本、状态和 owner；界面没有提供删除连接或撤销平台授权的动作。[[c6]]"
+        "key": "relations-and-limits",
+        "title": "模块关系与边界",
+        "body": "组件依赖 Vue 生命周期、二维码组件、共享 `@omem/ui` 控件及同目录 API 类型，因此自身属于表现与流程编排层，不负责凭据加密、权限探测或事件采集的底层实现。[[c9]]\n\n错误处理应按调用范围理解：基础数据、状态刷新与连接加载失败会向父组件发出字符串错误；提交、取消、配对码申请和绑定确认也分别在各自异常分支发出错误。[[c10]][[c11]] 这取代了旧正文仅凭 start 分支概括“所有请求错误”的证据不足说法。窄屏样式把能力摘要改为两列、授权区域改为单列，并限制二维码宽度。[[c12]] 当前材料未包含测试或服务端实现，因而不能确认轮询竞态、安全承诺及状态转换是否已有端到端保障。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "接入启动与凭据清理",
-        "reason": "支持模式分流、App ID 校验、不同接入端点以及 secret 清空行为。",
+        "label": "接入方式与凭据来源界面",
+        "reason": "支持创建、更新、导入三种接入方式，以及导入时选择 botmux 或手工 Secret 的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 213,
+          "endLine": 275
+        },
+        "quote": "    <OmPanel v-if=\"!onboarding\" title=\"选择接入方式\">\n      <div class=\"tabs\" role=\"tablist\" aria-label=\"飞书应用接入方式\">\n        <OmButton\n          :variant=\"mode === 'new' ? 'primary' : 'ghost'\"\n          @click=\"mode = 'new'\"\n          >创建新应用</OmButton\n        >\n        <OmButton\n          :variant=\"mode === 'update' ? 'primar"
+      },
+      {
+        "key": "c2",
+        "label": "基础数据初始化",
+        "reason": "支持并行加载默认配置、连接和可复用应用，并预填 App ID 的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 58,
+          "endLine": 69
+        },
+        "quote": "async function loadBase() {\n  try {\n    const [nextConfig, nextConnections, apps] = await Promise.all([\n      api<LarkRequestedConfig>(\"/integrations/lark/default-config\"),\n      api<LarkConnection[]>(\"/integrations/lark/status\"),\n      api<ReusableLarkApp[]>(\"/integrations/lark/reusable-apps\"),\n    ]);\n    config.valu"
+      },
+      {
+        "key": "c3",
+        "label": "接入提交与 Secret 清理",
+        "reason": "支持 App ID 校验、不同模式的请求分流、手工 Secret 传递及 finally 清空敏感字段。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -37,80 +63,146 @@
         "quote": "async function start() {\n  if (!config.value) return;\n  if (mode.value !== \"new\" && !/^cli_[a-zA-Z0-9]+$/.test(appId.value)) {\n    emit(\"error\", \"请输入有效的飞书 App ID（cli_…）\");\n    return;\n  }\n  busy.value = true;\n  pairingCode.value = \"\";\n  try {\n    if (mode.value === \"import\") {\n      onboarding.value = await api<LarkOnb"
       },
       {
-        "key": "c2",
-        "label": "接入方式与凭据说明",
-        "reason": "支持三种入口、手工 secret 输入和 botmux 复用时的前端可见范围。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/LarkSetup.vue",
-          "startLine": 204,
-          "endLine": 275
-        },
-        "quote": "<template>\n  <section class=\"page lark-page\">\n    <span class=\"eyebrow\">同一个应用用于群消息、owner 通知与确认</span>\n    <h1>飞书机器人</h1>\n    <p class=\"muted\">\n      新建或更新应用需要平台授权；也可安全复用 botmux 已有应用。App Secret\n      只提交给服务端加密保存，不会出现在状态响应、日志或页面结果中。\n    </p>\n\n    <OmPanel v-if=\"!onboarding\" title=\"选择接入方式\">\n      <div class=\"tabs\" role=\"t"
-      },
-      {
-        "key": "c3",
-        "label": "状态终止条件与轮询",
-        "reason": "支持状态标签、终态定义、定时刷新及卸载清理流程。",
+        "key": "c4",
+        "label": "接入状态展示分支",
+        "reason": "支持扫码、核验、配对、成功和失败界面由 onboarding 状态驱动，并限定安全及能力语义为前端呈现。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LarkSetup.vue",
-          "startLine": 24,
-          "endLine": 56
-        },
-        "quote": "let timer: ReturnType<typeof setInterval> | undefined;\n\nconst terminal = computed(() =>\n  onboarding.value\n    ? [\"active\", \"cancelled\", \"denied\", \"expired\", \"failed\"].includes(\n        onboarding.value.status,\n      )\n    : true,\n);\nconst statusLabel: Record<string, string> = {\n  draft: \"准备中\",\n  awaiting_scan: \"等待授权\","
-      },
-      {
-        "key": "c4",
-        "label": "授权与能力核验界面",
-        "reason": "支持二维码授权、同一 device 流程以及能力探测完成前不标记启用。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/LarkSetup.vue",
           "startLine": 314,
-          "endLine": 371
+          "endLine": 418
         },
         "quote": "    <OmPanel v-else title=\"接入状态\">\n      <div class=\"row\">\n        <OmBadge :tone=\"statusTone(onboarding.status)\">{{\n          statusLabel[onboarding.status] || onboarding.status\n        }}</OmBadge>\n        <code>{{\n          onboarding.appId || onboarding.requestedAppId || \"等待平台返回 App ID\"\n        }}</code>\n      </div"
       },
       {
         "key": "c5",
-        "label": "一次性 owner 配对",
-        "reason": "支持生成配对码、提交候选 open ID 并确认绑定的核心流程。",
+        "label": "状态轮询生命周期",
+        "reason": "支持非终态定时刷新、终态停止及组件卸载时清理定时器的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 188,
+          "endLine": 201
+        },
+        "quote": "watch(\n  () => onboarding.value?.status,\n  () => {\n    if (!onboarding.value || terminal.value) {\n      if (timer) clearInterval(timer);\n      timer = undefined;\n      return;\n    }\n    if (!timer) timer = setInterval(() => void refreshOnboarding(), 1500);\n  },\n  { immediate: true },\n);\nonMounted(() => void loadBase())"
+      },
+      {
+        "key": "c6",
+        "label": "owner 配对申请与确认",
+        "reason": "支持申请配对码、等待候选 Open ID，并提交配对身份确认的流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
           "startLine": 150,
-          "endLine": 181
+          "endLine": 180
         },
         "quote": "async function issuePairing() {\n  if (!onboarding.value) return;\n  busy.value = true;\n  try {\n    const result = await api<{ code: string; expiresAt: string }>(\n      `/integrations/lark/onboarding/${onboarding.value.id}/pairing-code`,\n      {},\n    );\n    pairingCode.value = result.code;\n    await refreshOnboarding();"
       },
       {
-        "key": "c6",
-        "label": "终态与已有连接",
-        "reason": "支持成功、失败、重新配置边界及已有连接展示范围。",
+        "key": "c7",
+        "label": "取消与本地重置行为",
+        "reason": "证明取消会调用服务端接口，而 reset 仅清空组件内的流程和敏感状态，用于替代旧结论。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 139,
+          "endLine": 187
+        },
+        "quote": "async function cancel() {\n  if (!onboarding.value) return;\n  try {\n    onboarding.value = await api(\n      `/integrations/lark/onboarding/${onboarding.value.id}/cancel`,\n      {},\n    );\n  } catch (error) {\n    emit(\"error\", String(error));\n  }\n}\nasync function issuePairing() {\n  if (!onboarding.value) return;\n  busy.v"
+      },
+      {
+        "key": "c8",
+        "label": "终态默认错误说明与操作入口",
+        "reason": "支持“不自动删除平台应用”仅在缺少服务端错误消息和错误码时作为默认文案，并说明刷新、取消与重置按钮的状态条件。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/LarkSetup.vue",
-          "startLine": 399,
-          "endLine": 453
+          "startLine": 406,
+          "endLine": 426
         },
-        "quote": "      <div v-else-if=\"onboarding.status === 'active'\" class=\"success-state\">\n        <h3>机器人连接已启用</h3>\n        <p>\n          owner\n          通知和判断已绑定。机器人加入群聊后会自动读取该群消息；移出群后自动停用采集。\n        </p>\n      </div>\n      <div v-else-if=\"terminal\" class=\"failure-state\" role=\"alert\">\n        <h3>{{ statusLabel[onboarding.status] "
+        "quote": "      <div v-else-if=\"terminal\" class=\"failure-state\" role=\"alert\">\n        <h3>{{ statusLabel[onboarding.status] || \"接入没有完成\" }}</h3>\n        <p>\n          {{\n            onboarding.errorMessage ||\n            onboarding.errorCode ||\n            \"可重新发起，不会自动删除平台上可能已创建的应用。\"\n          }}\n        </p>\n        <p v-if=\"onbo"
+      },
+      {
+        "key": "c9",
+        "label": "组件依赖与事件合同",
+        "reason": "支持该文件依赖 Vue、共享 UI、二维码组件和本地 API 合同，并通过事件向父组件报告结果。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 1,
+          "endLine": 13
+        },
+        "quote": "<script setup lang=\"ts\">\nimport { computed, onBeforeUnmount, onMounted, ref, watch } from \"vue\";\nimport QrcodeVue from \"qrcode.vue\";\nimport { OmBadge, OmButton, OmEmpty, OmPanel } from \"@omem/ui\";\nimport {\n  api,\n  type LarkConnection,\n  type LarkOnboarding,\n  type LarkRequestedConfig,\n  type ReusableLarkApp,\n} from \"."
+      },
+      {
+        "key": "c10",
+        "label": "加载与刷新错误分支",
+        "reason": "支持基础数据加载、onboarding 刷新和连接加载分别捕获异常并发出字符串错误。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 58,
+          "endLine": 93
+        },
+        "quote": "async function loadBase() {\n  try {\n    const [nextConfig, nextConnections, apps] = await Promise.all([\n      api<LarkRequestedConfig>(\"/integrations/lark/default-config\"),\n      api<LarkConnection[]>(\"/integrations/lark/status\"),\n      api<ReusableLarkApp[]>(\"/integrations/lark/reusable-apps\"),\n    ]);\n    config.valu"
+      },
+      {
+        "key": "c11",
+        "label": "提交、取消与配对错误分支",
+        "reason": "支持接入提交、取消、配对码申请和绑定确认各自在异常分支向父组件报告错误。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 94,
+          "endLine": 180
+        },
+        "quote": "async function start() {\n  if (!config.value) return;\n  if (mode.value !== \"new\" && !/^cli_[a-zA-Z0-9]+$/.test(appId.value)) {\n    emit(\"error\", \"请输入有效的飞书 App ID（cli_…）\");\n    return;\n  }\n  busy.value = true;\n  pairingCode.value = \"\";\n  try {\n    if (mode.value === \"import\") {\n      onboarding.value = await api<LarkOnb"
+      },
+      {
+        "key": "c12",
+        "label": "窄屏布局适配",
+        "reason": "支持移动端能力摘要、授权区域和二维码尺寸调整的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LarkSetup.vue",
+          "startLine": 556,
+          "endLine": 567
+        },
+        "quote": "@media (max-width: 700px) {\n  .capability-summary {\n    grid-template-columns: 1fr 1fr;\n  }\n  .authorization-grid {\n    grid-template-columns: 1fr;\n  }\n  .qr-box canvas {\n    max-width: 100%;\n    height: auto !important;\n  }\n}"
       }
     ],
     "questions": [
       {
-        "question": "手工 secret 的服务端加密、日志脱敏、botmux 读取边界及授权调用是否有自动化安全测试？",
-        "why": "前端会清空表单内存并陈述安全承诺，但无法证明传输后的持久化、日志和错误响应不会泄露凭据。",
-        "nextStep": "审查对应服务端端点、密钥存储与日志过滤，并执行覆盖成功和失败路径的泄露检查。",
+        "question": "服务端是否确实对 App Secret 加密保存、从日志和状态响应中剔除，并在 capability probe 完成前拒绝标记 active？",
+        "why": "组件文案展示了这些承诺，但当前材料只有前端请求和状态展示，不能确认服务端存储、脱敏及状态转换实现。",
+        "nextStep": "检查 integrations/lark 服务端路由、凭据存储、日志脱敏、状态 DTO、capability probe 及相应测试。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
+          "c3",
+          "c4",
+          "c9"
+        ]
+      },
+      {
+        "question": "轮询、重复提交、取消和配对确认是否已有组件或端到端测试覆盖？",
+        "why": "当前材料未提供测试文件；定时刷新会连续请求状态和连接列表，异步回写、按钮重复触发、卸载清理及异常恢复仍缺少可核实的自动化保障。",
+        "nextStep": "补查 LarkSetup 的 Vitest 与浏览器测试，重点核对终态停止、卸载清理、请求重叠、Secret 清空、服务端取消及候选 owner 缺失场景。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6",
+          "c7",
+          "c10",
+          "c11"
         ]
       }
     ]
@@ -118,86 +210,46 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/DecisionsView.vue",
-      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/LarkSetup.vue",
       "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/LearningView.vue",
-      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ReviewApp.vue",
-      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/AssetImage.vue",
-      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/review-api.ts",
-      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:14:04.921Z",
+    "at": "2026-10-01T02:39:38.125Z",
     "trace": {
-      "runId": "be6fc3f7-c7df-42d5-81d1-871d23b83cbc",
-      "roleId": "code-analyst",
+      "runId": "da48c598-8fa7-4c13-9088-52576ea9b4bc",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "09bb1359a06c92dc964d25e26d0ac4312df9affcb24cb7d9989bdec5f3bc2274",
-      "contextHash": "8eb1a82d1c354fc691663f437e0b6103ea7e5ce0ff9483c5c778b527f16149f6",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "0dd4e5201ff791dac7dd6594f692e38a3e468ddeab145ae49d93880edc9b2c5c",
+      "contextHash": "89fdfb57f88fbcb5effd358b2067e280d11669a020e70dc4755441b5a05600d5",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f766a9fdd0757476654d55af231c4f9347c10bd1fe2bd622ed9264469e2c5fab",
+      "fingerprint": "d4d252e6963386c18730cc3c20026d2759fbdccd783c1091f08efa0143b08f9d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee95-cebd-7400-a4f7-2bef20d3f867"
+        "01a0f554-8be2-7653-becc-279e890660b2"
       ],
       "usage": {
-        "used": 50262,
-        "size": 760000,
+        "used": 32496,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -205,10 +257,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 102928,
-          "utf8Bytes": 109158,
-          "estimatedTokens": 36386,
-          "budgetedTokens": 45483,
+          "chars": 35266,
+          "utf8Bytes": 42239,
+          "estimatedTokens": 14080,
+          "budgetedTokens": 17600,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -217,17 +269,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:14:37.933Z",
+    "at": "2026-10-01T02:39:59.437Z",
     "trace": {
-      "runId": "5c41d50a-29e7-45c8-badf-ff5da1bc0b3a",
+      "runId": "6bbacad7-94a5-4ebd-ae3c-3ef4e72a4a8c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "2e40ce571b46a8495670109881a32eb09f0a393181b8f093c10936a064a0ac97",
-      "contextHash": "b490ef41330f39047dcf32f4922ff3195e114946ddbba1af4da0615db9b1c287",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "73f6eb91226ede1d81eec3e73f1fbd4678ed3976902732080f5ec3e0ad11f9e1",
+      "contextHash": "326b482f4c42a43e1976d4a6971c97e89b81989b9e45222eec6d2e0a3d907691",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9769cf216e7464683d2126acd2d0d852c7bf2787b8271c49a1526d54cd65de04",
+      "fingerprint": "fc9ccc2cec245c74d1ce63eafbc74d20e231cf0e00741e0d31c47dda74421d4e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -240,11 +292,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee96-a6a5-7a61-ae42-3c0708653d74"
+        "01a0f554-fce0-7d01-bf82-70b3dec6ccad"
       ],
       "usage": {
-        "used": 55188,
-        "size": 760000,
+        "used": 30088,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -252,10 +304,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 121596,
-          "utf8Bytes": 136930,
-          "estimatedTokens": 45644,
-          "budgetedTokens": 57055,
+          "chars": 33526,
+          "utf8Bytes": 39105,
+          "estimatedTokens": 13035,
+          "budgetedTokens": 16294,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

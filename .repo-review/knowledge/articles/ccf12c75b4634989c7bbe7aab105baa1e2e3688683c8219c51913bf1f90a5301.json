@@ -2,31 +2,70 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
-    "title": "关键词检索的项目信任与有效状态测试",
-    "summary": "该测试规定关键词检索不能把会话上下文误当可信项目边界；只有显式受信的 project_id 才能收窄记忆检索，同时失效记忆必须排除。",
+    "title": "关键词检索的项目边界与有效记忆测试",
+    "summary": "该测试以临时 SQLite Store 构造真实捕获与记忆数据，验证关键词检索不会把未受信的项目上下文误当成权限过滤条件，同时只返回 active 记忆。它覆盖项目过滤和失效记忆排除，但未覆盖排序、时间与可见性过滤、中文分词、派生证据排除及知识检索。",
     "category": "tests",
     "sections": [
       {
-        "key": "source-scope",
-        "title": "来源检索不信任会话上下文",
-        "body": "用例把两个来源放入不同 `conversationId` 和 `application`，随后用另一个会话值冒充 `project_id`，但将 `project_trusted` 设为 false。检索仍能在工作区范围召回目标来源，并可同时找到两个会话中的关键词，明确规定会话与应用只是上下文载体，不是授权或项目过滤条件。[[c1]]"
+        "key": "purpose_and_fixture",
+        "title": "测试目标与真实存储夹具",
+        "body": "这组测试针对 `KeywordRetrieval` 的两个关键安全边界：项目上下文只有在明确受信时才能缩小记忆召回范围，失效记忆也不能继续作为证据返回。测试不是纯协议桩，而是为每个用例创建临时目录和真实 `Store`，结束后关闭数据库并递归清理目录，从而隔离状态。[[c1]]\n\n`Store` 构造时创建 SQLite 文件、执行迁移并初始化 application 等仓储，因此测试中的捕获与记忆写入会经过实际持久化层。[[c2]] 捕获输入还通过共享的 `captureSchema` 校验 provenance 等字段，说明来源数据结构与应用合同保持一致。[[c3]]"
       },
       {
-        "key": "memory-filter",
-        "title": "记忆的可信项目过滤",
-        "body": "记忆检索对 project_id 采用显式信任门控：未受信的错误项目不得排除 payments 记忆；受信但不匹配的项目必须返回空；受信且匹配时才命中。这一规则依赖调用方正确设置 `project_trusted`，测试没有把字段存在本身视为可信。[[c2]]\n\n另一个用例直接把一条记忆标为 invalidated，随后搜索只返回 active 记忆。由此检索结果可作为当前知识候选，但失效派生物不能继续充当证据。[[c3]]"
+        "key": "project_trust_flow",
+        "title": "项目可信度的断言流程",
+        "body": "第一个用例把两份来源放进不同 conversation/application 上下文，再携带 `project_id=\"conv-B\"`、`project_trusted=false` 搜索 A 的独有词；仍命中 A，证明 conversationId 只是上下文载体，不能冒充可信项目边界。无项目条件搜索公共标记时，两份来源均应召回。[[c4]]\n\n第二个用例写入一条属于 `payments` 的 active claim：未受信的错误项目仍能搜到；受信但不匹配的项目必须排除；受信且匹配时重新命中。[[c5]] 这精确验证了“是否过滤”由 `project_trusted` 与 `project_id` 联合决定，但没有证明项目权限或多租户隔离已经实现。"
       },
       {
-        "key": "coverage-limits",
-        "title": "覆盖边界",
-        "body": "测试验证了临时 SQLite 中的过滤与状态条件，却没有断言相关度排序、分词差异、分页稳定性、空查询或 limit 边界；也未测试 workspace/owner 的多租户隔离。现有 Store 本身被描述为单用户 SQLite 基础，因此这些断言不应被解释为团队级权限保证。[[c4]]"
+        "key": "active_only_and_limits",
+        "title": "有效状态约束与未覆盖行为",
+        "body": "第三个用例创建两条含相同关键词的记忆，随后直接把其中一条数据库状态改为 `invalidated`。搜索结果必须全部为 `active`，包含有效实体、排除失效实体，且总数为一，因此同时检查了状态字段和实体集合。[[c6]]\n\n从提供的实现片段只能确认来源检索会限制结果数量、分词、处理时间范围与可见性回调，并为较长词项准备 FTS 查询。[[c7]] 当前测试没有断言这些分支，也没有覆盖空查询、limit 上下界、排序稳定性、中文二字词的 LIKE 路径、原始/派生证据过滤、`readEvidence` 或 knowledge retrieval；这些能力不能由本文件的通过结果推出。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "会话上下文不构成项目过滤",
-        "reason": "支持未受信 project_id 不收窄来源检索及工作区范围召回。",
+        "label": "临时 Store 的建立与清理",
+        "reason": "支持测试使用独立临时数据库并在每个用例后释放资源的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
+          "startLine": 10,
+          "endLine": 22
+        },
+        "quote": "const stores: { store: Store; dir: string }[] = [];\nfunction setup() {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-retrieval-keyword-\"));\n  const store = new Store(dir);\n  stores.push({ store, dir });\n  return store;\n}\nafterEach(() => {\n  for (const { store, dir } of stores.splice(0)) {\n    store.close();\n    rmSync"
+      },
+      {
+        "key": "c2",
+        "label": "Store 的 SQLite 初始化",
+        "reason": "支持测试实际经过数据库迁移和仓储初始化，而非只使用内存协议桩。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 38,
+          "endLine": 65
+        },
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+      },
+      {
+        "key": "c3",
+        "label": "捕获来源合同",
+        "reason": "说明测试依赖共享捕获合同校验 provenance，并关联测试导入的 captureSchema。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 49,
+          "endLine": 70
+        },
+        "quote": "export const captureProvenanceSchema = z\n  .object({\n    collectorId: z.string().min(1).max(300),\n    actorId: z.string().min(1).max(300).nullable(),\n    actorType: z.enum([\"owner\", \"user\", \"bot\", \"system\", \"unknown\"]),\n    actorVerifiedBy: z.string().min(1).max(300).nullable(),\n    sourceUri: z.string().max(2000).null"
+      },
+      {
+        "key": "c4",
+        "label": "来源检索不信任会话项目",
+        "reason": "支持不同会话来源仍可在未受信项目参数下进行工作区级召回的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -37,9 +76,9 @@
         "quote": "describe(\"P0: RetrievalPort project handling\", () => {\n  it(\"conversationId/application are context carriers, never a trusted project filter\", () => {\n    const store = setup();\n    // Two sources live in different conversations. conversationId is NOT a project.\n    store.capture(\n      captureSchema.parse({\n        so"
       },
       {
-        "key": "c2",
-        "label": "可信项目门控",
-        "reason": "支持 searchMemories 仅在 project_trusted 为真时应用项目过滤。",
+        "key": "c5",
+        "label": "受信项目的记忆过滤",
+        "reason": "支持未受信项目不缩小召回，而受信项目必须匹配记忆 scope 的三组对照断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -50,9 +89,9 @@
         "quote": "  it(\"searchMemories only filters by project when project_id is confirmed/trusted\", () => {\n    const store = setup();\n    const retrieval = new KeywordRetrieval(store.db);\n    // Seed an active memory scoped to project \"payments\".\n    store.applications.applyMemory({\n      metadata: {\n        workspaceId: \"personal\",\n"
       },
       {
-        "key": "c3",
-        "label": "只召回有效记忆",
-        "reason": "支持 invalidated 记忆被排除、active 记忆保留的状态约束。",
+        "key": "c6",
+        "label": "失效记忆排除断言",
+        "reason": "支持检索只返回 active 记忆，并明确排除被标记为 invalidated 的实体。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -63,38 +102,46 @@
         "quote": "  it(\"searchMemories only returns active memories (invalidated are not evidence)\", () => {\n    const store = setup();\n    const retrieval = new KeywordRetrieval(store.db);\n    const apply = (applicationId: string, statement: string) =>\n      store.applications.applyMemory({\n        metadata: {\n          workspaceId: \"p"
       },
       {
-        "key": "c4",
-        "label": "单用户 SQLite 存储边界",
-        "reason": "说明当前 Store 是单用户基础，团队权限执行仍是后续迁移，限制对检索隔离测试的解读。",
-        "relation": "background",
+        "key": "c7",
+        "label": "来源关键词检索入口",
+        "reason": "界定实现片段可确认的 limit、分词、时间范围、可见性与长词 FTS 行为，并据此指出本测试未覆盖的分支。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 1,
-          "endLine": 2
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 53,
+          "endLine": 70
         },
-        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */"
+        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRan"
       }
     ],
     "questions": [
       {
-        "question": "`project_trusted` 由哪一层依据什么身份或绑定信息设置，并如何防止外部请求自行声明为 true？",
-        "why": "测试只验证布尔值对检索结果的影响，没有给出该信任位的来源和授权校验；若调用边界可伪造，项目过滤不能构成安全边界。",
-        "nextStep": "定位请求适配层并增加端到端测试：未认证输入即使提交 `project_trusted: true` 也应被降级或拒绝。",
-        "blocking": true,
+        "question": "`searchSources` 是否也应在 `project_trusted=true` 时按真实项目字段过滤？",
+        "why": "现有来源用例只证明未受信的 conversationId 不得充当项目过滤器；提供的实现片段未展示可信项目对来源查询的完整处理，也未提供对应断言。",
+        "nextStep": "检查 `searchSources` 后续 SQL 与来源项目字段定义，并增加可信匹配、可信不匹配的对照测试。",
+        "blocking": false,
         "citationKeys": [
-          "c2",
-          "c4"
+          "c4",
+          "c7"
         ]
       },
       {
-        "question": "project_trusted 由哪一层依据什么身份或绑定信息设置，并如何防止外部请求自行声明为 true？",
-        "why": "[[c2]] 只验证该布尔值对检索结果的影响，[[c4]] 又明确当前 Store 是单用户基础；材料没有给出信任位的来源和请求边界授权校验。此问题限制把项目过滤解释为安全边界，但不阻塞本文对现有测试行为的说明。",
-        "nextStep": "定位请求适配层并增加端到端测试：未认证输入即使提交 project_trusted: true 也应被降级或拒绝。",
+        "question": "关键词检索的中文短词、排序和派生证据排除是否已有独立行为测试？",
+        "why": "实现注释提到长词 FTS 与二字中文词的不同路径，但本文件仅使用英文唯一标记；同时没有验证排序分数或原始证据约束。",
+        "nextStep": "定位相关测试；若不存在，使用真实 SQLite 数据补充中文二字/长词、并列命中排序以及 derived revision 排除的行为断言。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c4"
+          "c7"
+        ]
+      },
+      {
+        "question": "中文短词、排序以及派生 revision 排除是否已有独立行为测试？",
+        "why": "当前测试使用英文标记，没有覆盖中文二字词的 LIKE 路径、结果排序或原始证据约束；提供的实现范围也不足以确认这些行为的完整测试状态。",
+        "nextStep": "定位相关测试；若不存在，使用真实 SQLite 数据补充中文二字词与长词、排序及派生 revision 排除的断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
         ]
       }
     ]
@@ -102,69 +149,39 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/proposal-policy.test.ts",
-      "digest": "19c9fe2b49e81db587a4f3b3e6e956c9e99151c9decd8c4943a5fef2b9bc7d57"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/quality-annotation.test.ts",
-      "digest": "bfaabb4a2ba8357da6dc8280e3617fcb16aefbfc81487305b88b4c7291cfd086"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-      "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
       "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-      "digest": "7785c4def39404faf04f4ecf85bca9fecef6413e7b247cbfb011f4b8aefe9e9c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-dev.test.ts",
-      "digest": "6ac6cc2db82deff33eb27a466db8dab2f3099421e7135506eee453e154604383"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:41:24.258Z",
+    "at": "2026-10-01T02:33:56.702Z",
     "trace": {
-      "runId": "57afc6d1-86a8-468a-b7e9-556ebbd65d51",
+      "runId": "83de4c01-f193-412b-97df-52e97ced5f53",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "68dee884eabd3126d9ee062c6f7d90dbbb54e032add8eadd096cd856827fc365",
-      "contextHash": "eb4e3569d537613c6ef145e75acc1d02e40fb504dd0232bbc1329d10b351ea7d",
+      "promptHash": "ffa08d6b16db3da37b2bed26e5ae69ab627af75238efdb8e1942b56151923e5e",
+      "contextHash": "94749ca1f2efc53ee77e6eb385d561f7cecb261cafac3164f02f13ffadd16751",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6681c5cac0246cd8e63ed815a1247190eacd72e21fd3601d6313d777d985d906",
+      "fingerprint": "fcd87e1cc1902ec6df774edad3ce2b64d77e302a51ff3f67c3f5fa65bfdf27be",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -177,11 +194,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeae-aa16-78b0-a03b-2387f57681d7"
+        "01a0f54f-5f4b-7201-8917-3fc5c4ced7c2"
       ],
       "usage": {
-        "used": 51570,
-        "size": 760000,
+        "used": 27307,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -189,10 +206,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 109768,
-          "utf8Bytes": 113882,
-          "estimatedTokens": 37961,
-          "budgetedTokens": 47452,
+          "chars": 24489,
+          "utf8Bytes": 26261,
+          "estimatedTokens": 8754,
+          "budgetedTokens": 10943,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -201,17 +218,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:41:55.143Z",
+    "at": "2026-10-01T02:34:20.240Z",
     "trace": {
-      "runId": "99bd9348-9da3-41d2-a964-f7e101115b63",
+      "runId": "9ea12319-0dc7-426f-83e4-6b4c2d41d7b0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e5d0947b862a2f314c6dd58d618a8a8bc876a9b259b42a416edff0ac1b1a7250",
-      "contextHash": "e705740479e3229e2a6b76044c808a62dd19b44a7ed56bb89819a0d0195de2c0",
+      "promptHash": "09327c692ad4bf54dc1daef776f6dbf99588ebbafe10cd7f5237dea243f980e3",
+      "contextHash": "74030fc49adbf97566f0e66d9ca6ebd4ef188410d983e7111a7012ac15d8e097",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "996df00afe3adf0983b61d9f9b09895c022062d3ed6e45ddd53ef1b4a08538a7",
+      "fingerprint": "934e8af5c977e976c975b7883629a9f45a445ee3c618e25b43423245e5b26e35",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -224,11 +241,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaf-a97d-75b1-9e22-32f18c06a078"
+        "01a0f54f-c85f-79c1-9ea8-b03687f7311c"
       ],
       "usage": {
-        "used": 55744,
-        "size": 760000,
+        "used": 27948,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -236,10 +253,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 130550,
-          "utf8Bytes": 144086,
-          "estimatedTokens": 48029,
-          "budgetedTokens": 60037,
+          "chars": 28034,
+          "utf8Bytes": 31450,
+          "estimatedTokens": 10484,
+          "budgetedTokens": 13105,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

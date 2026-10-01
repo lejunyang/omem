@@ -2,132 +2,206 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/inputs/aggregator.ts",
-    "title": "聊天与屏幕事件的事务化聚合",
-    "summary": "将高频聊天或屏幕事件按流暂存、按说话者去重并批量封装为统一 CaptureInput，同时保留逐 part 来源、迟到关系和批次记录。",
+    "title": "聊天与屏幕输入聚合器",
+    "summary": "该模块把聊天或屏幕采集器产生的细粒度事件持久化，按静默时间、最大窗口或事件数形成批次，再交给统一 capture 流程。它提供事件级幂等、按内容摘要与 actorId 去重、分片预算、迟到标记和并发状态复核；但缺失 actorId 的事件会共同按 unknown 去重，分片外部身份可能回退为 actorId，且 capture 与本地归批不在同一事务中。",
     "category": "implementation",
     "sections": [
       {
-        "key": "ingest",
-        "title": "事件接收与幂等身份",
-        "body": "聚合器只接受 chat 或 screen：聊天必须提供 conversationId，屏幕流由应用名和窗口标题组成。事件还必须携带 eventId 与 collectorId；在固定 personal workspace 内，相同身份且摘要一致返回 duplicate，摘要变化则报冲突。[[c1]]\n\n新事件的完整 envelope、payload/content 摘要、观察时间和接收时间会在同一个 `BEGIN IMMEDIATE` 事务中写为 pending。该实现明确固定到 personal workspace，并未提供任意 workspace 的租户隔离。[[c2]]"
+        "key": "purpose_and_ingest",
+        "title": "问题与事件接入",
+        "body": "`InputAggregator` 将连续的聊天或屏幕观察事件先持久化，再按流批量捕获。聊天以会话 ID 为流键，屏幕以应用名和窗口标题组合为键；其他来源会被拒绝，事件还必须提供采集器和事件 ID。[[c1]]\n\n接入在 SQLite 即时事务中完成，并以个人工作区、采集器和事件 ID 判重：相同载荷重放返回已有事件，不同载荷复用同一事件键则报冲突。完整载荷摘要用于幂等冲突判断，内容摘要用于后续聚合去重；摘要工具会递归排序对象键、忽略 `undefined`，再对规范 JSON 计算 SHA-256。[[c2]][[c3]]"
       },
       {
-        "key": "selection",
-        "title": "成批时机与去重规则",
-        "body": "流在静默超过默认 15 秒、最早事件超过默认 5 分钟或数量达到阈值时进入可处理集合；单批事件上限被夹在 1–500。[[c3]] 候选按接收时间和 ID 排序，part 总数最多 50。内容去重键由 content digest 与 actor ID 组成，因此同一说话者的重复内容只产生一份 part，不同说话者的相同文本仍作为独立证据；重复事件本身仍保留在批次追踪列表。[[c4]]"
+        "key": "readiness_and_selection",
+        "title": "成批时机与选择边界",
+        "body": "待处理事件按工作区、来源和流分组；默认静默 15 秒、首事件滞留 5 分钟，或待处理数量达到默认 50 条时进入刷新候选。单次事件上限限制在 1–500，并按接收时间和行 ID 稳定选择。[[c4]]\n\n选择阶段以“内容摘要 + actorId”判重：相同且非缺失的 actorId 所对应的重复内容不再占用 parts 预算，不同且非缺失的 actorId 即使内容相同仍分别保留。actorId 缺失时统一使用 `unknown`，因此多个身份未知、但现实中可能来自不同说话人的同内容事件可能被合并。每批最多容纳 50 个去重后的 parts；首个事件自身超限会报错，后续事件导致超限则留待下一批。[[c5]]"
       },
       {
-        "key": "envelope",
-        "title": "来源合并与迟到标记",
-        "body": "批量 envelope 为每个 part 补充 actor、观察时间、event ID、转发及 producer 信息。只有批内 actor 身份、类型和验证方式全部一致时，顶层 actor 才沿用，否则降级为 unknown；批次 ID 由 workspace、source、stream 和事件 ID 列表稳定生成。[[c5]]\n\n若任一观察时间不晚于上一批的最后观察时间，新批通过 `lateForBatchId` 指向上一批，而不是回写旧批，从而保留不可变捕获历史。[[c6]]"
+        "key": "envelope_and_provenance",
+        "title": "聚合信封与身份边界",
+        "body": "构造聚合信封时会按同一规则再次去重，并给每个 part 写入来源信息。`actorExternalId` 优先取事件的外部身份，缺失时回退到 actorId，再缺失才为 null；`actorPrincipalId`、观察时间和事件 ID按实现复制。`replyTo` 固定为 null，因此不会保留引用目标；只会复制 `quoted` 引用标志，以及转发标志和生产者类型。[[c6]] 分片合同允许文本、图片和链接携带这些可选 provenance 字段。[[c7]]\n\n批次顶层仅比较 `actorId`、`actorType` 和 `actorVerifiedBy` 是否分别一致；一致时从最后事件复制外部身份、主体身份和绑定版本，后三项自身并未参与一致性判断。若前三项不一致，顶层身份会清空或降为 unknown，但逐分片来源仍可保留。[[c8]] 批次 ID由工作区、来源、流键和有序事件键稳定计算；出现不晚于上一批末次观察时间的事件时，只记录迟到关系，不改写旧批次。[[c9]]"
       },
       {
-        "key": "commit",
-        "title": "捕获与提交边界",
-        "body": "flush 先调用外部 capture 获得 revision 和 job，再开启数据库事务复查所选事件仍全部 pending，写入批次并将事件更新为 batched；若状态已变化则抛出 `INPUT_BATCH_CHANGED`。[[c7]]\n\n外部 capture 位于批次事务之前，因此这里只能保证聚合表内部提交一致。若 capture 成功而状态复查或批次写入失败，当前材料没有展示对已生成 revision/job 的回滚、补偿或重用机制，不能宣称两部分具有原子性。[[c7]]"
+        "key": "flush_and_consistency",
+        "title": "捕获提交与一致性限制",
+        "body": "刷新先选择事件、构造信封并调用外部 `capture`，取得 revision 与可选 job；随后才开启本地事务，复核事件仍全部为 pending，写入批次并将其更新为 batched。状态已被并发改变时会抛出 `INPUT_BATCH_CHANGED`，阻止本地重复归批。[[c10]]\n\n该事务只覆盖本地批次表和事件状态，外部 `capture` 已在事务开始前完成。现有材料没有说明复核失败后已创建的 revision/job 会被幂等复用、清理还是成为孤立产物，因此这里仍存在待核实的最终一致性边界。[[c11]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "聚合流与事件幂等规则",
-        "reason": "支持 chat 和 screen 流键、provenance 必填以及重复事件冲突检查。",
-        "relation": "implements",
+        "label": "流键与接入前置条件",
+        "reason": "支持聚合器仅接受聊天和屏幕来源，以及会话、采集器和事件 ID 的必填约束。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
           "startLine": 39,
-          "endLine": 80
+          "endLine": 57
         },
         "quote": "  private streamKey(input: CaptureInput) {\n    if (input.source === \"chat\") {\n      if (!input.context.conversationId)\n        throw Error(\"CHAT_CONVERSATION_ID_REQUIRED\");\n      return input.context.conversationId;\n    }\n    if (input.source === \"screen\")\n      return [\n        input.context.application || \"unknown-ap"
       },
       {
         "key": "c2",
-        "label": "Pending 事件事务写入",
-        "reason": "直接支持新事件 envelope、摘要、时间字段及 pending 状态在事务中的写入。",
+        "label": "事件判重与摘要计算",
+        "reason": "支持事件键判重、相同载荷重放、冲突处理及完整载荷摘要和内容摘要的用途。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
-          "startLine": 53,
+          "startLine": 58,
           "endLine": 103
         },
-        "quote": "  ingest(input: CaptureInput, now = new Date()) {\n    const eventId = input.provenance?.eventId;\n    const producer = input.provenance?.collectorId;\n    if (!eventId || !producer) throw Error(\"INPUT_EVENT_ID_REQUIRED\");\n    const streamKey = this.streamKey(input);\n    const payloadDigest = stableDigest(input);\n    cons"
+        "quote": "    const payloadDigest = stableDigest(input);\n    const contentDigest = stableDigest({\n      source: input.source,\n      title: input.title,\n      parts: input.parts,\n      context: input.context,\n    });\n    return this.transaction(() => {\n      const existing = this.db\n        .prepare(\n          `SELECT * FROM inpu"
       },
       {
         "key": "c3",
-        "label": "流就绪条件",
-        "reason": "支持静默时间、最大窗口和最大事件数三个批处理触发条件。",
+        "label": "规范 JSON 与稳定摘要",
+        "reason": "支持递归排序对象键、忽略 undefined 并计算 SHA-256 的摘要规则。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/storage/digest.ts",
+          "startLine": 3,
+          "endLine": 19
+        },
+        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+      },
+      {
+        "key": "c4",
+        "label": "流就绪判定与事件上限",
+        "reason": "支持静默窗口、最长等待、数量阈值、流分组方式及 1–500 的事件上限。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
           "startLine": 124,
-          "endLine": 143
+          "endLine": 157
         },
         "quote": "  private readyStreams(options: AggregationOptions) {\n    const now = options.now ?? new Date();\n    const quietCutoff = iso(\n      new Date(now.getTime() - (options.quietMs ?? 15_000)),\n    );\n    const windowCutoff = iso(\n      new Date(now.getTime() - (options.maxWindowMs ?? 300_000)),\n    );\n    const maxEvents = M"
       },
       {
-        "key": "c4",
-        "label": "同说话者去重与 part 预算",
-        "reason": "说明按内容与 actor 联合去重、不同说话者保留及 50 part 限制。",
-        "relation": "implements",
+        "key": "c5",
+        "label": "按 actorId 去重与分片预算",
+        "reason": "支持内容摘要与 actorId 联合判重、actorId 缺失时统一使用 unknown，以及 50-part 预算边界。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
-          "startLine": 145,
+          "startLine": 158,
           "endLine": 178
         },
-        "quote": "  private selectBatchEvents(stream: Row, maxEvents: number) {\n    const candidates = this.db\n      .prepare(\n        `SELECT * FROM input_events\n         WHERE workspace_id=? AND source=? AND stream_key=? AND state='pending'\n         ORDER BY received_at,id LIMIT ?`,\n      )\n      .all(\n        String(stream.workspace_"
+        "quote": "    const selected: Row[] = [];\n    const seenKeys = new Set<string>();\n    let partCount = 0;\n    for (const event of candidates) {\n      const envelope = captureSchema.parse(JSON.parse(String(event.envelope)));\n      // Dedupe repeated turns by the SAME speaker; two different actors saying the\n      // same thing are"
       },
       {
-        "key": "c5",
-        "label": "聚合 envelope 的逐 part 来源",
-        "reason": "支持逐 part provenance、顶层 actor 稳定性判定和确定性批次身份。",
+        "key": "c6",
+        "label": "聚合分片来源写入规则",
+        "reason": "支持分片外部身份回退到 actorId、replyTo 固定为空，以及引用标志、转发标志等字段的实际写入语义。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
           "startLine": 181,
-          "endLine": 317
+          "endLine": 216
         },
         "quote": "  private envelopeFor(stream: Row, events: Row[]) {\n    const parsed = events.map((event) =>\n      captureSchema.parse(JSON.parse(String(event.envelope))),\n    );\n    const unique = new Set<string>();\n    const parts: CaptureInput[\"parts\"] = [];\n    for (let index = 0; index < parsed.length; index++) {\n      const sour"
       },
       {
-        "key": "c6",
-        "label": "迟到事件批次关联",
-        "reason": "说明迟到判断基于上一批最后观察时间，并以 lateForBatchId 建立关系。",
-        "relation": "tracks",
+        "key": "c7",
+        "label": "分片来源合同",
+        "reason": "解释文本、图片和链接分片可以携带的可选 provenance 字段及其类型边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 4,
+          "endLine": 47
+        },
+        "quote": "// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .object({\n    actorExternalI"
+      },
+      {
+        "key": "c8",
+        "label": "批次顶层身份判定",
+        "reason": "支持仅比较 actorId、actorType 和验证方式，并从最后事件复制其他顶层身份字段的限制。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
-          "startLine": 224,
-          "endLine": 249
+          "startLine": 250,
+          "endLine": 306
         },
-        "quote": "    const previous = this.db\n      .prepare(\n        `SELECT * FROM input_batches\n         WHERE workspace_id=? AND source=? AND stream_key=?\n         ORDER BY created_at DESC LIMIT 1`,\n      )\n      .get(\n        String(stream.workspace_id),\n        String(stream.source),\n        String(stream.stream_key),\n      ) as "
+        "quote": "    const latest = parsed.at(-1)!;\n    const actorIds = new Set(parsed.map((event) => event.provenance?.actorId));\n    const actorTypes = new Set(\n      parsed.map((event) => event.provenance?.actorType),\n    );\n    const verifiedBy = new Set(\n      parsed.map((event) => event.provenance?.actorVerifiedBy),\n    );\n    c"
       },
       {
-        "key": "c7",
-        "label": "批次提交与并发复查",
-        "reason": "支持先执行 capture、再事务复查 pending 状态、写批次并更新事件的顺序及其非原子边界。",
-        "relation": "implements",
+        "key": "c9",
+        "label": "稳定批次标识与迟到关系",
+        "reason": "支持上一批查询、迟到时间比较以及由有序事件键生成稳定批次 ID。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 217,
+          "endLine": 249
+        },
+        "quote": "    const eventIds = events.map(\n      (event) => `${String(event.producer)}:${String(event.event_id)}`,\n    );\n    const rowIds = events.map((event) => String(event.id));\n    const observed = events.map((event) =>\n      String(event.observed_at || event.received_at),\n    );\n    const previous = this.db\n      .prepare("
+      },
+      {
+        "key": "c10",
+        "label": "刷新状态复核与本地归批",
+        "reason": "支持 capture 后复核 pending 状态、写入批次并更新事件状态的本地事务流程。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/inputs/aggregator.ts",
           "startLine": 320,
-          "endLine": 403
+          "endLine": 400
         },
         "quote": "  flushReady(\n    capture: (input: CaptureInput) => CaptureResult,\n    options: AggregationOptions = {},\n  ) {\n    const maxEvents = Math.max(1, Math.min(options.maxEvents ?? 50, 500));\n    const results: {\n      batchId: string;\n      revisionId: string;\n      jobId: string | null;\n      eventIds: string[];\n      late"
+      },
+      {
+        "key": "c11",
+        "label": "捕获调用与事务边界",
+        "reason": "支持外部 capture 发生在本地事务之前，并界定当前材料无法证明的失败补偿问题。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/aggregator.ts",
+          "startLine": 332,
+          "endLine": 358
+        },
+        "quote": "    for (const stream of this.readyStreams(options)) {\n      const events = this.selectBatchEvents(stream, maxEvents);\n      if (!events.length) continue;\n      const batch = this.envelopeFor(stream, events);\n      const captured = capture(batch.envelope);\n      const createdAt = iso(options.now ?? new Date());\n      t"
       }
     ],
     "questions": [
       {
-        "question": "capture 已成功但批次事务随后失败时，如何避免留下未关联或重复生成的 revision？",
-        "why": "capture 调用发生在批次事务之前，而状态复查和 input_batches 写入仍可能因并发变化或数据库错误失败；当前材料没有展示跨两部分的回滚或补偿。",
-        "nextStep": "检查 capture 实现是否以批量 envelope 的 externalId 幂等，并增加“capture 成功后发生 INPUT_BATCH_CHANGED”及批次写入失败的行为测试。",
+        "question": "当 `capture` 已成功创建 revision/job，但随后因 `INPUT_BATCH_CHANGED` 回滚本地批次事务时，这些产物会被幂等复用、清理还是标记为孤立？",
+        "why": "外部 capture 明确发生在本地事务之前，而当前材料没有提供 capture 实现、调用方或补偿机制，无法判断并发失败后的最终一致性。",
+        "nextStep": "检查 `flushReady` 调用方、capture 的 externalId 幂等规则和失败补偿路径，并增加并发状态变化的真实行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c7"
+          "c10",
+          "c11"
+        ]
+      },
+      {
+        "question": "静默阈值、迟到事件、按 actorId 摘要去重、不同 actorId 同摘要保留、多个缺失 actorId 的事件合并、首事件超出 part 预算及分批续处理是否已有真实行为测试覆盖？",
+        "why": "材料可以证明这些实现分支，但没有提供测试文件或执行结果；尤其 actorId 缺失时，不同实际说话人可能共同被视为 unknown。",
+        "nextStep": "定位聚合器测试并核对实际断言；若缺失，补充基于真实数据库状态和 capture 结果的测试，明确覆盖多个缺失 actorId 的事件。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c9",
+          "c10"
+        ]
+      },
+      {
+        "question": "批次顶层的 `actorExternalId`、`actorPrincipalId` 和 `actorBindingVersion` 是否也应参与整批身份一致性判断？",
+        "why": "当前实现只比较 actorId、actorType 和 actorVerifiedBy，却在三者一致时从最后事件复制另外三个身份字段；绑定信息在批内变化时，顶层值可能不能代表所有事件。",
+        "nextStep": "确认身份绑定更新期间的产品语义；若要求整批身份严格一致，将这三个字段纳入比较并补充绑定版本变化测试，否则明确“取最后事件快照”的合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
         ]
       }
     ]
@@ -135,69 +209,34 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-store.ts",
-      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/config.ts",
-      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/conversation/router.ts",
-      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/hook-forward.ts",
-      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/inputs/aggregator.ts",
       "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/budget.ts",
-      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
-      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:18:10.914Z",
+    "at": "2026-10-01T02:11:11.700Z",
     "trace": {
-      "runId": "79591dfe-8707-4bd6-8fb4-eebb58e057a6",
+      "runId": "2bdbbeb4-3946-45d0-b199-9535289fc7e0",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "875ac26190509463c54f4b2e0581016cc369433c884d6117bc1835fa1a3c8d26",
-      "contextHash": "8e0c650ddf3cd7fae414f132c5bf910aca8a55f6481d48b6992440ff5b6695fe",
+      "promptHash": "a3a9b7acb78d2ce9489dbc0be1510b3603034c064efc7ecf7b79e3715fb57079",
+      "contextHash": "7f2a451ae7b340dea4c35e323ab441eee8a052e05d51be646558d00f2dbb7dcd",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "33355e1bfdcd99b5139274bc7eb55ff817545542005658274cb8524c5f6bb3b4",
+      "fingerprint": "dea68cf30a50d51fe1e1149aa347f5e7a40c8b9bcf3bd0f23fabda0e85cc6c8c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -210,10 +249,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bf-f43e-7882-a2ec-1336c55fdb9d"
+        "01a0f53a-89c4-7753-8fa8-5644d4d323b5"
       ],
       "usage": {
-        "used": 66109,
+        "used": 35415,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -222,10 +261,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 135446,
-          "utf8Bytes": 148147,
-          "estimatedTokens": 49383,
-          "budgetedTokens": 61729,
+          "chars": 37989,
+          "utf8Bytes": 44837,
+          "estimatedTokens": 14946,
+          "budgetedTokens": 18683,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -234,17 +273,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:18:45.635Z",
+    "at": "2026-10-01T02:11:31.210Z",
     "trace": {
-      "runId": "8a3bf8bf-f5da-4269-9719-59d1091ea116",
+      "runId": "681e0560-6e80-4edf-8e66-d84934716013",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4f298715ec3ddc7d6763375d2944cc78d7d5d37698adc3aa347f2499fb0f48d0",
-      "contextHash": "22e886304543001e276c798ee0cab0e1a2f5a8f54dd563d9ea527021385efb71",
+      "promptHash": "c12a785f970c25fba0115e50abd28c518408ac186369e4f9a87c50fa7a1ae0ab",
+      "contextHash": "a684042af72a4e82cd33a81e3984225831ef38109d9fc7bf445e72ceed80ef6f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bba85daba6a36c5b14ac91e16f1786d2afd9a56ff73a3547c5eea59eaef3746d",
+      "fingerprint": "3981129818ad0d3aadba51b4626e1448fc5682d467389cb1d9b1448c779330c1",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -257,10 +296,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c0-d34f-73a1-a93e-ee3c8a573b32"
+        "01a0f53a-f649-7742-baa6-78c8165210b2"
       ],
       "usage": {
-        "used": 60459,
+        "used": 30630,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -269,10 +308,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 131016,
-          "utf8Bytes": 140643,
-          "estimatedTokens": 46881,
-          "budgetedTokens": 58602,
+          "chars": 34114,
+          "utf8Bytes": 38848,
+          "estimatedTokens": 12950,
+          "budgetedTokens": 16188,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

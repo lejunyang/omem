@@ -2,97 +2,110 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-    "title": "文件源码、符号与关系详情帧",
-    "summary": "并行读取单个文件的不可变源码、符号、关系边和派生说明，支持源码定位与面向有效目标的证据下探。",
+    "title": "文件源码、符号与关系下探视图",
+    "summary": "FileFrame 汇集仓库文件的原始源码、解析或模型理解、符号大纲和关系边，并通过 drill 事件请求文件、符号或片段导航。源码是主加载路径，辅助数据可独立降级；关系能否下探及其原因展示由组件解析结果和共享辅助函数共同决定。旧稿把理解面板概括为纯确定性统计并过度推断全部目标状态的结论，已按实际界面行为收窄。",
     "category": "implementation",
     "sections": [
       {
-        "key": "loading",
-        "title": "读取与源码定位",
-        "body": "文件帧以 fileId 并行读取完整源码、符号、文件边和确定性理解；符号、边或理解失败可降级为空，源码失败则显示错误并允许重试，切换文件会重新装载。[[c1]] 符号经大纲筛选后转成固定范围标记，点击对应源码行或大纲项都会发出 symbol drill。语言高亮识别 Vue、TS、TSX、Markdown 和 JSON，其他后缀当前默认按 TypeScript 处理。[[c2]]"
+        "key": "purpose-and-loading",
+        "title": "作用与数据装载",
+        "body": "组件接收文件、可选锚点及文件和符号映射，并定义文件、符号、原文片段三类 `drill` 事件；它负责发出导航请求，但现有材料没有展示上层如何维护阅读轨迹。[[c1]] 挂载或 `fileId` 改变时，组件并行读取完整源码、符号、关系边和文件理解。源码请求失败会进入错误状态并允许重试；另外三项各自捕获异常并降级为空结果，因此辅助数据故障不必然阻断源码阅读。[[c2]]"
       },
       {
-        "key": "edge-resolution",
-        "title": "关系解析与交互约束",
-        "body": "每条边通过全局文件、符号映射解析为目标文件、目标符号或不可导航对象，同时判断方向并生成可读标题。[[c3]] 导入、调用、路由、测试及需求、决策、调研等关系进入可下探集合；按钮只有在目标可解析且未被 `edgeDisabled` 禁用时可用，禁用项展示原因，可用但非 confirmed 的项展示候选或过期状态。[[c4]]"
+        "key": "source-and-symbol-flow",
+        "title": "理解面板、原文与符号导航",
+        "body": "界面以“派生说明（确定性解析）”和“来自解析器，非模型摘要”标记理解面板，并与“仓库当前快照原文，不可变”的源码区域分区呈现；这是可确认的界面标签与布局行为，不足以证明所有 understanding 内容本质上都只来自确定性解析。面板展示语言、符号数、import 数和未决项；若 `understanding.model` 存在，还显示模型名称与置信度，仅在模型不存在时提示“未配置模型 · 无 AI 摘要”。这替代了旧稿“理解数据只展示解析统计和未决项”的结论。[[c3]] 符号经 `outlineSymbols` 转为代码范围标记和大纲。代码导航仅在行号命中某个符号起始行时下探；点击符号会更新锚点并发出包含文件、符号和行号的事件，即使该符号没有 fragment 也不会静默无响应。[[c4]]"
       },
       {
-        "key": "truth-and-limits",
-        "title": "真实性标识与列表上限",
-        "body": "派生说明明确标注来自解析器而非模型；没有模型时显示“未配置模型”，源码则标为当前快照的不可变原文，避免把确定性解析冒充 AI 总结。[[c5]] 模板当前只渲染可下探边前 60 条和其他边前 20 条，虽然标题显示总数，却没有分页、展开或截断提示，因此大文件中未显示的边可能被误认为不存在。[[c6]]"
+        "key": "edge-resolution-boundaries",
+        "title": "关系解析与展示边界",
+        "body": "关系边先经 `edgeDrillTarget` 解析，再由映射补充目标文件和符号名称；组件以解析结果是否为 `none` 判断可解析性，并以来源文件等于当前文件或来源符号为空来推断出边。[[c5]] 目标标签依次回退到展示标题、符号名、文件标签、摘要、证据或“未解析”；因此只能确认组件级回退，不能据此断言所有外部、缺失或过期目标都具备完整的人类可读原因。[[c6]] 按钮仅在目标可解析且 `edgeDisabled` 未禁用时可点击，禁用原因来自 `edgeReason` 或“不可下探”。可下探关系最多渲染 60 条，其他关系最多 20 条，所以该视图不能视为完整关系清单。[[c7]] FileFrame 的请求函数与 DTO 来自 `review-api`，标签、符号轮廓和边解析逻辑来自 `modules.ts`。[[c8]] 后者明确保持无 Vue 和 DOM 依赖，便于纯函数单测，但材料没有提供 FileFrame 自身的组件或浏览器测试证据。[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文件数据并行装载",
-        "reason": "支持源码为必需数据、其他数据可降级以及文件变化触发重载的说明。",
+        "label": "文件帧输入与下探事件合同",
+        "reason": "支持组件输入以及文件、符号、原文片段三类 drill 事件，并限定材料未展示上层轨迹管理。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-          "startLine": 48,
-          "endLine": 79
+          "startLine": 32,
+          "endLine": 46
         },
-        "quote": "const source = ref(\"\");\nconst totalLines = ref(0);\nconst symbols = ref<CodeSymbol[]>([]);\nconst edges = ref<CodeEdge[]>([]);\nconst understanding = ref<CodeUnderstanding | null>(null);\nconst loading = ref(true);\nconst loadError = ref(\"\");\n\nasync function load() {\n  loading.value = true;\n  loadError.value = \"\";\n  try {\n "
+        "quote": "const props = defineProps<{\n  file: CodeFile;\n  anchorLine?: number;\n  fileMap?: Map<string, CodeFile>;\n  symbolMap?: Map<string, CodeSymbol>;\n}>();\n\nconst emit = defineEmits<{\n  drill: [\n    target:\n      | { type: \"file\"; fileId: string; line?: number }\n      | { type: \"symbol\"; fileId: string; symbolId: string; line"
       },
       {
         "key": "c2",
-        "label": "语言选择与符号范围",
-        "reason": "支持未知后缀默认 TypeScript，以及符号范围标记和下探行为。",
+        "label": "并行加载与独立降级",
+        "reason": "支持源码主请求、辅助请求分别降级、错误记录及加载状态收束的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-          "startLine": 81,
-          "endLine": 114
+          "startLine": 56,
+          "endLine": 79
         },
-        "quote": "function langFor(path: string): string {\n  if (path.endsWith(\".vue\")) return \"vue\";\n  if (path.endsWith(\".ts\")) return \"typescript\";\n  if (path.endsWith(\".tsx\")) return \"tsx\";\n  if (path.endsWith(\".md\")) return \"markdown\";\n  if (path.endsWith(\".json\")) return \"json\";\n  return \"typescript\";\n}\n\nconst anchor = ref<number "
+        "quote": "async function load() {\n  loading.value = true;\n  loadError.value = \"\";\n  try {\n    const [src, syms, ed, un] = await Promise.all([\n      codeSourceFull(props.file.fileId),\n      codeSymbolsOfFile(props.file.fileId).catch(() => []),\n      codeEdgesForFile(props.file.fileId).catch(() => []),\n      codeUnderstandingFile("
       },
       {
         "key": "c3",
-        "label": "文件关系目标解析",
-        "reason": "说明边目标、方向及可解析状态如何从代码图映射生成。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-          "startLine": 116,
-          "endLine": 153
-        },
-        "quote": "// ---- edge resolution ----\ninterface ResolvedEdge {\n  edge: CodeEdge;\n  drill: ReturnType<typeof edgeDrillTarget>;\n  targetFile?: CodeFile;\n  targetSymbolName?: string;\n  resolvable: boolean;\n  direction: \"out\" | \"in\";\n}\n\nconst resolvedEdges = computed<ResolvedEdge[]>(() =>\n  edges.value.map((e) => {\n    const drill "
-      },
-      {
-        "key": "c4",
-        "label": "关系按钮状态与原因",
-        "reason": "精确支持可解析性、edgeDisabled、状态徽标和不可下探原因的交互约束。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-          "startLine": 256,
-          "endLine": 275
-        },
-        "quote": "      <h4>可下探的边 <small>{{ navEdges.length }}</small></h4>\n      <p class=\"muted small\">\n        点行内任意边下跳到目标文件/符号；外部包或未解析目标标灰不可点。\n      </p>\n      <button\n        v-for=\"re in navEdges.slice(0, 60)\"\n        :key=\"re.edge.edgeId\"\n        class=\"edge-row\"\n        :class=\"{ disabled: !re.resolvable || edgeDisabled(re.edge)"
-      },
-      {
-        "key": "c5",
-        "label": "派生说明与原始源码标识",
-        "reason": "支持解析器来源、模型缺失提示和不可变源码边界。",
+        "label": "理解面板与原文状态呈现",
+        "reason": "支持理解面板的解析统计、未决项、可选模型与置信度显示、无模型提示，以及原文区域的独立状态标签。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FileFrame.vue",
-          "startLine": 216,
+          "startLine": 217,
           "endLine": 240
         },
-        "quote": "    <template v-else-if=\"!loadError\">\n      <OmPanel v-if=\"understanding\" title=\"派生说明（确定性解析）\" class=\"stack\">\n        <OmStatusLine kind=\"derived\" sourceNote=\"来自解析器，非模型摘要\" />\n        <p class=\"muted\">\n          语言 {{ parsedUnderstanding().language ?? \"?\" }} · {{ parsedUnderstanding().symbolCount ?? symbols.length }} 个符号"
+        "quote": "      <OmPanel v-if=\"understanding\" title=\"派生说明（确定性解析）\" class=\"stack\">\n        <OmStatusLine kind=\"derived\" sourceNote=\"来自解析器，非模型摘要\" />\n        <p class=\"muted\">\n          语言 {{ parsedUnderstanding().language ?? \"?\" }} · {{ parsedUnderstanding().symbolCount ?? symbols.length }} 个符号 ·\n          {{ parsedUnderstanding()."
+      },
+      {
+        "key": "c4",
+        "label": "符号范围与固定下探",
+        "reason": "支持符号范围生成、起始行命中以及即使没有 fragment 仍发出符号下探事件的行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+          "startLine": 90,
+          "endLine": 114
+        },
+        "quote": "const anchor = ref<number | undefined>(props.anchorLine);\n\nconst ranges = ref<CodeRangeMark[]>([]);\nwatch(symbols, (syms) => {\n  ranges.value = outlineSymbols(syms).map((s) => ({\n    start: s.rangeStart?.line ?? 0,\n    end: s.rangeEnd?.line ?? s.rangeStart?.line ?? 0,\n    id: s.symbolId,\n    kind: s.kind,\n    title: s."
+      },
+      {
+        "key": "c5",
+        "label": "关系目标与方向解析",
+        "reason": "支持组件调用共享辅助函数解析目标，并在本地计算可解析性、目标名称和关系方向。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+          "startLine": 116,
+          "endLine": 139
+        },
+        "quote": "// ---- edge resolution ----\ninterface ResolvedEdge {\n  edge: CodeEdge;\n  drill: ReturnType<typeof edgeDrillTarget>;\n  targetFile?: CodeFile;\n  targetSymbolName?: string;\n  resolvable: boolean;\n  direction: \"out\" | \"in\";\n}\n\nconst resolvedEdges = computed<ResolvedEdge[]>(() =>\n  edges.value.map((e) => {\n    const drill "
       },
       {
         "key": "c6",
-        "label": "关系列表切片上限",
-        "reason": "精确支持导航边最多渲染 60 条、其他边最多渲染 20 条的结论。",
-        "relation": "implements",
+        "label": "关系目标标签回退规则",
+        "reason": "支持目标显示文本依次使用展示标题、符号名、文件标签、摘要、证据或未解析占位的限定说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+          "startLine": 141,
+          "endLine": 153
+        },
+        "quote": "function openEdge(re: ResolvedEdge) {\n  if (re.drill.kind === \"file\") emit(\"drill\", { type: \"file\", fileId: re.drill.fileId, line: re.drill.line });\n  else if (re.drill.kind === \"symbol\") emit(\"drill\", { type: \"symbol\", fileId: re.drill.fileId, symbolId: re.drill.symbolId, line: re.drill.line });\n}\n\nfunction targetLabe"
+      },
+      {
+        "key": "c7",
+        "label": "关系按钮禁用与展示上限",
+        "reason": "支持关系按钮的组件级禁用条件、原因展示，以及可下探边和其他边分别存在 60 条与 20 条渲染上限。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/codewiki/FileFrame.vue",
@@ -100,17 +113,53 @@
           "endLine": 281
         },
         "quote": "      <h4>可下探的边 <small>{{ navEdges.length }}</small></h4>\n      <p class=\"muted small\">\n        点行内任意边下跳到目标文件/符号；外部包或未解析目标标灰不可点。\n      </p>\n      <button\n        v-for=\"re in navEdges.slice(0, 60)\"\n        :key=\"re.edge.edgeId\"\n        class=\"edge-row\"\n        :class=\"{ disabled: !re.resolvable || edgeDisabled(re.edge)"
+      },
+      {
+        "key": "c8",
+        "label": "FileFrame 的 API 与辅助函数依赖",
+        "reason": "支持 FileFrame 从 review-api 引入请求函数和 DTO，并从 modules.ts 引入标签、轮廓、边解析与禁用辅助函数。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/FileFrame.vue",
+          "startLine": 20,
+          "endLine": 30
+        },
+        "quote": "import {\n  codeSourceFull,\n  codeSymbolsOfFile,\n  codeEdgesForFile,\n  codeUnderstandingFile,\n  type CodeFile,\n  type CodeSymbol,\n  type CodeEdge,\n  type CodeUnderstanding,\n} from \"../review-api\";\nimport { outlineSymbols, edgeDrillTarget, fileLabel, filePathLabel, symbolLabel, edgeReason, edgeDisabled } from \"./modules\""
+      },
+      {
+        "key": "c9",
+        "label": "无界面依赖的纯辅助模块",
+        "reason": "支持 modules.ts 被定位为无 Vue 和 DOM 依赖、便于独立单测的纯辅助模块。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/modules.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "/** Pure helpers for grouping code files into architecture modules and\n * aggregating parser edges into a deterministic module dependency graph.\n * Kept free of Vue / DOM so it is unit-testable. */\nimport type { CodeEdge, CodeFile, CodeSymbol } from \"../review-api\";\nimport type { CodeUnderstandingListItem } from \"../re"
       }
     ],
     "questions": [
       {
-        "question": "关系边超过当前切片上限时，产品是否需要分页、展开或明确的截断提示？",
-        "why": "模板只渲染导航边前 60 条和其他边前 20 条，但标题显示总数，用户可能把未显示项误认为不存在。",
-        "nextStep": "确认大文件的预期交互，并为超过上限、候选边、缺失边和外部包补充行为断言。",
+        "question": "关系方向在 `fromSymbolId` 为空时一律判为出边，是否适用于所有文件级关系类型？",
+        "why": "组件明确使用“来源文件是当前文件，或来源符号为空”推断出边，但现有材料没有完整 CodeEdge 合同、服务端边生成逻辑或方向测试，无法确认空来源符号不会出现在应判为入边的记录中。",
+        "nextStep": "补充 CodeEdge DTO、服务端边生成逻辑和方向测试材料，分别核对文件级与符号级关系。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c6"
+          "c5"
+        ]
+      },
+      {
+        "question": "FileFrame 的加载降级、不可导航边以及 60/20 条展示截断是否已有行为测试和完整关系入口？",
+        "why": "当前材料只展示组件实现与辅助模块的可单测定位，没有组件或浏览器测试，也无法确认被截断的关系能否从其他入口完整访问。",
+        "nextStep": "检查并引用相关 Vitest 或 Playwright 用例；若尚无测试，补充主请求失败、辅助请求降级、禁用原因和列表截断断言，并明确完整关系的访问路径。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c7",
+          "c9"
         ]
       }
     ]
@@ -118,49 +167,34 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/api.ts",
-      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
-      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/codewiki/FileFrame.vue",
       "digest": "6bf08120dbba105389b257dbc604f8501fd6b0717ba2bd055340e8fd165e2565"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/codewiki/FragmentFrame.vue",
-      "digest": "085ceb881ef2506da6bc0d4c20fd17b636a650f2276dd2c6d4f5f9dfb1d360f4"
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/codewiki/ModuleFrame.vue",
-      "digest": "89b59531ff437aff27e5ef45f8f284f311ce13d221e97ef219867ed21f7106bb"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/codewiki/SymbolFrame.vue",
-      "digest": "013636979e9904627fe148913fe9de78b6d8687de71d4c8c7a8e6d8cd087d0ae"
+      "key": "omem:apps/web/src/codewiki/modules.ts",
+      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:35:26.443Z",
+    "at": "2026-10-01T02:42:10.272Z",
     "trace": {
-      "runId": "7d8ddacf-8b88-427b-a425-fa3e56e89b3d",
+      "runId": "3cb60b5b-a7c1-4ba9-a1b8-ea25c2037491",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "2ce5899ddec7788628b169f037327499ab734a35f50be94ff8f40c9f568c04b0",
-      "contextHash": "ea170d15b74a4fd8fa824b4d002a080fab08ed8d5a2877e81f5ee3046c80c258",
+      "promptHash": "16be5ffb1d221b06d97b39e0c52803ca1a3df099581cfe64a4c9350c4ece4587",
+      "contextHash": "43d6cda555f992dd0f6a3ad01afa6e69ef33c423b7c4407e9f4bffdf0cd947f9",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "145bdfb491e0e96ad78d102a85fe3c19552b78948f21e7b2ac8d80ceb5cf0ae5",
+      "fingerprint": "c8b16f10d4db5ea9a7c41b32e6ae78ffa38f4ec9f56409759b5dd29dcba9d94d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -173,11 +207,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef17-3ae8-7113-977a-fb8df1959a68"
+        "01a0f556-ed19-7083-8835-1569ae94dfca"
       ],
       "usage": {
-        "used": 45185,
-        "size": 760000,
+        "used": 31804,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -185,10 +219,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 84425,
-          "utf8Bytes": 91595,
-          "estimatedTokens": 30532,
-          "budgetedTokens": 38165,
+          "chars": 34611,
+          "utf8Bytes": 40676,
+          "estimatedTokens": 13559,
+          "budgetedTokens": 16949,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -197,17 +231,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:36:02.593Z",
+    "at": "2026-10-01T02:42:28.633Z",
     "trace": {
-      "runId": "d1dbf1a4-1475-4c42-82f9-8681e18c0f5c",
+      "runId": "278bcdeb-2ae1-451c-8a86-c12c53d59a4e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "3da33f93d09651a60749fd579291f7855732e376c208d49d50ee5c3c1db1656a",
-      "contextHash": "9d07f5e4c10901efeb4f385376f898e2cf8dae276023b0af188599f6e7919133",
+      "promptHash": "9b776c0c95edd4e36590f129bf16f656886d30bc901607faebdde93ee1f515c3",
+      "contextHash": "80cc0eb0e75087d32ae20b2a65d316fdd01097543f4e90216001cefc6de67091",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "06f4e4d4fafe377a82433e1e52a6ea8d8f3b8ba024ac1486e3d390b07c27e71a",
+      "fingerprint": "05279fabe4cb5a0bd8c8a1ac755bf7aad7cf1455317ba7cc1d8161d3bdea1bfc",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -220,11 +254,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef18-1101-7683-9b7d-a8754a1b5472"
+        "01a0f557-53e5-75b2-ac66-2a4cd60246cf"
       ],
       "usage": {
-        "used": 46959,
-        "size": 760000,
+        "used": 29297,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -232,10 +266,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 96241,
-          "utf8Bytes": 107800,
-          "estimatedTokens": 35934,
-          "budgetedTokens": 44918,
+          "chars": 31531,
+          "utf8Bytes": 36216,
+          "estimatedTokens": 12072,
+          "budgetedTokens": 15090,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,147 +2,198 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/review-wiki.ts",
-    "title": "仓库 Wiki 恢复、生成与降级构建入口",
-    "summary": "脚本先同步固定材料与代码投影；默认优先由共享知识重建索引，显式生成则按目标调用模型、发布理解资产，并继续构建结构化 Markdown Wiki。降级路径选择理解记录时以模型结果优先、同类结果取较新者。",
+    "title": "仓库 Wiki 构建与代码理解生成入口",
+    "summary": "该脚本串联仓库捕获、代码图投影、代码理解生成和 Markdown Wiki 输出，并区分显式生成与复用共享知识两条路径。它依赖隔离的 repo-review 运行数据、当前代码快照和理解存储，但不负责 AST 解析、独立语义复核或事务化发布。",
     "category": "workflow",
     "sections": [
       {
-        "key": "modes-and-scope",
-        "title": "模式选择与同步前置",
-        "body": "脚本支持默认恢复和显式生成两种模式。使用 `--generate` 时必须至少提供一个 `--target`，以限制生成范围；两种模式都会先执行评审材料同步和代码投影，再恢复共享知识仓库。默认模式若已有共享知识，便直接重建统一知识索引，不进入旧式结构 Wiki 分支。[[c1]]"
+        "key": "purpose-and-input",
+        "title": "作用与输入边界",
+        "body": "脚本在仓库根目录创建 review store 与临时构建目录，依次执行材料捕获和代码图投影，再消费这些结果生成 Wiki；因此它是流程编排入口，而不是直接扫描源码的独立知识库。[[c1]] review store 与个人工作区隔离，实际运行数据位于 `.repo-review/runtime`，其中数据库进一步落在 `runtime/data`；历史 `.repo-review/data` 仅作为只读种子来源。[[c2]]\n\n生成模式必须显式提供仓库相对目标，否则立即报错。脚本加载模型配置后逐项生成理解，任一结果失败即抛错；成功结果先导出至 staging，再复制到 `GENERATED_DIR`。[[c3]] 先前把该目标直接称为“受版本管理的知识目录”的结论已撤回：当前材料只显示常量导入和复制行为，没有给出常量值或 Git 跟踪状态。"
       },
       {
-        "key": "generation-flow",
-        "title": "理解生成与资产发布",
-        "body": "生成模式从评审模型配置创建隔离的模型端口，并把超时、输入输出 token 上限及上下文预留预算传给每个目标。任一目标失败都会中止；成功结果先导出到运行时暂存区，再复制到 generated 资产目录。[[c2]] 生成完成后仍会进入结构化 Wiki 分支，而不会在本次运行中重建共享知识索引；现有材料未说明生成资产如何进入统一知识链。[[c3]]"
+        "key": "branching-and-rendering",
+        "title": "分支流程与 Wiki 组织",
+        "body": "非生成模式若恢复到已有共享知识，只重建知识索引并跳过 Markdown Wiki 渲染；否则读取当前快照、有效文件和符号，构造当前 head 的模块视图。[[c4]] 文件按共享路径规则归入 web、ui、contracts、agent-runtime、服务端子域、scripts 或 other，使命令输出与阅读端采用一致分组。[[c5]]\n\n每个模块只展示每个目标的最新理解，模型结果排在人工 seed 前；脚本明确标示语义复核状态，并把可识别的内部符号替换为限定名。只有同时定位到符号和文件时才生成源码链接；没有理解记录的模块退化为确定性文件目录。[[c6]]"
       },
       {
-        "key": "fallback-wiki",
-        "title": "结构化 Wiki 的选择与呈现",
-        "body": "降级构建读取当前快照、未移除文件和符号，并按仓库路径归入模块。[[c4]] 对同一目标，脚本先按 `Number(seed)` 升序、再按生成时间降序排序，随后仅展示首条；结合页面以 `note.seed` 区分人工整理与模型结果的逻辑，当前实现表现为假值模型结果优先、同类取较新。此前“人工 seed 优先”的结论被此结论替代。[[c5]] 人工内容和模型内容均带有未完成独立语义复核的来源提示；内部符号标识会转换为限定名，代码引用则拼接文件路径与起始行。理解存储的约束也明确人工 seed 不得声称模型或独立代理验证。[[c6]] 最终 Markdown 仅在内容变化时复制到目标位置，并在结束时关闭存储。[[c7]]"
+        "key": "limits-and-relations",
+        "title": "边界条件与发布限制",
+        "body": "代码图是已捕获 Fragment 的确定性投影，不另存文件正文；符号范围属于具体快照，未在最新解析中重现的边只会标为 stale。因此 Wiki 仅反映当前 head，不能证明跨 revision 身份连续性。[[c7]] 人工理解 seed 则通过稳定 locator 解析、摘要封存和严格交叉引用校验进入当前结果，失败记录不会遮蔽已有有效结果。[[c8]]\n\n最终 Markdown 先写入 staging，仅在内容变化时复制到 `.repo-review/wiki.md`，数据库始终在 `finally` 中关闭。[[c9]] 材料没有显示知识文件复制、索引重建和 Wiki 写入之间存在统一事务；同时，脚本对当前快照使用非空断言，尚不能确认同步成功但未形成快照时的受控行为。同步或捕获若直接抛错，则控制流不会进入该断言场景。"
+      },
+      {
+        "key": "open-questions",
+        "title": "待确认事项",
+        "body": "目前仍需确认 `GENERATED_DIR` 的实际发布边界，才能判断生成理解是否属于明确提交的知识资产。[[c3]] 还需用空仓库或无可投影文件的命令级测试验证：同步成功后若没有 current snapshot，入口应报出受控错误还是生成空 Wiki。[[c4]] 此外，分阶段写入意味着后续失败可能留下部分产物，其一致性要求仍需由测试或发布约定明确。[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "运行模式、同步与共享知识分支",
-        "reason": "支持显式生成的目标约束、同步前置步骤，以及默认模式优先重建共享知识索引的说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/review-wiki.ts",
-          "startLine": 14,
-          "endLine": 25
-        },
-        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst generate = process.argv.includes(\"--generate\");\nconst targets = process.argv.filter(a => a.startsWith(\"--target=\")).map(a => a.slice(9));\nif (generate && !targets.length) throw new Error(\"Specify --target=<repo-relative file or directory>; generation is "
-      },
-      {
-        "key": "c2",
-        "label": "模型理解生成与发布流程",
-        "reason": "支持模型端口创建、预算参数传递、失败终止和成功资产复制的流程描述。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/review-wiki.ts",
-          "startLine": 26,
-          "endLine": 38
-        },
-        "quote": "  if (generate) {\n    const config = loadReviewCodeModelConfig();\n    const model = buildUnderstandingModelPort({ ...config, workspaceDir: join(root, \".repo-review/runtime/agent-workspace\") });\n    if (!model) throw new Error(\"Set REVIEW_CODE_MODEL_CONFIG before requesting generation\");\n    for (const targetId of targe"
-      },
-      {
-        "key": "c3",
-        "label": "生成后的结构 Wiki 分支",
-        "reason": "支持生成模式不会采用共享知识提前分支，而会继续进入结构化 Wiki 构建的论断。",
+        "label": "捕获与代码投影编排",
+        "reason": "支持脚本先运行仓库捕获和代码同步，再进入知识生成或 Wiki 构建的流程描述。",
         "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-wiki.ts",
-          "startLine": 39,
-          "endLine": 46
+          "startLine": 15,
+          "endLine": 25
         },
-        "quote": "  }\n  if (!generate && sharedKnowledge.list().length) process.exitCode = 0;\n  else {\n  const snapshotId = currentSnapshotId(store)!;\n  const files = listFiles(store).filter(f => !f.removed);\n  const symbols = symbolsOfSnapshot(store, snapshotId);\n  const symbolById = new Map(symbols.map(s => [s.symbolId, s]));\n  const "
+        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst generate = taskFlag(\"generate\");\nconst targets = taskTargets();\nif (generate && !targets.length) throw new Error(\"Specify --target=<repo-relative file or directory>; generation is explicitly scoped\");\nconst store = createReviewStore(root);\nconst stage = "
       },
       {
-        "key": "c4",
-        "label": "当前快照与模块分组",
-        "reason": "支持降级构建依赖当前快照、有效文件、符号映射和路径模块分组。",
+        "key": "c2",
+        "label": "repo-review 运行数据布局",
+        "reason": "支持隔离运行目录位于 `.repo-review/runtime`、数据库位于其 data 子目录，以及历史数据仅作种子的边界。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/review-wiki.ts",
-          "startLine": 42,
-          "endLine": 50
+          "key": "omem:apps/server/src/review/store.ts",
+          "startLine": 17,
+          "endLine": 45
         },
-        "quote": "  const snapshotId = currentSnapshotId(store)!;\n  const files = listFiles(store).filter(f => !f.removed);\n  const symbols = symbolsOfSnapshot(store, snapshotId);\n  const symbolById = new Map(symbols.map(s => [s.symbolId, s]));\n  const fileById = new Map(files.map(f => [f.fileId, f]));\n  const modules = new Map<string, "
+        "quote": "/** Relative (POSIX) directory, inside the repo, that holds review runtime data.\n *\n * Layout:\n *   .repo-review/runtime/   gitignored live runtime: omem.sqlite WAL, sync state,\n *                           assets. Created on demand and seeded once from the\n *                           tracked legacy snapshot below.\n *"
       },
       {
-        "key": "c5",
-        "label": "理解记录排序与去重",
-        "reason": "直接支持模型结果优先、同类按生成时间取较新且每个目标仅展示一条的修正结论。",
+        "key": "c3",
+        "label": "显式目标生成与结果复制",
+        "reason": "支持生成必须限定目标、逐项失败即终止、结果经 staging 复制到 `GENERATED_DIR`；同时表明当前范围未展开该常量的实际目录。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 16,
+          "endLine": 39
+        },
+        "quote": "const generate = taskFlag(\"generate\");\nconst targets = taskTargets();\nif (generate && !targets.length) throw new Error(\"Specify --target=<repo-relative file or directory>; generation is explicitly scoped\");\nconst store = createReviewStore(root);\nconst stage = join(root, \".repo-review/runtime/wiki-build\");\nmkdirSync(sta"
+      },
+      {
+        "key": "c4",
+        "label": "共享知识分支与当前快照读取",
+        "reason": "说明已有共享知识时仅重建索引，否则通过非空断言读取当前快照并构造文件、符号视图。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-wiki.ts",
-          "startLine": 51,
-          "endLine": 62
+          "startLine": 25,
+          "endLine": 49
+        },
+        "quote": "  const sharedKnowledge = restoreReviewKnowledge(store, root).repository;\n  if (!generate && sharedKnowledge.list().length) { writeReviewKnowledgeIndex(root, sharedKnowledge.list()); console.log(\"Shared knowledge index rebuilt\"); }\n  if (generate) {\n    const config = loadReviewCodeModelConfig();\n    const model = buil"
+      },
+      {
+        "key": "c5",
+        "label": "仓库路径模块分类规则",
+        "reason": "支持 Wiki 与其他读取端共享按路径划分模块的规则。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/code-modules.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/** Shared repository-path grouping for the Wiki index and Vue reader. */\nexport function moduleForPath(path: string): string {\n  if (path.startsWith(\"apps/web/\")) return \"web\";\n  if (path.startsWith(\"packages/ui/\")) return \"ui\";\n  if (path.startsWith(\"packages/contracts/\")) return \"contracts\";\n  if (path.startsWith(\"p"
+      },
+      {
+        "key": "c6",
+        "label": "理解记录选择与可读化渲染",
+        "reason": "支持每目标去重、模型结果优先、复核状态提示、符号名替换及源码链接生成逻辑。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 52,
+          "endLine": 69
         },
         "quote": "  const current = listUnderstandings(store);\n  for (const [name, group] of [...modules].sort(([a], [b]) => a.localeCompare(b))) {\n    lines.push(\"\", `## ${name}`, \"\");\n    const notes = current.filter(row => group.some(f => f.path === row.target_id || f.path.startsWith(String(row.target_id).replace(/\\/$/, \"\") + \"/\")));"
       },
       {
-        "key": "c6",
-        "label": "人工 seed 的验证边界",
-        "reason": "说明人工 seed 被强制标记为 seed，且不得宣称模型运行或独立代理验证，为页面来源提示提供背景。",
+        "key": "c7",
+        "label": "代码图投影与快照身份边界",
+        "reason": "说明代码图不保存独立正文、符号范围依附快照，以及未重现的边仅转为 stale。",
         "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-store.ts",
-          "startLine": 17,
-          "endLine": 25
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 1,
+          "endLine": 16
         },
-        "quote": " * No production model is ever called: modelAvailable is always false, so the\n * validator forces seed=true / model=null / verified_by_agent=false. The\n * curator identity lives in the curated_* columns and the seed file, NOT in the\n * strict output (which forbids claiming a model ran or that a seed was\n * independentl"
+        "quote": "/** Code Knowledge side tables. These live in the SAME isolated review SQLite as\n * review_source_meta / review_relations 鈥?they are additive, CREATE-IF-NOT-EXISTS\n * only, and never touch sources/revisions/fragments/review_relations rows. The\n * code graph is a deterministic projection over the already-captured fragme"
       },
       {
-        "key": "c7",
-        "label": "Wiki 写入与存储关闭",
-        "reason": "支持仅在内容变化时发布 Wiki，并保证最终关闭存储的边界。",
-        "relation": "tracks",
+        "key": "c8",
+        "label": "人工理解 seed 的解析与校验",
+        "reason": "支持稳定 locator 解析、摘要封存、严格交叉引用校验及失败结果不覆盖有效结果的机制。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 1,
+          "endLine": 25
+        },
+        "quote": "/** Curated Code Understanding projection.\n *\n * Committed seed assets live under `.repo-review/knowledge/understandings/`.\n * They are hand-curated, human-readable module notes that cite the graph by\n * stable locators (repo-relative path + qualified symbol name). At sync time\n * this module:\n *\n *   1. builds the fix"
+      },
+      {
+        "key": "c9",
+        "label": "Wiki 分阶段写入与资源关闭",
+        "reason": "支持 Markdown 先写 staging、按变化复制至最终路径并在 finally 中关闭 store，也揭示这些写入未显示统一事务。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-wiki.ts",
-          "startLine": 70,
-          "endLine": 76
+          "startLine": 71,
+          "endLine": 77
         },
         "quote": "  const markdown = lines.join(\"\\n\") + \"\\n\";\n  writeFileSync(join(stage, \"wiki.md\"), markdown);\n  const destination = join(root, \".repo-review/wiki.md\");\n  if (!existsSync(destination) || readFileSync(destination, \"utf8\") !== markdown) copyFileSync(join(stage, \"wiki.md\"), destination);\n  console.log(`Wiki written: ${des"
       }
     ],
     "questions": [
       {
-        "question": "显式 `--generate` 成功后为何继续构建结构化 Wiki，而不是重建共享知识索引？",
-        "why": "生成分支发布理解资产后必然进入降级路径，但材料没有交代这些资产何时被导入共享 Capture→知识链，也无法判断这是兼容设计还是过渡行为。",
-        "nextStep": "核对命令调用方、生成资产导入流程和集成测试；若生成结果应立即进入共享知识，补充导入、恢复及索引重建步骤。",
+        "question": "`GENERATED_DIR` 的实际路径是否属于明确发布并受版本管理的知识资产？",
+        "why": "当前材料仅显示生成结果被复制到该常量指定的位置，没有提供常量定义或 Git 跟踪边界，先前的“受版本管理”结论已撤回。",
+        "nextStep": "补充 `apps/server/src/code/artifacts.ts` 中 `GENERATED_DIR` 的定义及发布约定，再决定如何描述生成产物的持久化边界。",
         "blocking": false,
         "citationKeys": [
-          "c2",
           "c3"
         ]
       },
       {
-        "question": "`listUnderstandings` 返回的 `seed` 是否始终为布尔值或规范化的 0/1？",
-        "why": "当前排序依赖 `Number(seed)`，而展示逻辑依赖其真值；现有材料说明人工结果应为 seed，但未提供查询返回类型或数据库值域。若返回字符串形式的布尔值，排序可能偏离“模型结果优先”的注释。",
-        "nextStep": "检查理解记录 DTO、数据库字段与排序测试，并覆盖人工和模型记录并存时的选择结果。",
+        "question": "同步成功但没有可用 current snapshot 时，脚本应给出受控错误还是生成空 Wiki？",
+        "why": "入口对 `currentSnapshotId` 使用非空断言；现有材料不能证明空仓库或无可投影文件时一定形成快照。捕获或同步直接抛错属于另一条错误传播路径，不会到达该断言。",
+        "nextStep": "增加空仓库和同步成功但无文件的命令级测试，确认实际返回值后实现明确错误或空输出策略。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c6"
+          "c1",
+          "c4"
         ]
       },
       {
-        "question": "源码链接对含空格、非 ASCII 路径、缺失范围和不同 Markdown 渲染器是否均可用？",
-        "why": "链接由相对文件路径和 `#L行号` 直接拼接，未展示路径转义或目标平台兼容性验证；缺失起始范围时固定回退到第一行。",
-        "nextStep": "增加特殊路径与缺失范围的输出测试，并在实际浏览器或代码托管渲染器中验证跳转。",
+        "question": "知识结果已复制但后续 Wiki 写入失败时，是否允许保留部分发布状态？",
+        "why": "理解产物复制、索引处理和 Wiki 写入分阶段发生，当前材料未显示统一事务、回滚机制或原子发布约定。",
+        "nextStep": "增加复制与写入失败的故障注入测试；若要求一致发布，再设计临时目录整体交换或显式发布清单。",
         "blocking": false,
         "citationKeys": [
-          "c5"
+          "c3",
+          "c9"
+        ]
+      },
+      {
+        "question": "同步成功但没有 current snapshot 时，脚本会受控报错、生成空 Wiki，还是在后续查询中失败？",
+        "why": "脚本对 `currentSnapshotId` 使用非空断言，但给定材料不足以确定空仓库或无可投影文件时的运行行为。",
+        "nextStep": "增加空仓库及无可投影文件的命令级测试，并据结果明确错误或空输出策略。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c4"
+        ]
+      },
+      {
+        "question": "生成理解已复制但后续 Wiki 写入失败时，是否允许保留部分发布状态？",
+        "why": "材料显示理解产物复制与 Wiki 写入分阶段执行，未显示统一事务、回滚或原子发布约定。",
+        "nextStep": "通过故障注入测试确认当前行为，并依据一致性要求补充发布约定或原子交换机制。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c9"
         ]
       }
     ]
@@ -151,7 +202,7 @@
     {
       "kind": "material",
       "key": "omem:scripts/review-wiki.ts",
-      "digest": "e0c0689831eef638a197005cdea1df5c281b01ef2e5971a5f3e879032689f060"
+      "digest": "3162c8095bcae2c3db2356d30aa9bb3d5fcffd01be34bef048798567c79541c5"
     },
     {
       "kind": "material",
@@ -177,17 +228,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:06:38.696Z",
+    "at": "2026-10-01T02:56:26.122Z",
     "trace": {
-      "runId": "17600904-06bd-4ce7-ac22-7bf0a8041a14",
+      "runId": "e3a30da8-1abb-43fe-9200-97f881246953",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "37a0b41b920073c4d4b2e274000cf2c03a73d5ba60505299d6ea2cb89992dcac",
-      "contextHash": "82469269bbbef6c3bab4310880a1a8a330d54276793aeaf21e88485a714adc6b",
+      "promptHash": "7913cbfb85c99e3671320c17ec72dc23f33dd2d0312c5ae6635661af4caa1ecd",
+      "contextHash": "700191b1487919bd9aa599f682f96ad4f35ea3097b9947ec4530329d76e53bc6",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a1a9b0a880c610ac959915d40e117385b806727c5823ecf51fe58d3872b51c58",
+      "fingerprint": "05152a62dc2b65416843967fa6c48a2e862536822d3d6e1ed115f929d0698c22",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -200,11 +251,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-7507-7b00-a374-d67ef776107a"
+        "01a0f563-e7e6-7441-9668-4f5723637a89"
       ],
       "usage": {
-        "used": 24159,
-        "size": 760000,
+        "used": 31288,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -212,10 +263,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 32725,
-          "utf8Bytes": 38268,
-          "estimatedTokens": 12756,
-          "budgetedTokens": 15945,
+          "chars": 34065,
+          "utf8Bytes": 39631,
+          "estimatedTokens": 13211,
+          "budgetedTokens": 16514,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -224,17 +275,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:06:52.283Z",
+    "at": "2026-10-01T02:56:45.997Z",
     "trace": {
-      "runId": "bd023e83-279d-4563-84e3-998ada263137",
+      "runId": "c01aba09-a4a6-42b6-af94-7b855a7e6e86",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "60ca721bf33e8f412ef1e3247b581486595cde54f9cd493236113be2b30556db",
-      "contextHash": "c46d16d840f7200e164a2f2cbc8f147b4f9742b7cdf8d9717342d140ff8e218a",
+      "promptHash": "62f4ee4cf488377b85bd1a1a9fb798addbe5beff854600a21c534879ae7ac6c3",
+      "contextHash": "70f8a26396507c8f7b3e2f518aff17d6f2827d2dfdb89d6737a39ee386c891db",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9fc47b69405cc43843902d0303c73012395d608fafd67ccfe07ddbd86b96b8c3",
+      "fingerprint": "6c75df71d2e8339db0bf85a0f42f97df39ea04e6b40ebc87269ff728650fde67",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -247,11 +298,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-c664-74e1-af78-77c2d1c5c91e"
+        "01a0f564-6002-7d80-b28b-777574338cdf"
       ],
       "usage": {
-        "used": 22084,
-        "size": 760000,
+        "used": 29107,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -259,10 +310,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 29737,
-          "utf8Bytes": 33677,
-          "estimatedTokens": 11226,
-          "budgetedTokens": 14033,
+          "chars": 31628,
+          "utf8Bytes": 36354,
+          "estimatedTokens": 12118,
+          "budgetedTokens": 15148,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,111 +2,219 @@
   "version": 1,
   "document": {
     "key": "omem:packages/contracts/src/index.ts",
-    "title": "跨层数据合同与 Code Knowledge 读取端口",
-    "summary": "该文件集中定义采集输入、证据提案、代理运行上下文、集成配置及 Code Knowledge 投影视图，是运行时、存储适配器和 HTTP 层共享的数据边界；它描述数据形状与局部一致性约束，不实现持久化、模型调用或任务编排。",
+    "title": "统一数据、Agent 流程与代码知识合同",
+    "summary": "该文件以 Zod 校验与 TypeScript 类型统一捕获输入、修订视图、证据提案、独立评估、人工决策、Agent 上下文及 repo-review 代码知识访问端口；它规定数据边界与不变量，但不证明持久化、调度、AST 解析或提案应用的具体行为。",
     "category": "architecture",
     "sections": [
       {
-        "key": "capture-evidence",
-        "title": "采集与证据基础",
-        "body": "采集合同统一接收文本、图片和 HTTP(S) 链接，并可按 part 保留说话者、事件、时间、回复、转发及原始或派生属性；`Revision` 与 `Fragment` 在这里仅是数据形状，并无只读或存储层不可变保证。[[c1]] 批处理提案携带作用域、文本或图像证据、不确定项和派生来源；更新或取代还要求目标标识与预期版本，表达并发更新前提。[[c2]]"
+        "key": "capture-contracts",
+        "title": "统一捕获与修订结构",
+        "body": "捕获合同统一接收文本、图片和 HTTP(S) 链接，并允许每个部件保留说话者、事件、回复、转发及原始或派生属性；manual、file、git、Lark、chat、screen 等入口共享同一信封和上下文结构。[[c1]]\n\n存储视图把图片内容替换为资产标识，通过 `Revision.previousId` 和 `current` 表达修订链，`Fragment.revisionId` 则表示片段隶属的修订。此前关于“固定片段及跨修订身份续接”的结论已被替代：这些类型只规定数据形状，并未承诺分片、去重或跨修订身份保持规则。[[c2]]"
+      },
+      {
+        "key": "proposal-verification",
+        "title": "证据提案、独立评估与人工决策",
+        "body": "文本证据绑定 source/fragment revision、精确引文及 Unicode codepoint 区间；图片证据绑定资产哈希、观察说明与可选区域。[[c3]] task、claim、episode、procedure 四类提案共享作用域、证据、不确定项和版本前置条件，update 与 supersede 还要求目标及预期版本。[[c4]]\n\n评估分别记录引文或资产有效性与语义裁决，避免把位置有效直接等同于论断成立。[[c5]] 人工决策另行绑定 approve、reject 或 request_context，以及提案摘要、请求和操作者。[[c6]] 此前“任务提案复用状态”的结论已被替代：任务领域另定义状态和动作，但提案的 `follow_up` 只复用等待对象、复查时间、暂停时间、时间表达式和时区结构。[[c7]]"
       },
       {
         "key": "agent-boundary",
-        "title": "代理角色与合同层信任隔离",
-        "body": "角色清单约束 profile、提示模板、技能、输出 schema、工具策略、会话隔离和预算，并禁止无工具角色列出允许工具。上下文清单把 `trusted_context` 与 `materials` 分成不同字段，材料至少包含文本或图片。[[c3]] 这提供合同层面的结构性隔离，但 schema 本身不能证明所有下游执行器都不会把材料内容解释为指令；实际执行安全仍需运行时处理规则和测试支撑。"
+        "title": "Agent 角色与受信上下文边界",
+        "body": "角色清单约束角色版本、模型配置引用、输出 schema、工具策略、会话继承和预算；无工具模式不得声明允许工具。[[c8]] 上下文合同把可信信封与待分析材料分开：可信部分记录工作区、身份绑定、来源纪元和项目可信度，材料部分保存文本或图片及片段级来源，并要求至少有一种内容。[[c9]] 这些是运行输入边界，不等于模型调度、权限隔离或输出落库已经实现。"
       },
       {
-        "key": "code-projection",
-        "title": "代码知识附加投影",
-        "body": "代码知识类型覆盖仓库、快照、文件、符号、边和理解结果。位置仅对生成它的 head 快照有效，符号可锚定不可变 review Fragment；边记录 parser、seed 或 LLM 来源及 confirmed、candidate、stale、missing 状态。[[c4]] `CodeKnowledgePort` 暴露当前快照、文件、符号、图、理解结果与同步入口；注释明确它们是隔离 review SQLite 的附加读视图，不替代统一材料链。[[c5]] 文件同时定义了投影状态，但没有给出其与运行时理解输出状态的转换。"
+        "key": "code-knowledge-view",
+        "title": "repo-review 代码知识投影",
+        "body": "代码知识被定义为隔离侧表中的附加读视图，不替代统一的 source、revision、fragment 和 review relation；源码位置只对生成它的快照有效，不构成稳定身份。[[c10]] 图边可表达 imports、defines、calls、test_of 等关系，并携带状态、来源和证据字段，但类型声明不能证明解析器实际生成某条跨文件调用边。[[c11]]\n\n`CodeKnowledgePort` 是暴露给 review HTTP 层的访问端口：它既包含快照、文件、符号、图和理解结果查询，也包含 `sync` 同步入口。此前将其整体称为“读取接口”的结论已被替代；合同本身仍不能证明具体 AST 覆盖、证据生成、陈旧边处理或同步实现。[[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "多模态采集与来源结构",
-        "reason": "支持多模态输入、逐 part 来源信息，以及 Revision、Fragment 只是类型形状的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/index.ts",
-          "startLine": 1,
-          "endLine": 146
-        },
-        "quote": "import { z } from \"zod\";\n// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .ob"
-      },
-      {
-        "key": "c2",
-        "label": "证据提案与并发更新约束",
-        "reason": "支持提案作用域、证据、来源，以及更新和取代操作所需的目标与预期版本。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/index.ts",
-          "startLine": 202,
-          "endLine": 371
-        },
-        "quote": "// Batch 2 contracts use snake_case because they are persisted and exchanged with\n// independent Agent runtimes. They are versioned separately from the HTTP view models.\nexport const batchTwoScopeSchema = z\n  .object({\n    workspace_id: z.string().min(1).max(300),\n    project_id: z.string().min(1).max(300).nullable(),\n"
-      },
-      {
-        "key": "c3",
-        "label": "角色清单与上下文清单",
-        "reason": "支持角色资产和执行策略约束，并证明可信上下文与材料在合同结构中分离。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/index.ts",
-          "startLine": 672,
-          "endLine": 831
-        },
-        "quote": "export const roleIdSchema = z.enum([\n  \"extractor\",\n  \"verifier\",\n  \"planner\",\n  \"feedback-curator\",\n  \"answerer\",\n  \"material-analyst\", \"code-analyst\", \"conversation-analyst\", \"visual-analyst\",\n  \"knowledge-planner\", \"knowledge-writer\", \"knowledge-verifier\", \"knowledge-refresher\",\n]);\n\nexport const roleManifestSchema "
-      },
-      {
-        "key": "c4",
-        "label": "代码快照、符号、关系与理解状态",
-        "reason": "支持快照局部位置、Fragment 锚点、边的来源和状态，以及理解投影的状态集合。",
+        "label": "捕获部件与来源合同",
+        "reason": "支持多模态捕获、部件级来源信息以及统一入口和上下文结构的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/contracts/src/index.ts",
-          "startLine": 891,
-          "endLine": 1015
+          "startLine": 4,
+          "endLine": 112
         },
-        "quote": "/** 1-based line, 0-based column. Per-snapshot: valid only on the head revision\n * that produced it; not part of any stable identity. */\nexport type CodeRange = { line: number; col: number };\n\nexport type CodeRepository = {\n  repoId: string;\n  rootPath: string;\n  remote: string | null;\n  defaultBranch: string | null;\n "
+        "quote": "// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .object({\n    actorExternalI"
       },
       {
-        "key": "c5",
-        "label": "Code Knowledge 读取端口",
-        "reason": "支持代码知识是附加投影，并说明 HTTP 层可查询文件、符号、图和理解结果及触发同步。",
-        "relation": "depends_on",
+        "key": "c2",
+        "label": "修订与片段数据结构",
+        "reason": "支持修订链和片段隶属关系，同时表明合同未声明跨修订身份续接。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/contracts/src/index.ts",
-          "startLine": 884,
-          "endLine": 1046
+          "startLine": 113,
+          "endLine": 147
+        },
+        "quote": "export type CaptureInput = z.infer<typeof captureSchema>;\nexport type StoredPart =\n  | { type: \"text\"; text: string; provenance?: PartProvenance }\n  | {\n      type: \"link\";\n      url: string;\n      label: string;\n      provenance?: PartProvenance;\n    }\n  | {\n      type: \"image\";\n      assetId: string;\n      mimeType: "
+      },
+      {
+        "key": "c3",
+        "label": "文本与图片证据锚点",
+        "reason": "支持文本区间、修订标识、资产哈希及图片区域边界的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 204,
+          "endLine": 263
+        },
+        "quote": "// Batch 2 contracts use snake_case because they are persisted and exchanged with\n// independent Agent runtimes. They are versioned separately from the HTTP view models.\nexport const batchTwoScopeSchema = z\n  .object({\n    workspace_id: z.string().min(1).max(300),\n    project_id: z.string().min(1).max(300).nullable(),\n"
+      },
+      {
+        "key": "c4",
+        "label": "分类型提案与并发前置条件",
+        "reason": "支持四类提案共享证据和版本字段，以及更新或取代操作的目标与预期版本约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 273,
+          "endLine": 374
+        },
+        "quote": "export const taskProposalBodySchema = z\n  .object({\n    title: z.string().min(1).max(300),\n    owner_id: z.string().min(1).max(300).nullable(),\n    due_at: z.iso.datetime({ offset: true }).nullable(),\n    due_expression: z.string().min(1).max(500).nullable(),\n    next_step: z.string().max(2000),\n    follow_up: taskFoll"
+      },
+      {
+        "key": "c5",
+        "label": "证据评估合同",
+        "reason": "支持引文或资产有效性与语义裁决被分别记录。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 415,
+          "endLine": 439
+        },
+        "quote": "export const evidenceAssessmentSchema = z\n  .object({\n    proposal_id: z.string().min(1).max(500),\n    proposal_digest: z.string().regex(/^[a-f0-9]{64}$/),\n    quote_asset_verdict: z.enum([\"valid\", \"invalid\", \"ambiguous\"]),\n    semantic_verdict: z.enum([\n      \"supported\",\n      \"contradicted\",\n      \"insufficient\",\n  "
+      },
+      {
+        "key": "c6",
+        "label": "人工决策操作合同",
+        "reason": "支持人工决策绑定操作、提案摘要、请求标识和操作者。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 497,
+          "endLine": 524
+        },
+        "quote": "export const runtimeRequestDecisionSchema = z\n  .object({ action: z.enum([\"approve\", \"reject\"]) })\n  .strict();\n\nexport const proposalAssessmentInputSchema = z\n  .object({\n    quote_asset_verdict: z.enum([\"valid\", \"invalid\", \"ambiguous\"]).optional(),\n    semantic_verdict: z.enum([\n      \"supported\",\n      \"contradicted"
+      },
+      {
+        "key": "c7",
+        "label": "任务状态、跟进与动作合同",
+        "reason": "支持任务领域独立定义状态和动作，并明确任务提案实际复用的跟进结构只包含等待、复查、暂停、时间表达式与时区。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/task-flow.ts",
+          "startLine": 3,
+          "endLine": 23
+        },
+        "quote": "export const taskStatusSchema = z.enum([\"open\", \"waiting\", \"done\", \"cancelled\"]);\nexport type TaskStatus = z.infer<typeof taskStatusSchema>;\nexport const taskFollowUpSchema = z.object({\n  waiting_on: z.string().min(1).max(500).nullable(),\n  next_check_at: z.iso.datetime({ offset: true }).nullable(),\n  snoozed_until: z."
+      },
+      {
+        "key": "c8",
+        "label": "Agent 角色清单约束",
+        "reason": "支持角色配置、输出类型、工具权限、会话策略和预算边界。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 675,
+          "endLine": 753
+        },
+        "quote": "export const roleIdSchema = z.enum([\n  \"extractor\",\n  \"verifier\",\n  \"planner\",\n  \"feedback-curator\",\n  \"answerer\",\n  \"material-analyst\", \"code-analyst\", \"conversation-analyst\", \"visual-analyst\",\n  \"knowledge-planner\", \"knowledge-writer\", \"knowledge-verifier\", \"knowledge-refresher\",\n]);\n\nexport const roleManifestSchema "
+      },
+      {
+        "key": "c9",
+        "label": "上下文信封与材料合同",
+        "reason": "支持可信上下文和材料分层、片段来源保留及材料非空约束。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 755,
+          "endLine": 834
+        },
+        "quote": "export const contextMaterialSchema = z\n  .object({\n    content_scope: z.enum([\"fragment\", \"revision\"]).optional(),\n    fragment_revision_id: z.string().min(1).max(500),\n    source_revision_id: z.string().min(1).max(500),\n    text: z.string().max(200_000).optional(),\n    image: z\n      .object({\n        asset_hash: z.st"
+      },
+      {
+        "key": "c10",
+        "label": "代码知识投影与快照定位",
+        "reason": "支持代码知识作为附加读视图，以及源码位置只在对应快照中有效。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 887,
+          "endLine": 960
         },
         "quote": "// ---------------------------------------------------------------------------\n// Code Knowledge domain model (repo-review side projection). See\n// docs/implementation/code-knowledge-design.md. These are plain read/view types;\n// the tables live in the isolated review SQLite side tables and are additive --\n// they neve"
+      },
+      {
+        "key": "c11",
+        "label": "代码图边状态与来源",
+        "reason": "支持图边类型、状态、生成来源和证据字段，同时界定类型声明不能证明实际解析行为。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 962,
+          "endLine": 989
+        },
+        "quote": "export type CodeEdgeKind =\n  | \"module_of\"\n  | \"imports\"\n  | \"exports\"\n  | \"defines\"\n  | \"calls\"\n  | \"route\"\n  | \"test_of\"\n  | \"vue_component\"\n  | \"uses_component\";\n\nexport type CodeEdgeStatus = \"confirmed\" | \"candidate\" | \"stale\" | \"missing\";\nexport type CodeEdgeOrigin = \"parser\" | \"seed\" | \"llm\";\n\nexport type CodeEdg"
+      },
+      {
+        "key": "c12",
+        "label": "代码知识 HTTP 访问端口",
+        "reason": "支持该端口同时声明查询方法和同步入口，并表明接口合同没有给出具体实现。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 1020,
+          "endLine": 1049
+        },
+        "quote": "export type CodeKnowledgeSyncResult = {\n  snapshotId: string;\n  fileCount: number;\n  symbolCount: number;\n  edgeCount: number;\n  staleEdgeCount: number;\n  reused: boolean;\n};\n\n/** Read surface exposed to the review HTTP layer. */\nexport interface CodeKnowledgePort {\n  currentSnapshot(): CodeSnapshot | null;\n  listRepos"
       }
     ],
     "questions": [
       {
-        "question": "运行时代码理解结果的 seed、generated、verified、failed 和 rejected 如何映射为投影层的 ok、partial、failed、model_unavailable 与 stale？",
-        "why": "材料展示了两套状态集合，但未定义转换；映射不当可能把未复核或被拒绝的结果呈现为可用理解。",
-        "nextStep": "检查写入 CodeUnderstanding 投影的适配器及状态映射测试，确认无模型、验证失败、独立复核和快照过期分别对应的状态。",
+        "question": "捕获修订的片段如何生成，并在新修订间保持或更换身份？",
+        "why": "引用 c1、c2 只定义捕获、修订和片段的数据形状，不能确认分片、去重、资产持久化或跨修订身份续接行为。",
+        "nextStep": "检查捕获存储、分片实现及行为测试，区分合同字段与实现保证。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c5"
+          "c1",
+          "c2"
         ]
       },
       {
-        "question": "哪些运行时规则和测试保证材料内容始终按非可信数据处理？",
-        "why": "合同只把可信上下文与材料分字段，无法单独约束所有下游执行器如何拼装提示或处理材料。",
-        "nextStep": "检查角色运行器的上下文序列化、提示边界和指令注入测试，并把保证限定到有覆盖的执行路径。",
+        "question": "提案经过评估和人工决策后，哪些 verdict 与 action 组合会真正写入任务、事实、经历或流程实体？",
+        "why": "引用 c4、c5、c6 分别定义提案、评估和决策输入，没有展示应用状态机、事务边界、并发冲突或失败恢复。",
+        "nextStep": "检查提案应用服务、作业处理器及并发冲突测试，核对持久化成功的完整条件。",
         "blocking": false,
         "citationKeys": [
-          "c3"
+          "c4",
+          "c5",
+          "c6"
+        ]
+      },
+      {
+        "question": "CodeKnowledgePort 的 sync 实现是否会创建跨文件 calls 边，并保存可回溯的源码证据？",
+        "why": "引用 c11、c12 只允许 calls 类型和 evidence 字段并声明同步入口，不能确认实际 AST 覆盖和证据生成规则。",
+        "nextStep": "检查 CodeKnowledgePort 实现、AST 同步器及真实行为测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c11",
+          "c12"
         ]
       }
     ]
@@ -114,54 +222,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
-      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/code-modules.ts",
-      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/OmHashRoute.ts",
-      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmBadge.vue",
-      "digest": "21bbd9ccfbf48a0add0d4cf96e9a8e345c6b7c634b0585a692cb5cc1a01f2909"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
+      "key": "omem:packages/contracts/src/task-flow.ts",
+      "digest": "40b7552c6f7ced8e0838773d5e9e4dd7ebff2d813d674f3624e0a1e0e87fa076"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:06:38.605Z",
+    "at": "2026-10-01T02:51:47.769Z",
     "trace": {
-      "runId": "8f775037-2343-4840-8586-a8d753fbbe36",
+      "runId": "d97e1d59-22ae-43eb-ac2d-075ce822ae35",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "86d7c50dcd116572075ce6f25e7a1d2a2af771465de3d9948c11b4b212714a2f",
-      "contextHash": "8d4020c8ae65750230ab3c98c820d7d76faeb980615083be5d49a5d0e4916e07",
+      "promptHash": "db564f6038d2d9cb51cf0aab9bc7926f4f2d1d74b9f9fe7b020a7b6a92c9086d",
+      "contextHash": "20d7ed75f5c16baabf17489ce54bc1222569f568f230b0522f12e2fc8a31d5ef",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1f6b7fe9f162f8b7053a4c1087fc6a3397d816e0c2d17822a1347413bce1b890",
+      "fingerprint": "eca852289da3255f1427aabdc880a8a382e97e41732e163b7fe141eb2a1c5a0d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -174,11 +257,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-07ab-7630-bf68-a92b525c2a5f"
+        "01a0f55f-bda9-7e13-80d6-b7593958202a"
       ],
       "usage": {
-        "used": 48971,
-        "size": 760000,
+        "used": 41685,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -186,10 +269,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 100207,
-          "utf8Bytes": 106603,
-          "estimatedTokens": 35535,
-          "budgetedTokens": 44419,
+          "chars": 57022,
+          "utf8Bytes": 63094,
+          "estimatedTokens": 21032,
+          "budgetedTokens": 26290,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -198,17 +281,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:07:03.432Z",
+    "at": "2026-10-01T02:52:03.438Z",
     "trace": {
-      "runId": "2f8a3e0b-8cac-4dcd-9d9e-b4c0d1db53b9",
+      "runId": "de2a3276-6e41-4be6-92c4-b5418c1511f0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "82db61fb03d765d6c9509e7a5ab84b4e39f30b0f826f4ac629644bde2a169bdb",
-      "contextHash": "b675445ba277c957fa6f36e08a2a79c823eefc68c1c4c130e8a59e845aaf6f77",
+      "promptHash": "2278198c5bbcceb7fb66e261c802f2f441a456aaebe5ada77a82d31842d0caeb",
+      "contextHash": "8471fd22676f2a13bc2886062192946264993486e2dea8245c8d65322a513983",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a909d0c1343308633be720a6fe8b6a7e3bd757bb472dc8a7b642b7dc9f2ca0cc",
+      "fingerprint": "162417f5580f2ac9743d24b0d9b487655e21b361a9cee0b1ee07e576a7341ae8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -221,11 +304,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-c658-7591-b804-15d65b90c621"
+        "01a0f560-1f60-72c3-83c2-43097ee2a4b1"
       ],
       "usage": {
-        "used": 48602,
-        "size": 760000,
+        "used": 37067,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -233,10 +316,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107260,
-          "utf8Bytes": 116860,
-          "estimatedTokens": 38954,
-          "budgetedTokens": 48693,
+          "chars": 53558,
+          "utf8Bytes": 57958,
+          "estimatedTokens": 19320,
+          "budgetedTokens": 24150,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,62 +2,49 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/attention-gate.test.ts",
-    "title": "AttentionGate 与按需知识整合的行为测试",
-    "summary": "该测试用临时 SQLite Store 组装 MemoryService 与关键词检索，验证证据不足、重复、冲突、来源修订和批量影响预算下的分流。它证明超预算 ChangeSet 在正常调用路径中被整体门控，但不覆盖真实模型判断、异常回滚、并发竞争或重试幂等性。",
+    "title": "AttentionGate 与按需知识整合测试",
+    "summary": "该测试以真实临时 SQLite Store、MemoryService 和 KeywordRetrieval 验证注意力门控：低价值或非阻塞变化延后处理，高风险冲突和超预算影响集中请求决策，重复知识避免新增，矛盾保留争议，来源更新使旧知识退出活动证据；批量部分仅验证超预算批次在门控阶段全批延后、零活动记忆物化并汇总为一个决策事项，不代表批准后的批量应用已具备完整原子性。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose_fixture",
-        "title": "测试目标与隔离夹具",
-        "body": "每个场景使用独立临时目录和 `Store`，结束后关闭数据库并递归清理目录，避免用例状态相互污染。[[c1]] `setup` 将自动应用上限设为 10，并装配 SQLite 关键词检索器；辅助函数捕获带 actor、事件时间及时区的 revision，以首个 fragment 构造 Unicode code point selector、固定作用域 claim，并注入确定性的 verifier assessment。[[c2]] 因此，这组测试关注门控消费既定评估后的行为，不代表真实 Agent 或 ACP verifier 的判断质量。"
+        "key": "purpose-fixtures",
+        "title": "测试目标与夹具",
+        "body": "该文件检验哪些变化可自动进入记忆、哪些变化应延后或请求用户决策。夹具把文本捕获为带来源、时间、角色和固定片段定位的 revision，再构造附有证据的 claim，并注入确定性的语义复核结果；每例使用临时目录、真实 Store、MemoryService 与关键词检索，结束后关闭数据库并清理目录。[[c1]] 因而这些属于服务层集成测试，但注入的复核结论不能证明外部 extractor、verifier 或模型调用链路可用。"
       },
       {
-        "key": "routing_conflicts",
-        "title": "延迟、重复与冲突分流",
-        "body": "提议同时包含 `scope_unknown` 且评估为 `insufficient` 时，结果为 `defer_until_use`：既不生成决策卡，也不形成活跃记忆，但原始来源仍可通过关键词检索找到。[[c3]] 跨来源 supersede 活跃知识时则进入 `awaiting_decision`，原记忆仍保持版本 1 和活跃状态，避免静默覆盖。[[c4]]\n\n相关用例还区分重复与冲突：同一来源证据、相同陈述但新 proposal id 会链接既有记忆，不增加活跃行；相反陈述不会自动提升，原记忆保持活跃，双方陈述被写入争议表，且以“重试”为查询词时相关原始来源仍有可检索结果。该断言只证明至少存在一个命中，并未逐一确认冲突双方都出现在结果中。[[c5]] 非活跃且不阻塞当前任务的跨来源冲突被延迟；只有阻塞当前任务时才生成包含问题、选项、尝试解决过程和关联目标的 AttentionCase。[[c8]]"
+        "key": "defer-deduplicate-dispute",
+        "title": "延后、去重与争议保留",
+        "body": "缺少范围且证据不足的题外材料会得到 `defer_until_use`：不生成决策卡、不晋升为活动记忆，但原始材料仍可检索，体现“延后而非丢弃”。[[c2]] 同一来源的相同陈述再次到达时会链接既有记忆，保持单一活动行且不打扰用户。[[c3]] 对来自不同来源、方向相反但均获支持的陈述，测试保留原活动知识、不自动晋升新主张，并将双方陈述记录为争议；关键词检查只能证明相关原始来源仍可搜索，尚未逐一核对两个来源或 revision 都出现在结果中。[[c4]]"
       },
       {
-        "key": "refresh_impact",
-        "title": "来源刷新与影响面门控",
-        "body": "同一 externalId 产生新 revision 后，刷新记录被置为 `needs_review`；用例通过服务返回与直接 SQL 分别核对受影响记忆、数量和刷新表状态，并确认旧记忆已退出活跃检索。该状态仅表示需要复核，不能视作 extractor 与独立 verifier 已完成。[[c6]]\n\n影响面门控不要求调用方显式传入数量：在一个来源已支撑十一条活跃记忆的布置下，对其中一个目标执行同源 supersede 会触发 `impact_limit_exceeded` 并请求决策；测试没有直接断言服务计算出的具体影响数或实体集合。[[c7]] 批量用例则明确断言十二个独立新增提议的总影响为 12、返回十二个受影响实体，并让全部结果作为一个 ChangeSet 进入 `awaiting_decision`；正常返回路径中没有活跃记忆物化。[[c9]] 整批只生成一张包含所检查关键字段的 AttentionCase，随后另一个预算内单条新增可自动应用且不会增加决策卡。[[c10]]"
+        "key": "conflict-refresh-impact",
+        "title": "冲突、刷新与影响门控",
+        "body": "跨来源 supersede 不会静默覆盖活动知识，而是产生一个 `pending` 决策记录，并核对其 `proposalDigest` 与门控结果一致；此前关于“已验证携带工作区语境”的结论被替代，因为测试没有断言具体工作区字段。[[c5]] 若目标已非活动知识且不阻塞当前任务，同类冲突只延后；当冲突阻塞当前任务时，AttentionCase 则须包含问题、选项、已尝试解决方式及关联任务。[[c6]] 来源 revision 更新后，刷新记录仅进入 `needs_review`、列出受影响记忆，且旧记忆退出活动检索；测试明确没有把失效登记视为复核完成。[[c7]] 此外，同源变更即使未由调用方提供影响数，也会按共享来源关联的依赖范围计算波及；当实际影响为 11、超过自动应用上限 10 时，结果进入 `awaiting_decision` 并生成决策事项。[[c9]]"
       },
       {
-        "key": "limits",
-        "title": "断言层次与未覆盖边界",
-        "body": "这些相关用例同时包含服务层行为断言和直接持久化断言：记忆状态、策略结果及关键词检索主要经服务接口核对，争议表与刷新表则通过 SQL 明确检查。[[c5]] [[c6]] AttentionCase 仅检查主题、问题、选项、尝试解决、证据引用和去重键等字段的存在性或部分内容，不能等同于依据完整合同逐字段验证。[[c10]]\n\n测试环境是同步、单进程、临时 SQLite，评估结果也是预设值。批量场景只证明一次正常调用中整批被门控且未产生活跃记忆，没有注入事务中途故障，也没有重复提交同一 ChangeSet。[[c9]] 因而尚不能推出异常回滚、并发唯一约束、跨进程一致性、重试幂等性或决策文案的语义质量。"
+        "key": "batch-atomicity-boundaries",
+        "title": "批量门控与未覆盖边界",
+        "body": "批量路径按去重后的实体并集计算影响：12 个独立新事实超过上限时，整个批次返回 `awaiting_decision`，每项均标记批量延后，只生成一张包含问题、选项、尝试解决方式和证据引用的汇总 AttentionCase；数据库查询同时确认没有活动记忆被物化。[[c8]] 此处替代了“没有活动记忆或应用回执”的旧结论，因为测试并未查询回执表。随后单个低影响创建仍可自动应用且不增加决策卡。该用例只证明超预算批次的门控阶段零物化，没有覆盖批准或拒绝后的批量执行、事务中途失败、重复操作、版本变化及并发竞争，因此不能概括为完整的批量原子性保证。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "临时数据库清理夹具",
-        "reason": "支持每个测试使用临时目录，并在结束后关闭 Store、删除测试数据的隔离说明。",
+        "label": "临时存储、证据与服务夹具",
+        "reason": "支持测试使用真实临时 Store、MemoryService、KeywordRetrieval，并以固定片段证据和注入复核结果构造场景。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/attention-gate.test.ts",
           "startLine": 11,
-          "endLine": 22
+          "endLine": 115
         },
         "quote": "const directories: string[] = [];\nconst stores: Store[] = [];\nconst temporary = (prefix: string) => {\n  const directory = mkdtempSync(join(tmpdir(), prefix));\n  directories.push(directory);\n  return directory;\n};\nafterEach(() => {\n  for (const store of stores.splice(0)) store.close();\n  for (const directory of director"
       },
       {
         "key": "c2",
-        "label": "捕获辅助函数与服务装配",
-        "reason": "支持 actor、事件时间、证据 selector、确定性评估、自动应用上限及检索器装配的说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "startLine": 25,
-          "endLine": 114
-        },
-        "quote": "const capture = (\n  store: Store,\n  text: string,\n  options: { externalId?: string; actorId?: string } = {},\n) =>\n  store.capture({\n    source: \"manual\",\n    externalId: options.externalId ?? `ag-source-${++sequence}`,\n    title: \"Attention gate evidence\",\n    parts: [{ type: \"text\", text }],\n    context: { application"
-      },
-      {
-        "key": "c3",
-        "label": "未知作用域与证据不足场景",
-        "reason": "证明证据不足的未知作用域提议被延迟，不生成决策或活跃记忆，而原始来源仍可检索。",
+        "label": "题外且信息不足的材料延后处理",
+        "reason": "支持材料不晋升、不生成决策卡，但原始来源仍可检索的断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -68,9 +55,35 @@
         "quote": "describe(\"Batch-2 AttentionGate and on-demand knowledge consolidation\", () => {\n  it(\"G10: off-task material with missing time/scope is deferred, retrievable, never a decision card\", () => {\n    const { store, memory, retrieval } = setup();\n    const revision = capture(store, \"内部文档提到一个待确认的接口\");\n    const result = memor"
       },
       {
+        "key": "c3",
+        "label": "重复陈述链接既有记忆",
+        "reason": "支持同一来源和陈述只链接原记忆、不新增活动行或决策卡。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 165,
+          "endLine": 181
+        },
+        "quote": "  it(\"G12a: the same statement from an overlapping source links to the existing memory, no second active row\", () => {\n    const { store, memory } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-dup\" });\n    const first = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n    expect"
+      },
+      {
         "key": "c4",
-        "label": "跨来源覆盖保护",
-        "reason": "证明跨来源 supersede 活跃知识会等待决策，既有记忆不会被静默覆盖。",
+        "label": "相反主张记录为可追溯争议",
+        "reason": "支持矛盾主张不自动晋升、争议入库及相关原始来源仍可通过关键词检索；该范围不证明逐一返回双方来源。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 183,
+          "endLine": 207
+        },
+        "quote": "  it(\"G12b: two supported but opposite claims keep both source attributions as a recorded dispute\", () => {\n    const { store, memory, retrieval } = setup();\n    const sourceOne = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-conflict-one\" });\n    memory.evaluate(claim(sourceOne, \"服务 A 已启用重试\"), supported());\n    const"
+      },
+      {
+        "key": "c5",
+        "label": "跨来源覆盖进入待决状态",
+        "reason": "支持活动知识的跨来源覆盖被门控为 pending 决策，并验证 proposalDigest；材料没有断言具体工作区字段。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -81,48 +94,9 @@
         "quote": "  it(\"G11: a conflict that overwrites existing knowledge becomes one contextual decision, not a JSON blob\", () => {\n    const { store, memory } = setup();\n    const first = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-authority-one\" });\n    const applied = memory.evaluate(claim(first, \"服务 A 已启用重试\"), supported());\n   "
       },
       {
-        "key": "c5",
-        "label": "重复链接与相反陈述争议",
-        "reason": "支持重复陈述链接既有记忆，以及相反陈述保留原活跃记忆、记录双方陈述并仅以结果非空验证相关来源检索的论断。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "startLine": 165,
-          "endLine": 207
-        },
-        "quote": "  it(\"G12a: the same statement from an overlapping source links to the existing memory, no second active row\", () => {\n    const { store, memory } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-dup\" });\n    const first = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n    expect"
-      },
-      {
         "key": "c6",
-        "label": "来源修订后的待复核记录",
-        "reason": "证明刷新记录进入 needs_review，持久化影响数量和状态，并使旧记忆退出活跃检索；不代表复核已经完成。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "startLine": 209,
-          "endLine": 263
-        },
-        "quote": "  it(\"G13: a source revision update records the affected memories and they stop being active evidence\", () => {\n    const { store, memory, retrieval } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-refresh\" });\n    const applied = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n"
-      },
-      {
-        "key": "c7",
-        "label": "未显式传入影响数量时的门控",
-        "reason": "支持十一条同源活跃记忆的测试布置，以及调用方未传影响数量时仍触发超预算门控；该范围不证明服务返回的具体影响数。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "startLine": 265,
-          "endLine": 288
-        },
-        "quote": "  it(\"G17: a change rippling to many dependent memories is gated even when no batch impact is supplied\", () => {\n    const { store, memory } = setup();\n    const shared = capture(store, \"共享来源事实\", { externalId: \"ag-shared\" });\n    const target = memory.evaluate(claim(shared, \"目标事实\"), supported());\n    const targetId = t"
-      },
-      {
-        "key": "c8",
-        "label": "任务相关性驱动的冲突策略",
-        "reason": "支持不阻塞任务的冲突被延迟，而阻塞冲突生成带上下文 AttentionCase 的分流。",
+        "label": "非阻塞延后与阻塞冲突决策",
+        "reason": "支持非活动知识上的非阻塞冲突只延后，以及阻塞当前任务的冲突生成包含问题、选项、尝试解决方式和任务关联的决策事项。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -133,98 +107,64 @@
         "quote": "  it(\"P0: a cross-source update on non-active knowledge that does not block the current task is deferred, never asked\", () => {\n    const { store, memory } = setup();\n    const sourceOne = capture(store, \"服务 A 已启用重试\", { externalId: \"p0-defer-one\" });\n    const applied = memory.evaluate(claim(sourceOne, \"服务 A 已启用重试\"), s"
       },
       {
-        "key": "c9",
-        "label": "超预算批次的整体门控",
-        "reason": "证明十二个独立提议被合并计算影响、整体延迟，并在一次正常调用路径中未物化活跃记忆；也界定其不支持故障回滚或重试保证。",
+        "key": "c7",
+        "label": "来源更新后的失效与待复核记录",
+        "reason": "支持刷新记录进入 needs_review、列出影响范围，并使旧记忆停止作为活动检索证据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 209,
+          "endLine": 263
+        },
+        "quote": "  it(\"G13: a source revision update records the affected memories and they stop being active evidence\", () => {\n    const { store, memory, retrieval } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-refresh\" });\n    const applied = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n"
+      },
+      {
+        "key": "c8",
+        "label": "超预算批次的统一门控",
+        "reason": "支持超预算批次整体延后、活动记忆零物化、单一汇总卡，以及低预算批次继续自动应用；不用于证明回执缺失或批准后的事务原子性。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/attention-gate.test.ts",
           "startLine": 341,
-          "endLine": 370
+          "endLine": 395
         },
         "quote": "  it(\"P0 G17: evaluateBatch unions deduped impact, gates over-budget batches atomically, raises one AttentionCase\", () => {\n    const { store, memory } = setup();\n    // 12 independent creates, each its own statement backed by its OWN source.\n    const entries = Array.from({ length: 12 }, (_, i) => {\n      const src = "
       },
       {
-        "key": "c10",
-        "label": "批量决策卡与预算内应用",
-        "reason": "支持单次超预算批次生成一张包含已检查字段的 AttentionCase，以及随后预算内单条变更自动应用且不新增决策卡。",
+        "key": "c9",
+        "label": "共享来源依赖的实际影响门控",
+        "reason": "支持调用方未提供批量影响数时仍计算共享来源关联的真实波及范围，并在影响数 11 超过上限后进入待决状态。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "startLine": 371,
-          "endLine": 394
+          "startLine": 265,
+          "endLine": 288
         },
-        "quote": "    // One consolidated card with the full v3 AttentionCase fields.\n    const decisions = memory.decisions();\n    expect(decisions).toHaveLength(1);\n    const ac = decisions[0]!.attentionCase as Record<string, unknown>;\n    expect(String(ac.topic)).toContain(\"批量变更\");\n    expect(String(ac.question).length).toBeGreaterTh"
+        "quote": "  it(\"G17: a change rippling to many dependent memories is gated even when no batch impact is supplied\", () => {\n    const { store, memory } = setup();\n    const shared = capture(store, \"共享来源事实\", { externalId: \"ag-shared\" });\n    const target = memory.evaluate(claim(shared, \"目标事实\"), supported());\n    const targetId = t"
       }
     ],
     "questions": [
       {
-        "question": "相反陈述场景是否要求检索结果明确同时包含冲突双方的原始来源？",
-        "why": "当前断言只检查查询“重试”的结果数量大于零，不能区分命中一个来源还是两个来源；更新后的正文已收窄为“相关原始来源仍有可检索结果”。",
-        "nextStep": "若这是合同要求，补充按两个 sourceId、revisionId 或 fragmentId 分别核对检索结果的断言；否则维持当前收窄表述。",
+        "question": "用户批准或拒绝 AttentionCase 后，待决单项与批量变更是否仍能保持幂等和原子应用？",
+        "why": "当前材料只覆盖决策卡创建，以及超预算批次在门控阶段没有活动记忆物化；没有展示决策执行后的版本校验、重复提交、回执处理或部分失败行为。",
+        "nextStep": "补充批准、拒绝、重复操作、版本变化及批量中途失败的服务层行为测试，并分别核对记忆、回执和决策状态。",
         "blocking": false,
         "citationKeys": [
-          "c5"
+          "c5",
+          "c6",
+          "c8"
         ]
       },
       {
-        "question": "批量 AttentionCase 在相同 ChangeSet 重试后是否必须复用同一决策记录与 dedupeKey？",
-        "why": "现有批量用例只执行一次超预算调用，随后测试的是不同的预算内单条新增，不能证明重复调用时 decisionId、dedupeKey 和待处理提议记录稳定复用。",
-        "nextStep": "增加相同 entries 重复调用 `evaluateBatch` 的测试，断言决策数量、decisionId、dedupeKey 及待处理提议记录。",
+        "question": "来源刷新后的 extractor、独立 verifier 和重新应用失败时，旧知识与刷新记录如何演进？",
+        "why": "现有测试只验证刷新记录进入 needs_review、列出影响范围并使旧记忆退出活动检索，没有覆盖后续复核状态机。",
+        "nextStep": "检查刷新工作流实现，并增加成功复核、复核失败、重试及新 revision 再次到达的行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c9",
-          "c10"
-        ]
-      },
-      {
-        "question": "来源刷新后的提取、独立复核和重新应用在成功、证据不足及失败时分别应如何收敛？",
-        "why": "当前测试只证明刷新记录进入 `needs_review`、旧记忆退出活跃检索，没有覆盖后续处理闭环及各类结果的最终状态。",
-        "nextStep": "补充从刷新入列到提取、复核和应用的集成测试，分别断言成功、证据不足和失败恢复时的旧知识与刷新记录状态。",
-        "blocking": false,
-        "citationKeys": [
-          "c6"
-        ]
-      },
-      {
-        "question": "并发调用和事务中途失败时能否保持无部分应用并避免重复决策卡？",
-        "why": "现有门控测试均为同步单进程正常路径；活跃行数为零只能说明该路径未物化，不能支持并发竞争、唯一约束冲突或异常回滚保证。",
-        "nextStep": "增加多连接并发与故障注入测试，核对事务回滚、版本冲突、唯一约束和 AttentionCase 去重。",
-        "blocking": false,
-        "citationKeys": [
-          "c9",
-          "c10"
-        ]
-      },
-      {
-        "question": "相同 ChangeSet 重复提交时，批量 AttentionCase 是否必须复用既有决策及去重键？",
-        "why": "当前批量用例仅执行一次超预算提交，不能证明重复提交时 decisionId、dedupeKey 或待处理提议的幂等性。",
-        "nextStep": "使用相同 entries 重复调用 evaluateBatch，并断言决策数量、decisionId、dedupeKey 和待处理记录。",
-        "blocking": false,
-        "citationKeys": [
-          "c9",
-          "c10"
-        ]
-      },
-      {
-        "question": "来源刷新后的提取、独立复核和重新应用在不同结果下如何收敛？",
-        "why": "现有用例只覆盖 needs_review 记录和旧记忆退出活跃检索，未覆盖后续处理闭环。",
-        "nextStep": "增加从刷新入列到提取、复核和应用的集成测试，覆盖成功、证据不足及失败恢复。",
-        "blocking": false,
-        "citationKeys": [
-          "c6"
-        ]
-      },
-      {
-        "question": "并发调用或事务中途失败时，能否避免部分应用和重复决策卡？",
-        "why": "现有测试是同步单进程正常路径，没有覆盖事务故障、并发竞争或唯一约束冲突。",
-        "nextStep": "增加多连接并发与故障注入测试，核对事务回滚、版本冲突、唯一约束和 AttentionCase 去重。",
-        "blocking": false,
-        "citationKeys": [
-          "c9",
-          "c10"
+          "c7"
         ]
       }
     ]
@@ -238,12 +178,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
@@ -253,23 +193,23 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "50917993e324da135effbfa9f6740f409ff736b851a5234e89b9398da1947556"
+      "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T01:03:36.499Z",
+    "at": "2026-10-01T02:24:20.224Z",
     "trace": {
-      "runId": "6b210907-8e4c-49f4-ba3e-00e4db4d4c26",
+      "runId": "2daa784a-98f8-429d-9801-5225809c0db6",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "68538ea8b87bc2ceb2ffa2cf3d7ebe3710edfbeef5917c31a7c64167c208714c",
-      "contextHash": "942c3db335f2dcf0bac8e3bb28abde470232a8175084aa550795fc2d3c185a49",
+      "promptHash": "e9d856cb4d50971c57297350e16b49cc7e1e3fcec7ac7b7e97754ca89e866fcf",
+      "contextHash": "d4f0d962ffc80da2fd25b49eb27645dca57c2a04ca7addb06cf9525d86f172f8",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fcc40afebb152959e597754c54eb33f80c63aedf0785b1907de69dca147a5992",
+      "fingerprint": "3563a54849c80c3b827e91178ae102b3bb7949aa85c4de82fab4473201c93328",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -282,10 +222,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4fc-ae06-7f21-909e-e99f221b0c79"
+        "01a0f546-9f5d-7f60-8bfe-d33e3631f268"
       ],
       "usage": {
-        "used": 36151,
+        "used": 37458,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -294,10 +234,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 48720,
-          "utf8Bytes": 55342,
-          "estimatedTokens": 18448,
-          "budgetedTokens": 23060,
+          "chars": 47518,
+          "utf8Bytes": 53798,
+          "estimatedTokens": 17933,
+          "budgetedTokens": 22417,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -306,17 +246,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T01:03:54.050Z",
+    "at": "2026-10-01T02:24:39.203Z",
     "trace": {
-      "runId": "8d7d51f0-8842-4432-9552-7bbdf91fba57",
+      "runId": "9b2389ba-b493-44ce-8568-e0caebbe874e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "7ad0d564e87a17384631984a95bb9b3e8d6ed2449902222dcac770e26b0b3759",
-      "contextHash": "461f403c3c1fc0813d1a59c0bb0323ac43439d2437c10d0427aee7a8d8515509",
+      "promptHash": "18854e573146fcd8397c5d377afcd4ca91296f8150470a4ebc08279d0487190b",
+      "contextHash": "25271b60285b39c57b92e976435baa2b35f7840a2580ea346e2ee43c41e90fd3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4e85584da4f8c98a037ad5a75b7718273f1684c04025c06e01ee47c5b072ba66",
+      "fingerprint": "89fa8a4620e8c0683281515b618677f4e00d04e586bce95777d545b663d1f33d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -329,10 +269,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4fd-12e6-7921-9a25-ec4a228f9d3c"
+        "01a0f547-02e4-7921-9688-ebb6259a6a6d"
       ],
       "usage": {
-        "used": 33592,
+        "used": 32980,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -341,10 +281,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 46107,
-          "utf8Bytes": 51913,
-          "estimatedTokens": 17305,
-          "budgetedTokens": 21632,
+          "chars": 45127,
+          "utf8Bytes": 50301,
+          "estimatedTokens": 16767,
+          "budgetedTokens": 20959,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

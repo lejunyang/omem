@@ -2,49 +2,49 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/app.test.ts",
-    "title": "服务端 API 集成测试",
-    "summary": "该测试文件以临时数据目录和 ACP fixture 构建 Fastify 应用，通过注入 HTTP 请求验证认证、捕获与问答证据、连接器边界、图片传递、持久任务控制、提案成功应用、通知查询及助手取消接口。它覆盖多条关键纵向链路，但不能据此证明真实外部 CLI、并发竞争、重启恢复、失败回滚或完整输入净化语义。",
+    "title": "服务端 API 集成测试：安全边界、证据链与运行控制",
+    "summary": "该文件用临时目录和 fixture ACP 代理装配完整 Fastify 应用，覆盖来源接口认证、捕获与问答证据、文件和图片输入、任务控制、提案应用、通知记录及助手取消入口。证据仅支持进程内 fixture 集成行为；不证明全部私有接口、真实 Agent CLI、过期代次冲突、并发与重启恢复，也不证明取消确实终止底层 ACP。",
     "category": "tests",
     "sections": [
       {
-        "key": "fixture-and-boundaries",
-        "title": "测试夹具与安全边界",
-        "body": "`setup` 为每个用例创建独立临时目录，以回环地址、空捕获根目录和 ACP fixture 构建应用，结束时关闭服务并删除数据；因此这些用例主要验证进程内集成，不代表生产部署或真实模型环境。[[c1]] 配置 token 后，匿名访问私有接口返回 401，Bearer token 可正常访问；未配置 token 时，带恶意跨域来源的匿名请求返回 403。[[c2]]\n\n文件连接器用例在捕获根目录为空时拒绝导入 `/etc/passwd`，且不产生捕获；这与连接器先解析真实路径、再确认目标位于允许根目录中的实现相符。[[c3]][[c4]] 同一用例还拒绝与焦点证据不匹配的选中文本，避免把伪造引文带入问答上下文。"
+        "key": "fixture-and-security",
+        "title": "测试夹具与已验证的安全边界",
+        "body": "`setup` 为每个用例创建临时数据目录，通过 `buildApp` 装配服务端、存储与运行器，并让 ACP profile 执行仓库内 fixture 脚本，关闭后清理目录。因此这些是隔离的进程内 HTTP 集成测试，并非真实外部 Agent CLI 的现场验收。[[c1]]\n\n认证断言应限定为实际访问的 `/api/sources`：配置令牌时匿名请求返回 401、正确 Bearer 令牌返回 200；无令牌时，来自恶意 Origin 的匿名请求返回 403。此前“所有私有接口均已验证”的宽泛结论由此被替代。[[c2]] 应用还要求非回环监听必须配置令牌，但这项装配约束不能替代对其他路由逐项测试。[[c3]]"
       },
       {
-        "key": "capture-run-and-jobs",
-        "title": "捕获、问答与持久任务流程",
-        "body": "问答链路先捕获文本证据，再提交 profile、焦点片段和问题；测试等待运行完成，并确认答案 revision 存在且答案片段具有显式证据出边。[[c5]] 图片用例验证保存后的字节与输入一致，并以运行事件中的 `images=1` 确认图片进入 ACP 提示上下文。[[c6]] 应用初始化时共同创建 `Store` 与 `Runs`，但这些断言没有验证真实 ACP CLI、认证配置或模型输出质量。[[c7]]\n\n捕获 API 返回初始为 `queued`、generation 为 1 的任务；携带相同期望代次和 requestId 的重复取消得到相同结果，随后重试使任务回到队列并推进至 generation 2。[[c8]] 这覆盖顺序调用下的幂等响应和代际控制结果，尚未覆盖 worker 领取、进程重启恢复或并发竞争。"
+        "key": "capture-and-evidence",
+        "title": "捕获、证据链与输入边界",
+        "body": "问答用例先捕获文本，再启动 fixture 运行并等待完成，随后确认答案形成新修订、答案片段保留一条出站证据链接，且原材料与答案均在存储中，证明派生答案仍连接原始证据。[[c4]] 文件及选中文本用例验证：未配置捕获根目录时导入 `/etc/passwd` 失败且不落库，无法匹配原文的伪造 selection 也被拒绝。[[c5]] 连接器实现进一步要求真实路径位于配置根目录内，并限制文件大小、UTF-8 解码与二进制内容。[[c6]]\n\n图片用例确认解码字节被原样保存，并由 fixture 运行事件中的 `images=1` 判断图片进入该提示流程；这只覆盖仓库内 fixture 的协议装配，不能外推真实 CLI 的多模态兼容性。[[c7]]"
       },
       {
-        "key": "policy-and-assistant",
-        "title": "提案成功路径、通知与助手取消",
-        "body": "策略用例从带已验证 owner 来源信息的中文承诺构造任务提案，证据明确指向固定 fragment、source、精确引文和 Unicode codepoint selector，并提供 `supported` 复核结论。[[c9]] 成功请求返回 `auto_apply` 与版本 1 回执；后续查询可观察到版本 1 任务、状态为 `applied` 的提案，以及包含提案回执、证据片段和待发送站内渠道的通知。[[c10]] 先前将这些结果表述为“原子地产生”超出了测试证据；现改为仅确认成功路径的最终可观察状态，是否跨任务、提案和通知事务回滚仍待失败用例或实现证据确认。\n\n助手取消用例创建会话、发送一轮消息，再调用含 conversation 与 turn 标识的取消路由：已有轮次返回成功，不存在的轮次返回 404。[[c11]] 由于 fixture 响应很快，它只证明路由接入及返回约定，不能证明长任务中的底层进程终止、事件停止或重复取消语义。"
+        "key": "jobs-policy-and-notifications",
+        "title": "任务控制与提案应用链路",
+        "body": "捕获接口返回状态为 `queued`、generation 为 1 且 attempts 为空的任务；携带 `expectedGeneration` 与 requestId 的取消请求重复提交得到同一结果，随后用正确期望代次重试，任务重新入队并升至 generation 2。[[c8]] 这证明单进程顺序场景中的重复取消幂等和成功重试，但没有验证错误或过期代次会被拒绝。\n\n提案链路中的捕获请求携带**声明为 owner**且填写验证方式字段的 provenance；随后同一次评估请求直接提交标为 `supported` 的 assessment，并断言策略结果为 `auto_apply`，任务、已应用提案及待处理的应用内通知均已落库。此前关于“可信身份已独立认证”和“独立 verifier 已运行”的结论被替代，因为材料只显示请求字段，没有证明认证或独立复核过程。[[c9]] 来源合同确实为主体类型、验证方式、时间、转发状态及原始或派生属性提供结构化字段，但字段存在本身不等于其真实性已获验证。[[c10]]"
       },
       {
-        "key": "normalization-and-contracts",
-        "title": "Hook 最小断言与合同关系",
-        "body": "Hook 单元测试只明确断言输出上下文中的事件名为 `PostToolUse`，且序列化结果不含输入中的 `thoughts` 和 `secret` 值。[[c12]] 先前声称会话和工具信息也被归一化到公开上下文缺少断言支持，现已被替代；现有材料不能确认 `session_id`、`tool_name` 或 `tool_input` 是否保留、转换或丢弃。\n\n测试文件直接导入应用构建器、共享合同和连接器入口，说明这些是实际测试依赖。[[c13]] 捕获合同对文本、图片和链接 part 使用严格对象校验，并限制图片 MIME 类型与数据长度。[[c14]] 不过这不能替代 `hookInput` 的完整实现证据，也未覆盖所有已知 hook 字段、畸形输入、超长负载或嵌套敏感字段。"
+        "key": "hooks-cancel-and-limits",
+        "title": "Hook 归一化、取消入口与限制",
+        "body": "Hook 用例只确认事件名被归一化为 `PostToolUse`，并确认序列化后的结果不含未知 `thoughts` 与 `secret` 的值；它没有断言 `tool_input.command` 是否保留或如何转换，也没有执行持久化。此前关于“工具输入已归一化”和“未知字段不会进入持久对象”的结论均被更窄表述替代。[[c11]]\n\n助手取消用例创建会话与 turn，调用取消端点并断言成功，同时确认不存在的 turn 返回 404，因而只能证明 HTTP 路由接入基本取消入口。[[c12]] fixture 响应很快，材料未观察取消发生时 turn 是否仍在运行、最终状态与事件流是否停止、资源是否释放或底层 ACP 是否终止。全文件也未覆盖过期 generation、并发控制、服务重启后的幂等恢复及真实 Agent CLI 能力。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "测试应用夹具",
-        "reason": "支持临时目录、回环地址、空捕获根目录、ACP fixture 以及测试结束清理方式的说明。",
+        "label": "隔离应用与 fixture ACP 测试夹具",
+        "reason": "支持临时目录、完整应用装配、仓库内 fixture ACP 脚本及关闭后清理的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/app.test.ts",
-          "startLine": 8,
+          "startLine": 1,
           "endLine": 34
         },
-        "quote": "async function setup(token?: string) {\n  const dir = mkdtempSync(join(tmpdir(), \"omem-api-\"));\n  const result = await buildApp({\n    dataDir: dir,\n    agentCwd: join(dir, \"agent\"),\n    token,\n    host: \"127.0.0.1\",\n    port: 4317,\n    captureRoots: [],\n    notifications: { mode: \"instant\" },\n    profiles: [\n      profi"
+        "quote": "import { it, expect } from \"vitest\";\nimport { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resolve } from \"node:path\";\nimport { buildApp } from \"../src/app.js\";\nimport { profileSchema } from \"../../../packages/contracts/src/index.js\";\nimport { hookInput } from \"../src/connector"
       },
       {
         "key": "c2",
-        "label": "私有接口认证与跨域拒绝测试",
-        "reason": "支持匿名请求 401、Bearer token 成功访问及恶意跨域匿名请求 403 的断言。",
+        "label": "来源接口认证与跨来源断言",
+        "reason": "支持 `/api/sources` 的匿名拒绝、Bearer 令牌访问和恶意 Origin 拒绝，并限定结论只覆盖该路由。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -56,34 +56,21 @@
       },
       {
         "key": "c3",
-        "label": "文件导入与选中文本校验测试",
-        "reason": "支持越界文件导入不落库以及伪造选中文本被拒绝的安全边界。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/app.test.ts",
-          "startLine": 100,
-          "endLine": 135
-        },
-        "quote": "it(\"validates selected text and restricts filesystem imports\", async () => {\n  const x = await setup();\n  try {\n    expect(\n      (\n        await x.app.inject({\n          method: \"POST\",\n          url: \"/api/connectors/file\",\n          payload: { path: \"/etc/passwd\" },\n        })\n      ).statusCode,\n    ).toBe(400);\n  "
-      },
-      {
-        "key": "c4",
-        "label": "捕获根目录路径校验",
-        "reason": "解释文件导入测试所依赖的真实路径解析和允许根目录检查。",
+        "label": "非回环监听的令牌前置条件",
+        "reason": "说明应用在非回环地址监听时必须配置令牌，并界定其与逐路由认证测试的区别。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/connectors.ts",
-          "startLine": 10,
-          "endLine": 27
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 46,
+          "endLine": 55
         },
-        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
+        "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
       },
       {
-        "key": "c5",
-        "label": "答案持久化与证据链接测试",
-        "reason": "支持捕获证据、提交运行、等待完成及检查答案证据出边的流程。",
+        "key": "c4",
+        "label": "答案持久化与显式证据链接",
+        "reason": "支持 fixture 运行完成、答案修订写入以及答案片段保留出站证据链接的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -94,9 +81,35 @@
         "quote": "it(\"persists a generated answer and its explicit evidence links\", async () => {\n  const x = await setup();\n  try {\n    const captured = x.store.capture({\n      source: \"manual\",\n      externalId: \"x\",\n      title: \"Evidence\",\n      parts: [{ type: \"text\", text: \"Some evidence\" }],\n      context: {},\n    });\n    const r"
       },
       {
+        "key": "c5",
+        "label": "文件导入与选中文本拒绝",
+        "reason": "支持越界文件导入失败且不落库，以及伪造 selection 因不匹配原文而被拒绝。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 100,
+          "endLine": 135
+        },
+        "quote": "it(\"validates selected text and restricts filesystem imports\", async () => {\n  const x = await setup();\n  try {\n    expect(\n      (\n        await x.app.inject({\n          method: \"POST\",\n          url: \"/api/connectors/file\",\n          payload: { path: \"/etc/passwd\" },\n        })\n      ).statusCode,\n    ).toBe(400);\n  "
+      },
+      {
         "key": "c6",
-        "label": "图片保存与 ACP 上下文测试",
-        "reason": "支持图片字节保持一致并通过事件确认图片进入 ACP 上下文的断言。",
+        "label": "文件连接器路径与内容限制",
+        "reason": "解释文件导入断言背后的真实路径、配置根目录、大小、UTF-8 和二进制内容限制。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 10,
+          "endLine": 34
+        },
+        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
+      },
+      {
+        "key": "c7",
+        "label": "图片字节保存与 fixture 提示输入",
+        "reason": "支持图片资产字节一致及 fixture 事件报告包含一张图片，同时限定其不能证明真实外部 CLI。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -107,22 +120,9 @@
         "quote": "it(\"preserves image bytes and includes images in an ACP prompt\", async () => {\n  const x = await setup();\n  try {\n    const png =\n      \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6vO8AAAAASUVORK5CYII=\";\n    const c = x.store.capture({\n      source: \"screen\",\n      externalId: \"screenshot\",\n"
       },
       {
-        "key": "c7",
-        "label": "应用存储与运行器初始化",
-        "reason": "说明集成测试中的持久化和运行状态由应用初始化的 Store 与 Runs 承载。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 51,
-          "endLine": 64
-        },
-        "quote": "  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify({ bodyLimit: 12_000_000, logger: false });\n  const store = new Store(config.dataDir, {\n    externalNotifications: config.notifications.external,\n  });"
-      },
-      {
         "key": "c8",
-        "label": "持久任务控制 API 测试",
-        "reason": "支持任务初始状态、相同请求取消的幂等结果及重试推进 generation 的断言。",
+        "label": "任务取消幂等与正确代次重试",
+        "reason": "支持任务初始状态、相同取消请求的重复结果及使用正确期望代次重试后 generation 增加，也显示未覆盖错误代次。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -134,47 +134,34 @@
       },
       {
         "key": "c9",
-        "label": "Owner 任务提案输入",
-        "reason": "支持已验证来源、固定证据定位、精确引文和 supported 复核输入的描述。",
+        "label": "Owner 提案请求与自动应用断言",
+        "reason": "支持请求自行声明 owner provenance、随评估请求提交 supported assessment，以及任务、提案和通知记录的落库断言；不将其解释为独立认证或独立复核。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/app.test.ts",
           "startLine": 247,
-          "endLine": 327
+          "endLine": 367
         },
         "quote": "it(\"evaluates and atomically applies a supported owner task through HTTP\", async () => {\n  const x = await setup();\n  try {\n    const text = \"我负责在周五前提交验证报告。\";\n    const captured = (\n      await x.app.inject({\n        method: \"POST\",\n        url: \"/api/captures\",\n        payload: {\n          source: \"manual\",\n          "
       },
       {
         "key": "c10",
-        "label": "任务应用与通知成功结果",
-        "reason": "仅支持成功路径中 auto_apply、任务版本、提案状态和通知回执的最终可观察结果，不用于证明事务原子性。",
-        "relation": "supports",
+        "label": "捕获来源信息合同",
+        "reason": "说明主体类型、验证方式、事件时间、转发状态和 producerKind 等结构化来源字段，但不证明字段值已认证。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/app.test.ts",
-          "startLine": 328,
-          "endLine": 364
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 49,
+          "endLine": 69
         },
-        "quote": "    expect(evaluated.statusCode).toBe(200);\n    expect(evaluated.json()).toMatchObject({\n      policy: \"auto_apply\",\n      receipt: { entityType: \"task\", entityVersion: 1 },\n    });\n    expect((await x.app.inject(\"/api/tasks\")).json()).toMatchObject([\n      { title: \"提交验证报告\", ownerId: \"owner\", version: 1 },\n    ]);\n   "
+        "quote": "export const captureProvenanceSchema = z\n  .object({\n    collectorId: z.string().min(1).max(300),\n    actorId: z.string().min(1).max(300).nullable(),\n    actorType: z.enum([\"owner\", \"user\", \"bot\", \"system\", \"unknown\"]),\n    actorVerifiedBy: z.string().min(1).max(300).nullable(),\n    sourceUri: z.string().max(2000).null"
       },
       {
         "key": "c11",
-        "label": "助手轮次取消端到端测试",
-        "reason": "支持创建会话、发送轮次、取消已有轮次成功及取消不存在轮次返回 404 的行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/app.test.ts",
-          "startLine": 370,
-          "endLine": 411
-        },
-        "quote": "it(\"HTTP cancel e2e: POST /api/assistant/conversations/:id/turns/:turnId/cancel wires to runtime\", async () => {\n  const a = await setup();\n  try {\n    // 1. Create a web conversation.\n    const convRes = await a.app.inject({\n      method: \"POST\",\n      url: \"/api/assistant/conversations\",\n      payload: { chatId: \"tes"
-      },
-      {
-        "key": "c12",
-        "label": "Hook 事件最小化断言",
-        "reason": "仅支持事件名等于 PostToolUse，以及结果不包含两个指定敏感值；不支持会话和工具字段已被保留的结论。",
+        "label": "Hook 事件与未知字段过滤断言",
+        "reason": "支持事件名归一化及结果不含 thoughts、secret 值，并明确该用例未断言工具输入转换或持久化。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -185,60 +172,46 @@
         "quote": "it(\"normalizes hook events without persisting unknown hidden payloads\", () => {\n  const v = hookInput({\n    hook_event_name: \"PostToolUse\",\n    session_id: \"s\",\n    tool_name: \"Bash\",\n    tool_input: { command: \"git status\" },\n    thoughts: \"private\",\n    secret: \"never\",\n  });\n  expect(v.context.event).toBe(\"PostToolU"
       },
       {
-        "key": "c13",
-        "label": "被测模块直接导入",
-        "reason": "证明测试直接依赖应用构建器、共享合同和连接器入口。",
-        "relation": "depends_on",
+        "key": "c12",
+        "label": "助手 turn 取消 HTTP 入口",
+        "reason": "支持取消端点成功及不存在 turn 返回 404，同时表明 fixture 响应很快且未验证底层执行终止。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/app.test.ts",
-          "startLine": 1,
-          "endLine": 7
+          "startLine": 370,
+          "endLine": 411
         },
-        "quote": "import { it, expect } from \"vitest\";\nimport { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resolve } from \"node:path\";\nimport { buildApp } from \"../src/app.js\";\nimport { profileSchema } from \"../../../packages/contracts/src/index.js\";\nimport { hookInput } from \"../src/connector"
-      },
-      {
-        "key": "c14",
-        "label": "捕获内容 Part 合同",
-        "reason": "解释文本、图片和链接输入所受的严格 schema、MIME 类型及长度约束。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/index.ts",
-          "startLine": 18,
-          "endLine": 46
-        },
-        "quote": "export const textPart = z\n  .object({\n    type: z.literal(\"text\"),\n    text: z.string().min(1).max(200000),\n    provenance: partProvenanceSchema.optional(),\n  })\n  .strict();\nexport const imagePart = z\n  .object({\n    type: z.literal(\"image\"),\n    mimeType: z.enum([\"image/png\", \"image/jpeg\", \"image/webp\"]),\n    data: z"
+        "quote": "it(\"HTTP cancel e2e: POST /api/assistant/conversations/:id/turns/:turnId/cancel wires to runtime\", async () => {\n  const a = await setup();\n  try {\n    // 1. Create a web conversation.\n    const convRes = await a.app.inject({\n      method: \"POST\",\n      url: \"/api/assistant/conversations\",\n      payload: { chatId: \"tes"
       }
     ],
     "questions": [
       {
-        "question": "助手取消是否必须保证底层 ACP 进程终止并停止后续事件写入？",
-        "why": "现有用例使用快速响应 fixture，只证明取消路由对已有轮次返回成功、对不存在轮次返回 404，无法观察真正运行中的取消效果。",
-        "nextStep": "增加可阻塞的 ACP fixture，并断言取消信号、运行状态收敛以及取消后不再追加事件。",
+        "question": "取消请求到达时，fixture turn 是否仍处于运行状态，底层 ACP 执行是否确实被终止？",
+        "why": "现有用例只断言取消端点返回成功和不存在的 turn 返回 404；fixture 响应很快，材料没有观察最终状态、后续事件、资源释放或子进程终止。",
+        "nextStep": "使用可控阻塞的 ACP fixture，在运行中发起取消，并断言 turn 最终状态、后续事件停止、资源释放及重复取消行为。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c11"
+          "c12"
         ]
       },
       {
-        "question": "持久任务控制在进程重启及并发取消、重试竞争下应采用什么确定语义？",
-        "why": "当前只覆盖同一 requestId 的顺序重复取消和一次匹配 generation 的重试。",
-        "nextStep": "补充数据库重启恢复测试，并以并发请求验证 generation 冲突、幂等结果和相应状态码。",
+        "question": "任务控制遇到过期代次、并发请求或服务重启时，是否仍保持 generation 冲突检测与 requestId 幂等？",
+        "why": "现有材料只覆盖单进程顺序调用、相同取消请求的重复提交，以及一次携带正确 expectedGeneration 的重试。",
+        "nextStep": "增加过期 generation、并发控制请求及持久化重启测试，核对响应状态、generation、attempts 和相同 requestId 的稳定结果。",
         "blocking": false,
         "citationKeys": [
           "c8"
         ]
       },
       {
-        "question": "提案评估失败、版本冲突或通知创建失败时，任务、提案和通知是否要求全事务回滚？",
-        "why": "现有材料只展示 supported 提案成功应用后的最终状态，不能证明跨对象写入的事务边界或失败回滚。",
-        "nextStep": "为 unsupported、needs_review、expected_versions 冲突和通知写入故障增加行为断言，并检查各持久化对象的一致性。",
+        "question": "真实 Agent CLI 的发现、鉴权、模型能力与图片传输是否和 fixture ACP agent 一致？",
+        "why": "测试 profile 执行仓库内 fixture 脚本，图片计数也来自该 fixture 的运行事件，不能证明外部 CLI 的实际兼容性。",
+        "nextStep": "增加独立 live test，记录实际 profile、模型能力、退出码以及文本和图片传输结果，并与 fixture 集成测试分开标注。",
         "blocking": false,
         "citationKeys": [
-          "c9",
-          "c10"
+          "c1",
+          "c7"
         ]
       }
     ]
@@ -257,28 +230,28 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
+      "digest": "e8a4ec3f6e8619195e7710c33738c95ae371a7aad7f8cef4368556452bbd072f"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:25:43.660Z",
+    "at": "2026-10-01T02:24:29.325Z",
     "trace": {
-      "runId": "93236ed5-bd83-493f-b3cb-dfd4ea0bedbb",
+      "runId": "5fe0c085-3a11-46e4-9c4b-0b0c62fde741",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "1f699e40d5ed3026b037b0de6f7bf3894557de46f6c730fc45120fedbe7413de",
-      "contextHash": "19c2c79fcb56138c1020694c260636a03ffd386bde8a94c2240693a147347796",
+      "promptHash": "c4f8398c96d1199fa8d97a73770fec3b23b32b5b8bc4d3a781f53523c711010f",
+      "contextHash": "bb0b12f0ba521e8c0b028b8757756182b4601af239bdcc1191687490a6ae382c",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bc5f26af6b1b8fdd506b5c87db8830614f30709cd763eeb7a5b7a8457e223ecb",
+      "fingerprint": "61551f8b3ab54e1204c212f9e3237b9302cf140ef83be5d7101a072f53a39d48",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -291,10 +264,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4d9-f0a3-7580-b85f-ff38935898df"
+        "01a0f546-b4c7-7541-952d-dbfb0f6c46a8"
       ],
       "usage": {
-        "used": 35581,
+        "used": 35264,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -303,10 +276,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 44585,
-          "utf8Bytes": 51381,
-          "estimatedTokens": 17127,
-          "budgetedTokens": 21409,
+          "chars": 43991,
+          "utf8Bytes": 51039,
+          "estimatedTokens": 17013,
+          "budgetedTokens": 21267,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -315,17 +288,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:25:58.688Z",
+    "at": "2026-10-01T02:24:48.773Z",
     "trace": {
-      "runId": "1dc660b0-7a93-4bac-ade2-e235e1a906ec",
+      "runId": "20f8adb8-c7aa-4bca-b698-7b6f1c9c7be0",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4e49381e76f93257eb02915dc83593db73a8c36d95563a1d132ca2a18e5ca032",
-      "contextHash": "34b856048e16cb1897275de3a5ce45010749096da518bbe3bee92a77d18ff4f8",
+      "promptHash": "8edfcfde4dc37e464f4a27482edfa16b4ade7f0fe006a2ec25488f965f5601f1",
+      "contextHash": "05d9e2887998b4baf1528464f415bd5c85e0656a1c417ca98e525d4c74e994b1",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "78d218459eb54fea8868ed01c7210ce782f30beb5e7df36bb2135c77202835cf",
+      "fingerprint": "8f77482433d41a51e2fbda5d7b6409003894a291fd06c52f2fbc2feb2df09d4a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -338,10 +311,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4da-6436-7143-b7ea-376abef311d2"
+        "01a0f547-2274-7db2-80c9-aebdadb8ddbf"
       ],
       "usage": {
-        "used": 32084,
+        "used": 32115,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -350,10 +323,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 41107,
-          "utf8Bytes": 46135,
-          "estimatedTokens": 15379,
-          "budgetedTokens": 19224,
+          "chars": 40285,
+          "utf8Bytes": 45435,
+          "estimatedTokens": 15145,
+          "budgetedTokens": 18932,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

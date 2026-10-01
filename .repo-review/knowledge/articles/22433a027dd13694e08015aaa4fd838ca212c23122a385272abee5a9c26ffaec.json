@@ -2,90 +2,119 @@
   "version": 1,
   "document": {
     "key": "omem:packages/contracts/src/knowledge.ts",
-    "title": "知识生成、复核与制品合同",
-    "summary": "该模块定义知识文档、内联引用、待确认问题、批量生成、独立复核与计划的严格 Zod 合同，并补充运行时材料和已验收制品的类型结构。",
+    "title": "知识生成、复核与制品的共享合同",
+    "summary": "该文件以严格 Zod schema 约束知识引用、疑问、文档、批次、独立复核和章节规划的数据形状，并导出对应 TypeScript 类型；另以普通类型描述输入材料和已验收知识制品携带的来源、依赖摘要、生成轨迹与复核信息。",
     "category": "architecture",
     "sections": [
       {
-        "key": "document",
-        "title": "正文、引用与问题",
-        "body": "知识文档包含稳定 key、标题、摘要、分类和章节；章节正文可承载 Markdown。引用具有短 key、人读标签、理由、关系及材料或文章目标，材料目标可带行号，文章目标可带 section，quote 默认为空并由宿主按固定范围提取。[[c1]] questions 明确记录问题、原因、下一步、是否阻塞及关联引用，避免把证据不足伪装成结论。[[c2]]"
+        "key": "purpose",
+        "title": "作用与合同边界",
+        "body": "该模块为知识流水线提供共享合同。知识生成结果被组织为文档与版本 1 批次，文档包含摘要、分类、章节、引用和问题；这些 Zod 对象均使用严格模式，并限制键格式、字段长度及数组规模。[[c1]] 独立复核和章节规划另有版本 1 结构：前者记录逐文档判定，后者约束章节用途及所需材料。[[c3]] `KnowledgeMaterial` 与 `KnowledgeArtifact` 则只是 TypeScript 类型，本文件没有展示它们的运行时校验，也不负责生成、持久化或任务编排。"
       },
       {
-        "key": "batch-review-plan",
-        "title": "批量输出、复核与组织计划",
-        "body": "批量合同一次容纳有限数量的知识文档；复核合同逐文档返回 accepted 或 needs_revision，并可附具体问题与待确认项。知识计划则把材料分配给至少四个章节，每章说明目的。[[c3]] 这些 schema 约束交换格式和数量边界，但不执行引用语义核验，也不负责修订合并。"
+        "key": "citation_flow",
+        "title": "引用与疑问如何表达",
+        "body": "引用要求提供人读标签、支持理由、关系类型，以及材料或文章目标；材料目标可以精确到行，文章目标可以指向章节。`quote` 默认留空，并注明由宿主从所选行范围抽取原文后再进行独立复核，从合同层降低生成方自行改写引文的风险。无法确认的事项通过问题对象保存原因、下一步、是否阻塞和相关引用键，使不确定性能够随文档或复核结果继续流转。[[c2]]"
       },
       {
-        "key": "artifact",
-        "title": "材料与已验收制品",
-        "body": "`KnowledgeMaterial` 保留来源、修订、摘要、正文行数、Fragment 与图片等信息。`KnowledgeArtifact` 则把文档、依赖摘要、生成模型与 trace，以及结论为 accepted 的复核模型和 trace 组合成版本化制品。[[c4]] 该类型表达制品应携带生成和复核来源，但这里只是 TypeScript 类型，并未展示摘要核验、落盘或防篡改实现。"
+        "key": "document_review_plan",
+        "title": "文档、复核与规划的衔接",
+        "body": "知识批次最多容纳 16 篇文档。复核合同同样采用版本 1，按文档键给出 `accepted` 或 `needs_revision`，并携带问题与待修订事项；规划合同则要求 4 至 32 个章节，每章以稳定格式的键、标题、用途和材料键描述预期覆盖范围。[[c3]] 这些定义说明各阶段交换什么数据，但没有给出规划、生成、宿主引文抽取和独立复核的实际调用顺序、重试方式或失败处理。"
+      },
+      {
+        "key": "material_artifact",
+        "title": "输入材料、产物溯源与限制",
+        "body": "`KnowledgeMaterial` 描述输入材料的来源与修订标识、命名空间、会话和参与者上下文、摘要、正文、片段及受限图片格式，并未在此声明材料不可变或禁止更新。[[c4]] `KnowledgeArtifact` 把最终文档绑定到材料或文章依赖的摘要，同时记录生成模型、努力级别、时间、运行轨迹和独立复核信息；其复核结论只能为 `accepted`，表明该类型面向已验收制品。[[c5]] 但本文件没有定义依赖摘要变化后的过期检测、状态转换或旧制品保留策略。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "知识引用与正文合同",
-        "reason": "支持引用键、标签、理由、关系、材料行号或文章章节，以及宿主提取 quote 的设计。",
+        "label": "知识文档与批次结构",
+        "reason": "支持知识文档的字段组成、严格校验、数量约束以及批次版本和文档上限。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/contracts/src/knowledge.ts",
-          "startLine": 3,
-          "endLine": 15
+          "startLine": 25,
+          "endLine": 39
         },
-        "quote": "const key = z.string().min(1).max(500);\nexport const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \""
+        "quote": "export const knowledgeDocumentSchema = z.object({\n  key, title: z.string().min(1).max(240), summary: z.string().min(1).max(1600),\n  category: z.enum([\"overview\", \"architecture\", \"background\", \"requirements\", \"progress\", \"implementation\", \"tests\", \"configuration\", \"workflow\", \"research\", \"conversation\", \"visual\"]),\n  se"
       },
       {
         "key": "c2",
-        "label": "问题与知识文档结构",
-        "reason": "支持待确认问题的完整字段，以及知识文档章节、引用和问题集合的边界。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/knowledge.ts",
-          "startLine": 17,
-          "endLine": 35
-        },
-        "quote": "export const knowledgeQuestionSchema = z.object({\n  question: z.string().min(1).max(1000),\n  why: z.string().min(1).max(1200),\n  nextStep: z.string().min(1).max(1000),\n  blocking: z.boolean(),\n  citationKeys: z.array(z.string()).max(20),\n}).strict();\n\nexport const knowledgeDocumentSchema = z.object({\n  key, title: z.st"
-      },
-      {
-        "key": "c3",
-        "label": "批量、复核与知识计划合同",
-        "reason": "支持批量文档、逐文档复核结论及按章节组织材料的交换格式。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/contracts/src/knowledge.ts",
-          "startLine": 37,
-          "endLine": 57
-        },
-        "quote": "export const knowledgeBatchSchema = z.object({\n  schema_version: z.literal(1), documents: z.array(knowledgeDocumentSchema).min(1).max(16),\n}).strict();\n\nexport const knowledgeReviewSchema = z.object({\n  schema_version: z.literal(1),\n  verdicts: z.array(z.object({\n    documentKey: key, verdict: z.enum([\"accepted\", \"need"
-      },
-      {
-        "key": "c4",
-        "label": "知识材料与制品类型",
-        "reason": "支持材料来源信息、Fragment、图片，以及制品依赖、生成 trace 和已验收复核 trace 的结构。",
+        "label": "引用与待确认问题合同",
+        "reason": "支持引用目标、关系、宿主抽取原文的约定，以及问题对象保存原因、下一步和阻塞状态的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/contracts/src/knowledge.ts",
-          "startLine": 59,
+          "startLine": 3,
+          "endLine": 23
+        },
+        "quote": "const key = z.string().min(1).max(500);\nexport const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \""
+      },
+      {
+        "key": "c3",
+        "label": "独立复核与章节规划合同",
+        "reason": "支持复核和规划各自采用版本化结构、复核判定范围及规划章节数量和材料关联方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 41,
+          "endLine": 57
+        },
+        "quote": "export const knowledgeReviewSchema = z.object({\n  schema_version: z.literal(1),\n  verdicts: z.array(z.object({\n    documentKey: key, verdict: z.enum([\"accepted\", \"needs_revision\"]),\n    issues: z.array(z.string().min(1).max(1600)).max(30),\n    questions: z.array(knowledgeQuestionSchema).max(20),\n  }).strict()).min(1).m"
+      },
+      {
+        "key": "c4",
+        "label": "知识输入材料类型",
+        "reason": "支持输入材料包含来源、修订、上下文、摘要、正文、片段和图片信息，同时说明该类型本身未表达不可变语义。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 66,
+          "endLine": 71
+        },
+        "quote": "export type KnowledgeMaterial = {\n  key: string; title: string; path: string | null; sourceId: string; revisionId: string;\n  namespace: string; conversationId?: string; actorId?: string | null; actorVerifiedBy?: string | null; eventAt?: string | null; quoted?: boolean; forwarded?: boolean; digest: string; text: string;"
+      },
+      {
+        "key": "c5",
+        "label": "已验收知识制品类型",
+        "reason": "支持制品记录依赖摘要、生成轨迹和独立复核信息，且复核结论类型仅允许 accepted。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/knowledge.ts",
+          "startLine": 73,
           "endLine": 78
         },
-        "quote": "export type KnowledgeDocument = z.infer<typeof knowledgeDocumentSchema>;\nexport type KnowledgeCitation = z.infer<typeof knowledgeCitationSchema>;\nexport type KnowledgeQuestion = z.infer<typeof knowledgeQuestionSchema>;\nexport type KnowledgeBatch = z.infer<typeof knowledgeBatchSchema>;\nexport type KnowledgeReview = z.in"
+        "quote": "export type KnowledgeArtifact = {\n  version: 1; document: KnowledgeDocument;\n  dependencies: { kind: \"material\" | \"article\"; key: string; digest: string }[];\n  generation: { model: string; effort: string | null; at: string; trace: Record<string, unknown> };\n  review: { model: string; at: string; trace: Record<string, u"
       }
     ],
     "questions": [
       {
-        "question": "宿主如何验证材料行号对应的精确引文，并对文章 section 引用做语义支持性复核？",
-        "why": "合同允许行号和 section 目标，也要求保留复核 trace，但本文件没有实现位置提取或语义核验流程。",
-        "nextStep": "检查知识制品生成与 verifier 编排代码及测试，确认越界行号、缺失章节和语义不支持时如何拒绝结果。",
+        "question": "规划、知识生成、宿主引文抽取与独立复核由哪些运行时模块按什么顺序调用？",
+        "why": "本文件仅定义阶段间的数据合同，无法确认实际编排顺序、失败重试或跨模块调用关系。",
+        "nextStep": "检查 knowledgePlanSchema、knowledgeBatchSchema、knowledgeReviewSchema 和 KnowledgeArtifact 的运行时使用点，并引用具体调用代码。",
         "blocking": false,
         "citationKeys": [
           "c1",
+          "c2",
           "c3",
-          "c4"
+          "c5"
+        ]
+      },
+      {
+        "question": "依赖摘要变化后，已验收 KnowledgeArtifact 如何被标记过期或阻止继续使用？",
+        "why": "制品类型记录了依赖摘要，但没有定义摘要比对、过期状态、读取拦截或失败结果保留机制。",
+        "nextStep": "查找 KnowledgeArtifact 的持久化、读取和 digest 比对逻辑，以运行时源码补证。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
         ]
       }
     ]
@@ -93,54 +122,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
-      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/code-modules.ts",
-      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/contracts/src/knowledge.ts",
       "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/OmHashRoute.ts",
-      "digest": "8d1b8444a0e7ff0a564808b91ad516ed718a92ba70ddb7019890a4b6d7bf24b1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmBadge.vue",
-      "digest": "21bbd9ccfbf48a0add0d4cf96e9a8e345c6b7c634b0585a692cb5cc1a01f2909"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:06:38.605Z",
+    "at": "2026-10-01T02:51:08.690Z",
     "trace": {
-      "runId": "8f775037-2343-4840-8586-a8d753fbbe36",
+      "runId": "570f78eb-d1e5-4b5d-955a-16744bc4f656",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "86d7c50dcd116572075ce6f25e7a1d2a2af771465de3d9948c11b4b212714a2f",
-      "contextHash": "8d4020c8ae65750230ab3c98c820d7d76faeb980615083be5d49a5d0e4916e07",
+      "promptHash": "9d7ca3856ac2603b7a67358a317f2fdae936262a7b9a6149b9060f9e9f682260",
+      "contextHash": "06c72199817cd5dcf805beb0fbe819e6bccef0f52fbf0bf7806e716aa8f4bea4",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1f6b7fe9f162f8b7053a4c1087fc6a3397d816e0c2d17822a1347413bce1b890",
+      "fingerprint": "26b2ddc8dad7f969776e89a0e25e817aba3f40cecb8109539957f9d2dfe1b2e0",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -153,11 +152,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-07ab-7630-bf68-a92b525c2a5f"
+        "01a0f55f-261a-7f30-bddf-918690cc1093"
       ],
       "usage": {
-        "used": 48971,
-        "size": 760000,
+        "used": 24765,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -165,10 +164,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 100207,
-          "utf8Bytes": 106603,
-          "estimatedTokens": 35535,
-          "budgetedTokens": 44419,
+          "chars": 15013,
+          "utf8Bytes": 19445,
+          "estimatedTokens": 6482,
+          "budgetedTokens": 8103,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -177,17 +176,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:07:03.432Z",
+    "at": "2026-10-01T02:51:24.971Z",
     "trace": {
-      "runId": "2f8a3e0b-8cac-4dcd-9d9e-b4c0d1db53b9",
+      "runId": "a3c898b4-3523-4c44-b28d-c4dd07035681",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "82db61fb03d765d6c9509e7a5ab84b4e39f30b0f826f4ac629644bde2a169bdb",
-      "contextHash": "b675445ba277c957fa6f36e08a2a79c823eefc68c1c4c130e8a59e845aaf6f77",
+      "promptHash": "faa25d0a7ea2c4785ed4fbe85528a3b7235d9228529a48121045e6a9a350b3d4",
+      "contextHash": "2442cde3f148b020e036c2a2e9ee8cf7b2b826c1b7392835d420d142350ea7b3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a909d0c1343308633be720a6fe8b6a7e3bd757bb472dc8a7b642b7dc9f2ca0cc",
+      "fingerprint": "2c69e17bc742f50ef4320f3c5d3b1aef13626f597cf8f683e700937debb0542a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -200,11 +199,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec6-c658-7591-b804-15d65b90c621"
+        "01a0f55f-89a0-78b3-8797-e85db66522fa"
       ],
       "usage": {
-        "used": 48602,
-        "size": 760000,
+        "used": 23501,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -212,10 +211,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107260,
-          "utf8Bytes": 116860,
-          "estimatedTokens": 38954,
-          "budgetedTokens": 48693,
+          "chars": 12562,
+          "utf8Bytes": 15952,
+          "estimatedTokens": 5318,
+          "budgetedTokens": 6648,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

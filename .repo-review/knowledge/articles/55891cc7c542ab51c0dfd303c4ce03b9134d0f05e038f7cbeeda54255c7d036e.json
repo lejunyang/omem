@@ -2,70 +2,140 @@
   "version": 1,
   "document": {
     "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
-    "title": "Code Wiki 方案与实现复审记录",
-    "summary": "基于提交 1063d9a 的复审记录，区分已修复的快照一致性和运行边界、真实验证结果，以及仍存在的单仓单用户、语义复核、跨文件调用和关键词检索限制。",
+    "title": "Code Wiki 方案与实现复审",
+    "summary": "该复审以提交 1063d9a 为基线，纠正了“通用 typed projection 已实现”的过度表述，记录固定版本证据链、可提交 Wiki、运行隔离、模型预算与验证结果，同时明确多仓库、多租户、统一编排、语义复核、跨文件调用和语义检索仍未完成。",
     "category": "progress",
     "sections": [
       {
-        "key": "corrections",
-        "title": "已修复的证据一致性问题",
-        "body": "复审记录称代码图已改为只解析捕获的固定版本，定位失败返回空；理解及其引用校验读取同一批固定材料，首启与手动同步走完整材料、代码投影和知识恢复链。[[c1]] 这些是该复审基线上的修复记录，不应与更早的设计预期混为一谈。"
+        "key": "review-positioning",
+        "title": "复审定位与证据一致性",
+        "body": "复审认可统一 Capture / Source / Revision / Fragment 的方向，但明确 repo-review 目前只是本仓库的隔离运行配置和阅读视图，可提交 Wiki 属于证据链上的派生物，不能据此宣称通用 typed projection 已经实现。[[c1]]\n\n本轮已修正固定证据错配：代码图只解析捕获时的精确文本，定位失败返回空；代码与文档 revision 同时固定，理解构建和引用校验读取同一批材料。这样可避免磁盘后续变化污染旧快照，也避免用新文档“验证”旧理解。[[c2]][[c3]]"
       },
       {
-        "key": "assets",
-        "title": "提交资产与运行时边界",
-        "body": "可读 Wiki、人工 seed 和显式生成的模型产物可以提交；SQLite、索引、临时模型目录只放运行时，冻结旧资产继续保留但不作为更新入口。默认启动重建本地视图，不自动调用模型。[[c2]]"
+        "key": "delivery-and-runtime",
+        "title": "可提交资产与运行边界",
+        "body": "Wiki 的交付物分为可读目录、真实模型生成物和人工 seed：模型产物记录模型、时间、输入摘要、依赖 hash 与符号 locator；人工说明仍保持 seed 身份。SQLite、索引、临时模型目录和构建暂存仅位于 runtime，旧 data 目录只是冻结历史，不是当前更新入口。[[c4]]\n\n“跟代码提交走”指源码、人工关系和派生 Wiki 进入 Git，而不是提交持续变化的 WAL。本地索引可由这些资产重建；启动可以恢复知识和构建索引，但默认不重新调用模型。[[c5]]"
       },
       {
-        "key": "limits",
-        "title": "剩余边界与验证强度",
-        "body": "当前仍限于本仓库和单用户 SQLite；模型说明未经过独立语义复核，跨文件调用、跨 revision 身份续接和语义检索也未完成。[[c3]] 同一记录另列出全量检查、1440/768/390 浏览器验证、真实 ACP 配置校验及模型生成结果；这些通过项应与未完成边界并列陈述。[[c4]]"
+        "key": "known-limits",
+        "title": "仍未完成的能力",
+        "body": "当前实现范围仍是 omem 单仓库与单用户 SQLite，review 适配和默认仓库标识尚未抽象为任意多仓库或多租户能力。个人助手材料学习与 CodeUnderstanding 也只复用了 ACP 传输，尚未完全纳入统一的持久任务与独立复核流水线。[[c6]]\n\n模型说明只是派生资料；结构校验和引用存在性校验不能证明语义正确，本次亦没有独立 verifier。解析层目前支持 imports，但跨文件 calls、类型解析及跨 revision 语义身份续接均未实现；检索仍是关键词方式，依赖变化后的自动重核验也未完成。[[c7]][[c8]]"
+      },
+      {
+        "key": "verification-and-budget",
+        "title": "验证证据与预算调整",
+        "body": "历史验证记录显示，第一切片的全量检查与多尺寸浏览器流程通过；随后六个目标完成真实模型生成，最终记录为 51 个测试文件、312 个用例及两套浏览器脚本退出码均为 0。不过这些结果证明的是当时基线上的检查与生成成功，不等于上述架构边界已被消除。[[c9]]\n\n用户允许提高预算后，本机示例改为 96000 输入、24000 输出和 16000 上下文预留，并按字节估算 token、附加 25% 余量；这不是精确 tokenizer 计量。记忆治理材料最终按完整输入生成，但此前 80000 字符门失败的历史仍被保留。[[c10]][[c11]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "固定快照修复",
-        "reason": "支持代码正文、理解材料和引用校验改为读取同一固定捕获快照。",
-        "relation": "tracks",
+        "label": "复审基线与核心判断",
+        "reason": "支持复审认可统一证据链、同时否定通用 typed projection 已实现的定位。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# Code Wiki 方案与实现复审\n\n复审基线：`1063d9a`，包含启动时已有的本机依赖清单格式与 osdk.lock 修改。核心判断：统一 Capture / Source / Revision / Fragment 是正确方向，但原先“已实现通用 typed projection”的表述超过了代码事实。repo-review 应是本仓库材料的隔离运行配置与阅读视图，可提交 Wiki 是这条证据链的派生产物。"
+      },
+      {
+        "key": "c2",
+        "label": "固定代码正文与引用定位修复",
+        "reason": "说明代码投影改为读取已捕获固定版本，并在定位失败时不再伪造引用。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
           "startLine": 7,
-          "endLine": 12
+          "endLine": 9
         },
-        "quote": "| 严重度 | 原问题 | 修复与证据 |\n| --- | --- | --- |\n| P1 | Code sync 重新扫描磁盘，正文可能来自新文件，而 fragment 来自旧 Capture；声明定位失败时返回第一片段 | Capture 保留精确文本；代码图只解析已捕获的固定版本。新投影仅保存 revision 引用，历史正文保留兼容。定位失败返回空，不伪造引用。回归验证捕获后修改磁盘不能改变固定代码正文。 |\n| P1 | 理解校验读取当前磁盘上的规则/文档，旧快照可能“验证”新证据 | 快照同时固定代码和文档的 revision；理解构建与引用校验读取同一批固定材料。 |\n| P1 | 首启仅同步普通材料，不同步代码图；模型结果只写运行库 | 首启及手动同步执行完整材料→代码投影→知识恢复链。增加明确的 Wiki build/generate 命令，派生 JSON 与可读 Markdown 随 Git 提交。 |\n| P1 | Highlight.js 的变量语言 import 无法被 Vite 打包，异常被静默吞掉；样式缺失 | 共享高亮器使用 literal imports，覆盖源码与 Markdown，完整文档解析保持跨行状态。浏览器检查实际 token 与计算后样式。 |"
+        "quote": "| 严重度 | 原问题 | 修复与证据 |\n| --- | --- | --- |\n| P1 | Code sync 重新扫描磁盘，正文可能来自新文件，而 fragment 来自旧 Capture；声明定位失败时返回第一片段 | Capture 保留精确文本；代码图只解析已捕获的固定版本。新投影仅保存 revision 引用，历史正文保留兼容。定位失败返回空，不伪造引用。回归验证捕获后修改磁盘不能改变固定代码正文。 |"
       },
       {
-        "key": "c2",
-        "label": "Wiki 与缓存边界",
-        "reason": "支持可提交知识资产、运行时缓存和冻结旧资产之间的职责划分。",
+        "key": "c3",
+        "label": "代码与文档快照一致性",
+        "reason": "支持理解构建和引用校验使用同一批固定 revision 的事实。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 10,
+          "endLine": 10
+        },
+        "quote": "| P1 | 理解校验读取当前磁盘上的规则/文档，旧快照可能“验证”新证据 | 快照同时固定代码和文档的 revision；理解构建与引用校验读取同一批固定材料。 |"
+      },
+      {
+        "key": "c4",
+        "label": "Wiki 资产与本地缓存分层",
+        "reason": "解释可提交模型产物、人工 seed、运行缓存和冻结旧资产之间的职责边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
           "startLine": 21,
-          "endLine": 29
+          "endLine": 27
         },
-        "quote": "## 可提交的 Wiki 与本地缓存\n\n- `.repo-review/wiki.md`：本仓库的可读目录与已有模块说明，直接在 Git 中阅读。\n- `.repo-review/knowledge/generated/*.json`：真实模型产物、原始生成时间/模型/input digest、依赖文件 hash，以及 path + qualifiedName + kind 引用定位信息。来源变化后过期，错误 locator 拒绝；恢复不是再次模型调用，也不是语义验证。\n- `.repo-review/knowledge/understandings/*.seed.json`：既有人工说明。仍是 seed，不改造成模型成果。\n- `.repo-review/runtime/`：可重建 SQLite、索引、临时模型工作目录、构建暂存。启动只写这里；明确执行 build/generate 才发布可提交的知识资产。\n- `.repo-review/data/` 和根级历史同步文件：保留的冻结旧资产。它们不是当前 Wiki 的更新入口；新机器不必依赖其最新状态，代码与 committed 知识可以重建当前视图。\n\n“跟代码提交走”不等于提交会不断变化的 SQLite WAL。源码、人工关系及派生 Wiki 共同进入 Git，本地索引用它们重建。首启需要本地索引构建，但不需要手动点击同步或重新调用模型。默认启动不自动消耗模型调用。"
+        "quote": "## 可提交的 Wiki 与本地缓存\n\n- `.repo-review/wiki.md`：本仓库的可读目录与已有模块说明，直接在 Git 中阅读。\n- `.repo-review/knowledge/generated/*.json`：真实模型产物、原始生成时间/模型/input digest、依赖文件 hash，以及 path + qualifiedName + kind 引用定位信息。来源变化后过期，错误 locator 拒绝；恢复不是再次模型调用，也不是语义验证。\n- `.repo-review/knowledge/understandings/*.seed.json`：既有人工说明。仍是 seed，不改造成模型成果。\n- `"
       },
       {
-        "key": "c3",
-        "label": "仍存架构边界",
-        "reason": "支持单仓单用户、派生说明未语义复核、跨文件调用和检索能力仍有限。",
+        "key": "c5",
+        "label": "Git 交付与启动行为",
+        "reason": "支持 Git 保存派生知识而运行索引可重建、默认启动不调用模型的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 29,
+          "endLine": 29
+        },
+        "quote": "“跟代码提交走”不等于提交会不断变化的 SQLite WAL。源码、人工关系及派生 Wiki 共同进入 Git，本地索引用它们重建。首启需要本地索引构建，但不需要手动点击同步或重新调用模型。默认启动不自动消耗模型调用。"
+      },
+      {
+        "key": "c6",
+        "label": "仓库范围与编排限制",
+        "reason": "证明当前仅覆盖本仓库、单用户 SQLite，且代码角色尚未完全进入统一材料流水线。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
           "startLine": 31,
-          "endLine": 37
+          "endLine": 34
         },
-        "quote": "## 仍然存在的架构边界\n\n1. 当前接入范围是本仓库与单用户 SQLite。代码源枚举和关系仍有 review 适配逻辑、默认仓库标识仍为 omem；不能把这次改造说成任意多仓库/多租户均已接入。\n2. 个人助手的自动材料学习与 CodeUnderstanding 角色运行尚未完全统一编排。代码角色有单独的严格输出合同及 registry，复用 ACP 传输；尚未统一进入所有输入渠道的持久任务/复核流水线。后续应接统一材料处理端口，不能再增加第二套 Capture 或 memory authority。\n3. 模型说明是派生资料，结构与引用存在性校验不证明每句解释正确。此次没有独立 verifier 语义复核，也没有把说明作为已验证记忆自动应用。\n4. imports 是解析器关系；跨文件 calls、类型解析、跨 revision 语义身份续接仍未实现。名称级调用只作候选；评审意图边继续仅来自 associations.json。\n5. 检索仍是关键词检索；下游 refresh_dependents 自动重核验仍未完成。没有将这些限制改写成“已通过完整验收”。"
+        "quote": "## 仍然存在的架构边界\n\n1. 当前接入范围是本仓库与单用户 SQLite。代码源枚举和关系仍有 review 适配逻辑、默认仓库标识仍为 omem；不能把这次改造说成任意多仓库/多租户均已接入。\n2. 个人助手的自动材料学习与 CodeUnderstanding 角色运行尚未完全统一编排。代码角色有单独的严格输出合同及 registry，复用 ACP 传输；尚未统一进入所有输入渠道的持久任务/复核流水线。后续应接统一材料处理端口，不能再增加第二套 Capture 或 memory authority。"
       },
       {
-        "key": "c4",
-        "label": "全量与浏览器验证记录",
-        "reason": "支持全量检查、三视口浏览器、真实 ACP 配置及模型生成结果均有明确记录。",
+        "key": "c7",
+        "label": "派生说明缺少语义复核",
+        "reason": "支持结构和引用存在性通过不等于语义正确、独立 verifier 尚未执行的限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 35,
+          "endLine": 35
+        },
+        "quote": "3. 模型说明是派生资料，结构与引用存在性校验不证明每句解释正确。此次没有独立 verifier 语义复核，也没有把说明作为已验证记忆自动应用。"
+      },
+      {
+        "key": "c8",
+        "label": "解析与检索未完成项",
+        "reason": "列明跨文件调用、类型解析、跨 revision 身份、语义检索及自动重核验仍未实现。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 36,
+          "endLine": 37
+        },
+        "quote": "4. imports 是解析器关系；跨文件 calls、类型解析、跨 revision 语义身份续接仍未实现。名称级调用只作候选；评审意图边继续仅来自 associations.json。\n5. 检索仍是关键词检索；下游 refresh_dependents 自动重核验仍未完成。没有将这些限制改写成“已通过完整验收”。"
+      },
+      {
+        "key": "c9",
+        "label": "检查、浏览器与真实模型验证记录",
+        "reason": "支持当时切片检查、真实模型生成和最终测试退出码的历史进展陈述。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -73,57 +143,78 @@
           "startLine": 39,
           "endLine": 44
         },
-        "quote": "## 验证记录\n\n- 第一切片 `fa2d57b`：`osdk run check` exit 0，49 文件 / 309 用例，typecheck/build 通过；真实浏览器 1440/768/390、可见代码高亮、引用栈、焦点归还、XSS 通过。\n- 本机 ACP 握手：TraeCode CLI 0.207.1 返回 GPT-5.6-Sol/Terra/Luna；实际配置选择 `gpt-5.6-sol` + `medium`，每次调用仍通过 ACP configOptions 校验支持性。\n- 已完成检索、助手、记忆治理、代码投影、材料同步、共享阅读器六个明确目标的真实模型生成，严格输出与引用校验通过。模型调用记录与产物字段可区分 fixture 和 live；批量结果以 `.repo-review/knowledge/generated/` 中实际提交资产为准。\n- 新增回归覆盖从全新数据库重建模型知识、重跑幂等、变更依赖失效、伪造 locator 拒绝、精确正文与原始 fragment 一致；最终全量（51 文件 / 312 用例）与两套浏览器脚本均 exit 0，详见 status.md。"
+        "quote": "## 验证记录\n\n- 第一切片 `fa2d57b`：`osdk run check` exit 0，49 文件 / 309 用例，typecheck/build 通过；真实浏览器 1440/768/390、可见代码高亮、引用栈、焦点归还、XSS 通过。\n- 本机 ACP 握手：TraeCode CLI 0.207.1 返回 GPT-5.6-Sol/Terra/Luna；实际配置选择 `gpt-5.6-sol` + `medium`，每次调用仍通过 ACP configOptions 校验支持性。\n- 已完成检索、助手、记忆治理、代码投影、材料同步、共享阅读器六个明确目标的真实模型生成，严格输出与引用校验通过。模型调用记录与产物字段可"
+      },
+      {
+        "key": "c10",
+        "label": "本机模型预算配置",
+        "reason": "说明预算数值、窗口发现、估算余量以及失败历史保留方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 46,
+          "endLine": 48
+        },
+        "quote": "## 预算调整\n\n用户明确允许较高预算后，将本机示例设为 96000 输入 tokens、24000 输出 tokens、16000 Agent 上下文预留，模型为已发现的 GPT-5.6-Sol（272000 tokens 窗口）。这是本地估算预算，非精确 tokenizer 计量；估计输入/输出均计入 25% 余量，未知模型窗口不捏造数值。此前 MemoryService 因 80000 字符门失败的记录保留，新的结果另记，不覆盖失败历史。已有五份模型说明的依赖摘要通过原生成快照逐项核对后细化到实际提供的规则片段，保留原模型输出、时间与 input digest，避免未提供给模型的文件其他部分变更造成重复调用。"
+      },
+      {
+        "key": "c11",
+        "label": "记忆治理完整材料生成结果",
+        "reason": "支持扩大预算后完整生成及其字符、字节和估算 token 数据。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 50,
+          "endLine": 50
+        },
+        "quote": "记忆治理模块最终成功：110183 字符 / 111585 UTF-8 字节，估算 37195 tokens，计入余量为 46494；扩大输出预算后按完整材料生成，没有截断源代码。"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "何时把 CodeUnderstanding 角色正式接入统一的材料持久任务、独立 verifier 与应用流水线？",
+        "why": "文档确认目前只复用 ACP 传输，模型说明尚未经过独立语义复核；在此之前不能把生成说明当作已验证记忆自动应用。",
+        "nextStep": "确定统一处理端口、任务状态和 verifier 输出合同，并用一次真实材料变更验证生成、复核、失败保留及应用全过程。",
+        "blocking": true,
+        "citationKeys": [
+          "c6",
+          "c7"
+        ]
+      },
+      {
+        "question": "语义检索、跨文件调用和跨 revision 符号身份的实施顺序如何确定？",
+        "why": "三项能力均被明确列为未实现，并分别影响召回质量、调用关系可信度和代码变化后的引用续接。",
+        "nextStep": "先按用户价值和数据迁移风险排序，分别定义可验证的功能切片，避免将名称级候选关系或关键词召回描述为完整能力。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:docs/implementation/batch2/research-sources.json",
-      "digest": "d45da3364f493df70f3cf617dc0cf06cf6aa1547425ba9d615c510f11eec3cd2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/browser-verification.json",
-      "digest": "1bb4e5292e112dfabc083287bd958422c0d4a3aa28d1de68756235e6cf993beb"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/code-knowledge-design.md",
-      "digest": "333454e6d0bf89cc86a7d0cd1b619904c686ff98ecc60d308ec055c06b1d93e0"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/code-wiki-prototype-gap.md",
-      "digest": "1d1257f66a641a52e4313357458fbb3c801620536926b79c1a1268aeb6642dce"
-    },
-    {
-      "kind": "material",
       "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
       "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/code-wiki-ui-design.md",
-      "digest": "976ba48c6b2ccf271dd3b3231778ecc1b434c85c85a4fb0151f5fa66216f20db"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T13:15:35.717Z",
+    "at": "2026-10-01T02:45:19.013Z",
     "trace": {
-      "runId": "eb44d4e0-a6f2-4117-b766-04d13f8f9a51",
+      "runId": "6f028081-44e4-424a-bc64-209e2f85500c",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
-      "promptHash": "36fc71672f7bd652e1f0799be4f6cf5f2b56983abb0a9193e273ce875a26e977",
-      "contextHash": "162fa073a1a5a2c7663af04926ad94e02ff8aeba53f50806fb971c37cda2da0f",
+      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
+      "promptHash": "cee1ab1f90055154535e36b00a0b46160ada4c3a4ff752037437088c646cdc02",
+      "contextHash": "ce04e20289b690fea96cf678f71829309f469615dac8d4a8d84b9f53880411f9",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b806c7a38efc03ed60a727274567993c4791d30698614a945c5ce5abd591a5d3",
+      "fingerprint": "f19f74b2c1c5b2c8fb53835c22364ed899139db3255b4a1de08a0eb25cc6adfc",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -136,22 +227,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed4c-f2e5-73c0-8090-bf3a88a5009a"
+        "01a0f559-b429-7640-8d5d-bc6f8b1a1748"
       ],
       "usage": {
-        "used": 87583,
-        "size": 760000,
+        "used": 24406,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 132899,
-          "utf8Bytes": 185439,
-          "estimatedTokens": 61813,
-          "budgetedTokens": 77267,
+          "chars": 9849,
+          "utf8Bytes": 15443,
+          "estimatedTokens": 5148,
+          "budgetedTokens": 6435,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -160,17 +251,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T13:15:52.253Z",
+    "at": "2026-10-01T02:45:35.595Z",
     "trace": {
-      "runId": "391b6c16-1aa5-479a-aca4-5fa191955d9f",
+      "runId": "3bc631e5-4085-43b6-8f99-01ea626a86c8",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
-      "promptHash": "0c658d9d8375303386fa0c950acb8c40cb2e70fcba6eb2fcdf2fbd13baabb112",
-      "contextHash": "935a51abd9c2df578d05d09c5a7308339c6c2a362e30faf54f82ee765cbe5978",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "2077ccceebc4f1a7541b4055d90ee17111fd4aba59a6d66b2f4ae384dbb68fa5",
+      "contextHash": "f19c1093e5881676e1ebba10fc915cf52563a37f34bd86cfc3d5f2cd066c19cf",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "56ef889cdd915696999b5dbc904104e969c513fd6dee32a5a88a45998b26cb65",
+      "fingerprint": "0fa726edcce12d3af97d6a60920d4b6fe65244262cdcff6790193891d00b67e9",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -183,22 +274,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed4e-72cd-73e3-919b-8a39545ea84a"
+        "01a0f55a-37ea-7951-87d8-b833b7b95a28"
       ],
       "usage": {
-        "used": 71142,
-        "size": 760000,
+        "used": 25040,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 132332,
-          "utf8Bytes": 185489,
-          "estimatedTokens": 61830,
-          "budgetedTokens": 77288,
+          "chars": 14438,
+          "utf8Bytes": 24760,
+          "estimatedTokens": 8254,
+          "budgetedTokens": 10318,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

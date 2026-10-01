@@ -2,66 +2,84 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/NotificationDetail.vue",
-    "title": "通知、应用回执与投递状态详情",
-    "summary": "在对话框中拆分展示通知内容、事实应用回执、条件化的前后版本入口、原始证据和各渠道投递结果，避免把通知本身误当作事实落库。",
+    "title": "通知与变化详情对话框",
+    "summary": "该 Vue 组件把通知关联的已生效记录、原始证据和外部投递状态集中展示，并通过事件把关闭、证据阅读和版本查看交给父组件处理；它明确区分“收到通知”与“事实已应用”，同时覆盖加载态、空数据、合并投递和错误状态。",
     "category": "implementation",
     "sections": [
       {
-        "key": "fact-boundary",
-        "title": "通知与事实生效的边界",
-        "body": "组件本身不读取详情，而由父层传入打开状态、数据与加载状态，并通过事件请求关闭、打开证据或打开修订。[[c1]] 详情展示变化类型、时间、标题和正文；只有存在 application receipt 时才呈现实体现状和版本，否则明确说明通知本身不代表事实已生效。存在 `beforeId` 时可打开变更前版本；变更后入口同时要求存在 `afterId` 且类型不是 `decision`。材料没有解释排除 decision 的领域原因，因此不能把它确定为长期业务规则。[[c2]]"
+        "key": "purpose-and-contract",
+        "title": "作用与组件合同",
+        "body": "该组件是通知详情的只读对话框，接收开关、详情对象与加载状态，并向父组件发出关闭、打开证据、打开版本三个事件；自身不获取数据、不改变通知状态。它复用 UI 包中的对话框、徽标、按钮、引用和空状态组件，以统一交互与视觉语义。[[c1]] `NotificationDetail` 从 API 类型模块导入，但给定 API 片段只展示了通知摘要类型，因此详情对象的完整静态合同无法从当前材料独立核对。[[c2]]"
       },
       {
-        "key": "evidence-delivery",
-        "title": "证据与多渠道投递",
-        "body": "原始证据逐条委托父组件打开，没有证据时显示空态。投递记录按渠道展示尝试次数和状态；批次包含多项变化时显示数量，最后错误只在该投递未被其他记录替代时呈现。[[c3]] 状态色调将等待、发送和等待重试归为警告，已送达归为成功，失败、未知及普通取消归为危险；若取消项带有 `supersededBy`，则使用中性色并显示“已合并”。[[c4]] 本组件没有重试、重新发送或标记已读入口，只负责解释父层提供的持久状态。"
+        "key": "detail-flow",
+        "title": "详情呈现与证据跳转",
+        "body": "渲染流程先显示“读取持久状态”的加载提示，随后在详情存在时展示变化类型、创建时间、标题与正文。组件把 application receipt 作为“已生效”的明确凭据；没有 receipt 时直接声明不能把通知本身视为事实已经生效。变更前版本始终按 `beforeId` 条件开放，变更后版本还会排除 `decision` 类型。[[c3]] 原始证据按 `evidenceIds` 逐项生成可打开的引用入口，列表为空则显示“没有提案证据”，实际阅读行为由父组件收到事件后完成。[[c4]]"
+      },
+      {
+        "key": "delivery-states",
+        "title": "投递状态与边界条件",
+        "body": "投递记录逐项展示渠道、尝试次数和状态。状态映射将失败、未知及普通取消标为危险，等待、发送中与重试等待标为警告，成功投递标为成功；若取消记录带有 `supersededBy`，则显示“已合并”并采用中性色，避免把摘要合并误报为失败。[[c5]] 批次包含多条变化时会显示数量；只有未被合并的记录才呈现最后错误，完全没有投递则显示空状态。[[c6]] 当前材料没有测试文件，因而无法确认日期本地化、未知状态回退、事件参数及这些条件分支是否已有自动化断言。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "详情组件输入输出合同",
-        "reason": "支持该组件由父层供数，并以事件委托关闭、证据和修订打开行为。",
-        "relation": "explains",
+        "label": "组件输入、事件与 UI 依赖",
+        "reason": "支持该组件是受控只读视图、复用公共 UI，并把导航动作交由父组件处理的说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/NotificationDetail.vue",
           "startLine": 1,
-          "endLine": 14
+          "endLine": 24
         },
         "quote": "<script setup lang=\"ts\">\nimport { OmBadge, OmButton, OmCitation, OmDialog, OmEmpty } from \"@omem/ui\";\nimport type { NotificationDetail } from \"./api\";\n\ndefineProps<{\n  open: boolean;\n  detail: NotificationDetail | null;\n  loading: boolean;\n}>();\nconst emit = defineEmits<{\n  close: [];\n  openEvidence: [id: string];\n  op"
       },
       {
         "key": "c2",
-        "label": "应用回执与版本入口",
-        "reason": "支持通知与事实生效的区分，以及 beforeId、afterId 和 decision 类型控制版本入口的条件。",
-        "relation": "explains",
+        "label": "前端 API 类型模块",
+        "reason": "说明详情类型来自 API 模块，同时当前所给范围只明确展示通知摘要等基础类型。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/NotificationDetail.vue",
-          "startLine": 27,
-          "endLine": 65
+          "key": "omem:apps/web/src/api.ts",
+          "startLine": 26,
+          "endLine": 39
         },
-        "quote": "<template>\n  <OmDialog\n    :open=\"open\"\n    title=\"通知与变化详情\"\n    @close=\"emit('close')\"\n    @back=\"emit('close')\"\n  >\n    <p v-if=\"loading\" class=\"muted\">正在读取持久状态…</p>\n    <template v-else-if=\"detail\">\n      <div class=\"row\">\n        <OmBadge>{{ detail.changeKind || \"通知\" }}</OmBadge>\n        <small>{{ new Date(detail.cr"
+        "quote": "export type Evidence = {\n  fragment: Fragment;\n  revision: Revision;\n  outgoing: Edge[];\n  backlinks: Edge[];\n};\nexport type Notification = {\n  id: string;\n  title: string;\n  body: string;\n  changeId: string | null;\n  createdAt: string;\n  readAt: string | null;\n};"
       },
       {
         "key": "c3",
-        "label": "证据和投递明细",
-        "reason": "支持证据入口、空态、投递尝试、批次数量及错误显示条件。",
-        "relation": "explains",
+        "label": "已生效记录与版本入口",
+        "reason": "支持加载流程、receipt 语义以及变更前后版本按钮的条件判断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/NotificationDetail.vue",
+          "startLine": 34,
+          "endLine": 65
+        },
+        "quote": "    <p v-if=\"loading\" class=\"muted\">正在读取持久状态…</p>\n    <template v-else-if=\"detail\">\n      <div class=\"row\">\n        <OmBadge>{{ detail.changeKind || \"通知\" }}</OmBadge>\n        <small>{{ new Date(detail.createdAt).toLocaleString(\"zh-CN\") }}</small>\n      </div>\n      <h3>{{ detail.title }}</h3>\n      <p>{{ detail.body }}"
+      },
+      {
+        "key": "c4",
+        "label": "原始证据列表",
+        "reason": "支持证据引用逐项发出打开事件以及无证据时展示空状态的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/NotificationDetail.vue",
           "startLine": 66,
-          "endLine": 103
+          "endLine": 80
         },
         "quote": "      <section class=\"detail-block\">\n        <h4>原始证据</h4>\n        <div class=\"evidence-list\">\n          <OmCitation\n            v-for=\"(id, index) in detail.evidenceIds\"\n            :key=\"id\"\n            :label=\"`查看原证据 ${index + 1}`\"\n            @open=\"emit('openEvidence', id)\"\n          />\n        </div>\n        <OmE"
       },
       {
-        "key": "c4",
+        "key": "c5",
         "label": "投递状态色调规则",
-        "reason": "支持不同投递状态以及被替代取消项的视觉语义。",
-        "relation": "implements",
+        "reason": "支持失败、等待、成功、取消及已合并状态的视觉语义映射。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/NotificationDetail.vue",
@@ -69,16 +87,45 @@
           "endLine": 24
         },
         "quote": "const tone = (state: string, supersededBy?: string | null) =>\n  state === \"cancelled\" && supersededBy\n    ? \"neutral\"\n    : [\"failed\", \"unknown\", \"cancelled\"].includes(state)\n      ? \"danger\"\n      : [\"pending\", \"sending\", \"retry_wait\"].includes(state)\n        ? \"warning\"\n        : state === \"delivered\"\n          ? \"su"
+      },
+      {
+        "key": "c6",
+        "label": "投递记录条件渲染",
+        "reason": "支持投递渠道、尝试次数、批次数量、错误隐藏规则与空投递状态的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/NotificationDetail.vue",
+          "startLine": 81,
+          "endLine": 103
+        },
+        "quote": "      <section class=\"detail-block\">\n        <h4>投递状态</h4>\n        <div\n          v-for=\"delivery in detail.deliveries\"\n          :key=\"delivery.id\"\n          class=\"delivery-row\"\n        >\n          <div>\n            <b>{{ delivery.channel }}</b>\n            <small>尝试 {{ delivery.attemptCount }} 次</small>\n          </"
       }
     ],
     "questions": [
       {
-        "question": "为什么 decision 类型在存在 afterId 时仍禁止查看“变更后”，这是领域约束还是临时界面限制？",
-        "why": "模板明确排除了 decision，但材料没有解释 afterId 的含义或该分支背后的数据模型。",
-        "nextStep": "核对 NotificationDetail DTO、通知生成逻辑和产品规则；若 decision 的 afterId 可安全阅读，应补充对应入口与测试。",
+        "question": "NotificationDetail 的完整字段合同及其后端来源是什么？",
+        "why": "组件使用 receipt、beforeId、afterId、evidenceIds、deliveries 等字段，但给定 API 材料范围未包含该类型定义，无法验证字段是否可选、状态枚举是否封闭，也无法基于源代码确认具体请求链路。",
+        "nextStep": "补充 api.ts 中 NotificationDetail 定义及获取详情的请求函数，并提供调用该组件的父级材料，以核对数据来源和事件承接关系。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c1",
+          "c2",
+          "c3",
+          "c4",
+          "c6"
+        ]
+      },
+      {
+        "question": "这些状态分支和交互是否已有组件测试覆盖？",
+        "why": "当前只提供实现文件，没有测试材料，无法确认 receipt 缺失、decision 无变更后入口、合并投递隐藏错误、未知状态回退及事件参数等行为是否被断言。",
+        "nextStep": "检查或补充 NotificationDetail 的组件测试，覆盖加载态、空态、状态色调、条件按钮和三个 emit 的载荷。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4",
+          "c5",
+          "c6"
         ]
       }
     ]
@@ -86,69 +133,29 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/DecisionsView.vue",
-      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/LarkSetup.vue",
-      "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/LearningView.vue",
-      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/NotificationDetail.vue",
       "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/ReviewApp.vue",
-      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/api.ts",
-      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/AssetImage.vue",
-      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/review-api.ts",
-      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+      "digest": "55734ffa40853ef546d3066a7ffe5bd32d972d9ef5810398e677a46da5204c07"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:16:37.262Z",
+    "at": "2026-10-01T02:38:42.115Z",
     "trace": {
-      "runId": "d6aa69c6-5d9b-4efa-8759-4fc06c0f72fb",
+      "runId": "75f0af6c-c597-408c-aa25-b4daa402fd87",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "43e04907e63ceac45132d3cb6693ccdf8b2d3b9f42392b3b64dfcb9f7578479b",
-      "contextHash": "fc3c7cd75514abae88d5177381834e52e3531c5c7b4a853e6421dc2a7ba4dbb9",
+      "promptHash": "ecd3913d47467b89fc0f81255cbbc8dadc02de9f8bafd486cd54921920a9ef45",
+      "contextHash": "56d16938df0e3f6911f84e4b9996daa0a2ae0558cb53748f73bc8ab941ea12b0",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "839fa807bd510435d3f330acf0dd6d1093bfbe3f159fb8aa7d652f57515ec892",
+      "fingerprint": "4489519c1e37d5f24da7bb743c1a998542e5e489e59bf28bf7f7c4bb61eadb07",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -161,13 +168,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee97-27c7-7903-9ccf-2a817f6755a1",
-        "01a0ee97-c35e-7b02-b29c-89cb07fa8fbb",
-        "01a0ee98-555c-7bb2-a6bb-c08fcde3c787"
+        "01a0f553-c994-75a2-8974-20d41c45b551"
       ],
       "usage": {
-        "used": 57830,
-        "size": 760000,
+        "used": 25307,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -175,29 +180,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 122838,
-          "utf8Bytes": 139688,
-          "estimatedTokens": 46563,
-          "budgetedTokens": 58204,
+          "chars": 13225,
+          "utf8Bytes": 15189,
+          "estimatedTokens": 5063,
+          "budgetedTokens": 6329,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 2
+      "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:16:55.623Z",
+    "at": "2026-10-01T02:39:00.257Z",
     "trace": {
-      "runId": "93b21d88-f347-4cb1-93ec-0c9dba8183e9",
+      "runId": "68996a02-f559-4664-94ca-31f0d8fb5da7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "4d5b1811f813ede91e5cfd403803e148f513ef6912e23793f813ba20f7c9646b",
-      "contextHash": "4226dfbebd3003a0b52b664fe48a25d3b964cc23391d60eb7b6559bbd45c1ea2",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "281b7213ddd1d74780658405dd63bf89d85574a159515cd42d0bab10146d9777",
+      "contextHash": "a8b7a9cd01abffc90c1ad0c8632727760ffc964b4724217fb0c617d58da671d0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "05504554777485c19bc41ab2ac837bbba73c0777dc1afe984094002a78a43aca",
+      "fingerprint": "dd7caf31d4cbdc872f3eeb77f2b17756487257af4d754d313f5bdded8d5f61a9",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -210,11 +215,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee98-f8c4-7de2-b9a7-95b7eef2030d"
+        "01a0f554-23ed-7cd2-9979-23014da6f737"
       ],
       "usage": {
-        "used": 53078,
-        "size": 760000,
+        "used": 24270,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -222,10 +227,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 121288,
-          "utf8Bytes": 135480,
-          "estimatedTokens": 45160,
-          "budgetedTokens": 56450,
+          "chars": 15927,
+          "utf8Bytes": 19425,
+          "estimatedTokens": 6475,
+          "budgetedTokens": 8094,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

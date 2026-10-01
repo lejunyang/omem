@@ -2,45 +2,76 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/ReviewApp.vue",
-    "title": "仓库评审知识库主应用",
-    "summary": "作为 repo-review 前端编排层，整合 Code Wiki、材料浏览、固定修订阅读、全文搜索、代码关系追溯和增量同步状态，并区分人工确认关系与关键词候选。",
-    "category": "architecture",
+    "title": "仓库评审应用的多视图入口与证据浏览流程",
+    "summary": "ReviewApp.vue 是 repo-review Web 端的顶层编排组件，承载代码 Wiki、分类材料浏览、固定版本阅读、全文搜索、代码追溯与同步状态。被替代结论：启动或点击“浏览材料”均不会自动加载材料列表，只有点击具体分类才发起查询。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "navigation-data",
-        "title": "视图编排与数据入口",
-        "body": "组件维护 Code Wiki、材料浏览、固定修订阅读、全文搜索、代码追溯和同步状态等视图，并集中调用评审 API 获取健康信息、分类、来源、修订、片段、关系及同步数据；Code Wiki 是默认入口。[[c1]] 启动时并行读取健康信息和分类，再读取同步状态；由于默认处于 Wiki，启动阶段不会预载材料列表。[[c2]] 浏览视图按分类请求来源，默认过滤已删除来源；用户切换“显示已删除”后，会按当前分类重新查询。[[c3]]"
+        "key": "role",
+        "title": "组件定位与职责边界",
+        "body": "该组件是仓库评审 Web 端的应用壳，集中维护 Wiki、浏览、阅读、搜索、追溯和同步等顶层视图及共享状态，并将默认入口交给 `CodeWiki`。[[c1]] 后者负责仓库快照、模块图、文件与模块详情、证据 trail 及哈希深链，因此 `ReviewApp` 的核心职责是跨视图编排和材料阅读，而非重复建设 Wiki 内部导航。[[c2]]\n\n数据访问统一经过 repo-review API 客户端；该接口面向本机的浏览、读取和同步场景，不发送个人工作区授权头。这是当前通信边界，不能据此推断存在多租户鉴权。[[c3]]"
       },
       {
-        "key": "revision-relations",
-        "title": "固定版本阅读与关系导航",
-        "body": "打开修订时先读取固定快照，并尝试取得同一来源的历史版本；历史列表失败会降级为空，不阻断当前正文。选择片段后并行读取片段详情和登记关系，关系读取失败同样降级为空，再以路径及最多三个符号生成决策、调研候选关键词。[[c4]] 关系状态直接使用服务端给出的有效状态，并按预设类型顺序稳定分组，前端不重新推断当前性。[[c5]] 点击关系时仅在对端或对端修订标识缺失时拒绝跳转，否则打开对端修订并定位片段；因此是否可跳转并不等同于关系是否为 confirmed。[[c10]] 阅读界面展示当前或历史版本、工作树 dirty 标记、commit、内容哈希、同步时间及历史版本选择器，用于辨认所读内容对应的固定快照。[[c6]]"
+        "key": "browse_read",
+        "title": "启动、分类浏览与固定版本阅读",
+        "body": "挂载时会并行读取健康状态与材料分类，再读取同步状态。默认视图是 Wiki，故启动阶段不预加载材料列表。[[c4]] 被替代的旧结论是“进入浏览页时会加载当前分类”：侧栏“浏览材料”实际上只切换视图，只有点击具体分类按钮才调用 `loadSources`，首次直接进入浏览页可能暂时显示空列表。[[c5]]\n\n分类查询会更新当前分类；列表默认过滤已删除源，勾选后重新请求。打开条目会读取固定修订、清空旧片段状态并加载同源历史版本，历史查询失败只降级为空列表，不阻断当前版本阅读。[[c6]]"
       },
       {
-        "key": "search-trace-sync",
-        "title": "搜索、追溯与同步边界",
-        "body": "搜索命中只携带片段标识时，界面先读取片段详情以确定所属修订，再打开并定位。代码追溯则按仓库路径查找代码来源、读取人工登记关系，并尝试读取头部修订中的符号；修订读取失败时退回路径关键词，决策和调研搜索失败则降级为空候选。[[c7]] 页面将人工登记链路与关键词候选分区展示，候选最多各显示五项，并明确不把相似结果当作确认关系。[[c8]] 执行同步后，组件并行刷新同步状态、分类和健康统计；这里的 `syncBusy` 只反映当前组件的一次操作。[[c11]] 同步页展示扫描、新增、更新、未变、跳过及最近提交信息，并声明当前浏览和检索不依赖 Agent CLI 或模型；该声明限于此只读评审界面，不能据此推断服务端同步的并发与事务语义。[[c9]]"
+        "key": "relations_search",
+        "title": "片段关联、搜索与代码追溯",
+        "body": "选择片段时并行取得详情和登记关系，再从文件名、路径段与少量符号生成关键词，查找决策和调研候选；关系目标缺失时提示并停止跳转。[[c7]] 关系的有效状态由服务端结果映射为“已关联、候选、缺失、已过期”，并在片段关系卡片中显示；词匹配结果仍只是候选，不能替代人工登记链路。[[c8]]\n\n全文搜索修剪输入后查询片段，点击命中会解析所属修订并定位原片段。代码追溯按路径读取代码源与登记关系，并尝试用当前修订符号增强关键词；修订或关联搜索失败时可局部降级。[[c9]]"
+      },
+      {
+        "key": "sync_limits",
+        "title": "同步流程与并发限制",
+        "body": "手动同步会设置忙碌状态；成功后并行刷新同步状态、分类与健康统计，失败写入统一错误栏，最终恢复按钮。同步页明确声明当前是只读浏览与检索模式，不依赖 Agent CLI 或模型；该声明不等同于对整个组件所有潜在能力的穷举。[[c10]]\n\n版本与片段请求完成后会直接写入共享状态，材料未显示请求序号、取消或旧响应丢弃机制。[[c11]] 搜索与追溯流程同样直接更新各自状态。[[c12]] 因而快速连续切换目标时存在较慢旧响应覆盖新状态的可能，但最终一致性策略仍需由产品约定和行为测试确认。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "主应用视图与评审 API",
-        "reason": "支持组件定义的视图集合、默认 Wiki 状态以及其直接依赖的评审 API 范围。",
-        "relation": "depends_on",
+        "label": "顶层视图与共享状态",
+        "reason": "支持组件统一维护六类顶层视图和相应响应式状态的论断。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 1,
-          "endLine": 63
+          "startLine": 37,
+          "endLine": 66
         },
-        "quote": "<script setup lang=\"ts\">\nimport { ref, computed, onMounted } from \"vue\";\nimport {\n  OmShell,\n  OmButton,\n  OmIcon,\n  OmBadge,\n  OmPanel,\n  OmEmpty,\n} from \"@omem/ui\";\nimport CodeWiki from \"./codewiki/CodeWiki.vue\";\nimport {\n  reviewHealth,\n  reviewCategories,\n  reviewSources,\n  reviewRevision,\n  reviewFragment,\n  revie"
+        "quote": "type View = \"wiki\" | \"browse\" | \"read\" | \"search\" | \"trace\" | \"sync\";\n\nconst health = ref<ReviewHealth | null>(null);\nconst categories = ref<ReviewCategory[]>([]);\nconst view = ref<View>(\"wiki\");\nconst activeCategory = ref<string>(\"architecture\");\nconst sources = ref<ReviewSource[]>([]);\nconst revision = ref<ReviewRevi"
       },
       {
         "key": "c2",
+        "label": "代码 Wiki 容器职责",
+        "reason": "说明 CodeWiki 负责模块图、详情、证据 trail 和深链，界定与应用壳的分工。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+          "startLine": 1,
+          "endLine": 38
+        },
+        "quote": "<script setup lang=\"ts\">\n/** Code Wiki vertical slice container. Owns: repo/snapshot overview, the\n * deterministic SVG module graph, module/file detail, the single controlled\n * trail drawer (>=5 levels, loop detection, breadcrumb, focus/scroll restore),\n * and hash deep-linking. All data comes from the real /api/revi"
+      },
+      {
+        "key": "c3",
+        "label": "评审 API 客户端边界",
+        "reason": "支持本机浏览、读取和同步接口不发送个人工作区授权头的边界说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "/** Client for the repo-review knowledge-base API (/api/review/*). This surface is\n * read/browse/sync only, bound to loopback, and has no token gating, so unlike the\n * personal workspace api.ts it sends no Authorization header. Shapes mirror\n * apps/server/src/review/app.ts exactly. */"
+      },
+      {
+        "key": "c4",
         "label": "应用启动流程",
-        "reason": "支持启动时并行读取健康状态和分类、默认不预载来源列表以及随后读取同步状态。",
-        "relation": "implements",
+        "reason": "支持启动时读取健康、分类和同步状态，且默认 Wiki 场景不预加载材料列表。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ReviewApp.vue",
@@ -50,143 +81,129 @@
         "quote": "async function boot() {\n  error.value = \"\";\n  try {\n    [health.value, categories.value] = await Promise.all([\n      reviewHealth(),\n      reviewCategories(),\n    ]);\n    // Code Wiki is the landing; only preload the browse list if the user opens it.\n    if (view.value !== \"wiki\")\n      await loadSources(activeCategory"
       },
       {
-        "key": "c3",
-        "label": "来源过滤与分类加载",
-        "reason": "支持默认隐藏已删除来源、按分类加载材料以及切换选项后重新查询。",
-        "relation": "implements",
+        "key": "c5",
+        "label": "侧栏导航与分类加载",
+        "reason": "支持被替代结论：普通浏览导航只切换视图，具体分类按钮才加载材料。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 423,
+          "endLine": 447
+        },
+        "quote": "    <template #navigation>\n      <div class=\"workspace-title\">\n        <b>本仓库 · omem</b><small>材料与知识 · {{ health?.sourceCount ?? 0 }} 源 / {{ health?.fragmentCount ?? 0 }} 片段</small>\n      </div>\n      <nav class=\"navigation\">\n        <button\n          v-for=\"item in navItems\"\n          :key=\"item.id\"\n          :class=\""
+      },
+      {
+        "key": "c6",
+        "label": "材料列表与版本阅读流程",
+        "reason": "支持删除项过滤、分类查询、固定修订打开和历史版本失败降级。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ReviewApp.vue",
           "startLine": 170,
-          "endLine": 217
+          "endLine": 250
         },
         "quote": "/** C2: hide removed sources unless the user explicitly opted in. */\nconst visibleSources = computed(() =>\n  showRemoved.value\n    ? sources.value\n    : sources.value.filter((s) => !s.removed),\n);\n\nfunction say(text: string) {\n  clearTimeout(toastTimer);\n  toast.value = text;\n  toastTimer = setTimeout(() => (toast.valu"
       },
       {
-        "key": "c4",
-        "label": "修订、片段与候选加载",
-        "reason": "支持历史版本失败降级、片段和关系并行加载，以及根据路径和符号查询决策、调研候选。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 219,
-          "endLine": 279
-        },
-        "quote": "async function openRevision(revisionId: string, selectFragmentId?: string) {\n  error.value = \"\";\n  try {\n    revision.value = await reviewRevision(revisionId);\n    view.value = \"read\";\n    selectedFragmentId.value = selectFragmentId ?? null;\n    fragmentDetail.value = null;\n    sourceVersions.value = [];\n    selectedVe"
-      },
-      {
-        "key": "c5",
-        "label": "关系状态与稳定分组",
-        "reason": "支持前端直接使用有效关系状态，并按预设关系类型顺序分组展示。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 108,
-          "endLine": 143
-        },
-        "quote": "function relationLabel(t: string): string {\n  return RELATION_LABELS[t] ?? t;\n}\n\n/** Badge tone from the EFFECTIVE relation status (the server already collapses\n * stored status + otherCurrent/otherRemoved into relationStatus, so the UI never\n * has to second-guess it). */\nfunction statusTone(r: ReviewRelation): \"succe"
-      },
-      {
-        "key": "c6",
-        "label": "固定快照与历史版本界面",
-        "reason": "支持阅读界面展示当前性、dirty 标记、commit、内容哈希、同步时间和历史版本选择器。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 495,
-          "endLine": 532
-        },
-        "quote": "    <section v-else-if=\"view === 'read' && revision\" class=\"page\">\n      <template v-if=\"revision\">\n        <div class=\"row\">\n          <span class=\"cat-badge\" :class=\"revision.context.category || 'neutral'\">{{ revision.context.category ? CATEGORY_LABELS[revision.context.category] : \"材料\" }}</span>\n          <OmBadge :t"
-      },
-      {
         "key": "c7",
-        "label": "搜索命中与代码追溯流程",
-        "reason": "支持命中解析、按路径读取代码来源、人工关系读取、符号关键词构造及失败降级。",
-        "relation": "implements",
+        "label": "片段详情与关系加载",
+        "reason": "支持片段详情、登记关系、关键词候选以及缺失目标不可跳转的流程。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 309,
-          "endLine": 358
+          "startLine": 253,
+          "endLine": 287
         },
-        "quote": "/** Search hits only carry a fragment id; resolve it to its revision, then open. */\nasync function openHit(hit: ReviewSearchHit) {\n  try {\n    const detail = await reviewFragment(hit.id);\n    await openRevision(detail.revisionId, hit.id);\n  } catch (e) {\n    error.value = String(e);\n  }\n}\n\nasync function runTrace() {\n "
+        "quote": "async function showFragment(fragmentId: string) {\n  error.value = \"\";\n  selectedFragmentId.value = fragmentId;\n  try {\n    const [detail, rels] = await Promise.all([\n      reviewFragment(fragmentId),\n      reviewFragmentRelations(fragmentId).catch(() => ({ fragmentId, relations: [] as ReviewRelation[] })),\n    ]);\n    "
       },
       {
         "key": "c8",
-        "label": "登记链路与关键词候选界面",
-        "reason": "支持人工关系和关键词候选分区展示、候选标识及每类最多五项的界面限制。",
-        "relation": "explains",
+        "label": "关系状态映射与呈现",
+        "reason": "支持确认、候选、缺失和过期状态的标签映射及其在片段关系卡片中的实际展示。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 644,
-          "endLine": 695
+          "startLine": 112,
+          "endLine": 126
         },
-        "quote": "        <OmPanel title=\"② 登记链路（意图 → 决策 → 调研 → 测试）\" class=\"stack\">\n          <template v-if=\"groupRelations(traceRelations).length\">\n            <div v-for=\"g in groupRelations(traceRelations)\" :key=\"g.type\">\n              <h4>{{ relationLabel(g.type) }}</h4>\n              <OmPanel\n                v-for=\"r in g.items\"\n "
+        "quote": "/** Badge tone from the EFFECTIVE relation status (the server already collapses\n * stored status + otherCurrent/otherRemoved into relationStatus, so the UI never\n * has to second-guess it). */\nfunction statusTone(r: ReviewRelation): \"success\" | \"warning\" | \"neutral\" | \"danger\" {\n  if (r.relationStatus === \"confirmed\") "
       },
       {
         "key": "c9",
-        "label": "同步统计与只读模式声明",
-        "reason": "支持同步页展示扫描统计、最近结果，并声明浏览检索不依赖 Agent CLI 或模型。",
+        "label": "搜索与代码追溯流程",
+        "reason": "支持搜索命中解析、路径追溯、登记关系读取、符号关键词增强和局部失败降级。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 704,
-          "endLine": 735
+          "startLine": 290,
+          "endLine": 361
         },
-        "quote": "    <!-- sync -->\n    <section v-else-if=\"view === 'sync'\" class=\"page\">\n      <h1>同步状态</h1>\n      <p class=\"muted\">增量扫描仓库内架构代码、进度文档、历史决策与背景调研；内容未变的文件保持原版本（幂等）。</p>\n      <OmPanel title=\"当前状态\" class=\"stack\">\n        <div class=\"row\" style=\"margin-top: 0\">\n          <OmBadge>最近 commit {{ shortCommit(syncState?.lastSyncC"
+        "quote": "async function runSearch() {\n  const q = searchInput.value.trim();\n  searchQuery.value = q;\n  view.value = \"search\";\n  if (!q) {\n    searchResults.value = [];\n    return;\n  }\n  searching.value = true;\n  error.value = \"\";\n  try {\n    searchResults.value = await reviewSearch(q);\n  } catch (e) {\n    error.value = String(e"
       },
       {
         "key": "c10",
-        "label": "关系对端跳转边界",
-        "reason": "支持关系对端缺失时拒绝跳转，以及存在对端修订时打开并定位片段的准确条件。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ReviewApp.vue",
-          "startLine": 281,
-          "endLine": 288
-        },
-        "quote": "/** Jump to the other side of a relation (bidirectional navigation). */\nasync function openRelation(other: ReviewRelation[\"other\"]) {\n  if (!other || !other.revisionId) {\n    say(\"该关联指向缺失的材料，无法跳转\");\n    return;\n  }\n  await openRevision(other.revisionId, other.fragmentId);\n}"
-      },
-      {
-        "key": "c11",
-        "label": "同步请求与刷新流程",
-        "reason": "支持同步调用、成功后刷新同步状态、分类和健康信息，以及组件本地忙碌状态的生命周期。",
-        "relation": "implements",
+        "label": "同步流程与页面模式声明",
+        "reason": "支持同步刷新流程以及同步页面明确给出的只读浏览、检索和无模型依赖限制。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/ReviewApp.vue",
           "startLine": 364,
-          "endLine": 379
+          "endLine": 387
         },
         "quote": "async function loadSync() {\n  syncState.value = await reviewSyncStatus();\n}\n\nasync function runSync() {\n  syncBusy.value = true;\n  error.value = \"\";\n  try {\n    lastSyncResult.value = await reviewRunSync();\n    await Promise.all([loadSync(), loadCategories(), refreshHealth()]);\n    say(\"同步完成\");\n  } catch (e) {\n    erro"
+      },
+      {
+        "key": "c11",
+        "label": "版本与片段异步状态写入",
+        "reason": "支持版本和片段流程直接更新共享状态且未显示竞态防护的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 219,
+          "endLine": 278
+        },
+        "quote": "async function openRevision(revisionId: string, selectFragmentId?: string) {\n  error.value = \"\";\n  try {\n    revision.value = await reviewRevision(revisionId);\n    view.value = \"read\";\n    selectedFragmentId.value = selectFragmentId ?? null;\n    fragmentDetail.value = null;\n    sourceVersions.value = [];\n    selectedVe"
+      },
+      {
+        "key": "c12",
+        "label": "搜索与追溯异步状态写入",
+        "reason": "支持搜索和追溯流程也直接写入状态、未显示请求序号或取消控制的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/ReviewApp.vue",
+          "startLine": 290,
+          "endLine": 357
+        },
+        "quote": "async function runSearch() {\n  const q = searchInput.value.trim();\n  searchQuery.value = q;\n  view.value = \"search\";\n  if (!q) {\n    searchResults.value = [];\n    return;\n  }\n  searching.value = true;\n  error.value = \"\";\n  try {\n    searchResults.value = await reviewSearch(q);\n  } catch (e) {\n    error.value = String(e"
       }
     ],
     "questions": [
       {
-        "question": "关键词候选搜索采用什么匹配与排序规则，是否可能因大小写、多关键词组合或结果截断而遗漏相关材料？",
-        "why": "前端只展示关键词构造、分类搜索调用和候选截断；服务端的分词、匹配、排序与总量限制不在提供材料中。",
-        "nextStep": "检查 reviewSearch 对应的服务端实现及检索测试，覆盖大小写、多词、符号名、排序、截断和无命中场景。",
+        "question": "快速连续打开不同版本、片段、搜索结果或追溯路径时，是否要求采用“最后一次请求获胜”，并取消或忽略旧响应？",
+        "why": "版本、片段、搜索和追溯流程都直接写入共享状态，所给材料未显示请求序号、取消控制器或乱序响应测试；较慢的旧请求可能覆盖较新的界面。",
+        "nextStep": "检查组件测试、浏览器测试及 API 请求封装；确认交互约定后，为延迟和乱序响应补充行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c4",
-          "c7",
-          "c8"
+          "c11",
+          "c12"
         ]
       },
       {
-        "question": "同步端点是否具有跨请求互斥、失败回滚和部分导入的明确语义？",
-        "why": "界面仅用本地 syncBusy 防止当前组件重复操作，并在成功后刷新统计；这不能证明多个页面或并发请求之间的安全性。",
-        "nextStep": "检查同步处理器、锁、事务边界及失败测试，确认并发同步、扫描中断和单文件失败时的持久状态。",
+        "question": "点击侧栏“浏览材料”时，产品期望立即加载当前分类，还是继续要求用户再点击一个具体分类？",
+        "why": "导航按钮只切换到浏览视图，而材料请求仅绑定在具体分类按钮上；首次直接进入浏览页会使用初始空列表。",
+        "nextStep": "确认产品交互预期；若应立即展示材料，让浏览导航触发当前分类加载，并增加首次进入浏览页的浏览器断言。",
         "blocking": false,
         "citationKeys": [
-          "c9",
-          "c11"
+          "c4",
+          "c5"
         ]
       }
     ]
@@ -194,86 +211,51 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/DecisionsView.vue",
-      "digest": "6d562e53f92a89350b8b100ba741e2c1a72d7412a4e4878ed687467f32acde99"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/LarkSetup.vue",
-      "digest": "b9b93f31de0a7698bfa2094a1e8d58d1483594d97b63b57037dd0d13e64c247e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/LearningView.vue",
-      "digest": "53869b6d375a86bb74555598d547b4275ba1fa0fb5386ccf7f36cf0727b0503a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/ReviewApp.vue",
       "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/api.ts",
-      "digest": "511b0d297d4accf1563a8cfe7f5cd029bab7c35e7f883001f656703c475285a2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/AssetImage.vue",
-      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/review-api.ts",
       "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/codewiki/CodeWiki.vue",
+      "digest": "e80550e75f6fbd550ba664a4198756a5267882ae99159245ab229342d36adb10"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:17:17.925Z",
+    "at": "2026-10-01T02:41:01.252Z",
     "trace": {
-      "runId": "383dd4ac-49e4-47e5-8b48-71d17bc9dfee",
-      "roleId": "code-analyst",
+      "runId": "ee8d271c-3bcf-418c-88c9-160428cc18bc",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "c780e7764efc4a7aacdc1c6c76c9cbe3a07b2e242041cedee7c775d71e529ab2",
-      "contextHash": "dbcab747d47ac0dacdc7e60c0678383e690ea53bdf7b3a0bbe7ef2ab7a5a8053",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "ef328267445890cdebdf95e1398b7719bea2ee5cc365a319fd054cfaf9311401",
+      "contextHash": "7a396274dc44790dd3b739c75ae8fb0d7c5f31a03b03e291b477cacbcf2defe9",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "415c958d7a709b27469a20feb4904b94948f84394b2b3f8e693fceb4d8e87dcd",
+      "fingerprint": "a2ac6c486a1870784351c14f870875daa8769f21eee46802a9162959092eb5f1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee99-423a-7241-9cfd-f1834a36f1cf"
+        "01a0f555-d86a-7062-8a16-e833681aee98"
       ],
       "usage": {
-        "used": 49325,
-        "size": 760000,
+        "used": 38727,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -281,10 +263,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 109593,
-          "utf8Bytes": 119355,
-          "estimatedTokens": 39785,
-          "budgetedTokens": 49732,
+          "chars": 56736,
+          "utf8Bytes": 65079,
+          "estimatedTokens": 21693,
+          "budgetedTokens": 27117,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -293,17 +275,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:17:31.551Z",
+    "at": "2026-10-01T02:41:22.285Z",
     "trace": {
-      "runId": "71915ed3-67ba-4b53-bf34-f717cea5eba9",
+      "runId": "3a2b1b5d-3279-413c-bd64-5839abfd412b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "a895cc15d7436585b9f67a1ff0726678b8fe86dc0a3eb36d09c2755ac978428f",
-      "contextHash": "0a34105514864ec4597bfbf8a43d66313949360ba6f77c8418e9a43caa93e243",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "19bed17c69ec59130696ad87f0c8dff136cc57c554c737e661e482479429f92e",
+      "contextHash": "0e64a5b70939d068021eb0c630a1b0196fd833410708015e2cd1733cb893c498",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "44ff06606ea527c7d86663353952d55069f875ac6b296cd81646de7762addf9c",
+      "fingerprint": "5a9fc092c249c11e3c71a7e4812088f9938b8a1ebc06f3cda4c62db26b62ecc8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -316,11 +298,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee99-99ab-7313-910c-7aa709af53eb"
+        "01a0f556-4338-7160-8410-d9b6fef4c6d4"
       ],
       "usage": {
-        "used": 47485,
-        "size": 760000,
+        "used": 37098,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -328,10 +310,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107953,
-          "utf8Bytes": 116863,
-          "estimatedTokens": 38955,
-          "budgetedTokens": 48694,
+          "chars": 53756,
+          "utf8Bytes": 59911,
+          "estimatedTokens": 19971,
+          "budgetedTokens": 24964,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

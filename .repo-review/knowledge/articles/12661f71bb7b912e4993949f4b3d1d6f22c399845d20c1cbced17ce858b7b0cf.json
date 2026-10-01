@@ -3,158 +3,211 @@
   "document": {
     "key": "omem:apps/server/src/assistant/acp-model.ts",
     "title": "ACP 助手模型适配器",
-    "summary": "把助手运行时的结构化请求转换为真实 ACP 会话，限定可用 transport、上下文预算和 JSON 回复合同，并把传输或解析失败明确暴露为模型不可用。",
+    "summary": "将助手运行时请求转换为受约束的 ACP 提示词，调用真实 Agent Profile，并把模型 JSON 解析为回答、检索建议或单个任务操作；同时明确拒绝缺失配置和非 ACP 传输。",
     "category": "implementation",
     "sections": [
       {
-        "key": "transport-prompt",
-        "title": "传输边界与提示组装",
-        "body": "`AcpAssistantModel` 是生产环境的模型端口适配器，本身不推理，也不生成兜底答案。只有配置了 `transport=acp` 的 profile 才会调用真实 ACP；缺少 profile 或使用一次性 CLI transport 时会抛出 `ModelUnavailableError`，让上层如实进入待重试或降级流程。[[c1]]\n\n适配器限制历史轮数和单条历史结果长度，并把可见证据、受信纠正、当前任务、时间与时区共同编入提示。材料被明确声明为不可执行指令，模型只能引用给定 evidence id；最多可提出三条补充检索词，且每次回复只能选择一种任务变更。[[c2]]"
+        "key": "purpose_and_boundary",
+        "title": "解决的问题与传输边界",
+        "body": "`AcpAssistantModel` 是助手运行时与真实 ACP Agent 之间的生产适配层，本身不做推理，也不生成兜底答案。它要求存在 Agent Profile 且 `transport` 必须为 `acp`；未配置 Profile 或使用 CLI 单次调用协议时，都会以 `ModelUnavailableError` 明确降级，避免把不能稳定产出结构化任务 JSON 的通道伪装成可用模型。[[c1]]\n\n适配器跨文件复用 `agents.ts` 暴露的 `acp()` 传输，但现有材料只展示了该传输的进程启动、环境过滤和终止机制，不能据此确认完整会话、权限请求及协议处理细节。[[c2]]"
       },
       {
-        "key": "execution-parse",
-        "title": "ACP 执行与结构化解析",
-        "body": "生成阶段通过项目既有 `acp()` 传输发送文本块，仅累计文本输出，并设置输出字符上限。取消信号原样传播，其他传输失败统一包装为模型不可用，避免把基础设施异常伪装为正常回答。[[c3]]\n\n解析器从输出中截取 JSON 对象，要求非空 `answer`，过滤 citation 与 search query 类型并限制检索词数量；合法的 `create_task` 或 `update_task` 被转换成结构化工具调用。这里仅完成语法和基本字段筛选，真正的可见性、意图、版本与写入权限仍由运行时治理。[[c4]]"
+        "key": "prompt_and_execution",
+        "title": "提示词组装与执行流程",
+        "body": "生成流程先限制上下文体积：默认仅保留最近 10 个历史轮次，每个旧回答截到 500 字；每条证据正文截到 2000 字。提示词合并 Profile 指令、可见性、可信上下文、当前时间与时区、现有任务、每日工作流、证据、历史和当前问题，并要求只引用给定证据、不得执行证据内指令。[[c3]]\n\n任务规则区分截止时间与跟进时间，限定每次回复最多一种变更，并允许首轮在证据不足时提出最多三个检索词，第二轮则必须基于已有证据回答。每日工作流进一步区分明确交办、讨论归并、等待跟进和事项回顾。[[c4]] ACP 调用仅累积 `text` 输出，限制最多 20000 字；取消信号原样传播，其他传输异常统一包装为模型不可用。[[c5]]"
+      },
+      {
+        "key": "parsing_and_limits",
+        "title": "结构化解析、校验与边界条件",
+        "body": "解析器从返回文本的第一个 `{` 到最后一个 `}` 提取 JSON；缺少 JSON、语法错误或空回答都会失败。引用 ID 及检索词只做字符串过滤，检索词最多保留三个。[[c6]] 创建事项仅在标题为非空字符串时形成工具调用，跟进字段交给共享 Zod 合同验证；更新事项还要求任务 ID、整数版本和受支持动作，动作范围与时区、时间格式约束来自任务合同。[[c7]]\n\n边界上，解析器不会验证引用 ID 是否真的属于输入证据，也不会在此处校验 `due_at`；若模型同时返回合法创建与更新，后解析的更新会覆盖创建，最终仍只有一个工具调用。当前材料未包含测试文件，因此只能说明代码分支，不能确认异常 JSON、双变更冲突、取消传播及真实 ACP 输出已被自动化测试覆盖。[[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "ACP transport 限制",
-        "reason": "支持生产适配器只接受 ACP profile、拒绝缺失配置和 CLI transport，且不提供伪回答的说明。",
-        "relation": "implements",
+        "label": "模型适配器的职责与传输路由",
+        "reason": "支持适配器不推理、不伪造答案，并明确拒绝缺失配置及非 ACP 传输的论断。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 10,
-          "endLine": 43
+          "startLine": 12,
+          "endLine": 45
         },
         "quote": "/**\n * Production assistant model adapter. It reuses the project's real ACP transport\n * (`acp()` from agents.ts) against a configured AgentProfile.\n *\n * G: transport routing is enforced here:\n *  - profile.transport === \"acp\" → real ACP session;\n *  - any CLI transport (codex-cli / trae-cli / claude-cli) → ModelUnava"
       },
       {
         "key": "c2",
-        "label": "助手提示与上下文预算",
-        "reason": "支持历史裁剪、证据隔离、任务及时区上下文、补充检索和单次变更合同。",
-        "relation": "explains",
+        "label": "ACP 子进程启动基础",
+        "reason": "说明跨文件依赖的 ACP 传输至少负责安全环境过滤、子进程启动与终止，但材料不足以证明完整协议流程。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 45,
-          "endLine": 88
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 1,
+          "endLine": 68
         },
-        "quote": "    // History budget: truncate old turns to keep context bounded.\n    const maxPrior = this.deps.maxPriorTurns ?? 10;\n    const priorBlock = input.priorTurns.length\n      ? input.priorTurns\n          .slice(-maxPrior)\n          .map(\n            (t) => `user: ${t.userText}\\nassistant: ${t.result.slice(0, 500)}`,\n     "
+        "quote": "/** Client-side ACP transport is reused from the official SDK. Agent output is data;\n * thought chunks are discarded. Permission callbacks never silently authorize tools. */\nimport { spawn, type ChildProcessWithoutNullStreams } from \"node:child_process\";\nimport { mkdirSync } from \"node:fs\";\nimport {\n  ClientSideConnect"
       },
       {
         "key": "c3",
-        "label": "真实 ACP 调用",
-        "reason": "支持适配器调用真实 ACP、限制输出并区分取消与传输不可用错误。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 90,
-          "endLine": 113
-        },
-        "quote": "    const blocks: ContentBlock[] = [{ type: \"text\", text: prompt }];\n    let output = \"\";\n    try {\n      await acp(\n        profile,\n        this.deps.workspaceRoot,\n        blocks,\n        (type, text) => {\n          if (type === \"text\") output += text;\n        },\n        input.signal ?? new AbortController().signal,"
-      },
-      {
-        "key": "c4",
-        "label": "回复 JSON 解析",
-        "reason": "支持回答、引用、搜索词以及创建或更新任务调用的解析规则，并说明此处仅做结构筛选。",
+        "label": "上下文预算与提示词构造",
+        "reason": "支持历史、证据截断以及可信上下文、任务、证据和当前问题如何进入提示词的描述。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 116,
-          "endLine": 168
+          "startLine": 47,
+          "endLine": 78
         },
-        "quote": "/**\n * Parse the model's JSON contract. Exposed for fixture tests so we can verify\n * that a well-formed ACP response (text + toolCall) produces the right\n * AssistantModelReply.\n */\nexport function parseAssistantReply(raw: string): AssistantModelReply {\n  const start = raw.indexOf(\"{\");\n  const end = raw.lastIndexOf(\""
+        "quote": "    // History budget: truncate old turns to keep context bounded.\n    const maxPrior = this.deps.maxPriorTurns ?? 10;\n    const priorBlock = input.priorTurns.length\n      ? input.priorTurns\n          .slice(-maxPrior)\n          .map(\n            (t) => `user: ${t.userText}\\nassistant: ${t.result.slice(0, 500)}`,\n     "
+      },
+      {
+        "key": "c4",
+        "label": "每日消息工作流规则",
+        "reason": "支持提示词所复用的交办、讨论、等待和回顾四类处理政策。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/message-workflows.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "/** Versioned daily-message recipes share the existing assistant/tool contract.\n * These are processing policies, never authority granted by captured messages. */\nexport const messageWorkflows = [\n  { id: \"direct_action\", title: \"随手交办\", trigger: \"本人明确要求记录或修改事项\", output: \"有来源的待办与实际操作回执\", instruction: \"Record explicit ow"
+      },
+      {
+        "key": "c5",
+        "label": "ACP 调用与异常转换",
+        "reason": "支持仅收集文本、输出长度上限、取消传播和传输错误包装的执行流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 93,
+          "endLine": 115
+        },
+        "quote": "    const blocks: ContentBlock[] = [{ type: \"text\", text: prompt }];\n    let output = \"\";\n    try {\n      await acp(\n        profile,\n        this.deps.workspaceRoot,\n        blocks,\n        (type, text) => {\n          if (type === \"text\") output += text;\n        },\n        input.signal ?? new AbortController().signal,"
+      },
+      {
+        "key": "c6",
+        "label": "基础回复解析",
+        "reason": "支持 JSON 截取、必填回答、引用过滤及检索词数量限制的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 124,
+          "endLine": 145
+        },
+        "quote": "export function parseAssistantReply(raw: string): AssistantModelReply {\n  const start = raw.indexOf(\"{\");\n  const end = raw.lastIndexOf(\"}\");\n  if (start < 0 || end <= start)\n    throw new ModelUnavailableError(\"agent returned no JSON answer\");\n  let parsed: unknown;\n  try {\n    parsed = JSON.parse(raw.slice(start, end"
+      },
+      {
+        "key": "c7",
+        "label": "任务操作共享合同",
+        "reason": "支持跟进字段、动作枚举、带偏移时间和 IANA 时区由共享合同严格校验的论断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/task-flow.ts",
+          "startLine": 3,
+          "endLine": 24
+        },
+        "quote": "export const taskStatusSchema = z.enum([\"open\", \"waiting\", \"done\", \"cancelled\"]);\nexport type TaskStatus = z.infer<typeof taskStatusSchema>;\nexport const taskFollowUpSchema = z.object({\n  waiting_on: z.string().min(1).max(500).nullable(),\n  next_check_at: z.iso.datetime({ offset: true }).nullable(),\n  snoozed_until: z."
+      },
+      {
+        "key": "c8",
+        "label": "创建与更新解析分支",
+        "reason": "支持创建、更新工具调用的成立条件，以及更新分支会覆盖先前创建结果这一边界判断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 146,
+          "endLine": 172
+        },
+        "quote": "  const task = object.create_task;\n  if (task && typeof task === \"object\") {\n    const t = task as Record<string, unknown>;\n    if (typeof t.title === \"string\" && t.title.trim()) {\n      reply.toolCalls = [\n        {\n          tool: \"create_task\",\n          title: t.title,\n          detail: typeof t.detail === \"string\""
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "是否应在宿主执行前显式拒绝模型同时返回 `create_task` 与 `update_task`，而不是由更新分支静默覆盖创建分支？",
+        "why": "当前解析顺序会先写入创建调用，再用更新调用覆盖；虽然最终满足“单次一种变更”，但没有把模型违反合同的情况暴露为错误。",
+        "nextStep": "补充产品期望，并为双变更响应增加解析器测试；若要求严格合同，则在解析阶段抛出明确错误。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "引用 ID 归属、`due_at` 格式及真实 ACP 输出兼容性由哪个后续层校验？",
+        "why": "本文件对引用和截止时间主要做类型筛选，而材料未提供宿主收据层或相关测试，无法确认无效证据 ID、错误时区时间以及带额外文本的模型输出最终如何处理。",
+        "nextStep": "检查助手运行时的工具执行与回执代码及对应测试，确认执行前校验；为无效引用、错误日期、取消和非标准 ACP 输出增加行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6",
+          "c7"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/app.ts",
-      "digest": "0b62021c1f4872700c1d87469edf9ef57f94e241b995efa3db3659eb7cebb120"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "b95571f8abc91d339dee83c4ef267451a884a470744904fe176a37fdff3ea5b6"
+      "digest": "efa43a2948fcae9611fe88e8ae00d6421136e04e43ba1761bda2a2fa0047665a"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/assistant/default-model.ts",
-      "digest": "2602359e46f83d2e9a0f1dc988f5c916d4eb4f86fdbace9a90d6d911d6de14cb"
+      "key": "omem:packages/contracts/src/task-flow.ts",
+      "digest": "40b7552c6f7ced8e0838773d5e9e4dd7ebff2d813d674f3624e0a1e0e87fa076"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "0c4df97d10c1eb45f43576235a19cb2e4330ee493a7419ed6ae27b9ac80abc68"
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/cli.ts",
-      "digest": "b752f6849d98db0ea4a3d4f8df662ef117e5c0c3c9197fb1ae1ee2f6000eae9c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/artifacts.ts",
-      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+      "key": "omem:apps/server/src/assistant/message-workflows.ts",
+      "digest": "1de3a26cceae1263b44f8c385de992841d6ba8bf892161dc002c84e5a582fbcc"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T20:05:27.602Z",
+    "at": "2026-10-01T02:04:01.600Z",
     "trace": {
-      "runId": "63ddaf9b-ed21-48fb-b8bc-ecf82acea82e",
-      "roleId": "knowledge-refresher",
+      "runId": "d92a6ecf-c631-434a-a21d-9ef10dbcb4ce",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "8f665af77f822806976ec69d457a278e019300403133e4ca301442fb4644f993",
-      "contextHash": "2e81f20b3208704306b47d726cd3c7fc23b0bc5c098a16db723147a792223950",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "435c87911e37146d1b10c27f6d23ede6aa7f1714776ff4f0663173e4820ee149",
+      "contextHash": "064945f855aeaf6673363ddf00b4e3767ba996b028d0d1f358292bd031ec188e",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5b2bf36801c127adf6b6703b924bd05e7b3c4e221918e91f7ccedd193aa9d16a",
+      "fingerprint": "71e8b4346a780d41fd9de9c06e028d4d060a359e2ad64b10aa22c7839f7d9cb7",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3eb-3ca5-7922-a4bf-cc0ad37b30af"
+        "01a0f533-fcfd-7f33-ac7c-1b498b150c49"
       ],
       "usage": {
-        "used": 59433,
+        "used": 30338,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -163,10 +216,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 124533,
-          "utf8Bytes": 128483,
-          "estimatedTokens": 42828,
-          "budgetedTokens": 53535,
+          "chars": 28572,
+          "utf8Bytes": 30606,
+          "estimatedTokens": 10202,
+          "budgetedTokens": 12753,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -175,17 +228,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T20:05:52.827Z",
+    "at": "2026-10-01T02:04:22.063Z",
     "trace": {
-      "runId": "a7eced54-1981-4cf8-8c1a-56d01a988454",
+      "runId": "6b92c7d5-28f3-4274-bce4-d353117f8d44",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "02404342034fb3b525a467f02e3f95405377e081f66a2371e756633610be94e6",
-      "contextHash": "b68f47ccfdf205d686590d5eecd768e8e572c82d5deb42c2c94661a8c106b88a",
+      "promptHash": "a57aaf23e2572f1b71649fd99ae07dda8f64d3372ec2270abfc93391ff3ad0b3",
+      "contextHash": "41c173de99ad10292069a33a1f227836bb5794efd6b9d03dc4fd441933c51aea",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1f58cac56e69fb61f0e61d45d16b245f5ef94d0c8ccd1c5cfd1469c34500526f",
+      "fingerprint": "33b9754cac93d5b944b59f7b4c154da3032e2e32a1feec68e27771704373c068",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -198,10 +251,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3ec-2635-7ea0-bf90-d1d2243a4a16"
+        "01a0f534-64d4-7b71-8608-2c0206158e8e"
       ],
       "usage": {
-        "used": 60331,
+        "used": 28963,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -210,10 +263,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 137176,
-          "utf8Bytes": 146360,
-          "estimatedTokens": 48787,
-          "budgetedTokens": 60984,
+          "chars": 32668,
+          "utf8Bytes": 36806,
+          "estimatedTokens": 12269,
+          "budgetedTokens": 15337,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

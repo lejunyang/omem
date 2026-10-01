@@ -2,101 +2,75 @@
   "version": 1,
   "document": {
     "key": "module:docs-implementation:part-4",
-    "title": "docs-implementation：通用知识整理与仓库知识闭环",
-    "summary": "该模块把仓库文件、代码、图像、对话等材料纳入统一 Capture 证据链，通过材料分析、固定引用、独立复核、定向修订和分层组织形成可追溯知识。派生正文只负责解释与导航，事实依据始终回到固定原始材料；当前主要边界是全库覆盖尚未完成、跨文件调用和跨版本身份续接仍有限。",
-    "category": "architecture",
+    "title": "统一知识流程、阶段进展与验证边界",
+    "summary": "本专题说明 omem 如何在统一原始证据链上生成、复核、阅读和检索知识，并梳理仓库评审、中文语义检索、来源更新及日常助理的当前进展与仍需实证的边界。",
+    "category": "overview",
     "sections": [
       {
-        "key": "purpose",
-        "title": "职责与设计背景",
-        "body": "本模块不是独立的代码知识库，而是面向多种 Capture 材料的共用知识整理层；仓库只承担输入适配，正文、引用、疑问、角色运行和任务记录复用同一机制。[[c1]] `KnowledgeDocument` 以具名 Markdown 章节承载解释，引用紧贴对应论断；模型选择固定范围，宿主复制原文，独立角色判断语义支持性，因此定位正确并不等于论断已经成立。[[c2]] 原始事实仍归属于 Source、Revision 和 Fragment，派生知识不会再次成为独立原件；来源变化会使相关正文及其依赖章节过期，同时保留旧固定版本以供追溯。[[c3]]"
+        "key": "purpose-and-authority",
+        "title": "为什么需要统一知识流程",
+        "body": "知识整理的目标不是另建一个事实库，而是把不同 Capture 中的原始材料组织成可阅读、可追溯且可失效的正文。`KnowledgeDocument` 以具名章节和内联引用表达结论，宿主从固定 Revision 复制引文；派生知识只负责组织与导航，事实权威仍属于 Capture、Source、Revision 和 Fragment。来源变化会让相关知识及其上层章节过期，但旧修订及固定引用仍可追溯。[[c1]]\n\n这一约束也适用于代码域：Code Wiki 只是统一证据链上的类型化投影，repo-review 是隔离的输入适配与开发视图，并不是独立知识库。跨文件调用尚未解析，名称级调用只能作为候选；代码变化后还需重新同步，使 locator 在新 head 上重新定位。[[c2]]"
       },
       {
-        "key": "pipeline",
-        "title": "生成、复核与演进流程",
-        "body": "流程先由材料角色分析，再交给独立会话复核；只有通过的正文才能发布，同批已通过内容可先保存，未通过内容继续修订，分析期间若来源变化则拒绝当前发布。[[c4]] 复核退回后会切换到专门的刷新角色，依据具体反馈局部修改；有限轮次结束时只保留有直接依据的陈述，其余转成明确问题，并且仍须重新通过独立复核。[[c5]] 仓库适配器处理 Git 可见材料并记录排除或失败原因，通过的结果保存为 JSON 与内联引用 Markdown，再组合为模块、主题和概览；局部生成、索引重建与模型调用边界明确分开。[[c6]] 用户回答保存为新的有来源原始材料，并使相关知识进入重核对；疑问只有在用户明确选择后才转成待办。[[c7]]"
+        "key": "generation-and-review",
+        "title": "如何生成、复核与演进",
+        "body": "材料、代码、对话和图像分析，以及规划、写作、复核和刷新角色，共用同一角色运行时与持久任务体系。`KnowledgePipeline` 先分析材料，再以独立会话核验引用对正文的支持性；只有通过的内容才发布，未通过部分进入定向修订，分析期间若来源变化则拒绝发布旧结果。协议用例只能证明流程合同，不能替代真实模型覆盖。[[c3]]\n\n仓库入口会处理 Git 可见材料并记录排除或失败原因，通过复核的正文保存为 JSON 与 Markdown，再逐层组成模块、主题和概览。失败项不能冒充已生成内容，实际覆盖必须以当前 `coverage.json` 和验证报告为准。复核退回后由专用刷新角色依据具体意见局部修改，有限轮次后仍无依据的内容应降为明确问题，而不能绕过复核。[[c4]][[c5]]"
       },
       {
-        "key": "relations",
-        "title": "跨模块协作、阅读与检索",
-        "body": "材料、代码、对话、图像、规划、写作、复核和刷新角色共用既有运行时、版本化合同及任务存储；worker 按任务种类领取，避免知识整理、学习和通知任务互相抢占。[[c8]] 个人知识与仓库知识共用证据阅读组件，引用可以逐层进入固定知识章节或原始材料，并保留返回、深链、滚动和焦点恢复等交互。[[c9]] 检索可先命中派生正文，再沿固定引用返回原始 Fragment；正文只作导航，会话可见性过滤和当前来源复查仍然生效。[[c10]] 因此 Code Wiki 是统一证据链在代码域的派生视图，而 repo-review 是隔离运行配置与阅读入口，不是新的事实权威。[[c11]]"
+        "key": "reading-and-retrieval",
+        "title": "知识如何关联阅读与助手召回",
+        "body": "个人知识入口和仓库知识入口复用同一证据阅读组件：读者可从正文中的可读引用进入固定知识章节或原始材料，并沿帧栈逐层返回、循环跳转、恢复滚动位置和焦点。代码结构图是补充入口，而不是另一套阅读合同。[[c6]]\n\n检索命中整理后的正文时，会继续沿固定引用返回原始 Fragment；派生正文不会作为独立证据送给助手。召回还会重新核对材料当前版本，避免知识投影尚未刷新时继续使用旧来源。当前实现进一步加入 FTS5/BM25、中文短词、知识引用和活跃记忆的融合，以及固定中文向量模型；但四条同义问法的结果只是小样本，reranker、ANN 和历史时点检索仍未完成。[[c7]][[c8]]"
       },
       {
-        "key": "progress_limits",
-        "title": "验证范围、现存边界与被替代结论",
-        "body": "材料记录了全量检查及真实浏览器对五层引用链、深链、视口和焦点行为的验证。[[c9]] 仓库材料、知识恢复与开发生命周期也有回归覆盖，但全仓模型处理的完成数必须以当前 coverage 报告为准，失败项不能计作已生成。[[c6]] 代码 Wiki 的历史切片还记录了真实模型生成、知识重建、依赖失效和两套浏览器脚本通过；这些只证明相应切片，不代表当前全库覆盖完整。[[c12]]\n\n现有边界包括跨文件调用不解析、跨 revision 符号及 Fragment 身份不续接，以及单用户 SQLite 不具备多租户 ACL、分布式事务或 pgvector。[[c13]][[c14]] 2026-09-29 复审中“仅关键词检索、下游自动重核验未完成”的结论已被后续中文向量检索与来源刷新闭环取代：当前固定中文向量模型和共享检索已经落地，`refresh_dependents` 也已进入 extractor、独立 verifier 与原子应用流程；旧结论仅保留为历史时点证据。[[c15]][[c16]]"
+        "key": "progress-and-limits",
+        "title": "当前进展、验证口径与限制",
+        "body": "来源更新已形成 Capture 记录失效范围、extractor 重跑、独立 verifier 和原子应用的闭环；失败或缺证据时保持待复核，不能把“已入队”视为更新成功。日常助理也已验证等待创建、暂缓、重启后单次补发和取消，但自动监听回复、周期回顾、重复提醒及外部到期投递仍未接入。[[c9]][[c10]]\n\n不同证据只能支持各自范围：工程检查证明构建和测试通过，真实 ACP 调用证明模型链路可用，小样本检索不代表总体质量。系统目前仍是 TypeScript 与 SQLite 的个人单用户实现，不具备多租户 ACL、分布式事务或 pgvector；可追溯也不等于每条 Claim 都已完成正式语义支持性评估。[[c11]]\n\n飞书实机快照仅记录 `lark-cli`、文档版本、text/link 类型及文本规模；它没有给出退出码、固定 Capture/Revision、幂等重试或关键内容断言，因此不能据此宣称真实 WebSocket、图片下载或精确引用定位已经验收。[[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "通用知识整理的共用范围",
-        "reason": "支持仓库只是输入适配器，知识正文、引用、疑问、角色和任务记录供各类 Capture 材料共用。",
+        "label": "知识正文与固定引用合同",
+        "reason": "说明派生正文的组织职责、原始证据权威、不可变修订以及来源变化后的级联失效。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 1,
-          "endLine": 3
+          "startLine": 3,
+          "endLine": 11
         },
-        "quote": "# 通用知识整理流程\n\n本轮按功能切片实现。仓库是输入适配器；正文、引用、疑问、角色运行和任务记录供各类 Capture 材料共用。"
+        "quote": "本轮按功能切片实现。仓库是输入适配器；正文、引用、疑问、角色运行和任务记录供各类 Capture 材料共用。\n\n## 已完成：正文与固定引用合同\n\n`KnowledgeDocument` 用具名章节组织 Markdown 正文，`[[c1]]` 引用贴在对应文字旁。引用有可读名称、理由、关系和材料行范围或知识章节目标。模型选择位置，宿主从固定版本复制引文；语义支持性另由独立角色复核，位置存在不能替代语义复核。\n\n`KnowledgeRepository` 保存不可变知识修订和当前指针。原始材料仍来自 Capture / Source / Revision / Fragment，派生知识不会再次作为独立原件采集。来源变化会使对应知识及"
       },
       {
         "key": "c2",
-        "label": "正文与固定引用合同",
-        "reason": "支持内联引用、宿主复制固定原文以及独立角色负责语义复核的职责划分。",
+        "label": "Code Wiki 的统一证据链定位",
+        "reason": "支持 Code Wiki 不是独立知识库，并界定跨文件调用和跨版本身份续接限制。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 5,
-          "endLine": 7
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 48,
+          "endLine": 57
         },
-        "quote": "## 已完成：正文与固定引用合同\n\n`KnowledgeDocument` 用具名章节组织 Markdown 正文，`[[c1]]` 引用贴在对应文字旁。引用有可读名称、理由、关系和材料行范围或知识章节目标。模型选择位置，宿主从固定版本复制引文；语义支持性另由独立角色复核，位置存在不能替代语义复核。"
+        "quote": "> 定位：Code Wiki 不是独立产品，是同一 Capture→Source/Revision/Fragment→Relation/Retrieval 证据链在代码域上的确定性 typed projection；repo-review 只是隔离 dev 配置/视图（5180 API + 5181 web、独立 SQLite、不起业务 worker）。以下数字为 2026-09-29 对运行中 `osdk run dev:review` 实例的实测（`/api/review/*` 直接查询），非设计目标。\n\n- **确定性代码图（无模型）**：TS Compiler AST（单文件、不建 Program）+ `@vue/compi"
       },
       {
         "key": "c3",
-        "label": "不可变修订与原始证据边界",
-        "reason": "支持派生知识不成为独立原件、来源变化触发级联过期且历史固定版本仍可读取。",
-        "relation": "supports",
+        "label": "共用角色运行时与独立复核",
+        "reason": "支持八类角色复用同一运行时，以及先分析、后独立复核、来源变化时拒绝发布的流程。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 9,
-          "endLine": 13
+          "startLine": 15,
+          "endLine": 29
         },
-        "quote": "`KnowledgeRepository` 保存不可变知识修订和当前指针。原始材料仍来自 Capture / Source / Revision / Fragment，派生知识不会再次作为独立原件采集。来源变化会使对应知识及依赖它的章节过期，旧引用仍可读取原始固定版本。JSON 和 Markdown 可作为可移植产物保存和重建。\n\n疑问可保留为后续调查项；用户明确选择后才加入现有待办。用户回答被保存为带来源的原始材料，不改写原证据。\n\n验证：`knowledge-repository.test.ts` 3 个行为用例通过，覆盖内联引用/范围校验、来源变更后的级联失效与历史保留、全新库恢复、问题回答和待办幂等。角色编排、仓库接入和阅读"
+        "quote": "## 已完成：共用 Agent 运行时\n\n材料、代码、对话、图像分析，以及章节规划、写作、复核和刷新这八个角色都使用既有 `RoleRuntimeGateway`、版本化 manifest/prompt/schema 和内嵌 skill。没有新增另一套模型进程或任务存储。宿主可以规范化引用后再交给独立复核角色，角色的原始范围和运行 trace 保留。\n\n持久 worker 增加按 kind/job id 领取的过滤条件，知识整理不会抢走学习或通知任务。预算使用共用实现；正式 review 配置为 192000 输入 / 24000 输出 / 16000 预留 tokens，仍需通过当前模型声明窗口校验。角色默认预算是 96000 /"
       },
       {
         "key": "c4",
-        "label": "分析、独立复核与发布门槛",
-        "reason": "支持先分析后独立复核、通过后发布、未通过内容继续修订以及来源变化时拒绝发布。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 23,
-          "endLine": 25
-        },
-        "quote": "## 已完成：通用分析、复核与服务接口\n\n`KnowledgePipeline` 先运行材料角色，再使用独立会话复核。只有通过的正文才发布；同批已通过内容可以先保存，未通过内容继续修订。模型选择引用行范围，宿主复制精确短引文，复核角色判断其是否支持正文。持久任务和角色输出支持重建投影后复用，分析期间来源变化会拒绝当前发布。"
-      },
-      {
-        "key": "c5",
-        "label": "复核退回后的定向修订",
-        "reason": "直接支持刷新角色依据复核反馈局部修改、保留有依据陈述并再次接受独立复核。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 61,
-          "endLine": 65
-        },
-        "quote": "## 已完善：语义退回后的定向修订\n\n独立复核退回后切换到专门的 knowledge-refresher，依据具体反馈局部修改，不再让初始分析角色反复重写整篇。有限轮次的最后一步要求只保留直接有依据的陈述，把剩余问题明确记录；仍必须重新通过独立复核，不绕过拒绝结果。输入材料的真实来源类型与转述状态进入上下文。\n\n验证：知识流程与角色运行时 11 用例通过，包括持续拒绝时不发布的反例。"
-      },
-      {
-        "key": "c6",
-        "label": "仓库材料适配、恢复与可提交产物",
-        "reason": "支持仓库材料处理、分层产物、局部生成与索引重建的区别，并说明恢复测试及 coverage 口径。",
+        "label": "仓库材料适配与覆盖记录",
+        "reason": "说明仓库材料如何进入统一流程、产物如何保存，以及失败项和实际覆盖的记录口径。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -107,35 +81,22 @@
         "quote": "## 已完成：仓库材料适配与可提交产物\n\n`review:analyze` 使用统一流程处理全部 Git 可见材料（含源码、文档、部署配置、技能和图像），记录明确的排除/失败原因。运行数据、旧历史库、私有环境与派生知识不重新作为独立证据。每份通过独立复核的正文立即保存为 JSON + 带内联链接的 Markdown；后续按模块、主题和概览逐层组合，仍保留固定引用。\n\n`review:generate -- --target=<path>` 是同一流程的局部入口；`review:build` 只重建当前知识索引，不重新调用模型。启动与手动同步均接入材料和知识恢复。review 中用户明确保存的回答写为原始 user-notes 材料，"
       },
       {
-        "key": "c7",
-        "label": "用户回答触发知识重核对",
-        "reason": "直接支持用户回答作为原始材料保存、相关知识进入重核对，以及显式待办动作的边界。",
-        "relation": "supports",
+        "key": "c5",
+        "label": "复核退回后的定向修订",
+        "reason": "支持刷新角色按具体反馈局部修订，并要求最终结果仍通过独立复核。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 27,
-          "endLine": 29
+          "startLine": 61,
+          "endLine": 65
         },
-        "quote": "个人服务已提供 `/api/knowledge`：正文、固定引用、原始材料、搜索、问题、回答和显式待办动作。它直接处理手工材料等通用 Capture 输入。回答保留为原始材料，并使对应知识进入重核对；下一轮处理会把回答提供给 Agent。代码关系只作为材料类型适配，不构成新的事实或记忆 authority。\n\n验证：知识仓储、流程和 API 三组 6 个用例通过；主服务与 review dev 接入回归 15 个用例通过。协议 fixture 仅证明流程，真实模型全仓处理的覆盖与失败另行记录。"
+        "quote": "## 已完善：语义退回后的定向修订\n\n独立复核退回后切换到专门的 knowledge-refresher，依据具体反馈局部修改，不再让初始分析角色反复重写整篇。有限轮次的最后一步要求只保留直接有依据的陈述，把剩余问题明确记录；仍必须重新通过独立复核，不绕过拒绝结果。输入材料的真实来源类型与转述状态进入上下文。\n\n验证：知识流程与角色运行时 11 用例通过，包括持续拒绝时不发布的反例。"
       },
       {
-        "key": "c8",
-        "label": "共用角色运行时与任务隔离",
-        "reason": "支持八类角色复用运行时和持久任务存储，并通过任务类型过滤避免不同 worker 抢占。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 15,
-          "endLine": 21
-        },
-        "quote": "## 已完成：共用 Agent 运行时\n\n材料、代码、对话、图像分析，以及章节规划、写作、复核和刷新这八个角色都使用既有 `RoleRuntimeGateway`、版本化 manifest/prompt/schema 和内嵌 skill。没有新增另一套模型进程或任务存储。宿主可以规范化引用后再交给独立复核角色，角色的原始范围和运行 trace 保留。\n\n持久 worker 增加按 kind/job id 领取的过滤条件，知识整理不会抢走学习或通知任务。预算使用共用实现；正式 review 配置为 192000 输入 / 24000 输出 / 16000 预留 tokens，仍需通过当前模型声明窗口校验。角色默认预算是 96000 /"
-      },
-      {
-        "key": "c9",
-        "label": "共享证据阅读链与浏览器验证",
-        "reason": "支持个人知识和仓库知识共用阅读组件，以及五层引用链、深链、视口和焦点行为的真实浏览器验证。",
+        "key": "c6",
+        "label": "统一证据阅读组件",
+        "reason": "支持个人知识与仓库知识共用引用阅读、帧栈、深链和焦点恢复合同。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -146,9 +107,9 @@
         "quote": "## 已完成：正文内联引用阅读\n\n个人“知识整理”和仓库“仓库知识”使用同一组阅读组件；代码结构视图作为补充入口。正文中的引用带可读名称，打开后先展示引用理由，再进入固定知识章节或原始材料；代码 import 行旁也能进入目标模块知识。帧栈行为已集中到 `packages/ui/useEvidenceTrail`，知识、材料与旧代码视图使用同一 dialog 合同，支持逐层返回、循环跳回、滚动与焦点恢复以及深链。\n\n验证：完整 `osdk run check` 通过；`knowledge-browser.ts` 用真实 Vue/API/SQLite 验证正文→章节→三个模块→固定代码的五层链、理由、import 跳转、Esc、深链、"
       },
       {
-        "key": "c10",
-        "label": "知识引导的原始证据召回",
-        "reason": "支持派生正文只用于检索导航，最终返回原始 Fragment，并继续执行可见性和来源新鲜度检查。",
+        "key": "c7",
+        "label": "知识引导原始证据召回",
+        "reason": "说明正文仅用于导航，助手最终获得原始 Fragment，并在召回时重新检查当前来源。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -159,111 +120,107 @@
         "quote": "## 已完成：知识引导个人助手召回\n\n关键词检索可以命中已整理的正文，再沿固定引用找到原始 Fragment 作为候选。派生正文只用于导航，不作为新的独立证据送入助手；原有会话可见性过滤继续生效。召回时重新核对当前材料摘要，即使知识投影尚未刷新，也不会将旧来源当成当前依据。\n\n验证：知识仓储/召回与 AssistantRuntime 28 用例通过，含“原文无关键词、知识正文有关键词”的真实原片段召回及来源变化后拒绝旧依据。"
       },
       {
-        "key": "c11",
-        "label": "Code Wiki 的统一证据链定位",
-        "reason": "支持 repo-review 是隔离运行与阅读视图、可提交 Wiki 是统一证据链派生产物，而非第二套事实权威。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
-          "startLine": 1,
-          "endLine": 3
-        },
-        "quote": "# Code Wiki 方案与实现复审\n\n复审基线：`1063d9a`，包含启动时已有的本机依赖清单格式与 osdk.lock 修改。核心判断：统一 Capture / Source / Revision / Fragment 是正确方向，但原先“已实现通用 typed projection”的表述超过了代码事实。repo-review 应是本仓库材料的隔离运行配置与阅读视图，可提交 Wiki 是这条证据链的派生产物。"
-      },
-      {
-        "key": "c12",
-        "label": "Code Wiki 历史验证记录",
-        "reason": "支持历史切片曾完成真实模型生成、知识重建、依赖失效回归、全量检查和两套浏览器脚本验证。",
+        "key": "c8",
+        "label": "中文混合与向量检索进展",
+        "reason": "支持当前混合检索、固定中文向量模型、词法降级、小样本结果及尚未完成的检索能力。",
         "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
-          "startLine": 39,
-          "endLine": 44
-        },
-        "quote": "## 验证记录\n\n- 第一切片 `fa2d57b`：`osdk run check` exit 0，49 文件 / 309 用例，typecheck/build 通过；真实浏览器 1440/768/390、可见代码高亮、引用栈、焦点归还、XSS 通过。\n- 本机 ACP 握手：TraeCode CLI 0.207.1 返回 GPT-5.6-Sol/Terra/Luna；实际配置选择 `gpt-5.6-sol` + `medium`，每次调用仍通过 ACP configOptions 校验支持性。\n- 已完成检索、助手、记忆治理、代码投影、材料同步、共享阅读器六个明确目标的真实模型生成，严格输出与引用校验通过。模型调用记录与产物字段可"
-      },
-      {
-        "key": "c13",
-        "label": "代码投影的技术边界",
-        "reason": "支持跨文件调用、类型解析和跨 revision 语义身份续接尚未实现。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
-          "startLine": 31,
-          "endLine": 37
-        },
-        "quote": "## 仍然存在的架构边界\n\n1. 当前接入范围是本仓库与单用户 SQLite。代码源枚举和关系仍有 review 适配逻辑、默认仓库标识仍为 omem；不能把这次改造说成任意多仓库/多租户均已接入。\n2. 个人助手的自动材料学习与 CodeUnderstanding 角色运行尚未完全统一编排。代码角色有单独的严格输出合同及 registry，复用 ACP 传输；尚未统一进入所有输入渠道的持久任务/复核流水线。后续应接统一材料处理端口，不能再增加第二套 Capture 或 memory authority。\n3. 模型说明是派生资料，结构与引用存在性校验不证明每句解释正确。此次没有独立 verifier 语义复核，也没有把说明作为已验"
-      },
-      {
-        "key": "c14",
-        "label": "单用户实施取舍",
-        "reason": "支持当前实现是个人单用户 SQLite，并明确不具备多租户 ACL、分布式事务和 pgvector。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 124,
-          "endLine": 138
-        },
-        "quote": "### 已实现的基础能力（跨 Batch，仍有效）\n\n- Node/TypeScript + Fastify HTTP API；SQLite + 图片对象目录；Vue 3 阅读台。\n- CaptureEnvelope 文本/图片/链接 + 上下文；图片类型/预算校验。\n- 文件、固定 Git commit、lark-cli 文档导入；主动 HTTP/CLI；opt-in TraeX hook 转发。\n- 版本化材料与不可变片段；引用/反向引用；环跳回；恢复为新版本且拒绝覆盖后续修改。\n- 持久变更/通知同事务；待办状态、关联证据、UTC 到期去重。\n- 官方 ACP SDK initialize/new/config/prompt/"
-      },
-      {
-        "key": "c15",
-        "label": "中文语义检索的后续进展",
-        "reason": "支持固定中文向量模型、共享检索和小样本验证已经落地，从而替代早期仅关键词检索的状态结论。",
-        "relation": "contradicts",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 3,
-          "endLine": 3
-        },
-        "quote": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，模型缺失时保留词法结果并报告 degraded。真实四条中文同义问法 top-1 为 4/4，词法基线为 0/4；这是小样本，不是整体检索质量结论。`osdk deps --frozen` 与全量 `osdk run check` 通过（57 文件 / 343 用例、typecheck、build）；首轮真实仓库向量索"
-      },
-      {
-        "key": "c16",
-        "label": "来源更新重核验闭环",
-        "reason": "支持 refresh_dependents 已从未实现占位发展为 extractor、独立 verifier 和原子更新闭环，从而替代早期限制描述。",
-        "relation": "contradicts",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
           "startLine": 5,
-          "endLine": 5
+          "endLine": 13
+        },
+        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手"
+      },
+      {
+        "key": "c9",
+        "label": "来源更新重核验闭环",
+        "reason": "支持失效范围记录、extractor、独立 verifier、原子应用及失败时保持待复核的当前实现。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 9,
+          "endLine": 9
         },
         "quote": "> **2026-10-01 来源更新闭环**：`refresh_dependents` 不再是 NOT_IMPLEMENTED 占位。Capture 同事务记录失效范围，调度复用已有 extractor job，独立 verifier 后由 MemoryService 原子更新同一记忆；失败/缺证据维持 `needs_review`，只有全部受影响记忆真正应用才记 `applied`。`/api/memory-refreshes` 提供状态和结果。模型 schema 从宿主 Zod 合同生成，修正原先 body 空定义及把可空元数据误当事实歧义的问题。全量 `osdk run check` exit 0（56 文件 / 341 用"
+      },
+      {
+        "key": "c10",
+        "label": "日常消息与跟进状态",
+        "reason": "支持等待事项闭环的实测范围及自动监听、周期回顾、重复提醒和外部投递缺口。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既有助手/提炼管线。schema 18 保存等待对象、独立跟进时间、暂缓时间与事项版本；等待/暂缓/取消使用同一应用回执，提醒与发生记录原子提交、离线补发一次。真实 `traex acp / gpt-5.6-sol / medium` 已验证等待创建→暂缓→重启只补发一次→回顾不修改→取消停止。全量检查通过（59 文件 / 351 用例、typecheck/build），个人浏览器覆盖新会话与等待控件，Wiki 浏览器递归引用回归通过；三个视口为 1440/768/390。仍未接入自动监听回复、周期回顾、重复提醒或外部到期投递。"
+      },
+      {
+        "key": "c11",
+        "label": "个人单用户实现边界",
+        "reason": "支持 SQLite 单用户取舍、多租户与分布式能力缺失，以及可追溯不等于语义验证完成。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 138,
+          "endLine": 142
+        },
+        "quote": "### 明确的实现取舍\n\n- 统一 TypeScript + SQLite 个人单用户实现；**不具备**多租户 ACL、分布式事务、pgvector。team scope 仅保留在架构设想中。\n- 所有原件/回答可追溯，不等于每个 Claim 已由证据验证器证实；正式 supported_by 自动评估未实现。\n- 跨 revision 语义 Fragment 身份续接、精确选区 selector、原生飞书 block 映射、原文刷新依赖自动重核验暂未实现。"
+      },
+      {
+        "key": "c12",
+        "label": "飞书文档导入摘要快照",
+        "reason": "支持快照实际包含的连接器、版本、part 类型和文本规模，并界定其无法证明的验收范围。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/live-lark-verification.json",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "{\n  \"connector\": \"lark-cli\",\n  \"title\": \"ACP 接入与使用指南\",\n  \"version\": \"15\",\n  \"partTypes\": [\n    \"text\",\n    \"link\"\n  ],\n  \"textCharacters\": 12245\n}"
       }
     ],
     "questions": [
       {
-        "question": "当前全库知识覆盖中 reviewed、stale、pending 和 failed 各有多少，哪些上层章节因依赖变化仍需重建？",
-        "why": "状态材料明确要求以当前 coverage 和 verification 报告为准，但所给固定材料未包含这些报告的实时内容，不能从历史测试数或文件数推导。",
-        "nextStep": "读取当前 coverage.json 与 verification.json，记录生成时间、源码指纹和各状态数量，并抽查受依赖变化影响的上层章节。",
+        "question": "当前全库知识的 reviewed、stale、pending 和 failed 数量分别是多少？",
+        "why": "材料明确要求以当前 coverage 与 verification 产物为准，但所给固定材料没有提供这些分类的最新数值，历史文件数不能代替当前覆盖。",
+        "nextStep": "读取同一源码指纹下最新的 coverage.json 与 verification.json，记录分类数量、失败原因和验证时间。",
         "blocking": false,
         "citationKeys": [
-          "c6"
+          "c4",
+          "c8"
         ]
       },
       {
-        "question": "跨 revision 的符号与 Fragment 身份续接准备采用何种稳定匹配策略？",
-        "why": "现有材料明确该能力尚未实现；代码变化后重新同步只能重定位当前 locator，无法直接保证长期深链和历史依赖的身份连续性。",
-        "nextStep": "定义身份续接的置信等级、冲突与降级规则，并用重命名、移动、拆分和合并样本验证；低置信结果保持候选。",
+        "question": "飞书导入快照是否能关联到固定 Capture/Revision、实际命令退出码和 reference map？",
+        "why": "现有快照只有文档摘要字段，无法复核导入幂等性、内容完整性、版本固定性或引用定位精度。",
+        "nextStep": "为该次 live 导入补充执行时间、授权范围、命令结果、固定 Source/Revision、片段映射及关键内容断言。",
         "blocking": false,
         "citationKeys": [
-          "c13"
+          "c12"
         ]
       },
       {
-        "question": "历史状态段落是否应迁出当前状态页，或增加机器可读的生效区间与替代关系？",
-        "why": "旧段落仍保留仅关键词检索和 refresh_dependents 未实现等时点结论，而顶部已记录后续实现，局部抽取仍可能混淆历史与现状。",
-        "nextStep": "为旧结论标注失效日期及替代引用，或迁入独立历史文档，同时保留原验证证据。",
+        "question": "日常助理的外部到期投递应优先接入哪个渠道，是否允许自动监听回复？",
+        "why": "站内等待闭环已有验证，但外部投递和回复监听涉及独立权限、会话范围、静默时段及通知策略，现有材料没有记录用户选择。",
+        "nextStep": "由用户确定首个渠道、允许监听的会话范围、静默时段和授权边界，再制定独立的实机验收场景。",
         "blocking": false,
         "citationKeys": [
-          "c15",
-          "c16"
+          "c10"
+        ]
+      },
+      {
+        "question": "飞书导入快照能否关联到固定 Capture/Revision、实际命令退出码和 reference map？",
+        "why": "现有快照仅包含连接器、标题、版本、part 类型和文本规模，无法核验导入幂等性、内容完整性、版本固定性或引用定位精度。",
+        "nextStep": "补充该次导入的执行时间、授权范围、命令结果、固定 Source/Revision、片段映射和关键内容断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c12"
         ]
       }
     ]
@@ -271,8 +228,13 @@
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:docs/implementation/live-lark-verification.json",
+      "digest": "de5202be07d3550e0ffa918f64ef5e2747117a9372e24ec0509568edfd2e0e46"
+    },
+    {
+      "kind": "material",
       "key": "omem:docs/implementation/status.md",
-      "digest": "8fe3da97df7a3b7143b4b17ffb8daee3c01cf1c2919fb3edf2628b638e551ccd"
+      "digest": "6f300567fb45ec1cd275528d00ea60384f90f01d55f0af228c818ef4bf1bd240"
     },
     {
       "kind": "material",
@@ -280,46 +242,46 @@
       "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
     },
     {
-      "kind": "material",
-      "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
-      "digest": "41955bc031b2ef3be0cd217a505e6ab9bcebd7bcbd46e024f6add953f357c205"
+      "kind": "article",
+      "key": "omem:docs/implementation/live-lark-verification.json",
+      "digest": "bb0fa1d1f54e6b9310fcfbcab32dadf9fc619d80fcd8df02c18495ec6e1aee6d"
     },
     {
       "kind": "article",
       "key": "omem:docs/implementation/status.md",
-      "digest": "89cf77da74776112e4b0cf526d00d839e7a9a4ca41b11e67f0e1da96c33f92b5"
+      "digest": "9a9efb0337f3d2cce3526a00a064c8f69983d6c03788dcf23d0b2e78c3f3f9e0"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:49:27.104Z",
+    "at": "2026-10-01T03:05:07.232Z",
     "trace": {
-      "runId": "c3cb84c4-81bc-4cc3-b5af-52eb2ca25443",
-      "roleId": "knowledge-refresher",
+      "runId": "28adfd85-e9f5-41ad-b77f-4e823a6ecd69",
+      "roleId": "knowledge-writer",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "e3edaf9d4ade34ef473ab4c30be80fb667e8eac0b94e5521538124221cd31fb1",
-      "contextHash": "152a951ed334c857f3683aa6791d478a759a4f8eff85f687740b1214a0afb5e0",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
+      "promptHash": "87b20c743aa52539a394f7c9c06829dac43ce3593733dbb2053436b356985d36",
+      "contextHash": "43d0b6f43a94b1b07dc65164fd6ec16f10849ce71a257b546e796a31ef72500a",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f05665404612ef43ce3b858eab147802e20f1102e1da2264154f6f69a2f73916",
+      "fingerprint": "c22f4b8821568a505249b098c12256feca0445875d5fea0334d6b471446bbc4d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-knowledge-writer",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4ef-9e2d-7523-9354-633be180dfc9"
+        "01a0f56b-d274-71e2-9e64-e0241113f66c"
       ],
       "usage": {
-        "used": 49214,
+        "used": 44098,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -328,10 +290,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 62027,
-          "utf8Bytes": 102402,
-          "estimatedTokens": 34134,
-          "budgetedTokens": 42668,
+          "chars": 47174,
+          "utf8Bytes": 74068,
+          "estimatedTokens": 24690,
+          "budgetedTokens": 30863,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -340,17 +302,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:49:46.022Z",
+    "at": "2026-10-01T03:05:24.910Z",
     "trace": {
-      "runId": "6b11fe7a-c936-4cd4-94cf-4e665a1bb420",
+      "runId": "c999b92f-228d-4078-aefa-e105e2b6b534",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "846a8a651d81deb021f11ab1624b1cdceee32ed370da324bda311f6f34f47f35",
-      "contextHash": "240aa95ff11ee390ae4110f60de554219e59867788d0d522164550ee65ec822b",
+      "promptHash": "9ab25ff9c27a7cd78c08c9557167b95c966491476da20dd380517e3b1e86f6c7",
+      "contextHash": "f4770dfff364937cca2fdac8267af174a83433b0ac595400c44159359f1a48eb",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a71cbc44e10d32530ca260c50c632d89156ff819041199466015bfa80465f711",
+      "fingerprint": "91da9a1878591756eac3bc72ac5e8ff149f21e20f6f9d4abd9409aa3ee1426b1",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -363,10 +325,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4f0-1c62-7fd0-8d5d-969d48e56be7"
+        "01a0f56c-5742-7c82-8d91-81a77bb2067f"
       ],
       "usage": {
-        "used": 46057,
+        "used": 43407,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -375,10 +337,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 59411,
-          "utf8Bytes": 98910,
-          "estimatedTokens": 32970,
-          "budgetedTokens": 41213,
+          "chars": 53646,
+          "utf8Bytes": 87472,
+          "estimatedTokens": 29158,
+          "budgetedTokens": 36448,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

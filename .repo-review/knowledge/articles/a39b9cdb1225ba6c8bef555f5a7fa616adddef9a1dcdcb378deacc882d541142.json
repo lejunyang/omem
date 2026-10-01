@@ -2,101 +2,101 @@
   "version": 1,
   "document": {
     "key": "module:other:part-5",
-    "title": "other · 模块理解 · 专题 5",
-    "summary": "本专题梳理 Store、仓库同步、运行时数据迁移和角色网关之间已被测试确认的协作边界。Store 提供版本化证据与普通片段链接；repo-review 维护文件来源、修订和专用关系；知识角色通过共享网关受能力、会话和输出合同约束。此前关于三类关系已统一连通及普遍失败原子性的结论被收窄，端到端阅读合同、真实 ACP 兼容性和并发故障恢复仍待验证。",
+    "title": "运行时可信边界与可追溯状态演进",
+    "summary": "本专题串联单用户 Store、仓库同步、角色运行时和旧数据迁移：原始材料以不可变修订保存，派生处理经隔离角色与固定引用执行，仓库增量同步以失败不推进基线保障可重试，旧数据库仅在显式种子流程中复制。现有证据主要来自源码与夹具测试，尚不能证明团队租户隔离、真实外部 ACP 兼容性或并发迁移安全。",
     "category": "architecture",
     "sections": [
       {
         "key": "evidence-foundation",
-        "title": "版本化证据基础与已收窄的结论",
-        "body": "Store 对相同捕获进行重试去重，内容变化和恢复都会追加修订，旧片段保持原文；基于陈旧 head 的再次恢复被拒绝。普通片段链接允许循环导航，重复写边保持幂等。[[c1]]\n\n此前“代码关系、正文引用与个人知识已共享同一种证据图”的结论被替代。现有材料只分别证明普通片段链接，以及 repo-review 的 requirement 关系能定位到指定标题片段，尚未证明正文引用、专用评审关系与个人知识链接共用同一存储和阅读合同。[[c2]] 失败安全也不能泛化为所有上层流程的事务保证；目前只能确认图片类型不匹配时不会发布 revision 或通知。[[c3]]"
+        "title": "不可变证据与单用户事务基础",
+        "body": "系统以 SQLite `Store` 作为当前单用户基础，初始化数据库、迁移、资产目录及作业、输入、运行时请求等仓储；团队级数据库与租户强制仍是后续能力。[[c1]] 捕获在事务中按来源定位当前版本：相同指纹视为重复，变化则追加 revision、生成固定 fragment、更新 head，并将依赖旧修订的记忆标为过期后入列刷新。派生材料不会再次进入抽取队列，避免总结自循环成为独立证据。[[c2]] 测试进一步证明旧 fragment 保留原文、恢复产生新版本且基于过期 head 的恢复被拒绝，体现“状态可演进、历史不改写”。[[c3]]"
       },
       {
         "key": "review-sync",
-        "title": "仓库同步、修订与运行时隔离",
-        "body": "仓库适配器以路径区分来源：相同内容的不同文件仍保持独立；文件变化追加修订，旧版退出默认召回，删除来源默认隐藏。[[c4]] 增量同步结合基线、HEAD 与脏工作树；缺失基线会全扫，非 UTF-8 文件局部失败，白名单外的符号链接不会被跟随。[[c5]] 脏树或文件失败时不推进基线，恢复或修复后重新扫描。[[c6]]\n\n运行时数据与旧目录隔离：默认启动忽略损坏旧库；显式种子才复制数据库和同步状态。重复种子不覆盖已有运行时，无旧快照时不创建数据库，复制失败会清除部分目标并保留旧数据。[[c7]]"
+        "title": "仓库同步的身份、增量与失败基线",
+        "body": "Repo-review 将文件路径作为稳定来源身份：相同内容的不同路径保持独立，内容更新追加修订，删除来源默认不再召回。[[c4]] 增量同步同时考虑提交漂移、已跟踪修改和未跟踪文件，并记录提交、dirty、内容摘要与同步时间；无效基线退回全扫，非 UTF-8 文件只造成局部失败，白名单外符号链接不会被跟随。[[c5]] 脏工作树或失败文件不会推进干净基线，恢复或修复后会再次扫描。[[c6]] 此外，新数据库会检查自身是否缺少来源：即使共享状态目录已有干净基线，也仍会重扫并补齐内容。[[c7]] 这一独立证据替代了先前把“新库重建”与失败基线共用同一引用范围的表述。"
       },
       {
         "key": "role-runtime",
-        "title": "知识角色的受控执行流程",
-        "body": "角色网关加载版本化提示与技能，并将角色包摘要、输出合同和实际技能写入作业 attempt；inline/native 技能、模型、reasoning effort 与图片能力均经过校验。[[c8]] 格式错误、输出超限、异常结束或超时不会生成任务或应用回执。不同项目使用独立会话，材料中的工具或权限文字仅作为数据，拒绝后的请求不能迟到转化为业务决定。[[c9]]\n\n知识角色复用同一网关，宿主可在输出校验阶段绑定固定引用；模型草稿与目录被隔离在不可信派生知识区。[[c10]] 这些结论来自本地夹具，尚不能证明所有真实 ACP CLI 都兼容。[[c13]]"
+        "title": "角色运行时的隔离与不应用原则",
+        "body": "知识处理复用版本化角色网关，不同角色拥有不同 prompt、skill 与 bundle 摘要。作业成功后，角色输出另行持久化；attempt 记录角色包摘要、输出合同和实际加载技能，用于追溯有效执行配置。[[c8]] 这替代了“执行结果写入 attempt”的不准确结论。网关先协商模型再校验 reasoning effort，并检查图片能力；格式错误、超量输出、非正常结束或超时均不会产生任务或应用回执。[[c9]] 不同项目使用独立会话，verifier 只接收固定输入；材料中夹带的工具或权限命令被当作数据，拒绝的运行时请求不能迟到批准为业务决定。[[c10]] 知识引用由宿主校验阶段绑定回固定材料，模型草稿与目录则留在不可信派生区。[[c11]]"
       },
       {
-        "key": "verified-boundaries",
-        "title": "已验证关联与剩余边界",
-        "body": "Review API 已测试类别预过滤、跨源同步拒绝、健康信息脱敏和修订 current 标记。[[c11]] requirement 关系能够指向各自需求标题片段，而不是共享概览表。[[c2]] 新数据库即使复用另一数据库留下的干净同步状态，也会因自身缺少来源而重新扫描并补齐文件；该结论由独立重建用例直接支持。[[c14]]\n\n这些协作点不等于三类知识关系已经端到端统一。当前 Store 用例也未验证进程崩溃、并发连接、资产落盘和外部通知。[[c12]] 跨文件调用解析、跨修订符号续接及统一阅读导航在本组材料中均缺少直接验收证据。"
+        "key": "migration-limits",
+        "title": "旧数据迁移、当前进展与限制",
+        "body": "默认启动与历史 `.repo-review/data` 隔离，即使旧数据库损坏也会得到空的可重建运行时且不改写旧文件。[[c12]] 只有显式种子流程才复制旧数据库并投影同步状态；已有运行时不会被二次覆盖，无旧快照时不动作，失败时删除部分目标以便重试，同时保留旧快照。[[c13]] 这些材料覆盖单进程事务行为、同步恢复、角色失败隔离和首次迁移安全，但夹具测试不能证明真实外部 ACP CLI、生产代理认证、超大数据库、进程中断或并发种子调用；当前 SQLite 实现也不能视为团队租户隔离已经完成。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "不可变修订与普通片段链接",
-        "reason": "支持捕获去重、历史片段固定、恢复追加新版本，以及循环关系可导航和重复写边幂等。",
+        "label": "Store 的单用户定位与初始化",
+        "reason": "支持当前以 SQLite 为单用户基础、构造时初始化数据库和各仓储，以及团队级强制仍待迁移的论断。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 69
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
+      },
+      {
+        "key": "c2",
+        "label": "捕获修订与派生队列边界",
+        "reason": "支持捕获去重、追加修订、固定片段、依赖失效与刷新入列，并说明派生材料不再自循环抽取。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 102,
+          "endLine": 143
+        },
+        "quote": "  capture(input: CaptureInput) {\n    const payloadDigest = stableDigest(input);\n    const parts: StoredPart[] = input.parts.map((p) => {\n      if (p.type !== \"image\") return p;\n      const bytes = Buffer.from(p.data, \"base64\");\n      if (\n        !bytes.length ||\n        bytes.length > 5_000_000 ||\n        bytes.toStri"
+      },
+      {
+        "key": "c3",
+        "label": "历史保留与恢复冲突测试",
+        "reason": "支持旧证据保持固定、恢复创建新修订以及基于过期 head 的恢复被拒绝。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/store.test.ts",
           "startLine": 40,
-          "endLine": 78
+          "endLine": 67
         },
         "quote": "describe(\"versioned evidence and transaction outbox\", () => {\n  it(\"deduplicates retries but keeps historical evidence fixed\", () => {\n    const s = setup();\n    const a = s.capture(input());\n    expect(s.capture(input()).duplicate).toBe(true);\n    const b = s.capture(input(\"second\"));\n    expect(b.revision.version).to"
       },
       {
-        "key": "c2",
-        "label": "需求关系的精确片段锚点",
-        "reason": "支持 requirement 关系指向各自需求标题片段，同时界定该测试只覆盖一种专用关系锚定行为。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 573,
-          "endLine": 655
-        },
-        "quote": "  it(\"requirement refs anchor to their own heading fragment, not a shared G01-G20 table\", async () => {\n    const root = makeFixtureRepo();\n    writeFile(\n      root,\n      \"docs/implementation/status.md\",\n      [\n        \"# Status\",\n        \"\",\n        \"## Acceptance overview\",\n        \"| ID | Intent |\",\n        \"|---"
-      },
-      {
-        "key": "c3",
-        "label": "无效图片的发布前拒绝",
-        "reason": "支持图片类型不匹配时不产生 revision 或通知，不能外推为所有失败路径的事务原子性。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/store.test.ts",
-          "startLine": 79,
-          "endLine": 97
-        },
-        "quote": "  it(\"rejects image type mismatch before publishing a revision\", () => {\n    const s = setup();\n    expect(() =>\n      s.capture(\n        captureSchema.parse({\n          ...input(),\n          parts: [\n            {\n              type: \"image\",\n              data: Buffer.from(\"not png\").toString(\"base64\"),\n             "
-      },
-      {
         "key": "c4",
         "label": "文件来源身份与修订历史",
-        "reason": "支持按路径保持独立来源、内容变化追加修订、旧版退出默认召回及删除来源默认隐藏。",
+        "reason": "支持路径独立身份、内容变化追加历史修订、删除来源默认排除和重复同步幂等。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 139,
+          "startLine": 143,
           "endLine": 230
         },
-        "quote": "// ---------------------------------------------------------------------------\n// Group 1: stable source identity + revision history.\n// ---------------------------------------------------------------------------\n\ndescribe(\"group 1: source identity and revisions\", () => {\n  it(\"keeps two files with identical content as"
+        "quote": "describe(\"group 1: source identity and revisions\", () => {\n  it(\"keeps two files with identical content as independent sources\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"one\", \"SHARED_BODY_ALPHA\");\n    archFile(root, \"two\", \"SHARED_BODY_ALPHA\");\n    commitAll(root, \"init\");\n    const store "
       },
       {
         "key": "c5",
-        "label": "增量快照与异常文件处理",
-        "reason": "支持干净基线零扫描、脏工作树覆盖、缺失基线全扫，以及非 UTF-8 文件和符号链接边界。",
+        "label": "增量快照与异常文件边界",
+        "reason": "支持提交漂移和脏文件扫描、快照上下文、无效基线全扫、非 UTF-8 局部失败及符号链接限制。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 233,
+          "startLine": 237,
           "endLine": 363
         },
-        "quote": "// ---------------------------------------------------------------------------\n// Group 2: incremental / snapshot reliability.\n// ---------------------------------------------------------------------------\n\ndescribe(\"group 2: incremental and snapshot reliability\", () => {\n  it(\"clean worktree at baseline==HEAD scans no"
+        "quote": "describe(\"group 2: incremental and snapshot reliability\", () => {\n  it(\"clean worktree at baseline==HEAD scans nothing\", async () => {\n    const root = makeFixtureRepo();\n    archFile(root, \"c\", \"CLEAN_TOKEN\");\n    commitAll(root, \"init\");\n    const store = setup();\n    await runReviewSync(store, root);\n    const secon"
       },
       {
         "key": "c6",
-        "label": "脏树与失败文件的基线控制",
-        "reason": "支持脏同步和单文件失败不推进基线，并在工作树恢复或文件修复后重新同步。",
+        "label": "脏同步与失败文件的基线控制",
+        "reason": "支持脏工作树和文件失败时不推进干净基线，并在恢复或修复后重新扫描。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -108,47 +108,60 @@
       },
       {
         "key": "c7",
-        "label": "运行时启动与显式种子迁移",
-        "reason": "支持默认启动与旧库隔离，以及显式复制、幂等、空启动和失败清理行为。",
+        "label": "新数据库依据自身内容重建",
+        "reason": "直接支持新数据库不能仅凭另一数据库留下的共享同步基线跳过扫描，而会补齐自身缺失来源。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
-          "startLine": 97,
-          "endLine": 178
+          "key": "omem:apps/server/tests/review-sync.test.ts",
+          "startLine": 687,
+          "endLine": 699
         },
-        "quote": "it(\"default startup ignores an unusable legacy database and starts a rebuildable runtime\", () => {\n  const root = makeRepoRoot();\n  const legacy = join(root, \".repo-review/data\");\n  mkdirSync(legacy, { recursive: true });\n  writeFileSync(join(legacy, \"omem.sqlite\"), \"not a sqlite file\");\n  const store = createReviewSto"
+        "quote": "it(\"rebuilds a fresh database even when another database left a clean sync baseline\", async () => {\n  const root = makeFixtureRepo();\n  try {\n    archFile(root, \"first\", \"ONE\"); archFile(root, \"second\", \"TWO\"); commitAll(root, \"fixture\");\n    const original = setup(); const stateDir = join(original.dataDir, \"shared-sta"
       },
       {
         "key": "c8",
-        "label": "角色包、技能与能力协商",
-        "reason": "支持角色配置差异、作业追踪、inline/native 技能校验，以及模型、effort 和图片能力检查。",
+        "label": "角色输出与 attempt 追踪分离",
+        "reason": "支持角色输出通过 roleOutputs 另行持久化，而 attempt 记录角色包摘要、输出合同和已加载技能。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/role-runtime.test.ts",
           "startLine": 95,
-          "endLine": 291
+          "endLine": 179
         },
         "quote": "describe(\"B2-03 versioned role runtime acceptance\", () => {\n  it(\"A-R01 sends distinct role prompts/skills and records effective hashes\", async () => {\n    const runtime = gateway();\n    const extracted = await runtime.run({\n      roleId: \"extractor\",\n      profile: profile(),\n      context: context(\"extractor\"),\n    }"
       },
       {
         "key": "c9",
-        "label": "运行失败与会话权限隔离",
-        "reason": "支持异常输出和超时不应用、跨项目会话隔离、材料命令无工具权限，以及迟到批准被拒绝。",
+        "label": "能力协商与失败不应用",
+        "reason": "支持模型及 effort 协商、图片能力检查，以及异常输出和超时不会形成业务应用。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/role-runtime.test.ts",
-          "startLine": 293,
-          "endLine": 433
+          "startLine": 226,
+          "endLine": 336
         },
-        "quote": "  it(\"A-R05 rejects malformed/oversized/non-end outputs and times out without applying\", async () => {\n    const store = new Store(temporary(\"omem-role-failures-\"));\n    try {\n      const runtime = new RoleRuntimeGateway(\n        new RoleBundleRegistry(),\n        temporary(\"omem-role-failure-workspace-\"),\n        store"
+        "quote": "  it(\"A-R03 renegotiates model options before validating effort\", async () => {\n    const runtime = gateway();\n    const selected = await runtime.run({\n      roleId: \"extractor\",\n      profile: profile({ model: \"beta\", effort: \"high\" }),\n      context: context(\"extractor\"),\n    });\n    expect(selected.trace).toMatchObj"
       },
       {
         "key": "c10",
-        "label": "知识角色的共享网关合同",
-        "reason": "支持知识角色复用运行网关、宿主绑定固定引用，并将模型草稿与可信任务指令隔离。",
+        "label": "会话隔离与材料指令防护",
+        "reason": "支持跨项目新会话、verifier 输入隔离、嵌入命令按数据处理及拒绝请求不能转为业务决定。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/role-runtime.test.ts",
+          "startLine": 338,
+          "endLine": 433
+        },
+        "quote": "  it(\"A-R06 uses fresh isolated sessions and keeps verifier input separate\", async () => {\n    const runtime = gateway();\n    const projectA = await runtime.run({\n      roleId: \"extractor\",\n      profile: profile(),\n      context: context(\"extractor\"),\n    });\n    const projectBContext = contextManifestSchema.parse({\n "
+      },
+      {
+        "key": "c11",
+        "label": "知识引用绑定与草稿隔离",
+        "reason": "支持知识角色经共享网关执行、引用由宿主绑定固定证据，并将草稿和目录置于不可信派生区。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -159,95 +172,87 @@
         "quote": "it(\"runs knowledge roles through the shared gateway and preserves host-bound citations\", async () => {\n  const result = await gateway().run({ roleId: \"code-analyst\", profile: profile(), context: context(\"code-analyst\", \"fixed evidence\", { task: { targetKeys: [\"manual:a\"] } }),\n    validateOutput: out => { const normali"
       },
       {
-        "key": "c11",
-        "label": "检索预过滤与 Review API 安全",
-        "reason": "支持类别过滤、跨源写请求拒绝、健康信息脱敏及修订 current 状态接口。",
+        "key": "c12",
+        "label": "默认启动隔离损坏旧库",
+        "reason": "支持默认启动不读取或改写不可用旧数据库，而创建可重新同步的空运行时。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 369,
-          "endLine": 493
+          "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+          "startLine": 97,
+          "endLine": 106
         },
-        "quote": "describe(\"group 4: retrieval and API safety\", () => {\n  it(\"category filter still returns results when other categories dominate the top-N\", async () => {\n    const root = makeFixtureRepo();\n    for (let i = 0; i < 22; i++) archFile(root, `arch${i}`, \"SHARED_Q\");\n    decisionsFile(root, \"my-decision\", \"decided SHARED_Q"
-      },
-      {
-        "key": "c12",
-        "label": "Store 测试覆盖边界",
-        "reason": "明确现有 Store 用例未覆盖崩溃恢复、并发竞争、资产落盘失败、外部通知和团队隔离。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/tests/store.test.ts",
-          "section": "coverage-boundary"
-        },
-        "quote": ""
+        "quote": "it(\"default startup ignores an unusable legacy database and starts a rebuildable runtime\", () => {\n  const root = makeRepoRoot();\n  const legacy = join(root, \".repo-review/data\");\n  mkdirSync(legacy, { recursive: true });\n  writeFileSync(join(legacy, \"omem.sqlite\"), \"not a sqlite file\");\n  const store = createReviewSto"
       },
       {
         "key": "c13",
-        "label": "知识网关验证范围",
-        "reason": "说明共享网关结论来自本地夹具测试，不能外推为全部真实 ACP CLI 的兼容性证明。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/tests/role-runtime.test.ts",
-          "section": "knowledge-gateway"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c14",
-        "label": "新数据库按自身内容重建",
-        "reason": "直接支持新数据库不能仅依赖其他数据库留下的干净同步基线，而会重新扫描并补齐自身缺失来源。",
+        "label": "显式种子的复制、幂等与失败清理",
+        "reason": "支持首次复制和状态投影、重复调用不覆盖运行时、无旧快照时不动作及失败后清理部分目标。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/review-sync.test.ts",
-          "startLine": 687,
-          "endLine": 699
+          "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
+          "startLine": 108,
+          "endLine": 178
         },
-        "quote": "it(\"rebuilds a fresh database even when another database left a clean sync baseline\", async () => {\n  const root = makeFixtureRepo();\n  try {\n    archFile(root, \"first\", \"ONE\"); archFile(root, \"second\", \"TWO\"); commitAll(root, \"fixture\");\n    const original = setup(); const stateDir = join(original.dataDir, \"shared-sta"
+        "quote": "describe(\"ensureReviewRuntimeSeeded\", () => {\n  it(\"backs up the legacy DB and projects state on first boot, leaving legacy untouched\", () => {\n    const repoRoot = makeRepoRoot();\n    const legacy = buildLegacy(repoRoot);\n    const legacyDb = join(repoRoot, \".repo-review\", \"data\", \"omem.sqlite\");\n    const legacyHashB"
       }
     ],
     "questions": [
       {
-        "question": "代码关系、正文引用与个人知识是否已经通过同一关系模型和阅读合同端到端连通？",
-        "why": "现有证据分别覆盖普通片段链接和 repo-review requirement 关系，没有直接证明正文引用、专用评审关系与个人知识链接共用存储、目标解析和导航结果。",
-        "nextStep": "补充覆盖三类入口、固定 Fragment 目标和统一阅读导航结果的集成测试或实现材料；在此之前保持为架构目标。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c2"
-        ]
-      },
-      {
-        "question": "Store 是否需要优先补充进程崩溃、并发写入和资产落盘失败测试？",
-        "why": "当前仅能确认无效图片这一特定路径不会发布 revision 或通知，尚不足以判断同步、知识保存及其他失败路径的整体原子性。",
-        "nextStep": "选择首要故障模型，增加可重复的中断点和双连接测试，并分别检查数据库、通知与资产文件的一致性。",
-        "blocking": false,
-        "citationKeys": [
-          "c3",
-          "c12"
-        ]
-      },
-      {
-        "question": "是否需要用至少一种真实 ACP CLI 验收角色运行时？",
-        "why": "夹具已覆盖能力协商、会话隔离、超时和输出合同，但真实代理的技能发现、图片输入与结束协议兼容性仍未知。",
-        "nextStep": "选定受支持的 Agent CLI 和模型配置，执行明确标记为 live check 的测试，并记录环境、退出码及不支持的能力。",
+        "question": "真实 `traex acp` 在当前模型、effort、图片与超时配置下，是否满足这些角色运行时合同？",
+        "why": "现有证据使用本地 fixture agent，能验证网关协议和失败处理，却不能代表外部 CLI 的发现、协商及结束事件行为。",
+        "nextStep": "使用实际 review 模型运行独立的 extractor、verifier 和 knowledge-writer 活检，保存 trace、退出码、有效模型与技能发现结果。",
         "blocking": false,
         "citationKeys": [
           "c8",
           "c9",
+          "c10",
+          "c11"
+        ]
+      },
+      {
+        "question": "显式旧库种子在两个进程同时启动或复制过程中进程退出时，是否仍能保证单次、完整且可重试？",
+        "why": "当前测试只覆盖顺序重复调用和同步抛错后的部分目标清理，没有并发锁、原子重命名或进程中断证据。",
+        "nextStep": "补充并发启动与中断恢复测试，并核对种子实现是否使用临时目标、完整性检查和原子发布。",
+        "blocking": false,
+        "citationKeys": [
+          "c12",
           "c13"
         ]
       },
       {
-        "question": "旧 review 数据的显式导入需要支持并发启动或超大数据库吗？",
-        "why": "现有种子测试覆盖首次复制、重复调用和损坏快照清理，但没有并发调用、进程中断或大数据量复制保证。",
-        "nextStep": "先确定该流程是单进程人工迁移还是启动期并发操作，再决定是否增加锁、原子切换和容量测试。",
+        "question": "团队作用域启用前，需要在哪些存储查询和写入路径加入 workspace 或 tenant 强制？",
+        "why": "源码明确说明当前 SQLite 是单用户基础；现有来源、修订和检索行为测试不能证明跨租户隔离。",
+        "nextStep": "建立 Store、检索、作业、通知及 repo-review API 的租户边界清单，再设计迁移和负向隔离测试。",
         "blocking": false,
         "citationKeys": [
-          "c7"
+          "c1",
+          "c2",
+          "c4",
+          "c5"
+        ]
+      },
+      {
+        "question": "显式旧库种子在两个进程同时启动或复制过程中进程退出时，是否仍能保证完整且可重试？",
+        "why": "当前材料只覆盖顺序重复调用和同步抛错后的部分目标清理，没有并发锁、原子发布或进程中断恢复的证据。",
+        "nextStep": "补充并发启动与中断恢复测试，并核对种子实现是否使用临时目标、完整性检查和原子重命名。",
+        "blocking": false,
+        "citationKeys": [
+          "c12",
+          "c13"
+        ]
+      },
+      {
+        "question": "团队作用域启用前，需要在哪些存储、检索、作业、通知和 API 路径加入 workspace 或 tenant 强制？",
+        "why": "源码明确将当前 SQLite 定位为单用户基础；现有来源身份、修订和检索测试不能证明跨租户隔离。",
+        "nextStep": "建立相关读写路径的租户边界清单，并设计迁移方案与跨租户负向隔离测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c2",
+          "c4",
+          "c5"
         ]
       }
     ]
@@ -274,6 +279,11 @@
       "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
     },
     {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+    },
+    {
       "kind": "article",
       "key": "omem:apps/server/tests/review-runtime-seed.test.ts",
       "digest": "dbe79c0890fac84e6becc98c2a484d2b7105f30d061277f04bd24b4bba4cade5"
@@ -291,23 +301,23 @@
     {
       "kind": "article",
       "key": "omem:apps/server/tests/store.test.ts",
-      "digest": "b73db4b07ec4acac224d8554d6feda2870048e1e5411d4401b12c14340b2290f"
+      "digest": "a51fb7ce8fe790d5e0ae0181271ae8bc6bee9aaae0deb09716cc61c8fa2eb333"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:00:54.803Z",
+    "at": "2026-10-01T03:36:13.928Z",
     "trace": {
-      "runId": "2254142a-be86-45f4-ac98-10f09db48341",
+      "runId": "fb45e309-f64c-4320-9b92-47b8913c2280",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "9748247e8070551f9196e99a2c7154cffc540a9f4feaf3c6a0a84ac2cd74492a",
-      "contextHash": "5e1b41e58ca294cc23a3a74f32d7d38fb81590e8ebe541ce6c85ed3653831c58",
+      "promptHash": "ffcd823e4838d4959220381a5b9a51693166c13bc7f44f64e5bfee3e628c96f1",
+      "contextHash": "81877ef3857c6bebf6c4354500be8ff726eee44a5ed0dab27b3cc1a22fe3f741",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b0eb0914e4f18458b5c571356d07b2568b09c54aa2b6ba9cb58f1fe1200a15ef",
+      "fingerprint": "2dd23a0ba788299cea9a37a8cfff597f9433cf26800b407484a2803a774b6fab",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -320,11 +330,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef8-1fd0-7d33-a603-253ad0c57476"
+        "01a0f588-50fb-72c2-b110-8dcece5ea42f"
       ],
       "usage": {
-        "used": 47096,
-        "size": 760000,
+        "used": 63084,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -332,10 +342,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 101403,
-          "utf8Bytes": 114955,
-          "estimatedTokens": 38319,
-          "budgetedTokens": 47899,
+          "chars": 134872,
+          "utf8Bytes": 149230,
+          "estimatedTokens": 49744,
+          "budgetedTokens": 62180,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -344,17 +354,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:01:07.244Z",
+    "at": "2026-10-01T03:36:34.426Z",
     "trace": {
-      "runId": "8d0dcdcc-c308-478c-85ee-c576692d7107",
+      "runId": "06afadea-7b2f-4eb6-bb0b-d5e8f14d62fa",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c5bb226a483cd2e796b40e2f4d1a8d1006a4ad34402f8b00737de3d1c764e340",
-      "contextHash": "f49dedf6bf374b2e6bae83c612b49f4c278b86409bc3c90a86c3de9f3f4e39bc",
+      "promptHash": "247db66b52d778f65c9581ae38d16a0ea5a0557c97894d31fc2ab3bdd827e1d9",
+      "contextHash": "73df6803b412a041af11850790922d64be17181efdcac214c286921a7d0f180a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fdae9f3ef218728e0e0f1eb4772aaadbc22e62413d24cb3c24f15bc79ab31851",
+      "fingerprint": "6af3915dcfac2d2cfc717ab3ac67e504a8f1c69f147f0962cdeca0789c58512f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -367,11 +377,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef8-74d0-73d1-8f6f-661e59ace2d5"
+        "01a0f588-ce8c-7b10-8bbd-28989d1cb8dd"
       ],
       "usage": {
-        "used": 44445,
-        "size": 760000,
+        "used": 60689,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -379,10 +389,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 99238,
-          "utf8Bytes": 111720,
-          "estimatedTokens": 37240,
-          "budgetedTokens": 46550,
+          "chars": 132767,
+          "utf8Bytes": 146269,
+          "estimatedTokens": 48757,
+          "budgetedTokens": 60947,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

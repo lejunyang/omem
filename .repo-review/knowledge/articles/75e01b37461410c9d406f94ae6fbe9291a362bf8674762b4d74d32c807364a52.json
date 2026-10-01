@@ -2,31 +2,36 @@
   "version": 1,
   "document": {
     "key": "omem:docs/implementation/code-knowledge-design.md",
-    "title": "Code Knowledge 领域模型与首个纵向切片设计",
-    "summary": "历史设计提案，规划在权威证据链上增加可重建的代码类型投影、TS/Vue 确定性解析、结构边和派生理解。设计项不能当作当前实现事实。",
+    "title": "Code Knowledge 领域模型与第一纵向切片设计",
+    "summary": "这是一份历史设计提案：它以 Capture→Source/Revision/Fragment 为证据权威，规划可重建的代码 typed projection、确定性 TS/Vue 解析、结构关系、只读 API、Web 阅读及模型增强。后续材料表明，确定性代码图、Code Wiki 和共享阅读能力已经落地；2026-09-29 复审所述“代码角色尚未统一编排”也是当时限制，已被 2026-10-01 接入共用知识合同、持久分析与独立复核的进展替代。当前仍明确存在的边界包括跨文件 calls、跨 revision 身份续接，以及全库知识覆盖尚未完成。",
     "category": "architecture",
     "sections": [
       {
         "key": "positioning",
-        "title": "定位与事实边界",
-        "body": "文档明确自称历史设计，并用“事实／设计／未实现”区分提案时的状态；当前能力应以后续复审与状态记录为准。[[c1]]"
+        "title": "历史定位与设计目标",
+        "body": "本文明确标注为历史设计提案，并以“事实／设计／未实现”区分提案时的代码基线和未来方案，因此其中的阶段表与缺口不能直接视作当前状态。[[c1]] 它针对早期 repo-review 只有固定 fragment、字符串符号和评审意图关系，缺少精确代码结构的问题，提出先做不依赖模型的解析，再把 seed 与模型理解挂到统一证据链上。[[c2]] 后续复审认可这一方向，同时纠正了早期“通用 typed projection 已实现”的过度表述。[[c3]]"
       },
       {
         "key": "model",
-        "title": "领域模型与生命周期",
-        "body": "方案规划仓库、快照、文件、符号、结构边和派生理解，且不替换既有 Source、Revision、Fragment；符号仍锚定不可变 fragment。[[c2]] 结构边区分 parser、seed、llm 来源及 confirmed、candidate、stale、missing 状态。[[c3]] 端点无法解析时保留 missing，快照、文件或 seed 变化时翻 stale，不静默删除。[[c4]]"
+        "title": "投影模型、证据锚点与生命周期",
+        "body": "Repository、Snapshot、File、Symbol、Edge 与 Understanding 都是原始来源之上的可重建投影，不替代 sources、revisions 和 fragments；符号位置属于当前快照，引用与检索最终锚定不可变 fragment。[[c4]] 结构边与评审意图边分开表达，imports、defines、calls 等来自解析器，而 implements 等意图关系继续受人工 seed 约束。[[c5]] 文件变化后旧证据保持冻结，相关边转为 stale；无法解析的 locator 保留为 missing，不静默丢弃。[[c6]] 兼容策略也要求只增量投影、确定性幂等重建，不复制正文或清空既有关系。[[c7]]"
       },
       {
         "key": "delivery",
-        "title": "解析选择与阶段交付",
-        "body": "PoC 选择已安装的 TypeScript Compiler API 与 Vue SFC 编译器进行单文件确定性解析；跨文件类型感知调用、SCIP 和多语言解析明确未实现。[[c5]] 交付被拆为存储、API、Web、派生理解及助手/Lark 阶段；Stage 5 在该设计中仍是后续。[[c6]]"
+        "title": "解析范围、交付路径与诚实降级",
+        "body": "首切片选择 TypeScript Compiler API、Vue SFC 编译器和保守规则，以零新增依赖实现离线确定性解析；同文件名称级 calls 仅为候选，跨文件类型分析与多语言索引不在该阶段范围内。[[c8]] 原计划按解析存储、只读 API、Web、派生理解和后续助手接入分阶段交付，其中 assistant、retrieval 与 Lark 通路当时明确尚未纳入首切片。[[c9]] 模型不可用不影响结构图，派生理解必须记录 unavailable，不能用假摘要掩盖失败。[[c10]] 文末追加的 P0 合同进一步规定内部 ID 与人类标签分离、missing/stale 节点不可操作，并只从快照固定正文读取源码。[[c11]]"
+      },
+      {
+        "key": "current_state",
+        "title": "后续实现与被替代结论",
+        "body": "2026-09-29 的实测已确认确定性 TS/Vue 代码图、Code Wiki Web 与证据 trail 可运行，同时保留跨文件 calls 和跨 revision 身份续接未实现等边界。[[c12]] 同日复审还记录代码角色未完全进入统一持久任务和独立语义复核流水线；这是带日期的历史判断。[[c13]] 2026-10-01 的更新已经明确接入共用正文／引用合同、八种知识角色、持久分析、独立复核及仓库全材料适配，因此“统一代码角色编排仍有限制”不能再无时间限定地作为当前结论。[[c14]] 同期中文向量检索和来源更新后的 extractor／verifier／apply 闭环也已落地，替代了早期“无 embedding、refresh_dependents 未完成”的描述；但全库覆盖仍须以最新 verification 与 coverage 记录为准。[[c15]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "历史设计声明",
-        "reason": "支持本文是历史提案且设计项不能视作当前实现。",
+        "label": "历史提案与状态标注",
+        "reason": "支持本文记录提案时基线，当前能力应以复审和状态文档为准。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -34,51 +39,90 @@
           "startLine": 1,
           "endLine": 8
         },
-        "quote": "# Code Knowledge 领域模型与第一纵向切片设计\n\n> 历史设计提案，描述提案时的基线；当前已实现范围与缺口以 [复审记录](code-wiki-review-2026-09-29.md) 和 [status.md](status.md) 为准。\n> 本文只新增本文件；不修改 `apps/server`、`packages`、`package.json`、`pnpm-workspace.yaml`、`osdk.toml`。\n> 标注约定：\n> - 【事实】= 已存在于当前代码库（HEAD `46d808a`），可被 grep/测试复核；\n> - 【设计】= 本文提出、尚未实现的方案；\n> - 【未实现】= 明确记录为缺口、不在本切片范围内。"
+        "quote": "# Code Knowledge 领域模型与第一纵向切片设计\n\n> 历史设计提案，描述提案时的基线；当前已实现范围与缺口以 [复审记录](code-wiki-review-2026-09-29.md) 和 [status.md](status.md) 为准。\n> 本文只新增本文件；不修改 `apps/server`、`packages`、`package.json`、`pnpm-workspace.yaml`、`osdk.toml`。\n> 标注约定：\n> - 【事实】= 已存在于当前代码库（HEAD `46d808a`），可被 grep/测试复核；\n> - 【设计】= 本文提出、尚未实现的方案；\n> - 【未实现】= 明确记录为缺口"
       },
       {
         "key": "c2",
-        "label": "领域模型叠加原则",
-        "reason": "支持代码领域对象是既有证据链上的叠加模型。",
+        "label": "Code Knowledge 设计目标",
+        "reason": "支持早期弱建模问题以及确定性结构层与模型增强层的设计边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 14,
+          "endLine": 28
+        },
+        "quote": "【事实】当前 repo-review（`apps/server/src/review/`）已经是一个\"代码评审知识库\"：\n它把 omem 仓库本身扫描成不可变 revision + 固定 fragment，并通过**手维护的 seed**\n（`docs/repo-review/associations.json`）建立 `code fragment → intent → requirement/decision/research/test`\n的双向关系。但它的代码侧是**弱建模**：\n\n- 代码文件只被正则切成 fragment（`sync.ts` 的 `CODE_BOUNDARY`），没有\"符号\"实体；\n- 符号只是 `conte"
+      },
+      {
+        "key": "c3",
+        "label": "Code Wiki 复审核心判断",
+        "reason": "支持统一证据链方向得到认可，同时早期实现范围曾被表述过度。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# Code Wiki 方案与实现复审\n\n复审基线：`1063d9a`，包含启动时已有的本机依赖清单格式与 osdk.lock 修改。核心判断：统一 Capture / Source / Revision / Fragment 是正确方向，但原先“已实现通用 typed projection”的表述超过了代码事实。repo-review 应是本仓库材料的隔离运行配置与阅读视图，可提交 Wiki 是这条证据链的派生产物。"
+      },
+      {
+        "key": "c4",
+        "label": "代码领域模型",
+        "reason": "解释代码实体是在既有来源、版本和片段之上的投影，以及符号的证据锚点。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/code-knowledge-design.md",
           "startLine": 82,
-          "endLine": 86
+          "endLine": 152
         },
-        "quote": "## 3. 领域模型\n\n【设计】命名如下（可调整）：`CodeRepository / CodeSnapshot / CodeFile / CodeSymbol / CodeEdge / CodeUnderstanding`。\n它们**不替换**既有 `sources/revisions/fragments`，而是叠加在其上：\n`CodeFile` ≈ 一个 `sources` 行的代码侧投影；`CodeSymbol` 通过 `fragment_id` 锚定不可变证据。"
+        "quote": "## 3. 领域模型\n\n【设计】命名如下（可调整）：`CodeRepository / CodeSnapshot / CodeFile / CodeSymbol / CodeEdge / CodeUnderstanding`。\n它们**不替换**既有 `sources/revisions/fragments`，而是叠加在其上：\n`CodeFile` ≈ 一个 `sources` 行的代码侧投影；`CodeSymbol` 通过 `fragment_id` 锚定不可变证据。\n\n### 3.1 CodeRepository（仓库）\n\n| 字段 | 类型 | 说明 |\n| --- | --- | --- |\n| `repo_id` | TE"
       },
       {
-        "key": "c3",
-        "label": "结构边状态与来源",
-        "reason": "支持 CodeEdge 的端点、生命周期状态和 parser、seed、llm 来源区分。",
+        "key": "c5",
+        "label": "结构化代码关系",
+        "reason": "说明结构边与评审意图边的区分、来源及反向查询方式。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/code-knowledge-design.md",
           "startLine": 154,
-          "endLine": 167
+          "endLine": 185
         },
-        "quote": "### 3.5 CodeEdge（typed 结构化边）\n\n【设计】这是本模型相对 `review_relations` 的增量：**代码结构边**与**评审意图边**分开存。\n\n| 字段 | 类型 | 说明 |\n| --- | --- | --- |\n| `edge_id` | TEXT PK | `cedge_<sha1(seed)[:24]>`，seed = 规范化后的端点+kind |\n| `snapshot_id` | TEXT FK | 在哪次解析中产生 |\n| `edge_kind` | TEXT | 见下表 |\n| `from_symbol_id` / `from_file_id` | TEXT | 端点之一（符号优先，否则文件） |\n| `to_symbol_id` / `to_file_id` | TEXT | 另一端 |\n| `status` | TEXT | `confirmed / candidate / stale / missing` |\n| `origin` | TEXT | `parser / seed / llm`（确定性解析 / 手维护 seed / 模型派生） |\n| `evidence` | TEXT NULL | 引用说明或 fragment id 列表（JSON） |"
+        "quote": "### 3.5 CodeEdge（typed 结构化边）\n\n【设计】这是本模型相对 `review_relations` 的增量：**代码结构边**与**评审意图边**分开存。\n\n| 字段 | 类型 | 说明 |\n| --- | --- | --- |\n| `edge_id` | TEXT PK | `cedge_<sha1(seed)[:24]>`，seed = 规范化后的端点+kind |\n| `snapshot_id` | TEXT FK | 在哪次解析中产生 |\n| `edge_kind` | TEXT | 见下表 |\n| `from_symbol_id` / `from_file_id` | TEXT | 端点之一（符号优"
       },
       {
-        "key": "c4",
-        "label": "锚定与失效生命周期",
-        "reason": "支持 fragment 固定、无法解析保留 missing，以及变化后翻 stale 而非删除。",
-        "relation": "tracks",
+        "key": "c6",
+        "label": "固定片段与失效语义",
+        "reason": "支持符号锚定不可变片段，以及 stale、missing 和双端失效规则。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/code-knowledge-design.md",
           "startLine": 214,
-          "endLine": 239
+          "endLine": 244
         },
-        "quote": "### 3.7 固定 range / fragment 关联\n\n【设计】现状 fragment 由正则边界切分；解析器产出精确 range 后：\n\n1. 解析器按 `range_start.line` 找到该文件 head revision 中 ordinal 最匹配的 fragment，\n   把 `symbol.fragment_id` 指向那个**不可变 fragment id**；\n2. range（line/col）存在 `CodeSymbol` 上，仅当前 snapshot 有效；\n3. 读取侧：展示 range → 但引用、关系、检索一律用 `fragment_id`（与 `review_relations` 一致）；\n4. 文件内容变更 → 新 revision → 旧 `fragment_id` 随旧 revision 冻结，\n   锚在其上的边按 §4 翻 stale，下一次 sync 在新 head 上重定位。\n【未实现】跨 revision 的 fragment 身份续接（与 AGENTS.md 记录的限制一致）。\n\n---\n\n## 4. 生命周期与双向/版本失效\n\n【设计】`status ∈ confirmed / candidate / stale / missing` 语义对齐现有 `review_relations`：\n\n- `confirmed`：parser 确定性产出（imports/exports/defines/range）或 seed 显式登记且两端都解析成功；\n- `candidate`：LLM/启发式提出、尚未人工确认的边；\n- `missing`：seed 要求的端点解析不到（代码未入库/符号未定位）——**保留可见**，不静默丢弃；\n- `stale`：以下任一发生即翻 stale（只翻转，不删除）：\n  1. 文件 head snapshot 推进（content_hash 变），边锚在旧 fragment；\n  2. 文件被删（`removed=1`）或 rename；\n  3. seed 从 `associations.json` 移除；\n  4. `CodeUnderstanding.input_hash` 变化 → 旧行 `stale`，新行 `supersedes_id` 指向旧行。"
+        "quote": "### 3.7 固定 range / fragment 关联\n\n【设计】现状 fragment 由正则边界切分；解析器产出精确 range 后：\n\n1. 解析器按 `range_start.line` 找到该文件 head revision 中 ordinal 最匹配的 fragment，\n   把 `symbol.fragment_id` 指向那个**不可变 fragment id**；\n2. range（line/col）存在 `CodeSymbol` 上，仅当前 snapshot 有效；\n3. 读取侧：展示 range → 但引用、关系、检索一律用 `fragment_id`（与 `review_relations` 一致）；"
       },
       {
-        "key": "c5",
-        "label": "确定性解析选择",
-        "reason": "支持 TS/Vue PoC 的工具选择、单文件范围及跨文件与多语言限制。",
+        "key": "c7",
+        "label": "兼容投影策略",
+        "reason": "支持新增代码表不搬运正文、不改写既有关系并可幂等重建。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 340,
+          "endLine": 362
+        },
+        "quote": "## 7. 与旧 repo-review 表的兼容迁移/投影（不得清空）\n\n【设计】这是硬约束。现状：\n\n- 【事实】`sources / revisions / fragments / review_source_meta / review_relations`\n  以及 `.repo-review/data/omem.sqlite`（含已跟踪数据）都是**线上有效证据**；\n- 【事实】`associations.json` 的 seed 是评审关系唯一来源；\n- 【事实】`review_relations` 重建是幂等 upsert，从不 DELETE。\n\n【设计】迁移/投影策略：\n\n1. **只读投影，不搬数据**：`cod"
+      },
+      {
+        "key": "c8",
+        "label": "TS 与 Vue 解析选择",
+        "reason": "解释首切片的解析技术、覆盖范围以及跨文件分析限制。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -86,12 +130,12 @@
           "startLine": 366,
           "endLine": 391
         },
-        "quote": "## 8. 确定性解析最小组合评估与 PoC 选择\n\n【设计】评估维度：是否零新依赖、离线确定性、能否产出精确 range、TS+Vue 覆盖。\n\n| 方案 | 现状 | 精确 range | TS | Vue SFC | 增量/跨文件类型 | 结论 |\n| --- | --- | --- | --- | --- | --- | --- |\n| **TS Compiler API**（`typescript.createSourceFile`） | 【事实】已装（devDep） | ✅ node.getStart/getEnd | ✅ | ❌（需另接） | AST-only 无类型；建 program 才有跨文件解析 | **PoC 首选** |\n| ts-morph | 未安装 | ✅ | ✅ | ❌ | 封装更友好但新依赖、体积大 | 暂缓 |\n| **@vue/compiler-sfc** | 【事实】已装（vue 依赖） | ✅ block 起止 | ❌ | ✅ | 模板 bindings 需额外分析 | **PoC 首选（配 TS）** |\n| Tree-sitter | 未安装（native 绑定） | ✅ | ✅ | 需 grammar | 多语言/增量强 | 暂缓（新 native 依赖） |\n| SCIP / indexer | 未安装（外部工具链） | ✅ | ✅ | 需 SCIP 索引器 | 跨仓跨语言最强 | 暂缓 |\n\n【设计】**首个 TS/Vue PoC 选择**：TS Compiler API（单文件 AST，不建 program）+\n`@vue/compiler-sfc`（parse 出 script/template/style block）+ 轻量正则补 imports/routes/tests。\n理由：零新 pnpm 依赖、离线、确定性、与现有 `tsx` 运行时一致。\n\nPoC 解析范围（第一切片）：\n\n- TS：`import/export` 语句（imports/exports）、顶层 `function/class/const/interface/type/enum`\n  声明（defines + range）、同文件内同名调用（calls，名称级、标 candidate）；\n- Vue：`.vue` → `vue_component` 符号；`<script setup>` 里 `defineProps/defineEmits` 轻量提取；\n  模板里组件标签 → `uses_component`（轻量，candidate）；\n- 路由：`app.(get|post|put|delete|patch)(...)` 正则 → `route` 符号（PoC 正则，标注 origin=parser 但 kind=route）；\n- 测试：复用现有 `TEST_BOUNDARY`（`it/test/describe`）→ `test_of`。\n\n【未实现】跨文件类型感知 calls、完整 SCIP 跨仓索引、Tree-sitter 多语言。"
+        "quote": "## 8. 确定性解析最小组合评估与 PoC 选择\n\n【设计】评估维度：是否零新依赖、离线确定性、能否产出精确 range、TS+Vue 覆盖。\n\n| 方案 | 现状 | 精确 range | TS | Vue SFC | 增量/跨文件类型 | 结论 |\n| --- | --- | --- | --- | --- | --- | --- |\n| **TS Compiler API**（`typescript.createSourceFile`） | 【事实】已装（devDep） | ✅ node.getStart/getEnd | ✅ | ❌（需另接） | AST-only 无类型；建 program 才有跨文件解析 | **PoC"
       },
       {
-        "key": "c6",
-        "label": "阶段化交付计划",
-        "reason": "支持各层被规划为分阶段交付，且助手、检索与 Lark 通路当时仍未实现。",
+        "key": "c9",
+        "label": "纵向切片阶段计划",
+        "reason": "支持各阶段交付边界以及助手、检索和 Lark 当时属于后续工作的判断。",
         "relation": "tracks",
         "target": {
           "kind": "material",
@@ -99,31 +143,118 @@
           "startLine": 441,
           "endLine": 470
         },
-        "quote": "## 12. 第一纵向切片：assistant → memory → retrieval → Lark → web\n\n【设计】按阶段打开，每阶段独立可验收、可独立提交（对齐 AGENTS.md \"每个完成的功能切片\n及时提交\"）。注意：完整 `assistant→memory→Lark` 通路在本切片**只到 web + 只读 API**；\nLark/assistant 接入列为后续阶段，避免一次性大改。\n\n### Stage 0（本文档）\n- 交付：本设计文档；验收：文档入库、事实点可被 grep 复核、无生产代码改动。\n\n### Stage 1 — 确定性解析与存储（后端，无 UI/无 LLM）\n- 新增 `apps/server/src/code-knowledge/{store.ts,parse.ts,sync}.ts`（设计，非本文创建）；\n- TS/Vue 解析器产出 code_files/code_symbols/code_edges（imports/exports/defines/routes/tests/components）；\n- 幂等 sync、dirty/removed/rename 失效、既有表行数不变；\n- 测试：`apps/server/tests/code-knowledge-*.test.ts`。\n\n### Stage 2 — 只读 API\n- `/api/review/code/*`（§6）；复用既有 loopback 鉴权；\n- 测试：API 级（fastify inject）。\n\n### Stage 3 — web 视图\n- `ReviewApp.vue` 增加符号/边面板；`review-api.ts` 加类型；\n- 浏览器验证：`osdk run dev:review` 访问 5181，人工/Playwright 冒烟。\n\n### Stage 4 — 派生理解（确定性 profiler 先，LLM 后）\n- 确定性 CodeUnderstanding（无模型）；随后可选 `code-explainer` 角色；\n- 模型不可用降级（§10）。\n\n### Stage 5 — assistant → retrieval → Lark（后续，不在本切片）\n- retrieval port 暴露 code 边；助手引用代码片段；stale/缺失边生成治理卡片走既有\n  proposal→policy→decision→Lark delivery 环。【未实现】"
+        "quote": "## 12. 第一纵向切片：assistant → memory → retrieval → Lark → web\n\n【设计】按阶段打开，每阶段独立可验收、可独立提交（对齐 AGENTS.md \"每个完成的功能切片\n及时提交\"）。注意：完整 `assistant→memory→Lark` 通路在本切片**只到 web + 只读 API**；\nLark/assistant 接入列为后续阶段，避免一次性大改。\n\n### Stage 0（本文档）\n- 交付：本设计文档；验收：文档入库、事实点可被 grep 复核、无生产代码改动。\n\n### Stage 1 — 确定性解析与存储（后端，无 UI/无 LLM）\n- 新增 `apps/serve"
+      },
+      {
+        "key": "c10",
+        "label": "模型不可用时的降级原则",
+        "reason": "支持结构层不依赖模型且不得生成虚假派生理解。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 412,
+          "endLine": 422
+        },
+        "quote": "## 10. 模型不可用降级\n\n【设计】对齐 §2.7 的诚实失败原则：\n\n1. **结构层永不需要模型**：imports/exports/defines/routes/tests/components/ranges 全部\n   确定性解析，无模型时照样建库、浏览、搜索、追溯；\n2. **派生理解**：无模型时写一行 `status=model_unavailable`、`confidence=NULL`、\n   `unknowns=[\"model unavailable\"]`，不写假摘要；\n3. **不自动降级为 canned answer**：助手侧若引用代码理解，模型不可用就抛\n   `ModelUnavailableErr"
+      },
+      {
+        "key": "c11",
+        "label": "Typed projection 的 P0 合同",
+        "reason": "支持内部 ID 与展示标签分离、不可操作节点说明和快照固定正文读取约束。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-knowledge-design.md",
+          "startLine": 505,
+          "endLine": 520
+        },
+        "quote": "## P0: typed projection, not a second source of truth\n\nCode side tables (`code_*`) are a **rebuildable typed projection** over the\nauthoritative review Capture -> Source/Revision/Fragment -> Relation/Retrieval\nchain. repo-review remains the isolation config/view; code rows own no file\nbodies except the immutable per-sn"
+      },
+      {
+        "key": "c12",
+        "label": "Code Wiki 实测能力与边界",
+        "reason": "支持确定性代码图已经落地，同时跨文件调用和跨版本身份仍受限制。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 46,
+          "endLine": 57
+        },
+        "quote": "## Code Wiki（通用代码知识纵向切片）实测\n\n> 定位：Code Wiki 不是独立产品，是同一 Capture→Source/Revision/Fragment→Relation/Retrieval 证据链在代码域上的确定性 typed projection；repo-review 只是隔离 dev 配置/视图（5180 API + 5181 web、独立 SQLite、不起业务 worker）。以下数字为 2026-09-29 对运行中 `osdk run dev:review` 实例的实测（`/api/review/*` 直接查询），非设计目标。\n\n- **确定性代码图（无模型）**：TS Compiler AST（"
+      },
+      {
+        "key": "c13",
+        "label": "2026-09-29 架构边界",
+        "reason": "证明代码角色未统一编排和缺少独立语义复核是复审当日的历史状态，而非无日期的当前结论。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/code-wiki-review-2026-09-29.md",
+          "startLine": 31,
+          "endLine": 37
+        },
+        "quote": "## 仍然存在的架构边界\n\n1. 当前接入范围是本仓库与单用户 SQLite。代码源枚举和关系仍有 review 适配逻辑、默认仓库标识仍为 omem；不能把这次改造说成任意多仓库/多租户均已接入。\n2. 个人助手的自动材料学习与 CodeUnderstanding 角色运行尚未完全统一编排。代码角色有单独的严格输出合同及 registry，复用 ACP 传输；尚未统一进入所有输入渠道的持久任务/复核流水线。后续应接统一材料处理端口，不能再增加第二套 Capture 或 memory authority。\n3. 模型说明是派生资料，结构与引用存在性校验不证明每句解释正确。此次没有独立 verifier 语义复核，也没有把说明作为已验"
+      },
+      {
+        "key": "c14",
+        "label": "2026-10-01 通用知识流程进展",
+        "reason": "支持共用合同、八种知识角色、持久分析、独立复核和仓库全材料适配已经接入，替代早期编排限制。",
+        "relation": "contradicts",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 15,
+          "endLine": 17
+        },
+        "quote": "> **当前新增能力以本段与 [通用知识流程](knowledge-pipeline.md) 为准。** 已接入共用正文/引用合同、八种知识角色、持久分析与独立复核、仓库全材料适配、个人知识入口、正文多层引用、问题/待办、知识引导原始证据召回。所有实现按功能分项提交。全仓 AI 处理与章节生成的逐文件结果见 `.repo-review/knowledge/coverage.json`；没有把未通过、过期或未生成的材料算作完成。下方 Code Wiki 200 文件/6 份说明等统计保留为此前切片的历史记录。\n\n> 本轮后续：实际 Agent 配置改为 `config/review-code-model.json`，生成及 revie"
+      },
+      {
+        "key": "c15",
+        "label": "检索与来源更新闭环",
+        "reason": "支持中文语义检索和 refresh_dependents 重核验闭环已落地，同时全库覆盖仍需按当前报告判断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 5,
+          "endLine": 9
+        },
+        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "这份文件应继续保持冻结的历史提案，还是增加一张“设计阶段→当前实现与验证资产”的独立映射表？",
+        "why": "文首声明它是历史提案，文末却追加了接近现行合同的 P0 内容；若缺少时间和落实状态标识，读者仍可能把不同阶段的内容混为当前实现。",
+        "nextStep": "由维护者选择保留原貌并强化历史标识，或新增独立映射表逐项链接最新 status、coverage 与 verification，不改写原始设计结论。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c11",
+          "c14"
+        ]
+      },
+      {
+        "question": "是否要在原文旧缺口旁统一添加“已被后续状态替代”的日期标记？",
+        "why": "embedding、refresh_dependents 和代码角色编排均已有后续进展，而原设计及早期复审中的无时间限定表述仍可能造成事实冲突。",
+        "nextStep": "以最新 status 和验证资产为当前依据，为已完成、仍受限和覆盖未知三类条目分别增加日期化状态链接。",
+        "blocking": false,
+        "citationKeys": [
+          "c12",
+          "c13",
+          "c14",
+          "c15"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:docs/implementation/batch2/research-sources.json",
-      "digest": "d45da3364f493df70f3cf617dc0cf06cf6aa1547425ba9d615c510f11eec3cd2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/browser-verification.json",
-      "digest": "1bb4e5292e112dfabc083287bd958422c0d4a3aa28d1de68756235e6cf993beb"
-    },
-    {
-      "kind": "material",
       "key": "omem:docs/implementation/code-knowledge-design.md",
       "digest": "333454e6d0bf89cc86a7d0cd1b619904c686ff98ecc60d308ec055c06b1d93e0"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/code-wiki-prototype-gap.md",
-      "digest": "1d1257f66a641a52e4313357458fbb3c801620536926b79c1a1268aeb6642dce"
     },
     {
       "kind": "material",
@@ -132,52 +263,52 @@
     },
     {
       "kind": "material",
-      "key": "omem:docs/implementation/code-wiki-ui-design.md",
-      "digest": "976ba48c6b2ccf271dd3b3231778ecc1b434c85c85a4fb0151f5fa66216f20db"
+      "key": "omem:docs/implementation/status.md",
+      "digest": "6f300567fb45ec1cd275528d00ea60384f90f01d55f0af228c818ef4bf1bd240"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T13:15:35.717Z",
+    "at": "2026-10-01T02:45:32.713Z",
     "trace": {
-      "runId": "eb44d4e0-a6f2-4117-b766-04d13f8f9a51",
-      "roleId": "material-analyst",
+      "runId": "dc46b1b6-9826-4eb8-8973-ae113b5e53d8",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
-      "promptHash": "36fc71672f7bd652e1f0799be4f6cf5f2b56983abb0a9193e273ce875a26e977",
-      "contextHash": "162fa073a1a5a2c7663af04926ad94e02ff8aeba53f50806fb971c37cda2da0f",
-      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "2da2939a09f17e014e2b01650ad9b48ce5ad4128021d5e9184017660706d3d29",
+      "contextHash": "dc6f551eb8cb8fbca133857874b08fde3367e3d8bb9054004baee3bbcac16c7f",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b806c7a38efc03ed60a727274567993c4791d30698614a945c5ce5abd591a5d3",
+      "fingerprint": "2fdeeb25dd62a9c5e8c382f1aafca0b1b0147db9f7a51ea2d565ab5e92430841",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-material-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed4c-f2e5-73c0-8090-bf3a88a5009a"
+        "01a0f559-dd9b-7bc3-86a2-d6c5adff1b36"
       ],
       "usage": {
-        "used": 87583,
-        "size": 760000,
+        "used": 47844,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 132899,
-          "utf8Bytes": 185439,
-          "estimatedTokens": 61813,
-          "budgetedTokens": 77267,
+          "chars": 63101,
+          "utf8Bytes": 93461,
+          "estimatedTokens": 31154,
+          "budgetedTokens": 38943,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -186,17 +317,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T13:15:52.253Z",
+    "at": "2026-10-01T02:46:00.311Z",
     "trace": {
-      "runId": "391b6c16-1aa5-479a-aca4-5fa191955d9f",
+      "runId": "bb5e2787-4a07-4691-9a8f-b109a74e52f7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
-      "promptHash": "0c658d9d8375303386fa0c950acb8c40cb2e70fcba6eb2fcdf2fbd13baabb112",
-      "contextHash": "935a51abd9c2df578d05d09c5a7308339c6c2a362e30faf54f82ee765cbe5978",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "a4264d2766fce41958ed8059ed4836d137480d41ac57f405c33fd511ab44e847",
+      "contextHash": "a6caa14c1d90ae6e10a8808473b4bf64e5ca3316f6471dff36942f2896865fbb",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "56ef889cdd915696999b5dbc904104e969c513fd6dee32a5a88a45998b26cb65",
+      "fingerprint": "c4a011ad35193336f65f9941ca1bb117c1094f3a449b95be2838a8baac43a42e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -209,22 +340,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed4e-72cd-73e3-919b-8a39545ea84a"
+        "01a0f55a-66f5-7b62-8a02-b51c97e94a80"
       ],
       "usage": {
-        "used": 71142,
-        "size": 760000,
+        "used": 44607,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 132332,
-          "utf8Bytes": 185489,
-          "estimatedTokens": 61830,
-          "budgetedTokens": 77288,
+          "chars": 59409,
+          "utf8Bytes": 87989,
+          "estimatedTokens": 29330,
+          "budgetedTokens": 36663,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

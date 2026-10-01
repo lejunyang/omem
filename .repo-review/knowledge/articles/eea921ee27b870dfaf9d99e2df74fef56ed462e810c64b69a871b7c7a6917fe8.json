@@ -2,313 +2,292 @@
   "version": 1,
   "document": {
     "key": "module:other:part-1",
-    "title": "other · 模块理解 · 专题 1",
-    "summary": "本专题汇集服务器中模型进程、助手治理、知识变更、外部投递与 Code Wiki 的基础保障。修订后的结论区分了已直接验证的行为与仍缺少夹具的边界：显式取消可阻止迟到任务落库，但新消息和超时尚未验证同等强度的迟到提交；代码 DTO 也只是对实际返回的失效边施加不可操作断言。",
+    "title": "其他模块专题 1：服务端治理与代码知识验证",
+    "summary": "本专题串联助手模型接入、受控写入、记忆变更门控、Lark 消息入口与代码知识快照。当前服务层已具备可运行的证据、收据和投递切片，但主要验证仍依赖进程内模型、协议夹具、临时 SQLite 与本地 HTTP 注入；真实外部 CLI、平台网络、并发恢复及迁移故障仍需独立验收。",
     "category": "overview",
     "sections": [
       {
-        "key": "agent-boundary",
-        "title": "模型与进程边界",
-        "body": "Agent 进程在过滤部分敏感环境变量后以 `shell:false` 启动，并为进程退出、空闲超时和 AbortSignal 取消建立收敛路径。[[c1]] ACP 线协议总输出和回答文本分别受预算限制；权限请求不会自动授权，补充输入请求也会被拒绝。[[c2]] 会话建立后，配置的模型与推理强度必须出现在服务端发现的选项中，随后才会设置配置并提交 prompt。[[c3]]\n\n助手模型适配器只接受 ACP profile；缺少配置或传入 CLI transport 时返回模型不可用，不生成伪答案。它截取有限历史与证据、要求单一 JSON 回答，并解析引用和可选任务调用。[[c4]] 这替代了旧稿把所有进程约束归入单一启动代码范围的宽泛结论。"
+        "key": "assistant-runtime",
+        "title": "助手接入与运行时治理",
+        "body": "助手模型适配层只接受 ACP profile；缺少配置或误用一次性 CLI 传输时明确报告模型不可用，不生成伪答案。历史上下文默认保留最近十轮，并把每轮助手结果裁到 500 字符。[[c1]][[c2]] 模型返回的回答、引用与任务请求只是结构化提案，服务端仍会重新检查证据可见性和所有者来源。[[c3]]\n\n运行时测试进一步证明，明确的“记一下”可以产生任务，而普通咨询即使收到模型的创建请求也保持零写入；跨轮证据可支撑后续任务，不存在的引用或取消后迟到的请求都会被拒绝。[[c4]] ACP fixture 还覆盖模型与推理强度协商、思考过滤、权限默认拒绝、超时及主动取消，但不代表真实外部 CLI 已通过相同验收。[[c5]]"
       },
       {
-        "key": "assistant-governance",
-        "title": "从回答到受治理写入",
-        "body": "助手先区分明确任务请求与普通咨询：明确的 owner 指派可创建任务，咨询即使收到模型的 `create_task` 也保持零写入；模型不可用则把轮次保留为可重试状态。[[c5]] 群聊默认不提供证据，注入策略后仅允许当前群范围材料，私人内容不会进入群聊回答。[[c6]] 会话修正另有独立作用域测试，只有同一会话能看到修正。[[c7]] Lark 身份链路还证明绑定 owner 可规范化并自动应用，而普通成员材料因 owner 未验证不能自动应用。[[c8]]\n\n相同传输事件保持幂等；新消息可中断会响应 abort 的旧模型调用，忽略 abort 的永久挂起模型也会超时收敛，两者均保持零任务。[[c9]] 只有显式取消场景直接构造了模型迟到返回任务调用并验证零写入；因此不能把同等强度的迟到提交围栏推广到新消息或超时场景。模型恢复后，pending 轮次可由重试推进完成。[[c10]]"
-      },
-      {
-        "key": "change-delivery",
-        "title": "知识变更与外部投递",
-        "body": "知识提案按证据充分性和冲突分流：不充分材料延后但仍可检索，重复事实链接既有知识，相反主张记录争议，跨来源覆盖不会静默替换活跃结论。[[c11]] 来源 revision 更新会记录受影响知识并使其退出活跃检索，但结果明确停在 `needs_review` 与 `not_implemented`；高波及变更或整批超限会进入决策门禁。[[c12]] 这意味着旧结论已被标为失效，而自动复核、引用迁移和重新激活仍未闭环。\n\n外部投递采用取消扫描与发送端复核两层防线：未发送卡片被撤销，取消后重新出现的 pending 意图也不会发送；已投递历史和仍在发送的记录保持原状，不伪装成已撤回。[[c13]]"
+        "key": "memory-and-messaging",
+        "title": "记忆门控与消息入口",
+        "body": "记忆层保留原始材料并谨慎晋升：信息不足的题外材料仍可检索但不进入活动记忆；重复陈述链接既有记录，相反主张则记录为争议。[[c6]] 当新来源试图覆盖另一来源支撑的活动知识时，测试明确要求进入 `awaiting_decision`，旧知识保持活动且不被静默改写；这替代了此前缺少直接证据的概括。[[c7]] 同源变化若实际波及 11 条依赖，也会因超过自动应用上限进入待决。[[c8]] 来源 revision 更新后仅登记为 `needs_review`，受影响旧记忆退出活动检索，不能把失效登记视为复核完成。[[c9]]\n\nLark 入口只有在有效绑定下才把外部身份映射为规范 owner，未绑定成员不会被当作所有者任务来源。[[c10]] 已绑定私聊会创建并关联一条回复投递意图。[[c11]] 相同事件再次投递后，测试仅确认 `delivery_intents` 数量仍为一，因此证据支持“回复投递意图未重复创建”，不能据此断言模型调用、会话轮次、任务或整个入口的其他副作用均具幂等性；此前“直接证明入口幂等”的结论已被替代。[[c12]] 这些场景使用本地确定性接线，没有真实 socket 或平台送达证据。"
       },
       {
         "key": "code-knowledge",
-        "title": "代码知识的不可变依据",
-        "body": "Code Wiki 通过显式 head 管理不可变快照：工作树从 A 变为脏 B 再恢复 A 时会复用原快照，历史 B 仍可读取；源码接口按指定 snapshot 返回固定内容，不回退到实时磁盘猜测。[[c14]] 模型理解制品可跨数据库恢复，但伪造定位会被拒绝，输入变化会令制品过期。[[c15]]\n\nAPI 同时保留内部操作键和人类展示字段；DTO 测试会对其实际返回的 `missing` 或 `stale` 图边断言 `actionable=false`，但夹具没有明确证明一定生成了这两类边，因此不把它表述为完整状态覆盖。[[c16]] 旧单主键侧表迁移后，符号、关系和历史图仍可查询。[[c17]] 生成预算则按 UTF-8 保守估算输入，并把输出及预留共同纳入已发现模型窗口校验。[[c18]]"
+        "title": "代码知识作为固定证据的派生视图",
+        "body": "代码知识不是第二套事实库：评审同步先捕获正文，代码同步再解析 TS/Vue，并把结构投影到同一隔离 SQLite；相同仓库、提交、脏状态与内容哈希组合会复用快照。[[c13]] 结构失效方式需要区分：消失的符号保留旧 `snapshot_id`，只是从当前 head 视图中过滤；最新解析未重新产生或触及已移除文件的边才标记为 `stale`，而不是所有旧结构统一转为 stale。[[c14]]\n\nA→B→A 用例证明当前指针可回到旧快照，同时保留 B 的历史图；源码 HTTP 接口按指定快照返回固定内容，缺少对应固定材料时返回 404，不回退读取实时磁盘。[[c15]] 导出只接受当前快照中状态成功、非 seed 且未过期的模型理解，并记录依赖与稳定符号定位。[[c16]] 产物测试还覆盖跨库恢复、重复恢复幂等、伪造定位拒绝及重新捕获源码变化后的过期处理。[[c17]]"
+      },
+      {
+        "key": "progress-and-limits",
+        "title": "当前进展与验证边界",
+        "body": "现有测试已经分别验证若干可运行切片：任务写入会产生真实 `application_receipts`，已完成轮次不会在恢复时重复调用模型；[[c18]] Lark 私聊回复会写入 `delivery_intents` 并把 outbox 标识关联回会话轮次；[[c11]] 代码快照与固定源码可经评审 HTTP 接口读取。[[c15]] 因而“收据、投递意图和快照接口”各自有直接证据，而不再由无关引用合并推断。\n\n边界仍然明确：模型侧主要使用进程内脚本或仓库 ACP fixture，Lark 侧是无真实网络的本地装置；[[c5]][[c12]] 代码产物测试只覆盖单个合法、伪造或过期产物，快照往返也发生在同一 Store 生命周期内。[[c17]][[c15]] 真实 Agent CLI 鉴权与能力发现、飞书最终送达、跨进程竞争、重启后的快照恢复、混合坏产物隔离及迁移失败回滚，均不能由当前材料宣称完成。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Agent 子进程生命周期",
-        "reason": "支持敏感环境过滤、无 shell 启动、进程退出错误、超时和取消的具体实现边界。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agents.ts",
-          "startLine": 32,
-          "endLine": 141
-        },
-        "quote": "const env = () =>\n  Object.fromEntries(\n    Object.entries(process.env).filter(\n      ([key]) =>\n        !key.startsWith(\"BOTMUX_\") &&\n        ![\"OMEM_TOKEN\", \"CLAUDECODE\"].includes(key),\n    ),\n  );\nfunction stop(child: ChildProcessWithoutNullStreams) {\n  if (child.exitCode !== null) return;\n  try {\n    if (process.pl"
-      },
-      {
-        "key": "c2",
-        "label": "ACP 请求与输出限制",
-        "reason": "支持线协议输出预算、权限和补充输入默认拒绝，以及回答字符上限。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agents.ts",
-          "startLine": 151,
-          "endLine": 231
-        },
-        "quote": "    let inputClosed = false;\n    const input = new ReadableStream<Uint8Array>({\n      start(controller) {\n        let total = 0;\n        child.stdout.on(\"data\", (chunk: Buffer) => {\n          if (inputClosed) return;\n          total += chunk.length;\n          if (total > 32_000_000) {\n            rejectExit(new Error(\""
-      },
-      {
-        "key": "c3",
-        "label": "模型能力协商",
-        "reason": "支持模型和推理强度从会话选项中发现、校验并设置，以及提交 prompt 前的能力检查。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agents.ts",
-          "startLine": 301,
-          "endLine": 339
-        },
-        "quote": "    let configOptions = session.configOptions || [];\n    for (const [key, value] of [\n      [\"model\", profile.model],\n      [\"reasoning_effort\", profile.effort],\n    ] as const) {\n      if (!value) continue;\n      const option = configOptions.find(\n        (o) =>\n          o.id === key ||\n          (key === \"model\"\n   "
-      },
-      {
-        "key": "c4",
-        "label": "助手 ACP 模型适配器",
-        "reason": "支持 ACP 专用路由、历史与证据裁剪、结构化请求、取消传播和回答解析流程。",
+        "label": "ACP 模型路由边界",
+        "reason": "支持仅允许 ACP profile，以及缺配置或 CLI 传输时诚实失败且不生成伪答案。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 42,
-          "endLine": 158
+          "startLine": 12,
+          "endLine": 45
         },
-        "quote": "    // G: reject when no profile configured.\n    if (!this.deps.profile)\n      throw new ModelUnavailableError(\"no assistant agent profile configured\");\n    const profile = this.deps.profile;\n\n    // G: reject CLI transports — do NOT pipe a codex CLI through ACP.\n    if (profile.transport !== \"acp\")\n      throw new Mod"
+        "quote": "/**\n * Production assistant model adapter. It reuses the project's real ACP transport\n * (`acp()` from agents.ts) against a configured AgentProfile.\n *\n * G: transport routing is enforced here:\n *  - profile.transport === \"acp\" → real ACP session;\n *  - any CLI transport (codex-cli / trae-cli / claude-cli) → ModelUnava"
+      },
+      {
+        "key": "c2",
+        "label": "助手历史上下文裁剪",
+        "reason": "支持默认保留最近十轮及每轮助手结果最多 500 字符的规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/acp-model.ts",
+          "startLine": 47,
+          "endLine": 56
+        },
+        "quote": "    // History budget: truncate old turns to keep context bounded.\n    const maxPrior = this.deps.maxPriorTurns ?? 10;\n    const priorBlock = input.priorTurns.length\n      ? input.priorTurns\n          .slice(-maxPrior)\n          .map(\n            (t) => `user: ${t.userText}\\nassistant: ${t.result.slice(0, 500)}`,\n     "
+      },
+      {
+        "key": "c3",
+        "label": "助手回复与工具调用合同",
+        "reason": "说明模型引用和任务调用仍需服务端重新治理，不能自行取得写权限。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "startLine": 23,
+          "endLine": 63
+        },
+        "quote": "export type AssistantCreateTaskCall = {\n  tool: \"create_task\";\n  title: string;\n  detail: string;\n  /** Evidence fragments the task is grounded on; the server re-validates both\n   *  visibility and owner provenance before creating anything. */\n  citationIds?: string[];\n  dueAt?: string | null;\n  dueExpression?: string "
+      },
+      {
+        "key": "c4",
+        "label": "任务意图、跨轮证据与取消栅栏",
+        "reason": "支持明确任务意图与咨询零写入，并证明跨轮证据、不存在引用和取消后迟到写入的治理结果。",
+        "relation": "supports",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "section": "intent-and-write-governance"
+        },
+        "quote": ""
       },
       {
         "key": "c5",
-        "label": "任务意图与模型失败测试",
-        "reason": "验证明确任务可写入、咨询保持零写入，以及模型不可用轮次可重试且不生成伪答案。",
+        "label": "ACP 协议与生命周期测试",
+        "reason": "支持模型协商、思考过滤、权限拒绝、超时和主动取消，同时界定其为受控 fixture。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 98,
-          "endLine": 236
+          "key": "omem:apps/server/tests/agents.test.ts",
+          "startLine": 41,
+          "endLine": 70
         },
-        "quote": "describe(\"detectTaskIntent (unit)\", () => {\n  it(\"identifies explicit assignment intents\", () => {\n    expect(detectTaskIntent(\"帮我记一下：周五下午3点和张三开会\").explicit).toBe(true);\n    expect(detectTaskIntent(\"提醒我明天交报告\").explicit).toBe(true);\n    expect(detectTaskIntent(\"创建一个任务\").explicit).toBe(true);\n    expect(detectTaskIntent("
+        "quote": "it(\"negotiates model before validating new effort options; drops thoughts\", async () => {\n  const { events } = await run(\"hello\", { model: \"beta\", effort: \"high\" });\n  expect(\n    events\n      .filter((e) => e.type === \"text\")\n      .map((e) => e.text)\n      .join(\"\"),\n  ).toContain(\"beta/high\");\n  expect(JSON.stringif"
       },
       {
         "key": "c6",
-        "label": "群聊证据隔离测试",
-        "reason": "验证群聊默认无证据、注入策略后的范围过滤，以及私人材料不进入群聊回答。",
-        "relation": "supports",
+        "label": "延后、去重与争议保留",
+        "reason": "支持题外材料延后、重复陈述链接既有记忆以及相反主张记录为争议。",
+        "relation": "explains",
         "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 238,
-          "endLine": 311
+          "kind": "article",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "section": "defer-deduplicate-dispute"
         },
-        "quote": "  it(\"G09: group conversations deny evidence by default when no policy is injected\", async () => {\n    const { store } = setup();\n    captureSource(store, \"群项目文档\", \"群内公开说明。\");\n    const model: AssistantModelPort = {\n      generate: async (input) => ({\n        answer: `evidence=${input.evidence.length}`,\n        citatio"
+        "quote": ""
       },
       {
         "key": "c7",
-        "label": "会话修正作用域测试",
-        "reason": "直接支持修正只进入同一会话 trusted context、不会泄漏到其他会话。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 519,
-          "endLine": 544
-        },
-        "quote": "  it(\"H-G16: correction in same scope reaches model; different scope does not leak\", async () => {\n    const { store } = setup();\n    const feedback = new FeedbackService(store);\n    const seen: string[] = [];\n    const model: AssistantModelPort = {\n      generate: async (input) => {\n        seen.push(input.trustedCont"
-      },
-      {
-        "key": "c8",
-        "label": "Lark owner 身份解析测试",
-        "reason": "支持绑定 owner 的规范身份可自动应用，而普通群成员因 owner 未验证不能自动应用。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
-          "startLine": 253,
-          "endLine": 346
-        },
-        "quote": "describe(\"Batch2 F7: lark real identity resolves to canonical owner\", () => {\n  it(\"G06 bound owner's ou_* message maps to canonical owner and auto-applies\", async () => {\n    const store = new Store(temporary(\"omem-f7-g06-\"));\n    try {\n      seedLarkBinding(store);\n      const inbox = new LarkEventInbox(store, { owne"
-      },
-      {
-        "key": "c9",
-        "label": "幂等、新消息取消与超时测试",
-        "reason": "支持事件幂等、新消息中断会响应取消的模型，以及永久挂起模型超时后零任务收敛；同时界定这些用例未构造迟到工具调用。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 362,
-          "endLine": 464
-        },
-        "quote": "  it(\"idempotency: same transport_event_id does not create a second turn or task\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    const model = new ScriptedModel([\n      {\n        answer: \"ok\",\n        citationIds: [],\n        toolCalls: [\n          {"
-      },
-      {
-        "key": "c10",
-        "label": "显式取消围栏与重试恢复",
-        "reason": "直接验证取消后迟到返回的任务调用无法落库，并支持模型恢复后重试 pending 轮次。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 598,
-          "endLine": 679
-        },
-        "quote": "  it(\"G20: cancel fence — model resolves late with create_task after cancel, zero writes\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    let release!: (r: AssistantModelReply) => void;\n    let generationStarted = () => {};\n    const model: AssistantM"
-      },
-      {
-        "key": "c11",
-        "label": "知识延后、去重与冲突测试",
-        "reason": "验证不充分材料延后、重复事实复用既有知识、相反主张记录争议及跨来源覆盖需决策。",
+        "label": "跨来源覆盖决策门控",
+        "reason": "直接支持跨来源 supersede 活动知识时进入待决、旧知识不被静默覆盖。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "startLine": 117,
-          "endLine": 207
+          "startLine": 135,
+          "endLine": 163
         },
-        "quote": "describe(\"Batch-2 AttentionGate and on-demand knowledge consolidation\", () => {\n  it(\"G10: off-task material with missing time/scope is deferred, retrievable, never a decision card\", () => {\n    const { store, memory, retrieval } = setup();\n    const revision = capture(store, \"内部文档提到一个待确认的接口\");\n    const result = memor"
+        "quote": "  it(\"G11: a conflict that overwrites existing knowledge becomes one contextual decision, not a JSON blob\", () => {\n    const { store, memory } = setup();\n    const first = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-authority-one\" });\n    const applied = memory.evaluate(claim(first, \"服务 A 已启用重试\"), supported());\n   "
       },
       {
-        "key": "c12",
-        "label": "来源刷新与影响门禁测试",
-        "reason": "支持来源更新使知识失效、自动复核尚未实现，以及单项和批量高影响变更进入门禁。",
-        "relation": "tracks",
+        "key": "c8",
+        "label": "大范围依赖影响门控",
+        "reason": "支持系统自行算出同源变更影响 11 条记忆，并因超过上限进入待决。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/attention-gate.test.ts",
+          "startLine": 265,
+          "endLine": 288
+        },
+        "quote": "  it(\"G17: a change rippling to many dependent memories is gated even when no batch impact is supplied\", () => {\n    const { store, memory } = setup();\n    const shared = capture(store, \"共享来源事实\", { externalId: \"ag-shared\" });\n    const target = memory.evaluate(claim(shared, \"目标事实\"), supported());\n    const targetId = t"
+      },
+      {
+        "key": "c9",
+        "label": "来源更新后的待复核状态",
+        "reason": "支持刷新记录进入 needs_review、列出影响范围并使旧记忆退出活动检索。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/attention-gate.test.ts",
           "startLine": 209,
-          "endLine": 396
+          "endLine": 263
         },
         "quote": "  it(\"G13: a source revision update records the affected memories and they stop being active evidence\", () => {\n    const { store, memory, retrieval } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-refresh\" });\n    const applied = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n"
       },
       {
-        "key": "c13",
-        "label": "取消后的投递隔离测试",
-        "reason": "验证未发送卡片撤销、迟到队列项由发送端拦截，并保留已投递及发送中状态。",
+        "key": "c10",
+        "label": "Lark 所有者身份映射",
+        "reason": "支持已绑定身份映射为规范 owner，未绑定成员不获得所有者自动应用权限。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+          "section": "lark-owner-resolution"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c11",
+        "label": "Lark 私聊回复投递意图",
+        "reason": "支持已绑定私聊进入助理、创建一条飞书投递意图并关联会话轮次 outbox。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
-          "startLine": 191,
-          "endLine": 285
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 773,
+          "endLine": 794
         },
-        "quote": "describe(\"G18 cancelling an annotation session revokes unsent cards\", () => {\n  it(\"cancel sweeps the queued intent in the same transaction; sender sends nothing\", async () => {\n    const fixture = setup();\n    try {\n      const session = fixture.quality.start(fixture.datasetId, \"cli_g18\");\n      expect(intentRow(fixtu"
+        "quote": "describe(\"Lark main-assistant entry\", () => {\n  it(\"routes bound-owner p2p to the assistant, enqueues a reply and links outbox\", async () => {\n    const { store } = larkSetup();\n    const model: AssistantModelPort = {\n      generate: async () => ({ answer: \"p2p 回复：已收到。\", citationIds: [] }),\n    };\n    const inbox = bui"
+      },
+      {
+        "key": "c12",
+        "label": "Lark 重复事件的投递意图断言",
+        "reason": "仅支持相同事件重复处理后 delivery_intents 数量仍为一；未断言模型调用、轮次、任务或其他副作用不重复。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 847,
+          "endLine": 864
+        },
+        "quote": "  it(\"duplicate delivery of the same event id does not create a second reply\", async () => {\n    const { store } = larkSetup();\n    let count = 0;\n    const model: AssistantModelPort = {\n      generate: async () => {\n        count++;\n        return { answer: `回复 ${count}`, citationIds: [] };\n      },\n    };\n    const i"
+      },
+      {
+        "key": "c13",
+        "label": "代码同步与快照身份",
+        "reason": "说明代码结构依赖已捕获 fragment，并支持内容寻址快照的幂等复用。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
       },
       {
         "key": "c14",
-        "label": "代码快照生命周期测试",
-        "reason": "支持显式 head、快照复用、历史可读性和源码按指定快照固定返回。",
-        "relation": "supports",
+        "label": "符号与边的不同失效语义",
+        "reason": "直接区分消失符号从当前视图过滤与未重新产生或触及移除文件的边标记 stale。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-          "startLine": 60,
-          "endLine": 159
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 1,
+          "endLine": 16
         },
-        "quote": "describe(\"code snapshot lifecycle: explicit head pointer + immutable snapshots\", () => {\n  it(\"A->B(dirty)->A: reused snapshot becomes head; B stays readable; /source pinned per snapshot\", async () => {\n    const root = makeRepo();\n    w(root, \"apps/server/src/a.ts\", V1);\n    commit(root, \"v1\");\n    const dir = mkdtemp"
+        "quote": "/** Code Knowledge side tables. These live in the SAME isolated review SQLite as\n * review_source_meta / review_relations 鈥?they are additive, CREATE-IF-NOT-EXISTS\n * only, and never touch sources/revisions/fragments/review_relations rows. The\n * code graph is a deterministic projection over the already-captured fragme"
       },
       {
         "key": "c15",
-        "label": "代码理解制品重建测试",
-        "reason": "验证固定源码证据、理解制品跨库恢复、伪造定位拒绝及输入变化后的过期处理。",
+        "label": "代码快照与固定源码读取",
+        "reason": "支持 A-B-A 快照回切、历史保留，以及 HTTP 按指定快照读取不可变源码的流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "article",
+          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+          "section": "flow"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c16",
+        "label": "代码理解产物导出约束",
+        "reason": "支持仅导出当前、成功、非 seed、未过期的模型结果，并记录依赖和符号定位。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 38,
+          "endLine": 60
+        },
+        "quote": "export function exportGeneratedUnderstanding(store: Store, repoRoot: string, id: string, destination: string): string {\n  const detail = understandingDetail(store, id);\n  const snapId = currentSnapshotId(store);\n  if (!detail || !snapId || detail.status !== \"generated\" || detail.seed || detail.stale || detail.snapshot_"
+      },
+      {
+        "key": "c17",
+        "label": "代码理解产物恢复测试",
+        "reason": "支持成功导出、跨库恢复、重复恢复、伪造定位拒绝及输入变化后的过期处理。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/code-artifacts.test.ts",
-          "startLine": 12,
+          "startLine": 28,
           "endLine": 57
         },
-        "quote": "it(\"rebuilds fixed code and model knowledge in a fresh DB, rejects changed input and forged locators\", async () => {\n  const root = mkdtempSync(join(tmpdir(), \"omem-artifacts-\"));\n  const first = new Store(join(root, \"db1\"));\n  const second = new Store(join(root, \"db2\"));\n  const path = \"apps/server/src/a.ts\";\n  const "
-      },
-      {
-        "key": "c16",
-        "label": "代码知识展示合同测试",
-        "reason": "支持内部操作键与人类标签分离，并准确限定为对当前响应中出现的 missing 或 stale 边执行不可操作断言。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-          "startLine": 31,
-          "endLine": 98
-        },
-        "quote": "describe(\"code DTO contract: action keys preserved + human labels\", () => {\n  it(\"keeps every contract field and adds display/trail links\", async () => {\n    const root = mkdtempSync(join(tmpdir(), \"omem-dto-\"));\n    git([\"init\", \"-q\", root], root);\n    git([\"config\", \"user.email\", \"t@e.com\"], root);\n    git([\"config\","
-      },
-      {
-        "key": "c17",
-        "label": "代码侧表历史迁移测试",
-        "reason": "验证旧符号和图边迁入新结构后记录未丢失，历史快照图仍可查询。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
-          "startLine": 22,
-          "endLine": 65
-        },
-        "quote": "describe(\"code side-table migration preserves history\", () => {\n  it(\"copies old single-PK symbols/edges into composite schema without dropping rows\", () => {\n    const store = setup();\n    // Simulate a pre-migration database: old-shape tables keyed by id alone.\n    store.db.exec(`CREATE TABLE code_repositories(\n     "
+        "quote": "    const result = await generateCodeUnderstanding(first, root, {\n      transport: \"fixture\",\n      run: async () => ({ model: \"fixture-only\", text: JSON.stringify({\n        module_responsibilities: [\"Returns a string\"], boundaries: [], key_flows: [], entry_points: [], exit_points: [],\n        risks_and_limits: [], cla"
       },
       {
         "key": "c18",
-        "label": "代码生成上下文预算测试",
-        "reason": "支持 UTF-8 保守估算、宿主配置校验，以及输入、输出与预留共同受模型窗口约束。",
+        "label": "应用收据与未完成轮次恢复",
+        "reason": "直接支持任务写入生成 application_receipts，且已完成轮次不会被恢复或再次调用模型。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/code-budget.test.ts",
-          "startLine": 5,
-          "endLine": 20
+          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
+          "startLine": 621,
+          "endLine": 649
         },
-        "quote": "it(\"counts UTF-8 bytes and charges headroom, with validated host overrides\", () => {\n  expect(estimateTokens(\"中文abc\")).toMatchObject({ chars: 5, utf8Bytes: 9, estimatedTokens: 3, budgetedTokens: 4 });\n  expect(generationBudget({ maxInputTokens: 96000 }, { max_context_tokens: 12000, max_output_tokens: 3000 }).maxInputTo"
+        "quote": "  it(\"G20: recoverUnfinishedTurns uses real application_receipts, not toolActions\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    // Model emits create_task with a transportEventId so the receipt is trackable.\n    let modelCalls = 0;\n    const model:"
       }
     ],
     "questions": [
       {
-        "question": "各 CLI transport 是否需要真实可执行夹具或独立 live check？",
-        "why": "Agent 层已有 CLI 参数和进程实现，但助手适配器目前明确拒绝 CLI；现有材料不能证明不同外部 CLI 的认证失败、结构化输出、取消与退出码行为。",
-        "nextStep": "为每种受支持 CLI 建立隔离夹具，分别验证 argv、输出协议、超时、取消和错误映射，并把依赖真实安装或登录的检查标为 live check。",
+        "question": "真实 Agent CLI/ACP 与飞书平台链路是否已有独立的活体验收？",
+        "why": "当前证据来自仓库 ACP fixture、进程内模型和本地 Lark 接线，不能确认真实鉴权、能力发现、网络重连、发送失败恢复及最终送达。",
+        "nextStep": "分别执行并记录真实 Agent CLI 与隔离飞书租户的 live check，保存版本、模型、退出码、事件重投、发送结果和故障恢复证据。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c4"
-        ]
-      },
-      {
-        "question": "来源更新后的自动复核、引用迁移与重新激活流程何时实现？",
-        "why": "来源刷新目前只记录受影响知识并将其移出活跃检索，结果明确为 `blocked/not_implemented` 和 `needs_review`。",
-        "nextStep": "定义刷新作业输入、并发版本规则和复核结果，增加从 `needs_review` 到重新激活、替换或持续失效的端到端测试。",
-        "blocking": false,
-        "citationKeys": [
+          "c5",
+          "c11",
           "c12"
         ]
       },
       {
-        "question": "发送中投递在租约到期后的最终状态如何收敛？",
-        "why": "现有测试只保证取消时不篡改 `sending` 状态，没有覆盖提供方成功、超时或去重窗口结束后的最终结果。",
-        "nextStep": "补充租约到期与提供方响应的组合测试，明确重试、去重和用户可见审计状态。",
+        "question": "来源刷新后的抽取、独立复核与重新应用失败时，知识状态如何收敛？",
+        "why": "现有材料只证明刷新进入 needs_review 且旧记忆退出活动检索，没有展示后续成功、失败、重试或新 revision 再次到达的状态机。",
+        "nextStep": "补充刷新 worker 的固定实现材料和行为测试，覆盖成功复核、失败保留历史、重复更新及重试。",
         "blocking": false,
         "citationKeys": [
-          "c13"
+          "c9"
         ]
       },
       {
-        "question": "新消息中断或超时后，忽略取消并迟到返回的任务调用是否也受提交围栏保护？",
-        "why": "当前新消息用例中的模型会响应 abort，超时用例中的模型永不返回；只有显式取消用例直接验证了迟到 `create_task` 的零写入。",
-        "nextStep": "分别构造新消息中断和超时后仍迟到返回 `create_task` 的模型夹具，断言任务、receipt 与通知均未写入。",
+        "question": "代码知识能否在进程重启、混合坏产物和迁移中途失败后保持可恢复？",
+        "why": "当前测试覆盖同一 Store 生命周期内的快照往返及单个伪造或过期产物，尚未证明重启恢复、逐文件失败隔离和事务回滚。",
+        "nextStep": "新增关闭并重开 Store 的快照测试、合法与损坏产物混合恢复测试，以及迁移重复执行和可控失败回滚测试。",
         "blocking": false,
         "citationKeys": [
-          "c9",
-          "c10"
-        ]
-      },
-      {
-        "question": "代码 DTO 是否需要显式构造 missing 与 stale 图边的状态覆盖？",
-        "why": "当前测试只在响应实际包含这些状态时执行 `actionable=false` 断言，单文件夹具未明确保证产生相应边。",
-        "nextStep": "建立含无法解析目标和过期关系的同步夹具，分别断言人读 reason、`actionable=false` 与深链行为。",
-        "blocking": false,
-        "citationKeys": [
-          "c16"
+          "c15",
+          "c17"
         ]
       }
     ]
@@ -322,7 +301,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "digest": "09ba2aa194ac1f4732a49e68cc6b9fd5e35b3b20f5b39566c1d54643f6e71004"
+      "digest": "efa43a2948fcae9611fe88e8ae00d6421136e04e43ba1761bda2a2fa0047665a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "17df8759d854439c570682baacfc9fca8589ebf402c35720af881a8a20bb0589"
     },
     {
       "kind": "material",
@@ -337,7 +321,17 @@
     {
       "kind": "material",
       "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
-      "digest": "056ab36d17e274ffd3be4f803b40ff438e82fe5e7115d4d12087a819419c6e8e"
+      "digest": "0ab9832cfb7350b451b3d173d5ba5a35f56c4932570d708b2a2ffece80b734a9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
     },
     {
       "kind": "material",
@@ -346,13 +340,28 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "e8a4ec3f6e8619195e7710c33738c95ae371a7aad7f8cef4368556452bbd072f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-      "digest": "fe7179000348646d152af6e844657c46759a104778e3acdcd9c1c207621313e8"
+      "digest": "0de34bc51deb75ca77b322a779e2f2a5c7db2a7e369780dd79d29e585b15008d"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/tests/attention-gate.test.ts",
-      "digest": "9f9460c115e6b0411c9bcb9f552a1ca74ddd26296dc3fe6990e421da90bc7311"
+      "digest": "062e1f9febea148e46eb406d4538ac6f41b14e6e7f186f792dee148efc22a4f5"
     },
     {
       "kind": "material",
@@ -361,8 +370,23 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/tests/code-artifacts.test.ts",
       "digest": "886ff92edee105e55eb237758a0f37ac4615f4c62add923241f9a6612721eba4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
     },
     {
       "kind": "material",
@@ -371,8 +395,23 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/code/budget.ts",
+      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
       "digest": "364f8bcf4806917b28a5bade7a212bd01ee4772fc47e64f2931ac7b29cc2ae30"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "daefa494b69b6b73f904d336a7aad216d72ad6eec343c5304f2951dc0674c121"
     },
     {
       "kind": "material",
@@ -381,84 +420,94 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
       "digest": "d04e8dca741772db0fd43565fb9fd906fb69a09070a5581161a3dcbf0da24140"
     },
     {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "b9d4fd78e9180e1d8d6d4b7ec092e15f38292d6c0f1346e2e6483c6dbeca3637"
+    },
+    {
       "kind": "article",
       "key": "omem:apps/server/tests/acp-model.test.ts",
-      "digest": "c830f3a19d1a15546ad5f2c58b7d6bd7aa20cf31b10d8595b24a8748a5683fd6"
+      "digest": "e399036f3cf919d0bb73b599221084aac3228ba05dd60a9d43f42c0e7fc821e3"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/agents.test.ts",
-      "digest": "9c3107e9b6360c5262ab25abf3d9160705f4feabc274016675c60e91558c550f"
+      "digest": "bd008c383b724edbdeb594cd301a403e686c1b76f314ff773e76305fa998f957"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
-      "digest": "9d57879e075e9ad030d7f3ba98c5c933c70cc63aaa566cf8914c81b6004d4529"
+      "digest": "4e705896abb03a593206e9b51ab02cd785bdaa22228cc23047ace3e3ece37f9e"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/app.test.ts",
-      "digest": "b98a023f63b86fa07b3cc3665b870e0f829998c909696a6da416da31a5d67df9"
+      "digest": "03e7b5be86c6002d7d98180c946beb2d04600fdc9027676e7779939ff17fb269"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-      "digest": "8d711b63fede78c5fe8abe22f5ae21e276dc842f8b9a303b6bfda2ca8583904f"
+      "digest": "2377ca526ffa8e6b8356b1314a73c911e23c7d35babcf1181beb79594cad1ec0"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/attention-gate.test.ts",
-      "digest": "4188ead9d9e971a07e2737ee24e7914b976a0973bf99825d8046a5932e4a9c32"
+      "digest": "4580b2833005f4b4c65aa1de9dca8e3c39139c07eedae14376b95a85efe52c11"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/batch2-fixes.test.ts",
-      "digest": "3c6d007936261c1796eda40929e4a976c7422ffbcaf32efe23fb3aaa20c160d8"
+      "digest": "fe5f678ef8492f08126cb829028f967fe1d5789b89f27a88319595857308a223"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-artifacts.test.ts",
-      "digest": "8d42540f860872d9b090ac371ccc194d807be09864a11500ea1c0acc7f186b80"
+      "digest": "424abd75d1cfe1219455b1aec1a422be1df3e2001aee76d0d8471a255afe9305"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-budget.test.ts",
-      "digest": "814b0f68cdd0db6e27b801417b786662966a00ddd41fec569850b921e3d2c0e0"
+      "digest": "2b390b59d7f5b588ae9850614c8f1960ce418fe5363ca3640b95f8bed6f15a95"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
-      "digest": "13c13d9e8439042f7e9bf444b0e03e8ad0dc38f1875843d060e95d4d63cfef37"
+      "digest": "803ce4026997c77bf87a256a72920d7b535675f44ada01af8fd9a84baf4a11d4"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-knowledge-migration.test.ts",
-      "digest": "b8030c80bab1e807ba95632fed3b3400c88d2f1c0fbd5525de6495c66325fe2b"
+      "digest": "2c3a91471aae23e8b8edccdd2fee4e7c01ea31f6d856104a8ba1ea3aafab245d"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-      "digest": "164776e323cb9457a29489e73d64294bc07517499b6df470a5a8c8ab350c43d7"
+      "digest": "0e3d4a09f85f1ca445d2ac51ec2a82d007f35fdd32097b36a3a6e42563935933"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:35:32.665Z",
+    "at": "2026-10-01T03:21:51.733Z",
     "trace": {
-      "runId": "ad9e48d7-b242-429b-a380-13b7b6f55265",
+      "runId": "28550712-4241-47de-80b9-2403ba1b70de",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "d75f7bf4f8f47e0b475200449399a11384173ffebaaf624bcfc0f3825e6ca942",
-      "contextHash": "3b54c24b31bbba64584adb918ce3838b048ac2f73c26d167ace4491253173a95",
+      "promptHash": "045fe4b3099abc79cdce9ff5309912b6c4253ad3b9a55c956d982435759ae83d",
+      "contextHash": "3590f807470a49e6267aa9d64729330c744d2e54b062f282591e26d20308ab82",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e64871021001522017f2afc340f4bd6454f2a59a0f7e41bf54824d1569dbc695",
+      "fingerprint": "7d9223bf7b20dfb96a9cb4971303db6c91928dea77862bf1829f200fbea2b0f3",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -471,11 +520,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee0-c41c-7c31-9afa-bc79859e616b"
+        "01a0f57b-2a94-7af0-99cf-3afa2fa6df17"
       ],
       "usage": {
-        "used": 89628,
-        "size": 760000,
+        "used": 126626,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -483,10 +532,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 234456,
-          "utf8Bytes": 260990,
-          "estimatedTokens": 86997,
-          "budgetedTokens": 108747,
+          "chars": 308052,
+          "utf8Bytes": 355542,
+          "estimatedTokens": 118514,
+          "budgetedTokens": 148143,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -495,17 +544,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:35:46.303Z",
+    "at": "2026-10-01T03:22:16.582Z",
     "trace": {
-      "runId": "0b3c1c23-2d92-4d7e-9ab1-06b70feb4259",
+      "runId": "58c767e1-1ebf-47d1-88e2-c7b8050b4694",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "527cd87c90d23fbe14dacb6b0c43e2baf16d042d4f8d869db1cfc2dde59dd092",
-      "contextHash": "c710433fc7dc5eedc57dfb35eb3fe68c757c9968a1d7eb3cf50eca58f7dfc883",
+      "promptHash": "fad645ba8aa17e2efa17bf7ec7577df2c9ddde73edc64b2475574bc221b8231f",
+      "contextHash": "ccdf4d870e23d0f0661613e3e092f59226a5f24cb1d32c9d00a07d5ce384aeb3",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bb549f1998d668f08237da787937606862846ad60be29ad84aae03171ef136bb",
+      "fingerprint": "0ab7dfc3813f6e8504662c126f88ec19279a79a4d1b958366673eadb8df7329e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -518,11 +567,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eee1-3a77-78c3-975e-42e3403db656"
+        "01a0f57b-b549-7622-bd0c-adc869b11805"
       ],
       "usage": {
-        "used": 86763,
-        "size": 760000,
+        "used": 119431,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -530,10 +579,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 233941,
-          "utf8Bytes": 258969,
-          "estimatedTokens": 86323,
-          "budgetedTokens": 107904,
+          "chars": 304606,
+          "utf8Bytes": 350460,
+          "estimatedTokens": 116820,
+          "budgetedTokens": 146025,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

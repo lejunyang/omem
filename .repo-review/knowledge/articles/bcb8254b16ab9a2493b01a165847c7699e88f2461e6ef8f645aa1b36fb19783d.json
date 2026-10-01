@@ -2,71 +2,84 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
-    "title": "提取角色运行清单",
-    "summary": "该清单声明 extractor 角色的版本、配置档引用、内联技能、ProposalBatch.v1 输出、无工具策略、隔离会话政策和令牌预算。它是期望运行配置，不等同于执行成功或外部 CLI 能力证明。",
+    "title": "提取器角色清单配置",
+    "summary": "该清单声明 extractor 角色第 1 版的提示模板、内联技能、结构化输出合同、工具与会话隔离策略，以及上下文、输出和修复预算。它是运行配置，不足以单独证明角色加载、摘要校验或提取流程已在运行时成功执行。",
     "category": "configuration",
     "sections": [
       {
-        "key": "identity-bundle",
-        "title": "角色身份与技能制品",
-        "body": "清单将角色标识和版本分别固定为 `extractor` 与 `1`，引用 `traex` 配置档和 `prompt.md` 模板。技能包以 `omem-extract`、`extract-1` 标识并采用内联加载，同时记录制品摘要，便于运行时锁定具体技能内容。[[c1]] 这些字段只声明配置关系，是否成功解析仍需运行记录或测试证明。"
+        "key": "role_contract",
+        "title": "角色与输出合同",
+        "body": "清单将角色标识为 `extractor`、版本设为 `1`，并指定 `traex` profile 与 `prompt.md` 模板，说明其用途是按固定角色配置发起提取任务。[[c1]] 输出被约束为 `ProposalBatch.v1`，因此下游预期接收结构化提案批次，而非自由文本；这里是接口声明，并不等同于已验证运行时能够正确产出该合同。[[c2]]"
       },
       {
-        "key": "contract-isolation",
-        "title": "输出合同与会话隔离",
-        "body": "角色输出被声明为 ProposalBatch.v1，工具策略为完全禁用且允许工具列表为空。会话每次均不复用，也不继承用户技能或 MCP，形成面向固定输入的隔离执行边界。[[c2]] 这与提取合同中的提案、证据和不确定性结构相衔接。[[c3]]"
+        "key": "skill_and_isolation",
+        "title": "技能装载与隔离边界",
+        "body": "角色绑定 `omem-extract` 的 `extract-1` 技能包，采用内联装载，并记录制品摘要，用于固定所依赖的技能版本与内容身份。[[c3]] 同时，工具策略禁止全部工具，会话永不复用，也不继承用户技能或 MCP；这使单次提取更易复现，并降低材料内容借助外部能力产生副作用或跨会话污染的风险。[[c4]]"
       },
       {
-        "key": "budget",
-        "title": "预算与修复上限",
-        "body": "清单设置最大上下文 96000、最大输出 24000 token，并允许最多两次修复尝试。[[c4]] 这些数值是配置上限，不代表单次运行必然获得对应模型容量，也没有说明超限、修复失败或不支持配置时的具体错误行为。"
+        "key": "resource_budget",
+        "title": "资源与失败恢复预算",
+        "body": "配置允许最多 96,000 个上下文 token、24,000 个输出 token，并设置最多两次修复尝试。[[c5]] 这些值为宿主执行提供资源上限和结构化输出失败后的恢复边界，但清单没有呈现超限处理、修复触发条件、实际消耗或成功率，因此不能据此判断当前 extractor 的性能与可靠性。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "提取角色与内联技能配置",
-        "reason": "支持角色身份、配置档、提示模板、技能加载方式和制品摘要的说明。",
+        "label": "提取器角色基本配置",
+        "reason": "支持附近关于角色标识、版本、执行 profile 和提示模板的配置说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
-          "startLine": 1,
-          "endLine": 16
+          "startLine": 2,
+          "endLine": 8
         },
-        "quote": "{\n  \"schema_version\": 1,\n  \"role_id\": \"extractor\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-extract\",\n      \"version\": \"extract-1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"75f0112122d4103309c3d69"
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"extractor\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],"
       },
       {
         "key": "c2",
-        "label": "输出、工具与会话策略",
-        "reason": "支持 ProposalBatch.v1 输出、禁用工具和会话隔离边界的说明。",
-        "relation": "explains",
+        "label": "提案批次输出合同",
+        "reason": "支持附近关于 extractor 输出被声明为 ProposalBatch.v1 的论断。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
           "startLine": 17,
-          "endLine": 26
+          "endLine": 17
         },
-        "quote": "  \"output_schema\": \"ProposalBatch.v1\",\n  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+        "quote": "  \"output_schema\": \"ProposalBatch.v1\","
       },
       {
         "key": "c3",
-        "label": "提案批次合同概要",
-        "reason": "支持输出合同包含观察、提案、弃权及提案证据与不确定性字段的关联说明。",
+        "label": "内联提取技能绑定",
+        "reason": "支持附近关于技能名称、版本、装载方式及制品摘要的说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-          "startLine": 3,
-          "endLine": 53
+          "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
+          "startLine": 9,
+          "endLine": 16
         },
-        "quote": "  \"$id\": \"https://omem.invalid/contracts/ProposalBatch.v1\",\n  \"type\": \"object\",\n  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",\n    \"job_id\",\n    \"role_id\",\n    \"observations\",\n    \"proposals\",\n    \"abstentions\"\n  ],\n  \"properties\": {\n    \"schema_version\": { \"const\": 1 },\n    \"job_id\": { \"type\": "
+        "quote": "  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-extract\",\n      \"version\": \"extract-1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"75f0112122d4103309c3d693dceeb1a19bd992abe4b91756e9a893a9b36ee644\"\n    }\n  ],"
       },
       {
         "key": "c4",
-        "label": "提取角色预算配置",
-        "reason": "支持上下文、输出令牌和修复次数上限的说明。",
-        "relation": "explains",
+        "label": "工具与会话隔离策略",
+        "reason": "支持附近关于禁用工具、禁止复用会话及不继承用户扩展能力的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
+          "startLine": 18,
+          "endLine": 26
+        },
+        "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
+      },
+      {
+        "key": "c5",
+        "label": "提取任务资源预算",
+        "reason": "支持附近关于上下文、输出 token 上限和修复次数的配置说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
@@ -78,22 +91,14 @@
     ],
     "questions": [
       {
-        "question": "运行时是否校验 `traex` 配置档支持清单中的上下文、输出预算及修复策略？",
-        "why": "清单声明预算和配置档引用，但没有模型能力发现、拒绝不支持设置或实际 trace 的证据。",
-        "nextStep": "检查配置档解析与能力协商实现，并用超限和不支持设置的行为测试验证失败路径。",
+        "question": "宿主是否会在加载时校验技能制品摘要，并严格执行工具、会话和预算策略？",
+        "why": "本材料只声明摘要和策略，未提供加载器实现、运行 trace 或测试结果，不能把配置意图视为已实现事实。",
+        "nextStep": "检查角色清单加载与执行代码，并用真实 extractor 运行记录核对摘要校验、隔离策略、预算限制和修复次数。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c4"
-        ]
-      },
-      {
-        "question": "内联技能的制品摘要不匹配时，运行时会拒绝启动还是重新生成制品？",
-        "why": "清单保存了摘要，但未描述完整性校验及失败处理。",
-        "nextStep": "核对技能加载器和摘要校验测试，记录明确的错误策略。",
-        "blocking": false,
-        "citationKeys": [
-          "c1"
+          "c3",
+          "c4",
+          "c5"
         ]
       }
     ]
@@ -101,49 +106,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
-      "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/prompt.md",
-      "digest": "95e5365efe5fc2b6acf74b1b4aa3436e115ee2b00f5bbb2bcf56398a2cf2d1fc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/SKILL.md",
-      "digest": "b496b1119b4959702ca15ae7f04af55d900642813af3a614a4bb77cf6f4698b5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml",
-      "digest": "76401f4dbc5664a0393bb4935243faeb38c159fb1e0296c04e9457601cbecdf6"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
       "digest": "f292d7b1582aae1f2ac92c146cfa1adc98c71b4f3ee52ab4bac4fadc30e821fd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-      "digest": "763b50103fdd95fef13b764dd1e7ca464c79fe7a860f6337e6dbbe2d56448b50"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:46:31.562Z",
+    "at": "2026-10-01T02:47:38.866Z",
     "trace": {
-      "runId": "fd6934d0-7425-473c-bb8c-c2a05c3176cb",
+      "runId": "b90e268f-eccd-4aad-a509-d55f3820b131",
       "roleId": "material-analyst",
       "roleVersion": "1",
       "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "24a2bdd5b82a50dcef62529139a824274131d6258e7fa6151636c47ea3c9afbf",
-      "contextHash": "794e2286e04e1e1101da64af54fe644ecebbb658e1fdcc3821f9af7f56831c7b",
+      "promptHash": "3d72592802465fefefdb873cc21eb71550f748f3d940d30b98d11d4d88446805",
+      "contextHash": "85f19e75e67c4873c163896ffebe40b95523118053a870c80e5bd311acb73847",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "49551b3df3c230fa79adcac1a9e70a3556e89cb3d4d180404458e7d649fe5dbd",
+      "fingerprint": "d657979c00afc2baa23455633b03095ea15ac994101794c196a8ac41b487c1c7",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -156,11 +136,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb3-9ba5-7c43-ba95-3acb0bf60f29"
+        "01a0f55c-00d4-7790-98d9-23c3de6b3961"
       ],
       "usage": {
-        "used": 24511,
-        "size": 760000,
+        "used": 21516,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -168,10 +148,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 24713,
-          "utf8Bytes": 27959,
-          "estimatedTokens": 9320,
-          "budgetedTokens": 11650,
+          "chars": 6944,
+          "utf8Bytes": 8564,
+          "estimatedTokens": 2855,
+          "budgetedTokens": 3569,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -180,17 +160,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:46:59.017Z",
+    "at": "2026-10-01T02:47:53.159Z",
     "trace": {
-      "runId": "87d870ca-ff46-41fc-9c42-4eeee3e0f866",
+      "runId": "fc30cb08-45d1-45b5-9368-1e0dd4dac9ac",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "6c0ced0bec75ba6bbf99d1ce67eaa051da842ccae342feecc6aa49be60c4594d",
-      "contextHash": "78371b25676653ad69abee0350800c615305e3e40f006695b500805da7024919",
+      "promptHash": "45baf50a14d0ea91587f0a74bd6a610020824a2cced98e5a4a0b92910116d9b0",
+      "contextHash": "ba23773a15956dbfed326825d284a89945479d161a9d116f687008b30f9cbdc7",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "00060cd282b39344704d580d841edd3a30624b8bd6f3d949b1ae55c486a20625",
+      "fingerprint": "8a68f191a5b658471b635dc5701f672cd4b2745caaaa79bebf4ee1b644f14c5d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,11 +183,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-59ca-7070-9b77-6bc267dd7841"
+        "01a0f55c-5376-7c33-997d-af1f524b353f"
       ],
       "usage": {
-        "used": 27897,
-        "size": 760000,
+        "used": 21286,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -215,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 38202,
-          "utf8Bytes": 50488,
-          "estimatedTokens": 16830,
-          "budgetedTokens": 21038,
+          "chars": 7839,
+          "utf8Bytes": 10295,
+          "estimatedTokens": 3432,
+          "budgetedTokens": 4290,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

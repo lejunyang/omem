@@ -2,135 +2,242 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/dev-review.ts",
-    "title": "个人模式与 Repo Review 的开发进程编排器",
-    "summary": "统一选择并传递 API/Web 端口，启动对应 API 与专用 Vite 子进程，以健康端点作为 API 就绪门禁，并在信号、启动超时或任一子进程退出时成组关闭和传播退出状态。",
-    "category": "workflow",
+    "title": "个人模式与仓库评审模式的开发进程编排",
+    "summary": "该脚本统一启动个人 omem 与 repo-review 的 API、Web 开发进程，负责端口预检与传递、健康检查、子进程故障传播，以及跨平台的成组关闭；它解决双进程部分启动、代理错连和残留 watcher 等开发期生命周期问题。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "mode_boot",
-        "title": "模式选择与启动链路",
-        "body": "编排器以 `OMEM_DEV_MODE` 区分 review 和 personal：前者默认 5180/5181、启动 review API，后者默认 4317/5173、启动个人 API并开启 Node watch。它先调用端口选择器并禁止 API 与 Web 端口相同，再将最终端口注入服务和 Vite 代理环境；两个子进程都由 Node 直接启动。[[c1]] 非 Windows 平台设置独立进程组，以便关闭时向整组发送信号。"
+        "key": "purpose-and-mode",
+        "title": "作用与模式选择",
+        "body": "脚本是个人模式和仓库评审模式共用的开发入口：`OMEM_DEV_MODE` 为 `personal` 时启动个人服务，否则进入 repo-review，并据此选择标签、默认端口、服务入口和健康检查路径。[[c1]] 它把当前工作目录作为两个子进程的根目录，并直接使用当前 Bun 可执行文件，因而假定调用者已在仓库根目录用 Bun 启动此脚本。[[c2]]"
       },
       {
-        "key": "readiness",
-        "title": "就绪判定与失败传播",
-        "body": "任一子进程触发 `error` 或 `exit` 都进入统一 shutdown，并依据退出码或信号计算父进程状态。编排器为 API 健康轮询设置 60 秒截止时间，单次 fetch 最多等待 2 秒，每次失败后间隔 500 毫秒；若请求在截止前已开始，在途请求和随后间隔可能使实际返回略超 60 秒。[[c2]] 只有 API 健康后才打印访问地址；Web 没有独立 HTTP 就绪探测，仅要求 Vite 子进程未提前退出。"
+        "key": "startup-flow",
+        "title": "端口预检、进程启动与就绪判定",
+        "body": "启动前先通过端口模块检查 API 与 Web 端口；显式配置非法或被占用时快速失败，默认端口被占用时可改用系统分配端口。随后还拒绝 API 与 Web 选到同一端口，避免半启动后才暴露监听冲突。[[c3]]\n\n预检通过后，脚本分别启动 API 和 Vite 包装脚本，并把选定端口同时注入后端、Web 代理环境。个人 API 带 `--watch`，评审 API 则直接运行专用入口。[[c4]] 启动并不等于就绪：它最多轮询健康端点 60 秒，每次请求限时 2 秒；成功后才打印访问地址，超时则按失败路径关闭全部子进程。[[c5]]"
       },
       {
-        "key": "shutdown",
-        "title": "跨平台关闭与边界条件",
-        "body": "关闭路径有重入保护：Windows 使用 `taskkill /T /F`，其他平台向子进程组发送 SIGTERM。两个 `waitForExit` 并行执行，各自最多约 5 秒，外层另有 6.5 秒竞速兜底。[[c3]] 非 Windows 超时后不会升级为 SIGKILL，编排器也不自动重启子进程；顶层异常日志固定写作 `repo-review`，即使处于 personal 模式也是如此。"
+        "key": "shutdown-and-failure",
+        "title": "关闭协同与故障传播",
+        "body": "任一子进程报错或退出都会触发统一关闭，并把正常退出码或信号导致的失败转换为编排器退出码；收到 `SIGINT`、`SIGTERM` 时则以成功码收尾。[[c6]] 关闭过程具备重入保护：首次调用终止 API 与 Web，后续并发关闭请求等待同一 Promise，防止重复清理和竞态。[[c7]]\n\nWindows 使用 `taskkill /T /F` 清理进程树；其他平台向负 PID 发送 `SIGTERM`，依赖子进程以独立进程组启动。等待子进程退出有单个 5 秒界限，整体另设 6.5 秒兜底，之后父进程直接退出。[[c8]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界条件与模块关系",
+        "body": "该脚本与 `dev-ports` 的关系有明确源码依据：导入并调用 `selectDevPort`，后者通过临时监听 `127.0.0.1` 验证端口；默认值冲突时递归请求端口 `0`，显式值冲突则报错。[[c9]] 但端口检查和真正启动子进程之间仍存在竞态窗口，其他进程可能抢占刚释放的端口。\n\n当前材料没有测试文件，因此无法确认关闭超时、信号传播、Windows 进程树、健康检查失败以及端口竞态是否有自动化断言。另一个可见限制是顶层异常日志固定写作 `repo-review: fatal`，即使处于个人模式也不会使用动态标签。[[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "开发模式、端口与子进程启动",
-        "reason": "支持 personal/review 分支、默认端口、入口文件、watch 差异及端口环境传递的说明。",
+        "label": "开发模式与默认端口分支",
+        "reason": "支持脚本按个人或仓库评审模式选择标签、端口变量和后续运行分支的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 6,
+          "endLine": 9
+        },
+        "quote": "const review = process.env.OMEM_DEV_MODE !== \"personal\";\nconst label = review ? \"repo-review\" : \"omem\";\nlet API_PORT: number;\nlet WEB_PORT: number;"
+      },
+      {
+        "key": "c2",
+        "label": "仓库根目录与 Bun 运行时",
+        "reason": "支持两个子进程共享当前工作目录并使用当前可执行文件的运行环境假设。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 10,
+          "endLine": 11
+        },
+        "quote": "const repoRoot = process.cwd();\nconst bun = process.execPath;"
+      },
+      {
+        "key": "c3",
+        "label": "启动前端口选择与冲突检查",
+        "reason": "支持 API、Web 端口预检、模式相关默认值、同端口拒绝以及失败退出流程。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/dev-review.ts",
           "startLine": 81,
-          "endLine": 112
+          "endLine": 91
         },
         "quote": "async function main(): Promise<void> {\n  // Preflight: fail fast with a clear message instead of letting the API/Vite\n  // child die with an opaque EADDRINUSE after a partial boot.\n  try {\n    API_PORT = await selectDevPort(review ? process.env.REVIEW_PORT : process.env.OMEM_PORT, review ? 5180 : 4317, `${label} API`);"
       },
       {
-        "key": "c2",
-        "label": "子进程失败与 API 健康门禁",
-        "reason": "支持失败传播、60 秒轮询截止、单次请求超时、轮询间隔和就绪地址输出的精确描述。",
-        "relation": "supports",
+        "key": "c4",
+        "label": "API 与 Web 子进程启动",
+        "reason": "支持个人模式 watch、评审专用入口以及端口环境变量传递给后端和代理的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 93,
+          "endLine": 112
+        },
+        "quote": "  apiChild = spawn(\n    bun,\n    [...(review ? [] : [\"--watch\"]), review ? \"apps/server/src/review/main.ts\" : \"apps/server/src/main.ts\"],\n    { cwd: repoRoot, stdio: \"inherit\", detached: process.platform !== \"win32\",\n      env: { ...process.env, OMEM_PORT: String(API_PORT), REVIEW_PORT: String(API_PORT), REVIEW_WEB_POR"
+      },
+      {
+        "key": "c5",
+        "label": "健康检查与就绪输出",
+        "reason": "支持健康端点选择、60 秒等待窗口、请求超时、失败关闭和成功后输出地址的流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 131,
+          "endLine": 154
+        },
+        "quote": "  // Wait for the API health endpoint before printing ready URLs. The API does a\n  // (possibly incremental) sync on boot, so allow up to 60s.\n  const healthUrl = `http://127.0.0.1:${API_PORT}${review ? \"/api/review/health\" : \"/api/health\"}`;\n  const deadline = Date.now() + 60_000;\n  let healthy = false;\n  while (Date."
+      },
+      {
+        "key": "c6",
+        "label": "子进程退出及系统信号处理",
+        "reason": "支持子进程错误或退出触发整体关闭，以及 SIGINT、SIGTERM 的退出码语义。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:scripts/dev-review.ts",
           "startLine": 114,
-          "endLine": 157
+          "endLine": 129
         },
         "quote": "  const onChildExit =\n    (which: \"API\" | \"web\") =>\n    (code: number | null, signal: NodeJS.Signals | null) => {\n      console.log(\n        `${label}: ${which} exited code=${code ?? \"-\"} signal=${signal ?? \"-\"}`,\n      );\n      if (shuttingDown) return;\n      const exitCode = code ?? (signal ? 1 : 0);\n      void shutd"
       },
       {
-        "key": "c3",
-        "label": "跨平台有界进程树关闭",
-        "reason": "支持重入保护、Windows 与非 Windows 的关闭方式，以及每个子进程等待上限和外层兜底。",
+        "key": "c7",
+        "label": "可重入关闭编排",
+        "reason": "支持关闭过程复用同一 Promise、终止两个子进程并最终退出父进程的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 54,
+          "endLine": 75
+        },
+        "quote": "let shuttingDown = false;\nlet shutdownPromise: Promise<void> | null = null;\n\nasync function shutdown(reason: string, exitCode: number): Promise<never> {\n  if (shuttingDown) {\n    // Re-entrant call (e.g. the other child exiting while we are already\n    // tearing down): wait for the first shutdown to finish the job.\n  "
+      },
+      {
+        "key": "c8",
+        "label": "跨平台进程树终止与有界等待",
+        "reason": "支持 Windows 与非 Windows 的不同终止方式，以及子进程退出等待存在时间上限。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/dev-review.ts",
           "startLine": 17,
-          "endLine": 75
+          "endLine": 47
         },
         "quote": "function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {\n  return new Promise((resolve) => {\n    if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return resolve();\n    let done = false;\n    const finish = () => {\n      if (done) return;\n      done = true;\n      c"
+      },
+      {
+        "key": "c9",
+        "label": "开发端口选择器",
+        "reason": "解释被编排脚本调用的端口模块如何校验范围、探测占用，并区分默认端口与显式端口冲突。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-ports.ts",
+          "startLine": 3,
+          "endLine": 24
+        },
+        "quote": "/** Defaults may move; explicit ports fail loudly. The chosen port is passed to\n * both the backend and proxy, so the browser never connects to another API. */\nexport async function selectDevPort(value: string | undefined, fallback: number, label: string): Promise<number> {\n  const port = value === undefined ? fallback"
+      },
+      {
+        "key": "c10",
+        "label": "顶层异常处理",
+        "reason": "支持未捕获异常会固定输出 repo-review 标签并以失败码退出这一边界说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/dev-review.ts",
+          "startLine": 160,
+          "endLine": 163
+        },
+        "quote": "void main().catch((err) => {\n  console.error(\"repo-review: fatal\", err);\n  process.exit(1);\n});"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "端口预检释放临时监听后，到 API 或 Web 真正绑定端口之前的抢占竞态，是否需要通过子进程启动重试或保留监听句柄来消除？",
+        "why": "当前流程先由端口模块关闭探测 server，再启动真实服务；材料未显示对间隙内 EADDRINUSE 的专门恢复策略。",
+        "nextStep": "补充并发抢占场景的集成测试，再决定是增加有限重试，还是调整为可向子进程移交监听资源的架构。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c9"
+        ]
+      },
+      {
+        "question": "非 Windows 平台的所有启动环境是否都保证 Bun 子进程成为以自身 PID 为组 ID 的独立进程组？",
+        "why": "清理逻辑向负 PID 发送 SIGTERM，并依赖 spawn 的 detached 配置；材料没有覆盖各目标平台的行为测试。",
+        "nextStep": "在支持的 Linux、macOS 环境执行带 watcher 后代进程的退出测试，并确认没有残留进程。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c8"
+        ]
+      },
+      {
+        "question": "顶层 fatal 日志是否应在个人模式下显示 `omem` 标签？",
+        "why": "正常日志使用动态 label，但 main 的拒绝处理固定写为 repo-review，可能造成个人模式诊断信息误导。",
+        "nextStep": "确认日志兼容要求；若无外部解析依赖，改为复用 label 并补充个人模式异常测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c10"
+        ]
+      },
+      {
+        "question": "非 Windows 平台的所有目标运行环境是否都保证 detached Bun 子进程以自身 PID 作为进程组 ID，并能覆盖 watcher 后代？",
+        "why": "清理逻辑向负 PID 发送 SIGTERM，虽然源码明确设置 detached 并说明该意图，但材料没有提供各目标平台上的行为测试。",
+        "nextStep": "在支持的 Linux、macOS 环境执行带 watcher 后代进程的退出测试，并确认没有残留进程。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c8"
+        ]
+      },
+      {
+        "question": "顶层 fatal 日志是否应在个人模式下显示 omem 标签？",
+        "why": "常规日志使用动态 label，但 main 的拒绝处理固定输出 repo-review，可能令个人模式下的诊断信息产生误导。",
+        "nextStep": "确认日志兼容要求；若无外部解析依赖，改为复用动态 label 并补充个人模式异常测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c1",
+          "c10"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:scripts/browser-smoke.ts",
-      "digest": "c07b665254ec5f76e8d9b70dd2d64e4e50c982ba3a71ecad8970bacbbdc3d315"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+      "key": "omem:scripts/dev-review.ts",
+      "digest": "dde7c0e6e375af50da5980679928c199db2dc564d05230ef9ab194fff85fd5b4"
     },
     {
       "kind": "material",
       "key": "omem:scripts/dev-ports.ts",
       "digest": "624ee00bd8d59507f69f2f7e86795c64ec90598006d0663ef53ed29904bb49f4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/dev-review-vite.ts",
-      "digest": "e9097a6e0a8df170792e77bec8ec9b192fb73a47d4ee49977a811297c2ea6592"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/dev-review.ts",
-      "digest": "5d20a7abac1995f94f01ac7e4205b9c7da33058fbe6c992bd65d2e2924bbc08f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/dev.ts",
-      "digest": "f91cb405aa1319d3c36b139dd854f3919972fcab6ace1bb0555a6d23df43e728"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
-      "digest": "48c6a4af946f8fc2ea78059cb2e1fd9c4a6cf666c9be2dec6e795c5899ec3da1"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:29:54.529Z",
+    "at": "2026-10-01T02:52:19.488Z",
     "trace": {
-      "runId": "115fc223-b7b0-4428-9168-a2fd6cab747f",
+      "runId": "b4bb0bd6-f4b8-4cf4-944a-f08fda397342",
       "roleId": "code-analyst",
       "roleVersion": "1",
       "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "81f8c7f9b77cf1d6f3f77be7be5acb26d0b9f7b997fc2e68dc2168349079507e",
-      "contextHash": "9f0aee8ab30aaf7f1a84ed8085cb7648e936d0e24367ff7fdaf92e478b23e253",
+      "promptHash": "f58242c61074fecd3a3e721a5243bf5e003d87876e3a1307d97b106961190edf",
+      "contextHash": "7c01e74a0ee4ca21f401696ea31a2a1c9b035d7db72e5103ca2580aa4daf5186",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3dcf0cc8e5d036a7fba5f590bec1d54f5324c5e8cddeda976bdad279695256a8",
+      "fingerprint": "cbcbedea2340817f1061e4d5432deb2a0325b407456bc32a5ee5faf18ffc0d8c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -143,11 +250,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea4-bfa0-78d3-b861-73b383949881"
+        "01a0f560-2eb5-7c80-adb9-c6730488087a"
       ],
       "usage": {
-        "used": 43374,
-        "size": 760000,
+        "used": 24710,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -155,10 +262,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 90593,
-          "utf8Bytes": 99178,
-          "estimatedTokens": 33060,
-          "budgetedTokens": 41325,
+          "chars": 14627,
+          "utf8Bytes": 16461,
+          "estimatedTokens": 5487,
+          "budgetedTokens": 6859,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -167,17 +274,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:30:09.595Z",
+    "at": "2026-10-01T02:52:38.155Z",
     "trace": {
-      "runId": "6e5208df-6021-4f6a-aa1c-cd5868ecf6f1",
+      "runId": "30d95b10-d0ef-4c59-b290-fb970c685483",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e4616fd214d6edd4df68c6d522ea87214a6db197c96ac969a9db2e1e0545016b",
-      "contextHash": "d23434bddfd55e51eed66b70c264f90c1356400a15d3d66ca35c34b1f9617a1f",
+      "promptHash": "a2682b0e4b2f73cbd87c108134c5396427a6cae6a2e90087dd5046c44ddc4c0b",
+      "contextHash": "d24b1fbf8ca4b77fa56607cfb6ce5395b9dc31ed19f18df0b1498c6e5ddce76a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3f7f22a1e38332f943bfec1b575fbfb7e3e72d86bc6a21f316507da637d295cc",
+      "fingerprint": "2bec50d311c13b188c0d434a14f129c630cf043551abd655285cdd51799c3ba0",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -190,11 +297,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea5-2348-7470-a66c-139829ea3d5b"
+        "01a0f560-a11b-7592-a109-b5a049a4b6e7"
       ],
       "usage": {
-        "used": 40464,
-        "size": 760000,
+        "used": 25356,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -202,10 +309,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 87841,
-          "utf8Bytes": 94904,
-          "estimatedTokens": 31635,
-          "budgetedTokens": 39544,
+          "chars": 19332,
+          "utf8Bytes": 23424,
+          "estimatedTokens": 7808,
+          "budgetedTokens": 9760,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

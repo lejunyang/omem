@@ -2,98 +2,169 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-    "title": "受控学习流水线端到端测试",
-    "summary": "验证捕获材料经过独立提取、核验、策略评估后自动应用并生成单一回执，同时覆盖重启重放、陈旧输入、停止重试、批量门禁和 worker 职责隔离。",
+    "title": "受控学习流水线的集成、恢复与批量门控测试",
+    "summary": "该测试以临时 SQLite 数据目录和 ACP 角色夹具验证学习流水线的持久化路径：捕获经过独立提取与复核会话后，在成功路径中产生已应用提案、待办和唯一应用回执；重启及重复投递不重复产生已断言的副作用；过期输入被拒绝，停机中的作业转为可重试；批量变更按去重后的影响规模整体门控；学习 worker 不消费知识角色作业。此前将成功路径概括为“原子应用”的结论已被更精确的表述替代，因为现有用例没有注入应用阶段故障或断言事务回滚。",
     "category": "tests",
     "sections": [
       {
-        "key": "end-to-end",
-        "title": "独立角色与自动应用",
-        "body": "测试通过固定 ACP 代理把 HTTP capture 推入真实学习流水线。提取与核验分别形成成功 job，并使用两个不同会话；受支持的提案最终自动应用为任务，只生成一张应用回执，健康接口报告学习 worker 正常。由此可见 `LearningPipeline` 已串联 Store、MemoryService、FeedbackService 与外部角色运行时，而不只是校验协议夹具。[[c1]]\n\n重启场景先完成提取并留下核验工作，关闭后重新打开同一数据库继续处理；任务和回执各保持一份。再次人工排入核验重放也不会增加任务或回执，说明持久 job 与回执共同约束重复效果。[[c2]] 这些断言证明自动应用和重放幂等，但没有在应用事务内部注入失败，因而不单独证明原子回滚。"
+        "key": "purpose_setup",
+        "title": "测试目标与受控环境",
+        "body": "该文件验证捕获入口、持久化作业、独立角色会话、策略判断和最终副作用能否组成可恢复、可观察的学习闭环。每个用例使用独立临时目录，并在结束后清理，降低数据库状态串扰；ACP profile 由当前 Node 进程启动固定角色夹具，超时为三秒，因此结论限定于受控协议和宿主接线。[[c1]]\n\n辅助构造会写入来源、操作者验证、事件时间及 producerKind，并组合 Store、MemoryService、FeedbackService 与 LearningPipeline；较短轮询间隔用于加快异步集成测试。[[c2]] 这说明测试跨越 HTTP 装配、作业处理和持久状态，但不能仅凭模块组合推断未被断言的事务性质。"
       },
       {
-        "key": "failure-and-policy",
-        "title": "失败恢复、批量门禁与职责隔离",
-        "body": "若来源在 job 执行前已有新修订，旧 job 会以 `STALE_JOB_INPUT` 失败，新修订对应工作仍可继续；停止 worker 时，正在执行的超时任务回到可重试状态，而非被标记为永久失败。[[c3]]\n\n批量策略按去重后的联合影响评估：12 个不同创建整体进入待决策，只形成一个 AttentionCase 且没有实体落地；12 个同实体创建的影响计为 1，其中一项应用，其余保留为重复。[[c4]] 普通学习 worker 不领取 `knowledge:*` job，避免与知识角色争抢。[[c5]] 当前仍缺少跨进程领取竞争、租约过期接管以及提取、核验和应用边界崩溃的系统性验证。"
+        "key": "successful_path",
+        "title": "成功路径、独立会话与幂等恢复",
+        "body": "首个场景从 `/api/captures` 发起请求，最终断言生成预期待办，提取与复核两类作业均成功且使用不同 session；提案状态为 `applied`、策略结果为 `auto_apply`，数据库中应用回执数量为一，健康接口报告流水线运行且无错误。[[c3]] 这些断言支持“成功路径完成应用且只产生一个回执”，但没有应用中途故障注入或回滚检查，因此此前“证明原子应用”的结论被替代。\n\n恢复场景先完成提取，再关闭并重开同一数据目录，由新流水线处理持久化的复核作业；随后重放同一复核输入，任务数和回执数仍保持为一。[[c4]] 这直接证明所覆盖结果的跨重启恢复与重复投递幂等，但不等同于证明任意副作用组合都具备事务原子性。"
+      },
+      {
+        "key": "failure_batch_isolation",
+        "title": "失败边界、批量门控与 worker 隔离",
+        "body": "过期场景通过同一 externalId 写入新修订，使旧作业以 `STALE_JOB_INPUT` 失败，同时当前输入仍可继续形成任务；长运行夹具在停机时被中断后，作业进入 `retry_wait` 并标记为 transient。[[c5]] 用例未覆盖实际退避时长、最大重试次数或最终死信结果。\n\n批量策略按整个 ChangeSet 的去重影响执行：十二个不同实体的 create 全部停放为 `awaiting_decision`，合并成一个 AttentionCase，且没有应用回执或 active memory。[[c6]] 十二个相同实体、相同陈述的 create 则折算为影响一，仅一条 applied，其余十一条 retained，也不生成决策卡。[[c7]] 两端用例尚未说明部分重复、create/update/delete 混合或应用阶段异常时的整体一致性。\n\n此外，学习流水线面对 `knowledge:code-analyst` 作业时不领取、不创建 attempt，使作业继续保持 queued，明确了学习 worker 与知识 worker 的 kind 隔离。[[c8]]"
+      },
+      {
+        "key": "coverage_limits",
+        "title": "证据边界与现场验证缺口",
+        "body": "这些测试使用真实 Store、Fastify 注入和子进程角色夹具，能够支持应用进程内路由接线、作业状态变化以及被明确查询的数据库结果。MemoryService 的结果类型也区分策略结果、可选应用回执和批量延后标记，说明“是否应用”和“批量门控”是可单独观察的结果。[[c9]]\n\n不过测试 profile 的 command 是当前 Node 可执行文件，参数指向固定夹具。[[c1]] 因此测试通过不能外推为生产 ACP CLI 已安装、认证有效、指定模型与 effort 受支持，也不能覆盖真实模型在超时、长上下文或非规范输出下的表现。现场能力验证应与这组夹具集成测试分别记录。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "捕获、独立角色与自动应用断言",
-        "reason": "支持两个独立角色会话、任务落地、单一应用回执及学习健康状态的说明，不将其扩大为事务原子性证明。",
+        "label": "临时目录与 ACP 测试配置",
+        "reason": "支持测试隔离方式以及由 Node 启动固定 ACP 夹具、设置三秒超时的结论。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 11,
+          "endLine": 31
+        },
+        "quote": "const directories: string[] = [];\nconst temporary = (prefix: string) => {\n  const directory = mkdtempSync(join(tmpdir(), prefix));\n  directories.push(directory);\n  return directory;\n};\nafterEach(() => {\n  for (const directory of directories.splice(0))\n    rmSync(directory, { recursive: true, force: true });\n});\n\nconst "
+      },
+      {
+        "key": "c2",
+        "label": "捕获与流水线辅助构造",
+        "reason": "支持捕获 provenance 字段以及 Store、记忆、反馈和学习流水线的组合方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 33,
+          "endLine": 63
+        },
+        "quote": "const capture = (store: Store, externalId = \"pipeline-source\") =>\n  store.capture({\n    source: \"manual\",\n    externalId,\n    title: \"Controlled worker input\",\n    parts: [{ type: \"text\", text: \"PIPELINE_TASK\" }],\n    context: { application: \"pipeline-test\" },\n    provenance: {\n      collectorId: \"pipeline-test\",\n     "
+      },
+      {
+        "key": "c3",
+        "label": "HTTP 捕获成功路径断言",
+        "reason": "支持独立提取与复核 session、已应用提案、唯一回执和健康状态；引用范围没有应用故障注入，因而也限定了结论边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 65,
-          "endLine": 148
+          "endLine": 147
         },
         "quote": "describe(\"B2-08 controlled learning pipeline\", () => {\n  it(\"runs capture through independent extractor/verifier sessions and atomic application\", async () => {\n    const directory = temporary(\"omem-learning-app-\");\n    const built = await buildApp({\n      dataDir: directory,\n      agentCwd: join(directory, \"agent\"),\n "
       },
       {
-        "key": "c2",
-        "label": "重启续跑与重放幂等断言",
-        "reason": "支持持久化核验 job 在重启后继续，以及重复核验不增加任务和应用回执。",
+        "key": "c4",
+        "label": "重启恢复与重复复核幂等",
+        "reason": "支持持久化复核作业在重启后恢复，并且重放不重复增加任务或应用回执。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 150,
-          "endLine": 212
+          "endLine": 211
         },
         "quote": "  it(\"resumes a persisted verifier job after restart without duplicate effects\", async () => {\n    const directory = temporary(\"omem-learning-restart-\");\n    let store = new Store(directory);\n    const captured = capture(store, \"pipeline-restart\");\n    const first = pipeline(store, join(directory, \"agent-first\"));\n    "
       },
       {
-        "key": "c3",
-        "label": "陈旧输入与优雅停止断言",
-        "reason": "支持旧修订 job 被拒绝，以及停止期间运行任务转回可重试状态。",
+        "key": "c5",
+        "label": "过期输入与优雅停机",
+        "reason": "支持旧修订作业失败、当前输入继续处理，以及停机中的作业转为可重试状态。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 214,
-          "endLine": 282
+          "endLine": 281
         },
         "quote": "  it(\"rejects stale input and preserves graceful shutdown as retryable\", async () => {\n    const directory = temporary(\"omem-learning-stale-\");\n    const store = new Store(directory);\n    try {\n      const stale = capture(store, \"pipeline-stale\");\n      store.capture({\n        source: \"manual\",\n        externalId: \"pip"
       },
       {
-        "key": "c4",
-        "label": "批量影响门禁与去重断言",
-        "reason": "支持不同实体批量整体待决策、单一 AttentionCase，以及同实体去重后仅应用一项。",
+        "key": "c6",
+        "label": "不同实体批量变更门控",
+        "reason": "支持十二条不同 create 整批停放、只生成一个 AttentionCase，且不产生回执或 active memory。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
-          "startLine": 285,
-          "endLine": 405
+          "startLine": 308,
+          "endLine": 359
         },
-        "quote": "describe(\"F: G17 evaluateBatch wired into the real verify path\", () => {\n  const captureBatch = (store: Store, text: string, externalId: string) =>\n    store.capture({\n      source: \"manual\",\n      externalId,\n      title: \"Batch source\",\n      parts: [{ type: \"text\", text }],\n      context: { application: \"batch-test\""
+        "quote": "  it(\"gates 12 distinct creates as one ChangeSet: parked, one AttentionCase, nothing applied\", async () => {\n    const directory = temporary(\"omem-batch-distinct-\");\n    const store = new Store(directory);\n    try {\n      captureBatch(store, \"BATCH_CREATE_DISTINCT\", \"batch-distinct\");\n      const p = pipeline(store, jo"
       },
       {
-        "key": "c5",
-        "label": "知识角色任务隔离断言",
-        "reason": "支持普通学习 worker 不领取知识角色 job 的职责边界。",
+        "key": "c7",
+        "label": "同实体批量创建去重",
+        "reason": "支持十二条相同实体提案按影响一处理，仅应用一条并保留十一条重复项。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/learning-pipeline.test.ts",
+          "startLine": 365,
+          "endLine": 400
+        },
+        "quote": "  it(\"dedupes 12 same-entity creates to impact=1: auto-applied, no AttentionCase\", async () => {\n    const directory = temporary(\"omem-batch-same-\");\n    const store = new Store(directory);\n    try {\n      captureBatch(store, \"BATCH_CREATE_SAME\", \"batch-same\");\n      const p = pipeline(store, join(directory, \"agent-sam"
+      },
+      {
+        "key": "c8",
+        "label": "知识角色作业隔离",
+        "reason": "支持学习流水线不领取知识角色作业的 worker kind 边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/learning-pipeline.test.ts",
           "startLine": 407,
-          "endLine": 417
+          "endLine": 416
         },
         "quote": "it(\"leaves knowledge-role work for the knowledge worker\", async () => {\n  const directory = temporary(\"omem-learning-kind-isolation-\");\n  const store = new Store(directory);\n  const p = pipeline(store, join(directory, \"agents\"));\n  try {\n    const { job } = store.jobs.enqueue({ kind: \"knowledge:code-analyst\", inputRefs"
+      },
+      {
+        "key": "c9",
+        "label": "学习策略结果结构",
+        "reason": "说明评估结果分别记录策略、应用回执和批量延后状态，支持对应用结果与门控结果分别观察。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 45,
+          "endLine": 60
+        },
+        "quote": "export type EvaluationResult = {\n  proposalId: string;\n  proposalDigest: string;\n  evidenceVerdict: \"valid\" | \"invalid\" | \"ambiguous\";\n  policy: PolicyOutcome;\n  reasons: string[];\n  receipt?: ReturnType<Store[\"applications\"][\"applyMemory\"]>;\n  decisionId?: string;\n  /** F5: the create proposal was matched against exis"
       }
     ],
     "questions": [
       {
-        "question": "多个学习 worker 并发运行且在提取、核验或应用之间崩溃时，租约与回执能否在所有阶段维持恰好一次的可观察效果？",
-        "why": "现有重启和重放发生在单 worker 顺序执行环境，没有跨进程领取竞争证据。",
-        "nextStep": "增加双进程竞争、租约过期接管以及各事务边界注入崩溃的集成测试。",
+        "question": "真实 ACP CLI、认证状态以及目标模型和 effort 组合是否另有现场验证？",
+        "why": "本文件使用 Node 启动固定角色夹具，只覆盖受控 ACP 协议与宿主集成，无法确认生产外部 CLI、认证和模型服务当前可用。",
+        "nextStep": "使用实际 ACP 配置单独执行 live check，记录退出码、会话 trace、能力协商结果和失败分类，并与夹具测试分开报告。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c3"
+          "c1"
+        ]
+      },
+      {
+        "question": "批量 ChangeSet 在部分重复、create/update/delete 混合或应用阶段异常时，是否仍保持整体策略一致性和事务原子性？",
+        "why": "现有批量用例只覆盖十二个不同 create 与十二个相同 create 两种极端；成功路径也没有注入应用阶段故障，不能据此确认中途失败后的整体回滚。",
+        "nextStep": "补充混合批次及应用故障注入测试，断言提案状态、AttentionCase、memory 版本和 application receipt 在失败前后的完整一致性。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c6",
+          "c7"
         ]
       }
     ]
@@ -101,69 +172,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/lark-realtime.test.ts",
-      "digest": "8c9f2eeca9a0ad0586572c2ac64d5b5f35a631f2f6199f10ba0db0474c680508"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/lark-rich-parts.test.ts",
-      "digest": "c527d049388fa485c086e91af83054f6983c0dd9bdc338f6cc60643f46042600"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/lark-runtime.test.ts",
-      "digest": "d012868f2a7037e3d0e8b4be9a1af3dd29beb77235639fbeb21de9201329edf6"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/learning-pipeline.test.ts",
       "digest": "ccc264f5b3eb1f8c6062722ced2d70a544efb31e3fc38d81fdc823d41afa252e"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/learning-refresh.test.ts",
-      "digest": "fe2dad4b8162d09a09f981b6307cfca63749a5b369e315629ab44c31b6be3d20"
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/migrations.test.ts",
-      "digest": "bc5b4990d965d39d896c285d9548ca5b428a32b4149cf58e4713876379c78430"
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "e8a4ec3f6e8619195e7710c33738c95ae371a7aad7f8cef4368556452bbd072f"
     },
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
-      "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "411512447121280c38d11a4c5aa7c8b67916a7ec8e540d59c746101bc13e2e3e"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:41:25.665Z",
+    "at": "2026-10-01T02:33:12.969Z",
     "trace": {
-      "runId": "a2edffe1-1898-45f7-a478-60dd8b1aaef6",
+      "runId": "972d9ead-aad8-40f9-a6c4-dbe9ad0cc09a",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "3fa90c8bcbc8e4ca71e9e9469a9a332975fd449cc46584540bf3258d74159e33",
-      "contextHash": "f6be53512ce24a1a478978535e046e261d09d1379cc14969c84b09b351b112f6",
+      "promptHash": "0eb257fa01b77acea852af33a4decd723281fadd3f747ac957c5dfb62fc4fa80",
+      "contextHash": "4fb91d0684d6e28270d363899e8ecf4be9f76eb388caaafbfaaf45011aa8f16c",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "43a78522c6e7bb064f408b5155c3c89bc888131c990fcafbcf11c33d9d998a39",
+      "fingerprint": "bb5fb85e615dd3321ab8d7503f767a30fe927a89e56c29de76a0b387ebe050ab",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -176,11 +222,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaf-2dff-7143-b750-5b155df86c99"
+        "01a0f54e-aab9-7282-8371-aeff5a25785a"
       ],
       "usage": {
-        "used": 59659,
-        "size": 760000,
+        "used": 35314,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -188,10 +234,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 142475,
-          "utf8Bytes": 152273,
-          "estimatedTokens": 50758,
-          "budgetedTokens": 63448,
+          "chars": 47432,
+          "utf8Bytes": 53372,
+          "estimatedTokens": 17791,
+          "budgetedTokens": 22239,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -200,17 +246,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:41:50.026Z",
+    "at": "2026-10-01T02:33:30.012Z",
     "trace": {
-      "runId": "26c3e0a2-785e-408a-9537-aa2c03688365",
+      "runId": "24052cec-c678-47a0-8c0f-800ce5573d0a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "1191f94c980dc422a5265c4c0b864b63fdb29717fc7201575c2c28838cb7e4da",
-      "contextHash": "74507541e2d4ea570c357cb76866e69bef05ed56de0cca973235cbc23aba2ef7",
+      "promptHash": "1610f6234ef3012b96fda9d835b1ccd9e5e5d8635575f5a1922d18b5eafd20e6",
+      "contextHash": "3b784f2a010717e765458d66925e7c985b7cc2a115bc90ab5433b8911b1af054",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "31ffc9f0520b6e75503ec67d79692561e856aab3b2e561327c97b8f12aa13728",
+      "fingerprint": "abbd2281132f839fea7ee52fb8f866cab5713627a8c04bdbc653aa640210c1c5",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -223,11 +269,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaf-aee7-73c1-93cb-fa080e033449"
+        "01a0f54f-1cd0-7c51-94e7-e1f5adda8967"
       ],
       "usage": {
-        "used": 56270,
-        "size": 760000,
+        "used": 32216,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -235,10 +281,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 138275,
-          "utf8Bytes": 145969,
-          "estimatedTokens": 48657,
-          "budgetedTokens": 60822,
+          "chars": 44132,
+          "utf8Bytes": 48750,
+          "estimatedTokens": 16250,
+          "budgetedTokens": 20313,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

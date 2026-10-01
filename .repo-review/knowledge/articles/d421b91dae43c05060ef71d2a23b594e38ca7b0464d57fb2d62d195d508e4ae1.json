@@ -3,30 +3,35 @@
   "document": {
     "key": "omem:apps/server/tests/review-materials.test.ts",
     "title": "仓库材料捕获与用户补充恢复测试",
-    "summary": "该测试验证 repo-review 的两条关键持久化路径：仓库文件按安全边界捕获为固定材料，并在删除、恢复及重复扫描时保持修订语义；用户澄清则作为带来源信息的原始材料导出，并可在全新数据库中恢复。",
+    "summary": "该测试验证 repo-review 的两条持久化链路：仓库中的文本、图片和配置经筛选后进入统一材料存储，并维持重复捕获、移除与恢复时的 revision 语义；用户澄清则可导出并恢复到另一数据库，同时保留原始材料的来源属性。",
     "category": "tests",
     "sections": [
       {
         "key": "repository-capture",
-        "title": "仓库材料捕获与安全边界",
-        "body": "第一组用例在临时仓库中同时创建说明文档、部署示例、私有配置和图片，断言捕获结果只包含可公开分析的三项材料，并确认图片进入材料仓库、README 中的链接可关联到部署文件。[[c1]] 这对应捕获器对 `.env`、本地配置、派生目录和依赖目录的排除规则，以及对普通文件、大小、文本编码和受支持图片格式的检查；因此测试解决的是“哪些仓库内容可成为固定证据”，而不是一般文件遍历。[[c2]]"
+        "title": "仓库材料捕获与筛选",
+        "body": "第一组用例创建 README、部署配置、私有配置和 PNG，再调用仓库材料适配器。断言当前材料只包含 README、部署文件和图片，`.env` 与本地配置不可见；PNG 保留一个可读取的图像部分，README 的相对链接还能产生指向部署文件的关联候选。[[c1]]\n\n适配器优先读取 Git 文件清单，失败时递归遍历目录；随后排除运行数据、依赖目录和私有配置，并把普通文本或受支持图片交给统一 `Store.capture`。因此这里验证的是通用知识管线之前的仓库输入适配，而非独立的代码事实库。[[c2]]"
       },
       {
         "key": "revision-lifecycle",
-        "title": "幂等、删除与修订保留",
-        "body": "用例再次扫描未变化的仓库，并直接比较 `revisions` 数量，证明相同内容不会产生新修订；随后删除部署文件，当前材料视图不再返回它，但旧 revision 仍可查询。文件以相同内容恢复后，材料重新使用原 revisionId，验证固定证据按内容保持身份，而删除只改变当前可见状态。[[c3]] 源码依据表明捕获器以内容哈希和捕获格式决定是否重新捕获，并在扫描结束后把未出现的来源标为 removed，这解释了测试中的生命周期行为。[[c4]]"
+        "title": "重复捕获、协调移除与恢复",
+        "body": "测试直接证明：内容未变时再次捕获不会增加 revision；部署文件移除后不再出现在当前材料视图，但原 revision 仍可查询；写回相同内容后，当前材料重新指向原 revision。[[c3]] 内容哈希与 `captureFormat` 共同决定是否再次调用捕获，是实现层对上述幂等现象的解释。[[c4]]\n\n此前把 `removed` 概括为“文件从工作区删除”的结论过窄，应由当前实现语义替代：协调阶段以本轮 `state=captured` 的集合为准，所有未在该集合中的既有 `omem:%` 文件源都会被标记为 removed，因而 excluded 或 failed 项也可能受到影响。它保留历史 source 与 revision，只改变当前可见状态。[[c5]]"
       },
       {
-        "key": "user-note-restore",
+        "key": "user-note-roundtrip",
         "title": "用户澄清的跨库恢复",
-        "body": "第二组用例先把“仅供本地单用户使用”的澄清以 `manual` 来源捕获，显式记录所有者、验证方式与 `producerKind: original`，再将其保存到知识目录；随后使用另一套空数据库恢复，断言正文、actorId 和原始生产者属性均未丢失。[[c5]] 恢复实现只接受 `knowledge-answer:` 前缀的手工输入，经合同校验后重新捕获，并把对应问题标为已回答；若文章尚未依赖该补充，还会登记待重核对失效项。[[c6]] 测试覆盖了无旧数据库时的可移植恢复，但未断言非法笔记拒绝、问题状态更新或知识失效记录。"
+        "body": "第二组用例先以 `manual` 来源捕获一条职责澄清，将其导出到知识目录，再由另一份全新 SQLite Store 恢复。恢复后的正文、`actorId` 和 `producerKind=original` 均被断言保留，说明用户回答作为原始材料往返，而不是被保存成无来源的派生答案。[[c6]]\n\n恢复入口还会校验 `knowledge-answer:` 标识、重新捕获仓库材料和已发布文章，并把对应问题更新为 answered；若文章尚未依赖这条回答，还会写入知识失效记录。当前用例没有为问题表、答案 revision、失效记录或文章恢复建立断言，因此这些副作用不能视为已由本文件完整验证。[[c7]]"
+      },
+      {
+        "key": "coverage-limits",
+        "title": "覆盖范围与剩余边界",
+        "body": "临时目录由用例直接创建且没有显式 Git 初始化，随后材料捕获成功；实现表明 Git 枚举抛错后会改走递归遍历，因此该场景与回退路径相容。不过测试没有显式制造或断言 Git 失败，也没有核对回退原因。[[c1]][[c8]] 当前已覆盖 PNG 的创建、捕获及图像部分断言；尚缺的是 JPEG、WebP 等 PNG 之外的图片格式，以及超限文件、非法 UTF-8、空文件、文本分片、失败 coverage、符号链接和越界路径等分支的针对性断言。[[c1]][[c8]]\n\n测试使用真实 Store，因此会创建 SQLite、执行迁移、创建资产目录并设置文件权限；这足以支撑场景运行，却不等于验证迁移失败回滚、权限异常或团队隔离。Store 的声明边界仍是本地单用户 SQLite，团队级约束属于后续迁移。[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "仓库材料捕获测试场景",
-        "reason": "支持附近关于公开材料、私有配置、图片及文档链接关联断言的说明。",
+        "label": "仓库材料场景断言",
+        "reason": "支持附近关于临时目录设置、文本与 PNG 捕获、私有配置排除、图片断言及 README 链接关联的测试结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -38,21 +43,21 @@
       },
       {
         "key": "c2",
-        "label": "仓库文件筛选与捕获规则",
-        "reason": "解释测试所验证的排除边界、普通文件约束、大小限制及文本和图片处理流程。",
+        "label": "仓库材料枚举与捕获流程",
+        "reason": "解释测试调用的 Git 枚举、目录回退、输入筛选以及统一捕获流程。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
           "startLine": 15,
-          "endLine": 55
+          "endLine": 54
         },
         "quote": "export function captureRepositoryMaterials(store: Store, repoRoot: string): RepositoryCoverage[] {\n  let paths: string[];\n  try { paths = [...new Set(execFileSync(\"git\", [\"ls-files\", \"--cached\", \"--others\", \"--exclude-standard\", \"-z\"], { cwd: repoRoot, encoding: \"utf8\", maxBuffer: 10_000_000, stdio: [\"ignore\", \"pipe\", "
       },
       {
         "key": "c3",
-        "label": "修订生命周期断言",
-        "reason": "支持重复扫描幂等、删除后保留旧修订及同内容恢复复用 revisionId 的结论。",
+        "label": "revision 生命周期断言",
+        "reason": "支持重复捕获不增加 revision、移除后保留历史以及相同内容恢复复用 revision 的直接测试结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -64,21 +69,34 @@
       },
       {
         "key": "c4",
-        "label": "内容哈希与移除对账",
-        "reason": "解释为何未变化内容不重复捕获，以及扫描缺失来源如何从当前材料视图移除。",
+        "label": "内容幂等判断",
+        "reason": "说明内容哈希与捕获格式如何决定是否再次执行 Store.capture，为重复捕获现象提供实现依据。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/materials.ts",
           "startLine": 37,
-          "endLine": 65
+          "endLine": 54
         },
         "quote": "      const hash = createHash(\"sha256\").update(bytes).digest(\"hex\");\n      const externalId = `omem:${path}`;\n      const previous = store.db.prepare(\"SELECT r.body FROM sources s JOIN revisions r ON s.head=r.id WHERE s.namespace='file' AND s.external_id=?\").get(externalId) as { body: string } | undefined;\n      const "
       },
       {
         "key": "c5",
-        "label": "用户补充跨数据库恢复断言",
-        "reason": "支持用户澄清被保存、在新数据库恢复并保留 actor 与原始生产者属性的说明。",
+        "label": "成功捕获集合协调逻辑",
+        "reason": "支持 removed 实际依据本轮 captured 集合协调，而非只代表文件从磁盘删除，并说明历史来源不会被直接删除。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 57,
+          "endLine": 66
+        },
+        "quote": "  // The general material adapter also owns non-code files (for example JSON).\n  // Reconcile removals here; the code/docs synchronizer cannot see all of them.\n  ensureReviewMetaTable(store);\n  const present = new Set(result.filter(row => row.state === \"captured\").map(row => row.materialKey));\n  const sources = store.d"
+      },
+      {
+        "key": "c6",
+        "label": "用户补充往返测试",
+        "reason": "支持用户澄清能够导出、跨数据库恢复，并保留正文、用户身份和原始生产者属性。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -89,38 +107,63 @@
         "quote": "it(\"persists user clarification as original material and restores it without a legacy database\", () => {\n  const root = mkdtempSync(join(tmpdir(), \"review-user-notes-\"));\n  const first = new Store(join(root, \".repo-review/runtime/first\"));\n  const second = new Store(join(root, \".repo-review/runtime/second\"));\n  try {\n "
       },
       {
-        "key": "c6",
-        "label": "用户补充保存与恢复流程",
-        "reason": "解释手工补充的格式校验、重新捕获、问题状态更新和知识失效登记机制。",
-        "relation": "explains",
+        "key": "c7",
+        "label": "知识恢复与回答状态处理",
+        "reason": "解释恢复入口除材料重建外还会更新问题状态、关联答案 revision，并可能写入知识失效记录。",
+        "relation": "calls",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/review/knowledge.ts",
           "startLine": 9,
-          "endLine": 32
+          "endLine": 25
         },
         "quote": "export function restoreReviewKnowledge(store: Store, root: string) {\n  const notes = join(root, \".repo-review/knowledge/user-notes.json\");\n  if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, \"utf8\")) as CaptureInput[]) {\n    if (input.source !== \"manual\" || !input.externalId?.startsWith(\"knowled"
+      },
+      {
+        "key": "c8",
+        "label": "材料适配器边界分支",
+        "reason": "支持对 Git 回退、路径检查、大小与编码限制、空文件、PNG/JPEG/WebP 分支、文本分片和失败记录等覆盖边界的归纳。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/review/materials.ts",
+          "startLine": 17,
+          "endLine": 55
+        },
+        "quote": "  try { paths = [...new Set(execFileSync(\"git\", [\"ls-files\", \"--cached\", \"--others\", \"--exclude-standard\", \"-z\"], { cwd: repoRoot, encoding: \"utf8\", maxBuffer: 10_000_000, stdio: [\"ignore\", \"pipe\", \"pipe\"] }).split(\"\\0\").filter(Boolean))].sort(); }\n  catch {\n    paths = [];\n    const walk = (directory: string, prefix ="
+      },
+      {
+        "key": "c9",
+        "label": "Store 初始化与单用户边界",
+        "reason": "说明测试中的真实 Store 会初始化 SQLite、迁移和资产目录，同时明确当前实现仍是单用户基础。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 68
+        },
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";\nimport { randomUUID, createHash } from \"node:crypto\";\nimport {\n  mkdirSync,\n  writeFileSync,\n  exi"
       }
     ],
     "questions": [
       {
-        "question": "非法或被篡改的 user-notes 输入是否应补充独立测试？",
-        "why": "恢复实现会拒绝非 manual 来源、错误 externalId 前缀或不符合 CaptureInput 合同的内容，但当前测试只覆盖合法输入的成功恢复。",
-        "nextStep": "增加分别包含错误来源、错误前缀和无效 provenance 的 user-notes.json 场景，断言恢复失败且不会产生部分写入。",
+        "question": "是否需要把材料捕获的失败与安全边界补成独立测试矩阵？",
+        "why": "当前用例没有显式断言 Git 枚举失败及回退原因，也未覆盖符号链接、realpath 逸出仓库根目录、超限文件、非法 UTF-8、空文件、文本分片、JPEG/WebP 和失败 coverage；这些分支会影响材料完整性及当前可见状态。",
+        "nextStep": "为各边界建立最小临时仓库，断言 coverage 的 state 与 reason，并验证 excluded 或 failed 项参与 removed 协调时不会删除既有 revision。",
         "blocking": false,
         "citationKeys": [
           "c5",
-          "c6"
+          "c8"
         ]
       },
       {
-        "question": "材料删除与恢复时，review_source_meta 的 removed 状态是否需要直接断言？",
-        "why": "现有测试通过 repository.materials() 的可见性间接验证删除对账，没有验证元数据状态及再次恢复后的清除结果。",
-        "nextStep": "在删除和恢复扫描后查询 review_source_meta，断言 removed 依次为 1 和 0，并保留现有 revisionId 断言。",
+        "question": "用户补充恢复后触发的问题状态与知识失效是否应在本文件中验证？",
+        "why": "恢复实现会更新 knowledge_questions 的 answered 状态和 answer_revision，并可能写入 knowledge_invalidations；当前测试只断言恢复材料的正文、actorId 与 producerKind。",
+        "nextStep": "建立对应问题与文章依赖夹具，分别断言 answered、answer_revision，以及依赖已更新和未更新时的 invalidation 行为。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4"
+          "c7"
         ]
       }
     ]
@@ -134,7 +177,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
@@ -150,33 +193,33 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:31:10.422Z",
+    "at": "2026-10-01T02:36:31.919Z",
     "trace": {
-      "runId": "3fec4710-4d74-42f8-8712-b68681ce6040",
-      "roleId": "code-analyst",
+      "runId": "ae5961af-2c52-45c8-802a-f34655318fac",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "9adbf9f705b71431777c8acfd633ddbde925b94c3b6dc9dcc48d381c002aa679",
-      "contextHash": "96e18ec571dc30bdde91101a0a0295e6d85c0a43c1c5b2c7887e5c221f9e7c9b",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "fae25c54774ab00753b6879c72b6fcefc381e9a7039a98ed042e71c3ba21dab7",
+      "contextHash": "38cbce0ca2ef321888fef5d49bbe50ebecc46ca86a84f0516e500a339c969341",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "374e83874ce520de741f5e2762a2e9b182dd79b1d49b7942df82be7998414259",
+      "fingerprint": "adeae2b060929f74a9d7ac438342442f2070cdb477290b1f7e7585bfb3f00784",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4de-fb6e-73e1-93e8-c6738527fc0e"
+        "01a0f551-cb06-74c3-88e3-87dd4b8226ae"
       ],
       "usage": {
-        "used": 28478,
+        "used": 33123,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -185,10 +228,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 25214,
-          "utf8Bytes": 27355,
-          "estimatedTokens": 9119,
-          "budgetedTokens": 11399,
+          "chars": 33961,
+          "utf8Bytes": 40080,
+          "estimatedTokens": 13360,
+          "budgetedTokens": 16700,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -197,17 +240,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:31:24.917Z",
+    "at": "2026-10-01T02:36:50.133Z",
     "trace": {
-      "runId": "6f46cf3b-d173-41a8-a8f2-fea80a4751dd",
+      "runId": "02a6c054-e4ba-4bb8-85b8-58a71688f4d9",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "889c51d1824af605302d5095a4af8764817b458aded12c5a283fafe18f4d267e",
-      "contextHash": "d66d1fe61dc11a0b031e0dc0490da3988f1e835b75bf8c643cdd66856e194395",
+      "promptHash": "eaa6a1eb059a2c0e3a0e83f8c9602a51f2e3a58df191002d75b9c4df5bcb8c56",
+      "contextHash": "deeb5a6b9db70133953b2ea48fef3e01589a2d987fd9fc20a5a4978c126b7b75",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a96114c20412196684bcc38d0410b339c2028e93a5a32f56d7b3429bb1aad2c4",
+      "fingerprint": "05495e1306ab172ef39427f9999d89b01cc9769bbd84e2ad30cd15b748b27439",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -220,10 +263,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4df-611f-7813-b0fa-ade27c1c7bfa"
+        "01a0f552-28fc-78f3-8ead-17f9b13a6f58"
       ],
       "usage": {
-        "used": 27344,
+        "used": 28336,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -232,10 +275,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 27928,
-          "utf8Bytes": 31501,
-          "estimatedTokens": 10501,
-          "budgetedTokens": 13127,
+          "chars": 30596,
+          "utf8Bytes": 35207,
+          "estimatedTokens": 11736,
+          "budgetedTokens": 14670,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

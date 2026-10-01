@@ -2,39 +2,70 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/hook-forward.ts",
-    "title": "非阻塞 Hook 转发入口",
-    "summary": "从标准输入接收受限 Hook 事件，规范化后先写入本地 spool，再以短超时尝试投递到捕获 API；异常和未送达只记录错误，不阻塞宿主。",
-    "category": "workflow",
+    "title": "Hook 捕获转发入口",
+    "summary": "这是一个显式启用的标准输入转发器：它限制输入规模与配置，经 hookInput 生成捕获对象，先写入本地 HookSpool，再以短超时提交到捕获 API。投递失败会记录到标准错误；代码提示未投递项已排队重试，但现有固定材料不足以验证记录是否始终保留以及后续重试如何触发。",
+    "category": "implementation",
     "sections": [
       {
-        "key": "flow",
-        "title": "输入、规范化与投递",
-        "body": "入口从 stdin 累积 JSON，原始输入超过 300000 字节即拒绝。环境变量只能从默认 Hook 字段白名单中选择字段，字符上限被限制在 1000–200000；随后调用 `hookInput` 完成字段提取、脱敏、事件身份和 provenance 构造。[[c1]]\n\n规范化结果先写入 `HookSpool`，目录可显式配置，否则位于数据目录下。flush 回调向 `/api/captures` 发送 JSON，可选附带 Bearer token，并设置 1500 毫秒超时；仅 HTTP 成功时读取捕获确认。[[c2]]"
+        "key": "purpose-and-input",
+        "title": "作用与输入约束",
+        "body": "该入口用于把外部 hook 事件送入 omem，同时保持宿主的标准输出协议不被捕获日志干扰；文件声明其不调用模型、不写标准输出，并以捕获失败不阻塞宿主为设计目标。[[c1]]\n\n处理流程在 `try` 中逐块读取标准输入；累计读取量超过 300000 字节时抛错，此判断发生在读到导致越界的整个 chunk 后。随后代码把请求字段限制在默认 profile 的字段集合内，并要求最大字符数为 1000～200000 的整数。[[c2]]"
       },
       {
-        "key": "failure-boundary",
-        "title": "失败语义与模块关系",
-        "body": "存在未送达结果时，入口只向 stderr 报告已排队重试；解析、配置、spool 或网络异常也由顶层 catch 记录，既不写 stdout 协议内容，也不把异常抛回宿主。[[c3]] 先前将 `flush(..., 3)` 解释为“最多处理次数”的结论已撤回：当前材料没有 `HookSpool` 的签名，无法确定该参数表示批量上限、重试次数还是其他约束。[[c2]]\n\n该文件只是可选 transport，不调用模型，也不直接写知识数据库。内容筛选依赖 connector profile；持久化原子性、退避、清理及后续 flush 触发机制依赖未提供的 spool 实现。[[c1]] [[c3]]"
+        "key": "delivery-flow",
+        "title": "转换、落盘与投递",
+        "body": "通过输入与配置校验后，代码解析 JSON，并将 profile id、字段集合和字符预算交给 `hookInput` 构造捕获对象。当前提供的 connectors 材料未包含该函数定义，因此不能进一步确认字段筛选、文本截断或上下文元数据的具体规则。[[c3]]\n\n捕获对象先由 `HookSpool.enqueue` 入队，再由 `flush` 调用捕获 API；请求可携带 Bearer token，超时为 1500 毫秒，单次 flush 的数量参数为 3。[[c4]] 队列构造器会创建目录并将权限设置为 `0700`，但现有 spool 行范围仅展示类型、容量错误和初始化，未展示入队、确认、删除及清理实现。[[c5]]"
+      },
+      {
+        "key": "failure-boundaries",
+        "title": "失败语义与证据边界",
+        "body": "HTTP 非成功响应会转成异常；若 flush 结果包含未投递项，入口向标准错误输出“queued for retry”。外围 `catch` 也会把其覆盖的读取、解析、配置、构造、入队、刷新和网络处理异常降级为标准错误提示，避免这些捕获失败主动阻断宿主。[[c6]] 这一保证限于该 `try/catch` 覆盖的处理流程，不能扩展为模块加载、日志输出本身或进程级故障均不会影响宿主。\n\n因此，调用结束不等于服务端已经接收或应用捕获。记录结构包含 producer、eventId 与 payloadDigest，确认结构也携带对应字段，说明队列具备进行身份核对所需的数据；然而当前材料没有给出实际核对、保留、重试或删除逻辑，不能断言所有失败都会保留记录，也不能断言恰好一次投递。[[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Hook 输入预算与字段配置",
-        "reason": "支持 stdin 大小限制、字段白名单、字符预算和 hookInput 规范化流程。",
-        "relation": "calls",
+        "label": "Hook 转发器设计边界",
+        "reason": "支持该入口不调用模型、不写标准输出，并以捕获失败不阻塞宿主为设计目标的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/hook-forward.ts",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "/** Opt-in hook transport. No model invocation and no stdout; failures never block the host. */"
+      },
+      {
+        "key": "c2",
+        "label": "输入预算与配置校验",
+        "reason": "支持累计字节上限、字段白名单以及最大字符数范围的说明，并准确界定越界检查发生在读取 chunk 之后。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/hook-forward.ts",
           "startLine": 9,
-          "endLine": 38
+          "endLine": 33
         },
         "quote": "const chunks: Buffer[] = [];\nlet bytes = 0;\ntry {\n  for await (const c of process.stdin) {\n    bytes += c.length;\n    if (bytes > 300000) throw Error(\"Capture budget exceeded\");\n    chunks.push(c);\n  }\n  const allowedFields = new Set<HookCaptureField>(\n    defaultHookCaptureProfile.fields,\n  );\n  const requestedFields "
       },
       {
-        "key": "c2",
-        "label": "Spool 与捕获 API 投递",
-        "reason": "说明先入 spool、API 地址、鉴权头、请求体、超时及 flush 调用，但不推断第二参数语义。",
+        "key": "c3",
+        "label": "捕获对象构造调用",
+        "reason": "支持 hookInput 接收已解析输入及 profile 配置，同时说明当前材料只能确认调用点、不能推导其内部转换规则。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/hook-forward.ts",
+          "startLine": 34,
+          "endLine": 38
+        },
+        "quote": "  const body = hookInput(JSON.parse(Buffer.concat(chunks).toString()), {\n    id: (process.env.OMEM_HOOK_PROFILE_ID || \"traex-env-v1\").slice(0, 100),\n    fields: requestedFields as HookCaptureField[],\n    maxChars,\n  });"
+      },
+      {
+        "key": "c4",
+        "label": "本地入队与 HTTP 投递",
+        "reason": "支持捕获对象先入队、再提交到捕获 API，以及认证头、请求超时和 flush 数量参数的流程说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -45,24 +76,62 @@
         "quote": "  const spool = new HookSpool(\n    resolve(\n      process.env.OMEM_HOOK_SPOOL ||\n        join(process.env.OMEM_DATA_DIR || \".omem\", \"hook-spool\"),\n    ),\n  );\n  spool.enqueue(body);\n  const outcomes = await spool.flush(async (capture) => {\n    const response = await fetch(\n      (process.env.OMEM_URL || \"http://127.0.0"
       },
       {
-        "key": "c3",
-        "label": "宿主非阻塞失败处理",
-        "reason": "支持未送达或异常只写 stderr、宿主继续运行的行为边界。",
+        "key": "c5",
+        "label": "HookSpool 初始化边界",
+        "reason": "支持队列目录创建与权限设置，并表明当前固定范围尚未覆盖 enqueue 和 flush 的具体实现。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 39,
+          "endLine": 70
+        },
+        "quote": "export class SpoolCapacityError extends Error {\n  constructor() {\n    super(\"HOOK_SPOOL_CAPACITY_EXCEEDED\");\n    this.name = \"SpoolCapacityError\";\n  }\n}\n\nconst jsonFiles = (directory: string) =>\n  readdirSync(directory)\n    .filter((name) => name.endsWith(\".json\") && !name.startsWith(\".\"))\n    .sort();\n\nexport class Ho"
+      },
+      {
+        "key": "c6",
+        "label": "未投递提示与异常降级",
+        "reason": "支持 HTTP 错误转换、未投递提示及 try/catch 覆盖流程内的异常降级，同时用于限定“不阻塞宿主”不能外推到进程级故障。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/hook-forward.ts",
-          "startLine": 64,
-          "endLine": 71
+          "startLine": 61,
+          "endLine": 70
         },
-        "quote": "  if (outcomes.some((outcome) => !outcome.delivered))\n    console.error(\"omem hook capture queued for retry; host continues\");\n} catch (error) {\n  const reason = error instanceof Error ? error.message : \"unavailable\";\n  console.error(\n    `omem hook capture queued or rejected (${reason}); host continues`,\n  );\n}"
+        "quote": "    if (!response.ok) throw Error(`HTTP_${response.status}`);\n    return (await response.json()) as CaptureAcknowledgement;\n  }, 3);\n  if (outcomes.some((outcome) => !outcome.delivered))\n    console.error(\"omem hook capture queued for retry; host continues\");\n} catch (error) {\n  const reason = error instanceof Error ? "
+      },
+      {
+        "key": "c7",
+        "label": "队列记录与确认结构",
+        "reason": "支持记录和确认包含身份核对字段，但不提供记录保留、确认匹配、删除或后续重试机制的实现证据。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/inputs/spool.ts",
+          "startLine": 20,
+          "endLine": 44
+        },
+        "quote": "export type SpoolRecord = {\n  schemaVersion: 1;\n  id: string;\n  producer: string;\n  eventId: string;\n  payloadDigest: string;\n  capture: CaptureInput;\n  createdAt: string;\n};\n\nexport type CaptureAcknowledgement = {\n  receipt: {\n    producer: string;\n    eventId: string;\n    payloadDigest: string;\n    revisionId: string"
       }
     ],
     "questions": [
       {
-        "question": "HookSpool 的重试触发、持久化原子性和过期清理策略是什么？",
-        "why": "当前材料只展示 enqueue、一次 flush 调用及未送达提示，没有提供 spool 的接口与实现，无法确认数字参数语义，也无法确认进程退出后由谁、何时再次投递。",
-        "nextStep": "核验 apps/server/src/inputs/spool.ts 及启动调用方，并测试网络失败、进程中断、重复确认和过期记录场景。",
+        "question": "HookSpool 的 enqueue 和 flush 是否会在未投递、异常或确认不匹配时保留记录，并由什么机制触发后续重试？",
+        "why": "当前固定材料只展示记录与确认类型、容量错误、构造器及 hook-forward 调用点；“queued for retry”是入口提示，尚不足以证明记录始终保留或存在后续自动重试。",
+        "nextStep": "补充 spool.ts 中 enqueue、flush、确认校验、删除、容量限制和 retention 清理逻辑的固定完整行范围后复核。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5",
+          "c6",
+          "c7"
+        ]
+      },
+      {
+        "question": "hookInput 实际如何筛选字段、截断文本并生成上下文元数据？",
+        "why": "调用点只给出了 profile id、字段集合与字符预算；当前 connectors.ts 的允许范围截至第 70 行，没有包含 hookInput 与 defaultHookCaptureProfile 的定义。",
+        "nextStep": "提供 connectors.ts 中相关定义及对应测试的固定行范围，并据此补充转换语义与边界。",
         "blocking": false,
         "citationKeys": [
           "c2",
@@ -74,13 +143,8 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/understanding-store.ts",
-      "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/config.ts",
-      "digest": "7dfb4d60b868a5c0f07665b5370889300e83ec316c69bd89924f949498946fdf"
+      "key": "omem:apps/server/src/hook-forward.ts",
+      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
     },
     {
       "kind": "material",
@@ -89,54 +153,24 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/conversation/router.ts",
-      "digest": "a134f4c92a6351340c644fef445b9b019bd77b0dd2e486c99b7a1b0abe7128ce"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/hook-forward.ts",
-      "digest": "25a48c239a56a6c88d4eefe5ba6dd0b31c806fb7c105238dc684c6af504aef6b"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/inputs/aggregator.ts",
-      "digest": "d0533cfed6d346953bb43c4cc268855e70f48f2ee075b419384b275a816cf319"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/code/budget.ts",
-      "digest": "b0c49cac35ccc411ca0703b049b6bfa8e59ab5f925463ecf026893049c3136cc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "860c92ede518ef516296eda109343cef2d850444d2d72af4132d1420a09af028"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
-      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
+      "key": "omem:apps/server/src/inputs/spool.ts",
+      "digest": "6e815455823d4befbba2dcce822d0c1b3e12b4b08f7f86def8945493dabe3039"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:18:10.914Z",
+    "at": "2026-10-01T02:10:00.292Z",
     "trace": {
-      "runId": "79591dfe-8707-4bd6-8fb4-eebb58e057a6",
+      "runId": "7fc0a4d8-62bb-4d2b-aec2-c14aac5c8ee4",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "875ac26190509463c54f4b2e0581016cc369433c884d6117bc1835fa1a3c8d26",
-      "contextHash": "8e0c650ddf3cd7fae414f132c5bf910aca8a55f6481d48b6992440ff5b6695fe",
+      "promptHash": "8eb9920500a92ff3ac0ab4ca81e8413989dcd00a125dae9927a22049c1919e49",
+      "contextHash": "8b828097da8900fa16cc8f951223f626c4fc05dcfd1682308e39c49c057092d6",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "33355e1bfdcd99b5139274bc7eb55ff817545542005658274cb8524c5f6bb3b4",
+      "fingerprint": "2e0bbfac549be77163790c6b0292794238fd11453a4dd2eef4b9e3f79beab63b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -149,10 +183,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3bf-f43e-7882-a2ec-1336c55fdb9d"
+        "01a0f539-7774-7e93-bdd7-d182885e1500"
       ],
       "usage": {
-        "used": 66109,
+        "used": 29249,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -161,10 +195,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 135446,
-          "utf8Bytes": 148147,
-          "estimatedTokens": 49383,
-          "budgetedTokens": 61729,
+          "chars": 21804,
+          "utf8Bytes": 26804,
+          "estimatedTokens": 8935,
+          "budgetedTokens": 11169,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -173,17 +207,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:18:45.635Z",
+    "at": "2026-10-01T02:10:15.785Z",
     "trace": {
-      "runId": "8a3bf8bf-f5da-4269-9719-59d1091ea116",
+      "runId": "cd013072-0bab-42b8-8d70-712045a06504",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4f298715ec3ddc7d6763375d2944cc78d7d5d37698adc3aa347f2499fb0f48d0",
-      "contextHash": "22e886304543001e276c798ee0cab0e1a2f5a8f54dd563d9ea527021385efb71",
+      "promptHash": "f8eeea7cb19cc305dab678d345d3d0f94f097bb1668e2069e4d224c91a8ff0cc",
+      "contextHash": "fcafffc26c3ac8224fad3091b84fe262230a1a321730bdf85e89bdbb2a4920e7",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bba85daba6a36c5b14ac91e16f1786d2afd9a56ff73a3547c5eea59eaef3746d",
+      "fingerprint": "120e373e7945419853d26b7c9e5148fb724a12f9471bf8db35fe361b6bc1c332",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -196,10 +230,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3c0-d34f-73a1-a93e-ee3c8a573b32"
+        "01a0f539-ddc2-7833-8ac5-c4e607c8863a"
       ],
       "usage": {
-        "used": 60459,
+        "used": 24920,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -208,10 +242,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 131016,
-          "utf8Bytes": 140643,
-          "estimatedTokens": 46881,
-          "budgetedTokens": 58602,
+          "chars": 18333,
+          "utf8Bytes": 21907,
+          "estimatedTokens": 7303,
+          "budgetedTokens": 9129,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

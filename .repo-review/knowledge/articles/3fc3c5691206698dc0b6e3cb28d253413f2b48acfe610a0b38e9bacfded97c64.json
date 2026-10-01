@@ -1,0 +1,251 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/tests/task-follow-up.test.ts",
+    "title": "每日消息跟进的生命周期与提醒语义测试",
+    "summary": "该测试以真实临时 SQLite Store、AssistantRuntime 和 MemoryService 验证个人跟进事项的创建、稍后提醒、重启恢复、一次性通知、取消、归属约束及多提醒去重；模型为可控桩，未覆盖真实 ACP 传输、并发更新和通知投递失败。",
+    "category": "tests",
+    "sections": [
+      {
+        "key": "purpose_and_setup",
+        "title": "测试目的与协作模块",
+        "body": "测试把 `Store`、`MemoryService`、`AssistantRuntime` 与回复解析器组合起来，用临时目录中的真实数据库运行，而非只断言协议对象。[[c1]] 模型桩根据当前任务和用户是否说“取消”返回创建、稍后或取消操作，因此重点是验证运行时如何治理模型提出的结构化写入，以及存储层如何持久化任务、修订和提醒回执；它不证明真实 ACP 模型能够稳定生成同样的调用。"
+      },
+      {
+        "key": "lifecycle",
+        "title": "跟进事项的完整生命周期",
+        "body": "首个场景从“等待张三回复”创建 `waiting` 事项，明确断言普通截止时间为空、跟进结构完整，且检查时间到达前不会提醒。[[c2]] 用户要求稍后提醒后，事项保持原 ID 和等待状态、版本升至 2，并保留等待对象，同时更新延后时间。关闭并重新打开 Store 后，逾期检查只补发一次通知，随后再次扫描不重复发送，说明一次性回执可跨进程恢复。[[c3]] 最后取消事项会清空跟进信息、将版本升至 3，并留下三条任务修订；即使扫描到更远未来也不会再通知。[[c4]]"
+      },
+      {
+        "key": "ownership_and_receipts",
+        "title": "归属边界与提醒合并",
+        "body": "第二个场景刻意让模型把“张三承诺回复”的讨论转换成创建任务调用，但运行时最终没有落库，验证第三方承诺不会自动变成用户个人事项；这里断言的是最终拒绝效果，没有揭示具体拒绝分支。[[c5]] 第三个场景直接写入两个等待事项：同一时刻触发的检查提醒与截止提醒不会在后续扫描中重复，而较晚截止时间仍会产生自己的回执；最终四条回执用于约束不同触发维度的幂等性。[[c6]] 该场景只检查计数，没有逐条核对通知标题、正文与每条回执对应的任务及触发类型。"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "测试依赖与模型桩",
+        "reason": "支持该文件使用真实 Store、MemoryService、AssistantRuntime 和回复解析器，并通过受控模型返回结构化任务操作。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/task-follow-up.test.ts",
+          "startLine": 1,
+          "endLine": 26
+        },
+        "quote": "import { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join } from \"node:path\";\nimport { describe, expect, it } from \"vitest\";\nimport { Store } from \"../src/store.js\";\nimport { MemoryService } from \"../src/memory/service.js\";\nimport { AssistantRuntime, type AssistantModelPort } from \""
+      },
+      {
+        "key": "c2",
+        "label": "等待事项创建断言",
+        "reason": "支持事项创建后处于 waiting、没有普通截止时间、保存跟进结构且提前扫描不提醒。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/task-follow-up.test.ts",
+          "startLine": 27,
+          "endLine": 32
+        },
+        "quote": "      const conversation = runtime.conversations.open({ principalId: \"owner\", channel: \"web\", visibility: \"private\", chatId: \"follow-up\" });\n      const create = await runtime.turn({ conversationId: conversation.id, userText: \"帮我跟进张三的评审回复，2030年10月2日上午9点提醒我检查。\" });\n      expect(create.turn.result).toContain(\"等待：张三\");\n  "
+      },
+      {
+        "key": "c3",
+        "label": "延后与重启补发断言",
+        "reason": "支持延后操作保留事项身份与等待对象，并验证数据库重开后只补发一次跟进通知。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/task-follow-up.test.ts",
+          "startLine": 33,
+          "endLine": 41
+        },
+        "quote": "      await runtime.turn({ conversationId: conversation.id, userText: \"稍后，2030年10月3日上午10点再提醒我。\" });\n      expect(store.tasks()[0]).toMatchObject({ id: taskId, status: \"waiting\", version: 2, dueAt: null,\n        followUp: { waiting_on: \"张三\", snoozed_until: \"2030-10-03T02:00:00.000Z\" } });\n      expect(store.remind(\"2030"
+      },
+      {
+        "key": "c4",
+        "label": "取消与修订历史断言",
+        "reason": "支持取消后状态、版本、跟进清理、停止未来提醒以及三次不可变修订记录。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/task-follow-up.test.ts",
+          "startLine": 42,
+          "endLine": 48
+        },
+        "quote": "      const resumed = new AssistantRuntime(store, model, { memory: new MemoryService(store) });\n      const cancel = await resumed.turn({ conversationId: conversation.id, userText: \"取消刚才的评审回复事项，不用做了。\" });\n      expect(cancel.turn.result).toContain(\"已取消\");\n      expect(store.tasks()[0]).toMatchObject({ status: \"cancelle"
+      },
+      {
+        "key": "c5",
+        "label": "第三方承诺不落为个人任务",
+        "reason": "支持即使模型请求创建任务，关于他人承诺的解释性讨论也不会产生用户任务。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/task-follow-up.test.ts",
+          "startLine": 52,
+          "endLine": 61
+        },
+        "quote": "  it(\"does not convert a discussion about someone else's promise into a personal task\", async () => {\n    const dir = mkdtempSync(join(tmpdir(), \"omem-discussion-\")); const store = new Store(dir);\n    try {\n      const model: AssistantModelPort = { generate: async () => ({ answer: \"张三承诺回复\", citationIds: [], toolCalls: "
+      },
+      {
+        "key": "c6",
+        "label": "多提醒与回执幂等断言",
+        "reason": "支持同时检查与截止提醒的处理、重复扫描抑制、较晚截止独立触发及最终回执数量。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/task-follow-up.test.ts",
+          "startLine": 64,
+          "endLine": 77
+        },
+        "quote": "  it(\"combines simultaneous check-in and deadline alerts, while a later deadline still gets its own receipt\", () => {\n    const dir = mkdtempSync(join(tmpdir(), \"omem-reminders-\")); const store = new Store(dir);\n    try {\n      for (const [name, due] of [[\"同时\", \"2030-10-02T01:00:00.000Z\"], [\"稍晚\", \"2030-10-04T01:00:00.0"
+      }
+    ],
+    "questions": [
+      {
+        "question": "并发的稍后或取消请求发生版本冲突时，系统是否会拒绝旧版本写入并向用户返回可理解的结果？",
+        "why": "现有生命周期只按版本 1、2、3 串行推进，没有制造两个请求使用同一 expected_version 的竞争，因此不能由本测试确认乐观并发控制行为。",
+        "nextStep": "增加两个更新共享旧 expected_version 的场景，断言仅一个更新成功、另一更新不产生修订或重复通知，并检查用户可见结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "提醒回执能否在事务失败、通知投递失败或同一时间并发扫描时保持恰好一次语义？",
+        "why": "当前测试证明顺序调用和重开数据库后的重复扫描不会再次提醒，但没有注入事务中断、投递异常或并发执行。",
+        "nextStep": "为回执写入和通知出站分别加入故障注入与并发扫描测试，逐条核对任务、触发类型、通知和回执的原子关系。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/task-follow-up.test.ts",
+      "digest": "4d7a37eb89e4ddcb811a4afe4909ebb10a30a314956065b47170c6f84a2214b4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "17df8759d854439c570682baacfc9fca8589ebf402c35720af881a8a20bb0589"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "efa43a2948fcae9611fe88e8ae00d6421136e04e43ba1761bda2a2fa0047665a"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T02:36:05.789Z",
+    "trace": {
+      "runId": "0f901c91-5c4f-4106-a8d1-5edaf6959bc9",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
+      "promptHash": "75c735fed3593205dbbf3fd7fb3491e33f3f9dd61ec243c50685799f7e00f9ce",
+      "contextHash": "53af892d05b1ed5d690cd7afd42c0fb370c5245788f27e7806cf6ed38bd6336a",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d3a84f2a7edee9ebc1a0a842160cdcfa7f6f6ff9e394d66792e514052eaba0e7",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f551-4fe1-7532-b6bd-1049f3c4cabc"
+      ],
+      "usage": {
+        "used": 29975,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 27604,
+          "utf8Bytes": 29762,
+          "estimatedTokens": 9921,
+          "budgetedTokens": 12402,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T02:36:25.903Z",
+    "trace": {
+      "runId": "b5c7aafc-ef11-40e5-b96d-4d9d60783cca",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "e71e821c53138eadfc5f5cb9719efe219f34e1bbd9d1ce829b1b5b017d5bafe7",
+      "contextHash": "b97805b2e6d340cb5fd5e92af5174ee6cc1a5df14de496f49780a8ee9f5a5179",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "d87d2899149c8b5f57d79b8a72ec8d6f1d139f7a70ecd949298d8dc9e40b723e",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f551-c0ca-7682-86a6-436818689ece"
+      ],
+      "usage": {
+        "used": 28572,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 30320,
+          "utf8Bytes": 34274,
+          "estimatedTokens": 11425,
+          "budgetedTokens": 14282,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

@@ -2,53 +2,71 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
-    "title": "对话分析角色的知识输出合同",
-    "summary": "该文件定义 KnowledgeBatch.v1 的封闭 JSON 结构，约束批次、文档、章节、引用和疑问的字段及数量边界。修订后不再把 Markdown、运行时校验或修复重试归因于 Schema 本身；这些能力需分别由角色提示或运行时实现证明。",
-    "category": "requirements",
+    "title": "会话分析角色的知识批次输出合同",
+    "summary": "该文件定义 KnowledgeBatch.v1 的 JSON Schema：一次输出包含 1–16 篇结构化知识文档，每篇文档包含摘要、分类、正文小节、引用和待确认问题。它约束输出形态与字段边界，但不能单独证明引用定位方式、跨字段一致性检查或独立复核已在运行时执行。",
+    "category": "configuration",
     "sections": [
       {
-        "key": "batch-document",
-        "title": "批次、文档与章节结构",
-        "body": "合同把顶层版本固定为 1，并要求批次包含 1–16 个文档；文档可归入概览、架构、需求、进展、实现、测试、配置、对话等类别。[[c1]] 每个文档必须具有键、标题、摘要、类别、章节、引用和问题，文档对象及顶层对象都拒绝未声明字段；这证明输出结构是封闭的，但不能单独证明运行时如何解析或校验它。[[c2]]\n\n每篇文档需包含 1–20 节，章节键须以字母开头且只能使用字母、数字、下划线和连字符；标题最长 200 字符，正文字段是最长 24000 字符的非空字符串。[[c3]] 正文采用 Markdown 并将引用贴近论断，是角色提示规定的生成要求，而不是该 JSON Schema 对字符串格式的验证。[[c4]]"
+        "key": "batch_structure",
+        "title": "批次与文档结构",
+        "body": "该合同采用 JSON Schema 2020-12，顶层版本固定为 `1`，并要求 `documents` 至少一项、至多十六项。[[c1]] 每篇文档必须提供 `key`、`title`、`summary`、`category`、`sections`、`citations` 与 `questions`，文档对象禁止未声明字段。[[c2]]\n\n分类枚举覆盖概览、架构、背景、需求、进展、实现、测试、配置、工作流、研究、会话和视觉材料，说明同一合同可承载多类知识文档；这只是输出分类能力，不代表相应分析流程均已实现。[[c3]]"
       },
       {
-        "key": "evidence-questions",
-        "title": "证据链接与显式不确定性",
-        "body": "每篇文档至少要有一条引用。引用包含人读标签、理由、关系和目标；目标可以指向材料或文章，材料目标可记录固定行号。`quote` 字段的描述要求留空，并声明由宿主依据固定范围提取精确引文后再独立复核，但这只是合同中的行为约定，尚不能证明对应宿主流程已经实现。[[c5]]\n\n问题数组最多包含 20 项，每项必须记录具体问题、提出原因、下一步、是否阻塞及关联引用键，用于显式保存尚未确认的事项。[[c6]] 先前把封闭对象结构解释为有利于“修复重试”的结论已被替代：本文件只能证明必填字段和额外属性限制，重试策略仍需角色清单、运行网关或行为测试佐证。[[c2]]"
+        "key": "content_and_evidence",
+        "title": "正文与证据引用",
+        "body": "正文由一至二十个小节组成；每节必须包含键、标题和正文，小节键遵循固定格式，且对象禁止额外字段。[[c4]] 引用列表要求至少一项、最多一百六十项；每条引用必须包含键、人读标签、理由、关系、目标和引文内容，关系值限于合同列出的枚举。[[c5]]\n\n引用目标的 `kind` 可标记为 `material` 或 `article`，目标还可携带起止行或章节字段；但 schema 没有按目标类型建立条件约束，因此此前“材料使用行号、文章使用章节”的结论被替代，不能仅凭本文件认定这种对应关系。[[c6]] `quote` 的描述约定宿主从固定行范围抽取精确引文，但不证明抽取与语义复核已经执行。[[c6]]"
+      },
+      {
+        "key": "questions_and_limits",
+        "title": "问题记录与合同边界",
+        "body": "每篇文档可以记录至多二十个问题，每项必须包含问题、原因、下一步、阻塞状态和关联引用键；这使未确认事项能够结构化保留，而不必混入已确认结论。[[c7]]\n\n顶层仅要求 `schema_version` 与 `documents`，禁止其他顶层属性，并以 `KnowledgeBatch.v1` 标识合同。[[c8]] 同时，正文只是普通字符串，`citationKeys` 也只是字符串数组；schema 没有表达正文标记或问题引用键必须匹配本篇 `citations.key` 的跨字段约束。[[c4]][[c5]][[c7]] 若需避免悬空引用，仍要由消费端或独立验证器补充检查。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "批次规模与知识类别",
-        "reason": "支持版本常量、文档数量范围以及文档类别枚举的说明。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
-          "startLine": 1,
-          "endLine": 47
-        },
-        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties"
-      },
-      {
-        "key": "c2",
-        "label": "文档必填字段与封闭对象",
-        "reason": "支持文档必填字段、文档对象拒绝额外属性以及顶层必填字段和封闭结构的论断；同时界定这些只是声明性约束。",
+        "label": "顶层版本与文档批次约束",
+        "reason": "支持 schema 版本固定为 1，以及 documents 数量限制为 1 至 16 项。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
-          "startLine": 209,
-          "endLine": 227
+          "startLine": 1,
+          "endLine": 13
         },
-        "quote": "        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalProperties\":"
+        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {"
+      },
+      {
+        "key": "c2",
+        "label": "文档必填字段与封闭边界",
+        "reason": "支持每篇文档的七个必填组成，以及文档对象禁止未声明字段。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
+          "startLine": 208,
+          "endLine": 219
+        },
+        "quote": "        },\n        \"required\": [\n          \"key\",\n          \"title\",\n          \"summary\",\n          \"category\",\n          \"sections\",\n          \"citations\",\n          \"questions\"\n        ],\n        \"additionalProperties\": false\n      }"
       },
       {
         "key": "c3",
-        "label": "章节字段约束",
-        "reason": "支持章节数量、键命名规则、标题长度、正文字符串长度以及章节对象封闭性的说明。",
+        "label": "知识文档分类枚举",
+        "reason": "说明合同允许表达的十二类知识文档。",
         "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
+          "startLine": 31,
+          "endLine": 46
+        },
+        "quote": "          \"category\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"overview\",\n              \"architecture\",\n              \"background\",\n              \"requirements\",\n              \"progress\",\n              \"implementation\",\n              \"tests\",\n              \"configuration\",\n              \"wor"
+      },
+      {
+        "key": "c4",
+        "label": "正文小节结构约束",
+        "reason": "支持小节数量、键格式、正文类型、必填字段及小节对象封闭性的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
@@ -58,72 +76,68 @@
         "quote": "          \"sections\": {\n            \"minItems\": 1,\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,59}$\"\n     "
       },
       {
-        "key": "c4",
-        "label": "角色正文与引用编排要求",
-        "reason": "支持正文使用 Markdown、引用贴近对应论断以及每节至少放置引用的生成要求，并表明该要求来自角色提示而非 Schema 字符串格式。",
-        "relation": "background",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/prompt.md",
-          "startLine": 4,
-          "endLine": 6
-        },
-        "quote": "按 task.targetKeys 覆盖所有目标，document.key 必须完全一致。材料正文建议 2–4 节、约 300–700 个汉字，复杂主题章节可以更长。解释作用、背景、流程、限制与其他材料的关联，不只列函数名和计数。\nsections 的 body 使用 Markdown，在对应句子或段落中放 [[c1]] 引用。每节至少一处，citations 每项都应在正文出现，禁止仅在文末列引用。\n引用只能来自提供的材料或文章：target.kind 为 material/article，target.key 必须使用提供的完整 key。材料引用只选择真实 startLine/endLine，把 quote 置为空字符串；宿主会"
-      },
-      {
         "key": "c5",
-        "label": "引用目标与引文约定",
-        "reason": "支持引用关系、材料或文章目标、固定行号以及 quote 留空并由宿主提取的合同描述。",
+        "label": "引用条目的关系与必填字段",
+        "reason": "支持引用数量、关系枚举，以及引用条目的必填组成。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
           "startLine": 78,
-          "endLine": 164
+          "endLine": 110
         },
         "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
       },
       {
         "key": "c6",
-        "label": "疑问项结构",
-        "reason": "支持疑问数量上限及 question、why、nextStep、blocking、citationKeys 等必填追踪字段的说明。",
-        "relation": "explains",
+        "label": "引用目标字段与引文抽取描述",
+        "reason": "支持目标类型、可选定位字段和 quote 描述，同时表明 schema 未按目标类型条件限制定位字段。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
+          "startLine": 112,
+          "endLine": 163
+        },
+        "quote": "                \"target\": {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"kind\": {\n                      \"type\": \"string\",\n                      \"enum\": [\n                        \"material\",\n                        \"article\"\n                      ]\n                    },\n   "
+      },
+      {
+        "key": "c7",
+        "label": "结构化问题字段",
+        "reason": "支持问题数量上限、必填信息和对象封闭规则，并显示 citationKeys 仅定义为字符串数组。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
           "startLine": 166,
-          "endLine": 205
+          "endLine": 206
         },
         "quote": "          \"questions\": {\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"question\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1,\n                  \"maxLength\": 1000\n                }"
+      },
+      {
+        "key": "c8",
+        "label": "顶层合同标识与封闭边界",
+        "reason": "支持顶层必填字段、禁止额外顶层属性以及 KnowledgeBatch.v1 合同标识。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
+          "startLine": 220,
+          "endLine": 227
+        },
+        "quote": "    }\n  },\n  \"required\": [\n    \"schema_version\",\n    \"documents\"\n  ],\n  \"additionalProperties\": false,\n  \"$id\": \"https://omem.local/schemas/KnowledgeBatch.v1\""
       }
     ],
     "questions": [
       {
-        "question": "运行时是否实际加载并执行 KnowledgeBatch.v1 校验，校验失败后是否存在修复重试？",
-        "why": "当前材料能证明 Schema 的字段约束，但没有展示对话分析角色的清单、运行网关、校验失败处理或重试预算；此前关于修复重试的结论因此已撤回。",
-        "nextStep": "检查对话分析角色清单、Schema 加载与输出解析代码，并以无效输出的行为测试确认失败路径和重试次数。",
-        "blocking": false,
-        "citationKeys": [
-          "c2"
-        ]
-      },
-      {
-        "question": "宿主按固定行范围复制精确引文并执行后续独立语义复核的流程是否已经实现？",
-        "why": "quote 字段只声明预期的宿主行为，JSON Schema 本身无法证明行范围解析、材料版本固定或独立复核已经接入。",
-        "nextStep": "核对引用解析、固定材料版本绑定和独立复核相关实现，并补充覆盖成功提取、越界范围及语义不支持情形的行为测试。",
-        "blocking": false,
-        "citationKeys": [
-          "c5"
-        ]
-      },
-      {
-        "question": "宿主按固定行范围提取引文并进行独立语义复核的流程是否已经实现？",
-        "why": "c5 中 quote 的描述和 c4 中的提示只能证明合同约定，不能证明行范围解析、固定版本绑定及独立复核已接入运行时；草稿未将其误述为已实现。",
-        "nextStep": "核对引用解析、固定材料版本绑定和独立复核实现，并补充成功提取、越界范围及语义不支持情形的行为测试。",
+        "question": "运行时是否另有校验，确保 sections 中使用的引用键以及 questions.citationKeys 都能解析到同一文档的 citations？",
+        "why": "当前 schema 仅把正文定义为字符串，并把 citationKeys 定义为字符串数组，未声明这些键与 citations.key 的跨字段一致性；若消费端没有补充校验，可能产生悬空引用。",
+        "nextStep": "检查消费该合同的解析器或独立验证器，并以行为测试验证正文引用和问题引用的存在性及同文档解析。",
         "blocking": false,
         "citationKeys": [
           "c4",
-          "c5"
+          "c5",
+          "c7"
         ]
       }
     ]
@@ -133,47 +147,22 @@
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/output.schema.json",
       "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/prompt.md",
-      "digest": "95e5365efe5fc2b6acf74b1b4aa3436e115ee2b00f5bbb2bcf56398a2cf2d1fc"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/SKILL.md",
-      "digest": "b496b1119b4959702ca15ae7f04af55d900642813af3a614a4bb77cf6f4698b5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml",
-      "digest": "76401f4dbc5664a0393bb4935243faeb38c159fb1e0296c04e9457601cbecdf6"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
-      "digest": "f292d7b1582aae1f2ac92c146cfa1adc98c71b4f3ee52ab4bac4fadc30e821fd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/extractor/1/output.schema.json",
-      "digest": "763b50103fdd95fef13b764dd1e7ca464c79fe7a860f6337e6dbbe2d56448b50"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:47:18.849Z",
+    "at": "2026-10-01T02:48:02.504Z",
     "trace": {
-      "runId": "078dd103-b414-4417-88d4-06ad06c51e4d",
+      "runId": "a9509136-b7e1-4c1c-9924-327f828328a3",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "0d15d37f7feff7737afd9e3b041e15f0f84948ed9908b1c2a5600045adbde491",
-      "contextHash": "88da03d9b673f6af97736c76d6bd4f77d6a3431b9b31446a83cda635d798d888",
+      "promptHash": "8d784f5c3155eb5c0e2863823e10ea1797b4c341559be513a9964a11311cb0aa",
+      "contextHash": "031192774673c71f0c7cd5febfb832adf8baddb743c409c088343f3fa1b873aa",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5c96c239017c4bd38a8ec7d3bc1c575687eaf6a185adfcad99191a3669f4c548",
+      "fingerprint": "6a3db4c586ff817f384db48b3247eb09ef81cee56658c93ade26ad2b8d4b8b19",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -186,11 +175,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-c713-7fb3-9449-01836f7e4f30"
+        "01a0f55c-5586-7741-a276-5096b5fe01f1"
       ],
       "usage": {
-        "used": 22484,
-        "size": 760000,
+        "used": 26140,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -198,10 +187,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 28100,
-          "utf8Bytes": 33842,
-          "estimatedTokens": 11281,
-          "budgetedTokens": 14102,
+          "chars": 21152,
+          "utf8Bytes": 25548,
+          "estimatedTokens": 8516,
+          "budgetedTokens": 10645,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -210,17 +199,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:47:29.093Z",
+    "at": "2026-10-01T02:48:19.231Z",
     "trace": {
-      "runId": "5eb1680d-878b-40c9-8ca5-1323138bf7d1",
+      "runId": "a830f13c-85f5-4ff7-aff3-95ffaf095e93",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "11abb17c2163509cb5d2bfdaed525ae9ed75e85f45c8fc9dffd512e5d69fa40b",
-      "contextHash": "b87b1c7d004bdc3b41e6b0ac4731d78ca73c8309ae16f5dce173eb6d7b823266",
+      "promptHash": "02b5bea57aa1ba8366248e8d15bac7d67b72d611cb9675ab6ee807bad9c63966",
+      "contextHash": "fd82256b1600ea264a7b74f8dbb9bb739e0e2220aeedc2bdf36d92acf5f5f0bc",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "dcc518bd318868dae03921f8c4f24f606dbe0122429e0e278a6ede007140701b",
+      "fingerprint": "067b09b6297ffdb6cc1bc96edc823bb2bf3b8931759f6cf204501c604b9f89ad",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -233,11 +222,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb5-1290-75a3-ba9d-82daccc2420b"
+        "01a0f55c-bacd-7490-9a06-15b62b6b5319"
       ],
       "usage": {
-        "used": 20946,
-        "size": 760000,
+        "used": 23724,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -245,10 +234,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26381,
-          "utf8Bytes": 31597,
-          "estimatedTokens": 10533,
-          "budgetedTokens": 13167,
+          "chars": 18178,
+          "utf8Bytes": 21378,
+          "estimatedTokens": 7126,
+          "budgetedTokens": 8908,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

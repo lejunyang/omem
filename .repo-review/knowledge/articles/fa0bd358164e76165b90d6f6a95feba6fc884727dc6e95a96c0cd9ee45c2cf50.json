@@ -2,58 +2,89 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-    "title": "知识文章正文加载与引用导航组件",
-    "summary": "KnowledgeDocument.vue 根据文档键和可选 revision 加载知识文章，呈现摘要、来源状态、目录、Markdown 正文与开放问题，并把可操作引用转换为上层 trail 导航帧。",
+    "title": "知识正文阅读与引用导航组件",
+    "summary": "该组件按文档键及可选修订加载知识文章，呈现来源状态、目录、Markdown 正文和待核对问题，并把可操作引用交给上层阅读轨迹。请求代次可避免旧响应覆盖新页面；同文档章节跳转、目录选择器边界和自动化测试覆盖仍需确认。",
     "category": "implementation",
     "sections": [
       {
-        "key": "load-and-race",
-        "title": "加载、版本与竞态处理",
-        "body": "组件监听 documentKey 与 revision，并立即执行文章请求；文档键和 revision 都经过 URL 编码。每轮请求递增 generation，只有仍为最新的一轮可以写入 article、发出 loaded 或显示错误，从而避免快速切换文档时旧响应覆盖新页面。加载前清空旧文章；成功渲染后等待 DOM 更新，再按可选 section 使用 `CSS.escape` 定位并滚动到对应章节。[[c1]]"
+        "key": "purpose-and-rendering",
+        "title": "阅读结构与问题入口",
+        "body": "组件区分错误、加载和成功状态；文章加载后展示标题、摘要、当前或历史来源标记与模型信息，再按章节交给共享 `OmMarkdown` 渲染。章节超过两项时才出现页内目录，以减少短文的导航噪声。[[c1]]\n\n正文末尾挂载按当前文章键过滤的待核对问题，使已形成的知识与仍需补充的背景处于同一阅读上下文。[[c2]]"
       },
       {
-        "key": "rendering",
-        "title": "正文结构与来源状态",
-        "body": "请求期间显示读取状态，失败显示知识不可用空态。成功后依次展示标题、摘要、当前或历史知识徽标、模型来源说明；章节超过两个时才生成目录。每个 section 交给共享 `OmMarkdown` 渲染，并传入文章 citations；文末挂载 `KnowledgeQuestions`，使用当前文章 key 继续读取或处理开放问题。[[c2]]"
+        "key": "load-and-position",
+        "title": "加载、竞态控制与章节定位",
+        "body": "组件监听 `documentKey` 和 `revision`，变化时清空旧状态并请求指定文章；`generation` 只允许最后一代请求写入结果或错误，避免快速切换时旧响应覆盖当前页面。[[c3]]\n\n加载完成并等待 DOM 更新后，组件按 `section` 滚动到目标章节。不过监听源不含 `section`，因此仅改变章节属性时是否会立即定位，仍取决于父级是否重建组件。[[c4]]"
       },
       {
         "key": "citation-navigation",
-        "title": "引用导航与边界",
-        "body": "Markdown 发出 citation key 后，`cite` 在当前文章 citations 中查找目标。只有 citation 标记为 actionable 且文章仍存在时才发出 navigate；导航帧 id 序列化 document、文章 revision 和 citation key，标题使用人读 label。[[c3]] 组件不自行读取原始证据，也不解释不可操作 reason，而把具体引用页面和 trail 栈管理交给父层。章节滚动使用选择器定位，目录点击也在当前根节点内滚动；本文件没有加载取消、重试按钮或空章节校验。[[c4]]"
+        "title": "引用导航与相邻模块",
+        "body": "点击正文引用时，组件先查找引用并检查 `actionable`；有效引用被编码成包含文档、固定修订和引用键的导航帧，再交给父级管理阅读轨迹。[[c5]] API 层统一附加会话令牌、处理失败响应，并定义文章、引用与导航帧类型。[[c6]]\n\n问题组件通过同一接口读取问题、保存用户回答或加入待办；回答会作为原始材料保存，并提示相关知识等待重新核对。[[c7]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "边界与被替代的判断",
+        "body": "初始章节定位使用 `CSS.escape`，目录点击却直接把章节键插入属性选择器；两条路径对引号、反斜杠等特殊字符的处理不一致。此前仅引用初始定位便比较两条路径的依据不足，现已由同时覆盖两处实现的引用替代。[[c8]]\n\n`OmButton` 在本文件中被导入但未使用。[[c9]] 另有 `.knowledge-open-questions` 样式未对应当前模板中的 `knowledge-questions` 类名；此前用导入范围同时支持该样式判断的结论已被拆分并替代。[[c10]] 这些现象可能是遗留代码，但现有材料不能证明其清理计划，也未提供测试文件来确认竞态、历史修订、引用禁用和滚动行为的覆盖情况。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文章加载与 generation 防竞态",
-        "reason": "支持参数编码、迟到响应抑制、加载后章节定位的完整流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-          "startLine": 6,
-          "endLine": 19
-        },
-        "quote": "const props = defineProps<{ prefix: string; documentKey: string; revision?: string; section?: string }>();\nconst emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();\nconst article = ref<Article | null>(null), error = ref(\"\");\nconst root = ref<HTMLElement>();\nlet generation = 0;\nwatch(()"
-      },
-      {
-        "key": "c2",
-        "label": "知识正文与开放问题渲染",
-        "reason": "支持加载状态、来源徽标、目录、Markdown 章节及问题组件的结构。",
+        "label": "知识正文模板结构",
+        "reason": "支持错误、加载、文章元数据、目录和分节 Markdown 的条件化呈现。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
           "startLine": 26,
-          "endLine": 43
+          "endLine": 40
         },
         "quote": "<template>\n  <article ref=\"root\" class=\"knowledge-document\">\n    <OmEmpty v-if=\"error\" title=\"知识暂不可用\" :description=\"error\" />\n    <p v-else-if=\"!article\" class=\"muted\" role=\"status\">正在读取知识正文…</p>\n    <template v-else>\n      <h2>{{ article.title }}</h2>\n      <p class=\"knowledge-summary\">{{ article.summary }}</p>\n      "
       },
       {
+        "key": "c2",
+        "label": "文章待核对问题入口",
+        "reason": "支持正文末尾按当前文章键挂载待核对问题组件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 37,
+          "endLine": 42
+        },
+        "quote": "      <section v-for=\"section in article.document.sections\" :key=\"section.key\" :data-section=\"section.key\" class=\"knowledge-section\">\n        <h3>{{ section.title }}</h3>\n        <OmMarkdown :source=\"section.body\" :citations=\"article.citations\" @cite=\"cite\" />\n      </section>\n      <KnowledgeQuestions :prefix=\"prefix\""
+      },
+      {
         "key": "c3",
-        "label": "可操作引用转导航帧",
-        "reason": "支持引用查找、actionable 门槛和导航载荷所含字段。",
-        "relation": "calls",
+        "label": "文章请求与代次校验",
+        "reason": "解释监听文档与修订、构造请求及阻止过期响应覆盖当前状态的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 10,
+          "endLine": 19
+        },
+        "quote": "let generation = 0;\nwatch(() => [props.documentKey, props.revision], async () => {\n  const current = ++generation; error.value = \"\"; article.value = null;\n  try {\n    const result = await knowledgeApi<Article>(props.prefix, \"/articles/\" + encodeURIComponent(props.documentKey) + (props.revision ? \"?revision=\" + encodeUR"
+      },
+      {
+        "key": "c4",
+        "label": "加载完成后的章节滚动",
+        "reason": "支持章节定位发生在加载与 DOM 更新之后，并说明监听源不包含章节属性。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 11,
+          "endLine": 18
+        },
+        "quote": "watch(() => [props.documentKey, props.revision], async () => {\n  const current = ++generation; error.value = \"\"; article.value = null;\n  try {\n    const result = await knowledgeApi<Article>(props.prefix, \"/articles/\" + encodeURIComponent(props.documentKey) + (props.revision ? \"?revision=\" + encodeURIComponent(props.rev"
+      },
+      {
+        "key": "c5",
+        "label": "引用点击到导航帧",
+        "reason": "支持引用可操作性检查以及向父级发送固定文档修订导航信息。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
@@ -63,47 +94,133 @@
         "quote": "function cite(key: string) {\n  const c = article.value?.citations.find(c => c.key === key);\n  if (!c?.actionable || !article.value) return;\n  emit(\"navigate\", { kind: \"citation\", id: JSON.stringify({ document: props.documentKey, revision: article.value.revision, citation: key }), title: c.label });\n}"
       },
       {
-        "key": "c4",
-        "label": "目录与章节滚动行为",
-        "reason": "支持目录只在章节较多时出现，并在组件根节点内定位章节。",
+        "key": "c6",
+        "label": "知识接口与文章类型",
+        "reason": "解释组件依赖的文章、引用、导航帧类型及统一鉴权和错误处理。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/api.ts",
+          "startLine": 1,
+          "endLine": 10
+        },
+        "quote": "import type { KnowledgeDocument, KnowledgeCitation } from \"../../../../packages/contracts/src/knowledge\";\nexport type ArticleMeta = { key: string; title: string; summary: string; category: string; current: boolean; revision: string; model: string; reviewedBy: string; generatedAt: string; questionCount: number };\nexport"
+      },
+      {
+        "key": "c7",
+        "label": "问题补充与待办流程",
+        "reason": "支持问题读取、回答保存为原始材料以及加入待办的相邻交互流程。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+          "startLine": 5,
+          "endLine": 15
+        },
+        "quote": "const props = defineProps<{ prefix: string; documentKey?: string }>();\ntype Question = { id: string; question: string; why: string; nextStep: string; blocking: boolean; state: string; documentKey: string };\nconst questions = ref<Question[]>([]), active = ref(\"\"), answer = ref(\"\"), message = ref(\"\");\nconst visible = com"
+      },
+      {
+        "key": "c8",
+        "label": "两种章节选择器路径",
+        "reason": "同时覆盖初始定位与目录点击实现，支持两条路径在 CSS 转义处理上不一致的判断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
-          "startLine": 31,
-          "endLine": 41
+          "startLine": 17,
+          "endLine": 35
         },
-        "quote": "      <h2>{{ article.title }}</h2>\n      <p class=\"knowledge-summary\">{{ article.summary }}</p>\n      <div class=\"knowledge-provenance\"><OmBadge>{{ article.current ? '当前知识' : '历史知识 · 来源已变化' }}</OmBadge><span>AI 分析并独立复核 · {{ article.model }}</span></div>\n      <nav v-if=\"article.document.sections.length > 2\" class=\"arti"
+        "quote": "    await nextTick(); if (props.section) root.value?.querySelector(`[data-section=\"${CSS.escape(props.section)}\"]`)?.scrollIntoView({ block: \"start\" });\n  } catch (e) { if (current === generation) error.value = String(e); }\n}, { immediate: true });\nfunction cite(key: string) {\n  const c = article.value?.citations.find("
+      },
+      {
+        "key": "c9",
+        "label": "未使用的按钮导入",
+        "reason": "支持本组件导入 OmButton、但模板与脚本中未使用该组件的观察。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 2,
+          "endLine": 3
+        },
+        "quote": "import { ref, watch, nextTick } from \"vue\";\nimport { OmMarkdown, OmBadge, OmEmpty, OmButton } from \"@omem/ui\";"
+      },
+      {
+        "key": "c10",
+        "label": "开放问题遗留样式",
+        "reason": "支持文件末尾存在 knowledge-open-questions 样式规则，而当前模板未使用该类名的判断。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 54,
+          "endLine": 56
+        },
+        "quote": ".knowledge-open-questions { border-top: 1px solid var(--om-line); margin-top: 32px; padding: 16px 0; color: var(--om-secondary); }\nsummary { cursor: pointer; min-height: 44px; }\n.knowledge-open-questions div { margin: 20px 0; }"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "仅改变 section 属性而不改变文档键或修订时，是否要求组件立即滚动到新章节？",
+        "why": "当前监听仅包含 documentKey 和 revision，章节滚动位于文章成功加载路径中；父级是否通过重建组件实现同文档章节跳转尚不明确。",
+        "nextStep": "检查父级路由或阅读轨迹组件的 key 与复用策略，并补充同文档 section 更新的行为测试；若组件会复用，应单独监听 section。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "章节键是否被合同严格限制为不会破坏 CSS 属性选择器的字符集合？",
+        "why": "初始定位使用 CSS.escape，而目录点击直接插入章节键；即使引用现已覆盖两处实现，是否会遇到特殊字符仍取决于章节键合同。",
+        "nextStep": "核对 section key 的合同约束，并为引号、反斜杠等边界值增加组件测试；若允许这些字符，目录路径应统一转义。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "该阅读组件目前有哪些浏览器或组件级自动化测试？",
+        "why": "提供材料没有测试文件，无法确认快速切换请求、错误响应、不可操作引用、历史修订和章节滚动的实际覆盖情况。",
+        "nextStep": "定位对应 Vitest 或 Playwright 用例；若不存在，优先补充竞态响应、引用禁用和章节导航的真实行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c5",
+          "c8"
+        ]
+      },
+      {
+        "question": "仅改变 section 属性而不改变文档键或修订时，父级是否会重建组件并触发目标章节定位？",
+        "why": "当前组件的监听源只有 documentKey 和 revision；材料未包含父级组件的 key、复用和导航策略，因此无法确定同文档内仅更新 section 的实际行为。",
+        "nextStep": "检查父级路由或阅读轨迹组件的 key 与复用策略，并增加仅更新 section 的行为测试；若组件会被复用，应单独响应 section 变化。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "章节键是否被合同限制为不会破坏未转义 CSS 属性选择器的字符集合？",
+        "why": "初始定位使用 CSS.escape，而目录点击直接插入章节键；材料未提供 KnowledgeDocument 对 section key 的字符约束。",
+        "nextStep": "核对 section key 的合同定义，并用引号、反斜杠等边界值验证目录点击；若允许这些字符，应统一选择器转义。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "竞态响应、不可操作引用、历史修订和章节滚动目前是否有自动化行为测试？",
+        "why": "给出的材料不包含测试文件，不能据此确认这些行为的测试覆盖。",
+        "nextStep": "定位相关 Vitest 或 Playwright 用例；若不存在，补充快速切换请求、引用禁用和章节导航的真实行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c5",
+          "c8"
+        ]
+      }
+    ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/store.test.ts",
-      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/App.vue",
-      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/AssetImage.vue",
-      "digest": "e7b0ff71665b29d416a26384f5317858438ae393822a1a1b800a44e9ef0f975e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/codewiki/modules.ts",
-      "digest": "d397f84cfec3d3c9bd0ef715a7e7efc40c50479023b1987840fbe11927bcaed4"
-    },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
@@ -111,56 +228,46 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
     },
     {
       "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/NotificationDetail.vue",
-      "digest": "ecb50ad26a8cfc22d6ef8fda2792bc9ac5ca529e6dd874dd33d5c1696dd39521"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/EvidenceReader.vue",
-      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:42:03.262Z",
+    "at": "2026-10-01T02:43:25.322Z",
     "trace": {
-      "runId": "0b34c2ee-cc37-4898-a3b0-3c45af7c716f",
-      "roleId": "code-analyst",
+      "runId": "1e4a2a49-122e-4a9b-82d3-e38a11da1336",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "5472c0246700819a084eb9b5112f3cab41c7cd887a9a982e2163c85d71ff23a4",
-      "contextHash": "364388f74400b7566dbf7577b1f1fc17afb50415dc518f330deef424de88b084",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "1735818d00362f0623e48029302137ce5e6ce34570684262e0606df66ae46226",
+      "contextHash": "44ff539396071c734ef0f095e888b75045bf6badb627b0d059fd19d7f291a43f",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "de351e4b4d6b07adf806b89a89dc2a996aa6e2c2872ca383c8afc6bd4dbabb66",
+      "fingerprint": "ed6cc9e097a5330c2a5f0fc1aa3818a6ae6b8f562b872098d3f0eefef2691515",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeaf-64e6-7921-9472-d7eeeec6806b"
+        "01a0f558-0e48-7941-b624-c910d548251e"
       ],
       "usage": {
-        "used": 44865,
-        "size": 760000,
+        "used": 28614,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -168,10 +275,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 86049,
-          "utf8Bytes": 90813,
-          "estimatedTokens": 30271,
-          "budgetedTokens": 37839,
+          "chars": 24780,
+          "utf8Bytes": 31197,
+          "estimatedTokens": 10399,
+          "budgetedTokens": 12999,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -180,17 +287,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:42:31.660Z",
+    "at": "2026-10-01T02:43:43.265Z",
     "trace": {
-      "runId": "83fb26b3-7530-407f-b33d-06482620964c",
+      "runId": "cf133d66-17b0-45fa-8b6d-e3bfbcfa57c5",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c1cfa58e2b965d8f14c421193cebb2b5e4a68464425b0990985624d18d0699d0",
-      "contextHash": "9d45216bf97d33f7fe9fa2870144d574d1888a04ddb2ae3f01d72e9fcd052af4",
+      "promptHash": "4a27b9502878b9214436f7208ae27c6d56270426336e59515491bfa838cde699",
+      "contextHash": "786bde116341c200d12c5729bfb995dc3eff039aaf2c5757fe8fd3f3477401cd",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "92cab9424d0317d2bcf680db489b543cfde8b9301ed5f2774ee909f246058b26",
+      "fingerprint": "fe936d113bc2bed3886c9ba77f86f6dd54737729dd1c164cf275c289bd8e21a6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -203,11 +310,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-421a-7423-91c2-657cce7e86df"
+        "01a0f558-756c-7312-9f10-34de569c8772"
       ],
       "usage": {
-        "used": 48976,
-        "size": 760000,
+        "used": 25859,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -215,10 +322,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 107223,
-          "utf8Bytes": 120168,
-          "estimatedTokens": 40056,
-          "budgetedTokens": 50070,
+          "chars": 21504,
+          "utf8Bytes": 25809,
+          "estimatedTokens": 8603,
+          "budgetedTokens": 10754,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

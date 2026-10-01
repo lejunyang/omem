@@ -2,205 +2,218 @@
   "version": 1,
   "document": {
     "key": "module:lark",
-    "title": "Lark 集成模块理解",
-    "summary": "Lark 模块统一承载应用接入、凭据保护、能力核验、身份配对、实时捕获、助理问答、通知投递与决策卡处理。当前关键未决边界是群聊捕获授权、国际版能力探测、接入任务重启恢复，以及媒体下载和平台去重的真实故障语义。",
+    "title": "lark · 模块理解",
+    "summary": "Lark 模块是 omem 的飞书/Lark 接入适配层，覆盖应用注册与复用、能力核验、所有者配对、实时事件、统一捕获、助手回复、决策卡片和通知投递。它复用公共输入、检索与记忆链路，并用收件箱、outbox、稳定标识和租约处理重投与故障；当前仍是 personal 单用户实现，群采集授权、消息修订语义、决策幂等和真实联调尚待补证。",
     "category": "architecture",
     "sections": [
       {
-        "key": "purpose_scope",
-        "title": "职责、能力范围与可见性边界",
-        "body": "该模块是 omem 与飞书/Lark 的集成边界。默认预设面向群聊材料记录、文档、日历、会议、任务和 owner 通知，并声明排除批量消息、群成员变更及权限管理等高风险能力。[[c1]] 但实际租户权限包含文档成员与权限设置读取以及日历 ACL 读取，用户权限还包含文档成员申请和权限读取；因此“排除权限管理”只是设计意图，不能等同于已经实现最小授权。此结论替代旧稿中仅凭配置注释推断实际权限边界的表述。[[c2]][[c3]][[c4]]\n\n运行时统一装配实时连接、助理、通知聚合、投递工作器、决策卡和质量标注。群聊检索只允许读取当前会话实际采集的证据，私聊采用个人可见性，从服务端限制跨群或私有材料泄露。[[c5]]"
+        "key": "purpose-and-boundary",
+        "title": "作用、范围与安全边界",
+        "body": "该模块不是独立知识库，而是 omem 与飞书/Lark 之间的接入层。默认应用配置面向消息、文档、日历、会议和任务等个人助理能力，并声明排除批量消息、会话成员变更及权限管理等高风险范围。[[c1]] 捕获复用公共 `Store` 的 `InputAggregator`，检索结果继续回指不可变 fragment，使后续知识与回答能够追溯原始证据。[[c2]][[c3]]\n\n接入记录当前固定写入 `personal` 工作区，因此只能视为单用户实现。Botmux 复用和直接凭据导入会调用统一的凭据接受流程；新建或 SDK 注册取得凭据后也汇入该流程。[[c4]][[c25]] 凭据库要求 32 字节主密钥，以受限引用定位文件，并将目录权限收紧为仅所有者可访问。[[c9]] 凭据写入采用 AES-256-GCM，经临时文件同步、重命名和权限收紧后落盘。[[c26]] 这些证据只覆盖所展示的 Lark 路径，不能外推为全仓库不存在其他明文凭据路径。"
       },
       {
-        "key": "onboarding_security",
-        "title": "应用接入、能力门禁与身份绑定",
-        "body": "接入既可走官方设备注册，也可导入 Botmux 应用或显式密钥；设备注册仅对目标轮询请求的瞬时网络或服务端错误进行有限重试，并保持原 device code。[[c6]] 两种既有应用来源最终进入同一凭据验收流程。[[c7]] 验收会校验应用编号，以 AES-256-GCM 和受限引用保存密钥，建立候选连接版本并执行能力探测；失败候选不会覆盖既有活动版本，存在缺失能力时也不会进入配对。[[c8]][[c9]]\n\nOpenAPI 探针查询并记录机器人身份，同时比较实际权限和回调；公共接口不可见的事件订阅由 WebSocket 实际投递补证，未配置真实探针时封闭失败。这里明确替代旧稿“比较机器人身份”的过强结论：材料只证明读取 `botOpenId`，没有证明它与某个预期身份进行比较。[[c10]] 能力齐备后，系统签发一次性配对码并仅持久化其 HMAC 摘要，核对应用、操作者、会话、期限和尝试次数；确认时原子废弃旧绑定、切换连接版本，并创建通知、决策以及群聊监控目标。[[c11]]"
+        "key": "onboarding-flow",
+        "title": "接入、能力核验与所有者绑定",
+        "body": "官方能力探针先换取租户令牌，再并行查询机器人与应用信息，将实际权限和卡片回调与申请配置比较。公开应用接口不提供事件订阅列表，因此事件能力仍标为运行时核验，需要 WebSocket 的真实投递补证。[[c5]][[c23]] onboarding 根据缺项把候选版本置为 `failed` 或 `awaiting_pair`；已有活动版本存在时，失败候选不会自动取代它。[[c6]]\n\n能力满足后，服务签发默认五分钟有效的随机配对码，仅保存 HMAC 摘要并消费同连接旧码。[[c7]] 管理端确认配对时，在事务中替换旧绑定、激活候选版本并创建通知与决策目标；若候选会话是群聊，还会创建已启用的群监控目标。[[c8]] 这条自动启用行为是否已获得明确采集授权，现有材料没有说明。"
       },
       {
-        "key": "runtime_flow",
-        "title": "实时捕获、问答与可靠投递",
-        "body": "实时回调先标准化，再按应用、事件编号和载荷摘要写入幂等收件箱；相同编号对应不同载荷时拒绝处理。助理只接受绑定 owner 的私聊，或 owner 在群内明确提及机器人的消息。机器人入群和首次普通群消息均可能创建或启用群监控；捕获会保留会话、发送者、时间、回复关系和绑定版本。[[c12]] 文本、富文本和图片会转换为统一 Capture 部件，但图片仅在缺少下载条件时降级为占位文本；真实下载抛错会继续向外传播。这替代了“所有图片失败都会自动降级”的旧结论。[[c13]]\n\n助理回复先在事务中创建 outbox 并关联 turn，再确认 inbox；同一 turn 使用稳定平台 UUID，以便重投复用既有投递。[[c14]] 通知投递通过租约状态机检查连接、绑定、标注会话和一小时本地去重窗口，最多尝试五次，认证失败会停用连接及相关目标；发送前还会复核密钥所属应用、载荷摘要和 30 KB 限制。[[c15]][[c16]] 决策卡则先联合核验应用、绑定、操作者、会话、消息、nonce、提案摘要、版本摘要和有效期并一次性消费动作，再由独立租约命令执行记忆决策、更新原卡片，按错误类型终止或重试。[[c17]][[c18]]"
+        "key": "runtime-flow",
+        "title": "实时事件、统一捕获与可靠回复",
+        "body": "运行时用连接租约限制同一连接的持有者，并以 token 续租或释放。[[c10]] 消息先按应用和事件 ID 写入收件箱：重复载荷复用原记录，同 ID 不同摘要则拒绝，同时把实际事件类型加入能力画像。[[c11]] `LarkRuntimeHost` 为连接管理器装配卡片处理器；在这套装配中，卡片事件直接进入卡片队列，但管理器本身只有配置处理器时才走该分支。[[c16]][[c24]]\n\n消息通过活动连接与绑定检查后，绑定 owner 的私聊可进入助手，群聊还必须明确提及机器人。[[c12]] 未进入助手路径的群消息会自动插入启用的群监控目标并经公共输入聚合器捕获，因此并非所有首次群消息都会走捕获分支。[[c13]] 文本、富文本和图片被转换为带发送者、事件时间及回复关系的统一 parts；图片下载调用没有局部异常降级。[[c14]] 助手回复的变更、投递意图及 turn 关联在同一事务中写入，同一 turn 使用稳定平台 UUID。[[c15]] outbox 提交后才完成 inbox；并发重投、既存 outbox 和恢复分支用于避免重复入队或补写缺失 outbox。[[c27]]"
       },
       {
-        "key": "recovery_limits",
-        "title": "并发恢复与尚未闭合的限制",
-        "body": "实时连接以数据库租约互斥，心跳和释放必须匹配原令牌；连接版本变化、停用或心跳异常会关闭旧连接。[[c19]] 运行循环依次同步连接、准备聚合、处理决策卡与投递；启动恢复目前只覆盖助理 turn，有结果者补标完成，无结果者删除并等待事件重投。[[c20]]\n\n能力探针固定访问飞书开放平台，而实时 WebSocket 与消息发送适配器都明确按 `tenantBrand` 选择飞书或 Lark 域名；因此国际版能力探测是否兼容仍不能从现有实现确认。[[c10]][[c21]][[c22]] onboarding 的活动控制器和 completion 只存在进程内，现有启动恢复也没有说明 `awaiting_scan` 或 `checking` 如何在重启后收敛。[[c8]][[c20]] 图片下载异常与平台发送结果不确定的最终一致性仍缺少真实租户依据。[[c13]][[c15]] 更关键的是，配对确认、机器人入群及首次普通群消息都可能启用群捕获，但材料没有展示独立的捕获范围授权步骤。[[c11]][[c12]]"
+        "key": "decisions-delivery-limits",
+        "title": "卡片决策、通知投递与限制",
+        "body": "决策卡片不会直接执行业务。回调值必须符合固定协议，动作限于批准、拒绝或请求上下文，并携带 UUID、nonce、提案摘要、期限和预期版本摘要；未知字段也会被拒绝。[[c28]] 随后入口再核对应用、操作者、消息位置、连接、绑定、摘要、期限、nonce 与决策状态，条件消费成功后才创建命令。[[c17]] 这替代了此前仅用入队实现范围支撑“严格协议”的证据不足表述。\n\nworker 领取到期或租约过期的命令，递增尝试次数并生成 lease token；完成写回必须仍持有该 token。[[c18]] 执行阶段以稳定 requestId 调用记忆决策，再读取凭据并原位更新卡片。普通异常以及限流或结果不明错误可在五次以内重试；认证错误只可确认会调用 `disableBinding`，所给范围未展示该方法实现，不能断言其具体改写哪些绑定状态。[[c19]]\n\n普通通知也通过条件抢占取得租约，连接、绑定或标注会话失效时抑制发送。[[c20]] 限流可在五次上限内重试；结果不明还受首次发送后一小时去重窗口约束。通知投递路径中的认证错误会禁用该连接的采集目标、将连接置为失败，并终止同连接中仍处于待发送或等待重试的其他意图。[[c21]] 运行时每轮先同步连接和准备聚合，再顺序消费卡片与投递任务，而非并发执行。[[c22]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "个人助理默认能力声明",
-        "reason": "支持默认预设的业务范围及声明排除的高风险能力；仅用于说明设计意图。",
+        "label": "个人助理默认能力边界",
+        "reason": "支持默认配置面向个人助理能力，并明确排除部分高风险权限范围。",
         "relation": "background",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/defaults.ts",
           "startLine": 3,
-          "endLine": 14
+          "endLine": 17
         },
         "quote": "/**\n * Reusable personal-assistant profile derived from botmux source revision\n * 597ffb10172ea9ac2b50b75507d52a8cf5fb0cd7. It reserves document, calendar,\n * meeting, task and rich-content capabilities while excluding bulk messaging,\n * chat ownership/membership mutation and permission/ACL administration.\n */\nexport c"
       },
       {
         "key": "c2",
-        "label": "租户文档权限读取项",
-        "reason": "支持租户权限表实际包含文档成员信息和权限设置读取能力。",
-        "relation": "contradicts",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
-          "startLine": 62,
-          "endLine": 63
-        },
-        "quote": "        \"docs:permission.member:retrieve\",\n        \"docs:permission.setting:read\","
-      },
-      {
-        "key": "c3",
-        "label": "用户文档权限申请与读取项",
-        "reason": "支持用户权限表包含文档成员申请、成员信息读取和权限设置读取能力。",
-        "relation": "contradicts",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
-          "startLine": 154,
-          "endLine": 156
-        },
-        "quote": "        \"docs:permission.member:apply\",\n        \"docs:permission.member:retrieve\",\n        \"docs:permission.setting:read\","
-      },
-      {
-        "key": "c4",
-        "label": "租户日历 ACL 读取权限",
-        "reason": "支持租户权限表实际包含日历 ACL 读取项，补足旧稿对租户权限范围的引用。",
-        "relation": "contradicts",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/defaults.ts",
-          "startLine": 107,
-          "endLine": 107
-        },
-        "quote": "        \"calendar:calendar.acl:read\","
-      },
-      {
-        "key": "c5",
-        "label": "运行时组合根与群聊可见性",
-        "reason": "支持运行时组件组装，以及群聊只能检索当前会话所采集证据的可见性边界。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-          "startLine": 36,
-          "endLine": 107
-        },
-        "quote": "export class LarkRuntimeHost {\n  private readonly controller = new AbortController();\n  private readonly connections = new Map<string, LarkConnectionManager>();\n  private readonly delivery: LarkDeliveryWorker;\n  private readonly batcher: LarkNotificationBatcher;\n  private readonly cards: LarkCardActionService;\n  readon"
-      },
-      {
-        "key": "c6",
-        "label": "设备注册与有限重试",
-        "reason": "支持设备注册参数映射、二维码状态回调和保持同一设备码的有限瞬时错误重试。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/registration.ts",
-          "startLine": 29,
-          "endLine": 103
-        },
-        "quote": "const registrationPath = \"/oauth/v1/app/registration\";\nconst retryMarker = \"__omemRegistrationRetry\";\nlet registrationRetryInstalled = false;\n\n/** Keep the same RFC 8628 device_code alive across transient poll failures.\n * The upstream SDK treats one network error as terminal; retrying its Axios\n * request here preserv"
-      },
-      {
-        "key": "c7",
-        "label": "既有应用统一导入入口",
-        "reason": "支持 Botmux 凭据与显式密钥两条路径汇入统一凭据验收流程。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-          "startLine": 120,
-          "endLine": 165
-        },
-        "quote": "  listReusableApps() {\n    return this.existingApps?.list() ?? [];\n  }\n\n  async importExisting(value: unknown) {\n    const input = larkExistingImportSchema.parse(value);\n    const id = randomUUID();\n    const at = iso(this.clock());\n    this.transaction(() => {\n      this.db\n        .prepare(\n          `INSERT INTO lar"
-      },
-      {
-        "key": "c8",
-        "label": "凭据验收与候选连接版本",
-        "reason": "支持凭据校验、候选版本创建、能力探测、失败处置和缺失能力门禁，同时显示活动任务依赖进程内状态。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-          "startLine": 244,
-          "endLine": 457
-        },
-        "quote": "  private async acceptCredentials(\n    onboardingId: string,\n    input: StartInput,\n    credentials: LarkRegistrationCredentials,\n  ) {\n    if (!/^cli_[a-zA-Z0-9]+$/.test(credentials.clientId))\n      throw Error(\"LARK_APP_ID_INVALID\");\n    if (!credentials.clientSecret) throw Error(\"LARK_SECRET_MISSING\");\n    if (input"
-      },
-      {
-        "key": "c9",
-        "label": "凭据认证加密存储",
-        "reason": "支持主密钥约束、受限秘密引用、AES-256-GCM 和原子文件持久化。",
+        "label": "统一存储与输入聚合器",
+        "reason": "支持 Lark 捕获复用公共 Store 和 InputAggregator，而非建立独立输入存储。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-          "startLine": 22,
-          "endLine": 132
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 38,
+          "endLine": 65
         },
-        "quote": "type SecretPayload = { appId: string; clientSecret: string };\n\nfunction parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexp"
+        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
       },
       {
-        "key": "c10",
-        "label": "OpenAPI 能力探测边界",
-        "reason": "支持固定飞书基地址、机器人身份查询与记录、权限和回调比较、事件运行时补证及未配置探针时封闭失败；不用于声称比较了机器人身份。",
-        "relation": "explains",
+        "key": "c3",
+        "label": "统一检索证据边界",
+        "reason": "支持检索结果回指不可变 fragment，使回答能够追溯原始证据。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/port.ts",
+          "startLine": 1,
+          "endLine": 7
+        },
+        "quote": "/**\n * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline\n * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can\n * implement the same interface without changing callers (pipeline / assistant tools).\n *\n * Everything returned here points back at immutable f"
+      },
+      {
+        "key": "c4",
+        "label": "接入记录与已有应用导入",
+        "reason": "支持接入记录固定使用 personal 工作区，并证明 Botmux 与直接凭据导入进入统一凭据接受流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 83,
+          "endLine": 164
+        },
+        "quote": "  async start(value: unknown) {\n    const input = larkOnboardingStartSchema.parse(value);\n    const id = randomUUID();\n    const at = iso(this.clock());\n    this.transaction(() => {\n      this.db\n        .prepare(\n          `INSERT INTO lark_onboardings(\n             id,workspace_id,mode,requested_app_id,requested_conf"
+      },
+      {
+        "key": "c5",
+        "label": "真实能力探针",
+        "reason": "支持令牌获取、机器人与应用查询、权限和回调缺项计算，以及事件采用运行时核验标记。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/registration.ts",
-          "startLine": 135,
-          "endLine": 242
+          "startLine": 141,
+          "endLine": 221
         },
-        "quote": "/** Public OpenAPI capability probe. Event subscriptions are confirmed by the\n * first matching WebSocket delivery (pairing requires im.message.receive_v1),\n * because the public application endpoint does not expose the event list. */\nexport class OfficialLarkCapabilityProbe implements LarkCapabilityProbe {\n  construct"
+        "quote": "  async probe(\n    credentials: { appId: string; clientSecret: string },\n    requested: LarkRequestedConfig,\n  ): Promise<LarkCapabilityResult> {\n    const base = \"https://open.feishu.cn\";\n    const tokenResponse = await this.request(\n      `${base}/open-apis/auth/v3/tenant_access_token/internal`,\n      {\n        metho"
       },
       {
-        "key": "c11",
-        "label": "一次性配对与原子激活",
-        "reason": "支持配对码摘要保存、身份与会话核验、旧绑定替换，以及群聊配对后自动启用监控目标。",
+        "key": "c6",
+        "label": "候选版本能力判定",
+        "reason": "支持凭据保存、候选版本创建、能力探测，以及依据缺项决定 failed 或 awaiting_pair。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 293,
+          "endLine": 457
+        },
+        "quote": "    const secretRef = this.secrets.put({\n      appId: credentials.clientId,\n      clientSecret: credentials.clientSecret,\n    });\n    let connectionId = \"\";\n    let version = 0;\n    try {\n      this.transaction(() => {\n        const current = this.db\n          .prepare(\"SELECT status FROM lark_onboardings WHERE id=?\")\n"
+      },
+      {
+        "key": "c7",
+        "label": "短期配对码签发与接收",
+        "reason": "支持配对码随机生成、默认有效期、HMAC 摘要保存、旧码消费和候选身份记录。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
           "startLine": 569,
-          "endLine": 815
+          "endLine": 662
         },
         "quote": "  issuePairingCode(onboardingId: string, ttlMs = 300_000) {\n    const onboarding = this.status(onboardingId);\n    if (onboarding.status !== \"awaiting_pair\" || !onboarding.connectionId)\n      throw Error(\"LARK_ONBOARDING_NOT_READY_FOR_PAIRING\");\n    const code = randomBytes(24).toString(\"base64url\");\n    const id = rand"
       },
       {
-        "key": "c12",
-        "label": "收件箱幂等、助理准入与群聊捕获",
-        "reason": "支持事件去重、绑定 owner 准入、机器人入群和普通群消息自动启用监控，以及捕获来源信息。",
+        "key": "c8",
+        "label": "配对确认与绑定激活",
+        "reason": "支持替换旧绑定、激活候选版本、创建业务目标及群聊监控目标。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 665,
+          "endLine": 817
+        },
+        "quote": "  confirmPairing(value: unknown) {\n    const input = larkPairingConfirmSchema.parse(value);\n    return this.transaction(() => {\n      const pairing = this.db\n        .prepare(\n          `SELECT p.*,c.workspace_id,c.app_id,c.active_version\n           FROM lark_pairing_codes p JOIN lark_connections c\n             ON c.id"
+      },
+      {
+        "key": "c9",
+        "label": "凭据存储初始化与引用边界",
+        "reason": "支持主密钥长度、受限目录、环境变量入口和凭据引用格式等安全边界。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 22,
+          "endLine": 56
+        },
+        "quote": "type SecretPayload = { appId: string; clientSecret: string };\n\nfunction parseKey(value: string) {\n  const key = /^[a-f0-9]{64}$/i.test(value)\n    ? Buffer.from(value, \"hex\")\n    : Buffer.from(value, \"base64\");\n  if (key.length !== 32)\n    throw Error(\"OMEM_SECRET_KEY must encode exactly 32 bytes\");\n  return key;\n}\n\nexp"
+      },
+      {
+        "key": "c10",
+        "label": "连接租约仓库",
+        "reason": "支持按连接抢占、过期替换、令牌续租和释放的连接所有权机制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 223,
+          "endLine": 279
+        },
+        "quote": "export class LarkConnectionLeaseRepository {\n  constructor(private readonly db: DatabaseSync) {}\n\n  claim(\n    connectionId: string,\n    owner: string,\n    now = new Date(),\n    leaseMs = 60_000,\n  ) {\n    const token = randomUUID();\n    const at = now.toISOString();\n    const result = this.db\n      .prepare(\n        `"
+      },
+      {
+        "key": "c11",
+        "label": "事件收件箱去重",
+        "reason": "支持按应用与事件 ID 去重、摘要冲突检查和实际事件能力画像更新。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/realtime.ts",
           "startLine": 337,
-          "endLine": 657
+          "endLine": 417
         },
         "quote": "  persist(event: LarkInboundEvent) {\n    const connection = this.store.db\n      .prepare(\n        `SELECT id,COALESCE(active_version,(\n           SELECT MAX(version) FROM lark_connection_versions\n           WHERE connection_id=lark_connections.id AND state='awaiting_pair'\n         )) AS connection_version\n         FROM"
       },
       {
+        "key": "c12",
+        "label": "绑定身份与助手路由",
+        "reason": "支持活动连接和绑定前置检查，以及 owner 私聊或明确提及机器人的群聊进入助手路径。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 503,
+          "endLine": 545
+        },
+        "quote": "    const connection = this.store.db\n      .prepare(\n        `SELECT c.id,v.capability_profile,b.id AS binding_id,b.binding_version,b.owner_open_id AS binding_owner_open_id\n         FROM lark_connections c\n         JOIN lark_connection_versions v ON v.connection_id=c.id\n           AND v.version=c.active_version\n       "
+      },
+      {
         "key": "c13",
-        "label": "消息部件与图片下载",
-        "reason": "支持文本、富文本和图片的统一部件转换，并证明仅缺少下载条件时显式降级，下载异常未在此捕获。",
+        "label": "其余群消息捕获路径",
+        "reason": "支持未进入助手路径的群消息自动创建监控目标，并调用统一输入聚合器捕获。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 602,
+          "endLine": 657
+        },
+        "quote": "    if (event.chatType === \"group\")\n      this.store.db\n        .prepare(\n          `INSERT OR IGNORE INTO lark_targets(\n             id,workspace_id,connection_id,binding_version,chat_id,target_type,\n             purpose,capture_enabled,state,created_at,updated_at\n           ) VALUES(?,'personal',?,?,?,'group','group_"
+      },
+      {
+        "key": "c14",
+        "label": "富消息统一捕获转换",
+        "reason": "支持文本、富文本和图片转换为带逐片来源信息的捕获输入，并显示图片下载异常边界。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/realtime.ts",
           "startLine": 719,
-          "endLine": 812
+          "endLine": 811
         },
         "quote": "  /**\n   * H-G15: adapt a raw Lark message into unified capture parts. Text messages stay a\n   * single text part; post (rich text) splits title + paragraphs into separate text\n   * parts; image messages are downloaded through the media port and stored as an\n   * asset-backed image part; a reply/quote carries replyTo p"
       },
       {
-        "key": "c14",
-        "label": "助理回复事务型 outbox",
-        "reason": "支持回复投递先于 inbox 确认持久化、turn 原子关联以及按 turn 生成稳定平台 UUID。",
+        "key": "c15",
+        "label": "助手回复事务 outbox",
+        "reason": "支持按 turn 生成稳定平台 UUID，并事务化写入投递意图及回合关联。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -211,35 +224,22 @@
         "quote": "  private enqueueAssistantReply(\n    connection: Row,\n    chatId: string,\n    replyText: string,\n    turnId?: string,\n  ): string {\n    const at = new Date().toISOString();\n    const changeId = randomUUID();\n    const card = {\n      schema: \"2.0\",\n      config: { width_mode: \"default\" },\n      body: { elements: [{ tag:"
       },
       {
-        "key": "c15",
-        "label": "通知投递租约与失败处置",
-        "reason": "支持投递领取门禁、一小时本地去重窗口、尝试上限、退避及认证失败后的连接停用。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-          "startLine": 178,
-          "endLine": 456
-        },
-        "quote": "  private transaction<T>(work: () => T) {\n    this.db.exec(\"BEGIN IMMEDIATE\");\n    try {\n      const result = work();\n      this.db.exec(\"COMMIT\");\n      return result;\n    } catch (error) {\n      this.db.exec(\"ROLLBACK\");\n      throw error;\n    }\n  }\n\n  claim(\n    workerId: string,\n    now = new Date(),\n    leaseMs = "
-      },
-      {
         "key": "c16",
-        "label": "投递前完整性复核",
-        "reason": "支持发送前核对秘密所属应用、载荷摘要和卡片大小，并回写投递结果。",
+        "label": "运行时连接与卡片处理器装配",
+        "reason": "支持当前 LarkRuntimeHost 为连接管理器装配卡片动作处理器和配对服务。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-          "startLine": 598,
-          "endLine": 643
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 110,
+          "endLine": 193
         },
-        "quote": "export class LarkDeliveryWorker {\n  constructor(\n    private readonly repository: LarkDeliveryRepository,\n    private readonly secrets: EncryptedSecretStore,\n    private readonly adapter: LarkMessageAdapter,\n    private readonly workerId: string,\n  ) {}\n\n  async processOne(now = new Date()) {\n    const lease = this.rep"
+        "quote": "  private activeConnections() {\n    return this.input.store.db\n      .prepare(\n        `SELECT id FROM lark_connections\n         WHERE state IN ('active','awaiting_pair') ORDER BY created_at`,\n      )\n      .all() as Row[];\n  }\n\n  private syncConnections() {\n    const active = new Set(\n      this.activeConnections().ma"
       },
       {
         "key": "c17",
-        "label": "决策卡联合校验与一次性入队",
-        "reason": "支持卡片动作的上下文、摘要、nonce、版本、期限和状态联合校验，以及条件消费与命令入队。",
+        "label": "卡片动作快照核验与入队",
+        "reason": "支持回调在应用、操作者、消息位置、连接、绑定、摘要、期限、nonce 和决策状态核验后才被一次性消费并创建命令。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -251,111 +251,195 @@
       },
       {
         "key": "c18",
-        "label": "决策命令租约与重试",
-        "reason": "支持决策命令租约领取、业务执行、卡片更新、终止错误识别、重试上限及认证失败停用。",
+        "label": "卡片命令租约",
+        "reason": "支持命令领取、尝试计数、租约令牌和陈旧写回保护。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
           "startLine": 240,
-          "endLine": 459
+          "endLine": 335
         },
         "quote": "  private claim(now = new Date(), leaseMs = 60_000): CardCommandLease | null {\n    const at = now.toISOString();\n    return this.store.tx(() => {\n      const row = this.store.db\n        .prepare(\n          `SELECT q.*,a.decision_id,a.proposal_digest,a.operator_open_id,a.message_id,\n             a.binding_id,d.owner_bin"
       },
       {
         "key": "c19",
-        "label": "实时连接租约与版本守护",
-        "reason": "支持连接租约抢占、令牌心跳和释放，以及连接版本变化或失效时停止旧连接。",
+        "label": "卡片决策执行与错误分支",
+        "reason": "支持稳定 requestId、记忆决策、凭据读取、卡片更新、重试规则及认证错误调用 disableBinding；所选范围不包含该方法实现。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-          "startLine": 223,
-          "endLine": 279
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 355,
+          "endLine": 459
         },
-        "quote": "export class LarkConnectionLeaseRepository {\n  constructor(private readonly db: DatabaseSync) {}\n\n  claim(\n    connectionId: string,\n    owner: string,\n    now = new Date(),\n    leaseMs = 60_000,\n  ) {\n    const token = randomUUID();\n    const at = now.toISOString();\n    const result = this.db\n      .prepare(\n        `"
+        "quote": "  async processOne(now = new Date()) {\n    const lease = this.claim(now);\n    if (!lease) return { processed: false as const };\n    let businessResult: unknown;\n    let attemptedSecret: string | undefined;\n    try {\n      businessResult = this.memory.decide(lease.decisionId, {\n        action: lease.action,\n        prop"
       },
       {
         "key": "c20",
-        "label": "运行循环与助理轮次恢复",
-        "reason": "支持队列处理顺序，以及启动时仅对未完成助理轮次执行补全或删除恢复。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-          "startLine": 195,
-          "endLine": 285
-        },
-        "quote": "  async processOnce(limit = 100) {\n    this.syncConnections();\n    const aggregation = this.batcher.prepareDue();\n    let cards = 0;\n    let deliveries = 0;\n    while (cards < limit && (await this.cards.processOne()).processed) cards++;\n    while (deliveries < limit && (await this.delivery.processOne()).processed)\n    "
-      },
-      {
-        "key": "c21",
-        "label": "实时连接品牌域名切换",
-        "reason": "支持 WebSocket 适配器按 tenantBrand 选择飞书或 Lark SDK 域名，修复旧稿对应引用范围不足。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-          "startLine": 154,
-          "endLine": 219
-        },
-        "quote": "export class OfficialLarkRealtimeAdapter implements LarkRealtimeAdapter {\n  connect(input: Parameters<LarkRealtimeAdapter[\"connect\"]>[0]) {\n    const dispatcher = new EventDispatcher({ loggerLevel: LoggerLevel.warn });\n    const handlers = Object.fromEntries(\n      [\n        \"im.message.receive_v1\",\n        \"im.message"
-      },
-      {
-        "key": "c22",
-        "label": "消息发送品牌域名切换",
-        "reason": "支持消息发送与更新适配器按 tenantBrand 选择飞书或 Lark SDK 域名。",
+        "label": "通知投递租约抢占",
+        "reason": "支持到期任务选择、失效状态抑制、条件抢占、尝试记录和一小时结果不明窗口。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-          "startLine": 113,
-          "endLine": 166
+          "startLine": 190,
+          "endLine": 350
         },
-        "quote": "export class OfficialLarkMessageAdapter implements LarkMessageAdapter {\n  async send(input: Parameters<LarkMessageAdapter[\"send\"]>[0]) {\n    const client = new Client({\n      appId: input.appId,\n      appSecret: input.clientSecret,\n      domain: input.tenantBrand === \"lark\" ? Domain.Lark : Domain.Feishu,\n    });\n    tr"
+        "quote": "  claim(\n    workerId: string,\n    now = new Date(),\n    leaseMs = 60_000,\n  ): DeliveryLease | null {\n    const at = now.toISOString();\n    return this.transaction(() => {\n      while (true) {\n        const row = this.db\n          .prepare(\n            `SELECT i.*,b.connection_id,b.state AS binding_state,\n            "
+      },
+      {
+        "key": "c21",
+        "label": "通知重试与认证处置",
+        "reason": "支持限流与结果不明的重试边界，以及认证失败后对目标、连接和其他待处理意图的具体处置。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+          "startLine": 389,
+          "endLine": 457
+        },
+        "quote": "  failed(lease: DeliveryLease, error: LarkDeliveryError, now = new Date()) {\n    return this.transaction(() => {\n      const row = this.db\n        .prepare(\"SELECT * FROM delivery_intents WHERE id=? AND lease_token=?\")\n        .get(lease.id, lease.leaseToken) as Row | undefined;\n      if (!row) throw Error(\"STALE_DELIV"
+      },
+      {
+        "key": "c22",
+        "label": "单轮任务处理顺序",
+        "reason": "支持每轮先同步连接和准备聚合，再顺序消费卡片与通知投递任务。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 195,
+          "endLine": 212
+        },
+        "quote": "  async processOnce(limit = 100) {\n    this.syncConnections();\n    const aggregation = this.batcher.prepareDue();\n    let cards = 0;\n    let deliveries = 0;\n    while (cards < limit && (await this.cards.processOne()).processed) cards++;\n    while (deliveries < limit && (await this.delivery.processOne()).processed)\n    "
+      },
+      {
+        "key": "c23",
+        "label": "事件订阅运行时核验边界",
+        "reason": "说明公开应用接口不暴露事件列表，事件订阅需由首次匹配的 WebSocket 投递确认。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/registration.ts",
+          "startLine": 135,
+          "endLine": 137
+        },
+        "quote": "/** Public OpenAPI capability probe. Event subscriptions are confirmed by the\n * first matching WebSocket delivery (pairing requires im.message.receive_v1),\n * because the public application endpoint does not expose the event list. */"
+      },
+      {
+        "key": "c24",
+        "label": "连接管理器的条件分派",
+        "reason": "支持只有配置卡片处理器时卡片事件才直接入队，并说明配对优先级和普通消息回落路径。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 924,
+          "endLine": 1019
+        },
+        "quote": "  start(connectionId: string, now = new Date(), leaseMs = 60_000) {\n    const token = this.leases.claim(connectionId, this.workerId, now, leaseMs);\n    if (!token) return false;\n    const row = this.db\n      .prepare(\n        `SELECT c.app_id,c.tenant_brand,v.version AS connection_version,\n           v.secret_ref FROM "
+      },
+      {
+        "key": "c25",
+        "label": "注册凭据进入统一接受流程",
+        "reason": "证明 SDK 注册返回凭据后调用统一凭据接受流程，补全新建注册与导入路径的汇合关系。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
+          "startLine": 167,
+          "endLine": 216
+        },
+        "quote": "  private async runRegistration(\n    onboardingId: string,\n    input: StartInput,\n    controller: AbortController,\n    qrReady: () => void,\n  ) {\n    try {\n      const credentials = await this.registration.register({\n        createOnly: input.mode === \"new\",\n        appId: input.mode === \"existing\" ? input.appId : unde"
+      },
+      {
+        "key": "c26",
+        "label": "凭据认证加密与原子落盘",
+        "reason": "支持 AES-256-GCM 加密、随机 IV、临时文件同步、重命名和文件权限收紧等密文写入过程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+          "startLine": 72,
+          "endLine": 100
+        },
+        "quote": "  put(secret: SecretPayload) {\n    const reference = `lark:${randomUUID()}`;\n    const path = this.path(reference);\n    const temporary = join(this.directory, `.secret-${randomUUID()}`);\n    const iv = randomBytes(12);\n    const cipher = createCipheriv(\"aes-256-gcm\", this.key, iv);\n    const encrypted = Buffer.concat(["
+      },
+      {
+        "key": "c27",
+        "label": "回复入队与收件箱完成顺序",
+        "reason": "支持回复 outbox 先入队、再完成 inbox 的调用顺序，以及并发重投和恢复分支。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+          "startLine": 550,
+          "endLine": 600
+        },
+        "quote": "      // A superseded/cancelled turn has no reply body and must not be delivered.\n      if (routed.status === \"cancelled\") {\n        this.finish(receipt.id, \"processed\");\n        return { ...receipt, outcome: \"interrupted\", turnId: routed.turnId };\n      }\n      const status = routed.status ?? \"done\";\n      const inFli"
+      },
+      {
+        "key": "c28",
+        "label": "决策卡片回调协议",
+        "reason": "直接支持协议字面量、动作枚举、UUID、nonce、摘要、期限、预期版本摘要及拒绝未知字段的严格输入约束。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
+          "startLine": 13,
+          "endLine": 23
+        },
+        "quote": "const callbackValueSchema = z\n  .object({\n    protocol: z.literal(\"omem.decision.v1\"),\n    cardActionId: z.string().uuid(),\n    action: z.enum([\"approve\", \"reject\", \"request_context\"]),\n    nonce: z.string().min(32).max(200),\n    proposalDigest: z.string().regex(/^[a-f0-9]{64}$/),\n    expiresAt: z.string().datetime({ o"
       }
     ],
     "questions": [
       {
-        "question": "群聊配对、机器人入群或首次普通群消息，是否足以授权自动启用群消息捕获？",
-        "why": "配对确认会为群聊创建启用中的监控目标，机器人入群和普通群消息路径也会创建或重新启用监控；材料没有展示独立的捕获范围确认，这直接影响外部群消息进入个人记忆的授权边界。",
-        "nextStep": "明确捕获授权口径；若这些动作只授权通知或问答，应在单独确认前保持 capture_enabled=0，并禁止普通消息隐式启用监控。",
-        "blocking": true,
-        "citationKeys": [
-          "c11",
-          "c12"
-        ]
-      },
-      {
-        "question": "国际版 Lark 的能力探测是否需要按 tenantBrand 切换开放平台域名？",
-        "why": "能力探测固定访问 open.feishu.cn，而实时 WebSocket 和消息发送明确按品牌选择飞书或 Lark 域名；当前材料不足以确认国际版能力接口兼容性。",
-        "nextStep": "核对官方端点，并在飞书与 Lark 真实租户分别验证 token、机器人信息和应用能力接口。",
-        "blocking": false,
-        "citationKeys": [
-          "c10",
-          "c21",
-          "c22"
-        ]
-      },
-      {
-        "question": "进程重启后，awaiting_scan 或 checking 状态的接入任务应如何收敛？",
-        "why": "接入状态持久化在数据库，但注册控制器和完成任务只存在进程内；当前启动恢复仅处理助理 turn，没有展示接入任务重新附着、过期或失败转换。",
-        "nextStep": "定义接入任务重启后的过期、失败或重新附着策略，并补充 awaiting_scan 与 checking 中断恢复测试。",
+        "question": "群消息自动创建并启用采集目标是否符合产品授权要求？",
+        "why": "配对确认可为群聊创建启用的监控目标；未进入助手路径且通过活动连接和绑定检查的群消息也会自动创建目标。现有材料未展示授权文案、范围选择或撤销流程。",
+        "nextStep": "核对对应 API、UI 与需求，并为未授权群聊不得自动创建目标或捕获消息增加行为测试。",
         "blocking": false,
         "citationKeys": [
           "c8",
-          "c20"
+          "c12",
+          "c13"
         ]
       },
       {
-        "question": "图片下载异常与平台发送结果不确定时，最终一致性策略是否已有真实平台依据？",
-        "why": "具备下载条件时媒体调用异常会向外抛出，尚无永久失败或占位降级状态机；通知投递采用稳定 UUID 和一小时本地窗口，但材料不能证明平台在不同品牌、租户和超时场景中提供相同去重语义。",
-        "nextStep": "补充媒体失败状态机，并在飞书与 Lark 真实租户验证超时、断连、重复 UUID、重投行为和服务端去重期限。",
+        "question": "相同应用与消息 ID 的消息更新在统一输入链路中如何形成 revision？",
+        "why": "实时适配器同时接收新增与更新事件，群聊捕获使用应用和消息 ID 组成 externalId；现有材料没有展示 InputAggregator 对相同 externalId 的更新语义。",
+        "nextStep": "补充 InputAggregator.ingest 实现及 receive、updated 行为测试材料，核验修订与平台重投的区分。",
         "blocking": false,
         "citationKeys": [
-          "c13",
-          "c14",
-          "c15"
+          "c2",
+          "c11",
+          "c13"
+        ]
+      },
+      {
+        "question": "卡片决策成功但原卡片更新失败后重试，是否具备跨进程持久化幂等？",
+        "why": "卡片 worker 使用稳定 requestId，但材料未包含 MemoryService.decide 的唯一约束和重放语义；业务决策与外部卡片更新不在同一事务中。",
+        "nextStep": "检查 decide 的 requestId 持久化约束，并增加业务提交后、卡片更新前崩溃的恢复测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c18",
+          "c19"
+        ]
+      },
+      {
+        "question": "Lark 功能切片是否经过真实租户联调和多 worker 数据库竞争验证？",
+        "why": "材料展示了注册、能力探测、WebSocket、收件箱、outbox 和多类租约的实现分支，但没有测试文件或真实外部运行记录。",
+        "nextStep": "分别记录真实注册、权限核验、捕获、卡片更新和投递检查，并补充租约竞争、过期重领、陈旧写回及崩溃恢复测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c10",
+          "c11",
+          "c15",
+          "c18",
+          "c20",
+          "c21",
+          "c24"
         ]
       }
     ]
@@ -365,6 +449,21 @@
       "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
       "digest": "0d16f21f6b556a9ea7fa726f904c1d727a933f3fe7dc102c57c6c94540d045d2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
+      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
     },
     {
       "kind": "material",
@@ -383,18 +482,23 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
       "digest": "537c8d83e468f1ef267ad4eaa291ef61cb8944c3fe13323ea984d7bb3d40f8ca"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "b3d724ab76b3b6cb14b2815774e230aa35f11df826213836614cdfc82fc29f18"
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
     },
     {
       "kind": "material",
@@ -403,69 +507,74 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "269de6f2eb6803ce2dfe064b35571a021ec2e5a67c6e35f70633552028eb31db"
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "digest": "350cbe18e9f431c0e6eba3b0948c5b90e4b6e4270e67fbaea0a15b2914fbc48f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/lark-annotations.ts",
+      "digest": "566a2c0c203d5bdf5ba552dbd60bd02e6965d6b3946c253331a87795484678bd"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/card-actions.ts",
-      "digest": "04537342b02d2e635d2b7ea730760ee67d72321548f7a98696c03c926a007d97"
+      "digest": "9a524e5e3d23cd0e43d6db7cff7c3501bd5475e5940067b51cf488102082af39"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/defaults.ts",
-      "digest": "3562b3d3b2f30eff833272282fc7ccc125bb56b43ae23e1c205fb1bb335f3834"
+      "digest": "d750817ce40bf271f52eac5faa780f96398302616598aaee125a8cc4e3234092"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/delivery.ts",
-      "digest": "1e0ea59773337e6a6d1383cfc8b8a4a7dcc81c722d06be887b05d9fc89aa378b"
+      "digest": "bf748f6503bc203f093866d0c1221bf44e9c89fa5107a816a286a2c312749776"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/existing-apps.ts",
-      "digest": "cd2b309a141251275afd301333fffcaa8e18198374c1383bcaa7383fe9f4f950"
+      "digest": "8e0578297de614c55de838a482a568b080b8e04392fb1d7f154e4a4d39b7c70c"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/onboarding.ts",
-      "digest": "6e129c2afef77b7746e726a1925ad5a53794e8fea5737823cdcb4b052700167c"
+      "digest": "9eb99bf4365cbd7250285d1d5b29e6b9fc0715e9f6c793210db89f11300f37ed"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/realtime.ts",
-      "digest": "f6149ec0a7b10c32b138750cc572a47bbbfd8be23823595975b899a8d97c76c4"
+      "digest": "4c53d520a234639d30e8f04440fded76fab7a130bf2b695d3229cc910a1b7fb4"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "11cba5f46e9c184a0a79ec5cece4e5872e4d2b613e9a37786974aa33a25f1700"
+      "digest": "b86a80bdf0b24c2015e7b3467004958533ab33a214c796268b3edab0407f1f53"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/runtime.ts",
-      "digest": "7321c9c3b9f2986ab1b9731f1f558568e8d017892c1434f633b9e8a93b5efded"
+      "digest": "5a408e43fb6a7d28bbbb3d8a720180b58824062dd676a90202430a86f5516838"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/integrations/lark/secret-store.ts",
-      "digest": "cab3cea054c666058c8a46d5968c954a9b6aeee67a4f9fdf8a7ff6abd84d4919"
+      "digest": "eee152940d04e99381c08fca6c18af663456eacbc706a234f44f9718bfb6dbc1"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:42:17.519Z",
+    "at": "2026-10-01T03:48:30.229Z",
     "trace": {
-      "runId": "24024d33-ca24-41b2-9ac7-3818ebd25c5f",
+      "runId": "c4185db0-0864-4031-a623-61cf145baa13",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "da6396fe4f55cca3d0a0cc3d8957cc3646efe9b873c4bb80373dbd1bc2785052",
-      "contextHash": "db6c7330728a81f5288ef5367c55e60e2582ee1fb5ca20e35d434bc758dd1f53",
+      "promptHash": "2468ec9e7923f8db164149a3896ec307e2cbe3cfc73d4a16ce66f46ff8d542be",
+      "contextHash": "892102030e8d1c6873da25cb80e8e340b21908110cd306f2ab69d329f90d5814",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "16190940c0aa9ee45f1508172de945f16d2b5ae0ca0fd75a8e6066cb365fabef",
+      "fingerprint": "e7255de85df8ecfe83b25ec298ecdbbbc99629da5067e4b204c8aebffa6f401a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -478,10 +587,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3d6-4f0e-7943-bb3a-9dd5ea92e0b1"
+        "01a0f593-66c3-7633-8d48-f435c453db9b"
       ],
       "usage": {
-        "used": 91395,
+        "used": 109846,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -490,10 +599,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 227964,
-          "utf8Bytes": 253699,
-          "estimatedTokens": 84567,
-          "budgetedTokens": 105709,
+          "chars": 275967,
+          "utf8Bytes": 314728,
+          "estimatedTokens": 104910,
+          "budgetedTokens": 131138,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -502,17 +611,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:42:39.346Z",
+    "at": "2026-10-01T03:48:56.555Z",
     "trace": {
-      "runId": "ef1d20d6-e6a7-4462-a1f9-d93e22353c52",
+      "runId": "20def2d1-b75e-4b16-ba93-de638701f12e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "65862c2f0e72cfe1f9e074933324fb694d95de7cf34c7131bf159df0a9abd6ba",
-      "contextHash": "25e11776fc705c08c1a4341f6b2be2c0ac125e8e08f3cb1f8ae59c17ebefdbf9",
+      "promptHash": "6468cfdb807a93eb9e5f05d2b000035095b103077427f4506e111615431ec680",
+      "contextHash": "06053ec9312bc33ae33fb9471ab55d9bb499843afaefe058639b39ce16257121",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5290cdfa8b52fee8a1c13ab24e0c0035154c2d25467329b145d6e284415e251b",
+      "fingerprint": "24cc5f16f7d2c7c5d5df56023d43e294367187bdfb666f7a3452c2445d7ede58",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -525,10 +634,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3d6-e610-7e10-bb70-638aa4d4323e"
+        "01a0f594-1128-77e1-af91-f907da203cf3"
       ],
       "usage": {
-        "used": 87007,
+        "used": 105207,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -537,10 +646,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 225006,
-          "utf8Bytes": 248634,
-          "estimatedTokens": 82878,
-          "budgetedTokens": 103598,
+          "chars": 272869,
+          "utf8Bytes": 309805,
+          "estimatedTokens": 103269,
+          "budgetedTokens": 129087,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

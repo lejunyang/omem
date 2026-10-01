@@ -2,109 +2,88 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/agents.test.ts",
-    "title": "Agent 运行边界与安全策略测试",
-    "summary": "该测试文件以临时工作目录和 ACP fixture 验证模型与推理强度协商、思考内容过滤、权限拒绝、超时与取消，以及 CLI 参数的安全构造。进程启动在各平台均禁用 shell，但只有非 Windows 使用独立进程组；现有材料仍不足以证明真实第三方 CLI 兼容性及 Windows 终止行为。",
+    "title": "Agent 运行时的协议、安全与生命周期测试",
+    "summary": "该测试文件以临时工作目录和可控 ACP fixture 验证 Agent 运行时的关键合同：模型与推理强度协商、思考内容过滤、权限拒绝、超时和取消，以及 CLI 参数的无 shell 安全构造。它覆盖的是受控替身行为，并不证明真实外部 Agent CLI、不同平台进程终止或完整输出边界均可用。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose_setup",
-        "title": "测试目标与运行夹具",
-        "body": "该文件针对服务端 Agent 适配层做行为测试。`run` 为每次调用创建独立临时目录，以共享 schema 校验配置后启动 ACP fixture，收集文本与权限事件；调用结束时直接删除目录。注释明确 `acp()` 应先等待子进程完全关闭，清理失败会作为真实错误暴露。[[c1]]\n\n测试连接共享配置合同与服务端适配实现：profile 指定 Node 可执行文件、fixture 路径和超时，再由 `acp` 执行。[[c2]] 子进程统一使用管道、`shell: false` 并过滤部分敏感环境变量；此前“隔离进程组启动”的表述被替代为更准确的平台结论：仅非 Windows 设置 `detached=true`，Windows 明确为 `false`。[[c3]]"
+        "key": "harness",
+        "title": "测试夹具与资源生命周期",
+        "body": "测试构造一个通过 `profileSchema` 校验的 ACP 配置，以当前 Node 进程启动固定 fixture；`run` 为每次调用创建独立临时目录，收集 `text/status/permission` 事件，并把文本输入交给 `acp`。无论成功或失败，`finally` 都递归清理目录；注释明确 `acp()` 返回前已经等待子进程 close，因而单次删除失败应被视为真实清理错误，而不是用重试掩盖。[[c1]]\n\n这组测试直接依赖服务端 Agent 适配器导出的 `acp`、`cliArgs`，同时依赖共享的 profile 校验合同。当前提供的 contracts 范围只显示导入位置，未包含 `profileSchema` 定义，因此不能据此确认其全部字段限制。[[c2]]"
       },
       {
-        "key": "asserted_behaviors",
-        "title": "已断言的核心行为",
-        "body": "模型配置方面，测试要求先协商模型再校验其 effort 选项；`beta/high` 应出现在文本结果中，而私有思考标记不得进入事件流。[[c4]] 当前模型不支持 `high` 时必须抛出 `Unsupported reasoning_effort`，不能静默回退。[[c5]]\n\n权限请求会产生 permission 事件，但默认结果是拒绝；测试没有授权成功路径。[[c6]] 无响应提示受超时约束，外部 `AbortSignal` 可取消活动请求并得到 `CANCELLED`。[[c7]] CLI 参数测试还要求只读模式存在、包含命令替换语法的模型名保持为字面 argv，且不出现绕过审批与沙箱的危险开关。[[c8]]"
+        "key": "protocol",
+        "title": "协商、输出过滤与交互边界",
+        "body": "协议用例要求先切换到 `beta` 模型，再校验并采用 `high` effort，最终文本包含该组合；事件序列不得泄露 fixture 的私有思考标记。若当前模型不支持 `high`，调用必须明确抛出 `Unsupported reasoning_effort`，不能静默降级。[[c3]]\n\n权限请求会被暴露为 `permission` 事件，并得到 `Permission declined`，确认默认路径不会替 Agent 授权。实现文件也声明丢弃 thought chunk、权限回调不得静默授权；但本文件没有覆盖自定义运行时请求回调、elicitation、MCP 或 skill discovery。[[c4]]"
       },
       {
-        "key": "lifecycle_limits",
-        "title": "进程生命周期与覆盖边界",
-        "body": "服务端实现显示，非 Windows 会向负 PID 对应的进程组发送 `SIGTERM`，1.5 秒后升级为 `SIGKILL`；Windows 则对直接子进程调用 `kill`。启动配置与此一致：非 Windows 创建独立进程组，Windows 不启用 detached。[[c9]] 现有测试只从结果层断言超时和取消，没有对两类平台的信号路径、升级终止或最终进程回收分别取证。[[c10]]\n\n这些用例属于 fixture 驱动的回归验证，不能单独证明真实 codex-cli 的版本兼容性、参数接受情况，也无法从给定材料判断 fixture 是否覆盖协议乱序、无效消息或异常退出。临时目录清理逻辑同样未被主动注入失败。因此已证明的是关键安全策略的可观察结果，而非全部外部协议与跨平台生命周期行为。[[c11]]"
+        "key": "termination",
+        "title": "超时、取消与平台化终止策略",
+        "body": "当 fixture 保持空闲时，较短的 `timeoutMs` 必须产生包含 `timed out` 的拒绝；活动请求被 `AbortController` 中止时，错误则需包含 `CANCELLED`。[[c5]] 这分别验证运行预算耗尽和调用方主动取消的可观察结果。\n\n终止实现先尝试 `SIGTERM`，1.5 秒后再升级为 `SIGKILL`：非 Windows 平台针对负 PID 向进程组发信号，Windows 则对单个子进程调用 `kill`。[[c6]] 与之对应，启动时也只有非 Windows 平台设置 `detached: true`；Windows 不创建独立进程组。[[c8]] 这替代了此前“所有子进程均以独立进程组启动”的过度概括。现有测试只观察 Promise 拒绝和目录清理，尚未直接证明信号升级、后代进程回收或 Windows 分支的实际效果。"
+      },
+      {
+        "key": "cli-safety",
+        "title": "CLI 参数安全合同与未覆盖范围",
+        "body": "CLI 用例把带有 `$(pwd)` 的模型名作为字面值传入，要求生成参数保留该字符串、包含 `read-only`，并且不出现绕过审批与沙箱的危险开关。[[c7]] 实现通过 `spawn` 的参数数组启动进程并设置 `shell: false`，因此该字符串不会被 shell 展开。[[c8]]\n\n不过，这里没有实际启动 Codex CLI，也未断言完整 argv 顺序、命令退出码、stderr、环境过滤、输出上限或真实供应商的能力发现。因此它属于协议 fixture 与参数构造测试，不能替代外部 CLI 的 live check。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "ACP 测试运行与清理夹具",
-        "reason": "支持临时目录、事件收集、ACP 调用以及等待子进程关闭后直接清理的说明。",
+        "label": "ACP 测试夹具与清理流程",
+        "reason": "支持临时目录、事件收集、ACP 调用以及等待子进程退出后执行单次清理的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/agents.test.ts",
-          "startLine": 17,
+          "startLine": 7,
           "endLine": 39
         },
-        "quote": "async function run(\n  text: string,\n  patch: Record<string, unknown> = {},\n  signal = new AbortController().signal,\n) {\n  const cwd = mkdtempSync(join(tmpdir(), \"omem-acp-\"));\n  const events: { type: string; text: string }[] = [];\n  try {\n    const result = await acp(\n      profileSchema.parse({ ...profile(), ...patch "
+        "quote": "const profile = () =>\n  profileSchema.parse({\n    id: \"fixture\",\n    name: \"Fixture\",\n    transport: \"acp\",\n    command: process.execPath,\n    args: [resolve(\"apps/server/tests/fixtures/acp-agent.mjs\")],\n    timeoutMs: 3000,\n  });\n\nasync function run(\n  text: string,\n  patch: Record<string, unknown> = {},\n  signal = ne"
       },
       {
         "key": "c2",
-        "label": "测试配置与共享合同",
-        "reason": "支持测试通过共享 profile schema 配置 Node fixture，并调用服务端 Agent 适配层。",
+        "label": "测试模块依赖入口",
+        "reason": "说明测试直接导入 Agent 适配器和共享 profile 校验合同，同时界定当前 contracts 材料未展示 schema 定义。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/agents.test.ts",
-          "startLine": 5,
-          "endLine": 15
+          "startLine": 1,
+          "endLine": 6
         },
-        "quote": "import { acp, cliArgs } from \"../src/agents.js\";\nimport { profileSchema } from \"../../../packages/contracts/src/index.js\";\nconst profile = () =>\n  profileSchema.parse({\n    id: \"fixture\",\n    name: \"Fixture\",\n    transport: \"acp\",\n    command: process.execPath,\n    args: [resolve(\"apps/server/tests/fixtures/acp-agent.m"
+        "quote": "import { it, expect } from \"vitest\";\nimport { mkdtempSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join, resolve } from \"node:path\";\nimport { acp, cliArgs } from \"../src/agents.js\";\nimport { profileSchema } from \"../../../packages/contracts/src/index.js\";"
       },
       {
         "key": "c3",
-        "label": "跨平台子进程启动配置",
-        "reason": "支持禁用 shell、管道通信、环境过滤，以及仅在非 Windows 启用 detached 的修正结论。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/agents.ts",
-          "startLine": 32,
-          "endLine": 64
-        },
-        "quote": "const env = () =>\n  Object.fromEntries(\n    Object.entries(process.env).filter(\n      ([key]) =>\n        !key.startsWith(\"BOTMUX_\") &&\n        ![\"OMEM_TOKEN\", \"CLAUDECODE\"].includes(key),\n    ),\n  );\nfunction stop(child: ChildProcessWithoutNullStreams) {\n  if (child.exitCode !== null) return;\n  try {\n    if (process.pl"
-      },
-      {
-        "key": "c4",
-        "label": "模型协商与思考过滤断言",
-        "reason": "支持 beta/high 协商结果可见且私有思考不得进入事件流。",
+        "label": "模型与推理强度协商断言",
+        "reason": "支持先协商模型、采用受支持 effort、过滤私有思考以及拒绝不支持 effort 的行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/agents.test.ts",
           "startLine": 41,
-          "endLine": 49
+          "endLine": 55
         },
         "quote": "it(\"negotiates model before validating new effort options; drops thoughts\", async () => {\n  const { events } = await run(\"hello\", { model: \"beta\", effort: \"high\" });\n  expect(\n    events\n      .filter((e) => e.type === \"text\")\n      .map((e) => e.text)\n      .join(\"\"),\n  ).toContain(\"beta/high\");\n  expect(JSON.stringif"
       },
       {
-        "key": "c5",
-        "label": "不支持的推理强度断言",
-        "reason": "支持不兼容 effort 必须明确报错而不是自动回退。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/agents.test.ts",
-          "startLine": 51,
-          "endLine": 54
-        },
-        "quote": "it(\"rejects unsupported effort instead of falling back\", async () => {\n  await expect(run(\"hello\", { effort: \"high\" })).rejects.toThrow(\n    \"Unsupported reasoning_effort\",\n  );"
-      },
-      {
-        "key": "c6",
-        "label": "权限请求拒绝断言",
-        "reason": "支持权限事件可被观察且当前测试期望默认拒绝。",
+        "key": "c4",
+        "label": "权限请求默认拒绝",
+        "reason": "支持权限事件可见且默认返回拒绝，并与实现声明的非静默授权边界相对应。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/agents.test.ts",
           "startLine": 56,
-          "endLine": 59
+          "endLine": 60
         },
-        "quote": "it(\"does not grant permission requests\", async () => {\n  const { events } = await run(\"ASK_PERMISSION\");\n  expect(events.some((e) => e.type === \"permission\")).toBe(true);\n  expect(events.some((e) => e.text === \"Permission declined\")).toBe(true);"
+        "quote": "it(\"does not grant permission requests\", async () => {\n  const { events } = await run(\"ASK_PERMISSION\");\n  expect(events.some((e) => e.type === \"permission\")).toBe(true);\n  expect(events.some((e) => e.text === \"Permission declined\")).toBe(true);\n});"
       },
       {
-        "key": "c7",
+        "key": "c5",
         "label": "超时与主动取消断言",
-        "reason": "支持空闲超时和 AbortSignal 取消两类生命周期行为。",
+        "reason": "支持空闲超时和 AbortSignal 主动取消分别产生可识别错误的结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -115,23 +94,10 @@
         "quote": "it(\"bounds idle prompt duration\", async () => {\n  await expect(run(\"TIMEOUT\", { timeoutMs: 1000 })).rejects.toThrow(\n    \"timed out\",\n  );\n});\nit(\"cancels an active prompt\", async () => {\n  const c = new AbortController();\n  const promise = run(\"TIMEOUT\", {}, c.signal);\n  setTimeout(() => c.abort(), 100);\n  await expec"
       },
       {
-        "key": "c8",
-        "label": "安全命令行参数断言",
-        "reason": "支持只读参数、模型名字面传递以及禁止危险绕过开关的结论。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/agents.test.ts",
-          "startLine": 72,
-          "endLine": 83
-        },
-        "quote": "it(\"builds explicit safe CLI argv without shell interpolation\", () => {\n  const p = profileSchema.parse({\n    ...profile(),\n    transport: \"codex-cli\",\n    args: [],\n    model: \"literal$(pwd)\",\n    effort: \"high\",\n  });\n  const a = cliArgs(p);\n  expect(a).toContain(\"read-only\");\n  expect(a).toContain(\"literal$(pwd)\");\n"
-      },
-      {
-        "key": "c9",
-        "label": "跨平台终止策略",
-        "reason": "支持非 Windows 终止进程组、Windows 终止直接子进程，以及延迟升级 SIGKILL 的实现说明。",
-        "relation": "implements",
+        "key": "c6",
+        "label": "跨平台子进程终止策略",
+        "reason": "解释非 Windows 进程组与 Windows 单进程的 SIGTERM、SIGKILL 分支，支持修正后的平台化终止描述。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/agents.ts",
@@ -141,61 +107,82 @@
         "quote": "function stop(child: ChildProcessWithoutNullStreams) {\n  if (child.exitCode !== null) return;\n  try {\n    if (process.platform !== \"win32\" && child.pid)\n      process.kill(-child.pid, \"SIGTERM\");\n    else child.kill(\"SIGTERM\");\n  } catch {}\n  const timer = setTimeout(() => {\n    try {\n      if (process.platform !== \"wi"
       },
       {
-        "key": "c10",
-        "label": "现有生命周期测试范围",
-        "reason": "说明当前测试仅断言超时和取消的外部错误结果，没有直接验证平台信号与进程回收细节。",
-        "relation": "tracks",
+        "key": "c7",
+        "label": "安全 CLI 参数断言",
+        "reason": "支持只读沙箱、危险开关缺失以及特殊模型字符串保持为字面参数的结论。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/agents.test.ts",
-          "startLine": 61,
-          "endLine": 70
+          "startLine": 72,
+          "endLine": 84
         },
-        "quote": "it(\"bounds idle prompt duration\", async () => {\n  await expect(run(\"TIMEOUT\", { timeoutMs: 1000 })).rejects.toThrow(\n    \"timed out\",\n  );\n});\nit(\"cancels an active prompt\", async () => {\n  const c = new AbortController();\n  const promise = run(\"TIMEOUT\", {}, c.signal);\n  setTimeout(() => c.abort(), 100);\n  await expec"
+        "quote": "it(\"builds explicit safe CLI argv without shell interpolation\", () => {\n  const p = profileSchema.parse({\n    ...profile(),\n    transport: \"codex-cli\",\n    args: [],\n    model: \"literal$(pwd)\",\n    effort: \"high\",\n  });\n  const a = cliArgs(p);\n  expect(a).toContain(\"read-only\");\n  expect(a).toContain(\"literal$(pwd)\");\n"
       },
       {
-        "key": "c11",
-        "label": "Fixture 路径与已覆盖用例范围",
-        "reason": "支持测试依赖外部 fixture，同时界定当前文件实际列出的行为场景与未证明事项。",
-        "relation": "background",
+        "key": "c8",
+        "label": "无 shell 与平台化进程启动",
+        "reason": "支持 argv 不经 shell 插值，并明确只有非 Windows 平台使用 detached 独立进程组，Windows 不使用。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/agents.test.ts",
-          "startLine": 7,
-          "endLine": 14
+          "key": "omem:apps/server/src/agents.ts",
+          "startLine": 56,
+          "endLine": 68
         },
-        "quote": "const profile = () =>\n  profileSchema.parse({\n    id: \"fixture\",\n    name: \"Fixture\",\n    transport: \"acp\",\n    command: process.execPath,\n    args: [resolve(\"apps/server/tests/fixtures/acp-agent.mjs\")],\n    timeoutMs: 3000,"
+        "quote": "function launch(profile: AgentProfile, args: string[], cwd: string) {\n  mkdirSync(cwd, { recursive: true, mode: 0o700 });\n  const child = spawn(profile.command, args, {\n    cwd,\n    env: env(),\n    stdio: \"pipe\",\n    shell: false,\n    detached: process.platform !== \"win32\",\n  });\n  // A process exiting before a write c"
       }
     ],
     "questions": [
       {
-        "question": "ACP fixture 是否还模拟了协议乱序、子进程异常退出或无效消息？",
-        "why": "当前材料只给出 fixture 路径，没有 fixture 源码，无法判断这些协议异常是否已由其他分支覆盖。",
-        "nextStep": "检查 apps/server/tests/fixtures/acp-agent.mjs，并将其场景与 agents.ts 的消息处理分支逐项对照。",
+        "question": "真实 Agent CLI 是否在支持的供应商与平台组合上通过了同等的协商、取消和权限拒绝检查？",
+        "why": "现有用例使用 Node fixture；它能验证宿主协议合同，但不能证明外部 CLI 的实际能力声明、错误格式和进程行为一致。",
+        "nextStep": "增加单独标注的 live 集成检查，记录具体 CLI 版本、平台、模型、effort、退出码及权限请求结果，不把它混同于 fixture 单测。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c11"
+          "c1",
+          "c3",
+          "c5"
         ]
       },
       {
-        "question": "真实 codex-cli 或其他配置命令是否做过独立的现场验证？",
-        "why": "当前测试只检查 cliArgs 生成的数组，没有实际启动第三方 CLI，不能证明具体版本的兼容性或参数接受情况。",
-        "nextStep": "在受控环境运行对应 CLI 的 live check，记录版本、实际 argv、退出码和可观察协议结果。",
+        "question": "超时或取消后，非 Windows 进程组中的后代进程与 Windows 单个子进程是否都能在升级期限内退出？",
+        "why": "实现存在平台分支和延迟 SIGKILL，但当前测试只观察 Promise 拒绝及目录清理，没有直接观测信号、后代进程和平台差异。",
+        "nextStep": "为 fixture 增加可观测的后代进程与信号记录，并在适用平台分别验证 SIGTERM、升级清理及无遗留进程。",
         "blocking": false,
         "citationKeys": [
+          "c5",
+          "c6",
           "c8"
         ]
       },
       {
-        "question": "Windows 下的取消和超时终止是否有专门测试？",
-        "why": "实现对 Windows 与非 Windows 采用不同的 detached 与终止方式，但本文件没有平台分支断言。",
-        "nextStep": "补充 Windows CI 或可控进程夹具，验证超时、取消、终止升级和最终进程回收。",
+        "question": "`profileSchema` 对 command、args、model、effort 与 timeoutMs 的完整限制是什么？",
+        "why": "测试依赖该 schema，但提供的 contracts 材料仅含文件前 70 行，未包含其定义，无法由当前证据确认默认值、枚举和长度边界。",
+        "nextStep": "后续分析时提供 `profileSchema` 定义所在行及相关测试，再核对默认值、枚举、长度和不支持组合的处理。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c9",
-          "c10"
+          "c2"
+        ]
+      },
+      {
+        "question": "超时或取消后，各平台上的目标进程及其后代是否都能在升级期限内退出？",
+        "why": "实现包含非 Windows 进程组与 Windows 单进程分支以及延迟 SIGKILL，但当前测试没有直接观测信号传递、后代进程回收或平台差异。",
+        "nextStep": "扩展 fixture 以记录后代进程和收到的信号，并分别验证适用平台上的 SIGTERM、SIGKILL 升级及无遗留进程。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6",
+          "c8"
+        ]
+      },
+      {
+        "question": "profileSchema 对 command、args、model、effort 和 timeoutMs 的完整约束是什么？",
+        "why": "当前 contracts 原材料只提供第 1 至 70 行，未包含 profileSchema 定义，无法核验其默认值、枚举、长度及组合约束。",
+        "nextStep": "提供 profileSchema 定义及其相关测试的固定行范围后再核验这些字段约束。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
         ]
       }
     ]
@@ -214,23 +201,23 @@
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T00:24:21.319Z",
+    "at": "2026-10-01T02:22:57.215Z",
     "trace": {
-      "runId": "beda5da6-cff6-4139-b050-458e1f9e0af9",
+      "runId": "8ff87cb7-19eb-4985-8196-cadb59f4bb8d",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "09affe902160d2a497704eaa70b4faa98af2ca641878715b0d473f92c5274ba2",
-      "contextHash": "e2d607120c153008aa027154f485b19220fb8639c8c4a1ea101ad22eb565cca4",
+      "promptHash": "29a50d253e222ed640010999e41a56ffc2daf33efaaaa340e8cbbbf172121c0b",
+      "contextHash": "67309adda7dc29cfd4b1bf276694c60493359baaa170e9a9a769c6a2f7396306",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "68ef413a8308620ea82a05b147d09034c48afd761ba0335c58a9444bc105b311",
+      "fingerprint": "e9c8c59c28aa1982818d892daa5396c18d5521bcb6da3549908837aee8b9295e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -243,10 +230,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4d8-b775-7822-b25c-0d12f0f50621"
+        "01a0f545-5aa8-7ab2-a3df-1f16fe2801f1"
       ],
       "usage": {
-        "used": 28635,
+        "used": 30786,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -255,10 +242,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 25288,
-          "utf8Bytes": 30474,
-          "estimatedTokens": 10158,
-          "budgetedTokens": 12698,
+          "chars": 24927,
+          "utf8Bytes": 30301,
+          "estimatedTokens": 10101,
+          "budgetedTokens": 12627,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -267,17 +254,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T00:24:37.581Z",
+    "at": "2026-10-01T02:23:19.288Z",
     "trace": {
-      "runId": "1a9f3af0-c630-426a-8457-4f6f7681e5a7",
+      "runId": "3cc804ec-da2e-4f38-8c54-ca7b6ea28bd2",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "cd11b67ddc28ae532891297809c0c679399ccc3329329af5e33ed1134d8ce3fd",
-      "contextHash": "f82ec21a3f7a0bb5eab2099c127339e1972731925ceb6614e940e0e5dfe3c81f",
+      "promptHash": "087b393d4ad9beaf66b06cadb76ba8df1b7def58fc57c2636484a86cc994c619",
+      "contextHash": "51d69c295b52f2c8d671f8305b78eb9146f83c51ef7976b04766168a3ff6bda5",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1c0cf0b2e9dd2fa98524d5e1e37cafede309db5af285cebd496d13299adc5046",
+      "fingerprint": "dc1da1edca4b4b3dcf51abbed0b139f05b5dc7dca031d22a0511316eee1b3c6f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -290,10 +277,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f4d9-2313-74a0-85aa-664a10471f6b"
+        "01a0f545-b813-7ba0-b55b-6f32a0d98fa5"
       ],
       "usage": {
-        "used": 26360,
+        "used": 26353,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -302,10 +289,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 22495,
-          "utf8Bytes": 26251,
-          "estimatedTokens": 8751,
-          "budgetedTokens": 10939,
+          "chars": 21654,
+          "utf8Bytes": 25668,
+          "estimatedTokens": 8556,
+          "budgetedTokens": 10695,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

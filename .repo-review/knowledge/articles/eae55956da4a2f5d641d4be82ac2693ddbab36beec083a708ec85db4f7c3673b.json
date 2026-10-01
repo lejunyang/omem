@@ -2,111 +2,124 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/styles.css",
-    "title": "Web 应用级布局、阅读状态与响应式样式",
-    "summary": "定义导航、页面内容、片段阅读、表单、错误和通知等应用级视觉规则，并在窄屏下调整布局；它依赖共享设计令牌，但材料未展示对应模板与视觉测试。",
+    "title": "Web 应用页面与阅读界面样式",
+    "summary": "该样式表定义顶部控件、导航、正文阅读、表单及反馈组件的页面级布局，并通过 1100px 和 700px 两级断点适配窄屏。交互状态来源、主题变量定义及无障碍表现无法仅凭此文件确认。",
     "category": "implementation",
     "sections": [
       {
-        "key": "layout-and-navigation",
-        "title": "导航与页面骨架",
-        "body": "样式文件为应用外壳补充具体布局：顶部控制区使用横向弹性布局，搜索输入采用深色背景并限制最大宽度；导航则纵向排列，按钮提供至少 44px 的触控高度，并用深色活动态区分当前位置。[[c1]] 来源链接允许任意位置换行，选中与悬停状态采用浅灰背景，适合展示较长路径。主内容通过固定最大宽度、自动居中和较大内边距形成阅读栏，页顶栏负责标题区分隔和状态信息排列。[[c2]]"
+        "key": "layout-navigation",
+        "title": "顶部控件、导航与正文布局",
+        "body": "顶部控件采用横向弹性布局并在两端分布内容；搜索输入最大宽度为 460px，同时允许随可用空间收缩。通知按钮保持文字不换行，工作区标题则为辅助说明预留间距。[[c1]]\n\n导航及来源列表纵向组织，按钮和来源项均具有至少 44px 的高度。悬停、激活和选中选择器提供不同背景或文字颜色，长来源名称允许任意位置换行。[[c2]] 页栏固定为 51px 高并两端对齐，正文以 950px 为最大宽度居中，一级标题可处理超长文本；这些规则只说明视觉布局，不能证明页栏实际承载哪些业务状态。[[c3]]"
       },
       {
-        "key": "reading-and-feedback",
-        "title": "阅读内容与反馈状态",
-        "body": "阅读区以底部分隔线组织片段，聚焦片段加深边线；正文保留换行、允许长文本断行，并使用较宽松的行高。[[c3]] 表单支持纵向字段栈和双列网格，错误横幅使用危险色，Toast 固定在视口底部中央且具有较高层级；摘录区域限制高度并滚动，避免长证据无限撑开页面。[[c4]] 这些规则只负责视觉呈现，是否显示、何时聚焦以及 Toast 生命周期仍需由组件逻辑决定。"
+        "key": "reading-forms-feedback",
+        "title": "阅读内容、表单与操作反馈",
+        "body": "阅读区把证据片段组织成带底部分隔线的内容流，聚焦片段使用更深的边线。片段正文保留原始换行、允许长串断行，并使用较宽行距增强连续阅读的可读性。[[c4]] 表单默认纵向排列；双字段区域在宽屏使用两列网格，提交按钮靠起始侧对齐。[[c5]]\n\n错误横幅以浅红背景和危险色文字呈现页内异常，toast 固定在视口底部中央并限制最大宽度。摘录区域限制高度且允许滚动，样例引文依赖衬线字体与柔和背景变量，`summary` 则具有 44px 最小交互高度。[[c6]]"
       },
       {
-        "key": "responsive-boundaries",
-        "title": "响应式边界与依赖",
-        "body": "文件依赖 `--om-secondary`、`--om-muted`、`--om-line`、`--om-ink` 等共享 CSS 变量，因此需要入口先加载 UI 令牌。[[c5]] 在 1100px 以下页面缩小留白；700px 以下进一步收紧页面和顶栏、隐藏顶栏徽章、压缩控制区与按钮，并把双列表单改成单列。[[c6]] Toast 在手机宽度下固定为 90vw，阅读提示改为顶部对齐。材料没有横向滚动、超窄屏、系统深色模式、减少动画或安全区适配规则，也未提供 HTML 结构，因而无法确认所有选择器当前都有对应元素。"
+        "key": "responsive-theme",
+        "title": "响应式边界与主题依赖",
+        "body": "在 1100px 以下，正文与页栏缩小横向留白；在 700px 以下，正文进一步收紧、标题缩小、页栏徽标隐藏，搜索框与通知按钮压缩字号和间距，双列表单改为单列，阅读提示、错误横幅和 toast 也同步调整。[[c7]]\n\n导航依赖 `--om-secondary`、`--om-muted` 与 `--om-ink`，页栏、片段和反馈区域还使用边线、危险色、衬线字体及柔和背景等全局变量。[[c2]][[c3]][[c6]] 因此，本文件无法单独确认变量在深色模式中的取值、颜色对比度是否达标，也不能证明 `active`、`selected` 与 `focused` 状态由哪些组件或事件驱动。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "顶部控制区与导航状态",
-        "reason": "支持顶部控件、导航排列、触控高度以及活动状态的样式说明。",
+        "label": "顶部控件与搜索输入",
+        "reason": "支持顶部控件的弹性排列、搜索输入的宽度与收缩行为，以及通知按钮和工作区标题的基本样式。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/styles.css",
           "startLine": 1,
-          "endLine": 63
+          "endLine": 31
         },
         "quote": ".top-controls {\n  display: flex;\n  gap: 16px;\n  align-items: center;\n  justify-content: space-between;\n}\n.top-controls input {\n  width: min(460px, 100%);\n  background: #292929;\n  border-color: #444;\n  color: white;\n  font-size: 13px;\n  min-width: 0;\n}\n.notification-button {\n  color: white !important;\n  white-space: now"
       },
       {
         "key": "c2",
-        "label": "来源链接与页面框架",
-        "reason": "说明长路径换行、来源选中态、页顶栏和居中内容栏的布局。",
+        "label": "导航与来源列表",
+        "reason": "支持导航纵向布局、最小交互高度、悬停与选择状态、长名称换行及所依赖主题变量的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/styles.css",
-          "startLine": 64,
-          "endLine": 107
+          "startLine": 32,
+          "endLine": 87
         },
-        "quote": ".source-link {\n  border: 0;\n  width: 100%;\n  display: flex;\n  flex-direction: column;\n  gap: 5px;\n  min-height: 44px;\n  padding: 10px 12px;\n  background: none;\n  text-align: left;\n  border-radius: 5px;\n  color: var(--om-secondary);\n  overflow-wrap: anywhere;\n}\n.source-link small {\n  font-size: 11px;\n}\n.source-link.sele"
+        "quote": ".navigation {\n  display: flex;\n  flex-direction: column;\n  gap: 5px;\n}\n.navigation button {\n  display: flex;\n  gap: 10px;\n  align-items: center;\n  text-align: left;\n  border: 0;\n  border-radius: 6px;\n  padding: 12px;\n  background: none;\n  color: var(--om-secondary);\n  min-height: 44px;\n  font-size: 13px;\n}\n.navigation "
       },
       {
         "key": "c3",
-        "label": "阅读片段样式",
-        "reason": "支持片段分隔、聚焦状态、正文换行和行高设计。",
+        "label": "页栏与正文容器",
+        "reason": "支持页栏尺寸和对齐方式、正文最大宽度与留白，以及标题长文本断行和相关主题变量依赖。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 88,
+          "endLine": 107
+        },
+        "quote": ".page-bar {\n  height: 51px;\n  border-bottom: 1px solid var(--om-line);\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  padding: 0 28px;\n  font-size: 12px;\n  color: var(--om-muted);\n  background: white;\n}\n.page {\n  max-width: 950px;\n  margin: auto;\n  padding: 42px 44px 60px;\n}\n.page h1 {\n  ma"
+      },
+      {
+        "key": "c4",
+        "label": "证据片段阅读样式",
+        "reason": "支持片段分隔、聚焦边线、原始换行保留、长文本断行和阅读行距的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/styles.css",
           "startLine": 125,
-          "endLine": 153
+          "endLine": 152
         },
         "quote": ".reading-note {\n  display: flex;\n  gap: 10px;\n  align-items: center;\n  background: #eee;\n  padding: 17px;\n  border-radius: 6px;\n  font-size: 13px;\n  margin: 26px 0;\n}\n.fragment {\n  padding: 18px 0;\n  border-bottom: 1px solid var(--om-line);\n}\n.fragment.focused {\n  border-bottom-color: #888;\n}\n.fragment > p {\n  font-siz"
       },
       {
-        "key": "c4",
-        "label": "表单与反馈组件样式",
-        "reason": "说明双列表单、错误横幅、Toast 和长摘录滚动区域的表现。",
+        "key": "c5",
+        "label": "表单与双字段网格",
+        "reason": "支持表单纵向排列、双字段两列网格、字段间距和提交按钮对齐方式。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/styles.css",
           "startLine": 154,
-          "endLine": 203
+          "endLine": 166
         },
-        "quote": ".form {\n  display: flex;\n  flex-direction: column;\n  gap: 18px;\n}\n.form-grid {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 16px;\n}\n.form button[type=\"submit\"] {\n  align-self: flex-start;\n}\n.stack {\n  margin-top: 22px;\n}\n.error-banner {\n  margin: 18px 28px;\n  padding: 14px;\n  background: #fff1f1;\n  border:"
-      },
-      {
-        "key": "c5",
-        "label": "共享设计变量使用",
-        "reason": "支持应用样式依赖共享颜色与边线令牌，而不是完全自包含。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/styles.css",
-          "startLine": 37,
-          "endLine": 60
-        },
-        "quote": ".navigation button {\n  display: flex;\n  gap: 10px;\n  align-items: center;\n  text-align: left;\n  border: 0;\n  border-radius: 6px;\n  padding: 12px;\n  background: none;\n  color: var(--om-secondary);\n  min-height: 44px;\n  font-size: 13px;\n}\n.navigation button:hover {\n  background: #e7e7e7;\n}\n.navigation button.active {\n  b"
+        "quote": ".form {\n  display: flex;\n  flex-direction: column;\n  gap: 18px;\n}\n.form-grid {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 16px;\n}\n.form button[type=\"submit\"] {\n  align-self: flex-start;\n}"
       },
       {
         "key": "c6",
+        "label": "错误、通知与摘录反馈",
+        "reason": "支持错误横幅、固定 toast、可滚动摘录、样例引文主题依赖及 summary 最小交互高度。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/styles.css",
+          "startLine": 170,
+          "endLine": 210
+        },
+        "quote": ".error-banner {\n  margin: 18px 28px;\n  padding: 14px;\n  background: #fff1f1;\n  border: 1px solid #ebc7c7;\n  color: var(--om-danger);\n  border-radius: 6px;\n  overflow-wrap: anywhere;\n}\n.toast {\n  position: fixed;\n  bottom: 24px;\n  left: 50%;\n  transform: translateX(-50%);\n  max-width: min(600px, 90vw);\n  background: #24"
+      },
+      {
+        "key": "c7",
         "label": "窄屏响应式规则",
-        "reason": "支持 1100px 与 700px 两级断点下的留白、控件、表单及反馈布局变化。",
+        "reason": "支持 1100px 与 700px 两级断点下页面、顶部控件、表单、阅读区和反馈组件的调整。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/styles.css",
           "startLine": 212,
-          "endLine": 272
+          "endLine": 273
         },
         "quote": "@media (max-width: 1100px) {\n  .page {\n    padding: 36px 36px;\n  }\n  .page-bar {\n    padding: 0 24px;\n  }\n}\n@media (max-width: 700px) {\n  .page {\n    padding: 27px 20px 40px;\n  }\n  .page h1 {\n    font-size: 27px;\n  }\n  .page-bar {\n    padding: 0 18px;\n    font-size: 11px;\n    gap: 8px;\n  }\n  .page-bar .om-badge {\n    d"
       }
     ],
     "questions": [
       {
-        "question": "这些应用级选择器目前分别由哪些组件使用，是否存在遗留或无效规则？",
-        "why": "材料只有样式表，没有对应模板；因此不能确认 `.sample-quote`、`.excerpt`、`.form-grid` 等规则是否仍有真实消费方。",
-        "nextStep": "将选择器与 Vue 模板做静态对照，并通过真实页面的浏览器检查确认关键状态和断点。",
+        "question": "哪些 Vue 组件消费了这些类名，并负责 active、selected 与 focused 状态切换？",
+        "why": "当前材料只有 CSS，无法确认状态绑定、事件流程、键盘交互或相关规则是否仍被实际使用。",
+        "nextStep": "结合模板与组件源代码检索对应类名，核对状态绑定、键盘交互及未使用规则。",
         "blocking": false,
         "citationKeys": [
           "c2",
@@ -114,13 +127,13 @@
         ]
       },
       {
-        "question": "产品是否要求深色模式、超窄屏和可访问性偏好适配？",
-        "why": "现有样式包含硬编码深浅颜色与两个宽度断点，但没有展示颜色方案、减少动画或移动安全区等媒体查询。",
-        "nextStep": "依据视觉规范确定支持矩阵，再补充对比度、键盘焦点以及 320px 等视口测试。",
+        "question": "全局主题变量是否满足深色模式和无障碍对比度要求？",
+        "why": "该文件引用多组主题变量，但没有提供变量定义，也未展示专门的焦点可见性、高对比度或深色模式规则。",
+        "nextStep": "检查全局主题定义，并通过浏览器无障碍检查验证正文、选中态、错误态和键盘焦点的实际表现。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c5",
+          "c2",
+          "c3",
           "c6"
         ]
       }
@@ -129,56 +142,41 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/main.ts",
-      "digest": "e28bb90369dd31edb2423c029d0d215f9ef339d91bbfd97cebc5dfeb522c1db5"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/review-api.ts",
-      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/styles.css",
       "digest": "67910ac93e56f8446d578981a1fc76c94dbbc0499ba88e982cbc49cbc033be3a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/App.vue",
-      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:43:48.017Z",
+    "at": "2026-10-01T02:45:41.481Z",
     "trace": {
-      "runId": "f7829b1c-ba0b-4a14-b01d-c517d7a9cac8",
-      "roleId": "code-analyst",
+      "runId": "ef75ca11-a750-405f-8746-0561422c6406",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "5dc81604ff68704209057ecbeecda95779242e9f6e3edddfe1ad9397d49753c8",
-      "contextHash": "9033340d3de9cc723731f6583868c92981559df795d4aa9586bbbc93121bd2cb",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "04d1ab059219d88e45500705d853e38f49840598a08b18b7fbb682d46ca0a31b",
+      "contextHash": "5b7e60df2047bbe0e5b8fac00498ffc9dc6e9ed59c28ac2eab18af6efd6ff981",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c03ef6d3d27ea7ca4a0e75d505fb68d71c7d944a4651505572a7d183eb201fb1",
+      "fingerprint": "132f6835c01fab000af2261e50da2069db3fa102e14baf5ddc6b131039171899",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb1-3921-7cd2-98f0-dd05425307dc"
+        "01a0f55a-32d9-7a40-b3a6-6206f4e956a1"
       ],
       "usage": {
-        "used": 27118,
-        "size": 760000,
+        "used": 27029,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -186,10 +184,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35356,
-          "utf8Bytes": 37146,
-          "estimatedTokens": 12382,
-          "budgetedTokens": 15478,
+          "chars": 18850,
+          "utf8Bytes": 23804,
+          "estimatedTokens": 7935,
+          "budgetedTokens": 9919,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -198,17 +196,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:44:11.043Z",
+    "at": "2026-10-01T02:46:00.774Z",
     "trace": {
-      "runId": "8dace05d-769c-431b-afa0-78ce1d657684",
+      "runId": "a07e98ce-3777-4a69-8800-a5b02753a788",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b90123a0929f3c4971440f4c7cafab00e91ae9bbd46acd04a93ab0f123fa45c0",
-      "contextHash": "f009a6741a03136886a2699a85495aabc2ccb3653eefa8848ebb2396c736a1f6",
+      "promptHash": "425c58435eb2fc65801c64b6caa6e414e02b9234f6424fbee9857d35a4e1c6c4",
+      "contextHash": "8d93bc0fc19592bfadfbea3fcc66a49d3d9858830dd7905c882c0a7ace281870",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "224943df608b076faafd625b4968b86f0d6f98c7f56256fae35d3e879b53be7b",
+      "fingerprint": "01196c437c55f56d2edb6aebd8af0d32727b784a84e1fde4e99520a24278614a",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -221,11 +219,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb1-db0e-7291-9d58-87379d09ebfa"
+        "01a0f55a-9f4a-72a1-95ed-0e4171ff2ca0"
       ],
       "usage": {
-        "used": 29790,
-        "size": 760000,
+        "used": 24447,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -233,10 +231,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 46925,
-          "utf8Bytes": 53911,
-          "estimatedTokens": 17971,
-          "budgetedTokens": 22464,
+          "chars": 15077,
+          "utf8Bytes": 18477,
+          "estimatedTokens": 6159,
+          "budgetedTokens": 7699,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

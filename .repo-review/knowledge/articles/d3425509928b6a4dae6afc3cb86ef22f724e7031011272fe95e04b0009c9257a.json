@@ -2,88 +2,176 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-    "title": "质量数据集冻结与分维度评估测试",
-    "summary": "该测试验证评测专用数据集的去重导入、人工确认和摘要防篡改，并以确定性规则基线区分引文定位、语义支持、事实槽、覆盖率、任务完成及不必要打扰。",
+    "title": "质量数据集与证据评估测试",
+    "summary": "该测试验证研究专用质量数据集从导入、人工确认、冻结到指标评估的闭环，并分别检查引用定位、语义支持、事实槽一致性、证据覆盖、任务完成和不必要打断。它以反例替代了“引文可定位即语义受支持”的旧结论，并明确空分母返回 null；尚未覆盖真实模型、生产捕获链路、并发冻结及复杂语言现象。",
     "category": "tests",
     "sections": [
       {
-        "key": "dataset-lifecycle",
-        "title": "评测数据集生命周期",
-        "body": "导入入口必须显式传入 `QUALITY_EVAL_ONLY`，普通 capture 不应进入这条研究评测路径。相同来源重复导入返回原数据集且不新增样本；样本未全部人工确认时冻结会失败，确认后生成 64 位 manifest digest，并可通过 `verifyFrozen` 复验。直接篡改已确认标签 JSON 会使复验失败，说明冻结保护的是数据集内容而非仅状态字段。[[c1]]"
+        "key": "dataset_lifecycle",
+        "title": "研究数据集生命周期",
+        "body": "测试在临时目录中实例化 `Store`，通过研究专用 opt-in 从一份含账号唯一性、手机号上限和权限范围的材料导入三个样本；再次导入同一材料必须复用原数据集且不新增样本。[[c1]] 全部样本经人工确认前，数据集不能冻结；确认后会生成 64 位十六进制清单摘要，随后直接篡改已冻结标签必须使校验失败，说明冻结结果能够发现持久化内容漂移。[[c2]]\n\n这条路径只验证隔离的评测工具链。导入器明确声明它服务人工标注研究，普通 HTTP、CLI、输入摄取和学习流程不得调用，因此不能据此推断生产捕获已经接入质量样本生成。[[c3]]"
       },
       {
-        "key": "metric-model",
-        "title": "证据质量的拆分判定",
-        "body": "评估不再把“引文是原文子串”等同于“结论受支持”，而是分别统计引文位置、语义支持、核心事实槽、必要证据覆盖、任务完成和不必要打扰。完全复制人工标签时各维度满分；引用位置正确但反向概括时，定位仍通过，语义则记为 contradicted，任务也不算完成。[[c2]]\n\n空答案不进入定位、语义和事实槽分母，但仍构成必要证据漏召回。规则样例还接受忠实同义改写，把遗漏限制条件或把历史规则宣称为当前有效判为 partial，并识别肯否翻转和数值上限变化。[[c3]]"
+        "key": "metric_behavior",
+        "title": "拆分指标与被替代的旧结论",
+        "body": "预测与人工标签完全一致时，精确匹配、处置一致、自动应用精度、引用定位、语义支持、事实槽、必要证据覆盖和任务完成均应达到预期，且不产生不必要打断。[[c4]] 更关键的回归用例替代了旧的“证据引文是原文子串即可算支持”结论：反向陈述即使引用可定位，也必须记为 `contradicted`，任务不能算完成。[[c5]]\n\n测试还覆盖忠实同义改写、遗漏限制条件、把历史规则宣称为当前有效、否定翻转以及数值上限变化。[[c6]] 这些行为来自确定性规则基线而非模型裁判；当前规则聚焦否定、概念对立、限定词、时间和词汇重叠，能力边界应按有限模式理解。[[c7]]"
       },
       {
-        "key": "coverage-limits",
-        "title": "断言边界",
-        "body": "这些断言刻画的是当前规则基线在少量中文句式上的确定性结果，不能据此推断其对跨句限定、双重否定、单位换算或多个时间范围同样可靠。零样本时，测试明确检查所列出的各项 rate 与延迟 `p50` 为 null；这替代了旧稿所称“所有延迟分位数均为 null”，因为其他分位数未在该范围内逐项断言。[[c4]]"
+        "key": "denominators_and_limits",
+        "title": "空结果、分母语义与覆盖边界",
+        "body": "预测弃权且不产出对象时，引用定位、语义支持和事实槽没有合格分母，相应比率必须为 `null`，不能因没有错误对象而得到满分；若人工标签期待对象，必要证据覆盖仍为零。[[c8]] 没有标注样本时，各类比率和延迟中位数也返回 `null`；本应自动提取却返回 `needs_context`，则计为不必要打断并判任务未完成。[[c9]]\n\n本文件使用基于临时目录的隔离仓储、手工预测和规则化中文短句，没有执行真实模型、并发写入、复杂长文本、多语言或生产 API。标签合同虽约束处置值、对象类型，并要求 `extract` 至少含一个对象，[[c10]] 但这些测试没有逐项覆盖所有非法结构和恢复路径，不能据此推断仓储校验已被穷尽。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "数据集导入、确认与冻结",
-        "reason": "支持评测入口隔离、幂等导入、未确认时拒绝冻结、摘要冻结和篡改检测。",
+        "label": "临时仓储中的研究样本导入与去重",
+        "reason": "支持测试使用临时目录隔离仓储、显式研究 opt-in、首次插入三个样本以及重复导入不新增的流程说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/quality-evaluation.test.ts",
           "startLine": 50,
-          "endLine": 143
+          "endLine": 79
         },
         "quote": "describe(\"B2-08 quality dataset and evaluation\", () => {\n  it(\"imports deduplicated source samples, requires human labels and freezes a digest\", () => {\n    const directory = mkdtempSync(join(tmpdir(), \"omem-quality-eval-\"));\n    directories.push(directory);\n    const store = new Store(directory);\n    try {\n      const"
       },
       {
         "key": "c2",
-        "label": "定位与语义支持分离",
-        "reason": "支持多维指标设计及引文可定位但结论矛盾时语义不通过的区别。",
+        "label": "人工确认、冻结与篡改检测",
+        "reason": "支持冻结前置条件、人工确认、清单摘要校验以及冻结后标签漂移会被发现的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/quality-evaluation.test.ts",
-          "startLine": 104,
-          "endLine": 133
+          "startLine": 80,
+          "endLine": 143
         },
-        "quote": "      // F6: the old assertion `evidenceSupport: { supported: 3, precision: 1 }`\n      // credited any prediction whose evidenceQuote was a substring, even when the\n      // statement contradicted the quote. The metric is now split into six\n      // independent dimensions; a verbatim copy of the label scores 1 on every"
+        "quote": "      expect(() => repository.freeze(imported.id)).toThrow(\n        \"QUALITY_DATASET_NOT_FULLY_CONFIRMED\",\n      );\n      const samples = repository.samples(imported.id);\n      for (const sample of samples)\n        repository.label({\n          sampleId: sample.id,\n          action: \"confirm\",\n          reviewerOpenId: "
       },
       {
         "key": "c3",
-        "label": "语义与覆盖率规则样例",
-        "reason": "支持空答案、同义改写、限制条件、时间、否定和数值事实槽的具体断言。",
+        "label": "评测导入器的生产隔离边界",
+        "reason": "说明数据集构建器仅用于人工标注研究，普通捕获、CLI、输入摄取和学习流程不得进入该路径。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 28
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c4",
+        "label": "全匹配预测的多维指标",
+        "reason": "支持完整正确预测在各拆分指标上的计数和比率预期。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+          "startLine": 96,
+          "endLine": 133
+        },
+        "quote": "      const predictions = repository.samples(imported.id).map((sample) => ({\n        sampleId: sample.id,\n        prediction: sample.confirmedLabel,\n        durationMs: 100 + sample.ordinal,\n        inputTokens: 10,\n        outputTokens: 5,\n        error: null,\n      }));\n      // F6: the old assertion `evidenceSupport"
+      },
+      {
+        "key": "c5",
+        "label": "可定位引文仍可能语义矛盾",
+        "reason": "证明引用位置正确不等于语义支持，并记录反向结论会被判为矛盾且任务未完成。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/quality-evaluation.test.ts",
           "startLine": 201,
-          "endLine": 329
+          "endLine": 232
         },
         "quote": "describe(\"G19 split evidence metrics\", () => {\n  it(\"judges a reverse statement as contradicted even when the quote is a substring\", () => {\n    const text =\n      \"当前甲系统与乙主体是单一关联关系，未来可能允许多对多绑定。\";\n    const sample = makeSample(\n      makeInput(text),\n      makeLabel([claim(text, text)], { autoApply: true }),\n    );\n   "
       },
       {
-        "key": "c4",
-        "label": "无合格分母的指标语义",
-        "reason": "支持零样本时列出的各项 rate 与延迟 p50 返回 null，并界定没有断言其他延迟分位数。",
+        "key": "c6",
+        "label": "同义、限定、时间、否定与数值用例",
+        "reason": "支持测试对同义改写、范围扩大、时间错配、否定翻转和数值变化的具体预期。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+          "startLine": 262,
+          "endLine": 329
+        },
+        "quote": "  it(\"does not penalize a faithful synonymous paraphrase\", () => {\n    const text = \"一个主体只能拥有一个主账号，并且该主账号代表对应组织。\";\n    const sample = makeSample(makeInput(text), makeLabel([claim(text, text)]));\n    const metrics = evaluateQuality([sample], [\n      {\n        sampleId: sample.id,\n        prediction: makeLabel([\n        "
+      },
+      {
+        "key": "c7",
+        "label": "确定性语义支持规则基线",
+        "reason": "说明评估器不是模型裁判，并界定其语义判断依赖的有限显式规则。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 33,
+          "endLine": 53
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
+      },
+      {
+        "key": "c8",
+        "label": "空预测的空分母与覆盖缺失",
+        "reason": "支持零预测对象时若干指标返回 null、但必要证据覆盖仍记为零的差异。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/quality-evaluation.test.ts",
+          "startLine": 234,
+          "endLine": 260
+        },
+        "quote": "  it(\"does not credit an empty answer as evidence support (null denominator)\", () => {\n    const text =\n      \"一个运营人最多关联五个手机号，每个手机号只能关联一个运营人。\";\n    const sample = makeSample(\n      makeInput(text),\n      makeLabel([claim(text, text)], { autoApply: true }),\n    );\n    // Prediction abstains with zero objects.\n    const "
+      },
+      {
+        "key": "c9",
+        "label": "零样本与不必要打断",
+        "reason": "支持无合格分母时比率和延迟为空，以及本可自动提取却请求上下文会被计为打断。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/quality-evaluation.test.ts",
           "startLine": 331,
-          "endLine": 342
+          "endLine": 359
         },
         "quote": "  it(\"returns null for every rate when there is no eligible denominator\", () => {\n    // Zero labeled samples.\n    const metrics = evaluateQuality([], []);\n    expect(metrics.denominator).toBe(0);\n    expect(metrics.citationLocation.accuracy).toBeNull();\n    expect(metrics.semanticSupport.rate).toBeNull();\n    expect(m"
+      },
+      {
+        "key": "c10",
+        "label": "质量标签结构约束",
+        "reason": "说明标签合同对处置、对象类型、字段长度及 extract 非空对象施加结构约束。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 39,
+          "endLine": 70
+        },
+        "quote": "export const qualityLabelSchema = z\n  .object({\n    disposition: z.enum([\"extract\", \"abstain\", \"needs_context\"]),\n    objects: z\n      .array(\n        z\n          .object({\n            kind: z.enum([\"task\", \"claim\", \"episode\", \"procedure\"]),\n            statement: z.string().min(1).max(4000),\n            evidenceQuote:"
       }
     ],
     "questions": [
       {
-        "question": "规则判定器对跨句限定、双重否定、单位换算和多时间区间的误判率是否有独立语料评测？",
-        "why": "当前用例集中于单句中文样例，能确认这些样例的确定性结果，但不足以推断更复杂表达的泛化能力。",
-        "nextStep": "扩充冻结数据集，加入上述最小对照组，并分别报告 supported、partial、contradicted 与事实槽混淆矩阵。",
+        "question": "确定性语义规则对更复杂的中文否定、条件嵌套、数量单位转换和跨句指代是否会产生系统性误判？",
+        "why": "现有测试只覆盖少量手工短句，评估器也明确定位为有限规则基线；当前材料不足以判断其在真实语料上的召回率和误报率。",
+        "nextStep": "补充来自冻结人工数据集的困难样本，分别统计 supported、partial、contradicted、unsupported 的混淆情况，并为新增规则建立反例测试。",
         "blocking": false,
         "citationKeys": [
-          "c3"
+          "c6",
+          "c7"
+        ]
+      },
+      {
+        "question": "冻结校验在并发标注、重复冻结或事务中途失败时是否仍保持一致性？",
+        "why": "当前测试覆盖未确认时拒绝冻结和冻结后篡改检测，但没有并发、幂等冻结或失败恢复场景。",
+        "nextStep": "检查仓储事务实现，并增加并发标签更新、重复 freeze 与故障注入测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c2"
         ]
       }
     ]
@@ -91,69 +179,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/proposal-policy.test.ts",
-      "digest": "19c9fe2b49e81db587a4f3b3e6e956c9e99151c9decd8c4943a5fef2b9bc7d57"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/quality-annotation.test.ts",
-      "digest": "bfaabb4a2ba8357da6dc8280e3617fcb16aefbfc81487305b88b4c7291cfd086"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/server/tests/quality-evaluation.test.ts",
       "digest": "c86c93cdfd8142e2becabae7e9b36e950d2edb1db99a4891340e4994fccf4149"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/retrieval-keyword.test.ts",
-      "digest": "512496af1d8aa8f8d9da5a3f41ee766be2714a31c0d0dd37d2ee67e8d7790b8f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/retrieval-source-profile.test.ts",
-      "digest": "7785c4def39404faf04f4ecf85bca9fecef6413e7b247cbfb011f4b8aefe9e9c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/tests/review-dev.test.ts",
-      "digest": "6ac6cc2db82deff33eb27a466db8dab2f3099421e7135506eee453e154604383"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/memory/service.ts",
-      "digest": "7213e7d550a0378421dab7f125f602df59000ac8fb2776449446129ce72b95a8"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "577458f7b3f5407b78faaa77e884478309986e6a2a3f3147e9d954de1450e09a"
+      "key": "omem:apps/server/src/quality/evaluator.ts",
+      "digest": "4c6debef6cb90bdc11eb1004b1e1f3f6be43688d996416c2b523165829af2835"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/storage/digest.ts",
-      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:42:39.792Z",
+    "at": "2026-10-01T02:34:36.036Z",
     "trace": {
-      "runId": "de846aa8-ecfb-46ce-9f5b-ad60c91e1dd0",
+      "runId": "7b4a3e5d-59e4-49fc-9189-25e595ca509b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "a04653e64b1aee49f8d8a27936ad72cb0b98edcb22fc25439ead964964f9ed79",
-      "contextHash": "232695e6ae302d6cb59f85587519ff3f40f8d618e09bdfe734ea6ea2639bbee7",
+      "promptHash": "ad597f82b4702fd40a7a27e78f42013402f13745ae73edb6b10efd4a1daafcdb",
+      "contextHash": "625bde1d1eb80546747c21b5d6f4786b692fd6b5a2ec91a719cc4836358f66c2",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "880a0929ac1c861a10ac0da90fa46ee70dfda02b7ad1ddcc2d8a5ba6512e8e26",
+      "fingerprint": "144fc1035d1987e30a88a19d372484e6303f9897b2cc6363a0ca6f4e44c3f6ac",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -166,11 +229,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-231d-7710-8ae8-31705aaaf133"
+        "01a0f54f-ff2a-72d2-bf24-bc3f35be54c1"
       ],
       "usage": {
-        "used": 59842,
-        "size": 760000,
+        "used": 34053,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -178,10 +241,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 133162,
-          "utf8Bytes": 148656,
-          "estimatedTokens": 49552,
-          "budgetedTokens": 61940,
+          "chars": 43015,
+          "utf8Bytes": 49711,
+          "estimatedTokens": 16571,
+          "budgetedTokens": 20714,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -190,17 +253,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:43:05.172Z",
+    "at": "2026-10-01T02:34:57.264Z",
     "trace": {
-      "runId": "f7c2f4b3-1d22-4cb0-9b35-e4623f259bef",
+      "runId": "64d4d3d6-0ea0-4f8b-9c39-d7337d663572",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "07656017172ace9a504a9a4e15d8e44fdac9626a31beb6bad34d24f4e80a86ca",
-      "contextHash": "18f49a39ae881ce1e93f00c75d6bd0f991d475016106933c38f13a84e20893ff",
+      "promptHash": "01325925d4a8d6d663e46759bd9006486495ecfe506767c24117b0ab638946b9",
+      "contextHash": "10d7c37c322da346e61c85e2fdd9ce817de6a09616ee84e034c8274b6274a985",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bd489f236376e0c87a42178bf61ca11aed7be51b50aadee17930c3ce9ba1af40",
+      "fingerprint": "88cfd1883442c34703d0977cf6810de8e2700d39bc14b9f3b7d067c4e245f8df",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -213,11 +276,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb0-d089-7b81-8822-2fb9d6a0af82"
+        "01a0f550-6a39-7d22-a77b-40779611e34f"
       ],
       "usage": {
-        "used": 54548,
-        "size": 760000,
+        "used": 31643,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -225,10 +288,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129043,
-          "utf8Bytes": 141623,
-          "estimatedTokens": 47208,
-          "budgetedTokens": 59010,
+          "chars": 39911,
+          "utf8Bytes": 45189,
+          "estimatedTokens": 15063,
+          "budgetedTokens": 18829,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

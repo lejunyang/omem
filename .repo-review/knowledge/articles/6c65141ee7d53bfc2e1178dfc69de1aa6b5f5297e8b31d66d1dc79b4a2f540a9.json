@@ -2,37 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/review-api.ts",
-    "title": "Repo-review 前端 API 客户端与数据合同",
-    "summary": "集中描述 repo-review 的浏览、同步、关系图与代码理解接口；轻量 fetch 封装依赖服务端合同一致性，目前材料未显示运行时响应校验。",
+    "title": "仓库评审前端 API 客户端",
+    "summary": "该文件是 Web 前端访问 `/api/review/*` 的类型化适配层，覆盖资料浏览、历史版本、检索与同步，以及代码快照、结构图、理解结果和源码切片。它统一请求路径、参数编码与错误转换；现有材料只证明客户端合同与调用行为，不足以断言版本不可变或仓库内不存在其他契约校验。",
     "category": "implementation",
     "sections": [
       {
         "key": "purpose-and-contract",
-        "title": "职责与接口边界",
-        "body": "该模块是 repo-review 知识库的前端客户端，覆盖读取、浏览与同步，并与个人工作区 API 区分：按文件注释，目标服务绑定回环地址、没有令牌门禁，因此请求不附带 `Authorization`。[[c1]] 类型描述来源、带版本的历史修订、片段、搜索与同步状态，也描述代码快照、文件、符号、边及理解结果；其中修订具有版本号、当前状态和前序标识，但材料没有证明运行时不可修改。[[c2]]"
+        "title": "职责与数据合同",
+        "body": "该模块集中封装仓库评审知识库的前端访问。文件将其界定为绑定 loopback 的读取、浏览与同步表面，并说明它没有 token 门禁，因此不发送个人工作区客户端使用的 `Authorization` 头。[[c1]]\n\n资料域类型覆盖来源、历史版本、片段、检索命中与关系。历史版本包含当前标志、内容哈希及可选 Git 快照信息；此前称其为“不可变版本”的结论已被替代，因为这里仅能证明历史版本可被读取。[[c2]] 关系 DTO 还提供方向、有效状态及关联端当前性，使界面可以解释 `stale`、`missing` 等状态。[[c3]]"
       },
       {
-        "key": "request-flow",
-        "title": "请求封装与核心流程",
-        "body": "通用 `get`、`post` 拼接 `/api/review` 前缀并尝试解析 JSON；失败响应优先采用服务端 `error`，否则抛出统一错误，成功响应则直接断言为泛型。[[c3]] 来源列表支持分类和已删除项参数，修订、片段、搜索及关系查询会编码相应标识或路径。[[c4]] `reviewCode` 单独将 404 转为 `null`，使追踪视图可以表达“该文件没有材料”，其他错误仍会抛出。[[c5]]"
+        "key": "request-flows",
+        "title": "请求流程与同步分支",
+        "body": "通用 `get`、`post` 在 `/api/review` 前缀下请求并解析 JSON；失败时优先采用服务端 `error`，成功结果则通过 TypeScript 类型断言返回，本文件未在此处执行运行时 schema 校验。[[c4]] 来源查询会编码筛选参数，资料同步入口通过 POST 调用 `/sync` 并声明返回 `SyncResult`。[[c5]] `SyncResult` 由扫描、导入、更新、未变、跳过等统计以及最近同步提交和时间组成。[[c6]]\n\n按代码路径查询资料时，404 被转换为 `null`，让追踪界面呈现“没有对应材料”；其他错误仍会抛出。[[c7]] 代码知识读取统一追加 `/code`，覆盖快照、结构图、文件、符号、边及文件理解。[[c8]]"
       },
       {
-        "key": "code-knowledge-flow",
-        "title": "代码知识读取与同步",
-        "body": "代码知识接口提供当前快照、整图、文件、符号、边和文件理解读取；DTO 除内部定位字段外，还允许携带展示标题、展示路径、引用标签、可操作状态、原因与深链。[[c6]] 策展理解区分列表摘要和完整详情，记录 seed、代理复核、过期、证据引用、未知项及被替代结果。[[c7]] 源码全文读取先请求第一行取得 `totalLines`，再按探测到的范围请求全文；代码同步则发送空 JSON 对象并返回文件、符号、边及过期边统计。[[c8]]"
-      },
-      {
-        "key": "conditions-and-limits",
-        "title": "关系语义与可确认限制",
-        "body": "关系 DTO 会为入向查询反转关系名；当对端不再指向当前且未删除的 head 时，有效状态被标为 `stale`，未解析关系的对端可为 `null`。[[c9]] 当前客户端对成功 JSON 没有展示运行时 schema 校验：解析失败会回退为 `{}`，随后仍通过 TypeScript 断言返回，因此合同偏差可能延迟到消费端才暴露。[[c10]] 此外，回环绑定、代理暴露范围以及两次源码请求之间的快照一致性均不在所给客户端材料中，不能视为已经验证。"
+        "key": "boundaries-and-integration",
+        "title": "合同、理解结果与源码读取边界",
+        "body": "注释声明代码知识形状镜像共享 contracts 与服务端模块；本文件随后直接声明快照、文件、符号、边和基础理解类型，并通过通用请求函数的类型断言接收响应。[[c9]] 结构化理解合同也在本地展开，包含职责、边界、流程、声明、证据、未知项和复核信息；列表及详情请求返回这些声明的类型。[[c10]] 因此此前“完全依赖人工同步”或“仓库内不存在自动一致性校验”的结论均被替代：给定材料只能描述本文件的实现，无法排除其他文件中的生成或契约测试。\n\n源码全文读取先请求第 1 行取得 `totalLines`，不超过一行时直接返回，否则再请求完整范围。[[c11]] 这取代了“客户端未处理空文件”的旧结论，但服务端是否接受空文件的第 1 行请求、是否限制全文大小，以及两次请求是否绑定同一快照，仍无法从本材料确认。代码同步另行发送带空 JSON 对象的 POST，并使用英文兜底错误。[[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Repo-review 客户端边界说明",
-        "reason": "支持该客户端的用途、回环无令牌假设及不发送授权头的设计背景。",
-        "relation": "background",
+        "label": "评审 API 的访问边界",
+        "reason": "支持客户端面向 loopback 的读取、浏览和同步接口，并且不发送授权头的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/review-api.ts",
@@ -43,21 +38,34 @@
       },
       {
         "key": "c2",
-        "label": "历史修订与修订详情类型",
-        "reason": "支持修订被描述为带版本的历史记录，并具有 current、previousId 等状态字段；不据此扩张为不可变保证。",
-        "relation": "supports",
+        "label": "来源历史版本合同",
+        "reason": "支持历史版本可读字段及可选 Git 快照信息，同时限定不能据此断言版本不可修改。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/review-api.ts",
           "startLine": 37,
-          "endLine": 82
+          "endLine": 48
         },
         "quote": "/** One row of GET /sources/:id/versions — a historical revision of a source. */\nexport type ReviewSourceVersion = {\n  id: string;\n  version: number;\n  current: boolean;\n  createdAt: string;\n  contentHash: string | null;\n  /** Head commit captured when this revision was synced. May be absent on\n   * backends that do no"
       },
       {
         "key": "c3",
-        "label": "通用请求包装器",
-        "reason": "支持统一路径前缀、JSON 解析、错误提取及成功值泛型断言的流程。",
+        "label": "片段关系 DTO",
+        "reason": "说明关系方向、有效状态以及关联端当前性和删除状态如何供界面解释关系。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 112,
+          "endLine": 137
+        },
+        "quote": "/** One bidirectional relation touching a fragment. `relationType` is already\n * inverted when the queried fragment is the target (e.g. a decision fragment\n * sees \"implemented_by\"). `other` is null for unresolved (missing) links.\n *\n * `relationStatus` is the EFFECTIVE status shown in the UI: the stored status,\n * for"
+      },
+      {
+        "key": "c4",
+        "label": "通用 GET 与 POST 封装",
+        "reason": "支持统一路径、JSON 解析、错误转换以及成功响应通过类型断言返回的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -68,22 +76,35 @@
         "quote": "async function get<T>(path: string): Promise<T> {\n  const r = await fetch(\"/api/review\" + path);\n  const value = await r.json().catch(() => ({}));\n  if (!r.ok) throw Error((value && (value as { error?: string }).error) || \"请求失败\");\n  return value as T;\n}\n\nasync function post<T>(path: string): Promise<T> {\n  const r = aw"
       },
       {
-        "key": "c4",
-        "label": "来源、修订、搜索与关系请求",
-        "reason": "支持查询参数和各类标识经过编码后构造请求路径的说明。",
+        "key": "c5",
+        "label": "来源查询与同步入口",
+        "reason": "支持查询参数编码、POST 调用同步入口及其声明的 SyncResult 返回类型。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/review-api.ts",
           "startLine": 194,
-          "endLine": 250
+          "endLine": 229
         },
         "quote": "export async function reviewSources(\n  category?: string,\n  includeRemoved = false,\n): Promise<ReviewSource[]> {\n  let path = \"/sources\";\n  const params: string[] = [];\n  if (category) params.push(\"category=\" + encodeURIComponent(category));\n  if (includeRemoved) params.push(\"includeRemoved=true\");\n  if (params.length)"
       },
       {
-        "key": "c5",
-        "label": "按代码路径查找材料",
-        "reason": "说明该查询将 404 转为 null，而对其他失败继续抛出异常。",
+        "key": "c6",
+        "label": "资料同步结果字段",
+        "reason": "直接支持同步结果包含扫描、导入、更新、未变、跳过统计及最近同步信息的论断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 153,
+          "endLine": 164
+        },
+        "quote": "export type SyncStats = {\n  totalScanned: number;\n  imported: number;\n  updated: number;\n  unchanged: number;\n  skipped: number;\n};\n\nexport type SyncResult = SyncStats & {\n  lastSyncCommit: string | null;\n  lastSyncAt: string;\n};"
+      },
+      {
+        "key": "c7",
+        "label": "按代码路径查找资料",
+        "reason": "支持将 404 转换为 null、其他失败继续抛出的特殊处理。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -94,98 +115,90 @@
         "quote": "/** 404 resolves to null instead of throwing, so the trace view can show a friendly\n * \"no material for this file\" state. */\nexport async function reviewCode(path: string): Promise<ReviewSource | null> {\n  const r = await fetch(\"/api/review/code?path=\" + encodeURIComponent(path));\n  if (r.status === 404) return null;\n "
       },
       {
-        "key": "c6",
-        "label": "代码图 DTO 与读取入口",
-        "reason": "支持代码文件、符号、边的展示投影字段及代码图读取接口。",
+        "key": "c8",
+        "label": "代码知识读取入口",
+        "reason": "支持代码接口统一添加前缀，以及快照、结构图、文件符号、文件边和理解结果的读取范围。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/review-api.ts",
-          "startLine": 262,
-          "endLine": 395
+          "startLine": 375,
+          "endLine": 396
         },
-        "quote": "export type CodeSnapshot = {\n  snapshotId: string;\n  repoId: string;\n  commit: string | null;\n  dirty: boolean;\n  capturedAt: string;\n  parserVersion: string;\n  fileCount: number;\n  changedCount: number;\n  partial: boolean;\n  // DTO projection (forward-compat)\n  displayTitle?: string;\n  shortCommit?: string;\n  citation"
+        "quote": "async function codeGet<T>(path: string): Promise<T> {\n  return get(\"/code\" + path);\n}\n\nexport async function codeCurrentSnapshot(): Promise<CodeSnapshot | null> {\n  return codeGet(\"/current-snapshot\");\n}\nexport async function codeGraph(): Promise<CodeGraph> {\n  return codeGet(\"/graph\");\n}\nexport async function codeFile"
       },
       {
-        "key": "c7",
-        "label": "策展理解合同",
-        "reason": "支持理解结果的列表与详情结构，以及 seed、复核、过期、替代、证据和未知项字段。",
-        "relation": "explains",
+        "key": "c9",
+        "label": "基础代码知识类型声明",
+        "reason": "支持镜像共享合同的注释、本地展开的基础 DTO，以及这些 DTO 与通用请求断言之间的实现关系。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/review-api.ts",
-          "startLine": 398,
-          "endLine": 496
+          "startLine": 257,
+          "endLine": 356
         },
-        "quote": "// --- Curated / seeded module understandings (/code/understandings) ---------\n// These are hand-curated module notes projected onto the head graph. They are\n// the ONLY narrative surface when no production model is configured. The list\n// endpoint returns summaries; :id returns the full CodeUnderstanding.v1 output.\n\n/"
+        "quote": "// ---------------------------------------------------------------------------\n// Code Knowledge read surface (/api/review/code/*). Shapes mirror\n// packages/contracts/src/index.ts (Code* types) and apps/server/src/code/*.\n// ---------------------------------------------------------------------------\n\nexport type CodeS"
       },
       {
-        "key": "c8",
-        "label": "源码全文读取与代码同步",
-        "reason": "支持先探测总行数再读取完整范围的流程，以及代码同步请求和返回统计。",
-        "relation": "calls",
+        "key": "c10",
+        "label": "结构化理解合同与读取接口",
+        "reason": "支持理解输出、列表、详情、复核状态、替代关系及解析引用均在本文件中声明并由接口返回。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/review-api.ts",
+          "startLine": 423,
+          "endLine": 496
+        },
+        "quote": "/** The structured CodeUnderstanding.v1 output carried by a curated module. */\nexport type CodeUnderstandingOutputV1 = {\n  schema_version: 1;\n  result_id: string;\n  role: string;\n  status: string;\n  module_responsibilities: string[];\n  boundaries: string[];\n  key_flows: { name: string; description: string; node_ids: st"
+      },
+      {
+        "key": "c11",
+        "label": "源码全文探测流程",
+        "reason": "支持先探测总行数、不超过一行直接返回、否则再次读取完整范围的流程。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/review-api.ts",
           "startLine": 498,
-          "endLine": 521
+          "endLine": 511
         },
         "quote": "export async function codeSourceSlice(\n  id: string,\n  startLine: number,\n  endLine: number,\n): Promise<SourceSlice> {\n  return codeGet(\n    \"/files/\" + encodeURIComponent(id) + \"/source?startLine=\" + startLine + \"&endLine=\" + endLine,\n  );\n}\n/** Fetch the whole file: probe totalLines with a 1-line request, then fetch "
       },
       {
-        "key": "c9",
-        "label": "关系方向与有效状态合同",
-        "reason": "支持反向关系名、过期状态判定及未解析对端为空的语义。",
-        "relation": "explains",
+        "key": "c12",
+        "label": "代码同步请求",
+        "reason": "支持代码同步使用带空 JSON 对象的独立 POST，并采用英文兜底错误文本。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/review-api.ts",
-          "startLine": 112,
-          "endLine": 137
+          "startLine": 513,
+          "endLine": 521
         },
-        "quote": "/** One bidirectional relation touching a fragment. `relationType` is already\n * inverted when the queried fragment is the target (e.g. a decision fragment\n * sees \"implemented_by\"). `other` is null for unresolved (missing) links.\n *\n * `relationStatus` is the EFFECTIVE status shown in the UI: the stored status,\n * for"
-      },
-      {
-        "key": "c10",
-        "label": "响应解析与类型断言边界",
-        "reason": "支持成功响应未经运行时模式验证便断言为目标类型，以及 JSON 解析失败回退为空对象的限制。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/review-api.ts",
-          "startLine": 174,
-          "endLine": 185
-        },
-        "quote": "async function get<T>(path: string): Promise<T> {\n  const r = await fetch(\"/api/review\" + path);\n  const value = await r.json().catch(() => ({}));\n  if (!r.ok) throw Error((value && (value as { error?: string }).error) || \"请求失败\");\n  return value as T;\n}\n\nasync function post<T>(path: string): Promise<T> {\n  const r = aw"
+        "quote": "export async function codeRunSync(): Promise<CodeSyncResult> {\n  const r = await fetch(\"/api/review/code/sync\", {\n    method: \"POST\",\n    headers: { \"content-type\": \"application/json\" },\n    body: \"{}\",\n  });\n  const value = await r.json().catch(() => ({}));\n  if (!r.ok) throw Error((value && (value as { error?: string"
       }
     ],
     "questions": [
       {
-        "question": "服务端响应是否通过共享 schema 或契约测试保证与这些前端类型同步？",
-        "why": "客户端声称形状精确镜像服务端，但成功响应仅进行 TypeScript 类型断言，所给材料没有展示服务端验证或契约测试。",
-        "nextStep": "核对服务端 DTO、共享合同和契约测试；若没有相应保证，将一致性明确记录为未验证约定，或引入共享 schema/边界解析。",
+        "question": "前端 DTO 与服务端及共享 contracts 的一致性是否由类型测试或生成流程保证？",
+        "why": "当前文件以注释说明镜像关系，在本地展开类型，并通过类型断言接收响应；给定材料无法确认仓库其他位置是否存在生成机制或契约测试。",
+        "nextStep": "检查共享合同的导入或生成机制，以及服务端路由与客户端之间的契约测试，重点覆盖展示投影、关系状态和理解详情。",
         "blocking": false,
         "citationKeys": [
-          "c1",
+          "c4",
+          "c9",
           "c10"
         ]
       },
       {
-        "question": "源码全文读取采用两次请求时，服务端的大小限制和快照一致性如何保证？",
-        "why": "实现先请求一行获取 totalLines，再按该范围读取全文；材料未说明空文件、大文件或两次请求之间内容变化的行为。",
-        "nextStep": "核对源码接口合同，并测试空文件、大文件以及两次请求间快照变化的情况。",
+        "question": "源码全文探测策略对空文件、超大文件和并发修改采用什么服务端约束？",
+        "why": "客户端先请求第 1 行，再依据 `totalLines` 决定是否读取全文，但材料未说明空文件请求是否合法、全文响应大小限制，或两次请求是否绑定同一快照。",
+        "nextStep": "核对源码切片端点的行号校验、响应大小限制和快照绑定规则，并补充相应行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c8"
-        ]
-      },
-      {
-        "question": "无令牌且仅绑定回环地址的安全假设由部署层如何落实？",
-        "why": "这一安全边界仅见于客户端注释，无法据此验证监听地址、开发代理或生产部署是否会将接口暴露到非预期网络。",
-        "nextStep": "检查 review 服务监听配置、开发代理及部署说明，并验证接口的实际网络可达范围。",
-        "blocking": false,
-        "citationKeys": [
-          "c1"
+          "c11"
         ]
       }
     ]
@@ -193,39 +206,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/main.ts",
-      "digest": "e28bb90369dd31edb2423c029d0d215f9ef339d91bbfd97cebc5dfeb522c1db5"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/review-api.ts",
       "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/styles.css",
-      "digest": "67910ac93e56f8446d578981a1fc76c94dbbc0499ba88e982cbc49cbc033be3a"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/App.vue",
-      "digest": "8b5c2060f3a7efd53c5a8f67468c191ee81994622322cdaeecf3ff5c45220869"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:45:03.743Z",
+    "at": "2026-10-01T02:44:54.754Z",
     "trace": {
-      "runId": "0498585f-9d78-4b49-baff-48664657ed48",
+      "runId": "d661e923-6648-461d-b723-be2f002e714a",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "cbe46bd7cde29b4822b4d108053bd258532a666f995119b7942d8f832a77ce66",
-      "contextHash": "cbce1dfb169c71dd722777294364ec41c73d5a34e41d2e02472e522772e9810c",
+      "promptHash": "6fe66d04de2dfb02d6cf943def4a16b7e03b6a2a9e5b7d5127573b4098598c06",
+      "contextHash": "fa4bff4de014ea8c881295281e6a4d18fb0fe3b17ae6f1710e242a174fa75290",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "93015ec0cd4fd4a0889e00af8065dc3d617c4242117ff4ad974e2c6054aba5f0",
+      "fingerprint": "f401eedc21cc3c9710dad629b7912a84badfffe043d003c428dba772726d2dad",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -238,11 +236,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb2-beb0-7782-858d-a362d858aeb3"
+        "01a0f559-6b16-7070-8247-0cb38b604e7a"
       ],
       "usage": {
-        "used": 28301,
-        "size": 760000,
+        "used": 33511,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -250,10 +248,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 44101,
-          "utf8Bytes": 49713,
-          "estimatedTokens": 16571,
-          "budgetedTokens": 20714,
+          "chars": 33873,
+          "utf8Bytes": 40039,
+          "estimatedTokens": 13347,
+          "budgetedTokens": 16684,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -262,17 +260,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:45:14.591Z",
+    "at": "2026-10-01T02:45:11.884Z",
     "trace": {
-      "runId": "f86402db-e79c-4f07-82ec-64e93c7ac758",
+      "runId": "51a0161b-f83d-4fdb-bab1-2afcbcfd7f93",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "97de7c60c9ab22637f235b6d99886b4baf36ced7f178b7c1173dd7d722787535",
-      "contextHash": "d2b89cca87fd23320d75e0f46fdc5b2f113d13d13ec12b2467037cf5d8a2bc5b",
+      "promptHash": "caa402b29581ca688bb5b74292cf24c3c6578f9e639b6a3d3edd9ed843611de3",
+      "contextHash": "5d69917d416891eadc0446263821690042638990d8fcf6dbc0796b54ebb7c53b",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ed53511441de63869fa738c5d26bf427684b861efbd7662045c82e1cee889c9b",
+      "fingerprint": "0b81c4610ae32ca7b89eadd9756023ecd9fbf5c3fb9f146a8da6b312939dd8cf",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -285,11 +283,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb3-02f1-77f0-8a63-84e75ccd6d24"
+        "01a0f559-d8e5-74c3-bf39-792240901e02"
       ],
       "usage": {
-        "used": 25964,
-        "size": 760000,
+        "used": 28937,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -297,10 +295,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 40283,
-          "utf8Bytes": 44207,
-          "estimatedTokens": 14736,
-          "budgetedTokens": 18420,
+          "chars": 30431,
+          "utf8Bytes": 34701,
+          "estimatedTokens": 11567,
+          "budgetedTokens": 14459,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

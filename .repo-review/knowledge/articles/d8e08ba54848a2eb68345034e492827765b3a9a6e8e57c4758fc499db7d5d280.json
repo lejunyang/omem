@@ -3,35 +3,48 @@
   "document": {
     "key": "module:code",
     "title": "code · 模块理解",
-    "summary": "代码知识模块把 Capture 中的固定源码修订投影为按解析器版本区分、可追溯的快照化代码图，并在图上管理人工或模型生成的理解；当前仍受全量同步、单文件名称级解析、查询语义和模型传输预算差异限制。",
+    "summary": "code 模块把 Capture 链中的固定仓库修订离线投影为可追溯的代码快照、符号与关系图，并在其上承载人工 seed 和可选模型生成的模块理解。源码已串联快照历史、人读 DTO、严格引用校验及版本化产物恢复，但跨文件语义、独立复核、选择性同步和部分事务一致性仍待完善。",
     "category": "architecture",
     "sections": [
       {
-        "key": "purpose",
-        "title": "职责与数据边界",
-        "body": "该模块不建立第二套源码事实库，而把 Capture→Source/Revision/Fragment 投影为文件、符号、关系和快照侧表；稳定标识便于跨解析定位，符号与关系则按快照保存。[[c1]] 此处替代此前“新解析未重现的历史关系都会变为 stale”的宽泛结论：stale 对账只修改本轮目标快照内未重现或触及已删除文件的关系，其他快照的关系保持原状态。[[c2]]\n\nDTO 保留内部动作键用于路由，同时补充人类可读标题、路径、引用标签和深链。不可操作状态目前只明确覆盖 removed 文件及 missing/stale 关系；符号 DTO 始终可操作，因此不能再泛称所有 missing/stale 对象都已统一处理。[[c3]]"
+        "key": "purpose_model",
+        "title": "统一证据链上的代码派生视图",
+        "body": "该模块服务于 Code Wiki 的代码定位、关系浏览与可追溯解释，但不把代码另建为事实权威。分析只读取 Capture 中固定且无损的修订正文；旧式有损捕获视为缺失，不会用当前工作树补造历史证据。[[c1]] 代码侧表位于同一评审 SQLite，文件、符号、边和快照采用确定性身份，是既有 Fragment 上的可重建投影。[[c2]]\n\n“派生视图完全不支持快照文本副本”的旧结论已被替代：表结构和读取路径允许保存逐快照 `content_text`，并在固定修订不可读时回退到该副本。[[c3]] 但当前同步调用明确传入 `contentText: null`，所以这只是存储与兼容读取能力，不能理解为当前同步已经填充了不可变文本副本；当前主要依赖固定 Capture 修订。[[c5]] 面向前端的 DTO 保留路由所需内部键，同时增加人读标题、路径、引用标签、可操作状态和原因，避免把内部 ID 当作可见文本。[[c4]]"
       },
       {
-        "key": "sync-flow",
-        "title": "从固定修订到代码快照",
-        "body": "同步从 Capture 当前 head revision 读取固定文本，Git 只补充提交、分支、远端和 dirty 元数据。快照身份实际由解析器版本、仓库、提交、dirty 状态及排序后的捕获内容哈希共同决定；解析器版本变化也会产生不同快照，这补全了此前遗漏版本因素的枚举。[[c4]] 相同身份可复用旧快照，但仍重新执行当前文件、关系和理解状态的对账；公开 `sync` 虽接受 `only`，当前实现没有消费它，实际仍是全量同步。[[c5]]\n\n解析使用 TypeScript 单文件 AST、Vue SFC 编译器和保守正则，不建立跨文件类型程序。[[c6]] 投影会固定文件 revision、写入符号，并生成 confirmed 的定义边、可解析或 missing 的导入边以及同文件名称匹配的 candidate 调用边。[[c7]] 路由、测试和 Vue 组件线索写入后，流程标记删除文件，在本轮目标快照内对账 stale 关系，切换显式 head，再投影人工 seed 并恢复可校验产物。[[c8]]"
+        "key": "sync_graph",
+        "title": "从固定修订到快照关系图",
+        "body": "同步从已捕获 Source 读取固定 head revision，筛选受支持路径和格式后离线解析；快照身份还会纳入查询所得全部捕获行的内容摘要。新快照和复用快照都会重新协调来源、文件及图数据，不因身份复用而跳过处理。[[c5]] 解析器使用单文件 TypeScript AST、Vue SFC 与保守正则提取符号、导入、名称级调用、路由、测试和模板组件；它不做跨文件类型解析，因此调用只能作为候选。[[c6]]\n\n关系状态需区分来源：声明形成 `defines` confirmed；只有解析到捕获文件集合中目标的相对导入才形成 confirmed，无法解析的相对导入以及所有非相对导入仍会写入 `imports` 边，但状态为 missing。同文件名称匹配的调用和未解析目标的 Vue 组件使用保持 candidate。[[c7]] 收尾阶段标记 removed 文件、更新当前快照内的陈旧边、切换显式 head、失效旧模型理解，再投影人工 seed 并恢复版本化成果。[[c8]] 未在本轮重现或接触 removed 文件的边只在指定快照内变为 stale，其他历史快照不受影响。[[c9]]"
       },
       {
-        "key": "understanding",
-        "title": "人工与模型理解的可信流程",
-        "body": "人工 seed 的证据必须来自固定快照正文；节点定位器、证据文件或证据别名无法解析时会保存 rejected 记录，而不是静默删引。通过合同的 seed 明确为低置信度、无模型且未独立验证，先前有效结果保留为历史并标记 stale。[[c9]]\n\n模型默认关闭，只有宿主显式配置 ACP、CLI 或 HTTP 才建立端口，适配器本身不读取凭据或主动推理。[[c10]] 生成时按目标路径限制文件与可见符号，检查输入和最终输出预算，处理取消、超时、引用范围及运行期间 head 移动。[[c11]] 当前成功结果可导出为带依赖摘要和稳定定位器的 JSON；恢复会重新核对依赖、范围、定位器和合同，但明确不等于重新生成或独立语义复核。[[c12]]"
+        "key": "understanding_flow",
+        "title": "人工 seed、模型生成与版本化恢复",
+        "body": "人工 seed 通过“路径、限定名、类型”定位器重解析到固定快照；节点或证据无法解析时保存 rejected，不能静默丢弃引用或冒充模型结果。校验通过的 seed 与引用镜像被持久化，默认读取面可以同时包含当前 seed 和已接受的模型结果。[[c10]]\n\n当前适配器支持 ACP、CLI 和显式 HTTP 端点，未配置时默认不构造模型端口。[[c11]] 生成函数本身接收结构化 port；未注入 port 时直接返回 unavailable，没有快照时直接返回 failed，这两种前置失败均不分配有效理解记录。[[c12]] 只有进入已建立结果标识的生成流程后，预取消、未知目标、预算超限、传输异常、合同或引用范围失败等才会持久化为 failed/rejected；这些记录不会进入默认当前读取面。流程还执行输入输出预算、取消超时、JSON 合同、引用范围及 head 移动栅栏检查。[[c13]]\n\n严格合同区分 raw fact 与 interpretation，并以独立 verifier 标志决定能否称为 verified；结构和交叉引用校验不等于语义复核。[[c14]] 当前成功、非 seed、未过期且属于当前快照的模型结果可导出为版本化 JSON，包含依赖摘要和稳定符号定位器。[[c15]] 恢复时比较依赖摘要、重绑定当前符号并重新验证；来源变化记 stale，定位或合同失败记 rejected，恢复记录仍明确标注未经独立语义复核。[[c16]]"
       },
       {
-        "key": "status-limits",
-        "title": "当前能力与未收敛限制",
-        "body": "当前或指定历史快照可分别查询符号、关系和整图；历史视图保留当时文件，当前视图隐藏 removed 文件，并默认过滤 stale 关系。[[c13]] 但 `symbolById` 只按稳定符号标识查询，没有限定或排序快照，多版本并存时返回语义尚不确定。\n\n名称级调用不能证明跨文件或动态分派目标，测试边目前指回测试文件，Vue 组件使用边也没有解析目标。[[c6]][[c8]] 模型传输能力同样不完全一致：ACP 会消费并下传请求预算，而 CLI 与 HTTP 分支未接收该预算。[[c14]] 因而“已入库”只表示结构或派生结果完成持久化，不能视为候选关系已经语义确认，也不能宣称各传输具有等价预算保证。"
+        "key": "progress_limits",
+        "title": "已串联环节、限制与被替代结论",
+        "body": "固定材料能够证明源码已串联固定文本读取、确定性解析、逐快照历史、状态化关系、人读 DTO、seed 投影、可选模型生成及产物恢复，但不能替代真实退出码、行为测试或浏览器验收。解析仍缺少跨文件类型语义，调用者上下文对类方法、箭头函数和嵌套结构也不完整。[[c6]]\n\n符号表以符号 ID 与快照 ID 为联合身份，但 `symbolById` 只按符号 ID 查询；同一稳定符号跨快照存在时，返回的范围、签名和 Fragment 未被明确限定。[[c17]] `sync({ only })` 当前忽略参数并执行全量同步，不能当作已实现的选择性刷新。[[c18]]\n\n一致性风险需限定在新生成模型结果：主记录及旧模型失效在事务内完成，规范化引用镜像随后在事务外写入，中断可能留下可见主记录但引用侧表不完整。[[c19]] 恢复路径则在一个事务中写入主记录和引用，不能与该风险混为一谈。[[c16]] 本次修订由此替代了“同步已保存文本副本”“所有导入均可确认”和“所有生成失败都会形成记录”等范围过宽的结论；统一证据链、逐快照历史、候选关系及派生知识不等于原始证据等认识继续保留。[[c2]][[c10]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "代码图投影与稳定身份",
-        "reason": "支持代码侧表依附 Capture 链、稳定标识及按快照保存结构记录的架构说明。",
+        "label": "固定 Capture 修订正文读取",
+        "reason": "支持代码分析只接受无损固定修订，并拒绝从当前工作树重建历史证据。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/source-text.ts",
+          "startLine": 3,
+          "endLine": 10
+        },
+        "quote": "/** Exact text from a fixed Capture revision. Legacy lossy captures are explicit\n * misses; never reconstruct evidence by reading the current working tree. */\nexport function revisionText(store: Store, revisionId: string): string | null {\n  const row = store.db.prepare(\"SELECT body FROM revisions WHERE id=?\").get(revis"
+      },
+      {
+        "key": "c2",
+        "label": "统一 SQLite 与确定性代码身份",
+        "reason": "支持代码侧表属于统一存储上的派生视图，以及文件、符号、边和快照的稳定身份规则。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -42,62 +55,49 @@
         "quote": "/** Code Knowledge side tables. These live in the SAME isolated review SQLite as\n * review_source_meta / review_relations 鈥?they are additive, CREATE-IF-NOT-EXISTS\n * only, and never touch sources/revisions/fragments/review_relations rows. The\n * code graph is a deterministic projection over the already-captured fragme"
       },
       {
-        "key": "c2",
-        "label": "本轮快照内的关系失效",
-        "reason": "支持 stale 对账仅修改指定快照、其他历史快照关系保持不变的修正结论。",
+        "key": "c3",
+        "label": "快照文本副本的存储与回退能力",
+        "reason": "支持表结构允许保存逐快照文本副本，并在固定修订正文不可读时使用该字段回退。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/store.ts",
-          "startLine": 863,
-          "endLine": 895
+          "startLine": 446,
+          "endLine": 498
         },
-        "quote": "/** Flip every edge not produced by this run's parse to stale (removed symbols /\n * deleted imports). Edges touching a removed file are also flipped. Returns the\n * number newly flipped. */\nexport function invalidateStaleEdges(\n  store: Store,\n  liveSeeds: Set<string>,\n  snapshotId: string,\n): number {\n  ensureCodeTabl"
+        "quote": "/** Immutable per-snapshot file pin: the review revision that supplied this\n * file's bytes when the snapshot was built. Used to serve fixed historical\n * source text instead of the live working tree. */\nexport function upsertSnapshotFile(\n  store: Store,\n  row: {\n    snapshotId: string;\n    fileId: string;\n    path: s"
       },
       {
-        "key": "c3",
-        "label": "文件、符号与关系展示状态",
-        "reason": "支持 removed 文件和 missing/stale 关系不可操作，同时符号始终可操作的精确 DTO 边界。",
+        "key": "c4",
+        "label": "用户可见 DTO 投影边界",
+        "reason": "支持保留内部操作键、增加人读字段并避免将内部 ID 渲染为标签。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/dto.ts",
-          "startLine": 35,
-          "endLine": 113
+          "startLine": 1,
+          "endLine": 5
         },
-        "quote": "export function fileDTO(f: CodeFile, snap?: CodeSnapshot | null) {\n  const base = f.path.split(\"/\").pop() ?? f.path;\n  return {\n    ...f,\n    type: \"file\",\n    symbolName: null,\n    displayTitle: base,\n    displayPath: f.path,\n    summary: `${f.language} · ${f.sizeBytes} bytes`,\n    version: snap ? shortCommit(snap.com"
-      },
-      {
-        "key": "c4",
-        "label": "包含解析器版本的快照身份",
-        "reason": "支持解析器版本、仓库、提交、dirty 状态及内容哈希共同进入快照标识。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/code/store.ts",
-          "startLine": 34,
-          "endLine": 74
-        },
-        "quote": "export const PARSER_VERSION = \"ts-ast@1+vue-sfc@1+regex@1+capture@2\";\n\nfunction sha1(s: string): string {\n  return createHash(\"sha1\").update(s).digest(\"hex\");\n}\n\nexport function codeRepositoryId(): string {\n  // PoC: single repo. Stable slug.\n  return \"omem\";\n}\n\nexport function fileIdFor(repoId: string, path: string): "
+        "quote": "/** User-facing DTO projection. The code_* tables are a rebuildable typed view over\n * the authoritative Capture->Source/Revision/Fragment chain. We SPREAD the original\n * row so every internal action key (fileId/name/kind/range/endpoints/...) stays for\n * the UI, and ADD human display* fields on top. IDs are never ren"
       },
       {
         "key": "c5",
-        "label": "同步入口与快照复用",
-        "reason": "支持 only 参数当前未使用、同步读取固定 Capture head，并在复用快照后继续对账。",
+        "label": "同步输入、快照协调与文件绑定",
+        "reason": "支持固定捕获输入、快照身份、新旧快照协调，并直接证明当前同步为快照文件绑定传入空文本副本。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 147,
-          "endLine": 216
+          "startLine": 170,
+          "endLine": 248
         },
-        "quote": "  async sync(_opts: { only?: string[] } = {}): Promise<CodeKnowledgeSyncResult> {\n    return runCodeSync(this.store, this.repoRoot);\n  }\n}\n\nexport async function runCodeSync(\n  store: Store,\n  repoRoot: string,\n): Promise<CodeKnowledgeSyncResult> {\n  ensureCodeTables(store);\n  ensureReviewMetaTable(store);\n\n  const rep"
+        "quote": "  // The Capture chain owns the bytes. Code analysis reads its immutable head\n  // revisions and never pairs live filesystem text with an older fragment.\n  const captured = store.db.prepare(`SELECT r.id, s.external_id\n    FROM sources s JOIN revisions r ON r.id=s.head\n    LEFT JOIN review_source_meta m ON m.source_id=s"
       },
       {
         "key": "c6",
-        "label": "离线解析精度边界",
-        "reason": "支持单文件 TypeScript AST、Vue SFC、保守正则及名称级候选调用的限制。",
-        "relation": "explains",
+        "label": "离线 TypeScript 与 Vue 解析边界",
+        "reason": "支持单文件 AST、Vue SFC、保守正则、名称级候选调用及位置合同，并解释跨文件语义限制。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/parse.ts",
@@ -108,148 +108,210 @@
       },
       {
         "key": "c7",
-        "label": "文件、符号与基础关系投影",
-        "reason": "支持固定 revision、符号写入以及定义、导入和同文件调用关系的生成状态。",
+        "label": "符号与关系图状态投影",
+        "reason": "支持声明为 confirmed、导入按解析结果区分 confirmed 与 missing，以及调用和组件使用保持 candidate。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 220,
-          "endLine": 330
+          "startLine": 250,
+          "endLine": 415
         },
-        "quote": "  store.tx(() => {\n    for (const row of captured) {\n      const path = row.external_id.slice(EXTERNAL_ID_PREFIX.length);\n      const text = revisionText(store, row.id);\n      if (text === null) continue;\n      store.db.prepare(\"INSERT OR IGNORE INTO code_snapshot_sources VALUES(?,?,?,?)\").run(snapId, path, row.id, sha"
+        "quote": "      // 1) Symbols.\n      const localQNames = new Map<string, string>();\n      for (const sym of f.parsed.symbols) {\n        const sid = symbolIdFor(repoId, f.path, sym.qualifiedName, sym.kind);\n        const declLine = f.text.split(\"\\n\")[sym.rangeStart.line - 1] ?? null;\n        upsertSymbol(store, {\n          symbol"
       },
       {
         "key": "c8",
-        "label": "特殊结构与同步收尾",
-        "reason": "支持路由、测试、Vue 组件线索以及删除、stale 对账、head 切换和理解恢复流程。",
-        "relation": "implements",
+        "label": "同步收尾与理解失效顺序",
+        "reason": "支持 removed 文件处理、边失效、当前快照切换、旧模型理解失效、seed 投影和产物恢复的串联顺序。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/sync.ts",
-          "startLine": 332,
+          "startLine": 435,
           "endLine": 473
         },
-        "quote": "      // 4) Routes.\n      for (const route of f.parsed.routes) {\n        const qname = `${route.method} ${route.path}`;\n        const rid = symbolIdFor(repoId, f.path, qname, \"route\");\n        upsertSymbol(store, {\n          symbolId: rid,\n          fileId,\n          snapshotId: snapId,\n          name: route.path,\n    "
+        "quote": "    // Mark files that disappeared as removed.\n    const known = new Set(files.map((f) => f.path));\n    const existingRows = store.db\n      .prepare(\"SELECT file_id, path FROM code_files\")\n      .all() as { file_id: string; path: string }[];\n    for (const row of existingRows) {\n      if (!known.has(String(row.path)) &"
       },
       {
         "key": "c9",
-        "label": "人工 seed 定位与持久化",
-        "reason": "支持固定证据解析、定位失败拒绝、低置信度 seed 属性及旧结果转为历史。",
+        "label": "快照限定的陈旧边更新",
+        "reason": "支持只更新指定快照内未重现或接触 removed 文件的边，其他快照保持不变。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 863,
+          "endLine": 896
+        },
+        "quote": "/** Flip every edge not produced by this run's parse to stale (removed symbols /\n * deleted imports). Edges touching a removed file are also flipped. Returns the\n * number newly flipped. */\nexport function invalidateStaleEdges(\n  store: Store,\n  liveSeeds: Set<string>,\n  snapshotId: string,\n): number {\n  ensureCodeTabl"
+      },
+      {
+        "key": "c10",
+        "label": "人工 seed 定位、校验与持久化",
+        "reason": "支持定位或证据失败保存 rejected、成功 seed 与引用写入，以及历史结果保留语义。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-store.ts",
-          "startLine": 213,
-          "endLine": 511
+          "startLine": 281,
+          "endLine": 515
         },
-        "quote": "  // Evidence: text must come from the FIXED on-disk content, never the seed\n  // author's hand-written summary. A selector pins exact source lines; a bare ref\n  // pins a doc file (e.g. AGENTS.md). Unresolvable refs are recorded per id so\n  // the owning seed is rejected rather than self-validated.\n  const seenEvidenc"
+        "quote": "export function projectCuratedSeeds(\n  store: Store,\n  repoRoot: string,\n  snapId: string,\n): ProjectResult {\n  ensureCodeTables(store);\n  const seeds = loadCuratedSeeds(repoRoot);\n  if (!seeds.length) return { projected: 0, rejected: 0, rejectedIds: [] };\n\n  const registry = new CodeRoleRegistry();\n  const bundle = re"
       },
       {
-        "key": "c10",
-        "label": "模型端口默认关闭",
-        "reason": "支持模型仅由宿主显式启用，且适配器不读取秘密或自行发起推理。",
+        "key": "c11",
+        "label": "当前模型适配器的默认与范围",
+        "reason": "支持评审模式默认不硬接模型，以及当前适配器面向 ACP、CLI 和显式 HTTP 端点。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-model.ts",
           "startLine": 1,
-          "endLine": 39
+          "endLine": 9
         },
         "quote": "/** Configurable Code Understanding model port.\n *\n * Review mode has NO hard-wired model: by default `available` is false and only\n * curated seed projections are served. A model runs only when the host passes\n * an explicit `UnderstandingTransportConfig` into the review app. This module\n * performs NO inference, read"
       },
       {
-        "key": "c11",
-        "label": "生成范围、预算与提交栅栏",
-        "reason": "支持目标范围、预算检查、取消超时、引用可见性及 head 移动防护。",
+        "key": "c12",
+        "label": "模型端口或快照缺失时的生成行为",
+        "reason": "支持未注入端口或没有当前快照时直接返回，且 understandingId 为空、不会进入失败记录持久化流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/understanding-store.ts",
-          "startLine": 741,
-          "endLine": 897
+          "startLine": 674,
+          "endLine": 700
         },
-        "quote": "  // Scope the reference set to the requested module (targetId = repo-relative\n  // path prefix). The model may ONLY cite ids we actually hand it; out-of-scope\n  // citations are rejected after the shared validator passes.\n  const targetPrefix = opts.targetId.replace(/\\/+$/, \"\");\n  const targetFiles = snapshot.files.fi"
+        "quote": "/** Run a model understanding for the current snapshot. Any failure (transport,\n * malformed output, unknown refs, timeout, abort) records a failed/rejected row\n * and NEVER promotes a bad result to current. Provenance fields are sealed here,\n * not by the model. */\nexport async function generateCodeUnderstanding(\n  st"
       },
       {
-        "key": "c12",
-        "label": "生成理解的导出与恢复",
-        "reason": "支持当前结果的导出条件、依赖摘要、精确定位器恢复及未独立语义复核的限制。",
+        "key": "c13",
+        "label": "模型生成的预算、验证与提交栅栏",
+        "reason": "支持已进入生成流程后的失败留痕、目标范围、预算、取消超时、合同校验、引用范围及 head 移动检查。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 709,
+          "endLine": 897
+        },
+        "quote": "  const persistOutcome = (status: \"failed\" | \"rejected\" | \"generated\", errors: string[], sealed: CodeUnderstandingOutput | null) => {\n    store.db\n      .prepare(\n        `INSERT INTO code_understandings(\n           understanding_id,target_type,target_id,snapshot_id,role_id,role_version,\n           prompt_hash,schema_d"
+      },
+      {
+        "key": "c14",
+        "label": "严格理解状态与独立复核合同",
+        "reason": "支持 raw fact 与 interpretation 的区分，以及 generated、verified 和独立 verifier 标志的语义。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+          "startLine": 216,
+          "endLine": 310
+        },
+        "quote": "// Each claim is explicitly tagged so raw facts (mechanically present in the\n// snapshot) are never conflated with an agent's interpretation.\nexport const claimSchema = z\n  .object({\n    text: z.string().min(1).max(2000),\n    kind: z.enum([\"raw_fact\", \"interpretation\"]),\n    node_ids: z.array(z.string().min(1).max(300)"
+      },
+      {
+        "key": "c15",
+        "label": "当前模型理解的版本化导出",
+        "reason": "支持导出门槛、依赖清单、稳定节点定位器和 JSON 文件写出。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
           "startLine": 38,
-          "endLine": 116
+          "endLine": 60
         },
         "quote": "export function exportGeneratedUnderstanding(store: Store, repoRoot: string, id: string, destination: string): string {\n  const detail = understandingDetail(store, id);\n  const snapId = currentSnapshotId(store);\n  if (!detail || !snapId || detail.status !== \"generated\" || detail.seed || detail.stale || detail.snapshot_"
       },
       {
-        "key": "c13",
-        "label": "当前与历史快照查询",
-        "reason": "支持按当前或指定快照查询符号和图、历史文件展示及 stale 关系过滤。",
+        "key": "c16",
+        "label": "生成理解产物的可信恢复",
+        "reason": "支持依赖摘要比较、定位器重绑定、严格验证、事务写入以及未经独立语义复核的声明。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/store.ts",
-          "startLine": 541,
-          "endLine": 620
+          "key": "omem:apps/server/src/code/artifacts.ts",
+          "startLine": 63,
+          "endLine": 116
         },
-        "quote": "/** Symbols anchored to the CURRENT head snapshot of this file (symbols from\n * superseded snapshots are naturally excluded). Pass snapshotId to read an\n * older snapshot's view. */\nexport function symbolsOfFile(\n  store: Store,\n  fileId: string,\n  snapshotId?: string,\n): CodeSymbol[] {\n  ensureCodeTables(store);\n  con"
+        "quote": "export function restoreGeneratedUnderstandings(store: Store, repoRoot: string) {\n  const dir = join(repoRoot, GENERATED_DIR);\n  const report: { file: string; status: \"restored\" | \"stale\" | \"rejected\"; reason?: string }[] = [];\n  const snapId = currentSnapshotId(store);\n  if (!snapId || !existsSync(dir)) return report;\n"
       },
       {
-        "key": "c14",
-        "label": "各模型传输的预算差异",
-        "reason": "支持 ACP 消费请求预算，而 CLI 与 HTTP 运行分支未接收该预算的能力差异。",
+        "key": "c17",
+        "label": "未限定快照的符号查询",
+        "reason": "支持符号可按快照列举，但 symbolById 仅按符号 ID 查询的边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/store.ts",
+          "startLine": 559,
+          "endLine": 571
+        },
+        "quote": "export function symbolsOfSnapshot(store: Store, snapshotId: string): CodeSymbol[] {\n  ensureCodeTables(store);\n  return (store.db\n    .prepare(\"SELECT * FROM code_symbols WHERE snapshot_id=? ORDER BY file_id, range_start\")\n    .all(snapshotId) as Row[]).map(symbolFromRow);\n}\n\nexport function symbolById(store: Store, sy"
+      },
+      {
+        "key": "c18",
+        "label": "当前同步入口忽略 only",
+        "reason": "支持公开同步入口虽接受 only 参数，实际仍直接执行全量同步。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-model.ts",
-          "startLine": 80,
-          "endLine": 161
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 147,
+          "endLine": 149
         },
-        "quote": "/** Build a port, or null when the host deliberately configured no model.\n * Throws CodeModelUnavailableError on an explicitly-broken/unsupported config so\n * the caller surfaces it honestly instead of silently degrading. */\nexport function buildUnderstandingModelPort(\n  config?: UnderstandingTransportConfig | null,\n):"
+        "quote": "  async sync(_opts: { only?: string[] } = {}): Promise<CodeKnowledgeSyncResult> {\n    return runCodeSync(this.store, this.repoRoot);\n  }"
+      },
+      {
+        "key": "c19",
+        "label": "新生成结果与引用镜像的事务边界",
+        "reason": "支持新模型主记录在事务内提交，而规范化引用镜像随后在事务外写入。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/understanding-store.ts",
+          "startLine": 894,
+          "endLine": 906
+        },
+        "quote": "  store.tx(() => {\n    store.db.prepare(\"UPDATE code_understandings SET stale=1 WHERE target_id=? AND source='model-generated' AND stale=0\").run(opts.targetId);\n    persistOutcome(\"generated\", [], result.output);\n  });\n\n  // Mirror refs.\n  store.db.prepare(\"DELETE FROM code_understanding_refs WHERE understanding_id=?\")"
       }
     ],
     "questions": [
       {
-        "question": "`CodeKnowledgeService.sync` 的 `only` 参数应实现局部同步，还是从公开合同中移除？",
-        "why": "当前方法接受 `only`，却始终执行全量同步；调用者可能误判快照身份、删除检测和本轮 stale 对账的作用范围。",
-        "nextStep": "确认产品是否需要局部同步；若需要，定义局部快照、删除检测和 stale 关系规则并补行为测试，否则显式拒绝或移除该参数。",
+        "question": "恢复或新生成的模型理解在进入正式回答前，是否必须由独立 verifier 将其提升为 verified？",
+        "why": "合同明确以独立 verifier 标志区分 generated 与 verified，恢复记录也声明未做独立语义复核；材料未展示回答消费端的状态过滤规则。",
+        "nextStep": "检查评审 API、回答编排和 verifier 作业的状态过滤逻辑，并增加 generated 与 verified 可见性行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c8"
+          "c14",
+          "c16"
         ]
       },
       {
-        "question": "CLI 与 HTTP 模型传输是否必须与 ACP 一样在传输侧强制执行上下文和输出预算？",
-        "why": "生成宿主会检查总体输入与最终输出，但只有 ACP 分支接收并下传请求预算，三种传输的限制能力并不等价。",
-        "nextStep": "核对各传输可声明的能力；对无法满足的预算设置提前拒绝，或在运行记录中明确标注能力差异。",
+        "question": "稳定符号查询是否应始终携带 snapshotId？",
+        "why": "符号可跨快照保留，但现有 symbolById 只按符号 ID 查询，范围、签名和 Fragment 来自哪个历史版本没有明确保证。",
+        "nextStep": "核对符号详情页和 trail 深链调用方，确定默认当前快照或强制显式快照的合同，并增加同一符号跨快照的行为测试。",
         "blocking": false,
         "citationKeys": [
-          "c11",
-          "c14"
+          "c17"
         ]
       },
       {
-        "question": "跨文件调用、测试覆盖目标和 Vue 组件目标准备采用何种可验证的解析策略？",
-        "why": "当前调用仅为单文件名称级 candidate，测试边指回测试文件，Vue 组件使用边没有解析目标，均不能提升为已确认语义关系。",
-        "nextStep": "评估 TypeScript Program 或语言服务解析；仍无法解析的关系继续保留 candidate 或 missing，并关联固定源码证据。",
+        "question": "sync({ only }) 是兼容性占位还是尚未完成的选择性同步能力？",
+        "why": "公开入口接受 only，但当前实现忽略该参数并执行全量同步，调用方可能误判运行成本和失效范围。",
+        "nextStep": "明确产品合同；若暂不支持则显式标注或移除参数，否则实现选择性输入、依赖协调及未覆盖区域的 stale 处理。",
         "blocking": false,
         "citationKeys": [
-          "c6",
-          "c7",
-          "c8"
+          "c18"
         ]
       },
       {
-        "question": "多快照存在同一稳定符号时，`symbolById` 应默认返回当前快照记录，还是要求调用方显式提供 snapshotId？",
-        "why": "符号表以稳定符号标识和快照标识组成复合主键，但该查询只按符号标识且没有排序，返回哪条快照记录缺乏确定语义。",
-        "nextStep": "检查 API 调用点和行为测试，随后默认限定 current snapshot，或要求调用方显式提供 snapshotId。",
+        "question": "新生成模型理解的主记录与规范化引用镜像是否需要原子提交或启动时修复？",
+        "why": "生成路径在事务内写主记录后，才在事务外更新引用镜像；进程中断可能留下可见主记录但引用侧表不完整，而恢复路径不具有这一事务边界。",
+        "nextStep": "检查现有一致性修复和集成测试；若没有，将生成路径的引用写入纳入同一事务或提供幂等重建步骤。",
         "blocking": false,
         "citationKeys": [
-          "c13"
+          "c19"
         ]
       }
     ]
@@ -259,6 +321,16 @@
       "kind": "material",
       "key": "omem:apps/server/src/code/artifacts.ts",
       "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/agent-runtime/src/code-understanding.ts",
+      "digest": "b08a7786e852f32f3192991bd4b4d014840ee1e186dd862541e7d3e37772c011"
     },
     {
       "kind": "material",
@@ -277,8 +349,13 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/code/store.ts",
-      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/source-text.ts",
+      "digest": "2b9b56c668a9df66e9a251effcdf861070512487b53deb2b06f870248af15888"
     },
     {
       "kind": "material",
@@ -292,64 +369,69 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "ab8053a39456179fe401078b91bebef5fcada9788da5b8093a123f6b919f269b"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/server/src/code/understanding-store.ts",
       "digest": "50fe806aea058838a21a4c17af41cad95df98284731b3c0a2753e6df62f5cbf5"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/artifacts.ts",
-      "digest": "bc9928b67fce11650d68dc15f1b89f909710a352c855362f7ed1609e8507c0de"
+      "digest": "2a877342ee204ec6d37c733081ec4d8b6f451a9e0bb31803b9c8819b19c9eb06"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/budget.ts",
-      "digest": "9bd03ac0398c9ca0cb3bbd3b1bde6ce0958351226b234349d2d51c0d3e20dbe3"
+      "digest": "cf5f3bbdd891b0cc33a2188b1d75ae3eb7a005cb84c38a6d79f6d8d2cff68157"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/dto.ts",
-      "digest": "e95afa3ed85e266150bbd0a1e6f9a9cd57e7a4c27568dfef23738edcaafaa7ee"
+      "digest": "a43a93fdfca7badde9794de9c45c226da2860d895b2a243a1abaee20f035669b"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/parse.ts",
-      "digest": "2253a41d6aa40e063bde7752130d0c517736b52c29b7e4f7e847529cde922829"
+      "digest": "f4a59534943d4e2704d3be9c4f08607733cb54bf383ea835c0254a714422130d"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/store.ts",
-      "digest": "9e12b9fceb2b1a0307a8136378db756e7d53192850b7d377204124a4ded61ba6"
+      "digest": "ef042c9b0d11e3b0564cea56e7e0f9b4eb7e411a8f24d18621264f087815f9a1"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/sync.ts",
-      "digest": "01ab2566e2c50b12b1165d51ac0b497fb3d1fc3fce905c932466555acb1844fa"
+      "digest": "f7d990f5b07b5fe0b6cf85809e367a744d5619e3b70019b7647e193483069fb4"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/understanding-model.ts",
-      "digest": "f81b83fce4d89b398dfc77eea989bd28ebc643f96ddf8d7365cdded3dbbe8074"
+      "digest": "8b127c3cef617354eeb0e4c03fb4fb145b37b9f5ed5afdda190efdf8cd824cb5"
     },
     {
       "kind": "article",
       "key": "omem:apps/server/src/code/understanding-store.ts",
-      "digest": "e8a8fd893fe38ae18ea5b4002c31023b7970c9bf465cb84b130d803d2fc78617"
+      "digest": "bec0005f05ecfc830df543e4ff17bd1837826e363b6ca04ca50fd3ec0821a63a"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-30T19:37:47.657Z",
+    "at": "2026-10-01T03:49:20.975Z",
     "trace": {
-      "runId": "2ae62465-7dca-4c29-aa92-2e2b79271922",
+      "runId": "ad17bb11-0a14-4c2a-ab1c-8ebcb488236b",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "daf86c3aa13d616891fab97f6a1ff2f02b90615f07f8469537bb3ee8ffd36ee9",
-      "contextHash": "11cff17c84931b2c7f27aaeb40c3e590abc9da555d949b81287f478d79987111",
+      "promptHash": "f7090c95c9f090fe7abeba99b7365352a37f27682f8cb4ebcbfb6d93e834a8ff",
+      "contextHash": "c3f48d5f79c10aac2ae1a1904db96e80265a1686e9dd3fb93150a6ba62907ae7",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "75ac9279ee8fa3b0bff4ddfc20eccd8c6166ec890674c23f11c5c4b19ef378ff",
+      "fingerprint": "9748becf8c4471393687062b2d3d941cb2dd5a8ee3d6ecb99a408b8c7f7dd459",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -362,10 +444,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3d2-4589-7a62-aa99-e0a1f957094d"
+        "01a0f594-443d-75f1-a1de-e533df7190a2"
       ],
       "usage": {
-        "used": 79803,
+        "used": 117413,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -374,10 +456,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 190165,
-          "utf8Bytes": 209746,
-          "estimatedTokens": 69916,
-          "budgetedTokens": 87395,
+          "chars": 296554,
+          "utf8Bytes": 328555,
+          "estimatedTokens": 109519,
+          "budgetedTokens": 136899,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -386,17 +468,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-30T19:38:08.161Z",
+    "at": "2026-10-01T03:49:43.216Z",
     "trace": {
-      "runId": "88f36f28-e936-4fad-bb0f-736b2259e3ee",
+      "runId": "452b087c-4180-4fc2-9b57-d340d66a5b7d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "bfef8913e346a88bbed85317c94028f479b12fecec0a5557aa44f2b30236fe68",
-      "contextHash": "5ca2a08391a0a43970cdebd499f9ffb0b695b8b39db8d8e538d718595ea6b51f",
+      "promptHash": "fc67c321b7a72c672e8eefdbafe1f7c89cbd4929028d072e3a80a7ab05ffc78c",
+      "contextHash": "5ac159f8945a1ed146b11dd26311673a27c92e1ef0ea42c3af38f8ba2873abf7",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "fa156af73cc4c172233ef37f9906350f4a8fc933e98f19df4a08a533c6bde972",
+      "fingerprint": "ab87c8ef76f0fc3966b32820795f57ae3e96f9aaa4093cb33f0b30ad0cf7a5d6",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -409,10 +491,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f3d2-cb07-78f2-be5c-deeed05b525c"
+        "01a0f594-d5c6-7172-8f71-1e2b00fbcc50"
       ],
       "usage": {
-        "used": 76081,
+        "used": 110245,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -421,10 +503,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 185873,
-          "utf8Bytes": 203192,
-          "estimatedTokens": 67731,
-          "budgetedTokens": 84664,
+          "chars": 292579,
+          "utf8Bytes": 322589,
+          "estimatedTokens": 107530,
+          "budgetedTokens": 134413,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
