@@ -63,12 +63,18 @@ async function render() {
       ALLOW_DATA_ATTR: false,
     });
     const doc = new DOMParser().parseFromString(clean, "text/html");
-    // Old artifacts contain independent citation labels in mid-paragraph.
-    // Keep authored “参考 [[c]]” inline; move other evidence links to that
-    // paragraph's end without rewriting the claim or its fixed target.
+    // Move standalone evidence after sentence boundaries to the paragraph end.
+    // Authored phrases such as “详解见 [[c]]” remain grammatical inline links.
     const groups = new Map<Element, Element[]>();
+    const standalone = new Set<Element>();
     for (const link of doc.querySelectorAll(".om-inline-citation")) {
-      if (/(?:参考|参见|详见|延伸阅读)[：:\s]*$/.test(link.previousSibling?.textContent ?? "")) continue;
+      let previous = link.previousSibling;
+      while (previous?.nodeType === Node.TEXT_NODE && !previous.textContent?.trim()) previous = previous.previousSibling;
+      const independent = previous instanceof Element && previous.matches(".om-inline-citation")
+        ? standalone.has(previous)
+        : !previous || /[。！？.!?]\s*$/.test(previous.textContent ?? "");
+      if (!independent) continue;
+      standalone.add(link);
       const parent = link.closest("p,li,td,blockquote");
       if (parent) groups.set(parent, [...(groups.get(parent) ?? []), link]);
     }
