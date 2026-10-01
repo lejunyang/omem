@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { OmPanel, OmButton, OmEmpty } from "@omem/ui";
+import { OmPanel, OmButton, OmEmpty, OmDisclosure } from "@omem/ui";
 import type { Change } from "./api";
 import ChangeComparison from "./ChangeComparison.vue";
 const props = defineProps<{ changes: Change[] }>();
@@ -23,9 +23,8 @@ function summary(c: Change) {
     <OmPanel v-for="c in visible" :key="c.id" :title="c.title" class="stack">
       <small>{{ labels[c.kind] || '变化' }} · {{ new Date(c.createdAt).toLocaleString('zh-CN') }}</small>
       <p>{{ summary(c) }}</p>
-      <details v-if="c.afterId && ['capture','restore','knowledge'].includes(c.kind)" @toggle="($event.currentTarget as HTMLDetailsElement).open && expanded.add(c.id)">
-        <summary>查看内容差异</summary><ChangeComparison v-if="expanded.has(c.id)" :change-id="c.id" />
-      </details>
+      <OmDisclosure v-if="c.afterId && ['capture','restore','knowledge'].includes(c.kind)" @update:open="$event && expanded.add(c.id)" title="查看内容差异"><ChangeComparison v-if="expanded.has(c.id)" :change-id="c.id" />
+      </OmDisclosure>
       <template #actions><template v-if="['capture','restore'].includes(c.kind)">
         <OmButton v-if="c.afterId" @click="emit('open', c.afterId)">阅读此版本</OmButton>
         <OmButton v-if="c.beforeId && c.afterId" @click="emit('restore', c)">恢复为新版本</OmButton>

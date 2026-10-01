@@ -22,3 +22,5 @@ export { parseHash, writeHash } from "./OmHashRoute";
 export type { WikiRoute, WikiView } from "./OmHashRoute";
 
 export { useEvidenceTrail } from "./useEvidenceTrail";
+
+export { default as OmDisclosure } from "./components/OmDisclosure.vue";

@@ -133,7 +133,7 @@ try {
     await page.getByRole("button", { name: "返回分类", exact: true }).click();
     const classified = catalog.articles.find((a: any) => a.current && a.topicPath?.length);
     if (classified) for (const part of classified.topicPath) {
-      await page.locator(".folder-title").filter({ hasText: part }).first().click();
+      await page.locator(".topic-folder > .om-disclosure > .disclosure-heading > .disclosure-title").filter({ hasText: part }).first().click();
     }
     await expect(page.locator(".library-overview .article-list button").first()).toBeVisible();
     await expect(page.locator(".library-overview form")).toHaveCount(0);

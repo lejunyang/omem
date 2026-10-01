@@ -849,6 +849,33 @@ try {
     await expect(page.locator(".reader .om-diagram foreignObject")).toHaveCount(0);
     await expect(page.locator(".reader script")).toHaveCount(0);
   });
+  await check("shared disclosures keep content and separate folder navigation from expansion", async () => {
+    await page.goto(base + "/#/design");
+    const heading = page.getByRole("button", { name: "展开阅读补充说明", exact: true });
+    await expect(heading).toHaveAttribute("aria-expanded", "false");
+    const input = page.getByPlaceholder("收起后再展开，内容保持");
+    await expect(input).not.toBeVisible();
+    await heading.focus(); await page.keyboard.press("Enter");
+    await expect(input).toBeVisible(); await input.fill("保留草稿");
+    await heading.click(); await expect(input).not.toBeVisible();
+    await heading.click(); await expect(input).toHaveValue("保留草稿");
+    const folder = page.getByRole("button", { name: /^分类目录\s*2 篇$/ });
+    const arrow = page.getByRole("button", { name: "展开分类目录", exact: true });
+    await folder.click(); await expect(arrow).toHaveAttribute("aria-expanded", "false");
+    await arrow.click();
+    await expect(page.getByText("分类标题与箭头分别执行导航和展开操作。", { exact: true })).toBeVisible();
+    const targetId = await heading.getAttribute("aria-controls");
+    await expect(page.locator(`[id="${targetId}"]`)).toBeVisible();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect(await heading.locator("svg").evaluate(el => getComputedStyle(el).transitionDuration)).toBe("0s");
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await heading.scrollIntoViewIfNeeded();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: join(out, `disclosure-${width}.png`) });
+    }
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+  });
   expect(errors).toEqual([]);
   writeFileSync(
     resolve(".repo-review/runtime/browser/verification.json"),

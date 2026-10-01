@@ -13,6 +13,7 @@ import {
   OmPanel,
   OmEmpty,
   OmCitation,
+  OmDisclosure,
 } from "@omem/ui";
 import {
   api,
@@ -483,11 +484,11 @@ onBeforeUnmount(() => {
       <p role="status">正在等待服务就绪，连接恢复后会自动进入对应工作区。</p>
       <p v-if="connectionError">{{ connectionError }}</p>
       <OmButton :disabled="booting" @click="boot">重新连接</OmButton>
-      <details><summary>访问令牌</summary>
+      <OmDisclosure title="访问令牌">
         <label for="startup-token">服务访问令牌</label>
         <input id="startup-token" v-model="token" type="password" autocomplete="off" />
         <OmButton @click="saveToken">保存并连接</OmButton>
-      </details>
+      </OmDisclosure>
     </OmPanel>
   </OmShell>
   <OmPanel v-else-if="reviewMode" title="知识库已合并到主应用"><p>请使用 osdk run dev 启动统一的个人助理。仓库知识将在同一个知识库中展示。</p></OmPanel>
@@ -587,21 +588,20 @@ onBeforeUnmount(() => {
         </p>
         <OmCodeViewer v-if="/\.(?:[cm]?[jt]sx?|vue|json|toml|css)$/.test(revision.title)" :code="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n')" :language="revision.title.split('.').pop()" />
         <OmMarkdown v-else :source="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n')" />
-        <details class="stack"><summary>选择原文提问或查看来源</summary>
+        <OmDisclosure class="stack" title="选择原文提问或查看来源">
           <div v-for="f in revision.fragments" :key="f.id" class="fragment">
             <p>{{ f.text.slice(0, 120) }}{{ f.text.length > 120 ? '…' : '' }}</p>
             <OmButton variant="ghost" @click="focus = f">就这段提问</OmButton>
             <OmCitation label="打开这段原文" @open="evidence?.open(f.id)" />
           </div>
-        </details>
+        </OmDisclosure>
         <template v-for="(p, i) in revision.parts" :key="i"
           ><AssetImage
             v-if="p.type === 'image'"
             :id="p.assetId"
             :label="p.label"
         /></template>
-        <details class="stack">
-          <summary>版本历史 · {{ history.length }}</summary>
+        <OmDisclosure class="stack" title="版本历史"><template #title>版本历史 · {{ history.length }}</template>
           <div class="row">
             <OmButton
               v-for="h in history"
@@ -610,7 +610,7 @@ onBeforeUnmount(() => {
               >v{{ h.version }}</OmButton
             >
           </div>
-        </details></template
+        </OmDisclosure></template
       ><OmEmpty
         v-else
         title="让第一份材料，成为有来处的记忆"
@@ -856,22 +856,20 @@ onBeforeUnmount(() => {
             {{ selectedProfile?.maxContextChars }}
             字符；超限明确拒绝，不静默截断焦点。</small
           ><p v-if="probing" role="status">正在连接 Agent，读取支持的模型与思考强度…</p><p v-else-if="probeError" role="alert">能力读取失败：{{ probeError }}</p><p v-else-if="probeNote" class="muted">{{ probeNote }}</p><OmButton :loading="probing" @click="probe">重新读取 Agent 能力</OmButton>
-          <details v-if="options.length">
-            <summary>已发现的配置选项</summary>
+          <OmDisclosure v-if="options.length" title="已发现的配置选项">
             <p v-for="o in options" :key="o.id">
               {{ o.name }}：{{ o.values.map((v) => v.name).join("、") }}
             </p>
-          </details>
+          </OmDisclosure>
         </div></OmPanel
       ><OmPanel class="stack" title="浏览器与 omem 的连接"
-        ><p>{{ accessProtected ? "此服务已启用访问保护，浏览器使用服务访问令牌连接。" : "当前已连接本地服务，未启用访问令牌，无需填写。" }}</p><details><summary>更换服务访问令牌</summary><p class="muted">令牌由 omem 服务的 token 配置或 OMEM_TOKEN 设置，用来防止其他人访问你的材料。它不是模型 API Key 或飞书令牌；仅保存在当前浏览器会话中。</p><label
+        ><p>{{ accessProtected ? "此服务已启用访问保护，浏览器使用服务访问令牌连接。" : "当前已连接本地服务，未启用访问令牌，无需填写。" }}</p><OmDisclosure title="更换服务访问令牌"><p class="muted">令牌由 omem 服务的 token 配置或 OMEM_TOKEN 设置，用来防止其他人访问你的材料。它不是模型 API Key 或飞书令牌；仅保存在当前浏览器会话中。</p><label
           >omem 服务访问令牌<input
             v-model="token"
             type="password"
             autocomplete="off"
             placeholder="仅保存在当前浏览器会话" /></label
-        ><OmButton @click="saveToken">保存令牌并重新连接</OmButton></details
-        ></OmPanel
+        ><OmButton @click="saveToken">保存令牌并重新连接</OmButton></OmDisclosure></OmPanel
       >
       <p class="muted">
         命令、参数、默认模型、上下文指令和通知模式在 omem.local.json
@@ -900,7 +898,11 @@ onBeforeUnmount(() => {
           label="选择真实材料后可体验引用"
           :version="1"
           @open="focus && evidence?.open(focus.id)" /></OmPanel
-      ><OmEmpty
+      ><OmPanel class="stack" title="折叠与目录">
+        <OmDisclosure title="展开阅读补充说明"><p>整行标题可展开，键盘 Enter / Space 也可操作。</p><label>展开内容保留输入<input placeholder="收起后再展开，内容保持" /></label></OmDisclosure>
+        <OmDisclosure title="分类目录" title-action @select="toast = '点击分类标题打开分类，箭头单独展开目录。'"><template #meta>2 篇</template><p>分类标题与箭头分别执行导航和展开操作。</p></OmDisclosure>
+      </OmPanel>
+      <OmEmpty
         title="内容暂未产生"
         description="空态提供下一步，不用演示数据假装系统已经工作。"
         ><OmButton @click="view = 'capture'">输入材料</OmButton></OmEmpty

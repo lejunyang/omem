@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel } from "@omem/ui";
+import { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel, OmDisclosure } from "@omem/ui";
 import { api, type Decision } from "./api";
 
 defineProps<{ decisions: Decision[] }>();
@@ -91,8 +91,7 @@ async function decide(
         >
       </div>
       <p>{{ decision.proposal.reason }}</p>
-      <details open>
-        <summary>查看具体变化</summary>
+      <OmDisclosure default-open title="查看具体变化">
         <div class="diff-grid">
           <div>
             <small>动作</small><b>{{ decision.proposal.operation }}</b>
@@ -108,7 +107,7 @@ async function decide(
         <p v-if="decision.proposal.uncertainties.length" class="inline-warning">
           尚不确定：{{ decision.proposal.uncertainties.join("、") }}
         </p>
-      </details>
+      </OmDisclosure>
       <div class="evidence-list">
         <OmCitation
           v-for="(item, index) in decision.proposal.evidence"
