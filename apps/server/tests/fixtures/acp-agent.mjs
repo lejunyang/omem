@@ -89,7 +89,7 @@ readline.createInterface({ input: process.stdin }).on("line", (raw) => {
           sessionUpdate: "agent_message_chunk",
           content: {
             type: "text",
-            text: `Evidence answer ${model}/${effort}; images=${msg.params.prompt.filter((p) => p.type === "image").length}`,
+            text: text.includes("Daily message workflows v1:") ? JSON.stringify({ answer: "日常消息已读取；当前没有需要变更的事项。", citation_ids: [], create_task: null, update_task: null, search_queries: [] }) : `Evidence answer ${model}/${effort}; images=${msg.params.prompt.filter((p) => p.type === "image").length}`,
           },
         },
       },

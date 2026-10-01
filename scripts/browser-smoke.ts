@@ -348,6 +348,42 @@ try {
       page.getByRole("heading", { name: "新增待办：补充回滚验证记录" }),
     ).toBeVisible();
   });
+  await check("daily assistant uses the persistent conversation API without a selected fragment", async () => {
+    await page.getByRole("button", { name: "日常助理", exact: true }).click();
+    await page.getByLabel("发给日常助理").fill("今天有什么需要跟进的事项？");
+    await page.getByRole("button", { name: "发送消息", exact: true }).click();
+    await expect(page.getByText("日常消息已读取；当前没有需要变更的事项。", { exact: true })).toBeVisible({ timeout: 20000 });
+    await page.getByRole("button", { name: "知识阅读", exact: true }).click();
+    await page.getByRole("button", { name: "日常助理", exact: true }).click();
+    await expect(page.getByText("今天有什么需要跟进的事项？", { exact: true })).toBeVisible();
+  });
+  await check("daily follow-up controls: waiting, snooze, cancel and narrow layout", async () => {
+    await page.getByRole("button", { name: "需求与待办", exact: true }).click();
+    await page.getByLabel("事项", { exact: true }).fill("等待评审回复");
+    await page.getByRole("button", { name: "记录待办" }).click();
+    const panel = page.locator(".om-panel").filter({ has: page.getByRole("heading", { name: "等待评审回复", exact: true }) });
+    await panel.getByRole("button", { name: "跟进设置" }).click();
+    await panel.getByLabel("等待对象或结果").fill("张三的评审回复");
+    await panel.getByLabel("下次跟进时间").fill("2030-10-02T09:00");
+    await panel.getByRole("button", { name: "记录等待", exact: true }).click();
+    await expect(panel.getByText("等待回复", { exact: true })).toBeVisible();
+    await expect(panel).toContainText("等待：张三的评审回复");
+    await panel.getByRole("button", { name: "跟进设置" }).click();
+    await panel.getByLabel("下次跟进时间").fill("2030-10-03T10:00");
+    await panel.getByRole("button", { name: "稍后提醒", exact: true }).click();
+    await expect(panel).toContainText("已暂缓提醒至");
+    expect(await page.locator("body").innerText()).not.toMatch(/"taskId"|"requestId"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    for (const width of [1440,768,390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(panel).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await page.screenshot({ path: join(out, `daily-${width}.png`) });
+    }
+    await panel.getByRole("button", { name: "跟进设置" }).click();
+    await panel.getByRole("button", { name: "取消事项", exact: true }).click();
+    await expect(panel.getByText("已取消", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
   await check(
     "A-U02 decision diff, evidence, receipts and stale state",
     async () => {

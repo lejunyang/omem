@@ -1,5 +1,5 @@
 {
-  "date": "2026-09-29",
+  "date": "2026-10-01",
   "browser": "145.0.7632.6",
   "checks": [
     "empty real workspace and material capture",
@@ -7,6 +7,8 @@
     "recursive evidence, cycle and return focus",
     "version update and immutable prior revision",
     "task creation and persistent change notifications",
+    "daily assistant uses the persistent conversation API without a selected fragment",
+    "daily follow-up controls: waiting, snooze, cancel and narrow layout",
     "A-U02 decision diff, evidence, receipts and stale state",
     "A-U03 QR, direct authorization link, reusable app and pairing",
     "page reload and desktop rendering",
