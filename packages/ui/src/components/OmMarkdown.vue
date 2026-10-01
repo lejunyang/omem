@@ -36,6 +36,7 @@ async function render() {
       import("dompurify"),
     ]);
     const source = props.source.replace(/\[\[([a-zA-Z][a-zA-Z0-9_-]*)\]\]/g, (_token, key: string) => {
+      if (!props.citations) return _token;
       const c = props.citations?.find(c => c.key === key);
       if (!c) return '<span class="om-inline-citation unavailable">引用不可用</span>';
       const label = escape(c.label), description = escape(c.reason);
