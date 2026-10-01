@@ -1,19 +1,12 @@
 {
   "version": 1,
-  "checkedAt": "2026-10-01T04:12:39.376Z",
+  "checkedAt": "2026-10-01T05:22:17.011Z",
   "profile": "/Users/bytedance/Desktop/Projects/lejunyang/omem/config/review-code-model.json",
   "model": "gpt-5.6-sol",
   "selection": [
-    "apps/server/src/agent-runtime/gateway.ts",
-    "apps/server/src/code/dto.ts",
-    "apps/server/src/assistant/runtime.ts",
-    "apps/server/src/memory/service.ts",
-    "apps/web/src/api.ts",
-    "apps/server/src/jobs/worker.ts",
-    "apps/server/src/integrations/lark/runtime.ts",
-    "apps/server/src/tasks/follow-up.ts",
-    "apps/server/src/review/sync.ts",
-    "apps/server/tests/learning-pipeline.test.ts"
+    "apps/web/src/App.vue",
+    "scripts/code-wiki-viewport.ts",
+    "docs/implementation/review-startup.md"
   ],
   "files": [
     {
@@ -3145,6 +3138,18 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/articles/69ce1792cd128fe48773ed4bc95906411fbdb79a6f07e6733e3dccf03c3b3f07.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/69ce1792cd128fe48773ed4bc95906411fbdb79a6f07e6733e3dccf03c3b3f07.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/articles/6a2a6a506b09f472fd32e2af5fa57da01ec9789849a1a0785972d0058f900662.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -4688,6 +4693,18 @@
     },
     {
       "path": ".repo-review/knowledge/articles/ac4dae25c1798bf1131bd420c42893be8ce1f92af83b4577a8abca02ec70b535.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/ad84fde4ee0e2a675dfab86d12516ff51be2c50134d04ce3bbb72ecdd301e1d5.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/articles/ad84fde4ee0e2a675dfab86d12516ff51be2c50134d04ce3bbb72ecdd301e1d5.md",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -6817,6 +6834,12 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/verification/history/2026-10-01T01-37-12-067Z-06abbd9a.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/verification/history/code-seeds-verification.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -7924,7 +7947,7 @@
       "path": "apps/web/src/App.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/App.vue",
-      "digest": "26945bdcf56549872ca16e347d406d92d398157552226ca011876cc61cf94936",
+      "digest": "45c3ed137296db63004ab875a98d4b13d230d4f219c3d48481543cbe3d5842b3",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
     },
@@ -8737,6 +8760,14 @@
       "knowledge": "reviewed"
     },
     {
+      "path": "docs/implementation/review-startup.md",
+      "state": "captured",
+      "materialKey": "omem:docs/implementation/review-startup.md",
+      "digest": "a5d8e6b37eb86987638c41443658beb99fc79755f147be4615037722151f7abb",
+      "reason": "固定材料已保存",
+      "knowledge": "reviewed"
+    },
+    {
       "path": "docs/implementation/status.md",
       "state": "captured",
       "materialKey": "omem:docs/implementation/status.md",
@@ -8996,7 +9027,7 @@
       "path": "osdk.lock",
       "state": "captured",
       "materialKey": "omem:osdk.lock",
-      "digest": "a3703b7887c61beb97ab2e3057af1e58566f6c68d13da1257e74f511625996c3",
+      "digest": "07340b19dc179a09d6988eb0405f94bc880110772893e71e52f9623487c099a8",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -9860,7 +9891,7 @@
       "path": "scripts/code-wiki-viewport.ts",
       "state": "captured",
       "materialKey": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "881e825d804b56fc07f2a7073aed6f8b3510ddf7bf42b27f6964816236ce3040",
+      "digest": "18aebdfeb58b6e2d725174b4e47801fab106f34238bc56e293ed8e5101e5534c",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
     },
@@ -10090,18 +10121,5 @@
     }
   ],
   "failures": [],
-  "compositionFailures": [
-    {
-      "key": "topic:code_wiki",
-      "error": "Error: Semantic review still requests changes: topic:code_wiki"
-    },
-    {
-      "key": "topic:inputs_integrations",
-      "error": "Error: ROLE_OUTPUT_REPAIR_EXHAUSTED: ROLE_OUTPUT_REFERENCES: Citation c15 requests unseen lines from omem:apps/server/src/integrations/lark/registration.ts"
-    },
-    {
-      "key": "module:other:part-4",
-      "error": "Error: ROLE_OUTPUT_REPAIR_EXHAUSTED: ROLE_OUTPUT_REFERENCES: Citation c3 requests unseen lines from omem:apps/server/tests/learning-pipeline.test.ts"
-    }
-  ]
+  "compositionFailures": []
 }

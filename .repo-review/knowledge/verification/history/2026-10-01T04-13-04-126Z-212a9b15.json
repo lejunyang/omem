@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-01T05:25:54.777Z",
-  "implementationCommit": "4db992dffed6ddef0b72e10c5acb3676b94761bd",
-  "sourceDigest": "ba8ed85c39064ce8d2d2addbe3eddef7983cb61d5e1cc816208a56a100b304c9",
+  "recordedAt": "2026-10-01T04:13:04.126Z",
+  "implementationCommit": "e3795f2f95f3f0760d242b5a290de31e5a121ed6",
+  "sourceDigest": "c3f4ff9ec9cda7040d5197107c268964db030c4c43cdb2ba867e2ae90f744bf8",
   "queryDigest": "9674c93985d290286444594c30b1d1dcb69834b931ed101e6390e5d7e74e542d",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T05-25-54-777Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-01T04-13-04-126Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T05-25-54-777Z/project.log",
-        "sha256": "a93c81522cdce824f71c34d88586801b78348a1155898ab564be3d08a420baf7"
+        "log": ".repo-review/runtime/verification/2026-10-01T04-13-04-126Z/project.log",
+        "sha256": "d47fa19b79a10d44ba49da92448d8fdceb3ecf4ebfbf5e9f3a651795d99717d1"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-01T05-25-54-777Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-01T04-13-04-126Z/liveChineseRetrieval.log",
         "sha256": "3f9f7a5452dcd3e9c0b7f46783ca607ed550f01cf0e7a5f7b57dfff17361d92f"
       }
     },
@@ -51,8 +51,8 @@
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 426,
-        "citations": 3160,
+        "articles": 424,
+        "citations": 3154,
         "errors": []
       }
     },
@@ -65,7 +65,7 @@
         "semantic": {
           "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 9840,
+          "indexed": 9826,
           "pending": 0,
           "error": null
         }
@@ -87,16 +87,16 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
   "knowledge": {
-    "materials": 522,
-    "reviewedMaterials": 369,
+    "materials": 521,
+    "reviewedMaterials": 368,
     "pendingMaterials": 153,
-    "currentArticles": 426,
-    "citations": 3160,
-    "articleLinks": 87,
+    "currentArticles": 424,
+    "citations": 3154,
+    "articleLinks": 82,
     "errors": [],
     "restore": {
-      "restored": 426,
-      "stale": 33,
+      "restored": 424,
+      "stale": 34,
       "missing": 17
     },
     "incomplete": true,
@@ -122,7 +122,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 3730,
+        "elapsedMs": 3480,
         "top5": [
           {
             "path": "README.md",
@@ -138,7 +138,7 @@
               "short-keyword",
               "semantic"
             ],
-            "snippet": " results\" :key=\"r.id\" :title=\"r.title\" class=\"stack\"\n        ><p class=\"excerpt\">{{ r.text }}</p>\n        <OmCitation\n          label=\"查看固定片段\"\n          :versio"
+            "snippet": "\"taskDraft.dueAt\"\n            type=\"datetime-local\" /></label\n        ><small v-if=\"focus\">将关联当前选中片段 {{ focus.ordinal + 1 }}</small\n        ><OmButton type=\"sub"
           },
           {
             "path": "docs/implementation/status.md",
@@ -180,13 +180,13 @@
           "AGENTS.md",
           ".claude/skills/osdk-guide/reference/model/guide.md",
           ".agents/skills/osdk-guide/reference/model/guide.md",
-          ".agents/skills/osdk-guide/reference/configuration/models.md"
+          ".claude/skills/osdk-guide/reference/configuration/models.md"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 4,
-        "elapsedMs": 3220,
+        "elapsedMs": 2986,
         "top5": [
           {
             "path": "AGENTS.md",
@@ -210,7 +210,7 @@
               "short-keyword",
               "semantic"
             ],
-            "snippet": "用服务器上已登录的 Agent。模型与 effort 不固定枚举，ACP\n        按实际能力协商；后续可增加 API provider。\n      </p>\n      <OmPanel title=\"问答运行配置\"\n        ><div class=\"form\">\n          <label\n "
+            "snippet": "== 'lark'\"\n      @error=\"(text) => (error = text)\"\n      @notice=\"say\" />\n    <section v-else-if=\"view === 'settings'\" class=\"page\">\n      <h1>能力与连接</h1>\n      "
           },
           {
             "path": ".agents/skills/osdk-guide/reference/model/guide.md",
@@ -249,7 +249,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 3096,
+        "elapsedMs": 3030,
         "top5": [
           {
             "path": "docs/2026-10-01/README.md",
@@ -265,7 +265,7 @@
               "short-keyword",
               "semantic"
             ],
-            "snippet": "<span>{{ s.title }}</span\n        ><small>{{ s.source }} · v{{ s.version }}</small>\n      </button>\n      <p v-if=\"!sources.length\" class=\"muted\">\n        导入第一份"
+            "snippet": "lass=\"muted\">\n        导入第一份材料，开始积累记忆。\n      </p></template\n    >\n    <div class=\"page-bar\">\n      <span\n        >我的工作记忆 /\n        {{\n          view === \"read\"\n "
           },
           {
             "path": "docs/autonomous-learning.md",
@@ -276,20 +276,20 @@
             "snippet": "原始材料、任务经历、模型假设、验证后的记忆必须分开存。一次失败可记录为 Episode；只有结合纠正和实际结果，才有资格提炼为 Procedure。用户的“谢谢”是弱反馈，不等于外部任务已成功；工具返回 200 也不等于业务目标达到。"
           },
           {
-            "path": "docs/implementation/batch2/plan.md",
-            "routes": [
-              "knowledge",
-              "semantic"
-            ],
-            "snippet": "# 核心实施方案：从材料到可治理的记忆"
-          },
-          {
             "path": "AGENTS.md",
             "routes": [
               "short-keyword",
               "semantic"
             ],
             "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
+          },
+          {
+            "path": "docs/implementation/batch2/plan.md",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "# 核心实施方案：从材料到可治理的记忆"
           }
         ]
       },
@@ -310,7 +310,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 4108,
+        "elapsedMs": 3698,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -369,7 +369,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 3825,
+        "elapsedMs": 3784,
         "top5": [
           {
             "path": "apps/server/src/retrieval/semantic.ts",
@@ -426,7 +426,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 3,
-        "elapsedMs": 4317,
+        "elapsedMs": 3834,
         "top5": [
           {
             "path": "docs/prototype/app.jsx",

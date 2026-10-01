@@ -3,44 +3,31 @@
   "document": {
     "key": "omem:apps/web/src/main.ts",
     "title": "Web 应用启动入口",
-    "summary": "该文件是 Vue 3 Web 客户端的最小启动入口：加载根组件与两层全局样式，创建应用实例并挂载到页面中的 #app 容器。它不承载业务状态或路由编排，具体功能由 App.vue 及其子模块负责。",
+    "summary": "该文件是 Vue 3 Web 客户端的最小装配入口：声明根组件与两份全局 CSS 的导入，创建应用实例并挂载到页面的 #app 容器。业务状态和页面模块编排由 App.vue 承担；样式职责、覆盖规则及宿主容器保障无法从现有材料确定。",
     "category": "implementation",
     "sections": [
       {
         "key": "purpose",
-        "title": "解决的问题与职责边界",
-        "body": "该入口把浏览器页面中的挂载节点与 Vue 根组件连接起来，是 Web 客户端开始运行的唯一显式启动步骤。它通过 `createApp(App).mount(\"#app\")` 创建应用并挂载，因此自身只负责引导，不处理数据请求、状态管理或具体界面交互。[[c1]]"
+        "title": "作用与职责边界",
+        "body": "该文件负责把 Vue 根组件接入浏览器宿主：源码导入 Vue 的 `createApp` 与 `App.vue`，随后创建应用并指定挂载目标。[[c1]] 入口中没有业务状态、数据请求或交互逻辑；已提供的根组件片段则声明了资料、通知、任务、模型配置和连接状态等响应式数据，因此这些职责位于组件树内部。[[c2]]"
       },
       {
-        "key": "startup-flow",
-        "title": "启动流程与样式装配",
-        "body": "模块加载时先引入 Vue 的应用工厂和本地根组件，随后依次加载共享 UI 设计令牌与应用级样式，最后才创建并挂载根实例。[[c2]] 这种顺序让组件渲染时已经具备公共设计变量和站点样式；但材料没有展示 CSS 的具体内容，因此无法判断两层样式发生冲突时的实际覆盖结果。"
+        "key": "bootstrap-flow",
+        "title": "源码装配流程",
+        "body": "从静态源码可观察到，文件先声明 `App.vue`，再依次声明 `@omem/ui/tokens.css` 与 `./styles.css` 的导入，最后执行 `createApp(App).mount(\"#app\")`。[[c3]] 这只能确认导入语句的源码排列及挂载调用，不能据此断言模块求值或浏览器样式加载的严格运行时顺序，也不能确定两份 CSS 各自承担设计变量、本地覆盖等具体职责。[[c4]]"
       },
       {
-        "key": "module-relations",
-        "title": "与其他模块的关系及边界条件",
-        "body": "`main.ts` 直接依赖 `App.vue`，后者进一步引入助手、任务跟进、证据阅读、聊天、个人知识、学习、决策、通知、Lark 配置和仓库评审等界面模块，说明业务编排集中在根组件而非启动文件。[[c3]] 当前代码固定挂载到 `#app`；所给材料未包含 HTML 模板，因而只能确认它要求运行页面提供该选择器，不能确认节点缺失时项目是否有额外兜底。[[c4]]"
+        "key": "boundaries",
+        "title": "模块关系与已知限制",
+        "body": "`main.ts` 是组件树的上游装配点，而 `App.vue` 继续引入日常助理、任务跟进、证据阅读、聊天、个人知识、学习、决策和仓库评审等界面模块。[[c5]] 当前入口未展示插件或路由注册、显式异常处理以及挂载节点校验；材料也未包含 HTML 模板和启动测试，所以只能确认代码使用 `#app` 选择器，不能确认宿主一定提供唯一节点，或节点缺失时系统约定何种行为。[[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "创建并挂载 Vue 应用",
-        "reason": "支持该文件只负责创建根应用并挂载到页面容器的职责判断。",
+        "label": "Vue 入口创建与挂载",
+        "reason": "支持入口导入 createApp 和根组件，并创建应用、指定 #app 挂载目标的描述。",
         "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/main.ts",
-          "startLine": 5,
-          "endLine": 5
-        },
-        "quote": "createApp(App).mount(\"#app\");"
-      },
-      {
-        "key": "c2",
-        "label": "入口依赖与全局样式导入",
-        "reason": "说明启动阶段依次装配 Vue、根组件、共享设计令牌和应用样式。",
-        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/main.ts",
@@ -50,49 +37,89 @@
         "quote": "import { createApp } from \"vue\";\nimport App from \"./App.vue\";\nimport \"@omem/ui/tokens.css\";\nimport \"./styles.css\";\ncreateApp(App).mount(\"#app\");"
       },
       {
-        "key": "c3",
-        "label": "根组件的界面模块依赖",
-        "reason": "支持业务功能由 App.vue 及其子模块承载，而非由 main.ts 实现。",
+        "key": "c2",
+        "label": "根组件状态声明",
+        "reason": "支持业务数据、模型配置、连接状态与界面状态由 App.vue 管理，而非由启动入口实现。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
-          "startLine": 1,
-          "endLine": 36
+          "startLine": 37,
+          "endLine": 68
         },
-        "quote": "<script setup lang=\"ts\">\nimport DailyAssistant from \"./DailyAssistant.vue\";\nimport TaskFollowUpControls from \"./TaskFollowUpControls.vue\";\nimport { ref, computed, onMounted, onBeforeUnmount } from \"vue\";\nimport {\n  OmShell,\n  OmButton,\n  OmIcon,\n  OmBadge,\n  OmPanel,\n  OmEmpty,\n  OmCitation,\n} from \"@omem/ui\";\nimport {"
+        "quote": "const view = ref(\"read\");\nconst sources = ref<Source[]>([]);\nconst revision = ref<Revision | null>(null);\nconst focus = ref<Fragment | null>(null);\nconst profiles = ref<Profile[]>([]);\nconst profileId = ref(\"traex\");\nconst model = ref(\"\");\nconst effort = ref(\"\");\nconst notifications = ref<Notification[]>([]);\nconst tas"
+      },
+      {
+        "key": "c3",
+        "label": "入口静态语句顺序",
+        "reason": "支持对根组件、两份 CSS 的源码导入排列以及随后挂载调用的静态描述。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/main.ts",
+          "startLine": 2,
+          "endLine": 5
+        },
+        "quote": "import App from \"./App.vue\";\nimport \"@omem/ui/tokens.css\";\nimport \"./styles.css\";\ncreateApp(App).mount(\"#app\");"
       },
       {
         "key": "c4",
-        "label": "固定的页面挂载选择器",
-        "reason": "支持入口依赖页面存在 #app 容器这一边界条件。",
+        "label": "两份全局样式导入",
+        "reason": "仅支持入口声明了共享 UI 包 CSS 与本地 CSS 的导入及其源码排列，不延伸解释具体样式职责或运行时覆盖语义。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/main.ts",
-          "startLine": 5,
+          "startLine": 3,
+          "endLine": 4
+        },
+        "quote": "import \"@omem/ui/tokens.css\";\nimport \"./styles.css\";"
+      },
+      {
+        "key": "c5",
+        "label": "根组件下游界面模块",
+        "reason": "支持 App.vue 继续组合日常助理、任务跟进、证据阅读、聊天、个人知识、学习、决策和仓库评审等模块。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 2,
+          "endLine": 36
+        },
+        "quote": "import DailyAssistant from \"./DailyAssistant.vue\";\nimport TaskFollowUpControls from \"./TaskFollowUpControls.vue\";\nimport { ref, computed, onMounted, onBeforeUnmount } from \"vue\";\nimport {\n  OmShell,\n  OmButton,\n  OmIcon,\n  OmBadge,\n  OmPanel,\n  OmEmpty,\n  OmCitation,\n} from \"@omem/ui\";\nimport {\n  api,\n  type Source,\n  "
+      },
+      {
+        "key": "c6",
+        "label": "完整启动入口",
+        "reason": "支持入口仅展示静态导入与 #app 挂载调用，未展示容器校验、显式异常处理、插件或路由注册。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/main.ts",
+          "startLine": 1,
           "endLine": 5
         },
-        "quote": "createApp(App).mount(\"#app\");"
+        "quote": "import { createApp } from \"vue\";\nimport App from \"./App.vue\";\nimport \"@omem/ui/tokens.css\";\nimport \"./styles.css\";\ncreateApp(App).mount(\"#app\");"
       }
     ],
     "questions": [
       {
-        "question": "承载 Web 应用的 HTML 是否始终提供唯一的 `#app` 元素，并对缺失节点有启动错误提示？",
-        "why": "当前材料只显示固定选择器的挂载调用，没有提供 HTML 模板或启动异常处理，无法确认宿主页面契约及失败体验。",
-        "nextStep": "检查 Web 应用的 HTML 入口及相关启动测试，确认挂载节点、重复节点和节点缺失时的行为。",
+        "question": "`@omem/ui/tokens.css` 与 `./styles.css` 分别定义哪些样式，二者是否存在约定并经过测试的覆盖关系？",
+        "why": "当前材料只能证明两个 CSS 文件被导入及其源码排列，不能支持共享设计变量、本地样式层或覆盖语义等具体结论。",
+        "nextStep": "提供两个 CSS 文件以及相关视觉或构建测试，再核验其职责、层叠关系和关键页面表现。",
         "blocking": false,
         "citationKeys": [
           "c4"
         ]
       },
       {
-        "question": "共享设计令牌与应用级样式出现同优先级规则时，预期由哪一层覆盖？",
-        "why": "入口明确先导入共享令牌、后导入本地样式，但未提供两个样式文件的内容，无法据此确认实际层叠策略。",
-        "nextStep": "结合 tokens.css、styles.css 及浏览器样式测试核对变量覆盖和全局选择器边界。",
+        "question": "宿主页面是否保证存在唯一的 `#app` 节点，缺失或重复时是否定义了可观察行为？",
+        "why": "现有材料只显示使用 `#app` 选择器挂载，没有 HTML 入口、运行时约定或启动测试，无法确认部署环境中的容器保障。",
+        "nextStep": "补充 HTML 模板和启动测试，分别验证正常挂载、节点缺失及必要时节点重复的行为。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c1",
+          "c6"
         ]
       }
     ]
@@ -106,39 +133,39 @@
     {
       "kind": "material",
       "key": "omem:apps/web/src/App.vue",
-      "digest": "fc9d87104382688e906e8333763828164d68918b81d34af4aa69ecd254dbc08c"
+      "digest": "611dac121db5173c178c50ce5091dcc5fd67bf6399f417aa51eb1780f31be528"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:42:48.352Z",
+    "at": "2026-10-01T05:01:34.755Z",
     "trace": {
-      "runId": "4a513946-7620-4dfc-8d78-6e26d6538a9b",
-      "roleId": "code-analyst",
+      "runId": "2528a187-d246-4fbe-9fef-0cd3092a3b16",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "b119b7793a52dad1ef0d7693594d479a7b49544a8794c4125167089610812c88",
-      "contextHash": "068aadb08ffa8a8fdbdd772738a6a3e2065bcfc5929604a76da24b3c1ff70369",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
+      "promptHash": "b4d2b9717bdf7e2f1cc0ede910809219110c4ea0155d9d9f260bab0261553c4d",
+      "contextHash": "a8bc324455dc7ebe604b506d7c7f1975d4dfde57d02ba348acdd39a4747a1f2c",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "58c44f5b4cc7c300c6645aca36bb0bcc5db400d2de3834631a7acf908b5faaf4",
+      "fingerprint": "caab907eaceb823f38c042dc47bbe99911c3513f488290beef7af75076c60d59",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f557-93de-72c2-9b94-f964b1788533"
+        "01a0f5d6-920e-7ba2-aa9c-b71774e2055e"
       ],
       "usage": {
-        "used": 22256,
+        "used": 24357,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -147,10 +174,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 9368,
-          "utf8Bytes": 11132,
-          "estimatedTokens": 3711,
-          "budgetedTokens": 4639,
+          "chars": 13986,
+          "utf8Bytes": 18396,
+          "estimatedTokens": 6132,
+          "budgetedTokens": 7665,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -159,17 +186,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:43:04.162Z",
+    "at": "2026-10-01T05:01:47.770Z",
     "trace": {
-      "runId": "ce3844d3-2e90-4866-b67e-f44878e2d7dc",
+      "runId": "a4b1f0b9-f8b5-45d8-8bf4-7bdcf168e07c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "37fda48c47741e2a80d02160c9f8770d95b5261056f99bd4e6f434d52ae59769",
-      "contextHash": "7ae6171526f7b981eb692ca6ee90845ee3ed4a6d3d1a512d4d90303ab8e0e06b",
+      "promptHash": "6491bc002bd95521487faf1348efb5ba319a3f5660a942fb9e1ef7646d52f734",
+      "contextHash": "548b5e68ee028f42769dee5c20965fd2868d6a5fe414c2cdd0e7a564fd5ff3bc",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "629171b0b8c3f94687b356077d76d2af450102115f66669e4ea3e1ca83df337e",
+      "fingerprint": "bb81d678772b1828946ddf22b1c24cff878ae0933a64ffd92687ba5e369f3228",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -182,10 +209,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f557-e5d2-7463-adc4-69cf9fa6bc98"
+        "01a0f5d6-f17c-7051-90a3-b4e2de519bc8"
       ],
       "usage": {
-        "used": 22058,
+        "used": 22846,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -194,10 +221,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 9793,
-          "utf8Bytes": 12373,
-          "estimatedTokens": 4125,
-          "budgetedTokens": 5157,
+          "chars": 11021,
+          "utf8Bytes": 13949,
+          "estimatedTokens": 4650,
+          "budgetedTokens": 5813,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

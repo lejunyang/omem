@@ -1,0 +1,63 @@
+{
+  "version": 4,
+  "recordedAt": "2026-10-01T05:22:58.713Z",
+  "implementationCommit": "4db992dffed6ddef0b72e10c5acb3676b94761bd",
+  "sourceDigest": "ba8ed85c39064ce8d2d2addbe3eddef7983cb61d5e1cc816208a56a100b304c9",
+  "queryDigest": "9674c93985d290286444594c30b1d1dcb69834b931ed101e6390e5d7e74e542d",
+  "mode": "full",
+  "checks": [
+    {
+      "name": "dependencies",
+      "state": "passed",
+      "details": {
+        "command": [
+          "osdk",
+          "deps",
+          "--frozen"
+        ],
+        "exitCode": 0,
+        "log": ".repo-review/runtime/verification/2026-10-01T05-22-58-713Z/dependencies.log",
+        "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
+      }
+    },
+    {
+      "name": "project",
+      "state": "passed",
+      "details": {
+        "command": [
+          "osdk",
+          "run",
+          "check"
+        ],
+        "exitCode": 0,
+        "log": ".repo-review/runtime/verification/2026-10-01T05-22-58-713Z/project.log",
+        "sha256": "3f687036aac81144e9db92b768cb53893daf9400aec3933b253d5fa912b84911"
+      }
+    },
+    {
+      "name": "liveChineseRetrieval",
+      "state": "passed",
+      "details": {
+        "command": [
+          "/Users/bytedance/Library/Application Support/osdk/installs/bun/1.4.2/bin/bun",
+          "scripts/live-retrieval-smoke.ts"
+        ],
+        "exitCode": 0,
+        "log": ".repo-review/runtime/verification/2026-10-01T05-22-58-713Z/liveChineseRetrieval.log",
+        "sha256": "3f9f7a5452dcd3e9c0b7f46783ca607ed550f01cf0e7a5f7b57dfff17361d92f"
+      }
+    },
+    {
+      "name": "repositoryRun",
+      "state": "failed",
+      "details": "Error [ERR_SQLITE_ERROR]: database is locked"
+    },
+    {
+      "name": "unchangedSourcesDuringVerification",
+      "state": "passed"
+    }
+  ],
+  "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
+  "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
+  "passed": false
+}

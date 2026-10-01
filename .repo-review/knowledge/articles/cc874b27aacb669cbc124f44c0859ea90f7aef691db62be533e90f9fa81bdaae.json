@@ -3,35 +3,35 @@
   "document": {
     "key": "module:docs-implementation",
     "title": "docs-implementation · 模块理解",
-    "summary": "本模块记录 omem 从 Batch 2 受控学习基础设施向个人主助手、渐进记忆、统一知识流水线和 Code Wiki 演进的设计与实施状态。共同原则是保存固定原始证据、渐进组织知识，并由确定性策略治理变更。现有材料支持知识整理、来源更新、中文检索及部分日常跟进已形成可运行切片；截至 2026-09-27 的设计记录仍将飞书主助手入口列为缺口，但其当前实现状态尚需同版本证据核验。",
+    "summary": "本模块汇集 omem 的实施合同、设计演进与验证边界。v3 以渐进记忆替代普遍确认路径，并计划复用既有基础设施；统一知识流程则以固定原始证据、独立复核和可重建投影连接日常助理、飞书与 Code Wiki。当前仍有全库覆盖、质量发布门、外部现场验收及跨版本代码身份等未决事项。",
     "category": "overview",
     "sections": [
       {
         "key": "purpose",
-        "title": "模块职责与设计演进",
-        "body": "`docs-implementation` 汇集设计、实施切片、迁移约束和验收记录。Batch 2 奠定持久任务、角色化提炼、飞书投递和界面基础；v3 随后明确替代“普通材料全量提炼、非自动通过就询问用户”的默认路径，转向原材料可找回、上下文保留、渐进整理以及只对影响行动的选择提问。[[c1]] 子专题进一步梳理这段演进及四层信息边界，但其正文属于派生知识，结论仍须沿引用回查固定材料。[[c2]]\n\n统一知识流水线沿用同一事实边界：权威原始材料属于 Capture、Source、Revision 和 Fragment，知识正文、检索索引与代码图都是可失效、可重建的派生视图。Code Wiki 因而是代码材料在统一证据链上的类型化投影，而非独立知识库。[[c3]]"
+        "title": "职责、背景与设计主线",
+        "body": "`docs-implementation` 用于串联产品方向、工程合同和阶段性验证。v3 文档明确标为“待实现”，其可确认的历史关系是：它替换 Batch 2 中“普通材料全量提炼、非自动通过即询问”的默认路径，并计划继续使用既有数据、事务、任务、ACP、Lark 与 UI 基础设施；该材料本身不能证明这些基础设施的具体实现程度。[[c1]] Batch 2 的实现状态应下钻到专项子知识及其固定引用核对。[[c2]]\n\n新的设计主线是先保存并找回原材料，再以轻量分类和实际使用价值渐进整理；低置信或缺背景通常先保留来源、按需补证，而非立即打扰用户。[[c1]] 各类知识正文、代码图、索引和摘要都位于统一 Capture→Source→Revision→Fragment 证据链之上，是可重建投影而不是新的独立事实来源。[[c3]]"
       },
       {
         "key": "workflow",
-        "title": "主助手、知识整理与治理流程",
-        "body": "v3 规划由飞书本人私聊、明确提及或 Web 对话进入 Conversation Router 和持久 AssistantRuntime；上下文构建器组合事项、原件、记忆与纠正，受管理工具提出事项、关系或提醒操作，再经确定性的授权、版本和证据策略写入权威状态及 Outbox。被动群聊、屏幕、Git 和文档进入采集与后台整理路径，由 Attention Gate 决定自动处理、推迟或发起交流。[[c4]]\n\n知识侧复用统一运行时：材料先形成带内联引用的正文，再由独立会话核验引用是否支持附近论断；来源变化或复核失败时不得发布旧结果，退回内容须定向修订并再次复核。[[c5]] 阅读与召回也保持证据闭环：个人知识和仓库知识共用 Evidence Trail，派生正文只帮助导航，助手最终取得当前固定原始片段。[[c6]]"
+        "title": "主要流程与跨模块关系",
+        "body": "材料先保真收录并建立检索入口，在任务使用、纠正或来源变化等触发下进入有目的提炼；角色提出候选后，由独立 verifier 核对主体、范围、时间和固定证据，再由确定性策略决定自动应用、继续补证或形成用户问题。[[c4]] 通过复核的正文按材料、模块和概览逐层组织；个人知识与仓库知识共用 Evidence Trail，检索即使先命中派生正文，最终仍沿引用回到固定原始片段。[[c5]]\n\n飞书私聊和 Web 路由到持久 AssistantRuntime、上下文构建器、检索端口、受管理工具及 Outbox，是 v3 描述的目标架构。原文同时说明当时普通 owner 私聊仍被忽略，尚无可用飞书主助手，因此不能把该流程图当作已实现证明。[[c6]] 日常助理和 Code Wiki 均应复用统一证据与服务边界，不另建事实权威。[[c5]]"
       },
       {
-        "key": "relations",
-        "title": "输入路由、跨模块关系与一致性约束",
-        "body": "主助手维护当前任务、项目归属、纠正、未完成承诺和最近对话目的，但不会把所有捕获内容视为指令：私聊与明确提及进入交互路径，背景观察进入记忆采集，内部状态只形成有限建议。[[c7]] 会话按主体、渠道、聊天和线程区分；Web 与飞书可共享 owner 的记忆和事项，却只有用户显式关联后才共用同一 conversation。持久 turn、取消和投递状态还要防止重启或超时后继续产生未授权动作。[[c8]]\n\n日常交办、等待跟进与知识整理沿用既有助手模型、MemoryService 和原始材料规则，而非各自建立事实来源；代码关系同样只是统一流水线中的材料适配和派生关系。[[c9]]"
+        "key": "progress",
+        "title": "进展、被替代结论与验证边界",
+        "body": "子知识记录了统一知识角色、中文语义检索、来源更新后的 extractor→verifier→apply 闭环，以及网页日常助理等较新进展；因此“只有关键词检索”或“来源重核验仍是占位”的旧说法已被替代。[[c7]] 但全库知识是否完整仍须读取当前 coverage 与 verification 报告，不能沿用历史统计。[[c7]]\n\n验证证据必须分层解释：确定性测试主要证明合同和状态机，真实浏览器证明可消费流程，小规模 live check 只证明特定配置与样本可连通；协议夹具不能替代全部真实 Agent CLI、飞书事件或外部观察器验收。[[c8]] 同样，专项子知识将通知能力收窄为逐条即时投递，并指出冻结 holdout、短窗合并、定时摘要及若干平台故障现场验证仍未完成；这替代了把“通知聚合已接入”理解为完整聚合能力的宽泛结论。[[c9]]"
       },
       {
-        "key": "progress_limits",
-        "title": "进展、验证口径与限制",
-        "body": "子专题记录 Batch 2 的受控学习主链、部分生产飞书能力、真实 ACP 小样本和浏览器回归已有历史验证。[[c10]] 后续材料分别记录了共用知识角色和独立复核流程、中文混合与向量检索，以及来源更新重核验和网页日常助理的若干闭环。[[c11]][[c12]][[c13]]\n\n这些进展不能反向证明飞书主助手已经接通：2026-09-27 的 v3 设计仍明确写明当时普通 owner 私聊被忽略、需要新增持久 AssistantRuntime；其当前状态缺少同一版本的端到端证据，仍待核验。[[c14]] 其他限制还包括冻结 holdout 与质量发布门未完成、完整通知聚合及部分飞书现场场景缺少实证，以及跨文件调用和跨 revision 符号身份尚未完善。[[c15]][[c16]] 工程检查、浏览器流程和单次 live check 只能证明各自范围，完整覆盖应以当前源码指纹对应的报告为准。"
+        "key": "limits",
+        "title": "治理约束与未完成能力",
+        "body": "当前实现仍以个人单用户、TypeScript 与 SQLite 为边界，workspace 字段不等于多租户 ACL。代码域尚缺可靠的跨文件调用解析，名称级调用只能作为候选；跨 revision 的符号与 Fragment 身份续接也未实现。[[c10]]\n\n迁移和停止操作必须保留原件、固定片段、正式修订、取消状态、receipt 与 outbox 历史，不得静默把 legacy scope 转成项目范围，也不能把“可追溯”误写成每条论断已经通过语义验证。[[c11]] 质量发布结论还依赖冻结数据集、明确的标注责任与真实指标；现有材料足以把这些列为限制，但不足以判定其当前数值或最新完成状态。[[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "v3 产品路径调整",
-        "reason": "支持旧有普遍提炼确认路径被替代，以及原材料优先、渐进整理和按行动相关性提问的设计背景。",
+        "label": "v3 定位与渐进记忆原则",
+        "reason": "支持 v3 被标为待实现、替换旧默认确认路径、计划复用既有基础设施，以及原材料优先和渐进整理原则。",
         "relation": "background",
         "target": {
           "kind": "material",
@@ -43,96 +43,45 @@
       },
       {
         "key": "c2",
-        "label": "Batch 2 与渐进记忆演进",
-        "reason": "提供 Batch 2 历史基础、v3 产品转向和信息边界的子知识下钻入口。",
-        "relation": "explains",
+        "label": "Batch 2 历史进展专题",
+        "reason": "为 Batch 2 的实现状态提供下钻入口，避免仅凭 v3 设计稿推断具体能力已经实现。",
+        "relation": "tracks",
         "target": {
           "kind": "article",
           "key": "module:docs-implementation:part-1",
-          "section": "purpose"
+          "section": "progress"
         },
         "quote": ""
       },
       {
         "key": "c3",
-        "label": "统一证据与 Code Wiki 定位",
-        "reason": "支持知识正文和代码图均为统一不可变证据链上的派生视图。",
+        "label": "统一知识流程的事实边界",
+        "reason": "支持原始证据链、派生知识非独立原件以及共用角色运行时的模块原则。",
         "relation": "explains",
         "target": {
           "kind": "article",
-          "key": "module:docs-implementation:part-3",
-          "section": "purpose_and_evolution"
+          "key": "module:docs-implementation:part-4",
+          "section": "purpose"
         },
         "quote": ""
       },
       {
         "key": "c4",
-        "label": "主助手端到端结构",
-        "reason": "支持交互入口、上下文构建、受管理工具、确定性策略、Outbox、后台整理和 Attention Gate 的关系。",
+        "label": "渐进处理与受控应用流程",
+        "reason": "支持分阶段处理、独立复核、低风险应用和 Attention Gate 的主要流程。",
         "relation": "explains",
         "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/assistant-v3/README.md",
-          "startLine": 23,
-          "endLine": 40
+          "kind": "article",
+          "key": "module:docs-implementation:part-1",
+          "section": "workflow"
         },
-        "quote": "```mermaid\nflowchart TB\n L[飞书：本人私聊 / 明确@] --> R[Conversation Router + 身份映射]\n WEB[Web：第二对话入口] --> R\n R --> A[主助手 AssistantRuntime]\n A --> C[Context Builder：当前事项、原件、记忆、纠正]\n C --> K[检索端口：关键词 + 可选本地语义引擎]\n A --> T[受管理治理工具：读、提案、事项、关系、提醒]\n T --> P[确定性授权/版本/证据策略]\n P --> DB[权威原件、记忆、事项、ChangeSet]\n DB --> O[Outbox：回复与正式变更通知]\n O -"
+        "quote": ""
       },
       {
         "key": "c5",
-        "label": "统一知识生成与独立复核",
-        "reason": "支持材料分析、独立语义复核、来源变化拒绝发布和退回后的定向修订。",
+        "label": "知识生成、阅读与原始证据召回",
+        "reason": "支持复核后分层发布、共享 Evidence Trail，以及检索最终返回固定原始片段。",
         "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "module:docs-implementation:part-4",
-          "section": "generation-and-review"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c6",
-        "label": "知识阅读与原始证据召回",
-        "reason": "支持共用 Evidence Trail、派生正文仅用于导航以及召回最终返回原始 Fragment。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "module:docs-implementation:part-4",
-          "section": "reading-and-retrieval"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c7",
-        "label": "主助手职责与输入边界",
-        "reason": "支持主助手维护工作上下文，并区分交互消息、被动采集和有限主动建议。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/assistant-v3/README.md",
-          "startLine": 15,
-          "endLine": 21
-        },
-        "quote": "## 2. 主 Agent 的明确职责\n\n**现在没有已经可用的飞书主助手**：基线只处理绑定、群采集、通知与卡片；普通owner私聊被忽略。planner role与answer schema的存在不等于入口已接通。需要新增一个持久的 AssistantRuntime。\n\n主助手维护的是你的当前工作上下文：正在推进哪些事项、材料属于哪些项目、哪些事实已被纠正、有哪些未完成承诺，以及最近对话目的。它可以查询和阅读材料、回答问题、记录或更新事项、组织知识和关系、提出下一步、安排提醒，并在明确授权范围内驱动受管理工具。\n\n它不把所有输入都当作用户指令。与你的私聊/明确@进入交互路径；被动群聊、屏幕观察、Agent日志进入记忆采集路径；内"
-      },
-      {
-        "key": "c8",
-        "label": "消息路由与会话一致性",
-        "reason": "支持不同输入的路由、跨渠道 conversation 显式关联，以及持久恢复和取消约束。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/assistant-v3/README.md",
-          "startLine": 43,
-          "endLine": 58
-        },
-        "quote": "## 3. 消息与会话路由\n\n`InboundEnvelope` 至少包含 `transport_event_id, app_id, tenant_id, chat_id, thread_id, message_id, reply_to, sender_external_id, principal_id, addressed_to_assistant, is_forwarded, payload_parts, observed_at, received_at, locale/timezone`。\n\n| 输入 | 路由 | 回复/处理 |\n| --- | --- | --- |\n| 已绑定owner私聊“帮我找…” | 主助手交互 |"
-      },
-      {
-        "key": "c9",
-        "label": "日常助理与知识流程共用关系",
-        "reason": "支持日常交办复用既有助手模型、MemoryService 和证据规则，并说明代码关系不形成新的事实来源。",
-        "relation": "depends_on",
         "target": {
           "kind": "article",
           "key": "module:docs-implementation:part-3",
@@ -141,144 +90,125 @@
         "quote": ""
       },
       {
-        "key": "c10",
-        "label": "Batch 2 历史进展与限制",
-        "reason": "支持受控学习、飞书能力、质量数据集和通知聚合的历史完成度及限制。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "module:docs-implementation:part-2",
-          "section": "progress_limits"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c11",
-        "label": "共用知识角色与复核流程",
-        "reason": "支持材料、代码、对话和图像角色共用运行时，以及独立复核和来源变化保护已经形成实现切片。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "module:docs-implementation:part-4",
-          "section": "generation-and-review"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c12",
-        "label": "中文混合与向量检索",
-        "reason": "支持知识引导原始证据召回、中文混合检索和固定向量模型的阶段进展。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "module:docs-implementation:part-4",
-          "section": "reading-and-retrieval"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c13",
-        "label": "来源更新与日常助理闭环",
-        "reason": "支持来源更新重核验和网页日常助理已验证的部分闭环，同时限定尚未接入的能力。",
-        "relation": "tracks",
-        "target": {
-          "kind": "article",
-          "key": "module:docs-implementation:part-4",
-          "section": "progress-and-limits"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c14",
-        "label": "2026-09-27 飞书主助手缺口",
-        "reason": "直接支持截至该设计记录时普通 owner 私聊尚未接通，并需要新增持久 AssistantRuntime；不用于推断当前状态。",
+        "key": "c6",
+        "label": "v3 主助手职责与目标架构",
+        "reason": "支持 AssistantRuntime 的规划职责、飞书与 Web 路由关系，并明确当时尚无可用飞书主助手。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/assistant-v3/README.md",
           "startLine": 15,
-          "endLine": 19
+          "endLine": 41
         },
-        "quote": "## 2. 主 Agent 的明确职责\n\n**现在没有已经可用的飞书主助手**：基线只处理绑定、群采集、通知与卡片；普通owner私聊被忽略。planner role与answer schema的存在不等于入口已接通。需要新增一个持久的 AssistantRuntime。\n\n主助手维护的是你的当前工作上下文：正在推进哪些事项、材料属于哪些项目、哪些事实已被纠正、有哪些未完成承诺，以及最近对话目的。它可以查询和阅读材料、回答问题、记录或更新事项、组织知识和关系、提出下一步、安排提醒，并在明确授权范围内驱动受管理工具。"
+        "quote": "## 2. 主 Agent 的明确职责\n\n**现在没有已经可用的飞书主助手**：基线只处理绑定、群采集、通知与卡片；普通owner私聊被忽略。planner role与answer schema的存在不等于入口已接通。需要新增一个持久的 AssistantRuntime。\n\n主助手维护的是你的当前工作上下文：正在推进哪些事项、材料属于哪些项目、哪些事实已被纠正、有哪些未完成承诺，以及最近对话目的。它可以查询和阅读材料、回答问题、记录或更新事项、组织知识和关系、提出下一步、安排提醒，并在明确授权范围内驱动受管理工具。\n\n它不把所有输入都当作用户指令。与你的私聊/明确@进入交互路径；被动群聊、屏幕观察、Agent日志进入记忆采集路径；内"
       },
       {
-        "key": "c15",
-        "label": "质量与平台能力限制",
-        "reason": "支持冻结质量集、通知聚合和飞书现场验证仍存在未完成范围。",
+        "key": "c7",
+        "label": "较新能力进展与覆盖限制",
+        "reason": "支持中文检索、来源更新闭环和网页日常助理等较新进展，同时说明全库覆盖仍须查看当前报告。",
         "relation": "tracks",
         "target": {
           "kind": "article",
-          "key": "module:docs-implementation:part-2",
-          "section": "progress_limits"
+          "key": "module:docs-implementation:part-4",
+          "section": "progress"
         },
         "quote": ""
       },
       {
-        "key": "c16",
-        "label": "验证与代码分析边界",
-        "reason": "支持区分确定性测试、浏览器和小规模 live check，并说明跨文件调用及跨版本身份限制。",
-        "relation": "tracks",
+        "key": "c8",
+        "label": "验证证据的适用范围",
+        "reason": "支持区分确定性测试、真实浏览器和小规模 live check，防止外推为全部外部集成已验收。",
+        "relation": "explains",
         "target": {
           "kind": "article",
           "key": "module:docs-implementation:part-3",
           "section": "verification_and_limits"
         },
         "quote": ""
+      },
+      {
+        "key": "c9",
+        "label": "质量集、通知与现场验证限制",
+        "reason": "支持 dev 草稿尚非冻结 holdout、通知仅完成逐条投递，以及部分平台场景仍缺现场验证。",
+        "relation": "tracks",
+        "target": {
+          "kind": "article",
+          "key": "module:docs-implementation:part-2",
+          "section": "progress_limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c10",
+        "label": "代码知识与单用户运行边界",
+        "reason": "支持个人单用户实现、跨文件调用及跨版本符号和 Fragment 身份续接等限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "article",
+          "key": "module:docs-implementation:part-4",
+          "section": "limits"
+        },
+        "quote": ""
+      },
+      {
+        "key": "c11",
+        "label": "迁移、停止与历史保护约束",
+        "reason": "支持保留证据和运行历史、禁止静默转换作用域，并要求停止操作保持端到端语义。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "article",
+          "key": "module:docs-implementation:part-1",
+          "section": "constraints"
+        },
+        "quote": ""
       }
     ],
     "questions": [
       {
-        "question": "飞书持久 AssistantRuntime、owner 私聊入口以及跨 Web／飞书会话续接当前分别实现到什么程度？",
-        "why": "2026-09-27 的原始设计记录明确写明当时入口尚未接通，而后续子专题只证明知识、日常助理和部分飞书基础切片已有进展，缺少同一当前版本下的端到端状态证据。",
-        "nextStep": "核对最新状态页、实现提交和真实多轮运行 trace，分别记录私聊路由、明确提及、Web 复用、conversation 显式关联、重启恢复和取消行为。",
+        "question": "持久 AssistantRuntime、owner 飞书私聊入口以及 Web／飞书会话续接是否已有晚于 2026-09-27 设计稿的实现证据？",
+        "why": "原始材料把 v3 标为待实现，并明确当时尚无可用飞书主助手；较新子知识不足以确认飞书入口和跨入口会话续接均已完成。",
+        "nextStep": "补充当前状态页、实现提交和真实多轮验收的固定引用，分别记录私聊路由、持久恢复、跨入口关联及停止控制状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c6",
+          "c7"
+        ]
+      },
+      {
+        "question": "当前全仓知识的 reviewed、stale、pending 与 failed 分布分别是多少？",
+        "why": "现有子知识只确认全库知识尚未完整，并要求以当前 coverage 与 verification 报告为准，无法据此推算最新数量。",
+        "nextStep": "读取当前 coverage.json 与 verification.json，按材料、模块和上层章节列出数量、失败原因、过期依赖及可重试项。",
+        "blocking": false,
+        "citationKeys": [
+          "c7"
+        ]
+      },
+      {
+        "question": "正式质量门所需的冻结 holdout、标注负责人和恢复条件目前是否已有更新记录？",
+        "why": "现有知识仅支持历史 dev 草稿未确认、标注停止且没有冻结数据集；这不阻塞本篇如实总结，但不足以形成当前质量发布结论。",
+        "nextStep": "补充最新数据集授权与冻结记录、负责人、运行 trace、样本分母及实际指标，并区分历史限制和当前结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c9"
+        ]
+      },
+      {
+        "question": "跨 revision 的代码符号与 Fragment 身份采用何种续接规则？",
+        "why": "当前代码变化后仍需在新 head 重新定位，重命名、移动、拆分和合并时的稳定身份尚无已确认合同。",
+        "nextStep": "先定义各类变更场景的身份语义，再基于真实提交历史建立题集，验证旧引用、关系边和历史版本的保留行为。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
+        ]
+      },
+      {
+        "question": "下一轮优先补哪一种外部现场验收：真实 Agent CLI、飞书事件与故障恢复，还是外部观察器？",
+        "why": "现有确定性测试、浏览器验证和小规模 live check 不能外推到全部外部集成；不同选择需要不同授权主体、数据范围和副作用边界。",
+        "nextStep": "选择一个具体集成和最小数据范围，记录能力协商、固定输入、退出码、运行 trace、平台回执、内容断言与失败恢复。",
         "blocking": false,
         "citationKeys": [
           "c8",
-          "c13",
-          "c14"
-        ]
-      },
-      {
-        "question": "质量发布门的人工标注负责人、冻结规则和独立 holdout 来源是什么？",
-        "why": "已有工程回归和小样本真实模型运行不能替代冻结数据集上的精度、覆盖率和负责人误判评估；该问题阻塞质量发布结论，但不阻塞本篇模块综述。",
-        "nextStep": "确定授权材料、标注负责人、版本摘要、数据切分和冻结流程，再运行隔离评测并保存分母、失败明细及版本化报告。",
-        "blocking": false,
-        "citationKeys": [
-          "c10",
-          "c15",
-          "c16"
-        ]
-      },
-      {
-        "question": "短窗合并、定时摘要以及尚未现场覆盖的飞书事件和故障，哪些属于发布前必验范围？",
-        "why": "专题材料表明逐条即时投递和部分平台链路已有验证，但完整聚合、若干事件和故障恢复仍缺少 live 证据；是否纳入发布门取决于产品范围与允许的测试副作用。",
-        "nextStep": "由用户选择最小 live 范围和允许的外部副作用，逐项记录实际授权、事件 receipt、投递状态、时间窗口、平台响应及恢复结果。",
-        "blocking": false,
-        "citationKeys": [
-          "c15",
-          "c16"
-        ]
-      },
-      {
-        "question": "跨文件调用分析与跨 revision 符号身份续接应优先推进哪一项？",
-        "why": "前者限制调用关系可信度，后者影响代码变化后的历史连续性；两者涉及不同的数据模型、迁移风险和验收样例。",
-        "nextStep": "分别用真实仓库中的跨文件调用案例和符号重命名或移动案例定义最小切片，再按主要使用场景选择优先级。",
-        "blocking": false,
-        "citationKeys": [
-          "c3",
-          "c16"
-        ]
-      },
-      {
-        "question": "当前全库知识的 reviewed、stale、pending 和 failed 分布是多少？",
-        "why": "子专题明确指出完整覆盖必须读取当前 coverage 与 verification；本批只提供设计材料和派生章节，无法给出可信的当前统计。",
-        "nextStep": "读取与当前源码指纹一致的 coverage、verification 和运行 trace，按材料、模块及上层章节列出分类数量、失败原因和可重试项。",
-        "blocking": false,
-        "citationKeys": [
-          "c11",
-          "c12",
-          "c13",
-          "c16"
+          "c9"
         ]
       }
     ]
@@ -307,23 +237,23 @@
     {
       "kind": "article",
       "key": "module:docs-implementation:part-4",
-      "digest": "8d4ae4ed67793550fbcb4593e8edff142938ee139e8a11184a052874c3c2961d"
+      "digest": "62b404ba1ac43cdd36a62ec57820376827df1ffabe18642c0eda5bdce2ae0b96"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T03:07:14.376Z",
+    "at": "2026-10-01T05:10:43.249Z",
     "trace": {
-      "runId": "25b7b9e4-1049-4c1a-b19c-f6c816ab1bd5",
+      "runId": "35616098-1b2c-4c40-84d9-3ace4254efc0",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "aaf267483529ce195ae5a8fc4a865828eca77c50d01976002d894b5c17578fb7",
-      "contextHash": "5e318b64d633e650110428a2a97c3ab2a12457da7f3ee0e8ef434dab97ade94f",
+      "promptHash": "4d932db11341d82100cb105b0963d66c1ee56b1f11e3132b09793892c14a47f9",
+      "contextHash": "a49623a5941a8fe73171292cf34d2d7160cadefb3beb2a9ec8d6efe742fbae64",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "4c8423055446e84f4852300f609c7bbb1080348f93fb06ca8f2f61f606cb9e47",
+      "fingerprint": "dde50c98d36daf8a137d07053428547f6a23b21740eead2ac3e025d2a979829b",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -336,10 +266,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f56d-b8b9-7432-b8f4-c4777de9b39b"
+        "01a0f5de-d576-7d92-80c5-2b0e103fe6e0"
       ],
       "usage": {
-        "used": 48543,
+        "used": 51307,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -348,10 +278,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 59535,
-          "utf8Bytes": 101834,
-          "estimatedTokens": 33945,
-          "budgetedTokens": 42432,
+          "chars": 60566,
+          "utf8Bytes": 103008,
+          "estimatedTokens": 34336,
+          "budgetedTokens": 42920,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -360,17 +290,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T03:07:32.586Z",
+    "at": "2026-10-01T05:11:07.856Z",
     "trace": {
-      "runId": "f9e3431d-f95f-499a-9ec9-928f29283bef",
+      "runId": "c40f56a6-5f9d-4328-beee-3a456f8d7a7b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "b0c5c2a2485d7d029018f2dcb23001253d7c5c6ca4e2cef90bef6a9b3259c904",
-      "contextHash": "a7a84bd5cbfd134b91ee98e07c134fdb2ca8842b1d279e45f68388327c929a75",
+      "promptHash": "287744d1ecba22d11e7ef56318c98221764583dc7dfaa78812747d69acdf8435",
+      "contextHash": "3da9f286ac03d152141506276941dace3b526e87b092111a7d55abeaba912fe0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "22459823943c4a8b9a0a54f8de46b189a68049538be7ed2cf0189830fb071022",
+      "fingerprint": "7761f80728b25f63255bb1fcae91bd73475ab35a1a7859725048226711699800",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -383,10 +313,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f56e-4408-76e3-97a9-6a931bc8696c"
+        "01a0f5df-50ee-78c2-9029-3265b49bc357"
       ],
       "usage": {
-        "used": 44219,
+        "used": 47000,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -395,10 +325,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 56723,
-          "utf8Bytes": 97249,
-          "estimatedTokens": 32417,
-          "budgetedTokens": 40522,
+          "chars": 56767,
+          "utf8Bytes": 96762,
+          "estimatedTokens": 32254,
+          "budgetedTokens": 40318,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
