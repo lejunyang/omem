@@ -16,7 +16,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
   const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,
-    generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length });
+    children: a.dependencies.filter(d => d.kind === "article").map(d => d.key), generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length });
   const resolveCitation = (a: KnowledgeArticle, key: string) => {
     const c = a.document.citations.find(c => c.key === key);
     if (!c) return null;

@@ -1,3 +1,4 @@
+import { importDevelopmentKnowledge } from "./knowledge/development.js";
 import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
 import { messageWorkflows } from "./assistant/message-workflows.js";
 import { registerKnowledgeRoutes } from "./knowledge/api.js";
@@ -56,6 +57,7 @@ export async function buildApp(
   const store = new Store(config.dataDir, {
     externalNotifications: config.notifications.external,
   });
+  const development = process.env.OMEM_REPO_ROOT ? importDevelopmentKnowledge(store, resolve(process.env.OMEM_REPO_ROOT)) : undefined;
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
   const feedback = new FeedbackService(store);
@@ -69,7 +71,7 @@ export async function buildApp(
       affected_memory_ids AS affectedMemoryIds,status,result_json AS result,created_at AS createdAt
      FROM refresh_records ORDER BY created_at DESC LIMIT 100`).all().map(row => ({ ...row,
        affectedMemoryIds: JSON.parse(String(row.affectedMemoryIds)), result: JSON.parse(String(row.result)) })));
-  registerKnowledgeRoutes(app, { store, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined });
+  registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined });
   const assistantModel = new AcpAssistantModel({
     profile: assistantProfile,
     workspaceRoot: config.agentCwd,

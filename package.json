@@ -10,7 +10,6 @@
     "dev": "bun scripts/dev.ts",
     "dev:server": "bun --watch apps/server/src/main.ts",
     "dev:web": "pnpm --filter @omem/web run dev",
-    "dev:review": "bun scripts/dev-review.ts",
     "build": "tsc -p tsconfig.server.json && pnpm --filter @omem/web run build",
     "start": "node dist/apps/server/src/main.js",
     "typecheck": "tsc --noEmit -p tsconfig.server.json && vue-tsc --noEmit -p apps/web/tsconfig.json",
