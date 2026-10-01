@@ -1,0 +1,1108 @@
+{
+  "version": 1,
+  "document": {
+    "key": "guide:capture",
+    "title": "一份材料的旅程：从导入到阅读与引用",
+    "summary": "以两节 Markdown 项目约定的首次导入和再次修订为例，解释网页与连接器如何形成统一捕获输入，Source、不可变 Revision 与 Fragment 如何保存版本，当前原文如何立即进入检索，后台记忆学习与显式知识生成为何是两条独立的派生流程，以及历史引用、图片和代码如何复用同一来源体系。",
+    "category": "workflow",
+    "sections": [
+      {
+        "key": "scenario",
+        "title": "先看一次可操作的导入",
+        "body": "假设要保存下面这份项目约定：\n\n```markdown\n## 提交\n合并前需评审。\n\n## 发布\n周五冻结。\n```\n\n在网页的手动导入区填写标题、固定的来源标识和正文后，页面会把文本组织成 `parts`，提交给捕获接口。以后修改同一材料时，应继续使用相同的来源类型和来源标识；如果来源标识留空，网页会生成新的随机值，服务端会将其视为另一份来源。参考 [[c1]]\n\n服务端接收的统一结构叫 **CaptureInput**：除来源、来源标识和标题外，它可以包含文本、图片或链接，还可携带观察时间、上游版本、来源信息和上下文。因此，网页手工输入与连接器虽然入口不同，进入保存层前都遵守同一份合同。参考 [[c2]]\n\n文件连接器会先确认路径位于允许目录内，读取不超过 500 KB 的严格 UTF-8 文本，再以规范化文件路径作为来源标识，转换成一个文本 part。参考 [[c3]] 捕获 API、文件连接器和 Git 连接器最终都汇入 `Store.capture`，这是追踪导入主链的第一个服务端入口。参考 [[c21]]"
+      },
+      {
+        "key": "revision",
+        "title": "同一来源如何形成固定版本",
+        "body": "保存层先用 `(source, externalId)` 查找 Source。首次导入会建立 Source、version 1 的不可变 Revision，并把正文按空行切成可定位的 Fragment；上面的示例会形成“提交”和“发布”两个片段。随后把“周五冻结”改为“周四冻结”，仍以同一来源标识导入，就会建立 version 2，令 `previousId` 指向 version 1，并把 Source 的 head 移到新版。参考 [[c4]]\n\n重复提交与内容更新会被区别处理：完整输入形成的指纹若与当前 head 相同，系统直接返回当前 Revision，并标记为重复；只有指纹变化才增加版本。若采集器提供事件身份，同一事件的相同载荷也会复用原 Revision，而同一事件对应不同载荷会被判为冲突。参考 [[c5]]\n\n测试覆盖了这一核心性质：相同输入不会增加版本，修改文本后得到 version 2，但仍可通过 version 1 的片段读取原来的文字。参考 [[c6]]"
+      },
+      {
+        "key": "save_and_jobs",
+        "title": "保存完成后，哪些工作已经发生",
+        "body": "一次新版本保存处在同一个 SQLite 事务中：Revision 与 Fragment 写入、Source head 更新、变更通知、旧依赖失效以及后台任务入队共同提交；中途异常则整体回滚。新版本出现时，依赖旧 Revision 的记忆会先被标为失效，并安排后续复查。参考 [[c7]]\n\n```mermaid\nflowchart LR\n  A[CaptureInput] --> B[Source 与不可变 Revision]\n  B --> C[Fragments 与当前 head]\n  C --> D[立即阅读和关键词检索]\n  C --> E[后台提炼候选记忆]\n  E --> F[核验并决定应用或待判断]\n  C --> G[显式生成知识页面]\n```\n\n其中 Source、Revision、Fragment、当前 head 和任务入队属于保存阶段；候选提取与核验由持久后台 worker 分别处理。参考 [[c7]] [[c8]]\n\n后台提取器读取固定 Revision，记录观察并产生候选；只有确实产生候选时才继续排入核验任务。核验器检查完整候选批次，再交给 MemoryService 决定自动应用还是等待判断。参考 [[c8]] [[c9]] 因此“原文已保存”并不表示“记忆已经形成并生效”；界面在任务排队时也明确提示尚未调用模型。参考 [[c10]]"
+      },
+      {
+        "key": "retrieval_and_knowledge",
+        "title": "原始材料、记忆与知识文章不是一回事",
+        "body": "当前原文不必等待模型才能被找到。关键词检索直接查询 Fragment，并通过 `sources.head` 只选择当前 Revision；所以第二次导入后，普通搜索会转向“周四冻结”，旧版本不再作为普通当前结果出现。记忆和知识命中也会路由回原始证据，而不是把派生文字当成另一份事实。参考 [[c11]]\n\n| 层次 | 作用 | 何时产生 |\n| --- | --- | --- |\n| 原始材料 | 保存输入事实、版本和片段 | 捕获事务内立即完成 |\n| 候选记忆 | 提炼可复用的信息或行动线索 | 后台提取与核验后产生 |\n| 知识文章 | 围绕读者问题重新组织讲解 | 显式发起知识生成后产生 |\n\n显式知识生成是另一条流程：它从当前材料建立调查范围，最多进行三轮补读，再由写作者和复核者生成页面，并非每次 capture 都自动生成文章。参考 [[c12]] 知识材料仍由某个固定 Revision 重建；派生来源会被排除，新一轮生成默认只使用各 Source 的当前 head。参考 [[c13]]"
+      },
+      {
+        "key": "historical_citations",
+        "title": "为什么引用可以回到旧版本",
+        "body": "Source 的 head 只是“当前版本”指针，并不会覆盖历史 Revision。服务端能按明确的 revision ID 取回其 parts、Fragments、上一版本及是否现行等信息；按 fragment ID 打开证据时，又会从该片段所属的 Revision 还原完整上下文。因此，引用 version 1 的片段时，即使 head 已移动到 version 2，仍可显示旧文字并标为历史版本。参考 [[c14]]\n\n知识文章的引用还会绑定材料依赖的内容摘要。打开引用时，服务端先按文章固定的依赖解析材料；当前材料摘要不匹配时，会在该 Source 的历史 Revision 中寻找对应版本，而不是静默跳到新版。参考 [[c15]] 阅读界面会把摘要随请求传给材料接口，并展示“当前版本”或“历史版本”、引用行范围和完整原文，读者可以从论断沿固定证据回查。参考 [[c16]]\n\n这也解释了示例中的结果：新搜索面向“周四冻结”，但旧文章若固定引用 version 1，仍会打开“周五冻结”。历史引用保留的是当时的依据，并不表示它仍是现行规则。"
+      },
+      {
+        "key": "images",
+        "title": "图片复用版本链，但资产另行保存",
+        "body": "图片与 Markdown 共用 Capture → Source → Revision 主链，不过输入只接受 PNG、JPEG 或 WebP。服务端会解码并核对文件签名与 5 MB 上限，再以字节的 SHA-256 作为资产标识，将二进制内容寻址保存；Revision 中只保留资产标识、类型和标签。没有文本的图片也会生成一个可导航的图片片段。参考 [[c17]]\n\n图片证据除 Source Revision 和 Fragment Revision 外，还携带资产哈希、可选区域及观察说明，并明确标记为推断内容。这让“看到什么”与原始图片资产保持可回查关系，同时避免把视觉解释当作图片本身。参考 [[c18]]"
+      },
+      {
+        "key": "code_and_entrypoints",
+        "title": "代码的专门处理与开发入口",
+        "body": "代码同样不建立第二套事实来源。代码同步读取已经捕获的 file Source 当前不可变 Revision，对其中符合范围的文件进行解析，并形成用于代码定位的投影；分析不会拿实时工作区文本去搭配旧 Fragment。参考 [[c19]] 精确符号检索可以借助 `code_symbols` 投影提高命中，但返回结果仍通过 Fragment、Revision 和当前 Source head 接回原始捕获证据。参考 [[c20]]\n\n追踪本流程时可以从四个入口开始：API 与连接器汇合点在 `app.ts` 的捕获路由；输入规范化在 `connectors.ts`；版本、片段、事务和任务入队在 `Store.capture`；后台提取与核验在学习流水线。显式知识页则沿知识流水线与 Repository 调查。普通检索面向当前 head，历史版本主要通过固定引用或明确的 Revision、Fragment 标识读取；代码投影在同一来源体系中承担辅助定位与检索的作用。参考 [[c14]] [[c19]] [[c20]] [[c21]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "网页提交捕获输入",
+        "reason": "支持示例中网页如何组织文本、链接和图片 parts，并说明来源标识留空时会生成随机值。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 281,
+          "endLine": 308
+        },
+        "quote": "async function capture() {\n  busy.value = true;\n  error.value = \"\";\n  try {\n    let response: { revision: Revision; duplicate: boolean };\n    if (importMode.value === \"lark\")\n      response = await api(\"/connectors/lark\", { url: input.value.url });\n    else if (importMode.value === \"file\")\n      response = await api(\"/"
+      },
+      {
+        "key": "c2",
+        "label": "统一捕获输入合同",
+        "reason": "说明 CaptureInput 的来源、标识、文本图片链接 parts 及可选上下文字段。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 70,
+          "endLine": 113
+        },
+        "quote": "export const captureSchema = z\n  .object({\n    externalId: z.string().min(1).max(300),\n    source: z.enum([\n      \"manual\",\n      \"file\",\n      \"git\",\n      \"lark\",\n      \"agent\",\n      \"hook\",\n      \"chat\",\n      \"screen\",\n    ]),\n    title: z.string().min(1).max(300),\n    parts: z\n      .array(z.discriminatedUnion(\"t"
+      },
+      {
+        "key": "c3",
+        "label": "文件连接器规范化",
+        "reason": "支持文件连接器的目录约束、大小和编码检查，以及转换为 CaptureInput 的过程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/connectors.ts",
+          "startLine": 10,
+          "endLine": 34
+        },
+        "quote": "export async function allowedPath(path: string, roots: string[]) {\n  const canonical = await realpath(resolve(path));\n  for (const root of roots) {\n    const base = await realpath(resolve(root));\n    const r = relative(base, canonical);\n    if (!r || (!r.startsWith(\"..\") && !isAbsolute(r))) return canonical;\n  }\n  thro"
+      },
+      {
+        "key": "c4",
+        "label": "版本与片段建立",
+        "reason": "支持按来源查找 Source、建立递增 Revision、记录 previousId，并按空行生成 Fragment。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 168,
+          "endLine": 223
+        },
+        "quote": "      let source = this.db\n        .prepare(\"SELECT * FROM sources WHERE namespace=? AND external_id=?\")\n        .get(input.source, input.externalId) as Row | undefined;\n      if (!source) {\n        source = { id: id(), head: null };\n        this.db\n          .prepare(\"INSERT INTO sources VALUES(?,?,?,?)\")\n          .r"
+      },
+      {
+        "key": "c5",
+        "label": "重复捕获判定",
+        "reason": "支持事件回执冲突检查、当前 head 指纹去重，以及重复时不建立新版本。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 136,
+          "endLine": 195
+        },
+        "quote": "    const body = {\n      parts,\n      context: input.context,\n      provenance: input.provenance,\n      observedAt: input.observedAt,\n      upstreamVersion: input.upstreamVersion,\n    };\n    const fingerprint = hash(JSON.stringify({ title: input.title, ...body }));\n    return this.tx(() => {\n      const producer = inpu"
+      },
+      {
+        "key": "c6",
+        "label": "历史证据测试",
+        "reason": "验证相同输入去重、修改后升到 version 2，以及旧片段仍可读取原文字。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/store.test.ts",
+          "startLine": 40,
+          "endLine": 52
+        },
+        "quote": "describe(\"versioned evidence and transaction outbox\", () => {\n  it(\"deduplicates retries but keeps historical evidence fixed\", () => {\n    const s = setup();\n    const a = s.capture(input());\n    expect(s.capture(input()).duplicate).toBe(true);\n    const b = s.capture(input(\"second\"));\n    expect(b.revision.version).to"
+      },
+      {
+        "key": "c7",
+        "label": "保存事务与刷新任务",
+        "reason": "支持 head 更新、旧记忆依赖失效、刷新任务、变更记录和捕获任务在事务路径中完成。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 231,
+          "endLine": 297
+        },
+        "quote": "      this.db\n        .prepare(\"UPDATE sources SET head=? WHERE id=?\")\n        .run(revisionId, String(source.id));\n      this.db\n        .prepare(\n          `INSERT INTO source_state(\n             source_id,workspace_id,registered_scope,head_revision_id,\n             validity_epoch,capture_policy,updated_at\n          "
+      },
+      {
+        "key": "c8",
+        "label": "候选记忆提取",
+        "reason": "说明提取器保存观察、产生候选后才排入核验任务，并协调来源刷新状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "startLine": 421,
+          "endLine": 454
+        },
+        "quote": "  private async extract(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"extractor@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);\n      const context = this.context(job, \"extractor\");\n      const run = await this.gateway.run({\n        roleId: \"extractor\","
+      },
+      {
+        "key": "c9",
+        "label": "候选核验与应用决策",
+        "reason": "支持核验完整候选批次并由 MemoryService 决定自动应用或等待判断。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "startLine": 458,
+          "endLine": 560
+        },
+        "quote": "  private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);\n      const reference = job.inputRefs.find(\n        (value) =>\n          typeof value === \"object\" &&\n          value !== null "
+      },
+      {
+        "key": "c10",
+        "label": "后台排队状态提示",
+        "reason": "支持原文已经保存与模型尚未调用是两个不同状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 22,
+          "endLine": 27
+        },
+        "quote": "function outcome(job: Job) {\n  const results = jobProposals(job);\n  if (job.state === \"queued\") return props.processing.enabled ? \"已保存原文，等待后台处理。尚未调用模型。\" : \"自动处理未启用，原文已经保存；此任务还没有调用模型。\";\n  if (job.state === \"succeeded\") return results.length ? `形成 ${results.length} 条候选记忆，其中 ${results.filter(p => p.state === \"applied\").le"
+      },
+      {
+        "key": "c11",
+        "label": "当前原文关键词检索",
+        "reason": "支持检索只连接当前 Source head，并说明记忆与知识命中最终回到原始证据。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 53,
+          "endLine": 120
+        },
+        "quote": "  searchSources(query: SearchQuery): SourceCandidate[] {\n    const limit = Math.max(1, Math.min(query.limit ?? 20, 100));\n    const terms = tokenize(query.text);\n    if (!terms.length) return [];\n    const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRan"
+      },
+      {
+        "key": "c12",
+        "label": "显式知识生成流程",
+        "reason": "说明知识页面先调查当前材料，再经写作与复核形成，属于独立的显式流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/pipeline.ts",
+          "startLine": 192,
+          "endLine": 216
+        },
+        "quote": "  async writePage(brief: WikiPageBrief) {\n    this.repository.refresh();\n    const writerVersion = stableDigest([\"reader-first@1\", ...[\"knowledge-researcher\", \"knowledge-writer\", \"knowledge-refresher\", \"knowledge-verifier\"].map(role => this.registry.load(role).bundleHash)]);\n    const existing = this.repository.get(bri"
+      },
+      {
+        "key": "c13",
+        "label": "固定版本构造知识材料",
+        "reason": "支持知识材料从 Revision 重建、排除派生来源，并默认从各 Source 当前 head 取材。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 11,
+          "endLine": 38
+        },
+        "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
+      },
+      {
+        "key": "c14",
+        "label": "按片段读取历史版本",
+        "reason": "支持按 revision ID 还原完整版本，并由 fragment ID 回到其所属 Revision 与上下文。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 387,
+          "endLine": 440
+        },
+        "quote": "  revision(revisionId: string): Revision | null {\n    const r = this.db\n      .prepare(\n        \"SELECT r.*,s.namespace,s.head FROM revisions r JOIN sources s ON r.source_id=s.id WHERE r.id=?\",\n      )\n      .get(revisionId) as Row | undefined;\n    if (!r) return null;\n    const body = JSON.parse(String(r.body));\n    r"
+      },
+      {
+        "key": "c15",
+        "label": "知识引用固定版本解析",
+        "reason": "说明引用依赖固定摘要，当前摘要不匹配时会在历史 Revision 中查找对应材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 24,
+          "endLine": 36
+        },
+        "quote": "  const resolveCitation = (a: KnowledgeArticle, key: string) => {\n    const c = a.document.citations.find(c => c.key === key);\n    if (!c) return null;\n    const dependency = a.dependencies.find(d => d.kind === c.target.kind && d.key === c.target.key);\n    if (!dependency) return { ...c, actionable: false, unavailableR"
+      },
+      {
+        "key": "c16",
+        "label": "历史原文阅读界面",
+        "reason": "支持阅读端携带材料摘要，并展示历史或当前状态、引用行范围及完整原文。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+          "startLine": 17,
+          "endLine": 51
+        },
+        "quote": "watch(() => [props.materialKey, props.digest], async () => {\n  const current = ++generation; material.value = null; error.value = \"\";\n  try { const m = await knowledgeApi<Material>(props.prefix, \"/materials/\" + encodeURIComponent(props.materialKey) + (props.digest ? \"?digest=\" + encodeURIComponent(props.digest) : \"\"));"
+      },
+      {
+        "key": "c17",
+        "label": "图片资产内容寻址",
+        "reason": "支持图片字节校验、大小限制、内容哈希落盘，以及 Revision 只保存资产元数据。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 102,
+          "endLine": 135
+        },
+        "quote": "  capture(input: CaptureInput) {\n    const payloadDigest = stableDigest(input);\n    const parts: StoredPart[] = input.parts.map((p) => {\n      if (p.type !== \"image\") return p;\n      const bytes = Buffer.from(p.data, \"base64\");\n      if (\n        !bytes.length ||\n        bytes.length > 5_000_000 ||\n        bytes.toStri"
+      },
+      {
+        "key": "c18",
+        "label": "图片证据结构",
+        "reason": "说明图片证据绑定两个版本标识、资产哈希、区域和推断观察。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 249,
+          "endLine": 257
+        },
+        "quote": "export const imageEvidenceSchema = z\n  .object({\n    fragment_revision_id: z.string().min(1).max(500),\n    source_revision_id: z.string().min(1).max(500),\n    asset_hash: z.string().regex(/^[a-f0-9]{64}$/),\n    inferred: z.literal(true),\n    region: imageRegionSchema.nullable(),\n    observation: z.string().min(1).max(2"
+      },
+      {
+        "key": "c19",
+        "label": "代码基于捕获版本分析",
+        "reason": "支持代码同步读取 Capture 链当前不可变 Revision，筛选文件并解析为代码定位所需的信息。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 170,
+          "endLine": 184
+        },
+        "quote": "  // The Capture chain owns the bytes. Code analysis reads its immutable head\n  // revisions and never pairs live filesystem text with an older fragment.\n  const captured = store.db.prepare(`SELECT r.id, s.external_id\n    FROM sources s JOIN revisions r ON r.id=s.head\n    LEFT JOIN review_source_meta m ON m.source_id=s"
+      },
+      {
+        "key": "c20",
+        "label": "符号投影回到原始证据",
+        "reason": "说明精确符号检索通过 Fragment、Revision 与当前 Source head 回到原始捕获材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/keyword.ts",
+          "startLine": 123,
+          "endLine": 135
+        },
+        "quote": "  private exactSymbols(query: string): Row[] {\n    // Optional AST projection: never create a separate code evidence store.\n    if (!this.db.prepare(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='code_symbols'\").get()) return [];\n    const names = [...new Set((query.match(/[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$"
+      },
+      {
+        "key": "c21",
+        "label": "捕获 API 与连接器入口",
+        "reason": "给开发者定位通用捕获、文件和 Git 连接器汇入 Store.capture 的代码入口。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 206,
+          "endLine": 224
+        },
+        "quote": "  app.get(\"/api/sources\", async () => store.list());\n  app.post(\"/api/captures\", async (req) =>\n    store.capture(captureSchema.parse(req.body)),\n  );\n  app.post(\"/api/connectors/file\", async (req) => {\n    const b = z.object({ path: str }).parse(req.body);\n    return store.capture(\n      captureSchema.parse(await file"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/connectors.ts",
+      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "411512447121280c38d11a4c5aa7c8b67916a7ec8e540d59c746101bc13e2e3e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "1cc007a5fd3cbc9208c80f6c54fd43cc766bae38f247e58b30659eff308a1f5e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "ae5194f77c897026e624f14241e69620d28a7232fd685b06d8c5dc411c9bc6da"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "9f2cb5cdef36dd74ee59101acfa9cb442c9202f67eb9f152a1ba066f0a23bee0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/store.test.ts",
+      "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/App.vue",
+      "digest": "3cc9db64ebf4443678ed277ad2df3320ed9517b5c3336ffaf76af552fb3c6cca"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "0b18c7e95c118580d32641cebf60d85844d73ba8fd74153b32ebcf44be13897e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/migrations.ts",
+      "digest": "a07fa14c0e94f388f0d0aac11cd8cd96682d276ec6f2b1db4cbb106c358d5684"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+      "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "8216ac2d415f54fa67219cb9a51f5542868e1b1a70b60c45e8cf040d523dcf74"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/EvidenceReader.vue",
+      "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+      "digest": "908fa60afaec9d3067731ce8c1bf34b842e15fe09ba30d70adff77b74d97e4fe"
+    }
+  ],
+  "reading": {
+    "key": "guide:capture",
+    "title": "一份材料的旅程：从导入到阅读与引用",
+    "order": 1,
+    "kind": "explanation",
+    "reader": "想理解数据如何进入系统的开发者",
+    "goal": "沿一次导入解释输入、固定版本、检索与后台处理的分支，能找到相应代码入口。",
+    "scenario": "通过网页保存一份两节的 Markdown 项目约定，随后改动一条规则再导入。用简短内容示例展示原始材料与知识的区别。",
+    "questions": [
+      "页面或连接器把什么交给服务端？",
+      "原文保存和版本变化如何发生？",
+      "保存后哪些事情立即发生，哪些依赖后台 Agent 或显式知识生成？",
+      "引用为什么能打开旧版本？",
+      "图片和代码走同一来源体系时有什么专门处理？"
+    ],
+    "entryPaths": [
+      "apps/server/src/store.ts",
+      "apps/server/src/connectors.ts",
+      "apps/server/src/learning/pipeline.ts",
+      "apps/server/src/knowledge/repository.ts"
+    ]
+  },
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T15:57:10.909Z",
+    "trace": {
+      "runId": "ac42b051-cc7a-4239-9787-726c33725eb0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "cfbdebf0d9930c054a5d83dd81c80b5d4df79e697e13c182694e4c260548129d",
+      "promptHash": "5a34ee64dd72b1cfc75cd67c7f3bdfe6b8c86e512b242958119449dbb955d842",
+      "contextHash": "1b29855a1509d6d14e4a4a025b3bf7164b9ec56bfc1a46423c3440bd68f63a6d",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "656d7f6d38b52be9d5b639acede86ca82ac215f96be14a9c1e761b257097f830",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f82e-90e9-7a01-aed3-bfa8f167bc65"
+      ],
+      "usage": {
+        "used": 84341,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 199892,
+          "utf8Bytes": 222608,
+          "estimatedTokens": 74203,
+          "budgetedTokens": 92754,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0,
+      "research": {
+        "rounds": [
+          {
+            "trace": {
+              "runId": "fc834c0f-a649-4169-8435-33c3bf9ae9b2",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "ed0610ccafae07c74aa0212019a53e23c1b7824c4fe9ab08ad83429e2a7280bf",
+              "contextHash": "06220647efc63faea03bd0c6201bcc738807403d274436a5de5e3422311edf8b",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "1770fb8f989bf58a016360924e3482b10430e3b74bd7ec0eaf63a0251705dff4",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f82a-cfe2-7800-9a24-7388c391f620"
+              ],
+              "usage": {
+                "used": 34795,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 54291,
+                  "utf8Bytes": 56069,
+                  "estimatedTokens": 18690,
+                  "budgetedTokens": 23363,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面面向需要追踪一次导入全流程的开发者。目前入口材料已确认两点：连接器把外部内容规范化为 CaptureInput；例如 fileInput 校验允许目录、500 KB 上限与 UTF-8 纯文本后，提交 source、externalId、title、text part 和 context（connectors.ts:19-34），gitInput 还把解析后的 commit SHA 写入 upstreamVersion（connectors.ts:36-74）。知识材料不是另一套来源：materialFromRevision 从既有 Revision 重建 KnowledgeMaterial，排除 derived revision，将文本、链接和图片分别整理，同时保留 sourceId、revisionId、fragments 与来源身份（knowledge/repository.ts:11-33）。这为“引用固定旧版本”提供了数据基础，但仍需追踪阅读 API 如何按 revisionId 打开它。\n\n尚未读到真正执行保存的方法、网页/API 调用点、版本去重与变更记录、保存后同步检索和异步任务的边界，也未覆盖图片资产及代码专门路径。下一轮先定位这些符号和调用关系，再补读完整函数与相应测试。",
+            "gaps": [
+              "CaptureInput 的完整字段定义以及网页/API 实际提交的请求形状尚未确认。",
+              "Store 中创建 Source、Revision、Fragment、Change 与更新 head 的核心函数尚未定位。",
+              "相同内容重复导入与内容变化时如何决定复用或新增 revision 尚未确认。",
+              "保存后立即建立的检索数据、source refresh，以及异步学习任务的入队点尚未确认。",
+              "显式知识生成与自动学习 pipeline 的职责边界尚未确认。",
+              "引用阅读接口是否直接使用固定 revisionId、如何读取旧版本尚未确认。",
+              "图片 asset 的落盘、Revision part 表示与知识生成读取方式尚未确认。",
+              "代码捕获如何复用 Source/Revision，同时增加 AST 定位与代码专用同步，尚未确认。"
+            ],
+            "requests": [
+              {
+                "kind": "search",
+                "query": "apps/server/src/store.ts CaptureInput capture("
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/store.ts INSERT INTO revisions"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/app.ts fileInput store.capture"
+              },
+              {
+                "kind": "search",
+                "query": "packages/contracts/src/index.ts CaptureInput StoredPart Revision Fragment"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/store.ts asset image assetId"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/learning/pipeline.ts enqueue revision source refresh"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/learning/pipeline.ts handleJob extract verifier"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/knowledge/pipeline.ts generate currentMaterials"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/app.ts revisionId revision("
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/retrieval/keyword.ts revisions fragments index"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/code/sync.ts capture revision sourceId"
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/tests/store.test.ts capture revision unchanged"
+              }
+            ]
+          },
+          {
+            "trace": {
+              "runId": "52d36b0f-9aa4-4857-9e59-079d66cca357",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "f9aeb188936fd671f4b7900e915e6f29b92159ec6c8dc6bb0f16e946ffaf2f43",
+              "contextHash": "058491bf76122e5336801478a0f1805f1f5e35181119782fe12e69b25ad94f66",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "61690218f5cc9fd39a20d73a6bc7dc3e3077498703fc1e6be53e870b7f9b37a0",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f82b-290b-76d0-b9cb-ad595b82e3a8"
+              ],
+              "usage": {
+                "used": 47519,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 96311,
+                  "utf8Bytes": 98601,
+                  "estimatedTokens": 32867,
+                  "budgetedTokens": 41084,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面面向想从一次 Markdown 导入追踪到阅读与引用的开发者，场景重点是“同一来源先导入两节内容，再修改一条规则重新导入”。现有材料已建立主链的两端，但中段仍需补齐。\n\n已确认的事实：\n1. 文件连接器先把外部输入规范化为 CaptureInput。fileInput 只允许配置根目录内的路径，限制为 500 KB，以严格 UTF-8 解码并拒绝含 NUL 的内容，然后产生 source=file、以规范化文件路径为 externalId、文件名为 title、单个 text part 和空 context（connectors.ts:10-34）。gitInput 同样形成 CaptureInput，但会先解析 ref 为具体 commit SHA，并把 SHA 保存为 upstreamVersion，因此输入身份与上游版本均被固定（connectors.ts:36-74）。\n2. Store.capture 是实际保存入口。它先对整个 CaptureInput 计算稳定摘要（store.ts:102-104）。图片不是直接以内联 base64 留在 revision 中：代码验证字节与声明类型相符，以内容 SHA-256 作为 assetId，在 dataDir/assets 下只写一次，并把 part 改写为 assetId、mimeType 等元数据（store.ts:104-131）。这说明图片与文本共用 Capture/Source/Revision 主体系，但二进制有内容寻址的专门落盘路径。\n3. 新版本被写入 revisions，并以当前 head.version + 1 递增版本号（store.ts:196-205）。但目前材料缺少 capture 函数的完整事务，尚不能准确说明同内容重复导入、source/head 更新、fragment 切分、change/notification、检索索引与任务入队的先后关系。\n4. 知识生成读取的仍是已保存 revision，而不是另一套原始材料。materialFromRevision 按 revisionId 调用 store.revision，拒绝 derived revision，把 text/link 合并为文本、把 image part 转成 assetId/mimeType/label，并保留 sourceId、revisionId、来源身份和 fragments（knowledge/repository.ts:11-33）。currentMaterials 只从每个 source 的当前 head 构造生成材料（knowledge/repository.ts:36-38）。因此“原始材料”是固定 revision；知识文章是基于这些材料生成的派生结构，两者不应混为一体。\n5. 知识引用会绑定到具体 material key 和行范围，并校验引用区间与逐字 quote；宿主可按模型给出的定位从原文复制 quote（knowledge/repository.ts:41-87）。这证明知识侧保留精确原文定位，但仍需阅读 API 与 Store.revision/evidence 才能完整解释为什么更新来源后旧引用仍能打开旧版本。\n6. 关键词检索明确声明最终返回 original evidence（retrieval/keyword.ts:21-27）；代码符号检索还要求 source.head 指向该 revision，并将 code_symbols 经 fragment、revision、source 连回原始捕获链（retrieval/keyword.ts:130-135）。需要补读普通 fragment 搜索，判断一般材料是否也只检索 head、保存后索引是否由数据库触发器即时可见。\n7. 学习流水线是持久后台 worker，使用 extractor 与 verifier 两种 Agent 角色（learning/pipeline.ts:65-99）。来源刷新会基于 revisionId、sourceId、validityEpoch 入队 extract_claims，且刻意复用 capture 提取任务的身份以避免来源更新触发第二个独立 extractor（learning/pipeline.ts:130-139）。提取无 proposal、成功或失败时都会协调 source refresh 状态（learning/pipeline.ts:446-454）。这支持“保存与后台理解分离”，但还需完整处理函数确认 capture 后具体排了哪些 job、验证何时发生、proposal 何时由 MemoryService 应用。\n8. 显式知识生成由独立 KnowledgePipeline 承担，入口依赖 MaterialResearch、KnowledgeRepository、writer/verifier 等组件（knowledge/pipeline.ts:1-10）；它与自动学习提取不是同一个流程。需要补读 plan/synthesize 才能准确描述显式触发及使用当前材料的方式。\n9. 代码没有形成第二套来源。Code Knowledge 同步明确只对已捕获 fragment 做投影，不自行捕获文件正文；分析读取 source 当前 head 的 immutable revision，避免把实时文件内容与旧 fragment 混用（code/sync.ts:1-9,170-176）。代码的专门处理是符号/边等结构化投影与定位，而原始字节、revision 和 fragment 仍由 Capture 链拥有。",
+            "gaps": [
+              "缺少 Store.capture 的完整实现，无法确认第二次导入如何匹配同一 source、何时创建新 revision、相同内容是否去重，以及事务内同步副作用。",
+              "缺少网页/API 导入路由，尚不能说明页面提交的具体请求形状及 connector 与 store.capture 的连接点。",
+              "缺少普通检索实现，尚不能确认保存后的文本如何立即进入 FTS、只检索当前 head 还是也能按 ID读取历史 revision。",
+              "缺少后台 job 的完整入队与处理链，尚不能准确区分 capture 当场完成、自动 Agent 学习、验证/应用以及刷新旧记忆的时序。",
+              "缺少阅读证据 API 和前端调用，尚未闭合“旧 revisionId/fragmentId 引用在来源更新后仍可打开”的用户可见路径。",
+              "缺少 CaptureInput、Revision、Fragment 的完整类型定义及对应版本变化测试例子。",
+              "缺少显式知识生成的调用与 synthesize 实现，尚不能完整解释原始材料与知识文章的生命周期差异。"
+            ],
+            "requests": [
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/store.ts",
+                "startLine": 102,
+                "endLine": 369
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:packages/contracts/src/index.ts",
+                "startLine": 20,
+                "endLine": 157
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/app.ts \"/api/capture\" store.capture fileInput"
+              },
+              {
+                "kind": "search",
+                "query": "apps/web/src/App.vue capture file path import"
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/retrieval/keyword.ts",
+                "startLine": 29,
+                "endLine": 199
+              },
+              {
+                "kind": "search",
+                "query": "apps/server/src/app.ts evidence fragment revision asset"
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/learning/pipeline.ts",
+                "startLine": 361,
+                "endLine": 560
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/knowledge/pipeline.ts",
+                "startLine": 192,
+                "endLine": 300
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/tests/store.test.ts",
+                "startLine": 14,
+                "endLine": 66
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/tests/store.test.ts",
+                "startLine": 78,
+                "endLine": 125
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/code/sync.ts",
+                "startLine": 150,
+                "endLine": 250
+              },
+              {
+                "kind": "search",
+                "query": "queueCaptureJob extract_claims refresh_dependents"
+              }
+            ]
+          },
+          {
+            "trace": {
+              "runId": "efb4acb1-7758-4a31-9dca-3d916821a128",
+              "roleId": "knowledge-researcher",
+              "roleVersion": "1",
+              "bundleHash": "99e98190a575ba3404585e728096d9ddc0019b2797a610711b61ff3e13d8b535",
+              "promptHash": "4c30633f0e702c359c1f1722ad4406a9b9a77dbd33fb1811e4c7ab7641b3a14d",
+              "contextHash": "d42a54562c887bc528b9900b660d4363ac8e4f0f8ea2c223a2b8114509f842ac",
+              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
+              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "fingerprint": "09dff3219a2691c8cd717c9e7eddf772504a1eacafcebf107cfd27fb3b9dd093",
+              "outputSchema": "KnowledgeResearch.v1",
+              "effectiveModel": "gpt-5.6-sol",
+              "effectiveEffort": "medium",
+              "loadedSkills": [
+                {
+                  "name": "omem-knowledge-researcher",
+                  "version": "1",
+                  "mode": "inline"
+                }
+              ],
+              "allowedTools": [],
+              "sessionIds": [
+                "01a0f82b-a67d-7431-bda6-97ced395f450"
+              ],
+              "usage": {
+                "used": 70069,
+                "size": 258400,
+                "cost": null,
+                "budget": {
+                  "maxInputTokens": 192000,
+                  "maxOutputTokens": 24000,
+                  "contextReserveTokens": 16000
+                },
+                "estimate": {
+                  "chars": 172587,
+                  "utf8Bytes": 176910,
+                  "estimatedTokens": 58970,
+                  "budgetedTokens": 73713,
+                  "estimator": "utf8-bytes/3 + 25% headroom"
+                }
+              },
+              "repairAttempts": 0
+            },
+            "findings": "页面面向想从一次 Markdown 导入追踪到阅读与引用的开发者，主场景可沿“首次导入两节项目约定，再修改一条规则并重新导入”解释。\n\n已确认的主流程与事实：\n1. 网页或连接器最终交给服务端的是 CaptureInput。它包含来源命名空间、用于识别同一来源的 externalId、标题、1–50 个 text/image/link part，以及可选 observedAt、upstreamVersion、provenance 和 context（packages/contracts/src/index.ts:20-113）。通用 `/api/captures` 直接校验并保存该结构；文件连接器路由先调用 fileInput，再交给同一个 Store.capture（apps/server/src/app.ts:206-214）。fileInput 只读取配置根目录内、最多 500 KB 的严格 UTF-8 文本，以规范化绝对路径作为 externalId（apps/server/src/connectors.ts:10-34）。因此网页手工输入与连接器输入的前端形式可以不同，但服务端保存入口统一。\n2. Store.capture 以 `(source, externalId)` 查找或建立 Source，以不可变 Revision 保存一次内容状态（apps/server/src/store.ts:168-209）。首次导入产生 version 1；同一来源内容变化后产生 version 2，previousId 指向旧 head，再把 Source.head 更新到新版（store.ts:197-245）。Markdown 文本按空行切成 fragments；两节内容若以空行分隔，会形成两个可定位片段（store.ts:210-223）。\n3. 重复与更新不同。若同一 collectorId/eventId 再送达相同 payload，会通过 capture receipt 返回原 revision；同一事件却改变 payload 会报 `CAPTURE_EVENT_CONFLICT`（store.ts:145-166）。没有事件身份时，若标题、parts、context、provenance、observedAt、upstreamVersion 形成的 fingerprint 与当前 head 相同，也返回当前 revision 且标记 duplicate，不增加版本（store.ts:136-143,177-195）。只有 fingerprint 改变才建立新版。测试验证相同输入被去重，修改文本产生 version 2，而旧 revision 仍非 current 但可读取原来的 “first”（apps/server/tests/store.test.ts:40-52）。\n4. 保存新版是一个 SQLite 事务内的原子动作：revision、fragments、source head/source_state、变更记录与通知，以及后台任务入队一起提交；异常则整体回滚（store.ts:74-84,144-297）。新材料立即可读；SQLite FTS 查询直接连接 fragments、revisions 和当前 `sources.head`，所以当前原文无需等模型即可进入关键词检索（retrieval/keyword.ts:53-80,138-143）。检索只返回当前 head 的 original evidence；旧版不会作为普通搜索结果继续出现。\n5. 保存后立即发生的确定性工作包括：落 revision/fragments、生成轻量导航 profile、更新 head、记录 change/notification，并入队后台任务（store.ts:219-295）。每个非 derived capture 都排 `extract_claims`；derived 材料被排除，避免模型产物把自己当成独立事实循环学习（store.ts:348-368；apps/server/tests/batch2-fixes.test.ts:349-383）。更新已有来源时还会把依赖旧 revision 的 memory dependency 标 stale、相关 memory 标 invalidated，记录 source refresh，并排 `refresh_dependents`（store.ts:246-275）。\n6. 后台学习不是保存事务本身。持久 worker 分别处理 `extract_claims`、`verify_proposals`、`refresh_dependents`（learning/pipeline.ts:106-120）。extractor 产出 observations 与候选 proposals；有候选时才排 verifier（learning/pipeline.ts:421-450）。verifier 校验整批输出，再由 MemoryService.evaluateBatch 决定自动应用或等待判断（learning/pipeline.ts:458-560）。因此“原文已保存”不等于“候选记忆已核验并应用”；UI 也明确把 queued 状态表述为原文已保存、尚未调用模型（apps/web/src/LearningView.vue:13-27）。\n7. 显式知识页面生成又是独立流程，不是 capture 后自动形成的记忆。KnowledgePipeline.writePage 先从当前材料建立调查目录，最多进行三轮研究，再由 writer 和 verifier 生成、复核文章（knowledge/pipeline.ts:192-216）。知识文章是基于原始 revision 的派生阅读结构；原文仍是事实载体。materialFromRevision 会拒绝 derived revision，并从固定 revision 组装文本、图片、来源身份及 fragments；currentMaterials 仅用每个 Source 的当前 head 作为新一轮生成输入（knowledge/repository.ts:11-38）。\n8. 引用固定旧版本的基础是引用中同时保存 fragment revision id/source revision id，或知识引用绑定 material、行范围与逐字 quote（packages/contracts/src/index.ts:224-232；knowledge/repository.ts:41-87）。Revision 是不可变记录，Source.head 变化不会删除旧 revision/fragments；测试直接证明 version 2 建立后，用 version 1 的 fragment id 仍能读取旧文本（store.test.ts:40-52）。还需补读 Store.revision/evidence 与知识读取 API，才能准确说明界面沿引用打开旧版时的具体调用链。\n9. 图片与文本共用 Capture → Source → Revision，但二进制有专门处理。输入只接受 PNG/JPEG/WebP；Store 校验 base64、5 MB 上限及文件签名，以字节 SHA-256 作为 assetId，在私有 assets 目录内容寻址落盘一次，revision 只保存 assetId/mimeType/label（contracts index.ts:27-35；store.ts:104-135）。图片 evidence 还保存 source revision、fragment revision、asset hash、区域与观察，并明确标为 inferred（contracts index.ts:249-257）。无文本图片会产生 `[图片] label` fragment 供导航；知识材料另把图片列为 images（store.ts:210-215；knowledge/repository.ts:19-30）。\n10. 代码同样不另建事实来源。代码同步只读取已捕获 Source 当前 head 的不可变 revision，然后生成符号、文件、边与快照等结构化投影，并将符号定位回原 fragment（code/sync.ts:1-9,170-184,220-250）。关键词检索可借 AST 符号投影提高命中，但结果仍连接回当前原始 revision/fragment（retrieval/keyword.ts:123-135）。因此代码的专门之处是 AST 定位和快照投影，原文版本与引用仍由统一 Capture 链负责。\n\n根据代码的解释：以示例 Markdown `## 提交\\n合并前需评审。\\n\\n## 发布\\n周五冻结。` 为例，首次保存会产生一个 Source、version 1 和两个 fragments。把“周五冻结”改为“周四冻结”再导入，因为 `(source, externalId)` 不变而 fingerprint 改变，会生成 version 2 并成为 head；普通检索转向新版，依赖旧版的记忆进入失效/复查流程，但旧文章或证据若绑定 version 1 的 revision/fragment，仍应能打开旧文字。这个例子是对上述机制的说明，不是仓库内现成 fixture。",
+            "gaps": [
+              "尚缺 Store.revision、Store.evidence 的完整实现以及对应 HTTP 路由，无法把“点击引用后如何按固定 revision/fragment 打开旧版”描述到具体端点和返回结构。",
+              "尚缺网页导入提交函数的完整范围，无法确认示例中的 Markdown 是作为 manual CaptureInput 直接发送，还是当前 UI 只提供其他字段组合。",
+              "知识 Repository/API 的后半段尚未读取，尚不能确认持久化文章引用时是否另外固化 material revision 映射，以及阅读页如何解析历史材料。"
+            ],
+            "requests": [
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/store.ts",
+                "startLine": 370,
+                "endLine": 463
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/app.ts",
+                "startLine": 204,
+                "endLine": 250
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/knowledge/api.ts",
+                "startLine": 1,
+                "endLine": 124
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/server/src/knowledge/repository.ts",
+                "startLine": 90,
+                "endLine": 224
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/App.vue",
+                "startLine": 210,
+                "endLine": 320
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/EvidenceReader.vue",
+                "startLine": 1,
+                "endLine": 244
+              },
+              {
+                "kind": "read",
+                "materialKey": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+                "startLine": 1,
+                "endLine": 59
+              }
+            ]
+          }
+        ],
+        "findings": "页面面向想从一次 Markdown 导入追踪到阅读与引用的开发者，主场景可沿“首次导入两节项目约定，再修改一条规则并重新导入”解释。\n\n已确认的主流程与事实：\n1. 网页或连接器最终交给服务端的是 CaptureInput。它包含来源命名空间、用于识别同一来源的 externalId、标题、1–50 个 text/image/link part，以及可选 observedAt、upstreamVersion、provenance 和 context（packages/contracts/src/index.ts:20-113）。通用 `/api/captures` 直接校验并保存该结构；文件连接器路由先调用 fileInput，再交给同一个 Store.capture（apps/server/src/app.ts:206-214）。fileInput 只读取配置根目录内、最多 500 KB 的严格 UTF-8 文本，以规范化绝对路径作为 externalId（apps/server/src/connectors.ts:10-34）。因此网页手工输入与连接器输入的前端形式可以不同，但服务端保存入口统一。\n2. Store.capture 以 `(source, externalId)` 查找或建立 Source，以不可变 Revision 保存一次内容状态（apps/server/src/store.ts:168-209）。首次导入产生 version 1；同一来源内容变化后产生 version 2，previousId 指向旧 head，再把 Source.head 更新到新版（store.ts:197-245）。Markdown 文本按空行切成 fragments；两节内容若以空行分隔，会形成两个可定位片段（store.ts:210-223）。\n3. 重复与更新不同。若同一 collectorId/eventId 再送达相同 payload，会通过 capture receipt 返回原 revision；同一事件却改变 payload 会报 `CAPTURE_EVENT_CONFLICT`（store.ts:145-166）。没有事件身份时，若标题、parts、context、provenance、observedAt、upstreamVersion 形成的 fingerprint 与当前 head 相同，也返回当前 revision 且标记 duplicate，不增加版本（store.ts:136-143,177-195）。只有 fingerprint 改变才建立新版。测试验证相同输入被去重，修改文本产生 version 2，而旧 revision 仍非 current 但可读取原来的 “first”（apps/server/tests/store.test.ts:40-52）。\n4. 保存新版是一个 SQLite 事务内的原子动作：revision、fragments、source head/source_state、变更记录与通知，以及后台任务入队一起提交；异常则整体回滚（store.ts:74-84,144-297）。新材料立即可读；SQLite FTS 查询直接连接 fragments、revisions 和当前 `sources.head`，所以当前原文无需等模型即可进入关键词检索（retrieval/keyword.ts:53-80,138-143）。检索只返回当前 head 的 original evidence；旧版不会作为普通搜索结果继续出现。\n5. 保存后立即发生的确定性工作包括：落 revision/fragments、生成轻量导航 profile、更新 head、记录 change/notification，并入队后台任务（store.ts:219-295）。每个非 derived capture 都排 `extract_claims`；derived 材料被排除，避免模型产物把自己当成独立事实循环学习（store.ts:348-368；apps/server/tests/batch2-fixes.test.ts:349-383）。更新已有来源时还会把依赖旧 revision 的 memory dependency 标 stale、相关 memory 标 invalidated，记录 source refresh，并排 `refresh_dependents`（store.ts:246-275）。\n6. 后台学习不是保存事务本身。持久 worker 分别处理 `extract_claims`、`verify_proposals`、`refresh_dependents`（learning/pipeline.ts:106-120）。extractor 产出 observations 与候选 proposals；有候选时才排 verifier（learning/pipeline.ts:421-450）。verifier 校验整批输出，再由 MemoryService.evaluateBatch 决定自动应用或等待判断（learning/pipeline.ts:458-560）。因此“原文已保存”不等于“候选记忆已核验并应用”；UI 也明确把 queued 状态表述为原文已保存、尚未调用模型（apps/web/src/LearningView.vue:13-27）。\n7. 显式知识页面生成又是独立流程，不是 capture 后自动形成的记忆。KnowledgePipeline.writePage 先从当前材料建立调查目录，最多进行三轮研究，再由 writer 和 verifier 生成、复核文章（knowledge/pipeline.ts:192-216）。知识文章是基于原始 revision 的派生阅读结构；原文仍是事实载体。materialFromRevision 会拒绝 derived revision，并从固定 revision 组装文本、图片、来源身份及 fragments；currentMaterials 仅用每个 Source 的当前 head 作为新一轮生成输入（knowledge/repository.ts:11-38）。\n8. 引用固定旧版本的基础是引用中同时保存 fragment revision id/source revision id，或知识引用绑定 material、行范围与逐字 quote（packages/contracts/src/index.ts:224-232；knowledge/repository.ts:41-87）。Revision 是不可变记录，Source.head 变化不会删除旧 revision/fragments；测试直接证明 version 2 建立后，用 version 1 的 fragment id 仍能读取旧文本（store.test.ts:40-52）。还需补读 Store.revision/evidence 与知识读取 API，才能准确说明界面沿引用打开旧版时的具体调用链。\n9. 图片与文本共用 Capture → Source → Revision，但二进制有专门处理。输入只接受 PNG/JPEG/WebP；Store 校验 base64、5 MB 上限及文件签名，以字节 SHA-256 作为 assetId，在私有 assets 目录内容寻址落盘一次，revision 只保存 assetId/mimeType/label（contracts index.ts:27-35；store.ts:104-135）。图片 evidence 还保存 source revision、fragment revision、asset hash、区域与观察，并明确标为 inferred（contracts index.ts:249-257）。无文本图片会产生 `[图片] label` fragment 供导航；知识材料另把图片列为 images（store.ts:210-215；knowledge/repository.ts:19-30）。\n10. 代码同样不另建事实来源。代码同步只读取已捕获 Source 当前 head 的不可变 revision，然后生成符号、文件、边与快照等结构化投影，并将符号定位回原 fragment（code/sync.ts:1-9,170-184,220-250）。关键词检索可借 AST 符号投影提高命中，但结果仍连接回当前原始 revision/fragment（retrieval/keyword.ts:123-135）。因此代码的专门之处是 AST 定位和快照投影，原文版本与引用仍由统一 Capture 链负责。\n\n根据代码的解释：以示例 Markdown `## 提交\\n合并前需评审。\\n\\n## 发布\\n周五冻结。` 为例，首次保存会产生一个 Source、version 1 和两个 fragments。把“周五冻结”改为“周四冻结”再导入，因为 `(source, externalId)` 不变而 fingerprint 改变，会生成 version 2 并成为 head；普通检索转向新版，依赖旧版的记忆进入失效/复查流程，但旧文章或证据若绑定 version 1 的 revision/fragment，仍应能打开旧文字。这个例子是对上述机制的说明，不是仓库内现成 fixture。",
+        "gaps": [
+          "尚缺 Store.revision、Store.evidence 的完整实现以及对应 HTTP 路由，无法把“点击引用后如何按固定 revision/fragment 打开旧版”描述到具体端点和返回结构。",
+          "尚缺网页导入提交函数的完整范围，无法确认示例中的 Markdown 是作为 manual CaptureInput 直接发送，还是当前 UI 只提供其他字段组合。",
+          "知识 Repository/API 的后半段尚未读取，尚不能确认持久化文章引用时是否另外固化 material revision 映射，以及阅读页如何解析历史材料。"
+        ],
+        "materials": [
+          {
+            "key": "omem:apps/server/src/store.ts",
+            "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 463
+              },
+              {
+                "start": 505,
+                "end": 514
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/connectors.ts",
+            "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 100
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/learning/pipeline.ts",
+            "digest": "411512447121280c38d11a4c5aa7c8b67916a7ec8e540d59c746101bc13e2e3e",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 100
+              },
+              {
+                "start": 106,
+                "end": 120
+              },
+              {
+                "start": 130,
+                "end": 139
+              },
+              {
+                "start": 361,
+                "end": 560
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/knowledge/repository.ts",
+            "digest": "1cc007a5fd3cbc9208c80f6c54fd43cc766bae38f247e58b30659eff308a1f5e",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 224
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/app.ts",
+            "digest": "6ca32fa22a7684fd62d1430eebaebfc4d11657b2ce003f135376573db8aaa7ae",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 9
+              },
+              {
+                "start": 23,
+                "end": 32
+              },
+              {
+                "start": 68,
+                "end": 77
+              },
+              {
+                "start": 204,
+                "end": 250
+              },
+              {
+                "start": 354,
+                "end": 363
+              },
+              {
+                "start": 368,
+                "end": 379
+              }
+            ]
+          },
+          {
+            "key": "omem:packages/contracts/src/index.ts",
+            "digest": "ae5194f77c897026e624f14241e69620d28a7232fd685b06d8c5dc411c9bc6da",
+            "ranges": [
+              {
+                "start": 20,
+                "end": 157
+              },
+              {
+                "start": 224,
+                "end": 233
+              },
+              {
+                "start": 248,
+                "end": 257
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/knowledge/pipeline.ts",
+            "digest": "9f2cb5cdef36dd74ee59101acfa9cb442c9202f67eb9f152a1ba066f0a23bee0",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 10
+              },
+              {
+                "start": 192,
+                "end": 300
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/keyword.ts",
+            "digest": "81ac46cbedc40de11dea7ee983ed67d1ab5aa9b8cbf8ceee6b245c0844ebc519",
+            "ranges": [
+              {
+                "start": 18,
+                "end": 27
+              },
+              {
+                "start": 29,
+                "end": 199
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/code/sync.ts",
+            "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 9
+              },
+              {
+                "start": 150,
+                "end": 250
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/store.test.ts",
+            "digest": "7bb2226b5156ba1fb0829b70b601be64da2776f008bae1f820503bd4112f127d",
+            "ranges": [
+              {
+                "start": 3,
+                "end": 12
+              },
+              {
+                "start": 14,
+                "end": 76
+              },
+              {
+                "start": 78,
+                "end": 125
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/App.vue",
+            "digest": "3cc9db64ebf4443678ed277ad2df3320ed9517b5c3336ffaf76af552fb3c6cca",
+            "ranges": [
+              {
+                "start": 102,
+                "end": 111
+              },
+              {
+                "start": 210,
+                "end": 320
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/LearningView.vue",
+            "digest": "0b18c7e95c118580d32641cebf60d85844d73ba8fd74153b32ebcf44be13897e",
+            "ranges": [
+              {
+                "start": 13,
+                "end": 31
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/storage/migrations.ts",
+            "digest": "a07fa14c0e94f388f0d0aac11cd8cd96682d276ec6f2b1db4cbb106c358d5684",
+            "ranges": [
+              {
+                "start": 795,
+                "end": 804
+              },
+              {
+                "start": 873,
+                "end": 882
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/tests/batch2-fixes.test.ts",
+            "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919",
+            "ranges": [
+              {
+                "start": 347,
+                "end": 356
+              },
+              {
+                "start": 379,
+                "end": 388
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/server/src/knowledge/api.ts",
+            "digest": "8216ac2d415f54fa67219cb9a51f5542868e1b1a70b60c45e8cf040d523dcf74",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 124
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/EvidenceReader.vue",
+            "digest": "4fbe40c0d75e7c575677f665e017f1058b1a855644288e468f3230c88555bb7f",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 244
+              }
+            ]
+          },
+          {
+            "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
+            "digest": "908fa60afaec9d3067731ce8c1bf34b842e15fe09ba30d70adff77b74d97e4fe",
+            "ranges": [
+              {
+                "start": 1,
+                "end": 59
+              }
+            ]
+          }
+        ]
+      },
+      "writerVersion": "29f3ea78e530ff7b242f271e45475916ab314266b4c45c899a043cac24210e0e"
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T15:57:37.064Z",
+    "trace": {
+      "runId": "4005f983-d321-49da-81bf-efcd88c6fb60",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "e9d0289f6a9ebcefcc1649bc58140312da70887f42c363b3a0b9130fd4a97ee2",
+      "promptHash": "12ea2905295f149531da260290dad0687889838c1c028570bf040e322074019c",
+      "contextHash": "0c68efc11da28243f3fe82b6afdf1fcc4081155627b81c90fed50fec943d2efe",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "40ef8c3d2c61e75f17dbc0d02a3d1188b541cc22eec49eb0c65d25dd9b0a1606",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f82f-3930-75c3-9841-6ed3849e5c00"
+      ],
+      "usage": {
+        "used": 71198,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 175176,
+          "utf8Bytes": 186856,
+          "estimatedTokens": 62286,
+          "budgetedTokens": 77858,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
