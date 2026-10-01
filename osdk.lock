@@ -72,7 +72,7 @@ sha256 = "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c"
 
 [deps.pnpm]
 installer = "pnpm"
-installer_version = "11.28.3"
+installer_version = "11.28.2"
 runtime = "node@24.18.1"
 manifest = "package.json"
 manifest_sha256 = "f95da31a6f9a3b2ffcfd56ccbd2a2bddccb01d455c61ea1a6642a84e52bcb14b"
