@@ -1,6 +1,7 @@
+import { MaterialResearch } from "./research.js";
 import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
-import { knowledgeBatchSchema, knowledgePlanSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial, type KnowledgePlan } from "../../../../packages/contracts/src/knowledge.js";
+import { knowledgeResearchSchema, type WikiPageBrief, knowledgeBatchSchema, knowledgePlanSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial, type KnowledgePlan } from "../../../../packages/contracts/src/knowledge.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
 import { RoleRuntimeGateway, renderRolePrompt, type RoleRunTrace } from "../agent-runtime/gateway.js";
 import { DurableJobWorker } from "../jobs/worker.js";
@@ -110,14 +111,14 @@ export class KnowledgePipeline {
     return batch;
   }
 
-  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown) {
+  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: unknown; writerVersion: string }) {
     let repair: unknown = priorFeedback;
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
     for (let attempt = 0; attempt < 4; attempt++) {
-      const write = await this.runRole(repair ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
+      const write = await this.runRole(repair ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, reading: publication?.reading, research: publication?.research, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
       const batch = knowledgeBatchSchema.parse(write.result);
-      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents }, out => {
+      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents, targets: remaining, reading: publication?.reading }, out => {
         const r = knowledgeReviewSchema.parse(out);
         if (r.verdicts.length !== remaining.length || remaining.some(t => !r.verdicts.some(v => v.documentKey === t.key))) throw Error("Review every target exactly once");
       });
@@ -129,8 +130,8 @@ export class KnowledgePipeline {
         const dependencies: KnowledgeArtifact["dependencies"] = offers.map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
         for (const a of articles) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
         if (this.stopping) throw Error("Knowledge publication cancelled");
-        const artifact: KnowledgeArtifact = { version: 1, document, dependencies,
-          generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: write.trace as unknown as Record<string, unknown> },
+        const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading } : {}),
+          generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}) } as unknown as Record<string, unknown> },
           review: { model: review.trace.effectiveModel!, at: review.at, trace: review.trace as unknown as Record<string, unknown>, verdict: "accepted" } };
         const article = this.repository.publish(artifact);
         this.options.onPublish?.(article); this.options.log?.(`Published ${document.key}`); published.push(article);
@@ -184,6 +185,35 @@ export class KnowledgePipeline {
       }
     }));
     return { total: materials.length, reused: materials.length - pending.length, failures };
+  }
+
+  /** Publish a reader page directly from investigated originals. File summaries
+   * are optional background, never a prerequisite or an arbitrary batching tree. */
+  async writePage(brief: WikiPageBrief) {
+    this.repository.refresh();
+    const writerVersion = stableDigest(["reader-first@1", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
+    const existing = this.repository.get(brief.key);
+    if (existing?.current && stableDigest(existing.reading) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion) return [existing];
+    const research = new MaterialResearch(this.repository.materials(), brief);
+    if (!research.offers.size) throw Error(`No available entry materials for ${brief.title}`);
+    const rounds: unknown[] = [];
+    let observations: unknown = [], findings = "", gaps: string[] = [];
+    for (let round = 0; round < 3; round++) {
+      const run = await this.runRole("knowledge-researcher", [...research.offers.values()], [], {
+        title: brief.title, page: brief, round, remainingRounds: 3 - round, catalog: research.catalog(), observations, findings,
+      }, out => knowledgeResearchSchema.parse(out));
+      const result = knowledgeResearchSchema.parse(run.result);
+      findings = result.findings; gaps = result.gaps;
+      rounds.push({ trace: run.trace, findings, gaps, requests: result.requests });
+      // Execute a last round's requests too: the writer and verifier will see
+      // the fetched source even when investigation has exhausted its round budget.
+      observations = research.execute(result.requests);
+      if (result.ready && !result.requests.length) break;
+    }
+    const target = { ...brief, purpose: brief.goal };
+    return this.writeAndVerify("knowledge-writer", [target], [...research.offers.values()], [],
+      undefined, { reading: brief, research: { rounds, findings, gaps,
+        materials: [...research.offers.values()].map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })) }, writerVersion });
   }
 
   async plan(): Promise<KnowledgePlan> {

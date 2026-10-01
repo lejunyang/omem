@@ -8,7 +8,7 @@
 
 ## 模型与生成
 
-仓库模型读取 config/review-code-model.json，REVIEW_CODE_MODEL_CONFIG 可覆盖；使用真实 traex ACP 的 gpt-5.6-sol。`osdk run review:generate <路径> --modules` 是已有材料说明流程；新的读者指南入口将在本轮接入并记录在此。角色输出、任务和 trace 保存在 .repo-review/runtime/，发布的文章在 .repo-review/knowledge/。
+仓库模型读取 config/review-code-model.json，REVIEW_CODE_MODEL_CONFIG 可覆盖；使用真实 traex ACP 的 gpt-5.6-sol。`osdk run review:generate <路径> --modules` 是已有材料说明流程；读者指南用 `osdk run review:guides`，只更新一页可用 `osdk run review:guides retrieval`。页面计划在 config/wiki-pages.json；模型按问题请求搜索/读取固定材料，再写作与独立检查。`--retry` 可重试失败任务。角色输出、任务和 trace 保存在 .repo-review/runtime/，发布的文章在 .repo-review/knowledge/。
 
 本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / `osdk run retrieval:index --review` 补建索引。
 

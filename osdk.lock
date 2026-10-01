@@ -75,14 +75,14 @@ installer = "pnpm"
 installer_version = "11.28.3"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "f95da31a6f9a3b2ffcfd56ccbd2a2bddccb01d455c61ea1a6642a84e52bcb14b"
+manifest_sha256 = "ad344548b8837b406b3f39f53253fb5dc815781c6a1550040804ff8532cf2dcf"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
 [deps.pnpm.native_lock]
 kind = "pnpm-lock"
 path = "pnpm-lock.yaml"
-sha256 = "bd2e67ef9731da32b64aed48dd2ef70a9b3e03b27dcea6321ef670523c8b6984"
+sha256 = "72704dd219006cb5f207d528d2a1c6b3e468d017d1c602bb9ca3eb673583b6fd"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

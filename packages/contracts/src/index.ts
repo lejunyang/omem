@@ -679,7 +679,7 @@ export const roleIdSchema = z.enum([
   "feedback-curator",
   "answerer",
   "material-analyst", "code-analyst", "conversation-analyst", "visual-analyst",
-  "knowledge-planner", "knowledge-writer", "knowledge-verifier", "knowledge-refresher",
+  "knowledge-researcher", "knowledge-planner", "knowledge-writer", "knowledge-verifier", "knowledge-refresher",
 ]);
 
 export const roleManifestSchema = z
@@ -716,7 +716,7 @@ export const roleManifestSchema = z
       "PlanProposal.v1",
       "CorrectionProposal.v1",
       "AnswerWithCitations.v1",
-      "KnowledgeBatch.v1", "KnowledgeReview.v1", "KnowledgePlan.v1",
+      "KnowledgeBatch.v1", "KnowledgeReview.v1", "KnowledgePlan.v1", "KnowledgeResearch.v1",
     ]),
     tool_policy: z
       .object({

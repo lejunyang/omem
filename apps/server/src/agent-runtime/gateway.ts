@@ -1,4 +1,4 @@
-import { knowledgeBatchSchema, knowledgeReviewSchema, knowledgePlanSchema } from "../../../../packages/contracts/src/knowledge.js";
+import { knowledgeResearchSchema, knowledgeBatchSchema, knowledgeReviewSchema, knowledgePlanSchema } from "../../../../packages/contracts/src/knowledge.js";
 import { estimateTokens, generationBudget, type GenerationBudget } from "./budget.js";
 import { createHash, randomUUID } from "node:crypto";
 import type {
@@ -23,6 +23,7 @@ import { RoleBundleRegistry, type RoleBundle } from "./bundles.js";
 import type { RuntimeRequestRepository } from "./requests.js";
 
 const outputSchemas = {
+  "KnowledgeResearch.v1": knowledgeResearchSchema,
   "KnowledgeBatch.v1": knowledgeBatchSchema,
   "KnowledgeReview.v1": knowledgeReviewSchema,
   "KnowledgePlan.v1": knowledgePlanSchema,
@@ -144,7 +145,7 @@ export function renderRolePrompt(
   }));
   const task = context.task ? { ...context.task } : undefined;
   const derived: Record<string, unknown> = {};
-  for (const name of ["articles", "drafts", "catalog", "revisionRequest", "priorKnowledge"]) {
+  for (const name of ["articles", "drafts", "catalog", "revisionRequest", "priorKnowledge", "research", "observations", "findings"]) {
     if (task && name in task) { derived[name] = task[name]; delete task[name]; }
   }
   const trusted = [

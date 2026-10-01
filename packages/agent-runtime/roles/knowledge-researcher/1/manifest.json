@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "role_id": "knowledge-researcher",
+  "role_version": "1",
+  "profile_ref": "traex",
+  "prompt_templates": [
+    "prompt.md"
+  ],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-knowledge-researcher",
+      "version": "1",
+      "load_mode": "inline",
+      "artifact_digest": "ecb0942c8e31ffaf4b9a35648bfcc6365728cd9d46a94fa9db2d119f07bcfc0f"
+    }
+  ],
+  "output_schema": "KnowledgeResearch.v1",
+  "tool_policy": {
+    "mode": "none",
+    "allowed_tools": []
+  },
+  "session_policy": {
+    "reuse": "never",
+    "inherit_user_skills": false,
+    "inherit_user_mcp": false
+  },
+  "budget": {
+    "max_context_tokens": 96000,
+    "max_output_tokens": 24000,
+    "max_repair_attempts": 2
+  }
+}

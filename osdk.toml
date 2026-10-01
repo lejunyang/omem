@@ -112,3 +112,15 @@ help = "Only analyze source materials"
 
 [tasks."review:generate".flags.retry]
 help = "Retry unfinished model work"
+
+[tasks."review:guides"]
+run = [{ argv = ["bun", "scripts/review-guides.ts", "{{args}}"] }]
+description = "Investigate and write reader-oriented repository guides with real ACP"
+
+[[tasks."review:guides".args]]
+name = "target"
+default = ""
+help = "Page key (overview, capture, retrieval, memory, contributing); omit for all"
+
+[tasks."review:guides".flags.retry]
+help = "Retry failed investigation or writing"

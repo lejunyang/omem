@@ -78,6 +78,34 @@ it("distinguishes Lark documents from conversations and recognizes ordinary impo
   expect(analystFor({ ...base, namespace: "file", path: null, title: "main.py" })).toBe("code-analyst");
 });
 
+it("investigates a requested range beyond the entry preview before writing and independently reviewing a reader page", async () => {
+  const { pipeline, repository, run, capture } = setup();
+  capture("Intro\n" + "Background\n".repeat(148) + "The delivery worker retries pending messages.");
+  let researchRound = 0;
+  run.mockImplementation(async input => {
+    const bundle = pipeline.registry.load(input.roleId);
+    let result: unknown;
+    if (input.roleId === "knowledge-researcher") {
+      researchRound++;
+      result = { schema_version: 1, ready: researchRound > 1, findings: "Follow the delivery behavior", gaps: [], requests: researchRound === 1 ? [{ kind: "read", materialKey: "manual:example", startLine: 140, endLine: 150 }] : [] };
+    } else if (input.roleId === "knowledge-verifier") {
+      expect(input.context.task!.reading).toMatchObject({ goal: "Explain retry behavior" });
+      result = { schema_version: 1, verdicts: [{ documentKey: "guide:delivery", verdict: "accepted", issues: [], questions: [] }] };
+    } else {
+      expect(input.context.materials.map(m => m.text).join("\n")).toContain("L150 The delivery worker retries pending messages.");
+      result = { schema_version: 1, documents: [{ key: "guide:delivery", title: "Delivery", summary: "Follow a message", category: "workflow", sections: [{ key: "retry", title: "When delivery fails", body: "Pending messages can be retried. Reference [[c1]]" }], citations: [{ key: "c1", label: "Worker behavior", reason: "Explains retry", relation: "supports", target: { kind: "material", key: "manual:example", startLine: 150, endLine: 150 }, quote: "" }], questions: [] }] };
+    }
+    input.validateOutput?.(result);
+    return { result, bundle, trace: { runId: "fixture-research", promptHash: "p", contextHash: "c", skillHash: "s", toolHash: "t", fingerprint: "f", effectiveEffort: null, repairAttempts: 0, roleId: input.roleId, roleVersion: "1", bundleHash: bundle.bundleHash, effectiveModel: "fixture", outputSchema: bundle.manifest.output_schema, sessionIds: [input.roleId + researchRound], loadedSkills: [], allowedTools: [], usage: {} } } as Awaited<ReturnType<RoleRuntimeGateway["run"]>>;
+  });
+  const [page] = await pipeline.writePage({ key: "guide:delivery", title: "Delivery", order: 0, kind: "explanation", reader: "New contributor", goal: "Explain retry behavior", scenario: "A pending message", questions: ["What happens after failure?"], entryPaths: ["manual:example"] });
+  expect(researchRound).toBe(2);
+  expect(page!.reading?.goal).toBe("Explain retry behavior");
+  expect(page!.document.citations[0]!.quote).toContain("retries pending messages");
+  expect(page!.generation.trace.research).toHaveProperty("rounds");
+  expect(repository.list()).toHaveLength(1); // No per-file article prerequisite.
+});
+
 it("isolates sibling articles while retaining explicitly supplied background dependencies", async () => {
   const { store, repository, pipeline, capture } = setup();
   const other = (text: string) => store.capture({ source: "manual", externalId: "other", title: "Other note", parts: [{ type: "text", text }], context: {} });
