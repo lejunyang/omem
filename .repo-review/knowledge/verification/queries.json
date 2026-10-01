@@ -1,8 +1,8 @@
 [
   { "query": "中文语义检索怎样处理长代码片段？", "expectedPaths": ["README.md", "apps/server/src/retrieval/semantic.ts"] },
   { "query": "如何保证本地模型不在启动时联网下载？", "expectedPaths": ["AGENTS.md", "apps/server/src/retrieval/embedding.ts", "README.md"] },
-  { "query": "原始资料修改后怎样重新验证记忆？", "expectedPaths": ["docs/2026-10-01/README.md", "apps/server/src/learning/refresh.ts", "README.md"] },
+  { "query": "原始资料修改后怎样重新验证记忆？", "expectedPaths": ["docs/reader-first/architecture.md", "apps/server/src/learning/refresh.ts", "README.md"] },
   { "query": "KnowledgePipeline", "expectedPaths": ["apps/server/src/knowledge/pipeline.ts"] },
   { "query": "searchSourcesAsync", "expectedPaths": ["apps/server/src/retrieval/semantic.ts"] },
-  { "query": "历史原型 docs/prototype/app.jsx 检索", "expectedPaths": ["docs/prototype/app.jsx"] }
+  { "query": "历史原型 docs/prototype/app.jsx 检索", "expectedPaths": ["docs/archive/2026-10-01-baseline/prototype/app.jsx"] }
 ]
