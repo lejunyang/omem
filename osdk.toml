@@ -18,7 +18,6 @@ agents = ["universal", "claude-code"]
 
 [tasks]
 dev = "pnpm run dev"
-"dev:review" = "pnpm run dev:review"
 "retrieval:verify" = "bun scripts/live-retrieval-smoke.ts"
 build = "pnpm run build"
 test = "pnpm run test"

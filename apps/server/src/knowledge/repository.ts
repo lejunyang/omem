@@ -40,7 +40,7 @@ export function currentMaterials(store: Store): KnowledgeMaterial[] {
 
 /** Validate the exact source/derived distinction and every inline reference.
  * Semantic correctness is checked separately by an independent model role. */
-export function validateKnowledgeDocument(document: KnowledgeDocument, materials: Map<string, KnowledgeMaterial>, articles: Map<string, KnowledgeArticle>, offered?: Set<string>) {
+export function validateKnowledgeDocument(document: KnowledgeDocument, materials: Map<string, KnowledgeMaterial>, articles: Map<string, KnowledgeArticle>, offered?: Set<string>, allowMissingHistorical = false) {
   knowledgeDocumentSchema.parse(document);
   const citations = new Map(document.citations.map(c => [c.key, c]));
   if (citations.size !== document.citations.length) throw Error("Duplicate citation keys");
@@ -56,12 +56,12 @@ export function validateKnowledgeDocument(document: KnowledgeDocument, materials
     if (offered && !offered.has(`${c.target.kind}:${c.target.key}`)) throw Error(`Reference was not offered: ${c.target.key}`);
     if (c.target.kind === "article") {
       const target = articles.get(c.target.key);
-      if (!target) throw Error(`Unknown article ${c.target.key}`);
+      if (!target) { if (allowMissingHistorical) continue; throw Error(`Unknown article ${c.target.key}`); }
       if (c.target.section && !target.document.sections.some(s => s.key === c.target.section)) throw Error(`Unknown section ${c.target.section}`);
       continue;
     }
     const m = materials.get(c.target.key);
-    if (!m) throw Error(`Unknown material ${c.target.key}`);
+    if (!m) { if (allowMissingHistorical) continue; throw Error(`Unknown material ${c.target.key}`); }
     if (m.images.length && !m.text.trim()) continue;
     const start = c.target.startLine, end = c.target.endLine;
     if (!start || !end || end < start || end > m.lineCount) throw Error(`Invalid range for ${c.key}: ${m.title} has ${m.lineCount} lines`);
@@ -141,6 +141,28 @@ export class KnowledgeRepository {
     return this.get(artifact.document.key)!;
   }
 
+  /** Restore an already reviewed historical version, retaining its fixed inputs.
+   * Never promotes stale content or replaces an existing head. */
+  restoreHistorical(artifact: KnowledgeArtifact, asHead = true) {
+    if (artifact.version !== 1 || artifact.review?.verdict !== "accepted" || !artifact.generation?.model || !artifact.review.model) throw Error("Missing review provenance");
+    const materials = new Map<string, KnowledgeMaterial>(), articles = new Map<string, KnowledgeArticle>();
+    for (const dependency of artifact.dependencies) {
+      if (dependency.kind === "material") {
+        const entry = this.resolveMaterial(dependency.key, dependency.digest);
+        if (entry) materials.set(dependency.key, entry.material);
+      } else {
+        const article = this.get(dependency.key, dependency.digest);
+        if (article) articles.set(dependency.key, article);
+      }
+    }
+    validateKnowledgeDocument(artifact.document, materials, articles, undefined, true);
+    const revision = digest(stableDigest(artifact));
+    this.store.tx(() => {
+      this.store.db.prepare("INSERT OR IGNORE INTO knowledge_revisions VALUES(?,?,?,?)").run(revision, artifact.document.key, JSON.stringify(artifact), artifact.generation.at);
+      if (asHead) this.store.db.prepare("INSERT OR IGNORE INTO knowledge_heads VALUES(?,?,0)").run(artifact.document.key, revision);
+    });
+  }
+
   /** Refresh checks content identity, including dependencies on derived pages. */
   refresh() {
     const materials = new Map(this.materials().map(m => [m.key, m.digest]));
@@ -159,7 +181,10 @@ export class KnowledgeRepository {
   resolveMaterial(key: string, expectedDigest?: string) {
     const current = this.materials().find(m => m.key === key);
     if (current && (!expectedDigest || current.digest === expectedDigest)) return { material: current, current: true };
-    for (const row of this.store.db.prepare("SELECT id FROM revisions ORDER BY created_at DESC").all() as Row[]) {
+    const separator = key.indexOf(":");
+    const namespace = key.startsWith("omem:") ? "file" : key.slice(0, separator);
+    const externalId = key.startsWith("omem:") ? key : key.slice(separator + 1);
+    for (const row of this.store.db.prepare("SELECT r.id FROM revisions r JOIN sources s ON s.id=r.source_id WHERE s.namespace=? AND (s.external_id=? OR s.id=?) ORDER BY r.created_at DESC").all(namespace, externalId, externalId) as Row[]) {
       const m = materialFromRevision(this.store, String(row.id));
       if (m?.key === key && (!expectedDigest || m.digest === expectedDigest)) return { material: m, current: false };
     }
