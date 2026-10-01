@@ -87,6 +87,10 @@ it("investigates a requested range beyond the entry preview before writing and i
     let result: unknown;
     if (input.roleId === "knowledge-researcher") {
       researchRound++;
+      if (researchRound > 1) {
+        expect(JSON.stringify(input.context.task!.observations)).not.toContain("The delivery worker");
+        expect(input.context.materials.map(m => m.text).join("\n")).toContain("L150 The delivery worker retries pending messages.");
+      }
       result = { schema_version: 1, ready: researchRound > 1, findings: "Follow the delivery behavior", gaps: [], requests: researchRound === 1 ? [{ kind: "read", materialKey: "manual:example", startLine: 140, endLine: 150 }] : [] };
     } else if (input.roleId === "knowledge-verifier") {
       expect(input.context.task!.reading).toMatchObject({ goal: "Explain retry behavior" });

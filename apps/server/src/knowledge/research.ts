@@ -16,7 +16,7 @@ export class MaterialResearch {
   }
 
   catalog() {
-    return this.materials.filter(m => !m.path?.startsWith("docs/archive/") && !m.path?.startsWith(".agents/") && !/lock\.(?:json|yaml)$/.test(m.path ?? "")).map(m => ({ key: m.key, path: m.path, title: m.title, lines: m.lineCount }));
+    return this.materials.filter(m => !m.path?.startsWith("docs/archive/") && !m.path?.startsWith(".agents/") && !/lock\.(?:json|yaml)$/.test(m.path ?? "")).map(m => ({ key: m.key, ...(m.path && m.title !== m.path ? { title: m.title } : {}), lines: m.lineCount }));
   }
 
   private size() {
@@ -37,13 +37,14 @@ export class MaterialResearch {
       offer.ranges = merged; this.offers.set(material.key, offer);
     }
     return { key: material.key, title: material.title, range, totalLines: material.lineCount,
-      outline: materialSections(material).slice(0, 35), text: text.split("\n").map((line, i) => `L${range.start + i} ${line}`).join("\n") };
+      outline: materialSections(material).slice(0, 35) };
   }
 
   search(query: string) {
     const terms = tokenize(query), historical = /历史|当时|archive|history|decision/i.test(query);
     if (!terms.length) return [];
-    const candidates = this.materials.filter(m => historical || !m.path?.startsWith("docs/archive/")).map(material => {
+    const paths = this.materials.filter(m => m.path && query.includes(m.path));
+    const candidates = (paths.length ? paths : this.materials).filter(m => historical || !m.path?.startsWith("docs/archive/")).map(material => {
       const lines = material.text.split("\n"), title = (material.path ?? material.title).toLowerCase();
       const matches = lines.flatMap((line, i) => {
         const score = terms.filter(t => line.toLowerCase().includes(t)).length;
@@ -51,10 +52,13 @@ export class MaterialResearch {
       }).sort((a, b) => b.score - a.score);
       const score = terms.filter(t => title.includes(t)).length * 3 + (matches[0]?.score ?? 0);
       return { material, matches, score };
-    }).filter(c => c.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);
+    }).filter(c => c.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
     return candidates.map(({ material, matches }) => ({ key: material.key, path: material.path, lines: material.lineCount,
       outline: materialSections(material).slice(0, 16),
-      matches: matches.slice(0, 2).map(hit => this.read(material.key, Math.max(1, hit.line - 3), hit.line + 6)) }));
+      matches: matches.slice(0, 2).map(hit => {
+        const result = this.read(material.key, Math.max(1, hit.line - 3), hit.line + 6);
+        return "range" in result ? { range: result.range } : result;
+      }) }));
   }
 
   execute(requests: KnowledgeResearch["requests"]) {
