@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount } from "vue";
+import { ref, watch, nextTick, onBeforeUnmount, useId } from "vue";
 import OmButton from "./OmButton.vue";
 import OmIcon from "./OmIcon.vue";
 const props = defineProps<{
@@ -10,6 +10,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: []; back: [] }>();
 const dialog = ref<HTMLDialogElement>();
+const titleId = useId();
 let previous: HTMLElement | null = null;
 watch(
   () => props.open,
@@ -32,7 +33,7 @@ onBeforeUnmount(() => dialog.value?.close());
     ref="dialog"
     class="om-dialog"
     :class="{ wide: sideOpen }"
-    aria-labelledby="om-dialog-title"
+    :aria-labelledby="titleId"
     @cancel.prevent="emit('back')"
     @click="
       (e) => {
@@ -44,7 +45,7 @@ onBeforeUnmount(() => dialog.value?.close());
       <header>
         <div>
           <small v-if="depth">证据路径 · 第 {{ depth }} 层</small>
-          <h2 id="om-dialog-title">{{ title }}</h2>
+          <h2 :id="titleId">{{ title }}</h2>
         </div>
         <OmButton variant="ghost" aria-label="关闭全部" @click="emit('close')"
           ><OmIcon name="close"

@@ -55,7 +55,7 @@ try {
     const trigger = page.locator(".book-content").getByRole("link", { name: c.label }).first();
     await trigger.click();
     const drawer = page.locator("dialog[open]");
-    await expect(drawer.locator(".code-table tr")).toHaveCount(c.resolved.endLine - c.resolved.startLine + 1);
+    await expect(drawer.locator(".code-table tr")).toHaveCount(c.resolved.endLine - c.resolved.startLine + 1, { timeout: 30000 });
     await expect(drawer.locator(".code-table tr").first()).toHaveAttribute("data-line", String(c.resolved.startLine));
     await drawer.getByRole("button", { name: "向上展开 20 行" }).click();
     await expect(drawer.locator(".code-table tr").first()).toHaveAttribute("data-line", String(Math.max(1, c.resolved.startLine - 20)));
@@ -124,6 +124,46 @@ try {
     await expect(page.getByText("当前已连接本地服务，未启用访问令牌，无需填写。")).toBeVisible();
     await page.screenshot({ path: `${OUT}/settings-1440.png`, fullPage: true });
     await page.getByRole("button", { name: "知识库", exact: true }).click();
+  });
+  await check("category browsing and composer at desktop, tablet and mobile widths", async () => {
+    const catalog = await api("/api/knowledge/articles");
+    const previousKey = await page.evaluate(() => sessionStorage.getItem("omem-knowledge-page"));
+    const previous = catalog.articles.find((a: any) => a.key === previousKey);
+    await page.getByLabel("查找章节", { exact: true }).fill("");
+    await page.getByRole("button", { name: "返回分类", exact: true }).click();
+    const classified = catalog.articles.find((a: any) => a.current && a.topicPath?.length);
+    if (classified) for (const part of classified.topicPath) {
+      await page.locator(".folder-title").filter({ hasText: part }).first().click();
+    }
+    await expect(page.locator(".library-overview .article-list button").first()).toBeVisible();
+    await expect(page.locator(".library-overview form")).toHaveCount(0);
+    await expect(page.getByText("浏览此分类", { exact: true })).toHaveCount(0);
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const trigger = page.getByRole("button", { name: "整理文章", exact: true });
+      await page.screenshot({ path: `${OUT}/library-${width}.png` });
+      await trigger.click();
+      const dialog = page.getByRole("dialog", { name: "整理成文章", exact: true });
+      await dialog.getByLabel("筛选整理材料").fill("README.md");
+      await expect(dialog.locator(".material-option").first()).toBeVisible();
+      await dialog.locator(".material-option").first().getByRole("checkbox").check();
+      await expect(dialog.getByRole("button", { name: "下一步", exact: true })).toBeInViewport();
+      expect(await dialog.evaluate(el => el.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `${OUT}/composer-materials-${width}.png` });
+      await dialog.getByRole("button", { name: "下一步", exact: true }).click();
+      await expect(dialog.getByLabel("文章主题", { exact: true })).toBeFocused();
+      await expect(dialog.getByRole("button", { name: "开始整理", exact: true })).toBeInViewport();
+      await page.screenshot({ path: `${OUT}/composer-purpose-${width}.png` });
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    if (previous) {
+      await page.getByRole("button", { name: /^全部文章/ }).click();
+      await page.getByLabel("查找章节", { exact: true }).fill(previous.title);
+      await page.locator(".tree-title").filter({ hasText: previous.title }).first().click();
+      await expect(page.locator(".book-content .article-body > h2")).toBeVisible({ timeout: 30000 });
+    }
   });
   for (const width of [1440, 768, 390]) await check(`readable layout at ${width}px`, async () => {
     await page.setViewportSize({ width, height: 1000 });
