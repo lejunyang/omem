@@ -41,9 +41,13 @@ export class MaterialResearch {
   }
 
   search(query: string) {
-    const terms = tokenize(query), historical = /历史|当时|archive|history|decision/i.test(query);
+    // Paths select a scope; their common directory tokens are not search terms.
+    const scopes = (query.match(/(?:[\w.-]+\/)+[\w./-]+/g) ?? []).filter(path => this.materials.some(m => m.path === path || m.path?.startsWith(path.replace(/\/$/, "") + "/")));
+    const paths = scopes.length ? this.materials.filter(m => scopes.some(path => m.path === path || m.path?.startsWith(path.replace(/\/$/, "") + "/"))) : [];
+    const terms = tokenize(scopes.reduce((text, path) => text.replaceAll(path, " "), query));
+    const historical = /历史|当时|archive|history|decision/i.test(query);
+    if (!terms.length && paths.length) return paths.slice(0, 5).map(m => this.read(m.key, 1, Math.min(m.lineCount, 80)));
     if (!terms.length) return [];
-    const paths = this.materials.filter(m => m.path && query.includes(m.path));
     const candidates = (paths.length ? paths : this.materials).filter(m => historical || !m.path?.startsWith("docs/archive/")).map(material => {
       const lines = material.text.split("\n"), title = (material.path ?? material.title).toLowerCase();
       const matches = lines.flatMap((line, i) => {
