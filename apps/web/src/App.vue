@@ -84,7 +84,7 @@ const evidence = ref<InstanceType<typeof EvidenceReader>>();
 const query = ref("");
 const sourceQuery = ref("");
 const results = ref<
-  { id: string; text: string; title: string; version: number }[]
+  { id: string; text: string; title: string; version: number; section?: { title: string; startLine: number; endLine: number } | null }[]
 >([]);
 const history = ref<{ id: string; title: string; version: number }[]>([]);
 const options = ref<
@@ -529,9 +529,9 @@ onBeforeUnmount(() => {
     </div>
     <section v-if="query" class="page">
       <h1>搜索“{{ query }}”</h1>
-      <p class="muted">当前使用精确文本检索；语义检索尚未接入。</p>
+      <p class="muted">结合原文、代码名称与已有知识查找。已启用的中文语义索引也会参与召回。</p>
       <OmPanel v-for="r in results" :key="r.id" :title="r.title" class="stack"
-        ><p class="excerpt">{{ r.text }}</p>
+        ><p v-if="r.section" class="search-section">{{ r.section.title }} · 第 {{ r.section.startLine }}–{{ r.section.endLine }} 行</p><p class="excerpt">{{ r.text }}</p>
         <OmCitation
           label="查看固定片段"
           :version="r.version"

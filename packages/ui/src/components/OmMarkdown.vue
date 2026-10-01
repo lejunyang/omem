@@ -147,19 +147,27 @@ function onClick(ev: MouseEvent) {
 <style scoped>
 .om-markdown {
   font: 16px/1.9 var(--om-sans);
+  overflow-wrap: anywhere;
 }
+.md-body :deep(> :first-child) { margin-top: 0; }
+.md-body :deep(> :last-child) { margin-bottom: 0; }
+.md-body :deep(p) { margin: 0 0 20px; }
+.md-body :deep(ul), .md-body :deep(ol) { margin: 16px 0 24px; padding-left: 1.6em; }
+.md-body :deep(li + li) { margin-top: 10px; }
+.md-body :deep(li > p) { margin: 8px 0; }
 .md-body :deep(code) {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   background: var(--om-soft);
   padding: 1px 5px;
   border-radius: 4px;
-  font-size: 12.5px;
+  font-size: 0.86em;
 }
 .md-body :deep(pre) {
   background: var(--om-paper);
   border: 1px solid var(--om-line);
   border-radius: 6px;
-  padding: 12px 14px;
+  padding: 18px 20px;
+  margin: 24px 0;
   overflow: auto;
 }
 .md-body :deep(pre code) {
@@ -175,19 +183,22 @@ function onClick(ev: MouseEvent) {
 .md-body :deep(.om-inline-citation.unavailable) { color: var(--om-muted); cursor: default; }
 .md-body :deep(blockquote) {
   border-left: 3px solid var(--om-line);
-  margin: 8px 0;
-  padding: 2px 14px;
+  margin: 24px 0;
+  padding: 8px 20px;
   color: var(--om-secondary);
 }
 .md-body :deep(table) {
   border-collapse: collapse;
-  margin: 8px 0;
+  margin: 24px 0;
 }
 .md-body :deep(th),
 .md-body :deep(td) {
   border: 1px solid var(--om-line);
-  padding: 4px 10px;
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
 }
+.md-body :deep(th) { background: var(--om-paper); font-weight: 600; }
 .md-failed pre {
   white-space: pre-wrap;
 }

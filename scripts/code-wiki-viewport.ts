@@ -38,7 +38,7 @@ try {
     const meta = catalog.articles.find((a: any) => a.key === "omem:apps/server/src/agent-runtime/gateway.ts");
     expect(meta).toBeTruthy();
     await page.getByLabel("查找章节", { exact: true }).fill("apps/server/src/agent-runtime/gateway.ts");
-    await page.getByRole("button", { name: meta.title, exact: true }).click();
+    await page.locator(".tree-title").filter({ hasText: meta.title }).click();
     const article = await api("/api/knowledge/articles/" + encodeURIComponent(meta.key));
     const groups = await page.locator(".book-content .om-paragraph-references").evaluateAll(nodes => nodes.map(n => [...n.querySelectorAll("a")].map(a => decodeURIComponent(a.getAttribute("href")!.split("/").pop()!))));
     for (const keys of groups) {

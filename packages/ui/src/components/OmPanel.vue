@@ -17,7 +17,10 @@ defineProps<{ title?: string }>();
   border: 1px solid var(--om-line);
   background: var(--om-panel);
   border-radius: var(--om-radius);
+  min-width: 0;
 }
+.om-panel :deep(> p:first-child) { margin-top: 0; }
+.om-panel :deep(> p:last-child) { margin-bottom: 0; }
 header {
   display: flex;
   align-items: center;
@@ -30,8 +33,9 @@ h3 {
 }
 footer {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
   margin-top: 20px;
 }
+@media (max-width: 700px) { .om-panel { padding: 20px 16px; } }
 </style>
