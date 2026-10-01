@@ -4,6 +4,7 @@
 
 - [主助手、会话、检索与受治理记忆](knowledge/articles/e707b04e3e968a054cd6ab20d7f82cc2dac61d74243de62b9bdd86142c620562.md)
 - [问题背景、研究取舍与历史演进](knowledge/articles/fdbbfaddc8de223ebcb15da97de3bf731044f8d79eb1cb8c9df9089047c20fda.md)
+- [证据、知识生成与递归阅读](knowledge/articles/6b734c7cdc9d476ff9167d11ed7df68b14c2a2d9bcd5bbb8e5e559398a790494.md)
 - [当前实现进展、已知限制与未决问题](knowledge/articles/f146bcb111d5896d7a8ad00482ccd15d8cb67f066a67b3906a0102a36f8b575c.md)
 
 ## 模块与材料
@@ -27,7 +28,7 @@
 - [docs-implementation · 模块理解 · 专题 1](knowledge/articles/3d8bcd6d032e82be0c09f76762de7b216dd197fd8e859d1d4d828cbee0f41987.md)
 - [docs-implementation · 模块理解 · 专题 2](knowledge/articles/b26b2801da1ba59559f15d4a295604f7de76247ed1018609fce4d74427fd36cc.md)
 - [统一知识流水线、Code Wiki 与验证边界](knowledge/articles/f8c11c2b83ccb5d68da4c592f7ea00d013ca3a6aaa4702d6f2e383595e9b2eb6.md)
-- [统一知识流程、阶段进展与验证边界](knowledge/articles/8cacd4aed1115e3d8ab47054816bd07d2ac3d155756ba0127a3028ac0c880fd6.md)
+- [docs-implementation：统一知识流程、运行进展与验证边界](knowledge/articles/8cacd4aed1115e3d8ab47054816bd07d2ac3d155756ba0127a3028ac0c880fd6.md)
 - [docs/interaction-design.md · 模块理解](knowledge/articles/4ab1816d9bf71284c6444f35aed1dcfb288e94a6f5c56510943468ace54861cc.md)
 - [docs-prototype：可追溯知识交互的离线原型](knowledge/articles/9c86be659ffe238413d8fab296ee85a9d95072d8f2723190c4396d5ca80d66aa.md)
 - [docs-prototype：可追溯知识交互的离线原型](knowledge/articles/cdecc569ce3f636b9226d85fbc8ed728d376d38506dcf6b39551394f8dc44984.md)
@@ -57,9 +58,9 @@
 - [ui · 模块理解 · 专题 1](knowledge/articles/1b40261c65b451f408e0ccbf7d88005ab4224d221aceb724a01f04d81f067d44.md)
 - [共享 UI：可追溯知识阅读与应用界面基础](knowledge/articles/6607c2c3bf5f37d90f40dbb9be65efb451562d2e65e1b7437d9c1a7e6198dfcc.md)
 - [web · 模块理解](knowledge/articles/14774f39872f6fa460a9730fa28549037f0c8d439cbede87fe5445fda85c616f.md)
-- [web · 模块理解 · 专题 1](knowledge/articles/01a1d59970b64ce9a240d80dd8127c069f020520ca789eec175c9af94250ccfc.md)
+- [Web 模块：个人记忆与仓库知识的统一交互层](knowledge/articles/01a1d59970b64ce9a240d80dd8127c069f020520ca789eec175c9af94250ccfc.md)
 - [Web 模块专题 2：Code Wiki 的可追溯阅读与下钻](knowledge/articles/94218fbf87841cfe339659af5d4b326fd0c168331762f84c04923ee3c1b8985b.md)
-- [Web 模块：可追溯知识阅读与本地接口边界](knowledge/articles/1ed2f14c8dbc2b0e8a369de4de7877707fecf84d98b7996ff88fafb99dec43fa.md)
+- [Web · 可追溯知识阅读与仓库评审接入](knowledge/articles/1ed2f14c8dbc2b0e8a369de4de7877707fecf84d98b7996ff88fafb99dec43fa.md)
 - [web · 模块理解 · 专题 4](knowledge/articles/ad84fde4ee0e2a675dfab86d12516ff51be2c50134d04ce3bbb72ecdd301e1d5.md)
 - [omem 实施与仓库知识维护约定](knowledge/articles/3591087d38d6710915b3872a65ea82f23a8f0287e486eee9d206fb520b0140f3.md)
 - [omem 项目总览与能力边界](knowledge/articles/4c55b33ace6626adffcb745e2d8b3732a0dd8064f2f8d5a89ca3b886a364aac6.md)
@@ -275,6 +276,7 @@
 - [知识功能实现验证记录](knowledge/articles/bdb7f03a6b11e14c8d0fc0422224be587295dc20ec8b9b9d0454406960ec3f42.md)
 - [ACP 实机结果快照](knowledge/articles/cf5a2e0a6f409814a283e4db5c2ac3e7769fee9f836ce993b715ca2741389a47.md)
 - [飞书文档导入实机快照](knowledge/articles/f8c37898be208ca2f2b6070cf2e6a6ee735e7342d27e08d168258e33ab8ef4f3.md)
+- [Review 启动模式修复与环境恢复记录](knowledge/articles/22dd4e1a9f6e19a284c9a26685c63cee8a816685a1054da22da3d2c1fa9da7e5.md)
 - [实现状态：统一知识、助手与 Code Wiki 的阶段性进展](knowledge/articles/ea3b10c73196cbb2d4fbcdb64dda5f83612fc7e831d8c0ace4d3f9507a4c899b.md)
 - [以证据阅读为中心的交互设计](knowledge/articles/c204455873b70773ef0d2dc203ec5317b85c375df8cb34309589ebd983135401.md)
 - [交互原型的目录忽略配置](knowledge/articles/be532688397f7b87ce184828eadc8dc0595395fc8257380e8a6d8011b8e3ac77.md)

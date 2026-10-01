@@ -3,48 +3,48 @@
   "document": {
     "key": "omem:scripts/code-wiki-viewport.ts",
     "title": "Code Wiki 浏览器验收脚本",
-    "summary": "该 Playwright 脚本从真实 Code Wiki 页面验收响应式布局、知识正文、证据 Trail、深链重载后的基本可读性、Markdown 安全、内部标识隐藏和焦点归还，并保存截图与检查结果。它依赖已启动且含指定代码图数据的 review 服务；第四帧、深链恢复和所谓“模型不可用”检查均存在断言边界，不能视为对应能力的完整证明。",
+    "summary": "该脚本以无头 Chromium 和运行中的 review 服务验收 Code Wiki 功能切片，覆盖启动恢复、CDP 模拟视口布局、模块正文、证据 Trail 导航、深链重载、安全渲染、标识清洁与焦点恢复。它通过稳定名称操作界面；深链、跨文件关系和模型降级场景的结论均受现有断言范围限制。",
     "category": "tests",
     "sections": [
       {
         "key": "purpose_setup",
         "title": "目标与运行前提",
-        "body": "脚本是 Code Wiki 功能切片的外部浏览器验收入口：默认访问本机 5181，可由环境变量覆盖；截图写入实现文档目录，Chromium 以无头模式运行。执行前先通过代码图按稳定路径确认 `runtime.ts` 与 `memory/service.ts` 存在，不把数据库 ID 写死在脚本中。[[c1]]\n\n页面运行期间会收集页面异常以及高亮、动态导入相关的部分控制台警告或错误。[[c2]] 全部检查结束后要求错误集合为空；无论检查成功还是抛错，`finally` 都会关闭浏览器并输出已通过检查与错误列表。[[c10]] 脚本本身不负责启动服务或构造测试数据库。"
+        "body": "脚本通过 Playwright 启动无头 Chromium，以 `OMEM_WEB_URL` 指定服务地址，并允许显式选择 Chromium 可执行文件；截图写入实现文档目录。运行前请求代码图，按稳定路径确认 `runtime.ts` 与 `memory/service.ts` 已同步，因此它依赖可访问的 review API、预置代码图和浏览器环境，并非自包含单元测试。[[c1]]\n\n运行期间收集页面异常，以及与高亮或动态导入有关的控制台警告和错误，最终要求错误集合为空。[[c2]] 无论中途检查是否失败，`finally` 都会关闭浏览器并输出已完成检查和错误列表。[[c9]]"
       },
       {
-        "key": "responsive_content",
-        "title": "响应式布局与知识内容",
-        "body": "脚本以 1440、768、390 三种真实 viewport 打开概览页，断言页面没有横向溢出并分别截图；随后进入 assistant 模块，要求职责文本可见、没有常见加载失败提示、知识正文或模块条目非空，且主内容长度超过 300 字，用于排除空壳页面。[[c3]]\n\n移动端另行确认知识内容可见，并在点击 `runtime.ts` 后要求 Trail 抽屉宽度超过视口的 95%。[[c4]] 这些检查覆盖基本尺寸和内容可用性，但未验证断点排版细节、触控手势、纵向溢出或截图视觉差异。"
+        "key": "startup_layout_content",
+        "title": "启动恢复、布局与正文验收",
+        "body": "启动场景暂时把 review 健康接口改写为 503，断言界面显示连接中和服务未就绪；等待恢复时不得轮询个人域接口，解除故障后仓库知识入口应自行出现。这验证了 review 模式对短暂 503 的独立恢复，但没有覆盖持续故障、超时上限或其他错误码。[[c3]]\n\n布局测试通过 `setViewportSize` 在 1440、768、390 三种 CDP 模拟的浏览器视口尺寸下检查文档级横向溢出并保存截图，不能据此推导真实设备或多浏览器兼容性。模块页还必须出现职责内容、足量正文及至少一个知识正文或模块条目，同时不得显示加载失败，以排除空壳和占位渲染。[[c4]]"
       },
       {
         "key": "trail_flow",
-        "title": "证据 Trail 的核心交互流程",
-        "body": "主流程从模块页打开 `runtime.ts` 文件帧，验证源码行、高亮关键字及字重；再沿同文件的 `governCreateTask` 边进入符号或范围帧，以面包屑和源码行数确认压栈。[[c5]] 随后用 Escape 返回文件帧，沿可用边继续下钻，并检查弹栈与面包屑跳转。[[c6]]\n\n深链检查保存 UI 生成的 `/trail/` URL 后重载，只断言重载后至少存在一个面包屑且没有获取失败，因此至多证明恢复了一个可读 Trail 帧，不能证明重载前后的完整帧数量、顺序和内容等价。第四帧点击也受可用边是否存在影响，最终仅要求不少于两个面包屑，尚未严格证明形成四层栈。"
+        "title": "证据 Trail 的核心交互",
+        "body": "脚本从模块页按可见文件名打开 `runtime.ts`，检查源码行、语法高亮及样式，再沿同文件的 `governCreateTask` 调用边进入符号范围帧。[[c5]] 随后验证 Escape 弹出一层、面包屑跳回旧帧，并重新加载界面生成的 `/trail/` 地址；重载断言只要求至少出现一个面包屑且没有抓取错误，因此仅证明深链恢复了可用 Trail 帧。先前关于恢复“同一完整阅读栈”的结论已被替代，因为脚本没有比较重载前后的帧数、类型、面包屑或源码内容。[[c6]]\n\n关系下钻选择当前页面首个未禁用边，主要断言面包屑增长且没有抓取错误；它能证明 Trail 可导航，却不能确认所选边具有预期的跨文件来源、目标和关系语义。第四帧在没有可用边时还会跳过点击，只保留较弱的栈状态断言。[[c6]]"
       },
       {
         "key": "security_accessibility_limits",
-        "title": "安全、可读标识、焦点与降级边界",
-        "body": "安全检查先取得 fragment ID 并挂载真实 `OmMarkdown`，再通过 Vue 组件实例注入含脚本、事件处理器、`javascript:` 链接、SVG 和 iframe 的载荷；断言载荷没有执行，危险节点和属性也未保留。[[c7]] 这验证了固定载荷的客户端清洗效果，但依赖 Vue 私有字段，不能代表所有编码方式或内容入口均已覆盖。\n\n脚本还禁止抽屉可见文本暴露内部符号、文件、片段 ID 或 UUID，并要求关闭全部帧后焦点回到 assistant 触发卡片。[[c8]] 所谓“模型不可用”步骤实际上只访问普通概览、检查通用文案并截图，没有构造模型故障，也没有断言降级原因或原始代码图仍可操作；它不能作为降级展示已经通过验收的证据。[[c9]]"
+        "title": "安全、可见性与未覆盖边界",
+        "body": "安全检查通过搜索取得片段标识，在真实挂载的 `OmMarkdown` 中注入脚本、图片错误处理器、`javascript:` 链接、SVG、iframe 和鼠标事件载荷。断言确认载荷未执行，且检查结果中没有 `script`、`img`、`svg`、`iframe`、`onerror` 与 `javascript:`；但没有直接检查保留的 `<b>` 是否仍含 `onmouseover`，故不能概括为全部事件属性均已清除。[[c7]]\n\n可见文本检查仅确认抽屉中未出现正则覆盖的 `sym_`、`file_`、`frag_` 或 `fragment_` 前缀标识、32 位以上十六进制串及标准 UUID 格式。先前“不会泄露任何内部标识或 UUID”的宽泛结论已被这一明确范围替代。脚本还验证关闭全部帧后焦点返回模块卡片，以及 390 像素视口下抽屉宽度超过视口的 95%。[[c8]] 所谓“模型不可用”场景只是重新打开概览并检查“可追溯的知识”文字，既未注入模型或知识接口故障，也未继续操作原始代码图，因此不能证明故障原因或降级后的图浏览能力。[[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "浏览器与代码图初始化",
-        "reason": "支持默认地址、截图目录、无头浏览器配置以及按稳定路径确认前置代码图数据的说明。",
+        "label": "浏览器启动与代码图前置检查",
+        "reason": "支持浏览器配置、服务地址、截图目录，以及按稳定路径确认代码图前置数据的说明。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 16,
+          "startLine": 12,
           "endLine": 44
         },
-        "quote": "const BASE = process.env.OMEM_WEB_URL || \"http://127.0.0.1:5181\";\nconst OUT = \"docs/implementation/screenshots\";\nmkdirSync(OUT, { recursive: true });\n\nconst browser = await chromium.launch({\n  headless: true,\n  ...(process.env.OMEM_CHROMIUM ? { executablePath: process.env.OMEM_CHROMIUM } : {}),\n});\n\nconst errors: strin"
+        "quote": "import { chromium, expect } from \"@playwright/test\";\nimport { setTimeout as sleep } from \"node:timers/promises\";\nimport { mkdirSync } from \"node:fs\";\n\nconst BASE = process.env.OMEM_WEB_URL || \"http://127.0.0.1:5181\";\nconst OUT = \"docs/implementation/screenshots\";\nmkdirSync(OUT, { recursive: true });\n\nconst browser = aw"
       },
       {
         "key": "c2",
-        "label": "页面错误收集",
-        "reason": "支持页面异常监听及对高亮、动态导入相关控制台消息的筛选范围。",
+        "label": "页面异常与控制台消息收集",
+        "reason": "支持运行期间收集页面异常及特定高亮、动态导入警告或错误的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -55,145 +55,123 @@
         "quote": "try {\n  const page = await browser.newPage();\n  page.on(\"pageerror\", (e) => errors.push(e.message));\n  page.on(\"console\", (message) => {\n    if (/highlight|dynamic import/i.test(message.text()) && [\"warning\", \"error\"].includes(message.type())) errors.push(message.text());\n  });"
       },
       {
-        "key": "c10",
-        "label": "最终校验、浏览器清理与结果输出",
-        "reason": "支持错误集合最终断言，以及 finally 中关闭浏览器并输出检查和错误列表的论断。",
+        "key": "c9",
+        "label": "最终错误断言与浏览器清理",
+        "reason": "支持最终要求错误集合为空、关闭浏览器并输出检查结果的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 275,
-          "endLine": 278
+          "startLine": 296,
+          "endLine": 300
         },
-        "quote": "  expect(errors).toEqual([]);\n} finally {\n  await browser.close();\n  console.log(JSON.stringify({ checks, errors }, null, 2));"
+        "quote": "  expect(errors).toEqual([]);\n} finally {\n  await browser.close();\n  console.log(JSON.stringify({ checks, errors }, null, 2));\n}"
       },
       {
         "key": "c3",
-        "label": "多视口与模块正文断言",
-        "reason": "支持三种视口的横向溢出检查、截图，以及模块职责正文、加载错误和内容长度断言。",
+        "label": "Review API 启动恢复测试",
+        "reason": "支持模拟健康接口返回 503、禁止个人接口轮询以及恢复后显示仓库知识入口的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/code-wiki-viewport.ts",
           "startLine": 61,
-          "endLine": 85
+          "endLine": 80
+        },
+        "quote": "  await check(\"startup: unavailable review API waits and recovers without personal polling\", async () => {\n    let unavailable = true;\n    const personalRequests: string[] = [];\n    page.on(\"request\", request => {\n      const path = new URL(request.url()).pathname;\n      if (/^\\/api\\/(health|profiles|sources|tasks|noti"
+      },
+      {
+        "key": "c4",
+        "label": "CDP 模拟视口与模块正文检查",
+        "reason": "支持三种浏览器视口尺寸的横向溢出检查、截图和模块正文非空断言；结合文件注释说明这些尺寸来自 CDP 模拟。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/code-wiki-viewport.ts",
+          "startLine": 82,
+          "endLine": 106
         },
         "quote": "  for (const width of [1440, 768, 390]) {\n    await page.setViewportSize({ width, height: 900 });\n    await page.goto(BASE + \"/#/overview\");\n    await sleep(2500);\n    await check(`viewport ${width}: no horizontal overflow`, async () => {\n      const overflow = await page.evaluate(\n        () => document.documentElemen"
       },
       {
-        "key": "c4",
-        "label": "390 像素移动端抽屉检查",
-        "reason": "支持窄屏知识内容可见、点击文件行以及抽屉接近全宽的移动端断言。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 259,
-          "endLine": 273
-        },
-        "quote": "  // --- 390: drawer fills viewport, no overflow -----------------------------\n  await page.setViewportSize({ width: 390, height: 844 });\n  await page.goto(BASE + \"/#/module/assistant\");\n  await sleep(3000);\n  await check(\"390: curated note renders + drawer full-width\", async () => {\n    await expect(page.locator(\".kno"
-      },
-      {
         "key": "c5",
-        "label": "文件帧与同文件调用边",
-        "reason": "支持从 runtime.ts 源码帧进入 governCreateTask 符号或范围帧，以及源码高亮和面包屑增长的流程。",
+        "label": "文件帧与符号帧下钻",
+        "reason": "支持按 runtime.ts 打开源码、检查语法高亮并沿 governCreateTask 边进入符号帧的流程。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 87,
-          "endLine": 110
+          "startLine": 108,
+          "endLine": 131
         },
         "quote": "  // --- Frame 1: open runtime.ts file row, assert source lines ---------------\n  await check(\"frame1 file: runtime.ts source renders\", async () => {\n    await page.locator(\".om-trail, main\").locator(\"button\").filter({ hasText: \"runtime.ts\" }).first().evaluate((el:any)=>el.click());\n    await sleep(3000);\n    const t ="
       },
       {
         "key": "c6",
-        "label": "弹栈、跳转与深链重载",
-        "reason": "支持 Escape 回退、边下钻、面包屑跳转及深链重载后的实际断言，并表明第四帧点击是条件执行、深链仅要求至少一个帧。",
+        "label": "Trail 回退、关系下钻与深链重载",
+        "reason": "支持 Escape 回退、关系边下钻、面包屑跳转及深链重载，也界定了完整栈等价和固定关系语义尚未被断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 112,
-          "endLine": 171
+          "startLine": 133,
+          "endLine": 192
         },
         "quote": "  // --- Frame 3: Esc back to runtime.ts file frame, then drill an import edge --\n  await check(\"frame3: back to runtime.ts, then drill a real import edge\", async () => {\n    await page.keyboard.press(\"Escape\");\n    await sleep(900);\n    expect(await drawerText(page)).toContain(\"runtime.ts\");\n    expect(await page.loca"
       },
       {
         "key": "c7",
-        "label": "真实 Markdown 组件 XSS 验收",
-        "reason": "支持通过已挂载 OmMarkdown 注入固定恶意载荷，并检查执行副作用、危险节点、事件属性和 javascript 链接。",
+        "label": "真实 Markdown 组件的安全检查",
+        "reason": "支持恶意载荷的注入方式和实际检查项目，并表明 onmouseover 属性未被单独读取断言。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 174,
-          "endLine": 216
+          "startLine": 195,
+          "endLine": 237
         },
         "quote": "  // --- XSS: feed payload through the actually-mounted OmMarkdown component -\n  await check(\"xss: mounted OmMarkdown strips script/handlers/javascript:\", async () => {\n    // Deep-link a fragment trail frame so FragmentFrame's <OmMarkdown> mounts.\n    const s = await api<Array<{ id: string }>>(\"/api/review/search?q=\" "
       },
       {
         "key": "c8",
-        "label": "内部标识隐藏与焦点归还",
-        "reason": "支持可见抽屉文本不得出现内部 ID，以及关闭全部 Trail 后焦点回到 assistant 模块卡片的断言。",
+        "label": "标识格式、焦点、降级与移动抽屉检查",
+        "reason": "支持特定正则覆盖的标识格式检查、焦点恢复、概览文字检查和窄屏抽屉断言，同时界定模型故障未被显式模拟。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 218,
-          "endLine": 249
+          "startLine": 239,
+          "endLine": 294
         },
         "quote": "  // --- DOM hygiene: no raw symbol/file/fragment uuids in visible text ------\n  await check(\"dom: no raw sym_/file_/fragment uuid in visible drawer text\", async () => {\n    const found = await page.evaluate(() => {\n      const txt = document.querySelector(\".om-trail\")!.innerText;\n      const re = /(sym_[0-9a-f]{8,}|fi"
-      },
-      {
-        "key": "c9",
-        "label": "所谓模型不可用场景的实际断言",
-        "reason": "支持该步骤实际只检查概览通用文案并截图，未构造故障或验证明确降级行为的限制判断。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/code-wiki-viewport.ts",
-          "startLine": 251,
-          "endLine": 257
-        },
-        "quote": "  // --- model-unavailable: honest degraded note, graph still browsable -------\n  await check(\"model-unavailable: degraded state, raw graph still browsable\", async () => {\n    await page.goto(BASE + \"/#/overview\");\n    await sleep(2500);\n    expect(await page.locator(\"main\").innerText()).toContain(\"可追溯的知识\");\n    await "
       }
     ],
     "questions": [
       {
-        "question": "“第四个 Trail 帧”是否应成为无条件的严格验收项？",
-        "why": "当前步骤仅在存在可用边时点击，随后只断言面包屑不少于两个；没有边时也可能通过，与检查名称表达的四层栈目标不一致。",
-        "nextStep": "准备确定含连续可用边的数据夹具，记录点击前后的面包屑数量，并明确断言达到预期层数；若允许图数据不足时降级，应把检查名称和通过条件改为对应语义。",
+        "question": "是否要把可见文本的标识清洁验收扩展到产品合同禁止展示的全部内部 `*Id` 类型和格式？",
+        "why": "当前正则只覆盖若干固定前缀、长十六进制串和标准 UUID；其他内部键名、编码或非十六进制标识是否可能进入可见文本，材料没有给出完整合同或断言。",
+        "nextStep": "列出 DTO 合同中禁止展示的内部 ID 类型及可能格式，并为每类增加可见文本断言；在此之前保持正文中的有限范围表述。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "“模型不可用”验收是否应显式模拟模型或知识接口失败，并直接操作原始代码图？",
+        "why": "现有场景只重新进入概览并检查“可追溯的知识”文字，无法证明该状态由模型故障触发，也没有点击图节点验证降级后的源码浏览能力。",
+        "nextStep": "为相应模型或知识接口增加路由故障注入，断言明确的降级提示，再从概览进入文件或符号帧并验证源码仍可读取。",
+        "blocking": false,
+        "citationKeys": [
+          "c8"
+        ]
+      },
+      {
+        "question": "跨文件边验收是否需要固定稳定的源符号、关系类型和目标路径？",
+        "why": "现有流程选择页面上首个未禁用关系边，断言主要是面包屑增加和没有抓取错误，不能区分正确的跨文件关系与任意可点击关系。",
+        "nextStep": "使用可见路径、符号名和关系标签定位一条有源码依据的固定边，并断言目标文件、符号及源码范围；若当前图只提供候选关系，同时断言其候选状态。",
         "blocking": false,
         "citationKeys": [
           "c6"
-        ]
-      },
-      {
-        "question": "模型不可用验收是否需要脚本显式构造故障状态并检查人读降级原因？",
-        "why": "现有步骤没有禁用模型、模拟 ACP 失败或验证降级提示，只确认概览显示通用文案，因此无法区分正常状态与真实降级状态。",
-        "nextStep": "为 review 服务提供明确的测试配置或故障注入方式，再同时断言降级说明可见、生成能力不可用且原始代码图仍可浏览。",
-        "blocking": false,
-        "citationKeys": [
-          "c9"
-        ]
-      },
-      {
-        "question": "XSS 验收是否允许长期依赖 Vue 的 `__vueParentComponent` 私有字段？",
-        "why": "该字段不是稳定公共接口，Vue 升级或组件结构调整可能让测试因注入方式失效，而非因 Markdown 安全回归失败。",
-        "nextStep": "考虑通过公开测试路由、受控 fragment 内容或组件级公共 props 挂载方式送入同一载荷，同时保留真实页面中的最终 DOM 与执行副作用断言。",
-        "blocking": false,
-        "citationKeys": [
-          "c7"
-        ]
-      },
-      {
-        "question": "模型不可用验收是否需要显式构造故障状态并检查人读降级原因？",
-        "why": "现有步骤没有禁用模型、模拟 ACP 失败或验证降级提示，只确认普通概览中的通用文案，无法区分正常状态与真实降级状态。",
-        "nextStep": "为 review 服务提供受控测试配置或故障注入，并同时断言降级说明可见、生成能力不可用且原始代码图仍可浏览。",
-        "blocking": false,
-        "citationKeys": [
-          "c9"
         ]
       }
     ]
@@ -202,23 +180,23 @@
     {
       "kind": "material",
       "key": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "f25f4063423277b2e2ab11eb5e9a00bbb7616c2c1fe98e664ddf6bd502d75d50"
+      "digest": "65a7161cc2415f724a4aab73dc4ae59dd492b477ed6aa6386c3e7c89deffad73"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:52:25.878Z",
+    "at": "2026-10-01T05:03:44.239Z",
     "trace": {
-      "runId": "f8caf27b-011a-46d9-9879-725280878651",
+      "runId": "6af60198-954d-44da-be70-b4a2abdde1f2",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "6daa8d5f4eaa470dd26e9f4dfa0d449249ee002a38a1b54a299700e112d1ac37",
-      "contextHash": "6ecfd9e5a9717887bc8883e0cbfe016afac2c1c06336d2aa212b3c6f81a26671",
+      "promptHash": "42abbf3170377bd364791adf63a2573025dc1f55d24f47cc787ed92098ea0aab",
+      "contextHash": "5d750222cae67ca44e4c8fded2b79ed707cc05f276633047c66ce49074ab55e0",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f8499f3e1187df2a67f3ca72cc2cca9ad4df468a0249953cc80cb11813467ecd",
+      "fingerprint": "a0901e03b7ae9e926f62b3e787dc45cdd0f73bd0c105b032a54a6ae93394ce16",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -231,10 +209,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f560-4e7b-7450-9e96-489bde3f12c0"
+        "01a0f5d8-8031-74a3-be98-9a16fdba5f4f"
       ],
       "usage": {
-        "used": 33121,
+        "used": 30922,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -243,10 +221,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 30297,
-          "utf8Bytes": 37329,
-          "estimatedTokens": 12443,
-          "budgetedTokens": 15554,
+          "chars": 30917,
+          "utf8Bytes": 37065,
+          "estimatedTokens": 12355,
+          "budgetedTokens": 15444,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -255,17 +233,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:52:45.938Z",
+    "at": "2026-10-01T05:04:07.775Z",
     "trace": {
-      "runId": "c5c86293-b290-4a43-a9b0-bca339588d6c",
+      "runId": "e69ddbf1-e251-445c-8439-773c344d31d7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "4bc99a93a94b68636cb93a43e61c2306b4b03af3b64d2d82a6abedd15647ffb0",
-      "contextHash": "842ce4f2bc0a5684f03546f2e77370680c31ade4133f952f0d4998da04cdea9b",
+      "promptHash": "19b2c7e581f6ccdd31dbaa62a994ee7f4ae89c3449df83432df3992f9bbf88a0",
+      "contextHash": "502457d1bc97196a790dea21b3642cd393820b1df88f03370840a0fbd96e4116",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "894c90c1a583ec7dae6feb9fbe3515ada101d36ed17e0a279ff40a909e68e494",
+      "fingerprint": "1edf5847e8cf699e18a433af008b91dc5fb3f2674ed13d330f56f1599aa29085",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -278,10 +256,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f560-b7d4-7390-be99-28fa86e8aeb9"
+        "01a0f5d8-ec19-7831-9024-9127d2216edf"
       ],
       "usage": {
-        "used": 27926,
+        "used": 28659,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -290,10 +268,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 26895,
-          "utf8Bytes": 31601,
-          "estimatedTokens": 10534,
-          "budgetedTokens": 13168,
+          "chars": 27820,
+          "utf8Bytes": 32862,
+          "estimatedTokens": 10954,
+          "budgetedTokens": 13693,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
