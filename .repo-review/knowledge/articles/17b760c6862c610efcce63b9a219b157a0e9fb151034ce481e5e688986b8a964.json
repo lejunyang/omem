@@ -2,58 +2,66 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/agents/openai.yaml",
-    "title": "知识复核技能的界面元数据",
-    "summary": "该 YAML 提供技能在代理界面中的显示名称、短描述和默认调用提示；其中中文名称指向复核职责，但英文短描述更像知识构建，存在界面语义不一致。",
+    "title": "知识正文复核角色的界面与默认提示配置",
+    "summary": "该配置为知识复核角色声明人类可读名称、简短说明和默认提示词，用于把固定材料交给指定技能处理。它仅能证明角色配置的预期入口，不能单独证明技能已加载、复核流程已执行或知识已通过验证。",
     "category": "configuration",
     "sections": [
       {
-        "key": "interface-metadata",
-        "title": "界面展示与默认入口",
-        "body": "界面显示名称为“复核知识正文”，默认提示则要求使用 `omem-knowledge-verifier` 处理所提供的固定材料，二者都把入口指向复核技能。[[c1]] 这些字段属于技能界面元数据和默认触发文本，不足以单独证明运行时会加载技能、执行校验或产生合规结果。"
+        "key": "role-purpose",
+        "title": "面向使用者的角色定位",
+        "body": "该角色在界面中显示为“复核知识正文”，表明它面向已有知识内容的复核场景，而不是原始材料采集或普通问答。简短说明进一步把目标描述为：基于固定证据构建带关联的知识。两项字段共同提供角色的展示定位，但中英文混用可能影响界面一致性。参考 [[c1]]"
       },
       {
-        "key": "wording-mismatch",
-        "title": "描述语义差异",
-        "body": "短描述写为“Build linked knowledge from fixed evidence”，表达的是从固定证据构建关联知识，与显示名称强调的“复核知识正文”并不完全一致。[[c2]] 这可能只是展示文案遗留，也可能使用户误解该代理会负责写作；仅凭当前五行配置无法确定产品期望，应结合角色职责统一文案。"
+        "key": "default-entry",
+        "title": "默认调用入口与能力边界",
+        "body": "默认提示词要求使用指定的知识复核技能处理已提供的固定材料，体现了“角色配置 → 技能 → 固定证据”的预期调用关系。参考 [[c2]]\n\n这份 YAML 只声明默认提示，并未给出技能实现、输入输出校验、独立复核结果或运行记录，因此不能据此认定复核已经发生，也不能证明不受支持的设置会被拒绝。实际能力仍需结合技能定义和运行证据确认。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "技能显示名称与默认提示",
-        "reason": "支持界面名称和默认入口均指向知识复核技能的说明。",
+        "label": "复核角色展示配置",
+        "reason": "支持该角色的人类可读名称、功能说明以及固定证据导向的定位。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/agents/openai.yaml",
           "startLine": 1,
-          "endLine": 4
+          "endLine": 3
         },
-        "quote": "interface:\n  display_name: \"复核知识正文\"\n  short_description: \"Build linked knowledge from fixed evidence\"\n  default_prompt: \"Use $omem-knowledge-verifier to process the supplied fixed materials.\""
+        "quote": "interface:\n  display_name: \"复核知识正文\"\n  short_description: \"Build linked knowledge from fixed evidence\""
       },
       {
         "key": "c2",
-        "label": "英文短描述",
-        "reason": "支持短描述采用“构建关联知识”措辞并与复核职责存在语义差异的判断。",
-        "relation": "contradicts",
+        "label": "默认复核提示词",
+        "reason": "支持默认入口会指定知识复核技能处理所提供固定材料的陈述。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/agents/openai.yaml",
-          "startLine": 2,
-          "endLine": 3
+          "startLine": 4,
+          "endLine": 4
         },
-        "quote": "  display_name: \"复核知识正文\"\n  short_description: \"Build linked knowledge from fixed evidence\""
+        "quote": "  default_prompt: \"Use $omem-knowledge-verifier to process the supplied fixed materials.\""
       }
     ],
     "questions": [
       {
-        "question": "英文短描述应改为“复核固定证据支持的知识正文”，还是该技能原本还承担知识构建职责？",
-        "why": "显示名称和默认提示指向复核，而短描述指向构建关联知识，当前材料无法判定哪一个代表预期产品语义。",
-        "nextStep": "由角色负责人确认职责；若仅负责复核，统一 short_description，并更新技能制品摘要及相关快照。",
+        "question": "运行时是否实际加载该角色配置，并能解析和调用所指定的知识复核技能？",
+        "why": "材料只有声明性配置，没有加载逻辑、技能定义或运行 trace，无法把预期调用关系视为实现事实。",
+        "nextStep": "检查对应技能定义及一次真实运行记录，确认配置加载、技能解析、固定材料传递和结果校验均成功。",
         "blocking": false,
         "citationKeys": [
-          "c1",
           "c2"
+        ]
+      },
+      {
+        "question": "界面简短说明是否应统一为中文？",
+        "why": "展示名称为中文而简短说明为英文，可能造成面向中文用户的界面语言不一致；现有材料没有说明这是刻意设计还是待本地化内容。",
+        "nextStep": "由产品或界面规范确认目标语言；若要求中文化，再调整 short_description 并验证实际展示。",
+        "blocking": false,
+        "citationKeys": [
+          "c1"
         ]
       }
     ]
@@ -61,49 +69,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/manifest.json",
-      "digest": "ced20e3fc7c32c1924bb1a75fb7c6a421c5325d5b5d2e0c5687da7a12b4be56c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/output.schema.json",
-      "digest": "17695868b9041caa6e53ea9fa41078ffb071e017cfc8809ecd37d877858ca280"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/prompt.md",
-      "digest": "00da70970c69048d908fe14b558e880e6a7cacb31a390545d3a33da6c6b2c1a9"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/SKILL.md",
-      "digest": "ae04527bbbee4a060f3efb902afe13f9874af8a41404e45a0defa4b0a2abb903"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/knowledge-verifier/1/skills/omem-knowledge-verifier/agents/openai.yaml",
       "digest": "24fba9d13ed186bfc6973935c56d200db5432ff09ebb5f69fc91916255635b6f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-writer/1/manifest.json",
-      "digest": "a02e6973acf352122a5a1e4b8cd28da85bdcd59715db541557c7ce61e0baacda"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:47:44.213Z",
+    "at": "2026-10-01T06:58:36.949Z",
     "trace": {
-      "runId": "eba62761-4eda-4339-9d0d-071cb7f788a9",
+      "runId": "02533883-f27c-490e-8ff5-fcd4bc14eb91",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "c41d8b74905d1e9e85247026f8b0ecda590dcc11fae38f9ab9ab03f84ad5d0cb",
-      "contextHash": "5e8e684996dd44e0cdbbd19d15c5279a58045aeb0f63b1acececa6b96ce5b455",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "27d83186e627a198abe29731f63fb1e616f010e8d90d5680a13f1dc9e58452ae",
+      "contextHash": "b31a0363071142705153a4ae71f9dfb29af2112968b23ed130fbdafeedd876df",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1441fa35b1d751d16d60e984c90d615a41284a31263089e077ace17121d49ece",
+      "fingerprint": "9357b79096f9eafd2d778fb2cb22b94595a4360b5bdbe9be44b02d35a20bda36",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -116,11 +99,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb4-e6be-7ce2-a873-c88d61f20c8e"
+        "01a0f641-cecc-7d40-9bda-eb9e9974941b"
       ],
       "usage": {
-        "used": 21599,
-        "size": 760000,
+        "used": 21765,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -128,10 +111,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 18031,
-          "utf8Bytes": 20663,
-          "estimatedTokens": 6888,
-          "budgetedTokens": 8610,
+          "chars": 7375,
+          "utf8Bytes": 10339,
+          "estimatedTokens": 3447,
+          "budgetedTokens": 4309,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -140,17 +123,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:47:58.300Z",
+    "at": "2026-10-01T06:58:53.022Z",
     "trace": {
-      "runId": "54df86c5-9768-4a3a-ac48-2c36bf224c36",
+      "runId": "c1c43205-5cb6-4d28-8dea-75421eb18dce",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "defa0673e3d7e6bfb1530afa5e0ae4dc476a2ff7dea3ef15a2580272092e9ae5",
-      "contextHash": "f1a93f52ec65e654550f997da015276b36423fba5d50f553472fd86510842d9e",
+      "promptHash": "2935b6182bdf7cb525754f1b366e6e3bd93c2532875f9dc16a1c17b59f1ef5fc",
+      "contextHash": "acdb61b1ab6ffb560c80511067256fac2805bfd9ffc993292d2c0133cfbf9c16",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "c6d5b261646ceaf54b5eb3b3cc9860ff0c1114650c18ec6baea6ced98daf8fe9",
+      "fingerprint": "1c12f4150b4db33409b18add10cc19b44f953d3ff4b0a091c31a770c3e66e513",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -163,11 +146,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb5-765a-78a1-8aea-8f9a27e145d8"
+        "01a0f642-1744-7260-a184-8248a82e96dc"
       ],
       "usage": {
-        "used": 22736,
-        "size": 760000,
+        "used": 20973,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -175,10 +158,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 27584,
-          "utf8Bytes": 36056,
-          "estimatedTokens": 12019,
-          "budgetedTokens": 15024,
+          "chars": 6093,
+          "utf8Bytes": 8487,
+          "estimatedTokens": 2829,
+          "budgetedTokens": 3537,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

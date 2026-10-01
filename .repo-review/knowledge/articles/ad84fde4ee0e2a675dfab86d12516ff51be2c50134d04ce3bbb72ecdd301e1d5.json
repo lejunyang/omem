@@ -2,43 +2,36 @@
   "version": 1,
   "document": {
     "key": "module:web:part-4",
-    "title": "web · 模块理解 · 专题 4",
-    "summary": "本专题说明 Web 模块的 Vite 开发入口：它接入 Vue 构建插件，在仅限本机访问的固定端口启动开发服务器，并把 `/api` 请求代理到本地后端；现有证据尚不足以覆盖页面结构、生产部署及后端路由契约。",
+    "title": "Web 前端的开发与类型检查基础",
+    "summary": "Web 模块以 Vite 和 Vue 插件提供前端开发入口，通过本地代理连接 API；TypeScript 配置负责严格的跨包源码检查，但不直接产出 JavaScript。现有材料覆盖开发与检查基础，尚不足以确认生产部署、浏览器兼容范围及后端路由契约。",
     "category": "configuration",
     "sections": [
       {
-        "key": "role",
-        "title": "职责与背景",
-        "body": "这一专题覆盖 Web 模块的开发期基础设施，而非页面业务本身。Vite 配置以 `defineConfig` 为入口，并注册 Vue 插件，使前端源码及 Vue 单文件组件能够进入开发与构建流程。子知识将其归纳为 Web 前端配置入口，但该归纳仍依赖配置源码，不能据此推断具体页面、组件层次、Vue 主版本或生产部署方式。[[c1]][[c2]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "Web 前端需要同时处理 Vue 单文件组件、浏览器类型和共享包源码。Vite 配置注册 Vue 插件，承担开发及构建入口；TypeScript 则采用 ESNext 模块和 Bundler 解析方式，并提供 DOM、Vite 客户端等类型环境。两者共同构成“构建工具处理页面、类型系统提前发现问题”的基础。参考 [[c1]]、[[c2]]"
       },
       {
-        "key": "request-flow",
-        "title": "启动与请求流程",
-        "body": "开发服务器固定监听 `127.0.0.1`，默认端口为 `5173`，可由 `OMEM_WEB_PORT` 覆盖；`strictPort: true` 使端口冲突直接暴露，而不会静默切换端口。浏览器访问 `/api` 时，请求由 Vite 转发至 `127.0.0.1` 上的 `OMEM_PORT`，其默认值为 `4317`，形成“浏览器 → Web 开发服务器 → 本地 API”的链路。[[c3]][[c4]]"
+        "key": "development-flow",
+        "title": "本地开发请求如何流转",
+        "body": "开发服务器仅监听 `127.0.0.1`，默认端口为 `5173`，可由 `OMEM_WEB_PORT` 覆盖；`strictPort` 要求端口冲突时直接失败。页面访问 `/api` 时，请求被转发到本机 `OMEM_PORT` 指定的服务，默认端口为 `4317`。\n\n```mermaid\nflowchart LR\n  Browser[浏览器页面] --> Vite[Vite 开发服务器]\n  Vite -->|/api| API[本地 API 服务]\n```\n\n这条链路只证明开发期代理关系，不能据此确认后端是否保留 `/api` 前缀或生产环境是否采用同一拓扑。参考 [[c3]]"
       },
       {
-        "key": "relations-limits",
-        "title": "跨模块关系与限制",
-        "body": "这段配置把 Web 模块与一个本地 HTTP 后端连接起来，同时将开发服务限制在回环地址，默认不向局域网开放。现有材料只显示代理目标，没有后端启动、路由注册或路径重写配置，因此无法确认哪个模块提供 API、后端是否保留 `/api` 前缀，也不能把该代理视为生产部署合同。端口值通过 `Number(...)` 直接转换，非法环境变量可能产生无效数值，而配置中没有显式校验或回退逻辑。[[c5]][[c6]]"
+        "key": "type-boundary",
+        "title": "跨包检查边界与当前限制",
+        "body": "类型检查覆盖应用自身的 `.ts`、`.vue` 文件，并直接纳入共享 UI 与契约包源码；`strict` 开启严格检查，`noEmit` 表明 TypeScript 不在此配置下生成 JavaScript。因此，生产转译仍依赖其他构建流程，Vue 单文件组件的完整检查效果也取决于实际调用工具。参考 [[c4]]\n\n当前材料没有给出依赖版本、构建脚本、浏览器兼容策略或运行结果，因而不能确认 Vue 主版本、生产部署方式及 ES2023 的最终运行要求。直接跨包包含源码是长期设计还是阶段性安排，也仍需架构材料说明。"
+      },
+      {
+        "key": "relationships",
+        "title": "与其他模块的关系",
+        "body": "该模块在开发期连接三个边界：Vue 插件处理界面源码，共享 UI 与契约包进入统一类型检查，本地 API 则通过代理向页面提供数据。它体现的是前端接入关系，而不是完整应用架构；尤其是后端服务归属、接口集合和共享包发布方式，均需结合相应模块材料才能确定。参考 [[c2]]、[[c3]]、[[c4]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Web 前端配置入口说明",
-        "reason": "引用子知识对该文件职责与证据边界的组织，帮助首次阅读者理解其属于开发基础设施而非页面业务；具体事实另由原始源码引用支持。",
-        "relation": "background",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/web/vite.config.ts",
-          "section": "purpose"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c2",
-        "label": "Vite 与 Vue 插件配置",
-        "reason": "原始配置直接支持 Vite 配置入口及 Vue 插件注册的论断。",
+        "label": "Vue 构建入口",
+        "reason": "支持 Vite 配置注册 Vue 插件并作为 Web 前端构建入口的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -49,85 +42,72 @@
         "quote": "import { defineConfig } from \"vite\";\nimport vue from \"@vitejs/plugin-vue\";\nexport default defineConfig({\n  plugins: [vue()],"
       },
       {
-        "key": "c3",
-        "label": "本地开发请求流程说明",
-        "reason": "引用子知识对浏览器、Vite 开发服务器与本地 API 之间流程的组织；端口和代理细节由相邻原始材料引用核实。",
+        "key": "c2",
+        "label": "TypeScript 编译环境",
+        "reason": "支持 ES2023、ESNext、Bundler、DOM 与 Vite 客户端类型共同构成前端类型环境的论断。",
         "relation": "explains",
         "target": {
-          "kind": "article",
-          "key": "omem:apps/web/vite.config.ts",
-          "section": "dev-flow"
+          "kind": "material",
+          "key": "omem:apps/web/tsconfig.json",
+          "startLine": 1,
+          "endLine": 1
         },
-        "quote": ""
+        "quote": "{\"compilerOptions\":{\"target\":\"ES2023\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"skipLibCheck\":true,\"esModuleInterop\":true,\"lib\":[\"ES2023\",\"DOM\",\"DOM.Iterable\"],\"types\":[\"vite/client\"],\"noEmit\":true},\"include\":[\"src/**/*.ts\",\"src/**/*.vue\",\"../../packages/ui/src/**/*.ts\",\"../../packages/ui/src/**/*.v"
+      },
+      {
+        "key": "c3",
+        "label": "开发服务器与 API 代理",
+        "reason": "支持本地监听地址、端口覆盖、严格端口策略及浏览器到本地 API 的代理链路。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/vite.config.ts",
+          "startLine": 5,
+          "endLine": 5
+        },
+        "quote": "  server: { host: \"127.0.0.1\", port: Number(process.env.OMEM_WEB_PORT || 5173), strictPort: true, proxy: { \"/api\": `http://127.0.0.1:${process.env.OMEM_PORT || 4317}` } },"
       },
       {
         "key": "c4",
-        "label": "开发服务器与 API 代理配置",
-        "reason": "原始配置支持监听地址、端口覆盖、严格端口策略及 `/api` 代理目标等具体事实。",
-        "relation": "supports",
+        "label": "跨包类型检查范围",
+        "reason": "支持严格检查、禁止直接输出以及应用、共享 UI 和契约源码被统一纳入检查范围的说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/vite.config.ts",
-          "startLine": 5,
-          "endLine": 5
+          "key": "omem:apps/web/tsconfig.json",
+          "startLine": 1,
+          "endLine": 1
         },
-        "quote": "  server: { host: \"127.0.0.1\", port: Number(process.env.OMEM_WEB_PORT || 5173), strictPort: true, proxy: { \"/api\": `http://127.0.0.1:${process.env.OMEM_PORT || 4317}` } },"
-      },
-      {
-        "key": "c5",
-        "label": "配置边界与模块关系说明",
-        "reason": "引用子知识对本地绑定、后端证据缺口和端口转换风险的归纳，用于说明当前专题的已知边界。",
-        "relation": "background",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/web/vite.config.ts",
-          "section": "boundaries"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c6",
-        "label": "本地绑定与环境变量边界",
-        "reason": "原始配置支持回环地址限制、两个端口环境变量及缺少显式端口校验的分析。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/vite.config.ts",
-          "startLine": 5,
-          "endLine": 5
-        },
-        "quote": "  server: { host: \"127.0.0.1\", port: Number(process.env.OMEM_WEB_PORT || 5173), strictPort: true, proxy: { \"/api\": `http://127.0.0.1:${process.env.OMEM_PORT || 4317}` } },"
+        "quote": "{\"compilerOptions\":{\"target\":\"ES2023\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"skipLibCheck\":true,\"esModuleInterop\":true,\"lib\":[\"ES2023\",\"DOM\",\"DOM.Iterable\"],\"types\":[\"vite/client\"],\"noEmit\":true},\"include\":[\"src/**/*.ts\",\"src/**/*.vue\",\"../../packages/ui/src/**/*.ts\",\"../../packages/ui/src/**/*.v"
       }
     ],
     "questions": [
       {
-        "question": "哪个后端模块监听 `OMEM_PORT`（默认 4317），代理请求是否需要保留 `/api` 前缀？",
-        "why": "当前证据只证明 Vite 将 `/api` 请求转发到本地端口，未提供后端启动与路由材料，因而无法确认服务归属、路径合同或是否需要重写。",
-        "nextStep": "补充后端启动配置与路由注册材料，核对监听端口、API 前缀和代理重写行为。",
-        "blocking": false,
-        "citationKeys": [
-          "c4",
-          "c5"
-        ]
-      },
-      {
-        "question": "是否应对 `OMEM_WEB_PORT` 的非法值提供显式校验或默认值回退？",
-        "why": "配置直接使用 `Number(...)` 转换环境变量，非数字字符串可能产生无效端口，但现有材料没有说明预期错误处理。",
-        "nextStep": "结合启动脚本和真实运行检查确认非法端口值的行为，再决定是在配置层报错还是回退默认端口。",
-        "blocking": false,
-        "citationKeys": [
-          "c5",
-          "c6"
-        ]
-      },
-      {
-        "question": "生产环境由什么构建和部署配置承接 Web 与 API 的连接？",
-        "why": "当前材料仅描述 Vite 开发服务器，无法证明生产环境仍使用同一监听地址、端口或代理关系。",
-        "nextStep": "补充生产构建脚本、部署配置或反向代理材料，单独记录开发链路与生产链路的差异。",
+        "question": "实际由哪个命令完成 Vue 单文件组件类型检查与生产构建？",
+        "why": "现有配置包含 `.vue` 文件并设置 `noEmit`，但没有提供调用工具、构建脚本或真实执行结果。",
+        "nextStep": "补充应用包脚本及构建配置，核对类型检查和生产构建命令的实际退出结果。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c5"
+          "c4"
+        ]
+      },
+      {
+        "question": "本地 API 是否要求保留 `/api` 前缀，生产环境又如何连接该服务？",
+        "why": "Vite 配置只证明开发期按前缀代理到本地端口，没有后端路由或生产部署材料。",
+        "nextStep": "结合后端监听与路由配置确认路径契约，并补充生产环境的请求拓扑。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "直接检查共享 UI 与契约源码是长期边界还是阶段性安排？",
+        "why": "配置明确跨包包含源码，但没有项目引用、包级产物或架构决策材料解释其意图。",
+        "nextStep": "查阅共享包构建配置与架构决策，确认是否计划迁移到独立包产物或项目引用。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
         ]
       }
     ]
@@ -135,8 +115,18 @@
   "dependencies": [
     {
       "kind": "material",
+      "key": "omem:apps/web/tsconfig.json",
+      "digest": "7a61554f3814816b2e147949e7f630c712b00074444c2aaee5924511e2af0a0c"
+    },
+    {
+      "kind": "material",
       "key": "omem:apps/web/vite.config.ts",
       "digest": "4fcb2917c4add37f82214643fd7c2b9ccad0f64d44cbf0526cc21aa0c032a2e1"
+    },
+    {
+      "kind": "article",
+      "key": "omem:apps/web/tsconfig.json",
+      "digest": "ae9cb9e5a36637888a622314639916f92f14b017d22f18e28da0edaaf781a9d2"
     },
     {
       "kind": "article",
@@ -147,17 +137,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T03:54:10.797Z",
+    "at": "2026-10-01T07:40:15.985Z",
     "trace": {
-      "runId": "cfce4cd8-ab4f-4cce-967a-1e56dca1f104",
+      "runId": "17e41cc8-cc1e-4caf-8746-6881d949c054",
       "roleId": "knowledge-writer",
       "roleVersion": "1",
-      "bundleHash": "14b3305c8a120b1fdfd2583cd432f6b792953636f6c87e15243c2f9b632d584e",
-      "promptHash": "6be0130d32c9b55b39cee18e7fb0ac272ad1194e8fd037db33b4a5f9fc094be9",
-      "contextHash": "9939b0cf2185b28e6f4f65c847168ae5113a3ded2407119b6c7dfe75afce2d78",
+      "bundleHash": "3e627be543b2979e3759ca541af350fd8033b07dd1ba343d30dbb2260e8aa464",
+      "promptHash": "8e07097f10e659a022b7835ff6a39f71231854a02b7326a0c6f9d11fec808520",
+      "contextHash": "504d6cb95d2d25a6dd3f374235f04bedfe83a46d4b8d64b93e5ee564a41ab2ea",
       "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "58129d17ca75692b4618b9c6f5d568122b915e2a126baa86f957bafd7c793c74",
+      "fingerprint": "d696271f8e5e515a091c1b929063f394903834ca2061f62c5ba4efa1a548bc13",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -170,10 +160,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f598-e28c-7c93-8d38-f294292a3b5c"
+        "01a0f667-e06d-77a2-b01d-4ab5cacbd899"
       ],
       "usage": {
-        "used": 24456,
+        "used": 26870,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -182,10 +172,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 8835,
-          "utf8Bytes": 12109,
-          "estimatedTokens": 4037,
-          "budgetedTokens": 5047,
+          "chars": 15265,
+          "utf8Bytes": 21939,
+          "estimatedTokens": 7313,
+          "budgetedTokens": 9142,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -194,17 +184,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T03:54:26.438Z",
+    "at": "2026-10-01T07:40:32.268Z",
     "trace": {
-      "runId": "d5a691e5-0f89-4838-b57d-15c89199e160",
+      "runId": "7c643d37-5d24-4573-b6fb-ff245a7a667a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "90a12691d9dde1c3a98d578b5de04143ba79679b424b89d2cfba4ef1772f23f8",
-      "contextHash": "10a17239c3b31c98c27e58d62d2d1e2a221a5a27de9cf052abfaa6a400000ad2",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "51413b0d781df401a17c70ff2192133075fef3423d7cfe0b11bbebb2364f270a",
+      "contextHash": "ba682894e9f2b7df8386c5cae6c36de9fb0d302c277921ab0c9c82b16621ed2a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "b5f230d0878152fd5b5f39221d1d854685c959f19bc5dea6444b544b5b73de8a",
+      "fingerprint": "873f3ae3178a9dff89e6f6fa5a22e1faf20c2dab4d6ce23bb8e4700d8d86f3da",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -217,10 +207,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f599-3c88-71f3-b4dd-db76bcc3c67d"
+        "01a0f668-3f97-7262-8d2a-47d9eb1f3d1d"
       ],
       "usage": {
-        "used": 22655,
+        "used": 25209,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -229,10 +219,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 10008,
-          "utf8Bytes": 14638,
-          "estimatedTokens": 4880,
-          "budgetedTokens": 6100,
+          "chars": 16594,
+          "utf8Bytes": 24320,
+          "estimatedTokens": 8107,
+          "budgetedTokens": 10134,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,97 +2,110 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
-    "title": "知识刷新批次输出合同",
-    "summary": "该 JSON Schema 定义 KnowledgeBatch.v1 的批次、文档、章节、引用和问题结构，并通过枚举、长度、数量及 additionalProperties 约束输出；它是验证合同，不是刷新逻辑或通过验证的证据。",
-    "category": "implementation",
+    "title": "知识刷新结果的结构化输出合同",
+    "summary": "该 JSON Schema 定义知识刷新角色提交批量知识文档时必须遵守的数据形状，包括文档正文、内联引用和待确认问题。它约束的是输出格式，不能单凭此文件推断校验器、刷新流程或持久化机制已经实际接入。",
+    "category": "configuration",
     "sections": [
       {
-        "key": "batch",
-        "title": "批次与文档结构",
-        "body": "合同采用 JSON Schema 2020-12，顶层要求版本恒为 1，并要求 `documents` 包含 1 至 16 个文档。[[c1]] 每个文档必须提供键、标题、摘要、类别、章节、引用和问题，且禁止未声明字段；类别限定为概览、架构、需求、进展、实现、测试、配置等受控值。[[c2]] 这使宿主能稳定解析刷新结果，但不说明任何一次模型输出已经通过验证。"
+        "key": "purpose",
+        "title": "它解决什么问题",
+        "body": "知识刷新需要把分析结果交给后续复核、展示或保存流程，因此输出不能只是自由文本。该合同把一次结果固定为版本号与文档数组：每批至少包含 1 篇、最多 16 篇文档；每篇文档必须给出键、标题、摘要、类别、章节、引用和问题列表，从而让宿主可以稳定解析。参考 [[c1]]\n\n文档类别限定为概览、架构、需求、进展、实现、测试、配置、工作流、研究、对话和视觉等枚举，便于下游按用途组织内容。不过，这里只描述允许的数据结构，不证明分类界面、数据库写入或刷新任务已经实现。参考 [[c2]]"
       },
       {
-        "key": "content",
-        "title": "章节与引用约束",
-        "body": "章节数量限制为 1 至 20，章节键必须符合受限标识符格式，并要求标题与正文。[[c3]] 引用则限定数量、键格式、可读标签、理由和关系枚举；目标只能是材料或文章，可附材料行号或文章章节，同时要求 `quote` 字段。[[c4]] 这些规则约束引用形状和定位信息，却不能单独验证引用是否在语义上真正支持正文。"
+        "key": "document_structure",
+        "title": "正文与证据如何组织",
+        "body": "每篇文档由 1 至 20 个章节组成；章节键必须以字母开头，并只能使用字母、数字、下划线或连字符。标题与正文也有长度上限，这使文章既能被稳定定位，又避免单次结果无限膨胀。参考 [[c3]]\n\n引用是正文论断与证据之间的结构化连接。每项引用包含人类可读标签、引用理由、关系类型和目标；目标可以指向材料或文章，并可携带材料行号或文章章节。`quote` 字段被要求保留，但说明明确建议留空，由宿主依据固定行范围提取原文。参考 [[c4]]\n\n关系类型只允许支持、解释、实现、依赖、调用、矛盾、背景和跟踪等既定值。这一约束能减少下游对任意关系名称的猜测，但并不等同于语义支持性已经经过独立验证。参考 [[c5]]"
       },
       {
-        "key": "questions",
-        "title": "疑问记录与严格性",
-        "body": "疑问项要求问题、原因、下一步、阻塞状态和关联引用键，从而把未确定事项保留为可跟踪结构，而不是混入确定结论。[[c5]] 顶层和文档层均列出必填字段并禁用额外属性，合同标识为 `KnowledgeBatch.v1`；因此兼容性依赖生产者严格遵守该版本。[[c6]]"
+        "key": "uncertainty_and_limits",
+        "title": "如何保留不确定性与边界",
+        "body": "合同为每篇文档预留最多 20 个问题。每个问题必须说明问题本身、提出原因、下一步、是否阻塞以及关联的引用键，使缺失背景或待决事项能够随结果一起传递，而不是被正文中的肯定语气掩盖。参考 [[c6]]\n\n顶层及各主要对象都禁止未声明字段，并要求固定的必要字段；这有助于尽早发现拼写错误或协议漂移。参考 [[c7]] 但该文件没有说明谁执行校验、校验失败如何处理、引用行范围是否会被再次核验，也没有展示知识刷新器的输入合同或运行状态，因此它应被理解为**格式规范**，而不是已完成能力的证据。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "批次版本与文档数量",
-        "reason": "支持顶层版本常量及批次文档数量边界。",
-        "relation": "implements",
+        "label": "批量文档基本结构",
+        "reason": "支持输出由版本号和受数量约束的文档数组组成，以及文档必填字段的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
-          "startLine": 1,
-          "endLine": 14
+          "startLine": 5,
+          "endLine": 19
         },
-        "quote": "{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\","
+        "quote": "    \"schema_version\": {\n      \"type\": \"number\",\n      \"const\": 1\n    },\n    \"documents\": {\n      \"minItems\": 1,\n      \"maxItems\": 16,\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLen"
       },
       {
         "key": "c2",
-        "label": "文档字段与类别集合",
-        "reason": "支持文档元数据、受控类别以及后续内容结构的定义。",
+        "label": "知识文档类别",
+        "reason": "支持文档类别被限制为一组明确枚举值的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
+          "startLine": 31,
+          "endLine": 46
+        },
+        "quote": "          \"category\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"overview\",\n              \"architecture\",\n              \"background\",\n              \"requirements\",\n              \"progress\",\n              \"implementation\",\n              \"tests\",\n              \"configuration\",\n              \"wor"
+      },
+      {
+        "key": "c3",
+        "label": "章节格式约束",
+        "reason": "支持章节数量、键格式以及标题和正文长度均受到约束的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
-          "startLine": 15,
-          "endLine": 48
-        },
-        "quote": "        \"properties\": {\n          \"key\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLength\": 500\n          },\n          \"title\": {\n            \"type\": \"string\",\n            \"minLength\": 1,\n            \"maxLength\": 240\n          },\n          \"summary\": {\n            \"type\": \"string\",\n   "
-      },
-      {
-        "key": "c3",
-        "label": "章节结构约束",
-        "reason": "支持章节数量、键格式和必填内容字段的限制。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
           "startLine": 48,
-          "endLine": 77
+          "endLine": 68
         },
         "quote": "          \"sections\": {\n            \"minItems\": 1,\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,59}$\"\n     "
       },
       {
         "key": "c4",
-        "label": "引用结构与目标类型",
-        "reason": "支持引用数量、关系枚举、目标定位和 quote 字段要求。",
-        "relation": "implements",
+        "label": "引用目标与原文提取",
+        "reason": "支持引用目标可指向材料或文章、可提供定位信息，并由宿主提取固定范围原文的说明。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
-          "startLine": 78,
-          "endLine": 164
+          "startLine": 112,
+          "endLine": 152
         },
-        "quote": "          \"citations\": {\n            \"minItems\": 1,\n            \"maxItems\": 160,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"key\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$\"\n   "
+        "quote": "                \"target\": {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"kind\": {\n                      \"type\": \"string\",\n                      \"enum\": [\n                        \"material\",\n                        \"article\"\n                      ]\n                    },\n   "
       },
       {
         "key": "c5",
-        "label": "疑问项合同",
-        "reason": "支持疑问必须记录原因、下一步、阻塞状态及关联引用键。",
-        "relation": "implements",
+        "label": "引用关系类型",
+        "reason": "支持引用关系只能采用合同规定枚举值的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
+          "startLine": 99,
+          "endLine": 110
+        },
+        "quote": "                \"relation\": {\n                  \"type\": \"string\",\n                  \"enum\": [\n                    \"supports\",\n                    \"explains\",\n                    \"implements\",\n                    \"depends_on\",\n                    \"calls\",\n                    \"contradicts\",\n                    \"backgroun"
+      },
+      {
+        "key": "c6",
+        "label": "待确认问题结构",
+        "reason": "支持问题项的数量限制及其原因、下一步、阻塞状态和关联引用等必填信息。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
           "startLine": 166,
-          "endLine": 206
+          "endLine": 205
         },
         "quote": "          \"questions\": {\n            \"maxItems\": 20,\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"question\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1,\n                  \"maxLength\": 1000\n                }"
       },
       {
-        "key": "c6",
-        "label": "必填字段与合同标识",
-        "reason": "支持文档和顶层字段均被严格要求，以及模式的正式标识。",
-        "relation": "depends_on",
+        "key": "c7",
+        "label": "严格顶层合同",
+        "reason": "支持文档字段必须完整、额外字段被禁止，以及顶层仅接受规定结构的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
@@ -104,25 +117,22 @@
     ],
     "questions": [
       {
-        "question": "宿主是否还执行引用正文出现性、行号有效性和语义支持性等超出 JSON Schema 的检查？",
-        "why": "该合同能校验结构、枚举和长度，但没有表达“每个引用必须出现在正文”或“引用必须语义支持论断”等跨字段和语义规则。",
-        "nextStep": "检查宿主验证流程，并分别用未使用引用、越界行号和不支持正文的引用做行为测试，记录拒绝阶段与错误信息。",
+        "question": "该输出合同目前由哪个运行时组件执行校验，校验失败后会重试、拒绝还是保留失败记录？",
+        "why": "材料只定义 JSON Schema，没有给出调用方、错误处理或持久化行为，因而无法据此确认合同已在实际刷新流程中生效。",
+        "nextStep": "检查知识刷新角色的运行入口、Schema 校验调用和任务失败处理，并用真实运行记录确认行为。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4",
-          "c6"
+          "c7"
         ]
       },
       {
-        "question": "宿主是否额外检查引用在正文中的出现性、行号有效性及语义支持性？",
-        "why": "该 JSON Schema 约束字段形状、枚举、数量和长度，但没有表达这些跨字段或语义规则。",
-        "nextStep": "检查宿主验证流程，并用未使用引用、越界行号和不支持论断的引用进行行为测试。",
+        "question": "材料行号与文章章节目标在保存前是否还会接受存在性和语义支持性复核？",
+        "why": "合同允许声明定位信息和关系类型，但没有规定目标解析失败、范围越界或证据不支持论断时的处理方式。",
+        "nextStep": "查看引用解析与独立 verifier 的实现及测试，确认无效引用是否会阻止结果覆盖既有知识。",
         "blocking": false,
         "citationKeys": [
-          "c3",
           "c4",
-          "c6"
+          "c5"
         ]
       }
     ]
@@ -130,49 +140,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
-      "digest": "468bbb6b669089c57790cb8ba50178f9d7d9a8ffb6835dd48c18a137f7e25fa1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/manifest.json",
-      "digest": "eb5e63bd3b6e3878ed2dffe409bae271e20993ac0baabdf1e4c47bb12cfbb27d"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/output.schema.json",
       "digest": "26fe8a10d7b6e71b9bac1af6d7e00718125103223943095382ab09a5cfa1df68"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/prompt.md",
-      "digest": "4314f06e1b0e6ba910552b65d93ffce60f1ada2837ed285ca1979b5f9afa1e94"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/SKILL.md",
-      "digest": "7cc6c58913efeb9fd59c189e30c43fe0b266d747e6671e61c977949c27ac9b6f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/knowledge-refresher/1/skills/omem-knowledge-refresher/agents/openai.yaml",
-      "digest": "df5592fd59bc200546ba138dee22816073a69783056f7324f74eaeed4938a78f"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:23:33.379Z",
+    "at": "2026-10-01T07:21:56.683Z",
     "trace": {
-      "runId": "199ac603-c8d2-4ddc-bc10-73337bdf68d5",
+      "runId": "3738c578-0554-4338-a47f-3b6206c5e0e5",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "92a44dfc33138fc923b2598cd48a9ae406f7f0d6e574498df685e924a54d31b8",
-      "contextHash": "b0debaf029893a97683879e270c7048b66d9ca2187c0ef238335e03e11459f73",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "16490f432310a951d1d7cf2723daeef8a7558c2d8a75d0d45cf18e2f77bc4751",
+      "contextHash": "98371d84a02145d1e9234aeb8c75614ebc139334fbccad9b8a697992a5c295c7",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "ceeabaf73efe948f941f09bbd9171bdc803d23dc7c20c760f12aecb5da2083e8",
+      "fingerprint": "d22e8f8fc79841ca2440bffa58ee0a025fbe9e1fd179bc891cc9f2d61ef6b15c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -185,11 +170,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9e-90b1-7731-822d-dd67e8eaf1b6"
+        "01a0f657-15b5-7e12-8cfd-d914f215d44a"
       ],
       "usage": {
-        "used": 23945,
-        "size": 760000,
+        "used": 25952,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -197,10 +182,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23174,
-          "utf8Bytes": 26432,
-          "estimatedTokens": 8811,
-          "budgetedTokens": 11014,
+          "chars": 14998,
+          "utf8Bytes": 17950,
+          "estimatedTokens": 5984,
+          "budgetedTokens": 7480,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -209,17 +194,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:23:51.676Z",
+    "at": "2026-10-01T07:22:19.259Z",
     "trace": {
-      "runId": "a0545f02-7565-4ac3-b128-7fd7aa2f247e",
+      "runId": "08477280-b22c-4b1b-8072-53ae7e666956",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "3dfa76d5abf62a96b63d3dc8ec93b66c8f1ed916f9317a6d0013bc2f8b39d31e",
-      "contextHash": "fd5474391e31196a1861373e699d04032e295888896ca4341ab196897ab0dfcb",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "4412648c9596ac5876495b393b3235b6f59ac161505924a9b7927dec7dbde43e",
+      "contextHash": "b598a7dbb5f3e1e70f20d176fd1839f128b03684ade0a7c65832bb200625dcdb",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "10d76f4f484b9c366f48e2092258328d79d173c527a8e97a131b55db3da713f2",
+      "fingerprint": "f9a14e654e41a5c7acc9aa67c6ef8b3f83aaac7f511030fb261f47f72d345a0c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -232,11 +217,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ee9f-53a6-7b11-9a73-0641f6a1c7d7"
+        "01a0f657-8b62-7ca2-9dc2-a1b5551b3b17"
       ],
       "usage": {
-        "used": 25873,
-        "size": 760000,
+        "used": 24264,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -244,10 +229,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36073,
-          "utf8Bytes": 48005,
-          "estimatedTokens": 16002,
-          "budgetedTokens": 20003,
+          "chars": 18407,
+          "utf8Bytes": 23101,
+          "estimatedTokens": 7701,
+          "budgetedTokens": 9627,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

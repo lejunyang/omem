@@ -2,81 +2,146 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/components/OmShell.vue",
-    "title": "OmShell：三栏应用外壳与响应式侧栏",
-    "summary": "OmShell 提供固定顶栏、导航、主内容和可选助手栏；桌面端保持三栏布局，中小屏通过本地开关将侧栏改为覆盖层。",
+    "title": "自适应三栏应用外壳",
+    "summary": "OmShell 为 omem 页面提供统一的顶部栏、导航区、主内容区和可选助理区，并通过断点把固定侧栏转换为移动端抽屉。组件只负责布局与显隐状态，具体导航、页面内容和助理能力由插槽注入。",
     "category": "implementation",
     "sections": [
       {
-        "key": "composition",
-        "title": "页面骨架与状态",
-        "body": "组件解决应用级布局复用问题。顶栏包含导航按钮、品牌区、业务自定义的 `top` 插槽，以及仅在存在助手插槽时出现的“追问”按钮；主体由导航插槽、默认主内容和可选助手插槽组成。两个本地布尔状态分别控制窄屏导航和助手栏显隐，点击导航区域会自动收起导航。[[c1]] 它复用通用按钮与图标组件，但不掌握路由、助手数据或页面业务状态。"
+        "key": "purpose-and-layout",
+        "title": "统一页面骨架",
+        "body": "OmShell 解决不同页面重复搭建应用框架的问题：顶部栏承载品牌与页面级工具，主体按“导航—内容—助理”组织。`top`、`navigation`、默认插槽和 `assistant` 插槽让调用方提供业务内容；只有传入助理插槽时，追问按钮与右侧区域才会出现。参考 [[c1]]\n\n外壳占满动态视口并锁住根滚动，三个内容区域各自承担滚动；主内容通过弹性宽度占据剩余空间，导航和助理保持固定宽度。这使长文阅读、目录导航和辅助问答可以同时存在。参考 [[c2]]"
       },
       {
-        "key": "responsive",
-        "title": "响应式流程与限制",
-        "body": "外壳占满动态视口并禁止根级滚动，将滚动职责交给导航、主区和助手栏。桌面导航宽 240px、助手栏宽 330px；宽度低于 1100px 时助手栏默认隐藏并可从右侧固定展开，低于 700px 时导航也转为左侧覆盖层，同时缩短顶栏并精简品牌。[[c2]]\n\n两个覆盖侧栏没有可见遮罩、焦点约束或 Escape 关闭逻辑，助手栏内部点击也不会像导航一样自动关闭；按钮只通过可见文本表达助手用途，未暴露展开状态。材料未显示路由跳转或跨组件调用依据，也未提供响应式浏览器测试。[[c3]]"
+        "key": "responsive-flow",
+        "title": "从固定侧栏切换为抽屉",
+        "body": "组件用两个本地布尔状态分别控制导航与助理显隐。桌面宽度下按钮隐藏、侧栏常驻；宽度不超过 1100px 时助理改为右侧固定抽屉，不超过 700px 时导航也改为左侧抽屉，同时压缩顶栏并简化品牌信息。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[桌面三栏] -->|不超过 1100px| B[助理右侧抽屉]\n  B -->|不超过 700px| C[导航左侧抽屉]\n```\n\n导航区域自身被点击后会关闭，助理则只通过顶部“追问”按钮切换；当前材料没有显示遮罩层、Esc 关闭或焦点管理。参考 [[c4]]"
+      },
+      {
+        "key": "dependencies-and-boundaries",
+        "title": "基础组件依赖与职责边界",
+        "body": "外壳直接复用 OmButton 和 OmIcon：菜单与品牌图形由图标组件绘制，切换控件使用 ghost 按钮样式。图标对未知名称会回退为书本图形；按钮负责原生禁用与忙碌语义，但 OmShell 只使用普通点击状态。参考 [[c5]] [[c6]]\n\n该组件不解析路由、不保存展开状态，也不实现助理业务逻辑；品牌链接还通过 `prevent` 阻止默认跳转。因此它是纯页面容器，导航目标、助理内容及持久化策略均需由上层提供。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "应用外壳插槽与开关状态",
-        "reason": "支持顶栏、导航、主内容、助手插槽组成方式以及本地显隐状态的说明。",
-        "relation": "explains",
+        "label": "页面插槽与三栏结构",
+        "reason": "支持顶部、导航、正文和可选助理区域由插槽组成，以及助理区域按插槽存在性渲染的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmShell.vue",
-          "startLine": 1,
-          "endLine": 44
+          "startLine": 8,
+          "endLine": 42
         },
-        "quote": "<script setup lang=\"ts\">\nimport { ref } from \"vue\";\nimport OmButton from \"./OmButton.vue\";\nimport OmIcon from \"./OmIcon.vue\";\nconst nav = ref(false);\nconst assist = ref(false);\n</script>\n<template>\n  <div class=\"om-shell\">\n    <header class=\"om-top\">\n      <OmButton\n        class=\"nav-toggle\"\n        variant=\"ghost\"\n  "
+        "quote": "<template>\n  <div class=\"om-shell\">\n    <header class=\"om-top\">\n      <OmButton\n        class=\"nav-toggle\"\n        variant=\"ghost\"\n        aria-label=\"导航\"\n        @click=\"nav = !nav\"\n        ><OmIcon name=\"menu\" /></OmButton\n      ><a href=\"#\" class=\"om-brand\" @click.prevent\n        ><OmIcon name=\"layers\" :size=\"26\" />"
       },
       {
         "key": "c2",
-        "label": "基础三栏布局",
-        "reason": "支持视口高度、滚动职责及桌面端导航和助手栏尺寸的说明。",
-        "relation": "supports",
+        "label": "桌面布局与滚动规则",
+        "reason": "支持全视口外壳、固定宽度侧栏、弹性主内容及各区域滚动行为的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmShell.vue",
-          "startLine": 45,
+          "startLine": 46,
           "endLine": 106
         },
-        "quote": "<style scoped>\n.om-shell {\n  height: 100dvh;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n.om-top {\n  height: 70px;\n  flex-shrink: 0;\n  background: #171717;\n  color: white;\n  display: flex;\n  align-items: center;\n  gap: 24px;\n  padding: 0 24px;\n}\n.om-brand {\n  display: flex;\n  gap: 12px;\n  align-ite"
+        "quote": ".om-shell {\n  height: 100dvh;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n.om-top {\n  height: 70px;\n  flex-shrink: 0;\n  background: #171717;\n  color: white;\n  display: flex;\n  align-items: center;\n  gap: 24px;\n  padding: 0 24px;\n}\n.om-brand {\n  display: flex;\n  gap: 12px;\n  align-items: center;\n  t"
       },
       {
         "key": "c3",
-        "label": "窄屏覆盖侧栏规则",
-        "reason": "支持 1100px 与 700px 两级响应式切换，并揭示覆盖层仅由 CSS 显隐的边界。",
-        "relation": "supports",
+        "label": "响应式侧栏规则",
+        "reason": "支持两个断点下助理与导航从常驻侧栏变为固定抽屉，以及移动端顶栏简化的流程。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmShell.vue",
           "startLine": 107,
-          "endLine": 167
+          "endLine": 166
         },
         "quote": ".nav-toggle,\n.assistant-toggle {\n  display: none !important;\n}\n@media (max-width: 1100px) {\n  .om-assistant {\n    display: none;\n  }\n  .assistant-toggle {\n    display: inline-flex !important;\n    color: white;\n  }\n  .om-assistant.shown {\n    display: block;\n    position: fixed;\n    right: 0;\n    top: 70px;\n    bottom: "
+      },
+      {
+        "key": "c4",
+        "label": "导航与助理显隐状态",
+        "reason": "支持两个独立布尔状态、按钮切换方式及导航区域点击后关闭的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmShell.vue",
+          "startLine": 2,
+          "endLine": 40
+        },
+        "quote": "import { ref } from \"vue\";\nimport OmButton from \"./OmButton.vue\";\nimport OmIcon from \"./OmIcon.vue\";\nconst nav = ref(false);\nconst assist = ref(false);\n</script>\n<template>\n  <div class=\"om-shell\">\n    <header class=\"om-top\">\n      <OmButton\n        class=\"nav-toggle\"\n        variant=\"ghost\"\n        aria-label=\"导航\"\n   "
+      },
+      {
+        "key": "c5",
+        "label": "图标回退行为",
+        "reason": "支持 OmIcon 提供菜单和层叠图形，并在未知名称时回退到默认书本图形的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmIcon.vue",
+          "startLine": 2,
+          "endLine": 32
+        },
+        "quote": "withDefaults(defineProps<{ name?: string; size?: number }>(), {\n  size: 18,\n  name: \"book\",\n});\nconst paths: Record<string, string> = {\n  book: \"M12 5v16M3 4c4-1 7 0 9 2 2-2 5-3 9-2v15c-4-1-7 0-9 2-2-2-5-3-9-2z\",\n  layers: \"m12 3 10 5-10 5L2 8zM2 12l10 5 10-5M2 16l10 5 10-5\",\n  arrow: \"m9 5 7 7-7 7\",\n  back: \"m14 6-6 6"
+      },
+      {
+        "key": "c6",
+        "label": "按钮交互语义",
+        "reason": "支持 OmButton 的样式变体、禁用与忙碌状态语义，以及 ghost 外观的说明。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmButton.vue",
+          "startLine": 2,
+          "endLine": 20
+        },
+        "quote": "withDefaults(\n  defineProps<{\n    variant?: \"primary\" | \"secondary\" | \"ghost\";\n    loading?: boolean;\n    disabled?: boolean;\n    type?: \"button\" | \"submit\";\n  }>(),\n  { variant: \"secondary\", type: \"button\" },\n);\n</script>\n<template>\n  <button\n    :type=\"type\"\n    class=\"om-button\"\n    :class=\"variant\"\n    :disabled=\"d"
+      },
+      {
+        "key": "c7",
+        "label": "品牌链接与组件状态",
+        "reason": "支持品牌链接阻止默认跳转、组件仅维护导航和助理显隐状态，因此未承担路由与持久化职责的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmShell.vue",
+          "startLine": 2,
+          "endLine": 27
+        },
+        "quote": "import { ref } from \"vue\";\nimport OmButton from \"./OmButton.vue\";\nimport OmIcon from \"./OmIcon.vue\";\nconst nav = ref(false);\nconst assist = ref(false);\n</script>\n<template>\n  <div class=\"om-shell\">\n    <header class=\"om-top\">\n      <OmButton\n        class=\"nav-toggle\"\n        variant=\"ghost\"\n        aria-label=\"导航\"\n   "
       }
     ],
     "questions": [
       {
-        "question": "移动端导航和助手覆盖层是否需要焦点管理、Escape 关闭、遮罩及 `aria-expanded`？",
-        "why": "当前材料只显示布尔显隐与固定定位，无法看到对键盘用户和背景交互的约束。",
-        "nextStep": "确认侧栏的对话框或导航语义，并补充键盘、焦点返回和不同视口宽度的浏览器测试。",
+        "question": "移动端抽屉是否需要补充 Esc 关闭、点击外部关闭、焦点圈定和关闭后焦点归还？",
+        "why": "现有材料只展示按钮切换与导航区内部点击关闭；对键盘用户和屏幕阅读器所需的抽屉交互合同没有给出，也未提供测试文件证明这些行为。",
+        "nextStep": "确认项目对抽屉的无障碍要求，并为键盘关闭、焦点移动、焦点归还及双抽屉互斥行为补充浏览器测试。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
+          "c3",
+          "c4"
         ]
       },
       {
-        "question": "移动端导航和助手覆盖层是否需要焦点管理、Escape 关闭、遮罩及 aria-expanded？",
-        "why": "当前材料只显示布尔显隐与固定定位，无法看到对键盘用户和背景交互的约束。",
-        "nextStep": "确认侧栏的对话框或导航语义，并补充键盘、焦点返回和不同视口宽度的浏览器测试。",
+        "question": "导航与助理抽屉是否允许在窄屏上同时处于打开状态？",
+        "why": "两个显隐状态彼此独立，当前切换逻辑没有显示互斥处理；这可能导致左右固定层同时覆盖主内容。",
+        "nextStep": "由产品交互确认允许叠加还是打开一侧时关闭另一侧，再据此添加状态约束和响应式断言。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c3"
+          "c4"
+        ]
+      },
+      {
+        "question": "导航与助理抽屉是否允许在窄屏上同时打开？",
+        "why": "nav 与 assist 是彼此独立的状态，当前切换逻辑没有互斥约束；在不超过 700px 时两侧固定层可能同时覆盖主内容。",
+        "nextStep": "由产品交互确认允许叠加还是打开一侧时关闭另一侧，再据此添加状态约束和响应式断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
         ]
       }
     ]
@@ -84,38 +149,8 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmPanel.vue",
-      "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
-      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/ui/src/components/OmShell.vue",
       "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmStatusLine.vue",
-      "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
-      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/highlight.ts",
-      "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
     },
     {
       "kind": "material",
@@ -126,27 +161,22 @@
       "kind": "material",
       "key": "omem:packages/ui/src/components/OmButton.vue",
       "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:26:55.969Z",
+    "at": "2026-10-01T07:01:12.641Z",
     "trace": {
-      "runId": "f0a2b923-fe64-4f46-a375-0c579799d0c5",
+      "runId": "1fb73fb0-4916-4224-800f-2e0529da194a",
       "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "efd3d1ff303420d53087badd2f464bf3aa8af87cfd54c30ed58bf02f24e5b8d2",
-      "contextHash": "7757dfeebda306a48c1622bc127ad757355a97b2adcedddbc067054f1a5e145a",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "b33eb25a096eefd869deb114e1522da8e787917ce8202ab3aaeb983853669b8f",
+      "contextHash": "4baa7670e1d314963b67eb3af9e06f040c8d5b0bb5277be7c503eb83dc7a721b",
       "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a55b61e8eae72a7843c32cbe28f2f184d2d2358e900c2034101338d8e48a648c",
+      "fingerprint": "0e63f55791a75a21f9f990ae79e9a17d9f3dbc43decf71dfa9fe0bfd27528e72",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -159,11 +189,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea1-9483-76f2-b00c-f39d11d9b12f"
+        "01a0f644-199c-7ef0-9678-ddb0cf8d926e"
       ],
       "usage": {
-        "used": 34567,
-        "size": 760000,
+        "used": 25617,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -171,10 +201,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 51248,
-          "utf8Bytes": 53271,
-          "estimatedTokens": 17757,
-          "budgetedTokens": 22197,
+          "chars": 14945,
+          "utf8Bytes": 18063,
+          "estimatedTokens": 6021,
+          "budgetedTokens": 7527,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -183,17 +213,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:27:20.220Z",
+    "at": "2026-10-01T07:01:32.433Z",
     "trace": {
-      "runId": "6633981a-2593-4850-bc67-603ea31b227a",
+      "runId": "897370be-533a-4b22-bfc2-0954e65052a7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0c4ed297379bac8b72fd264a7dfc8b50245b813d8943880f8519c6281265990e",
-      "contextHash": "afef2621b0f791d244cfd43f8ab6aa704d541379ab6ae6a336528fdb10b4d141",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "4e9eaeeb3173528c345afc7661cad8aa36670886c1982672da106707d05ad98f",
+      "contextHash": "68b3dd040a33f95e3ef14298f27f6bbc3558d79b9a1006ec1b73ab931666152f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "eabebc66d564f07fe2b3e0059765d8da27b4fac7ead33b03960fea24900c6e4d",
+      "fingerprint": "080f6b541b10c8d68a18883907b023af2d9252dbc063055268a1c808284dc039",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -206,11 +236,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-69a8-73c1-8014-650a56b0797e"
+        "01a0f644-7cc3-7fd3-b368-feacbf40dc73"
       ],
       "usage": {
-        "used": 37890,
-        "size": 760000,
+        "used": 25612,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -218,10 +248,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 66460,
-          "utf8Bytes": 76474,
-          "estimatedTokens": 25492,
-          "budgetedTokens": 31865,
+          "chars": 17428,
+          "utf8Bytes": 20768,
+          "estimatedTokens": 6923,
+          "budgetedTokens": 8654,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

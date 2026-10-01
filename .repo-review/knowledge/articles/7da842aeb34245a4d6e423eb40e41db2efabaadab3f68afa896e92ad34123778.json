@@ -2,97 +2,177 @@
   "version": 1,
   "document": {
     "key": "omem:scripts/quality-run.ts",
-    "title": "隔离运行冻结质量样本并生成预测",
-    "summary": "该脚本使用实时 TraeX profile 逐项运行冻结质量样本，在独立临时 Store 中执行学习流水线，将 proposal 转换为结构化预测，并逐样本持久化以支持恢复。",
+    "title": "隔离运行记忆提取质量样本",
+    "summary": "该脚本以冻结数据集为固定输入，逐条调用在线学习流水线，在隔离存储中收集提案、耗时和令牌用量，并将结果写入可续跑的预测文件；它支持重复执行检查，但不承诺在线模型输出完全一致。",
     "category": "workflow",
     "sections": [
       {
-        "key": "setup",
-        "title": "冻结输入与断点续跑",
-        "body": "命令要求冻结数据集标识，打开配置的 Store 并验证冻结状态，再选择可用的 `traex` 实时 profile。已有预测逐项通过 schema 解析，其 sampleId 构成跳过集合。处理上限默认取样本总数；环境变量能解析为数值时通过 `Math.max` 将下限设为 1，但非数字值会产生 `NaN`，当前没有显式拒绝。预测通过临时文件重命名原子替换，最终权限收紧为 `0600`。[[c1]]"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "该脚本用于对**冻结数据集**执行基于固定输入、可重跑的在线质量检查。启动时必须指定数据集，确认其已冻结，并选择 ACP 当前提供的模型；输出用于判断样本应提取记忆、放弃提取，还是需要更多上下文。由于执行仍依赖在线模型，并写入当前时间、耗时等运行数据，相同输入并不等于预测结果必然确定一致。参考 [[c1]] [[c9]]\n\n已有预测会先通过结构校验，再按样本 ID 跳过已完成项；环境变量还可限制本次处理数量，因此批量运行中断后能够接着处理剩余样本。结果通过临时文件重命名写入，并收紧文件权限。参考 [[c2]]"
       },
       {
-        "key": "isolated-run",
-        "title": "逐样本隔离执行",
-        "body": "每个未完成样本使用唯一临时目录和独立 Store，以人工来源捕获文本，并保存来源 URI、转发状态和时区等 provenance；其中 actor 类型与验证来源由 `actorVerified` 布尔值映射为固定值。[[c2]] 随后构造 MemoryService 与 LearningPipeline，使用所选实时 profile drain 作业，只收集 applied、awaiting_decision 或 approved 状态的 proposal。这种隔离减少样本间状态污染，但仍依赖外部实时模型配置。"
+        "key": "execution",
+        "title": "隔离执行流程",
+        "body": "每个样本都会创建独立临时目录和 `Store`，将文本、来源位置、参与者可信度与转发状态重新捕获为一次输入，再组装记忆服务、反馈服务和 `LearningPipeline`。流水线调用 `drain(10)` 后停止，随后从该临时库读取提案和作业尝试。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[冻结样本] --> B[临时存储捕获]\n  B --> C[学习流水线处理]\n  C --> D[读取提案与用量]\n  D --> E[持久化预测]\n```\n\n这条路径复用了应用中的角色运行、持久任务、记忆和检索相关组件，而不是另建一套只供评测使用的提取器。延伸阅读：[[c4]]"
       },
       {
         "key": "prediction",
-        "title": "预测映射、用量与错误",
-        "body": "有 proposal 时 disposition 为 `extract`，否则为 `abstain`；对象包含类型、归一化陈述和证据引文，任务还附带 owner 与期限字段，autoApply 由是否存在 applied proposal 决定。脚本汇总作业尝试中的输入、输出 token，并记录耗时。[[c3]] 单样本异常不会终止整批，而会生成 `needs_context`、空对象和截断错误信息；每轮关闭并删除临时 Store、持久化预测并输出进度。[[c4]]"
+        "title": "如何形成预测",
+        "body": "脚本只采用状态为已应用、等待决策或已批准的提案：存在提案时标记为 `extract`，否则为 `abstain`。预测对象保存类型、可读陈述和证据摘录；任务对象还可附带负责人、截止时间及原始时间表达。只要任一提案已应用，`autoApply` 就为真。参考 [[c5]]\n\n结果写入前必须通过统一合同，合同约束样本标识、质量标签、耗时、令牌用量和错误字段。标签只允许任务、主张、事件和流程四类对象，并要求 `extract` 至少包含一个对象。参考 [[c6]] [[c7]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "失败恢复与已知边界",
+        "body": "单个样本异常不会终止整批运行，而会生成 `needs_context`、空对象且禁止自动应用的预测，并保存截断后的错误信息。无论成功或失败，临时数据库都会关闭并删除；每处理完一个样本便持久化一次结果，降低中途退出留下半写文件的风险。参考 [[c8]]\n\n当前材料不能证明 `drain(10)` 足以处理样本产生的全部后续任务，也不能确认环境变量指定的 effort 会在执行前按 ACP 能力被拒绝；模型名称本身则会根据 ACP 暴露的选项进行选择和可用性检查。参考 [[c3]] [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "冻结数据集与预测持久化",
-        "reason": "支持冻结验证、实时 profile 选择、已有结果恢复、运行上限计算及原子持久化行为。",
+        "label": "冻结输入与在线模型准备",
+        "reason": "支持脚本要求数据集、验证冻结状态并选择在线 ACP 模型，也说明固定的是输入而非模型输出。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-run.ts",
           "startLine": 27,
-          "endLine": 60
+          "endLine": 38
         },
         "quote": "const datasetId = process.argv[2] || process.env.OMEM_QUALITY_DATASET_ID;\nif (!datasetId) throw Error(\"Usage: quality-run <frozen-dataset-id>\");\nconst config = loadConfig();\nconst sourceStore = new Store(config.dataDir);\nconst repository = new QualityRepository(sourceStore.db);\nconst frozen = repository.verifyFrozen(da"
       },
       {
         "key": "c2",
-        "label": "隔离样本与学习流水线",
-        "reason": "支持每样本独立 Store、provenance 字段及 actorVerified 的固定映射、流水线执行和 proposal 状态筛选。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:scripts/quality-run.ts",
-          "startLine": 63,
-          "endLine": 113
-        },
-        "quote": "try {\n  let processed = 0;\n  for (const sample of frozen.samples) {\n    if (completed.has(sample.id) || processed >= limit) continue;\n    const directory = join(\n      tmpdir(),\n      `omem-quality-run-${datasetId}-${sample.ordinal}-${randomUUID()}`,\n    );\n    const store = new Store(directory);\n    const started = Da"
-      },
-      {
-        "key": "c3",
-        "label": "预测对象与用量映射",
-        "reason": "支持 proposal 到结构化预测、任务字段、自动应用标志、耗时和 token 用量的转换。",
+        "label": "续跑与原子保存",
+        "reason": "支持校验已有预测、跳过已完成样本、限制处理数量及通过临时文件重命名保存结果。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-run.ts",
-          "startLine": 114,
-          "endLine": 155
+          "startLine": 40,
+          "endLine": 60
         },
-        "quote": "      const attempts = store.jobs\n        .list()\n        .flatMap((job) => store.jobs.attempts(job.id));\n      const numericUsage = (key: string) => {\n        const values = attempts.flatMap((attempt) => {\n          const value = attempt.usage[key];\n          return typeof value === \"number\" ? [value] : [];\n        })"
+        "quote": "const predictions: QualityPrediction[] = existsSync(output)\n  ? (JSON.parse(readFileSync(output, \"utf8\")) as unknown[]).map((value) =>\n      qualityPredictionSchema.parse(value),\n    )\n  : [];\nconst completed = new Set(predictions.map((prediction) => prediction.sampleId));\nconst limit = Math.max(\n  1,\n  Number(process."
+      },
+      {
+        "key": "c3",
+        "label": "样本隔离处理",
+        "reason": "支持每个样本使用独立临时存储、捕获来源上下文、调用学习流水线及固定执行 drain(10) 的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 63,
+          "endLine": 108
+        },
+        "quote": "try {\n  let processed = 0;\n  for (const sample of frozen.samples) {\n    if (completed.has(sample.id) || processed >= limit) continue;\n    const directory = join(\n      tmpdir(),\n      `omem-quality-run-${datasetId}-${sample.ordinal}-${randomUUID()}`,\n    );\n    const store = new Store(directory);\n    const started = Da"
       },
       {
         "key": "c4",
-        "label": "失败降级与逐项清理",
-        "reason": "支持异常统一转为 needs_context 预测、临时目录清理、逐项持久化和最终 Store 关闭。",
-        "relation": "supports",
+        "label": "学习流水线组成",
+        "reason": "说明质量运行所复用的学习流水线关联角色运行、任务处理、记忆服务与检索端口。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "startLine": 14,
+          "endLine": 26
+        },
+        "quote": "import { RoleBundleRegistry } from \"../agent-runtime/bundles.js\";\nimport {\n  RoleRuntimeGateway,\n  type RoleRunTrace,\n} from \"../agent-runtime/gateway.js\";\nimport { DurableJobWorker, JobExecutionError } from \"../jobs/worker.js\";\nimport type { JobLease } from \"../jobs/repository.js\";\nimport { FeedbackService, MemoryServ"
+      },
+      {
+        "key": "c5",
+        "label": "提案到预测的映射",
+        "reason": "支持提案状态筛选、提取或放弃判定、对象字段、自动应用状态及运行用量汇总。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 109,
+          "endLine": 155
+        },
+        "quote": "      const proposals = memory\n        .proposals()\n        .filter((proposal) =>\n          [\"applied\", \"awaiting_decision\", \"approved\"].includes(proposal.state),\n        );\n      const attempts = store.jobs\n        .list()\n        .flatMap((job) => store.jobs.attempts(job.id));\n      const numericUsage = (key: string)"
+      },
+      {
+        "key": "c6",
+        "label": "预测结果合同",
+        "reason": "支持预测必须包含合法样本标识和质量标签，并可记录耗时、令牌用量与错误。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 4,
+          "endLine": 15
+        },
+        "quote": "export const qualityPredictionSchema = z\n  .object({\n    sampleId: z.string().uuid(),\n    prediction: qualityLabelSchema,\n    durationMs: z.number().nonnegative().optional(),\n    inputTokens: z.number().int().nonnegative().nullable().optional(),\n    outputTokens: z.number().int().nonnegative().nullable().optional(),\n  "
+      },
+      {
+        "key": "c7",
+        "label": "质量标签约束",
+        "reason": "支持处置类型、对象种类与字段约束，以及 extract 必须至少包含一个对象。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/repository.ts",
+          "startLine": 39,
+          "endLine": 67
+        },
+        "quote": "export const qualityLabelSchema = z\n  .object({\n    disposition: z.enum([\"extract\", \"abstain\", \"needs_context\"]),\n    objects: z\n      .array(\n        z\n          .object({\n            kind: z.enum([\"task\", \"claim\", \"episode\", \"procedure\"]),\n            statement: z.string().min(1).max(4000),\n            evidenceQuote:"
+      },
+      {
+        "key": "c8",
+        "label": "失败降级与清理",
+        "reason": "支持失败样本降级为 needs_context、关闭并删除临时存储，以及逐样本持久化结果。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-run.ts",
           "startLine": 157,
-          "endLine": 193
+          "endLine": 180
         },
         "quote": "    } catch (error) {\n      predictions.push(\n        qualityPredictionSchema.parse({\n          sampleId: sample.id,\n          prediction: {\n            disposition: \"needs_context\",\n            objects: [],\n            autoApply: false,\n            forbiddenEffects: [],\n            notes: \"Runner failed before a valid"
+      },
+      {
+        "key": "c9",
+        "label": "ACP 模型选择",
+        "reason": "支持模型通过 ACP 可选项发现和校验，同时表明当前材料只展示 effort 被写入 profile，未展示其能力校验。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/live-model.ts",
+          "startLine": 4,
+          "endLine": 35
+        },
+        "quote": "export async function selectLiveProfile(base: AgentProfile, cwd: string) {\n  const probe = await acp(\n    base,\n    cwd,\n    null,\n    () => {},\n    new AbortController().signal,\n  );\n  const modelOption = probe.configOptions.find(\n    (option) => option.id === \"model\",\n  );\n  if (!modelOption || modelOption.type !== \""
       }
     ],
     "questions": [
       {
-        "question": "已有预测文件含重复或不属于当前冻结数据集的 sampleId 时，运行器应拒绝、去重还是原样保留？",
-        "why": "当前代码逐项做 schema 校验，并用 Set 决定跳过哪些样本，但不会在运行前检查 sampleId 唯一性或数据集归属。",
-        "nextStep": "确定恢复文件的严格合同，并增加重复、未知 sampleId 及数据集变更场景的行为测试。",
+        "question": "`pipeline.drain(10)` 是否足以处理单个样本产生的全部学习任务？",
+        "why": "脚本在读取提案前只执行固定上限为十的 drain；现有材料没有给出 drain 的完整语义或单样本任务数量上界。",
+        "nextStep": "核对 `LearningPipeline.drain` 的完整实现及行为测试，并验证存在后续派生任务或任务数超过十时的处理结果。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c3"
         ]
       },
       {
-        "question": "流水线异常统一映射为 `needs_context` 是否会混淆模型确实缺背景与基础设施失败？",
-        "why": "捕获分支把所有异常写成相同 disposition，仅在 error 字段保留消息，而质量指标可能把它解释为业务预测。",
-        "nextStep": "在 evaluator 合同中确认错误样本的计分方式，必要时将运行失败与模型判断缺背景分开表示。",
+        "question": "在线运行是否会在执行前拒绝 ACP 不支持的 effort 设置？",
+        "why": "材料证明模型会经过 ACP 可选项探测，但只显示环境变量中的 effort 被写入 profile，不能确认执行路径会校验其支持情况。",
+        "nextStep": "检查角色运行网关的 profile 能力校验路径，并通过真实 ACP 分别验证受支持与不受支持的 effort。",
         "blocking": false,
         "citationKeys": [
-          "c4"
+          "c9"
+        ]
+      },
+      {
+        "question": "断点续跑、单样本失败和预测文件原子替换是否已有自动化行为测试？",
+        "why": "提供的材料展示了相关实现，但没有测试文件证据，无法确认异常中断、损坏旧预测或重复样本等场景已被断言。",
+        "nextStep": "查找质量运行脚本的集成测试；若缺失，补充恢复已有预测、失败后继续、临时目录清理和输出合同校验用例。",
+        "blocking": false,
+        "citationKeys": [
+          "c2",
+          "c8"
         ]
       }
     ]
@@ -100,49 +180,44 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/server/tests/knowledge-repository.test.ts",
-      "digest": "b22c13d63c6dbbbc65708be7fc8c384448ebacb2f017e80355cacd215e85bcc3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/knowledge-browser.ts",
-      "digest": "ca9d7ef04d756523eafef1953f8e84bfa2a740529675e83704a69fb69c68b13d"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/live-role-smoke.ts",
-      "digest": "0f522a2e0b04896d8649d087fa7468ba340a2fe401f688a7a04dbf939905b3f1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/quality-evaluate.ts",
-      "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
-    },
-    {
-      "kind": "material",
-      "key": "omem:scripts/quality-lark-annotate.ts",
-      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
-    },
-    {
-      "kind": "material",
       "key": "omem:scripts/quality-run.ts",
       "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-model.ts",
+      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/evaluator.ts",
+      "digest": "4c6debef6cb90bdc11eb1004b1e1f3f6be43688d996416c2b523165829af2835"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "411512447121280c38d11a4c5aa7c8b67916a7ec8e540d59c746101bc13e2e3e"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:46:50.120Z",
+    "at": "2026-10-01T07:26:04.716Z",
     "trace": {
-      "runId": "02b7be29-5096-45d7-a278-87fa116e4607",
+      "runId": "a1738f79-b299-4cc1-b65a-947b965b0191",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "742b32caf4d7b28712e03dc4171d3f8266bfc45c22777e8da47e01862f0e3225",
-      "contextHash": "2a2742a14f00d0a5b68ed4df1c7922aa1fc4fd7b9921da4a3b67fa1e844c6879",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "d213da49263f8d9fb40e1c1148b690b07665e72eb9fded25130a266da4234c02",
+      "contextHash": "0c420d0c2831a26acad08d77d3ea3b3e94978667df820b91ce2e3e20975aaa8f",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "48e67deea6c7cbac1ce93e68013fdbfc1714fb4a1cb1af205e51fe2d2b811e1b",
+      "fingerprint": "b478d7ab6fde37ec9561a07e423a95c5b205197b9b13a02be7d4e915a97760d1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -155,11 +230,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeeb-1fb4-70d1-bcaf-ed42732f2b65"
+        "01a0f65a-caf5-7f62-b01b-ede3dc92626d"
       ],
       "usage": {
-        "used": 35326,
-        "size": 760000,
+        "used": 32277,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -167,10 +242,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 61645,
-          "utf8Bytes": 71957,
-          "estimatedTokens": 23986,
-          "budgetedTokens": 29983,
+          "chars": 35213,
+          "utf8Bytes": 42441,
+          "estimatedTokens": 14147,
+          "budgetedTokens": 17684,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -179,17 +254,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:46:58.341Z",
+    "at": "2026-10-01T07:26:27.926Z",
     "trace": {
-      "runId": "95bc7121-a43d-416d-af26-20f580cfb551",
+      "runId": "608d660b-9e8b-4ec7-bca0-d374b2717e90",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "e56ae2be9aed635efcf6aa8557b5f45a684a6c03c314f90689f9f378019248a8",
-      "contextHash": "296c5641c062d4414d1a7a2bea0b2879cfbe39ad36eb6fbdf5c8ba327c4428df",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "dea8e0d7e55fa16b6eb74bc3dd6d8c195f065cf3163f6052dd7463a3850b0945",
+      "contextHash": "d78d73911572de8c8f4c5b8ea121ca6b4d6e96749c68075dd29716f19eb7730a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a5f65c11b230e527d63b45f39b56123a5541ec09989e91372f5d2454e956f18f",
+      "fingerprint": "9fde0bffc2f349c894ab19ac0ae6fdf4899d6cdc218c87d1d204904407a047ba",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -202,11 +277,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeeb-91a4-77f2-8451-4bead72ff742"
+        "01a0f65b-3dcc-7441-86f1-be5462948dcc"
       ],
       "usage": {
-        "used": 30333,
-        "size": 760000,
+        "used": 29747,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -214,10 +289,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 57274,
-          "utf8Bytes": 64742,
-          "estimatedTokens": 21581,
-          "budgetedTokens": 26977,
+          "chars": 31758,
+          "utf8Bytes": 37026,
+          "estimatedTokens": 12342,
+          "budgetedTokens": 15428,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

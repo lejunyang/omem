@@ -2,63 +2,37 @@
   "version": 1,
   "document": {
     "key": "module:other:part-1",
-    "title": "其他模块专题 1：服务端治理与代码知识验证",
-    "summary": "本专题串联助手模型接入、受控写入、记忆变更门控、Lark 消息入口与代码知识快照。当前服务层已具备可运行的证据、收据和投递切片，但主要验证仍依赖进程内模型、协议夹具、临时 SQLite 与本地 HTTP 注入；真实外部 CLI、平台网络、并发恢复及迁移故障仍需独立验收。",
-    "category": "overview",
+    "title": "服务端治理与代码知识的可追溯验证",
+    "summary": "服务端通过运行时合同、注意力门控和发送侧守卫约束模型及外部副作用；代码知识建立在已捕获原文、不可变快照和可校验产物之上。现有测试覆盖主要单进程流程，但真实外部 CLI、并发故障、决策执行和部分恢复场景仍需独立验证。",
+    "category": "architecture",
     "sections": [
       {
-        "key": "assistant-runtime",
-        "title": "助手接入与运行时治理",
-        "body": "助手模型适配层只接受 ACP profile；缺少配置或误用一次性 CLI 传输时明确报告模型不可用，不生成伪答案。历史上下文默认保留最近十轮，并把每轮助手结果裁到 500 字符。[[c1]][[c2]] 模型返回的回答、引用与任务请求只是结构化提案，服务端仍会重新检查证据可见性和所有者来源。[[c3]]\n\n运行时测试进一步证明，明确的“记一下”可以产生任务，而普通咨询即使收到模型的创建请求也保持零写入；跨轮证据可支撑后续任务，不存在的引用或取消后迟到的请求都会被拒绝。[[c4]] ACP fixture 还覆盖模型与推理强度协商、思考过滤、权限默认拒绝、超时及主动取消，但不代表真实外部 CLI 已通过相同验收。[[c5]]"
+        "key": "assistant-governance",
+        "title": "模型只能提议，服务端决定是否写入",
+        "body": "助理回复将自然语言回答、实际依赖的证据片段与结构化任务请求分开；任务请求还要由服务端重新检查证据可见性和所有者来源，模型不能自行取得写权限。参考 [[c1]]\n\n明确的“记一下”可以创建任务，而普通咨询即使收到模型的创建请求也保持零写入，使“生成内容”和“改变用户数据”成为两条不同的信任路径。参考 [[c2]] Agent 传输层还验证模型与推理强度协商、过滤私有思考、默认拒绝权限请求，并为超时和主动取消提供可观察错误。参考 [[c3]]"
       },
       {
-        "key": "memory-and-messaging",
-        "title": "记忆门控与消息入口",
-        "body": "记忆层保留原始材料并谨慎晋升：信息不足的题外材料仍可检索但不进入活动记忆；重复陈述链接既有记录，相反主张则记录为争议。[[c6]] 当新来源试图覆盖另一来源支撑的活动知识时，测试明确要求进入 `awaiting_decision`，旧知识保持活动且不被静默改写；这替代了此前缺少直接证据的概括。[[c7]] 同源变化若实际波及 11 条依赖，也会因超过自动应用上限进入待决。[[c8]] 来源 revision 更新后仅登记为 `needs_review`，受影响旧记忆退出活动检索，不能把失效登记视为复核完成。[[c9]]\n\nLark 入口只有在有效绑定下才把外部身份映射为规范 owner，未绑定成员不会被当作所有者任务来源。[[c10]] 已绑定私聊会创建并关联一条回复投递意图。[[c11]] 相同事件再次投递后，测试仅确认 `delivery_intents` 数量仍为一，因此证据支持“回复投递意图未重复创建”，不能据此断言模型调用、会话轮次、任务或整个入口的其他副作用均具幂等性；此前“直接证明入口幂等”的结论已被替代。[[c12]] 这些场景使用本地确定性接线，没有真实 socket 或平台送达证据。"
+        "key": "change-and-delivery-gates",
+        "title": "高风险变化与外部投递采用双层门控",
+        "body": "知识更新不会因模型判断“受支持”就无条件覆盖现有内容。跨来源替换活动知识时，旧知识继续保持有效，新提案进入待决状态，避免静默改写。参考 [[c4]] 来源产生新 revision 后，受影响记忆会进入待复核范围并退出活动检索；失效登记本身不代表 extractor 与独立 verifier 已经完成。参考 [[c5]]\n\n外部通知采用相似的诚实边界：取消标注会话后，尚未发送的意图被取消，worker 不再调用消息适配器。参考 [[c6]] 如果取消后又出现待发送记录，发送侧仍会检查会话状态并抑制投递，形成取消清扫与消费检查两道防线。参考 [[c7]]"
       },
       {
-        "key": "code-knowledge",
-        "title": "代码知识作为固定证据的派生视图",
-        "body": "代码知识不是第二套事实库：评审同步先捕获正文，代码同步再解析 TS/Vue，并把结构投影到同一隔离 SQLite；相同仓库、提交、脏状态与内容哈希组合会复用快照。[[c13]] 结构失效方式需要区分：消失的符号保留旧 `snapshot_id`，只是从当前 head 视图中过滤；最新解析未重新产生或触及已移除文件的边才标记为 `stale`，而不是所有旧结构统一转为 stale。[[c14]]\n\nA→B→A 用例证明当前指针可回到旧快照，同时保留 B 的历史图；源码 HTTP 接口按指定快照返回固定内容，缺少对应固定材料时返回 404，不回退读取实时磁盘。[[c15]] 导出只接受当前快照中状态成功、非 seed 且未过期的模型理解，并记录依赖与稳定符号定位。[[c16]] 产物测试还覆盖跨库恢复、重复恢复幂等、伪造定位拒绝及重新捕获源码变化后的过期处理。[[c17]]"
+        "key": "code-knowledge-flow",
+        "title": "代码知识依附固定原文与不可变快照",
+        "body": "代码结构不是第二套事实库：同步器解析 TypeScript 与 Vue，并将结构投影到已经捕获的 fragment；快照身份由仓库、提交、脏状态和内容哈希共同决定，相同输入复用快照，输入变化才产生新快照。参考 [[c8]]\n\n结构对象具有不同的历史语义：最新解析未重新生成的边会转为 `stale`，消失的符号则保留在旧快照中并退出当前 head 视图，而不是统一改成过期状态。参考 [[c13]] A→B→A 测试进一步证明当前版本由显式指针决定：回到相同输入时复用 A，较晚产生的 B 仍可作为历史图读取。参考 [[c9]]\n\n生成式代码理解的导出入口只接受当前快照中状态为成功、非 seed 且未过期的模型结果，并记录依赖和稳定符号定位。参考 [[c14]] 恢复测试证明合法产物可跨库重建，伪造定位会被拒绝，源码变化后旧产物会转为过期并退出当前模型理解列表。参考 [[c10]]"
       },
       {
         "key": "progress-and-limits",
-        "title": "当前进展与验证边界",
-        "body": "现有测试已经分别验证若干可运行切片：任务写入会产生真实 `application_receipts`，已完成轮次不会在恢复时重复调用模型；[[c18]] Lark 私聊回复会写入 `delivery_intents` 并把 outbox 标识关联回会话轮次；[[c11]] 代码快照与固定源码可经评审 HTTP 接口读取。[[c15]] 因而“收据、投递意图和快照接口”各自有直接证据，而不再由无关引用合并推断。\n\n边界仍然明确：模型侧主要使用进程内脚本或仓库 ACP fixture，Lark 侧是无真实网络的本地装置；[[c5]][[c12]] 代码产物测试只覆盖单个合法、伪造或过期产物，快照往返也发生在同一 Store 生命周期内。[[c17]][[c15]] 真实 Agent CLI 鉴权与能力发现、飞书最终送达、跨进程竞争、重启后的快照恢复、混合坏产物隔离及迁移失败回滚，均不能由当前材料宣称完成。"
+        "title": "当前可用切片与验证边界",
+        "body": "对外 DTO 同时保留路由所需的操作键和人类可读字段：快照、文件与符号具有展示名称和深链；缺失或过期图边在被检查到时必须不可操作。不过图边断言只在响应确实含边时执行，尚不能证明最小源码场景稳定产生边。参考 [[c11]]\n\n服务端 HTTP 测试已走通“原始承诺—注入 `supported` assessment 后的策略评估—自动应用—任务查询—通知回执”的单进程链路；语义结论由测试请求直接提供，并未运行 extractor 或独立 verifier。该用例证明来源已验证的所有者事项在此评估前提下可以形成任务实体、证据关联和通知回执。参考 [[c12]] 当前证据仍主要来自临时 SQLite、fixture 模型和伪消息适配器；真实 Agent CLI、飞书网络、多 worker 竞争、决策批准后的批量应用及崩溃恢复不能由这些用例直接推出。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "ACP 模型路由边界",
-        "reason": "支持仅允许 ACP profile，以及缺配置或 CLI 传输时诚实失败且不生成伪答案。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 12,
-          "endLine": 45
-        },
-        "quote": "/**\n * Production assistant model adapter. It reuses the project's real ACP transport\n * (`acp()` from agents.ts) against a configured AgentProfile.\n *\n * G: transport routing is enforced here:\n *  - profile.transport === \"acp\" → real ACP session;\n *  - any CLI transport (codex-cli / trae-cli / claude-cli) → ModelUnava"
-      },
-      {
-        "key": "c2",
-        "label": "助手历史上下文裁剪",
-        "reason": "支持默认保留最近十轮及每轮助手结果最多 500 字符的规则。",
+        "label": "助理回复与任务请求合同",
+        "reason": "支持回答、引用与工具请求分离，以及任务写入必须由服务端重新治理的论断。",
         "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/assistant/acp-model.ts",
-          "startLine": 47,
-          "endLine": 56
-        },
-        "quote": "    // History budget: truncate old turns to keep context bounded.\n    const maxPrior = this.deps.maxPriorTurns ?? 10;\n    const priorBlock = input.priorTurns.length\n      ? input.priorTurns\n          .slice(-maxPrior)\n          .map(\n            (t) => `user: ${t.userText}\\nassistant: ${t.result.slice(0, 500)}`,\n     "
-      },
-      {
-        "key": "c3",
-        "label": "助手回复与工具调用合同",
-        "reason": "说明模型引用和任务调用仍需服务端重新治理，不能自行取得写权限。",
-        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/assistant/runtime.ts",
@@ -68,21 +42,22 @@
         "quote": "export type AssistantCreateTaskCall = {\n  tool: \"create_task\";\n  title: string;\n  detail: string;\n  /** Evidence fragments the task is grounded on; the server re-validates both\n   *  visibility and owner provenance before creating anything. */\n  citationIds?: string[];\n  dueAt?: string | null;\n  dueExpression?: string "
       },
       {
-        "key": "c4",
-        "label": "任务意图、跨轮证据与取消栅栏",
-        "reason": "支持明确任务意图与咨询零写入，并证明跨轮证据、不存在引用和取消后迟到写入的治理结果。",
+        "key": "c2",
+        "label": "任务意图与零写入测试",
+        "reason": "支持明确指令可以创建任务，而普通咨询中的模型写入请求会被拒绝。",
         "relation": "supports",
         "target": {
-          "kind": "article",
+          "kind": "material",
           "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "section": "intent-and-write-governance"
+          "startLine": 98,
+          "endLine": 192
         },
-        "quote": ""
+        "quote": "describe(\"detectTaskIntent (unit)\", () => {\n  it(\"identifies explicit assignment intents\", () => {\n    expect(detectTaskIntent(\"帮我记一下：周五下午3点和张三开会\").explicit).toBe(true);\n    expect(detectTaskIntent(\"提醒我明天交报告\").explicit).toBe(true);\n    expect(detectTaskIntent(\"创建一个任务\").explicit).toBe(true);\n    expect(detectTaskIntent("
       },
       {
-        "key": "c5",
-        "label": "ACP 协议与生命周期测试",
-        "reason": "支持模型协商、思考过滤、权限拒绝、超时和主动取消，同时界定其为受控 fixture。",
+        "key": "c3",
+        "label": "Agent 协商与取消测试",
+        "reason": "支持能力协商、思考过滤、权限拒绝、超时及主动取消的可观察行为。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -93,21 +68,9 @@
         "quote": "it(\"negotiates model before validating new effort options; drops thoughts\", async () => {\n  const { events } = await run(\"hello\", { model: \"beta\", effort: \"high\" });\n  expect(\n    events\n      .filter((e) => e.type === \"text\")\n      .map((e) => e.text)\n      .join(\"\"),\n  ).toContain(\"beta/high\");\n  expect(JSON.stringif"
       },
       {
-        "key": "c6",
-        "label": "延后、去重与争议保留",
-        "reason": "支持题外材料延后、重复陈述链接既有记忆以及相反主张记录为争议。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "section": "defer-deduplicate-dispute"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c7",
-        "label": "跨来源覆盖决策门控",
-        "reason": "直接支持跨来源 supersede 活动知识时进入待决、旧知识不被静默覆盖。",
+        "key": "c4",
+        "label": "跨来源覆盖门控",
+        "reason": "支持冲突更新进入待决状态且不静默覆盖现有活动知识。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -118,22 +81,9 @@
         "quote": "  it(\"G11: a conflict that overwrites existing knowledge becomes one contextual decision, not a JSON blob\", () => {\n    const { store, memory } = setup();\n    const first = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-authority-one\" });\n    const applied = memory.evaluate(claim(first, \"服务 A 已启用重试\"), supported());\n   "
       },
       {
-        "key": "c8",
-        "label": "大范围依赖影响门控",
-        "reason": "支持系统自行算出同源变更影响 11 条记忆，并因超过上限进入待决。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/attention-gate.test.ts",
-          "startLine": 265,
-          "endLine": 288
-        },
-        "quote": "  it(\"G17: a change rippling to many dependent memories is gated even when no batch impact is supplied\", () => {\n    const { store, memory } = setup();\n    const shared = capture(store, \"共享来源事实\", { externalId: \"ag-shared\" });\n    const target = memory.evaluate(claim(shared, \"目标事实\"), supported());\n    const targetId = t"
-      },
-      {
-        "key": "c9",
-        "label": "来源更新后的待复核状态",
-        "reason": "支持刷新记录进入 needs_review、列出影响范围并使旧记忆退出活动检索。",
+        "key": "c5",
+        "label": "来源刷新与知识失效",
+        "reason": "支持来源更新记录影响范围、标记待复核并让旧记忆退出活动检索。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -144,47 +94,35 @@
         "quote": "  it(\"G13: a source revision update records the affected memories and they stop being active evidence\", () => {\n    const { store, memory, retrieval } = setup();\n    const source = capture(store, \"服务 A 已启用重试\", { externalId: \"ag-refresh\" });\n    const applied = memory.evaluate(claim(source, \"服务 A 已启用重试\"), supported());\n"
       },
       {
-        "key": "c10",
-        "label": "Lark 所有者身份映射",
-        "reason": "支持已绑定身份映射为规范 owner，未绑定成员不获得所有者自动应用权限。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/tests/batch2-fixes.test.ts",
-          "section": "lark-owner-resolution"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c11",
-        "label": "Lark 私聊回复投递意图",
-        "reason": "支持已绑定私聊进入助理、创建一条飞书投递意图并关联会话轮次 outbox。",
+        "key": "c6",
+        "label": "取消后停止卡片发送",
+        "reason": "支持会话取消后待发送意图进入取消状态，worker 不再发送消息。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 773,
-          "endLine": 794
+          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+          "startLine": 191,
+          "endLine": 215
         },
-        "quote": "describe(\"Lark main-assistant entry\", () => {\n  it(\"routes bound-owner p2p to the assistant, enqueues a reply and links outbox\", async () => {\n    const { store } = larkSetup();\n    const model: AssistantModelPort = {\n      generate: async () => ({ answer: \"p2p 回复：已收到。\", citationIds: [] }),\n    };\n    const inbox = bui"
+        "quote": "describe(\"G18 cancelling an annotation session revokes unsent cards\", () => {\n  it(\"cancel sweeps the queued intent in the same transaction; sender sends nothing\", async () => {\n    const fixture = setup();\n    try {\n      const session = fixture.quality.start(fixture.datasetId, \"cli_g18\");\n      expect(intentRow(fixtu"
       },
       {
-        "key": "c12",
-        "label": "Lark 重复事件的投递意图断言",
-        "reason": "仅支持相同事件重复处理后 delivery_intents 数量仍为一；未断言模型调用、轮次、任务或其他副作用不重复。",
+        "key": "c7",
+        "label": "发送侧取消兜底",
+        "reason": "支持取消后重新出现的待发送意图仍会被消费者拦截。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 847,
-          "endLine": 864
+          "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+          "startLine": 257,
+          "endLine": 288
         },
-        "quote": "  it(\"duplicate delivery of the same event id does not create a second reply\", async () => {\n    const { store } = larkSetup();\n    let count = 0;\n    const model: AssistantModelPort = {\n      generate: async () => {\n        count++;\n        return { answer: `回复 ${count}`, citationIds: [] };\n      },\n    };\n    const i"
+        "quote": "  it(\"sender suppresses a card even if a retry intent appears after cancellation\", async () => {\n    const fixture = setup();\n    try {\n      const session = fixture.quality.start(fixture.datasetId, \"cli_g18\");\n      fixture.quality.cancel(session.id);\n      // Simulate an intent that lands in the queue after the sessi"
       },
       {
-        "key": "c13",
-        "label": "代码同步与快照身份",
-        "reason": "说明代码结构依赖已捕获 fragment，并支持内容寻址快照的幂等复用。",
+        "key": "c8",
+        "label": "代码结构投影与快照身份",
+        "reason": "支持代码结构依赖已捕获 fragment，并说明相同输入复用快照、变化输入产生新快照。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -195,99 +133,123 @@
         "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
       },
       {
-        "key": "c14",
-        "label": "符号与边的不同失效语义",
-        "reason": "直接区分消失符号从当前视图过滤与未重新产生或触及移除文件的边标记 stale。",
+        "key": "c9",
+        "label": "A-B-A 快照生命周期",
+        "reason": "支持显式当前指针、相同输入复用及历史快照继续可读。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
+          "startLine": 68,
+          "endLine": 111
+        },
+        "quote": "    // Snapshot A: clean baseline.\n    await runReviewSync(store, root);\n    const A = await runCodeSync(store, root);\n    expect(A.reused).toBe(false);\n    expect(A.fileCount).toBe(1);\n    const capturedA = getSnapshot(store, A.snapshotId)!.capturedAt;\n    expect(currentSnapshotId(store)).toBe(A.snapshotId);\n\n    // S"
+      },
+      {
+        "key": "c10",
+        "label": "理解产物恢复与失效",
+        "reason": "支持固定源码证据、跨库恢复、伪造定位拒绝及源码变化后的过期处理。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-artifacts.test.ts",
+          "startLine": 21,
+          "endLine": 57
+        },
+        "quote": "    await runReviewSync(first, root); await runCodeSync(first, root);\n    const snap = currentSnapshotId(first)!;\n    const file = listFiles(first)[0]!;\n    expect(snapshotFileBinding(first, snap, file.fileId)!.contentText).toBe(text);\n    expect(first.db.prepare(\"SELECT content_text FROM code_snapshot_files WHERE file"
+      },
+      {
+        "key": "c11",
+        "label": "代码知识 DTO 检查",
+        "reason": "支持快照、文件、符号的人类可读字段与深链，同时表明图边检查是条件执行。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/code-knowledge-dto.test.ts",
+          "startLine": 52,
+          "endLine": 98
+        },
+        "quote": "    // Snapshot keeps commit/parserVersion/fileCount dirty.\n    const snap = await app.inject({ method: \"GET\", url: \"/api/review/code/current-snapshot\", headers: hdr });\n    expect(snap.statusCode).toBe(200);\n    const sb = JSON.parse(snap.body);\n    for (const k of [\"snapshotId\",\"commit\",\"dirty\",\"parserVersion\",\"fileC"
+      },
+      {
+        "key": "c12",
+        "label": "注入评估后的事项应用链路",
+        "reason": "支持测试直接提供 supported assessment，随后验证策略评估、任务应用、证据关联和通知回执。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/app.test.ts",
+          "startLine": 247,
+          "endLine": 367
+        },
+        "quote": "it(\"evaluates and atomically applies a supported owner task through HTTP\", async () => {\n  const x = await setup();\n  try {\n    const text = \"我负责在周五前提交验证报告。\";\n    const captured = (\n      await x.app.inject({\n        method: \"POST\",\n        url: \"/api/captures\",\n        payload: {\n          source: \"manual\",\n          "
+      },
+      {
+        "key": "c13",
+        "label": "符号与边的历史保留规则",
+        "reason": "支持区分结构对象的失效语义：消失符号留在旧快照并退出当前视图，未重新生成或关联已移除文件的边转为过期。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/store.ts",
-          "startLine": 1,
+          "startLine": 13,
           "endLine": 16
         },
-        "quote": "/** Code Knowledge side tables. These live in the SAME isolated review SQLite as\n * review_source_meta / review_relations 鈥?they are additive, CREATE-IF-NOT-EXISTS\n * only, and never touch sources/revisions/fragments/review_relations rows. The\n * code graph is a deterministic projection over the already-captured fragme"
+        "quote": " * Symbols are upserted onto the head snapshot: range/fragment are per-snapshot,\n * so a symbol that disappears after an edit simply keeps its old snapshot_id and\n * is filtered out of the current head view. Edges not re-produced by the latest\n * parse, or touching a removed file, are flipped to stale (never deleted). "
       },
       {
-        "key": "c15",
-        "label": "代码快照与固定源码读取",
-        "reason": "支持 A-B-A 快照回切、历史保留，以及 HTTP 按指定快照读取不可变源码的流程。",
-        "relation": "explains",
-        "target": {
-          "kind": "article",
-          "key": "omem:apps/server/tests/code-knowledge-snapshot.test.ts",
-          "section": "flow"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c16",
-        "label": "代码理解产物导出约束",
-        "reason": "支持仅导出当前、成功、非 seed、未过期的模型结果，并记录依赖和符号定位。",
+        "key": "c14",
+        "label": "代码理解导出约束",
+        "reason": "直接支持导出只接受当前快照中的成功、非 seed、未过期模型结果，并记录依赖及符号定位。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/code/artifacts.ts",
           "startLine": 38,
-          "endLine": 60
+          "endLine": 59
         },
         "quote": "export function exportGeneratedUnderstanding(store: Store, repoRoot: string, id: string, destination: string): string {\n  const detail = understandingDetail(store, id);\n  const snapId = currentSnapshotId(store);\n  if (!detail || !snapId || detail.status !== \"generated\" || detail.seed || detail.stale || detail.snapshot_"
-      },
-      {
-        "key": "c17",
-        "label": "代码理解产物恢复测试",
-        "reason": "支持成功导出、跨库恢复、重复恢复、伪造定位拒绝及输入变化后的过期处理。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/code-artifacts.test.ts",
-          "startLine": 28,
-          "endLine": 57
-        },
-        "quote": "    const result = await generateCodeUnderstanding(first, root, {\n      transport: \"fixture\",\n      run: async () => ({ model: \"fixture-only\", text: JSON.stringify({\n        module_responsibilities: [\"Returns a string\"], boundaries: [], key_flows: [], entry_points: [], exit_points: [],\n        risks_and_limits: [], cla"
-      },
-      {
-        "key": "c18",
-        "label": "应用收据与未完成轮次恢复",
-        "reason": "直接支持任务写入生成 application_receipts，且已完成轮次不会被恢复或再次调用模型。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/assistant-runtime.test.ts",
-          "startLine": 621,
-          "endLine": 649
-        },
-        "quote": "  it(\"G20: recoverUnfinishedTurns uses real application_receipts, not toolActions\", async () => {\n    const { store } = setup();\n    const memory = new MemoryService(store, { ownerId: \"owner\" });\n    // Model emits create_task with a transportEventId so the receipt is trackable.\n    let modelCalls = 0;\n    const model:"
       }
     ],
     "questions": [
       {
-        "question": "真实 Agent CLI/ACP 与飞书平台链路是否已有独立的活体验收？",
-        "why": "当前证据来自仓库 ACP fixture、进程内模型和本地 Lark 接线，不能确认真实鉴权、能力发现、网络重连、发送失败恢复及最终送达。",
-        "nextStep": "分别执行并记录真实 Agent CLI 与隔离飞书租户的 live check，保存版本、模型、退出码、事件重投、发送结果和故障恢复证据。",
+        "question": "AttentionCase 获得批准或拒绝后，单项及批量变更能否在重复提交、版本变化和中途失败时保持幂等与原子性？",
+        "why": "当前材料证明冲突和高影响变化会被门控，但没有展示用户决策后的执行、回执及失败回滚。",
+        "nextStep": "补充决策执行的服务层测试，分别覆盖批准、拒绝、重复请求、版本冲突和批量中途失败。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c11",
-          "c12"
+          "c4",
+          "c5"
         ]
       },
       {
-        "question": "来源刷新后的抽取、独立复核与重新应用失败时，知识状态如何收敛？",
-        "why": "现有材料只证明刷新进入 needs_review 且旧记忆退出活动检索，没有展示后续成功、失败、重试或新 revision 再次到达的状态机。",
-        "nextStep": "补充刷新 worker 的固定实现材料和行为测试，覆盖成功复核、失败保留历史、重复更新及重试。",
+        "question": "真实 Agent CLI 与飞书链路是否通过了与 fixture 相同的协商、取消、权限拒绝和最终送达检查？",
+        "why": "现有证据主要验证进程内 fixture 和伪消息适配器，无法确认外部 CLI 能力声明、鉴权、网络失败和平台事件重投。",
+        "nextStep": "增加独立标注的 live 检查，记录具体 CLI 或平台版本、模型配置、退出码、取消结果和投递状态。",
         "blocking": false,
         "citationKeys": [
-          "c9"
+          "c3",
+          "c6",
+          "c7"
         ]
       },
       {
-        "question": "代码知识能否在进程重启、混合坏产物和迁移中途失败后保持可恢复？",
-        "why": "当前测试覆盖同一 Store 生命周期内的快照往返及单个伪造或过期产物，尚未证明重启恢复、逐文件失败隔离和事务回滚。",
-        "nextStep": "新增关闭并重开 Store 的快照测试、合法与损坏产物混合恢复测试，以及迁移重复执行和可控失败回滚测试。",
+        "question": "代码理解恢复在损坏 JSON、缺失依赖以及多个产物部分失败时，是否会逐项隔离并保留已有有效结果？",
+        "why": "现有用例覆盖合法产物、伪造符号定位和源码变化，但没有展示批量恢复中的解析失败与部分成功。",
+        "nextStep": "构造合法、损坏、缺失依赖和过期产物混合目录，逐项断言恢复报告及当前有效理解不被覆盖。",
         "blocking": false,
         "citationKeys": [
-          "c15",
-          "c17"
+          "c10",
+          "c14"
+        ]
+      },
+      {
+        "question": "代码图 DTO 测试中的最小源码是否稳定产生至少一条边？",
+        "why": "当前图边字段断言位于循环内，却没有先断言边数组非空；空图会让这些检查全部跳过。",
+        "nextStep": "加入确定会产生关系边的最小源码，并先断言边数量，再验证状态、展示字段和不可操作原因。",
+        "blocking": false,
+        "citationKeys": [
+          "c11"
         ]
       }
     ]
@@ -341,17 +303,12 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "e8a4ec3f6e8619195e7710c33738c95ae371a7aad7f8cef4368556452bbd072f"
+      "digest": "e331447e1286c4fa7c12a3e8a9e87ad83cec034057dd8ad12b866e43b3becf1f"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/connectors.ts",
       "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/index.ts",
-      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
@@ -367,6 +324,11 @@
       "kind": "material",
       "key": "omem:apps/server/tests/batch2-fixes.test.ts",
       "digest": "18c82eb71cb90777956912fcccf5c7b4cc0f8688b3159aeeceb1ee3c44fca919"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
@@ -451,7 +413,7 @@
     {
       "kind": "article",
       "key": "omem:apps/server/tests/app.test.ts",
-      "digest": "03e7b5be86c6002d7d98180c946beb2d04600fdc9027676e7779939ff17fb269"
+      "digest": "153f4be61865804afc0e20ee58f5b93733cdeaa4b3b0f0f0dc8e26e3127b4b9f"
     },
     {
       "kind": "article",
@@ -497,17 +459,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T03:21:51.733Z",
+    "at": "2026-10-01T07:17:36.044Z",
     "trace": {
-      "runId": "28550712-4241-47de-80b9-2403ba1b70de",
+      "runId": "722d6ad1-6108-4740-b3cc-c2b02a23c0ac",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "045fe4b3099abc79cdce9ff5309912b6c4253ad3b9a55c956d982435759ae83d",
-      "contextHash": "3590f807470a49e6267aa9d64729330c744d2e54b062f282591e26d20308ab82",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "2eb1d01e8a2e364c50979dc7fad2e5c14582a8303d9e2d7dd72491e2cb367521",
+      "contextHash": "2e632ffc2e9dc2c01e6b996d6fe37791edc29a9d75de11b29d3957c7c0246470",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "7d9223bf7b20dfb96a9cb4971303db6c91928dea77862bf1829f200fbea2b0f3",
+      "fingerprint": "7b244502d2036a47aa40f9f7a635a9dfefa54b9a19d2bf8d9978c401de58a962",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -520,10 +482,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f57b-2a94-7af0-99cf-3afa2fa6df17"
+        "01a0f652-ffde-7c72-88ca-b6fcf8b42268"
       ],
       "usage": {
-        "used": 126626,
+        "used": 122369,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -532,10 +494,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 308052,
-          "utf8Bytes": 355542,
-          "estimatedTokens": 118514,
-          "budgetedTokens": 148143,
+          "chars": 305632,
+          "utf8Bytes": 353166,
+          "estimatedTokens": 117722,
+          "budgetedTokens": 147153,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -544,17 +506,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T03:22:16.582Z",
+    "at": "2026-10-01T07:17:59.228Z",
     "trace": {
-      "runId": "58c767e1-1ebf-47d1-88e2-c7b8050b4694",
+      "runId": "ae044c35-2440-4ecb-9d22-3b4d27e07fac",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "fad645ba8aa17e2efa17bf7ec7577df2c9ddde73edc64b2475574bc221b8231f",
-      "contextHash": "ccdf4d870e23d0f0661613e3e092f59226a5f24cb1d32c9d00a07d5ce384aeb3",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "cf0acb787d4597cf470f5d98e2be2902a0697be57f80e880248f61adf0dd868b",
+      "contextHash": "d7425227451350e0bfd2778bb878695f1084f997b88b1fa9a0aadfa3806945f2",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0ab7dfc3813f6e8504662c126f88ec19279a79a4d1b958366673eadb8df7329e",
+      "fingerprint": "fd755b94a858584ddf202ad645273a1dd64dbeed7d8aeeabcc1bf5cd837fd510",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -567,10 +529,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f57b-b549-7622-bd0c-adc869b11805"
+        "01a0f653-7a96-7f71-b909-c56c0ff6757d"
       ],
       "usage": {
-        "used": 119431,
+        "used": 120678,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -579,10 +541,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 304606,
-          "utf8Bytes": 350460,
-          "estimatedTokens": 116820,
-          "budgetedTokens": 146025,
+          "chars": 302952,
+          "utf8Bytes": 348766,
+          "estimatedTokens": 116256,
+          "budgetedTokens": 145320,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

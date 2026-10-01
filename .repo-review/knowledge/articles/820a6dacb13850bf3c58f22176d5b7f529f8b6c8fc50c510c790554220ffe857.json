@@ -2,95 +2,123 @@
   "version": 1,
   "document": {
     "key": "omem:package.json",
-    "title": "项目运行入口与依赖配置",
-    "summary": "该清单定义了 omem 的 Node.js 版本约束、开发与构建脚本、测试和质量评估入口，以及服务端、模型处理、飞书接入和 Vue 工具链所需依赖。它能说明项目预期如何运行，但不能单独证明任何命令已成功执行或外部集成当前可用。",
+    "title": "项目运行、构建与依赖配置",
+    "summary": "根包配置定义了 omem 的 Node.js 运行基线、前后端开发与构建入口、分层检查脚本及主要依赖。它反映项目预期采用的工具链和可调用工作流，但不能单独证明功能已经实现、依赖可重复安装或真实集成检查已经通过。",
     "category": "configuration",
     "sections": [
       {
-        "key": "runtime-and-entrypoints",
-        "title": "运行环境与入口",
-        "body": "项目声明为私有 ESM 包，版本为 0.1.0，并要求 Node.js 24 及以上版本；这些是安装和执行时的配置约束，不代表目标环境已经满足。开发流程主要由 Bun 启动，同时分别提供服务端监听、Web 开发和仓库评审环境入口；生产启动则指向编译后的 Node.js 文件。[[c1]]"
+        "key": "runtime-baseline",
+        "title": "运行基线与项目形态",
+        "body": "omem 根包是版本为 0.1.0 的私有 ESM 项目，要求 Node.js 24 或更高版本。这些配置限定了服务端产物的模块加载方式与最低运行环境；部署或本地开发前，需要先确认 Node.js 版本符合要求。参考 [[c1]]"
       },
       {
-        "key": "build-and-verification",
-        "title": "构建与验证脚本",
-        "body": "构建脚本先编译服务端 TypeScript，再构建 Web 包；类型检查同时覆盖服务端与 Vue 前端，常规测试由 Vitest 执行。清单还列出浏览器冒烟、角色、学习、流水线和飞书宿主等 live 检查，以及质量标注与评估入口。[[c2]] 这些名称表明项目设计了分层验证路径，但 package.json 只声明命令，无法证明测试已经运行、退出码为零或真实外部 CLI 与服务可用。"
+        "key": "development-build",
+        "title": "开发、构建与启动流程",
+        "body": "统一开发入口由 Bun 执行，同时提供服务端监听和 Web 子包开发命令。生产构建先编译服务端 TypeScript，再通过 pnpm 构建 Web 子包；启动命令运行编译后的 Node.js 服务文件。类型检查分别覆盖服务端 TypeScript 与 Vue 工程。参考 [[c2]]\n\n```mermaid\nflowchart LR\n  A[开发入口] --> B[服务端监听]\n  A --> C[Web 开发服务]\n  D[生产构建] --> E[编译服务端]\n  E --> F[构建 Web 子包]\n  F --> G[运行服务端产物]\n```\n\n该图描述的是配置声明的命令关系，实际可运行性仍需结合命令退出码和行为检查确认。参考 [[c2]]"
       },
       {
-        "key": "dependency-profile",
-        "title": "依赖能力与技术边界",
-        "body": "运行依赖体现出 Fastify 服务端、Agent Client Protocol、Hugging Face Transformers、飞书 SDK 和 Zod 校验等能力组合。[[c3]] 开发依赖则包含 Playwright、Vue 3 编译器、Vite、TypeScript、Vitest 与 vue-tsc，支持 Vue 前端构建、静态检查、单元测试和浏览器验证。[[c4]] 依赖版本被精确固定，但仅凭清单不能确认锁文件一致性、模型资源是否已下载，或飞书凭据与外部服务是否已配置。"
+        "key": "verification-workflows",
+        "title": "测试与质量检查分层",
+        "body": "配置将 Vitest 全量测试、浏览器冒烟检查，以及角色、学习、流水线和 Lark 主机等 live 场景分成独立入口，并另设 Lark 标注与质量评估命令。这种划分便于区分常规自动化测试和依赖外部环境的检查，但脚本存在不等于对应场景已经验证通过。参考 [[c3]]"
+      },
+      {
+        "key": "dependency-boundaries",
+        "title": "依赖所呈现的技术范围",
+        "body": "运行依赖涵盖 Agent Client Protocol SDK、Fastify、Hugging Face Transformers、Lark SDK 与 Zod，可确认项目配置了代理协议、HTTP 服务、模型处理、Lark 接入和数据校验所需的软件包；仅凭依赖清单，不能进一步确定模型是否本地运行、采用何种模型或是否需要联网下载。参考 [[c4]]\n\n开发依赖覆盖 Playwright、Vue 单文件组件编译、TypeScript、Vite、Vitest 与 Vue 类型检查，支撑前端构建、浏览器测试和静态校验。依赖版本虽被精确声明，但完整的可重复安装机制仍取决于本材料未展示的锁文件和工作区配置。参考 [[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "包信息与运行入口",
-        "reason": "支持附近关于 ESM、Node.js 版本要求，以及 Bun 开发入口和 Node.js 生产入口的配置描述。",
+        "label": "运行环境约束",
+        "reason": "支持项目为私有 ESM 包、当前版本及 Node.js 最低版本的说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:package.json",
           "startLine": 2,
-          "endLine": 15
+          "endLine": 8
         },
-        "quote": "  \"name\": \"omem\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"engines\": {\n    \"node\": \">=24.0.0\"\n  },\n  \"scripts\": {\n    \"dev\": \"bun scripts/dev.ts\",\n    \"dev:server\": \"bun --watch apps/server/src/main.ts\",\n    \"dev:web\": \"pnpm --filter @omem/web run dev\",\n    \"dev:review\": \"bun scripts/dev-review.t"
+        "quote": "  \"name\": \"omem\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"engines\": {\n    \"node\": \">=24.0.0\"\n  },"
       },
       {
         "key": "c2",
-        "label": "构建、测试与质量脚本",
-        "reason": "支持附近关于构建、类型检查、常规测试、浏览器及 live 检查和质量评估入口的说明。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:package.json",
-          "startLine": 14,
-          "endLine": 27
-        },
-        "quote": "    \"build\": \"tsc -p tsconfig.server.json && pnpm --filter @omem/web run build\",\n    \"start\": \"node dist/apps/server/src/main.js\",\n    \"typecheck\": \"tsc --noEmit -p tsconfig.server.json && vue-tsc --noEmit -p apps/web/tsconfig.json\",\n    \"test\": \"vitest run\",\n    \"test:browser\": \"bun scripts/browser-smoke.ts\",\n    \"tes"
-      },
-      {
-        "key": "c3",
-        "label": "应用运行依赖",
-        "reason": "支持附近对服务端、ACP、模型处理、飞书接入和数据校验能力构成的判断。",
+        "label": "开发与构建命令",
+        "reason": "支持开发入口、前后端命令、构建顺序、启动方式和类型检查范围的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:package.json",
-          "startLine": 29,
-          "endLine": 35
+          "startLine": 9,
+          "endLine": 15
         },
-        "quote": "  \"dependencies\": {\n    \"@agentclientprotocol/sdk\": \"1.5.0\",\n    \"@fastify/static\": \"8.3.0\",\n    \"@huggingface/transformers\": \"3.8.1\",\n    \"@larksuiteoapi/node-sdk\": \"1.74.0\",\n    \"fastify\": \"5.12.5\",\n    \"zod\": \"4.1.12\""
+        "quote": "  \"scripts\": {\n    \"dev\": \"bun scripts/dev.ts\",\n    \"dev:server\": \"bun --watch apps/server/src/main.ts\",\n    \"dev:web\": \"pnpm --filter @omem/web run dev\",\n    \"build\": \"tsc -p tsconfig.server.json && pnpm --filter @omem/web run build\",\n    \"start\": \"node dist/apps/server/src/main.js\",\n    \"typecheck\": \"tsc --noEmit -p "
       },
       {
-        "key": "c4",
-        "label": "前端与测试开发依赖",
-        "reason": "支持附近关于 Vue、Vite、TypeScript、Vitest、Playwright 和 vue-tsc 工具链的说明。",
+        "key": "c3",
+        "label": "测试与质量入口",
+        "reason": "支持普通测试、浏览器检查、live 冒烟场景及质量评估命令的分层描述。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:package.json",
-          "startLine": 37,
-          "endLine": 46
+          "startLine": 16,
+          "endLine": 24
+        },
+        "quote": "    \"test\": \"vitest run\",\n    \"test:browser\": \"bun scripts/browser-smoke.ts\",\n    \"test:live-role\": \"bun scripts/live-role-smoke.ts\",\n    \"test:live-learning\": \"bun scripts/live-learning-smoke.ts\",\n    \"test:live-pipeline\": \"bun scripts/live-pipeline-smoke.ts\",\n    \"test:live-lark-host\": \"bun scripts/live-lark-host-smo"
+      },
+      {
+        "key": "c4",
+        "label": "应用运行依赖",
+        "reason": "支持代理协议、HTTP 服务、模型处理、Lark 接入和数据校验相关软件包已经列入运行依赖的论断。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 28,
+          "endLine": 35
+        },
+        "quote": "  \"dependencies\": {\n    \"@agentclientprotocol/sdk\": \"1.5.0\",\n    \"@fastify/static\": \"8.3.0\",\n    \"@huggingface/transformers\": \"3.8.1\",\n    \"@larksuiteoapi/node-sdk\": \"1.74.0\",\n    \"fastify\": \"5.12.5\",\n    \"zod\": \"4.1.12\"\n  },"
+      },
+      {
+        "key": "c5",
+        "label": "开发工具依赖",
+        "reason": "支持浏览器测试、Vue 编译、TypeScript、Vite、Vitest 与类型检查工具链的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:package.json",
+          "startLine": 36,
+          "endLine": 45
         },
         "quote": "  \"devDependencies\": {\n    \"@playwright/test\": \"1.58.2\",\n    \"@types/node\": \"24.10.1\",\n    \"@vitejs/plugin-vue\": \"6.0.9\",\n    \"@vue/compiler-sfc\": \"3.5.43\",\n    \"prettier\": \"3.6.2\",\n    \"typescript\": \"5.9.3\",\n    \"vite\": \"7.3.1\",\n    \"vitest\": \"3.2.4\",\n    \"vue-tsc\": \"3.1.4\""
       }
     ],
     "questions": [
       {
-        "question": "这些构建、测试、浏览器与 live 检查在当前锁定依赖和运行环境中是否均已通过？",
-        "why": "package.json 只能证明命令被声明，不能提供实际执行时间、退出码、行为断言或外部服务可用性的证据。",
-        "nextStep": "结合锁文件、持续集成记录或实际命令运行报告，分别记录常规检查与依赖真实外部系统的 live 检查结果。",
+        "question": "仓库使用哪一份锁文件和包管理器配置来保证依赖可重复安装？",
+        "why": "当前材料列出了精确依赖版本，并在脚本中使用 Bun 与 pnpm，但未展示 packageManager 字段、工作区定义或锁文件信息，无法据此确定完整安装流程。",
+        "nextStep": "结合根目录锁文件、工作区配置和依赖管理文档核对实际安装入口及冻结安装要求。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2"
+          "c2",
+          "c4",
+          "c5"
         ]
       },
       {
-        "question": "Transformers 模型资源和飞书集成所需配置是否已完成离线锁定与凭据配置？",
-        "why": "依赖清单显示相关 SDK 存在，但没有模型身份、资源下载状态、运行时联网策略或凭据来源信息。",
-        "nextStep": "检查项目的模型配置、依赖锁定文件和飞书运行配置，并用不暴露秘密的真实冒烟结果确认可用边界。",
+        "question": "这些 browser、live 与 quality 脚本最近一次真实运行的结果是什么？",
+        "why": "package.json 只能确认入口存在，不能证明外部 CLI、浏览器、Lark 或模型相关链路当前可用。",
+        "nextStep": "查阅状态文档和验证报告，并以实际退出码及行为断言区分已通过、跳过和失败项目。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "browser、live 与 quality 脚本最近一次真实运行的结果是什么？",
+        "why": "package.json 只能证明这些命令入口存在，不能证明浏览器、外部 CLI、Lark、模型或其他集成链路当前已经运行成功。",
+        "nextStep": "查阅状态文档和验证报告，并以实际退出码及行为断言区分已通过、跳过和失败项目。",
         "blocking": false,
         "citationKeys": [
           "c3"
@@ -102,39 +130,39 @@
     {
       "kind": "material",
       "key": "omem:package.json",
-      "digest": "e95f4f6d1f8218ec9d7e55b7439719348d19e4cb76af939bf662175f9fc9caf7"
+      "digest": "f25341153b8ee54afd77fce483778d13b0b3c4bdc733853e4bfe41e62af2bc99"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:46:22.798Z",
+    "at": "2026-10-01T06:57:25.829Z",
     "trace": {
-      "runId": "918aebeb-4afb-495d-afdc-b11d29485af8",
-      "roleId": "material-analyst",
+      "runId": "04d202d4-cfd7-4ba9-929e-5f0a3b2cd0d7",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "231c51ecf6012cb9b7cb4bf537dfe9e5df5916c44bc4308c93c3422cf21d9225",
-      "contextHash": "7b05f799fe2bf058964bc419ed61fc1a34fdff30d017b25c0afda04104a90d73",
-      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "1ac93e3be7d56bdd07ae660290a6950566b154d39b0332d6683e3c6e829b7837",
+      "contextHash": "b4cb2d03386bb0e6304ff4fcdbd263e96f5f4c376b425511b9a2a2e12c93dd4b",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e5268c5239b604e55c56732c8ddb19878ce429daaa48af88091f996da9c0e3bc",
+      "fingerprint": "6d04e1f402cd42ee7088407daddf5f84e269390e7238f0e1a1e78c0e3a2fd3d3",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-material-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f55a-d56c-7433-96e1-8bf3b6944a69"
+        "01a0f640-b294-7e41-b271-9af3e11e52b8"
       ],
       "usage": {
-        "used": 23006,
+        "used": 25037,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -143,10 +171,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 7857,
-          "utf8Bytes": 9477,
-          "estimatedTokens": 3159,
-          "budgetedTokens": 3949,
+          "chars": 13796,
+          "utf8Bytes": 19942,
+          "estimatedTokens": 6648,
+          "budgetedTokens": 8310,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -155,17 +183,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:46:38.183Z",
+    "at": "2026-10-01T06:57:41.546Z",
     "trace": {
-      "runId": "f77b1e11-376d-4560-80a2-8cf95871e74d",
+      "runId": "57b14591-6c04-4046-8eae-4301ed6b3e1d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "a2d65ae801c5d068756f194e39b5272ec91ed4e3b140bf1976209bcf7af1c136",
-      "contextHash": "842bec4e32216685c63174d530a33a4a9bc86cf54d57f97547b2c5484705d444",
+      "promptHash": "55d4aec5df9ab742ff667a16ed6fbf1234573fc719326f845bf5fa1681207978",
+      "contextHash": "7c7af88b046fcfb2b2bd6e42011b662551460587eb0e5cef56d3f4d959bb1701",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "90c4fc863bf418ef9f13f29fe4e52d4b74b0d16fbc8ea5241768d692d1c756cb",
+      "fingerprint": "9c8163633bc373a9a15d205b0228327dd30cff37031332dd2970701e56b6555e",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -178,10 +206,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f55b-2cb0-7f00-8dc7-9f19f7450725"
+        "01a0f641-0319-7f93-af72-cb3771bbdc47"
       ],
       "usage": {
-        "used": 22003,
+        "used": 22458,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -190,10 +218,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 9283,
-          "utf8Bytes": 11989,
-          "estimatedTokens": 3997,
-          "budgetedTokens": 4997,
+          "chars": 9905,
+          "utf8Bytes": 12959,
+          "estimatedTokens": 4320,
+          "budgetedTokens": 5400,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

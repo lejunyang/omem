@@ -2,32 +2,32 @@
   "version": 1,
   "document": {
     "key": "omem:docs/2026-10-01/README.md",
-    "title": "omem 目标、当前能力与调研导航",
-    "summary": "该文档以日常场景说明 omem 的统一证据系统定位，区分已验证的检索、事项、手动等待和来源更新闭环，以及仍待实现的语义重排、自动监听回复、周期治理、外部投递和英语学习能力；后半部分是旧基线调研目录，不能视为当前实现清单。",
+    "title": "omem 产品定位、当前能力与阅读指南",
+    "summary": "omem 将文档、代码、聊天和图片纳入统一证据链，在可追溯问答之上支持来源更新、事项跟进和未来的学习能力；本文说明已验证闭环、尚存限制及调研文档的阅读方式。",
     "category": "overview",
     "sections": [
       {
-        "key": "product_direction",
-        "title": "产品定位与统一证据主线",
-        "body": "omem 是“先记得住、再帮你办事”的个人助手：文档、代码、聊天和图片进入同一材料库，代码只增加 AST 定位能力；回答、Code Wiki 和学习卡都是原始材料的派生视图，不另建事实库。引用可以逐层阅读，而检索和模型预算独立控制。[[c1]] 这与总体决策一致：记忆、事项、学习和代码知识共享证据底座，但保留各自的对象语义与操作流程。[[c2]]"
+        "key": "product-purpose",
+        "title": "从记住材料到协助行动",
+        "body": "omem 是面向个人知识与日常行动的助手：文档、代码、聊天和图片进入同一材料库，代码额外使用 AST 定位结构；回答、Code Wiki 和学习卡则是从材料生成的视图，不另建事实库。用户可以追问代码为何如此实现、用中文检索英文资料、管理带时间的事项，也可以在来源变化后重新核验已有结论。参考 [[c1]]\n\n统一并不意味着所有对象同形。原始版本、可核验主张、长期记忆、派生文章和可执行事项各自承担不同职责，但都应回到固定证据；派生内容不能因此成为新的独立来源。参考 [[c2]]"
       },
       {
-        "key": "verified_and_limited",
-        "title": "已验证场景与能力边界",
-        "body": "四个场景体现当前切片：代码问答已有统一引用链，但精确跨文件调用仍缺失；中文问法召回英文材料已有真实结果；带时间事项已验证创建、改期、完成；来源内容变化后可更新同一记忆并保留旧原文，且只有实际应用成功才算闭环。[[c3]] 最新状态还记录了中文向量检索和来源重核验，但 reranker、历史时点检索、周期全库巡检等仍未完成，因此这些结果不能外推为完整产品验收。[[c4]]"
+        "key": "current-capabilities",
+        "title": "已跑通的闭环与现实边界",
+        "body": "现有材料记录了多条真实闭环：中文问题能召回英文原文中的具体阈值；一次性事项可以创建、改期和完成；来源由“重试 3 次”更新为“5 次”后，同一记忆会重新分析、独立复核并更新，同时保留旧原文。参考 [[c3]]\n\n主动跟进已不止于普通到期提醒：系统能够保存等待对象、独立跟进时间和暂缓状态，并验证了“等待创建→暂缓→重启→取消”的流程。当前缺口是**自动监听对方回复**、周期回顾、重复提醒和外部到期投递，而不是尚未具备等待事项跟进。参考 [[c4]]\n\n检索已经加入中文向量和原片段分窗索引，但仍缺语义重排、近似向量索引和历史时点检索；英语卡片、评分与复习页面也尚未实现。因此，单项实测只能证明对应场景成立，不能外推为完整产品已经交付。参考 [[c5]]"
       },
       {
-        "key": "remaining_work",
-        "title": "后续工作与被替代的旧概括",
-        "body": "主动跟进已不再只是“来源变更和站内提醒”：网页日常助理现已支持手动创建等待事项、记录等待对象、暂缓、取消，并在重启后离线补发一次；这部分已通过真实 ACP 流程验证。仍未接入的是**自动监听对方回复**、周期回顾、重复提醒和外部到期投递。[[c5]] 因而旧 README 将“等待别人回复”整体列为待接入的概括已被上述结论收窄，不再代表当前边界。[[c6]] 其余主线仍包括语义重排与英语学习卡；后半部分十三章和附录是基于 `94aafe9` 的调研档案，当前能力应以实施状态和代码为准。[[c7]]"
+        "key": "reading-guide",
+        "title": "如何使用这组调研文档",
+        "body": "本目录的十三章与两份附录是基于旧代码基线形成的方案与证据档案，解释统一证据、检索、Code Wiki、主动事项、学习和质量治理等取舍；它们不是当前实现清单，判断现有能力应优先查看实施状态与代码。参考 [[c6]]\n\n首次阅读可从决策摘要进入，再结合迁移、风险和证据口径理解推进边界；关注知识主线时阅读第 3 至 7 章，关注日常跟进或英语学习时分别进入第 8、9 章。验证附录和固定版本证据索引用于区分本轮实测、历史记录与设计建议。参考 [[c7]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "统一材料库与引用阅读原则",
-        "reason": "支持多类输入汇入同一材料库、派生内容不另建事实库，以及阅读深度与计算预算分离的产品定位。",
-        "relation": "explains",
+        "label": "统一材料与使用场景",
+        "reason": "支持 omem 的产品定位、统一材料库设计以及代码问答、跨语言检索、事项和来源更新等使用场景。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/2026-10-01/README.md",
@@ -38,84 +38,94 @@
       },
       {
         "key": "c2",
-        "label": "统一证据系统总体决策",
-        "reason": "说明 Code Wiki、记忆、事项和学习共享证据系统，但不被强行建模为同一种对象。",
+        "label": "证据对象分层",
+        "reason": "解释原始来源、主张、记忆、派生产物和行动对象共享证据但保持不同语义职责。",
         "relation": "background",
         "target": {
           "kind": "material",
-          "key": "omem:docs/2026-10-01/01-决策摘要.md",
-          "startLine": 3,
-          "endLine": 15
+          "key": "omem:docs/2026-10-01/03-统一证据内核.md",
+          "startLine": 9,
+          "endLine": 23
         },
-        "quote": "**建议继续当前 TypeScript/Fastify/SQLite/Vue + ACP 路线，下一阶段从“有材料、有角色、有页面”推进到两个可持续闭环：任何回答可追溯，现行知识会随来源更新，历史回答保留原版本并标明是否过期；任何交办事项都能从理解一直跟到提醒与完成。** Code Wiki、记忆、事项和学习属于同一证据系统上的不同视图与操作，不新建一个代码知识孤岛，也不把它们硬塞成同一种对象。\n\n优先顺序：\n\n1. 修正已出现的引用→原片段映射、AST调用归属、时间/版本与真实接线断点，建立冻结评测和本轮可复现基线\n2. 在既有 RetrievalPort 上接混合召回、权限与时间过滤、重排及可解释查询计划；同时打通日常交办→时间"
+        "quote": "**Source**：稳定的逻辑来源身份，例如某篇飞书文档、某仓库路径、某群聊消息/会话流、某上传文件。身份键必须包含workspace、connector/namespace、upstreamId；采集通道不是项目，URL只是引用也不等于已授权持续采集源。保留来源注册范围、更新游标、采集策略、删除与撤权状态。\n\n**SourceRevision**：某来源在某时刻的不可变快照。保留raw parts、content hash、upstream版本、captured_at、event_at、有效时间范围、时区与精度、actor/quoted/forwarded/producer_kind、parser版本。原件不随摘要优化而改写。A"
       },
       {
         "key": "c3",
-        "label": "四个日常场景及进展",
-        "reason": "支持代码问答、跨语言召回、事项闭环和来源更新四类场景的已验证范围及限制。",
+        "label": "已验证的日常闭环",
+        "reason": "支持跨语言召回、一次性事项变更完成以及来源更新后重核验并保留历史的结论。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/2026-10-01/README.md",
-          "startLine": 5,
-          "endLine": 14
+          "startLine": 7,
+          "endLine": 12
         },
-        "quote": "可以用四个日常场景理解它：\n\n| 你做什么 | 助手应该做什么 | 本轮进展 |\n| --- | --- | --- |\n| 问“这个函数为什么这样写？” | 找到代码、相关设计说明、决定和测试，给出能逐层打开的引用 | 保留统一引用链；检索已融合原文、记忆和 Wiki，补齐跨段引用；精确跨文件调用仍未实现 |\n| 中文问一份英文资料 | 换同义词或英文搜索，再回到原文作答 | 已真实验证：中文问熔断阈值，找到英文原文中的 7 次和 41 秒 |\n| 说“10 月 2 日上午 9 点提醒我复习英语”，随后改期、说完成 | 记录明确时间，改同一个事项，完成后不再提醒 | 创建→改期→完成已真实验证；当前为站内一次性提醒，重复安排和外部"
+        "quote": "| 你做什么 | 助手应该做什么 | 本轮进展 |\n| --- | --- | --- |\n| 问“这个函数为什么这样写？” | 找到代码、相关设计说明、决定和测试，给出能逐层打开的引用 | 保留统一引用链；检索已融合原文、记忆和 Wiki，补齐跨段引用；精确跨文件调用仍未实现 |\n| 中文问一份英文资料 | 换同义词或英文搜索，再回到原文作答 | 已真实验证：中文问熔断阈值，找到英文原文中的 7 次和 41 秒 |\n| 说“10 月 2 日上午 9 点提醒我复习英语”，随后改期、说完成 | 记录明确时间，改同一个事项，完成后不再提醒 | 创建→改期→完成已真实验证；当前为站内一次性提醒，重复安排和外部到期发送未接通 |\n| 某篇说"
       },
       {
         "key": "c4",
-        "label": "检索与来源更新最新状态",
-        "reason": "补充中文向量检索、来源重核验的当前实现证据，并限定尚未交付的重排、历史检索和周期巡检能力。",
-        "relation": "supports",
+        "label": "等待事项跟进状态",
+        "reason": "证明等待对象、跟进时间、暂缓与取消流程已经实现，并明确尚缺自动回复监听、周期回顾、重复提醒和外部投递。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:docs/implementation/status.md",
-          "startLine": 5,
-          "endLine": 13
-        },
-        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手"
-      },
-      {
-        "key": "c5",
-        "label": "手动等待事项闭环",
-        "reason": "支持等待对象、暂缓、取消、离线补发一次已经实现，并准确列出自动监听回复等剩余缺口。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 1,
-          "endLine": 1
+          "startLine": 3,
+          "endLine": 3
         },
         "quote": "> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既有助手/提炼管线。schema 18 保存等待对象、独立跟进时间、暂缓时间与事项版本；等待/暂缓/取消使用同一应用回执，提醒与发生记录原子提交、离线补发一次。真实 `traex acp / gpt-5.6-sol / medium` 已验证等待创建→暂缓→重启只补发一次→回顾不修改→取消停止。全量检查通过（59 文件 / 351 用例、typecheck/build），个人浏览器覆盖新会话与等待控件，Wiki 浏览器递归引用回归通过；三个视口为 1440/768/390。仍未接入自动监听回复、周期回顾、重复提醒或外部到期投递。"
       },
       {
+        "key": "c5",
+        "label": "检索与学习能力边界",
+        "reason": "支持中文向量检索的当前能力和重排、历史检索等限制，并说明英语学习功能仍未交付。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 7,
+          "endLine": 11
+        },
+        "quote": "> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录权重支持显式历史/路径查询覆盖。逐材料分析避免无关批次依赖；旧保守依赖在受影响重生成时逐步收敛。`review:verify --full` 是可复跑验收入口，最新报告与历史报告分开，不累加通过率。全库知识尚未完整，实际覆盖与失败以当前报告为准。\n\n> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手"
+      },
+      {
         "key": "c6",
-        "label": "主动跟进旧概括",
-        "reason": "标出 README 中将等待回复整体列为待接入的旧表述，说明其已被最新实施状态收窄和替代。",
-        "relation": "contradicts",
+        "label": "调研档案定位",
+        "reason": "说明这组文档基于旧基线，实际能力应以当前实施状态和代码为准。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/2026-10-01/README.md",
           "startLine": 16,
-          "endLine": 20
+          "endLine": 26
         },
         "quote": "接下来仍有三块实质工作：\n\n- **更强召回**：当前是 FTS5/BM25、中文短词、记忆/Wiki 路由和一次模型补搜；已加入 osdk 管理的中文 BGE embedding 与原片段分窗索引，尚无语义重排。沿用已有调研中的可替换检索提供方，不迁移原件和事实存储。\n- **更主动跟进**：当前有来源变更触发的重核验和到期站内提醒；等待别人回复、临近截止追踪、周期治理和外部提醒仍要逐项接入。\n- **英语学习**：学习材料沿用 Capture，卡片引用固定原文；卡片内容与复习进度分开。调度复用已调研的 FSRS，导出采用稳定 omem ID 的 Anki 文本格式。卡片、评分和复习页面目前尚未实现，也不会拿普通待办冒充间隔重复。"
       },
       {
         "key": "c7",
-        "label": "调研档案目录与当前状态入口",
-        "reason": "说明后半部分是旧基线调研档案，选型背景与当前已实现能力需要分开判断。",
+        "label": "章节阅读顺序",
+        "reason": "支持按决策、知识主线、日常事项、英语学习和验证边界组织阅读路径。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/2026-10-01/README.md",
-          "startLine": 22,
+          "startLine": 49,
           "endLine": 55
         },
-        "quote": "下面是此前的详细调研档案，基线为 `94aafe9`。它解释为什么选这些机制；实际能力以 [当前实施进度](../implementation/status.md) 和代码为准。\n\n## 分章节阅读目录\n\n本包包含完整方案的13章和2份附录。各篇均可独立打开，外部资料和固定代码版本的引用链接保留。文件名按原章节顺序编号，正文、表格、代码示例与证据等级保留。\n\n### 正文\n\n- [一、决策摘要](01-决策摘要.md)\n- [二、审查范围与证据口径](02-审查范围与证据口径.md)\n- [三、统一内核：共享证据，不强求所有对象同形](03-统一证据内核.md)\n- [四、端到端数据流与多模态接入](04-端到端数据流与多模态接入."
+        "quote": "## 建议阅读顺序\n\n1. 先读[决策摘要](01-决策摘要.md)，再看[迁移与分阶段实施](11-迁移与分阶段实施.md)和[风险与待确认问题](12-风险与待确认问题.md)，了解重点与推进顺序\n2. 深入记忆与知识主线时，依次读第3至7章；外部工具与论文取舍见[第13章](13-一手研究与选型取舍.md)\n3. 日常安排重点看[第8章](08-日常消息与主动事项.md)；英语学习与记忆卡重点看[第9章](09-英语学习与记忆卡.md)\n4. 评测、预算、隐私与运行要求见[第10章](10-评测预算隐私与运行质量.md)\n5. 核对现状和建议的证据边界时，读[审查范围](02-审查范围与证据口径.md)、[验证附录](附录01"
       }
     ],
-    "questions": []
+    "questions": [
+      {
+        "question": "更强召回、主动跟进和英语学习三条后续主线应优先推进哪一条？",
+        "why": "现有材料同时列出三块实质工作，但没有确定当前阶段的新优先级；不同选择会改变下一功能切片及验收重点。",
+        "nextStep": "由用户结合近期使用场景选择首要主线，再依据当前实施状态拆分可独立验证和提交的最小闭环。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
+        ]
+      }
+    ]
   },
   "dependencies": [
     {
@@ -126,7 +136,7 @@
     {
       "kind": "material",
       "key": "omem:docs/implementation/status.md",
-      "digest": "6f300567fb45ec1cd275528d00ea60384f90f01d55f0af228c818ef4bf1bd240"
+      "digest": "726656da857c2c99807a238300d8c6f8d475a8f1eb2bae50c67d68a8fde48b17"
     },
     {
       "kind": "material",
@@ -147,17 +157,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:44:21.359Z",
+    "at": "2026-10-01T06:55:29.898Z",
     "trace": {
-      "runId": "c8ccc9e3-a049-4340-8219-c1b0845fedb1",
+      "runId": "ce54a6be-a79d-41dd-9002-5d0dcaa56ffe",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "6f6f5536ba6a57adf14eb53e20c3dc6cfb62d27be916332f5e07767125006299",
-      "contextHash": "0a7a01188dea99f3dee7cedc650454902c4b8587ebadd1736f2c82cf59efb5fe",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "011eec28312d9635931ee4da0fd8bba98e42347c3542404cd26855704ee651b5",
+      "contextHash": "ad293b9f5047f773b7cf9f1124019d228c62aa6f984c0c8f06499febc3f6843f",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0db3f71a42cfd37c5a050512ad018bae04ae31ec4c563d872c886c04aa972c7a",
+      "fingerprint": "0e84d0a7b808a082de8ad12b5fb7e6eab5122ff8794db195c4fdd0d3ad435f0a",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -170,10 +180,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f558-f132-7021-8810-cd2b796971a5"
+        "01a0f63e-d8b3-7591-b770-cbdbc40a788f"
       ],
       "usage": {
-        "used": 38607,
+        "used": 39076,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -182,10 +192,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 38852,
-          "utf8Bytes": 65835,
-          "estimatedTokens": 21945,
-          "budgetedTokens": 27432,
+          "chars": 39123,
+          "utf8Bytes": 67414,
+          "estimatedTokens": 22472,
+          "budgetedTokens": 28090,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -194,17 +204,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:44:46.499Z",
+    "at": "2026-10-01T06:55:50.948Z",
     "trace": {
-      "runId": "387906d4-20b9-4936-b9de-b8e04bf39ee0",
+      "runId": "5c407a6a-1334-40cf-9398-3f685cc5ce5c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "869656a15bdc3b8c30f406ad031bcc5c66cfcff8a8c9e1556b91702394009676",
-      "contextHash": "ffdd4a6dd237b11daefcecd29b739008745383ae9df90462724d87aa7192925e",
+      "promptHash": "01b31eab02b1f4da258279caf2ed397988c757a27f79e7da9ed381c67db88fe4",
+      "contextHash": "93eafaf914015b3d001169e409c72d20c38a90c8c7e36b031a45b4c8cc8226fa",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5a6b49d5f564e2835db269c62e39039006d63e896019fa33f3d88cdfc0940f45",
+      "fingerprint": "51aaf708c70e72cdc923ff4a52856830a0e29124e4280062fd521125329fcc7f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -217,10 +227,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f559-7279-79c3-8651-5df875ec58ae"
+        "01a0f63f-43de-74a1-ab6b-305ff277cfdd"
       ],
       "usage": {
-        "used": 36059,
+        "used": 37346,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -229,10 +239,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35708,
-          "utf8Bytes": 60911,
-          "estimatedTokens": 20304,
-          "budgetedTokens": 25380,
+          "chars": 35904,
+          "utf8Bytes": 61695,
+          "estimatedTokens": 20565,
+          "budgetedTokens": 25707,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

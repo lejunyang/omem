@@ -2,183 +2,290 @@
   "version": 1,
   "document": {
     "key": "module:scripts:part-2",
-    "title": "scripts · 模块理解 · 专题 2",
-    "summary": "本专题汇集脚本层的三类显式入口：实时角色与学习流水线冒烟、冻结质量集的标注—运行—评估闭环，以及仓库知识和 Wiki 的同步、生成与发布。它们主要负责组装既有服务、限定运行范围并留下诊断产物，而非另建业务实现。",
+    "title": "真实链路验证、质量评测与仓库知识维护",
+    "summary": "这些脚本把真实模型冒烟验证、冻结数据集评测、飞书人工标注和仓库知识重建组织为显式运维入口。它们复用应用的角色、学习、存储与代码投影能力，并通过隔离数据、可追溯报告和失败退出码区分“链路可运行”与“业务质量已证明”。",
     "category": "workflow",
     "sections": [
       {
         "key": "live-validation",
-        "title": "实时链路：从角色连通性到持久状态",
-        "body": "实时检查分成两层：角色冒烟通过同一网关依次运行 extractor 与 verifier，并把提案摘要转成复核候选，证明配置、合同与两次**角色运行**能够贯通；此前将其表述为“两次模型调用”的结论已被替代，因为材料没有展示网关内部如何调用模型。该脚本也未把提案数量、复核结论或引用支持性设为通过条件。[[c1]]\n\n更高一层的流水线冒烟从带 provenance 的 Capture 开始，组装记忆、反馈与 LearningPipeline，要求两个作业成功、一个提案自动应用并落成一个任务。[[c2]] 报告还保留请求及实际模型、attempt、任务和通知数量，便于诊断运行结果；不过通知内容、任务字段及请求配置与实际配置是否一致都未纳入硬断言。[[c3]]"
+        "title": "用真实模型检查关键链路",
+        "body": "真实链路检查分为两个层次。角色冒烟脚本从 ACP 选择可用模型，先运行抽取角色，再把提案及稳定摘要交给复核角色，最后保存两阶段结果和运行轨迹；它证明角色协议、模型调用与结构化输出可以串联，但没有应用提案或断言语义质量。参考 [[c1]]\n\n学习流水线冒烟捕获一条含负责人、截止时间和应用上下文的中文任务，复用记忆、反馈与学习服务处理队列，并要求两个作业成功、一个提案已应用且形成一个任务。其成功条件仍偏向数量和状态，未核对任务字段及证据链。参考 [[c2]]\n\n两类检查共同回答“真实配置下能否跑通”，不能替代质量评测；运行轨迹记录实际模型、推理强度、输入指纹和修复次数，为失败追查提供依据。参考 [[c3]]"
       },
       {
         "key": "quality-loop",
-        "title": "质量闭环：标注、隔离预测与门禁",
-        "body": "质量流程先把 Lark 文档以评估专用 opt-in 导入 dev 数据集，启动卡片会话并轮询投递、事件和失败终态；当前收到首个新增标注事件便成功退出，并不代表整套数据已完成。[[c4]] 冻结后，运行器逐样本创建独立 Store，复用学习流水线，把有效 proposal 映射为结构化预测并逐项原子替换预测文件，从而支持断点续跑并降低样本间状态污染。[[c5]]\n\n最后，评估命令核验冻结清单，记录预测摘要，并以自动应用精确率、语义支持、引用位置、证据覆盖及预测完整性等阈值决定退出码。[[c6]] 但实际语义蕴含算法以及重复、未知 sampleId 的处理位于未提供的 evaluator 中；运行器又会把基础设施或模型链路异常统一写成 `needs_context`，可能把执行失败与业务上的“确实缺少背景”混为一类。"
+        "title": "从人工样本到离线质量门禁",
+        "body": "质量流程把人工判断与在线预测分开：飞书入口把指定文档转成仅供评测的草拟样本，普通捕获、学习与知识生产不得调用这套规则切分器。参考 [[c4]] 标注脚本启动卡片会话并轮询消息与事件，但当前“收到标注”依据全局事件表计数增长，未限定到本次会话，并发活动可能造成误判。参考 [[c5]]\n\n冻结数据集运行器逐样本创建临时存储，把来源和可信度重新捕获后调用真实学习流水线；已有预测会按样本标识跳过，结果以临时文件替换方式持续保存，便于中断续跑。参考 [[c6]] [[c7]] 单样本失败会降级为 `needs_context`，不会终止整批运行。参考 [[c8]]\n\n预测完成后，离线评估器校验冻结集并计算自动应用精确率、语义支持、引用位置、证据覆盖和完整性等指标；门禁失败仍写出报告，但进程返回非零状态。参考 [[c9]] 其中语义支持使用确定性规则区分否定翻转、限制丢失和时间错配，并明确区别于“引文是否出现在原文中”。参考 [[c10]]"
       },
       {
-        "key": "review-publication",
-        "title": "仓库知识：共享管线、受控生成与降级 Wiki",
-        "body": "仓库知识入口把 repo-review 接入共享 KnowledgePipeline：先同步材料与代码、恢复文章，再分析目标；只有无分析失败且未启用 files-only 时，才继续综合模块、主题与总览。imports 上下文最多补充四份材料且各自只开放前 70 行，因此不能据此断言跨文件调用。[[c7]]\n\nWiki 入口默认优先由共享知识重建索引；显式生成必须限定 target，并按模型预算生成理解资产，但发布后仍进入结构化 Wiki 分支，本次运行没有展示这些资产随即回流共享知识链。[[c8]] 人工 seed 则从当前快照解析 locator，以固定材料构造证据并执行严格交叉引用校验；无法解析或校验失败的结果保留为 rejected，不能遮蔽有效结果，也不得冒充模型运行或独立代理复核。[[c9]] 因而原始图与固定材料仍是证据，文章和 Wiki 是派生视图；多文件发布的原子性与中断恢复能力尚未由这些入口证明。"
+        "key": "knowledge-maintenance",
+        "title": "按变更重建仓库知识",
+        "body": "仓库知识生成要求显式配置 ACP profile，并把并发数限制为 1–6；路径目标及是否合成模块由运行参数决定。参考 [[c11]] 主流程先同步原始材料和代码图，再分析选定目标；分析上下文可补充链接材料和最多四个 import 邻接文件，但这些邻接信息不能解释为完整的跨文件调用证据。参考 [[c12]]\n\n分析结果会记录 reviewed、stale、pending 与失败状态。启用模块合成时，只处理受影响分组，且组内全部子材料都有当前知识才会合成；模块任务按配置的有限并发执行。定向更新沿既有依赖修复祖先，全库无前置失败时才重新规划主题和总览，最终索引只纳入 current 页面。参考 [[c13]]\n\n底层代码同步只是已捕获 Fragment 上的确定性投影：相同输入复用快照，代码树变化产生新快照，未重现的符号和边转为旧状态；它不捕获文件正文，也不证明跨 revision 身份连续。参考 [[c14]]"
+      },
+      {
+        "key": "wiki-boundaries",
+        "title": "Wiki 输出与发布边界",
+        "body": "Wiki 构建入口同样先执行捕获和代码投影。显式生成必须指定目标；若已有共享知识且未请求生成，则只重建共享索引，否则才从当前快照组织文件、符号和模块视图。参考 [[c15]]\n\n阅读输出优先展示每个目标的最新理解，模型结果排在人工 seed 前，并用限定符号名和源码链接替换内部标识；没有理解记录时退化为确定性文件目录。参考 [[c16]] Markdown 先写入运行时 staging，内容变化后再复制到最终 Wiki。参考 [[c17]] 当前材料没有显示理解文件、索引和 Wiki 之间存在统一发布事务，因此中途写入失败是否允许保留部分产物仍需明确。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "实时角色提取与复核串联",
-        "reason": "支持脚本经同一网关依次执行 extractor 和 verifier，并将提案摘要转换为复核候选；它只能直接证明两次角色运行的编排。",
-        "relation": "calls",
+        "label": "抽取与复核角色冒烟",
+        "reason": "支持真实 ACP profile 下先抽取、再以稳定摘要组织候选并独立复核，最后保存结果与轨迹的流程。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-role-smoke.ts",
-          "startLine": 22,
-          "endLine": 47
+          "startLine": 10,
+          "endLine": 79
         },
-        "quote": "const gateway = new RoleRuntimeGateway(\n  new RoleBundleRegistry(),\n  config.agentCwd,\n);\nconst extraction = await gateway.run({\n  roleId: \"extractor\",\n  profile: liveProfile,\n  context,\n});\nconst extractionResult = extraction.result as {\n  proposals: Record<string, unknown>[];\n};\nconst verificationContext = contextMan"
+        "quote": "const config = loadConfig();\nconst profile = config.profiles.find((candidate) => candidate.id === \"traex\");\nif (!profile) throw Error(\"TraeX profile is not configured\");\nconst { profile: liveProfile } = await selectLiveProfile(\n  profile,\n  config.agentCwd,\n);\nconst context = contextManifestSchema.parse(\n  JSON.parse(\n"
       },
       {
         "key": "c2",
-        "label": "学习流水线端到端断言",
-        "reason": "支持 MemoryService、FeedbackService 与 LearningPipeline 的组装，以及作业成功、提案已应用和任务数量的联合断言。",
+        "label": "学习流水线行为断言",
+        "reason": "支持中文任务捕获、学习服务组装以及对作业、提案和任务数量与状态的成功条件。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/live-pipeline-smoke.ts",
-          "startLine": 46,
+          "startLine": 20,
           "endLine": 68
         },
-        "quote": "  const memory = new MemoryService(store, { ownerId: \"owner\" });\n  const pipeline = new LearningPipeline({\n    store,\n    memory,\n    feedback: new FeedbackService(store),\n    profile,\n    workspaceRoot: config.agentCwd,\n    workerId: \"live-pipeline-worker\",\n  });\n  const processed = await pipeline.drain(10);\n  await p"
+        "quote": "  const captured = store.capture({\n    source: \"manual\",\n    externalId: \"live-pipeline-source\",\n    title: \"支付重试任务\",\n    observedAt: \"2026-09-22T08:00:00Z\",\n    parts: [\n      {\n        type: \"text\",\n        text: \"我负责在本周五18:00前补齐支付重试方案，先核对现有接口。\",\n      },\n    ],\n    context: { application: \"payments\" },\n    provenanc"
       },
       {
         "key": "c3",
-        "label": "实时流水线诊断报告",
-        "reason": "支持报告记录请求与实际模型配置、作业尝试、提案、任务和通知数量，并说明这些诊断字段并非都属于硬断言。",
-        "relation": "tracks",
+        "label": "角色运行追踪字段",
+        "reason": "支持运行轨迹记录角色版本、上下文指纹、实际模型、推理强度、使用量和修复次数。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/live-pipeline-smoke.ts",
-          "startLine": 69,
-          "endLine": 107
+          "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+          "startLine": 43,
+          "endLine": 61
         },
-        "quote": "  const report = {\n    createdAt: new Date().toISOString(),\n    requestedModel: profile.model ?? null,\n    requestedEffort: profile.effort ?? null,\n    effectiveModels: [...new Set(attempts.map((attempt) => attempt.model))],\n    effectiveEfforts: [...new Set(attempts.map((attempt) => attempt.effort))],\n    capturedRevi"
+        "quote": "export type RoleRunTrace = {\n  runId: string;\n  roleId: string;\n  roleVersion: string;\n  bundleHash: string;\n  promptHash: string;\n  contextHash: string;\n  skillHash: string;\n  toolHash: string;\n  fingerprint: string;\n  outputSchema: OutputSchemaName;\n  effectiveModel: string | null;\n  effectiveEffort: string | null;\n "
       },
       {
         "key": "c4",
-        "label": "Lark 标注会话与首事件成功条件",
-        "reason": "支持评估数据集导入、标注会话启动，以及检测到首个新增事件便结束的当前成功边界。",
-        "relation": "implements",
+        "label": "评测样本隔离规则",
+        "reason": "支持飞书文档切分器只用于人工评测，不得进入普通捕获、学习或知识生产。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/import.ts",
+          "startLine": 1,
+          "endLine": 14
+        },
+        "quote": "/**\n * EVAL-ONLY: research annotation dataset builder.\n *\n * These helpers turn a Lark/HTML document into rule-split draft quality samples\n * purely for the human annotation harness (`osdk run quality-lark-annotate`,\n * triggered explicitly via `OMEM_QUALITY_SOURCE`). They are NOT part of the\n * ordinary capture/import"
+      },
+      {
+        "key": "c5",
+        "label": "飞书标注等待判据",
+        "reason": "支持标注会话启动、卡片消息观察以及以全局事件总数增长作为成功信号的当前实现。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-lark-annotate.ts",
           "startLine": 52,
-          "endLine": 140
+          "endLine": 123
         },
         "quote": "try {\n  const imported = importQualityDatasetEval({\n    optIn: QUALITY_EVAL_ONLY,\n    repository: host.quality.repository,\n    document,\n    sourceUri,\n    name: process.env.OMEM_QUALITY_DATASET || \"merchant-center-dev-v1\",\n    split: \"dev\",\n    targetCount: Number(process.env.OMEM_QUALITY_TARGET || 40),\n  });\n  const "
       },
       {
-        "key": "c5",
-        "label": "冻结样本的隔离运行与预测持久化",
-        "reason": "支持逐样本使用独立 Store、执行学习流水线、映射 proposal、异常降级并在每项处理后持久化预测。",
+        "key": "c6",
+        "label": "预测续跑与原子保存",
+        "reason": "支持已有预测校验、按样本跳过、批次限额以及通过临时文件重命名保存结果。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 40,
+          "endLine": 60
+        },
+        "quote": "const predictions: QualityPrediction[] = existsSync(output)\n  ? (JSON.parse(readFileSync(output, \"utf8\")) as unknown[]).map((value) =>\n      qualityPredictionSchema.parse(value),\n    )\n  : [];\nconst completed = new Set(predictions.map((prediction) => prediction.sampleId));\nconst limit = Math.max(\n  1,\n  Number(process."
+      },
+      {
+        "key": "c7",
+        "label": "隔离样本执行",
+        "reason": "支持每个冻结样本使用独立临时存储重新捕获，并调用学习流水线形成预测。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-run.ts",
           "startLine": 63,
-          "endLine": 180
+          "endLine": 155
         },
         "quote": "try {\n  let processed = 0;\n  for (const sample of frozen.samples) {\n    if (completed.has(sample.id) || processed >= limit) continue;\n    const directory = join(\n      tmpdir(),\n      `omem-quality-run-${datasetId}-${sample.ordinal}-${randomUUID()}`,\n    );\n    const store = new Store(directory);\n    const started = Da"
       },
       {
-        "key": "c6",
-        "label": "质量指标与退出门禁",
-        "reason": "支持冻结数据集验证、预测摘要、各项质量阈值，以及任一门禁失败时设置非零退出码。",
+        "key": "c8",
+        "label": "失败样本降级",
+        "reason": "支持单样本异常转为 needs_context、清理临时存储并继续持久化批量结果。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/quality-run.ts",
+          "startLine": 157,
+          "endLine": 180
+        },
+        "quote": "    } catch (error) {\n      predictions.push(\n        qualityPredictionSchema.parse({\n          sampleId: sample.id,\n          prediction: {\n            disposition: \"needs_context\",\n            objects: [],\n            autoApply: false,\n            forbiddenEffects: [],\n            notes: \"Runner failed before a valid"
+      },
+      {
+        "key": "c9",
+        "label": "离线质量门禁",
+        "reason": "支持冻结集校验、预测摘要、质量阈值以及缺失预测门禁。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:scripts/quality-evaluate.ts",
           "startLine": 14,
-          "endLine": 62
+          "endLine": 48
         },
         "quote": "  const repository = new QualityRepository(store.db);\n  const frozen = repository.verifyFrozen(datasetId);\n  const predictions = JSON.parse(\n    readFileSync(resolve(predictionPath), \"utf8\"),\n  ) as unknown[];\n  if (!Array.isArray(predictions)) throw Error(\"QUALITY_PREDICTIONS_NOT_ARRAY\");\n  const metrics = evaluateQua"
       },
       {
-        "key": "c7",
-        "label": "共享知识分析与分层综合",
-        "reason": "支持材料与代码同步、有限 imports 上下文扩充、失败处理，以及仅在完整运行条件满足时生成模块、主题和总览。",
+        "key": "c10",
+        "label": "确定性语义支持判定",
+        "reason": "支持语义支持与引用位置分离，并说明否定、反义、限制、时间和词汇重合等规则边界。",
         "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/quality/evaluator.ts",
+          "startLine": 33,
+          "endLine": 53
+        },
+        "quote": "// ---------------------------------------------------------------------------\n// Deterministic, rule-based semantic support judge (NOT an LLM).\n//\n// The old `evidenceSupport` metric only checked whether evidenceQuote was a\n// substring of the source text, which credited even statements that directly\n// contradicted t"
+      },
+      {
+        "key": "c11",
+        "label": "知识生成配置与并发",
+        "reason": "支持知识生成必须使用显式 ACP 配置、并发范围为 1–6，以及路径和模块相关参数的读取。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:scripts/review-knowledge.ts",
-          "startLine": 39,
-          "endLine": 88
+          "startLine": 21,
+          "endLine": 29
         },
-        "quote": "  console.log(\"Actual profile:\", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });\n  await runReviewSync(store, root);\n  const coverage = restoreReviewKnowledge(store, root).coverage;\n  await runCodeSync(store, root);\n  console.log(\"Restore:\", restor"
+        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst config = loadReviewCodeModelConfig();\nif (config.transport !== \"acp\" || !config.command) throw Error(\"Knowledge roles require an explicitly configured ACP profile\");\nconst profile = profileSchema.parse({ id: \"traex\", name: \"Repository knowledge\", transpo"
       },
       {
-        "key": "c8",
-        "label": "Wiki 的共享知识与显式生成分支",
-        "reason": "支持默认重建共享知识索引、生成模式限定目标并发布理解资产，以及生成后继续进入结构化 Wiki 分支的控制流。",
+        "key": "c12",
+        "label": "知识材料选择与分析",
+        "reason": "支持仓库同步、代码投影、目标扩展及通过 imports 边有限补充分析上下文的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-knowledge.ts",
+          "startLine": 41,
+          "endLine": 70
+        },
+        "quote": "try {\n  console.log(\"Actual profile:\", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });\n  await runReviewSync(store, root);\n  const coverage = restoreReviewKnowledge(store, root).coverage;\n  await runCodeSync(store, root);\n  console.log(\"Restore:\", "
+      },
+      {
+        "key": "c13",
+        "label": "分层合成与覆盖记录",
+        "reason": "支持失败状态记录、受影响模块的合成门槛、按配置并发合成、祖先修复、全库规划及 current 页面索引规则。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-knowledge.ts",
+          "startLine": 71,
+          "endLine": 135
+        },
+        "quote": "  const compositionFailures: { key: string; error: string }[] = [];\n  const recordCoverage = () => {\n    const known = new Map(repository.list().map(a => [a.document.key, a]));\n    const output = { version: 1, checkedAt: new Date().toISOString(), profile: reviewModelConfigPath(), model: profile.model,\n      selection: "
+      },
+      {
+        "key": "c14",
+        "label": "代码投影快照边界",
+        "reason": "支持代码同步不捕获正文、相同输入复用快照以及未重现结构转为旧状态的能力边界。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:scripts/review-wiki.ts",
-          "startLine": 14,
-          "endLine": 48
+          "key": "omem:apps/server/src/code/sync.ts",
+          "startLine": 1,
+          "endLine": 10
         },
-        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst generate = process.argv.includes(\"--generate\");\nconst targets = process.argv.filter(a => a.startsWith(\"--target=\")).map(a => a.slice(9));\nif (generate && !targets.length) throw new Error(\"Specify --target=<repo-relative file or directory>; generation is "
+        "quote": "/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,\n * and projects them onto the isolated review SQLite side tables. It does NOT\n * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection\n * over already-captured fragments; fragment_id is filled by locating the head\n "
       },
       {
-        "key": "c9",
-        "label": "人工理解 seed 的投影约束",
-        "reason": "支持人工 seed 基于当前快照解析定位、执行严格校验、保留 rejected 结果且不遮蔽有效结果，并禁止冒充模型或独立复核成果。",
-        "relation": "background",
+        "key": "c15",
+        "label": "Wiki 构建分支",
+        "reason": "支持捕获与投影先行、显式生成目标约束，以及共享知识索引和当前快照两条分支。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/code/understanding-store.ts",
-          "startLine": 1,
-          "endLine": 25
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 15,
+          "endLine": 49
         },
-        "quote": "/** Curated Code Understanding projection.\n *\n * Committed seed assets live under `.repo-review/knowledge/understandings/`.\n * They are hand-curated, human-readable module notes that cite the graph by\n * stable locators (repo-relative path + qualified symbol name). At sync time\n * this module:\n *\n *   1. builds the fix"
+        "quote": "const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();\nconst generate = taskFlag(\"generate\");\nconst targets = taskTargets();\nif (generate && !targets.length) throw new Error(\"Specify --target=<repo-relative file or directory>; generation is explicitly scoped\");\nconst store = createReviewStore(root);\nconst stage = "
+      },
+      {
+        "key": "c16",
+        "label": "可读 Wiki 组织",
+        "reason": "支持理解记录去重排序、内部符号可读化、源码链接以及无说明时退化为文件目录。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 52,
+          "endLine": 69
+        },
+        "quote": "  const current = listUnderstandings(store);\n  for (const [name, group] of [...modules].sort(([a], [b]) => a.localeCompare(b))) {\n    lines.push(\"\", `## ${name}`, \"\");\n    const notes = current.filter(row => group.some(f => f.path === row.target_id || f.path.startsWith(String(row.target_id).replace(/\\/$/, \"\") + \"/\")));"
+      },
+      {
+        "key": "c17",
+        "label": "Wiki 分阶段写入",
+        "reason": "支持 Markdown 先写 staging、内容变化时复制到最终位置及最终关闭存储。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:scripts/review-wiki.ts",
+          "startLine": 71,
+          "endLine": 77
+        },
+        "quote": "  const markdown = lines.join(\"\\n\") + \"\\n\";\n  writeFileSync(join(stage, \"wiki.md\"), markdown);\n  const destination = join(root, \".repo-review/wiki.md\");\n  if (!existsSync(destination) || readFileSync(destination, \"utf8\") !== markdown) copyFileSync(join(stage, \"wiki.md\"), destination);\n  console.log(`Wiki written: ${des"
       }
     ],
     "questions": [
       {
-        "question": "质量标注脚本的成功语义应是“链路收到首个事件”还是“冻结数据集全部标注完成”？",
-        "why": "当前实现收到首个新增事件便退出，而默认目标可包含多条样本；若把该命令用于完整数据集生产，会过早报告成功。",
-        "nextStep": "明确命令定位；若要求完整会话，应依据仓库进度或会话完成终态退出，并分别保留卡片投递和全量完成指标。",
+        "question": "真实学习流水线冒烟是否应校验任务负责人、截止时间、文本语义和原始证据引用？",
+        "why": "当前成功条件只覆盖作业、提案和任务的数量与状态，字段提取错误仍可能通过。",
+        "nextStep": "为稳定业务字段增加行为断言，并明确允许模型自由表述的字段范围。",
         "blocking": false,
         "citationKeys": [
-          "c4"
+          "c2"
         ]
       },
       {
-        "question": "流水线异常是否应继续统一编码为业务预测 `needs_context`？",
-        "why": "基础设施、模型传输或合同失败与模型确实判断“缺少背景”具有不同含义；合并后可能污染质量指标。",
-        "nextStep": "检查 evaluator 的计分合同，并考虑为运行失败增加独立状态，或明确将此类记录从业务指标中剔除。",
+        "question": "飞书标注成功信号能否限定到当前会话、数据集或样本？",
+        "why": "当前脚本只比较全局事件表计数，并发标注可能让本次会话提前被判定成功。",
+        "nextStep": "确认事件表可用关联字段，并将等待查询改为按当前会话或数据集过滤，同时覆盖重复回调。",
         "blocking": false,
         "citationKeys": [
-          "c5",
-          "c6"
+          "c5"
         ]
       },
       {
-        "question": "显式生成的代码理解资产在何时进入共享 Capture→知识链？",
-        "why": "Wiki 生成分支发布理解资产后继续构建结构化 Wiki，本次运行没有展示重新恢复文章或重建共享知识索引的步骤。",
-        "nextStep": "核对生成资产导入与下次同步流程；若期望即时可见，补充受校验的导入、恢复和索引重建阶段。",
+        "question": "固定的 `drain(10)` 是否保证单个质量样本产生的全部后续作业都已处理？",
+        "why": "运行器在读取提案前只使用固定处理上限，材料没有给出单样本任务数量上界。",
+        "nextStep": "核对 drain 的完整语义，并用产生超过十个派生任务的行为测试验证。",
         "blocking": false,
         "citationKeys": [
-          "c8",
-          "c9"
+          "c7"
         ]
       },
       {
-        "question": "知识文章、覆盖率、计划和 Wiki 的多文件发布在中断或复制失败时如何保持一致？",
-        "why": "现有脚本展示了分步写入和复制，但没有展示跨文件事务、原子目录切换或失败回滚。",
-        "nextStep": "通过故障注入测试明确可恢复状态和重跑幂等性，再决定采用原子替换、发布清单或版本化目录。",
+        "question": "知识理解、索引和 Wiki 分阶段发布失败时，是否允许保留部分更新？",
+        "why": "现有流程分别复制知识资产、重建索引并写入 Wiki，材料没有显示统一事务或回滚约定。",
+        "nextStep": "通过故障注入确认当前状态，再决定采用发布清单、目录原子交换或明确允许部分发布。",
         "blocking": false,
         "citationKeys": [
-          "c7",
-          "c8"
+          "c13",
+          "c17"
         ]
       }
     ]
@@ -196,8 +303,33 @@
     },
     {
       "kind": "material",
+      "key": "omem:scripts/live-model.ts",
+      "digest": "4e856d007581cf9aa41ff8fc5f2e03f4e6012418877b68f7459c8bec20b30c72"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "digest": "4ecc1b05bcc6967e82b0fca41ee6239088c916bc0d0cc16f5af6ffa86d069837"
+    },
+    {
+      "kind": "material",
       "key": "omem:scripts/quality-evaluate.ts",
       "digest": "30eb2128f1231b6d1033f4141b8d68d0b5497314a7372e9a037d44b68e5f4734"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "ca58b9dd281c41e8f83a92051174dccb941ca8430743fecfcd4865c8a539b8f2"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/storage/digest.ts",
+      "digest": "b3a8c5fa0c7106df455ddb05bb077a4789f2285aa4c5893de5176f3457055240"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/evaluator.ts",
+      "digest": "4c6debef6cb90bdc11eb1004b1e1f3f6be43688d996416c2b523165829af2835"
     },
     {
       "kind": "material",
@@ -206,18 +338,63 @@
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/quality/import.ts",
+      "digest": "cdd6b01885b876a01497548c64bceac55a9dfcd9a98b5018eecb1a05729ddb96"
+    },
+    {
+      "kind": "material",
       "key": "omem:scripts/quality-run.ts",
       "digest": "51c5027808cd744cf5966a38575ac648abc49607412b9195202dd0af93cec49c"
     },
     {
       "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "411512447121280c38d11a4c5aa7c8b67916a7ec8e540d59c746101bc13e2e3e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/quality/repository.ts",
+      "digest": "2c7a13e66ed0f6ee36d38c91b57c08f184751b6e2371c6f3edf86afe63344e11"
+    },
+    {
+      "kind": "material",
       "key": "omem:scripts/review-knowledge.ts",
-      "digest": "196bd31f17aa5428a67b5fcff77e0a4cafe75a6cdf815cc51e5b2aefda751a92"
+      "digest": "b256254624461ce0a49c50a37fc71a42e9592f33826b94c77baf435525e4153d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/task-args.ts",
+      "digest": "e63a0ffd77a1ab124b2747a232553e70f14eb9ec52dadc6ddea974a3da44308f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "62386f4962b74dd9c0f1c3d6ca4b5b33aaa3878f8a9cc0d01e0893026739f5ed"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/sync.ts",
+      "digest": "c08ef8063d6b494a7435e091e9ef158b4f30a084ef02404ef9206aece3b8b783"
     },
     {
       "kind": "material",
       "key": "omem:scripts/review-wiki.ts",
-      "digest": "e0c0689831eef638a197005cdea1df5c281b01ef2e5971a5f3e879032689f060"
+      "digest": "3162c8095bcae2c3db2356d30aa9bb3d5fcffd01be34bef048798567c79541c5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/code-modules.ts",
+      "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/store.ts",
+      "digest": "b6bfecfa364f88eb7fd32807c867647f89ad3007cb28a49ffdc71522eae52228"
     },
     {
       "kind": "material",
@@ -227,53 +404,53 @@
     {
       "kind": "article",
       "key": "omem:scripts/live-pipeline-smoke.ts",
-      "digest": "d2b1190d6064e14b26dbd5912633057a1447dea29e0d2c9567742193de6510c5"
+      "digest": "8e2cabf5afb63a3da44a81bb7cd885cc6408599fab66f51fef17821059b110d9"
     },
     {
       "kind": "article",
       "key": "omem:scripts/live-role-smoke.ts",
-      "digest": "4e23d4d87761203ad1ad16984698d41d16e8b3b36d5167d794b2fa8d3444e8bc"
+      "digest": "c913757a17b80907a1cc668dbf2eef8445a98678ffe99d854eefb8c991b52cac"
     },
     {
       "kind": "article",
       "key": "omem:scripts/quality-evaluate.ts",
-      "digest": "7dde2709c591562f032694d4448ba503b93cafb68497dccd409269cd25a9f179"
+      "digest": "7c06860db2fcb8177c91074e67a35428468243677760f8b4df3bc4ca1bf69095"
     },
     {
       "kind": "article",
       "key": "omem:scripts/quality-lark-annotate.ts",
-      "digest": "68b732350b9f355694a03f5068685dcbe57e3aa26691c6b88242dc4a16c5c64b"
+      "digest": "008b144298f4db990a6047cc2d09af6ffeaff53e26620a12eea2616243513c95"
     },
     {
       "kind": "article",
       "key": "omem:scripts/quality-run.ts",
-      "digest": "b187f716f128d1c921d8f140f506b603dc25c390cbe7905c4efc2c3f9c3775b7"
+      "digest": "22ff348fbc8e52e55bf0272422522d1ff9cf8462d1b2b033820c37d648dc4983"
     },
     {
       "kind": "article",
       "key": "omem:scripts/review-knowledge.ts",
-      "digest": "6c9f6ec3e855766057cfe91ce9c39122f15ea4b1525943e8fa2ce4c8bc196a58"
+      "digest": "0a93ea164dfe513ad70a943865e27ebea7897dbac8b3c5fd9033565fb96c0caa"
     },
     {
       "kind": "article",
       "key": "omem:scripts/review-wiki.ts",
-      "digest": "eca546f650942f454d1840fe82f11f19fb97ce85ab4cae6a48861223ad286948"
+      "digest": "322c5e8660ae086d037a34743e1d7a673694489eb1ab48b635cbab3f582a27ea"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:55:07.782Z",
+    "at": "2026-10-01T07:57:29.649Z",
     "trace": {
-      "runId": "1db1cfd4-f224-4acb-8052-684d72c09648",
+      "runId": "446ecaae-99d9-44b7-a5a2-a41f05ab118e",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "6e34cf59da43c199823452732e27b1500bc25f6f751607fa5dd59df2d10b3a9f",
-      "contextHash": "676fbac05744db674dd01c667c694792a26ff8775fea522b12c853bd19c37b9f",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "54e4a88e60958fac317ed2a9cbf097307ac195bdf1d883ad1563d93ad1b5dfbb",
+      "contextHash": "9078d95274ab2fc01a1769224dfb85745fdcde210e711939d74e58bde950049f",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "66d7b9bf2cbce5e3513e98ef59317aa1603eafab57b751e1f7bb0efa9b67aba7",
+      "fingerprint": "d8886145e59dba3308da2f90693f889a8255e4c75880b65f7c779ffe953d094f",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -286,11 +463,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef2-d708-7cc0-888a-f473fa7326d9"
+        "01a0f677-832d-7c62-a899-c3533f29838f"
       ],
       "usage": {
-        "used": 54552,
-        "size": 760000,
+        "used": 70257,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -298,10 +475,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 129015,
-          "utf8Bytes": 147974,
-          "estimatedTokens": 49325,
-          "budgetedTokens": 61657,
+          "chars": 146696,
+          "utf8Bytes": 176989,
+          "estimatedTokens": 58997,
+          "budgetedTokens": 73747,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -310,17 +487,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:55:19.554Z",
+    "at": "2026-10-01T07:57:54.968Z",
     "trace": {
-      "runId": "3d14496b-9112-4065-9c37-1e12135038f0",
+      "runId": "43024205-8081-4d79-944b-b61fa122dc65",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "80e37b476880312df9da0df053dcffb5ba5abac086142ec9e0e3d76d2fd56e2e",
-      "contextHash": "45dded300a26e0a3d02b2dc94ff6a26a321b07716fba9d61e47fbe9412f6499b",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "efcafbb7cb3dd9b9a0acff2a33e3905aaeab24d698195b69fe7efb793224108f",
+      "contextHash": "027feafc7452e2d4e8c1b5a2b33f4d6d4c2d288c0f24c7a857bd3c575d1a0187",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "06e369299fcd4fbfd4b29b6e1fabb8aaffd05645904b757da0ab6427780ce447",
+      "fingerprint": "421b6691ad7312206fd32dff60c1f246b134fa20552c20ba99e7221f7c01e1d7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -333,11 +510,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef3-28dc-72a2-8880-719584425237"
+        "01a0f678-0d39-7ef3-9586-9b9277845961"
       ],
       "usage": {
-        "used": 52102,
-        "size": 760000,
+        "used": 67395,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -345,10 +522,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 125748,
-          "utf8Bytes": 143073,
-          "estimatedTokens": 47691,
-          "budgetedTokens": 59614,
+          "chars": 143456,
+          "utf8Bytes": 171337,
+          "estimatedTokens": 57113,
+          "budgetedTokens": 71392,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

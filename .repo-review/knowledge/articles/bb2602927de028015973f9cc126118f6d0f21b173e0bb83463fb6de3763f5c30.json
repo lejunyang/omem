@@ -2,31 +2,36 @@
   "version": 1,
   "document": {
     "key": "module:docs-validation.md",
-    "title": "docs-validation.md · 模块理解",
-    "summary": "该模块保存 2026-09-26 第一轮设计材料与离线交互原型的验证记录，证明证据阅读交互合同曾在真实 Chromium 中接受检查。它是历史验收依据和视觉对照，不是当前 Vue 产品、后端、模型、检索或外部集成的完整验收报告；其中“真实模型与服务端尚未部署”等结论已被后续进展替代，当前状态应以实施状态和最新验证产物为准。",
+    "title": "首轮原型验证与当前交付边界",
+    "summary": "说明首轮离线原型验证解决的问题、执行流程、已覆盖交互及未验证边界，并区分历史原型证据与当前统一知识阅读、检索和持续验收能力。",
     "category": "tests",
     "sections": [
       {
-        "key": "role",
-        "title": "职责与历史背景",
-        "body": "`docs/validation.md` 记录第一轮架构材料和离线交互原型如何被核验，并主动限定结论的时间范围：当时真实模型与服务端尚未部署，原型也“不等于当前运行代码”。[[c1]] 已有子知识据此将其定位为历史验证记录，而非生产系统的完整验收；这一定位有助于首次阅读者避免把旧结论外推到当前实现。[[c2]]"
+        "key": "purpose",
+        "title": "验证记录解决什么问题",
+        "body": "这份记录回答的是：第一轮设计材料和离线交互原型能否形成可演示、可复现的阅读闭环。它不是生产系统验收；记录形成时，真实模型、服务端和开源引擎尚未部署，因此其中的“通过”不能解释为当前产品已经完成端到端交付。参考 [[c1]]\n\n首次阅读项目时，可以用它了解引用下钻、原位追问等体验最初如何被验证；判断现有能力则应转向最新实施状态和实时验收报告。"
       },
       {
-        "key": "workflow",
-        "title": "验证流程与交互合同",
-        "body": "验证流程包括材料与上游仓库核验、自包含原型构建、桌面和手机浏览器测试、人工视觉检查及静态一致性检查。[[c3]] 配套脚本启动真实 Chromium，并收集页面异常与外部请求；脚本开头也明确这些断言不代表后端行为。[[c4]] 检查完成后，脚本把浏览器版本、检查项、异常、外部请求及“仅限离线原型”的范围写入 `verification.json`。[[c5]] 覆盖重点包括多层下钻、循环跳回、固定历史版本、原位追问、滚动与焦点恢复、异常状态、搜索及移动端展示。[[c6]] 这些行为与现行固定 FragmentRevision、逐层退栈和局部状态保留合同相衔接。[[c7]]"
+        "key": "method",
+        "title": "验证如何执行",
+        "body": "验证依次核对设计与上游材料、构建自包含 HTML，在桌面、低高度窗口和手机视口运行 Chromium 测试，并辅以人工视觉检查和 Markdown、JSON、引用节点等静态一致性检查。参考 [[c2]]\n\n```mermaid\nflowchart LR\n  A[核对材料] --> B[构建离线原型]\n  B --> C[多视口浏览器测试]\n  C --> D[视觉与静态检查]\n```\n\n文档还给出了安装 Chromium、构建和运行测试的旧原型复现步骤，以及复用本机浏览器的配置方式。参考 [[c3]]"
       },
       {
-        "key": "progress-limits",
-        "title": "被替代结论与当前限制",
-        "body": "历史原型仍可作为视觉和交互对照，但产品界面已明确采用 `packages/ui` 的 Vue 3 与 TypeScript 实现，不再以 React 原型作为产品代码。[[c8]] 现行规范同时要求真实动作、诚实错误态以及项目检查和浏览器检查，并限定旧原型只作视觉参考。[[c9]] 后续状态已记录真实 ACP、中文向量检索、来源更新闭环和日常助理等能力，因此旧文中“真实模型与服务端尚未部署”的环境结论已经被替代；实际覆盖和失败应查看当前状态与验证报告。[[c10]] 不过，首轮验证未覆盖真实引用准确率、外部连接器、团队 ACL、灾备、完整无障碍、长期性能及真正的后端恢复，“字段存在”或“可点击”也不能视为生产能力。[[c11]]"
+        "key": "coverage",
+        "title": "原型证明了哪些交互",
+        "body": "浏览器检查覆盖多层引用下钻与返回、循环引用截断、历史版本固定、弹窗追问、原文圈选，以及返回后的滚动位置和焦点恢复；无权限、已删除、定位不确定、无搜索结果等异常状态也在范围内。参考 [[c4]]\n\n这些结果只证明指定离线环境中的交互设计可以运行。真实引用准确率、中文检索质量、模型幻觉率、外部连接器、团队权限、并发灾备、完整无障碍审计和真正的后端学习流程均未在该轮得到验证。参考 [[c5]]"
+      },
+      {
+        "key": "current",
+        "title": "与当前实施进展的关系",
+        "body": "当前项目已把仓库材料、已复核文章和必要历史证据接入个人知识库，并提供功能目录、完整文章、页内导航、段末引用和 Mermaid 渲染；旧正文仍需经过真实 ACP 分析与独立复核，界面升级不会自动提升知识质量。参考 [[c6]]\n\n项目也已提供 osdk 管理的生成与全量验证入口，并加入中文向量检索、来源更新闭环和覆盖状态报告；但全库知识仍未完整，实际覆盖、失败与索引状态必须以当次报告为准。参考 [[c7]] 因而，首轮验证应作为历史原型证据保留，而不应替代当前运行环境的验收。"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "首轮验证的时间与能力边界",
-        "reason": "支持该文档只验证第一轮设计材料和离线原型，且不能代表当前运行代码的判断。",
+        "label": "首轮验证定位",
+        "reason": "支持该记录只面向第一轮设计材料和离线原型、当时尚未部署真实模型与服务端的范围判断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -38,20 +43,8 @@
       },
       {
         "key": "c2",
-        "label": "历史验证记录的子知识定位",
-        "reason": "引用已有子知识对文档历史角色的组织性解释，附近事实仍由原始材料直接支撑。",
-        "relation": "background",
-        "target": {
-          "kind": "article",
-          "key": "omem:docs/validation.md",
-          "section": "scope"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c3",
-        "label": "首轮验证执行流程",
-        "reason": "支持材料核验、原型构建、浏览器测试、视觉检查和静态一致性检查构成验证流程。",
+        "label": "验证执行流程",
+        "reason": "说明材料核验、原型构建、多视口浏览器测试、人工视觉检查和静态一致性检查共同组成验证流程。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -62,35 +55,22 @@
         "quote": "## 已执行\n\n1. **材料读取**：两份飞书文档 revision 19/18 的全文；第二份中两张架构画板；用户 HTML 的视觉、引用栈与追问实现；旧项目关键 README/类型/摄入与上下文包代码。\n2. **上游核验**：17 个仓库的固定 commit、README、许可证；补查 WeKnora SearchParams/SearchResult/manual upload/chunks handler 和 Hindsight OpenAPI 的 retain/recall/证据字段。来源、hash、URL 见研究索引。\n3. **原型构建**：`npm --prefix docs/prototype run buil"
       },
       {
+        "key": "c3",
+        "label": "原型复现步骤",
+        "reason": "支持旧离线原型提供了浏览器安装、构建、测试以及复用本机 Chromium 的具体复现方式。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/validation.md",
+          "startLine": 33,
+          "endLine": 43
+        },
+        "quote": "测试可复现：\n\n```bash\ncd docs/prototype\nnpm ci\nnpx playwright install chromium\nnpm run build\nnpm test\n```\n\n本机复用已有浏览器时设置 `OMEM_CHROMIUM=/path/to/chrome`。截图存放在 [prototype/screenshots](prototype/screenshots)。"
+      },
+      {
         "key": "c4",
-        "label": "真实浏览器脚本及后端边界",
-        "reason": "证明脚本启动 Chromium、设置桌面视口、收集页面异常和外部请求，并明确不蕴含后端验证。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/prototype/smoke.mjs",
-          "startLine": 1,
-          "endLine": 20
-        },
-        "quote": "// Real browser checks for the main interaction contract. No backend behavior is implied.\nimport { chromium, expect } from \"@playwright/test\";\nimport { mkdir, writeFile } from \"node:fs/promises\";\nimport { fileURLToPath } from \"node:url\";\nconst browser = await chromium.launch({\n  headless: true,\n  ...(process.env.OMEM_C"
-      },
-      {
-        "key": "c5",
-        "label": "验证结果文件写入逻辑",
-        "reason": "直接支持脚本将浏览器版本、检查结果、异常、外部请求和离线原型范围写入 verification.json 的论断。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/prototype/smoke.mjs",
-          "startLine": 267,
-          "endLine": 285
-        },
-        "quote": "  await check(\"无脚本异常且零外部请求\", async () => {\n    expect(errors).toEqual([]);\n    expect(external).toEqual([]);\n  });\n  await writeFile(\n    new URL(\"./verification.json\", root),\n    JSON.stringify(\n      {\n        date: \"2026-09-26\",\n        browser: browser.version(),\n        checks,\n        errors,\n        externalRequ"
-      },
-      {
-        "key": "c6",
-        "label": "浏览器交互覆盖范围",
-        "reason": "支持引用层级、循环、版本、追问、状态恢复、异常状态、搜索和移动端均在原型检查范围内。",
+        "label": "浏览器交互覆盖",
+        "reason": "支持多层引用、循环处理、固定历史版本、追问、焦点恢复和异常状态等交互经过浏览器检查。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -101,61 +81,9 @@
         "quote": "## 浏览器覆盖\n\n- 首页、离线资源和无横向溢出。\n- 8 层业务示例链，末端和 Esc 上一层。\n- 100 层合成链，单一当前正文，回到起点。\n- 循环引用检测，路径不继续增长，可回到原有层。\n- 历史 r6 与现行 r7 对比，旧引用不被重定向。\n- 弹窗内追问、范围改变、固定焦点、草稿与范围保留；点击 AI 回答引用继续下钻并返回原问答。\n- 原文圈选并在 dialog 内追问。\n- 返回后恢复阅读位置和起始焦点。\n- 无权限、已删除、原文定位不确定状态及追问禁用。\n- 关键词搜索与无结果状态。\n- 模拟来源同步的进行中/完成状态。\n- 恢复追加事件，刷新后演示历史保留。\n- 字号调整影响正文，手机全屏引用和问答。\n- 浏"
       },
       {
-        "key": "c7",
-        "label": "引用弹窗现行交互合同",
-        "reason": "说明历史原型验证的下钻、退栈、循环跳回及局部状态保留如何关联现行设计。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:design.md",
-          "startLine": 40,
-          "endLine": 42
-        },
-        "quote": "## 引用弹窗\n\n一条引用对应固定 FragmentRevision。点击下一级 push，Esc/back 退一层，根层退出；循环目标提供跳回，不无限压栈。路径持久保留、正文只呈现当前层；每层记录滚动和局部草稿。当前弹窗可展开追问，答案引用仍可深入。禁止打开弹窗时清掉背景文章状态。"
-      },
-      {
-        "key": "c8",
-        "label": "Vue 产品界面实现入口",
-        "reason": "直接支持当前产品界面采用 packages/ui、Vue 3 和 TypeScript且不继续用 React 构建的判断。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:design.md",
-          "startLine": 1,
-          "endLine": 3
-        },
-        "quote": "# omem 设计系统\n\n状态：v1 实施规范，2026-09-26。用户已认可的黑白灰证据阅读风格是产品基线。系统架构在 [docs/design.md](docs/design.md)；此文件只定义界面与组件规范。实现入口为 `packages/ui`（Vue 3 + TypeScript），不继续用 React 构建产品界面。"
-      },
-      {
-        "key": "c9",
-        "label": "真实行为与历史原型边界",
-        "reason": "支持当前产品必须验证真实动作和错误态，并把历史离线原型限定为视觉对照。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:design.md",
-          "startLine": 50,
-          "endLine": 54
-        },
-        "quote": "## 真实行为与验收\n\n按钮必须执行对应动作或明确禁用；服务未连接显示错误/未配置；不要用模拟回答冒充真实模型。配置的范围和模型需实际传入执行器。每次知识/事项修改形成可读通知，失败不显示成功。时间在界面用本地时区，存储用 UTC。\n\n改 UI 前阅读 `.agents/skills/omem-design/SKILL.md`，复用 token 与组件；之后执行 `osdk run check` 和浏览器检查，验证引用层级、恢复焦点、窄屏、错误态。历史离线原型保留在 docs/prototype 供视觉对照，不作为新产品代码依赖。"
-      },
-      {
-        "key": "c10",
-        "label": "后续真实能力与当前验收入口",
-        "reason": "表明系统后来已增加真实模型、语义检索、来源更新闭环和日常助理能力，同时要求以当前报告判断覆盖情况。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 1,
-          "endLine": 15
-        },
-        "quote": "> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既有助手/提炼管线。schema 18 保存等待对象、独立跟进时间、暂缓时间与事项版本；等待/暂缓/取消使用同一应用回执，提醒与发生记录原子提交、离线补发一次。真实 `traex acp / gpt-5.6-sol / medium` 已验证等待创建→暂缓→重启只补发一次→回顾不修改→取消停止。全量检查通过（59 文件 / 351 用例、typecheck/build），个人浏览器覆盖新会话与等待控件，Wiki 浏览器递归引用回归通过；三个视口为 1440/768/390。仍未接入自动监听回复、周期回顾、重复提醒或外部到期投递。\n\n>"
-      },
-      {
-        "key": "c11",
-        "label": "首轮明确未验证事项",
-        "reason": "支持真实质量、外部集成、可靠性、无障碍、性能和后端工作流不属于首轮验证结论。",
+        "key": "c5",
+        "label": "未验证能力边界",
+        "reason": "界定真实检索与生成质量、外部集成、生产运行、兼容性和后端工作流不属于首轮验证结论。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -164,18 +92,43 @@
           "endLine": 53
         },
         "quote": "## 明确没有验证的内容\n\n- 真实引用支持准确率、中文检索 Recall、事实幻觉率、学习后的任务成功率。\n- WeKnora/Hindsight 的实际部署、资源峰值、模型费用、异步任务幂等性和删除传播。\n- 真实飞书/Git/Agent connector、鉴权/撤权、团队 ACL、数据库并发、灾备。\n- 完整读屏/对比度无障碍审计、Safari/Firefox 兼容、长期海量路径性能。\n- 后端学习工作流、自动执行 Skill、真正的多版本数据恢复。原型恢复只操作演示历史。\n\n以上在实施方案 P0–P2 的退出条件中列明。研究中的“字段存在”和原型中的“可点击”都不被当作生产能力已实现。"
+      },
+      {
+        "key": "c6",
+        "label": "统一知识阅读",
+        "reason": "直接支持当前已接入统一知识阅读、完整文章、页内导航、段末引用和标准 Mermaid 渲染，并说明旧正文仍需重新分析复核。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 1,
+          "endLine": 1
+        },
+        "quote": "> **2026-10-01 统一知识阅读（本轮）**：`dev` 将本仓库原始材料、已复核文章与所需历史证据接入个人库；移除 `dev:review` 用户入口。知识阅读改为功能目录、完整文章、页内导航；引用移到段末，代码按引用行展开，原始 Markdown 连贯渲染。菜单与面包屑共享定义，飞书未启用提示留在飞书页面。Mermaid 使用标准库渲染。旧正文不会因换界面自动变成高质量知识；受影响内容需要真实 ACP 重新分析与独立复核。本轮验收结果见 [统一知识阅读](unified-knowledge-reading.md)。"
+      },
+      {
+        "key": "c7",
+        "label": "当前检索与验收状态",
+        "reason": "支持 osdk 验收入口、中文语义检索、来源更新闭环和覆盖报告已落地，同时说明全库知识仍未完整。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 5,
+          "endLine": 17
+        },
+        "quote": "> **2026-10-01 Bun 脚本入口**：开发服务和 TypeScript 脚本直接使用 osdk 管理的 Bun，移除直接 tsx 依赖。任务声明参数后可使用 `osdk run review:verify --full` 和 `osdk run review:generate <路径> --modules`。真实 Bun 完整验收通过：348 项测试、typecheck/build、中文向量模型和 6 条 HTTP 检索；子脚本复用已选择的 Bun 路径，避免重复进入 shim。\n\n> **2026-10-01 检索与维护**：精确代码标识符通过现有 AST 定义召回固定原片段，混合结果使用 MMR 减少重复，仓库目录"
       }
     ],
     "questions": [
       {
-        "question": "是否要把 `docs/validation.md` 的页面标题显式改为“历史原型验证”，并链接当前自动生成的验证报告？",
-        "why": "正文虽已声明时间边界，但“本次交付验证”仍可能被误读为当前系统的完整验收；后续实施状态已经替代部分旧环境结论，并提供新的能力与验收入口。",
-        "nextStep": "保留历史结果不变，在页首增加醒目的历史状态说明，并将当前验收入口指向实施状态及最新验证报告。",
+        "question": "首轮离线原型的 npm 与 Playwright 复现入口是否仍需作为长期可运行的历史验收保留？",
+        "why": "验证文档仍提供独立的旧原型复现命令，而当前生成和验收入口已经转向 osdk；现有材料没有明确旧入口是否继续维护。",
+        "nextStep": "由维护者确定旧原型的维护定位；若继续支持，应在当前环境重跑并记录日期与结果，否则应标注为历史命令及其最后验证时间。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c10",
-          "c11"
+          "c3",
+          "c7"
         ]
       }
     ]
@@ -189,38 +142,28 @@
     {
       "kind": "material",
       "key": "omem:docs/implementation/status.md",
-      "digest": "6f300567fb45ec1cd275528d00ea60384f90f01d55f0af228c818ef4bf1bd240"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/prototype/smoke.mjs",
-      "digest": "d720ba9d0168f6974e900cbe4fe5a2ece652f8eec8fe68497cc9902bc84ee702"
-    },
-    {
-      "kind": "material",
-      "key": "omem:design.md",
-      "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
+      "digest": "726656da857c2c99807a238300d8c6f8d475a8f1eb2bae50c67d68a8fde48b17"
     },
     {
       "kind": "article",
       "key": "omem:docs/validation.md",
-      "digest": "c6ce95291e10654ce2222fffd115e84b186de5e5a61ad8c5e96dc3653cfc3195"
+      "digest": "89c4ecc97f42b2998ec9d510a44122e1484159c610872eed45acfa6fe60c89f4"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T03:04:42.225Z",
+    "at": "2026-10-01T07:05:58.060Z",
     "trace": {
-      "runId": "81aaf0bc-bc3b-4bc8-9b11-eddb7542d656",
+      "runId": "915517b9-b98f-4301-9ae9-509a679b4250",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "47a77cde060ce7e4b9a3acb4115c9b2b05847aff7380aff77f27934ee120c791",
-      "contextHash": "320e9bd9e441b3c175174521f78b5a6cb71d2f3ea4d0bea59c5aa576e746fe55",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "3099b3a53988ad9a759d738899afd609352765b18020ade419a42b4a2d0a3903",
+      "contextHash": "e633f43bc0f9f36f921846baf7ac9264b2f19f9ea587575cfedb6f6831678f03",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "187dd0fdd887de43500efc4b2e9dfd0c89a14b4f30cb6beebc3afc845092f1dc",
+      "fingerprint": "3ff9c7f4583d766431cc41063465dfcbd94e9c641bbaf2f39eaea55199a2ccce",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -233,10 +176,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f56b-787c-7593-9d00-e5a5c2629a70"
+        "01a0f648-6f4d-75b1-b69c-870f54aea78a"
       ],
       "usage": {
-        "used": 45648,
+        "used": 39308,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -245,10 +188,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 61849,
-          "utf8Bytes": 90646,
-          "estimatedTokens": 30216,
-          "budgetedTokens": 37770,
+          "chars": 43966,
+          "utf8Bytes": 70333,
+          "estimatedTokens": 23445,
+          "budgetedTokens": 29307,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -257,17 +200,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T03:05:05.184Z",
+    "at": "2026-10-01T07:06:18.030Z",
     "trace": {
-      "runId": "5ac78e60-50c5-4ade-b313-c525509c8f53",
+      "runId": "5c334652-a055-4403-8f36-e150c473d64a",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "c4520f4f74749c909f2590cb476429cee3eca02d912f64db7360496b1499ee61",
-      "contextHash": "042b0dcf5cb63f9e7c1151a10fdb69ac93ebebd02a058ef80c53317d5f82dac3",
+      "promptHash": "7c71d35be762b1564aa9dc1bd2db690fd030f4f2c61194ed7164f7756784a248",
+      "contextHash": "d80c1c20b4d29017e45306dd184f564215b2c7e62195d5adc46de1c3327e1ce0",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "86239aeaf3f873876c411a9bdb6da536ae56abf4adb22c498ca027faad68f9a4",
+      "fingerprint": "458712cb832018dcf4323e596a3030fa9eb48e965935a383899546b5c86c24a8",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -280,10 +223,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f56b-f9c0-7143-a976-042ea98a5bf5"
+        "01a0f648-d484-7c83-97b3-172b5f3f31ba"
       ],
       "usage": {
-        "used": 43827,
+        "used": 36810,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -292,10 +235,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 59936,
-          "utf8Bytes": 87906,
-          "estimatedTokens": 29302,
-          "budgetedTokens": 36628,
+          "chars": 40488,
+          "utf8Bytes": 64074,
+          "estimatedTokens": 21358,
+          "budgetedTokens": 26698,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

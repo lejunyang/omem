@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:docs/validation.md",
-    "title": "首轮设计与离线原型验证记录",
-    "summary": "该文档记录 2026-09-26 第一轮架构材料和离线交互原型的验证范围、浏览器覆盖及明确未验证项。它能证明当时原型的视觉与交互合同经过检查，但不能代表当前 Vue 产品、后端服务、真实模型或外部集成已完成；当前能力应以实施状态和最新验证报告为准。",
+    "title": "首轮设计与离线原型验证",
+    "summary": "记录 2026 年 9 月 26 日对设计材料和离线交互原型的验证范围，证明引用下钻、追问、历史版本、响应式布局等交互设想可以运行，但不代表真实模型、后端服务、连接器或当前 Vue 产品已经通过验收。",
     "category": "tests",
     "sections": [
       {
         "key": "scope",
-        "title": "验证定位与时间边界",
-        "body": "本文是第一轮设计材料与离线交互原型的历史验证记录，开头已明确说明其“不等于当前运行代码”，且当时开源引擎、真实模型和服务端尚未部署。[[c1]] 因而其中的“已执行”应理解为对研究、静态材料和原型行为的验收，而非生产系统验收。当前实现后来已加入真实 ACP、统一检索、知识流程及日常助理等能力，具体状态需要转向实施状态页判断。[[c2]]"
+        "title": "验证对象与证据边界",
+        "body": "这份记录解决的是“第一轮设计和离线原型是否具备可演示、可复现的交互闭环”，而不是证明生产系统已经交付。验证发生于 2026 年 9 月 26 日，当时开源引擎、真实模型和服务端均未部署；文档也明确要求以实施状态和决策记录判断后续实际能力。参考 [[c1]]\n\n因此，文中的“通过”应理解为历史原型证据：它能说明方案曾在特定浏览器环境中运行，却不能直接外推为当前 Vue 应用、真实数据链路或线上部署的验收结果。"
       },
       {
         "key": "coverage",
-        "title": "已验证的原型合同",
-        "body": "验证工作包括材料与上游仓库核验、自包含 React/CSS 原型构建、桌面与手机浏览器测试、人工视觉检查及静态一致性检查。[[c3]] 浏览器覆盖重点是证据阅读交互：多层与百层引用链、循环检测、固定历史版本、弹窗内追问、返回后的滚动与焦点恢复、权限和删除状态、搜索、模拟同步及移动端展示。[[c4]] 配套 Playwright 脚本确实监听页面异常和外部 HTTP 请求，并从 1440×1000 视口启动真实浏览器断言；脚本自身也声明不蕴含后端行为。[[c5]]"
+        "title": "原型覆盖的阅读与引用交互",
+        "body": "验证过程包括材料与上游项目核验、自包含 HTML 构建、多个视口的浏览器测试、人工视觉检查及静态一致性检查。参考 [[c2]]\n\n浏览器重点覆盖了证据阅读体验：多层引用下钻、循环检测、固定历史版本、弹窗内追问、原文圈选、返回后的滚动与焦点恢复，以及无权限、删除和定位不确定等异常状态；同时检查搜索、同步演示、刷新恢复、移动端布局，并确认没有脚本异常或外部网络请求。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[离线文章] --> B[固定引用下钻]\n  B --> C[原位追问]\n  C --> D[答案引用继续下钻]\n  D --> B\n```\n\n这条流程仅表达原型中已验证的交互关系，不包含真实后端知识生成或模型调用。"
       },
       {
         "key": "limits",
-        "title": "未覆盖能力与后续验收关系",
-        "body": "本文明确没有验证真实引用准确率、中文检索召回、幻觉率、真实 connector 与鉴权、团队 ACL、数据库并发、灾备、完整无障碍和长期性能，也没有验证后端学习工作流、自动 Skill 或真正的多版本恢复。[[c6]] 其结论边界是“字段存在”和“原型可点击”都不能视为生产能力。当前视觉规范同样要求真实动作、诚实错误态以及修改后运行项目检查和浏览器检查，并把历史离线原型仅作为视觉对照。[[c7]] 因此该文档适合作为早期交互合同和历史证据，不宜作为当前全系统验收报告。"
+        "title": "未验证事项与当前状态的关系",
+        "body": "该轮没有验证真实引用支持准确率、中文语义检索质量、事实幻觉率，也没有覆盖 WeKnora/Hindsight 部署、真实飞书或 Git 连接器、团队权限、数据库并发、灾备及完整无障碍兼容性；后端学习流程、自动执行 Skill 和真正的多版本恢复同样不在范围内。参考 [[c4]]\n\n后续实施记录显示，项目已经增加统一知识阅读、日常助理、中文向量检索、来源更新闭环和真实 ACP 验证等能力，但这些属于 2026 年 10 月的新实现与新验收，不能倒填为本次历史原型已经验证的内容；实施记录也继续保留尚未完成的能力边界。延伸阅读：[[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "验证范围与历史声明",
-        "reason": "支持本文仅验证第一轮设计材料和离线原型、不能代表当前运行代码的判断。",
+        "label": "原型验证定位",
+        "reason": "支持本次验证仅面向第一轮设计材料和离线原型、并非当前运行代码或生产部署验收的判断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -38,22 +38,9 @@
       },
       {
         "key": "c2",
-        "label": "当前实施进展摘要",
-        "reason": "说明后续已经出现真实模型、检索、知识流程和日常助理能力，当前状态不能由旧原型文档推断。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/status.md",
-          "startLine": 1,
-          "endLine": 15
-        },
-        "quote": "> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既有助手/提炼管线。schema 18 保存等待对象、独立跟进时间、暂缓时间与事项版本；等待/暂缓/取消使用同一应用回执，提醒与发生记录原子提交、离线补发一次。真实 `traex acp / gpt-5.6-sol / medium` 已验证等待创建→暂缓→重启只补发一次→回顾不修改→取消停止。全量检查通过（59 文件 / 351 用例、typecheck/build），个人浏览器覆盖新会话与等待控件，Wiki 浏览器递归引用回归通过；三个视口为 1440/768/390。仍未接入自动监听回复、周期回顾、重复提醒或外部到期投递。\n\n>"
-      },
-      {
-        "key": "c3",
-        "label": "首轮已执行验证",
-        "reason": "支持材料核验、原型构建、浏览器测试、视觉检查和静态一致性检查的范围描述。",
-        "relation": "supports",
+        "label": "验证执行范围",
+        "reason": "说明材料核验、原型构建、浏览器测试、人工视觉检查和静态一致性检查构成了本次验证方法。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/validation.md",
@@ -63,9 +50,9 @@
         "quote": "## 已执行\n\n1. **材料读取**：两份飞书文档 revision 19/18 的全文；第二份中两张架构画板；用户 HTML 的视觉、引用栈与追问实现；旧项目关键 README/类型/摄入与上下文包代码。\n2. **上游核验**：17 个仓库的固定 commit、README、许可证；补查 WeKnora SearchParams/SearchResult/manual upload/chunks handler 和 Hindsight OpenAPI 的 retain/recall/证据字段。来源、hash、URL 见研究索引。\n3. **原型构建**：`npm --prefix docs/prototype run buil"
       },
       {
-        "key": "c4",
-        "label": "浏览器交互覆盖清单",
-        "reason": "支持多层引用、循环、版本、追问、焦点、权限、搜索和移动端等原型行为已被覆盖。",
+        "key": "c3",
+        "label": "浏览器交互覆盖",
+        "reason": "支持多层引用、循环检测、历史版本、追问、焦点恢复、异常状态和响应式布局等原型行为已被浏览器检查覆盖。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -76,22 +63,9 @@
         "quote": "## 浏览器覆盖\n\n- 首页、离线资源和无横向溢出。\n- 8 层业务示例链，末端和 Esc 上一层。\n- 100 层合成链，单一当前正文，回到起点。\n- 循环引用检测，路径不继续增长，可回到原有层。\n- 历史 r6 与现行 r7 对比，旧引用不被重定向。\n- 弹窗内追问、范围改变、固定焦点、草稿与范围保留；点击 AI 回答引用继续下钻并返回原问答。\n- 原文圈选并在 dialog 内追问。\n- 返回后恢复阅读位置和起始焦点。\n- 无权限、已删除、原文定位不确定状态及追问禁用。\n- 关键词搜索与无结果状态。\n- 模拟来源同步的进行中/完成状态。\n- 恢复追加事件，刷新后演示历史保留。\n- 字号调整影响正文，手机全屏引用和问答。\n- 浏"
       },
       {
-        "key": "c5",
-        "label": "原型浏览器脚本入口",
-        "reason": "证明脚本使用真实浏览器、监听页面异常与外部请求，同时明确不代表后端行为。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/prototype/smoke.mjs",
-          "startLine": 1,
-          "endLine": 20
-        },
-        "quote": "// Real browser checks for the main interaction contract. No backend behavior is implied.\nimport { chromium, expect } from \"@playwright/test\";\nimport { mkdir, writeFile } from \"node:fs/promises\";\nimport { fileURLToPath } from \"node:url\";\nconst browser = await chromium.launch({\n  headless: true,\n  ...(process.env.OMEM_C"
-      },
-      {
-        "key": "c6",
-        "label": "明确未验证事项",
-        "reason": "支持真实质量、外部集成、服务可靠性、无障碍、性能和后端工作流均不在本轮结论内。",
+        "key": "c4",
+        "label": "未验证能力边界",
+        "reason": "列明真实质量、外部集成、生产运行、无障碍兼容及后端工作流等未被本轮原型验证覆盖的事项。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -102,32 +76,20 @@
         "quote": "## 明确没有验证的内容\n\n- 真实引用支持准确率、中文检索 Recall、事实幻觉率、学习后的任务成功率。\n- WeKnora/Hindsight 的实际部署、资源峰值、模型费用、异步任务幂等性和删除传播。\n- 真实飞书/Git/Agent connector、鉴权/撤权、团队 ACL、数据库并发、灾备。\n- 完整读屏/对比度无障碍审计、Safari/Firefox 兼容、长期海量路径性能。\n- 后端学习工作流、自动执行 Skill、真正的多版本数据恢复。原型恢复只操作演示历史。\n\n以上在实施方案 P0–P2 的退出条件中列明。研究中的“字段存在”和原型中的“可点击”都不被当作生产能力已实现。"
       },
       {
-        "key": "c7",
-        "label": "真实行为与验收规范",
-        "reason": "说明当前产品必须验证真实动作和错误态，并将历史离线原型限定为视觉对照。",
-        "relation": "explains",
+        "key": "c5",
+        "label": "后续实施进展",
+        "reason": "用于区分首轮原型的历史验证与 2026 年 10 月已经新增、另行检查且仍有限制的实际能力。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
-          "key": "omem:design.md",
-          "startLine": 50,
-          "endLine": 54
+          "key": "omem:docs/implementation/status.md",
+          "startLine": 1,
+          "endLine": 17
         },
-        "quote": "## 真实行为与验收\n\n按钮必须执行对应动作或明确禁用；服务未连接显示错误/未配置；不要用模拟回答冒充真实模型。配置的范围和模型需实际传入执行器。每次知识/事项修改形成可读通知，失败不显示成功。时间在界面用本地时区，存储用 UTC。\n\n改 UI 前阅读 `.agents/skills/omem-design/SKILL.md`，复用 token 与组件；之后执行 `osdk run check` 和浏览器检查，验证引用层级、恢复焦点、窄屏、错误态。历史离线原型保留在 docs/prototype 供视觉对照，不作为新产品代码依赖。"
+        "quote": "> **2026-10-01 统一知识阅读（本轮）**：`dev` 将本仓库原始材料、已复核文章与所需历史证据接入个人库；移除 `dev:review` 用户入口。知识阅读改为功能目录、完整文章、页内导航；引用移到段末，代码按引用行展开，原始 Markdown 连贯渲染。菜单与面包屑共享定义，飞书未启用提示留在飞书页面。Mermaid 使用标准库渲染。旧正文不会因换界面自动变成高质量知识；受影响内容需要真实 ACP 重新分析与独立复核。本轮验收结果见 [统一知识阅读](unified-knowledge-reading.md)。\n\n> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既"
       }
     ],
-    "questions": [
-      {
-        "question": "是否应将本文显式标记为“历史原型验证”，并把当前验收入口指向最新 verification.json 与实施状态？",
-        "why": "标题“本次交付验证”容易被误读为当前系统验收，但正文限定在 2026-09-26 离线原型，而实施状态已记录多轮后续真实能力与检查。",
-        "nextStep": "保留原始验证结果，在标题或页首增加历史状态标签，并链接当前自动生成的验证报告；不要直接改写旧结果为新实现结论。",
-        "blocking": false,
-        "citationKeys": [
-          "c1",
-          "c2",
-          "c6"
-        ]
-      }
-    ]
+    "questions": []
   },
   "dependencies": [
     {
@@ -138,7 +100,7 @@
     {
       "kind": "material",
       "key": "omem:docs/implementation/status.md",
-      "digest": "6f300567fb45ec1cd275528d00ea60384f90f01d55f0af228c818ef4bf1bd240"
+      "digest": "726656da857c2c99807a238300d8c6f8d475a8f1eb2bae50c67d68a8fde48b17"
     },
     {
       "kind": "material",
@@ -159,17 +121,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:46:13.556Z",
+    "at": "2026-10-01T06:56:17.164Z",
     "trace": {
-      "runId": "419cf09a-7e6e-444e-9242-652fd1488fc0",
+      "runId": "17a2c303-6301-4dd2-9181-34a2c03bfbc9",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "0aad5e30b0a5363f1441068649f9c79bd82679cd06fa1a88ad864119d1bf03f7",
-      "contextHash": "1c741457c1d4f0c362d8a5eeb39c930ec9ef9ff882954572a0ba4090527bca0b",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "b93af9c326d6ff00110bb865526006837946e89565caf20a63441e885ab3a0bc",
+      "contextHash": "64d582a27181c363ee22fd7f461a4560fdfe69ed29991bd1c1af6ddbe7ccac01",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e382c46470c9006794f5b4e6d5c7058fdee20e67d92c30fa6412234b99d1d1c7",
+      "fingerprint": "72d6d7cbc321e76ac9552238f96ab47177ac6776b68a4bd7d0862049638145ec",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -182,10 +144,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f55a-a235-72d2-8711-ee4ed86529c8"
+        "01a0f63f-908a-7a53-9bf6-f50f7d58f39d"
       ],
       "usage": {
-        "used": 32982,
+        "used": 33484,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -194,10 +156,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 30544,
-          "utf8Bytes": 45491,
-          "estimatedTokens": 15164,
-          "budgetedTokens": 18955,
+          "chars": 31267,
+          "utf8Bytes": 47824,
+          "estimatedTokens": 15942,
+          "budgetedTokens": 19928,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -206,17 +168,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:46:35.421Z",
+    "at": "2026-10-01T06:56:33.670Z",
     "trace": {
-      "runId": "5093daba-3108-4e0f-8e5f-6f1771357c6e",
+      "runId": "4c5105db-4e85-4349-a78a-b88e60ef44cb",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "928892761acf7af64bf47b84ce4435ea2f4985c85f45183230d27914f31e3214",
-      "contextHash": "e86d78fda3ddf67fbd03a1094b4185358f500e8afafa7997ee04838b143ff6f0",
+      "promptHash": "e72cefa3b6e6054dd20510d7d0980049f0fddb87837885b2b41f98c012501c4f",
+      "contextHash": "49bb6f4af7f484635a85c0211e24430454fbbcfa7423f0a248b95f656a1db58f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "3b4cbdbdf2e23094ace2ac0b6209d50591e047ad42389d963c3269d903122dbb",
+      "fingerprint": "21f64a7638277eb16dd71e5843f989a0a4c0f35e23367a793c1679bd1e80e923",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -229,10 +191,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f55b-06f7-7a93-abf5-85f95def5388"
+        "01a0f640-0171-7172-84da-10f82d9f531f"
       ],
       "usage": {
-        "used": 33650,
+        "used": 33477,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -241,10 +203,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 33251,
-          "utf8Bytes": 51955,
-          "estimatedTokens": 17319,
-          "budgetedTokens": 21649,
+          "chars": 32056,
+          "utf8Bytes": 50383,
+          "estimatedTokens": 16795,
+          "budgetedTokens": 20994,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

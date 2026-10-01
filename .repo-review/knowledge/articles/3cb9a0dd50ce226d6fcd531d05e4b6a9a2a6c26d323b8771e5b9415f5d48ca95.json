@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+    "title": "可递归展开的知识文章目录树",
+    "summary": "该组件将文章元数据中的父子关系呈现为逐层展开的目录树，负责文章选择、当前项与待更新状态展示，并通过祖先链避免当前递归路径上的环路；它不负责数据请求或关系完整性校验。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "知识页面需要让读者从一篇文章继续浏览其下级内容，同时辨认当前选中的文章以及需要更新的条目。`KnowledgeTree` 接收当前文章、全量文章列表、选中键和可选祖先链；用户点击标题后，组件只向外发出文章键，由上层继续处理选择结果。参考 [[c1]]\n\n目录关系和状态来自统一的文章元数据：`children` 保存下级文章键，`current` 表示文章是否为当前版本。组件本身只消费这些字段，不负责获取文章数据。参考 [[c2]]"
+      },
+      {
+        "key": "flow",
+        "title": "递归展开与文章选择",
+        "body": "组件从当前文章的 `children` 开始，先排除祖先链中的键和当前文章自身，再到全量文章列表中寻找对应条目。只有解析成功的文章才会进入子节点集合；节点是否展开则由各实例自己的局部状态保存。参考 [[c3]]\n\n有子节点时，界面显示带可访问名称和 `aria-expanded` 状态的展开按钮。展开后组件递归渲染子文章，并把当前文章键追加到祖先链；标题按钮根据文章键标记当前页、发出选择事件，非当前版本的文章显示“待更新”。参考 [[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "处理边界与已知限制",
+        "body": "祖先链过滤能阻止沿当前递归路径返回祖先或指向自身，但它并不是完整的关系校验：重复子键仍可能形成重复条目，而在全量文章列表中找不到的子键会被略过。参考 [[c3]]\n\n该组件只实现目录计算、展开、选择和状态展示；其源码没有实现网络请求、令牌处理、请求错误处理或知识阅读帧构造。接口文件另行定义文章元数据，并提供这些数据访问与阅读帧相关能力，但现有材料不足以确认具体由哪个父组件调用或承担页面级协调。延伸阅读：[[c2]] [[c5]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "目录输入与选择事件",
+        "reason": "支持组件接收文章树数据、选中状态与祖先链，并通过事件输出所选文章键的职责说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+          "startLine": 2,
+          "endLine": 6
+        },
+        "quote": "import { computed, ref } from \"vue\";\nimport type { ArticleMeta } from \"./api\";\nconst props = defineProps<{ article: ArticleMeta; articles: ArticleMeta[]; selected: string; ancestors?: string[] }>();\nconst emit = defineEmits<{ select: [key: string] }>();\nconst expanded = ref(false);"
+      },
+      {
+        "key": "c2",
+        "label": "文章元数据合同",
+        "reason": "支持目录关系由 children 提供、文章更新状态由 current 提供，以及组件依赖统一文章元数据类型的论断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/api.ts",
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "import type { KnowledgeDocument, KnowledgeCitation } from \"../../../../packages/contracts/src/knowledge\";\nexport type ArticleMeta = { children?: string[]; key: string; title: string; summary: string; category: string; current: boolean; revision: string; model: string; reviewedBy: string; generatedAt: string; questionCo"
+      },
+      {
+        "key": "c3",
+        "label": "子节点解析与环路过滤",
+        "reason": "支持子键过滤、文章查找、缺失键略过，以及祖先链只能约束当前递归路径的边界说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+          "startLine": 6,
+          "endLine": 7
+        },
+        "quote": "const expanded = ref(false);\nconst children = computed(() => (props.article.children ?? []).filter(key => !props.ancestors?.includes(key) && key !== props.article.key).flatMap(key => props.articles.find(a => a.key === key) ?? []));"
+      },
+      {
+        "key": "c4",
+        "label": "树节点交互与递归渲染",
+        "reason": "支持展开状态、当前页标记、待更新提示、递归祖先链和选择事件转发的描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+          "startLine": 9,
+          "endLine": 16
+        },
+        "quote": "<template>\n  <li>\n    <div class=\"tree-row\">\n      <button v-if=\"children.length\" class=\"tree-toggle\" :aria-label=\"(expanded ? '收起' : '展开') + article.title\" :aria-expanded=\"expanded\" @click=\"expanded = !expanded\">{{ expanded ? '−' : '+' }}</button><span v-else class=\"tree-spacer\" />\n      <button class=\"tree-title\" :cl"
+      },
+      {
+        "key": "c5",
+        "label": "知识接口与阅读帧能力",
+        "reason": "说明网络请求、令牌、错误处理和知识阅读帧构造存在于接口文件中，并限定不能据此推断具体父组件职责。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/api.ts",
+          "startLine": 5,
+          "endLine": 12
+        },
+        "quote": "export type KnowledgeFrame = { kind: \"knowledge\" | \"citation\" | \"source\"; id: string; title: string };\nexport async function knowledgeApi<T>(prefix: string, path: string, init?: RequestInit): Promise<T> {\n  const token = sessionStorage.getItem(\"omem-token\");\n  const response = await fetch(prefix + path, { ...init, head"
+      }
+    ],
+    "questions": [
+      {
+        "question": "缺失或重复的子文章键是否应显示为不可用节点，而不是被静默略过或重复渲染？",
+        "why": "当前子节点计算会略过无法在文章列表中解析的键，也没有对子键去重；现有材料未给出产品合同或上游数据完整性保证。",
+        "nextStep": "检查父组件、文章关系生成逻辑和交互测试，确认缺失键、重复键及循环关系的预期展示，并补充相应行为断言。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
+        ]
+      },
+      {
+        "question": "目录树是否需要支持方向键导航以及展开后的焦点管理？",
+        "why": "现有节点提供按钮名称、展开状态和当前页标记，但材料未说明是否要求完整的树形控件键盘交互模型。",
+        "nextStep": "查阅页面级无障碍规范和浏览器测试，确认采用普通嵌套列表语义还是完整的 tree/treeitem 键盘模型。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+      "digest": "15e970e292aea4fb0055fa4d2663532fadc12a0edf32669ea22d594a1dabee90"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/api.ts",
+      "digest": "668d5d6f22b4f79251b1975cbbee8e79d84974665e4f2ebec9600cb3a8808d35"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T06:54:19.304Z",
+    "trace": {
+      "runId": "c45e4845-9442-472a-8241-1b59af6feed0",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "cdd8029668a89274eedaccb17b004c23515390dfe7bc2bd5d2e2c9987148df3b",
+      "contextHash": "4b3c8ba0b4a1f9aaa80aa5014f73d074d9ee40121ffe9eba7c045f872f2fcfd6",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "2d9716b402fe3abce035e257bbb3ce32f5eba29c80d55c0db215da1feadc6559",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f63d-d7cf-7c50-a618-138140690555"
+      ],
+      "usage": {
+        "used": 25300,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 15856,
+          "utf8Bytes": 22088,
+          "estimatedTokens": 7363,
+          "budgetedTokens": 9204,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T06:54:37.850Z",
+    "trace": {
+      "runId": "94e1097c-a469-41e0-bcac-e3840c5f7ff2",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "4bcb1df6748f8454fdf0c7d407776047be413a05d605470d63ad0805c26ecaaa",
+      "contextHash": "611980dbbc2ea24ee2d1bb25d672428ca29f246331d5d7ce366a8aeacb318efb",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "6c382ed07cdb190dbb534907202630978972c760c638f096a4948146f9613fe8",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f63e-3100-7b01-aa8b-3799252c5c1f"
+      ],
+      "usage": {
+        "used": 23050,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 12372,
+          "utf8Bytes": 15708,
+          "estimatedTokens": 5236,
+          "budgetedTokens": 6545,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

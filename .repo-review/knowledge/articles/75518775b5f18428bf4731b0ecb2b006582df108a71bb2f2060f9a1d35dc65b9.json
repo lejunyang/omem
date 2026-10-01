@@ -2,27 +2,27 @@
   "version": 1,
   "document": {
     "key": "omem:pnpm-workspace.yaml",
-    "title": "pnpm 工作区边界与依赖构建许可",
-    "summary": "该配置把 apps 与 packages 下的直接子目录纳入 pnpm 工作区，并允许 esbuild 和 protobufjs 执行依赖构建脚本。它定义包发现和安装期脚本许可边界，但不描述应用功能、启动流程或构建结果。",
+    "title": "前端工作区与依赖构建许可",
+    "summary": "该配置定义 pnpm 工作区包含的应用与共享包目录，并明确允许四个依赖执行构建步骤。它描述的是包管理边界和安装策略，不能单独证明各目录、依赖或相关功能已经实际存在并可运行。",
     "category": "configuration",
     "sections": [
       {
-        "key": "workspace_scope",
-        "title": "工作区包发现范围",
-        "body": "工作区仅声明 `apps/*` 和 `packages/*` 两类路径，因此 pnpm 会把这两处的直接子目录作为候选工作区包。[[c5]] 该结构与锁文件中的 `apps/web`、`packages/ui` importer 相互印证，但配置本身没有列出具体包名，也不能证明这些包包含可运行实现。"
+        "key": "workspace-scope",
+        "title": "工作区覆盖范围",
+        "body": "该仓库采用 pnpm workspace 组织多包工程，将 `apps/*` 与 `packages/*` 纳入统一依赖管理。前者通常承载可运行应用，后者用于共享能力；这为应用复用公共组件或基础设施提供了目录层面的组织基础。参考 [[c1]]\n\n这份文件只声明包扫描范围：它不会证明匹配目录中当前有哪些项目，也不能证明任一应用已完成构建、测试或发布。判断实际实现状态仍需结合各包清单、源码和当前进展材料。"
       },
       {
-        "key": "build_policy",
-        "title": "安装期构建脚本白名单",
-        "body": "`allowBuilds` 只允许 `esbuild` 与 `protobufjs` 执行依赖构建脚本。[[c6]] 这是一项安装安全和可复现性边界：其他依赖若需要生命周期构建脚本，不能从本材料推断其已获许可。锁文件确实解析了 esbuild 的多平台可选二进制包，说明该许可与当前工具链存在关联。[[c7]]"
+        "key": "dependency-build-policy",
+        "title": "依赖构建许可",
+        "body": "配置显式允许 `esbuild`、`protobufjs`、`onnxruntime-node` 与 `sharp` 执行安装期构建。它们分别可能涉及代码构建、协议处理、模型推理和图像处理等技术场景，但此处只能确认构建许可，不能据此断言项目已经启用了这些能力。参考 [[c2]]\n\n显式许可有助于控制哪些依赖可以运行构建脚本，并让安装行为更可预期。实际安装是否成功、二进制是否适配运行平台，以及上层代码是否调用这些依赖，仍需通过锁文件、包清单和真实检查确认。"
       }
     ],
     "citations": [
       {
-        "key": "c5",
-        "label": "工作区目录模式",
-        "reason": "直接支持工作区只覆盖 apps 与 packages 两类直接子目录的配置事实。",
-        "relation": "explains",
+        "key": "c1",
+        "label": "工作区目录范围",
+        "reason": "支持工作区统一包含应用目录与共享包目录的配置事实。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:pnpm-workspace.yaml",
@@ -32,30 +32,17 @@
         "quote": "packages:\n  - apps/*\n  - packages/*"
       },
       {
-        "key": "c6",
-        "label": "依赖构建脚本许可",
-        "reason": "支持安装期构建许可仅包含 esbuild 和 protobufjs 的结论。",
+        "key": "c2",
+        "label": "依赖构建许可",
+        "reason": "支持四个依赖被明确允许执行构建步骤的配置事实。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:pnpm-workspace.yaml",
           "startLine": 5,
-          "endLine": 7
+          "endLine": 9
         },
-        "quote": "allowBuilds:\n  esbuild: true\n  protobufjs: true"
-      },
-      {
-        "key": "c7",
-        "label": "esbuild 平台可选依赖",
-        "reason": "说明工作区构建许可与锁文件中实际解析的 esbuild 平台包之间的关联。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:pnpm-lock.yaml",
-          "startLine": 2103,
-          "endLine": 2130
-        },
-        "quote": "  esbuild@0.25.12:\n    optionalDependencies:\n      '@esbuild/aix-ppc64': 0.25.12\n      '@esbuild/android-arm': 0.25.12\n      '@esbuild/android-arm64': 0.25.12\n      '@esbuild/android-x64': 0.25.12\n      '@esbuild/darwin-arm64': 0.25.12\n      '@esbuild/darwin-x64': 0.25.12\n      '@esbuild/freebsd-arm64': 0.25.12\n      '@esbuild/freebsd-x64': 0.25.12\n      '@esbuild/linux-arm': 0.25.12\n      '@esbuild/linux-arm64': 0.25.12\n      '@esbuild/linux-ia32': 0.25.12\n      '@esbuild/linux-loong64': 0.25.12\n      '@esbuild/linux-mips64el': 0.25.12\n      '@esbuild/linux-ppc64': 0.25.12\n      '@esbuild/linux-riscv64': 0.25.12\n      '@esbuild/linux-s390x': 0.25.12\n      '@esbuild/linux-x64': 0.25.12\n      '@esbuild/netbsd-arm64': 0.25.12\n      '@esbuild/netbsd-x64': 0.25.12\n      '@esbuild/openbsd-arm64': 0.25.12\n      '@esbuild/openbsd-x64': 0.25.12\n      '@esbuild/openharmony-arm64': 0.25.12\n      '@esbuild/sunos-x64': 0.25.12\n      '@esbuild/win32-arm64': 0.25.12\n      '@esbuild/win32-ia32': 0.25.12\n      '@esbuild/win32-x64': 0.25.12"
+        "quote": "allowBuilds:\n  esbuild: true\n  protobufjs: true\n  onnxruntime-node: true\n  sharp: true"
       }
     ],
     "questions": []
@@ -63,29 +50,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:pnpm-lock.yaml",
-      "digest": "02d0a9725d31c52b4031dcd17d719325808e618bb159d1f1c16fd08238cd2b76"
-    },
-    {
-      "kind": "material",
       "key": "omem:pnpm-workspace.yaml",
-      "digest": "25c83f134f6a94d376b9fd0cca3dd1b36fa6fdca6e54142d8ed47780f6265c61"
+      "digest": "ace444b899447a05be96e70626066715b1b32e60d88379368ea507f94ed26214"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T13:39:59.461Z",
+    "at": "2026-10-01T07:02:06.425Z",
     "trace": {
-      "runId": "72de11c5-6b5a-4c7d-b955-c38c5405696a",
+      "runId": "80e7c1a4-4649-4fe4-8b89-bbb1f0c09923",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "e502ab4ab6b426c067cccfaa6ed8c3023f108c253f187a0087e03617f7224a14",
-      "promptHash": "786b9fcef17b03ece0438d4c82e847e9c43f5b688fe9deb65b6b552fe1296579",
-      "contextHash": "79ed31ecbb487b0db030d895ece3f4efffe400c7fcc7c9eb64f3f6a1bd2ea311",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "3a2241d3058819119a2b3cca65effada31123b042946e10d698a6fde101eefbe",
+      "contextHash": "770c4a4e74584c585438332b73d689536967630ec91b39655c37e7ae6c92120e",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "923d0756c3f9ac11b46150062e6ebac0a578d3fd5a8696bf216fc935c9d4a766",
+      "fingerprint": "f1878b9bb95d0426420e5425d7aeee23e2483d97b8ff71d47504a3867cb77e55",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -98,22 +80,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed64-5890-7fa2-a8cd-753a44463fab"
+        "01a0f645-044e-7c93-929d-a19d68cdb793"
       ],
       "usage": {
-        "used": 68434,
-        "size": 760000,
+        "used": 21402,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 110532,
-          "utf8Bytes": 112088,
-          "estimatedTokens": 37363,
-          "budgetedTokens": 46704,
+          "chars": 6764,
+          "utf8Bytes": 9716,
+          "estimatedTokens": 3239,
+          "budgetedTokens": 4049,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -122,17 +104,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T13:40:10.802Z",
+    "at": "2026-10-01T07:02:19.987Z",
     "trace": {
-      "runId": "dd1141fd-5639-4bca-8417-21373f74d446",
+      "runId": "e624f62c-33bd-4841-9228-0939979bad38",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "e91bc5926a7e67fdc70eb4a865576c0a68e67842a69227aa699c2c1ee29df28c",
-      "promptHash": "5f65c598ece43aace27295fd599d040e49bd3f5c29ae22a61c8f3b0a209ddc5d",
-      "contextHash": "660467c6141ca4e931c58fd00b72beea184f5a81154af84fde27a3dae5996973",
+      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
+      "promptHash": "ff260bec5d605c2399e21da65bf126443586e41caf76237eab392ac2f6075f5c",
+      "contextHash": "72ebea168f226f50e45729b55b55ef2b6c03def0e725a5ee50cbbc3b54225a65",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1e049025a31b88f5749bfa670090f907552227c94d815e31779a7c7fad154ab9",
+      "fingerprint": "35d0bd60853d8574b17b696377df63d3fdda20ad3b1c51ef0e339d8771df21b3",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -145,22 +127,22 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ed64-cb2a-7f42-846b-2bf12d7877ad"
+        "01a0f645-4cd3-7711-8b89-f3ba98484cf3"
       ],
       "usage": {
-        "used": 68159,
-        "size": 760000,
+        "used": 20427,
+        "size": 258400,
         "cost": null,
         "budget": {
-          "maxInputTokens": 96000,
+          "maxInputTokens": 192000,
           "maxOutputTokens": 24000,
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 117024,
-          "utf8Bytes": 120228,
-          "estimatedTokens": 40076,
-          "budgetedTokens": 50095,
+          "chars": 5056,
+          "utf8Bytes": 7034,
+          "estimatedTokens": 2345,
+          "budgetedTokens": 2932,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

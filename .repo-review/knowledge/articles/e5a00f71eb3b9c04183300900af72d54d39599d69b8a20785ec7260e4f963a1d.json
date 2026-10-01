@@ -2,62 +2,83 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/knowledge/repository.ts",
-    "title": "知识正文的材料解析、发布与失效管理",
-    "summary": "该仓库把不可变捕获修订转换为知识材料，校验并发布带固定引用的知识正文，同时维护正文版本、问题状态和依赖失效传播；它负责引用的结构与来源定位一致性，但不判断引用是否在语义上支持附近论断。",
+    "title": "知识文章的证据绑定、版本发布与失效管理",
+    "summary": "该仓库把不可变原始修订转换为稳定知识材料，绑定并校验正文中的内联引用，以内容摘要发布不可变文章版本，同时维护历史恢复、依赖失效、待确认问题与用户补充之间的闭环。",
     "category": "implementation",
     "sections": [
       {
         "key": "material_identity",
-        "title": "原始修订到知识材料",
-        "body": "模块将 Store 中的修订转换为统一知识材料：派生修订被排除，文本和链接按捕获格式组合，图片保留资源信息，来源、会话及行为者元数据一并传递。文件来源优先沿用 `omem:` 键；材料摘要覆盖文本、图片及引用、转发身份。转换结果按 Store 和修订号缓存，而默认生成输入只取每个来源的当前 head，因此历史版本不会混入当前材料。[[c1]] 摘要由规范化 JSON 计算：对象键递归排序并忽略 `undefined`，从而避免字段顺序产生无意义的身份变化。[[c2]]"
+        "title": "把原始修订转换为稳定证据",
+        "body": "仓库从原始修订生成知识材料：排除派生内容，合并文本与链接，保留图片、来源和参与者等溯源字段，再计算稳定摘要；文件来源尽量保留 `omem:` 键和可读路径。结果按 Store 与修订号缓存，其可靠性建立在当前单用户 SQLite 与不可变修订基础上。参考 [[c1]] [[c2]]\n\n正常读取只遍历各来源的 head。需要恢复旧知识时，仓库先匹配当前材料，再按材料键解析命名空间与外部标识并回查历史修订；传入预期摘要时，只有内容身份一致的版本才会返回。参考 [[c3]] [[c10]]"
       },
       {
-        "key": "validation_binding",
-        "title": "引用结构校验与原文绑定",
-        "body": "发布前先执行共享文档合同，再检查章节键和引用键唯一性。每节必须含内联引用，正文出现的引用必须已声明，且每项声明引用必须在某个章节正文中被使用；文章目标需存在并可选校验章节，材料目标需具有有效行号，绑定后的引文也必须来自指定范围。[[c3]] **此前“该函数保证引用贴近相应论断”的结论已被替代**：实现只做引用是否出现在正文中的结构检查，不测量相邻程度，也不判断语义支持性；“贴近论断”属于生成规范和独立模型复核要求。\n\n模型仅选择材料与行号，宿主再从固定材料复制最多 320 个字符，避免模型自行誊写源码；无文本的纯图片材料允许空引文。[[c4]]"
+        "key": "validation_publish",
+        "title": "引用绑定与原子发布流程",
+        "body": "模型负责选择材料与行号，宿主从固定范围复制精确短引文。结构校验检查合同、章节与引用键唯一性、每节内联引用、目标存在性、行号范围及 quote 是否来自指定材料；语义支持性则由后续模型角色判断。参考 [[c4]] [[c5]]\n\n发布前会核对材料摘要和上游文章版本；通过后以规范化制品生成内容寻址修订，并在事务中保存不可变版本、切换 head、清除失效标记及同步疑问。相同修订幂等返回，正文中消失的开放问题会标为 `superseded`。共享 WAL 数据库还设置了 30 秒写等待，但本次材料没有展示事务回滚实现。参考 [[c6]] [[c11]]"
       },
       {
-        "key": "publication_refresh",
-        "title": "版本发布与依赖失效",
-        "body": "仓库初始化时设置 SQLite 写等待上限，并建立正文修订、当前 head、问题、显式失效和导入状态表，以支持生成 CLI 与阅读端共享数据库。[[c5]] 发布前会重新核对材料摘要和上游文章修订，输入已变化时拒绝写入；随后校验文档、计算稳定修订号，并在事务中保存修订、切换 head、清除失效标记和同步问题状态。消失的开放问题会标为 `superseded`，再次出现时可恢复为 `open`，最后记录知识整理事件。[[c6]]\n\n刷新过程把显式失效和直接依赖变化加入集合，再沿文章依赖逐层传播，最终只切换各 head 的 `current` 状态而不删除历史正文。[[c7]]"
-      },
-      {
-        "key": "history_questions_boundaries",
-        "title": "历史追溯、用户补充与实现边界",
-        "body": "按键读取默认返回 head，也可指定修订；材料解析优先匹配当前版本，必要时遍历历史修订并返回 `current:false`，使旧引用仍可追溯。用户回答问题时，回答会被捕获为新的原始修订，而不是直接改写派生正文；原文档随后被标记为需要重新核对。问题还可转为 Store 任务，重复创建会复用已有任务。[[c8]] 共享合同统一限定文档、章节、引用关系、定位字段和问题结构，仓库是在该合同之上补充运行时来源校验，并未另建知识模型。[[c9]]\n\n当前材料显示的基础设施是单用户 SQLite；30 秒 busy timeout 只能缓解写竞争。该文件不负责生成正文或执行独立语义复核，也未给出同一文档并发发布的比较交换条件、文章依赖无环约束及相应测试，因此这些行为不能由现有实现推定。"
+        "key": "staleness_questions",
+        "title": "历史恢复、失效传播与用户补充",
+        "body": "历史恢复只接受版本正确、结论为 `accepted`，且带生成模型与复核模型记录的制品；当前检查并不证明两个角色或模型彼此独立。恢复会按固定摘要解析依赖，允许历史证据缺失，并用 `INSERT OR IGNORE` 保存版本、避免替换已有 head。参考 [[c8]]\n\n刷新先标记材料摘要或上游文章版本不匹配的文章，再沿文章依赖传播失效并更新 `current`。历史版本不会删除；循环依赖可随失效集合达到固定点而终止，但实现没有显式报告依赖环。参考 [[c7]]\n\n用户回答会先保存为新的原始捕获，再把原文章标记为需要重新核对；疑问也可幂等转成待办。因此补充信息不会直接改写派生正文，而会成为下一轮生成的证据。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "修订材料转换与当前材料选择",
-        "reason": "支持派生修订过滤、内容与元数据组装、材料身份摘要、缓存以及仅从来源 head 选择当前材料的说明。",
+        "label": "原始修订转知识材料",
+        "reason": "支持排除派生修订、合并文本与链接、保留溯源字段并计算稳定材料摘要的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
           "startLine": 11,
-          "endLine": 39
+          "endLine": 33
         },
         "quote": "export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {\n  let cache = materialCache.get(store);\n  if (!cache) { cache = new Map(); materialCache.set(store, cache); }\n  if (cache.has(revisionId)) return cache.get(revisionId)!;\n  const r = store.revision(revisionId);\n  const con"
       },
       {
         "key": "c2",
-        "label": "稳定摘要规范化",
-        "reason": "支持递归排序对象键、忽略未定义字段并以规范化 JSON 计算 SHA-256 摘要的说明。",
+        "label": "SQLite 与不可变修订基础",
+        "reason": "说明当前存储定位为单用户 SQLite，并以不可变修订作为一致性基础。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/storage/digest.ts",
-          "startLine": 3,
-          "endLine": 19
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 4,
+          "endLine": 6
         },
-        "quote": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n      Object.entries(value as Record<string, unknown>)\n        .filter(([, entry]) => entry !== undefined)\n        .sort(([left], [right]) => le"
+        "quote": "/** SQLite is the single-user foundation. Immutable revisions, changes and notification\n * outbox are committed together. Postgres/team enforcement remains a later migration. */\nimport { DatabaseSync } from \"node:sqlite\";"
       },
       {
         "key": "c3",
-        "label": "知识文档引用校验",
-        "reason": "支持共享合同解析、键唯一性、内联引用使用、目标存在性和材料范围校验，并表明语义正确性由独立角色检查。",
+        "label": "当前材料读取",
+        "reason": "支持正常读取只遍历来源 head，并将当前原始修订转换为知识材料。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 36,
+          "endLine": 39
+        },
+        "quote": "export function currentMaterials(store: Store): KnowledgeMaterial[] {\n  const rows = store.db.prepare(\"SELECT id,head FROM sources WHERE head IS NOT NULL ORDER BY namespace,external_id\").all() as Row[];\n  return rows.map(r => materialFromRevision(store, String(r.head))).filter((m): m is KnowledgeMaterial => !!m);\n}"
+      },
+      {
+        "key": "c10",
+        "label": "历史材料解析",
+        "reason": "支持按材料键解析命名空间与外部标识、回查历史修订并校验预期摘要。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 181,
+          "endLine": 191
+        },
+        "quote": "  resolveMaterial(key: string, expectedDigest?: string) {\n    const current = this.materials().find(m => m.key === key);\n    if (current && (!expectedDigest || current.digest === expectedDigest)) return { material: current, current: true };\n    const separator = key.indexOf(\":\");\n    const namespace = key.startsWith(\"o"
+      },
+      {
+        "key": "c4",
+        "label": "知识正文结构校验",
+        "reason": "支持内联引用、唯一键、目标存在性、行号及精确引文等结构校验规则。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -68,9 +89,9 @@
         "quote": "/** Validate the exact source/derived distinction and every inline reference.\n * Semantic correctness is checked separately by an independent model role. */\nexport function validateKnowledgeDocument(document: KnowledgeDocument, materials: Map<string, KnowledgeMaterial>, articles: Map<string, KnowledgeArticle>, offered?"
       },
       {
-        "key": "c4",
-        "label": "固定原文引文绑定",
-        "reason": "支持由模型选择定位、宿主复制固定材料短引文以及纯图片材料例外的说明。",
+        "key": "c5",
+        "label": "宿主绑定精确引文",
+        "reason": "支持模型提供定位范围、宿主复制固定材料字节并限制引文长度的流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -81,9 +102,22 @@
         "quote": "/** Models choose locators; the host copies source bytes. This avoids asking a\n * language model to reproduce long code verbatim. The independent review sees\n * the exact bound quote and the surrounding original material. */\nexport function bindKnowledgeQuotes(document: KnowledgeDocument, materials: Map<string, Knowled"
       },
       {
-        "key": "c5",
-        "label": "知识仓库初始化与数据表",
-        "reason": "支持 SQLite 写等待策略以及正文修订、head、问题、失效和导入状态表的说明。",
+        "key": "c6",
+        "label": "知识发布事务",
+        "reason": "支持发布前核对依赖、生成内容寻址修订、幂等保存、切换 head 及同步疑问状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 118,
+          "endLine": 141
+        },
+        "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
+      },
+      {
+        "key": "c11",
+        "label": "共享数据库写等待设置",
+        "reason": "支持仓库为共享 WAL 数据库设置 30 秒 SQLITE_BUSY 等待上限的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -94,76 +128,62 @@
         "quote": "export class KnowledgeRepository {\n  constructor(readonly store: Store, private readonly materialProvider = () => currentMaterials(store)) {\n    // CLI generation and the reader may share this WAL database. Wait for a\n    // bounded writer transaction instead of failing immediately with SQLITE_BUSY.\n    store.db.exec(\""
       },
       {
-        "key": "c6",
-        "label": "知识正文发布流程",
-        "reason": "支持依赖复检、稳定修订计算、事务写入、head 切换、问题状态同步和用户事件记录的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 118,
-          "endLine": 142
-        },
-        "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
-      },
-      {
-        "key": "c7",
-        "label": "知识依赖刷新传播",
-        "reason": "支持显式失效、直接依赖变化、文章依赖逐层传播及 current 状态更新的说明。",
+        "key": "c8",
+        "label": "已复核历史版本恢复",
+        "reason": "支持恢复时检查 accepted 结论、生成模型与复核模型记录，以及固定依赖解析和不覆盖已有 head 的边界；该范围未实现角色独立性校验。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
           "startLine": 144,
-          "endLine": 157
+          "endLine": 163
         },
-        "quote": "  /** Refresh checks content identity, including dependencies on derived pages. */\n  refresh() {\n    const materials = new Map(this.materials().map(m => [m.key, m.digest]));\n    const articles = this.list();\n    const articleMap = new Map(articles.map(a => [a.document.key, a]));\n    const bad = new Set((this.store.db.p"
+        "quote": "  /** Restore an already reviewed historical version, retaining its fixed inputs.\n   * Never promotes stale content or replaces an existing head. */\n  restoreHistorical(artifact: KnowledgeArtifact, asHead = true) {\n    if (artifact.version !== 1 || artifact.review?.verdict !== \"accepted\" || !artifact.generation?.model "
       },
       {
-        "key": "c8",
-        "label": "历史材料解析与问题处理",
-        "reason": "支持历史修订追溯、用户回答捕获为原始材料、正文失效刷新以及问题转任务的说明。",
+        "key": "c7",
+        "label": "依赖失效传播",
+        "reason": "支持材料或文章依赖变化触发失效、沿文章依赖传播并更新 current 状态。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/knowledge/repository.ts",
-          "startLine": 159,
-          "endLine": 188
+          "startLine": 166,
+          "endLine": 179
         },
-        "quote": "  resolveMaterial(key: string, expectedDigest?: string) {\n    const current = this.materials().find(m => m.key === key);\n    if (current && (!expectedDigest || current.digest === expectedDigest)) return { material: current, current: true };\n    for (const row of this.store.db.prepare(\"SELECT id FROM revisions ORDER BY "
+        "quote": "  /** Refresh checks content identity, including dependencies on derived pages. */\n  refresh() {\n    const materials = new Map(this.materials().map(m => [m.key, m.digest]));\n    const articles = this.list();\n    const articleMap = new Map(articles.map(a => [a.document.key, a]));\n    const bad = new Set((this.store.db.p"
       },
       {
         "key": "c9",
-        "label": "共享知识数据合同",
-        "reason": "支持知识引用、问题、文档结构及允许关系由共享合同统一约束的说明。",
-        "relation": "depends_on",
+        "label": "回答捕获与待办转换",
+        "reason": "支持用户回答先成为原始修订、触发知识失效，以及疑问幂等创建待办的闭环。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:packages/contracts/src/knowledge.ts",
-          "startLine": 3,
-          "endLine": 35
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 194,
+          "endLine": 213
         },
-        "quote": "const key = z.string().min(1).max(500);\nexport const knowledgeCitationSchema = z.object({\n  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),\n  label: z.string().min(1).max(160),\n  reason: z.string().min(1).max(800),\n  relation: z.enum([\"supports\", \"explains\", \"implements\", \"depends_on\", \"calls\", \"contradicts\", \""
+        "quote": "  questions() { return (this.store.db.prepare(\"SELECT * FROM knowledge_questions ORDER BY updated_at DESC\").all() as Row[]).map(r => ({ id: String(r.id), documentKey: String(r.document_key), ...JSON.parse(String(r.body)), state: String(r.state), taskId: r.task_id, answerRevision: r.answer_revision })); }\n\n  answer(id: "
       }
     ],
     "questions": [
       {
-        "question": "并发发布同一 document key 时，后提交者是否必须基于读取时的同一 head 才能覆盖当前版本？",
-        "why": "写等待配置和发布事务能够降低写冲突，但展示的发布过程没有针对目标文档当前 head 的比较交换条件；现有材料不足以确定产品期望采用最后写入生效还是乐观并发控制。",
-        "nextStep": "检查发布调用方和并发测试；若要求防止丢失更新，在事务内校验预期 head 或加入版本条件。",
+        "question": "并发发布、SQLITE_BUSY 等待以及事务失败回滚是否已有行为级测试覆盖？",
+        "why": "材料显示仓库设置 30 秒写等待，并在发布时调用 Store 事务，但未提供事务实现或测试文件，无法确认竞争写入、部分失败与回滚边界是否经过真实行为断言。",
+        "nextStep": "检查 KnowledgeRepository 的测试及 Store 事务实现，补充两个仓库实例并发发布、事务中途异常和等待超时后的数据库状态断言。",
         "blocking": false,
         "citationKeys": [
-          "c5",
+          "c11",
           "c6"
         ]
       },
       {
-        "question": "循环文章依赖是否属于允许输入，若允许，失效后的恢复语义是什么？",
-        "why": "发布和刷新代码未展示文章依赖图的无环约束；刷新能沿依赖传播失效，但仅凭这些材料无法确定循环依赖的生成限制及重新发布恢复策略。",
-        "nextStep": "检查生成规划与发布入口是否拒绝依赖环，并补充循环依赖及重新发布恢复行为的测试或明确约束。",
+        "question": "文章依赖图出现环时，产品是否允许仅将环内失效状态传播到固定点，而不报告循环依赖？",
+        "why": "刷新算法按文章数量迭代并在失效集合不再增长时停止，能够在存在循环时终止，但没有显式拒绝或诊断循环依赖。",
+        "nextStep": "确认依赖图是否应保持无环；若应禁止，在发布校验中检测环并增加行为测试，否则在文档中明确循环依赖的失效语义。",
         "blocking": false,
         "citationKeys": [
-          "c6",
           "c7"
         ]
       }
@@ -173,7 +193,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
+      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
     },
     {
       "kind": "material",
@@ -194,17 +214,17 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:16:33.306Z",
+    "at": "2026-10-01T06:49:09.854Z",
     "trace": {
-      "runId": "7f719efc-5d32-4b89-a03e-4fd46e55eb79",
+      "runId": "abb4c9cd-22a5-4d82-9ec8-437fb350b89e",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "68b75c77ba4143baaf7bf812a9641f3020888523180af7ad66b442b2e0f71ded",
-      "contextHash": "16a813210c04a8f0a9f2b9f7c2140a8f222b62ef4485483948858616690ba288",
+      "promptHash": "a1e22e7761192adc1755f8c9695a5ef7cbd8a91c43e4c126559e6db52dc3b277",
+      "contextHash": "4f5025a18c680edc0d7b2443ff3e1cfb12760cb8f9ea61cba6d2d309c8c989ac",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "923b0ffef8a43577b5c2f99493e2dd02e25289daaf60f64273d8b25b004d28e5",
+      "fingerprint": "56581ca2b6ccd27ba9a9bdcbf1c4da97441b46ba6391dbe248ce10dd3ee6e4cf",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -217,10 +237,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f53f-6873-7e90-a66f-72704802b3f1"
+        "01a0f639-16e8-7772-8f57-b8af410073f1"
       ],
       "usage": {
-        "used": 32859,
+        "used": 34919,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -229,10 +249,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 39948,
-          "utf8Bytes": 46328,
-          "estimatedTokens": 15443,
-          "budgetedTokens": 19304,
+          "chars": 42262,
+          "utf8Bytes": 47550,
+          "estimatedTokens": 15850,
+          "budgetedTokens": 19813,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -241,17 +261,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:16:50.927Z",
+    "at": "2026-10-01T06:49:28.646Z",
     "trace": {
-      "runId": "6cd6ecb5-4bd9-4b34-ac86-071b292cbdbe",
+      "runId": "82495567-b84c-4eae-8fc5-b791be97c5f7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "23d659e30f1b1b2418a159f5bd10bd9002cbd5ca9474e094e8317ae51b2c8a05",
-      "contextHash": "99927282786190d3eae6265ce0d29002d2d787af3d699ca6369287ffbc9fcf6f",
+      "promptHash": "a0123622beb957054ddae6246c49f4ebc3e7ddf88641c960e69b7a5ac435b16a",
+      "contextHash": "73ff4c2a52faeb282e9b4e65b38b339b0805b9e668ce231b2eedaee91183358f",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9e613ff296b646e33e187275578001ff10e6f8dce3ba980f093718dbb8c5d293",
+      "fingerprint": "c8569017693171d05c69d50bf98591e19e1faa9e922f93dba84c482052a4d210",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -264,10 +284,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f53f-dabe-7960-a950-21e7513a33ad"
+        "01a0f639-710c-7ca0-a240-f5fd5a8728c1"
       ],
       "usage": {
-        "used": 30882,
+        "used": 30725,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -276,10 +296,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 36608,
-          "utf8Bytes": 41216,
-          "estimatedTokens": 13739,
-          "budgetedTokens": 17174,
+          "chars": 39198,
+          "utf8Bytes": 43300,
+          "estimatedTokens": 14434,
+          "budgetedTokens": 18043,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

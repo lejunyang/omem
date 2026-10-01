@@ -2,84 +2,206 @@
   "version": 1,
   "document": {
     "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-    "title": "知识首页、覆盖进度与材料索引",
-    "summary": "汇总当前知识文章和材料覆盖情况，提供主题阅读、文本筛选、分批索引与显式分析入口，并定时刷新运行状态。",
+    "title": "知识库阅读入口与文章导航",
+    "summary": "知识库首页以双栏布局组织文章目录与正文阅读，支持主题分组、关键词筛选、会话内选中恢复和定时刷新，并把文章加载及引用导航交给正文组件处理。",
     "category": "implementation",
     "sections": [
       {
-        "key": "loading-selection",
-        "title": "数据加载与主题选择",
-        "body": "首页从文章接口同时取得文章、材料及分析运行状态，并每 15 秒刷新；卸载时清除定时器。当前主题只取以 `topic:` 开头且仍为 current 的文章，在用户尚未手动选择时优先打开总览主题，避免后续轮询覆盖用户选择。[[c1]]"
+        "key": "purpose",
+        "title": "从知识目录进入连续阅读",
+        "body": "知识库首页解决文章增多后难以发现和连续阅读的问题：左侧提供目录与搜索，右侧展示当前文章；没有可读内容时，引导用户先导入并分析材料。参考 [[c1]]\n\n目录按“总览与主题”“功能与实现”“全部文章”组织。主题总览优先，模块列表排除分片文章，让首次进入的读者先理解整体，再深入具体实现。参考 [[c2]]"
       },
       {
-        "key": "coverage-analysis",
-        "title": "覆盖统计与显式分析",
-        "body": "覆盖数按“材料存在同键 current 文章”计算。若仍有未解读材料，按钮会把对应 revisionId 集合提交到分析端点，并在请求成功后标记为运行中；运行期间按钮禁用。这里能够确认的是前端提交与状态表达，不能单独证明后台分析、复核或持久化已经完成。[[c2]]"
+        "key": "flow",
+        "title": "目录加载、选择与正文展示",
+        "body": "页面挂载时请求文章元数据，之后每 15 秒刷新，卸载时停止轮询。选中的文章键保存在浏览器会话中；若原选择已失效，则优先回退到主题总览，否则选择列表首篇。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[加载文章目录] --> B[分组或筛选]\n  B --> C[选择当前文章]\n  C --> D[请求完整正文]\n  D --> E[渲染章节并沿引用导航]\n```\n\n首页把文章键和修订号交给正文组件。正文组件请求完整文章，以代次校验忽略过期响应，并把各章节交给 Markdown 阅读器；可操作引用会转换为继续导航事件。参考 [[c4]] [[c5]] [[c6]]"
       },
       {
-        "key": "reading-index",
-        "title": "主题阅读与知识索引",
-        "body": "桌面主题导航和移动选择器共享 selected 状态；选中的当前文章以内嵌正文展示。非主题文章可按标题、键和摘要做不区分大小写筛选，卡片展示摘要及“已复核”或“来源变化，待更新”，点击后创建知识帧。列表每次显示 40 篇，可继续扩展，页面底部还装配全局疑问列表。[[c3]]"
+        "key": "boundaries",
+        "title": "筛选方式与状态边界",
+        "body": "搜索在前端对标题、摘要和文章键拼接后的文本执行大小写不敏感子串匹配；输入搜索词后，匹配结果以扁平列表展示。参考 [[c7]] [[c8]] 目录树会排除当前节点和祖先节点以避免可见循环，并为非当前文章标注“待更新”。参考 [[c9]]\n\n目录请求失败时，错误显示在正文区域，已有文章数组不会在异常分支中主动清空。参考 [[c10]] [[c11]] 首页轮询没有正文加载所用的请求代次保护，因此慢请求可能重叠，乱序响应是否需要专门处理仍待行为测试确认。参考 [[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "文章加载、主题选择与轮询",
-        "reason": "支持文章和材料加载、总览主题默认选择、定时刷新及卸载清理。",
+        "label": "知识库双栏入口",
+        "reason": "支持首页包含搜索、目录、正文区域以及无内容引导的用途说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-          "startLine": 9,
-          "endLine": 30
+          "startLine": 29,
+          "endLine": 50
         },
-        "quote": "const articles = ref<ArticleMeta[]>([]), materials = ref<{ key: string; title: string; path: string | null; revisionId: string }[]>([]);\nconst query = ref(\"\"), selected = ref(\"\"), error = ref(\"\"), running = ref(false), limit = ref(40);\nconst selectedByUser = ref(false);\nlet timer: ReturnType<typeof setInterval> | undef"
+        "quote": "<template>\n  <section class=\"knowledge-library\">\n    <aside class=\"book-navigation\">\n      <h1>知识库</h1>\n      <p class=\"muted\">按主题阅读，沿引用深入</p>\n      <label for=\"knowledge-filter\">查找章节</label><input id=\"knowledge-filter\" v-model=\"query\" placeholder=\"主题、功能、材料名称\" />\n      <nav aria-label=\"知识目录\">\n        <ul v-if=\"query\"><"
       },
       {
         "key": "c2",
-        "label": "覆盖状态与分析请求",
-        "reason": "支持覆盖统计、待处理 revisionId 收集、分析 POST 请求和运行状态界面。",
-        "relation": "implements",
+        "label": "文章分组规则",
+        "reason": "支持主题总览优先、模块入口排除分片文章及其他文章独立归类。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-          "startLine": 19,
-          "endLine": 27
+          "startLine": 12,
+          "endLine": 13
         },
-        "quote": "const reviewed = computed(() => materials.value.filter(m => articles.value.some(a => a.key === m.key && a.current)).length);\nasync function load() {\n  try { const result = await knowledgeApi<{ articles: ArticleMeta[]; materials: typeof materials.value; running: boolean }>(props.prefix, \"/articles\"); articles.value = re"
+        "quote": "const topics = computed(() => articles.value.filter(a => a.key.startsWith(\"topic:\")).sort((a,b) => a.key === 'topic:overview' ? -1 : b.key === 'topic:overview' ? 1 : 0));\nconst modules = computed(() => articles.value.filter(a => a.key.startsWith(\"module:\") && !a.key.includes(\":part-\")));"
       },
       {
         "key": "c3",
-        "label": "主题阅读与文章索引界面",
-        "reason": "支持响应式主题选择、正文展示、筛选分页、状态文案及疑问组件装配。",
+        "label": "目录刷新与选择恢复",
+        "reason": "支持会话保存、失效选择回退、首次加载、十五秒轮询和卸载清理流程。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 16,
+          "endLine": 27
+        },
+        "quote": "function select(key: string) { selected.value = key; sessionStorage.setItem(\"omem-knowledge-page\", key); emit(\"select\", key); }\nwatch(() => props.selectedKey, key => { if (key) selected.value = key; });\nasync function load() {\n  try {\n    const result = await knowledgeApi<{ articles: ArticleMeta[] }>(props.prefix, \"/ar"
+      },
+      {
+        "key": "c4",
+        "label": "正文组件衔接",
+        "reason": "支持首页向正文组件传递文章键、修订号并转发导航事件。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 44,
+          "endLine": 48
+        },
+        "quote": "    <div class=\"book-content\">\n      <p v-if=\"error\" class=\"error\" role=\"alert\">{{ error }}</p>\n      <KnowledgeDocument v-if=\"current\" :key=\"current.key\" :prefix=\"prefix\" :document-key=\"current.key\" :revision=\"current.revision\" @navigate=\"emit('navigate', $event)\" />\n      <p v-else-if=\"loading\" role=\"status\">正在打开知识库…"
+      },
+      {
+        "key": "c5",
+        "label": "正文请求与引用导航",
+        "reason": "支持完整文章请求、过期响应保护、章节定位和可操作引用导航。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 10,
+          "endLine": 23
+        },
+        "quote": "let generation = 0;\nwatch(() => [props.documentKey, props.revision], async () => {\n  const current = ++generation; error.value = \"\"; article.value = null;\n  try {\n    const result = await knowledgeApi<Article>(props.prefix, \"/articles/\" + encodeURIComponent(props.documentKey) + (props.revision ? \"?revision=\" + encodeUR"
+      },
+      {
+        "key": "c6",
+        "label": "文章章节渲染",
+        "reason": "直接支持正文遍历文章章节并通过 Markdown 组件渲染章节内容。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 31,
+          "endLine": 38
+        },
+        "quote": "      <div class=\"article-body\"><h2>{{ article.title }}</h2>\n      <p class=\"knowledge-summary\">{{ article.summary }}</p>\n      <div class=\"knowledge-provenance\"><OmBadge>{{ article.current ? '当前知识' : '待更新 · 原文已变化或部分证据缺失' }}</OmBadge><span>AI 分析并独立复核 · {{ article.model }}</span></div>\n      <section v-for=\"section in a"
+      },
+      {
+        "key": "c7",
+        "label": "关键词匹配范围",
+        "reason": "直接支持筛选覆盖标题、摘要和文章键，并采用小写化后的子串匹配。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 14,
+          "endLine": 14
+        },
+        "quote": "const matches = computed(() => articles.value.filter(a => (a.title + a.summary + a.key).toLowerCase().includes(query.value.toLowerCase())));"
+      },
+      {
+        "key": "c8",
+        "label": "搜索结果列表",
+        "reason": "支持有搜索词时直接遍历匹配文章并传入空子文章集合，形成扁平结果列表。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-          "startLine": 32,
-          "endLine": 46
+          "startLine": 34,
+          "endLine": 36
         },
-        "quote": "<template>\n  <section class=\"knowledge-home\">\n    <header><span class=\"eyebrow\">材料 · 理解 · 证据</span><h1>可追溯的知识</h1><p class=\"muted\">从正文里的引用进入背景、需求、实现与原文；每一层都保留来路。</p></header>\n    <p v-if=\"error\" class=\"error\" role=\"alert\">{{ error }}</p>\n    <div class=\"coverage\"><OmBadge>{{ reviewed }} / {{ materials.length }} 份材料已有当前"
+        "quote": "      <label for=\"knowledge-filter\">查找章节</label><input id=\"knowledge-filter\" v-model=\"query\" placeholder=\"主题、功能、材料名称\" />\n      <nav aria-label=\"知识目录\">\n        <ul v-if=\"query\"><KnowledgeTree v-for=\"a in matches\" :key=\"a.key\" :article=\"a\" :articles=\"[]\" :selected=\"selected\" @select=\"select\" /></ul>"
+      },
+      {
+        "key": "c9",
+        "label": "目录树防环与更新标记",
+        "reason": "支持过滤当前及祖先节点，并为非当前文章显示待更新状态。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+          "startLine": 4,
+          "endLine": 15
+        },
+        "quote": "const props = defineProps<{ article: ArticleMeta; articles: ArticleMeta[]; selected: string; ancestors?: string[] }>();\nconst emit = defineEmits<{ select: [key: string] }>();\nconst expanded = ref(false);\nconst children = computed(() => (props.article.children ?? []).filter(key => !props.ancestors?.includes(key) && key "
+      },
+      {
+        "key": "c10",
+        "label": "错误展示位置",
+        "reason": "直接支持请求错误在右侧正文内容区域以警告文本显示。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 44,
+          "endLine": 45
+        },
+        "quote": "    <div class=\"book-content\">\n      <p v-if=\"error\" class=\"error\" role=\"alert\">{{ error }}</p>"
+      },
+      {
+        "key": "c11",
+        "label": "首页请求处理",
+        "reason": "支持成功时替换文章数组、失败时仅记录错误且没有主动清空既有目录。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "startLine": 18,
+          "endLine": 24
+        },
+        "quote": "async function load() {\n  try {\n    const result = await knowledgeApi<{ articles: ArticleMeta[] }>(props.prefix, \"/articles\");\n    articles.value = result.articles;\n    if (!current.value && articles.value.length) select(topics.value[0]?.key ?? articles.value[0]!.key);\n    error.value = \"\";\n  } catch (e) { error.value "
+      },
+      {
+        "key": "c12",
+        "label": "正文过期响应保护",
+        "reason": "用于对照说明正文组件使用递增代次忽略过期响应，而首页目录加载未采用该机制。",
+        "relation": "background",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "startLine": 10,
+          "endLine": 18
+        },
+        "quote": "let generation = 0;\nwatch(() => [props.documentKey, props.revision], async () => {\n  const current = ++generation; error.value = \"\"; article.value = null;\n  try {\n    const result = await knowledgeApi<Article>(props.prefix, \"/articles/\" + encodeURIComponent(props.documentKey) + (props.revision ? \"?revision=\" + encodeUR"
       }
     ],
     "questions": [
       {
-        "question": "定时刷新失败后是否应保留旧内容并区分“数据陈旧”与首次加载失败？",
-        "why": "当前所有加载异常只写入同一 error，材料没有说明已有文章在轮询失败时应如何提示其新鲜度。",
-        "nextStep": "补充首次加载和轮询失败的界面测试，再确定是否增加最后更新时间与陈旧状态。",
+        "question": "首页目录的十五秒轮询是否需要像正文加载一样加入请求代次保护？",
+        "why": "定时器可能在前一次目录请求完成前再次触发加载，而首页没有忽略过期响应的机制；慢响应或乱序响应可能使目录短暂回退。",
+        "nextStep": "补充慢响应和乱序响应的行为测试，再决定采用 generation、AbortController，或在前一次请求结束后安排下一次刷新。",
         "blocking": false,
         "citationKeys": [
-          "c1"
+          "c3",
+          "c11",
+          "c12"
         ]
       },
       {
-        "question": "分析请求是否需要展示服务端接受的任务范围和最终失败状态？",
-        "why": "前端成功 POST 后只把 running 设为 true，后续依赖轮询结果；当前材料无法确认任务级错误和部分接受如何反馈。",
-        "nextStep": "核对分析端点响应合同与任务状态字段，并补充行为测试。",
+        "question": "会话选中项、空目录和加载失败场景是否已有端到端或组件测试？",
+        "why": "提供的固定材料不包含测试文件，无法确认会话恢复、失效选中项回退、空文章列表和错误展示是否已被自动化覆盖。",
+        "nextStep": "检查相关测试目录；若尚未覆盖，为上述交互补充真实行为断言。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c1",
+          "c3",
+          "c10",
+          "c11"
         ]
       }
     ]
@@ -87,49 +209,39 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "digest": "1f14dd60b038ea6f4e8b15a0c18cd63ca87885cf79876d02ccdb35f653cdb7cc"
-    },
-    {
-      "kind": "material",
       "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "25fc3c91a561c2e0f39ed27224f02c8ecda0c740198171974497b5c42a7ab463"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
-      "digest": "6161685476e34b499d78d8827894f698f05a73dc644a8948d889f1edcd337786"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-      "digest": "d10e4fe95d71f27225663cc3081e7c259308ec05b72a400e228f4dde1756d36f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-      "digest": "8642623296154c94e9930ac91046b69f5ef988082489e22c2263e23aafd08985"
+      "digest": "bdb7374c59733c2d94cdb1c7065fca29ffeafd05458f1fbbc1e2b7057ad8eac8"
     },
     {
       "kind": "material",
       "key": "omem:apps/web/src/knowledge/api.ts",
-      "digest": "616e8f5e2898814e318f520f0b5f4f18b16831b4af6e58d561fd0301882b8806"
+      "digest": "668d5d6f22b4f79251b1975cbbee8e79d84974665e4f2ebec9600cb3a8808d35"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeTree.vue",
+      "digest": "15e970e292aea4fb0055fa4d2663532fadc12a0edf32669ea22d594a1dabee90"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+      "digest": "b1e6cb519dc2112a4477e1a90b0fe5c255771d23cf8131e411dfc2f16ab7645b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:35:12.881Z",
+    "at": "2026-10-01T06:53:09.127Z",
     "trace": {
-      "runId": "37b8e422-2f3c-4d65-9512-c500b959680c",
+      "runId": "e2bdd99c-21df-4310-9137-41911d8b8031",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "84cc1ff1bb1f014328e5c7702077f1dda72e2d5b21f9f556dfbcaf5257bc89b7",
-      "contextHash": "e9d709e8ac9d54e26cef2afd7d357176ed9d6771bfdb0c1f31af779152f4ceae",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "32de367aa1233f7192db9cfe814ed61b823db021d0f5e945a5ce9662a36fae0c",
+      "contextHash": "439d662eb064983efcb69c98b6c69cce2fded4670b0cacef1817024304a5ef24",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "422e0b05be95a2e889bbfe188fe0c915ec1694cb40766fff40be8a404f7961a9",
+      "fingerprint": "976775be93c07bc06321ffb771b0f7d1e830f4812788834b7dc81a447bd95adb",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -142,11 +254,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef17-3b83-77a1-a991-1c7cfebe8637"
+        "01a0f63c-af4a-7211-9abb-5d8e1536c271"
       ],
       "usage": {
-        "used": 32861,
-        "size": 760000,
+        "used": 30752,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -154,10 +266,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 48655,
-          "utf8Bytes": 61163,
-          "estimatedTokens": 20388,
-          "budgetedTokens": 25485,
+          "chars": 30586,
+          "utf8Bytes": 38169,
+          "estimatedTokens": 12723,
+          "budgetedTokens": 15904,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -166,17 +278,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:35:29.405Z",
+    "at": "2026-10-01T06:53:29.246Z",
     "trace": {
-      "runId": "e33386af-8dd0-444b-a527-2fb826e1cd30",
+      "runId": "f9362451-f4ec-410b-a634-aeee0a80f45d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "768f3715a631f961ebc7561acf56349fd0c92678a8e08dc5a9032dec2489e49b",
-      "contextHash": "4aae98e56ead896194fb6b2458789e4a0d8d42f4ee3de9fb39d0de2a4196901c",
+      "promptHash": "2686e3aa9e9459cf9a75d22d58f479c84ceaf6e2cb72f2bbd76891de5afcb1f1",
+      "contextHash": "8da3225d7d18afca33b4877cca6638e9696461c2f052cf155d6800d0b7cb58af",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "bcbd2e1cc61713d665be8daef29874d2bd9e5cb7b68f4e9ca9f31b873ebca5db",
+      "fingerprint": "81a99313f1d6d97ab0e91171b5c51974459599f16211982cb47ac688d995e945",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -189,11 +301,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0ef17-dc95-70e0-aa0b-4beab7429d41"
+        "01a0f63d-1f97-77f1-afd2-8894d45b9f23"
       ],
       "usage": {
-        "used": 28075,
-        "size": 760000,
+        "used": 28619,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -201,10 +313,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 44806,
-          "utf8Bytes": 54597,
-          "estimatedTokens": 18199,
-          "budgetedTokens": 22749,
+          "chars": 27676,
+          "utf8Bytes": 31737,
+          "estimatedTokens": 10579,
+          "budgetedTokens": 13224,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

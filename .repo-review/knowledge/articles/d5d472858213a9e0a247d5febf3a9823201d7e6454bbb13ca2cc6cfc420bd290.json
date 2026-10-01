@@ -2,26 +2,26 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
-    "title": "证据复核技能的 OpenAI 界面元数据",
-    "summary": "该文件提供技能在代理界面中的展示名称、简短描述和默认调用提示，仅描述发现与启动文案，不定义实际核验逻辑或运行权限。",
+    "title": "证据复核代理入口配置",
+    "summary": "该配置为证据复核能力声明面向用户的名称、简短说明与默认提示词，将代理入口指向 omem-evidence-review 技能。材料仅能证明配置意图，不能证明技能已被运行时加载，也不能证明复核流程已经执行成功。",
     "category": "configuration",
     "sections": [
       {
-        "key": "interface_metadata",
-        "title": "展示与发现信息",
-        "body": "界面元数据把技能显示为“omem Evidence Review”，并用简短描述说明其用途是依据固定源证据验证提案支持性。[[c1]] 这些字段主要服务于技能浏览、选择或界面提示；它们不是核验算法，也没有声明输出 Schema、工具权限、会话隔离或判定规则。"
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "该入口面向需要判断“某项提议是否得到固定来源证据支持”的场景。配置把能力展示为“omem Evidence Review”，并用简短描述明确其职责是依据固定证据核验提议，而非生成新证据或仅检查引用位置。这里记录的是代理界面的能力声明，不能单凭此文件推断底层复核实现已经可用。参考 [[c1]]"
       },
       {
-        "key": "default_invocation",
-        "title": "默认调用提示",
-        "body": "默认提示建议调用 `omem-evidence-review` 来评估提案与证据之间的关系。[[c2]] 它把用户意图导向对应技能，但仅是一句启动模板；真正的检查顺序、判定枚举和禁止执行边界仍依赖技能正文、角色提示词及 manifest。材料也未证明某个具体 OpenAI 或兼容运行时已经读取或展示这份元数据。"
+        "key": "invocation",
+        "title": "如何引导调用",
+        "body": "默认提示词要求调用 `omem-evidence-review` 技能，并将待评估提议与其证据作为复核对象。由此可见，该文件承担的是入口引导和技能路由配置：用户或宿主触发代理后，实际规则与执行过程应由对应技能及运行时提供。本材料未展示技能内容、模型参数、输出合同或执行结果，因此这些能力仍需结合其他实现与运行记录确认。参考 [[c2]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "证据复核技能展示信息",
-        "reason": "支持界面显示名称及“依据固定源证据验证提案支持性”的用途说明。",
+        "label": "证据复核能力说明",
+        "reason": "支持附近关于代理展示名称、职责及固定来源证据核验场景的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
@@ -33,9 +33,9 @@
       },
       {
         "key": "c2",
-        "label": "证据复核默认提示",
-        "reason": "支持默认提示会引导调用指定技能评估提案及其证据。",
-        "relation": "supports",
+        "label": "默认技能调用提示",
+        "reason": "支持附近关于默认提示词将任务路由到 omem-evidence-review 技能的说明。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
@@ -47,9 +47,9 @@
     ],
     "questions": [
       {
-        "question": "哪些运行时会消费该 OpenAI 界面元数据，技能名称和默认提示是否经过集成验证？",
-        "why": "文件仅含界面字段，没有加载路径、兼容版本或运行结果，无法确认其当前可见性和生效范围。",
-        "nextStep": "检查技能注册与界面发现流程，并在目标运行时验证展示名称、描述和默认提示是否正确加载。",
+        "question": "运行时是否会实际加载该代理配置并解析 `omem-evidence-review` 技能？",
+        "why": "当前材料只有五行入口配置，没有加载代码、技能正文或真实运行轨迹，无法确认配置已接入并可执行。",
+        "nextStep": "检查对应技能定义、代理运行时的配置发现逻辑，并执行一次带固定证据的真实复核调用。",
         "blocking": false,
         "citationKeys": [
           "c1",
@@ -61,49 +61,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
-      "digest": "1ec6d9a7e7997db6ff2f98381d8acd1ef976ff9e21201d6c5bb73824d97f9555"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/output.schema.json",
-      "digest": "6ab370d7f0c7af0c0433a7b98677e949fd8c45df348c52020af5aaecd8371670"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
-      "digest": "588a152e46dc50fce04717dcc7ebe386913f8f45da0ae090b735f16dcbce6f23"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
-      "digest": "1066d9fa84cc7dacab542e8ff908be35fd27ac116f78aa38fd11f944c3f34227"
-    },
-    {
-      "kind": "material",
       "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
       "digest": "dab14a5bbcf124b8c2676845e2977bb2a21fa8686310c037b62046a826d23edf"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
-      "digest": "c8b425766c71d518aefc2d4a3577d4ba6993843610bb4bb24400c2f2d3251e89"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:49:50.466Z",
+    "at": "2026-10-01T07:23:43.548Z",
     "trace": {
-      "runId": "a25733b0-3139-4385-913b-a710e4e80fe6",
+      "runId": "dc1766c0-b597-46b4-99ee-b6a271785df7",
       "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "6f7a31ded6bacbae621620037f1ca0e4d5711b22ad74ec9f9518983b51269a8e",
-      "promptHash": "a372c1653c6967e1ac0e3dd9985d14441a9414c509010b0807bb0591345cdf3e",
-      "contextHash": "a1487c5159a37c9dbdeccb4b74d2a4fed811dba3f0b0ed145097f26a31bed90d",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "dba7e001192db8a90684f7f12ef0ce5037e25dd254d8bd8e8064c85007fa8864",
+      "contextHash": "7556c08083b228349945764e92afb74582587d8b32d83b9a72c74d17c94d5494",
       "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "0b8599c3fcf2e12d3749ab23f85488a2a99627fcc6a0722a90bc11d2aec2470b",
+      "fingerprint": "d54e24d6c13ace2453b0a6952f8114d5934e44275b73cce44b57a9c5879903b8",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -116,11 +91,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb6-9c4e-7dd1-be0a-2001a0351860"
+        "01a0f658-cb03-7620-a01a-05a9b0401c72"
       ],
       "usage": {
-        "used": 22805,
-        "size": 760000,
+        "used": 21606,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -128,10 +103,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 17102,
-          "utf8Bytes": 18722,
-          "estimatedTokens": 6241,
-          "budgetedTokens": 7802,
+          "chars": 7308,
+          "utf8Bytes": 10260,
+          "estimatedTokens": 3420,
+          "budgetedTokens": 4275,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -140,17 +115,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:50:13.675Z",
+    "at": "2026-10-01T07:23:59.289Z",
     "trace": {
-      "runId": "3874c96a-a864-469d-b654-f30ffba2d406",
+      "runId": "ad757aa7-0ed9-4811-8dce-ed1f6261f11b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "a39642d35002ec25cec4e20d72764eabf8be4ccab2695dc45153bb3c06c8e1ef",
-      "contextHash": "9335ec54db684ae8611582aa34d109858b3ab57a3e4772eb49178deef009b19f",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "46d66ca6e0371a608c2582124f719b4bb3910474b00b46e961b621528efaf70f",
+      "contextHash": "128f9efe1d4ea60c82ab1522508d7653f172e23f8ef7f2ea0d309538e437673a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "32db0511b1cf4e7319e878e6fd90b132f01a61c0e181e6ae27d668b8030a11eb",
+      "fingerprint": "7ec2e9eaf43f8106b91e1aac5a690628cd6b34b16e2b7ee1549f67d7a062078d",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -163,11 +138,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb7-62fa-78c1-ba10-675c555edc3f"
+        "01a0f659-18a3-74d1-abb3-d5a4a5b35aab"
       ],
       "usage": {
-        "used": 23922,
-        "size": 760000,
+        "used": 20981,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -175,10 +150,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 28491,
-          "utf8Bytes": 36621,
-          "estimatedTokens": 12207,
-          "budgetedTokens": 15259,
+          "chars": 6462,
+          "utf8Bytes": 9582,
+          "estimatedTokens": 3194,
+          "budgetedTokens": 3993,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

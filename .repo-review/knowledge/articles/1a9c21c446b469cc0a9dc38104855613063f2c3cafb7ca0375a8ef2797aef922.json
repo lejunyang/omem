@@ -2,54 +2,82 @@
   "version": 1,
   "document": {
     "key": "omem:deploy/omem.service.example",
-    "title": "omem 用户级 systemd 服务示例",
-    "summary": "该文件是用户级 systemd 部署模板：通过环境文件与 osdk 命令启动个人记忆服务，并设置失败重启和默认启用目标。实际使用前必须替换绝对路径；现有材料不能证明服务已经安装、启用或经过生产运维验证。",
+    "title": "以 systemd 用户服务运行 omem",
+    "summary": "这是一份供人工配置的 systemd 用户服务模板，描述 omem 的启动顺序、工作目录、环境文件、启动命令、故障重启和用户会话挂接方式。文件中的绝对路径均为占位符，因此不能据此认定服务已经安装、启用或正在运行。",
     "category": "configuration",
     "sections": [
       {
-        "key": "startup",
-        "title": "启动排序与执行方式",
-        "body": "该单元把进程声明为 `simple` 类型，并通过指定的工作目录、环境文件及 `osdk run start` 命令启动服务；文件开头明确要求先填写真实路径，再复制到用户 systemd 目录。[[c1]] `After=network-online.target` 只表达单元同时进入事务时的启动顺序，模板没有声明拉入该 target 的依赖，因此不能单凭这一行断定网络必然已经就绪。"
+        "key": "purpose",
+        "title": "适用场景与前置条件",
+        "body": "该模板适合希望把 omem 作为个人后台进程交给 systemd 管理的场景。服务被安排在 `network-online.target` 之后启动，但这只是启动顺序约束，不表示模板会主动拉起该目标，也不保证届时网络实际可用。复制到用户级 systemd 目录前，必须先填写真实路径；因此它是**部署起点**，不是已完成部署的证明。参考 [[c1]]"
       },
       {
-        "key": "recovery",
-        "title": "故障恢复与启用目标",
-        "body": "进程异常退出后，systemd 会等待五秒再尝试重启，停止阶段的超时时间为二十秒；安装段将服务挂接到用户级 `default.target`。[[c2]] 这些配置提供了基础恢复机制和启用入口，但并未定义启动频率限制、应用健康检查、日志保留或数据备份，也不能证明模板已在任何主机上安装、启用并稳定运行。"
+        "key": "runtime",
+        "title": "启动与故障恢复",
+        "body": "运行时，systemd 先进入指定的 omem 项目目录，加载单独的环境文件，再执行 `osdk run start`。进程因失败退出后会等待 5 秒重启，停止时最多等待 20 秒。这提供了基础守护能力，但材料没有说明环境变量清单、日志策略、网络依赖的就绪检测或应用健康检查。参考 [[c2]]"
+      },
+      {
+        "key": "enablement",
+        "title": "启用范围与限制",
+        "body": "服务挂接到用户会话的 `default.target`，说明该示例按用户服务组织，而非系统级守护进程。实际使用仍需替换工作目录、环境文件和 `osdk` 可执行路径，并由部署者完成 systemd 的加载与启用；当前材料没有记录这些操作是否执行，也不能证明服务已在运行。参考 [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "systemd 启动与执行配置",
-        "reason": "支持该文件是待填写真实路径的部署模板，以及 simple 服务类型、网络排序、工作目录、环境文件和启动命令等论断。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:deploy/omem.service.example",
-          "startLine": 1,
-          "endLine": 10
-        },
-        "quote": "# Copy to a user systemd directory only after setting the actual paths.\n[Unit]\nDescription=omem personal memory service\nAfter=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=/ABSOLUTE/PATH/omem\nEnvironmentFile=/ABSOLUTE/PATH/omem.env\nExecStart=/ABSOLUTE/PATH/TO/osdk run start"
-      },
-      {
-        "key": "c2",
-        "label": "重启策略与安装目标",
-        "reason": "支持失败重启、五秒重启间隔、二十秒停止超时和挂接 default.target 的描述。",
+        "label": "用户服务模板与启动顺序",
+        "reason": "支持该文件是需要先填写真实路径的个人服务模板，并证明其仅声明位于 network-online.target 之后的启动顺序。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:deploy/omem.service.example",
-          "startLine": 11,
+          "startLine": 1,
+          "endLine": 4
+        },
+        "quote": "# Copy to a user systemd directory only after setting the actual paths.\n[Unit]\nDescription=omem personal memory service\nAfter=network-online.target"
+      },
+      {
+        "key": "c2",
+        "label": "启动与重启配置",
+        "reason": "支持工作目录、环境文件、osdk 启动命令，以及失败重启和停止超时的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:deploy/omem.service.example",
+          "startLine": 6,
+          "endLine": 13
+        },
+        "quote": "[Service]\nType=simple\nWorkingDirectory=/ABSOLUTE/PATH/omem\nEnvironmentFile=/ABSOLUTE/PATH/omem.env\nExecStart=/ABSOLUTE/PATH/TO/osdk run start\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20"
+      },
+      {
+        "key": "c3",
+        "label": "用户会话安装目标",
+        "reason": "支持该服务挂接到用户级 default.target，以及仍需部署者另行加载和启用的判断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:deploy/omem.service.example",
+          "startLine": 15,
           "endLine": 16
         },
-        "quote": "Restart=on-failure\nRestartSec=5\nTimeoutStopSec=20\n\n[Install]\nWantedBy=default.target"
+        "quote": "[Install]\nWantedBy=default.target"
       }
     ],
     "questions": [
       {
-        "question": "是否计划把该模板安装为用户级 systemd 服务，并由谁确定实际路径和运维策略？",
-        "why": "模板仍含绝对路径占位符，材料不能证明服务已经安装、启用，或具备日志、健康监控与备份安排。",
-        "nextStep": "确认部署主机和运行账户，填写路径后验证环境文件权限、启动退出码、网络依赖、重启行为和日志查看流程。",
+        "question": "实际部署时应使用哪些项目目录、环境文件和 osdk 可执行路径？",
+        "why": "模板中的三处路径都是占位符；缺少部署环境信息时，无法形成可直接运行的服务配置。",
+        "nextStep": "由部署者确认 omem 仓库位置、omem.env 的安全存放位置及 osdk 的绝对路径，再替换模板并验证服务启动。",
+        "blocking": true,
+        "citationKeys": [
+          "c1",
+          "c2"
+        ]
+      },
+      {
+        "question": "环境文件需要包含哪些变量，服务日志、网络就绪和健康状态应如何检查？",
+        "why": "材料只声明加载环境文件、启动命令及顺序约束，没有列出必需变量、日志查看方式、可靠的网络就绪检测或健康检查。",
+        "nextStep": "结合应用配置说明和实际运行结果，补充环境变量清单、journalctl 查看方式、网络依赖策略及可验证的健康检查步骤。",
         "blocking": false,
         "citationKeys": [
           "c1",
@@ -61,54 +89,24 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:config/omem.example.json",
-      "digest": "ecba4320f4a1389feece681ad38d82f3eee9ffc22291b9e23f6cafeaea5e523f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.example.json",
-      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.json",
-      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
-    },
-    {
-      "kind": "material",
-      "key": "omem:deploy/omem.env.example",
-      "digest": "3a49807415a019629e2766a5356cee26526b901566c16c59f17fc71da5cd3aaa"
-    },
-    {
-      "kind": "material",
       "key": "omem:deploy/omem.service.example",
       "digest": "1f1dda957ae1e6765a313da0b7af11b1eae0e0ff58e7bf405d510377e4597861"
-    },
-    {
-      "kind": "material",
-      "key": "omem:design.md",
-      "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/design.md",
-      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:45:33.508Z",
+    "at": "2026-10-01T07:29:06.693Z",
     "trace": {
-      "runId": "f70f8723-a46d-4e84-8fe2-3dfc6b9fc517",
+      "runId": "ad486735-e7b7-47e4-8626-9f9a017481c1",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "6f5b2daf186ef0f340fbe28892a59f3e8b70a3dfc57a5ef4ff9c6657fdcb8af4",
-      "contextHash": "56aa42457f8f76d4409d3065922b8459c1cc6a150167b69e9dc25151ff8660dc",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "827a72c76ae73a9e22d5f51367fde23c74e52ebab6fed4ca48ffb8c93fd434db",
+      "contextHash": "b196a2c5d8e3e7310cf62bcc815fd03af3c246eb37881bc018a2fafe2a02d961",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e8d974664ce22eb91d167a988eca2c4713d07ddfce12a18a5978e2b579a2134c",
+      "fingerprint": "1d9bf54c5b2a43cb8f781a4a8da633c8f44c91eed6244409b2f197e1ceedef1c",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -121,11 +119,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb3-4c04-7d00-b09b-b7b5d6b61025"
+        "01a0f65d-b45d-7683-a328-f54247fb121f"
       ],
       "usage": {
-        "used": 21321,
-        "size": 760000,
+        "used": 23068,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -133,10 +131,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 21180,
-          "utf8Bytes": 29991,
-          "estimatedTokens": 9997,
-          "budgetedTokens": 12497,
+          "chars": 9899,
+          "utf8Bytes": 14965,
+          "estimatedTokens": 4989,
+          "budgetedTokens": 6237,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -145,17 +143,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:45:42.545Z",
+    "at": "2026-10-01T07:29:23.188Z",
     "trace": {
-      "runId": "bcc92c06-4e38-4449-805e-7931d33b3522",
+      "runId": "9881d43a-2c62-4afa-aec6-de52c53c01ad",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ee7bc79975b92a202ef198939ea3e4679aa8695139a19872059881a5ac01054f",
-      "contextHash": "385d13586891d50bdb6e983c2730e5cf022328d25ea351fff7822bae06386ff6",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "93b49d2115e25dcb3add80f90bbc9f609cc93bd522073b472a02b84e57d27734",
+      "contextHash": "5bdb1ad0d271629bb896bf56a83dd9e1da2f7504df1f6507c7acfc962cd0ab58",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "5a8a679c592870e754b0c516af3c7ba2827942286da7d72dfd7f1f5759e03f24",
+      "fingerprint": "59573d0b963bd5391de8ee12a873ff05d63487dc1514eccdf8a88eed7f691e6c",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -168,11 +166,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb3-7706-7253-9566-1b6d3483d585"
+        "01a0f65e-0690-7d52-812a-d6faa2feb12d"
       ],
       "usage": {
-        "used": 20123,
-        "size": 760000,
+        "used": 21494,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -180,10 +178,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 18436,
-          "utf8Bytes": 26325,
-          "estimatedTokens": 8775,
-          "budgetedTokens": 10969,
+          "chars": 7049,
+          "utf8Bytes": 10709,
+          "estimatedTokens": 3570,
+          "budgetedTokens": 4463,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

@@ -2,40 +2,53 @@
   "version": 1,
   "document": {
     "key": "omem:deploy/omem.env.example",
-    "title": "omem 部署环境变量示例",
-    "summary": "定义服务监听地址、端口、数据目录、配置文件路径，以及绑定非回环接口时对强 secret 的要求。路径仍是占位符，示例不能直接作为完成的部署配置。",
+    "title": "服务部署环境变量配置",
+    "summary": "该示例文件集中声明 omem 服务的监听地址、端口、数据目录、应用配置文件与访问令牌要求。它适合作为本地或服务器部署时的配置模板，但仅能证明项目建议如何填写环境变量，不能据此确认运行时已经读取这些变量、目录已经创建或鉴权已经启用。",
     "category": "configuration",
     "sections": [
       {
-        "key": "network-storage",
-        "title": "监听与本地路径",
-        "body": "示例将服务绑定到 `127.0.0.1:4317`，并为数据目录和应用配置分别保留绝对路径占位符。[[c1]] 回环地址体现仅供本机访问的保守起点；部署者必须替换路径，才能进一步验证目录权限、数据落盘位置和配置文件是否可读。"
+        "key": "service_endpoint",
+        "title": "监听地址与端口",
+        "body": "该模板默认把服务绑定到 `127.0.0.1:4317`，对应仅从本机访问的部署起点。若要让局域网设备、反向代理或其他主机连接，需要调整监听地址，并同时评估暴露范围与访问控制；文件本身只给出了配置值，并不证明服务当前已按此地址运行。参考 [[c1]]"
       },
       {
-        "key": "authentication",
-        "title": "非回环监听的安全条件",
-        "body": "注释明确要求：绑定非回环接口时，应在本地提供强 secret。[[c2]] 示例没有给出 secret，也没有说明 token 的认证机制、权限模型、TLS 或反向代理安排，因此只能确认这一最低配置提醒，不能据此断言远程或公网暴露已经安全。"
+        "key": "storage_and_access",
+        "title": "数据位置、配置文件与访问保护",
+        "body": "运行前需要把数据目录和应用配置文件替换为实际的**绝对路径**：前者用于指定 omem 数据位置，后者指向本地配置文件。模板没有说明目录创建、权限检查或配置加载失败时的行为，因此这些仍需结合运行实现验证。参考 [[c2]]\n\n当服务绑定到非回环接口时，注释明确要求在本地设置高强度 `OMEM_TOKEN`；示例故意不提供默认令牌，避免把共享密钥直接固化在模板中。这是部署安全要求的文档陈述，不能单凭该文件断言运行时一定会拒绝缺少令牌的外部监听。参考 [[c3]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "监听与路径变量",
-        "reason": "支持默认监听主机、端口，以及数据目录和配置文件使用绝对路径占位符的描述。",
-        "relation": "explains",
+        "label": "默认监听端点",
+        "reason": "支持默认主机为回环地址、端口为 4317，以及该文件仅声明建议配置值的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:deploy/omem.env.example",
           "startLine": 1,
-          "endLine": 4
+          "endLine": 2
         },
-        "quote": "OMEM_HOST=127.0.0.1\nOMEM_PORT=4317\nOMEM_DATA_DIR=/ABSOLUTE/PATH/omem-data\nOMEM_CONFIG=/ABSOLUTE/PATH/omem/omem.local.json"
+        "quote": "OMEM_HOST=127.0.0.1\nOMEM_PORT=4317"
       },
       {
         "key": "c2",
-        "label": "非回环接口的 secret 提示",
-        "reason": "支持绑定非回环接口时必须在本地提供强 secret 的安全条件。",
-        "relation": "depends_on",
+        "label": "数据与配置路径",
+        "reason": "支持数据目录和应用配置文件需要填写绝对路径的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:deploy/omem.env.example",
+          "startLine": 3,
+          "endLine": 4
+        },
+        "quote": "OMEM_DATA_DIR=/ABSOLUTE/PATH/omem-data\nOMEM_CONFIG=/ABSOLUTE/PATH/omem/omem.local.json"
+      },
+      {
+        "key": "c3",
+        "label": "外部监听令牌要求",
+        "reason": "支持非回环监听需要强令牌且模板未提供默认密钥的安全要求。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:deploy/omem.env.example",
@@ -47,13 +60,21 @@
     ],
     "questions": [
       {
-        "question": "目标部署仅限本机访问，还是需要绑定非回环接口？",
-        "why": "该选择决定是否必须配置强 secret，也会影响是否需要补充 TLS、反向代理、网络边界和访问控制设计。",
-        "nextStep": "确认访问范围；若需要远程访问，明确实际 host、secret 管理方式和网络防护方案，并进行连接与拒绝访问测试。",
-        "blocking": true,
+        "question": "运行时是否会校验路径必须为绝对路径，并在目录不存在、不可写或配置文件缺失时给出明确错误？",
+        "why": "示例仅展示绝对路径占位符，没有提供路径验证、目录创建和错误处理的实现事实。",
+        "nextStep": "检查环境变量解析与启动流程，并以不存在、相对路径和不可写目录分别执行启动验证。",
+        "blocking": false,
         "citationKeys": [
-          "c1",
           "c2"
+        ]
+      },
+      {
+        "question": "绑定到非回环接口但未设置 OMEM_TOKEN 时，服务是否会拒绝启动或拒绝请求？",
+        "why": "材料提出了安全要求，但没有证明运行时强制执行该约束。",
+        "nextStep": "检查监听与鉴权配置加载逻辑，并进行一次缺少令牌的非回环启动测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3"
         ]
       }
     ]
@@ -61,71 +82,41 @@
   "dependencies": [
     {
       "kind": "material",
-      "key": "omem:config/omem.example.json",
-      "digest": "ecba4320f4a1389feece681ad38d82f3eee9ffc22291b9e23f6cafeaea5e523f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.example.json",
-      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
-    },
-    {
-      "kind": "material",
-      "key": "omem:config/review-code-model.json",
-      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
-    },
-    {
-      "kind": "material",
       "key": "omem:deploy/omem.env.example",
       "digest": "3a49807415a019629e2766a5356cee26526b901566c16c59f17fc71da5cd3aaa"
-    },
-    {
-      "kind": "material",
-      "key": "omem:deploy/omem.service.example",
-      "digest": "1f1dda957ae1e6765a313da0b7af11b1eae0e0ff58e7bf405d510377e4597861"
-    },
-    {
-      "kind": "material",
-      "key": "omem:design.md",
-      "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/design.md",
-      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:45:05.898Z",
+    "at": "2026-10-01T07:19:39.935Z",
     "trace": {
-      "runId": "3d2190a5-97e9-469b-b2e7-dc862908f037",
-      "roleId": "knowledge-refresher",
+      "runId": "c43ab54c-b627-4cbb-88af-ee8855988fae",
+      "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "8df970836bcee3e065165a0dbf38253c1396a1ac6990655ee3e83ffec375cd5a",
-      "contextHash": "702742bd5c7576e3df0b80f7fa6953424bd0868293c8127067136856f20789b7",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "dcaf105e1c0087e2e5c8098455cc7049c0b9e7e9e774d4e9a3b4c151f3e6db5c",
+      "contextHash": "cc9aa593d7afe116a10809cec7c360d870b3b95356f7c44853ddf44ddac8aed4",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "9e64681b6aeae4cc3e8e8278ddbfd17676b93b72f878051ae88630f3bb016271",
+      "fingerprint": "686a858b0a36d89b84065dcd3c3876da079502dcea6c94b2cf645991a54fce6d",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-material-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb2-b71d-7263-af50-7f7e6884af6e"
+        "01a0f654-ebf7-7950-b99c-9d7e4eb052a2"
       ],
       "usage": {
-        "used": 25376,
-        "size": 760000,
+        "used": 21714,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -133,10 +124,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 27039,
-          "utf8Bytes": 38567,
-          "estimatedTokens": 12856,
-          "budgetedTokens": 16070,
+          "chars": 6873,
+          "utf8Bytes": 9825,
+          "estimatedTokens": 3275,
+          "budgetedTokens": 4094,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -145,17 +136,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:45:22.018Z",
+    "at": "2026-10-01T07:19:54.415Z",
     "trace": {
-      "runId": "6ad346ba-dce6-4054-8bdb-cb2076d81a8c",
+      "runId": "8f96cb7f-6972-4b2c-8a2a-40302431a6e7",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "72536710157be82b9647d63f14411c8cc841093b969e2076bfb7deaddb81714e",
-      "contextHash": "7f6bcdbb021bebee33e40c0b25c75ef5c3ec1d532d78076cb0e70546f2aa2395",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "54e60f9541d79c487a873f15cb2f0890ef965d2620ac24f83ea1c8a7fc42feaf",
+      "contextHash": "2e15277dd63c843c7ff914993249a7b38e08eb8b7d7b7aa47c1ab1bdc7c0ab86",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d03f1a10f1ce024958593bf9c737b81d621d6a844599b2878450e11d687387f5",
+      "fingerprint": "b29d18051a512481e5eb47a5ced78d4e03b7729b0239bb177d91fe754ef41827",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -168,11 +159,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb3-0b90-7e10-aa1b-b82a88c82e02"
+        "01a0f655-60d7-7e02-8e23-3dfc17848b3d"
       ],
       "usage": {
-        "used": 23178,
-        "size": 760000,
+        "used": 21650,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -180,10 +171,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 23899,
-          "utf8Bytes": 34503,
-          "estimatedTokens": 11501,
-          "budgetedTokens": 14377,
+          "chars": 6385,
+          "utf8Bytes": 9929,
+          "estimatedTokens": 3310,
+          "budgetedTokens": 4138,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

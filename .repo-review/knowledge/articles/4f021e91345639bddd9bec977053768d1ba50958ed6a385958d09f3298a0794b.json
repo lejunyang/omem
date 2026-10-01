@@ -2,31 +2,31 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/tests/knowledge-api.test.ts",
-    "title": "知识 API 的固定引用与历史证据集成测试",
-    "summary": "该测试以临时 SQLite 存储和真实 Fastify 路由串联手工捕获、知识发布、固定引用解析、历史材料读取、问题转任务、缺少模型配置以及历史图片访问，验证知识 API 的关键证据可追溯行为；同时未覆盖错误引用、模型成功运行和权限并发等场景。",
+    "title": "知识 API 的固定引用与历史材料回归测试",
+    "summary": "该测试以临时单用户存储和真实 Fastify 路由验证一条完整知识读取链路：手工材料被发布为带行内引用和待确认问题的知识文章；材料更新后，文章仍能解析到原固定版本；问题可转成任务；缺少模型配置时分析请求明确失败；被新版本替代的图片资产仍可读取。",
     "category": "tests",
     "sections": [
       {
-        "key": "purpose",
-        "title": "测试目标与装配方式",
-        "body": "测试在临时目录中创建 `Store` 和 Fastify 实例，并注册知识路由，因而验证的是服务器组件之间的真实集成，而非纯协议夹具。它先捕获一条手工“发布计划”，再以该材料的稳定键和摘要发布带内联引用、问题及独立复核元数据的知识文档。[[c1]] 用例无论成功或异常都会关闭应用与存储连接，并递归清理临时目录，补足测试资源的生命周期边界。[[c8]] `Store` 初始化会建立 SQLite、执行迁移并创建受限权限的资源目录，说明本用例运行在当前单用户持久化基础上。[[c2]]"
+        "key": "scenario",
+        "title": "模拟从手工材料到知识文章的使用场景",
+        "body": "测试创建临时目录、真实 `Store` 与 Fastify 实例，并注册知识路由，因此验证的是 HTTP 接口、知识仓库和存储协作，而非孤立函数。它捕获一条“发布前核对回滚步骤”的手工材料，再构造包含行内引用和“由谁核对”问题的知识文档，经引用绑定后发布为已复核文章。参考 [[c1]]\n\n测试直接依赖存储、路由、仓库引用绑定及知识合同，说明这些模块共同组成被测链路；但仅凭导入与本文件调用，不能推断它们内部更深的跨文件调用关系。参考 [[c2]]"
       },
       {
-        "key": "asserted-flow",
-        "title": "已断言的核心流程",
-        "body": "发布后，文章读取接口必须返回可操作且具有人读标签、理由的引用；引用解析接口还必须落到固定材料摘要，而不是仅指向当前 source head。随后同一外部来源被新版本覆盖，测试仍按旧摘要读取原文，并断言其 `current=false`，证明历史证据可回溯。[[c3]] 该行为对应 API 按文章依赖摘要解析材料、同时返回当前性标志的实现。[[c4]] 测试还读取知识问题并通过专用接口创建任务，确认响应包含任务标识且存储中实际新增一项；未配置模型时，分析入口必须返回 503，而非伪造生成结果。[[c5]]"
+        "key": "citation_and_action",
+        "title": "验证固定引用与问题转任务",
+        "body": "读取文章时，测试要求引用同时具有可操作状态、人类可读标签和引用理由；随后通过引用接口确认它解析到材料的固定摘要。即使同一外部来源后来捕获了新计划，携带旧摘要读取时仍返回原文，并标记为非当前版本。这验证了“当前材料更新”不会破坏既有知识所依赖的历史证据。参考 [[c3]]\n\n同一 API 还列出知识问题，并允许把问题显式转为任务；断言既检查响应含任务标识，也检查存储中确实新增任务。对于分析入口，本测试只覆盖未配置模型时返回 503，未证明配置模型后的生成、复核或发布流程可用。参考 [[c4]]"
       },
       {
-        "key": "boundaries",
-        "title": "图片历史与未覆盖边界",
-        "body": "用例进一步捕获一张 PNG，保存其资源标识后再以文本修订替换同一来源；旧资源仍应返回 200 且保持 `image/png`，验证图片资产不会因 source head 更新而失去访问能力。[[c6]] 不过测试只覆盖成功发布与解析路径：没有断言不存在的文章或引用是否返回 404、依赖摘要缺失时是否变为不可操作，也没有覆盖模型配置有效时的实际分析、任务重复创建、并发更新或访问控制。材料构造中调用了引用绑定函数，但所给仓库片段未展示其实现，因此这里只能确认测试使用了宿主绑定后的文档，不能据此说明其具体截取算法。[[c7]]"
+        "key": "historical_assets",
+        "title": "保留被替代版本中的图片资产",
+        "body": "测试先捕获一张 PNG 图片并取得资产标识，再用文本材料更新相同外部来源。之后旧图片仍可通过资产接口读取，响应状态为 200，且媒体类型保持 `image/png`。这说明历史版本中的二进制证据不会因来源头版本变化而立即失效。参考 [[c5]]\n\n边界上，该用例只检查单个 PNG 的成功读取，没有覆盖不存在的资产、其他图片格式、权限隔离、损坏文件或并发更新。临时目录、应用和数据库在 `finally` 中关闭并删除，使测试之间保持隔离，但也意味着它没有验证服务重启后的持久化行为。参考 [[c6]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "测试装配与知识发布",
-        "reason": "支持临时存储、真实路由、手工材料捕获以及带引用和复核信息的知识发布流程。",
+        "label": "手工材料发布流程",
+        "reason": "支持测试使用临时存储注册路由、捕获手工材料并发布带引用和问题的知识文章这一场景。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -37,35 +37,22 @@
         "quote": "it(\"serves fixed inline citations and explicit question actions through the same API for manual materials\", async () => {\n  const dir = mkdtempSync(join(tmpdir(), \"knowledge-api-\")), store = new Store(dir), app = Fastify();\n  const repository = registerKnowledgeRoutes(app, { store, prefix: \"/api/knowledge\", workspace: "
       },
       {
-        "key": "c8",
-        "label": "测试资源清理",
-        "reason": "支持用例结束时关闭 Fastify 与 Store，并递归清理临时目录的生命周期陈述。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/tests/knowledge-api.test.ts",
-          "startLine": 37,
-          "endLine": 37
-        },
-        "quote": "  } finally { await app.close(); store.close(); rmSync(dir, { recursive: true, force: true }); }"
-      },
-      {
         "key": "c2",
-        "label": "Store 初始化基础",
-        "reason": "解释测试所用存储会建立 SQLite、执行迁移并创建资源目录，界定其单用户持久化背景。",
+        "label": "被测模块依赖",
+        "reason": "支持测试文件显式依赖 Store、知识路由、引用绑定函数和知识文档合同。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 38,
-          "endLine": 65
+          "key": "omem:apps/server/tests/knowledge-api.test.ts",
+          "startLine": 6,
+          "endLine": 9
         },
-        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+        "quote": "import { Store } from \"../src/store.js\";\nimport { registerKnowledgeRoutes } from \"../src/knowledge/api.js\";\nimport { bindKnowledgeQuotes } from \"../src/knowledge/repository.js\";\nimport type { KnowledgeDocument } from \"../../../packages/contracts/src/knowledge.js\";"
       },
       {
         "key": "c3",
-        "label": "固定引用与历史材料断言",
-        "reason": "支持文章引用可操作、引用解析到固定摘要，以及更新后仍能读取旧材料并标记为非当前版本。",
+        "label": "固定版本引用断言",
+        "reason": "支持文章引用可操作、引用解析到固定材料摘要，以及材料更新后旧原文仍可读取且非当前的论断。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -77,21 +64,8 @@
       },
       {
         "key": "c4",
-        "label": "API 的摘要固定解析",
-        "reason": "解释文章与引用接口如何依据依赖摘要解析固定材料，并返回可操作性、解析目标和当前性状态。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/knowledge/api.ts",
-          "startLine": 20,
-          "endLine": 44
-        },
-        "quote": "  const resolveCitation = (a: KnowledgeArticle, key: string) => {\n    const c = a.document.citations.find(c => c.key === key);\n    if (!c) return null;\n    const dependency = a.dependencies.find(d => d.kind === c.target.kind && d.key === c.target.key);\n    if (!dependency) return { ...c, actionable: false, unavailableR"
-      },
-      {
-        "key": "c5",
-        "label": "问题转任务与缺少模型",
-        "reason": "支持问题可以显式创建任务，以及未配置模型时分析请求返回 503 的断言。",
+        "label": "问题任务与无模型响应",
+        "reason": "支持问题可转为真实任务，并明确限定分析接口只验证无模型时返回 503。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -102,9 +76,9 @@
         "quote": "    const q = (await app.inject(\"/api/knowledge/questions\")).json()[0];\n    const task = await app.inject({ method: \"POST\", url: `/api/knowledge/questions/${q.id}/task` });\n    expect(task.json().taskId).toBeTruthy(); expect(store.tasks()).toHaveLength(1);\n    const noModel = await app.inject({ method: \"POST\", url: \"/a"
       },
       {
-        "key": "c6",
-        "label": "历史图片资产访问",
-        "reason": "支持来源更新后旧图片资产仍可读取且 MIME 类型正确的行为。",
+        "key": "c5",
+        "label": "历史图片读取",
+        "reason": "支持图片来源被新版本替代后，旧 PNG 资产仍能成功读取并保留媒体类型。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -115,37 +89,45 @@
         "quote": "    const image = store.capture({ source: \"manual\", externalId: \"diagram\", title: \"历史图像\", parts: [{ type: \"image\", mimeType: \"image/png\", data: \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=\", label: \"原图\" }], context: {} });\n    const assetId = (image.revision.parts[0] as "
       },
       {
-        "key": "c7",
-        "label": "引用绑定调用边界",
-        "reason": "表明测试确实调用引用绑定并发布结果，但当前提供的行段没有该函数实现，支持对分析确定性边界的说明。",
-        "relation": "background",
+        "key": "c6",
+        "label": "测试资源清理",
+        "reason": "支持测试最终关闭 Fastify 与存储并删除临时目录，从而保持用例隔离。",
+        "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/tests/knowledge-api.test.ts",
-          "startLine": 17,
-          "endLine": 18
+          "startLine": 37,
+          "endLine": 37
         },
-        "quote": "    const document: KnowledgeDocument = { key: m.key, title: \"发布准备\", summary: \"发布约束\", category: \"requirements\", sections: [{ key: \"release\", title: \"发布前\", body: \"先核对回滚步骤。[[source]]\" }], citations: [{ key: \"source\", label: \"发布计划原文\", reason: \"原文直接说明发布条件\", relation: \"supports\", target: { kind: \"material\", key: m.key, star"
+        "quote": "  } finally { await app.close(); store.close(); rmSync(dir, { recursive: true, force: true }); }"
       }
     ],
     "questions": [
       {
-        "question": "配置有效模型后，知识分析接口能否完成生成、独立复核并发布可解析的固定引用？",
-        "why": "当前测试只断言缺少模型配置时返回 503，没有覆盖成功的真实运行时链路。",
-        "nextStep": "增加使用可用 Agent CLI/ACP 配置的独立 live 集成检查，并验证生成 trace、复核结论、发布结果及引用解析。",
+        "question": "配置有效模型后，分析请求是否会完成生成、独立复核并发布可读取的文章？",
+        "why": "现有断言只确认未配置模型时返回 503，没有覆盖成功路径及其中间失败处理。",
+        "nextStep": "新增配置测试模型或可控运行时替身的集成用例，断言分析状态、发布结果、复核信息和固定依赖。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "历史资产接口对不存在、损坏或非 PNG 资产的响应合同是什么？",
+        "why": "当前用例只验证一个仍存在的 PNG 资产返回 200 和正确媒体类型，无法确定异常状态码及错误结构。",
+        "nextStep": "补充缺失资产、损坏内容和其他受支持图片格式的接口断言，并与资产路由合同对齐。",
         "blocking": false,
         "citationKeys": [
           "c5"
         ]
       },
       {
-        "question": "引用依赖缺失、摘要不可解析以及未知文章或引用的错误响应是否符合 API 合同？",
-        "why": "现有用例只覆盖依赖和材料均存在的成功路径，未验证不可操作引用与 404 分支。",
-        "nextStep": "补充缺失依赖、错误摘要、未知文档键和未知引用键的行为断言。",
+        "question": "材料更新后，知识文章的引用接口是否仍会直接解析到原固定版本？",
+        "why": "现有测试在更新后通过材料接口携带旧 digest 读取原文，但没有再次调用文章引用接口验证端到端解析；正文对此已有合理依据，但补测可收紧回归保障。",
+        "nextStep": "在更新同一来源后再次请求 `/api/knowledge/citation`，断言 resolved.digest 仍为文章依赖的旧 digest、current 为 false 且引用 actionable。",
         "blocking": false,
         "citationKeys": [
-          "c3",
-          "c4"
+          "c3"
         ]
       }
     ]
@@ -169,44 +151,44 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "1a262649e2e2d5e5580192d1c9b800c5e9e4523dd162fb3a85022865cc7b085f"
+      "digest": "0564f6983a12d8f89cfd04094d0541542cc18907704bdf1dfb038aa518c90e51"
     },
     {
       "kind": "material",
       "key": "omem:apps/server/src/knowledge/api.ts",
-      "digest": "4c55a6018171e203bb4c6ac44ed56b724e342ed4d38d472100412b67d1ce5898"
+      "digest": "f7165a02c8245228c644a4cce4bb1f70b04e0428f71a1a4887f58bd1d69dd258"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T02:29:15.036Z",
+    "at": "2026-10-01T06:49:00.483Z",
     "trace": {
-      "runId": "2c67d9e0-83eb-4e6c-a61b-814e63652382",
-      "roleId": "knowledge-refresher",
+      "runId": "87023dd8-d48d-4f96-b40d-f2500fddc833",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "473732c6a4730b7a214984978082f6ca1a4a9228b3bea2ea418be9d5c5a0a139",
-      "contextHash": "c2a776b833919b329828e3be7664d174aa596af98c1887949d21896d67d826df",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3f9105e5498a44583d6e8e591b4f603c822526081d326f8f1766791c98cfc3bb",
+      "promptHash": "dd02566002f0b93d497fe49b265877ce30aeb67b063345f4c05f62b34fd91b15",
+      "contextHash": "b2452576429e360119cc8feaba2d633de9ea988b8cd241d78f81507198ae98be",
+      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "57100bb0d90e561834557214113378cb610ab85269c57731fb2f8ac74852be45",
+      "fingerprint": "95032309b192c957b2691b99c902a5dddcc7ff76c4e7f25a351e8777090bcdb3",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54b-230c-7f80-93e4-72c14e692a81"
+        "01a0f638-e310-7cd1-94ad-9bc2afbe5506"
       ],
       "usage": {
-        "used": 31612,
+        "used": 30279,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -215,10 +197,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 37831,
-          "utf8Bytes": 42711,
-          "estimatedTokens": 14237,
-          "budgetedTokens": 17797,
+          "chars": 33001,
+          "utf8Bytes": 36509,
+          "estimatedTokens": 12170,
+          "budgetedTokens": 15213,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -227,17 +209,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T02:29:33.360Z",
+    "at": "2026-10-01T06:49:24.460Z",
     "trace": {
-      "runId": "0d94c9c3-229c-47f0-8af0-9d1f38c21a49",
+      "runId": "ef192c36-214e-468d-9572-87fdedcc397c",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "edb3183027c11d16c8a5cd5bdb4cf2efbc6a036cdfb11ca4bdfaf0e86b9120fa",
-      "contextHash": "bf5fb87057b83c5a847514a2cf0f45839c795c2d09a29a47e6d8554e62efced6",
+      "promptHash": "01a6c6b775884880f56449f7683abc8d94553ac0aa8ba2a465148c1e7b69e6c6",
+      "contextHash": "1a7bcd6940c4d0efb602bfd2b7efae676c12a70bbbca64709018d4fea97ad109",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "e299211b492c7133f643b5fe2744cc3f4bc94365545560d5a3e9feb4b9b3f423",
+      "fingerprint": "bb33ac6f883e0758bbfb20a8f5ae5e8cb6d8af76b93e5311bad0dc7f6cc8f8af",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -250,10 +232,10 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0f54b-7b1c-7572-8dc1-b86bfdc9b39a"
+        "01a0f639-4b3d-7112-a660-54daefd95926"
       ],
       "usage": {
-        "used": 29662,
+        "used": 30319,
         "size": 258400,
         "cost": null,
         "budget": {
@@ -262,10 +244,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 35536,
-          "utf8Bytes": 39656,
-          "estimatedTokens": 13219,
-          "budgetedTokens": 16524,
+          "chars": 34530,
+          "utf8Bytes": 38464,
+          "estimatedTokens": 12822,
+          "budgetedTokens": 16028,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

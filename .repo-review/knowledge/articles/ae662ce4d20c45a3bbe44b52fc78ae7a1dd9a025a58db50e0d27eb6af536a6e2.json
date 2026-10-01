@@ -2,39 +2,70 @@
   "version": 1,
   "document": {
     "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
-    "title": "视觉材料分析角色 v1 运行清单",
-    "summary": "该清单声明 visual-analyst 的角色包、KnowledgeBatch 输出、隔离策略和预算，但未定义图像载荷通道、模型视觉能力协商或这些策略的实际执行情况。",
+    "title": "视觉材料分析角色配置",
+    "summary": "该清单声明视觉分析角色的版本、提示词与技能装载方式、结构化输出合同、工具和会话隔离策略，以及上下文与修复预算。它描述的是角色运行配置，不能单凭此文件证明宿主已完整执行这些约束。",
     "category": "configuration",
     "sections": [
       {
-        "key": "visual_role_contract",
-        "title": "角色包与知识输出",
-        "body": "清单定义 `visual-analyst` v1，引用 `traex` profile 与 `prompt.md`，并以内联方式加载固定版本和制品摘要的 `omem-visual-analyst` 技能。其输出合同为 `KnowledgeBatch.v1`，说明配置期望该角色产生结构化知识批次。[[c1]]\n\n现有材料只有运行清单，没有提供视觉提示词、技能正文、输出 Schema 或执行记录。因此可以确认角色及输出合同的声明，但不能进一步认定 OCR、图像理解、视觉引用定位或制品摘要验证已经由运行时实现。"
+        "key": "purpose",
+        "title": "角色定位与输出边界",
+        "body": "这份清单把角色标识为版本 1 的“视觉分析员”，并指定使用 `traex` profile 与 `prompt.md` 提示模板。它解决的是视觉材料进入知识流程时，如何选定稳定角色定义的问题；但清单只声明配置，不足以证明视觉识别或知识生成已经实际运行。参考 [[c1]]\n\n角色输出被约束为 `KnowledgeBatch.v1`，意味着分析结果预期以统一知识文档合同交给后续保存、复核或展示环节，而不是返回任意格式文本。参考 [[c2]]"
       },
       {
-        "key": "visual_isolation",
-        "title": "隔离、输入边界与预算",
-        "body": "该角色的工具策略为 `none`，允许工具列表为空；会话声明永不复用，并禁止继承用户技能和 MCP。[[c2]] 这些字段仅表明可用工具和可继承上下文受到限制。此前“图像必须由宿主随上下文提供”的结论由此替代：清单没有定义图像载荷通道，无法区分上下文、任务附件或其他宿主管理机制。\n\n预算配置为 96,000 个上下文 token、24,000 个输出 token和最多两次修复尝试。[[c3]] 它没有说明所选 profile 是否支持视觉输入、如何拒绝不兼容模型，也未证明预算计量及修复行为已经生效。"
+        "key": "isolation",
+        "title": "技能装载与运行隔离",
+        "body": "角色内联装载 `omem-visual-analyst` 版本 1，并记录制品摘要，用于把角色配置绑定到特定技能内容。摘要可支持一致性识别，但其校验时机与失败处理并未在本材料中说明。参考 [[c3]]\n\n工具策略明确为禁用且允许列表为空；会话策略同时禁止复用，也不继承用户技能和 MCP。由配置意图看，每次视觉分析应处于隔离环境，材料内容不能借助外部工具扩展或影响用户侧能力。是否由运行时强制执行，仍需结合宿主实现确认。参考 [[c4]]"
+      },
+      {
+        "key": "budget",
+        "title": "上下文、输出与修复预算",
+        "body": "该角色允许最多 96,000 个上下文 token、24,000 个输出 token，并配置最多两次修复尝试。这为较大的图像说明、上下文材料和结构化结果留出空间，也限制了格式修复循环；清单没有说明超限后的截断、报错或降级行为。参考 [[c5]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "视觉角色、技能与知识输出配置",
-        "reason": "支持视觉角色身份、profile、内联技能制品及 KnowledgeBatch 输出合同的配置说明。",
+        "label": "角色与提示配置",
+        "reason": "支持角色标识、版本、运行 profile 和提示模板均由清单声明的论断。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
           "startLine": 2,
-          "endLine": 17
+          "endLine": 8
         },
-        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"visual-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],\n  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-visual-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"feef67248fed3d15d94d9"
+        "quote": "  \"schema_version\": 1,\n  \"role_id\": \"visual-analyst\",\n  \"role_version\": \"1\",\n  \"profile_ref\": \"traex\",\n  \"prompt_templates\": [\n    \"prompt.md\"\n  ],"
       },
       {
         "key": "c2",
-        "label": "视觉角色工具与会话配置",
-        "reason": "支持无可调用工具、会话不复用以及不继承用户技能和 MCP 的配置事实，同时说明清单并未定义图像载荷通道。",
+        "label": "结构化输出合同",
+        "reason": "支持视觉分析结果预期遵循 KnowledgeBatch.v1 合同的论断。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+          "startLine": 17,
+          "endLine": 17
+        },
+        "quote": "  \"output_schema\": \"KnowledgeBatch.v1\","
+      },
+      {
+        "key": "c3",
+        "label": "内联技能绑定",
+        "reason": "支持技能名称、版本、内联装载方式及制品摘要由配置固定的论断。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
+          "startLine": 9,
+          "endLine": 16
+        },
+        "quote": "  \"skill_bundles\": [\n    {\n      \"canonical_name\": \"omem-visual-analyst\",\n      \"version\": \"1\",\n      \"load_mode\": \"inline\",\n      \"artifact_digest\": \"feef67248fed3d15d94d98e2aee12878b3f92cd96bc8b4708ca5404ad4919fb9\"\n    }\n  ],"
+      },
+      {
+        "key": "c4",
+        "label": "工具与会话隔离",
+        "reason": "支持禁用工具、禁止会话复用以及不继承用户能力的配置说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -45,9 +76,9 @@
         "quote": "  \"tool_policy\": {\n    \"mode\": \"none\",\n    \"allowed_tools\": []\n  },\n  \"session_policy\": {\n    \"reuse\": \"never\",\n    \"inherit_user_skills\": false,\n    \"inherit_user_mcp\": false\n  },"
       },
       {
-        "key": "c3",
-        "label": "视觉分析任务预算配置",
-        "reason": "支持上下文、输出 token 和修复尝试次数的配置上限。",
+        "key": "c5",
+        "label": "角色运行预算",
+        "reason": "支持上下文、输出和修复尝试上限的具体配置说明。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -60,44 +91,27 @@
     ],
     "questions": [
       {
-        "question": "宿主通过什么机制向无工具的 visual-analyst 提供原始图像，并如何确认所选 profile 具备所需视觉能力？",
-        "why": "清单禁止工具但没有描述图像载荷、模型能力协商、不支持视觉输入时的拒绝行为或 KnowledgeBatch 生成结果。",
-        "nextStep": "检查角色输入封装、profile 能力发现和视觉任务集成测试，验证原图传递、能力不兼容时的失败处理及 KnowledgeBatch 引用生成。",
+        "question": "宿主运行时是否会强制校验技能制品摘要、工具禁用和会话隔离策略？",
+        "why": "当前材料仅给出声明式清单，无法确认这些约束的加载、校验及失败处理是否已经实现。",
+        "nextStep": "检查角色清单加载器及其运行时测试，确认各字段的执行路径和异常行为。",
         "blocking": false,
         "citationKeys": [
-          "c1",
-          "c2",
-          "c3"
+          "c3",
+          "c4"
+        ]
+      },
+      {
+        "question": "达到 token 上限或连续两次修复仍失败时，任务会如何结束？",
+        "why": "预算数值已经给出，但清单没有定义截断、重试终止、错误保留或降级输出语义。",
+        "nextStep": "查阅 Agent 运行网关的预算处理实现与失败状态合同。",
+        "blocking": false,
+        "citationKeys": [
+          "c5"
         ]
       }
     ]
   },
   "dependencies": [
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
-      "digest": "1ec6d9a7e7997db6ff2f98381d8acd1ef976ff9e21201d6c5bb73824d97f9555"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/output.schema.json",
-      "digest": "6ab370d7f0c7af0c0433a7b98677e949fd8c45df348c52020af5aaecd8371670"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
-      "digest": "588a152e46dc50fce04717dcc7ebe386913f8f45da0ae090b735f16dcbce6f23"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
-      "digest": "1066d9fa84cc7dacab542e8ff908be35fd27ac116f78aa38fd11f944c3f34227"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/agents/openai.yaml",
-      "digest": "dab14a5bbcf124b8c2676845e2977bb2a21fa8686310c037b62046a826d23edf"
-    },
     {
       "kind": "material",
       "key": "omem:packages/agent-runtime/roles/visual-analyst/1/manifest.json",
@@ -107,34 +121,34 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T19:50:33.450Z",
+    "at": "2026-10-01T07:24:04.953Z",
     "trace": {
-      "runId": "1741f66b-807a-42a9-b7bc-5929fa4143c0",
-      "roleId": "knowledge-refresher",
+      "runId": "390822c6-6ec1-4ace-8675-3730bd4385e1",
+      "roleId": "material-analyst",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "ceef0e66be17027159970992bd7b280497a012241177cbdb0d265865a88a9630",
-      "contextHash": "abf23acb200f5df6bc7abd3504c90453ceb67b439059c1ed0b7d40c0cb533126",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "68d9fe6c6773f97eeddc96050559f245f2bad4fbfee90fd309948ea85e801308",
+      "promptHash": "d3bb5a9a0aa77b0ab7930f9a3e505b56fb2997cf1b7ca60ff5e59192ce9c15ac",
+      "contextHash": "b7cfa2a338632d88d23729046623731011842a29e38534b6fc5efb9d3c1ba3ef",
+      "skillHash": "ff0ca8ddc767c70d9c3f9cad1db495ac7cd984536b68302d7da871db5d7c12ee",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "1f3d66be2a1f4535d1d821bb14b0e9732d50fae8af593bf875df386cc36f18b0",
+      "fingerprint": "7752cc4fc6ec68e2c74e8f2ff613a16da90196ee34140d639f16d986da0f04c1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-material-analyst",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb7-bf69-7003-9780-292fef3b8d64"
+        "01a0f659-0da8-7483-9aa2-236f035e2baf"
       ],
       "usage": {
-        "used": 21396,
-        "size": 760000,
+        "used": 22414,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -142,10 +156,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 22352,
-          "utf8Bytes": 27456,
-          "estimatedTokens": 9152,
-          "budgetedTokens": 11440,
+          "chars": 7814,
+          "utf8Bytes": 10766,
+          "estimatedTokens": 3589,
+          "budgetedTokens": 4487,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -154,17 +168,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:50:41.995Z",
+    "at": "2026-10-01T07:24:21.050Z",
     "trace": {
-      "runId": "7e2e3b60-4d82-4b29-bf72-5f194bb6ebb3",
+      "runId": "54c1cd3d-76ed-4e7f-90d1-720c294d3be8",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "02648273572f4b98b058346c82752eb43acebe2b3486030efbb3a21673f8b950",
-      "contextHash": "171497f3db0d6c4175eacd210c4af33cda91b06253bf7717c6c5fff8d314bfdc",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "198c11e0a8c50f5d06f961e44d5d52af6b064e4d1f1d4ee4b6e0e3f3096455a4",
+      "contextHash": "a55395b694de065e69de148edfbd82b615555260c1ff7838a239f10b1e4eff73",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "6da32fc1d467062084f4268ad0b6bb230bc6e460cdef6794699b2a092ef4765a",
+      "fingerprint": "a1b626ba97bfb32d1ed8c4535bae9312b12b626a15cef9eb3a01c5bd5048b9c7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -177,11 +191,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeb8-0d26-7cc0-a87a-23d8f299cb5c"
+        "01a0f659-69cd-7df3-b41a-f77ac0e2a0f6"
       ],
       "usage": {
-        "used": 18958,
-        "size": 760000,
+        "used": 22107,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -189,10 +203,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 19527,
-          "utf8Bytes": 23353,
-          "estimatedTokens": 7785,
-          "budgetedTokens": 9732,
+          "chars": 8637,
+          "utf8Bytes": 12451,
+          "estimatedTokens": 4151,
+          "budgetedTokens": 5189,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

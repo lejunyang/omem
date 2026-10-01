@@ -3,214 +3,216 @@
   "document": {
     "key": "topic:requirements",
     "title": "现行产品原则、信任边界与工程约束",
-    "summary": "系统当前以个人助手和单用户实现为边界，统一接收多模态材料及上下文信息，并以不可变修订、固定引用、能力协商和风险分级自治维持信任。外部集成必须获得明确授权；设计合同和 v3 验收方案提供评价尺度，但不能替代当前实现、真实行为测试和 live 检查证据。",
+    "summary": "omem 以个人助理为当前落点，把多来源材料、记忆、任务和代码知识纳入同一可追溯证据链。系统允许低风险自治，但严格区分材料、派生结果与已验证事实；当前实现仍是单用户边界，部分主助手 V3 能力处于待实现或待验收状态。",
     "category": "requirements",
     "sections": [
       {
-        "key": "product-boundary",
-        "title": "个人优先、统一输入与执行边界",
-        "body": "系统先服务个人并保留团队化架构，飞书主 Agent 是主要入口，Web 是后台与第二入口；模型先经 Agent CLI／ACP 接入，不要求本地大模型。[[c1]] 当前 SQLite／共享令牌实现明确属于单用户，不能据此宣称租户隔离；执行器还应发现模型与 effort 能力，并明确拒绝不支持的组合。采集入口统一容纳文本、图片、链接及上下文元数据，而采集内容只是资料，不能自动成为工具指令。[[c2]] 已确认的产品方向可从相关子知识继续下钻。[[c3]]"
+        "key": "product-purpose",
+        "title": "个人助理与统一证据体系",
+        "body": "omem 首先服务个人：飞书主 Agent 承担对话和知识治理入口，Web 作为后台与第二入口；系统既要长期运行，也要支持本地部署，并通过可配置的 Agent CLI/ACP 使用大模型。首批输入覆盖飞书、Git、文本、Agent 会话等来源，统一承载文本、图片和链接。参考 [[c1]]\n\n这些输入不是彼此割裂的知识库。代码可以使用 AST 做专门解析，但 Code Wiki、文章与结构图仍应落在统一的来源、修订和片段证据链上。现有捕获合同已经为多种来源、三类内容部件及部件级来源信息定义了共同数据形状。参考 [[c2]]、[[c3]]"
       },
       {
-        "key": "evidence-trust",
-        "title": "不可变证据与阅读体验",
-        "body": "Source、Fragment 等稳定身份用于跨版本追踪，Revision 固定某一时刻的内容；正文和引用不得以原地修改方式抹去历史。[[c4]] “提到、派生、相关”与事实支持必须分开，支持关系不能沿多跳引用自动传递，多来源结论仍受证据可见性约束。[[c5]] 派生回答不是新的独立证据；即使沉淀为候选，也必须回连原始材料。该约束由现行实施规范直接规定，而不是由对象字段本身自动保证。[[c2]] 身份与关系语义可继续阅读证据合同子知识。[[c6]]\n\n阅读侧要求引用贴近论断并固定到 FragmentRevision；共享 trail 支持逐层进入、返回、循环跳回、滚动与草稿记忆，关闭后恢复焦点，同时保留背景文章状态。[[c7]] 对应组件和引用链规范可从界面子知识继续下钻。[[c8]]"
+        "key": "trust-boundary",
+        "title": "材料、推断与事实的信任边界",
+        "body": "采集内容始终是**待理解的数据**，不能因为其中出现命令、待办或断言就直接执行或认定为事实。可信工作区、主体绑定和来源属性由宿主提供，并与模型读取的材料分开；多参与者内容应保留各片段的身份与时间，而不是拍平成未知主体。参考 [[c4]]\n\n引用、语义相关、派生和事实支持也具有不同含义：提到某材料或由它生成摘要，并不自动证明结论；只有经过证据评估的原子主张支持才能承担事实依据，多跳引用不能自动传递支持。参考 [[c5]]\n\n系统以稳定对象身份追踪同一来源或片段，以不可变修订固定“当时看到的内容”；遇到重复段落或大幅改写时保留候选继任，而不是偷偷续接。有效时间与系统获知时间分开，避免后补材料篡改历史认知。参考 [[c6]]"
       },
       {
-        "key": "autonomy-integrations",
-        "title": "自治变更与外部授权",
-        "body": "普通、高置信且小范围的变更可以自主执行，但每次都应通知修改内容；歧义、背景不足、范围过大或危险操作需要用户决策。[[c1]][[c2]] 这取代了此前仅由工程验证条款支撑自治分级的宽泛表述，使自治依据与通知要求直接对应已确认决策。\n\n外部通知、采集范围变化、屏幕观察、全局 hooks 和操作系统服务属于独立集成，必须具有具体范围并保留用户配置；真实连接、采集和投递还取决于当前配置与授权。[[c9]] 因此，“允许助理主动工作”不等于默认授权其扩大观察范围、向外发送消息或执行不可逆操作。"
+        "key": "autonomy-and-safety",
+        "title": "自治、权限与可恢复变更",
+        "body": "普通且高置信度的变化可以自动完成，但每次都要向用户说明；歧义、背景不足、大范围或危险操作需要用户决定。扩大采集范围、安装系统监听器和外部通知属于独立集成，不能从一般自治授权中推导出来。当前 SQLite 与共享令牌方案明确是单用户实现，尚不能宣称具备租户隔离。参考 [[c7]]\n\n变更必须区分“已排队”“已提议”和“已应用”。事实更新应产生新修订并保留历史，失败不能显示成功；界面同样必须呈现真实的服务、模型和操作状态，不能用模拟回答掩盖未连接能力。参考 [[c8]]\n\n迁移还要保护原件、固定片段、正式记忆、任务、变更和投递历史。已取消的会话不得自动重启，旧作用域也不能未经业务依据就转换为项目归属。参考 [[c9]]"
       },
       {
-        "key": "progress-acceptance",
-        "title": "进展判断、验证与发布纪律",
-        "body": "能力只能依据实施状态和真实行为判断，早期架构或原型不能当作已交付证明；后续应按带测试的具体垂直切片推进。[[c10]] 每个切片须用真实退出码、行为断言及必要的浏览器检查验证，协议 fixture 不能代替外部 CLI 的 live 检查；通过后应连同测试和文档独立提交，共享工作区只暂存目标改动，推送仍需明确请求。[[c9]]\n\nv3 的 G01–G20、Scenario 指标和初始硬门被明确标为待实现验收，覆盖主体身份、隐私、多模态材料、停止语义、降级和引用回查，不能把当前缺陷行为或设计文本算作通过。[[c11]] 相关验收子知识提供逐项下钻入口，但仍不是完成证明。[[c12]]"
+        "key": "progress-and-verification",
+        "title": "当前进展口径与工程验收",
+        "body": "现行材料明确把主助手 V3 的停止控制、保真输入、检索、飞书主入口、注意力门控和反馈评测列为待实现改造；其中检索与主入口可在接口稳定后并行，外部检索 PoC 不是主助手的前置条件。因此设计方案、合同类型或原型都不能单独作为功能已经交付的证明。参考 [[c10]]\n\n仓库知识本身也是验收材料。捕获、AST、知识生成、引用、检索或助理运行发生变化后，应先检查并提交实现，再由真实模型生成、独立复核和更新知识资产；覆盖状态需区分已复核、过期、待处理和失败，检索还要通过真实 HTTP 查询验证。参考 [[c11]]\n\nCode Wiki 当前还有明确限制：跨文件调用尚不解析，跨修订符号和片段身份续接未实现，代码变化后需要重新同步定位。内部标识只能用于路由，缺失或过期目标必须禁用并给出人读原因。参考 [[c12]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "已确认的个人助手与自治方向",
-        "reason": "支持个人优先、飞书主入口、CLI／ACP 模型接入、文本图片链接输入，以及高置信变更自动执行并逐次通知的已确认方向。",
+        "label": "已确认的产品方向",
+        "reason": "支持个人优先、飞书主入口、部署方式、模型接入以及首批材料范围。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/decisions.md",
           "startLine": 7,
-          "endLine": 14
+          "endLine": 16
         },
         "quote": "| 使用对象 | 先服务个人，保留团队模型设计 |\n| 主入口（2026-09-27补充） | 飞书机器人上的主Agent承担入口和个人助手角色，应能主动对话治理知识/记忆；Web是后台与第二入口 |\n| 部署 | 长期服务器运行，也能本地运行 |\n| 大语言模型 | 不使用本地 LLM；先通过 Agent CLI/ACP（TraeX、Codex、Claude Code），以后接 API；模型、effort、上下文可配置 |\n| 本地模型 | 当前无现成权重；需要时下载 embedding/reranker 等小模型，使用 osdk 管理；本轮不引入本地 LLM |\n| 首批材料 | lark-cli 飞书文档、Git、纯文本、Ag"
       },
       {
         "key": "c2",
-        "label": "模型、单用户、采集与证据边界",
-        "reason": "支持模型能力协商、当前单用户限制、包含上下文元数据的统一采集格式、材料非指令、派生回答非独立证据及自治风险分级。",
+        "label": "统一记忆目标",
+        "reason": "支持代码 AST 特化仍属于统一记忆体系，且调研方案不能视为已实现能力。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:AGENTS.md",
-          "startLine": 7,
-          "endLine": 10
+          "startLine": 1,
+          "endLine": 3
         },
-        "quote": "- LLMs use configurable Agent CLI/ACP initially, later API. Do not make a local LLM required. Discover model/effort capabilities; reject unsupported settings. Local embedding/reranker weights may be added via osdk when semantic retrieval is implemented.\n- Personal-first, server or local. Preserve team scope in architec"
+        "quote": "# omem：个人记忆与助理的实施约定\n\n先读 `README.md` 和 `docs/implementation/status.md` 的当前进展；调研方案不是已实现能力。目标是统一记忆、可追溯问答和主动事项跟进，未来学习卡也复用原始证据。代码需要 AST 特化，但不得拆成独立知识库。优先复用已有调研和成熟实现，推进可跑通的功能切片，避免围绕边界测试堆砌框架。"
       },
       {
         "key": "c3",
-        "label": "产品与技术方向子知识",
-        "reason": "提供已确认产品方向的可读下钻入口；事实依据仍由相邻原始决策记录承担。",
-        "relation": "background",
+        "label": "统一捕获合同",
+        "reason": "支持多来源捕获、文本图片链接部件以及部件级来源信息的数据形状。",
+        "relation": "implements",
         "target": {
-          "kind": "article",
-          "key": "omem:docs/decisions.md",
-          "section": "direction"
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 4,
+          "endLine": 112
         },
-        "quote": ""
+        "quote": "// Per-part provenance lets an aggregated batch keep which speaker / event / time a\n// fragment came from, instead of flattening multi-speaker turns into actor=null.\n// Every field is optional/nullable so historical parts without metadata still parse.\nexport const partProvenanceSchema = z\n  .object({\n    actorExternalI"
       },
       {
         "key": "c4",
-        "label": "稳定身份与不可变修订",
-        "reason": "支持稳定对象身份与固定内容修订相分离，以及引用目标具有明确版本和建立原因。",
+        "label": "可信上下文与材料分离",
+        "reason": "支持宿主可信上下文、主体绑定与模型材料分离，并保留片段级来源属性。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/index.ts",
+          "startLine": 755,
+          "endLine": 834
+        },
+        "quote": "export const contextMaterialSchema = z\n  .object({\n    content_scope: z.enum([\"fragment\", \"revision\"]).optional(),\n    fragment_revision_id: z.string().min(1).max(500),\n    source_revision_id: z.string().min(1).max(500),\n    text: z.string().max(200_000).optional(),\n    image: z\n      .object({\n        asset_hash: z.st"
+      },
+      {
+        "key": "c5",
+        "label": "证据关系语义",
+        "reason": "支持引用、派生、相关与事实支持的区别，以及支持不能沿引用链自动传递。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/contracts/evidence-model.md",
+          "startLine": 58,
+          "endLine": 73
+        },
+        "quote": "## 3. 关系语义\n\n| type | 方向 A→B 的含义 | 可否当事实支持 |\n| --- | --- | --- |\n| contains | A 包含 B | 否，结构关系 |\n| references | A 明确提到了/链接到了 B | 否，仅证明引用存在 |\n| derived_from | A 的内容由 B 提炼/生成 | 否，生成来源不等于结论正确 |\n| supported_by | A 的原子主张受到 B 支持 | 是，但需有效的 EvidenceAssessment |\n| contradicted_by | B 与 A 的主张相冲突 | 作为冲突提示 |\n| supersedes | A 在确定范围/时"
+      },
+      {
+        "key": "c6",
+        "label": "身份、修订与双轴时间",
+        "reason": "支持稳定身份和固定修订分工、歧义续接处理以及有效时间与获知时间分离。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/contracts/evidence-model.md",
           "startLine": 9,
-          "endLine": 17
+          "endLine": 23
         },
         "quote": "| Source | `tenant_id, source_id, connector_id, external_key, canonical_uri, current_revision_id, acl_policy_id` | URL 可变；ID 不随 URL/标题变化；同 connector/external_key 在 tenant 内唯一 |\n| SourceRevision | `revision_id, source_id, upstream_revision, raw_hash, normalized_hash, object_keys, fetched_at, parser_version, normalizatio"
       },
       {
-        "key": "c5",
-        "label": "关系类型与支持边界",
-        "reason": "支持引用、派生、相关和事实支持不可混同，以及多跳引用不能自动传递支持、多来源结论仍受权限约束。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/contracts/evidence-model.md",
-          "startLine": 60,
-          "endLine": 73
-        },
-        "quote": "| type | 方向 A→B 的含义 | 可否当事实支持 |\n| --- | --- | --- |\n| contains | A 包含 B | 否，结构关系 |\n| references | A 明确提到了/链接到了 B | 否，仅证明引用存在 |\n| derived_from | A 的内容由 B 提炼/生成 | 否，生成来源不等于结论正确 |\n| supported_by | A 的原子主张受到 B 支持 | 是，但需有效的 EvidenceAssessment |\n| contradicted_by | B 与 A 的主张相冲突 | 作为冲突提示 |\n| supersedes | A 在确定范围/时间取代 B | 不自动跨"
-      },
-      {
-        "key": "c6",
-        "label": "身份、修订与时间子知识",
-        "reason": "提供稳定身份、不可变修订和证据关系语义的分层阅读入口，不把派生概括视为新的事实依据。",
-        "relation": "background",
-        "target": {
-          "kind": "article",
-          "key": "omem:docs/contracts/evidence-model.md",
-          "section": "identity"
-        },
-        "quote": ""
-      },
-      {
         "key": "c7",
-        "label": "固定引用与层级阅读合同",
-        "reason": "支持材料非指令、固定版本引用、逐层导航、循环返回、局部状态保存以及背景文章状态保留。",
+        "label": "自治与权限边界",
+        "reason": "支持单用户现状、高置信度自治、例外决策及外部集成需要明确范围。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:design.md",
-          "startLine": 24,
-          "endLine": 42
+          "key": "omem:AGENTS.md",
+          "startLine": 8,
+          "endLine": 14
         },
-        "quote": "顶栏品牌、搜索和通知；左侧入口/材料目录；中间为当前材料与片段；右侧为基于固定片段的追问。需求、待办和观察记录是个人助理的一等信息，但材料内容不自动变成执行指令。\n\n引用贴近原句。明确显示固定版本、源类型、原文、关系类型。正文渲染为文本或经审查的 AST；绝不把采集来的 HTML 直接 v-html。模型回答与验证后的事实有不同状态。\n\n## 组件合同\n\n从 `@omem/ui` 复用：OmButton、OmIcon、OmBadge、OmEmpty、OmPanel、OmShell、OmDialog、OmCitation。禁止业务页面重新创建不同配色/焦点/圆角的按钮和弹窗。业务数据只通过 props/slots/events 注入；"
+        "quote": "- Personal-first, server or local. Preserve team scope in architecture; current SQLite/shared-token implementation is explicitly single-user. Do not pretend tenant enforcement exists.\n- Text + image + links + contextual metadata is the common capture input for manual, file, Git, Lark, chat, hooks, and external screen o"
       },
       {
         "key": "c8",
-        "label": "共享组件与引用阅读链",
-        "reason": "提供共享 UI 组件和引用 trail 交互要求的子知识下钻入口。",
-        "relation": "background",
-        "target": {
-          "kind": "article",
-          "key": "omem:design.md",
-          "section": "components-trail"
-        },
-        "quote": ""
-      },
-      {
-        "key": "c9",
-        "label": "验证、提交与外部集成纪律",
-        "reason": "支持真实行为验证、切片提交、共享工作区暂存纪律，以及外部通知、采集范围和系统服务必须单独授权。",
+        "label": "真实界面行为",
+        "reason": "支持动作、服务、模型和通知必须反映真实结果，失败不得伪装为成功。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:AGENTS.md",
-          "startLine": 11,
-          "endLine": 14
+          "key": "omem:design.md",
+          "startLine": 50,
+          "endLine": 54
         },
-        "quote": "- Test via actual exit codes and real behavioral assertions. Protocol fixture tests are not evidence that every external CLI works; label live checks separately. Run browser checks for UI and update docs with any remaining limits.\n- Commit each completed functional slice promptly after its relevant checks pass, includi"
+        "quote": "## 真实行为与验收\n\n按钮必须执行对应动作或明确禁用；服务未连接显示错误/未配置；不要用模拟回答冒充真实模型。配置的范围和模型需实际传入执行器。每次知识/事项修改形成可读通知，失败不显示成功。时间在界面用本地时区，存储用 UTC。\n\n改 UI 前阅读 `.agents/skills/omem-design/SKILL.md`，复用 token 与组件；之后执行 `osdk run check` 和浏览器检查，验证引用层级、恢复焦点、窄屏、错误态。历史离线原型保留在 docs/prototype 供视觉对照，不作为新产品代码依赖。"
+      },
+      {
+        "key": "c9",
+        "label": "迁移与历史保护",
+        "reason": "支持保留权威历史、维持取消状态并禁止静默转换旧作用域。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+          "startLine": 19,
+          "endLine": 25
+        },
+        "quote": "## 2. 先保留什么、不要做什么\n\n保留原件/图片、source revisions、原fragment ID、正式task/memory revisions、changes、binding/secret、job/receipt/outbox数据和历史。主助手复用现有已建立的飞书应用，不再创建一套机器人。\n\n旧quality_datasets是研发草稿，不能自动提升为记忆真值。用户已经叫停的session保持cancelled；迁移不能自动重启标注或重发旧确认卡。未发送intent按新取消条件处理，已发送历史保留实际结果，不能声称撤回了用户已看到的信息。\n\n不把活跃知识批量重写成新分类。先给旧资料补source profile和候"
       },
       {
         "key": "c10",
-        "label": "能力判断与垂直切片原则",
-        "reason": "支持设计提案不等于已实现，并要求后续工作以带测试的具体垂直切片推进。",
+        "label": "主助手改造状态",
+        "reason": "支持 V3 工作仍标为待实现、各切片顺序及检索 PoC 不是主入口前置条件。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
+          "startLine": 1,
+          "endLine": 17
+        },
+        "quote": "# 改造任务与新的验收方式\n\n状态：待实现。以审查基线16d3aa6为出发点，先修产品入口和语义损失，复用已经完成的工程基础。本轮只提交审查/设计/隔离复现，不改变真实库和用户叫停状态。\n\n## 1. 优先级与文件边界\n\n| 顺序 | 工作 | 主要文件/新增模块 | 完成标准 |\n| --- | --- | --- | --- |\n| V3-01 | 停止控制与隔离质量标注 | quality/lark-annotations、lark/delivery、API权限/开关 | 停止后未发卡不再发送；评测不走普通导入默认路径 |\n| V3-02 | 保真输入与主体映射 | contracts、lark/realtime、inputs"
+      },
+      {
+        "key": "c11",
+        "label": "仓库知识验收流程",
+        "reason": "支持实现与知识资产分开提交，以及真实生成、复核、覆盖检查和检索验证要求。",
         "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:AGENTS.md",
-          "startLine": 3,
-          "endLine": 3
+          "startLine": 16,
+          "endLine": 24
         },
-        "quote": "Read `README.md` and `docs/implementation/status.md` for actual capabilities. Initial architecture proposals do not imply features are implemented. The user has authorized incremental implementation of the personal assistant; build the next concrete vertical slice with tests."
-      },
-      {
-        "key": "c11",
-        "label": "待实现回归场景与任务指标",
-        "reason": "支持 G01–G20 属于待实现验收，并说明 Scenario 评估、分项指标和初始硬门的范围。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
-          "startLine": 84,
-          "endLine": 125
-        },
-        "quote": "## 6. 必须新增的回归场景\n\n这些是待实现验收，不能把本轮复现的缺陷行为当pass标准。\n\n| ID | 输入与过程 | 必须出现 | 禁止出现 |\n| --- | --- | --- | --- |\n| G01 | 导入一份40段的业务说明，当前无相关请求 | 原件/结构/索引/一次概览 | 40张“是否值得记”的确认卡 |\n| G02 | 含“当前…未来可能…”、“上述三种”的段落 | 保留父上下文，区分现状与规划 | 统一标explicit verified fact |\n| G03 | 代码仓库含TODO、SQL示例、测试数据 | 按代码/示例解析，保留符号与commit | 当成本人交办或执行命令 |\n| G04 | "
+        "quote": "## 每次相关修改都用本仓库知识库验证\n\n`.repo-review` 是 omem 对本仓库的实际应用，也是验收材料；不能只维护产品代码、让仓库知识持续过期。当前用户已授权重建和提交派生知识，不需要每次重问是否生成。\n\n1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库重建时省略选择器。必须走真实 `traex acp` 的 `gpt-5.6-sol`，保留独立 v"
       },
       {
         "key": "c12",
-        "label": "主助手 v3 验收子知识",
-        "reason": "提供回归场景和价值评估的可读下钻入口，同时保持其待实现状态，不将派生总结当作完成证明。",
-        "relation": "background",
+        "label": "Code Wiki 现行边界",
+        "reason": "支持内部标识展示限制、统一知识运行时，以及跨文件调用和跨修订续接尚未实现。",
+        "relation": "explains",
         "target": {
-          "kind": "article",
-          "key": "omem:docs/implementation/assistant-v3/migration-and-acceptance.md",
-          "section": "acceptance"
+          "kind": "material",
+          "key": "omem:AGENTS.md",
+          "startLine": 28,
+          "endLine": 36
         },
-        "quote": ""
+        "quote": "Code Wiki 不是独立产品：`knowledge_*` 正文/引用与 `code_*` 结构图都是统一 Capture→Source/Revision/Fragment 链上的派生视图。通用处理使用 `KnowledgePipeline` + `RoleRuntimeGateway` + 现有 jobs；repo-review 只是本仓库输入适配器与生成/检索验收配置（保留隔离 SQLite，不起业务 worker）。用户统一使用 `osdk run dev`：仓库材料、已复核文章和被引用历史原文幂等接入个人库，不替换个人数据。不要重建第二套 review 产品入口。\n\n- **DTO 人类 label / internal "
       }
     ],
     "questions": [
       {
-        "question": "上述原则中，哪些已经由当前数据库约束、运行时代码和端到端测试强制执行？",
-        "why": "材料混合了已确认方向、设计合同和明确待实现的验收项，不能仅凭规范判断单用户边界、固定引用、自治通知和停止语义的当前完成度。",
-        "nextStep": "建立“原则—实现位置—确定性测试—真实 Agent／Lark 检查—剩余限制”矩阵，优先核对单用户边界、固定引用、自治通知和停止语义。",
+        "question": "README 与实施状态文档所列的当前能力，哪些已经覆盖主助手 V3 的待实现切片？",
+        "why": "现有材料同时包含现行约束和明确标为待实现的迁移方案，但未提供实施状态正文，不能进一步判定各切片的完成度。",
+        "nextStep": "对照 README、实施状态、对应源码和真实检查记录，逐项标记已实现、部分实现、待实现或已停止。",
         "blocking": false,
         "citationKeys": [
-          "c2",
-          "c4",
           "c10",
           "c11"
         ]
       },
       {
-        "question": "当前实际获准启用的外部通知、飞书采集、Agent hooks、屏幕观察和操作系统服务分别有哪些？",
-        "why": "材料只确认产品方向，并明确外部集成必须具有具体范围；当前配置、授权主体和停止方式未包含在所给材料中。",
-        "nextStep": "按集成列出启用状态、授权主体、采集或投递范围、停止方式和最近一次 live 验证；未经确认的项目保持关闭。",
+        "question": "当前实际获准启用的采集源、飞书连接和外部通知范围是什么？",
+        "why": "产品方向列出了候选输入，但实施约定要求外部通知、采集扩展和系统服务分别获得具体授权。",
+        "nextStep": "核对当前配置、主体绑定和用户授权，形成按连接器划分的启用、停用、未配置和未授权清单。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c9"
+          "c7"
         ]
       },
       {
-        "question": "各 Agent CLI／ACP 执行器当前支持哪些模型、effort 和上下文组合，拒绝路径是否已有行为测试？",
-        "why": "规范要求发现并校验执行器能力，但材料未提供实际能力矩阵、不支持配置的拒绝结果或各执行器的 live 验证记录。",
-        "nextStep": "对每个已配置执行器记录能力发现结果，并分别验证支持组合的真实传参与不支持组合的明确拒绝。",
+        "question": "最近一次真实模型生成、独立复核、索引更新和 HTTP 检索验证是否成功？",
+        "why": "材料规定了完整验收流程，却未提供本次运行 trace、覆盖状态或验证报告，不能据此确认知识当前有效。",
+        "nextStep": "检查最新生成 trace、覆盖记录、验证报告与真实搜索结果；未执行的项目明确标记为跳过。",
         "blocking": false,
         "citationKeys": [
-          "c2"
+          "c11"
         ]
       }
     ]
@@ -219,7 +221,7 @@
     {
       "kind": "material",
       "key": "omem:AGENTS.md",
-      "digest": "d4f72638286fc89318f409eefe2ff84e4774205f99acf4eeee6067b60c6565a4"
+      "digest": "49aa263bb8ec8696624ab5aa8517acb497c9f14a37b7624a1bd0bf7bb9891da7"
     },
     {
       "kind": "material",
@@ -230,6 +232,11 @@
       "kind": "material",
       "key": "omem:design.md",
       "digest": "fe02528e87ce7aa79e18bd7c0a5319d416a636ec49f41a52af48075191989178"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/design.md",
+      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
     },
     {
       "kind": "material",
@@ -249,12 +256,7 @@
     {
       "kind": "material",
       "key": "omem:packages/contracts/src/index.ts",
-      "digest": "41cb047b0ebeb1a3b8721bf0d3f2949bbdca3052c458bea1c376fa9dce4f7e83"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/contracts/src/knowledge.ts",
-      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+      "digest": "93c78d8a8d36bdbd5b7d7435479eea256a9e3eb5bcb42674977df3facdce2cac"
     },
     {
       "kind": "material",
@@ -262,9 +264,19 @@
       "digest": "6be6e622c9fa3786e29eb68451bdf9d3f951246a3f5512b7edb4ef32877b07ea"
     },
     {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/task-flow.ts",
+      "digest": "40b7552c6f7ced8e0838773d5e9e4dd7ebff2d813d674f3624e0a1e0e87fa076"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/knowledge.ts",
+      "digest": "7bb20a612e889d08e29a096b8f25c4afa2ba662b31c312185f882ac2ad672502"
+    },
+    {
       "kind": "article",
       "key": "omem:AGENTS.md",
-      "digest": "e7a464404acc1389133908551684f26326ec332b4a1521e514d4853d61482588"
+      "digest": "65d1d8128e0e3ecebac2aa15d71ed1be63c76eab8d9e2376e7ff69e170ba656b"
     },
     {
       "kind": "article",
@@ -274,7 +286,7 @@
     {
       "kind": "article",
       "key": "omem:design.md",
-      "digest": "b95261ad0e3ffc78e4f7d758e01a26b0c86274fb849aafbf4d4de6b2102c4d07"
+      "digest": "e476bf5128241038d4995c71d3ac844aacc449c7e62b2c02d9bcae980ecc61ac"
     },
     {
       "kind": "article",
@@ -299,40 +311,40 @@
     {
       "kind": "article",
       "key": "module:contracts",
-      "digest": "5243602fde7393ee5028cad0df502cd21c248e6c58d8debf1fb75478c9be2201"
+      "digest": "1227dc194235f536281b2e437fd85d0a4a83cb42f2384b0fdfb5ed08a9a7057b"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T21:02:57.955Z",
+    "at": "2026-10-01T07:51:55.484Z",
     "trace": {
-      "runId": "98cfd5aa-ab70-4aa0-8dbe-ab5761b5cedb",
-      "roleId": "knowledge-refresher",
+      "runId": "a8c6dfec-d548-4f91-92d9-3eb079881ee3",
+      "roleId": "knowledge-writer",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "04c9136204dbde628a81f2f3a64422faf419168b6aacae03bddb71aa0e8cb8fb",
-      "contextHash": "e156ca1bdf009bebe12ff0f21c79792009e78e995e1122f8f715ba2bf19bb476",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "bundleHash": "3e627be543b2979e3759ca541af350fd8033b07dd1ba343d30dbb2260e8aa464",
+      "promptHash": "3e80a0b94306ff4c95902f8a6f707f5d72969a6377de2aa05f61ef38733d233e",
+      "contextHash": "0f46321974a1d115a99d7a737a2bfbb62d8db48cf61916a1ed768c43135ca634",
+      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "aec9b7979aed637709ad4cc724be4edb17f37d491377ae9810a37dd93536d866",
+      "fingerprint": "ad708f037d55ca508d634415db0b005e0e9c10ac5de3d3ea31b1ebb17d185cc1",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-knowledge-writer",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eef9-f49c-7650-9991-42ce71275273"
+        "01a0f672-37f0-7cc2-ab67-0596b823df43"
       ],
       "usage": {
-        "used": 71026,
-        "size": 760000,
+        "used": 83057,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -340,10 +352,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 138921,
-          "utf8Bytes": 201362,
-          "estimatedTokens": 67121,
-          "budgetedTokens": 83902,
+          "chars": 147969,
+          "utf8Bytes": 219280,
+          "estimatedTokens": 73094,
+          "budgetedTokens": 91368,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -352,17 +364,17 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T21:03:12.929Z",
+    "at": "2026-10-01T07:52:19.063Z",
     "trace": {
-      "runId": "85c7fc17-dbc9-43b1-aa26-0185053a06b1",
+      "runId": "f01c4af3-ac9c-4d5f-af92-aba87b04374b",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "d96c8b01989d5abc515d9a2db2da49b39a95141c3a5a6f82c114c8eac272ea48",
-      "contextHash": "7e0e0af33b1740a43a8824398986d73728c817d5fc5a8ec837718617ae0c3bb7",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "04bc8b597e5fc78f090d8c46c05588b67f16a453bd72385a11275869aaa81087",
+      "contextHash": "5f969d14913c375e06b13b6d861488eebc597bb4e61ac99f68ffb5a7313a896a",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "dcceb1f6b8878b1a292e895c9c4bf5153351876f9be2cddaa9ab54c73201df57",
+      "fingerprint": "1a852ccbbf940a1dc77c04a6b9dbd56dc7824a85ff7ac64e8286e7972e5b2db3",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -375,11 +387,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eefa-5608-75d2-80e6-33f88abd2d6c"
+        "01a0f672-ee49-72c0-be32-3ddbb9fd5cf0"
       ],
       "usage": {
-        "used": 68004,
-        "size": 760000,
+        "used": 84334,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -387,10 +399,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 135590,
-          "utf8Bytes": 196295,
-          "estimatedTokens": 65432,
-          "budgetedTokens": 81790,
+          "chars": 154086,
+          "utf8Bytes": 230857,
+          "estimatedTokens": 76953,
+          "budgetedTokens": 96192,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

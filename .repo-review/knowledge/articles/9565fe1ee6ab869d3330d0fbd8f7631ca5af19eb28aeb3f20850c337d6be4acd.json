@@ -2,201 +2,188 @@
   "version": 1,
   "document": {
     "key": "module:project:part-2",
-    "title": "project · 模块理解 · 专题 2",
-    "summary": "本专题说明 omem 项目层如何把个人助理、知识整理与仓库评审统一到可追溯证据链，并梳理其处理流程、工程治理、单用户部署边界及尚未交付的能力。",
-    "category": "architecture",
+    "title": "运行配置、依赖锁定与部署边界",
+    "summary": "本章说明 omem 如何通过 osdk 统一开发与验证入口、锁定中文检索模型和应用依赖，并分别配置个人助手与仓库知识生成使用的 Agent。系统可在本机或服务器运行，但当前仍是单用户服务；外部监听、systemd 守护及 TraeX Hook 均需显式配置，模板或命令入口本身不代表集成已经启用或验证成功。参考 [[c9]]",
+    "category": "configuration",
     "sections": [
       {
-        "key": "purpose",
-        "title": "职责与设计背景",
-        "body": "omem 是个人工作记忆与助理的总体入口：文本、图片、链接和上下文先形成不可变证据，问答、受治理记忆、待办、通知与仓库 Wiki 再沿用同一证据链；外部屏幕采集仍是需单独配置的集成。[[c1]]\n\n知识整理复用 Capture→Source/Revision/Fragment、持久任务和角色运行网关。不同材料由专门角色分析，经独立复核后组织为模块、主题和概览；AST 负责代码定位及明确结构关系，语义说明则由模型分析和复核。[[c2]] Code Wiki 因而是这条通用链路的派生阅读视图，而非第二套捕获系统或事实权威。[[c3]]"
+        "key": "runtime-baseline",
+        "title": "统一而可复现的运行环境",
+        "body": "omem 的基础运行只要求 osdk 和可登录的 Agent CLI，不依赖 Docker、Redis、Python 或本地大语言模型；开发入口会同时启动 API 与 Vue，并把仓库知识接入个人知识库，启动过程只恢复既有知识，不主动调用生成式模型。参考 [[c1]]\n\n工具链由 osdk 统一声明：Node、pnpm 与 Bun 分工承担服务运行、依赖管理和 TypeScript 脚本执行，`check` 汇总类型检查、测试与构建。中文向量模型则锁定到指定的 BGE-small-zh-v1.5 修订和文件摘要，pnpm 安装也绑定清单及原生锁文件，从而减少环境与模型身份漂移。参考 [[c2]] [[c3]]"
       },
       {
-        "key": "workflow",
-        "title": "主要流程与跨模块关系",
-        "body": "正文生产遵循“分析原始材料—独立复核—组织章节”的顺序；引用应贴近论断并指向固定目标，无法确认的事项保留为调查项，用户回答作为新原始材料触发重核对，错误或过期结果不得覆盖有效知识。[[c4]] 阅读侧复用共享证据 Trail：内部标识只用于路由，界面显示可读名称；缺失或过期目标不可操作并说明原因，帧栈还需保留层级、滚动位置与关闭后的焦点恢复。[[c5]]\n\n仓库阅读启动只恢复已有知识；全仓分析、局部生成和索引重建分别通过显式入口执行，review 使用独立 SQLite 且不启动个人业务 worker。[[c6]] 已复核正文保存为可提交的 JSON 和内联链接 Markdown，运行数据、私有环境与派生知识不重新充当独立证据，失败项也不能冒充已完成。[[c7]]"
+        "key": "agent-and-review",
+        "title": "个人助手与仓库生成的 Agent 配置",
+        "body": "个人助手通过配置文件选择 ACP 或 CLI 运行器；TraeX 可动态发现模型和推理强度，Codex 与 Claude 则通过各自命令接入。不支持的模型或 effort 应明确报错，图片也只能交给声明支持图像的 ACP，不能静默丢弃。每次问答使用新会话并显式传入固定证据，当前尚未实现跨轮 ACP 会话恢复。参考 [[c4]]\n\n仓库知识生成使用独立的实际配置：通过只读模式启动 `traex acp serve`，选择 `gpt-5.6-sol` 与 `medium`，并设置调用超时、输入输出令牌和上下文预留预算。配置表达预期执行边界；一次生成是否真正成功，仍须结合能力校验和运行 trace 判断。参考 [[c5]]"
       },
       {
-        "key": "constraints-progress",
-        "title": "工程约束、进展与限制",
-        "body": "工程治理要求使用 osdk 冻结依赖并运行项目检查，以真实退出码和行为断言判断结果；UI 还需浏览器检查。完成的功能切片应连同测试、文档和剩余限制及时独立提交，共享工作区只暂存目标改动。[[c8]] review 的模型调用必须显式触发，模型与 effort 经过 ACP 校验；运行数据库和构建暂存留在忽略提交的目录，只有明确保存的知识资产进入发布区域。跨文件调用解析及跨修订符号、片段身份续接仍未实现。[[c9]]\n\n当前还没有精确的跨文件类型调用解析、embedding 检索和所有来源的自动重核验。[[c10]] 此外，现有 SQLite/shared-token 实现被明确限定为单用户，不能宣称已有租户强制隔离；若未来面向团队，需要另行设计身份、授权和数据隔离。[[c11]] 这项结论取代先前缺少直接引文支撑的单用户边界表述。"
+        "key": "deployment",
+        "title": "从本机启动到服务器守护",
+        "body": "部署模板默认监听 `127.0.0.1:4317`，数据目录和应用配置需要替换为实际绝对路径。若改为非回环监听，必须另设高强度令牌。参考 [[c6]] 当前 SQLite 与共享令牌实现明确属于单用户部署，不能被解释为具备团队租户隔离的权限系统。参考 [[c9]]\n\nsystemd 示例把 omem 组织为用户服务：进入项目目录、加载环境文件、执行 `osdk run start`，失败后等待五秒重启，并在停止时保留二十秒退出窗口。模板中的项目目录、环境文件与 osdk 路径都是占位符，因此复制、启用和健康检查仍需部署者完成。参考 [[c7]]"
+      },
+      {
+        "key": "explicit-integrations",
+        "title": "外部捕获必须显式启用",
+        "body": "TraeX Hook 示例覆盖提示提交、工具使用后和会话停止三个事件，统一异步调用转发脚本并设置五秒超时。它被明确标为 opt-in 配置，命令中仍含绝对路径占位符；启用前必须审阅捕获字段和范围，并验证构建产物、接收服务及失败处理，不能因为模板存在就宣称端到端捕获已经运行。参考 [[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "个人助理与统一证据链",
-        "reason": "支持项目面向个人工作记忆、统一接收多类输入，并让问答、记忆、待办、通知和 Wiki 共用证据链的论断。",
-        "relation": "explains",
+        "label": "启动与开发入口",
+        "reason": "支持运行前提、开发服务组成、仓库知识接入以及启动时不调用生成式模型的说明。",
+        "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:README.md",
-          "startLine": 1,
-          "endLine": 3
+          "startLine": 5,
+          "endLine": 18
         },
-        "quote": "# omem\n\n个人工作记忆与助理系统。统一接收文本、图片、链接与上下文，保留不可变证据，通过 Agent CLI/ACP 分析、独立复核和组织知识正文。个人问答、受治理记忆、待办与通知沿用同一证据链；本仓库的 Wiki 是代码材料的一种应用。外部屏幕采集器等接入仍需单独配置。"
+        "quote": "## 启动\n\n需要 osdk 和可登录的 Agent CLI；omem 当前运行不需要 Docker、Python、Redis 或本地大语言模型。\n\n```bash\nosdk skills sync\nosdk trust --yes\nosdk install\nosdk deps --frozen\nosdk run build\nosdk run start\n```\n\n浏览器打开 `http://127.0.0.1:4317`。默认是空工作区，在“输入材料”开始录入。开发模式 `osdk run dev` 同时启动 API 与 Vue（默认 4317 / 5173），把本仓库材料和 `.repo-review/knowledge` 中已"
       },
       {
         "key": "c2",
-        "label": "知识整理与代码定位流程",
-        "reason": "支持通用知识处理链、独立复核、章节组织，以及 AST 定位与模型语义分析之间的职责划分。",
+        "label": "osdk 工具与检查任务",
+        "reason": "说明 Node、pnpm、Bun 的版本声明以及统一检查任务的组成。",
         "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:README.md",
-          "startLine": 20,
-          "endLine": 22
+          "key": "omem:osdk.toml",
+          "startLine": 1,
+          "endLine": 27
         },
-        "quote": "## 知识整理与本仓库 Wiki\n\n知识处理复用 Capture → Source / Revision / Fragment、现有持久 jobs 和 RoleRuntimeGateway。代码、文档、对话、图像使用专门角色；分析后由独立角色复核，再由 AI 组织模块、架构、背景、需求、进展与概览章节。正文引用直接贴近论断，带名称、理由、固定位置，可逐层进入子知识、原文与代码。代码 AST 用于定位和明确的结构关系，语义说明与关系由模型分析和复核。"
+        "quote": "# Bun runs TypeScript scripts; Node runs the compiled server and build tools.\n[tools]\nnode = \"24.18.1\"\npnpm = \"11\"\nbun = \"1.4.2\"\n\n[models.memory-zh.views]\n\n[deps.pnpm]\nauto = true\nallow_build_from_source = true\n\n[skills.osdk-guide]\nsource = \"github:lejunyang/one-sdk\"\nskill = \"osdk-guide\"\nref = \"02a2f2b3142ded7d73554aae"
       },
       {
         "key": "c3",
-        "label": "Code Wiki 的派生视图定位",
-        "reason": "支持 Code Wiki 复用通用知识管线、仅作为仓库输入适配器和隔离运行配置，而非独立产品或事实系统。",
+        "label": "模型与依赖锁定",
+        "reason": "支持中文嵌入模型的固定修订、文件完整性记录及 pnpm 冻结安装边界。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:AGENTS.md",
-          "startLine": 16,
-          "endLine": 18
+          "key": "omem:osdk.lock",
+          "startLine": 25,
+          "endLine": 85
         },
-        "quote": "## Code Wiki / repo-review 维护规则\n\nCode Wiki 不是独立产品：`knowledge_*` 正文/引用与 `code_*` 结构图都是统一 Capture→Source/Revision/Fragment 链上的派生视图。通用处理使用 `KnowledgePipeline` + `RoleRuntimeGateway` + 现有 jobs；repo-review 只是本仓库输入适配器与隔离运行配置（独立 SQLite、默认 5180 API / 5181 web，端口可变，不起业务 worker）。启动用 `osdk run dev:review`。"
+        "quote": "[models.memory-zh]\nprovider = \"huggingface\"\nrepository = \"Xenova/bge-small-zh-v1.5\"\nrequested_revision = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\"\nrevision = \"75c43b069aac4d136ba6bc1122f995fedcfd2781\"\nendpoint = \"https://huggingface.co\"\nkind = \"embedding\"\nfamily = \"bge\"\nderived_from = \"BAAI/bge-small-zh-v1.5\"\ninclude "
       },
       {
         "key": "c4",
-        "label": "正文分析、复核与调查流程",
-        "reason": "支持先分析再复核和组织、内联固定引用、疑问重核对，以及失败结果不得覆盖有效知识。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:AGENTS.md",
-          "startLine": 28,
-          "endLine": 35
-        },
-        "quote": "### 正文知识与 Agent 流程\n\n- 先分析原始材料，再独立复核，最后组织模块/主题/概览。代码、文档、对话、图像的角色使用同一合同和运行时，不能另建 code-only 捕获或事实 authority。\n- 正文的 `[[citation]]` 必须贴近论断，引用有可读名称、理由、关系和固定目标。模型选定位范围，宿主复制精确原文，独立角色核对支持性；位置校验不等于语义核验。\n- 知识、原文、代码 import 的阅读使用 `packages/ui` 的 `useEvidenceTrail` / `OmTrailDrawer`，与个人知识入口共用。不要再把所有引用堆到文章底部。\n- 无法确认的事项保留为有依据的疑问/调查项；用"
-      },
-      {
-        "key": "c5",
-        "label": "可读标签与共享证据 Trail",
-        "reason": "支持内部标识与可见文本分离、失效目标显示原因，以及 Code Wiki 和个人阅读入口复用同一帧栈合同。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:AGENTS.md",
-          "startLine": 20,
-          "endLine": 21
-        },
-        "quote": "- **DTO 人类 label / internal id 分离**：返回给前端时铺开内部 `*Id` 键（fileId/symbolId/edgeId/fragmentId…）供路由与深链，但展示字段必须用 `displayTitle/displayPath/symbolName/citationLabel/actionable/reason`；任何内部 id（`file_…/sym_…/frag_…`、裸 UUID）不得作为可见文本渲染。missing/stale 节点 `actionable=false` 并带人读 reason，不静默跳转目标。\n- **trail 交互与个人 EvidenceReader 共用同一合同**"
-      },
-      {
-        "key": "c6",
-        "label": "仓库评审运行入口",
-        "reason": "支持阅读恢复、全仓分析、局部生成与索引重建的差异，并说明 review 的独立数据库和业务 worker 边界。",
+        "label": "Agent 能力与会话边界",
+        "reason": "支持不同 Agent 接入方式、能力发现、不支持选项报错、图片处理和会话恢复限制。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:README.md",
-          "startLine": 24,
-          "endLine": 39
+          "startLine": 84,
+          "endLine": 99
         },
-        "quote": "```bash\n# 本仓库阅读视图：恢复已提交知识，不调用模型\nosdk run dev:review\n# 分析全部仓库材料，独立复核并生成章节；真实消耗模型调用\nosdk run review:analyze\n# 只处理一个文件或目录\nosdk run review:generate -- --target=apps/server/src/retrieval/keyword.ts\n# 重试未完成/过期项；正常运行会复用已完成知识与持久结果\nosdk run review:analyze -- --retry\n# 仅重建索引，不调用模型\nosdk run review:build\n```\n\n默认 API / web 端口是 5180"
+        "quote": "## Agent 配置\n\n复制 `config/omem.example.json` 为忽略提交的 `omem.local.json`，按本机命令调整。运行时读取 `OMEM_CONFIG` 指向的文件（默认 omem.local.json，不存在则使用示例）。`profiles` 可配置 transport、command、args、默认 model/effort、instructions、maxContextChars、timeoutMs。文件配置在服务启动时读取，修改后重启；界面中的模型/effort 作用于下一次问题。\n\n- TraeX：`traex acp serve`，复用宿主登录，动态发现模型/effort，支持图片。"
+      },
+      {
+        "key": "c5",
+        "label": "仓库评审模型配置",
+        "reason": "支持仓库生成所用 ACP 命令、模型、推理强度及调用预算。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:config/review-code-model.json",
+          "startLine": 2,
+          "endLine": 15
+        },
+        "quote": "  \"transport\": \"acp\",\n  \"command\": \"traex\",\n  \"args\": [\n    \"-c\",\n    \"sandbox_mode=\\\"read-only\\\"\",\n    \"acp\",\n    \"serve\"\n  ],\n  \"model\": \"gpt-5.6-sol\",\n  \"effort\": \"medium\",\n  \"timeoutMs\": 480000,\n  \"maxInputTokens\": 192000,\n  \"maxOutputTokens\": 24000,\n  \"contextReserveTokens\": 16000"
+      },
+      {
+        "key": "c6",
+        "label": "部署环境与访问保护",
+        "reason": "支持默认监听端点、绝对路径配置及非回环监听需要强令牌的部署要求。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:deploy/omem.env.example",
+          "startLine": 1,
+          "endLine": 6
+        },
+        "quote": "OMEM_HOST=127.0.0.1\nOMEM_PORT=4317\nOMEM_DATA_DIR=/ABSOLUTE/PATH/omem-data\nOMEM_CONFIG=/ABSOLUTE/PATH/omem/omem.local.json\n# Required if binding to a non-loopback interface; provide a strong secret locally.\n# OMEM_TOKEN="
       },
       {
         "key": "c7",
-        "label": "仓库材料适配与可提交产物",
-        "reason": "支持材料排除规则、复核后保存、知识恢复，以及失败条目不得冒充已经生成。",
-        "relation": "tracks",
+        "label": "systemd 用户服务模板",
+        "reason": "说明用户服务的工作目录、环境文件、启动命令、失败重启和停止超时设置。",
+        "relation": "explains",
         "target": {
           "kind": "material",
-          "key": "omem:docs/implementation/knowledge-pipeline.md",
-          "startLine": 31,
-          "endLine": 37
+          "key": "omem:deploy/omem.service.example",
+          "startLine": 1,
+          "endLine": 16
         },
-        "quote": "## 已完成：仓库材料适配与可提交产物\n\n`review:analyze` 使用统一流程处理全部 Git 可见材料（含源码、文档、部署配置、技能和图像），记录明确的排除/失败原因。运行数据、旧历史库、私有环境与派生知识不重新作为独立证据。每份通过独立复核的正文立即保存为 JSON + 带内联链接的 Markdown；后续按模块、主题和概览逐层组合，仍保留固定引用。\n\n`review:generate -- --target=<path>` 是同一流程的局部入口；`review:build` 只重建当前知识索引，不重新调用模型。启动与手动同步均接入材料和知识恢复。review 中用户明确保存的回答写为原始 user-notes 材料，"
+        "quote": "# Copy to a user systemd directory only after setting the actual paths.\n[Unit]\nDescription=omem personal memory service\nAfter=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=/ABSOLUTE/PATH/omem\nEnvironmentFile=/ABSOLUTE/PATH/omem.env\nExecStart=/ABSOLUTE/PATH/TO/osdk run start\nRestart=on-failure\nRestartSec"
       },
       {
         "key": "c8",
-        "label": "工程验证与切片提交规则",
-        "reason": "支持 osdk 依赖检查、真实行为验证、浏览器检查、按功能切片提交及共享工作区暂存边界。",
+        "label": "TraeX 可选捕获 Hook",
+        "reason": "支持 Hook 的显式启用边界、三个触发事件、异步转发方式及待替换路径。",
         "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:AGENTS.md",
-          "startLine": 5,
-          "endLine": 14
+          "key": "omem:integrations/traex/hooks.example.json",
+          "startLine": 1,
+          "endLine": 7
         },
-        "quote": "- Use Vue 3 + TypeScript for UI. Read `.agents/skills/omem-design/SKILL.md` and root `design.md` before UI work; reuse `packages/ui`. `docs/design.md` is system architecture, not the visual spec.\n- Manage runtime and application dependencies with osdk, following `.agents/skills/osdk-guide/SKILL.md`. Actual upstream is "
+        "quote": "{\n  \"description\": \"omem opt-in capture; merge after reviewing fields and capture scope\",\n  \"version\": \"1\",\n  \"hooks\": {\n    \"UserPromptSubmit\": [{\"hooks\":[{\"type\":\"command\",\"command\":\"node /ABSOLUTE/PATH/omem/dist/apps/server/src/hook-forward.js\",\"timeout\":\"5s\",\"async\":true}]}],\n    \"PostToolUse\": [{\"hooks\":[{\"type\":\""
       },
       {
         "key": "c9",
-        "label": "模型、发布与解析边界",
-        "reason": "支持显式模型触发、ACP 参数校验、运行数据与发布资产分离，以及跨文件和跨修订身份能力的当前限制。",
+        "label": "单用户部署与租户边界",
+        "reason": "支持当前 SQLite 与共享令牌实现明确为单用户服务，且不能把共享令牌视为团队租户权限系统。",
         "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:AGENTS.md",
-          "startLine": 23,
-          "endLine": 26
-        },
-        "quote": "- **实际模型配置**：review 默认读取 `config/review-code-model.json`，`REVIEW_CODE_MODEL_CONFIG` 可覆盖，不读个人 Agent profile。启动只恢复知识，不自动调用模型；显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模型成果。\n- **数据与发布边界**：数据库、临时工作目录和构建暂存写 `.repo-review/runtime/`（gitignored）。明确的知识生成/保存操作可"
-      },
-      {
-        "key": "c10",
-        "label": "尚未交付的知识能力",
-        "reason": "直接支持跨文件精确类型解析、embedding 检索和所有来源自动重核验尚未完成。",
-        "relation": "tracks",
         "target": {
           "kind": "material",
           "key": "omem:README.md",
-          "startLine": 52,
-          "endLine": 52
+          "startLine": 146,
+          "endLine": 146
         },
-        "quote": "跨文件调用的精确类型解析、embedding 检索和所有来源的自动重核验尚未完成；不会把这些能力写成已交付。流程、分项提交与验证记录见 [通用知识流程](docs/implementation/knowledge-pipeline.md)，早期问题见 [复审记录](docs/implementation/code-wiki-review-2026-09-29.md)。"
-      },
-      {
-        "key": "c11",
-        "label": "单用户与租户隔离边界",
-        "reason": "直接支持当前 SQLite/shared-token 实现是单用户模型且不存在租户强制隔离，并为附近的团队扩展限制提供依据。",
-        "relation": "supports",
-        "target": {
-          "kind": "material",
-          "key": "omem:AGENTS.md",
-          "startLine": 8,
-          "endLine": 8
-        },
-        "quote": "- Personal-first, server or local. Preserve team scope in architecture; current SQLite/shared-token implementation is explicitly single-user. Do not pretend tenant enforcement exists."
+        "quote": "单用户部署默认仅监听 loopback。公网/局域网监听需设置 `OMEM_HOST` 和强 `OMEM_TOKEN`，所有 `/api/*` 都校验 Bearer；浏览器令牌仅放 sessionStorage。部署到服务器建议用 TLS 反向代理/SSH 隧道。当前不是多租户服务，不把一个 shared token 当团队权限系统。"
       }
     ],
     "questions": [
       {
-        "question": "项目层各项维护约束中，哪些已经由代码或自动检查强制执行，哪些仍依赖人工流程？",
-        "why": "材料规定了模型校验、发布边界、共享 Trail、验证和提交要求，但未给出每项约束对应的实现位置及最新合规结果。",
-        "nextStep": "将模型配置加载、DTO 展示、Trail 行为、发布目录和验证任务逐项对照当前代码、测试及最近一次检查记录，形成可追溯矩阵。",
+        "question": "当前环境中的 TraeX ACP 是否已成功接受仓库配置里的模型、推理强度与令牌预算？",
+        "why": "静态配置能够确定期望值，但本批材料没有提供最近一次能力发现、ACP 握手或知识生成 trace，不能据此确认实际调用成功。",
+        "nextStep": "检查最近一次真实知识生成的能力校验和运行 trace，记录最终模型、effort、预算、退出状态及失败原因。",
         "blocking": false,
         "citationKeys": [
           "c4",
-          "c5",
-          "c8",
-          "c9"
+          "c5"
         ]
       },
       {
-        "question": "下一阶段应优先补齐跨文件调用解析、embedding 检索，还是所有来源的自动重核验？",
-        "why": "三项能力均明确尚未完成，但现有材料没有给出业务优先级、资源预算和验收顺序；不同选择会改变下一垂直切片的依赖与测试范围。",
-        "nextStep": "根据近期检索质量、代码阅读深度和证据更新需求确定优先级，再为首选能力定义最小端到端切片及行为验收。",
-        "blocking": false,
+        "question": "目标服务器应使用哪些项目目录、数据目录、配置文件和 osdk 可执行路径？",
+        "why": "环境变量与 systemd 文件仍使用绝对路径占位符，缺少具体部署环境信息时无法形成可直接启用的服务。",
+        "nextStep": "由部署者确认四项实际路径及密钥保存位置，替换模板后验证启动、重启、日志、健康状态和非回环鉴权。",
+        "blocking": true,
         "citationKeys": [
-          "c7",
-          "c10"
+          "c6",
+          "c7"
         ]
       },
       {
-        "question": "未来部署是否需要从当前单用户边界扩展到团队或多租户权限隔离？",
-        "why": "当前 SQLite/shared-token 实现明确没有租户强制隔离；目标使用人数和共享范围会直接影响身份、授权、数据迁移及审计设计。",
-        "nextStep": "确认目标使用人数、共享方式和隔离要求；个人部署可维持现状，团队场景则应先设计身份与租户边界，不能把 shared token 当作团队权限系统。",
+        "question": "TraeX Hook 实际允许捕获哪些事件字段，敏感信息如何脱敏和保留？",
+        "why": "示例只列出事件和转发命令，并明确要求先审阅捕获范围，没有给出字段白名单、脱敏规则或保留期限。",
+        "nextStep": "审查三个事件的真实载荷，由用户确定最小捕获范围，再替换转发脚本路径并进行端到端验证。",
         "blocking": false,
         "citationKeys": [
-          "c11"
+          "c8"
+        ]
+      },
+      {
+        "question": "当前环境中的 TraeX ACP 是否已成功接受仓库配置里的模型与推理强度，并完成一次采用所列预算的真实知识生成？",
+        "why": "静态配置和 README 能支持期望的模型、effort 与宿主预算，但本批材料没有提供最近一次能力发现、ACP 握手或生成 trace，不能据此确认实际调用成功。",
+        "nextStep": "检查最近一次真实知识生成的能力校验与运行 trace，记录最终模型、effort、预算、退出状态及失败原因。",
+        "blocking": false,
+        "citationKeys": [
+          "c4",
+          "c5"
         ]
       }
     ]
@@ -205,27 +192,27 @@
     {
       "kind": "material",
       "key": "omem:AGENTS.md",
-      "digest": "d4f72638286fc89318f409eefe2ff84e4774205f99acf4eeee6067b60c6565a4"
+      "digest": "49aa263bb8ec8696624ab5aa8517acb497c9f14a37b7624a1bd0bf7bb9891da7"
     },
     {
       "kind": "material",
       "key": "omem:README.md",
-      "digest": "78dca587dc82b998a52eee9dee4abee4b04608e50df2564bda82ab28ca8231b4"
+      "digest": "99072ccdaf5e50d51aafcdb71ee970c1ee9ae4b42a95b49e587d173a3665f0c4"
     },
     {
       "kind": "material",
       "key": "omem:config/omem.example.json",
-      "digest": "ecba4320f4a1389feece681ad38d82f3eee9ffc22291b9e23f6cafeaea5e523f"
+      "digest": "f03a576e24e30589fc3ed538495d2d073ede3f42ec4101b8a702fd7c44578968"
     },
     {
       "kind": "material",
       "key": "omem:config/review-code-model.example.json",
-      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
     },
     {
       "kind": "material",
       "key": "omem:config/review-code-model.json",
-      "digest": "52910cd6554f46548c6d77ddfecf10c28790dec7a970f595aa85037baddab324"
+      "digest": "16c2a46a5a522e06af932f3ca4732f30f61e13008677acec48ff2939b5be0c75"
     },
     {
       "kind": "material",
@@ -244,104 +231,104 @@
     },
     {
       "kind": "material",
+      "key": "omem:docs/design.md",
+      "digest": "8eee556ec7e9fa045f0149fda05d0898cfe4fd22f6b92a5126d975e9c3c6ff68"
+    },
+    {
+      "kind": "material",
       "key": "omem:integrations/traex/hooks.example.json",
       "digest": "0ce9740fd7d84a9b15fbd12ca8bb9d0490f943747b987ea9d4c4246fe5e61279"
     },
     {
       "kind": "material",
       "key": "omem:osdk.lock",
-      "digest": "8ea83c4ae93ba830a0045e8b54a64455979ac30a10af73730b5546d379eb90e9"
+      "digest": "3b996afe644e4747b01ebb5fd839f55d779ea3fa8df6e12852cf4275b84ff81d"
     },
     {
       "kind": "material",
       "key": "omem:osdk.toml",
-      "digest": "f2f80953f5e21a98762274f91832d3384390ba80aaa52869785489a1f8c94d74"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/implementation/knowledge-pipeline.md",
-      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
+      "digest": "0156f8f7820a6ffbe23c4871d7352aa3a2939f8141d324798ce4117fb49c864d"
     },
     {
       "kind": "material",
       "key": "omem:package.json",
-      "digest": "6d4b9075ac687e5b6fdd63098d88fbe3855ab556cc0186f6101af47db1f38f0f"
+      "digest": "f25341153b8ee54afd77fce483778d13b0b3c4bdc733853e4bfe41e62af2bc99"
     },
     {
       "kind": "article",
       "key": "omem:AGENTS.md",
-      "digest": "e7a464404acc1389133908551684f26326ec332b4a1521e514d4853d61482588"
+      "digest": "65d1d8128e0e3ecebac2aa15d71ed1be63c76eab8d9e2376e7ff69e170ba656b"
     },
     {
       "kind": "article",
       "key": "omem:README.md",
-      "digest": "f8a72c66102921110b264b1f0fc7144576359d1bc74a09326aa509cf7545d7ec"
+      "digest": "dbba2597429916e6229b785719553814fc46dd5cfa4de796220875ec5fa95266"
     },
     {
       "kind": "article",
       "key": "omem:config/omem.example.json",
-      "digest": "d6f4c152e4328672d1420771398ec9444b085f077a065d476996f1927ef74548"
+      "digest": "c5011e09ddc593ae0b9acae8c554d34cd280dd6407b5bc1a03de700769df2db3"
     },
     {
       "kind": "article",
       "key": "omem:config/review-code-model.example.json",
-      "digest": "7eae303e89a075266489bedd49de19f5e53ced5a39146c7e8caab109b998cae0"
+      "digest": "06f4b2735e1db3cff7c6237ccf86f4ae4f2d12a1ca103fd82f17f197845ff6d6"
     },
     {
       "kind": "article",
       "key": "omem:config/review-code-model.json",
-      "digest": "695bed7c56f7d83cc12320d31fc11717a5858ff52e20dbf673a8548542ea6bab"
+      "digest": "ea30e92415b043df6ba4db0efc0f6e1a99036392b09ccff29ec0b84bd409f2da"
     },
     {
       "kind": "article",
       "key": "omem:deploy/omem.env.example",
-      "digest": "892c659f3bba13a20fef08e7e38fc11bdec2bcb52bb373dcc186b2c2ccb6422d"
+      "digest": "b9db3fa6d801a939839d893617f3c5381f3e84ac2b7d2ad64c9163ac499078d5"
     },
     {
       "kind": "article",
       "key": "omem:deploy/omem.service.example",
-      "digest": "51f28d02bb0ab0bbde19faec8184d01518bae1aabdb5768424c1285a9579307e"
+      "digest": "8e9acca1d740bff6e270efc02073429438295a3847a48a9d1b5c0b57bfb63adf"
     },
     {
       "kind": "article",
       "key": "omem:design.md",
-      "digest": "b95261ad0e3ffc78e4f7d758e01a26b0c86274fb849aafbf4d4de6b2102c4d07"
+      "digest": "e476bf5128241038d4995c71d3ac844aacc449c7e62b2c02d9bcae980ecc61ac"
     },
     {
       "kind": "article",
       "key": "omem:integrations/traex/hooks.example.json",
-      "digest": "8cf0782a05073a04b40e2b86fb1bd0d6aacedf8dd21b6108d34a57ad66827311"
+      "digest": "e9c4de8436b0f93f86fdc838c87541cd106ed691f7f653607a43751ac7664164"
     },
     {
       "kind": "article",
       "key": "omem:osdk.lock",
-      "digest": "b7b5833a1f046ba5cbc1165e3dbde7dadfa5ddba07645f6c1abe71d955960398"
+      "digest": "22004cba2cca8b68b56c8abed13a9e924f34934dcce419ec5f098347e9914587"
     },
     {
       "kind": "article",
       "key": "omem:osdk.toml",
-      "digest": "3e07fee6151d757826696096e4be87fe38910fc474026f24bea96d05c40d095a"
+      "digest": "6052eabc58e44d811d03a96cf4296b68beb79ce768f1768f3b171cb9e3198dcc"
     },
     {
       "kind": "article",
       "key": "omem:package.json",
-      "digest": "7db24ff332e9a0d09df55ce863a18f34f4224557ce07e4cd689766cbb978a0ec"
+      "digest": "11292f96a2d4039b47689ab0d675364029cf254ce49684e818bef38ab7398392"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-09-29T20:10:51.080Z",
+    "at": "2026-10-01T07:52:44.635Z",
     "trace": {
-      "runId": "62aa43d9-ee5a-4e6f-957a-bb5510b00d76",
+      "runId": "a4c6155f-d160-4f2f-bb3e-12bd7423687e",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "b8dd024d5c4c6a750701e8948b9e46d5d5383d8d89609fc9e17ac196ce204334",
-      "promptHash": "426be82e4f58adf1511dd78257fe227ad83be56e0da6a60d97edf93d62009df3",
-      "contextHash": "c28109484cee4d850713e6c7272548b433f07bff6b80d878edbc55e008cba156",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "019849bbdc2f5dc429b05c9d2ebdd92c9f26c98f26f2ecaa60f2f86427635b05",
+      "contextHash": "838cf181707cc9faf86313338c8c02ca04155a0c9edf67bde86f39e95d587631",
       "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "19f9ea67a20f48141a0a6ac0bbc8e6152bc42cd017dc42ac5bb65dcc83a8078f",
+      "fingerprint": "b7b330d9105450a4607ddd71c66afdf7f3040a8cdb38420b1c5734f9e6f835bd",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -354,12 +341,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eec9-feba-7362-bfbb-855ed32ac8af",
-        "01a0eeca-4f2c-78f3-95ae-0ca5767e0e13"
+        "01a0f673-43b6-7431-8958-c1f4d142eb63"
       ],
       "usage": {
-        "used": 57864,
-        "size": 760000,
+        "used": 70486,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -367,29 +353,29 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 110799,
-          "utf8Bytes": 150906,
-          "estimatedTokens": 50302,
-          "budgetedTokens": 62878,
+          "chars": 112936,
+          "utf8Bytes": 177855,
+          "estimatedTokens": 59285,
+          "budgetedTokens": 74107,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
-      "repairAttempts": 1
+      "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T20:11:00.077Z",
+    "at": "2026-10-01T07:53:07.240Z",
     "trace": {
-      "runId": "cba32117-4409-4a49-b478-76eb2b05ee69",
+      "runId": "e6751114-be41-484f-bd9d-0ad19af164f1",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "1a237ce28a9e93f96ad531330769f43ea89e09265a03314ab5aab5e10944d1d4",
-      "promptHash": "ebc21df106a14638530822b2e632a9313537a2500ec6f265af60971114f8903f",
-      "contextHash": "a0e6905e3bc48fc56a094e9de982d696d9e84697867c57ca486630c6e4bc500e",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "fe9e37fbaf2eab3d15c9981481b87bd4d3214e7f1e4f3cbba3b0d504965d0382",
+      "contextHash": "95ca037169c5106ce4a689e23d392da4665459c00c290ff17c345ca3fde8f66c",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "78ee0c4caaffb109d92efbca70ab9726ead7a3bc20f7a8c0c01be38d33fbc67e",
+      "fingerprint": "7c7ac5ed79bfa68efc6362ac903fb484c1edd1281588b87babdbad680e09cb5f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -402,11 +388,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eeca-9f12-7ad0-b879-359cb85094c8"
+        "01a0f673-a869-7a51-90db-a54b211b7ed9"
       ],
       "usage": {
-        "used": 55497,
-        "size": 760000,
+        "used": 68027,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -414,10 +400,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 108854,
-          "utf8Bytes": 148323,
-          "estimatedTokens": 49441,
-          "budgetedTokens": 61802,
+          "chars": 109606,
+          "utf8Bytes": 172317,
+          "estimatedTokens": 57439,
+          "budgetedTokens": 71799,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

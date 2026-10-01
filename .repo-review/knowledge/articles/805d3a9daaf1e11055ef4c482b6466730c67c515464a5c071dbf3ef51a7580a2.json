@@ -2,85 +2,193 @@
   "version": 1,
   "document": {
     "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-    "title": "OmMarkdown：安全的 Markdown 与内联证据引用渲染",
-    "summary": "该组件把 Markdown、代码高亮和证据引用转换为经过清洗的 HTML，并将引用、站内链接和外部链接分流为不同交互；它同时处理异步竞态、失败回退和不可用引用。",
+    "title": "安全的 Markdown、证据引用与流程图阅读器",
+    "summary": "该组件把知识正文转换为经过净化的可交互 HTML，统一处理可选的证据引用、代码高亮、Mermaid 流程图和链接分流，并在渲染失败时展示原文。递增代次避免旧异步结果覆盖新正文，但异步期间清空正文可能使加载提示无法结束。",
     "category": "implementation",
     "sections": [
       {
-        "key": "purpose-flow",
-        "title": "作用与核心流程",
-        "body": "组件解决“富文本可读性”与“不可信 HTML 安全性”并存的问题。`source` 或引用表变化后异步加载 Markdown 解析器和清洗器，将 `[[引用键]]` 替换为带人类标签的链接或不可用提示，再调用共享代码高亮器处理代码块。最终 HTML 只允许有限标签、属性和 URI 协议，并仅由最新一轮渲染写入视图，避免快速切换材料时旧结果覆盖新结果。[[c1]]\n\n渲染成功后使用事件委托区分三类点击：证据引用发出 `cite`，HTTP、邮件和电话链接在新窗口打开并补充隔离属性，其余相对路径发出 `navigate-internal`，因此路由和证据抽屉仍由父组件控制。[[c2]]"
+        "key": "purpose",
+        "title": "面向证据阅读的正文展示",
+        "body": "组件接收 Markdown 正文和可选引用清单，对外发出“打开引用”与“内部导航”事件，适合作为知识文章或证据阅读器的正文层；引用最终如何打开、内部路径如何解释，仍由上层决定。参考 [[c1]]\n\n提供引用清单时，正文中的 `[[引用键]]` 会转换为人类可读的标签：有效引用成为专用链接，不可操作引用显示原因，清单中找不到的键显示“引用不可用”。未提供引用清单时，标记保持原样，不会被误报为失效证据。参考 [[c2]]"
       },
       {
-        "key": "boundaries",
-        "title": "边界与退化行为",
-        "body": "空正文直接清空结果；依赖加载、解析、高亮或清洗任一步失败时，组件不继续展示残留 HTML，而是显示原始 Markdown。未知引用不会变成可点击目标；已知但不可操作的引用会显示原因。[[c3]]\n\n该组件依赖 `highlightCode` 的语言映射与转义策略；未知语言只转义代码，已知语言才动态加载语法包。这里没有材料证明外部链接是否应在点击前就带 `target`，也没有提供测试文件，因而异步竞态、清洗规则及键盘激活引用的覆盖情况无法确认。[[c4]]"
+        "key": "pipeline",
+        "title": "从 Markdown 到安全 HTML",
+        "body": "渲染分为引用替换、Markdown 解析、代码处理、HTML 净化、引用整理和流程图渲染。普通代码块调用共享高亮器，Mermaid 块先暂存；净化阶段仅允许指定标签、`href`、`class`、`title` 属性，以及外部协议、绝对路径或相对路径形式的 URI，同时禁用数据属性。参考 [[c3]]\n\n共享高亮器按语言别名加载 TypeScript、JavaScript、XML、CSS、Markdown、JSON、INI 与 Bash；Vue、HTML 映射到 XML，未知语言则只转义代码，不尝试高亮。参考 [[c4]]\n\n独立出现的引用会移到所在段落末尾组成“参考”区域，语句内部引用保留原位。Mermaid 采用严格安全级别，生成的 SVG 还会再次净化；渲染失败时保留原始图表描述。只有当前代次仍为最新时，异步结果才会写入页面。参考 [[c5]]"
+      },
+      {
+        "key": "interaction-limits",
+        "title": "链接分流、失败降级与已知限制",
+        "body": "点击引用专用链接时，组件发出引用事件；HTTP、邮件和电话链接在新窗口打开并设置隔离属性；其他链接阻止默认跳转后交给上层作为内部路径处理。参考 [[c6]]\n\nMarkdown 解析或依赖加载失败时，界面显示失败提示和原始正文；正常渲染期间显示加载提示，成功后展示净化后的 HTML。参考 [[c7]] 图片标签不在允许列表内，因此普通 Markdown 图片会被移除；数据属性也被禁止，链接地址仅保留明确允许的协议和路径形式。参考 [[c8]]\n\n空正文会立即清空已有 HTML，但该分支没有把 `loading` 复位。若前一次异步渲染尚未结束，此次更新会推进代次，使旧请求的收尾逻辑也不能复位加载状态，界面可能持续停留在“正在渲染 Markdown…”提示。参考 [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "Markdown 编译、引用替换与清洗流程",
-        "reason": "支持组件如何异步解析引用、突出显示代码、限制 HTML 能力并用 generation 防止旧结果覆盖的说明。",
+        "label": "正文输入与导航事件",
+        "reason": "支持组件接收正文和引用清单，并把引用打开及内部导航交给上层处理的说明。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-          "startLine": 25,
-          "endLine": 64
+          "startLine": 7,
+          "endLine": 16
         },
-        "quote": "async function render() {\n  const current = ++generation;\n  failed.value = false;\n  if (!props.source) {\n    html.value = \"\";\n    return;\n  }\n  loading.value = true;\n  try {\n    const [{ marked }, DOMPurify] = await Promise.all([\n      import(\"marked\"),\n      import(\"dompurify\"),\n    ]);\n    const source = props.source"
+        "quote": "const props = defineProps<{ source: string; citations?: { key: string; label: string; reason: string; relation?: string; actionable: boolean; unavailableReason?: string | null }[] }>();\nconst emit = defineEmits<{\n  \"navigate-internal\": [path: string];\n  cite: [key: string];\n}>();\n\nconst html = ref(\"\");\nconst loading = "
       },
       {
         "key": "c2",
-        "label": "链接点击分流逻辑",
-        "reason": "支持引用、外部链接和内部路径分别交给不同交互出口的论断。",
-        "relation": "explains",
+        "label": "引用标记转换条件",
+        "reason": "支持仅在提供引用清单时转换引用标记，以及有效、不可用和缺失引用的不同展示行为。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-          "startLine": 69,
-          "endLine": 81
+          "startLine": 38,
+          "endLine": 44
+        },
+        "quote": "    const source = props.source.replace(/\\[\\[([a-zA-Z][a-zA-Z0-9_-]*)\\]\\]/g, (_token, key: string) => {\n      if (!props.citations) return _token;\n      const c = props.citations?.find(c => c.key === key);\n      if (!c) return '<span class=\"om-inline-citation unavailable\">引用不可用</span>';\n      const label = escape(c.lab"
+      },
+      {
+        "key": "c3",
+        "label": "解析与净化规则",
+        "reason": "支持代码块处理、Mermaid 暂存，以及允许标签、属性和 URI 范围的渲染流水线说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 45,
+          "endLine": 65
+        },
+        "quote": "    const diagrams: string[] = [];\n    const raw = await marked.parse(source, {\n      async: true,\n      walkTokens: async (token) => {\n        if (token.type !== \"code\") return;\n        if (token.lang === \"mermaid\") {\n          const index = diagrams.push(token.text) - 1;\n          Object.assign(token, { type: \"html\","
+      },
+      {
+        "key": "c4",
+        "label": "共享代码高亮规则",
+        "reason": "支持语言别名、按需加载、XML 相关依赖和未知语言转义降级的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/highlight.ts",
+          "startLine": 3,
+          "endLine": 32
+        },
+        "quote": "// Literal imports let Vite resolve every chunk in development and production.\nconst loaders = {\n  typescript: () => import(\"highlight.js/lib/languages/typescript\"),\n  javascript: () => import(\"highlight.js/lib/languages/javascript\"),\n  xml: () => import(\"highlight.js/lib/languages/xml\"),\n  css: () => import(\"highlight"
+      },
+      {
+        "key": "c5",
+        "label": "引用整理与流程图渲染",
+        "reason": "支持段末引用整理、Mermaid 严格渲染与二次净化、失败保留原文及最新代次提交控制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 66,
+          "endLine": 104
+        },
+        "quote": "    const doc = new DOMParser().parseFromString(clean, \"text/html\");\n    // Move standalone evidence after sentence boundaries to the paragraph end.\n    // Authored phrases such as “详解见 [[c]]” remain grammatical inline links.\n    const groups = new Map<Element, Element[]>();\n    const standalone = new Set<Element>();\n "
+      },
+      {
+        "key": "c6",
+        "label": "链接点击分流",
+        "reason": "支持引用链接、外部链接和内部路径采用不同点击行为的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 110,
+          "endLine": 122
         },
         "quote": "function onClick(ev: MouseEvent) {\n  const a = (ev.target as HTMLElement).closest(\"a\");\n  if (!a) return;\n  const href = a.getAttribute(\"href\") || \"\";\n  if (href.startsWith(\"/__omem/citation/\")) { ev.preventDefault(); emit(\"cite\", decodeURIComponent(href.slice(\"/__omem/citation/\".length))); return; }\n  if (/^(https?:|m"
       },
       {
-        "key": "c3",
-        "label": "加载状态与失败回退界面",
-        "reason": "支持渲染失败后显示原文以及正常结果通过 v-html 呈现的说明。",
-        "relation": "supports",
+        "key": "c7",
+        "label": "渲染状态与失败界面",
+        "reason": "支持加载提示、失败后展示原始 Markdown 和成功后展示 HTML 的界面行为。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-          "startLine": 84,
-          "endLine": 92
+          "startLine": 125,
+          "endLine": 133
         },
         "quote": "<template>\n  <div class=\"om-markdown\">\n    <small v-if=\"loading\">正在渲染 Markdown…</small>\n    <div v-else-if=\"failed\" class=\"md-failed\">\n      Markdown 渲染失败，以下为原文：\n      <pre>{{ source }}</pre>\n    </div>\n    <div v-else class=\"md-body\" v-html=\"html\" @click=\"onClick\"></div>\n  </div>"
       },
       {
-        "key": "c4",
-        "label": "共享代码高亮实现",
-        "reason": "说明 OmMarkdown 所调用高亮模块对已知语言动态加载、对未知语言安全转义的边界。",
-        "relation": "depends_on",
+        "key": "c8",
+        "label": "HTML 与地址允许范围",
+        "reason": "支持图片标签未获允许、数据属性被禁用，以及 URI 仅接受指定协议和路径形式的安全边界。",
+        "relation": "supports",
         "target": {
           "kind": "material",
-          "key": "omem:packages/ui/src/highlight.ts",
-          "startLine": 21,
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 19,
+          "endLine": 23
+        },
+        "quote": "const ALLOWED_TAGS = new Set([\n  \"p\", \"ul\", \"ol\", \"li\", \"h1\", \"h2\", \"h3\", \"h4\", \"h5\", \"h6\",\n  \"code\", \"pre\", \"a\", \"strong\", \"em\", \"blockquote\", \"table\", \"thead\",\n  \"tbody\", \"tr\", \"th\", \"td\", \"hr\", \"br\", \"del\", \"span\",\n]);"
+      },
+      {
+        "key": "c9",
+        "label": "空正文加载状态",
+        "reason": "支持空正文清空 HTML 后提前返回且未复位 loading，以及异步收尾受渲染代次限制这一已知竞态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/ui/src/components/OmMarkdown.vue",
+          "startLine": 25,
           "endLine": 32
         },
-        "quote": "export function escapeCode(text: string): string {\n  return text.replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");\n}\n\nexport async function highlightCode(code: string, language: string): Promise<string> {\n  const lang = aliases[language.toLowerCase()];\n  if (!lang) return escapeCode(code);\n  const req"
+        "quote": "async function render() {\n  const current = ++generation;\n  failed.value = false;\n  if (!props.source) {\n    html.value = \"\";\n    return;\n  }\n  loading.value = true;"
       }
     ],
     "questions": [
       {
-        "question": "异步竞态、恶意 Markdown、未知引用和内部链接分流是否已有组件测试或浏览器测试？",
-        "why": "材料展示了这些关键分支，但未提供任何测试文件，无法确认安全规则和快速更新行为已被回归保护。",
-        "nextStep": "检查对应测试套件，并至少加入快速连续更新 source、危险协议、引用不可用和点击分流的行为断言。",
+        "question": "是否应在空正文分支显式复位加载状态？",
+        "why": "当前实现可能在异步渲染期间清空正文后持续显示加载提示，这是直接影响阅读界面的状态竞态。",
+        "nextStep": "在空正文分支设置 `loading.value = false`，并增加可控异步延迟下“有正文后立即清空”的组件测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c9"
+        ]
+      },
+      {
+        "question": "快速连续修改正文或引用时，最新结果、失败状态和加载状态是否已有自动化回归测试？",
+        "why": "实现以递增代次阻止旧结果提交，但提供的材料没有测试文件，无法确认成功、失败与清空交错时的所有状态分支。",
+        "nextStep": "检查组件测试，并补充连续更新、旧请求后完成和旧请求后失败的行为断言。",
         "blocking": false,
         "citationKeys": [
           "c1",
-          "c2",
-          "c3"
+          "c5",
+          "c9"
+        ]
+      },
+      {
+        "question": "内部链接允许的具体路径形式是否由上层阅读器统一约束？",
+        "why": "组件把所有非外部协议且非引用专用的链接交给上层，材料未展示接收方对锚点、相对路径和异常路径的处理。",
+        "nextStep": "检查 `navigate-internal` 的调用方及路由测试，确认支持范围和不可导航时的提示。",
+        "blocking": false,
+        "citationKeys": [
+          "c6"
+        ]
+      },
+      {
+        "question": "允许列表排除 Markdown 图片是否为明确的产品策略？",
+        "why": "图片标签不在允许列表中，普通 Markdown 图片会被净化移除；材料无法判断这是安全取舍还是尚未实现。",
+        "nextStep": "结合图像阅读需求确认策略；如需支持，应限定来源协议并补充恶意地址与加载失败测试。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c8"
+        ]
+      },
+      {
+        "question": "普通 Markdown 图片被净化移除是否为明确的产品策略？",
+        "why": "允许标签不包含图片，文章已准确说明当前行为，但现有材料无法判断这是长期安全策略还是尚未实现的能力。",
+        "nextStep": "结合知识阅读器的图像展示需求确认产品策略；若需要支持图片，再明确允许的来源协议与安全边界。",
+        "blocking": false,
+        "citationKeys": [
+          "c3",
+          "c8"
         ]
       }
     ]
@@ -89,85 +197,45 @@
     {
       "kind": "material",
       "key": "omem:packages/ui/src/components/OmMarkdown.vue",
-      "digest": "2d9c6ee526fede6520c249b067bd8ad625ba6c10c20045c90527cee244746737"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmPanel.vue",
-      "digest": "e47e885a03fec111091423bb6843500998290c6348f1e74f07d42057c94ac19f"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmRelationGraph.vue",
-      "digest": "11f9c9265a42aff10a6b8141badaf42ebf236ec5f4d27e5e053e9fad2dbbfc28"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmShell.vue",
-      "digest": "c6aa34c3bcb705efdf702d6ba12aadd58399bb958bca318cfe84de75ef1b6761"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmStatusLine.vue",
-      "digest": "4d7648170f6d6519f6afe6dec5a3e3bc4ae4394a6983bba9f036a7dbae2f621c"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmTrailDrawer.vue",
-      "digest": "631e40f6a4b7622abdf9520edc4a231e7c0c22e7026115415f7b0c15b4915b2c"
+      "digest": "cbc9b5b6b661160c32aa5b304ae14d52314942dd739a3050c78bfa87d9cae7bf"
     },
     {
       "kind": "material",
       "key": "omem:packages/ui/src/highlight.ts",
       "digest": "a6c33a82031eeeed5624628df0df9bfb9127a81b4004b792875c43b645bf3e64"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmIcon.vue",
-      "digest": "9f476f345ce9f26f4a76c78d6b3f607f955661b416a836e144a892019ce2e9a4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/components/OmButton.vue",
-      "digest": "f8313d4df263222f4fe6c8dd61d39bed4f7f73f5fef65414e04e082b109040cd"
-    },
-    {
-      "kind": "material",
-      "key": "omem:packages/ui/src/trail.ts",
-      "digest": "20f3effe9d193c9ad872e7520e57edd40b6f37ccf5b1b1a5e5f6254c07d9d253"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "medium",
-    "at": "2026-09-29T19:26:55.969Z",
+    "effort": "high",
+    "at": "2026-10-01T08:30:52.343Z",
     "trace": {
-      "runId": "f0a2b923-fe64-4f46-a375-0c579799d0c5",
-      "roleId": "code-analyst",
+      "runId": "85e3ea26-bff4-4484-85be-abe6813d3f58",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "7386472576a0ff1b404ca7466f6bebbbcc1ac7989fef6253efd538d08c788620",
-      "promptHash": "efd3d1ff303420d53087badd2f464bf3aa8af87cfd54c30ed58bf02f24e5b8d2",
-      "contextHash": "7757dfeebda306a48c1622bc127ad757355a97b2adcedddbc067054f1a5e145a",
-      "skillHash": "5ea7111bc33dccf90ce406f4182f4e6e8d05f4dd34849c099c7f4f3e9808f936",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "c7db9721437ebd62b24133aa8efa1fec8d2a15a4d736cc429b33d97b0de88175",
+      "contextHash": "a2d1d8baf5ffa6a2cbfa979f11947eea1493ca093aca7df3b43a7cf9482a665c",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a55b61e8eae72a7843c32cbe28f2f184d2d2358e900c2034101338d8e48a648c",
+      "fingerprint": "02504e005dd9a4a68a7ca566e967d483055eaaa3a04e81719e05ca723ef617b4",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
-          "name": "omem-code-analyst",
+          "name": "omem-knowledge-refresher",
           "version": "1",
           "mode": "inline"
         }
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea1-9483-76f2-b00c-f39d11d9b12f"
+        "01a0f696-2ab4-7100-ab7f-c1d4f9db8500"
       ],
       "usage": {
-        "used": 34567,
-        "size": 760000,
+        "used": 29859,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -175,10 +243,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 51248,
-          "utf8Bytes": 53271,
-          "estimatedTokens": 17757,
-          "budgetedTokens": 22197,
+          "chars": 27321,
+          "utf8Bytes": 34543,
+          "estimatedTokens": 11515,
+          "budgetedTokens": 14394,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },
@@ -187,20 +255,20 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-09-29T19:27:20.220Z",
+    "at": "2026-10-01T08:31:11.970Z",
     "trace": {
-      "runId": "6633981a-2593-4850-bc67-603ea31b227a",
+      "runId": "bd0a25ec-eeaa-4646-a876-015ab938741d",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "d5d5e418fc8dc50e5007658c81ad25c071ae41679485e019973f6a711a19d3ea",
-      "promptHash": "0c4ed297379bac8b72fd264a7dfc8b50245b813d8943880f8519c6281265990e",
-      "contextHash": "afef2621b0f791d244cfd43f8ab6aa704d541379ab6ae6a336528fdb10b4d141",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "71301c64c30f3df586da9e43b12eb551da69ae36f7cf6d5bc79cbc33c5e898f5",
+      "contextHash": "dfb35e86f8edb1864a3d996130bbee0f9a0f6720fd854cddea840ff666ec73ea",
       "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
       "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "eabebc66d564f07fe2b3e0059765d8da27b4fac7ead33b03960fea24900c6e4d",
+      "fingerprint": "631d2f1b94297a0c77077138445dadbf853a5418227e872527d9dfb277c9231f",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "medium",
+      "effectiveEffort": "high",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
@@ -210,11 +278,11 @@
       ],
       "allowedTools": [],
       "sessionIds": [
-        "01a0eea2-69a8-73c1-8014-650a56b0797e"
+        "01a0f696-8f85-73c1-a660-d7fdfba9a9d9"
       ],
       "usage": {
-        "used": 37890,
-        "size": 760000,
+        "used": 27452,
+        "size": 258400,
         "cost": null,
         "budget": {
           "maxInputTokens": 192000,
@@ -222,10 +290,10 @@
           "contextReserveTokens": 16000
         },
         "estimate": {
-          "chars": 66460,
-          "utf8Bytes": 76474,
-          "estimatedTokens": 25492,
-          "budgetedTokens": 31865,
+          "chars": 24321,
+          "utf8Bytes": 29741,
+          "estimatedTokens": 9914,
+          "budgetedTokens": 12393,
           "estimator": "utf8-bytes/3 + 25% headroom"
         }
       },

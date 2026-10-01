@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:docs/implementation/unified-knowledge-reading.md",
+    "title": "统一知识阅读与证据追溯",
+    "summary": "统一应用以主题文章为主要入口，把解释性知识、原始材料、固定引用和个人事项纳入同一阅读流程；同时保留历史证据、独立复核与待更新状态，避免把旧调研或失效引用误当成当前实现。",
+    "category": "implementation",
+    "sections": [
+      {
+        "key": "reading_experience",
+        "title": "从主题文章逐层追溯证据",
+        "body": "统一知识阅读解决的是在日常助理、知识文章、原始材料和事项之间反复切换的问题。用户启动同一个应用后，先从可展开的知识目录进入完整文章，再通过页内导航定位章节；需要核实论断时，才沿句段末的引用进入代码或原始文档。旧文章若受来源变化影响，会明确标记为待更新。参考 [[c1]]\n\n阅读层次刻意区分“解释”与“证据”：代码引用先展示固定行范围，并允许向上下文展开；原始 Markdown 则连续呈现标题、段落、表格和代码围栏。流程图采用严格模式渲染并过滤 SVG，失败时保留文字说明，避免可视化失败破坏正文可读性。参考 [[c2]]"
+      },
+      {
+        "key": "data_and_generation",
+        "title": "统一存储与可追溯生成",
+        "body": "仓库材料并未进入独立的评审产品，而是接入个人库既有的 Store、Source、Revision、Fragment 与 KnowledgeRepository。捕获过程保持幂等，历史原文可从运行目录补入；已保存文章的固定引用继续指向当时版本，不能因源码更新而漂移，也不能为缺失证据补造内容。参考 [[c3]]\n\n启动阶段只恢复已有知识，不调用生成式模型；真实生成结果和独立复核结果仍保存于仓库知识目录。刷新会产出可独立阅读的当前文章并保留修稿历史，复核负责拦截事实错误、证据不支持和关键条件缺失。新写作规范只适用于重新分析并复核的文章，历史调研中的旧状态不得直接宣称为现行能力。参考 [[c4]]"
+      },
+      {
+        "key": "validation_and_limits",
+        "title": "验收范围与剩余边界",
+        "body": "文档记录的验收覆盖依赖锁定、全量检查、浏览器工作流以及多视口阅读体验，包含 Markdown 表格、Mermaid、原文过滤、统一目录、导航一致性和代码上下文展开。参考 [[c5]]\n\n浏览器实测还发现并修复了弹窗样式作用域问题，且截图必须在完整文章加载后取得，不能用空态页面冒充通过。这些实施记录属于文档所述时点的事实；最终状态仍以自动验证报告和知识覆盖记录为准。未通过的文章继续保留旧版并标记待更新，未覆盖材料不能计为完成，因此历史检查退出 0 不能单独证明当前知识仍是最新状态。参考 [[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "主题文章阅读流程",
+        "reason": "支持统一入口、文章优先、页内导航、证据下钻及旧文章待更新状态的说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/unified-knowledge-reading.md",
+          "startLine": 3,
+          "endLine": 7
+        },
+        "quote": "## 现在如何使用\n\n启动 `osdk run dev`，打开终端给出的地址。日常助理、知识库、原始材料和事项都在一个应用中。本仓库作为个人库中的真实材料使用；不再切换到独立的 review 产品。\n\n知识库默认从主题文章开始。目录可逐层展开功能与相关知识，中央保留完整叙述，页内导航定位章节。文章与原始代码是两个阅读层次：先读解释，需要依据时再点引用。来源变化的旧文章明确显示待更新。"
+      },
+      {
+        "key": "c2",
+        "label": "证据展示与图表降级",
+        "reason": "说明代码固定行展示、原始文档连续渲染以及 Mermaid 的安全渲染和失败降级方式。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/unified-knowledge-reading.md",
+          "startLine": 9,
+          "endLine": 14
+        },
+        "quote": "- 独立证据链接放段末，小字号、浅色；作者写的“参考……”链接保持自然衔接。\n- 引用代码默认只显示固定行范围，上下分别展开 20 行。\n- 原始文档完整渲染标题、段落、表格和代码围栏；选择原文提问收在文档的辅助操作中。\n- 菜单与面包屑使用同一份定义。飞书未启用是该页的连接状态，切换页面后不残留。\n\n交互参考：[DeepWiki 的 VS Code 知识目录与文章](https://deepwiki.com/microsoft/vscode)。流程图使用 [Mermaid](https://mermaid.js.org/config/usage.html)，以严格模式渲染并过滤 SVG，失败保留文字描述。"
+      },
+      {
+        "key": "c3",
+        "label": "个人库数据复用",
+        "reason": "支持仓库材料复用统一数据模型、幂等捕获、历史原文补入和固定引用不漂移等实现陈述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/unified-knowledge-reading.md",
+          "startLine": 16,
+          "endLine": 20
+        },
+        "quote": "## 数据与生成\n\n`dev` 明确传入当前仓库根目录，依旧使用个人 Store、Source/Revision/Fragment 与 KnowledgeRepository。幂等捕获保留个人材料，按摘要恢复文章。历史原文从已有 `.repo-review/runtime` 补入，已保存文章的固定引用不随最新源码漂移。不存在的历史证据不能补造。\n\n`.repo-review/knowledge` 继续保存真实生成与独立复核结果，生成和验收仍用隔离的运行目录。启动不调用生成式模型。写作角色要求中文功能标题、场景说明、必要的表格与流程图、句段末引用；只有重新分析并复核的文章会采用新规则。"
+      },
+      {
+        "key": "c4",
+        "label": "刷新与独立复核规则",
+        "reason": "支持文章刷新、修稿历史、复核拒绝条件以及历史状态不得冒充当前能力的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/unified-knowledge-reading.md",
+          "startLine": 20,
+          "endLine": 24
+        },
+        "quote": "`.repo-review/knowledge` 继续保存真实生成与独立复核结果，生成和验收仍用隔离的运行目录。启动不调用生成式模型。写作角色要求中文功能标题、场景说明、必要的表格与流程图、句段末引用；只有重新分析并复核的文章会采用新规则。\n\n刷新角色输出可独立阅读的当前文章，修稿过程保留在历史中。复核角色仍拒绝事实错误、引用不支持与关键条件缺失，但不要求概念说明穷举全部代码分支，也不往疑问里批量添加测试清单。历史调研中的当时状态不能冒充现行能力。\n\n恢复已有目录时先导入新版本的子章节，再导入引用它们的父章节；即使旧版父子都已在个人库中，一次启动也能更新。固定旧引用仍可阅读其历史版本。"
+      },
+      {
+        "key": "c5",
+        "label": "浏览器验收范围",
+        "reason": "支持依赖检查、全量检查、真实浏览器行为和多视口阅读覆盖已经执行的历史验收记录。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/unified-knowledge-reading.md",
+          "startLine": 26,
+          "endLine": 31
+        },
+        "quote": "## 验收记录\n\n- `osdk deps --frozen`：退出 0。新增 Mermaid 依赖后使用锁文件安装。\n- 首轮 `osdk run check`：退出 0，60 个测试文件、352 个测试，类型检查与构建通过；之后的父子章节更新补充行为断言和角色制品检查也已通过。最终全量结果以自动验证报告为准。\n- `osdk run browser`：退出 0，保留个人工作流验收并增加真实 Markdown 表格、Mermaid 和过滤后的原文渲染。\n- `OMEM_WEB_URL=http://127.0.0.1:65092 osdk exec -t bun -t node -- bun scripts/code-wiki-v"
+      },
+      {
+        "key": "c6",
+        "label": "实测修复与覆盖边界",
+        "reason": "直接支持弹窗样式作用域修复、有效截图条件、验证记录位置以及失败和未覆盖材料的处理边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/implementation/unified-knowledge-reading.md",
+          "startLine": 33,
+          "endLine": 33
+        },
+        "quote": "浏览器实测修复了一处弹窗 CSS 作用域错误；截图在完整文章加载后获取，不能用空态的 h2 冒充通过。真实 ACP 的受影响材料重生成、独立复核和上层章节重建记录在 `.repo-review/knowledge/coverage.json`，自动检查记录在 `verification.json`；历史检查报告保留在 `verification/history/`。未通过的文章保留旧版并标记待更新，未覆盖材料不算完成。"
+      }
+    ],
+    "questions": [
+      {
+        "question": "当前自动验证报告与知识覆盖记录是否仍对应最新源码和材料版本？",
+        "why": "材料明确把最终全量状态交给 verification.json 与 coverage.json；本文记录的历史退出码不能单独确认当前工作区仍处于相同状态。",
+        "nextStep": "读取当前 verification.json 与 coverage.json，核对源码、材料和索引指纹以及 reviewed、stale、pending、failed 状态。",
+        "blocking": false,
+        "citationKeys": [
+          "c5",
+          "c6"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:docs/implementation/unified-knowledge-reading.md",
+      "digest": "838ee8b9c6fc0247ee566b30f45bb9efc696f0abb6acd8f4f06efed11ebb1fa5"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-01T07:21:56.091Z",
+    "trace": {
+      "runId": "e7870248-0135-4659-b9bb-9414934314fe",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
+      "promptHash": "8c38ba643814db30df9312dc84675f45a7bc8983e578b28e85b46d0b6c02f9e2",
+      "contextHash": "cff85f7bf7b3227925c723b4f4c6162258f0fa8352afbd3d31803f116f7a0d89",
+      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "620bc4584967d154a95a3155daabfefcf95216207c81a66608366d17cf335b45",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f657-240f-7c82-ad6d-f8851af63c94"
+      ],
+      "usage": {
+        "used": 27359,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 14122,
+          "utf8Bytes": 24402,
+          "estimatedTokens": 8134,
+          "budgetedTokens": 10168,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-01T07:22:20.300Z",
+    "trace": {
+      "runId": "a4f26a42-bc15-4fea-bde7-1fcb9b10fbe7",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "bad23a3da2f909f6c421bb7d0e35075b43ec5b3c7a8f926720cdde7ee6951f17",
+      "promptHash": "e9335638a77c747a5072e6c777a460f62e816452a0e206b0b29243c4e5a7daba",
+      "contextHash": "41e649590c585e361ed1a8ed5bc0b9064d2023e27c48dc4043d53a45f5dabea4",
+      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
+      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "fingerprint": "acd76d7141927229d3eb099cd6933be76976d56441e80acaa1785155a21ee09f",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "inline"
+        }
+      ],
+      "allowedTools": [],
+      "sessionIds": [
+        "01a0f657-8a06-7680-a261-421f9f0a4353"
+      ],
+      "usage": {
+        "used": 23759,
+        "size": 258400,
+        "cost": null,
+        "budget": {
+          "maxInputTokens": 192000,
+          "maxOutputTokens": 24000,
+          "contextReserveTokens": 16000
+        },
+        "estimate": {
+          "chars": 10704,
+          "utf8Bytes": 19118,
+          "estimatedTokens": 6373,
+          "budgetedTokens": 7967,
+          "estimator": "utf8-bytes/3 + 25% headroom"
+        }
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
