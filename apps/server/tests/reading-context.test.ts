@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.js";
@@ -7,6 +7,28 @@ import { materialFromRevision } from "../src/knowledge/repository.js";
 import { materialSections } from "../src/knowledge/structure.js";
 import { evidenceNeighbors } from "../src/retrieval/context.js";
 import { buildApp } from "../src/app.js";
+import { developmentRetrieval } from "../src/knowledge/development.js";
+import { KeywordRetrieval } from "../src/retrieval/keyword.js";
+import { ensureReviewMetaTable } from "../src/review/store.js";
+
+it("keeps removed repository copies out of dev searches while preserving history and personal material", () => {
+  const root = mkdtempSync(join(tmpdir(), "dev-search-")), store = new Store(join(root,"data"));
+  try {
+    mkdirSync(join(root,"config"));
+    writeFileSync(join(root,"config/review-search.json"), JSON.stringify({rules:[{prefix:"docs/archive/",weight:0.45}]}));
+    ensureReviewMetaTable(store);
+    const add = (id:string, source:"file"|"manual"="file") => store.capture({source,externalId:id,title:id,parts:[{type:"text",text:"A delivery worker retries pending messages."}],context:{}});
+    const old = add("omem:docs/old.md"), archive=add("omem:docs/archive/old.md"), current=add("omem:docs/current.md"), personal=add("own-note","manual");
+    store.db.prepare("INSERT INTO review_source_meta(source_id,removed,updated_at) VALUES(?,1,?)").run(old.revision.sourceId,new Date().toISOString());
+    const retrieval=developmentRetrieval(store,root,new KeywordRetrieval(store.db));
+    const hits=retrieval.searchSources({text:"delivery worker",limit:10,diversify:false});
+    expect(hits.map(h=>h.sourceRevisionId)).not.toContain(old.revision.id);
+    expect(hits.findIndex(h=>h.sourceRevisionId===current.revision.id)).toBeLessThan(hits.findIndex(h=>h.sourceRevisionId===archive.revision.id));
+    expect(hits.some(h=>h.sourceRevisionId===personal.revision.id)).toBe(true);
+    expect(retrieval.readEvidence(old.revision.id)).toBeTruthy();
+    expect(retrieval.searchSources({text:"delivery",visible:()=>false})).toEqual([]);
+  } finally { store.close(); rmSync(root,{recursive:true,force:true}); }
+});
 
 it("retrieves a Chinese question through the global API without requiring a literal substring", async () => {
   const dir = mkdtempSync(join(tmpdir(), "reading-search-"));

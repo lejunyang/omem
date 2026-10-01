@@ -9,6 +9,7 @@ export function loadReviewSearchPolicy(root: string) {
   const {rules}=schema.parse(existsSync(path)?JSON.parse(readFileSync(path,"utf8")):{});
   rules.sort((a,b)=>b.prefix.length-a.prefix.length);
   return (path: string, query: string, category?: string) => {
+    if (/测试|\btests?\b/i.test(query) && /(?:^|\/)tests?\//.test(path)) return 1;
     // An explicit category, path or historical question overrides defaults.
     if (category || /历史|调研|原型|旧版|早期|\bhistory\b|\bresearch\b|\bprototype\b/i.test(query) || query.toLowerCase().includes(path.toLowerCase())) return 1;
     return rules.find(rule=>path.startsWith(rule.prefix))?.weight ?? 1;
