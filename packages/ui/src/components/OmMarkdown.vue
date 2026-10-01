@@ -71,9 +71,10 @@ async function render() {
     for (const link of doc.querySelectorAll(".om-inline-citation")) {
       let previous = link.previousSibling;
       while (previous?.nodeType === Node.TEXT_NODE && !previous.textContent?.trim()) previous = previous.previousSibling;
+      if (/^[,，;；·、]\s*$/.test(previous?.textContent?.trim() ?? "") && previous?.previousSibling instanceof Element && previous.previousSibling.matches(".om-inline-citation")) previous = previous.previousSibling;
       const independent = previous instanceof Element && previous.matches(".om-inline-citation")
         ? standalone.has(previous)
-        : !previous || /[。！？.!?]\s*$/.test(previous.textContent ?? "");
+        : !previous || /[。！？.!?,，;；]\s*$/.test(previous.textContent ?? "");
       if (!independent) continue;
       standalone.add(link);
       const parent = link.closest("p,li,td,blockquote");
