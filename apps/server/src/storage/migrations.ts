@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 19;
+export const SUPPORTED_SCHEMA_VERSION = 20;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -977,6 +977,15 @@ const taskFollowUpStatements = [
 ] as const;
 
 // Retrieval projections are replaceable indexes. Immutable revisions remain the authority.
+const materialDescriptionStatements = [
+  `CREATE TABLE material_descriptions(
+    revision_id TEXT NOT NULL REFERENCES revisions(id), version INTEGER NOT NULL,
+    author TEXT NOT NULL CHECK(author IN ('model','user')), description TEXT NOT NULL,
+    trace TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(revision_id,version)
+  )`,
+  "ALTER TABLE retrieval_units ADD COLUMN description_json TEXT",
+];
+
 const retrievalUnitStatements = [
   `CREATE TABLE retrieval_units(
     id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL,
@@ -1093,6 +1102,7 @@ const migrations: readonly Migration[] = [
   { version: 17, name: "fragment-semantic-index", statements: embeddingStatements, checksum: checksum(embeddingStatements) },
   { version: 18, name: "task-follow-up-lifecycle", statements: taskFollowUpStatements, checksum: checksum(taskFollowUpStatements) },
   { version: 19, name: "contextual-retrieval-units", statements: retrievalUnitStatements, checksum: checksum(retrievalUnitStatements) },
+  { version: 20, name: "material-descriptions", statements: materialDescriptionStatements, checksum: checksum(materialDescriptionStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

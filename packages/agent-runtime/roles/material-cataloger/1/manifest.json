@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "role_id": "material-cataloger",
+  "role_version": "1",
+  "profile_ref": "traex",
+  "prompt_templates": [
+    "prompt.md"
+  ],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-material-cataloger",
+      "version": "1",
+      "load_mode": "native",
+      "artifact_digest": "bae66438f54fcf881ad97ce31449bcc2bcf8904ce9efcdca62d5c7c88723b113"
+    }
+  ],
+  "output_schema": "MaterialDescriptions.v1",
+  "tool_policy": {
+    "mode": "none",
+    "allowed_tools": []
+  },
+  "session_policy": {
+    "reuse": "never",
+    "inherit_user_skills": false,
+    "inherit_user_mcp": false
+  },
+  "budget": {
+    "max_context_tokens": 96000,
+    "max_output_tokens": 24000,
+    "max_repair_attempts": 2
+  }
+}

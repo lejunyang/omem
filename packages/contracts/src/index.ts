@@ -1,5 +1,6 @@
 import { taskFollowUpSchema, taskStatusSchema } from "./task-flow.js";
 export * from "./task-flow.js";
+export * from "./material-description.js";
 import { z } from "zod";
 // Per-part provenance lets an aggregated batch keep which speaker / event / time a
 // fragment came from, instead of flattening multi-speaker turns into actor=null.
@@ -673,6 +674,7 @@ export type JobState = z.infer<typeof jobStateSchema>;
 export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 
 export const roleIdSchema = z.enum([
+  "material-cataloger",
   "daily-assistant",
   "extractor",
   "verifier",
@@ -719,6 +721,7 @@ export const roleManifestSchema = z
       )
       .max(10),
     output_schema: z.enum([
+      "MaterialDescriptions.v1",
       "ProposalBatch.v1",
       "AssessmentBatch.v1",
       "PlanProposal.v1",

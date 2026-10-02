@@ -67,6 +67,7 @@ export function researchSnapshot(input: {
       all("sources").filter((r) => sourceIds.has(String(r.id))),
     );
     copy("revisions", revisions);
+    copy("material_descriptions", all("material_descriptions").filter(r => revisionIds.has(String(r.revision_id))));
     copy(
       "fragments",
       all("fragments").filter((r) => fragmentIds.has(String(r.id))),

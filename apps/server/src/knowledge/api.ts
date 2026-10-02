@@ -23,6 +23,23 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   const retrieval: RetrievalPort = input.retrieval ?? new KeywordRetrieval(input.store.db);
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
+  let descriptionRun: {state: string; revisionIds: string[]; error?: string} | null = null;
+  app.get(prefix + "/description-run", async () => descriptionRun);
+  app.post<{ Body: {revisionIds: string[]} }>(prefix + "/describe", async (req, reply) => {
+    if (!input.profile) return reply.code(503).send({error:"请先在能力与连接中配置 Agent"});
+    if (running) return reply.code(409).send({error:"材料整理正在进行，请稍后再试"});
+    const ids = req.body?.revisionIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 30 || ids.some(id => typeof id !== "string")) return reply.code(400).send({error:"请选择 1–30 份材料"});
+    const selected = repository.materials().filter(m => ids.includes(m.revisionId));
+    if (selected.length !== new Set(ids).size) return reply.code(409).send({error:"材料已更新，请重新选择当前版本"});
+    if (selected.some(m => input.store.descriptions.get(m.revisionId)?.author === "user")) return reply.code(409).send({error:"这些材料有人工修正，已保留；原文换版后可重新分析"});
+    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), {...input.profile, id:"traex"}, {retrievalConfig:input.retrievalConfig, retryTag:new Date().toISOString()});
+    const pipeline = running;
+    descriptionRun = {state:"running", revisionIds:ids};
+    void pipeline.describeMaterials(selected).then(() => { descriptionRun = {state:"done",revisionIds:ids}; })
+      .catch(error => { descriptionRun = {state:"failed",revisionIds:ids,error:String(error)}; }).finally(() => {running = null;});
+    return reply.code(202).send(descriptionRun);
+  });
   const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,
     topicPath: a.document.topicPath ?? [], generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length, reading: a.reading });
   const resolveCitation = (a: KnowledgeArticle, key: string) => {
@@ -82,6 +99,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const filename = m.path ?? (["file", "git"].includes(m.namespace) ? m.title : "");
     const codeLanguage = filename && !/\.(md|markdown)$/i.test(filename) ? filename.split(".").at(-1)?.toLowerCase() ?? "text" : null;
     return { key: m.key, title: m.title, path: m.path, codeLanguage, digest: m.digest, revisionId: m.revisionId, text: m.text, lineCount: m.lineCount, current: entry.current,
+      materialDescription: input.store.descriptions.get(m.revisionId),
       images: m.images.map(i => ({ ...i, url: prefix + "/assets/" + i.assetId })), knowledge: knowledge ? meta(knowledge) : null, links, documentLinks };
   });
   app.get<{ Params: { id: string } }>(prefix + "/assets/:id", async (req, reply) => {
