@@ -1,5 +1,9 @@
 import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
-import { taskFollowUpSchema, type TaskFollowUp, type TaskAction } from "../../../../packages/contracts/src/task-flow.js";
+import {
+  taskFollowUpSchema,
+  type TaskFollowUp,
+  type TaskAction,
+} from "../../../../packages/contracts/src/task-flow.js";
 import { validateFollowUp } from "../tasks/follow-up.js";
 import { randomUUID } from "node:crypto";
 import type { Store } from "../store.js";
@@ -10,7 +14,14 @@ import {
   type ConversationTurn,
   type Visibility,
 } from "../conversation/router.js";
-import type { RetrievalPort, SourceCandidate } from "../retrieval/port.js";
+import type {
+  RetrievalPort,
+  SourceCandidate,
+  RetrievalPurpose,
+  RetrievalHit,
+} from "../retrieval/port.js";
+import { materialFromRevision } from "../knowledge/repository.js";
+import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
 
 export type AssistantEvidence = {
@@ -21,6 +32,10 @@ export type AssistantEvidence = {
   sectionTitle?: string;
   text: string;
 };
+export type AssistantBackground = Pick<
+  RetrievalHit,
+  "kind" | "title" | "text" | "headingPath"
+> & { citationIds: string[] };
 
 export type AssistantCreateTaskCall = {
   tool: "create_task";
@@ -43,12 +58,29 @@ export type AssistantUpdateTaskCall = {
   dueExpression?: string | null;
   followUp?: TaskFollowUp | null;
 };
-export type AssistantTask = { id: string; title: string; detail: string; status: string; version: number; dueAt: string | null; followUp?: TaskFollowUp | null; nextStep?: string };
+export type AssistantTask = {
+  id: string;
+  title: string;
+  detail: string;
+  status: string;
+  version: number;
+  dueAt: string | null;
+  followUp?: TaskFollowUp | null;
+  nextStep?: string;
+};
 
-export function validatedDueAt(dueAt: string | null | undefined, expression: string | null | undefined, userText: string) {
+export function validatedDueAt(
+  dueAt: string | null | undefined,
+  expression: string | null | undefined,
+  userText: string,
+) {
   if (!dueAt) return null;
-  if (!expression?.trim() || !userText.includes(expression.trim()) ||
-    !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(dueAt) || !Number.isFinite(Date.parse(dueAt)))
+  if (
+    !expression?.trim() ||
+    !userText.includes(expression.trim()) ||
+    !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(dueAt) ||
+    !Number.isFinite(Date.parse(dueAt))
+  )
     throw Error("INVALID_TASK_TIME: 需要原消息中的时间表达及含时区的明确时间");
   return new Date(dueAt).toISOString();
 }
@@ -63,6 +95,7 @@ export type AssistantModelReply = {
   toolCalls?: (AssistantCreateTaskCall | AssistantUpdateTaskCall)[];
   /** At most one additional retrieval round; these are search terms, never facts. */
   searchQueries?: string[];
+  searchRequests?: { text: string; purpose: RetrievalPurpose }[];
 };
 
 /**
@@ -98,6 +131,8 @@ export type AssistantModelPort = {
     userText: string;
     priorTurns: { ordinal: number; userText: string; result: string }[];
     evidence: AssistantEvidence[];
+    /** Derived explanations and applied state, separate from original evidence. */
+    background?: AssistantBackground[];
     visibility: Visibility;
     /** Owner-scoped corrections/constraints the model must respect. */
     trustedContext?: string;
@@ -312,12 +347,16 @@ export class AssistantRuntime {
    * to determine if a tool was already committed. This survives the window where
    * the receipt was written but turn.toolActions was not yet persisted.
    */
-  private hasCommittedReceipt(turn: { inputMessageRefs: { transportEventId?: string | null } }): boolean {
+  private hasCommittedReceipt(turn: {
+    inputMessageRefs: { transportEventId?: string | null };
+  }): boolean {
     const eventId = turn.inputMessageRefs.transportEventId;
     if (!eventId) return false;
     // proposal_id in governCreateTask is `assistant-task:${eventId}:${digest}`.
     const row = this.store.db
-      .prepare("SELECT count(*) AS n FROM application_receipts WHERE proposal_id LIKE ?")
+      .prepare(
+        "SELECT count(*) AS n FROM application_receipts WHERE proposal_id LIKE ?",
+      )
       .get(`assistant-task:${eventId}:%`) as { n: number };
     return row.n > 0;
   }
@@ -329,7 +368,10 @@ export class AssistantRuntime {
     const turn = this.router.turn(turnId);
     if (!turn) return { ok: false, reason: "not_found" };
     if (turn.inputMessageRefs.status !== "pending")
-      return { ok: false, reason: `not_pending:${turn.inputMessageRefs.status}` };
+      return {
+        ok: false,
+        reason: `not_pending:${turn.inputMessageRefs.status}`,
+      };
     const conversation = this.router.get(turn.conversationId);
     if (!conversation) return { ok: false, reason: "conversation_not_found" };
     if (this.hasCommittedReceipt(turn)) {
@@ -366,8 +408,7 @@ export class AssistantRuntime {
             t.inputMessageRefs.status === "running" ||
             t.inputMessageRefs.status === "pending",
         );
-      for (const t of unfinished)
-        this.router.cancelTurn(t.id, "shutdown");
+      for (const t of unfinished) this.router.cancelTurn(t.id, "shutdown");
     }
     this.inflight.clear();
   }
@@ -379,9 +420,15 @@ export class AssistantRuntime {
    * executeTurn. ModelUnavailableError during recovery leaves the turn pending
    * so it can be retried later.
    */
-  async recoverUnfinishedTurns(): Promise<{ recovered: number; retried: number; alreadyCommitted: number }> {
+  async recoverUnfinishedTurns(): Promise<{
+    recovered: number;
+    retried: number;
+    alreadyCommitted: number;
+  }> {
     const unfinished = this.router.unfinishedTurns();
-    let recovered = 0, retried = 0, alreadyCommitted = 0;
+    let recovered = 0,
+      retried = 0,
+      alreadyCommitted = 0;
     for (const turn of unfinished) {
       const conversation = this.router.get(turn.conversationId);
       if (!conversation) continue;
@@ -425,7 +472,10 @@ export class AssistantRuntime {
     if (running) this.router.cancelTurn(running.id, "superseded");
   }
 
-  private deriveSignal(external: AbortSignal | undefined, controller: AbortController) {
+  private deriveSignal(
+    external: AbortSignal | undefined,
+    controller: AbortController,
+  ) {
     const merged = new AbortController();
     // FENCE: if either upstream signal is ALREADY aborted at creation time,
     // abort immediately rather than only listening for future events.
@@ -438,10 +488,7 @@ export class AssistantRuntime {
     };
     external?.addEventListener("abort", finish, { once: true });
     controller.signal.addEventListener("abort", finish, { once: true });
-    const timer = setTimeout(
-      finish,
-      this.options.turnTimeoutMs ?? 60_000,
-    );
+    const timer = setTimeout(finish, this.options.turnTimeoutMs ?? 60_000);
     timer.unref?.();
     merged.signal.addEventListener("abort", () => clearTimeout(timer), {
       once: true,
@@ -468,8 +515,7 @@ export class AssistantRuntime {
       const priorTurns = this.router
         .turns(input.conversation.id)
         .filter(
-          (t) =>
-            t.id !== input.turnId && t.inputMessageRefs.status === "done",
+          (t) => t.id !== input.turnId && t.inputMessageRefs.status === "done",
         )
         .slice(-maxPrior)
         .map((t) => ({
@@ -481,16 +527,27 @@ export class AssistantRuntime {
       // 1. Read-only retrieval via RetrievalPort, then visibility filtering.
       //    G08: also merge prior turn working context so the model sees fragments
       //    from the previous consultation turn (anaphora like "按这个").
-      const retrieved = await this.retrieveEvidence(input.userText, input.conversation);
+      const context = await this.retrieveContext(
+        input.userText,
+        input.conversation,
+      );
+      const retrieved = context.evidence;
+      let background = context.background;
       const priorCtx = this.priorWorkingContext(input.conversation);
-      let evidence = [...retrieved, ...priorCtx.filter(
-        (p) => !retrieved.some((r) => r.fragmentId === p.fragmentId),
-      )];
+      let evidence = [
+        ...retrieved,
+        ...priorCtx.filter(
+          (p) => !retrieved.some((r) => r.fragmentId === p.fragmentId),
+        ),
+      ];
 
       // 1b. Read owner-scoped corrections from FeedbackService (H-G16).
       const trustedContext = this.readScopedCorrections(input.conversation);
       const tasks = this.visibleTasks(input.conversation);
-      const clock = { now: new Date().toISOString(), timezone: this.options.timezone ?? "Asia/Shanghai" };
+      const clock = {
+        now: new Date().toISOString(),
+        timezone: this.options.timezone ?? "Asia/Shanghai",
+      };
       const searchQueries: string[] = [];
 
       // 2. Ask the model. Unavailable / cancelled / error never yields a fake answer.
@@ -504,22 +561,61 @@ export class AssistantRuntime {
             userText: input.userText,
             priorTurns,
             evidence,
+            background,
             visibility: input.conversation.visibility,
-            trustedContext, tasks, clock, retrievalRound: 0,
+            trustedContext,
+            tasks,
+            clock,
+            retrievalRound: 0,
             signal: input.signal,
           }),
           input.signal,
           this.options.turnTimeoutMs ?? 60_000,
         );
-        searchQueries.push(...[...new Set(reply.searchQueries ?? [])].map(q => q.trim().slice(0, 160)).filter(Boolean).slice(0, 3));
-        if (searchQueries.length) {
+        const requests = [
+          ...(reply.searchRequests ?? []),
+          ...(reply.searchQueries ?? []).map((text) => ({
+            text,
+            purpose: "balanced" as const,
+          })),
+        ]
+          .map((r) => ({ ...r, text: r.text.trim().slice(0, 160) }))
+          .filter((r) => r.text)
+          .slice(0, 3);
+        searchQueries.push(...requests.map((r) => r.text));
+        if (requests.length) {
           this.assertNotCancelled(input.signal);
-          const extra = (await Promise.all(searchQueries.map(q => this.retrieveEvidence(q, input.conversation)))).flat();
-          evidence = [...new Map([...extra, ...evidence].map(e => [e.fragmentId,e])).values()].slice(0, 24);
-          reply = await this.withTimeout(this.model.generate({
-            userText: input.userText, priorTurns, evidence, visibility: input.conversation.visibility,
-            trustedContext, tasks, clock, retrievalRound: 1, signal: input.signal,
-          }), input.signal, this.options.turnTimeoutMs ?? 60_000);
+          const contexts = await Promise.all(
+            requests.map((q) =>
+              this.retrieveContext(q.text, input.conversation, q.purpose),
+            ),
+          );
+          const extra = contexts.flatMap((c) => c.evidence);
+          background = [
+            ...contexts.flatMap((c) => c.background),
+            ...background,
+          ].slice(0, 16);
+          evidence = [
+            ...new Map(
+              [...extra, ...evidence].map((e) => [e.fragmentId, e]),
+            ).values(),
+          ].slice(0, 24);
+          reply = await this.withTimeout(
+            this.model.generate({
+              userText: input.userText,
+              priorTurns,
+              evidence,
+              background,
+              visibility: input.conversation.visibility,
+              trustedContext,
+              tasks,
+              clock,
+              retrievalRound: 1,
+              signal: input.signal,
+            }),
+            input.signal,
+            this.options.turnTimeoutMs ?? 60_000,
+          );
         }
       } catch (error) {
         if (input.signal.aborted || error instanceof TurnCancelledError) {
@@ -529,7 +625,10 @@ export class AssistantRuntime {
         const unavailable = error instanceof ModelUnavailableError;
         if (unavailable) {
           // H-G20: model unavailable leaves the turn PENDING so it can be retried.
-          this.router.markPending(input.turnId, `model_unavailable: ${error.message}`);
+          this.router.markPending(
+            input.turnId,
+            `model_unavailable: ${error.message}`,
+          );
           return;
         }
         degraded = true;
@@ -549,7 +648,14 @@ export class AssistantRuntime {
       //    must never auto-create tasks even if the model emits one.
       const intent = detectTaskIntent(input.userText);
       const toolActions: Array<Record<string, unknown>> = searchQueries.length
-        ? [{ tool: "search", queries: searchQueries, evidenceCount: evidence.length }] : [];
+        ? [
+            {
+              tool: "search",
+              queries: searchQueries,
+              evidenceCount: evidence.length,
+            },
+          ]
+        : [];
       const createdTaskIds: string[] = [];
       let taskRejectedReason: string | null = null;
       if (!degraded) {
@@ -589,17 +695,44 @@ export class AssistantRuntime {
 
       // Only persisted receipts may claim an action was performed. Discard the
       // model's speculative success text whenever it requested a mutation.
-      const mutations = toolActions.filter(a => a.tool !== "search");
-      const finalAnswer = mutations.length ? mutations.map(action => {
-        if (action.rejected) return `${action.tool === "create_task" ? "未创建任务" : "未执行事项变更"}：${action.detail ?? action.reason}。`;
-        const task = this.store.tasks().find(t => t.id === action.taskId);
-        if (!task) return "事项变更尚未确认。";
-        const verb = action.tool === "create_task" ? "已创建任务" : ({ complete: "已完成", reopen: "已重新打开", reschedule: "已改期", wait: "已设为等待", snooze: "已暂缓提醒", cancel: "已取消" } as Record<string,string>)[String(action.action)] ?? "已更新";
-        const time = task.dueAt ? `；提醒时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）` : "";
-        const follow = task.followUp ? taskFollowUpSchema.parse(task.followUp) : null;
-        const check = follow?.next_check_at ? `；下次跟进：${new Intl.DateTimeFormat("zh-CN", { timeZone: follow.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(follow.next_check_at))}（${follow.timezone}）` : follow?.waiting_on ? "；尚未设置跟进时间" : "";
-        return `${verb}：${task.title}${["complete","cancel"].includes(String(action.action)) ? "" : time + (follow?.waiting_on ? `；等待：${follow.waiting_on}` : "") + check}。`;
-      }).join("\n") : reply.answer;
+      const mutations = toolActions.filter((a) => a.tool !== "search");
+      const finalAnswer = mutations.length
+        ? mutations
+            .map((action) => {
+              if (action.rejected)
+                return `${action.tool === "create_task" ? "未创建任务" : "未执行事项变更"}：${action.detail ?? action.reason}。`;
+              const task = this.store
+                .tasks()
+                .find((t) => t.id === action.taskId);
+              if (!task) return "事项变更尚未确认。";
+              const verb =
+                action.tool === "create_task"
+                  ? "已创建任务"
+                  : ((
+                      {
+                        complete: "已完成",
+                        reopen: "已重新打开",
+                        reschedule: "已改期",
+                        wait: "已设为等待",
+                        snooze: "已暂缓提醒",
+                        cancel: "已取消",
+                      } as Record<string, string>
+                    )[String(action.action)] ?? "已更新");
+              const time = task.dueAt
+                ? `；提醒时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）`
+                : "";
+              const follow = task.followUp
+                ? taskFollowUpSchema.parse(task.followUp)
+                : null;
+              const check = follow?.next_check_at
+                ? `；下次跟进：${new Intl.DateTimeFormat("zh-CN", { timeZone: follow.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(follow.next_check_at))}（${follow.timezone}）`
+                : follow?.waiting_on
+                  ? "；尚未设置跟进时间"
+                  : "";
+              return `${verb}：${task.title}${["complete", "cancel"].includes(String(action.action)) ? "" : time + (follow?.waiting_on ? `；等待：${follow.waiting_on}` : "") + check}。`;
+            })
+            .join("\n")
+        : reply.answer;
 
       // 4. Only allow citations the runtime actually supplied.
       const allowed = new Set(evidence.map((item) => item.fragmentId));
@@ -611,7 +744,10 @@ export class AssistantRuntime {
       );
 
       if (!input.conversation.currentGoal && priorTurns.length === 0)
-        this.router.setGoal(input.conversation.id, input.userText.slice(0, 200));
+        this.router.setGoal(
+          input.conversation.id,
+          input.userText.slice(0, 200),
+        );
 
       // FENCE: abort check right before final persistence.
       this.assertNotCancelled(input.signal);
@@ -647,7 +783,10 @@ export class AssistantRuntime {
     let rejectTimeout: ((e: Error) => void) | undefined;
     const timeout = new Promise<never>((_, reject) => {
       rejectTimeout = reject;
-      timer = setTimeout(() => reject(new TurnCancelledError("turn_timeout")), ms);
+      timer = setTimeout(
+        () => reject(new TurnCancelledError("turn_timeout")),
+        ms,
+      );
     });
     // External abort (user cancel, superseded turn, or deriveSignal timer):
     // reject immediately. Do NOT clear our timer — finally does that. If the
@@ -662,40 +801,126 @@ export class AssistantRuntime {
     }
   }
 
+  private async retrieveContext(
+    userText: string,
+    conversation: Conversation,
+    purpose: RetrievalPurpose = "balanced",
+  ) {
+    const retrieval = this.options.retrieval;
+    if (!retrieval?.search)
+      return {
+        evidence: await this.retrieveEvidence(userText, conversation),
+        background: [] as AssistantBackground[],
+      };
+    const visible = (id: string) => this.isVisible(conversation, id);
+    const hits = await retrieval.search({
+      text: userText,
+      limit: 16,
+      purpose,
+      visible,
+    });
+    const evidence = new Map<string, AssistantEvidence>(),
+      background: AssistantBackground[] = [];
+    for (const hit of hits) {
+      const citationIds: string[] = [];
+      for (const reference of hit.references) {
+        const material = materialFromRevision(this.store, reference.revisionId);
+        if (!material) continue;
+        const lines = material.text.split("\n");
+        const start = lines
+          .slice(0, reference.startLine - 1)
+          .reduce((n, l) => n + l.length + 1, 0);
+        const end =
+          start +
+          lines.slice(reference.startLine - 1, reference.endLine).join("\n")
+            .length;
+        for (const f of fragmentPositions(material)) {
+          if (!reference.fragmentIds.includes(f.id) || !visible(f.id)) continue;
+          const entry = this.enrichEvidence(f.id);
+          if (!entry) continue;
+          entry.text = material.text.slice(
+            Math.max(start, f.start),
+            Math.min(end, f.end),
+          );
+          if (!entry.text.trim()) continue;
+          entry.sectionTitle = evidenceSection(
+            this.store,
+            f.id,
+            visible,
+          )?.title;
+          const prior = evidence.get(f.id);
+          if (prior && !prior.text.includes(entry.text))
+            prior.text += "\n\n" + entry.text;
+          else if (!prior) evidence.set(f.id, entry);
+          citationIds.push(f.id);
+        }
+      }
+      if (hit.kind !== "source")
+        background.push({
+          kind: hit.kind,
+          title: hit.title,
+          text: hit.text.replace(
+            /\[\[([\w-]+)\]\]/g,
+            (_ref, key: string) =>
+              hit.citations?.find((c) => c.key === key)?.label ??
+              "（引用见文章）",
+          ),
+          headingPath: hit.headingPath,
+          citationIds,
+        });
+    }
+    return { evidence: [...evidence.values()].slice(0, 28), background };
+  }
+
   private async retrieveEvidence(
     userText: string,
     conversation: Conversation,
   ): Promise<AssistantEvidence[]> {
     // A: prefer the injected RetrievalPort (project-wide contract). Fall back
     // to store.search for legacy tests that don't wire a port.
-    let rows: Array<{ id: string; text: string; title: string; version?: number }> =
-      [];
+    let rows: Array<{
+      id: string;
+      text: string;
+      title: string;
+      version?: number;
+    }> = [];
     if (this.options.retrieval) {
-      const candidates: SourceCandidate[] =
-        await (this.options.retrieval.searchSourcesAsync?.bind(this.options.retrieval) ?? this.options.retrieval.searchSources.bind(this.options.retrieval))({
-          text: userText,
-          limit: 20,
-          visible: fragmentId => this.isVisible(conversation, fragmentId),
-        });
+      const candidates: SourceCandidate[] = await (
+        this.options.retrieval.searchSourcesAsync?.bind(
+          this.options.retrieval,
+        ) ?? this.options.retrieval.searchSources.bind(this.options.retrieval)
+      )({
+        text: userText,
+        limit: 20,
+        visible: (fragmentId) => this.isVisible(conversation, fragmentId),
+      });
       // Retain the actual semantic hit inside a long original fragment. The ACP
       // evidence budget is 2,000 characters; rereading only its prefix loses tails.
       const visible = (id: string) => this.isVisible(conversation, id);
       const evidence = new Map<string, AssistantEvidence>();
       for (const c of candidates) {
-        const hit = this.enrichEvidence(c.fragmentId, c.routes?.includes("semantic") ? c.snippet : undefined);
+        const hit = this.enrichEvidence(
+          c.fragmentId,
+          c.routes?.includes("semantic") ? c.snippet : undefined,
+        );
         if (hit && visible(hit.fragmentId)) {
-          hit.sectionTitle = evidenceSection(this.store, hit.fragmentId, visible)?.title;
+          hit.sectionTitle = evidenceSection(
+            this.store,
+            hit.fragmentId,
+            visible,
+          )?.title;
           evidence.set(hit.fragmentId, hit);
         }
       }
       // Preserve all ranked hits, then fill the remaining budget with original
       // heading / neighboring evidence. Every added fragment is visibility checked.
-      for (const c of candidates) for (const id of evidenceNeighbors(this.store, c.fragmentId, visible)) {
-        if (evidence.size >= 28) break;
-        if (evidence.has(id)) continue;
-        const neighbor = this.enrichEvidence(id);
-        if (neighbor) evidence.set(id, neighbor);
-      }
+      for (const c of candidates)
+        for (const id of evidenceNeighbors(this.store, c.fragmentId, visible)) {
+          if (evidence.size >= 28) break;
+          if (evidence.has(id)) continue;
+          const neighbor = this.enrichEvidence(id);
+          if (neighbor) evidence.set(id, neighbor);
+        }
       return [...evidence.values()];
     }
     // Legacy fallback (old tests without retrieval port).
@@ -709,35 +934,114 @@ export class AssistantRuntime {
   }
 
   private visibleTasks(conversation: Conversation): AssistantTask[] {
-    return this.store.tasks().filter(t => conversation.visibility === "private" ||
-      (typeof t.evidenceId === "string" && this.isVisible(conversation, t.evidenceId)))
-      .slice(0, 60).map(t => ({ id: String(t.id), title: String(t.title), detail: String(t.detail),
-        status: String(t.status), version: Number(t.version), dueAt: t.dueAt ? String(t.dueAt) : null, followUp: t.followUp as TaskFollowUp | null, nextStep: String(t.nextStep ?? "") }));
+    return this.store
+      .tasks()
+      .filter(
+        (t) =>
+          conversation.visibility === "private" ||
+          (typeof t.evidenceId === "string" &&
+            this.isVisible(conversation, t.evidenceId)),
+      )
+      .slice(0, 60)
+      .map((t) => ({
+        id: String(t.id),
+        title: String(t.title),
+        detail: String(t.detail),
+        status: String(t.status),
+        version: Number(t.version),
+        dueAt: t.dueAt ? String(t.dueAt) : null,
+        followUp: t.followUp as TaskFollowUp | null,
+        nextStep: String(t.nextStep ?? ""),
+      }));
   }
 
-  private governTaskUpdate(call: AssistantUpdateTaskCall,
-    input: { turnId: string; userText: string; conversation: Conversation }, tasks: AssistantTask[]): Record<string, unknown> {
-    const reject = (reason: string) => ({ tool: "update_task", rejected: true, reason });
-    const patterns = { complete: /完成|做完|办完|标.*完成|\bdone\b|\bcomplete\b/i,
-      reopen: /重新打开|还没完成|恢复.*待办|\breopen\b/i, reschedule: /改到|改为|改期|推迟|延后|提前|挪到|\breschedule\b/i,
-      wait: /等待|等.*回复|等.*确认|等.*结果|\bwait\b/i, snooze: /稍后|再提醒|再跟进|先不提醒|暂停提醒|晚点|\bsnooze\b/i, cancel: /取消|不用做|不做了|\bcancel\b/i };
-    if (!patterns[call.action].test(input.userText) || /怎么|如何|是否|吗[？?]?$/.test(input.userText)) return reject("没有明确的事项变更指令");
-    if (!tasks.some(t => t.id === call.taskId && t.version === call.expectedVersion)) return reject("事项不存在、不可见或已被修改，请重新确认");
+  private governTaskUpdate(
+    call: AssistantUpdateTaskCall,
+    input: { turnId: string; userText: string; conversation: Conversation },
+    tasks: AssistantTask[],
+  ): Record<string, unknown> {
+    const reject = (reason: string) => ({
+      tool: "update_task",
+      rejected: true,
+      reason,
+    });
+    const patterns = {
+      complete: /完成|做完|办完|标.*完成|\bdone\b|\bcomplete\b/i,
+      reopen: /重新打开|还没完成|恢复.*待办|\breopen\b/i,
+      reschedule: /改到|改为|改期|推迟|延后|提前|挪到|\breschedule\b/i,
+      wait: /等待|等.*回复|等.*确认|等.*结果|\bwait\b/i,
+      snooze: /稍后|再提醒|再跟进|先不提醒|暂停提醒|晚点|\bsnooze\b/i,
+      cancel: /取消|不用做|不做了|\bcancel\b/i,
+    };
+    if (
+      !patterns[call.action].test(input.userText) ||
+      /怎么|如何|是否|吗[？?]?$/.test(input.userText)
+    )
+      return reject("没有明确的事项变更指令");
+    if (
+      !tasks.some(
+        (t) => t.id === call.taskId && t.version === call.expectedVersion,
+      )
+    )
+      return reject("事项不存在、不可见或已被修改，请重新确认");
     if (!this.options.memory) return reject("事项服务不可用");
     try {
-      const followUp = call.followUp ? validateFollowUp({ ...call.followUp, timezone: this.options.timezone ?? "Asia/Shanghai" }, input.userText) : null;
-      const dueAt = call.action === "reschedule" ? validatedDueAt(call.dueAt, call.dueExpression, input.userText) : null;
-      if (call.action === "reschedule" && !dueAt) return reject("请给出明确的改期时间");
-      const revision = this.store.capture({ source: "manual", externalId: `turn:${input.turnId}`, title: "事项变更指令",
-        parts: [{ type: "text", text: input.userText }], context: { conversationId: input.conversation.chatId ?? input.conversation.id },
-        provenance: { collectorId: "assistant", actorId: this.options.ownerId ?? "owner", actorType: "owner", actorVerifiedBy: "runtime",
-          sourceUri: null, eventId: input.turnId, eventAt: new Date().toISOString(), timezone: this.options.timezone ?? "Asia/Shanghai",
-          quoted: false, forwarded: false, producerKind: "original" } }).revision;
-      const receipt = this.options.memory.commandTask({ taskId: call.taskId, expectedVersion: call.expectedVersion,
-        action: call.action, dueAt, dueExpression: call.dueExpression ?? null, followUp, requestId: input.turnId,
-        evidenceId: revision.fragments[0]!.id });
-      return { tool: "update_task", action: call.action, taskId: receipt.entityId, receiptId: receipt.id };
-    } catch (error) { return reject(error instanceof Error ? error.message : "事项变更失败"); }
+      const followUp = call.followUp
+        ? validateFollowUp(
+            {
+              ...call.followUp,
+              timezone: this.options.timezone ?? "Asia/Shanghai",
+            },
+            input.userText,
+          )
+        : null;
+      const dueAt =
+        call.action === "reschedule"
+          ? validatedDueAt(call.dueAt, call.dueExpression, input.userText)
+          : null;
+      if (call.action === "reschedule" && !dueAt)
+        return reject("请给出明确的改期时间");
+      const revision = this.store.capture({
+        source: "manual",
+        externalId: `turn:${input.turnId}`,
+        title: "事项变更指令",
+        parts: [{ type: "text", text: input.userText }],
+        context: {
+          conversationId: input.conversation.chatId ?? input.conversation.id,
+        },
+        provenance: {
+          collectorId: "assistant",
+          actorId: this.options.ownerId ?? "owner",
+          actorType: "owner",
+          actorVerifiedBy: "runtime",
+          sourceUri: null,
+          eventId: input.turnId,
+          eventAt: new Date().toISOString(),
+          timezone: this.options.timezone ?? "Asia/Shanghai",
+          quoted: false,
+          forwarded: false,
+          producerKind: "original",
+        },
+      }).revision;
+      const receipt = this.options.memory.commandTask({
+        taskId: call.taskId,
+        expectedVersion: call.expectedVersion,
+        action: call.action,
+        dueAt,
+        dueExpression: call.dueExpression ?? null,
+        followUp,
+        requestId: input.turnId,
+        evidenceId: revision.fragments[0]!.id,
+      });
+      return {
+        tool: "update_task",
+        action: call.action,
+        taskId: receipt.entityId,
+        receiptId: receipt.id,
+      };
+    } catch (error) {
+      return reject(error instanceof Error ? error.message : "事项变更失败");
+    }
   }
 
   private readScopedCorrections(conversation: Conversation): string {
@@ -773,7 +1077,10 @@ export class AssistantRuntime {
     for (let i = turns.length - 1; i >= 0; i--) {
       const t = turns[i]!;
       if (t.inputMessageRefs.status !== "done") continue;
-      const selected = t.selectedEvidence as Array<{ fragmentId: string; text?: string }>;
+      const selected = t.selectedEvidence as Array<{
+        fragmentId: string;
+        text?: string;
+      }>;
       if (!selected || !selected.length) continue;
       return selected
         .map((s) => this.enrichEvidence(s.fragmentId, s.text))
@@ -783,19 +1090,38 @@ export class AssistantRuntime {
     return [];
   }
 
-  private enrichEvidence(fragmentId: string, focus?: string): AssistantEvidence | null {
+  private enrichEvidence(
+    fragmentId: string,
+    focus?: string,
+  ): AssistantEvidence | null {
     const record = this.store.evidence(fragmentId);
     if (!record) return null;
-    const head = this.store.db.prepare("SELECT head FROM sources WHERE id=?").get(record.revision.sourceId) as { head: string } | undefined;
-    if (head?.head !== record.revision.id || record.revision.provenance?.producerKind === "derived" || (record.revision.context as Record<string, unknown> | undefined)?.derived === true) return null;
+    const head = this.store.db
+      .prepare("SELECT head FROM sources WHERE id=?")
+      .get(record.revision.sourceId) as { head: string } | undefined;
+    if (
+      head?.head !== record.revision.id ||
+      record.revision.provenance?.producerKind === "derived" ||
+      (record.revision.context as Record<string, unknown> | undefined)
+        ?.derived === true
+    )
+      return null;
     let text = record.fragment.text;
     // A stored excerpt is only a locator, never independent evidence. Check it
     // against the current immutable original before using it, including follow-ups.
-    if (text.length > 2000 && typeof focus === "string" && focus.length > 0 && focus.length <= 2000) {
+    if (
+      text.length > 2000 &&
+      typeof focus === "string" &&
+      focus.length > 0 &&
+      focus.length <= 2000
+    ) {
       const offset = text.indexOf(focus);
       if (offset >= 0) {
-        const start = Math.max(0, offset - Math.floor((2000 - focus.length) / 2));
-        text = text.slice(start,start + 2000);
+        const start = Math.max(
+          0,
+          offset - Math.floor((2000 - focus.length) / 2),
+        );
+        text = text.slice(start, start + 2000);
       }
     }
     return {
@@ -842,14 +1168,12 @@ export class AssistantRuntime {
       action: { tool: "create_task", rejected: true, reason, ...extra },
     });
 
-    if (!this.options.memory)
-      return reject("no_memory_governance");
+    if (!this.options.memory) return reject("no_memory_governance");
 
     // Only cite evidence the runtime actually exposed (already visibility-filtered).
     const cited = (input.call.citationIds ?? [])
       .map((id) => input.evidence.find((e) => e.fragmentId === id))
       .filter((e): e is AssistantEvidence => Boolean(e));
-
 
     // G08: if the model did not cite this turn evidence but prior turns have
     // working context, use that as cited evidence (anaphora resolution).
@@ -864,7 +1188,8 @@ export class AssistantRuntime {
     const modelAskedFor = (input.call.citationIds ?? []).length > 0;
     if (modelAskedFor && !cited.length && !contextCited.length) {
       return reject("no_prior_evidence", {
-        detail: "model cited fragments not found in current evidence or prior working context",
+        detail:
+          "model cited fragments not found in current evidence or prior working context",
       });
     }
     // B: for a direct owner assignment with no pre-existing cited fragments,
@@ -896,12 +1221,14 @@ export class AssistantRuntime {
           },
         }).revision;
         if (rev.fragments[0]) {
-          directEvidence = [{
-            fragmentId: rev.fragments[0].id,
-            sourceRevisionId: rev.id,
-            revisionTitle: "owner direct message",
-            text: rev.fragments[0].text,
-          }];
+          directEvidence = [
+            {
+              fragmentId: rev.fragments[0].id,
+              sourceRevisionId: rev.id,
+              revisionTitle: "owner direct message",
+              text: rev.fragments[0].text,
+            },
+          ];
         }
       } catch {
         // capture failure is non-fatal; cited fragments still work
@@ -912,7 +1239,7 @@ export class AssistantRuntime {
     // original message. We do NOT require pre-existing cited evidence fragments —
     // the owner is directly telling us what to record. But if the model DID cite
     // fragments, we validate them.
-    const proposalId = `assistant-task:${input.transportEventId ?? input.requestId}:${stableDigest(input.call.title).slice(0,16)}`;
+    const proposalId = `assistant-task:${input.transportEventId ?? input.requestId}:${stableDigest(input.call.title).slice(0, 16)}`;
 
     try {
       const result = this.options.memory.evaluate(
@@ -929,10 +1256,24 @@ export class AssistantRuntime {
           body: {
             title: input.call.title,
             owner_id: ownerId,
-            due_at: validatedDueAt(input.call.dueAt, input.call.dueExpression, input.userText),
+            due_at: validatedDueAt(
+              input.call.dueAt,
+              input.call.dueExpression,
+              input.userText,
+            ),
             due_expression: input.call.dueExpression ?? null,
             next_step: input.call.detail,
-            ...(input.call.followUp ? { follow_up: validateFollowUp({ ...input.call.followUp, timezone: this.options.timezone ?? "Asia/Shanghai" }, input.userText) } : {}),
+            ...(input.call.followUp
+              ? {
+                  follow_up: validateFollowUp(
+                    {
+                      ...input.call.followUp,
+                      timezone: this.options.timezone ?? "Asia/Shanghai",
+                    },
+                    input.userText,
+                  ),
+                }
+              : {}),
           },
           evidence: allEvidence.map((e) => {
             const codePoints = Array.from(e.text);
@@ -941,7 +1282,11 @@ export class AssistantRuntime {
               fragment_revision_id: e.fragmentId,
               source_revision_id: e.sourceRevisionId,
               exact_quote: quote,
-              selector: { start: 0, end: Array.from(quote).length, unit: "unicode_codepoint" as const },
+              selector: {
+                start: 0,
+                end: Array.from(quote).length,
+                unit: "unicode_codepoint" as const,
+              },
             };
           }),
 

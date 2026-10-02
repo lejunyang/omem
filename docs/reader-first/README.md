@@ -7,6 +7,7 @@
 - [整体复审](review.md)：实际能力、问题成因及外部方案。
 - [当前实现逐层审查](current-system.md)：清洗、RAG、记忆、代码、Wiki 与 ACP 的实际代码、缺口和解法。
 - [成熟组件与具体改造](component-integration.md)：每项外部方法如何融入现有文件与合同，而不是只列产品名字。
+- [本轮检索改造](retrieval-redesign.md)：讲解、结构化原件与用途策略如何接成同一条搜索和回答流程。
 - [Agent 自主研究](agent-research.md)：材料工作区、原生工具/skills/MCP、会话与独立补查。
 - [目标流程](architecture.md)：材料、检索、代码研究、知识与记忆如何协作。
 - [写作与阅读](writing.md)：读者任务、页面模板、引用和视觉规范。

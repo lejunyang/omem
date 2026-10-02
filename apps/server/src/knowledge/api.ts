@@ -1,6 +1,7 @@
 import { relevance, bestSnippet } from "../retrieval/relevance.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import type { RetrievalPort } from "../retrieval/port.js";
+import { retrievalPurposes } from "../retrieval/port.js";
 import { KeywordRetrieval, tokenize } from "../retrieval/keyword.js";
 import { fragmentPositions } from "./structure.js";
 import type { FastifyInstance } from "fastify";
@@ -96,7 +97,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return { revisionId };
   });
   app.post<{ Params: { id: string } }>(prefix + "/questions/:id/task", async req => ({ taskId: repository.createTask(req.params.id) }));
-  app.get<{ Querystring: { q?: string; topic?: string } }>(prefix + "/search", async (req, reply) => {
+  app.get<{ Querystring: { q?: string; topic?: string; purpose?: string } }>(prefix + "/search", async (req, reply) => {
     const text = (req.query.q ?? "").trim().slice(0, 300), terms = tokenize(text);
     if (!terms.length) return [];
     repository.refresh();
@@ -104,6 +105,19 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     try { if (req.query.topic) { topic = JSON.parse(req.query.topic); if (!Array.isArray(topic) || topic.some(p => typeof p !== "string")) throw Error(); } }
     catch { return reply.code(400).send({ error: "分类路径无效" }); }
     const articles = repository.list().filter(a => a.current && topic.every((part, i) => a.document.topicPath?.[i] === part));
+    if (retrieval.search) {
+      const purpose = req.query.purpose ?? "concept";
+      if (!retrievalPurposes.includes(purpose as typeof retrievalPurposes[number])) return reply.code(400).send({ error: "查找用途无效" });
+      const hits = await retrieval.search({ text, limit: 50, kinds: ["knowledge"], topicPath: topic, purpose: purpose as typeof retrievalPurposes[number] });
+      const byKey = new Map(articles.map(a => [a.document.key, a]));
+      const seen = new Set<string>();
+      return hits.flatMap(hit => {
+        if (hit.target.kind !== "knowledge" || seen.has(hit.target.key)) return [];
+        const a = byKey.get(hit.target.key); if (!a || a.revision !== hit.target.revision) return [];
+        seen.add(hit.target.key);
+        return [{ ...meta(a), section: hit.target.section, sectionTitle: hit.headingPath.join(" / "), excerpt: hit.text, derived: true, score: hit.score, routes: hit.routes }];
+      });
+    }
     const materials = new Map(repository.materials().map(m => [m.key, m]));
     const scopedFragments = new Set(articles.flatMap(a => a.dependencies.filter(d => d.kind === "material").flatMap(d => materials.get(d.key)?.fragments.map(f => f.id) ?? [])));
     const query = { text, limit: 60, ...(topic.length ? { visible: (id: string) => scopedFragments.has(id) } : {}) };

@@ -4,6 +4,8 @@ import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowl
 
 export type MaterialSection = { title: string; startLine: number; endLine: number; kind: "section" | "symbol" | "document" };
 const cache = new WeakMap<KnowledgeMaterial, MaterialSection[]>();
+type PositionedFragment = KnowledgeMaterial["fragments"][number] & { start: number; end: number; startLine: number; endLine: number };
+const positionsCache = new WeakMap<KnowledgeMaterial, PositionedFragment[]>();
 
 /** Reading structure is a projection; original fragments and their IDs never change. */
 export function materialSections(material: KnowledgeMaterial): MaterialSection[] {
@@ -29,13 +31,16 @@ export function materialSections(material: KnowledgeMaterial): MaterialSection[]
 }
 
 export function fragmentPositions(material: KnowledgeMaterial) {
+  const saved = positionsCache.get(material); if (saved) return saved;
   let cursor = 0;
-  return material.fragments.flatMap(fragment => {
+  const positions = material.fragments.flatMap(fragment => {
     const start = material.text.indexOf(fragment.text, cursor);
     if (start < 0) return [];
     cursor = start + fragment.text.length;
     return [{ ...fragment, start, end: cursor, startLine: material.text.slice(0, start).split("\n").length, endLine: material.text.slice(0, cursor).split("\n").length }];
   });
+  positionsCache.set(material, positions);
+  return positions;
 }
 
 export function containingSection(material: KnowledgeMaterial, line: number) {
