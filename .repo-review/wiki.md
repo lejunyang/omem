@@ -1,9 +1,14 @@
 # 知识目录
 
+## 软件开发 / omem
+
+- [先认识 omem：把材料变成能找回的工作记忆](knowledge/articles/e3a688af2ed1ce2734e7f6a41ed91e4369645398f90a03e28b92c27028f48e1f.md)
+- [一份材料的旅程：从导入到固定引用](knowledge/articles/08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.md)
+- [一次中文提问如何找到答案：统一搜索、上下文与 RAG](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
+
 ## 软件开发 / omem / 服务端 / Agent 运行时
 
 - [ACP 助理模型的提示编排与结构化回复](knowledge/articles/12661f71bb7b912e4993949f4b3d1d6f22c399845d20c1cbced17ce858b7b0cf.md)
-- [统一助手回合：检索、模型与事项治理](knowledge/articles/da8ad3f24a297c6e53ca8ea2db6271f676fe567775dacb355ec46e29b00b345a.md)
 
 ## 未分类
 
@@ -136,14 +141,6 @@
 - [飞书质量数据集的人工标注联调入口](knowledge/articles/f5eb4da86a2da0eeb6316527263a2849ffe80405e0c33963892ee227d32e3436.md)
 - [飞书通知投递的持久化、重试与绑定安全验收](knowledge/articles/d468d8fcb76d8e6b89ca8af0660a60483724e119aef2751cc4accac7e8394296.md)
 
-## 软件开发 / omem / 服务端 / 存储与数据库迁移
-
-- [SQLite 数据库如何安全演进到当前结构](knowledge/articles/70d45111240700f09d248181bee2b36040dcc48e7938c056ed4482bae200e20d.md)
-
-## 软件开发 / omem / 知识生成 / Agent 自主研究
-
-- [为知识 Agent 构建隔离的自主研究环境](knowledge/articles/052b7a5f06c5ca089f216633bf39395608fd9bad8adc088f98b214b6749761f3.md)
-
 ## 软件开发 / omem / Web 应用 / 材料处理
 
 - [从材料选择到文章整理任务](knowledge/articles/78f7700ae70bb697992117b2fd48b4142bf2fd94368145ce4178ddb68c3941f4.md)
@@ -173,7 +170,6 @@
 
 - [原始材料阅读与证据跳转](knowledge/articles/4b9d3ac9d775696f7fdfb11b62922c68aa35ceaa961f0041278a4fd2c84e1a5f.md)
 - [模块说明、证据与文件下探界面](knowledge/articles/9b4dcab1214bbd0cb31ae5cc73e8b4db1ae09fb7b2cff65fc3cb8c82c27a9e26.md)
-- [统一打开知识、原文与固定引用](knowledge/articles/0103d25c4803b215cdd1a6865c50244b68e3a2fdbcbac0c98feef02bc40a62d2.md)
 - [递归证据阅读与就地追问](knowledge/articles/12a5295cb1a5cb2774b5de2f3f8084513b5cf0fe3b2974118aa9b84fe8246672.md)
 
 ## 软件开发 / omem / Web 应用 / 变更历史
@@ -194,10 +190,6 @@
 
 - [开发模式下的仓库知识接入与历史证据恢复](knowledge/articles/54306083b4010d3a9fef4776c00e541eb27f3ce5de04f7b87086577c2ff7259b.md)
 
-## 软件开发 / omem / 服务端 / 检索 / 索引维护
-
-- [批量追平语义检索索引](knowledge/articles/c4e286048ae9b03aaf2a54a2760ff83e531b45e623863a511a5ca6d54cf7aba1.md)
-
 ## 软件开发 / omem / 知识管理 / 材料结构与证据定位
 
 - [把原始材料投影为可阅读的章节与坐标](knowledge/articles/8c4c28033756dcb1881238042ae9801d09fdc38bb68fadbb48d9a1984b7e8797.md)
@@ -206,33 +198,15 @@
 
 - [日常助理：交办、追踪与记忆引用入口](knowledge/articles/001b6918b116c330d22184278aab72b29da732fb01cd08b2e3ac0de0773485c5.md)
 - [知识库阅读与整理入口重设计](knowledge/articles/cf724b52fd6fb802f1016d1b227c60cd6ebdbb9c39062c027b484354f403a36f.md)
-- [统一工作记忆的 Web 应用编排](knowledge/articles/da0e264957572bf35832a2327ed88508c6913c8ffb0323e87898adcffe262642.md)
 - [需要人工判断的变更处理页](knowledge/articles/1d19197dfd0e1a844770e51be28ef17e866b29a3a26d421dabf55605fe1dc2a2.md)
 
 ## 软件开发 / omem / 服务端 / 应用装配与请求入口
 
 - [服务端应用如何装配并承接一次请求](knowledge/articles/464fb8678bf77a7fc70c6e577b524284f5161deefd39d11125de970688dbea13.md)
 
-## 软件开发 / omem / Web 应用 / 知识库 API
-
-- [知识库 HTTP 接口：阅读、检索与异步整理](knowledge/articles/475058334ffc659aacefe4563ad15d0681a233ebb9f997fe364aa9919e3c79b3.md)
-
 ## 软件开发 / omem / 知识管理 / 仓储集成测试
 
 - [知识浏览与递归证据追踪的端到端验证](knowledge/articles/5ef71b2c76cc144c5bd5b4ddf3a6f860924bd6e2d060a8a70675f934ca0f5e13.md)
-
-## 软件开发 / omem / 服务端 / 检索 / 混合语义检索
-
-- [统一检索：从结构化知识单元到可追溯结果](knowledge/articles/0f4c98f99ec08ee9f67bc4c9abbbec7193e9e0c6a38384e2306d9c1cf84a9f03.md)
-
-## 软件开发 / omem / 服务端 / 检索 / 检索单位投影
-
-- [统一检索单位：把异构记忆投影成可搜索上下文](knowledge/articles/130cdb6c662c51b13762227a6e5989994935a42467c7e55412ace7eb689e1d4f.md)
-
-## 软件开发 / omem / 服务端 / 检索
-
-- [统一检索服务的配置与生命周期装配](knowledge/articles/4de4dc1b2d97b0ac0916c8d7803da3bbb33b99302666b39fa0e01e13e7ba9ae6.md)
-- [统一检索端口：让原件、知识与状态共享一种查询语言](knowledge/articles/e1aefe156d02f69476a443ae16951b1e4d0f5e30e2f93765c433725e810452db.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读 / 递归证据追踪
 
