@@ -39,6 +39,8 @@ import {
   type NotificationDetail as NotificationDetailType,
 } from "./api";
 import EvidenceReader from "./EvidenceReader.vue";
+import MaterialDescription from "./MaterialDescription.vue";
+import { materialRoles, materialRoleLabels, materialStatusLabels, type MaterialRole } from "../../../packages/contracts/src/material-description";
 import ChatPane from "./ChatPane.vue";
 import AssetImage from "./AssetImage.vue";
 import PersonalKnowledge from "./knowledge/PersonalKnowledge.vue";
@@ -127,6 +129,7 @@ function showSearchResults() {
   });
 }
 const searchPurpose = ref<RetrievalPurpose>("balanced");
+const searchRole = ref<MaterialRole | "">("");
 const {
   open: searchOpen,
   frames: searchFrames,
@@ -189,7 +192,7 @@ let searchController: AbortController | undefined;
 const searching = ref(false),
   searchError = ref("");
 watch(
-  [query, searchPurpose],
+  [query, searchPurpose, searchRole],
   () => {
     clearTimeout(searchTimer);
     searchController?.abort();
@@ -376,7 +379,7 @@ async function search(version: number, text: string) {
   try {
     const response = await api<typeof results.value>(
       "/search?" +
-        new URLSearchParams({ q: text, purpose: searchPurpose.value }),
+        new URLSearchParams({ q: text, purpose: searchPurpose.value, ...(searchRole.value ? {role:searchRole.value} : {}) }),
       undefined,
       "GET",
       controller.signal,
@@ -696,6 +699,7 @@ onBeforeUnmount(() => {
       >
       <SearchAnswer :query="query" :purpose="searchPurpose" @navigate="pushSearch" @open="(id) => evidence?.open(id)" @results="showSearchResults" />
       <h2 ref="searchResultsHeading" class="search-results-heading">实际搜索命中 <small v-if="!searching && !searchError">{{ results.length }} 条</small></h2>
+      <label class="search-purpose">筛选命中材料<select v-model="searchRole"><option value="">所有用途</option><option v-for="role in materialRoles" :key="role" :value="role">{{materialRoleLabels[role]}}</option></select></label>
       <p v-if="searching" class="search-loading" role="status">
         <span class="search-spinner" aria-hidden="true" />正在搜索相关材料…
       </p>
@@ -720,6 +724,7 @@ onBeforeUnmount(() => {
           >
         </p>
         <p v-if="r.target.kind === 'knowledge' && r.target.reviewState === 'needs-review'" class="muted">待复核的讲解背景 · 引用依据仍匹配原文，其他材料已有变化</p>
+        <p v-if="r.materialDescription" class="muted">{{materialRoleLabels[r.materialDescription.description.role]}} · {{materialStatusLabels[r.materialDescription.description.status]}}<span v-if="r.materialDescription.description.scope"> · {{r.materialDescription.description.scope}}</span></p>
         <OmMarkdown
           v-if="r.kind === 'knowledge'"
           :source="r.text"
@@ -798,6 +803,7 @@ onBeforeUnmount(() => {
             >
           </div>
           <h1>{{ revision.title }}</h1>
+          <MaterialDescription :revision-id="revision.id" :current="revision.current" />
           <p class="muted">
             保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
             每个片段都有固定身份
