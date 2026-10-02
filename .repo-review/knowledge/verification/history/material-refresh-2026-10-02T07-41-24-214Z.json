@@ -1,16 +1,45 @@
 {
   "version": 1,
-  "recordedAt": "2026-10-02T08:42:55.966Z",
-  "implementationCommit": "be48418dd0ed02b9db46b7085b548ae11c298029",
+  "recordedAt": "2026-10-02T07:41:24.214Z",
   "model": "gpt-5.6-sol",
   "scope": "Only the changed implementation, using the shared native KnowledgePipeline; historical unselected notes are not claimed refreshed.",
   "analysis": {
-    "total": 15,
-    "reused": 1,
+    "total": 14,
+    "reused": 0,
     "failures": [
       {
         "keys": [
-          "omem:apps/server/src/knowledge/structure.ts"
+          "omem:apps/server/src/assistant/acp-model.ts"
+        ],
+        "error": "Error: Agent timed out"
+      },
+      {
+        "keys": [
+          "omem:apps/server/src/retrieval/port.ts"
+        ],
+        "error": "Error: KNOWLEDGE_INPUT_CHANGED"
+      },
+      {
+        "keys": [
+          "omem:apps/server/src/retrieval/factory.ts"
+        ],
+        "error": "Error: KNOWLEDGE_INPUT_CHANGED"
+      },
+      {
+        "keys": [
+          "omem:apps/server/src/retrieval/units.ts"
+        ],
+        "error": "Error: KNOWLEDGE_INPUT_CHANGED"
+      },
+      {
+        "keys": [
+          "omem:apps/server/src/retrieval/unified.ts"
+        ],
+        "error": "Error: KNOWLEDGE_INPUT_CHANGED"
+      },
+      {
+        "keys": [
+          "omem:apps/web/src/knowledge/KnowledgeFrame.vue"
         ],
         "error": "Error: Agent timed out"
       }
@@ -20,37 +49,37 @@
     {
       "path": "apps/server/src/app.ts",
       "key": "omem:apps/server/src/app.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:05:58.301Z",
-      "reviewAt": "2026-10-02T08:07:16.059Z"
+      "state": "stale",
+      "generationAt": "2026-10-02T07:08:23.518Z",
+      "reviewAt": "2026-10-02T07:10:21.685Z"
     },
     {
       "path": "apps/server/src/assistant/acp-model.ts",
       "key": "omem:apps/server/src/assistant/acp-model.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:09:52.515Z",
-      "reviewAt": "2026-10-02T08:12:16.339Z"
+      "state": "stale",
+      "generationAt": "2026-10-01T02:04:01.600Z",
+      "reviewAt": "2026-10-01T02:04:22.063Z"
     },
     {
       "path": "apps/server/src/assistant/runtime.ts",
       "key": "omem:apps/server/src/assistant/runtime.ts",
       "state": "current",
-      "generationAt": "2026-10-02T08:12:45.927Z",
-      "reviewAt": "2026-10-02T08:13:53.461Z"
+      "generationAt": "2026-10-02T07:13:03.536Z",
+      "reviewAt": "2026-10-02T07:14:21.096Z"
     },
     {
       "path": "apps/server/src/knowledge/agent-research.ts",
       "key": "omem:apps/server/src/knowledge/agent-research.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:11:18.349Z",
-      "reviewAt": "2026-10-02T08:13:45.198Z"
+      "state": "stale",
+      "generationAt": "2026-10-02T07:12:34.650Z",
+      "reviewAt": "2026-10-02T07:14:51.265Z"
     },
     {
       "path": "apps/server/src/knowledge/api.ts",
       "key": "omem:apps/server/src/knowledge/api.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:17:59.567Z",
-      "reviewAt": "2026-10-02T08:19:20.645Z"
+      "state": "stale",
+      "generationAt": "2026-10-02T07:16:41.138Z",
+      "reviewAt": "2026-10-02T07:18:18.589Z"
     },
     {
       "path": "apps/server/src/knowledge/structure.ts",
@@ -62,30 +91,26 @@
     {
       "path": "apps/server/src/retrieval/factory.ts",
       "key": "omem:apps/server/src/retrieval/factory.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:16:36.955Z",
-      "reviewAt": "2026-10-02T08:18:14.884Z"
+      "state": "stale",
+      "generationAt": "2026-10-01T00:10:43.565Z",
+      "reviewAt": "2026-10-01T00:10:59.416Z"
     },
     {
       "path": "apps/server/src/retrieval/port.ts",
       "key": "omem:apps/server/src/retrieval/port.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:20:44.617Z",
-      "reviewAt": "2026-10-02T08:22:33.002Z"
+      "state": "stale",
+      "generationAt": "2026-10-01T00:11:23.568Z",
+      "reviewAt": "2026-10-01T00:11:40.367Z"
     },
     {
       "path": "apps/server/src/retrieval/unified.ts",
       "key": "omem:apps/server/src/retrieval/unified.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:21:20.598Z",
-      "reviewAt": "2026-10-02T08:22:57.311Z"
+      "state": "pending"
     },
     {
       "path": "apps/server/src/retrieval/units.ts",
       "key": "omem:apps/server/src/retrieval/units.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:29:15.890Z",
-      "reviewAt": "2026-10-02T08:30:49.889Z"
+      "state": "pending"
     },
     {
       "path": "apps/server/src/review/development.ts",
@@ -98,29 +123,22 @@
       "path": "apps/server/src/storage/migrations.ts",
       "key": "omem:apps/server/src/storage/migrations.ts",
       "state": "current",
-      "generationAt": "2026-10-02T08:30:58.017Z",
-      "reviewAt": "2026-10-02T08:31:49.980Z"
+      "generationAt": "2026-10-02T07:29:15.787Z",
+      "reviewAt": "2026-10-02T07:30:43.280Z"
     },
     {
       "path": "apps/web/src/App.vue",
       "key": "omem:apps/web/src/App.vue",
       "state": "current",
-      "generationAt": "2026-10-02T08:29:48.835Z",
-      "reviewAt": "2026-10-02T08:31:23.695Z"
+      "generationAt": "2026-10-02T07:40:00.201Z",
+      "reviewAt": "2026-10-02T07:41:24.092Z"
     },
     {
       "path": "apps/web/src/knowledge/KnowledgeFrame.vue",
       "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
-      "state": "current",
-      "generationAt": "2026-10-02T08:41:09.557Z",
-      "reviewAt": "2026-10-02T08:42:55.823Z"
-    },
-    {
-      "path": "scripts/retrieval-index.ts",
-      "key": "omem:scripts/retrieval-index.ts",
-      "state": "current",
-      "generationAt": "2026-10-02T08:33:00.606Z",
-      "reviewAt": "2026-10-02T08:34:21.070Z"
+      "state": "stale",
+      "generationAt": "2026-10-01T19:07:49.442Z",
+      "reviewAt": "2026-10-01T19:08:08.978Z"
     }
   ]
 }

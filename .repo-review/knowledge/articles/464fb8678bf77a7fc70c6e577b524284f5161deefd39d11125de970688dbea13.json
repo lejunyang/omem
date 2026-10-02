@@ -2,185 +2,134 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/app.ts",
-    "title": "个人记忆服务的 HTTP 组合入口",
-    "summary": "该文件是服务端组合根：创建 Fastify 应用，连接单用户 SQLite 存储、统一捕获、知识与检索、助理、学习流水线和飞书集成，并集中处理访问控制、HTTP 路由、后台任务及资源回收。",
-    "category": "architecture",
+    "title": "服务端应用如何装配并承接一次请求",
+    "summary": "buildApp 是 omem 服务端的组合根：它根据配置创建存储、检索、助手与可选后台能力，统一挂载 API 的访问保护和错误转换，并在启动、恢复与关闭阶段管理资源。理解这里，能快速判断一项功能应改路由边界、业务服务还是运行时生命周期。",
+    "category": "服务端",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "服务端",
+      "应用装配与请求入口"
+    ],
     "sections": [
       {
         "key": "composition",
-        "title": "把存储、知识与助理组装成服务",
-        "body": "`buildApp` 把分散的能力组装成一个可运行的个人记忆服务。它创建 Fastify、`Store`、运行记录、记忆与反馈服务，注册知识接口和检索服务，并以固定的个人所有者和 60 秒轮次超时初始化助理。非回环地址若未配置令牌，应用会拒绝启动。参考 [[c1]]\n\n`Store` 是共享的持久化基础：它创建单用户 SQLite 数据库、执行迁移，并提供任务、输入聚合、运行时请求和来源画像等仓储。由此，组合入口主要负责协议适配和生命周期协调，具体数据规则仍由各服务承担。参考 [[c2]]"
+        "title": "它解决的是“把能力组装成可运行服务”",
+        "body": "`buildApp(config, dependencies)` 接收运行配置和可注入的飞书依赖，先拒绝“非回环地址却没有令牌”的危险启动方式，再创建 Fastify、SQLite 存储、运行任务、记忆与反馈服务。它本身不实现这些领域算法，而是把对象放进同一个进程并让路由调用它们，因此是查找服务端依赖关系和新增入口的第一站。参考 [[c1]]\n\n助手侧由配置中的 ACP profile、检索服务和 `AssistantRuntime` 组成；学习流水线只有在启用且找到指定 profile 时才创建，否则配置错误会直接阻止启动。参考 [[c2]] 飞书接入同样是条件装配：可由调用者注入，也可在启用时从环境构建密钥、注册、探测和运行时；构建失败会先关闭存储再抛错。参考 [[c3]]"
       },
       {
-        "key": "capture_api",
-        "title": "从多种入口汇入统一证据链",
-        "body": "服务接受规范化捕获，也支持文件、Git、飞书链接、TraeX hook 和输入事件。连接器先把外部内容转换成统一捕获结构，再交给 `store.capture`；输入事件则经过聚合器，在批次就绪后写入。参考 [[c3]]\n\n连接器执行的是**显式且有边界的读取**：文本中的 URL 只作为材料保留，不会被自动抓取；文件必须位于配置的根目录内，大小不超过 500 KB，并能以严格 UTF-8 解码且不含空字节。参考 [[c4]]\n\n捕获后可通过接口读取来源画像、固定修订、历史、证据、关系、搜索结果和资源，并查看或恢复变化。参考 [[c5]] 此外，服务还暴露通知、事项、作业、运行时请求、提案与决策、记忆版本及反馈接口，使后续处理仍围绕同一份材料和持久化边界展开。参考 [[c12]]"
+        "key": "representative-flow",
+        "title": "代表性调用：从 Web 消息到助手结果",
+        "body": "一次典型使用分两步。客户端先 `POST /api/assistant/conversations`，输入 `chatId` 和可选 `threadId`；服务端固定把主体设为个人 owner、渠道设为 web、可见性设为 private，并拒绝网页伪造飞书渠道或群可见性。输出是已打开的会话。参考 [[c6]]\n\n```mermaid\nflowchart LR\n  A[Web 创建私人会话] --> B[提交 text 与可选 requestId]\n  B --> C[AssistantRuntime.turn]\n  C --> D[返回回合结果或 404]\n```\n\n随后客户端向该会话的 `/turns` 提交文本；路由校验正文，把 `requestId` 转成带 `web:` 前缀的传输事件标识并调用 `assistant.turn`。若会话不存在返回 404，否则原样返回运行时结果；同一区域还提供历史读取、取消与重试，重试冲突返回 409。参考 [[c7]]"
       },
       {
-        "key": "assistant_security",
-        "title": "助理操作由服务器重新约束",
-        "body": "Web 调用方不能自行声明飞书通道、群组可见性或其他主体；服务端把会话固定为个人所有者、Web 通道和私有可见性。会话随后支持执行、查询、取消和重试轮次，并对缺失会话或不可重试状态返回对应错误。参考 [[c6]]\n\n模型回复可以包含引用、补充检索词以及创建或更新事项的结构化请求，但这些请求并不自动获得写权限。运行时合同要求服务器重新检查证据可见性、所有者来源和事项约束。参考 [[c7]]\n\n用户控制已有事项时，服务先生成一条带来源信息的手动捕获，再以其证据片段执行完成、改期、等待、暂缓或取消等命令，使操作依据可以回溯。参考 [[c8]]"
-      },
-      {
-        "key": "boundaries_lifecycle",
-        "title": "可选集成、访问边界与生命周期",
-        "body": "学习流水线只在启用且指定 profile 存在时创建；飞书启用后会装配密钥存储、注册与能力探测、已有应用提供器和运行宿主。初始化失败会关闭存储并终止启动。参考 [[c9]]\n\n所有 `/api/` 请求统一经过访问检查：配置令牌时采用定时安全比较；没有令牌时仅接受本机 Host 与本机 Origin。输入错误通常映射为 400，重基、过期或冲突映射为 409，重复活动映射为 429。参考 [[c10]]\n\n应用启动末尾会恢复未完成的助理轮次，周期性派发提醒和刷新输入批次，再启动学习及飞书运行时；关闭时停止定时器和各运行组件，最后关闭检索与数据库。构建后的静态前端仅在目录存在时注册。参考 [[c11]]"
+        "key": "boundaries-lifecycle",
+        "title": "边界保护与生命周期",
+        "body": "所有 `/api/` 请求先经过统一保护：配置令牌时用定时安全比较验证 Bearer token；无令牌时只接受本机 Host，并拒绝非本机 Origin。静态页面不走这条 API 判断。参考 [[c4]] 输入校验主要由 Zod 完成；冲突类错误映射为 409、重复活动映射为 429，其余校验或业务错误为 400。参考 [[c5]]\n\n路由注册结束后，服务会挂载已有的前端构建、恢复上次进程未完成的助手回合，并启动提醒、输入聚合以及可选的学习和飞书运行时。关闭时按顺序停定时器、助手、后台流水线、运行任务、检索与存储，避免数据库或子进程悬挂。修改启动恢复、后台轮询或资源释放，应集中查看这一段；具体业务行为则应进入对应 service/runtime，而不是继续堆在路由里。参考 [[c8]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "服务依赖装配",
-        "reason": "支持应用创建、非回环访问前置条件，以及存储、知识、检索和助理运行时的组装说明。",
+        "label": "应用核心对象装配",
+        "reason": "支持 buildApp 的输入、安全启动条件，以及 Fastify、Store、Runs、MemoryService、FeedbackService 的创建关系。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 47,
-          "endLine": 88
+          "startLine": 49,
+          "endLine": 65
         },
         "quote": "export async function buildApp(\n  config: Config,\n  dependencies: {\n    lark?: LarkOnboardingService;\n    larkRuntime?: LarkRuntimeHost;\n  } = {},\n) {\n  if (![\"127.0.0.1\", \"localhost\", \"::1\"].includes(config.host) && !config.token)\n    throw Error(\"OMEM_TOKEN is required for a non-loopback bind\");\n  const app = Fastify"
       },
       {
         "key": "c2",
-        "label": "单用户存储基础",
-        "reason": "说明 Store 初始化 SQLite、执行迁移并提供多个共享仓储服务。",
+        "label": "助手与学习流水线",
+        "reason": "说明 ACP 模型、检索、AssistantRuntime 和条件启用的 LearningPipeline 如何由配置组装。",
         "relation": "depends_on",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/store.ts",
-          "startLine": 38,
-          "endLine": 69
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 77,
+          "endLine": 107
         },
-        "quote": "export class Store {\n  readonly db: DatabaseSync;\n  readonly applications: ApplicationRepository;\n  readonly jobs: JobRepository;\n  readonly inputs: InputAggregator;\n  readonly runtimeRequests: RuntimeRequestRepository;\n  readonly profiles: SourceProfileService;\n  constructor(\n    readonly dataDir: string,\n    options:"
+        "quote": "  const assistantModel = new AcpAssistantModel({\n    profile: assistantProfile,\n    workspaceRoot: config.agentCwd,\n  });\n  const retrievalService = createRetrieval(store.db, config.retrieval);\n  const assistantRetrieval = development ? developmentRetrieval(store, retrievalService.retrieval) : retrievalService.retrieva"
       },
       {
         "key": "c3",
-        "label": "统一捕获入口",
-        "reason": "支持直接捕获、各类连接器转换及输入事件聚合后写入 Store 的流程。",
-        "relation": "calls",
+        "label": "飞书条件装配",
+        "reason": "支持飞书服务可注入或按配置创建，以及初始化失败时关闭存储的行为。",
+        "relation": "depends_on",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 204,
-          "endLine": 239
+          "startLine": 108,
+          "endLine": 139
         },
-        "quote": "  app.get(\"/api/sources\", async () => store.list());\n  app.post(\"/api/captures\", async (req) =>\n    store.capture(captureSchema.parse(req.body)),\n  );\n  app.post(\"/api/connectors/file\", async (req) => {\n    const b = z.object({ path: str }).parse(req.body);\n    return store.capture(\n      captureSchema.parse(await file"
+        "quote": "  let lark = dependencies.lark;\n  let larkRuntime = dependencies.larkRuntime ?? null;\n  if (config.lark?.enabled && !lark) {\n    try {\n      const secrets = EncryptedSecretStore.fromEnvironment(config.dataDir);\n      lark = new LarkOnboardingService(\n        store.db,\n        secrets,\n        new OfficialLarkRegistrati"
       },
       {
         "key": "c4",
-        "label": "连接器读取边界",
-        "reason": "支持 URL 不自动抓取，以及文件根目录、大小、UTF-8 和非二进制文本限制。",
-        "relation": "explains",
+        "label": "API 访问保护",
+        "reason": "支持令牌比较、本机 Host 限制和跨域来源限制。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/connectors.ts",
-          "startLine": 1,
-          "endLine": 34
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 141,
+          "endLine": 165
         },
-        "quote": "/** Connectors are explicit, bounded reads. URLs in captured text are retained, never\n * automatically crawled. Server filesystem imports require configured roots. */\nimport { readFile, realpath, stat } from \"node:fs/promises\";\nimport { resolve, relative, isAbsolute } from \"node:path\";\nimport { execFile } from \"node:ch"
+        "quote": "  app.addHook(\"onRequest\", async (req, reply) => {\n    if (!req.url.startsWith(\"/api/\")) return;\n    if (config.token) {\n      const candidate = String(req.headers.authorization || \"\").replace(\n        /^Bearer /,\n        \"\",\n      );\n      const a = Buffer.from(candidate),\n        b = Buffer.from(config.token);\n      "
       },
       {
         "key": "c5",
-        "label": "证据与变化接口",
-        "reason": "支持来源画像、修订、历史、证据、关系、搜索、资源以及变化查看和恢复能力。",
+        "label": "统一错误映射",
+        "reason": "说明冲突、重复活动、Zod 校验和普通业务错误对应的 HTTP 状态。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 240,
-          "endLine": 315
+          "startLine": 166,
+          "endLine": 184
         },
-        "quote": "  app.get<{ Params: { revision: string } }>(\n    \"/api/source-profiles/:revision\",\n    async (req, reply) => {\n      const profile = store.profiles.latest(req.params.revision);\n      if (!profile)\n        return reply.code(404).send({\n          error: \"Source readable, smart profile pending\",\n          sourceReadable: "
-      },
-      {
-        "key": "c12",
-        "label": "记忆与处理接口",
-        "reason": "支持通知、事项、作业、运行时请求、提案、决策、记忆版本和反馈接口的概括。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 316,
-          "endLine": 451
-        },
-        "quote": "  app.get<{ Params: { id: string } }>(\n    \"/api/notifications/:id\",\n    async (req, reply) =>\n      store.notification(req.params.id) ??\n      reply.code(404).send({ error: \"Notification not found\" }),\n  );\n  app.get(\"/api/notifications\", async () => {\n    store.remind();\n    return store.notifications();\n  });\n  app."
+        "quote": "  app.setErrorHandler((error, _req, reply) => {\n    const e = error as Error;\n    const code =\n      e.message.includes(\"REBASE_REQUIRED\") ||\n      e.message.includes(\"STALE_\") ||\n      e.message.includes(\"_CONFLICT\")\n        ? 409\n        : e.message.includes(\"already active\")\n          ? 429\n          : e instanceof "
       },
       {
         "key": "c6",
-        "label": "Web 会话信任边界",
-        "reason": "支持 Web 调用方不能伪造飞书通道或群组可见性，以及轮次执行、取消和重试行为。",
+        "label": "Web 会话身份边界",
+        "reason": "支持创建 Web 私人会话的输入输出，以及网页不能伪造飞书渠道和群可见性的限制。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 575,
-          "endLine": 637
+          "startLine": 587,
+          "endLine": 611
         },
         "quote": "  app.post(\"/api/assistant/conversations\", async (req) => {\n    const body = z\n      .object({\n        chatId: z.string().min(1).max(200),\n        threadId: z.string().max(200).nullish(),\n        // C: web callers cannot assert a Lark channel, group visibility, or choose\n        // the principal. The server owns these;"
       },
       {
         "key": "c7",
-        "label": "助理结构化调用合同",
-        "reason": "说明模型产生的引用、检索词和事项工具调用仍须由服务器重新治理。",
-        "relation": "depends_on",
+        "label": "助手回合调用链",
+        "reason": "支持文本校验、事件标识转换、AssistantRuntime.turn 调用及读取、取消、重试结果处理。",
+        "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/assistant/runtime.ts",
-          "startLine": 23,
-          "endLine": 63
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 613,
+          "endLine": 650
         },
-        "quote": "export type AssistantCreateTaskCall = {\n  tool: \"create_task\";\n  title: string;\n  detail: string;\n  /** Evidence fragments the task is grounded on; the server re-validates both\n   *  visibility and owner provenance before creating anything. */\n  citationIds?: string[];\n  dueAt?: string | null;\n  dueExpression?: string "
+        "quote": "  app.post<{ Params: { id: string } }>(\n    \"/api/assistant/conversations/:id/turns\",\n    async (req, reply) => {\n      const body = z.object({ text: str, requestId: z.string().min(1).max(200).optional() }).strict().parse(req.body);\n      const result = await assistant.turn({\n        conversationId: req.params.id,\n    "
       },
       {
         "key": "c8",
-        "label": "事项操作留证",
-        "reason": "支持事项命令先形成带来源信息的捕获修订，再以证据片段驱动记忆服务执行。",
+        "label": "启动恢复与关闭清理",
+        "reason": "支持静态页面挂载、未完成回合恢复、后台定时任务启动，以及关闭时的资源释放顺序。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/app.ts",
-          "startLine": 333,
-          "endLine": 350
-        },
-        "quote": "  app.get(\"/api/assistant/workflows\", async () => messageWorkflows.map(({ instruction: _instruction, ...recipe }) => recipe));\n  app.get(\"/api/tasks\", async () => store.tasks());\n  app.post<{ Params: { id: string } }>(\"/api/tasks/:id/commands\", async req => {\n    const command = taskCommandSchema.parse(req.body);\n    c"
-      },
-      {
-        "key": "c9",
-        "label": "学习与飞书初始化",
-        "reason": "支持学习 profile 校验、飞书组件装配以及初始化失败时关闭存储的行为。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 89,
-          "endLine": 130
-        },
-        "quote": "  const learningConfig = config.learning;\n  const learningProfile = learningConfig?.enabled\n    ? config.profiles.find((profile) => profile.id === learningConfig.profileId)\n    : undefined;\n  if (learningConfig?.enabled && !learningProfile)\n    throw Error(`Learning profile not found: ${learningConfig.profileId}`);\n  c"
-      },
-      {
-        "key": "c10",
-        "label": "API 访问与错误处理",
-        "reason": "支持令牌或本机来源校验，以及冲突、限流和输入错误的统一状态码映射。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 138,
-          "endLine": 182
-        },
-        "quote": "  app.addHook(\"onRequest\", async (req, reply) => {\n    if (!req.url.startsWith(\"/api/\")) return;\n    if (config.token) {\n      const candidate = String(req.headers.authorization || \"\").replace(\n        /^Bearer /,\n        \"\",\n      );\n      const a = Buffer.from(candidate),\n        b = Buffer.from(config.token);\n      "
-      },
-      {
-        "key": "c11",
-        "label": "启动与关闭流程",
-        "reason": "说明静态资源、未完成轮次恢复、周期任务、可选运行时启动及资源回收顺序。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/app.ts",
-          "startLine": 640,
-          "endLine": 682
+          "startLine": 652,
+          "endLine": 683
         },
         "quote": "  const web = resolve(\"apps/web/dist\");\n  if (existsSync(web))\n    await app.register(staticFiles, { root: web, prefix: \"/\" });\n  // G20: recover any pending/running turns from a previous process.\n  await assistant.recoverUnfinishedTurns();\n  const tick = setInterval(() => store.remind(), 30000);\n  tick.unref();\n  let "
       }
@@ -191,120 +140,582 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/app.ts",
-      "digest": "d0a0d20d427cae9cce2887dda081d6569bd3601a4ae7ca99d30ff0f3afc4ddd3"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "17df8759d854439c570682baacfc9fca8589ebf402c35720af881a8a20bb0589"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/connectors.ts",
-      "digest": "f70b538466baea0b5f2e898abe08b7804a848f2bb466e1249a18f0366c5f9eba"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/store.ts",
-      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/integrations/lark/registration.ts",
-      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+      "digest": "b81ec015730e7f1b211f3c3c9790acd2a696fbb0ab8cdf560831a063a0641fbc"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
-    "effort": "high",
-    "at": "2026-10-01T11:45:58.331Z",
+    "effort": "medium",
+    "at": "2026-10-02T08:05:58.301Z",
     "trace": {
-      "runId": "7fc91539-c491-4e2b-b3f2-878192343d04",
-      "roleId": "knowledge-refresher",
+      "runId": "666d6250-b7ba-4bea-bc8f-7a401018c359",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e50df0d60657c1d146b6fbabbb7778d1fc2bfa2609c17e3c6827ec3fa11c78f3",
-      "promptHash": "2132c908571e9a0bb3e21c3625cc9929b15adea72dbf63656b3883bbbba4b33e",
-      "contextHash": "1129905f53c94416d7defe2719b4cd37d4b18ba2f868b24bbe53e64ea6ae9882",
-      "skillHash": "7a8c5c9c9bc8ab17b8492f86c56338c40e551d9939ee2693560c5789b74a5f38",
-      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "135f5ca6cf8c29a512545bba3c3ba50807378b27c77311fed500d09d648d0eaa",
+      "bundleHash": "70621a5271096862c1e5dabcb1c344ffcc287f707b1e9bded40bb3784dde1b12",
+      "promptHash": "142acff6f95fc151cf11fee5fbb9e72cb8eb733c4e166dde80ba4f41385dc302",
+      "contextHash": "eece80f75a3edf52b7233e16c73fa9f8df1539405cb093fe157fdf86964abf07",
+      "skillHash": "879f6a286ece6eab136d61a6e691f1bcbe8771ae6ecaa240cf101809df2be102",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "7ea25959c780af14d4a1238166fbfe1aa8af37ac9de83bc66610e9409f75d8fd",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
-          "mode": "inline"
+          "mode": "native"
         }
       ],
-      "allowedTools": [],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
       "sessionIds": [
-        "01a0f748-bf34-7e60-b2b0-2e91edd617db"
+        "01a0fba4-ed14-7461-8350-9b7d7f1532c4"
       ],
       "usage": {
-        "used": 40411,
+        "used": 53163,
         "size": 258400,
         "cost": null,
-        "budget": {
-          "maxInputTokens": 192000,
-          "maxOutputTokens": 24000,
-          "contextReserveTokens": 16000
-        },
-        "estimate": {
-          "chars": 62186,
-          "utf8Bytes": 69715,
-          "estimatedTokens": 23239,
-          "budgetedTokens": 29049,
-          "estimator": "utf8-bytes/3 + 25% headroom"
-        }
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Jy9X59er0fGO2IJHpEuIR2en:exec-c82fbb21-6097-4326-baf5-7efdf21887ec",
+            "title": "Read SKILL.md, Read README.md, Read README.md, Read progress.md, Read catalog.json, Read knowledge.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Jy9X59er0fGO2IJHpEuIR2en:exec-c82fbb21-6097-4326-baf5-7efdf21887ec",
+              "process_id": "34648",
+              "turn_id": "01a0fba4-f27b-7d52-9308-175dbf61e13c",
+              "started_at_ms": 1790928303079,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md\nsed -n '1,240p' README.md\nsed -n '1,260p' docs/reader-first/README.md\nsed -n '1,260p' docs/reader-first/progress.md\nsed -n '1,240p' catalog.json\nsed -n '1,200p' knowledge.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/70621a5271096862c1e5dabcb1c344ffcc287f707b1e9bded40bb3784dde1b12/666d6250-b7ba-4bea-bc8f-7a401018c359",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-code-analyst/SKILL.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' README.md",
+                  "name": "README.md",
+                  "path": "README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' docs/reader-first/README.md",
+                  "name": "README.md",
+                  "path": "docs/reader-first/README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' docs/reader-first/progress.md",
+                  "name": "progress.md",
+                  "path": "docs/reader-first/progress.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,200p' knowledge.json",
+                  "name": "knowledge.json",
+                  "path": "knowledge.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Jy9X59er0fGO2IJHpEuIR2en:exec-c82fbb21-6097-4326-baf5-7efdf21887ec",
+            "status": "completed",
+            "outputDigest": "4c6e4582eda94c9306936d2acccf57da3cd7468a8a7c08259ec934cefa74f1a8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_gQzolhUuceI7T9fPfKINzoL1:exec-f4d6467a-67e7-4171-8e90-da13685a3585",
+            "title": "Read app.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_gQzolhUuceI7T9fPfKINzoL1:exec-f4d6467a-67e7-4171-8e90-da13685a3585",
+              "process_id": "73484",
+              "turn_id": "01a0fba4-f27b-7d52-9308-175dbf61e13c",
+              "started_at_ms": 1790928311921,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/app.ts | sed -n '1,240p'\nnl -ba originals/apps/server/src/app.ts | sed -n '241,480p'\nnl -ba originals/apps/server/src/app.ts | sed -n '481,696p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/70621a5271096862c1e5dabcb1c344ffcc287f707b1e9bded40bb3784dde1b12/666d6250-b7ba-4bea-bc8f-7a401018c359",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/app.ts",
+                  "name": "app.ts",
+                  "path": "originals/apps/server/src/app.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_gQzolhUuceI7T9fPfKINzoL1:exec-f4d6467a-67e7-4171-8e90-da13685a3585",
+            "status": "completed",
+            "outputDigest": "089af4895ee222d97877db893cfa4152dabbffd369f60ee1a5820ec6aab725f0"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-cb090c34-4533-4fe1-801e-210273b307cb",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/app.ts",
+                "symbol": "buildApp"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-2da4b96e-b616-4652-b994-93de4d8d7256",
+            "title": "Tool: omem/search_knowledge",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_knowledge",
+              "arguments": {
+                "query": "buildApp Fastify 应用装配 请求入口 生命周期 服务关闭",
+                "purpose": "implementation",
+                "limit": 8
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-b6a188b3-1c13-4e3d-9ed8-a95a66c1849b",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "buildApp app.ts 代表性请求 assistant conversations turns",
+                "keys": [
+                  "omem:apps/server/src/app.ts"
+                ],
+                "purpose": "implementation",
+                "limit": 8
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-35c0f00f-f107-4e26-aa53-a4112f4e33d7",
+            "title": "Tool: omem/related_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "related_materials",
+              "arguments": {
+                "key": "omem:apps/server/src/app.ts"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/app.ts",
+              "symbol": "buildApp"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "related_materials",
+            "args": {
+              "key": "omem:apps/server/src/app.ts"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-cb090c34-4533-4fe1-801e-210273b307cb",
+            "status": "completed",
+            "outputDigest": "0b704c000ed961698ee15cd486d19798ac4a098ce3d88e544178f92c6da3b27d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-35c0f00f-f107-4e26-aa53-a4112f4e33d7",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_knowledge",
+            "args": {
+              "query": "buildApp Fastify 应用装配 请求入口 生命周期 服务关闭",
+              "purpose": "implementation",
+              "limit": 8
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "buildApp app.ts 代表性请求 assistant conversations turns",
+              "keys": [
+                "omem:apps/server/src/app.ts"
+              ],
+              "kind": "all",
+              "purpose": "implementation",
+              "limit": 8
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-2da4b96e-b616-4652-b994-93de4d8d7256",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_VEIr8OrHrgEqfR2u91WJQRht:exec-b6a188b3-1c13-4e3d-9ed8-a95a66c1849b",
+            "status": "completed",
+            "outputDigest": "0d18d3ed817c15926863acdd409dcdad304526c92013fe7899b69a9743ccfb09"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_mrZfRIpxE7DfpDyDNrBCo7a0:exec-c655deda-9e61-4f44-9d0f-450661997012",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/app.ts",
+                "startLine": 49,
+                "endLine": 206
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_mrZfRIpxE7DfpDyDNrBCo7a0:exec-76e4f44d-743c-4bcb-bdbe-0252668e05ab",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/app.ts",
+                "startLine": 543,
+                "endLine": 695
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/app.ts",
+              "startLine": 49,
+              "endLine": 206
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/app.ts",
+              "startLine": 543,
+              "endLine": 695
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/app.ts",
+              "startLine": 207,
+              "endLine": 320
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_mrZfRIpxE7DfpDyDNrBCo7a0:exec-c655deda-9e61-4f44-9d0f-450661997012",
+            "status": "completed",
+            "outputDigest": "6166d0e99e5c5919467dc012925870006a9202d2c247c5208b3f8accaa647465"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_mrZfRIpxE7DfpDyDNrBCo7a0:exec-dfa8e69e-a79b-4adc-b326-a7d94739452a",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/app.ts",
+                "startLine": 207,
+                "endLine": 320
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_mrZfRIpxE7DfpDyDNrBCo7a0:exec-76e4f44d-743c-4bcb-bdbe-0252668e05ab",
+            "status": "completed",
+            "outputDigest": "a2c0f695fce57bc9646cf3da23c6fe1b119045cf9271f3e8b843f59868ac7689"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_mrZfRIpxE7DfpDyDNrBCo7a0:exec-dfa8e69e-a79b-4adc-b326-a7d94739452a",
+            "status": "completed",
+            "outputDigest": "09d16e3299b5d6baf1b0014eb7c8c5b5aa67473d23a40a1b5a8b2eb5b097bf84"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ceom4LixMuSKWxbff5TqZbKG:exec-b080e071-33d3-4b52-9510-f64352382b8e",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/app.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ceom4LixMuSKWxbff5TqZbKG:exec-b080e071-33d3-4b52-9510-f64352382b8e",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
       },
       "repairAttempts": 0
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T11:46:19.253Z",
+    "at": "2026-10-02T08:07:16.059Z",
     "trace": {
-      "runId": "b904a383-ed9d-4239-b9a2-0848f0a8cce1",
+      "runId": "faeaa195-8e30-47be-8159-e7880a29f302",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "730119dff504568d688c060878b364b934840b0d60b43144fd36edce6b5db9fd",
-      "promptHash": "e4ef18ead66d9c2c0d01b3988411633487202bd70a65ec2f74740275f7b6666c",
-      "contextHash": "049d4aa50e01d853cf3dbf56735e60b67a0495d4a77b9b1622d8d4c027499aac",
-      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
-      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "f880115c8099f8f907b7dc07129d27e41ae10eec4a8ebd7b0910c1a54bb7a816",
+      "bundleHash": "0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9",
+      "promptHash": "c5723eeac12b586c796dd0f598bd901e9c8cb702b92cc8b1e8541ed7555f4fb3",
+      "contextHash": "c209329411d37785d54604e6b17c8f02a2fd5bd969b39873e5b4b7cce54ae54b",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "1b0b3c655ca2978af8123176925e8eeade7e303ff13d662a8aed8668a34123ac",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
-      "effectiveEffort": "high",
+      "effectiveEffort": "medium",
       "loadedSkills": [
         {
           "name": "omem-knowledge-verifier",
           "version": "1",
-          "mode": "inline"
+          "mode": "native"
         }
       ],
-      "allowedTools": [],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
       "sessionIds": [
-        "01a0f749-2d3d-7c32-a351-f5b73fc3f3cb"
+        "01a0fba6-a90e-7a91-a15b-9602bbcf5e20"
       ],
       "usage": {
-        "used": 38273,
+        "used": 37137,
         "size": 258400,
         "cost": null,
-        "budget": {
-          "maxInputTokens": 192000,
-          "maxOutputTokens": 24000,
-          "contextReserveTokens": 16000
-        },
-        "estimate": {
-          "chars": 59616,
-          "utf8Bytes": 65721,
-          "estimatedTokens": 21907,
-          "budgetedTokens": 27384,
-          "estimator": "utf8-bytes/3 + 25% headroom"
-        }
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Isr9MNQ8FcLFsov7h97qrKVl:exec-f1ecff99-b954-4bdd-8df2-44377340e8a3",
+            "title": "Read SKILL.md, Read catalog.json, Read knowledge.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Isr9MNQ8FcLFsov7h97qrKVl:exec-f1ecff99-b954-4bdd-8df2-44377340e8a3",
+              "process_id": "4371",
+              "turn_id": "01a0fba6-abbb-7ed0-b9c8-2760ff4845d5",
+              "started_at_ms": 1790928408547,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md && sed -n '1,220p' catalog.json && sed -n '1,220p' knowledge.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/faeaa195-8e30-47be-8159-e7880a29f302",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' knowledge.json",
+                  "name": "knowledge.json",
+                  "path": "knowledge.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Isr9MNQ8FcLFsov7h97qrKVl:exec-f1ecff99-b954-4bdd-8df2-44377340e8a3",
+            "status": "completed",
+            "outputDigest": "55d5e17c52262dfa4ed6133f06f3f40c7d1c76ec7f09d72009bf0fe809915beb"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_K07xBtAY9gtKE1uHfFTd3S8J:exec-c5f58542-d144-4cbf-8b20-aacc2aa99c46",
+            "title": "Read app.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_K07xBtAY9gtKE1uHfFTd3S8J:exec-c5f58542-d144-4cbf-8b20-aacc2aa99c46",
+              "process_id": "60680",
+              "turn_id": "01a0fba6-abbb-7ed0-b9c8-2760ff4845d5",
+              "started_at_ms": 1790928414443,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/app.ts | sed -n '1,696p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/faeaa195-8e30-47be-8159-e7880a29f302",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/app.ts | sed -n '1,696p'",
+                  "name": "app.ts",
+                  "path": "originals/apps/server/src/app.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_K07xBtAY9gtKE1uHfFTd3S8J:exec-c5f58542-d144-4cbf-8b20-aacc2aa99c46",
+            "status": "completed",
+            "outputDigest": "34baec1cd866ea51f9328a8ee790722c44579436ffe535248aa99906e30092fa"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_BhJ5HWMXUZKYcIn8bKE3cakN:exec-37ce8cd9-959b-4b88-84a1-4ebc67854f86",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/app.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_BhJ5HWMXUZKYcIn8bKE3cakN:exec-37ce8cd9-959b-4b88-84a1-4ebc67854f86",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
       },
       "repairAttempts": 0
     },

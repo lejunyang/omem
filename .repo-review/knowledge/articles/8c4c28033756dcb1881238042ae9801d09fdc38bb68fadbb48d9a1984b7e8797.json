@@ -1,0 +1,909 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/knowledge/structure.ts",
+    "title": "把原始材料投影为可阅读的章节与坐标",
+    "summary": "该模块不改写原始 fragment，而是按代码符号、Markdown 标题或整篇文档生成统一行范围，并将 fragment 对齐到字符与行坐标，供研究大纲、检索上下文和证据定位复用。",
+    "category": "知识管理",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "知识管理",
+      "材料结构与证据定位"
+    ],
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "为什么需要结构投影",
+        "body": "知识系统保存的是带固定身份的原始材料与 fragment，但阅读、研究和检索还需要回答“这一行属于哪个章节或符号”。此模块把不同材料统一投影为 `title/startLine/endLine/kind`，并明确保持原 fragment 及其 ID 不变；两个 `WeakMap` 分别缓存章节和 fragment 坐标。参考 [[c1]]\n\n这层投影会直接成为材料读取与搜索结果中的大纲，也会帮助检索命中补回同一章节内的标题和相邻原文。因此它是原始证据与阅读上下文之间的适配层，不是另一套事实存储。参考 [[c2]] [[c3]]"
+      },
+      {
+        "key": "flow",
+        "title": "从材料到可读范围",
+        "body": "`materialSections` 先用 `path`，缺失时用标题，判断候选类型。代码分支会调用 `parseFile` 并把解析到的符号映射为行范围；Markdown 分支使用与阅读器一致的 lexer，围栏中的 `#` 不会成为标题，一个标题持续到下一个同级或更高层级标题之前。任何分支若最终没有得到结构，都会返回覆盖全文的 `document`。参考 [[c4]] [[c5]]\n\n```mermaid\nflowchart LR\n  A[KnowledgeMaterial] --> B{候选类型}\n  B -->|代码候选| C[解析器返回符号]\n  B -->|Markdown| D[标题层级范围]\n  C -->|有符号| E[符号范围]\n  C -->|无符号| F[整篇范围]\n  D -->|有标题| G[章节范围]\n  D -->|无标题| F\n  B -->|其他| F\n```\n\n外层正则接受的代码扩展名比解析器当前的 AST 范围更宽。实际进入符号解析的是 `.ts/.tsx/.js/.mjs`，Vue 文件另走组件解析；像 `.jsx`、`.cjs`、`.mts` 这类虽进入代码候选分支，但解析器把它们视为普通文本并返回空符号，最终由本模块回退为全文范围。扩展名判断区分大小写。参考 [[c4]] [[c6]] [[c7]]"
+      },
+      {
+        "key": "coordinates",
+        "title": "把命中落回具体证据",
+        "body": "`fragmentPositions` 按 fragment 原顺序，从上次结束处继续在完整文本中精确查找，输出字符偏移和 1-based 起止行；重复文本会依次绑定，找不到的 fragment 会被跳过。`containingSection` 再筛选覆盖命中行的范围，并以跨度最小者作为最具体结构。参考 [[c8]]\n\n例如检索命中 Markdown 的某个段落后，上层先找到该 fragment 的行号，再定位所属章节，只补充章节标题及同节相邻 fragment，并继续遵守可见性过滤。缓存以材料对象身份为键，适合不可变快照；若调用方原地修改同一对象，已有投影不会自动失效。参考 [[c3]] [[c8]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "结构类型与投影缓存",
+        "reason": "支持统一章节坐标、两类对象身份缓存，以及投影不改变原 fragment 身份的说明。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/structure.ts",
+          "startLine": 5,
+          "endLine": 10
+        },
+        "quote": "export type MaterialSection = { title: string; startLine: number; endLine: number; kind: \"section\" | \"symbol\" | \"document\" };\nconst cache = new WeakMap<KnowledgeMaterial, MaterialSection[]>();\ntype PositionedFragment = KnowledgeMaterial[\"fragments\"][number] & { start: number; end: number; startLine: number; endLine: nu"
+      },
+      {
+        "key": "c2",
+        "label": "研究结果中的材料大纲",
+        "reason": "说明材料读取会把结构投影作为 outline 返回，体现它在研究阅读中的用途。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/research.ts",
+          "startLine": 26,
+          "endLine": 40
+        },
+        "quote": "  read(key: string, start: number, end: number) {\n    const material = this.byKey.get(key) ?? this.materials.find(m => m.path === key);\n    if (!material) return { error: \"材料不存在，请使用目录中的 key\" };\n    if (start > material.lineCount || end < start) return { error: \"行范围无效\", totalLines: material.lineCount };\n    const range "
+      },
+      {
+        "key": "c3",
+        "label": "检索命中的章节邻居",
+        "reason": "说明检索上下文使用 fragment 坐标和所属章节补充标题与相邻原文，并应用可见性过滤。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/context.ts",
+          "startLine": 6,
+          "endLine": 18
+        },
+        "quote": "export function evidenceNeighbors(store: Store, fragmentId: string, visible: (id: string) => boolean) {\n  const evidence = store.evidence(fragmentId);\n  if (!evidence) return [];\n  const material = materialFromRevision(store, evidence.revision.id);\n  if (!material) return [];\n  const positions = fragmentPositions(mater"
+      },
+      {
+        "key": "c4",
+        "label": "代码候选分支",
+        "reason": "支持路径回退、代码候选扩展名匹配，以及符号结果为空后进入全文回退的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/structure.ts",
+          "startLine": 11,
+          "endLine": 16
+        },
+        "quote": "export function materialSections(material: KnowledgeMaterial): MaterialSection[] {\n  const saved = cache.get(material); if (saved) return saved;\n  const path = material.path ?? material.title;\n  let sections: MaterialSection[] = [];\n  if (/\\.(?:[cm]?[jt]sx?|vue)$/.test(path)) {\n    sections = parseFile(path, material.t"
+      },
+      {
+        "key": "c5",
+        "label": "Markdown 章节与全文回退",
+        "reason": "支持 Markdown lexer、标题层级截止规则以及没有结构时返回整篇范围。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/structure.ts",
+          "startLine": 17,
+          "endLine": 30
+        },
+        "quote": "  } else if (/\\.(?:md|markdown)$/i.test(path) || /^#{1,6}\\s/m.test(material.text)) {\n    // Use the same Markdown parser as the reader: fenced headings aren't sections.\n    let cursor = 0;\n    const headings: (MaterialSection & { depth: number })[] = [];\n    for (const token of marked.lexer(material.text)) {\n      cons"
+      },
+      {
+        "key": "c6",
+        "label": "解析器的扩展名识别",
+        "reason": "支持当前只有 Vue、TS、TSX、JS、MJS 被识别为可进入相应解析路径，其他扩展名默认为普通文本。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 226,
+          "endLine": 233
+        },
+        "quote": "function extLanguage(path: string): string {\n  if (path.endsWith(\".vue\")) return \"vue\";\n  if (path.endsWith(\".ts\") || path.endsWith(\".tsx\")) return \"typescript\";\n  if (path.endsWith(\".js\") || path.endsWith(\".mjs\")) return \"javascript\";\n  if (path.endsWith(\".json\")) return \"json\";\n  if (path.endsWith(\".md\")) return \"mar"
+      },
+      {
+        "key": "c7",
+        "label": "AST 与 Vue 解析路径",
+        "reason": "支持 Vue 的专门解析以及仅 TypeScript、JavaScript 语言进入 AST 遍历，其他语言返回空符号。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/code/parse.ts",
+          "startLine": 236,
+          "endLine": 310
+        },
+        "quote": "export function parseFile(path: string, source: string): ParsedFile {\n  const language = extLanguage(path);\n  const base = path.split(\"/\").pop() ?? path;\n\n  if (language === \"vue\") {\n    const { descriptor, errors } = parseVue(source, { filename: path });\n    if (errors.length) {\n      return {\n        language,\n      "
+      },
+      {
+        "key": "c8",
+        "label": "Fragment 对齐与具体范围选择",
+        "reason": "支持 fragment 顺序匹配、字符和行坐标计算，以及按最小跨度选择所属结构。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/structure.ts",
+          "startLine": 33,
+          "endLine": 47
+        },
+        "quote": "export function fragmentPositions(material: KnowledgeMaterial) {\n  const saved = positionsCache.get(material); if (saved) return saved;\n  let cursor = 0;\n  const positions = material.fragments.flatMap(fragment => {\n    const start = material.text.indexOf(fragment.text, cursor);\n    if (start < 0) return [];\n    cursor "
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/structure.ts",
+      "digest": "2ede9df50f2d9580167ff21e1386a67593ab3ca4991e28a3de8149a9ea7a9213"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/code/parse.ts",
+      "digest": "3dcab1e9b29ead33c2a44af2121c1ffe1b815966a520d27225a4cc6f502f5e33"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/agent-research.ts",
+      "digest": "e76a2c403ae54ae1e4d5f8ba7ec2d6f1c17a1f2fdbf1d45666aed6470b79aaf1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "a3d0ad8d9524de33a9c0fcd64913fadaff3eb766eddfde395ad04e54adb11d14"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/research.ts",
+      "digest": "b2562ba11074823a6bd64799ec14dd3fd791b69692bbfb8594a893dc2799d5ce"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/context.ts",
+      "digest": "81ce242b8ed22df4ecde092dfe80627471e50a1962b6bef71e14b57c5ed03a36"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/reading-context.test.ts",
+      "digest": "8806cca81e216f348b5710c6f07c7ead7f010a8fe2c2423438101876793d7c6b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/archive/2026-10-01-baseline/prototype/app.jsx",
+      "digest": "3463c1c480ab929a16f0be14f47a817ec6729c09d221429243628708aafba731"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-02T07:20:43.546Z",
+    "trace": {
+      "runId": "0b332fa8-e05a-4f31-9f74-9fca85fa5198",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da",
+      "promptHash": "14d267c1e5a87fff75fbaa4dda3916285930e14b464947aba2824637a27222bc",
+      "contextHash": "0180d9a77b1b1a90366ccb63ff1204c0a2b37cb44d07ee844faa42634a2053b2",
+      "skillHash": "b611e7f72593c708d1430a1b9867e83f0d95796036e615120cb4aad48fd02fb0",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "d03e281ea9bd5ffb8efdf7cbbe5af41d7b1857a4408828baeb8122622655621f",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a0fb7b-443c-72c3-a211-144291821e1d"
+      ],
+      "usage": {
+        "used": 52773,
+        "size": 258400,
+        "cost": null,
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_zWbgrg5ODw922Yj12wWCYoOf:exec-cfbefd08-811c-4648-bfa2-e66f039082d3",
+            "title": "Read SKILL.md, Read README.md, Read README.md, Read progress.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_zWbgrg5ODw922Yj12wWCYoOf:exec-cfbefd08-811c-4648-bfa2-e66f039082d3",
+              "process_id": "60644",
+              "turn_id": "01a0fb7b-472d-7ea0-acb3-cc814433f626",
+              "started_at_ms": 1790925563919,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md && sed -n '1,220p' README.md && sed -n '1,240p' docs/reader-first/README.md && sed -n '1,240p' docs/reader-first/progress.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/0b332fa8-e05a-4f31-9f74-9fca85fa5198",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' README.md",
+                  "name": "README.md",
+                  "path": "README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' docs/reader-first/README.md",
+                  "name": "README.md",
+                  "path": "docs/reader-first/README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' docs/reader-first/progress.md",
+                  "name": "progress.md",
+                  "path": "docs/reader-first/progress.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_zWbgrg5ODw922Yj12wWCYoOf:exec-cfbefd08-811c-4648-bfa2-e66f039082d3",
+            "status": "failed",
+            "outputDigest": "47b6c68595660a0263731cdc57b0bac0cbf05ac50d773304ab849f87e89af5ed"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_D8i58xb5N2zIt2AuSnLndbF4:exec-d36127bf-c772-4fca-9cb1-5e542259989a",
+            "title": "pwd; rg --files -g 'catalog.json' -g 'knowledge.json' -g 'originals/**' -g 'README.md' -g 'progress.md' | sed -n '1,240p'; sed -n '1,240p' catalog.json; sed -n '1,220p' knowledge.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_D8i58xb5N2zIt2AuSnLndbF4:exec-d36127bf-c772-4fca-9cb1-5e542259989a",
+              "process_id": "65193",
+              "turn_id": "01a0fb7b-472d-7ea0-acb3-cc814433f626",
+              "started_at_ms": 1790925571991,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "pwd; rg --files -g 'catalog.json' -g 'knowledge.json' -g 'originals/**' -g 'README.md' -g 'progress.md' | sed -n '1,240p'; sed -n '1,240p' catalog.json; sed -n '1,220p' knowledge.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/0b332fa8-e05a-4f31-9f74-9fca85fa5198",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "pwd; rg --files -g 'catalog.json' -g 'knowledge.json' -g 'originals/**' -g 'README.md' -g 'progress.md' | sed -n '1,240p'; sed -n '1,240p' catalog.json; sed -n '1,220p' knowledge.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_D8i58xb5N2zIt2AuSnLndbF4:exec-d36127bf-c772-4fca-9cb1-5e542259989a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_D8i58xb5N2zIt2AuSnLndbF4:exec-d36127bf-c772-4fca-9cb1-5e542259989a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_D8i58xb5N2zIt2AuSnLndbF4:exec-d36127bf-c772-4fca-9cb1-5e542259989a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_D8i58xb5N2zIt2AuSnLndbF4:exec-d36127bf-c772-4fca-9cb1-5e542259989a",
+            "status": "completed",
+            "outputDigest": "4d6e55d199da6b9af152eefb75b610f70b7fe80ad4373d27673080e090b28f6e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_nzHsjsK7P1y0pyZYJAf0Pqi2:exec-366d478b-c231-4e61-9d6f-6e78ae9aebc6",
+            "title": "Read structure.ts, Read parse.ts, Search materialSections|fragmentPositions|containingSection in server, Search apps/server/src/code/parse.ts|apps/server/src/knowledge/structure.ts in catalog.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_nzHsjsK7P1y0pyZYJAf0Pqi2:exec-366d478b-c231-4e61-9d6f-6e78ae9aebc6",
+              "process_id": "33452",
+              "turn_id": "01a0fb7b-472d-7ea0-acb3-cc814433f626",
+              "started_at_ms": 1790925580176,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/knowledge/structure.ts; sed -n '200,330p' originals/apps/server/src/code/parse.ts | nl -ba -v200; rg -n \"materialSections|fragmentPositions|containingSection\" originals/apps/server/src originals/apps/server/tests originals/apps/web/src; rg -n 'apps/server/src/code/parse.ts|apps/server/src/knowledge/structure.ts' catalog.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/0b332fa8-e05a-4f31-9f74-9fca85fa5198",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/knowledge/structure.ts",
+                  "name": "structure.ts",
+                  "path": "originals/apps/server/src/knowledge/structure.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '200,330p' originals/apps/server/src/code/parse.ts",
+                  "name": "parse.ts",
+                  "path": "originals/apps/server/src/code/parse.ts"
+                },
+                {
+                  "type": "search",
+                  "cmd": "rg -n 'materialSections|fragmentPositions|containingSection' originals/apps/server/src originals/apps/server/tests originals/apps/web/src",
+                  "query": "materialSections|fragmentPositions|containingSection",
+                  "path": "server"
+                },
+                {
+                  "type": "search",
+                  "cmd": "rg -n 'apps/server/src/code/parse.ts|apps/server/src/knowledge/structure.ts' catalog.json",
+                  "query": "apps/server/src/code/parse.ts|apps/server/src/knowledge/structure.ts",
+                  "path": "catalog.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_nzHsjsK7P1y0pyZYJAf0Pqi2:exec-366d478b-c231-4e61-9d6f-6e78ae9aebc6",
+            "status": "completed",
+            "outputDigest": "7ba7a4c9af0a3be822c1327de572d3f12ea7afd17e1a9303b6821407c7eb0c9f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-4aab8660-ac40-441e-9958-536fb0a2ea98",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/knowledge/structure.ts",
+                "symbol": "materialSections"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-2dbdc12e-7ce7-4e05-904e-76e477c829f0",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/knowledge/structure.ts",
+                "startLine": 1,
+                "endLine": 49
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/knowledge/structure.ts",
+              "symbol": "materialSections"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/knowledge/structure.ts",
+              "startLine": 1,
+              "endLine": 49
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-4aab8660-ac40-441e-9958-536fb0a2ea98",
+            "status": "completed",
+            "outputDigest": "339a4524b145654c289f942abafba0996a9531350293438a344fe2411169023b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-62a2a177-e49b-47be-9608-724229282db6",
+            "title": "Tool: omem/search_knowledge",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_knowledge",
+              "arguments": {
+                "query": "材料结构 fragmentPositions containingSection AST 符号 Markdown 标题",
+                "limit": 5,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-2dbdc12e-7ce7-4e05-904e-76e477c829f0",
+            "status": "completed",
+            "outputDigest": "949fec23fd6b4dc7289a24d31655fa561d2ee844b6ea7769df5afca97eb082bc"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-af4342f2-ec25-4eaa-aae8-5223dfb28eea",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "materialSections fragmentPositions containingSection 阅读上下文 outline",
+                "kind": "code",
+                "limit": 8,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-6ef2c2c8-3bdf-45bd-87dd-f562ea9773ea",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/code/parse.ts",
+                "startLine": 220,
+                "endLine": 312
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/code/parse.ts",
+              "startLine": 220,
+              "endLine": 312
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-6ef2c2c8-3bdf-45bd-87dd-f562ea9773ea",
+            "status": "completed",
+            "outputDigest": "1d591ae3593b60d25a26ef33065af559bff080f9b8ea472c797d7a2f37636939"
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_knowledge",
+            "args": {
+              "query": "材料结构 fragmentPositions containingSection AST 符号 Markdown 标题",
+              "purpose": "implementation",
+              "limit": 5
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "materialSections fragmentPositions containingSection 阅读上下文 outline",
+              "kind": "code",
+              "purpose": "implementation",
+              "limit": 8
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-62a2a177-e49b-47be-9608-724229282db6",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hTGgbqRGhlpHuaPNARiXAKFQ:exec-af4342f2-ec25-4eaa-aae8-5223dfb28eea",
+            "status": "completed",
+            "outputDigest": "020c8a0e46f413cafe991ee7c286f75f17fcde511abd1099aec93a3fc957f75d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-762c12cc-bc12-4dee-8dfa-8ac9d0ddae20",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/tests/reading-context.test.ts",
+                "startLine": 1,
+                "endLine": 75
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-350bd464-1a0d-4aa2-b73e-f6230556d43c",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/knowledge/research.ts",
+                "startLine": 20,
+                "endLine": 65
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-12c266d6-5093-4cfa-81df-3fab1110bbe1",
+            "title": "Tool: omem/related_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "related_materials",
+              "arguments": {
+                "key": "omem:apps/server/src/knowledge/structure.ts"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-43f51b5f-3cb0-4917-8140-f91fbadf069f",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/context.ts",
+                "startLine": 1,
+                "endLine": 39
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/tests/reading-context.test.ts",
+              "startLine": 1,
+              "endLine": 75
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/knowledge/research.ts",
+              "startLine": 20,
+              "endLine": 65
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "related_materials",
+            "args": {
+              "key": "omem:apps/server/src/knowledge/structure.ts"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/context.ts",
+              "startLine": 1,
+              "endLine": 39
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-762c12cc-bc12-4dee-8dfa-8ac9d0ddae20",
+            "status": "completed",
+            "outputDigest": "1487a040c526c1069e28f3cd8eb641c3bc6b8ef086da347c5fc6a8289c9ec03e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-350bd464-1a0d-4aa2-b73e-f6230556d43c",
+            "status": "completed",
+            "outputDigest": "e901349045360451504399de7871a75959264af46f43804ec4ff0a64b9177630"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-12c266d6-5093-4cfa-81df-3fab1110bbe1",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_fOT7kr7VpjSVWE1NsruymXp3:exec-43f51b5f-3cb0-4917-8140-f91fbadf069f",
+            "status": "completed",
+            "outputDigest": "efb1b345bbb1548313107085f833bf76d847fc9a25a4722bf137b573f9a80bd7"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_iuU83u2ygQPut37X8MS9cXHv:exec-ea9bb3fd-e369-4b68-9a22-b9adf23cb403",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/knowledge/structure.ts",
+              "omem:apps/server/src/code/parse.ts",
+              "omem:apps/server/src/knowledge/agent-research.ts",
+              "omem:apps/server/src/retrieval/context.ts",
+              "omem:apps/server/src/knowledge/research.ts",
+              "omem:docs/archive/2026-10-01-baseline/prototype/app.jsx",
+              "omem:apps/server/src/knowledge/pipeline.ts",
+              "omem:apps/server/tests/reading-context.test.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_iuU83u2ygQPut37X8MS9cXHv:exec-ea9bb3fd-e369-4b68-9a22-b9adf23cb403",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-02T07:21:48.658Z",
+    "trace": {
+      "runId": "57ffa1b8-dcef-4e91-bc71-ef011379fe85",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9",
+      "promptHash": "c12224280fdbbaf690d65d481293d1d20547552566ac28c58ed53e1b215bfb29",
+      "contextHash": "33830f2983ce34c476be96e344191e4988bded8826e61cd749d76f60f9540715",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "1a12e90818adad6020564b7f114dea1fdb36eaea5c9211a1a5d98a29e72ec5a0",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a0fb7c-d42b-74a2-81c6-3659f4c481ec"
+      ],
+      "usage": {
+        "used": 32570,
+        "size": 258400,
+        "cost": null,
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_1thoni6FRVE7yz1Bdpu3XYQl:exec-371731ce-e97d-4d27-922f-aaa1cf3ae00c",
+            "title": "Read SKILL.md, Read catalog.json, Read knowledge.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_1thoni6FRVE7yz1Bdpu3XYQl:exec-371731ce-e97d-4d27-922f-aaa1cf3ae00c",
+              "process_id": "21352",
+              "turn_id": "01a0fb7c-dace-7e41-a4c9-c50ffaec0fc9",
+              "started_at_ms": 1790925668794,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md && sed -n '1,240p' catalog.json && sed -n '1,200p' knowledge.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/57ffa1b8-dcef-4e91-bc71-ef011379fe85",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,200p' knowledge.json",
+                  "name": "knowledge.json",
+                  "path": "knowledge.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_1thoni6FRVE7yz1Bdpu3XYQl:exec-371731ce-e97d-4d27-922f-aaa1cf3ae00c",
+            "status": "completed",
+            "outputDigest": "77cdde34b31482379d25eb829af5785665b925515b20d77cab4ef431d682c265"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_jKahMBfyUA3c9Bvax2Bm9abH:exec-e973f935-70ab-484a-b843-c080d67e3bfa",
+            "title": "Search apps/server/src/(knowledge/research|retrieval/context|code/parse|knowledge/structure)\\.ts in catalog.json, Read structure.ts, Read research.ts, Read context.ts, Read parse.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_jKahMBfyUA3c9Bvax2Bm9abH:exec-e973f935-70ab-484a-b843-c080d67e3bfa",
+              "process_id": "83313",
+              "turn_id": "01a0fb7c-dace-7e41-a4c9-c50ffaec0fc9",
+              "started_at_ms": 1790925681393,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n 'apps/server/src/(knowledge/research|retrieval/context|code/parse|knowledge/structure)\\.ts' catalog.json && nl -ba originals/apps/server/src/knowledge/structure.ts && nl -ba originals/apps/server/src/knowledge/research.ts | sed -n '1,110p' && nl -ba originals/apps/server/src/retrieval/context.ts | sed -n '1,100p' && nl -ba originals/apps/server/src/code/parse.ts | sed -n '210,330p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/final-material-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/57ffa1b8-dcef-4e91-bc71-ef011379fe85",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"apps/server/src/(knowledge/research|retrieval/context|code/parse|knowledge/structure)\\\\.ts\" catalog.json",
+                  "query": "apps/server/src/(knowledge/research|retrieval/context|code/parse|knowledge/structure)\\.ts",
+                  "path": "catalog.json"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/knowledge/structure.ts",
+                  "name": "structure.ts",
+                  "path": "originals/apps/server/src/knowledge/structure.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/knowledge/research.ts",
+                  "name": "research.ts",
+                  "path": "originals/apps/server/src/knowledge/research.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/context.ts",
+                  "name": "context.ts",
+                  "path": "originals/apps/server/src/retrieval/context.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/code/parse.ts",
+                  "name": "parse.ts",
+                  "path": "originals/apps/server/src/code/parse.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_jKahMBfyUA3c9Bvax2Bm9abH:exec-e973f935-70ab-484a-b843-c080d67e3bfa",
+            "status": "completed",
+            "outputDigest": "0cc34fa05261f325fbbecb39274af649cb1d638abccbdf07c3ff3c9beafac970"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_mUxV1i0SyLBiykshrMYXQJ28:exec-3c0252aa-3eb4-46c4-a7dc-125a13174b96",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/knowledge/structure.ts",
+              "omem:apps/server/src/knowledge/research.ts",
+              "omem:apps/server/src/retrieval/context.ts",
+              "omem:apps/server/src/code/parse.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_mUxV1i0SyLBiykshrMYXQJ28:exec-3c0252aa-3eb4-46c4-a7dc-125a13174b96",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
