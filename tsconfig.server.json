@@ -8,9 +8,7 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": ".",
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "noUncheckedIndexedAccess": true
   },
   "include": [
@@ -25,6 +23,7 @@
     "scripts/retrieval-index.ts",
     "scripts/live-retrieval-smoke.ts",
     "scripts/review-guides.ts",
-    "scripts/live-knowledge-smoke.ts"
+    "scripts/live-knowledge-smoke.ts",
+    "scripts/live-native-knowledge-smoke.ts"
   ]
 }

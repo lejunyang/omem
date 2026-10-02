@@ -11,7 +11,7 @@
       "canonical_name": "omem-code-analyst",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "7a3dae9e901ee4846571b09ce168a21061594943bc6b3f2bb727ff5255d8bc48"
+      "artifact_digest": "a7c2c85fac74c5745e20b9143fb5eea37128c053706875b5bd9738f4e7a11571"
     }
   ],
   "output_schema": "KnowledgeBatch.v1",

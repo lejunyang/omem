@@ -1,10 +1,37 @@
 # Agent 自主调查、写作与独立补查
 
-2026-10-02 本轮目标。实现状态与实际 ACP 验证见 progress.md。
+2026-10-02。原生 ACP 调查、写作与独立补查已接通；实际仓库生成状态见 progress.md。
 
-## 当前限制
+## 改造前的限制
 
 writePage 的 researcher 返回 requests，宿主最多三轮执行 MaterialResearch.search/read，随后 writer/verifier 读取同一批材料。每轮新建 ACP session；knowledge roles 的 skills 内联、工具关闭。底层已能携带 MCP，但未接知识工具。输出所有文本拼成 JSON，也会把正常过程说明判成输出错误。
+
+## 已接通的实现
+
+`knowledge/pipeline.ts` 的 ACP 知识任务默认开启 nativeResearch。研究者在一次 session/prompt 内按需读材料并用工具调查，再把 findings 交作者；作者也可以继续读取；verifier 独立新会话有相同材料范围和工具，自行补查。调查不再受宿主三轮门槛限制。保留旧 bounded-context 模式作为非 ACP/协议兼容；这不表示普通助手问答的上下文策略也已重做。
+
+`knowledge/agent-research.ts` 把固定原文导出 originals/，保留安全相对路径，图片单独导出，catalog.json 记录 key、修订、文件、行数和出处。SQLite 使用 VACUUM INTO 做一致快照，检索仅读这个快照；任务完成前不会因当前库变化而悄悄换原文。快照会话按需加载本地已安装的中文 BGE，未安装降级全文，不下载权重。派生文章和记忆仍标明背景来源。
+
+官方 MCP SDK 提供 Streamable HTTP，只监听本机且每次任务有独立随机地址，生命周期随角色结束。工具如下：
+
+| 工具 | 帮助 Agent 完成的调查 |
+| --- | --- |
+| list_materials | 按标题/路径/类型发现原件，分页取得完整目录 |
+| read_material / read_section | 整篇、任意行段、完整章节或函数；含来源、修订、目录和图片 |
+| search_materials | 共用修复后的混合检索；按明确 key/类型缩范围；弱匹配可为空 |
+| search_knowledge / read_knowledge | 阅读已有解释和其引用，再回原文核对新增事实 |
+| search_memories / read_memory | 找已有事实、经验、流程及其依据，提供背景 |
+| code_navigation | 定义、import、候选调用位置、路由和测试；不是完整类型调用图 |
+| related_materials | 显式关联及 confirmed/candidate/missing；不把 import 当业务关系 |
+| material_history | 查看已捕获版本目录，按修订补读；历史正文只作背景 |
+| read_image | 提供原始图片像素，另有工作区文件路径供原生读取 |
+| submit_result | 校验最终候选；错误留在当前 Agent turn 内修正，成功仍由宿主发布 |
+
+`agent-runtime/gateway.ts` 在原生知识模式跳过宿主输入/输出 token 预算，skills 按 canonical 名称原生加载；`agents.ts` 处理工具生命周期、计划与实际 usage，丢弃私有思考。候选提交经共享 Zod 合同及引用校验，因此聊天过程不用伪装成最终 JSON。实际 config/review-code-model.json 已移除三项预算配置；模型固有窗口、Traex 自动压缩、超时和取消仍存在。
+
+正文依赖记录引用与实际工具读取的材料，而不是把导出目录中所有文件都算依赖。原生 shell 的 parsed_cmd 与 MCP 读取都保留记录；未被运行时识别的 shell 阅读不能宣称完整覆盖，引用依赖仍是最低保障。固定历史引用不会自动跳到新版。
+
+真实小型验收使用代码路由、配置表和独立设计说明：研究、作者、复核都发生实际工具调用；作者形成含场景输入输出、流程图、概念区别和修改入口的五节页面；独立复核重新读取与搜索后通过。图像工具、历史版本读取和全库复杂调查还未单独做真实模型验收，不能继承为全部工具通过。
 
 ## 目标分工
 
