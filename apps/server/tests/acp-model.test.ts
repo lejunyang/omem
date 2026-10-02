@@ -79,6 +79,31 @@ describe("AcpAssistantModel transport routing (G)", () => {
 });
 
 describe("parseAssistantReply (G fixture parsing)", () => {
+  it("resolves short model references to distinct fixed ranges for reading and governed task requests", () => {
+    const aliases = new Map([
+      ["cite_1", "e:original:2:4"],
+      ["cite_2", "e:original:6:8"],
+    ]);
+    const reply = parseAssistantReply(
+      JSON.stringify({
+        answer: "预订。[[cite_1]] 释放。[cite_2] 未知。[[cite_99]]",
+        citation_ids: ["cite_1", "cite_2"],
+        create_task: {
+          title: "检查释放行为",
+          detail: "阅读方法",
+          citation_ids: ["cite_2"],
+        },
+      }),
+      aliases,
+    );
+    expect(reply.answer).toBe(
+      "预订。[[e:original:2:4]] 释放。[[e:original:6:8]] 未知。（引用不可用：模型没有提供对应原文）",
+    );
+    expect(reply.citationIds).toEqual([...aliases.values()]);
+    expect(reply.toolCalls![0]).toMatchObject({
+      citationIds: ["e:original:6:8"],
+    });
+  });
   it("parses a well-formed JSON reply with citations and create_task", () => {
     const raw = JSON.stringify({
       answer: "接口在 GET /v1/items。",
@@ -113,7 +138,9 @@ describe("parseAssistantReply (G fixture parsing)", () => {
   });
 
   it("throws when answer is missing", () => {
-    expect(() => parseAssistantReply(JSON.stringify({ citation_ids: [] }))).toThrow();
+    expect(() =>
+      parseAssistantReply(JSON.stringify({ citation_ids: [] })),
+    ).toThrow();
   });
 
   it("ignores malformed citation_ids (non-strings filtered)", () => {
