@@ -426,15 +426,13 @@ export async function prepareAgentResearch(input: {
         },
         async ({ query, limit, purpose }) => {
           if (config.enabled) {
-            ready ??= retrieval
-              .indexBatch(0)
-              .catch((error) =>
-                record({
-                  kind: "index",
-                  state: "lexical-only",
-                  reason: String(error),
-                }),
-              );
+            ready ??= retrieval.indexBatch(0).catch((error) =>
+              record({
+                kind: "index",
+                state: "lexical-only",
+                reason: String(error),
+              }),
+            );
             await ready;
           }
           const hits = await retrieval.search({
@@ -444,6 +442,23 @@ export async function prepareAgentResearch(input: {
             kinds: ["knowledge"],
             visible: (id) => fragments.has(id),
           });
+          // Search may return a reviewed background page whose uncited research
+          // inputs changed. Grant read access only after the shared visibility
+          // policy admitted it; it does not enter the writer's citation offers.
+          for (const h of hits)
+            if (h.target.kind === "knowledge" && !articles.has(h.target.key)) {
+              const row = db
+                .prepare(
+                  "SELECT artifact FROM knowledge_revisions WHERE id=? AND document_key=?",
+                )
+                .get(h.target.revision, h.target.key);
+              if (row)
+                articles.set(h.target.key, {
+                  ...JSON.parse(String(row.artifact)),
+                  revision: h.target.revision,
+                  current: false,
+                });
+            }
           return hits.flatMap((h) =>
             h.target.kind === "knowledge" && articles.has(h.target.key)
               ? [
@@ -458,6 +473,7 @@ export async function prepareAgentResearch(input: {
                     citations: h.citations,
                     references: h.references,
                     derived: true,
+                    reviewState: h.target.reviewState ?? "current",
                   },
                 ]
               : [],
@@ -479,6 +495,7 @@ export async function prepareAgentResearch(input: {
             revision: a.revision,
             dependencies: a.dependencies,
             derived: true,
+            reviewState: a.current ? "current" : "needs-review",
           };
         },
       );

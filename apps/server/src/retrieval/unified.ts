@@ -446,11 +446,15 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     };
     const priority = (u: RetrievalUnit) => {
       const definition = this.namedDefinition(u, q) ? 2 : 1;
+      const freshness =
+        u.target.kind === "knowledge" && u.target.reviewState === "needs-review"
+          ? 0.85
+          : 1;
       if (
         q.purpose !== "follow-up" ||
         (!["task", "memory"].includes(u.kind) && u.subtype !== "conversation")
       )
-        return preference(u) * definition;
+        return preference(u) * definition * freshness;
       const event = Date.parse(u.eventAt ?? "");
       const ageDays = Math.max(0, (Date.now() - event) / 86_400_000);
       return (

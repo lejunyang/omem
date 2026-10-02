@@ -237,6 +237,216 @@ it("finds separate functions in the same file at their own ranges rather than a 
   }
 });
 
+it("recalls supported prose as pending review when an uncited research input changes, but respects explicit invalidation", async () => {
+  const s = setup();
+  try {
+    s.store.capture({
+      source: "manual",
+      externalId: "consumer",
+      title: "event consumer",
+      parts: [
+        {
+          type: "text",
+          text: "if (seen(event.id)) return;\nqueue.deliver(event.parcel);",
+        },
+      ],
+      context: {},
+    });
+    const article = s.publish();
+    const backgroundInput = {
+      source: "manual" as const,
+      externalId: "background",
+      title: "operator notes",
+      context: {},
+    };
+    s.store.capture({
+      ...backgroundInput,
+      parts: [{ type: "text", text: "值班安排周一。" }],
+    });
+    const background = s.repository
+      .materials()
+      .find((m) => m.title === "operator notes")!;
+    s.repository.publish({
+      ...article,
+      dependencies: [
+        ...article.dependencies,
+        { kind: "material", key: background.key, digest: background.digest },
+      ],
+    });
+    s.store.capture({
+      ...backgroundInput,
+      parts: [{ type: "text", text: "值班安排周二。" }],
+    });
+    s.repository.refresh();
+    const hit = (
+      await s.retrieval.search({ text: "重复通知 配送", kinds: ["knowledge"] })
+    )[0]!;
+    expect(hit.target).toMatchObject({
+      kind: "knowledge",
+      reviewState: "needs-review",
+    });
+    expect(hit.references[0]).toMatchObject({ startLine: 1, endLine: 2 });
+    expect(
+      await s.retrieval.search({
+        text: "重复通知",
+        kinds: ["knowledge"],
+        visible: (id) =>
+          id !==
+          s.repository.materials().find((m) => m.key === background.key)!
+            .fragments[0]!.id,
+      }),
+    ).toEqual([]);
+    s.store.db
+      .prepare("INSERT INTO knowledge_invalidations VALUES(?,?)")
+      .run(article.document.key, "用户更正了正文结论");
+    expect(
+      await s.retrieval.search({ text: "重复通知", kinds: ["knowledge"] }),
+    ).toEqual([]);
+  } finally {
+    await s.close();
+  }
+});
+
+it("keeps a parent explanation tied to its fixed child revision after the child's citation range changes", async () => {
+  const s = setup();
+  try {
+    s.store.capture({
+      source: "manual",
+      externalId: "consumer",
+      title: "event consumer",
+      parts: [
+        {
+          type: "text",
+          text: "if (seen(event.id)) return;\nqueue.deliver(event.parcel);",
+        },
+      ],
+      context: {},
+    });
+    const child = s.publish();
+    const parent = s.repository.publish({
+      ...child,
+      document: {
+        ...child.document,
+        key: "delivery-overview",
+        sections: [
+          {
+            key: "why",
+            title: "配送概念",
+            body: "重复通知只安排一次运输。[[child]]",
+          },
+        ],
+        citations: [
+          {
+            key: "child",
+            label: "配送解释",
+            reason: "解释事件受理",
+            relation: "explains",
+            quote: "",
+            target: {
+              kind: "article",
+              key: child.document.key,
+              section: "dedup",
+            },
+          },
+        ],
+      },
+      dependencies: [
+        { kind: "article", key: child.document.key, digest: child.revision },
+      ],
+    });
+    const m = s.repository.materials()[0]!;
+    s.repository.publish({
+      ...child,
+      document: bindKnowledgeQuotes(
+        {
+          ...child.document,
+          citations: child.document.citations.map((c) => ({
+            ...c,
+            target: { kind: "material", key: m.key, startLine: 2, endLine: 2 },
+          })),
+        },
+        new Map([[m.key, m]]),
+      ),
+    });
+    const hit = (
+      await s.retrieval.search({ text: "重复通知 配送", kinds: ["knowledge"] })
+    ).find(
+      (h) =>
+        h.target.kind === "knowledge" && h.target.key === parent.document.key,
+    )!;
+    expect(hit.target).toMatchObject({ reviewState: "needs-review" });
+    expect(hit.references[0]).toMatchObject({ startLine: 1, endLine: 2 });
+  } finally {
+    await s.close();
+  }
+});
+
+it("lets the assistant cite one of two functions sharing a fragment without selecting the other range", async () => {
+  const s = setup();
+  try {
+    s.store.capture({
+      source: "file",
+      externalId: "functions",
+      title: "processor.ts",
+      context: { filePath: "processor.ts", captureFormat: "verbatim-v1" },
+      parts: [
+        {
+          type: "text",
+          text: "export function reserveParcel() {\n  return 1;\n}\nexport function releaseParcel() {\n  return 0;\n}",
+        },
+      ],
+    });
+    const hits = await Promise.all(
+      ["reserveParcel", "releaseParcel"].map((text) =>
+        s.retrieval.search({ text, purpose: "implementation" }),
+      ),
+    );
+    let received: Parameters<AssistantModelPort["generate"]>[0] | undefined;
+    const runtime = new AssistantRuntime(
+      s.store,
+      {
+        generate: async (input) => {
+          received = input;
+          const chosen = input.evidence.find((e) =>
+            e.text.includes("releaseParcel"),
+          )!;
+          return {
+            answer: `释放包裹。[[${chosen.citationId}]]`,
+            citationIds: [chosen.citationId!],
+          };
+        },
+      },
+      {
+        ownerId: "owner",
+        retrieval: {
+          ...s.retrieval,
+          searchSources: () => [],
+          search: async () => hits.map((list) => list[0]!),
+        },
+      },
+    );
+    const conversation = runtime.conversations.open({
+      principalId: "owner",
+      channel: "web",
+      chatId: "functions",
+      visibility: "private",
+    });
+    const result = await runtime.turn({
+      conversationId: conversation.id,
+      userText: "这两个函数有什么区别？",
+    });
+    expect(received?.evidence).toHaveLength(2);
+    expect(new Set(received?.evidence.map((e) => e.fragmentId)).size).toBe(1);
+    expect(new Set(received?.evidence.map((e) => e.citationId)).size).toBe(2);
+    expect(result.turn.selectedEvidence).toHaveLength(1);
+    expect((result.turn.selectedEvidence as unknown[])[0]).toMatchObject({
+      sourceTarget: { startLine: 4, endLine: 6 },
+    });
+  } finally {
+    await s.close();
+  }
+});
+
 it("opens a named method as a complete operation including its local state and branches", async () => {
   const s = setup();
   try {
