@@ -27,6 +27,8 @@
 
 ## 本轮记录
 
+- 2026-10-02 系统/Agent review 落档：恢复两次聊天审查的详细结论至 docs/README.md、current-system.md、component-integration.md 与 agent-research.md，区分 10 月 1 日基线、当前首片与本轮目标。已用 lark-cli 读取用户指定的两份 Traex 文档；原响应仅在 runtime。接下来先修检索噪声，再接原生自主研究与独立补查，尚未标记完成。
+
 2026-10-02：上一轮按仓库路径降权、按“历史”等关键词放行的策略已撤销。通用研究器不再排除特定目录，分类不再限定软件领域，引用依赖不再当导航树。新增按明确材料范围写文章的 API、持久分类路径与输入别名，网页提供选材、阅读目标和生成状态；搜索只在请求完成且为空时显示空结果。实现与真实跨领域验证结果继续记录在 [通用流程修正](general-knowledge.md)。下列 10 月 1 日记录保留为过程记录，相关路径策略不再代表当前实现。
 
 - 文档基线：旧 docs（除运行中的 associations.json）原样归档，旧 README/AGENTS 也保留快照。运行 fixture 路径与关联定位已迁移，浏览器产物改放 runtime。osdk deps --frozen 退出 0；osdk run check 退出 0（354 项测试、类型检查、构建）。最初检查内容通过但 osdk 缓存被沙箱阻止，授权重跑后取得成功退出码。
