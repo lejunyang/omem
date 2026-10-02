@@ -1,0 +1,1518 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-02T02:59:20.913Z",
+  "implementationCommit": "a4dd61f",
+  "scope": "探索性真实库对照，不是已标注相关性基准；问题存放在被输入适配器排除的 .repo-review 中",
+  "defaultDecision": "保留中文 embedding，BGE cross-encoder 仅显式实验，不默认启用",
+  "limits": [
+    "专用重排仍偏好复述问题和历史方案，不能证明能回答问题",
+    "长片段在远处凑齐词会被高估；局部摘要评分原型改善部分问题但未成为本轮实现",
+    "当前与历史适用性尚缺正式检索数据"
+  ],
+  "pairComparison": [
+    {
+      "query": "系统把新增输入的事实放进长期记忆时，需要谁来应用结果？",
+      "before": [
+        {
+          "title": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "snippet": "                  ) : article === \"memory\" ? (\n                      <>\n                        <p>\n                          Agent\n                          的长期记忆应该保留它做过什么、哪里出错、怎样",
+          "score": 0.022168337184514254,
+          "routes": [
+            "short-keyword",
+            "semantic"
+          ]
+        },
+        {
+          "title": "apps/web/src/App.vue",
+          "snippet": "\"让第一份材料，成为有来处的记忆\"\n        description=\"输入文本、图片或链接，也可以从飞书文档和 Git 导入。\"\n        ><OmButton variant=\"primary\" @click=\"view = 'capture'\"\n          >输入材料</OmButton\n        ></OmEmpty\n   ",
+          "score": 0.008894117241892666,
+          "routes": [
+            "short-keyword",
+            "semantic"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+          "snippet": "已知来源出现新版本时，旧记忆先停止作为有效依据，再复用现有提炼任务和独立复核任务。仍受新原文支持的结论更新同一个记忆 ID，旧原文和旧记忆版本继续保留；无法支持的保留 `needs_review`。`GET /api/memory-refreshes` 可查看影响范围、核验任务和真实应用结果。调度任务成功只表示已排队，只有实际修复所有受影响记忆后才记为 `a",
+          "score": 0.00811572258090558,
+          "routes": [
+            "semantic"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/design.md",
+          "snippet": "omem 是供人和不同 Agent 共用的长期记忆系统。外部材料成为可引用的证据，任务过程成为可复盘的经历，稳定的经验成为可复用的知识与操作方法。Agent 会主动补齐材料、更新知识、发现冲突、修正检索策略；人主要阅读、追问和处理少量真正需要判断的例外。",
+          "score": 0.007336764683242255,
+          "routes": [
+            "semantic"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/design.md",
+          "snippet": "第一版的成功不以“保存了多少条记忆”衡量，而以三个任务衡量：过去解决过的问题能否更快处理；材料更新后是否及时停止使用旧结论；每个重要回答能否回到具体证据。",
+          "score": 0.007516658758703328,
+          "routes": [
+            "semantic"
+          ]
+        }
+      ],
+      "after": [
+        {
+          "title": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "snippet": "                  ) : article === \"memory\" ? (\n                      <>\n                        <p>\n                          Agent\n                          的长期记忆应该保留它做过什么、哪里出错、怎样",
+          "score": 0.5802344141903597,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md",
+          "snippet": "优先完成P0A的“合法跨段引用→原始证据找回→源更新后不误用”作为超强记忆主线的第一片；P0B命令真实性可独立补，随后P0C给出一次明确时间提醒的可见价值。若团队只能一条线：先P0A，再按实际用户使用在P1A检索、P1C更新闭环与P0B/P0C交替切片。不要把完整向量引擎设成长期记忆重核验的前置条件，也不要等全量Code Wiki生成才修基础提醒。",
+          "score": 0.4362357903042542,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
+          "snippet": "统一EvidenceResolver读取固定版本原文、判断当前有效/历史/撤权、验证selector，所有入口包括主助手、Knowledge API、Code Wiki、学习卡和导出都调用它。主助手不能只searchSources而长期memory永远不入检索；应让Memory/Claim检索与原件检索并行，但把命中memory回查到原证据。",
+          "score": 0.42329868595357617,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "apps/web/src/LearningView.vue",
+          "snippet": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入",
+          "score": 0.4164068517676757,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/2026-10-01/03-统一证据内核.md",
+          "snippet": "**Memory**：为长期使用而选出的状态、偏好、经验、程序或重要经历，是经过治理的记忆视图。它有有效范围、适用条件、用途与撤销记录，不是无限追加的摘要仓库。频繁点击不是事实真实性，用户一句“谢谢”也不是程序成功验证。",
+          "score": 0.41797905722817996,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "怎样查到改版前的原文，而不是现在文件内容？",
+      "before": [
+        {
+          "title": "apps/web/src/codewiki/FileFrame.vue",
+          "snippet": "      <OmStatusLine kind=\"raw\" sourceNote=\"仓库当前快照原文，不可变\" />\n      <OmCodeViewer\n        :code=\"source\"\n        :language=\"langFor(file.path)\"\n        :anchor-line=\"anchor\"\n        ",
+          "score": 0.01846451779520615,
+          "routes": [
+            "knowledge",
+            "semantic"
+          ]
+        },
+        {
+          "title": "apps/web/src/codewiki/FileFrame.vue",
+          "snippet": "/** Always opens a symbol/range frame (fixed range), even when the symbol has no\n * fragment — never silently no-ops on a same-file self target. */\nfunction openSymbol(s: CodeSymbo",
+          "score": 0.01639344262295082,
+          "routes": [
+            "knowledge"
+          ]
+        },
+        {
+          "title": "apps/web/src/codewiki/FileFrame.vue",
+          "snippet": "<template v-else-if=\"!loadError\">\n      <OmPanel v-if=\"understanding\" title=\"派生说明（确定性解析）\" class=\"stack\">\n        <OmStatusLine kind=\"derived\" sourceNote=\"来自解析器，非模型摘要\" />\n        <p",
+          "score": 0.016129032258064516,
+          "routes": [
+            "knowledge"
+          ]
+        },
+        {
+          "title": "apps/web/src/codewiki/FileFrame.vue",
+          "snippet": "function onCodeNavigate(t: { filePath?: string; symbol?: string; line?: number }) {\n  if (!t.line) return;\n  const sym = symbols.value.find((s) => (s.rangeStart?.line ?? -1) === t.",
+          "score": 0.015873015873015872,
+          "routes": [
+            "knowledge"
+          ]
+        },
+        {
+          "title": "apps/web/src/codewiki/FileFrame.vue",
+          "snippet": "const anchor = ref<number | undefined>(props.anchorLine);",
+          "score": 0.015384615384615385,
+          "routes": [
+            "knowledge"
+          ]
+        }
+      ],
+      "after": [
+        {
+          "title": "apps/web/src/codewiki/FileFrame.vue",
+          "snippet": "      <OmStatusLine kind=\"raw\" sourceNote=\"仓库当前快照原文，不可变\" />\n      <OmCodeViewer\n        :code=\"source\"\n        :language=\"langFor(file.path)\"\n        :anchor-line=\"anchor\"\n        ",
+          "score": 0.7184064991726352,
+          "routes": [
+            "knowledge",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
+          "snippet": "统一EvidenceResolver读取固定版本原文、判断当前有效/历史/撤权、验证selector，所有入口包括主助手、Knowledge API、Code Wiki、学习卡和导出都调用它。主助手不能只searchSources而长期memory永远不入检索；应让Memory/Claim检索与原件检索并行，但把命中memory回查到原证据。",
+          "score": 0.5972983459953822,
+          "routes": [
+            "short-keyword",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/reader-first/agent-research.md",
+          "snippet": "保留旧有效文章和历史，不手改派生 JSON。实现检查通过单独提交，然后生成受影响实际知识再提交。实时工作目录不能被悄悄当生成时的固定原文。\n",
+          "score": 0.5560206992934305,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/implementation/repository-in-personal-memory.md",
+          "snippet": "迁移沿用材料 key 和内容摘要。旧文章需要的原文，从已有 review 运行数据补入，然后重新捕获当前文件作为 head。文章历史按固定依赖版本恢复，不把历史复核视作当前有效；缺失的旧原文仍不可用，前端不得跳转到新版本冒充旧依据。已有有效知识不被历史导入覆盖。历史引用解析按对应 source 查找，避免每条引用扫描全库历史。",
+          "score": 0.5450783929091656,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "packages/ui/src/useEvidenceTrail.ts",
+          "snippet": "const frames = ref<TrailFrame[]>([]), current = ref(0), open = ref(false), loopAt = ref<number | null>(null), trigger = ref<HTMLElement | null>(null);",
+          "score": 0.5358299320752868,
+          "routes": [
+            "knowledge",
+            "cross-encoder"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "为什么重复导入同一份笔记不会又排一次学习任务？",
+      "before": [
+        {
+          "title": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "snippet": "                  ) : article === \"memory\" ? (\n                      <>\n                        <p>\n                          Agent\n                          的长期记忆应该保留它做过什么、哪里出错、怎样",
+          "score": 0.016647305581182915,
+          "routes": [
+            "short-keyword",
+            "semantic"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/prototype/data.js",
+          "snippet": "…itle: \"把一次错误，变成下一次的经验\",\n    group: \"Agent 经验\",\n    kind: \"学习笔记\",\n    summary: \"保留触发、纠正与验证结果，才能从任务经历提炼出可复用的方法。\",\n    refs: [\"incident\", \"trace\", \"runbook\"],\n  },\n  {\n    id: \"versi",
+          "score": 0.01639344262295082,
+          "routes": [
+            "short-keyword"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/migration-and-acceptance.md",
+          "snippet": "| ID | 输入与过程 | 必须出现 | 禁止出现 |\n| --- | --- | --- | --- |\n| G01 | 导入一份40段的业务说明，当前无相关请求 | 原件/结构/索引/一次概览 | 40张“是否值得记”的确认卡 |\n| G02 | 含“当前…未来可能…”、“上述三种”的段落 | 保留父上下文，区分现状与规划 | 统一标explicit ",
+          "score": 0.009591970901434821,
+          "routes": [
+            "short-keyword"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/reviews/2026-09-27-batch2/README.md",
+          "snippet": "source='agent'时即使producerKind='original'也不入处理队列，阻止了从主动导入的原始Agent会话中学习；应该按原始/派生产物区分，不能只按载体区分。refresh_dependents仅返回revision ID，任务标succeeded，旧memory仍invalidated；失效保护是好的，但不能当作已经完成重核验。暂",
+          "score": 0.009271381069788405,
+          "routes": [
+            "short-keyword",
+            "semantic"
+          ]
+        },
+        {
+          "title": "apps/web/src/LearningView.vue",
+          "snippet": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入",
+          "score": 0.009276092737779363,
+          "routes": [
+            "short-keyword",
+            "knowledge",
+            "semantic"
+          ]
+        }
+      ],
+      "after": [
+        {
+          "title": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "snippet": "                  ) : article === \"memory\" ? (\n                      <>\n                        <p>\n                          Agent\n                          的长期记忆应该保留它做过什么、哪里出错、怎样",
+          "score": 0.625552374263753,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/prototype/data.js",
+          "snippet": "…itle: \"把一次错误，变成下一次的经验\",\n    group: \"Agent 经验\",\n    kind: \"学习笔记\",\n    summary: \"保留触发、纠正与验证结果，才能从任务经历提炼出可复用的方法。\",\n    refs: [\"incident\", \"trace\", \"runbook\"],\n  },\n  {\n    id: \"versi",
+          "score": 0.5604643451309016,
+          "routes": [
+            "short-keyword",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "apps/server/src/tasks/follow-up.ts",
+          "snippet": "/** Called inside Store's transaction. No model, outbound messages or new daemon.\n * A receipt is committed together with its notification, so offline catch-up and\n * repeated poll",
+          "score": 0.4485197016062649,
+          "routes": [
+            "knowledge",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/autonomous-learning.md",
+          "snippet": "独立性按源谱系与任务 ID 去重，同一文档转载、同一对话多次复述、同一 Agent 自我引用不算多个证据。项目 scope 和个人 scope 不自动互相推广。",
+          "score": 0.4416720675646126,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/reviews/2026-09-27-batch2/README.md",
+          "snippet": "source='agent'时即使producerKind='original'也不入处理队列，阻止了从主动导入的原始Agent会话中学习；应该按原始/派生产物区分，不能只按载体区分。refresh_dependents仅返回revision ID，任务标succeeded，旧memory仍invalidated；失效保护是好的，但不能当作已经完成重核验。暂",
+          "score": 0.4392371057897999,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "用户说先等对方回复，事项的下一次跟进如何设定？",
+      "before": [
+        {
+          "title": "apps/web/src/TaskFollowUpControls.vue",
+          "snippet": "older=\"例如：张三的评审回复\" /></label>\n      <label>下次跟进时间<input v-model=\"when\" type=\"datetime-local\" /></label>\n      <small>跟进时间不改变截止时间；不会自动联系对方。未设置时间时只记录等待。</small>\n      <div class=\"fol",
+          "score": 0.02367089933917195,
+          "routes": [
+            "short-keyword",
+            "semantic"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+          "snippet": "截止提醒与跟进提醒复用现有30秒轮询，通知和发生回执同事务保存；同时到期合并一条，重启后补发一次，暂缓期间不提醒，完成/取消后停止。提醒写入站内通知中心，不自动催促对方或新增外部投递。时间使用用户时区并保留原始表达；缺少明确时间时只记录等待，不虚构某个分钟。",
+          "score": 0.017941982061341726,
+          "routes": [
+            "short-keyword",
+            "semantic"
+          ]
+        },
+        {
+          "title": "apps/server/src/assistant/message-workflows.ts",
+          "snippet": ", title: \"讨论归并\", trigger: \"讨论、转述或会议材料\", output: \"决定、承诺、待确认问题及原文引用\", instruction: \"Separate decisions, each speaker's commitments and open questions. Other people's promises are not",
+          "score": 0.01660064450251239,
+          "routes": [
+            "knowledge",
+            "semantic"
+          ]
+        },
+        {
+          "title": "apps/web/src/App.vue",
+          "snippet": "待或稍后跟进。截止时间与跟进时间分开，提醒进入通知中心；完成或取消后停止提醒。\n      </p>\n      <form class=\"form\" @submit.prevent=\"createTask\">\n        <label\n          >事项<input\n            v-model=\"taskDraft.title\"\n ",
+          "score": 0.015867802662432765,
+          "routes": [
+            "short-keyword",
+            "semantic"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+          "snippet": "…| 等别人 | 已有任务明确waiting_on+对方事件 | 更新等待状态或候选下一步 | 有授权时起草，未授权不替用户催别人 |\n| 截止前检查 | 临近期限+当前状态+最新证据 | 缺口、最小下一步 | 实质风险/遗漏才提醒，重复需新理由 |\n| 会前准备 | 已授权事件/事项+相关原件 | 简短背景、决定点、材料链接 | 只在有实际准备价值时发 |",
+          "score": 0.012442447403266176,
+          "routes": [
+            "short-keyword"
+          ]
+        }
+      ],
+      "after": [
+        {
+          "title": "apps/web/src/TaskFollowUpControls.vue",
+          "snippet": "older=\"例如：张三的评审回复\" /></label>\n      <label>下次跟进时间<input v-model=\"when\" type=\"datetime-local\" /></label>\n      <small>跟进时间不改变截止时间；不会自动联系对方。未设置时间时只记录等待。</small>\n      <div class=\"fol",
+          "score": 0.8173754021807171,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "apps/web/src/App.vue",
+          "snippet": "待或稍后跟进。截止时间与跟进时间分开，提醒进入通知中心；完成或取消后停止提醒。\n      </p>\n      <form class=\"form\" @submit.prevent=\"createTask\">\n        <label\n          >事项<input\n            v-model=\"taskDraft.title\"\n ",
+          "score": 0.7072083630680982,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "apps/server/src/assistant/message-workflows.ts",
+          "snippet": ", title: \"讨论归并\", trigger: \"讨论、转述或会议材料\", output: \"决定、承诺、待确认问题及原文引用\", instruction: \"Separate decisions, each speaker's commitments and open questions. Other people's promises are not",
+          "score": 0.6721397350446441,
+          "routes": [
+            "knowledge",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "scripts/live-daily-smoke.ts",
+          "snippet": "  const before = store.tasks()[0]!.version;\n  await turn(\"回顾刚才的评审回复事项，告诉我状态，不修改。\");\n  assert.equal(store.tasks()[0]!.version, before);\n  await turn(\"取消刚才的评审回复事项，不用继续跟进了。\");\n  asser",
+          "score": 0.6667256877097549,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "scripts/browser-smoke.ts",
+          "snippet": "ole(\"button\", { name: \"日常助理\", exact: true }).click();\n    await expect(page.getByText(\"今天有什么需要跟进的事项？\", { exact: true })).toBeVisible();\n  });\n  await check(\"daily follow-up control",
+          "score": 0.5907548699487869,
+          "routes": [
+            "short-keyword",
+            "semantic",
+            "cross-encoder"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "读引用里的源码时只展开被引用的那几行，界面如何办到？",
+      "before": [
+        {
+          "title": "apps/web/src/EvidenceReader.vue",
+          "snippet": "      ><template v-else\n        ><p v-if=\"!current.e.backlinks.length\">没有直接反向引用。</p>\n        <div v-for=\"edge in current.e.backlinks\" :key=\"edge.id\" class=\"edge\">\n          <OmCita",
+          "score": 0.021050812187190834,
+          "routes": [
+            "knowledge",
+            "semantic"
+          ]
+        },
+        {
+          "title": "scripts/browser-smoke.ts",
+          "snippet": "层引用验收\" })\n        .click();\n      await page.getByText(\"选择原文提问或查看来源\", { exact: true }).click();\n      await page\n        .getByRole(\"button\", { name: /打开这段原文/ })\n        .first()\n ",
+          "score": 0.018589881105820674,
+          "routes": [
+            "knowledge",
+            "semantic"
+          ]
+        },
+        {
+          "title": "scripts/browser-smoke.ts",
+          "snippet": "const arrow = page.getByRole(\"button\", { name: \"展开分类目录\", exact: true });\n    await folder.click(); await expect(arrow).toHaveAttribute(\"aria-expanded\", \"false\");\n    await arrow.cl",
+          "score": 0.01639344262295082,
+          "routes": [
+            "knowledge"
+          ]
+        },
+        {
+          "title": "scripts/browser-smoke.ts",
+          "snippet": "const input = page.getByPlaceholder(\"收起后再展开，内容保持\");\n    await expect(input).not.toBeVisible();\n    await heading.focus(); await page.keyboard.press(\"Enter\");\n    await expect(input",
+          "score": 0.015873015873015872,
+          "routes": [
+            "knowledge"
+          ]
+        },
+        {
+          "title": "apps/web/src/ChatPane.vue",
+          "snippet": "const started = await api<{ id: string; state: \"running\" }>(\"/runs\", {\n      question: draft.value,\n      profileId: props.profileId,\n      focusId: props.focus.id,\n      ...(props",
+          "score": 0.015384615384615385,
+          "routes": [
+            "knowledge"
+          ]
+        }
+      ],
+      "after": [
+        {
+          "title": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+          "snippet": "“知识库”按主题与功能展开目录，中央显示完整文章，右侧为本页章节。引用在正文末尾轻量展示，点击后在原处打开可逐层返回的阅读窗。代码默认展示被引用的行，可向上下各展开 20 行。“原始材料”保留完整 Markdown 和版本历史，不把存储片段当成文档章节。",
+          "score": 0.5285106618793084,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "apps/web/src/EvidenceReader.vue",
+          "snippet": "      ><template v-else\n        ><p v-if=\"!current.e.backlinks.length\">没有直接反向引用。</p>\n        <div v-for=\"edge in current.e.backlinks\" :key=\"edge.id\" class=\"edge\">\n          <OmCita",
+          "score": 0.5248938310508792,
+          "routes": [
+            "knowledge",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "scripts/browser-smoke.ts",
+          "snippet": "层引用验收\" })\n        .click();\n      await page.getByText(\"选择原文提问或查看来源\", { exact: true }).click();\n      await page\n        .getByRole(\"button\", { name: /打开这段原文/ })\n        .first()\n ",
+          "score": 0.5132822456511336,
+          "routes": [
+            "knowledge",
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "scripts/browser-smoke.ts",
+          "snippet": "const input = page.getByPlaceholder(\"收起后再展开，内容保持\");\n    await expect(input).not.toBeVisible();\n    await heading.focus(); await page.keyboard.press(\"Enter\");\n    await expect(input",
+          "score": 0.4677356318911776,
+          "routes": [
+            "knowledge",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/interaction-design.md",
+          "snippet": "- **引用片段**：突出被引用的原文；清楚标识明确引用、提炼、支持、历史等关系。\n- **上下文**：展开原段落/页面附近内容，防止断章取义；大文档按块分页。\n- **谁引用了它**：反向引用列表，显示直接引用者；点入仍可继续导航，遇环提示。\n- **版本**：固定历史版和现行版差异，明确“打开新版本”动作；绝不悄悄用新正文替换旧引用。",
+          "score": 0.45186316256266124,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "代理自己寻找缺少的背景资料时，有哪些可读取的数据？",
+      "before": [
+        {
+          "title": "packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml",
+          "snippet": "interface:\n  display_name: \"整理对话材料\"\n  short_description: \"Build linked knowledge from fixed evidence\"\n  default_prompt: \"Use $omem-conversation-analyst to process the supplied fixe",
+          "score": 0.01639344262295082,
+          "routes": [
+            "knowledge"
+          ]
+        },
+        {
+          "title": "docs/README.md",
+          "snippet": "| 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |\n| --- | --- | --- | --- |\n| 材料完整、可读 | Capture、原文版本、Markdown/AST 阅读结构 | 空行片段和字符窗口缺少结构背景，多模态解析较浅 | store、knowledge/structure、retrieval |\n| 找到相关内容 | FT",
+          "score": 0.011424990937213273,
+          "routes": [
+            "short-keyword"
+          ]
+        },
+        {
+          "title": ".agents/skills/omem-design/SKILL.md",
+          "snippet": "…保存路径、当前层滚动与草稿；Esc 返回一层，关闭恢复焦点；环显示跳回目标。问答不得丢失当前证据。\n5. 正文当作不可信资料渲染为文本/审查后的 AST，不直接 v-html；图片必须由已验证 asset ID 加载。模型回包不能直接操作 DOM 或触发工具。\n6. 所有普通点击区域至少 44px，输入有可见 label；700px 以下全屏引用和折叠导航",
+          "score": 0.008871480017470902,
+          "routes": [
+            "short-keyword"
+          ]
+        },
+        {
+          "title": "docs/reader-first/review.md",
+          "snippet": "当前分析器只看到目标材料及少量补充。仓库脚本补充最多四个 import 文件的前 70 行，角色不能自行读取其他文件。发现背景缺失时，流程更擅长删掉未支持结论，而不是继续调查。",
+          "score": 0.007978069096476574,
+          "routes": [
+            "semantic"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/migration-and-acceptance.md",
+          "snippet": "…| 群内@询问；私人记忆含敏感内容 | 按群可见范围回答 | 将私人原件带入群回复 |\n| G10 | 当前任务无关的资料缺时间/归属 | 内部unknown/defer，可检索 | 每个unknown都创建decision |\n| G11 | 冲突确实阻碍当前任务且自动补证无解 | 一个有背景、有选择、有后续动作的问题 | 无上下文JSON或笼统“请确认",
+          "score": 0.007792737217383834,
+          "routes": [
+            "short-keyword"
+          ]
+        }
+      ],
+      "after": [
+        {
+          "title": "docs/README.md",
+          "snippet": "| 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |\n| --- | --- | --- | --- |\n| 材料完整、可读 | Capture、原文版本、Markdown/AST 阅读结构 | 空行片段和字符窗口缺少结构背景，多模态解析较浅 | store、knowledge/structure、retrieval |\n| 找到相关内容 | FT",
+          "score": 0.5570609273538992,
+          "routes": [
+            "short-keyword",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/reviews/2026-09-27-batch2/README.md",
+          "snippet": "缺背景不一定能由用户补齐，且多数知识导入没有迫在眉睫的选择。当前逻辑会把“我读不懂/没证据/不知道属于哪个项目”都升级成你的待办。",
+          "score": 0.5194228347986695,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/reader-first/review.md",
+          "snippet": "当前分析器只看到目标材料及少量补充。仓库脚本补充最多四个 import 文件的前 70 行，角色不能自行读取其他文件。发现背景缺失时，流程更擅长删掉未支持结论，而不是继续调查。",
+          "score": 0.4866073508112931,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/research/mempalace/README.md",
+          "snippet": "推荐 PoC 用 Python sidecar + 公共后端 API：自己指定投影 ID `omem:<fragmentRevisionId>`、写 namespace/generation/source_revision/text_hash metadata，再通过 search_memories 读取。需要验证它识别自定义 metadata 与父 chu",
+          "score": 0.42432924109557013,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        },
+        {
+          "title": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/README.md",
+          "snippet": "1. 记忆库首先要**找得回原材料、保留上下文**。收录材料本身不需要你逐句批准，材料描述也不自动成为你的任务。\n2. 输入时应该分类，但采用轻量、多维、可修正的分类；不是强迫每个句子归入唯一的事实/待办类型，更不是立刻构建完整本体。\n3. 深度整理可以渐进。实际任务、反复使用、用户纠正、来源更新和跨来源关系决定整理优先级；不能等数据很多才有基础结构，也不能",
+          "score": 0.39466704557479043,
+          "routes": [
+            "semantic",
+            "cross-encoder"
+          ]
+        }
+      ]
+    }
+  ],
+  "httpAfter": [
+    {
+      "query": "系统把新增输入的事实放进长期记忆时，需要谁来应用结果？",
+      "status": 200,
+      "elapsedMs": 478,
+      "top5": [
+        {
+          "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "title": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "score": 0.6452836163569863,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…\",\n        time: \"刚刚\",\n        why: \"需要回到原始片段核对；演示回答不会直接成为正式事实。\",\n        before: \"尚未沉淀。\",\n        after: m.text,\n        refs: m.refs,\n        state: \"candidate\",\n      },\n      "
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/2026-10-01/02-审查范围与证据口径.md",
+          "title": "docs/archive/2026-10-01-baseline/2026-10-01/02-审查范围与证据口径.md",
+          "score": 0.2654071370093263,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…期触发提醒”；真实网络故障恢复仍需验收 |\n| 图片 | 保存图片、visual-analyst、知识页面图像入口 | 输入生产媒体下载/所有路径多模态保真需实测；图像语义检索/OCR区域锚点尚缺 |\n| 学习 | 当前learning主要是提取事实/经验的流水线 | 不是面向用户英语学习的课程/卡片/复习系统 |\n| 评测 | 六维指标/空分母null/"
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/research/integration-readiness.md",
+          "title": "docs/archive/2026-10-01-baseline/research/integration-readiness.md",
+          "score": 0.2372330855981489,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "| 维度 | WeKnora | Hindsight | MemPalace |\n| --- | --- | --- | --- |\n| 定位 | 腾讯开源企业级 RAG/知识库框架（问答、Agent、Wiki/GraphRAG） | Vectorize 开源 Agent 记忆系统（retain 抽事实/建图，recall 四路召回+rerank） | 本地"
+        },
+        {
+          "path": "apps/server/src/storage/repository.ts",
+          "title": "apps/server/src/storage/repository.ts",
+          "score": 0.23086419753086418,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "const payloadJson = JSON.stringify(payload);\n        if (Buffer.byteLength(payloadJson) > 30_000)\n          throw Error(\"LARK_CARD_PAYLOAD_TOO_LARGE\");"
+        },
+        {
+          "path": "apps/server/src/storage/digest.ts",
+          "title": "apps/server/src/storage/digest.ts",
+          "score": 0.23086419753086418,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n    "
+        }
+      ]
+    },
+    {
+      "query": "怎样查到改版前的原文，而不是现在文件内容？",
+      "status": 200,
+      "elapsedMs": 466,
+      "top5": [
+        {
+          "path": "apps/web/src/codewiki/FileFrame.vue",
+          "title": "apps/web/src/codewiki/FileFrame.vue",
+          "score": 0.275,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "const anchor = ref<number | undefined>(props.anchorLine);"
+        },
+        {
+          "path": "packages/ui/src/trail.ts",
+          "title": "packages/ui/src/trail.ts",
+          "score": 0.25,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "export type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown in the drawer header / breadcrumb. */\n  title:"
+        },
+        {
+          "path": "apps/web/src/knowledge/KnowledgeDocument.vue",
+          "title": "apps/web/src/knowledge/KnowledgeDocument.vue",
+          "score": 0.25,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "let generation = 0;\nwatch(() => [props.documentKey, props.revision], async () => {"
+        },
+        {
+          "path": "packages/agent-runtime/roles/planner/1/prompt.md",
+          "title": "packages/agent-runtime/roles/planner/1/prompt.md",
+          "score": 0.25,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "Propose bounded next steps for an existing task from fixed evidence. Separate goals, verified state, prerequisites, dependencies, blockers, and unknowns. Do not claim completion wi"
+        },
+        {
+          "path": "packages/ui/src/useEvidenceTrail.ts",
+          "title": "packages/ui/src/useEvidenceTrail.ts",
+          "score": 0.25,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "export function useEvidenceTrail(onChange: () => void = () => {}) {"
+        }
+      ]
+    },
+    {
+      "query": "为什么重复导入同一份笔记不会又排一次学习任务？",
+      "status": 200,
+      "elapsedMs": 510,
+      "top5": [
+        {
+          "path": "docs/archive/2026-10-01-baseline/prototype/data.js",
+          "title": "docs/archive/2026-10-01-baseline/prototype/data.js",
+          "score": 0.5831744163379203,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…itle: \"把一次错误，变成下一次的经验\",\n    group: \"Agent 经验\",\n    kind: \"学习笔记\",\n    summary: \"保留触发、纠正与验证结果，才能从任务经历提炼出可复用的方法。\",\n    refs: [\"incident\", \"trace\", \"runbook\"],\n  },\n  {\n    id: \"versi"
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/migration-and-acceptance.md",
+          "title": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/migration-and-acceptance.md",
+          "score": 0.33944325932632724,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "| ID | 输入与过程 | 必须出现 | 禁止出现 |\n| --- | --- | --- | --- |\n| G01 | 导入一份40段的业务说明，当前无相关请求 | 原件/结构/索引/一次概览 | 40张“是否值得记”的确认卡 |\n| G02 | 含“当前…未来可能…”、“上述三种”的段落 | 保留父上下文，区分现状与规划 | 统一标explicit "
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "title": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+          "score": 0.32520433641975793,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…的重点是<strong>验证结果</strong>\n                          ，而不仅是准备了一份脚本。\n                        </p>\n                        <blockquote>\n                          从“准备好”到“验证过”，差的是一次可核对"
+        },
+        {
+          "path": "docs/reader-first/general-knowledge.md",
+          "title": "docs/reader-first/general-knowledge.md",
+          "score": 0.30154507076975956,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…写阅读目标，通过 `/api/knowledge/pages` 调查、写作、独立复核和发布；同一路径接受文档、代码、学习笔记等。范围选择保存在文章 reading 数据中。\n- 分类内查找先限定文章和相关材料；一个文章只占一个结果，附最佳命中章节。顶部搜索区分等待、成功、空结果与失败，快速换词或离开页面不会被旧请求回写。\n- 仓库导入器移到 review "
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/implementation/status.md",
+          "title": "docs/archive/2026-10-01-baseline/implementation/status.md",
+          "score": 0.2932703182079979,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…ed 纠正，作为 `trustedContext` 注入模型 prompt；同 scope 注入、跨 scope 不串。学习 pipeline 的 `confirmed_corrections` 注入（A-F01/A-F03）保持不变。 |\n| G17 | 一次计划/变更影响多对象按总影响策略门禁 | learning-pipeline.test.ts ·"
+        }
+      ]
+    },
+    {
+      "query": "用户说先等对方回复，事项的下一次跟进如何设定？",
+      "status": 200,
+      "elapsedMs": 340,
+      "top5": [
+        {
+          "path": "apps/web/src/TaskFollowUpControls.vue",
+          "title": "apps/web/src/TaskFollowUpControls.vue",
+          "score": 0.2823555042840452,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…abel>等待对象或结果<input v-model=\"waitingOn\" placeholder=\"例如：张三的评审回复\" /></label>\n      <label>下次跟进时间<input v-model=\"when\" type=\"datetime-local\" /></label>\n      <small>跟进时间不改变截止时间；不会自动联"
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+          "title": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+          "score": 0.22709189186762008,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "截止提醒与跟进提醒复用现有30秒轮询，通知和发生回执同事务保存；同时到期合并一条，重启后补发一次，暂缓期间不提醒，完成/取消后停止。提醒写入站内通知中心，不自动催促对方或新增外部投递。时间使用用户时区并保留原始表达；缺少明确时间时只记录等待，不虚构某个分钟。"
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+          "title": "docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+          "score": 0.2171836056817645,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…| 等别人 | 已有任务明确waiting_on+对方事件 | 更新等待状态或候选下一步 | 有授权时起草，未授权不替用户催别人 |\n| 截止前检查 | 临近期限+当前状态+最新证据 | 缺口、最小下一步 | 实质风险/遗漏才提醒，重复需新理由 |\n| 会前准备 | 已授权事件/事项+相关原件 | 简短背景、决定点、材料链接 | 只在有实际准备价值时发 |"
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/implementation/status.md",
+          "title": "docs/archive/2026-10-01-baseline/implementation/status.md",
+          "score": 0.2028149674056899,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "> **2026-10-01 日常消息与跟进**：新增网页“日常助理”持久会话入口；四类消息模板共用既有助手/提炼管线。schema 18 保存等待对象、独立跟进时间、暂缓时间与事项版本；等待/暂缓/取消使用同一应用回执，提醒与发生记录原子提交、离线补发一次。真实 `traex acp / gpt-5.6-sol / medium` 已验证等待创建→暂缓→重"
+        },
+        {
+          "path": "apps/web/src/App.vue",
+          "title": "apps/web/src/App.vue",
+          "score": 0.1850611734937526,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…cess' : 'neutral'\">{{\n          ({ done: \"已完成\", waiting: \"等待回复\", cancelled: \"已取消\", open: \"待推进\" })[t.status]\n        }}</OmBadge>\n        <p>{{ t.detail }}</p>\n        <p v-if=\"t.f"
+        }
+      ]
+    },
+    {
+      "query": "读引用里的源码时只展开被引用的那几行，界面如何办到？",
+      "status": 200,
+      "elapsedMs": 545,
+      "top5": [
+        {
+          "path": "scripts/browser-smoke.ts",
+          "title": "scripts/browser-smoke.ts",
+          "score": 0.36,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "const arrow = page.getByRole(\"button\", { name: \"展开分类目录\", exact: true });\n    await folder.click(); await expect(arrow).toHaveAttribute(\"aria-expanded\", \"false\");\n    await arrow.cl"
+        },
+        {
+          "path": "apps/web/src/EvidenceReader.vue",
+          "title": "apps/web/src/EvidenceReader.vue",
+          "score": 0.36,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "…v-for=\"[key, label] in [\n            ['excerpt', '引用片段'],\n            ['context', '完整材料'],\n            ['backlinks', '反向引用'],\n          ]\"\n          :key=\"key\"\n          :variant="
+        },
+        {
+          "path": "apps/web/src/ChatPane.vue",
+          "title": "apps/web/src/ChatPane.vue",
+          "score": 0.36,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "const started = await api<{ id: string; state: \"running\" }>(\"/runs\", {\n      question: draft.value,\n      profileId: props.profileId,\n      focusId: props.focus.id,\n      ...(props"
+        },
+        {
+          "path": "scripts/browser-smoke.ts",
+          "title": "scripts/browser-smoke.ts",
+          "score": 0.36,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "const input = page.getByPlaceholder(\"收起后再展开，内容保持\");\n    await expect(input).not.toBeVisible();\n    await heading.focus(); await page.keyboard.press(\"Enter\");\n    await expect(input"
+        },
+        {
+          "path": "apps/web/src/ChatPane.vue",
+          "title": "apps/web/src/ChatPane.vue",
+          "score": 0.36,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "async function ask() {\n  if (!draft.value.trim() || !props.focus || busy.value) return;\n  error.value = \"\";\n  busy.value = true;\n  try {"
+        }
+      ]
+    },
+    {
+      "query": "代理自己寻找缺少的背景资料时，有哪些可读取的数据？",
+      "status": 200,
+      "elapsedMs": 335,
+      "top5": [
+        {
+          "path": "packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml",
+          "title": "packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml",
+          "score": 0.18367346938775508,
+          "routes": [
+            "knowledge"
+          ],
+          "snippet": "interface:\n  display_name: \"整理对话材料\"\n  short_description: \"Build linked knowledge from fixed evidence\"\n  default_prompt: \"Use $omem-conversation-analyst to process the supplied fixe"
+        },
+        {
+          "path": "docs/README.md",
+          "title": "docs/README.md",
+          "score": 0.13090785748755712,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "| 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |\n| --- | --- | --- | --- |\n| 材料完整、可读 | Capture、原文版本、Markdown/AST 阅读结构 | 空行片段和字符窗口缺少结构背景，多模态解析较浅 | store、knowledge/structure、retrieval |\n| 找到相关内容 | FT"
+        },
+        {
+          "path": ".agents/skills/omem-design/SKILL.md",
+          "title": ".agents/skills/omem-design/SKILL.md",
+          "score": 0.10117478205346249,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…保存路径、当前层滚动与草稿；Esc 返回一层，关闭恢复焦点；环显示跳回目标。问答不得丢失当前证据。\n5. 正文当作不可信资料渲染为文本/审查后的 AST，不直接 v-html；图片必须由已验证 asset ID 加载。模型回包不能直接操作 DOM 或触发工具。\n6. 所有普通点击区域至少 44px，输入有可见 label；700px 以下全屏引用和折叠导航"
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/implementation/batch2/acceptance.md",
+          "title": "docs/archive/2026-10-01-baseline/implementation/batch2/acceptance.md",
+          "score": 0.09125247235137438,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "| ID | 路径 | 预期结果 |\n| --- | --- | --- |\n| A-U01 | 输入材料→job→提案→自动生效→通知详情 | 页面显示真实状态/数据，能点到每条原证据 |\n| A-U02 | 待判断→展开diff/依据→补背景/拒绝/确认 | 不含无效按钮；各动作对应独立receipt；过期明确提示 |\n| A-U03 | 机器人创建/扫"
+        },
+        {
+          "path": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/migration-and-acceptance.md",
+          "title": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/migration-and-acceptance.md",
+          "score": 0.09125247235137438,
+          "routes": [
+            "short-keyword"
+          ],
+          "snippet": "…| 群内@询问；私人记忆含敏感内容 | 按群可见范围回答 | 将私人原件带入群回复 |\n| G10 | 当前任务无关的资料缺时间/归属 | 内部unknown/defer，可检索 | 每个unknown都创建decision |\n| G11 | 冲突确实阻碍当前任务且自动补证无解 | 一个有背景、有选择、有后续动作的问题 | 无上下文JSON或笼统“请确认"
+        }
+      ]
+    },
+    {
+      "query": "absent_7a784e08f752435ebf47b5a3f67c20fe",
+      "status": 200,
+      "hits": []
+    }
+  ],
+  "localPassagePrototype": {
+    "implemented": false,
+    "results": [
+      {
+        "query": "系统把新增输入的事实放进长期记忆时，需要谁来应用结果？",
+        "top": [
+          {
+            "score": 0.01639344262295082,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…容。\n- 明确区分原文事实、来源声称、计划、建议、假设、转述和已验证结果。不要把它们互相提升。\n- 每项重要输出必须绑定输入中存在的原始证据 ID；引文保持原字，不改写成更有力的说法。模型生成的其他摘要不是新的独立佐证。\n- 不编造负责人、日期、上下文、结果或权限。不能唯一确定就输出缺失项和需要补充的具体问题。\n- 来源与数据有冲突时保留各方，不凭表达自信",
+            "title": "docs/archive/2026-10-01-baseline/implementation/batch2/prompts/common.md"
+          },
+          {
+            "score": 0.012064516129032256,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const payloadJson = JSON.stringify(payload);\n        if (Buffer.byteLength(payloadJson) > 30_000)\n          throw Error(\"LARK_CARD_PAYLOAD_TOO_LARGE\");",
+            "title": "apps/server/src/storage/repository.ts"
+          },
+          {
+            "score": 0.011873015873015872,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n    ",
+            "title": "apps/server/src/storage/digest.ts"
+          },
+          {
+            "score": 0.011094521674395052,
+            "snippet": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入",
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "title": "apps/web/src/LearningView.vue"
+          },
+          {
+            "score": 0.011687499999999998,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "export type ApplicationMetadata = {\n  workspaceId: string;\n  applicationId: string;\n  proposalId?: string;\n  proposalDigest: string;\n  generation: number;\n  title: string;\n  detail",
+            "title": "apps/server/src/storage/repository.ts"
+          }
+        ]
+      },
+      {
+        "query": "怎样查到改版前的原文，而不是现在文件内容？",
+        "top": [
+          {
+            "score": 0.018883242269415113,
+            "snippet": "      <OmStatusLine kind=\"raw\" sourceNote=\"仓库当前快照原文，不可变\" />\n      <OmCodeViewer\n        :code=\"source\"\n        :language=\"langFor(file.path)\"\n        :anchor-line=\"anchor\"\n        ",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "title": "apps/web/src/codewiki/FileFrame.vue"
+          },
+          {
+            "score": 0.01639344262295082,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const anchor = ref<number | undefined>(props.anchorLine);",
+            "title": "apps/web/src/codewiki/FileFrame.vue"
+          },
+          {
+            "score": 0.013568521031207597,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "export type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown in the drawer header / breadcrumb. */\n  title:",
+            "title": "packages/ui/src/trail.ts"
+          },
+          {
+            "score": 0.013175230566534914,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "Propose bounded next steps for an existing task from fixed evidence. Separate goals, verified state, prerequisites, dependencies, blockers, and unknowns. Do not claim completion wi",
+            "title": "packages/agent-runtime/roles/planner/1/prompt.md"
+          },
+          {
+            "score": 0.013368983957219251,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "let generation = 0;\nwatch(() => [props.documentKey, props.revision], async () => {",
+            "title": "apps/web/src/knowledge/KnowledgeDocument.vue"
+          }
+        ]
+      },
+      {
+        "query": "为什么重复导入同一份笔记不会又排一次学习任务？",
+        "top": [
+          {
+            "score": 0.01639344262295082,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "export function dispatchTaskReminders(db: DatabaseSync, instant: string) {",
+            "title": "apps/server/src/tasks/follow-up.ts"
+          },
+          {
+            "score": 0.016129032258064516,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "/** Called inside Store's transaction. No model, outbound messages or new daemon.\n * A receipt is committed together with its notification, so offline catch-up and\n * repeated poll",
+            "title": "apps/server/src/tasks/follow-up.ts"
+          },
+          {
+            "score": 0.013481631277384564,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…itle: \"把一次错误，变成下一次的经验\",\n    group: \"Agent 经验\",\n    kind: \"学习笔记\",\n    summary: \"保留触发、纠正与验证结果，才能从任务经历提炼出可复用的方法。\",\n    refs: [\"incident\", \"trace\", \"runbook\"],\n  },\n  {\n    id: \"versi",
+            "title": "docs/archive/2026-10-01-baseline/prototype/data.js"
+          },
+          {
+            "score": 0.013289036544850499,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…写阅读目标，通过 `/api/knowledge/pages` 调查、写作、独立复核和发布；同一路径接受文档、代码、学习笔记等。范围选择保存在文章 reading 数据中。\n- 分类内查找先限定文章和相关材料；一个文章只占一个结果，附最佳命中章节。顶部搜索区分等待、成功、空结果与失败，快速换词或离开页面不会被旧请求回写。\n- 仓库导入器移到 review ",
+            "title": "docs/reader-first/general-knowledge.md"
+          },
+          {
+            "score": 0.013101867016049786,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…是否联系用户 |\n| --- | --- | --- | --- | --- |\n| W0 收录 | 类型、编码、大小、重复event、hash、时间、权限、逐消息身份、结构/附件抓取 | 通常不用 | EvidenceEnvelope/原件版本 | 主动导入可给一次接收回执；不逐片段问 |\n| W1 可检索化 | 按标题/表格/代码符号/消息边界切片，原",
+            "title": "docs/archive/2026-10-01-baseline/implementation/assistant-v3/processing-policy.md"
+          }
+        ]
+      },
+      {
+        "query": "用户说先等对方回复，事项的下一次跟进如何设定？",
+        "top": [
+          {
+            "score": 0.022524506103296902,
+            "snippet": ", title: \"讨论归并\", trigger: \"讨论、转述或会议材料\", output: \"决定、承诺、待确认问题及原文引用\", instruction: \"Separate decisions, each speaker's commitments and open questions. Other people's promises are not",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "title": "apps/server/src/assistant/message-workflows.ts"
+          },
+          {
+            "score": 0.022158468687378825,
+            "snippet": "待或稍后跟进。截止时间与跟进时间分开，提醒进入通知中心；完成或取消后停止提醒。\n      </p>\n      <form class=\"form\" @submit.prevent=\"createTask\">\n        <label\n          >事项<input\n            v-model=\"taskDraft.title\"\n ",
+            "routes": [
+              "short-keyword",
+              "knowledge",
+              "semantic"
+            ],
+            "title": "apps/web/src/App.vue"
+          },
+          {
+            "score": 0.021563171001935416,
+            "snippet": "older=\"例如：张三的评审回复\" /></label>\n      <label>下次跟进时间<input v-model=\"when\" type=\"datetime-local\" /></label>\n      <small>跟进时间不改变截止时间；不会自动联系对方。未设置时间时只记录等待。</small>\n      <div class=\"fol",
+            "routes": [
+              "short-keyword",
+              "knowledge",
+              "semantic"
+            ],
+            "title": "apps/web/src/TaskFollowUpControls.vue"
+          },
+          {
+            "score": 0.019963373648260826,
+            "snippet": "    const body = [task.next_step || task.detail,\n      followUp?.waiting_on ? `等待：${followUp.waiting_on}。尚未确认收到回复。` : \"\",\n      fresh.some(t => t.kind === \"due\") ? \"已到截止时间，请检查进展。\" ",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "title": "apps/server/src/tasks/follow-up.ts"
+          },
+          {
+            "score": 0.01952768916188483,
+            "snippet": "=\"!turns.length\" title=\"还没有日常消息\" description=\"可以先记一件要跟进的事，或问今天有哪些待办。\" />\n    <div aria-live=\"polite\">\n      <OmPanel v-for=\"turn in turns\" :key=\"turn.id\" class=\"stack\" title=\"日常消息\"",
+            "routes": [
+              "short-keyword",
+              "knowledge",
+              "semantic"
+            ],
+            "title": "apps/web/src/DailyAssistant.vue"
+          }
+        ]
+      },
+      {
+        "query": "读引用里的源码时只展开被引用的那几行，界面如何办到？",
+        "top": [
+          {
+            "score": 0.02054006143982867,
+            "snippet": "      ><template v-else\n        ><p v-if=\"!current.e.backlinks.length\">没有直接反向引用。</p>\n        <div v-for=\"edge in current.e.backlinks\" :key=\"edge.id\" class=\"edge\">\n          <OmCita",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "title": "apps/web/src/EvidenceReader.vue"
+          },
+          {
+            "score": 0.018550869512323036,
+            "snippet": "层引用验收\" })\n        .click();\n      await page.getByText(\"选择原文提问或查看来源\", { exact: true }).click();\n      await page\n        .getByRole(\"button\", { name: /打开这段原文/ })\n        .first()\n ",
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "title": "scripts/browser-smoke.ts"
+          },
+          {
+            "score": 0.01639344262295082,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const arrow = page.getByRole(\"button\", { name: \"展开分类目录\", exact: true });\n    await folder.click(); await expect(arrow).toHaveAttribute(\"aria-expanded\", \"false\");\n    await arrow.cl",
+            "title": "scripts/browser-smoke.ts"
+          },
+          {
+            "score": 0.015384615384615385,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const started = await api<{ id: string; state: \"running\" }>(\"/runs\", {\n      question: draft.value,\n      profileId: props.profileId,\n      focusId: props.focus.id,\n      ...(props",
+            "title": "apps/web/src/ChatPane.vue"
+          },
+          {
+            "score": 0.012658227848101266,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "> **2026-10-01 统一知识阅读（本轮）**：`dev` 将本仓库原始材料、已复核文章与所需历史证据接入个人库；移除 `dev:review` 用户入口。知识阅读改为功能目录、完整文章、页内导航；引用移到段末，代码按引用行展开，原始 Markdown 连贯渲染。菜单与面包屑共享定义，飞书未启用提示留在飞书页面。Mermaid 使用标准库渲染。旧正文",
+            "title": "docs/archive/2026-10-01-baseline/implementation/status.md"
+          }
+        ]
+      },
+      {
+        "query": "代理自己寻找缺少的背景资料时，有哪些可读取的数据？",
+        "top": [
+          {
+            "score": 0.01639344262295082,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "interface:\n  display_name: \"整理对话材料\"\n  short_description: \"Build linked knowledge from fixed evidence\"\n  default_prompt: \"Use $omem-conversation-analyst to process the supplied fixe",
+            "title": "packages/agent-runtime/roles/conversation-analyst/1/skills/omem-conversation-analyst/agents/openai.yaml"
+          },
+          {
+            "score": 0.016129032258064516,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "| 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |\n| --- | --- | --- | --- |\n| 材料完整、可读 | Capture、原文版本、Markdown/AST 阅读结构 | 空行片段和字符窗口缺少结构背景，多模态解析较浅 | store、knowledge/structure、retrieval |\n| 找到相关内容 | FT",
+            "title": "docs/README.md"
+          },
+          {
+            "score": 0.007978069096476574,
+            "snippet": "当前分析器只看到目标材料及少量补充。仓库脚本补充最多四个 import 文件的前 70 行，角色不能自行读取其他文件。发现背景缺失时，流程更擅长删掉未支持结论，而不是继续调查。",
+            "routes": [
+              "semantic"
+            ],
+            "title": "docs/reader-first/review.md"
+          },
+          {
+            "score": 0.0072720663910992005,
+            "snippet": "先改善真实检索，再让 traex 在材料快照中使用原生读取及知识工具自主调查、写作，独立审阅者也能补查。Agent 自带 harness 负责调查循环和上下文管理；omem 负责来源、选材、工具、任务与发布。后续比较成熟记忆组件，而不是默认再造整个平台。",
+            "routes": [
+              "semantic"
+            ],
+            "title": "docs/README.md"
+          },
+          {
+            "score": 0.006939508531944396,
+            "snippet": "知识读取会核对当前来源；历史图片按固定 revision 中的 asset 引用读取，不因来源 head 已变化而丢失。知识 API 的历史图片回归通过。",
+            "routes": [
+              "semantic"
+            ],
+            "title": "docs/archive/2026-10-01-baseline/implementation/knowledge-pipeline.md"
+          }
+        ]
+      }
+    ],
+    "historicalExperiment": true,
+    "laterImplementedIn": "89899ec"
+  },
+  "finalHttp": {
+    "recordedAt": "2026-10-02T04:30:33.693Z",
+    "implementationCommit": "564f434",
+    "conditions": "Actual HTTP after the Chinese embedding model was ready; six fresh queries, latest published guides, default configuration without reranker. Earlier HTTP startup degradation is retained separately, so this is not a controlled gain comparison.",
+    "health": {
+      "available": true,
+      "backend": "sqlite-fts5-bge-crossencoder@5",
+      "reranker": {
+        "model": null,
+        "state": "disabled",
+        "error": null
+      },
+      "semantic": {
+        "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+        "state": "indexing",
+        "indexed": 12091,
+        "pending": 79,
+        "error": null
+      }
+    },
+    "results": [
+      {
+        "query": "系统把新增输入的事实放进长期记忆时，需要谁来应用结果？",
+        "status": 200,
+        "elapsedMs": 5088,
+        "top5": [
+          {
+            "path": "docs/archive/2026-10-01-baseline/implementation/batch2/prompts/common.md",
+            "score": 0.01639344262295082,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…容。\n- 明确区分原文事实、来源声称、计划、建议、假设、转述和已验证结果。不要把它们互相提升。\n- 每项重要输出必须绑定输入中存在的原始证据 ID；引文保持原字，不改写成更有力的说法。模型生成的其他摘要不是新的独立佐证。\n- 不编造负责人、日期、上下文、结果或权限。不能唯一确定就输出缺失项和需要补充的具体问题。\n- 来源与数据有冲突时保留各方，不凭表达自信"
+          },
+          {
+            "path": "apps/server/src/storage/digest.ts",
+            "score": 0.014649206552556568,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "function normalize(value: unknown): unknown {\n  if (Array.isArray(value)) return value.map(normalize);\n  if (value && typeof value === \"object\")\n    return Object.fromEntries(\n    "
+          },
+          {
+            "path": "packages/agent-runtime/src/code-understanding.ts",
+            "score": 0.014416679464420748,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "// ---------------------------------------------------------------------------\n// Deterministic validator. Returns a discriminated result instead of throwing\n// on cross-reference "
+          },
+          {
+            "path": "packages/agent-runtime/src/code-understanding.ts",
+            "score": 0.014191418847789175,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "export const canonicalJson = (value: unknown) =>\n  JSON.stringify(normalize(value));"
+          },
+          {
+            "path": "apps/server/src/storage/repository.ts",
+            "score": 0.01316305516316677,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const timestamp = () => new Date().toISOString();"
+          }
+        ]
+      },
+      {
+        "query": "怎样查到改版前的原文，而不是现在文件内容？",
+        "status": 200,
+        "elapsedMs": 3856,
+        "top5": [
+          {
+            "path": "apps/web/src/codewiki/FileFrame.vue",
+            "score": 0.01885653536556745,
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "      <OmStatusLine kind=\"raw\" sourceNote=\"仓库当前快照原文，不可变\" />\n      <OmCodeViewer\n        :code=\"source\"\n        :language=\"langFor(file.path)\"\n        :anchor-line=\"anchor\"\n        "
+          },
+          {
+            "path": "apps/web/src/codewiki/FileFrame.vue",
+            "score": 0.01639344262295082,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const anchor = ref<number | undefined>(props.anchorLine);"
+          },
+          {
+            "path": "packages/ui/src/trail.ts",
+            "score": 0.013568521031207597,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "export type TrailFrame = {\n  kind: TrailFrameKind;\n  /** Stable identity for loop detection. */\n  id: string;\n  /** Short title shown in the drawer header / breadcrumb. */\n  title:"
+          },
+          {
+            "path": "packages/agent-runtime/roles/planner/1/prompt.md",
+            "score": 0.013368983957219251,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "Propose bounded next steps for an existing task from fixed evidence. Separate goals, verified state, prerequisites, dependencies, blockers, and unknowns. Do not claim completion wi"
+          },
+          {
+            "path": "apps/server/src/retrieval/keyword.ts",
+            "score": 0.013175230566534914,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "export const ORIGINAL = \"COALESCE(json_extract(r.body, '$.provenance.producerKind'),'original') != 'derived' AND COALESCE(json_extract(r.body, '$.context.derived'),0) != 1\";\nconst "
+          }
+        ]
+      },
+      {
+        "query": "为什么重复导入同一份笔记不会又排一次学习任务？",
+        "status": 200,
+        "elapsedMs": 3403,
+        "top5": [
+          {
+            "path": "docs/reader-first/general-knowledge.md",
+            "score": 0.01639344262295082,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…写阅读目标，通过 `/api/knowledge/pages` 调查、写作、独立复核和发布；同一路径接受文档、代码、学习笔记等。范围选择保存在文章 reading 数据中。\n- 分类内查找先限定文章和相关材料；一个文章只占一个结果，附最佳命中章节。顶部搜索区分等待、成功、空结果与失败，快速换词或离开页面不会被旧请求回写。\n- 仓库导入器移到 review "
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/prototype/data.js",
+            "score": 0.013304745524364742,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…itle: \"把一次错误，变成下一次的经验\",\n    group: \"Agent 经验\",\n    kind: \"学习笔记\",\n    summary: \"保留触发、纠正与验证结果，才能从任务经历提炼出可复用的方法。\",\n    refs: [\"incident\", \"trace\", \"runbook\"],\n  },\n  {\n    id: \"versi"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/reviews/2026-09-27-batch2/README.md",
+            "score": 0.012486822870099695,
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "source='agent'时即使producerKind='original'也不入处理队列，阻止了从主动导入的原始Agent会话中学习；应该按原始/派生产物区分，不能只按载体区分。refresh_dependents仅返回revision ID，任务标succeeded，旧memory仍invalidated；失效保护是好的，但不能当作已经完成重核验。暂"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+            "score": 0.010939924334548264,
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "明从“重试 3 次”改成“5 次” | 停用旧结论，重新分析新材料，独立复核后更新原记忆，保留旧历史 | 已用真实 GPT-5.6-sol 验证同 ID 从 3 次更新为 5 次；旧原文保留，不能只排队就算完成 |"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+            "score": 0.00987059853331011,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "- **更强召回**：当前是 FTS5/BM25、中文短词、记忆/Wiki 路由和一次模型补搜；已加入 osdk 管理的中文 BGE embedding 与原片段分窗索引，尚无语义重排。沿用已有调研中的可替换检索提供方，不迁移原件和事实存储。\n- **更主动跟进**：当前有来源变更触发的重核验和到期站内提醒；等待别人回复、临近截止追踪、周期治理和外部提醒仍要"
+          }
+        ]
+      },
+      {
+        "query": "用户说先等对方回复，事项的下一次跟进如何设定？",
+        "status": 200,
+        "elapsedMs": 3942,
+        "top5": [
+          {
+            "path": "apps/web/src/App.vue",
+            "score": 0.022158468687378825,
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "待或稍后跟进。截止时间与跟进时间分开，提醒进入通知中心；完成或取消后停止提醒。\n      </p>\n      <form class=\"form\" @submit.prevent=\"createTask\">\n        <label\n          >事项<input\n            v-model=\"taskDraft.title\"\n "
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+            "score": 0.020704925539447173,
+            "routes": [
+              "short-keyword",
+              "semantic"
+            ],
+            "snippet": "截止提醒与跟进提醒复用现有30秒轮询，通知和发生回执同事务保存；同时到期合并一条，重启后补发一次，暂缓期间不提醒，完成/取消后停止。提醒写入站内通知中心，不自动催促对方或新增外部投递。时间使用用户时区并保留原始表达；缺少明确时间时只记录等待，不虚构某个分钟。"
+          },
+          {
+            "path": "apps/server/src/tasks/follow-up.ts",
+            "score": 0.018122676712638904,
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "    const body = [task.next_step || task.detail,\n      followUp?.waiting_on ? `等待：${followUp.waiting_on}。尚未确认收到回复。` : \"\",\n      fresh.some(t => t.kind === \"due\") ? \"已到截止时间，请检查进展。\" "
+          },
+          {
+            "path": "apps/server/src/assistant/message-workflows.ts",
+            "score": 0.016914918215228003,
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": ", title: \"讨论归并\", trigger: \"讨论、转述或会议材料\", output: \"决定、承诺、待确认问题及原文引用\", instruction: \"Separate decisions, each speaker's commitments and open questions. Other people's promises are not"
+          },
+          {
+            "path": "apps/server/src/memory/service.ts",
+            "score": 0.016004364634299672,
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "    const followUp = input.followUp ? validateFollowUp(input.followUp, evidence.fragment.text) : null;\n    if (input.action === \"wait\" && !followUp?.waiting_on) throw Error(\"请说明等待谁"
+          }
+        ]
+      },
+      {
+        "query": "读引用里的源码时只展开被引用的那几行，界面如何办到？",
+        "status": 200,
+        "elapsedMs": 4056,
+        "top5": [
+          {
+            "path": "apps/web/src/EvidenceReader.vue",
+            "score": 0.01639344262295082,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const e = await api<Evidence>(\"/evidence/\" + id);\n    if (current.value)\n      current.value.scroll =\n        document.querySelector(\".om-dialog .dialog-scroll\")?.scrollTop || 0;\n "
+          },
+          {
+            "path": "apps/server/src/knowledge/repository.ts",
+            "score": 0.016129032258064516,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "/** Validate the exact source/derived distinction and every inline reference.\n * Semantic correctness is checked separately by an independent model role. */\nexport function validat"
+          },
+          {
+            "path": "apps/web/src/api.ts",
+            "score": 0.015873015873015872,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "import type { TaskFollowUp } from \"../../../packages/contracts/src/task-flow.js\";\nimport type {\n  Revision,\n  Fragment,\n  Change,\n  RunEvent,\n} from \"../../../packages/contracts/sr"
+          },
+          {
+            "path": "apps/web/src/EvidenceReader.vue",
+            "score": 0.015630428974094158,
+            "routes": [
+              "knowledge",
+              "semantic"
+            ],
+            "snippet": "      ><template v-else\n        ><p v-if=\"!current.e.backlinks.length\">没有直接反向引用。</p>\n        <div v-for=\"edge in current.e.backlinks\" :key=\"edge.id\" class=\"edge\">\n          <OmCita"
+          },
+          {
+            "path": "scripts/knowledge-browser.ts",
+            "score": 0.015151515151515152,
+            "routes": [
+              "knowledge"
+            ],
+            "snippet": "const a = \"omem:apps/server/src/a.ts\", b = \"omem:apps/server/src/b.ts\", c = \"omem:apps/server/src/c.ts\";\npublish(c, \"模块 C\", c, \"material\", \"C 的实现\");\npublish(b, \"模块 B\", c, \"article\""
+          }
+        ]
+      },
+      {
+        "query": "代理自己寻找缺少的背景资料时，有哪些可读取的数据？",
+        "status": 200,
+        "elapsedMs": 3566,
+        "top5": [
+          {
+            "path": "docs/README.md",
+            "score": 0.01639344262295082,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "| 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |\n| --- | --- | --- | --- |\n| 材料完整、可读 | Capture、原文版本、Markdown/AST 阅读结构 | 空行片段和字符窗口缺少结构背景，多模态解析较浅 | store、knowledge/structure、retrieval |\n| 找到相关内容 | FT"
+          },
+          {
+            "path": ".agents/skills/omem-design/SKILL.md",
+            "score": 0.01408093926359967,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "…保存路径、当前层滚动与草稿；Esc 返回一层，关闭恢复焦点；环显示跳回目标。问答不得丢失当前证据。\n5. 正文当作不可信资料渲染为文本/审查后的 AST，不直接 v-html；图片必须由已验证 asset ID 加载。模型回包不能直接操作 DOM 或触发工具。\n6. 所有普通点击区域至少 44px，输入有可见 label；700px 以下全屏引用和折叠导航"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/implementation/batch2/acceptance.md",
+            "score": 0.01245028349163437,
+            "routes": [
+              "short-keyword"
+            ],
+            "snippet": "| ID | 路径 | 预期结果 |\n| --- | --- | --- |\n| A-U01 | 输入材料→job→提案→自动生效→通知详情 | 页面显示真实状态/数据，能点到每条原证据 |\n| A-U02 | 待判断→展开diff/依据→补背景/拒绝/确认 | 不含无效按钮；各动作对应独立receipt；过期明确提示 |\n| A-U03 | 机器人创建/扫"
+          },
+          {
+            "path": "docs/reader-first/review.md",
+            "score": 0.007978069096476574,
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "当前分析器只看到目标材料及少量补充。仓库脚本补充最多四个 import 文件的前 70 行，角色不能自行读取其他文件。发现背景缺失时，流程更擅长删掉未支持结论，而不是继续调查。"
+          },
+          {
+            "path": "docs/README.md",
+            "score": 0.0072720663910992005,
+            "routes": [
+              "semantic"
+            ],
+            "snippet": "先改善真实检索，再让 traex 在材料快照中使用原生读取及知识工具自主调查、写作，独立审阅者也能补查。Agent 自带 harness 负责调查循环和上下文管理；omem 负责来源、选材、工具、任务与发布。后续比较成熟记忆组件，而不是默认再造整个平台。"
+          }
+        ]
+      },
+      {
+        "query": "absent_817248ce5b494e27b4f93415199ff4b5",
+        "status": 200,
+        "hits": []
+      }
+    ]
+  }
+}

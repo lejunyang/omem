@@ -1,0 +1,657 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-02T04:36:24.577Z",
+  "scope": "Native knowledge generation only. Existing daily assistant and memory extraction are not claimed converted. Model acceptance is separate from reader acceptance and retrieval relevance.",
+  "model": "gpt-5.6-sol",
+  "guides": [
+    {
+      "key": "guide:overview",
+      "file": "e3a688af2ed1ce2734e7f6a41ed91e4369645398f90a03e28b92c27028f48e1f.json",
+      "title": "先认识 omem：把材料变成能找回的工作记忆",
+      "current": true,
+      "sections": [
+        "从一个容易遗忘的决定开始",
+        "先保存约定，再确认它可被找回",
+        "同一份约定会产生四种不同东西",
+        "找回决定，并在需要时整理成解释",
+        "代码与文档一起成为材料",
+        "把评审变成真正可跟进的事项",
+        "现在能做什么，哪些仍需人工"
+      ],
+      "generationAt": "2026-10-02T03:46:19.179Z",
+      "reviewAt": "2026-10-02T03:49:23.798Z",
+      "verdict": "accepted",
+      "research": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-researcher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 19,
+        "mcpTools": [
+          "search_knowledge",
+          "search_materials"
+        ],
+        "reads": 31
+      },
+      "writer": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-refresher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 6,
+        "mcpTools": [],
+        "reads": 6
+      },
+      "independentReview": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-verifier",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 13,
+        "mcpTools": [
+          "search_materials"
+        ],
+        "reads": 21
+      }
+    },
+    {
+      "key": "guide:capture",
+      "file": "08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.json",
+      "title": "一份材料的旅程：从导入到可检索、可追溯",
+      "current": true,
+      "sections": [
+        "先看结果：新规则可搜，旧论断仍可核对",
+        "不同入口先汇成同一种输入",
+        "保存时追加版本，而不是覆盖原文",
+        "提交后立即可搜，语义索引随后追赶",
+        "保存、记忆学习与 Wiki 生成是三条节奏",
+        "旧引用如何准确回到旧版本",
+        "图片与代码共享来源体系，但有专用处理"
+      ],
+      "generationAt": "2026-10-02T03:48:49.512Z",
+      "reviewAt": "2026-10-02T03:52:24.370Z",
+      "verdict": "accepted",
+      "research": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-researcher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 78,
+        "mcpTools": [
+          "search_materials",
+          "code_navigation"
+        ],
+        "reads": 43
+      },
+      "writer": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-refresher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 30,
+        "mcpTools": [
+          "code_navigation",
+          "search_materials",
+          "read_material"
+        ],
+        "reads": 21
+      },
+      "independentReview": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-verifier",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 14,
+        "mcpTools": [
+          "code_navigation",
+          "search_materials"
+        ],
+        "reads": 36
+      }
+    },
+    {
+      "key": "guide:retrieval",
+      "file": "c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.json",
+      "title": "一次提问如何找到答案：召回、上下文与 RAG",
+      "current": true,
+      "sections": [
+        "先看清这次查询找到了什么",
+        "三个入口共用召回，但用途不同",
+        "问题怎样变成候选",
+        "命中一个片段后怎样补成可读背景",
+        "助手如何使用来源并追加一次查询",
+        "区分“没找到”和“找到却答不好”",
+        "当前边界与修改入口"
+      ],
+      "generationAt": "2026-10-02T04:22:30.395Z",
+      "reviewAt": "2026-10-02T04:25:26.289Z",
+      "verdict": "accepted",
+      "research": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-researcher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 39,
+        "mcpTools": [
+          "read_section",
+          "read_knowledge",
+          "search_materials",
+          "code_navigation",
+          "read_material"
+        ],
+        "reads": 60
+      },
+      "writer": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-writer",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 15,
+        "mcpTools": [
+          "code_navigation",
+          "search_materials"
+        ],
+        "reads": 39
+      },
+      "independentReview": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-verifier",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 37,
+        "mcpTools": [
+          "code_navigation",
+          "search_materials"
+        ],
+        "reads": 30
+      }
+    },
+    {
+      "key": "guide:memory",
+      "file": "d4de0ea627a2bb808daffc14026246c2dbde153c0450431a2116482269c8270c.json",
+      "title": "规则变了以后：原文、记忆与待办如何更新",
+      "current": true,
+      "sections": [
+        "先把两件事分开",
+        "保存原文不等于记忆已经生效",
+        "来源变化后，先失效再重核验",
+        "记忆重核验与 Wiki 更新不是同一件事",
+        "等待、跟进、截止、暂缓和已读",
+        "怎样判断哪一步真的完成了",
+        "当前能主动做什么，边界在哪里"
+      ],
+      "generationAt": "2026-10-02T04:01:01.845Z",
+      "reviewAt": "2026-10-02T04:05:40.069Z",
+      "verdict": "accepted",
+      "research": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-researcher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 29,
+        "mcpTools": [
+          "search_knowledge",
+          "code_navigation",
+          "search_materials",
+          "read_knowledge"
+        ],
+        "reads": 39
+      },
+      "writer": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-writer",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 50,
+        "mcpTools": [
+          "code_navigation",
+          "search_materials"
+        ],
+        "reads": 34
+      },
+      "independentReview": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-verifier",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 23,
+        "mcpTools": [
+          "code_navigation"
+        ],
+        "reads": 31
+      }
+    },
+    {
+      "key": "guide:contributing",
+      "file": "0fc1372e659c300a4a7193e2de27f7d10a3c14baf8d61d9cee5f74f4a67a1d4a.json",
+      "title": "改一条完整功能链：让搜索结果说清所属章节",
+      "current": true,
+      "sections": [
+        "先跑通一个可观察的场景",
+        "从输入框跟到搜索响应",
+        "理解“命中结果”和“所属章节”的分工",
+        "按改动范围选择入口",
+        "复用组件并保持阅读节奏",
+        "把“代码通过”和“页面好用”分开确认",
+        "先提交实现，再更新知识"
+      ],
+      "generationAt": "2026-10-02T04:21:23.210Z",
+      "reviewAt": "2026-10-02T04:23:51.467Z",
+      "verdict": "accepted",
+      "research": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-researcher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 61,
+        "mcpTools": [
+          "code_navigation",
+          "search_materials",
+          "read_material"
+        ],
+        "reads": 38
+      },
+      "writer": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-refresher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 11,
+        "mcpTools": [
+          "code_navigation",
+          "search_materials",
+          "read_material"
+        ],
+        "reads": 30
+      },
+      "independentReview": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-verifier",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 14,
+        "mcpTools": [
+          "read_material",
+          "code_navigation",
+          "search_materials"
+        ],
+        "reads": 33
+      }
+    },
+    {
+      "key": "guide:knowledge-agent",
+      "file": "8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.json",
+      "title": "Agent 怎样把材料讲明白：自主调查、写作与补查",
+      "current": true,
+      "sections": [
+        "先决定读者要解决什么问题",
+        "在固定原件上建立调查地图",
+        "缺背景时，沿问题补读而不是猜",
+        "研究、写作与复核是三次独立判断",
+        "通过复核后才成为可更新的文章",
+        "工具正确不等于读者已经读懂"
+      ],
+      "generationAt": "2026-10-02T04:19:29.181Z",
+      "reviewAt": "2026-10-02T04:21:00.105Z",
+      "verdict": "accepted",
+      "research": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-researcher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 65,
+        "mcpTools": [
+          "read_section",
+          "read_material"
+        ],
+        "reads": 20
+      },
+      "writer": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-refresher",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 10,
+        "mcpTools": [
+          "read_section"
+        ],
+        "reads": 14
+      },
+      "independentReview": {
+        "workflow": "native-research@1",
+        "hostTokenBudget": null,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "skills": [
+          {
+            "name": "omem-knowledge-verifier",
+            "mode": "native"
+          }
+        ],
+        "nativeCalls": 6,
+        "mcpTools": [],
+        "reads": 9
+      }
+    }
+  ],
+  "selectedMaterials": [
+    {
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/agents.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/agent-research.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/ranking.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/relevance.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/reranker.ts",
+      "current": true
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "current": true
+    }
+  ],
+  "guideAttempts": [
+    {
+      "selection": "all six",
+      "exitCode": 1,
+      "failedKey": "guide:retrieval",
+      "reason": "Independent reviewer exceeded the configured 480000ms runtime; old valid revision retained."
+    },
+    {
+      "selection": "guide:retrieval",
+      "exitCode": 0,
+      "timeoutMs": 600000,
+      "verdict": "accepted"
+    }
+  ],
+  "nativeSmallExample": {
+    "passed": true,
+    "fixtureIsExternalAgentRun": true,
+    "scope": "Real Traex ACP researcher, writer and independent reviewer; not an ACP protocol fixture."
+  },
+  "fullVerification": {
+    "recordedAt": "2026-10-02T04:26:22.315Z",
+    "implementationCommit": "564f43495fe2fec9ba1a627cb6ff8df1bef74f28",
+    "passed": false,
+    "checks": [
+      {
+        "name": "dependencies",
+        "state": "passed"
+      },
+      {
+        "name": "project",
+        "state": "passed"
+      },
+      {
+        "name": "liveChineseRetrieval",
+        "state": "passed"
+      },
+      {
+        "name": "currentKnowledgeReferences",
+        "state": "passed"
+      },
+      {
+        "name": "semanticIndex",
+        "state": "passed"
+      },
+      {
+        "name": "repositorySearch",
+        "state": "failed",
+        "details": {
+          "passed": 4,
+          "total": 6
+        }
+      },
+      {
+        "name": "unchangedSourcesDuringVerification",
+        "state": "passed"
+      }
+    ],
+    "knowledge": {
+      "materials": 566,
+      "reviewedMaterials": 172,
+      "pendingMaterials": 394,
+      "currentArticles": 186,
+      "citations": 1328,
+      "articleLinks": 5,
+      "errors": [],
+      "restore": {
+        "stale": 307,
+        "restored": 189,
+        "missing": 3
+      },
+      "incomplete": true,
+      "note": "未覆盖或过期文章不计为通过；本检查只验证当前正文，不能代表全库已经生成。"
+    }
+  },
+  "browser": {
+    "base": "http://127.0.0.1:65132",
+    "checks": [
+      {
+        "key": "guide:knowledge-agent",
+        "width": 1440,
+        "sections": [
+          "先决定读者要解决什么问题",
+          "在固定原件上建立调查地图",
+          "缺背景时，沿问题补读而不是猜",
+          "研究、写作与复核是三次独立判断",
+          "通过复核后才成为可更新的文章",
+          "工具正确不等于读者已经读懂"
+        ],
+        "diagrams": 1
+      },
+      {
+        "key": "guide:knowledge-agent",
+        "width": 768,
+        "sections": [
+          "先决定读者要解决什么问题",
+          "在固定原件上建立调查地图",
+          "缺背景时，沿问题补读而不是猜",
+          "研究、写作与复核是三次独立判断",
+          "通过复核后才成为可更新的文章",
+          "工具正确不等于读者已经读懂"
+        ],
+        "diagrams": 1
+      },
+      {
+        "key": "guide:knowledge-agent",
+        "width": 390,
+        "sections": [
+          "先决定读者要解决什么问题",
+          "在固定原件上建立调查地图",
+          "缺背景时，沿问题补读而不是猜",
+          "研究、写作与复核是三次独立判断",
+          "通过复核后才成为可更新的文章",
+          "工具正确不等于读者已经读懂"
+        ],
+        "diagrams": 1
+      },
+      {
+        "key": "guide:retrieval",
+        "width": 1440,
+        "sections": [
+          "先看清这次查询找到了什么",
+          "三个入口共用召回，但用途不同",
+          "问题怎样变成候选",
+          "命中一个片段后怎样补成可读背景",
+          "助手如何使用来源并追加一次查询",
+          "区分“没找到”和“找到却答不好”",
+          "当前边界与修改入口"
+        ],
+        "diagrams": 1
+      },
+      {
+        "key": "guide:retrieval",
+        "width": 768,
+        "sections": [
+          "先看清这次查询找到了什么",
+          "三个入口共用召回，但用途不同",
+          "问题怎样变成候选",
+          "命中一个片段后怎样补成可读背景",
+          "助手如何使用来源并追加一次查询",
+          "区分“没找到”和“找到却答不好”",
+          "当前边界与修改入口"
+        ],
+        "diagrams": 1
+      },
+      {
+        "key": "guide:retrieval",
+        "width": 390,
+        "sections": [
+          "先看清这次查询找到了什么",
+          "三个入口共用召回，但用途不同",
+          "问题怎样变成候选",
+          "命中一个片段后怎样补成可读背景",
+          "助手如何使用来源并追加一次查询",
+          "区分“没找到”和“找到却答不好”",
+          "当前边界与修改入口"
+        ],
+        "diagrams": 1
+      }
+    ],
+    "errors": []
+  },
+  "visualReview": {
+    "prose": "Paragraph spacing, citations, tables and narrow layout were visually reviewed.",
+    "diagram": "Rendered and contained, but the horizontal five-step diagram is too small: labels measured about 10px at desktop and 5px at 390px. Rendering checks do not certify diagram readability; vertical/grouped authoring or readable expansion remains needed.",
+    "screenshots": [
+      ".repo-review/runtime/browser/native-guides/agent-top-1440.png",
+      ".repo-review/runtime/browser/native-guides/agent-diagram-390.png"
+    ]
+  },
+  "remaining": [
+    "Complex Chinese retrieval is still weak: public expected-path checks passed 4/6 and fresh HTTP questions still contain unrelated results.",
+    "The explanation-paragraph vector projection is an experiment, not part of default retrieval.",
+    "Real image/history tool coverage and full-library investigation are not verified by the small example.",
+    "The original viewport script has a narrow paragraph-reference locator; the content-aware runtime variant passed ten checks.",
+    "Whole-library pending/stale material notes remain explicit rather than being regenerated for coverage alone."
+  ]
+}

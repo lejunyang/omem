@@ -1,0 +1,395 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-02T04:00:31.909Z",
+  "prototype": true,
+  "implemented": false,
+  "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+  "projection": "current explanation paragraphs + title/section; fixed raw citations remain targets; no writes to original vectors",
+  "articles": 181,
+  "paragraphs": 1017,
+  "windows": 1018,
+  "limits": [
+    "Exploratory six-question comparison, not a calibrated benchmark.",
+    "No automatic current/history applicability classification.",
+    "The corpus is captured before later guide publications."
+  ],
+  "results": [
+    {
+      "query": "系统把新增输入的事实放进长期记忆时，需要谁来应用结果？",
+      "hits": [
+        {
+          "score": 0.6353295813731125,
+          "key": "omem:apps/server/src/learning/refresh.ts",
+          "revision": "33ff961cc0ce3f2ae00cc57d27ee3f6e4d92db471427aabcf0529c7ad9eb532a",
+          "title": "来源更新的记忆失效快照与重核验对账",
+          "section": "输入边界与摘要依赖",
+          "body": "记录键依赖存储层的 `stableDigest`：输入会递归规范化，对象属性按键排序并忽略值为 `undefined` 的字段，之后将规范 JSON 计算为 SHA-256 十六进制摘要。因此对象字段顺序不会改变刷新 ID。[[c6]] 当前材料未展示表约束、事务边界、调用方及重试机制，也未说明输入是否允许多个独立来源，这些仍需结合迁移与运行流程确认。",
+          "targets": [
+            {
+              "label": "稳定摘要规范化实现",
+              "kind": "material",
+              "key": "omem:apps/server/src/storage/digest.ts",
+              "startLine": 3,
+              "endLine": 19
+            }
+          ]
+        },
+        {
+          "score": 0.6237836915323844,
+          "key": "module:learning",
+          "revision": "5517362af3d08135ab4888751f3a61e542965fcdb122d2e58fc66342cd9e3e37",
+          "title": "从捕获材料到可信记忆的学习与重核验",
+          "section": "提取、独立复核与整批治理",
+          "body": "通过复核后，整份变更一次性交给记忆服务评估。服务先合并受影响记忆与新实体的去重集合；若超过自动应用预算，原本可自动应用的提案会整体停放，并只生成一次批量确认。其他策略还包括拒绝、延后到使用时处理、仅保留为可检索来源以及忽略噪声，因而“进入队列”或“模型支持”都不等于已经写入有效记忆。参考 [[c8]] [[c9]]",
+          "targets": [
+            {
+              "label": "整批影响评估",
+              "kind": "material",
+              "key": "omem:apps/server/src/learning/pipeline.ts",
+              "startLine": 525,
+              "endLine": 564
+            },
+            {
+              "label": "批量策略与治理结果",
+              "kind": "material",
+              "key": "omem:apps/server/src/memory/service.ts",
+              "startLine": 1380,
+              "endLine": 1427
+            }
+          ]
+        },
+        {
+          "score": 0.608653172269667,
+          "key": "omem:apps/web/src/App.vue",
+          "revision": "1c557c66cf8f6bb236c39172d082602ced626ade0a526672e82aaa9e86684aa1",
+          "title": "个人工作记忆的 Web 应用总入口",
+          "section": "统一工作入口与两种运行模式",
+          "body": "该组件解决的是“从同一入口完成记忆采集、阅读、检索和行动”的问题。它用稳定导航连接知识库、原始材料、材料处理、待判断、待办、通知和设置，并通过 URL hash 与会话存储保持当前页面。参考 [[c1]]",
+          "targets": [
+            {
+              "label": "工作区导航与页面状态",
+              "kind": "material",
+              "key": "omem:apps/web/src/App.vue",
+              "startLine": 40,
+              "endLine": 70
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "query": "怎样查到改版前的原文，而不是现在文件内容？",
+      "hits": [
+        {
+          "score": 0.6570484808761858,
+          "key": "omem:apps/web/src/ChangeHistory.vue",
+          "revision": "3264ec6af262032e772fc262769d8ef7f90facd631d33e7b18e3efb21614f973",
+          "title": "变更历史的筛选、比较与版本恢复入口",
+          "section": "从变化记录找到可执行入口",
+          "body": "页面解决“最近发生了什么、具体改了什么、能否回到旧内容”的问题。它接收 `Change[]`，将记录按材料、知识、恢复、事项、判断、问答和引用等类别显示，并以中文标签和本地化时间降低内部数据结构对读者的干扰。页面文案同时说明这里只呈现最近 200 条记录，并强调恢复不会覆盖现有版本，而是创建新版本。参考 [[c1]]",
+          "targets": [
+            {
+              "label": "历史页面用途与分类",
+              "kind": "material",
+              "key": "omem:apps/web/src/ChangeHistory.vue",
+              "startLine": 6,
+              "endLine": 10
+            }
+          ]
+        },
+        {
+          "score": 0.649984750307167,
+          "key": "omem:apps/web/src/knowledge/KnowledgeDocument.vue",
+          "revision": "e20ce36ed06e2c17ca950a7903a6aa23f5825e427ef9a5808ed3acd219fd4d31",
+          "title": "知识文章的加载、阅读与证据导航",
+          "section": "围绕阅读任务组织正文与证据",
+          "body": "文章存在待核对问题时，页面会挂载限定到当前文档的问题组件。该组件排除已被替代的问题，允许用户补充背景或加入待办；回答会保存为原始材料并等待后续知识核对，而不是直接改写正文。参考 [[c5]]",
+          "targets": [
+            {
+              "label": "待核对问题处理",
+              "kind": "material",
+              "key": "omem:apps/web/src/knowledge/KnowledgeQuestions.vue",
+              "startLine": 5,
+              "endLine": 24
+            }
+          ]
+        },
+        {
+          "score": 0.6366691220428656,
+          "key": "guide:overview",
+          "revision": "6eafd8cb2f662af0f94509c5254850e1e033c111fccffbd0e2cceef3c91bd5a9",
+          "title": "先认识 omem：把材料变成能找回的工作记忆",
+          "section": "先保存约定，再确认它可被找回",
+          "body": "保存后，到**原始材料**打开它。页面会显示当前版本、固定片段和版本历史。若以后用相同来源标识保存了不同内容，系统会新增版本并保留旧版；内容没有变化时则复用已有版本。这样，未来看到“规则已修改”时，仍能回看当初那段文字。参考 [[c5]]",
+          "targets": [
+            {
+              "label": "材料版本保存",
+              "kind": "material",
+              "key": "omem:apps/server/src/store.ts",
+              "startLine": 168,
+              "endLine": 208
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "query": "为什么重复导入同一份笔记不会又排一次学习任务？",
+      "hits": [
+        {
+          "score": 0.6324712713788604,
+          "key": "guide:capture",
+          "revision": "f13e6fdd6133eb179e870c1afbec2b5dd71c18cb8edee9247d0f38e84064c06a",
+          "title": "一份材料的旅程：从导入到可检索、可追溯",
+          "section": "保存、记忆学习与 Wiki 生成是三条节奏",
+          "body": "每个非派生 Capture 会持久化 `extract_claims` 任务，以避免模型派生内容再次自循环为独立证据；但 learning 默认关闭。参考 [[c14]] [[c15]]",
+          "targets": [
+            {
+              "label": "捕获后排队抽取",
+              "kind": "material",
+              "key": "omem:apps/server/src/store.ts",
+              "startLine": 348,
+              "endLine": 369
+            },
+            {
+              "label": "学习能力开关",
+              "kind": "material",
+              "key": "omem:apps/server/src/config.ts",
+              "startLine": 56,
+              "endLine": 65
+            }
+          ]
+        },
+        {
+          "score": 0.6310904488416672,
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "revision": "9a3f52e8bf3277c0c10b19a5bded8f833dd99d91d8406cdbbf0d9aff6278741c",
+          "title": "从原始材料到可信记忆的学习流水线",
+          "section": "只使用当前修订构造受约束上下文",
+          "body": "召回到的既有记忆仅作为背景，失效记忆以原 memory identity 作为刷新目标；角色被明确要求只依据当前原始材料重核验，不得把旧派生正文当作证据或复制出重复记忆。参考 [[c5]]",
+          "targets": [
+            {
+              "label": "召回与失效记忆刷新约束",
+              "kind": "material",
+              "key": "omem:apps/server/src/learning/pipeline.ts",
+              "startLine": 276,
+              "endLine": 308
+            }
+          ]
+        },
+        {
+          "score": 0.6262833619959652,
+          "key": "module:learning",
+          "revision": "5517362af3d08135ab4888751f3a61e542965fcdb122d2e58fc66342cd9e3e37",
+          "title": "从捕获材料到可信记忆的学习与重核验",
+          "section": "提取、独立复核与整批治理",
+          "body": "通过复核后，整份变更一次性交给记忆服务评估。服务先合并受影响记忆与新实体的去重集合；若超过自动应用预算，原本可自动应用的提案会整体停放，并只生成一次批量确认。其他策略还包括拒绝、延后到使用时处理、仅保留为可检索来源以及忽略噪声，因而“进入队列”或“模型支持”都不等于已经写入有效记忆。参考 [[c8]] [[c9]]",
+          "targets": [
+            {
+              "label": "整批影响评估",
+              "kind": "material",
+              "key": "omem:apps/server/src/learning/pipeline.ts",
+              "startLine": 525,
+              "endLine": 564
+            },
+            {
+              "label": "批量策略与治理结果",
+              "kind": "material",
+              "key": "omem:apps/server/src/memory/service.ts",
+              "startLine": 1380,
+              "endLine": 1427
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "query": "用户说先等对方回复，事项的下一次跟进如何设定？",
+      "hits": [
+        {
+          "score": 0.6510582873706969,
+          "key": "omem:apps/server/src/tasks/follow-up.ts",
+          "revision": "8af77c01efd40c930aa735012af4e4ab60735c2de905a046dd2ceef45d8b2045",
+          "title": "任务跟进校验与提醒派发",
+          "section": "到期扫描与通知生成",
+          "body": "同一轮若同时命中两类触发，只创建一条通知，但会为每个新触发分别写入收据。标题优先显示“事项待跟进”，正文组合下一步或详情、等待对象、到期说明及可执行动作，并明确不会自动联系他人。函数最终返回本轮创建的通知数量。[[c4]]",
+          "targets": [
+            {
+              "label": "提醒通知正文与收据写入",
+              "kind": "material",
+              "key": "omem:apps/server/src/tasks/follow-up.ts",
+              "startLine": 35,
+              "endLine": 49
+            }
+          ]
+        },
+        {
+          "score": 0.6115885365284234,
+          "key": "omem:apps/server/src/storage/repository.ts",
+          "revision": "6d67bc3c669e09c9efea9dc47822f3ffe578bc4da12b57d0bc6e75bbc426b072",
+          "title": "应用结果持久化与通知意图仓库",
+          "section": "统一提交与幂等边界",
+          "body": "首次提交先执行 `before` 钩子并创建实体，再写入 change 与通知。[[c2]] 随后生成应用回执并执行 `after` 钩子，而真正的数据库 `COMMIT` 要等整个回调返回后才发生。[[c3]] 因而这些数据库写入共享事务边界，但材料未证明钩子只包含可回滚操作。",
+          "targets": [
+            {
+              "label": "应用实体与变更写入",
+              "kind": "material",
+              "key": "omem:apps/server/src/storage/repository.ts",
+              "startLine": 231,
+              "endLine": 260
+            },
+            {
+              "label": "应用回执与后置钩子",
+              "kind": "material",
+              "key": "omem:apps/server/src/storage/repository.ts",
+              "startLine": 366,
+              "endLine": 399
+            }
+          ]
+        },
+        {
+          "score": 0.5964356192230297,
+          "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+          "revision": "ac6e200dc79804f4b8f123b505322d3c56aa30e6424cac0c372a7188d1d54bb9",
+          "title": "知识阅读框架：在正文、原文与引用之间导航",
+          "section": "不同标识切换与输入边界",
+          "body": "当页面切换到**不同的 `frame.id`** 时，监听器会递增请求代次，并清空已有引用和错误。异步响应返回后，只有代次仍与当前请求一致时才能更新状态，从而避免较慢的旧请求覆盖新标识对应的页面。参考 [[c5]]",
+          "targets": [
+            {
+              "label": "标识切换防护",
+              "kind": "material",
+              "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+              "startLine": 12,
+              "endLine": 17
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "query": "读引用里的源码时只展开被引用的那几行，界面如何办到？",
+      "hits": [
+        {
+          "score": 0.6992689003905806,
+          "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+          "revision": "5361f515a9a876a3e44df90105436222d6f48af156b715d416c50b3bc123bf1f",
+          "title": "带行锚点与引用入口的代码阅读器",
+          "section": "定位、引用与范围选择",
+          "body": "点击代码行时，只有该行落入某个范围才会触发导航，而且当前事件只携带行号。范围查找使用 `find`，因此多个范围重叠时会选择输入数组中的首个匹配项。参考 [[c9]] 行级引用按钮会阻止点击继续冒泡，并单独发出引用目标，避免同时触发行导航。参考 [[c10]]",
+          "targets": [
+            {
+              "label": "范围选择与行导航",
+              "kind": "material",
+              "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+              "startLine": 68,
+              "endLine": 75
+            },
+            {
+              "label": "逐行引用按钮",
+              "kind": "material",
+              "key": "omem:packages/ui/src/components/OmCodeViewer.vue",
+              "startLine": 91,
+              "endLine": 96
+            }
+          ]
+        },
+        {
+          "score": 0.6852712409498313,
+          "key": "module:web:part-3",
+          "revision": "2bb7c959f7c53751a6dc3c618e09ef41d2fb2ed775da2b0c5a7feaa0d2f427d7",
+          "title": "个人知识库的阅读与证据追溯",
+          "section": "从结论逐层返回文章与原文",
+          "body": "正文中的可操作引用不会直接替换主页面，而是生成一个引用阅读帧。引用解析后先展示关系类型和引用理由；目标不可用时给出原因，可用时则按目标类型打开文章或原始材料。解析结果提供修订、章节、材料摘要或行范围时，视图才会进一步定位到对应版本、章节或行段。参考 [[c3]]",
+          "targets": [
+            {
+              "label": "引用解析与条件定位",
+              "kind": "material",
+              "key": "omem:apps/web/src/knowledge/KnowledgeFrame.vue",
+              "startLine": 12,
+              "endLine": 30
+            }
+          ]
+        },
+        {
+          "score": 0.6741142755123725,
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "revision": "0e02e44da751187d76318303a34b1c42c0df81336823180b1d28a329234303c2",
+          "title": "让知识文章引导检索回到原始证据",
+          "section": "精度、递归与数量边界",
+          "body": "递归访问深度超过 8 时停止；同一“文章＋引用”若已经以不低于当前值的分数访问过，也不会重复展开。任何依赖摘要失效都会跳过该文章，材料缺失、空引文、越界行号或当前摘录不再包含保存引文时，同样不产生候选。参考 [[c4]] [[c5]]",
+          "targets": [
+            {
+              "label": "递归引用控制",
+              "kind": "material",
+              "key": "omem:apps/server/src/knowledge/retrieval.ts",
+              "startLine": 49,
+              "endLine": 70
+            },
+            {
+              "label": "引用范围映射",
+              "kind": "material",
+              "key": "omem:apps/server/src/knowledge/retrieval.ts",
+              "startLine": 71,
+              "endLine": 89
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "query": "代理自己寻找缺少的背景资料时，有哪些可读取的数据？",
+      "hits": [
+        {
+          "score": 0.618372847498876,
+          "key": "guide:capture",
+          "revision": "f13e6fdd6133eb179e870c1afbec2b5dd71c18cb8edee9247d0f38e84064c06a",
+          "title": "一份材料的旅程：从导入到可检索、可追溯",
+          "section": "旧引用如何准确回到旧版本",
+          "body": "知识材料由某个具体 Revision 构造，包含来源身份、Revision 标识、完整文本或图片和内容摘要；“可选材料”默认只列每个 Source 的当前 head。发布时，文章保存每项依赖的 key 与摘要，并在写入前确认所用依赖仍匹配。参考 [[c20]] [[c21]]",
+          "targets": [
+            {
+              "label": "固定知识材料",
+              "kind": "material",
+              "key": "omem:apps/server/src/knowledge/repository.ts",
+              "startLine": 12,
+              "endLine": 41
+            },
+            {
+              "label": "知识发布依赖校验",
+              "kind": "material",
+              "key": "omem:apps/server/src/knowledge/repository.ts",
+              "startLine": 122,
+              "endLine": 153
+            }
+          ]
+        },
+        {
+          "score": 0.6032482586550498,
+          "key": "omem:apps/server/src/knowledge/retrieval.ts",
+          "revision": "0e02e44da751187d76318303a34b1c42c0df81336823180b1d28a329234303c2",
+          "title": "让知识文章引导检索回到原始证据",
+          "section": "一次命中如何落到证据",
+          "body": "收到非空词项后，函数读取当前知识头，并为材料和文章建立缓存。材料必须能解析到当前来源，且不能是派生内容；正文与图片共同计算摘要，用来检查文章依赖是否仍对应当前材料。参考 [[c3]]",
+          "targets": [
+            {
+              "label": "当前知识与材料校验",
+              "kind": "material",
+              "key": "omem:apps/server/src/knowledge/retrieval.ts",
+              "startLine": 24,
+              "endLine": 48
+            }
+          ]
+        },
+        {
+          "score": 0.600005876294382,
+          "key": "omem:packages/agent-runtime/roles/knowledge-planner/1/skills/omem-knowledge-planner/agents/openai.yaml",
+          "revision": "ff528189edcb5671d6a713bad7b64ceb0a43b6e0f2e4782c683ff2c5a3b58480",
+          "title": "知识章节组织代理配置",
+          "section": "默认调用方式与证据边界",
+          "body": "现有五行材料没有展示配置由谁加载、输入合同如何校验、引用怎样生成，也没有运行记录或测试结果。因此，只能确认该代理元数据与默认提示已经写入配置文件，不能称其运行链路已经实现或验证。",
+          "targets": []
+        }
+      ]
+    }
+  ]
+}
