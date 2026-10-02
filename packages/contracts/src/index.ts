@@ -673,13 +673,21 @@ export type JobState = z.infer<typeof jobStateSchema>;
 export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 
 export const roleIdSchema = z.enum([
+  "daily-assistant",
   "extractor",
   "verifier",
   "planner",
   "feedback-curator",
   "answerer",
-  "material-analyst", "code-analyst", "conversation-analyst", "visual-analyst",
-  "knowledge-researcher", "knowledge-planner", "knowledge-writer", "knowledge-verifier", "knowledge-refresher",
+  "material-analyst",
+  "code-analyst",
+  "conversation-analyst",
+  "visual-analyst",
+  "knowledge-researcher",
+  "knowledge-planner",
+  "knowledge-writer",
+  "knowledge-verifier",
+  "knowledge-refresher",
 ]);
 
 export const roleManifestSchema = z
@@ -716,7 +724,11 @@ export const roleManifestSchema = z
       "PlanProposal.v1",
       "CorrectionProposal.v1",
       "AnswerWithCitations.v1",
-      "KnowledgeBatch.v1", "KnowledgeReview.v1", "KnowledgePlan.v1", "KnowledgeResearch.v1",
+      "KnowledgeBatch.v1",
+      "KnowledgeReview.v1",
+      "KnowledgePlan.v1",
+      "KnowledgeResearch.v1",
+      "AssistantReply.v1",
     ]),
     tool_policy: z
       .object({
@@ -781,7 +793,10 @@ export const contextMaterialSchema = z
     // Image fragment evidence anchor (asset hash). Mirrors image.asset_hash but is
     // surfaced at the material level so callers can reference the asset without
     // unwrapping the inline image payload.
-    asset_ref: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    asset_ref: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict()
   .refine((material) => material.text !== undefined || material.image, {
@@ -1031,7 +1046,10 @@ export interface CodeKnowledgePort {
   currentSnapshot(): CodeSnapshot | null;
   listRepositories(): CodeRepository[];
   listSnapshots(repoId?: string): CodeSnapshot[];
-  listFiles(filter?: { language?: string; includeRemoved?: boolean }): CodeFile[];
+  listFiles(filter?: {
+    language?: string;
+    includeRemoved?: boolean;
+  }): CodeFile[];
   fileById(fileId: string): CodeFile | null;
   symbolsOfFile(fileId: string): CodeSymbol[];
   symbolsOfSnapshot(snapshotId: string): CodeSymbol[];
@@ -1044,6 +1062,9 @@ export interface CodeKnowledgePort {
     symbols: CodeSymbol[];
     edges: CodeEdge[];
   };
-  understandingOf(target: { type: "file" | "symbol"; id: string }): CodeUnderstanding | null;
+  understandingOf(target: {
+    type: "file" | "symbol";
+    id: string;
+  }): CodeUnderstanding | null;
   sync(opts?: { only?: string[] }): Promise<CodeKnowledgeSyncResult>;
 }

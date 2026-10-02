@@ -19,14 +19,18 @@ import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowl
 import type { NativeResearchEnvironment } from "../agent-runtime/gateway.js";
 import { stableDigest } from "../storage/digest.js";
 import { UnifiedRetrieval } from "../retrieval/unified.js";
-import { RetrievalProjection } from "../retrieval/units.js";
 import { retrievalPurposes } from "../retrieval/port.js";
 import { loadChineseEmbedding } from "../retrieval/embedding.js";
 import { loadChineseReranker } from "../retrieval/reranker.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { materialSections, fragmentPositions } from "./structure.js";
 import { parseFile } from "../code/parse.js";
-import { KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
+import {
+  KnowledgeRepository,
+  materialFromRevision,
+  type KnowledgeArticle,
+} from "./repository.js";
+import { researchSnapshot } from "./research-snapshot.js";
 
 type Entry = {
   material: KnowledgeMaterial;
@@ -55,6 +59,18 @@ export async function prepareAgentResearch(input: {
   schema: z.ZodType;
   validate: (output: unknown) => unknown;
   retrievalConfig?: RetrievalConfig;
+  /** Host policy; native files and MCP share this same snapshot scope. */
+  visible?: (fragmentId: string) => boolean;
+  includeUnanchoredState?: boolean;
+  onActivity?: (event: {
+    label: string;
+    tool?: string;
+    status: string;
+    at: string;
+    key?: string;
+    startLine?: number;
+    endLine?: number;
+  }) => void;
 }): Promise<NativeResearchEnvironment> {
   const { workspace, repository } = input;
   let databaseHandle: DatabaseSync | undefined;
@@ -146,10 +162,22 @@ export async function prepareAgentResearch(input: {
       JSON.stringify(catalog, null, 2),
       { mode: 0o600 },
     );
+    const databaseFile = join(workspace, "snapshot.sqlite");
+    const db = researchSnapshot({
+      ...input,
+      file: databaseFile,
+      includeUnanchoredState: input.includeUnanchoredState ?? !input.visible,
+    });
+    databaseHandle = db;
+    const admittedArticles = input.articles.filter((a) =>
+      db
+        .prepare("SELECT 1 FROM knowledge_revisions WHERE id=?")
+        .get(a.revision),
+    );
     writeFileSync(
       join(workspace, "knowledge.json"),
       JSON.stringify(
-        input.articles.map((a) => ({
+        admittedArticles.map((a) => ({
           key: a.document.key,
           title: a.document.title,
           summary: a.document.summary,
@@ -160,14 +188,6 @@ export async function prepareAgentResearch(input: {
       ),
       { mode: 0o600 },
     );
-    const databaseFile = join(workspace, "snapshot.sqlite");
-    // Build before freezing the copy; Agent tools never write to the snapshot.
-    new RetrievalProjection(repository.store.db).sync();
-    repository.store.db.exec(
-      `VACUUM INTO '${databaseFile.replaceAll("'", "''")}'`,
-    );
-    const db = new DatabaseSync(databaseFile, { readOnly: true });
-    databaseHandle = db;
     const config = input.retrievalConfig ?? {
       enabled: true,
       osdkModel: "memory-zh",
@@ -191,7 +211,7 @@ export async function prepareAgentResearch(input: {
         ),
       ),
     );
-    const articles = new Map(input.articles.map((a) => [a.document.key, a]));
+    const articles = new Map(admittedArticles.map((a) => [a.document.key, a]));
     const activity: unknown[] = [];
     const reads = new Set<string>();
     const record = (event: unknown) => {
@@ -201,6 +221,45 @@ export async function prepareAgentResearch(input: {
         JSON.stringify(event) + "\n",
         { mode: 0o600 },
       );
+      const e = event as {
+        kind?: string;
+        tool?: string;
+        success?: boolean;
+        args?: { key?: string; startLine?: number; endLine?: number };
+        title?: string;
+        status?: string;
+      };
+      const labels: Record<string, string> = {
+        list_materials: "查看材料目录",
+        search_materials: "搜索原始材料",
+        read_material: "补读原文",
+        read_section: "阅读完整章节",
+        search_knowledge: "查找已有讲解",
+        read_knowledge: "阅读已有讲解",
+        search_memories: "查找个人记忆",
+        read_memory: "核对记忆状态",
+        code_navigation: "查看代码定义与关联线索",
+        related_materials: "查看材料关联",
+        material_history: "对比历史版本",
+        read_image: "查看原始图片",
+      };
+      if (e.kind === "mcp" || e.kind === "submission")
+        input.onActivity?.({
+          label:
+            e.kind === "submission"
+              ? "整理调查结果"
+              : (labels[e.tool ?? ""] ?? "核对资料"),
+          tool: e.tool,
+          status: e.success === false ? "failed" : "done",
+          at: new Date().toISOString(),
+          ...(e.args?.key
+            ? {
+                key: e.args.key,
+                startLine: e.args.startLine,
+                endLine: e.args.endLine,
+              }
+            : {}),
+        });
     };
     let submitted: unknown;
     const entry = (key: string) => {
@@ -483,9 +542,30 @@ export async function prepareAgentResearch(input: {
       tool(
         "read_knowledge",
         "Read an existing fixed article or section with citations and source dependency versions. Use read_material to check claims.",
-        { key: z.string(), section: z.string().optional() },
-        ({ key, section }) => {
-          const a = articles.get(key);
+        {
+          key: z.string(),
+          section: z.string().optional(),
+          revision: z.string().optional(),
+        },
+        ({ key, section, revision }) => {
+          const fixed = revision
+            ? db
+                .prepare(
+                  "SELECT artifact FROM knowledge_revisions WHERE id=? AND document_key=?",
+                )
+                .get(revision, key)
+            : undefined;
+          const a = revision
+            ? fixed
+              ? ({
+                  ...JSON.parse(String(fixed.artifact)),
+                  revision,
+                  current:
+                    articles.get(key)?.revision === revision &&
+                    articles.get(key)?.current,
+                } as KnowledgeArticle)
+              : undefined
+            : articles.get(key);
           if (!a) throw Error("Article unavailable in this snapshot");
           return {
             ...a.document,
@@ -629,7 +709,7 @@ export async function prepareAgentResearch(input: {
       );
       tool(
         "material_history",
-        "List captured versions, or read a specified historical revision. Historical bodies are context; published citations point to the offered fixed current material.",
+        "List captured versions, or read a specified historical revision. When citing an older body, include its revision if your submission schema supports it; never link an old claim to the current body.",
         { key: z.string(), revision: z.string().optional() },
         ({ key, revision }) => {
           const m = entry(key).material;
@@ -644,7 +724,20 @@ export async function prepareAgentResearch(input: {
               title: r.title,
               at: r.created_at,
               current: r.id === m.revisionId,
-              ...(revision ? { parts: JSON.parse(String(r.body)).parts } : {}),
+              ...(revision
+                ? {
+                    parts: JSON.parse(String(r.body)).parts,
+                    key,
+                    text: materialFromRevision(
+                      input.repository.store,
+                      String(r.id),
+                    )?.text,
+                    lineCount: materialFromRevision(
+                      input.repository.store,
+                      String(r.id),
+                    )?.lineCount,
+                  }
+                : {}),
             }));
         },
       );

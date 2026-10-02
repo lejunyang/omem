@@ -111,6 +111,53 @@ describe("detectTaskIntent (unit)", () => {
 });
 
 describe("AssistantRuntime (async, governed)", () => {
+  it("search consultation preserves its read-only mode and purpose when retried", async () => {
+    const { store } = setup();
+    const seen: Array<{ mode?: string; purpose?: string }> = [];
+    const model: AssistantModelPort = {
+      async generate(input) {
+        seen.push({ mode: input.mode, purpose: input.purpose });
+        if (seen.length === 1)
+          throw new ModelUnavailableError("temporarily disconnected");
+        return {
+          answer: "这是说明，不执行事项。",
+          citationIds: [],
+          toolCalls: [
+            {
+              tool: "create_task",
+              title: "周五买牛奶",
+              detail: "示例",
+              citationIds: [],
+            },
+          ],
+        };
+      },
+    };
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner" });
+    const conversation = runtime.conversations.open({
+      principalId: "owner",
+      channel: "web",
+      chatId: "search-mode",
+      visibility: "private",
+    });
+    const first = await runtime.turn({
+      conversationId: conversation.id,
+      userText: "帮我记一下周五买牛奶",
+      mode: "research",
+      purpose: "background",
+    });
+    expect(first.turn.inputMessageRefs.status).toBe("pending");
+    await runtime.retryTurn(first.turn.id);
+    expect(seen).toEqual([
+      { mode: "research", purpose: "background" },
+      { mode: "research", purpose: "background" },
+    ]);
+    expect(store.tasks()).toEqual([]);
+    expect(runtime.conversations.turn(first.turn.id)?.result).toBe(
+      "这是说明，不执行事项。",
+    );
+  });
+
   it("B-positive: explicit owner assignment creates a task through MemoryService with real receipt", async () => {
     const { store } = setup();
     const memory = new MemoryService(store, { ownerId: "owner" });

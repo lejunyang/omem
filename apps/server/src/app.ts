@@ -1,6 +1,9 @@
 import { evidenceSection } from "./retrieval/context.js";
 import { retrievalPurposes } from "./retrieval/port.js";
-import { importDevelopmentKnowledge, developmentRetrieval } from "./review/development.js";
+import {
+  importDevelopmentKnowledge,
+  developmentRetrieval,
+} from "./review/development.js";
 import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
 import { messageWorkflows } from "./assistant/message-workflows.js";
 import { registerKnowledgeRoutes } from "./knowledge/api.js";
@@ -43,6 +46,7 @@ import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js"
 import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
 import { AssistantRuntime } from "./assistant/runtime.js";
 import { AcpAssistantModel } from "./assistant/acp-model.js";
+import { KnowledgeRepository } from "./knowledge/repository.js";
 import { createRetrieval } from "./retrieval/factory.js";
 import { QualityRepository, qualityLabelSchema } from "./quality/repository.js";
 const str = z.string().min(1).max(2000);
@@ -59,7 +63,9 @@ export async function buildApp(
   const store = new Store(config.dataDir, {
     externalNotifications: config.notifications.external,
   });
-  const development = process.env.OMEM_REPO_ROOT ? importDevelopmentKnowledge(store, resolve(process.env.OMEM_REPO_ROOT)) : undefined;
+  const development = process.env.OMEM_REPO_ROOT
+    ? importDevelopmentKnowledge(store, resolve(process.env.OMEM_REPO_ROOT))
+    : undefined;
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
   const feedback = new FeedbackService(store);
@@ -68,26 +74,48 @@ export async function buildApp(
   // the adapter raises ModelUnavailableError and the runtime degrades honestly.
   const assistantProfile =
     config.profiles.find((p) => p.transport === "acp") ?? null;
-  app.get("/api/memory-refreshes", async () => store.db.prepare(
-    `SELECT id,source_id AS sourceId,new_revision_id AS revisionId,affected_count AS affectedCount,
+  app.get("/api/memory-refreshes", async () =>
+    store.db
+      .prepare(
+        `SELECT id,source_id AS sourceId,new_revision_id AS revisionId,affected_count AS affectedCount,
       affected_memory_ids AS affectedMemoryIds,status,result_json AS result,created_at AS createdAt
-     FROM refresh_records ORDER BY created_at DESC LIMIT 100`).all().map(row => ({ ...row,
-       affectedMemoryIds: JSON.parse(String(row.affectedMemoryIds)), result: JSON.parse(String(row.result)) })));
+     FROM refresh_records ORDER BY created_at DESC LIMIT 100`,
+      )
+      .all()
+      .map((row) => ({
+        ...row,
+        affectedMemoryIds: JSON.parse(String(row.affectedMemoryIds)),
+        result: JSON.parse(String(row.result)),
+      })),
+  );
 
   const assistantModel = new AcpAssistantModel({
     profile: assistantProfile,
     workspaceRoot: config.agentCwd,
+    repository: development?.repository ?? new KnowledgeRepository(store),
+    researchWorkspace: resolve(config.dataDir, "assistant-agents"),
+    retrievalConfig: config.retrieval,
   });
   const retrievalService = createRetrieval(store.db, config.retrieval);
-  const assistantRetrieval = development ? developmentRetrieval(store, retrievalService.retrieval) : retrievalService.retrieval;
-  registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined, retrievalConfig: config.retrieval, retrieval: assistantRetrieval });
+  const assistantRetrieval = development
+    ? developmentRetrieval(store, retrievalService.retrieval)
+    : retrievalService.retrieval;
+  registerKnowledgeRoutes(app, {
+    store,
+    repository: development?.repository,
+    prefix: "/api/knowledge",
+    workspace: resolve(config.dataDir, "knowledge-agents"),
+    profile: assistantProfile ?? undefined,
+    retrievalConfig: config.retrieval,
+    retrieval: assistantRetrieval,
+  });
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",
     memory,
     feedback,
     retrieval: assistantRetrieval,
     timezone: config.notifications.external?.timezone,
-    turnTimeoutMs: 60_000,
+    turnTimeoutMs: assistantProfile?.timeoutMs ?? 60_000,
   });
   const learningConfig = config.learning;
   const learningProfile = learningConfig?.enabled
@@ -124,6 +152,7 @@ export async function buildApp(
         onboarding: lark,
         secrets,
         assistantModel,
+        assistantTimeoutMs: assistantProfile?.timeoutMs,
         retrieval: assistantRetrieval,
         pollMs: config.lark.pollMs,
       });
@@ -271,18 +300,40 @@ export async function buildApp(
     const b = z.object({ from: str, to: str }).strict().parse(req.body);
     return store.link(b.from, b.to);
   });
-  app.get<{ Querystring: { q?: string; purpose?: string } }>("/api/search", async (req, reply) => {
-    const purpose = z.enum(retrievalPurposes).safeParse(req.query.purpose ?? "balanced");
-    if (!purpose.success) return reply.code(400).send({ error: "查找用途无效" });
-    const query = { text: (req.query.q || "").slice(0, 300), limit: 30, purpose: purpose.data };
-    if (assistantRetrieval.search) return assistantRetrieval.search(query);
-    const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ?? assistantRetrieval.searchSources(query));
-    return hits.flatMap(hit => {
-      const entry = store.evidence(hit.fragmentId);
-      return entry ? [{ id: hit.fragmentId, text: hit.snippet, title: entry.revision.title, version: entry.revision.version,
-        score: hit.score, routes: hit.routes, section: evidenceSection(store, hit.fragmentId) }] : [];
-    });
-  });
+  app.get<{ Querystring: { q?: string; purpose?: string } }>(
+    "/api/search",
+    async (req, reply) => {
+      const purpose = z
+        .enum(retrievalPurposes)
+        .safeParse(req.query.purpose ?? "balanced");
+      if (!purpose.success)
+        return reply.code(400).send({ error: "查找用途无效" });
+      const query = {
+        text: (req.query.q || "").slice(0, 300),
+        limit: 30,
+        purpose: purpose.data,
+      };
+      if (assistantRetrieval.search) return assistantRetrieval.search(query);
+      const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ??
+        assistantRetrieval.searchSources(query));
+      return hits.flatMap((hit) => {
+        const entry = store.evidence(hit.fragmentId);
+        return entry
+          ? [
+              {
+                id: hit.fragmentId,
+                text: hit.snippet,
+                title: entry.revision.title,
+                version: entry.revision.version,
+                score: hit.score,
+                routes: hit.routes,
+                section: evidenceSection(store, hit.fragmentId),
+              },
+            ]
+          : [];
+      });
+    },
+  );
   app.get<{ Params: { id: string } }>("/api/assets/:id", async (req, reply) => {
     const bytes = store.asset(req.params.id);
     if (!bytes) return reply.code(404).send({ error: "Asset not found" });
@@ -298,26 +349,92 @@ export async function buildApp(
       .send(bytes);
   });
   app.get("/api/changes", async () => store.changes());
-  app.get<{ Params: { id: string } }>("/api/changes/:id/content", async (req, reply) => {
-    const change = store.db.prepare("SELECT kind,before_id,after_id FROM changes WHERE id=?").get(req.params.id);
-    if (!change) return reply.code(404).send({ error: "变化记录不存在" });
-    function content(id: unknown) {
-      if (!id) return null;
-      if (change!.kind === "knowledge") {
-        const row = store.db.prepare("SELECT artifact FROM knowledge_revisions WHERE id=?").get(String(id));
-        if (!row) return null;
-        const { document, generation } = JSON.parse(String(row.artifact));
-        const citationNames = new Map(document.citations.map((c: { key: string; label: string }) => [c.key, c.label]));
-        const sections = document.sections.map((s: { title: string; body: string }) => "## " + s.title + "\n\n" + s.body.replace(/\[\[([^\]]+)\]\]/g, (_: string, key: string) => "〔参考：" + (citationNames.get(key) ?? "未找到引用") + "〕"));
-        const references = document.citations.map((c: { label: string; reason: string; target: { kind: string; key: string; startLine?: number; endLine?: number } }) => c.label + "：" + c.reason + (c.target.kind === "material" ? `（${c.target.key.replace(/^omem:/, "")}，第 ${c.target.startLine}–${c.target.endLine} 行）` : ""));
-        return { title: document.title, text: document.summary + "\n\n" + sections.join("\n\n") + "\n\n引用说明：\n" + references.join("\n"), version: "知识正文 · " + generation.at };
-
+  app.get<{ Params: { id: string } }>(
+    "/api/changes/:id/content",
+    async (req, reply) => {
+      const change = store.db
+        .prepare("SELECT kind,before_id,after_id FROM changes WHERE id=?")
+        .get(req.params.id);
+      if (!change) return reply.code(404).send({ error: "变化记录不存在" });
+      function content(id: unknown) {
+        if (!id) return null;
+        if (change!.kind === "knowledge") {
+          const row = store.db
+            .prepare("SELECT artifact FROM knowledge_revisions WHERE id=?")
+            .get(String(id));
+          if (!row) return null;
+          const { document, generation } = JSON.parse(String(row.artifact));
+          const citationNames = new Map(
+            document.citations.map((c: { key: string; label: string }) => [
+              c.key,
+              c.label,
+            ]),
+          );
+          const sections = document.sections.map(
+            (s: { title: string; body: string }) =>
+              "## " +
+              s.title +
+              "\n\n" +
+              s.body.replace(
+                /\[\[([^\]]+)\]\]/g,
+                (_: string, key: string) =>
+                  "〔参考：" + (citationNames.get(key) ?? "未找到引用") + "〕",
+              ),
+          );
+          const references = document.citations.map(
+            (c: {
+              label: string;
+              reason: string;
+              target: {
+                kind: string;
+                key: string;
+                startLine?: number;
+                endLine?: number;
+              };
+            }) =>
+              c.label +
+              "：" +
+              c.reason +
+              (c.target.kind === "material"
+                ? `（${c.target.key.replace(/^omem:/, "")}，第 ${c.target.startLine}–${c.target.endLine} 行）`
+                : ""),
+          );
+          return {
+            title: document.title,
+            text:
+              document.summary +
+              "\n\n" +
+              sections.join("\n\n") +
+              "\n\n引用说明：\n" +
+              references.join("\n"),
+            version: "知识正文 · " + generation.at,
+          };
+        }
+        const revision = store.revision(String(id));
+        return revision
+          ? {
+              title: revision.title,
+              version: "v" + revision.version,
+              text: revision.parts
+                .map((p) =>
+                  p.type === "text"
+                    ? p.text
+                    : p.type === "link"
+                      ? p.url
+                      : "[图片：" + p.label + "]",
+                )
+                .join("\n\n"),
+            }
+          : null;
       }
-      const revision = store.revision(String(id));
-      return revision ? { title: revision.title, version: "v" + revision.version, text: revision.parts.map(p => p.type === "text" ? p.text : p.type === "link" ? p.url : "[图片：" + p.label + "]").join("\n\n") } : null;
-    }
-    return { before: content(change.before_id), after: content(change.after_id), kind: change.kind, hasBefore: !!change.before_id };
-  });
+      return {
+        before: content(change.before_id),
+        after: content(change.after_id),
+        kind: change.kind,
+        hasBefore: !!change.before_id,
+      };
+    },
+  );
   app.post<{ Params: { id: string } }>(
     "/api/changes/:id/restore",
     async (req) => {
@@ -342,24 +459,66 @@ export async function buildApp(
       return { ok: true };
     },
   );
-  app.get("/api/assistant/workflows", async () => messageWorkflows.map(({ instruction: _instruction, ...recipe }) => recipe));
+  app.get("/api/assistant/workflows", async () =>
+    messageWorkflows.map(({ instruction: _instruction, ...recipe }) => recipe),
+  );
   app.get("/api/tasks", async () => store.tasks());
-  app.post<{ Params: { id: string } }>("/api/tasks/:id/commands", async req => {
-    const command = taskCommandSchema.parse(req.body);
-    const task = store.tasks().find(t => t.id === req.params.id);
-    if (!task) throw Error("Task not found");
-    const label = { complete: "标记完成", reopen: "重新打开", reschedule: "修改截止时间", wait: "记录等待", snooze: "暂缓提醒", cancel: "取消" }[command.action];
-    const description = [`用户对已有事项“${task.title}”执行：${label}。`,
-      command.followUp?.waiting_on ? `等待：${command.followUp.waiting_on}` : "",
-      command.followUp?.time_expression ? `跟进时间：${command.followUp.time_expression}（${command.followUp.timezone}）` : "",
-      command.dueExpression ? `截止时间：${command.dueExpression}` : ""].filter(Boolean).join("\n");
-    const revision = store.capture({ source: "manual", externalId: `task-control:${command.requestId}`, title: `事项操作：${task.title}`,
-      parts: [{ type: "text", text: description }], context: {},
-      provenance: { collectorId: "task-controls", actorId: "owner", actorType: "owner", actorVerifiedBy: "local-user",
-        sourceUri: null, eventId: command.requestId, eventAt: new Date().toISOString(), timezone: command.followUp?.timezone ?? config.notifications.external?.timezone ?? "Asia/Shanghai",
-        quoted: false, forwarded: false, producerKind: "original" } }).revision;
-    return memory.commandTask({ taskId: req.params.id, ...command, evidenceId: revision.fragments[0]!.id });
-  });
+  app.post<{ Params: { id: string } }>(
+    "/api/tasks/:id/commands",
+    async (req) => {
+      const command = taskCommandSchema.parse(req.body);
+      const task = store.tasks().find((t) => t.id === req.params.id);
+      if (!task) throw Error("Task not found");
+      const label = {
+        complete: "标记完成",
+        reopen: "重新打开",
+        reschedule: "修改截止时间",
+        wait: "记录等待",
+        snooze: "暂缓提醒",
+        cancel: "取消",
+      }[command.action];
+      const description = [
+        `用户对已有事项“${task.title}”执行：${label}。`,
+        command.followUp?.waiting_on
+          ? `等待：${command.followUp.waiting_on}`
+          : "",
+        command.followUp?.time_expression
+          ? `跟进时间：${command.followUp.time_expression}（${command.followUp.timezone}）`
+          : "",
+        command.dueExpression ? `截止时间：${command.dueExpression}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const revision = store.capture({
+        source: "manual",
+        externalId: `task-control:${command.requestId}`,
+        title: `事项操作：${task.title}`,
+        parts: [{ type: "text", text: description }],
+        context: {},
+        provenance: {
+          collectorId: "task-controls",
+          actorId: "owner",
+          actorType: "owner",
+          actorVerifiedBy: "local-user",
+          sourceUri: null,
+          eventId: command.requestId,
+          eventAt: new Date().toISOString(),
+          timezone:
+            command.followUp?.timezone ??
+            config.notifications.external?.timezone ??
+            "Asia/Shanghai",
+          quoted: false,
+          forwarded: false,
+          producerKind: "original",
+        },
+      }).revision;
+      return memory.commandTask({
+        taskId: req.params.id,
+        ...command,
+        evidenceId: revision.fragments[0]!.id,
+      });
+    },
+  );
   app.post("/api/tasks", async (req) =>
     store.createTask(taskSchema.parse(req.body)),
   );
@@ -370,12 +529,32 @@ export async function buildApp(
       ...store.setTaskStatus(req.params.id, b.status, b.expectedVersion),
     };
   });
-  app.get("/api/jobs", async () => (store.db.prepare(`SELECT id FROM jobs WHERE workspace_id='personal'
-    ORDER BY CASE WHEN state IN ('running','leased') THEN 0 WHEN state IN ('failed','retry_wait','awaiting_decision') THEN 1 WHEN state='queued' THEN 3 ELSE 2 END, created_at DESC LIMIT 200`).all()).map(row => store.jobs.get(String(row.id))!).map(job => {
-    const ref = job.inputRefs.find((ref): ref is { revisionId: string } => !!ref && typeof ref === "object" && "revisionId" in ref && typeof ref.revisionId === "string");
-    const revision = ref?.revisionId ? store.revision(String(ref.revisionId)) : null;
-    return { ...job, materialTitle: revision?.title ?? null, evidenceId: revision?.fragments[0]?.id ?? null };
-  }));
+  app.get("/api/jobs", async () =>
+    store.db
+      .prepare(
+        `SELECT id FROM jobs WHERE workspace_id='personal'
+    ORDER BY CASE WHEN state IN ('running','leased') THEN 0 WHEN state IN ('failed','retry_wait','awaiting_decision') THEN 1 WHEN state='queued' THEN 3 ELSE 2 END, created_at DESC LIMIT 200`,
+      )
+      .all()
+      .map((row) => store.jobs.get(String(row.id))!)
+      .map((job) => {
+        const ref = job.inputRefs.find(
+          (ref): ref is { revisionId: string } =>
+            !!ref &&
+            typeof ref === "object" &&
+            "revisionId" in ref &&
+            typeof ref.revisionId === "string",
+        );
+        const revision = ref?.revisionId
+          ? store.revision(String(ref.revisionId))
+          : null;
+        return {
+          ...job,
+          materialTitle: revision?.title ?? null,
+          evidenceId: revision?.fragments[0]?.id ?? null,
+        };
+      }),
+  );
   app.get<{ Params: { id: string } }>("/api/jobs/:id", async (req, reply) => {
     const job = store.jobs.get(req.params.id);
     return job
@@ -565,10 +744,19 @@ export async function buildApp(
         };
       const current = probes.get(p.id);
       if (current) return current;
-      const pending = acp(p, config.agentCwd, null, () => {}, new AbortController().signal);
+      const pending = acp(
+        p,
+        config.agentCwd,
+        null,
+        () => {},
+        new AbortController().signal,
+      );
       probes.set(p.id, pending);
-      try { return await pending; }
-      finally { if (probes.get(p.id) === pending) probes.delete(p.id); }
+      try {
+        return await pending;
+      } finally {
+        if (probes.get(p.id) === pending) probes.delete(p.id);
+      }
     },
   );
   app.post("/api/runs", async (req, reply) =>
@@ -613,11 +801,21 @@ export async function buildApp(
   app.post<{ Params: { id: string } }>(
     "/api/assistant/conversations/:id/turns",
     async (req, reply) => {
-      const body = z.object({ text: str, requestId: z.string().min(1).max(200).optional() }).strict().parse(req.body);
+      const body = z
+        .object({
+          text: str,
+          requestId: z.string().min(1).max(200).optional(),
+          mode: z.enum(["assist", "research"]).optional(),
+          purpose: z.enum(retrievalPurposes).optional(),
+        })
+        .strict()
+        .parse(req.body);
       const result = await assistant.turn({
         conversationId: req.params.id,
         userText: body.text,
         transportEventId: body.requestId ? `web:${body.requestId}` : null,
+        mode: body.mode,
+        purpose: body.purpose,
       });
       if (!result.conversation)
         return reply.code(404).send({ error: "Conversation not found" });
@@ -635,16 +833,20 @@ export async function buildApp(
     "/api/assistant/conversations/:id/turns/:turnId/cancel",
     async (req, reply) => {
       const conversation = assistant.conversations.get(req.params.id);
-      if (!conversation) return reply.code(404).send({ error: "Conversation not found" });
+      if (!conversation)
+        return reply.code(404).send({ error: "Conversation not found" });
       const ok = assistant.cancelTurn(req.params.turnId);
-      return ok ? { ok: true } : reply.code(404).send({ error: "Turn not found" });
+      return ok
+        ? { ok: true }
+        : reply.code(404).send({ error: "Turn not found" });
     },
   );
   app.post<{ Params: { id: string; turnId: string } }>(
     "/api/assistant/conversations/:id/turns/:turnId/retry",
     async (req, reply) => {
       const conversation = assistant.conversations.get(req.params.id);
-      if (!conversation) return reply.code(404).send({ error: "Conversation not found" });
+      if (!conversation)
+        return reply.code(404).send({ error: "Conversation not found" });
       const result = await assistant.retryTurn(req.params.turnId);
       return result.ok ? result : reply.code(409).send(result);
     },
@@ -653,7 +855,11 @@ export async function buildApp(
   if (existsSync(web))
     await app.register(staticFiles, { root: web, prefix: "/" });
   // G20: recover any pending/running turns from a previous process.
-  await assistant.recoverUnfinishedTurns();
+  // Recovery can involve long native investigation. Start once in the
+  // background so health, cancellation and persisted progress stay reachable.
+  const recovery = assistant
+    .recoverUnfinishedTurns()
+    .catch((error) => app.log.error(error));
   const tick = setInterval(() => store.remind(), 30000);
   tick.unref();
   let lastInputError = "";
@@ -672,9 +878,10 @@ export async function buildApp(
   learning?.start();
   larkRuntime?.start();
   app.addHook("onClose", async () => {
+    assistant.shutdown();
+    await recovery;
     clearInterval(tick);
     clearInterval(inputTick);
-    assistant.shutdown();
     await learning?.stop();
     await larkRuntime?.stop();
     await runs.close();

@@ -62,6 +62,22 @@ export type EvaluationResult = {
 
 const now = () => new Date().toISOString();
 
+/** Notification prose describes the applied content, never its storage kind or
+ * identifiers. Historical bodies are read for display; authority stays in apply. */
+const readableMemory = (kind: string, body: Record<string, unknown>) => {
+  const lines = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  if (kind === "claim") return String(body.statement ?? "");
+  if (kind === "episode") {
+    const outcomes: Record<string, string> = { unknown: "尚不明确", partial: "部分完成", success: "已完成", failure: "未成功" };
+    return [String(body.trigger ?? ""), ...lines(body.actions).map(action => `- ${action}`),
+      `结果：${outcomes[String(body.outcome)] ?? "尚不明确"}`].filter(Boolean).join("\n");
+  }
+  return [String(body.trigger ?? ""),
+    ...lines(body.preconditions).map(condition => `使用条件：${condition}`),
+    ...lines(body.steps).map((instruction, index) => `${index + 1}. ${instruction}`),
+    ...lines(body.verification).map(check => `完成检查：${check}`)].filter(Boolean).join("\n");
+};
+
 const occurrences = (text: string, quote: string) => {
   const haystack = Array.from(text);
   const needle = Array.from(quote);
@@ -1179,16 +1195,33 @@ export class MemoryService {
     decision?: { id: string; requestId: string },
     approvedByOwner = false,
   ) {
+    const updated = proposal.operation !== "create" && Boolean(proposal.target_id);
+    const after = proposal.kind === "task"
+      ? [proposal.body.title, proposal.body.next_step ? `下一步：${proposal.body.next_step}` : "",
+        proposal.body.due_expression ? `截止时间：${proposal.body.due_expression}` : "",
+        proposal.body.follow_up?.waiting_on ? `等待：${proposal.body.follow_up.waiting_on}` : "",
+        proposal.body.follow_up?.time_expression ? `检查时间：${proposal.body.follow_up.time_expression}` : ""].filter(Boolean).join("\n")
+      : readableMemory(proposal.kind, proposal.body);
+    const prior = updated && proposal.kind !== "task" ? this.db.prepare(`SELECT m.kind,r.body FROM memories m
+      JOIN memory_revisions r ON r.id=m.head_revision_id WHERE m.id=? AND m.workspace_id=?`)
+      .get(proposal.target_id!, proposal.scope.workspace_id) as Row | undefined : undefined;
+    const before = prior ? readableMemory(String(prior.kind), JSON.parse(String(prior.body))) : null;
+    const heading = proposal.kind === "task" ? proposal.body.title :
+      proposal.kind === "claim" ? proposal.body.statement : proposal.body.trigger;
+    const notificationTitle = `${proposal.kind === "task" ? updated ? "事项已更新" : "事项已记录" : updated ? "记忆已更新" : "已记下"}：${
+      Array.from(heading.replace(/\s+/g, " ").trim()).slice(0, 120).join("")
+    }`;
+    const notificationBody = [before !== null ? `之前：\n${before}` : "",
+      before !== null ? `现在：\n${after}` : after,
+      proposal.reason.trim() ? `补充说明：${proposal.reason.trim()}` : ""].filter(Boolean).join("\n\n");
     const metadata = {
       workspaceId: proposal.scope.workspace_id,
       applicationId: `proposal:${proposalDigest}:1`,
       proposalId: proposal.proposal_id,
       proposalDigest,
       generation: 1,
-      title: `应用${proposal.kind}：${
-        proposal.kind === "task" ? proposal.body.title : "新记忆"
-      }`,
-      details: proposal.reason,
+      title: notificationTitle,
+      details: notificationBody,
       delivery: {
         channelBindingVersion: 1,
         channel: "in_app",
