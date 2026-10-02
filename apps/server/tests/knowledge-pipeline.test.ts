@@ -32,7 +32,7 @@ function setup(reject = false, changeDuringRun = false) {
     return { result, bundle, trace: { runId: `fixture-${count}`, roleId: input.roleId, roleVersion: "1", bundleHash: bundle.bundleHash, promptHash: "p", contextHash: "c", skillHash: "s", toolHash: "t", fingerprint: "f", outputSchema: bundle.manifest.output_schema, effectiveModel: "fixture-model", effectiveEffort: "low", loadedSkills: [], allowedTools: [], sessionIds: [`${input.roleId}-${count}`], usage: {}, repairAttempts: 0 } } as Awaited<ReturnType<RoleRuntimeGateway["run"]>>;
   });
   const profile = profileSchema.parse({ id: "traex", name: "Fixture", command: "unused", transport: "acp" });
-  const pipeline = new KnowledgePipeline(repository, gateway, profile, { concurrency: 1 });
+  const pipeline = new KnowledgePipeline(repository, gateway, profile, { concurrency: 1, nativeResearch: false });
   return { store, repository, pipeline, run, captured, capture, accept: () => { reject = false; }, reject: () => { reject = true; } };
 }
 

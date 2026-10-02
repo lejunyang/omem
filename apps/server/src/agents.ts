@@ -8,6 +8,8 @@ import {
   type SessionConfigOption,
   type ContentBlock,
   type McpServer,
+  type SessionUpdate,
+  type RequestPermissionRequest,
 } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../../../packages/contracts/src/index.js";
 export type Emit = (
@@ -26,6 +28,9 @@ export type AcpOptions = {
   expectedSkills?: string[];
   skillDiscoveryTimeoutMs?: number;
   maxOutputChars?: number;
+  unbounded?: boolean;
+  onSessionUpdate?: (update: SessionUpdate) => void;
+  allowPermission?: (request: RequestPermissionRequest) => boolean;
   contextBudget?: { estimatedInputTokens: number; maxOutputTokens: number; contextReserveTokens: number };
   onRuntimeRequest?: (request: RuntimeRequestEvent) => void | Promise<void>;
 };
@@ -155,7 +160,7 @@ export async function acp(
         child.stdout.on("data", (chunk: Buffer) => {
           if (inputClosed) return;
           total += chunk.length;
-          if (total > 32_000_000) {
+          if (!options.unbounded && total > 32_000_000) {
             rejectExit(new Error("ACP wire output budget exceeded"));
             stop(child);
             return;
@@ -181,6 +186,8 @@ export async function acp(
     connection = new ClientSideConnection(
       () => ({
         requestPermission: async (request) => {
+          const once = request.options.find(o => o.kind === "allow_once");
+          if (once && options.allowPermission?.(request)) return { outcome: { outcome: "selected", optionId: once.optionId } };
           await options.onRuntimeRequest?.({
             kind: "permission",
             sessionId: sessionId || request.sessionId,
@@ -217,12 +224,13 @@ export async function acp(
           return { action: "decline" };
         },
         sessionUpdate: async ({ update }) => {
+          if (["tool_call", "tool_call_update", "plan", "usage_update"].includes(update.sessionUpdate)) options.onSessionUpdate?.(update);
           if (
             update.sessionUpdate === "agent_message_chunk" &&
             update.content.type === "text"
           ) {
             outputChars += update.content.text.length;
-            if (outputChars > (options.maxOutputChars ?? 250_000)) {
+            if (!options.unbounded && outputChars > (options.maxOutputChars ?? 250_000)) {
               terminalFailure = new Error("Agent output limit exceeded");
               rejectExit(terminalFailure);
               stop(child);
@@ -262,6 +270,7 @@ export async function acp(
         clientCapabilities: {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
+          _meta: { terminal_output: true, traex_subagent_parent_tool_call_id: true },
         },
         clientInfo: { name: "omem", version: "0.1.0" },
       }),

@@ -1,4 +1,5 @@
 import { MaterialResearch } from "./research.js";
+import { prepareAgentResearch } from "./agent-research.js";
 import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
 import { knowledgeResearchSchema, type WikiPageBrief, knowledgeBatchSchema, knowledgePlanSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial, type KnowledgePlan } from "../../../../packages/contracts/src/knowledge.js";
@@ -24,13 +25,20 @@ export class KnowledgePipeline {
   private readonly running = new Set<DurableJobWorker>();
   private stopping = false;
   constructor(readonly repository: KnowledgeRepository, readonly gateway: RoleRuntimeGateway, readonly profile: AgentProfile,
-    readonly options: { budget?: Partial<GenerationBudget>; concurrency?: number; retryTag?: string; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
+    readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; concurrency?: number; retryTag?: string; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
+
+  private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
 
   async stop() { this.stopping = true; await Promise.all([...this.running].map(w => w.stop())); }
 
   private context(role: string, jobId: string, offers: Offer[], articles: KnowledgeArticle[], task: Record<string, unknown>): ContextManifest {
     const materials: ContextManifest["materials"] = [];
-    for (const { material: m, ranges } of offers) {
+    if (this.nativeResearch) {
+      const m = offers[0]?.material;
+      if (!m) throw Error("At least one fixed original material is required");
+      materials.push({content_scope:"revision",fragment_revision_id:m.fragments[0]?.id??m.revisionId,source_revision_id:m.revisionId,text:"Fixed originals are available in catalog.json and omem tools; read them on demand."});
+    }
+    for (const { material: m, ranges } of this.nativeResearch ? [] : offers) {
       const lines = m.text.split("\n");
       for (const range of ranges) {
         let text = "";
@@ -53,15 +61,16 @@ export class KnowledgePipeline {
       trusted_context: { workspace_id: "personal", project_id: null, owner_id: "owner", observed_at: new Date().toISOString(), timezone: "Asia/Shanghai",
         actor_binding: { id: null, verified_by: null }, source_kind: (offers[0]?.material.namespace ?? "file") as ContextManifest["trusted_context"]["source_kind"], is_forwarded: offers.some(o => o.material.forwarded), producer_kind: "original", source_epoch: 1, project_trusted: false },
       materials, related_memories: [], confirmed_corrections: [],
-      task: { ...task, articles: articles.map(a => ({ ...a.document, revision: a.revision, provenance: "derived knowledge, not independent evidence" })),
-        allowedMaterials: offers.map(o => ({ key: o.material.key, title: o.material.title, ranges: o.ranges, image: !!o.material.images.length })) },
+      task: { ...task, nativeResearch: this.nativeResearch,
+        ...(this.nativeResearch ? { materialCatalog: "catalog.json", articleCatalog: "knowledge.json" } : { articles: articles.map(a => ({ ...a.document, revision: a.revision, provenance: "derived knowledge, not independent evidence" })) }),
+        allowedMaterials: (this.nativeResearch ? offers.slice(0, 1) : offers).map(o => ({ key: o.material.key, title: o.material.title, ranges: o.ranges, image: !!o.material.images.length })) },
     };
   }
 
   private async runRole(role: string, offers: Offer[], articles: KnowledgeArticle[], task: Record<string, unknown>, validate?: (out: unknown) => unknown): Promise<RunResult> {
     if (this.stopping) throw Error("Knowledge pipeline stopped");
     const bundle = this.registry.load(role);
-    const refs = [{ role, task, retryTag: this.options.retryTag, materials: offers.map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })),
+    const refs = [{ role, task, workflow: this.nativeResearch ? "native-research@1" : "bounded-context@1", retryTag: this.options.retryTag, materials: offers.map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })),
       articles: articles.map(a => ({ key: a.document.key, revision: a.revision })), model: this.profile.model, effort: this.profile.effort, budget: this.options.budget, bundleHash: bundle.bundleHash }];
     const { job } = this.repository.store.jobs.enqueue({ kind: `knowledge:${role}`, inputRefs: refs, roleVersion: bundle.bundleHash, policyVersion: "knowledge@1", maxAttempts: 3, cause: "knowledge-generation" });
     const result = () => {
@@ -74,7 +83,9 @@ export class KnowledgePipeline {
     const worker = new DurableJobWorker(this.repository.store.jobs, `knowledge-${job.id}`, {
       [`knowledge:${role}`]: async (lease, signal) => {
         this.options.log?.(`AI ${role}: ${String(task.targetKeys ?? task.title ?? "catalog")}`);
-        const run = await this.gateway.run({ roleId: role, profile: this.profile, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate });
+        const run = await this.gateway.run({ roleId: role, profile: this.profile, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate,
+          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate }) } : {}),
+          emit: (type, text) => { if (type === "status") this.options.log?.(text); } });
         const saved = this.repository.store.jobs.saveRoleOutput({ jobId: lease.id, leaseToken: lease.leaseToken,
           model: run.trace.effectiveModel, effort: run.trace.effectiveEffort, promptHash: run.trace.promptHash, skillHash: run.trace.skillHash, toolHash: run.trace.toolHash,
           fingerprint: run.trace.fingerprint, roleBundleHash: run.trace.bundleHash, contextHash: run.trace.contextHash, outputSchema: run.trace.outputSchema,
@@ -112,6 +123,7 @@ export class KnowledgePipeline {
   }
 
   private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: unknown; writerVersion: string }) {
+    if (this.nativeResearch) offers = offers.map(o=>({material:o.material,ranges:[{start:1,end:o.material.lineCount}]}));
     let repair: unknown = priorFeedback;
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
@@ -129,8 +141,10 @@ export class KnowledgePipeline {
       for (const document of batch.documents.filter(d => !rejected.some(v => v.documentKey === d.key))) {
         const extraQuestions = verdicts.find(v => v.documentKey === document.key)!.questions;
         document.questions = [...document.questions, ...extraQuestions].filter((q, i, all) => all.findIndex(x => x.question === q.question) === i).slice(0, 20);
-        const dependencies: KnowledgeArtifact["dependencies"] = offers.map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
-        for (const a of articles) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
+        const readKeys = new Set(document.citations.filter(c=>c.target.kind==="material").map(c=>c.target.key));
+        if (this.nativeResearch) for (const t of [write.trace,review.trace]) for (const event of (t.usage.activity ?? []) as {reads?:string[]}[]) for(const key of event.reads??[])readKeys.add(key);
+        const dependencies: KnowledgeArtifact["dependencies"] = offers.filter(o=>!this.nativeResearch||readKeys.has(o.material.key)).map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
+        for (const a of articles.filter(a=>!this.nativeResearch||document.citations.some(c=>c.target.kind==="article"&&c.target.key===a.document.key))) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
         if (this.stopping) throw Error("Knowledge publication cancelled");
         const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading } : {}),
           generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}) } as unknown as Record<string, unknown> },
@@ -182,6 +196,7 @@ export class KnowledgePipeline {
           if (answer) offers.push({ material: answer, ranges: [{ start: 1, end: answer.lineCount }] });
         }
         for (const s of supplements(targets)) if (!offers.some(o => o.material.key === s.material.key)) offers.push(s);
+        if (this.nativeResearch) for (const material of this.repository.materials()) if (!offers.some(o=>o.material.key===material.key)) offers.push({material,ranges:[{start:1,end:material.lineCount}]});
         try { await this.writeAndVerify(analystFor(targets[0]!), targets.map(m => ({ key: m.key, title: m.title })), offers, [], this.previousFeedback(targets, offers)); }
         catch (error) { const failure = { keys: targets.map(m => m.key), error: String(error) }; failures.push(failure); this.options.log?.(`FAILED ${failure.keys.join(", ")}: ${failure.error}`); }
       }
@@ -193,13 +208,22 @@ export class KnowledgePipeline {
    * are optional background, never a prerequisite or an arbitrary batching tree. */
   async writePage(brief: WikiPageBrief) {
     this.repository.refresh();
-    const writerVersion = stableDigest(["reader-first@2", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
+    const writerVersion = stableDigest([this.nativeResearch ? "native-research@1" : "reader-first@2", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
     const existing = this.repository.get(brief.key);
     if (existing?.current && stableDigest(existing.reading) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion) return [existing];
     const available = this.repository.materials();
     const scope = brief.materialKeys ? new Set(brief.materialKeys) : null;
     const materials = scope ? available.filter(m => scope.has(m.key)) : available;
     if (!materials.length || (scope && materials.length !== scope.size)) throw Error("Selected materials are no longer available");
+    if (this.nativeResearch) {
+      const offers = materials.map(material=>({material,ranges:[{start:1,end:material.lineCount}]}));
+      const articles = this.repository.list().filter(a=>a.current&&a.document.key!==brief.key);
+      const run = await this.runRole("knowledge-researcher", offers, articles, {title:brief.title,page:brief}, out=>knowledgeResearchSchema.parse(out));
+      const research = knowledgeResearchSchema.parse(run.result);
+      if (!research.ready || research.requests.length) throw Error("Native researcher must complete its own tool investigation before writing");
+      return this.writeAndVerify("knowledge-writer", [{...brief,purpose:brief.goal}], offers, articles, undefined,
+        {reading:brief,research:{trace:run.trace,findings:research.findings,gaps:research.gaps},writerVersion});
+    }
     const research = new MaterialResearch(materials, brief);
     if (!research.offers.size) research.search(brief.title + " " + brief.goal);
     if (!research.offers.size) for (const m of materials.slice(0, 3)) research.read(m.key, 1, Math.min(m.lineCount, 80));
@@ -228,7 +252,7 @@ export class KnowledgePipeline {
     const articles = this.repository.list().filter(a => a.current);
     const base = materials[0];
     if (!base) throw Error("No captured materials to organize");
-    const result = await this.runRole("knowledge-planner", [{ material: base, ranges: [{ start: 1, end: Math.min(base.lineCount, 100) }] }], [],
+    const result = await this.runRole("knowledge-planner", this.nativeResearch ? materials.map(material=>({material,ranges:[{start:1,end:material.lineCount}]})) : [{ material: base, ranges: [{ start: 1, end: Math.min(base.lineCount, 100) }] }], this.nativeResearch ? articles : [],
       { title: "知识树规划", catalog: articles.map(a => ({ key: a.document.key, title: a.document.title, category: a.document.category, summary: a.document.summary.slice(0, 220) })) }, out => {
         const plan = knowledgePlanSchema.parse(out);
         for (const chapter of plan.chapters) for (const key of chapter.materialKeys) if (!articles.some(a => a.document.key === key)) throw Error(`Unknown catalog key ${key}`);
@@ -284,7 +308,7 @@ export class KnowledgePipeline {
     // When the configured budget permits it, provide the full relevant source
     // instead of making a chapter infer behavior between isolated excerpts.
     const full = selected.map(o => ({ material: o.material, ranges: [{ start: 1, end: o.material.lineCount }] }));
-    try {
+    if (!this.nativeResearch) try {
       const base = this.registry.load("knowledge-writer");
       const maxInput = this.options.budget?.maxInputTokens ?? base.manifest.budget.max_context_tokens;
       const bundle = { ...base, manifest: { ...base.manifest, budget: { ...base.manifest.budget, max_context_tokens: maxInput } } };

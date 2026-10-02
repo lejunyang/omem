@@ -11,7 +11,7 @@
       "canonical_name": "omem-knowledge-researcher",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "ecb0942c8e31ffaf4b9a35648bfcc6365728cd9d46a94fa9db2d119f07bcfc0f"
+      "artifact_digest": "3e4bdc26e2bc94afe399129ed9890ef87b0e6e725570f97933b6375cf47b892a"
     }
   ],
   "output_schema": "KnowledgeResearch.v1",

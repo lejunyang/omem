@@ -20,6 +20,7 @@ agents = ["universal", "claude-code"]
 dev = "pnpm run dev"
 "retrieval:verify" = "bun scripts/live-retrieval-smoke.ts"
 "knowledge:verify" = "bun scripts/live-knowledge-smoke.ts"
+"knowledge:native-verify" = "bun scripts/live-native-knowledge-smoke.ts"
 build = "pnpm run build"
 test = "pnpm run test"
 typecheck = "pnpm run typecheck"

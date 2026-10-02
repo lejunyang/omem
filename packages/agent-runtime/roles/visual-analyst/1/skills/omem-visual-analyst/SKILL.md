@@ -12,3 +12,7 @@ description: 分析图像材料。根据原始图片说明可见结构、界面�
 sections 的 body 使用 Markdown，在对应句子或段落中放 [[c1]] 引用。每节至少一处，citations 每项都应在正文出现，禁止仅在文末列引用。
 引用只能来自提供的材料或文章：target.kind 为 material/article，target.key 必须使用提供的完整 key。材料引用只选择真实 startLine/endLine，把 quote 置为空字符串；宿主会从固定材料中复制精确短引文，不要抄写整段代码。图片引用允许空 quote 和无行号。文章引用给真实 section key。
 label 用人读名称，不显示内部 id；reason 解释为何引用、支持附近哪项论断。关系值严格使用 schema。把不能确定、缺背景或需要用户选择的点写成 questions，包含 why、nextStep、blocking 和 citationKeys；避免泛泛追问。
+
+
+## 原生调查与交付
+自主模式先读 catalog.json 或使用 list_materials，按目标用原生文件读取与 omem 搜索/章节/符号工具继续调查。支持整篇或任意行段，没有宿主 token 预算；按价值选择材料，不机械增加工具次数。对代码先跟一次场景，从入口到保存、输出或用户观察结果，补配置、类型、调用者和设计解释。相关知识提供背景，原件支持新增事实。最终用 submit_result 提交合同；工具返回具体错误时补读修正。

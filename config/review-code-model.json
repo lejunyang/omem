@@ -9,8 +9,5 @@
   ],
   "model": "gpt-5.6-sol",
   "effort": "medium",
-  "timeoutMs": 480000,
-  "maxInputTokens": 192000,
-  "maxOutputTokens": 24000,
-  "contextReserveTokens": 16000
+  "timeoutMs": 480000
 }
