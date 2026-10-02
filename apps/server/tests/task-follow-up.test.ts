@@ -11,6 +11,37 @@ const followUp = { waiting_on: "张三", next_check_at: "2030-10-02T01:00:00.000
   time_expression: "2030年10月2日上午9点", timezone: "Asia/Shanghai" };
 
 describe("daily message follow-up", () => {
+  it("reminds with the persisted current check time after snoozing, without copying the old instruction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omem-reminder-content-")); let store = new Store(dir);
+    try {
+      const original = "跟进周末读书会报名确认，等待组织者回复；2030年10月2日上午9点提醒我检查。";
+      const metadata = (applicationId: string) => ({ workspaceId: "personal", applicationId,
+        proposalDigest: applicationId, generation: 1, title: "更新报名确认事项", details: "明确的个人委托",
+        delivery: { channelBindingVersion: 1, channel: "in_app" as const, target: "notification-center" } });
+      const created = store.applications.applyTask({ metadata: metadata("create"), task: {
+        title: "周末读书会报名确认", detail: original, nextStep: original, status: "waiting", dueAt: null,
+        followUp: { ...followUp, waiting_on: "组织者回复" },
+      } });
+      store.applications.applyTask({ metadata: metadata("snooze"), task: {
+        id: created.entityId, expectedVersion: 1, title: "周末读书会报名确认", detail: original,
+        nextStep: original, status: "waiting", dueAt: null,
+        followUp: { waiting_on: "组织者回复", next_check_at: "2030-10-03T02:00:00.000Z",
+          snoozed_until: "2030-10-03T02:00:00.000Z", time_expression: "2030年10月3日上午10点", timezone: "Asia/Shanghai" },
+      } });
+      store.close(); store = new Store(dir);
+      expect(store.remind("2030-10-03T02:00:00.000Z")).toBe(1);
+      const reminder = store.notifications().find(n => n.title.startsWith("事项待跟进"))!;
+      expect(reminder.body).toContain("2030年10月3日");
+      expect(reminder.body).toContain("10:00");
+      expect(reminder.body).toContain("Asia/Shanghai");
+      expect(reminder.body).toContain("等待：组织者回复");
+      expect(reminder.body).toContain("检查「周末读书会报名确认」的进展");
+      expect(reminder.body).not.toContain("10月2日");
+      expect(store.tasks()[0]!.detail).toBe(original);
+      expect(store.remind("2030-10-03T03:00:00.000Z")).toBe(0);
+    } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("tracks a waiting message, snoozes without changing its deadline, catches up once after reopening the store, then cancels", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omem-follow-up-")); let store = new Store(dir);
     try {

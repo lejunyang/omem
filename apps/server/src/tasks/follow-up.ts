@@ -35,9 +35,16 @@ export function dispatchTaskReminders(db: DatabaseSync, instant: string) {
     const notificationId = randomUUID();
     const following = fresh.some(t => t.kind === "follow_up");
     const title = `${following ? "事项待跟进" : "待办到期"}：${task.title}`;
-    const body = [task.next_step || task.detail,
+    const timezone = followUp?.timezone ?? "Asia/Shanghai";
+    const currentTime = (value: string) => `${new Intl.DateTimeFormat("zh-CN", {
+      timeZone: timezone, dateStyle: "full", timeStyle: "short",
+    }).format(new Date(value))}（${timezone}）`;
+    // Free-text detail/next_step can still contain the original reminder time.
+    // Keep those on the task; the alert describes its current persisted state.
+    const body = [following ? `当前检查时间：${currentTime(followUp!.next_check_at!)}` : "",
+      fresh.some(t => t.kind === "due") ? `当前截止时间：${currentTime(String(task.due_at))}` : "",
       followUp?.waiting_on ? `等待：${followUp.waiting_on}。尚未确认收到回复。` : "",
-      fresh.some(t => t.kind === "due") ? "已到截止时间，请检查进展。" : "到了约定的跟进时间，请检查进展。",
+      `下一步：检查「${task.title}」的进展。`,
       "可标记完成、稍后提醒或取消；不会自动联系他人。"].filter(Boolean).join("\n");
     db.prepare("INSERT INTO notifications VALUES(?,?,?,?,?,?,?)").run(notificationId, null, title, body, instant, null,
       following ? `follow-up:${task.id}:${task.version}:${followUp!.next_check_at}` : `due:${task.id}:${task.version}`);
