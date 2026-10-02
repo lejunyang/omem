@@ -45,7 +45,7 @@ try {
     await page.getByLabel("查找章节", { exact: true }).fill(meta.title);
     await page.locator(".tree-title").filter({ hasText: meta.title }).click();
     const article = await api("/api/knowledge/articles/" + encodeURIComponent(meta.key));
-    const groups = await page.locator(".book-content .om-paragraph-references").evaluateAll(nodes => nodes.map(n => [...n.querySelectorAll("a")].map(a => decodeURIComponent(a.getAttribute("href")!.split("/").pop()!))));
+    const groups = await page.locator(".book-content .md-body p, .book-content .md-body li, .book-content .md-body td").evaluateAll(nodes => nodes.map(n => [...n.querySelectorAll(".om-inline-citation[href]")].map(a => decodeURIComponent(a.getAttribute("href")!.split("/").pop()!))));
     for (const keys of groups) {
       const targets = keys.map(key => JSON.stringify(article.citations.find((c: any) => c.key === key).target));
       expect(new Set(targets).size).toBe(targets.length);
@@ -90,7 +90,7 @@ try {
     await expect(page.locator("dialog[open] .layer-chip")).toContainText("第 1 层");
     await page.keyboard.press("Escape");
     await expect(page.locator("dialog[open]")).toHaveCount(0);
-    await expect(page.locator(".book-content .om-paragraph-references").first()).toBeVisible();
+    await expect(page.locator(".book-content .om-inline-citation[href]").first()).toBeVisible();
   });
   await check("README reads as a document with intact code fences", async () => {
     await page.getByRole("button", { name: "原始材料", exact: true }).click();

@@ -14,7 +14,15 @@ import {
   OmEmpty,
   OmCitation,
   OmDisclosure,
+  OmTrailDrawer,
+  useEvidenceTrail,
 } from "@omem/ui";
+import KnowledgeFrame from "./knowledge/KnowledgeFrame.vue";
+import type {
+  RetrievalHit,
+  RetrievalPurpose,
+  SourceAnchor,
+} from "../../server/src/retrieval/port";
 import {
   api,
   type Source,
@@ -38,17 +46,37 @@ import DecisionsView from "./DecisionsView.vue";
 import NotificationDetail from "./NotificationDetail.vue";
 import LarkSetup from "./LarkSetup.vue";
 const navigation = [
-  ["daily", "spark", "日常助理"], ["knowledge", "book", "知识库"],
-  ["read", "layers", "原始材料"], ["capture", "plus", "输入材料"],
-  ["learning", "spark", "材料处理"], ["decisions", "check", "待判断"],
-  ["tasks", "check", "事项与待办"], ["changes", "clock", "变更历史"],
-  ["notifications", "spark", "通知中心"], ["lark", "layers", "飞书机器人"],
+  ["daily", "spark", "日常助理"],
+  ["knowledge", "book", "知识库"],
+  ["read", "layers", "原始材料"],
+  ["capture", "plus", "输入材料"],
+  ["learning", "spark", "材料处理"],
+  ["decisions", "check", "待判断"],
+  ["tasks", "check", "事项与待办"],
+  ["changes", "clock", "变更历史"],
+  ["notifications", "spark", "通知中心"],
+  ["lark", "layers", "飞书机器人"],
   ["settings", "layers", "能力与连接"],
 ];
-function hashView() { const key = location.hash.replace(/^#\//, "").split(/[/?]/)[0]; return key === "design" || navigation.some(([id]) => id === key) ? key! : "knowledge"; }
-const view = ref(location.hash ? hashView() : sessionStorage.getItem("omem-view") || "knowledge");
-function syncView() { view.value = hashView(); }
-const pageTitle = computed(() => navigation.find(([id]) => id === view.value)?.[2] ?? (view.value === "design" ? "组件预览" : "知识库"));
+function hashView() {
+  const key = location.hash.replace(/^#\//, "").split(/[/?]/)[0];
+  return key === "design" || navigation.some(([id]) => id === key)
+    ? key!
+    : "knowledge";
+}
+const view = ref(
+  location.hash
+    ? hashView()
+    : sessionStorage.getItem("omem-view") || "knowledge",
+);
+function syncView() {
+  view.value = hashView();
+}
+const pageTitle = computed(
+  () =>
+    navigation.find(([id]) => id === view.value)?.[2] ??
+    (view.value === "design" ? "组件预览" : "知识库"),
+);
 const sources = ref<Source[]>([]);
 const revision = ref<Revision | null>(null);
 const focus = ref<Fragment | null>(null);
@@ -67,7 +95,12 @@ const notificationOpen = ref(false);
 const notificationLoading = ref(false);
 const error = ref("");
 const pollError = ref("");
-watch(view, () => { error.value = ""; query.value = ""; sessionStorage.setItem("omem-view", view.value); if (hashView() !== view.value) location.hash = "/" + view.value; });
+watch(view, () => {
+  error.value = "";
+  query.value = "";
+  sessionStorage.setItem("omem-view", view.value);
+  if (hashView() !== view.value) location.hash = "/" + view.value;
+});
 const reviewMode = ref(false);
 const connecting = ref(true);
 const connectionError = ref("");
@@ -84,9 +117,57 @@ const token = ref("");
 const evidence = ref<InstanceType<typeof EvidenceReader>>();
 const query = ref("");
 const sourceQuery = ref("");
-const results = ref<
-  { id: string; text: string; title: string; version: number; section?: { title: string; startLine: number; endLine: number } | null }[]
->([]);
+const results = ref<RetrievalHit[]>([]);
+const searchPurpose = ref<RetrievalPurpose>("balanced");
+const {
+  open: searchOpen,
+  frames: searchFrames,
+  current: searchCurrent,
+  active: searchActive,
+  trigger: searchTrigger,
+  loopAt: searchLoopAt,
+  push: pushSearch,
+  back: backSearch,
+  jump: jumpSearch,
+  close: closeSearch,
+} = useEvidenceTrail();
+const resultKinds = {
+  source: "原始材料",
+  knowledge: "讲解",
+  memory: "已应用记忆",
+  task: "当前事项",
+};
+function readSearchResult(result: RetrievalHit, reference?: SourceAnchor) {
+  const target = reference ?? result.target;
+  if (target.kind === "task") {
+    query.value = "";
+    view.value = "tasks";
+    return;
+  }
+  if (target.kind === "memory") {
+    if (result.references[0]) readSearchResult(result, result.references[0]);
+    return;
+  }
+  pushSearch({
+    kind: target.kind,
+    id: JSON.stringify(target),
+    title: result.title,
+  });
+}
+function readSearchCitation(result: RetrievalHit, citation: string) {
+  if (result.target.kind !== "knowledge") return;
+  const label =
+    result.citations?.find((c) => c.key === citation)?.label ?? "原文引用";
+  pushSearch({
+    kind: "citation",
+    id: JSON.stringify({
+      document: result.target.key,
+      revision: result.target.revision,
+      citation,
+    }),
+    title: label,
+  });
+}
 const history = ref<{ id: string; title: string; version: number }[]>([]);
 const options = ref<
   { id: string; name: string; values: { value: string; name: string }[] }[]
@@ -97,14 +178,25 @@ let toastTimer: ReturnType<typeof setTimeout>;
 let searchVersion = 0;
 let searchTimer: ReturnType<typeof setTimeout>;
 let searchController: AbortController | undefined;
-const searching = ref(false), searchError = ref("");
-watch(query, () => {
-  clearTimeout(searchTimer); searchController?.abort();
-  const version = ++searchVersion;
-  results.value = []; searchError.value = "";
-  searching.value = !!query.value.trim();
-  if (searching.value) searchTimer = setTimeout(() => void search(version, query.value.trim()), 250);
-}, { flush: "sync" });
+const searching = ref(false),
+  searchError = ref("");
+watch(
+  [query, searchPurpose],
+  () => {
+    clearTimeout(searchTimer);
+    searchController?.abort();
+    const version = ++searchVersion;
+    results.value = [];
+    searchError.value = "";
+    searching.value = !!query.value.trim();
+    if (searching.value)
+      searchTimer = setTimeout(
+        () => void search(version, query.value.trim()),
+        250,
+      );
+  },
+  { flush: "sync" },
+);
 let lastNotificationId = "";
 let refreshing = false;
 const input = ref({
@@ -218,10 +310,23 @@ async function boot() {
     }
     // Only a real missing review route identifies the personal server. A proxy
     // failure while the API is syncing must never start personal API polling.
-    if (r.status !== 404) throw Error(r.status === 401 ? "服务需要访问令牌" : `服务暂未就绪（HTTP ${r.status}）`);
-    const health = await api<{ notificationMode: string; accessProtected: boolean; processingEnabled: boolean; learning: { running: boolean; enabled: boolean } }>("/health");
+    if (r.status !== 404)
+      throw Error(
+        r.status === 401
+          ? "服务需要访问令牌"
+          : `服务暂未就绪（HTTP ${r.status}）`,
+      );
+    const health = await api<{
+      notificationMode: string;
+      accessProtected: boolean;
+      processingEnabled: boolean;
+      learning: { running: boolean; enabled: boolean };
+    }>("/health");
     accessProtected.value = health.accessProtected;
-    processing.value = { ...health.learning, enabled: health.processingEnabled };
+    processing.value = {
+      ...health.learning,
+      enabled: health.processingEnabled,
+    };
     notificationMode.value = health.notificationMode;
     connecting.value = false;
   } catch (e) {
@@ -258,13 +363,23 @@ async function openRevision(id: string, navigate = true) {
   }
 }
 async function search(version: number, text: string) {
-  const controller = new AbortController(); searchController = controller;
+  const controller = new AbortController();
+  searchController = controller;
   try {
-    const response = await api<typeof results.value>("/search?q=" + encodeURIComponent(text), undefined, "GET", controller.signal);
+    const response = await api<typeof results.value>(
+      "/search?" +
+        new URLSearchParams({ q: text, purpose: searchPurpose.value }),
+      undefined,
+      "GET",
+      controller.signal,
+    );
     if (version === searchVersion) results.value = response;
   } catch (e) {
-    if (version === searchVersion && !controller.signal.aborted) searchError.value = String(e);
-  } finally { if (version === searchVersion) searching.value = false; }
+    if (version === searchVersion && !controller.signal.aborted)
+      searchError.value = String(e);
+  } finally {
+    if (version === searchVersion) searching.value = false;
+  }
 }
 async function upload(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -463,19 +578,26 @@ function setProfile() {
   probing.value = false;
   if (view.value === "settings") void probe();
 }
-watch(view, v => { if (v === "settings" && !probeNote.value && !probing.value) void probe(); });
+watch(view, (v) => {
+  if (v === "settings" && !probeNote.value && !probing.value) void probe();
+});
 function saveToken() {
   sessionStorage.setItem("omem-token", token.value);
   token.value = "";
   void boot();
 }
-onMounted(() => { window.addEventListener("hashchange", syncView); void boot(); });
+onMounted(() => {
+  window.addEventListener("hashchange", syncView);
+  void boot();
+});
 onBeforeUnmount(() => {
   window.removeEventListener("hashchange", syncView);
   clearTimeout(bootRetryTimer);
   clearInterval(pollTimer);
   clearTimeout(toastTimer);
-  clearTimeout(searchTimer); searchController?.abort(); searchVersion++;
+  clearTimeout(searchTimer);
+  searchController?.abort();
+  searchVersion++;
 });
 </script>
 <template>
@@ -486,12 +608,21 @@ onBeforeUnmount(() => {
       <OmButton :disabled="booting" @click="boot">重新连接</OmButton>
       <OmDisclosure title="访问令牌">
         <label for="startup-token">服务访问令牌</label>
-        <input id="startup-token" v-model="token" type="password" autocomplete="off" />
+        <input
+          id="startup-token"
+          v-model="token"
+          type="password"
+          autocomplete="off"
+        />
         <OmButton @click="saveToken">保存并连接</OmButton>
       </OmDisclosure>
     </OmPanel>
   </OmShell>
-  <OmPanel v-else-if="reviewMode" title="知识库已合并到主应用"><p>请使用 osdk run dev 启动统一的个人助理。仓库知识将在同一个知识库中展示。</p></OmPanel>
+  <OmPanel v-else-if="reviewMode" title="知识库已合并到主应用"
+    ><p>
+      请使用 osdk run dev 启动统一的个人助理。仓库知识将在同一个知识库中展示。
+    </p></OmPanel
+  >
   <OmShell v-else
     ><template #top
       ><div class="top-controls">
@@ -524,102 +655,197 @@ onBeforeUnmount(() => {
           <OmIcon :name="icon" />{{ label }}
         </button>
       </nav>
-</template
-    >
+    </template>
     <div class="page-bar">
-      <span
-        >我的工作记忆 /
-        {{ pageTitle }}</span
+      <span>我的工作记忆 / {{ pageTitle }}</span
       ><OmBadge>个人版 · 基础链路</OmBadge>
     </div>
     <div v-if="error || pollError" class="error-banner" role="alert">
       {{ error || pollError
-      }}<OmButton variant="ghost" @click="error = ''; pollError = ''">关闭提示</OmButton>
+      }}<OmButton
+        variant="ghost"
+        @click="
+          error = '';
+          pollError = '';
+        "
+        >关闭提示</OmButton
+      >
     </div>
     <section v-if="query.trim()" class="page" :aria-busy="searching">
       <h1>搜索“{{ query }}”</h1>
-      <p class="muted">结合原文、代码名称与已有知识查找。已启用的中文语义索引也会参与召回。</p>
-      <p v-if="searching" class="search-loading" role="status"><span class="search-spinner" aria-hidden="true" />正在搜索相关材料…</p>
-      <p v-else-if="searchError" class="error" role="alert">搜索失败：{{ searchError }} <OmButton variant="secondary" @click="searching = true; search(++searchVersion, query.trim())">重试</OmButton></p>
+      <p class="muted">
+        先读相关讲解，再沿引用查看原文和实现；当前事项与已应用记忆也可一起查找。
+      </p>
+      <label class="search-purpose"
+        >查找用途
+        <select v-model="searchPurpose">
+          <option value="balanced">综合查找</option>
+          <option value="concept">理解概念</option>
+          <option value="implementation">定位实现</option>
+          <option value="background">了解背景</option>
+          <option value="follow-up">跟进事项</option>
+        </select></label
+      >
+      <p v-if="searching" class="search-loading" role="status">
+        <span class="search-spinner" aria-hidden="true" />正在搜索相关材料…
+      </p>
+      <p v-else-if="searchError" class="error" role="alert">
+        搜索失败：{{ searchError }}
+        <OmButton
+          variant="secondary"
+          @click="
+            searching = true;
+            search(++searchVersion, query.trim());
+          "
+          >重试</OmButton
+        >
+      </p>
       <OmPanel v-for="r in results" :key="r.id" :title="r.title" class="stack"
-        ><p v-if="r.section" class="search-section">{{ r.section.title }} · 第 {{ r.section.startLine }}–{{ r.section.endLine }} 行</p><p class="excerpt">{{ r.text }}</p>
-        <OmCitation
-          label="查看固定片段"
-          :version="r.version"
-          @open="evidence?.open(r.id)" /></OmPanel
+        ><p class="search-section">
+          {{ resultKinds[r.kind]
+          }}<span v-if="r.headingPath.length">
+            · {{ r.headingPath.join(" / ") }}</span
+          ><span v-if="r.target.kind === 'source'">
+            · 第 {{ r.target.startLine }}–{{ r.target.endLine }} 行</span
+          >
+        </p>
+        <OmMarkdown
+          v-if="r.kind === 'knowledge'"
+          :source="r.text"
+          :citations="r.citations"
+          @cite="readSearchCitation(r, $event)"
+        />
+        <p v-else class="excerpt">{{ r.text }}</p>
+        <div class="search-actions">
+          <OmButton
+            v-if="r.kind !== 'memory' || r.references.length"
+            variant="secondary"
+            @click="readSearchResult(r)"
+            >{{
+              r.kind === "knowledge"
+                ? "阅读讲解"
+                : r.kind === "task"
+                  ? "查看事项"
+                  : r.kind === "memory"
+                    ? "查看原始依据"
+                    : "阅读原文"
+            }}</OmButton
+          >
+          <OmButton
+            v-if="r.kind === 'knowledge' && r.references.length"
+            variant="ghost"
+            @click="readSearchResult(r, r.references[0])"
+            >查看对应原文</OmButton
+          >
+        </div></OmPanel
       ><OmEmpty
         v-if="!searching && !searchError && !results.length"
-        title="未找到相关片段"
+        title="未找到相关内容"
         description="试试原文关键词，或先导入材料。"
       />
     </section>
-    <section v-else-if="view === 'read'" class="materials-layout"><aside class="materials-directory" aria-label="材料目录">      <h4 class="nav-heading">
-        材料目录 <small>{{ sources.length }}</small>
-      </h4>
-      <input v-model="sourceQuery" aria-label="查找原始材料" placeholder="查找原始材料" class="source-filter" />
-      <button
-        v-for="s in sources.filter(s => s.title.toLowerCase().includes(sourceQuery.toLowerCase())).slice(0, 80)"
-        :key="s.id"
-        class="source-link"
-        :class="{ selected: revision?.sourceId === s.sourceId }"
-        @click="
-          openRevision(s.id);
-          query = '';
-        "
-      >
-        <span>{{ s.title }}</span
-        ><small>{{ s.source }} · v{{ s.version }}</small>
-      </button>
-      <p v-if="!sources.length" class="muted">
-        导入第一份材料，开始积累记忆。
-      </p><small v-if="sources.length > 80">显示前 80 项，可输入名称筛选。</small></aside><div class="page reader">
-      <template v-if="revision"
-        ><div class="row">
-          <OmBadge>{{ revision.source }}</OmBadge
-          ><OmBadge :tone="revision.current ? 'neutral' : 'warning'"
-            >v{{ revision.version }} ·
-            {{ revision.current ? "当前版本" : "历史版本" }}</OmBadge
-          >
-        </div>
-        <h1>{{ revision.title }}</h1>
-        <p class="muted">
-          保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
-          每个片段都有固定身份
+    <section v-else-if="view === 'read'" class="materials-layout">
+      <aside class="materials-directory" aria-label="材料目录">
+        <h4 class="nav-heading">
+          材料目录 <small>{{ sources.length }}</small>
+        </h4>
+        <input
+          v-model="sourceQuery"
+          aria-label="查找原始材料"
+          placeholder="查找原始材料"
+          class="source-filter"
+        />
+        <button
+          v-for="s in sources
+            .filter((s) =>
+              s.title.toLowerCase().includes(sourceQuery.toLowerCase()),
+            )
+            .slice(0, 80)"
+          :key="s.id"
+          class="source-link"
+          :class="{ selected: revision?.sourceId === s.sourceId }"
+          @click="
+            openRevision(s.id);
+            query = '';
+          "
+        >
+          <span>{{ s.title }}</span
+          ><small>{{ s.source }} · v{{ s.version }}</small>
+        </button>
+        <p v-if="!sources.length" class="muted">
+          导入第一份材料，开始积累记忆。
         </p>
-        <OmCodeViewer v-if="/\.(?:[cm]?[jt]sx?|vue|json|toml|css)$/.test(revision.title)" :code="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n')" :language="revision.title.split('.').pop()" />
-        <OmMarkdown v-else :source="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n')" />
-        <OmDisclosure class="stack" title="选择原文提问或查看来源">
-          <div v-for="f in revision.fragments" :key="f.id" class="fragment">
-            <p>{{ f.text.slice(0, 120) }}{{ f.text.length > 120 ? '…' : '' }}</p>
-            <OmButton variant="ghost" @click="focus = f">就这段提问</OmButton>
-            <OmCitation label="打开这段原文" @open="evidence?.open(f.id)" />
-          </div>
-        </OmDisclosure>
-        <template v-for="(p, i) in revision.parts" :key="i"
-          ><AssetImage
-            v-if="p.type === 'image'"
-            :id="p.assetId"
-            :label="p.label"
-        /></template>
-        <OmDisclosure class="stack" title="版本历史"><template #title>版本历史 · {{ history.length }}</template>
-          <div class="row">
-            <OmButton
-              v-for="h in history"
-              :key="h.id"
-              @click="openRevision(h.id)"
-              >v{{ h.version }}</OmButton
+        <small v-if="sources.length > 80">显示前 80 项，可输入名称筛选。</small>
+      </aside>
+      <div class="page reader">
+        <template v-if="revision"
+          ><div class="row">
+            <OmBadge>{{ revision.source }}</OmBadge
+            ><OmBadge :tone="revision.current ? 'neutral' : 'warning'"
+              >v{{ revision.version }} ·
+              {{ revision.current ? "当前版本" : "历史版本" }}</OmBadge
             >
           </div>
-        </OmDisclosure></template
-      ><OmEmpty
-        v-else
-        title="让第一份材料，成为有来处的记忆"
-        description="输入文本、图片或链接，也可以从飞书文档和 Git 导入。"
-        ><OmButton variant="primary" @click="view = 'capture'"
-          >输入材料</OmButton
-        ></OmEmpty
-      >
-    </div></section>
+          <h1>{{ revision.title }}</h1>
+          <p class="muted">
+            保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
+            每个片段都有固定身份
+          </p>
+          <OmCodeViewer
+            v-if="/\.(?:[cm]?[jt]sx?|vue|json|toml|css)$/.test(revision.title)"
+            :code="
+              revision.parts
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n')
+            "
+            :language="revision.title.split('.').pop()"
+          />
+          <OmMarkdown
+            v-else
+            :source="
+              revision.parts
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n\n')
+            "
+          />
+          <OmDisclosure class="stack" title="选择原文提问或查看来源">
+            <div v-for="f in revision.fragments" :key="f.id" class="fragment">
+              <p>
+                {{ f.text.slice(0, 120) }}{{ f.text.length > 120 ? "…" : "" }}
+              </p>
+              <OmButton variant="ghost" @click="focus = f">就这段提问</OmButton>
+              <OmCitation label="打开这段原文" @open="evidence?.open(f.id)" />
+            </div>
+          </OmDisclosure>
+          <template v-for="(p, i) in revision.parts" :key="i"
+            ><AssetImage
+              v-if="p.type === 'image'"
+              :id="p.assetId"
+              :label="p.label"
+          /></template>
+          <OmDisclosure class="stack" title="版本历史"
+            ><template #title>版本历史 · {{ history.length }}</template>
+            <div class="row">
+              <OmButton
+                v-for="h in history"
+                :key="h.id"
+                @click="openRevision(h.id)"
+                >v{{ h.version }}</OmButton
+              >
+            </div>
+          </OmDisclosure></template
+        ><OmEmpty
+          v-else
+          title="让第一份材料，成为有来处的记忆"
+          description="输入文本、图片或链接，也可以从飞书文档和 Git 导入。"
+          ><OmButton variant="primary" @click="view = 'capture'"
+            >输入材料</OmButton
+          ></OmEmpty
+        >
+      </div>
+    </section>
     <section v-else-if="view === 'capture'" class="page">
       <span class="eyebrow">记忆的起点</span>
       <h1>输入材料</h1>
@@ -732,7 +958,10 @@ onBeforeUnmount(() => {
       @open="(id) => evidence?.open(id)"
       @error="(text) => (error = text)"
       @notice="say" />
-    <DailyAssistant v-else-if="view === 'daily'" @open="id => evidence?.open(id)" @refresh="refresh" />
+    <DailyAssistant
+      v-else-if="view === 'daily'"
+      @open="(id) => evidence?.open(id)"
+      @refresh="refresh" />
     <section v-else-if="view === 'tasks'" class="page">
       <span class="eyebrow">从工作中记下要推进的事</span>
       <h1>需求与待办</h1>
@@ -755,13 +984,35 @@ onBeforeUnmount(() => {
       </form>
       <OmPanel v-for="t in tasks" :key="t.id" class="stack" :title="t.title"
         ><OmBadge :tone="t.status === 'done' ? 'success' : 'neutral'">{{
-          ({ done: "已完成", waiting: "等待回复", cancelled: "已取消", open: "待推进" })[t.status]
+          {
+            done: "已完成",
+            waiting: "等待回复",
+            cancelled: "已取消",
+            open: "待推进",
+          }[t.status]
         }}</OmBadge>
         <p>{{ t.detail }}</p>
         <p v-if="t.followUp?.waiting_on">等待：{{ t.followUp.waiting_on }}</p>
-        <small v-if="t.followUp?.next_check_at">下次跟进 {{ new Date(t.followUp.next_check_at).toLocaleString("zh-CN", { timeZone: t.followUp.timezone }) }}（{{ t.followUp.timezone }}）</small>
-        <small v-if="t.followUp?.snoozed_until">已暂缓提醒至 {{ new Date(t.followUp.snoozed_until).toLocaleString("zh-CN", { timeZone: t.followUp.timezone }) }}</small>
-        <TaskFollowUpControls :task="t" @refresh="refresh" @error="text => error = text" />
+        <small v-if="t.followUp?.next_check_at"
+          >下次跟进
+          {{
+            new Date(t.followUp.next_check_at).toLocaleString("zh-CN", {
+              timeZone: t.followUp.timezone,
+            })
+          }}（{{ t.followUp.timezone }}）</small
+        >
+        <small v-if="t.followUp?.snoozed_until"
+          >已暂缓提醒至
+          {{
+            new Date(t.followUp.snoozed_until).toLocaleString("zh-CN", {
+              timeZone: t.followUp.timezone,
+            })
+          }}</small
+        >
+        <TaskFollowUpControls
+          :task="t"
+          @refresh="refresh"
+          @error="(text) => (error = text)" />
         <small v-if="t.dueAt"
           >到期 {{ new Date(t.dueAt).toLocaleString("zh-CN") }}</small
         ><template #actions
@@ -774,7 +1025,11 @@ onBeforeUnmount(() => {
             @open="evidence?.open(t.evidenceId)" /></template
       ></OmPanel>
     </section>
-    <ChangeHistory v-else-if="view === 'changes'" :changes="changes" @open="openRevision" @restore="restore" />
+    <ChangeHistory
+      v-else-if="view === 'changes'"
+      :changes="changes"
+      @open="openRevision"
+      @restore="restore" />
     <section v-else-if="view === 'notifications'" class="page">
       <h1>通知中心</h1>
       <p class="muted">
@@ -791,7 +1046,15 @@ onBeforeUnmount(() => {
         :title="n.title"
         class="stack"
         ><OmBadge>{{ n.readAt ? "已读" : "未读" }}</OmBadge>
-        <p>{{ n.body === "已保存新的知识正文、固定引用与独立模型复核记录。" ? "旧版知识整理通知，未记录可比较的正文版本。" : n.body.includes("之前：") && n.body.includes("当前：") ? "原始材料已更新，打开详情查看完整内容差异。" : n.body }}</p>
+        <p>
+          {{
+            n.body === "已保存新的知识正文、固定引用与独立模型复核记录。"
+              ? "旧版知识整理通知，未记录可比较的正文版本。"
+              : n.body.includes("之前：") && n.body.includes("当前：")
+                ? "原始材料已更新，打开详情查看完整内容差异。"
+                : n.body
+          }}
+        </p>
         <small>{{ new Date(n.createdAt).toLocaleString("zh-CN") }}</small
         ><template #actions
           ><OmButton v-if="!n.readAt" @click="readNotification(n)"
@@ -807,7 +1070,8 @@ onBeforeUnmount(() => {
     <section v-else-if="view === 'settings'" class="page">
       <h1>能力与连接</h1>
       <p class="muted">
-        使用运行 omem 的电脑上已登录的 Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。
+        使用运行 omem 的电脑上已登录的
+        Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。
       </p>
       <OmPanel title="问答运行配置"
         ><div class="form">
@@ -855,7 +1119,17 @@ onBeforeUnmount(() => {
             >上下文上限
             {{ selectedProfile?.maxContextChars }}
             字符；超限明确拒绝，不静默截断焦点。</small
-          ><p v-if="probing" role="status">正在连接 Agent，读取支持的模型与思考强度…</p><p v-else-if="probeError" role="alert">能力读取失败：{{ probeError }}</p><p v-else-if="probeNote" class="muted">{{ probeNote }}</p><OmButton :loading="probing" @click="probe">重新读取 Agent 能力</OmButton>
+          >
+          <p v-if="probing" role="status">
+            正在连接 Agent，读取支持的模型与思考强度…
+          </p>
+          <p v-else-if="probeError" role="alert">
+            能力读取失败：{{ probeError }}
+          </p>
+          <p v-else-if="probeNote" class="muted">{{ probeNote }}</p>
+          <OmButton :loading="probing" @click="probe"
+            >重新读取 Agent 能力</OmButton
+          >
           <OmDisclosure v-if="options.length" title="已发现的配置选项">
             <p v-for="o in options" :key="o.id">
               {{ o.name }}：{{ o.values.map((v) => v.name).join("、") }}
@@ -863,13 +1137,29 @@ onBeforeUnmount(() => {
           </OmDisclosure>
         </div></OmPanel
       ><OmPanel class="stack" title="浏览器与 omem 的连接"
-        ><p>{{ accessProtected ? "此服务已启用访问保护，浏览器使用服务访问令牌连接。" : "当前已连接本地服务，未启用访问令牌，无需填写。" }}</p><OmDisclosure title="更换服务访问令牌"><p class="muted">令牌由 omem 服务的 token 配置或 OMEM_TOKEN 设置，用来防止其他人访问你的材料。它不是模型 API Key 或飞书令牌；仅保存在当前浏览器会话中。</p><label
-          >omem 服务访问令牌<input
-            v-model="token"
-            type="password"
-            autocomplete="off"
-            placeholder="仅保存在当前浏览器会话" /></label
-        ><OmButton @click="saveToken">保存令牌并重新连接</OmButton></OmDisclosure></OmPanel
+        ><p>
+          {{
+            accessProtected
+              ? "此服务已启用访问保护，浏览器使用服务访问令牌连接。"
+              : "当前已连接本地服务，未启用访问令牌，无需填写。"
+          }}
+        </p>
+        <OmDisclosure title="更换服务访问令牌"
+          ><p class="muted">
+            令牌由 omem 服务的 token 配置或 OMEM_TOKEN
+            设置，用来防止其他人访问你的材料。它不是模型 API Key
+            或飞书令牌；仅保存在当前浏览器会话中。
+          </p>
+          <label
+            >omem 服务访问令牌<input
+              v-model="token"
+              type="password"
+              autocomplete="off"
+              placeholder="仅保存在当前浏览器会话" /></label
+          ><OmButton @click="saveToken"
+            >保存令牌并重新连接</OmButton
+          ></OmDisclosure
+        ></OmPanel
       >
       <p class="muted">
         命令、参数、默认模型、上下文指令和通知模式在 omem.local.json
@@ -899,8 +1189,19 @@ onBeforeUnmount(() => {
           :version="1"
           @open="focus && evidence?.open(focus.id)" /></OmPanel
       ><OmPanel class="stack" title="折叠与目录">
-        <OmDisclosure title="展开阅读补充说明"><p>整行标题可展开，键盘 Enter / Space 也可操作。</p><label>展开内容保留输入<input placeholder="收起后再展开，内容保持" /></label></OmDisclosure>
-        <OmDisclosure title="分类目录" title-action @select="toast = '点击分类标题打开分类，箭头单独展开目录。'"><template #meta>2 篇</template><p>分类标题与箭头分别执行导航和展开操作。</p></OmDisclosure>
+        <OmDisclosure title="展开阅读补充说明"
+          ><p>整行标题可展开，键盘 Enter / Space 也可操作。</p>
+          <label
+            >展开内容保留输入<input
+              placeholder="收起后再展开，内容保持" /></label
+        ></OmDisclosure>
+        <OmDisclosure
+          title="分类目录"
+          title-action
+          @select="toast = '点击分类标题打开分类，箭头单独展开目录。'"
+          ><template #meta>2 篇</template>
+          <p>分类标题与箭头分别执行导航和展开操作。</p></OmDisclosure
+        >
       </OmPanel>
       <OmEmpty
         title="内容暂未产生"
@@ -914,6 +1215,32 @@ onBeforeUnmount(() => {
       :model="model"
       :effort="effort"
       @saved="refresh" />
+    <OmTrailDrawer
+      :open="searchOpen"
+      :frames="searchFrames"
+      :current="searchCurrent"
+      :loop-at="searchLoopAt"
+      :return-focus-to="searchTrigger"
+      @close="closeSearch"
+      @back="backSearch"
+      @jump="jumpSearch"
+      @dismiss-loop="searchLoopAt = null"
+    >
+      <KeepAlive v-if="searchOpen"
+        ><KnowledgeFrame
+          v-if="searchActive"
+          :key="searchActive.kind + searchActive.id"
+          :frame="searchActive"
+          prefix="/api/knowledge"
+          @navigate="pushSearch"
+          @loaded="
+            (title, id) => {
+              const frame = searchFrames.find((f) => f.id === id);
+              if (frame) frame.title = title;
+            }
+          "
+      /></KeepAlive>
+    </OmTrailDrawer>
     <NotificationDetail
       :open="notificationOpen"
       :detail="notificationDetail"
@@ -940,15 +1267,105 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.materials-layout{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100%;}.materials-directory{padding:20px 16px;border-right:1px solid var(--om-line);min-width:0;align-self:start;position:sticky;top:0;max-height:calc(100dvh - 140px);overflow:auto;}.materials-layout .reader{min-width:0;padding:28px;}.materials-directory .source-link{width:100%;}.materials-directory .nav-heading{margin-top:0;}@media(max-width:1000px){.materials-layout{grid-template-columns:190px minmax(0,1fr);}}@media(max-width:700px){.materials-layout{display:block;}.materials-directory{position:static;max-height:260px;border-right:0;border-bottom:1px solid var(--om-line);}.materials-layout .reader{padding:20px;}}
-
+.materials-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 100%;
+}
+.materials-directory {
+  padding: 20px 16px;
+  border-right: 1px solid var(--om-line);
+  min-width: 0;
+  align-self: start;
+  position: sticky;
+  top: 0;
+  max-height: calc(100dvh - 140px);
+  overflow: auto;
+}
+.materials-layout .reader {
+  min-width: 0;
+  padding: 28px;
+}
+.materials-directory .source-link {
+  width: 100%;
+}
+.materials-directory .nav-heading {
+  margin-top: 0;
+}
+@media (max-width: 1000px) {
+  .materials-layout {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+}
+@media (max-width: 700px) {
+  .materials-layout {
+    display: block;
+  }
+  .materials-directory {
+    position: static;
+    max-height: 260px;
+    border-right: 0;
+    border-bottom: 1px solid var(--om-line);
+  }
+  .materials-layout .reader {
+    padding: 20px;
+  }
+}
 </style>
 
-<style scoped>.source-filter{width:100%;min-height:44px;padding:8px;border:1px solid var(--om-line);border-radius:6px;}</style>
+<style scoped>
+.source-filter {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--om-line);
+  border-radius: 6px;
+}
+</style>
 
 <style scoped>
-.search-loading { display:flex; align-items:center; gap:12px; min-height:96px; color:var(--om-secondary); }
-.search-spinner { width:18px; height:18px; border:2px solid var(--om-line); border-top-color:var(--om-ink); border-radius:50%; animation:search-turn .8s linear infinite; }
-@keyframes search-turn { to { transform:rotate(360deg); } }
-@media(prefers-reduced-motion:reduce) { .search-spinner { animation:none; } }
+.search-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 96px;
+  color: var(--om-secondary);
+}
+.search-purpose {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0;
+}
+.search-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.search-purpose select {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--om-line);
+  border-radius: 6px;
+  background: var(--om-panel);
+}
+.search-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--om-line);
+  border-top-color: var(--om-ink);
+  border-radius: 50%;
+  animation: search-turn 0.8s linear infinite;
+}
+@keyframes search-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-spinner {
+    animation: none;
+  }
+}
 </style>
