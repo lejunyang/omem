@@ -29,6 +29,7 @@ try {
   }
   const excluded = await retrieval.searchSourcesAsync({ text: cases[0]!.query, visible: id => id !== ids[0] });
   assert.ok(excluded.every(h => h.fragmentId !== ids[0]));
+  assert.deepEqual(await retrieval.searchSourcesAsync({ text: "zyxq_unknown_824719" }), [], "absent identifiers must not produce semantic guesses");
   const report = { passed: true, health: retrieval.health(), cases: results };
   mkdirSync(resolve(".omem/verification"),{recursive:true}); writeFileSync(resolve(".omem/verification/live-retrieval.json"),JSON.stringify(report,null,2)+"\n");
   console.log(JSON.stringify(report,null,2));

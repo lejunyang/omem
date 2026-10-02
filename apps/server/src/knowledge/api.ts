@@ -1,3 +1,4 @@
+import { relevance, bestSnippet } from "../retrieval/relevance.js";
 import type { RetrievalPort } from "../retrieval/port.js";
 import { KeywordRetrieval, tokenize } from "../retrieval/keyword.js";
 import { fragmentPositions } from "./structure.js";
@@ -106,10 +107,10 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const scopedFragments = new Set(articles.flatMap(a => a.dependencies.filter(d => d.kind === "material").flatMap(d => materials.get(d.key)?.fragments.map(f => f.id) ?? [])));
     const query = { text, limit: 60, ...(topic.length ? { visible: (id: string) => scopedFragments.has(id) } : {}) };
     const hits = await (retrieval.searchSourcesAsync?.(query) ?? retrieval.searchSources(query));
-    const hitRanks = new Map(hits.map((hit, i) => [hit.fragmentId, 1 / (i + 1)]));
+    const maxScore = Math.max(...hits.map(h => h.score), 1e-6);
+    const hitRanks = new Map(hits.map(hit => [hit.fragmentId, hit.score / maxScore]));
     const ranked = articles.flatMap(a => a.document.sections.flatMap(section => {
-      const words = (a.document.title + " " + section.title + " " + section.body).toLowerCase();
-      const lexical = terms.reduce((n, term) => n + (words.includes(term) ? 1 : 0), 0) / terms.length;
+      const lexical = relevance(section.title + " " + section.body, terms, a.document.title);
       let evidence = 0;
       for (const c of a.document.citations.filter(c => section.body.includes("[[" + c.key + "]]"))) {
         if (c.target.kind !== "material") continue;
@@ -119,8 +120,8 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
           if (fragment.endLine >= (c.target.startLine ?? 1) && fragment.startLine <= (c.target.endLine ?? material.lineCount)) evidence = Math.max(evidence, hitRanks.get(fragment.id) ?? 0);
         }
       }
-      const score = lexical + evidence;
-      return score ? [{ ...meta(a), section: section.key, sectionTitle: section.title, excerpt: section.body.slice(0, 600), derived: true, score }] : [];
+      const score = lexical + evidence * .4;
+      return score ? [{ ...meta(a), section: section.key, sectionTitle: section.title, excerpt: bestSnippet(section.body, terms, 600), derived: true, score }] : [];
     })).sort((a, b) => b.score - a.score);
     // One article per result, with its best matching section. Long articles do
     // not consume the whole result window simply by repeating related words.
