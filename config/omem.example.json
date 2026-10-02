@@ -1,12 +1,20 @@
 {
-  "retrieval": { "enabled": true, "osdkModel": "memory-zh" },
+  "retrieval": {
+    "enabled": true,
+    "osdkModel": "memory-zh"
+  },
   "profiles": [
     {
       "id": "traex",
       "name": "TraeX · ACP",
       "transport": "acp",
       "command": "traex",
-      "args": ["-c", "sandbox_mode=\"read-only\"", "acp", "serve"],
+      "args": [
+        "-c",
+        "sandbox_mode=\"read-only\"",
+        "acp",
+        "serve"
+      ],
       "skills": [],
       "maxContextChars": 20000,
       "timeoutMs": 120000,

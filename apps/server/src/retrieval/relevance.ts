@@ -15,15 +15,16 @@ export function queryTerms(text: string): string[] {
 export function exactLookup(text: string): boolean {
   return /^[A-Za-z_$][\w$./\\-]*$/.test(text.trim());
 }
-export function relevance(text: string, terms: string[], title = "") {
+export function relevance(text: string, terms: string[], title = "", weights?: Map<string, number>) {
   const lower = text.toLowerCase(), heading = title.toLowerCase();
   const matched = terms.filter(t => lower.includes(t));
   const titleMatched = terms.filter(t => heading.includes(t));
   // A file title alone is not a reason to return all its fragments.
   const required = terms.length <= 2 ? 1 : Math.min(3, Math.ceil(terms.length / 3));
   if (matched.length < required) return 0;
-  const coverage = matched.length / terms.length;
-  return coverage * coverage + titleMatched.length / terms.length * .15;
+  const weight = (ts: string[]) => ts.reduce((sum,t) => sum + (weights?.get(t) ?? 1),0);
+  const total = weight(terms), coverage = weight(matched) / total;
+  return coverage * coverage + weight(titleMatched) / total * .15;
 }
 export function bestSnippet(text: string, terms: string[], size = 300) {
   const lower = text.toLowerCase();

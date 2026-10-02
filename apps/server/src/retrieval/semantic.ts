@@ -4,6 +4,7 @@ import type { EmbeddingModel } from "./embedding.js";
 import type { SearchQuery, SourceCandidate } from "./port.js";
 import { rankEvidence } from "./ranking.js";
 import { exactLookup, queryTerms } from "./relevance.js";
+import type { RerankerModel } from "./reranker.js";
 
 type Fragment = { id: string; revision_id: string; text: string; title: string; created_at: string; namespace: string; actor: string | null };
 const CURRENT = `FROM fragments f JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id WHERE ${ORIGINAL}`;
@@ -17,14 +18,17 @@ export class SemanticRetrieval extends KeywordRetrieval {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
   private error: string | null = null;
-  constructor(private readonly database: DatabaseSync, private readonly load: () => Promise<EmbeddingModel>) { super(database); }
+  private reranker: RerankerModel | null = null;
+  private rankingLoad: Promise<RerankerModel> | undefined;
+  private rankingError: string | null = null;
+  constructor(private readonly database: DatabaseSync, private readonly load: () => Promise<EmbeddingModel>, private readonly loadReranker?: () => Promise<RerankerModel>) { super(database); }
 
   override health() {
     const modelId = this.model?.id ?? "";
     const total = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT}`).get()!.n);
     const indexed = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT} AND EXISTS (
       SELECT 1 FROM fragment_embedding_heads h WHERE h.fragment_id=f.id AND h.model_id=?)`).get(modelId)!.n);
-    return { available: true, backend: "sqlite-fts5-bge-relevance-rrf@4", semantic: { model: this.model?.id ?? null,
+    return { available: true, backend: "sqlite-fts5-bge-crossencoder@5", reranker: {model:this.reranker?.id??null,state:this.rankingError?"degraded":this.reranker?"ready":this.loadReranker?"pending":"disabled",error:this.rankingError}, semantic: { model: this.model?.id ?? null,
       state: this.error ? "degraded" : indexed === total && this.model ? "ready" : "indexing", indexed, pending: total-indexed, error: this.error } };
   }
 
@@ -83,7 +87,8 @@ export class SemanticRetrieval extends KeywordRetrieval {
   async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {
     const lexical = super.searchSources({ ...query, diversify: false, limit: 100 });
     // A literal identifier/path needs an actual match, not a semantic guess.
-    if (!queryTerms(query.text).length || exactLookup(query.text) || !this.model) return rankEvidence(lexical,query);
+    if (!queryTerms(query.text).length || exactLookup(query.text)) return rankEvidence(lexical,query);
+    if (!this.model) return this.rerank(lexical,query,new Map());
     try {
       const [raw] = await this.model.embed([query.text.slice(0, 400)], "query");
       const vector = normalize(raw!);
@@ -119,8 +124,27 @@ export class SemanticRetrieval extends KeywordRetrieval {
           fused.set(hit.id, { ...hit, score: (prior?.score ?? 0) + quality/(60+rank+1), routes: [...new Set([...(prior?.routes ?? []),...hit.routes ?? []])] });
         });
       }
-      return rankEvidence([...fused.values()],query,vectors);
-    } catch (error) { this.error = String(error); return rankEvidence(lexical,query); }
+      return this.rerank([...fused.values()],query,vectors);
+    } catch (error) { this.error = String(error); return this.rerank(lexical,query,new Map()); }
+  }
+
+  private async rerank(hits: SourceCandidate[], query: SearchQuery, vectors: Map<string,Float32Array>) {
+    if (!this.loadReranker || !hits.length) return rankEvidence(hits,query,vectors);
+    try {
+      this.rankingLoad ??= this.loadReranker().then(m=>this.reranker=m);
+      const model = await this.rankingLoad;
+      const pool = [...hits].sort((a,b)=>b.score-a.score).slice(0,40);
+      const scores = await model.score(query.text, pool.map(h=>{
+        const row=this.database.prepare("SELECT title FROM revisions WHERE id=?").get(h.sourceRevisionId);
+        return String(row?.title??"")+"\n"+h.snippet;
+      }));
+      this.rankingError=null;
+      // Sigmoid scores help ordering, not a claim of calibrated truth. Very
+      // weak pairs may be absent rather than filling the result window.
+      const scale=Math.max(...pool.map(h=>h.score),1e-6);
+      const reranked=pool.flatMap((hit,i)=>scores[i]!>=.1||hit.routes?.includes("code-symbol")?[{...hit,score:scores[i]!*.7+hit.score/scale*.3,routes:[...(hit.routes??[]),"cross-encoder"]}]:[]);
+      return rankEvidence(reranked,query,vectors);
+    } catch(error) { this.rankingError=String(error);return rankEvidence(hits,query,vectors); }
   }
 
   async close() {
@@ -128,6 +152,7 @@ export class SemanticRetrieval extends KeywordRetrieval {
     clearTimeout(this.timer);
     await this.work?.catch(() => {});
     await this.model?.close();
+    await this.reranker?.close();
   }
 }
 

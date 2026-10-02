@@ -1,4 +1,5 @@
 import { relevance, bestSnippet } from "../retrieval/relevance.js";
+import type { RetrievalConfig } from "../retrieval/factory.js";
 import type { RetrievalPort } from "../retrieval/port.js";
 import { KeywordRetrieval, tokenize } from "../retrieval/keyword.js";
 import { fragmentPositions } from "./structure.js";
@@ -15,7 +16,7 @@ import { posix } from "node:path";
 import { parseFile } from "../code/parse.js";
 import { wikiPageBriefSchema } from "../../../../packages/contracts/src/knowledge.js";
 
-export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
+export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
   const prefix = input.prefix;
   const retrieval: RetrievalPort = input.retrieval ?? new KeywordRetrieval(input.store.db);
@@ -138,7 +139,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const selectedIds = new Set(ids), selected = repository.materials().filter(m => selectedIds.has(m.revisionId));
     if (selected.length !== selectedIds.size) return reply.code(400).send({ error: "所选材料已更新，请刷新后重试" });
     const brief = { ...parsed.data, materialKeys: selected.map(m => m.key) };
-    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: "traex" }, { budget: input.budget, onPublish: input.onPublish });
+    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, onPublish: input.onPublish });
     const pipeline = running;
     lastRun = { state: "running", title: brief.title, key: brief.key };
     void pipeline.writePage(brief).then(() => { lastRun = { state: "published", title: brief.title, key: brief.key }; })
@@ -151,7 +152,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     if (!Array.isArray(req.body?.revisionIds) || !req.body.revisionIds.length || req.body.revisionIds.length > 500) return reply.code(400).send({ error: "请选择要整理的固定材料版本" });
     const ids = new Set(req.body.revisionIds), selected = repository.materials().filter(m => ids.has(m.revisionId));
     if (selected.length !== ids.size) return reply.code(400).send({ error: "部分材料已更新或不可用，请刷新后重试" });
-    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: "traex" }, { budget: input.budget, concurrency: 2, onPublish: input.onPublish });
+    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, concurrency: 2, onPublish: input.onPublish });
     const pipeline = running;
     void pipeline.analyze(selected).then(result => { lastRun = result; }).catch(error => { lastRun = { error: String(error) }; }).finally(() => { running = null; });
     return reply.code(202).send({ state: "running", materials: selected.length });

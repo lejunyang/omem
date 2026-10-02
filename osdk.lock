@@ -70,6 +70,49 @@ path = "vocab.txt"
 size = 109540
 sha256 = "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c"
 
+[models.relevance-zh]
+provider = "huggingface"
+repository = "Xenova/bge-reranker-base"
+requested_revision = "280bcc27a84e0b898c251e06fddb25171bd9b101"
+revision = "280bcc27a84e0b898c251e06fddb25171bd9b101"
+endpoint = "https://huggingface.co"
+variant = "q8"
+kind = "other"
+family = "bge-reranker"
+derived_from = "BAAI/bge-reranker-base"
+include = [
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "onnx/model_quantized.onnx",
+]
+
+[[models.relevance-zh.files]]
+path = "config.json"
+size = 782
+sha256 = "b6575b9d5be20d6747417c8e20c5a0db1636356e0b6d422d7244c628423c4d4c"
+
+[[models.relevance-zh.files]]
+path = "onnx/model_quantized.onnx"
+size = 279301077
+sha256 = "dd98f3e67837d23210a6b7550c08cced4f61845b940ac45be3565840a10f3244"
+
+[[models.relevance-zh.files]]
+path = "special_tokens_map.json"
+size = 279
+sha256 = "d5469a60db23249c7f8945013d78df30b44b6bf686c6bb4740f4223f77b1b535"
+
+[[models.relevance-zh.files]]
+path = "tokenizer.json"
+size = 17098079
+sha256 = "48564c5c7d3fa64d85d95e65414a542385f88b0f128fd8d4163fd7a57f2be05c"
+
+[[models.relevance-zh.files]]
+path = "tokenizer_config.json"
+size = 443
+sha256 = "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b"
+
 [deps.pnpm]
 installer = "pnpm"
 installer_version = "11.28.3"

@@ -12,7 +12,7 @@ it("retains the strongest evidence while placing complementary evidence before m
   const hits=[hit("a",1,"current implementation"),hit("mirror",.99,"current implementation"),hit("background",.95,"design rationale")];
   const vectors=new Map([['a',new Float32Array([1,0])],['mirror',new Float32Array([1,0])],['background',new Float32Array([.6,.8])]]);
   expect(rankEvidence(hits,{text:"implementation",limit:2},vectors).map(h=>h.id)).toEqual(['a','background']);
-  expect(rankEvidence(hits,{text:"implementation",limit:3},vectors).map(h=>h.id)).toContain('mirror');
+  expect(rankEvidence(hits,{text:"implementation",limit:3},vectors).map(h=>h.id)).toEqual(['a','background']);
   expect(rankEvidence(hits,{text:"implementation",limit:2,diversify:false},vectors).map(h=>h.id)).toEqual(['a','mirror']);
 });
 

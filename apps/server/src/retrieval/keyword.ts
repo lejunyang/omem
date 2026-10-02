@@ -102,13 +102,22 @@ export class KeywordRetrieval implements RetrievalPort {
       ["memory", memoryRows],
       ["knowledge", knowledgeEvidenceCandidates(this.db, terms)],
     ];
+    // Document-frequency weighting keeps common words from overpowering the
+    // distinctive concepts of a question. Count sources, not chunk count.
+    const corpus = Number(this.db.prepare("SELECT count(*) AS n FROM sources").get()!.n);
+    const occurrences = new Map(terms.map(t => [t,new Set<string>()]));
+    for (const [,rows] of branches) for (const row of rows.filter(eligible)) {
+      const prose = (String(row.fragment_text)+"\n"+String(row.title)).toLowerCase();
+      for (const t of terms) if (prose.includes(t)) occurrences.get(t)!.add(String(row.revision_id));
+    }
+    const weights = new Map(terms.map(t => [t,Math.log(1+(corpus+.5)/((occurrences.get(t)?.size??0)+.5))]));
     // Preserve relevance magnitude within lexical routes. Fusion with dense
     // retrieval happens once, downstream; route count is not evidence quality.
     const fused = new Map<string, { row: Row; score: number; routes: string[] }>();
     const titleSources = new Set<string>();
     for (const [route, rows] of branches) {
       for (const row of rows.filter(eligible)) {
-        let score = Math.max(relevance(String(row.fragment_text), terms, String(row.title)), Number(row.guide_score ?? 0));
+        let score = Math.max(relevance(String(row.fragment_text), terms, String(row.title), weights), Number(row.guide_score ?? 0));
         if (!score && terms.length <= 2 && terms.every(t => String(row.title).toLowerCase().includes(t)) && !titleSources.has(String(row.revision_id))) {
           score = .4; titleSources.add(String(row.revision_id));
         }

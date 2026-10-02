@@ -1,3 +1,4 @@
+import { readRetrievalConfig } from "../apps/server/src/retrieval/factory.js";
 /** Reader-driven repository application of the shared knowledge pipeline. */
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ const store = createReviewStore(root), runtime = join(root, ".repo-review/runtim
 mkdirSync(runtime, { recursive: true });
 const { repository, coverage } = restoreReviewKnowledge(store, root);
 const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, "reader-agents"), new RuntimeRequestRepository(store.db)), profile,
-  { budget: config, retryTag: taskFlag("retry") ? new Date().toISOString() : undefined, onPublish: a => publishReviewArticle(root, a), log: message => console.log(new Date().toISOString(), message) });
+  { retrievalConfig: readRetrievalConfig(join(root, "config/retrieval.json")), budget: config, retryTag: taskFlag("retry") ? new Date().toISOString() : undefined, onPublish: a => publishReviewArticle(root, a), log: message => console.log(new Date().toISOString(), message) });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void pipeline.stop());
 const results: { key: string; state: string; error?: string }[] = [];
 try {
