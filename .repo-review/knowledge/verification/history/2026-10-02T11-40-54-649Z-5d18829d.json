@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-02T15:36:26.818Z",
-  "implementationCommit": "7e83ba9ad1c88babee12565b614dfd0deed2c64c",
-  "sourceDigest": "f4ef680049c8cce55b9096e920764593c328e8297b89bee3e2ebc6b7051cbdbf",
+  "recordedAt": "2026-10-02T11:40:54.649Z",
+  "implementationCommit": "68677fabdb9dba9041b253a925c1b4409f9c3418",
+  "sourceDigest": "8e2066499a166d033c86c17730fe2ae08dfff6981661615404d1af4fa03474b9",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-02T15-36-26-818Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-02T11-40-54-649Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-02T15-36-26-818Z/project.log",
-        "sha256": "108b18f8cae54cff46b0db2fdcec1b4c9ba76a42ab73998d2affa21ba1d0bc7c"
+        "log": ".repo-review/runtime/verification/2026-10-02T11-40-54-649Z/project.log",
+        "sha256": "f6e21d832b53b921bc203a53ccf04d7856fe3910847ac161aea1e7a85df6084c"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-02T15-36-26-818Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-02T11-40-54-649Z/liveChineseRetrieval.log",
         "sha256": "eaab515e25820c499c7642c5affe0f466d1e18522e8b7de23f6ee39bade1b02a"
       }
     },
@@ -51,8 +51,8 @@
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 150,
-        "citations": 1029,
+        "articles": 176,
+        "citations": 1243,
         "errors": []
       }
     },
@@ -63,11 +63,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v4",
-        "units": 12775,
+        "units": 12679,
         "semantic": {
           "model": "structure-icu-v4:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12775,
+          "indexed": 12679,
           "pending": 0,
           "error": null
         },
@@ -94,16 +94,16 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
   "knowledge": {
-    "materials": 585,
-    "reviewedMaterials": 141,
-    "pendingMaterials": 444,
-    "currentArticles": 150,
-    "citations": 1029,
-    "articleLinks": 0,
+    "materials": 572,
+    "reviewedMaterials": 164,
+    "pendingMaterials": 408,
+    "currentArticles": 176,
+    "citations": 1243,
+    "articleLinks": 2,
     "errors": [],
     "restore": {
-      "stale": 349,
-      "restored": 152,
+      "stale": 322,
+      "restored": 179,
       "missing": 3
     },
     "incomplete": true,
@@ -129,7 +129,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 848,
+        "elapsedMs": 1359,
         "top5": [
           {
             "path": "docs/reader-first/validation.md",
@@ -194,7 +194,7 @@
         "passed": false,
         "firstExpectedRank": 19,
         "uniquePathsAt5": 5,
-        "elapsedMs": 535,
+        "elapsedMs": 705,
         "top5": [
           {
             "path": "docs/reader-first/validation.md",
@@ -253,16 +253,16 @@
         "status": 200,
         "baselineTop5": [
           "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
-          "docs/reader-first/assistant-memory-flow.md",
           "docs/reader-first/validation.md",
+          "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
-          "docs/archive/2026-10-01-baseline/AGENTS.md"
+          "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": null,
+        "firstExpectedRank": 15,
         "uniquePathsAt5": 5,
-        "elapsedMs": 694,
+        "elapsedMs": 805,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
@@ -274,15 +274,6 @@
             "snippet": "明从“重试 3 次”改成“5 次” | 停用旧结论，重新分析新材料，独立复核后更新原记忆，保留旧历史 | 已用真实 GPT-5.6-sol 验证同 ID 从 3 次更新为 5 次；旧原文保留，不能只排队就算完成 |"
           },
           {
-            "path": "docs/reader-first/assistant-memory-flow.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "事项即时应用和后台学习原本分别有验收脚本，但普通用户会同时启用它们。助手保存的原始委托也会进入后台提取。现在 LearningPipeline 把这条原始指令的已有应用回执和当前事项状态交给提取者，并按固定片段与任务历史过滤已经生效的重复事项候选；名称相似度不决定是否重复。原始指令、模型候选、观察和其他记忆仍保留，即使"
-          },
-          {
             "path": "docs/reader-first/validation.md",
             "routes": [
               "bm25",
@@ -290,6 +281,15 @@
               "purpose:balanced"
             ],
             "snippet": "| 问法 | 实际结果 | 判断 |\n| --- | --- | --- |\n| 知识文章是怎样生成的 | 知识检索前五个章节包含入门、检索、材料旅程；原始材料侧仍有前端组件排在架构说明前 | 能找到相关讲解，机制入口排序仍可改善 |\n| 规则修改后旧记忆怎么处理 | 前五个章节大部分来自概览，专项记忆页没有出现；原始"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
@@ -300,13 +300,13 @@
             "snippet": "状态更新采用 compare-and-set：同一卡片连点、Web与卡片同时批准、approve/reject竞态，最多一次业务效果。stale decision 更新卡片为“资料已变化，需重新查看”，不能批准不同内容。用户修改后执行先生成新 proposal digest，再重新验证，不沿用旧批准。"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "path": "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
+            "snippet": "历史片段可以被用户显式查看或用于历史回答；不应因“能读到”就作为当前有效依据。先前轮次selectedEvidence也必须重新验证状态，不能绕开新版召回过滤。"
           }
         ]
       },
@@ -327,7 +327,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 3,
-        "elapsedMs": 148,
+        "elapsedMs": 127,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -393,7 +393,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 106,
+        "elapsedMs": 110,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -459,7 +459,7 @@
         "passed": false,
         "firstExpectedRank": 12,
         "uniquePathsAt5": 3,
-        "elapsedMs": 744,
+        "elapsedMs": 718,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
