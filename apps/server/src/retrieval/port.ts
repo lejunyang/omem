@@ -27,7 +27,13 @@ export type SourceAnchor = {
 };
 export type RetrievalTarget =
   | SourceAnchor
-  | { kind: "knowledge"; key: string; revision: string; section: string }
+  | {
+      kind: "knowledge";
+      key: string;
+      revision: string;
+      section: string;
+      reviewState?: "needs-review";
+    }
   | { kind: "memory" | "task"; id: string; version: number };
 
 /** A readable explanation is a result, not merely an alias for its citations. */

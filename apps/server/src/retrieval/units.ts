@@ -11,7 +11,7 @@ import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
 import type { ProvenanceRef, RetrievalHit, SourceAnchor } from "./port.js";
 
-export const UNIT_VERSION = "structure-icu-v3";
+export const UNIT_VERSION = "structure-icu-v4";
 type Row = Record<string, unknown>;
 export type RetrievalUnit = Omit<RetrievalHit, "score" | "routes"> & {
   owner: string;
@@ -420,6 +420,13 @@ export class RetrievalProjection {
             .prepare("SELECT * FROM knowledge_heads ORDER BY document_key")
             .all()
         : [],
+      tableExists(this.db, "knowledge_invalidations")
+        ? this.db
+            .prepare(
+              "SELECT * FROM knowledge_invalidations ORDER BY document_key",
+            )
+            .all()
+        : [],
       this.db.prepare("SELECT id,version,status FROM tasks ORDER BY id").all(),
       this.db
         .prepare("SELECT id,head_revision_id,status FROM memories ORDER BY id")
@@ -470,7 +477,7 @@ export class RetrievalProjection {
     const articleRows = tableExists(this.db, "knowledge_heads")
       ? (this.db
           .prepare(
-            "SELECT r.*,h.current FROM knowledge_heads h JOIN knowledge_revisions r ON r.id=h.revision_id WHERE h.current=1",
+            "SELECT r.*,h.current FROM knowledge_heads h JOIN knowledge_revisions r ON r.id=h.revision_id",
           )
           .all() as Row[])
       : [];
@@ -480,31 +487,105 @@ export class RetrievalProjection {
         {
           revision: String(row.id),
           artifact: JSON.parse(String(row.artifact)) as KnowledgeArtifact,
+          current: !!row.current,
         },
       ]),
     );
-    const valid = (a: KnowledgeArtifact) =>
-      a.dependencies.every((d) =>
-        d.kind === "material"
-          ? materials.get(d.key)?.digest === d.digest
-          : articles.get(d.key)?.revision === d.digest,
-      );
-    const validArticles = new Map(
-      [...articles].filter(([, a]) => valid(a.artifact)),
+    const fixedArticles = new Map(
+      [...articles.values()].map((a) => [a.revision, a]),
     );
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const [key, a] of validArticles)
-        if (
-          a.artifact.dependencies.some(
-            (d) => d.kind === "article" && !validArticles.has(d.key),
+    const fixedArticle = (key: string, revision: string) => {
+      if (!fixedArticles.has(revision)) {
+        const row = this.db
+          .prepare(
+            "SELECT artifact FROM knowledge_revisions WHERE document_key=? AND id=?",
           )
-        ) {
-          validArticles.delete(key);
-          changed = true;
-        }
-    }
+          .get(key, revision);
+        if (row)
+          fixedArticles.set(revision, {
+            revision,
+            artifact: JSON.parse(String(row.artifact)),
+            current: false,
+          });
+      }
+      const a = fixedArticles.get(revision);
+      return a?.artifact.document.key === key ? a : undefined;
+    };
+    const invalidated = new Set(
+      tableExists(this.db, "knowledge_invalidations")
+        ? this.db
+            .prepare("SELECT document_key FROM knowledge_invalidations")
+            .all()
+            .map((r) => String(r.document_key))
+        : [],
+    );
+    const childArticle = (a: KnowledgeArtifact, key: string) => {
+      const dependency = a.dependencies.find(
+        (d) => d.kind === "article" && d.key === key,
+      );
+      return dependency && fixedArticle(key, dependency.digest);
+    };
+    // All material used while writing must remain in the visibility scope, even
+    // when only the cited original inputs decide whether prose can be recalled.
+    const inputsAvailable = (
+      a: KnowledgeArtifact,
+      seen = new Set<string>(),
+    ): boolean =>
+      a.dependencies.every((d) => {
+        if (d.kind === "material") return materials.has(d.key);
+        if (seen.has(d.digest)) return true;
+        seen.add(d.digest);
+        const child = fixedArticle(d.key, d.digest);
+        return !!child && inputsAvailable(child.artifact, seen);
+      });
+    const supported = (
+      a: KnowledgeArtifact,
+      seen = new Set<string>(),
+    ): boolean => {
+      if (
+        a.review.verdict !== "accepted" ||
+        invalidated.has(a.document.key) ||
+        !inputsAvailable(a)
+      )
+        return false;
+      return a.document.citations.every((c) => {
+        const dependency = a.dependencies.find(
+          (d) => d.kind === c.target.kind && d.key === c.target.key,
+        );
+        if (!dependency) return false;
+        if (c.target.kind === "material")
+          return materials.get(c.target.key)?.digest === dependency.digest;
+        if (seen.has(dependency.digest)) return false;
+        const child = fixedArticle(c.target.key, dependency.digest);
+        return (
+          !!child &&
+          supported(child.artifact, new Set([...seen, dependency.digest]))
+        );
+      });
+    };
+    const current = (
+      a: KnowledgeArtifact,
+      seen = new Set<string>(),
+    ): boolean => {
+      if (
+        !articles.get(a.document.key)?.current ||
+        invalidated.has(a.document.key)
+      )
+        return false;
+      return a.dependencies.every((d) => {
+        if (d.kind === "material")
+          return materials.get(d.key)?.digest === d.digest;
+        if (seen.has(d.digest)) return false;
+        const child = articles.get(d.key);
+        return (
+          child?.revision === d.digest &&
+          current(child.artifact, new Set([...seen, d.digest]))
+        );
+      });
+    };
+    const validArticles = new Map(
+      [...articles].filter(([, a]) => supported(a.artifact)),
+    );
     const articleVisibility = (
       a: KnowledgeArtifact,
       seen = new Set<string>(),
@@ -512,9 +593,9 @@ export class RetrievalProjection {
       a.dependencies.flatMap((d) => {
         if (d.kind === "material")
           return materials.get(d.key)?.fragments.map((f) => f.id) ?? [];
-        if (seen.has(d.key)) return [];
-        seen.add(d.key);
-        const child = validArticles.get(d.key);
+        if (seen.has(d.digest)) return [];
+        seen.add(d.digest);
+        const child = fixedArticle(d.key, d.digest);
         return child ? articleVisibility(child.artifact, seen) : [];
       });
     const references = (
@@ -531,10 +612,10 @@ export class RetrievalProjection {
           if (m && c.target.startLine && c.target.endLine)
             output.push(sourceAnchor(m, c.target.startLine, c.target.endLine));
         } else {
-          const key = c.target.key + ":" + (c.target.section ?? "");
+          const child = childArticle(a, c.target.key);
+          const key = child?.revision + ":" + (c.target.section ?? "");
           if (seen.has(key)) continue;
           seen.add(key);
-          const child = validArticles.get(c.target.key);
           if (child)
             for (const s of child.artifact.document.sections.filter(
               (s) => !c.target.section || s.key === c.target.section,
@@ -545,8 +626,10 @@ export class RetrievalProjection {
       return [...new Map(output.map((r) => [idFor(r), r])).values()];
     };
     for (const [key, { revision, artifact: a }] of validArticles) {
+      const reviewState = current(a) ? undefined : ("needs-review" as const);
       const owner = "knowledge:" + key,
-        identity = UNIT_VERSION + ":" + revision;
+        identity =
+          UNIT_VERSION + ":" + revision + ":" + (reviewState ?? "current");
       wanted.add(owner);
       if (heads.get(owner) === identity) continue;
       // The whole source background must be visible before derived prose is disclosed.
@@ -569,7 +652,13 @@ export class RetrievalProjection {
               "\n",
             ),
             headingPath: [section.title, ...p.headingPath],
-            target: { kind: "knowledge", key, revision, section: section.key },
+            target: {
+              kind: "knowledge",
+              key,
+              revision,
+              section: section.key,
+              ...(reviewState ? { reviewState } : {}),
+            },
             references: references(a, p.text),
             visibilityIds,
             topicPath: a.document.topicPath ?? [],

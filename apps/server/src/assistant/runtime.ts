@@ -19,6 +19,7 @@ import type {
   SourceCandidate,
   RetrievalPurpose,
   RetrievalHit,
+  SourceAnchor,
 } from "../retrieval/port.js";
 import { materialFromRevision } from "../knowledge/repository.js";
 import { fragmentPositions } from "../knowledge/structure.js";
@@ -26,16 +27,19 @@ import { stableDigest } from "../storage/digest.js";
 
 export type AssistantEvidence = {
   fragmentId: string;
+  /** Distinguishes independently retrieved ranges within one stored fragment. */
+  citationId?: string;
   /** Revision id of the fragment's source revision (used as source_revision_id). */
   sourceRevisionId: string;
   revisionTitle: string;
   sectionTitle?: string;
   text: string;
+  sourceTarget?: SourceAnchor;
 };
 export type AssistantBackground = Pick<
   RetrievalHit,
   "kind" | "title" | "text" | "headingPath"
-> & { citationIds: string[] };
+> & { citationIds: string[]; reviewState?: "needs-review" };
 
 export type AssistantCreateTaskCall = {
   tool: "create_task";
@@ -88,7 +92,7 @@ export function validatedDueAt(
 export type AssistantModelReply = {
   /** Final natural-language reply shown to the user. */
   answer: string;
-  /** Fragment ids the answer actually relies on (citations). */
+  /** Evidence citation ids supplied to this turn (legacy fragment ids accepted). */
   citationIds: string[];
   /** Structured, server-enforced tool requests. The model cannot grant itself
    *  write permission: every call is re-governed by MemoryService. */
@@ -537,7 +541,12 @@ export class AssistantRuntime {
       let evidence = [
         ...retrieved,
         ...priorCtx.filter(
-          (p) => !retrieved.some((r) => r.fragmentId === p.fragmentId),
+          (p) =>
+            !retrieved.some(
+              (r) =>
+                (r.citationId ?? r.fragmentId) ===
+                (p.citationId ?? p.fragmentId),
+            ),
         ),
       ];
 
@@ -597,7 +606,10 @@ export class AssistantRuntime {
           ].slice(0, 16);
           evidence = [
             ...new Map(
-              [...extra, ...evidence].map((e) => [e.fragmentId, e]),
+              [...extra, ...evidence].map((e) => [
+                e.citationId ?? e.fragmentId,
+                e,
+              ]),
             ).values(),
           ].slice(0, 24);
           reply = await this.withTimeout(
@@ -680,7 +692,13 @@ export class AssistantRuntime {
           }
           this.assertNotCancelled(input.signal);
           const governed = this.governCreateTask({
-            call,
+            call: {
+              ...call,
+              citationIds: call.citationIds?.map(
+                (id) =>
+                  evidence.find((e) => e.citationId === id)?.fragmentId ?? id,
+              ),
+            },
             conversation: input.conversation,
             evidence,
             priorContext: this.priorWorkingContext(input.conversation),
@@ -735,12 +753,19 @@ export class AssistantRuntime {
         : reply.answer;
 
       // 4. Only allow citations the runtime actually supplied.
-      const allowed = new Set(evidence.map((item) => item.fragmentId));
+      const allowed = new Set(
+        evidence.flatMap((item) => [
+          item.citationId ?? item.fragmentId,
+          item.fragmentId,
+        ]),
+      );
       const citationIds = (reply.citationIds ?? []).filter((id) =>
         allowed.has(id),
       );
-      const selectedEvidence = evidence.filter((item) =>
-        citationIds.includes(item.fragmentId),
+      const selectedEvidence = evidence.filter(
+        (item) =>
+          citationIds.includes(item.citationId ?? item.fragmentId) ||
+          citationIds.includes(item.fragmentId),
       );
 
       if (!input.conversation.currentGoal && priorTurns.length === 0)
@@ -843,16 +868,15 @@ export class AssistantRuntime {
             Math.min(end, f.end),
           );
           if (!entry.text.trim()) continue;
-          entry.sectionTitle = evidenceSection(
-            this.store,
-            f.id,
-            visible,
-          )?.title;
-          const prior = evidence.get(f.id);
-          if (prior && !prior.text.includes(entry.text))
-            prior.text += "\n\n" + entry.text;
-          else if (!prior) evidence.set(f.id, entry);
-          citationIds.push(f.id);
+          entry.sourceTarget = reference;
+          entry.citationId = `e:${f.id}:${reference.startLine}:${reference.endLine}`;
+          entry.sectionTitle =
+            hit.kind === "source" && hit.headingPath.length
+              ? hit.headingPath.join(" / ")
+              : evidenceSection(this.store, f.id, visible)?.title;
+          if (!evidence.has(entry.citationId))
+            evidence.set(entry.citationId, entry);
+          citationIds.push(entry.citationId);
         }
       }
       if (hit.kind !== "source")
@@ -867,6 +891,9 @@ export class AssistantRuntime {
           ),
           headingPath: hit.headingPath,
           citationIds,
+          ...(hit.target.kind === "knowledge" && hit.target.reviewState
+            ? { reviewState: hit.target.reviewState }
+            : {}),
         });
     }
     return { evidence: [...evidence.values()].slice(0, 28), background };
@@ -1077,13 +1104,31 @@ export class AssistantRuntime {
     for (let i = turns.length - 1; i >= 0; i--) {
       const t = turns[i]!;
       if (t.inputMessageRefs.status !== "done") continue;
-      const selected = t.selectedEvidence as Array<{
-        fragmentId: string;
-        text?: string;
-      }>;
+      const selected = t.selectedEvidence as AssistantEvidence[];
       if (!selected || !selected.length) continue;
       return selected
-        .map((s) => this.enrichEvidence(s.fragmentId, s.text))
+        .map((s) => {
+          const entry = this.enrichEvidence(s.fragmentId, s.text);
+          if (
+            !entry ||
+            !s.sourceTarget ||
+            s.sourceRevisionId !== entry.sourceRevisionId
+          )
+            return entry;
+          const original = this.store.evidence(s.fragmentId);
+          if (
+            s.sourceTarget.revisionId !== entry.sourceRevisionId ||
+            !original?.fragment.text.includes(s.text)
+          )
+            return entry;
+          return {
+            ...entry,
+            citationId: s.citationId,
+            sourceTarget: s.sourceTarget,
+            sectionTitle: s.sectionTitle,
+            text: s.text,
+          };
+        })
         .filter((e): e is AssistantEvidence => Boolean(e))
         .filter((e) => this.isVisible(conversation, e.fragmentId));
     }
