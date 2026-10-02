@@ -24,6 +24,17 @@ import type {
 import { materialFromRevision } from "../knowledge/repository.js";
 import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
+import { evidenceForRange } from "./research.js";
+
+export type ResearchActivity = {
+  label: string;
+  tool?: string;
+  status: string;
+  at: string;
+  key?: string;
+  startLine?: number;
+  endLine?: number;
+};
 
 export type AssistantEvidence = {
   fragmentId: string;
@@ -100,6 +111,15 @@ export type AssistantModelReply = {
   /** At most one additional retrieval round; these are search terms, never facts. */
   searchQueries?: string[];
   searchRequests?: { text: string; purpose: RetrievalPurpose }[];
+  /** Host-bound originals actually selected by the native investigation. */
+  researchedEvidence?: AssistantEvidence[];
+  researchTrace?: {
+    workspace: string;
+    model: string | null;
+    effort: string | null;
+    sessionId: string;
+    tools: string[];
+  };
 };
 
 /**
@@ -143,6 +163,10 @@ export type AssistantModelPort = {
     tasks?: AssistantTask[];
     clock?: { now: string; timezone: string };
     retrievalRound?: number;
+    mode?: "assist" | "research";
+    purpose?: RetrievalPurpose;
+    visible?: (fragmentId: string) => boolean;
+    onResearchActivity?: (event: ResearchActivity) => void;
     signal?: AbortSignal;
   }): Promise<AssistantModelReply>;
 };
@@ -239,6 +263,7 @@ export function detectTaskIntent(userText: string): {
  * injected (the real ACP adapter in production, a fixed fake in tests only).
  */
 export class AssistantRuntime {
+  private stopping = false;
   private readonly router: ConversationRouter;
   /** In-flight turns per conversation; a newer message interrupts the prior one. */
   private readonly inflight = new Map<
@@ -275,6 +300,8 @@ export class AssistantRuntime {
     /** External transport event id (e.g. Lark event_id) for idempotent delivery. */
     transportEventId?: string | null;
     signal?: AbortSignal;
+    mode?: "assist" | "research";
+    purpose?: RetrievalPurpose;
   }): Promise<AssistantTurnResult> {
     const conversation = this.router.get(input.conversationId);
     if (!conversation) throw Error("ASSISTANT_CONVERSATION_NOT_FOUND");
@@ -284,6 +311,10 @@ export class AssistantRuntime {
       conversationId: conversation.id,
       inputText: input.userText,
       transportEventId: input.transportEventId ?? null,
+      refs: {
+        mode: input.mode ?? "assist",
+        purpose: input.purpose ?? "balanced",
+      },
     });
     if (enqueued.duplicate) {
       return this.toResult(enqueued.turn, conversation, [], true);
@@ -402,6 +433,7 @@ export class AssistantRuntime {
 
   /** Abort every in-flight turn and mark them cancelled. Called on shutdown. */
   shutdown() {
+    this.stopping = true;
     for (const [conversationId, entry] of this.inflight) {
       entry.controller.abort();
       // Cancel the currently running turn for this conversation.
@@ -434,6 +466,7 @@ export class AssistantRuntime {
       retried = 0,
       alreadyCommitted = 0;
     for (const turn of unfinished) {
+      if (this.stopping) break;
       const conversation = this.router.get(turn.conversationId);
       if (!conversation) continue;
       // Check REAL application_receipts table, not in-memory toolActions.
@@ -452,17 +485,25 @@ export class AssistantRuntime {
       this.router.startTurn(turn.id);
       const controller = new AbortController();
       const signal = this.deriveSignal(undefined, controller);
-      try {
-        await this.executeTurn({
+      const entry = {
+        controller,
+        chain: this.executeTurn({
           turnId: turn.id,
           conversation,
           userText: turn.inputText,
           transportEventId: turn.inputMessageRefs.transportEventId ?? null,
           signal,
-        });
+        }),
+      };
+      this.inflight.set(conversation.id, entry);
+      try {
+        await entry.chain;
         retried++;
       } catch {
         // Leave pending for retry on next recoverUnfinishedTurns.
+      } finally {
+        if (this.inflight.get(conversation.id) === entry)
+          this.inflight.delete(conversation.id);
       }
       recovered++;
     }
@@ -513,6 +554,17 @@ export class AssistantRuntime {
   }) {
     this.router.startTurn(input.turnId);
     try {
+      const refs = this.router.turn(input.turnId)!.inputMessageRefs;
+      const mode = refs.mode === "research" ? "research" : "assist";
+      const purpose = (
+        typeof refs.purpose === "string" ? refs.purpose : "balanced"
+      ) as RetrievalPurpose;
+      const researchActivity: ResearchActivity[] = [];
+      const onResearchActivity = (event: ResearchActivity) => {
+        if (input.signal.aborted) return;
+        researchActivity.push(event);
+        this.router.recordResearch(input.turnId, researchActivity);
+      };
       // Prior turns are per-conversation only: a group conversation never replays
       // private p2p history, because those live in a different conversation row.
       const maxPrior = this.options.maxPriorTurns ?? 20;
@@ -534,6 +586,7 @@ export class AssistantRuntime {
       const context = await this.retrieveContext(
         input.userText,
         input.conversation,
+        purpose,
       );
       const retrieved = context.evidence;
       let background = context.background;
@@ -576,6 +629,10 @@ export class AssistantRuntime {
             tasks,
             clock,
             retrievalRound: 0,
+            mode,
+            purpose,
+            visible: (id) => this.isVisible(input.conversation, id),
+            onResearchActivity,
             signal: input.signal,
           }),
           input.signal,
@@ -623,12 +680,31 @@ export class AssistantRuntime {
               tasks,
               clock,
               retrievalRound: 1,
+              mode,
+              purpose,
+              visible: (id) => this.isVisible(input.conversation, id),
+              onResearchActivity,
               signal: input.signal,
             }),
             input.signal,
             this.options.turnTimeoutMs ?? 60_000,
           );
         }
+        if (reply.researchedEvidence)
+          evidence = [
+            ...new Map(
+              [
+                ...reply.researchedEvidence.filter(
+                  (e) =>
+                    e.sourceTarget &&
+                    e.sourceTarget.fragmentIds.every((id) =>
+                      this.isVisible(input.conversation, id),
+                    ),
+                ),
+                ...evidence,
+              ].map((e) => [e.citationId ?? e.fragmentId, e]),
+            ).values(),
+          ];
       } catch (error) {
         if (input.signal.aborted || error instanceof TurnCancelledError) {
           this.router.cancelTurn(input.turnId, "cancelled");
@@ -668,9 +744,15 @@ export class AssistantRuntime {
             },
           ]
         : [];
+      if (researchActivity.length || reply.researchTrace)
+        toolActions.push({
+          tool: "research",
+          activity: researchActivity,
+          trace: reply.researchTrace,
+        });
       const createdTaskIds: string[] = [];
       let taskRejectedReason: string | null = null;
-      if (!degraded) {
+      if (!degraded && mode !== "research") {
         for (const call of reply.toolCalls ?? []) {
           if (call.tool === "update_task") {
             this.assertNotCancelled(input.signal);
@@ -713,7 +795,9 @@ export class AssistantRuntime {
 
       // Only persisted receipts may claim an action was performed. Discard the
       // model's speculative success text whenever it requested a mutation.
-      const mutations = toolActions.filter((a) => a.tool !== "search");
+      const mutations = toolActions.filter(
+        (a) => a.tool === "create_task" || a.tool === "update_task",
+      );
       const finalAnswer = mutations.length
         ? mutations
             .map((action) => {
@@ -851,33 +935,19 @@ export class AssistantRuntime {
       for (const reference of hit.references) {
         const material = materialFromRevision(this.store, reference.revisionId);
         if (!material) continue;
-        const lines = material.text.split("\n");
-        const start = lines
-          .slice(0, reference.startLine - 1)
-          .reduce((n, l) => n + l.length + 1, 0);
-        const end =
-          start +
-          lines.slice(reference.startLine - 1, reference.endLine).join("\n")
-            .length;
-        for (const f of fragmentPositions(material)) {
-          if (!reference.fragmentIds.includes(f.id) || !visible(f.id)) continue;
-          const entry = this.enrichEvidence(f.id);
-          if (!entry) continue;
-          entry.text = material.text.slice(
-            Math.max(start, f.start),
-            Math.min(end, f.end),
-          );
-          if (!entry.text.trim()) continue;
-          entry.sourceTarget = reference;
-          entry.citationId = `e:${f.id}:${reference.startLine}:${reference.endLine}`;
-          entry.sectionTitle =
-            hit.kind === "source" && hit.headingPath.length
-              ? hit.headingPath.join(" / ")
-              : evidenceSection(this.store, f.id, visible)?.title;
-          if (!evidence.has(entry.citationId))
-            evidence.set(entry.citationId, entry);
-          citationIds.push(entry.citationId);
-        }
+        if (!reference.fragmentIds.every(visible)) continue;
+        const entry = evidenceForRange(
+          material,
+          reference.startLine,
+          reference.endLine,
+          visible,
+        );
+        entry.sourceTarget = reference;
+        if (hit.kind === "source" && hit.headingPath.length)
+          entry.sectionTitle = hit.headingPath.join(" / ");
+        if (!evidence.has(entry.citationId!))
+          evidence.set(entry.citationId!, entry);
+        citationIds.push(entry.citationId!);
       }
       if (hit.kind !== "source")
         background.push({
@@ -1388,7 +1458,9 @@ export class AssistantRuntime {
     return {
       turn,
       conversation,
-      evidence,
+      evidence: Array.isArray(turn.selectedEvidence)
+        ? (turn.selectedEvidence as AssistantEvidence[])
+        : evidence,
       createdTaskIds: (turn.toolActions as Array<{ taskId?: string }>)
         .map((a) => a.taskId)
         .filter((id): id is string => Boolean(id)),

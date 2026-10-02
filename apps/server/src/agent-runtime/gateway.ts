@@ -4,6 +4,7 @@ import {
   knowledgeReviewSchema,
   knowledgePlanSchema,
 } from "../../../../packages/contracts/src/knowledge.js";
+import { assistantReplySchema } from "../../../../packages/contracts/src/assistant.js";
 import {
   estimateTokens,
   generationBudget,
@@ -43,6 +44,7 @@ const outputSchemas = {
   "PlanProposal.v1": planProposalSchema,
   "CorrectionProposal.v1": correctionProposalSchema,
   "AnswerWithCitations.v1": answerWithCitationsSchema,
+  "AssistantReply.v1": assistantReplySchema,
 } satisfies Record<string, z.ZodType>;
 
 type OutputSchemaName = keyof typeof outputSchemas;

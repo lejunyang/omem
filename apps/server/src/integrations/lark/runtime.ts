@@ -21,7 +21,10 @@ import {
   type LarkRealtimeAdapter,
 } from "./realtime.js";
 import type { EncryptedSecretStore } from "./secret-store.js";
-import { AssistantRuntime, type AssistantModelPort } from "../../assistant/runtime.js";
+import {
+  AssistantRuntime,
+  type AssistantModelPort,
+} from "../../assistant/runtime.js";
 import type { VisibilityPolicy } from "../../assistant/runtime.js";
 import { QualityLarkAnnotationService } from "../../quality/lark-annotations.js";
 
@@ -57,6 +60,7 @@ export class LarkRuntimeHost {
       realtimeAdapter?: LarkRealtimeAdapter;
       messageAdapter?: LarkMessageAdapter;
       assistantModel?: AssistantModelPort;
+      assistantTimeoutMs?: number;
       retrieval?: RetrievalPort;
       media?: LarkMediaPort;
       /** Test seam: invoked after the reply outbox row is committed but before the
@@ -86,14 +90,18 @@ export class LarkRuntimeHost {
     // Real server-owned visibility: a group conversation may see only evidence
     // actually collected in that group chat. The owner's private/p2p imports and
     // anything not sourced from this chat are invisible here.
-    const visibilityPolicy: VisibilityPolicy = ({ conversation, fragmentId }) => {
+    const visibilityPolicy: VisibilityPolicy = ({
+      conversation,
+      fragmentId,
+    }) => {
       if (conversation.visibility === "private") return true;
       const record = input.store.evidence(fragmentId);
       if (!record) return false;
       const chatId = record.revision.context?.conversationId;
       return Boolean(chatId && chatId === conversation.chatId);
     };
-    const assistantRetrieval = input.retrieval ?? new KeywordRetrieval(input.store.db);
+    const assistantRetrieval =
+      input.retrieval ?? new KeywordRetrieval(input.store.db);
     const assistantFeedback = new FeedbackService(input.store);
     this.assistant = input.assistantModel
       ? new AssistantRuntime(input.store, input.assistantModel, {
@@ -102,7 +110,7 @@ export class LarkRuntimeHost {
           feedback: assistantFeedback,
           retrieval: assistantRetrieval,
           visibilityPolicy,
-          turnTimeoutMs: 60_000,
+          turnTimeoutMs: input.assistantTimeoutMs ?? 60_000,
         })
       : null;
   }

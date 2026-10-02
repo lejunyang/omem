@@ -21,7 +21,12 @@ export type Conversation = {
   updatedAt: string;
 };
 
-export type TurnStatus = "pending" | "running" | "done" | "failed" | "cancelled";
+export type TurnStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled";
 
 /**
  * Per-turn metadata. Persisted as JSON in input_message_refs so the runtime can
@@ -94,9 +99,13 @@ export class ConversationRouter {
          WHERE workspace_id=? AND principal_id=? AND channel=? AND chat_id=?
            AND COALESCE(thread_id,'')=?`,
       )
-      .get(workspaceId, input.principalId, input.channel, input.chatId, threadId) as
-      | Row
-      | undefined;
+      .get(
+        workspaceId,
+        input.principalId,
+        input.channel,
+        input.chatId,
+        threadId,
+      ) as Row | undefined;
     if (existing) return rowToConversation(existing);
     const id = randomUUID();
     const at = now();
@@ -130,7 +139,9 @@ export class ConversationRouter {
 
   setGoal(conversationId: string, goal: string | null) {
     this.db
-      .prepare("UPDATE conversations SET current_goal=?,updated_at=? WHERE id=?")
+      .prepare(
+        "UPDATE conversations SET current_goal=?,updated_at=? WHERE id=?",
+      )
       .run(goal, now(), conversationId);
   }
 
@@ -228,6 +239,13 @@ export class ConversationRouter {
 
   startTurn(turnId: string) {
     this.patchRefs(turnId, { status: "running", error: null });
+  }
+
+  /** Human-readable investigation progress; provider reasoning stays private. */
+  recordResearch(turnId: string, activity: unknown[]) {
+    this.db
+      .prepare("UPDATE conversation_turns SET tool_actions=? WHERE id=?")
+      .run(JSON.stringify([{ tool: "research", activity }]), turnId);
   }
 
   completeTurn(input: {

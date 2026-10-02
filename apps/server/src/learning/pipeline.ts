@@ -124,33 +124,81 @@ export class LearningPipeline {
   }
 
   private async refreshDependents(job: JobLease) {
-    const refs = job.inputRefs as { sourceId?: string; previousRevisionId?: string; revisionId?: string }[];
-    const result = recordSourceRefresh(this.input.store.db, job.workspaceId, refs);
-    if (!result.affectedCount) return { resultRef: result.recordId, usage: { affected: 0 } };
+    const refs = job.inputRefs as {
+      sourceId?: string;
+      previousRevisionId?: string;
+      revisionId?: string;
+    }[];
+    const result = recordSourceRefresh(
+      this.input.store.db,
+      job.workspaceId,
+      refs,
+    );
+    if (!result.affectedCount)
+      return { resultRef: result.recordId, usage: { affected: 0 } };
     const ref = refs[0]!;
-    const state = this.input.store.db.prepare("SELECT validity_epoch FROM source_state WHERE source_id=? AND head_revision_id=?").get(ref.sourceId!, ref.revisionId!) as Row | undefined;
+    const state = this.input.store.db
+      .prepare(
+        "SELECT validity_epoch FROM source_state WHERE source_id=? AND head_revision_id=?",
+      )
+      .get(ref.sourceId!, ref.revisionId!) as Row | undefined;
     if (!state) {
-      reconcileSourceRefresh(this.input.store.db, ref.revisionId!, { reason: "source_advanced" });
-      return { resultRef: result.recordId, usage: { superseded: result.affectedCount } };
+      reconcileSourceRefresh(this.input.store.db, ref.revisionId!, {
+        reason: "source_advanced",
+      });
+      return {
+        resultRef: result.recordId,
+        usage: { superseded: result.affectedCount },
+      };
     }
     // Same identity as capture's extraction job, so source updates never launch
     // a second independent extractor that could recreate the same memories.
-    const queued = this.input.store.jobs.enqueue({ workspaceId: job.workspaceId, kind: "extract_claims",
-      inputRefs: [{ revisionId: ref.revisionId, sourceId: ref.sourceId, validityEpoch: Number(state.validity_epoch) }],
-      roleVersion: "extractor@1", policyVersion: job.policyVersion, cause: "source_refresh" });
-    this.input.store.db.prepare("UPDATE refresh_records SET status='queued',result_json=? WHERE id=? AND status='needs_review'")
+    const queued = this.input.store.jobs.enqueue({
+      workspaceId: job.workspaceId,
+      kind: "extract_claims",
+      inputRefs: [
+        {
+          revisionId: ref.revisionId,
+          sourceId: ref.sourceId,
+          validityEpoch: Number(state.validity_epoch),
+        },
+      ],
+      roleVersion: "extractor@1",
+      policyVersion: job.policyVersion,
+      cause: "source_refresh",
+    });
+    this.input.store.db
+      .prepare(
+        "UPDATE refresh_records SET status='queued',result_json=? WHERE id=? AND status='needs_review'",
+      )
       .run(JSON.stringify({ extractionJobId: queued.job.id }), result.recordId);
-    return { resultRef: result.recordId, usage: { queued: result.affectedCount } };
+    return {
+      resultRef: result.recordId,
+      usage: { queued: result.affectedCount },
+    };
   }
 
   private refreshMemories(job: JobLease) {
     const db = this.input.store.db;
-    return this.sourceRefs(job).flatMap(ref => (db.prepare(`SELECT m.id,m.version,m.kind,m.scope,m.status,mr.body
+    return this.sourceRefs(job).flatMap((ref) =>
+      (
+        db
+          .prepare(
+            `SELECT m.id,m.version,m.kind,m.scope,m.status,mr.body
       FROM memories m JOIN memory_revisions mr ON mr.id=m.head_revision_id
       JOIN memory_dependencies md ON md.memory_revision_id=mr.id
-      WHERE md.source_id=? AND md.state='stale' AND m.status='invalidated'`).all(ref.sourceId) as Row[])
-      .map(m => ({ memory_id: String(m.id), version: Number(m.version), kind: String(m.kind), scope: JSON.parse(String(m.scope)),
-        status: "invalidated", body: JSON.parse(String(m.body)) })));
+      WHERE md.source_id=? AND md.state='stale' AND m.status='invalidated'`,
+          )
+          .all(ref.sourceId) as Row[]
+      ).map((m) => ({
+        memory_id: String(m.id),
+        version: Number(m.version),
+        kind: String(m.kind),
+        scope: JSON.parse(String(m.scope)),
+        status: "invalidated",
+        body: JSON.parse(String(m.body)),
+      })),
+    );
   }
 
   private sourceRefs(job: JobLease) {
@@ -175,6 +223,68 @@ export class LearningPipeline {
           ]
         : [];
     });
+  }
+
+  /** The immediate assistant/control path may already have applied this exact
+   * original command. Keep it for learning, but do not execute its task intent
+   * again merely because background extraction has a different proposal id. */
+  private handledTaskActions(job: JobLease) {
+    return this.sourceRefs(job).flatMap((ref) => {
+      const revision = this.input.store.revision(ref.revisionId);
+      const provenance = revision?.provenance;
+      if (
+        !provenance ||
+        provenance.actorId !== (this.input.ownerId ?? "owner") ||
+        provenance.actorType !== "owner" ||
+        provenance.producerKind !== "original" ||
+        provenance.forwarded ||
+        provenance.quoted ||
+        !(
+          (provenance.collectorId === "assistant" &&
+            provenance.actorVerifiedBy === "runtime") ||
+          (provenance.collectorId === "task-controls" &&
+            provenance.actorVerifiedBy === "local-user")
+        )
+      )
+        return [];
+      return (
+        this.input.store.db
+          .prepare(
+            `SELECT DISTINCT f.id AS fragmentId,a.id AS receiptId,
+        a.entity_id AS taskId,a.entity_version AS appliedVersion,t.version AS currentVersion,
+        t.title,t.status,t.follow_up AS followUp
+        FROM task_revisions tr JOIN json_each(tr.evidence_set) e
+        JOIN fragments f ON f.id=e.value
+        JOIN application_receipts a ON a.entity_type='task' AND a.entity_id=tr.task_id
+          AND a.entity_version=tr.version AND a.workspace_id=tr.workspace_id
+        JOIN tasks t ON t.id=tr.task_id AND t.workspace_id=tr.workspace_id
+        WHERE f.revision_id=? AND tr.workspace_id=?`,
+          )
+          .all(ref.revisionId, job.workspaceId) as Row[]
+      ).map((row) => ({
+        fragmentId: String(row.fragmentId),
+        receiptId: String(row.receiptId),
+        taskId: String(row.taskId),
+        appliedVersion: Number(row.appliedVersion),
+        currentVersion: Number(row.currentVersion),
+        title: String(row.title),
+        status: String(row.status),
+        followUp: row.followUp ? JSON.parse(String(row.followUp)) : null,
+      }));
+    });
+  }
+
+  private pendingTaskCandidate(
+    proposal: Proposal,
+    handled: ReturnType<LearningPipeline["handledTaskActions"]>,
+  ) {
+    if (proposal.kind !== "task" || !proposal.evidence.length) return true;
+    const appliedFragments = new Set(
+      handled.map((action) => action.fragmentId),
+    );
+    return !proposal.evidence.every((evidence) =>
+      appliedFragments.has(evidence.fragment_revision_id),
+    );
   }
 
   private context(
@@ -273,10 +383,19 @@ export class LearningPipeline {
         project_trusted: projectTrusted,
       },
       materials,
-      related_memories: [...this.relatedMemories(first.revision, scope), ...this.refreshMemories(job)],
-      task: { mode: "extract_and_refresh",
-        daily_message_policy: "For discussion/chat: preserve decisions, per-speaker commitments, open questions and explicit outcomes. Only explicit owner assignment or a verified owner's own commitment can propose an owner task. A waiting promise from someone else is background, not permission to create or complete a task. Distinguish check-in time from deadline; no invented schedule or external outreach.", refreshTargets: this.refreshMemories(job),
-        instruction: "Recheck invalidated memories against ONLY current original materials. If still supported or changed, emit an update to the same memory_id with expected_versions[that id]=version, retaining its scope. Do not create a duplicate for an existing target. If no longer supported, abstain with a reason; it stays invalidated. You may create genuinely new memories. Never treat prior derived bodies as evidence." },
+      related_memories: [
+        ...this.relatedMemories(first.revision, scope),
+        ...this.refreshMemories(job),
+      ],
+      task: {
+        mode: "extract_and_refresh",
+        already_applied_task_actions: this.handledTaskActions(job),
+        daily_message_policy:
+          "For discussion/chat: preserve decisions, per-speaker commitments, open questions and explicit outcomes. Only explicit owner assignment or a verified owner's own commitment can propose an owner task. A waiting promise from someone else is background, not permission to create or complete a task. Distinguish check-in time from deadline; no invented schedule or external outreach.",
+        refreshTargets: this.refreshMemories(job),
+        instruction:
+          "Recheck invalidated memories against ONLY current original materials. If still supported or changed, emit an update to the same memory_id with expected_versions[that id]=version, retaining its scope. Do not create a duplicate for an existing target. If no longer supported, abstain with a reason; it stays invalidated. You may create genuinely new memories. Never treat prior derived bodies as evidence. already_applied_task_actions are host receipts for this exact original owner command: do not create or reapply its task action. Retain useful attributed observations or other durable facts without recreating the task, including when it has since been completed or cancelled.",
+      },
       confirmed_corrections: this.input.feedback.recall(scope),
       ...(candidates ? { candidates } : {}),
     });
@@ -287,7 +406,15 @@ export class LearningPipeline {
   }
 
   private relatedMemories(
-    revision: { title: string; fragments: { text: string }[]; context: { application?: string; conversationId?: string; runId?: string } },
+    revision: {
+      title: string;
+      fragments: { text: string }[];
+      context: {
+        application?: string;
+        conversationId?: string;
+        runId?: string;
+      };
+    },
     scope: { project_id: string | null },
   ) {
     const query =
@@ -314,7 +441,9 @@ export class LearningPipeline {
    * so a fragment ordinal resolves back to its source part and its per-part
    * provenance. This MUST mirror the flatMap in store.capture.
    */
-  private fragmentPairs(revision: Revision): { part: StoredPart; text: string }[] {
+  private fragmentPairs(
+    revision: Revision,
+  ): { part: StoredPart; text: string }[] {
     const pairs: { part: StoredPart; text: string }[] = [];
     for (const part of revision.parts) {
       if (part.type === "text") {
@@ -432,7 +561,11 @@ export class LearningPipeline {
       const batch = proposalBatchSchema.parse(run.result);
       const output = this.saveRun(job, run);
       this.recordObservations(job, batch);
-      if (batch.proposals.length)
+      const handled = this.handledTaskActions(job);
+      const pending = batch.proposals.filter((proposal) =>
+        this.pendingTaskCandidate(proposal, handled),
+      );
+      if (pending.length)
         this.input.store.jobs.enqueue({
           workspaceId: job.workspaceId,
           kind: "verify_proposals",
@@ -445,12 +578,25 @@ export class LearningPipeline {
           parentJobId: job.id,
           cause: "extraction",
         });
-      if (!batch.proposals.length) for (const ref of this.sourceRefs(job))
-        reconcileSourceRefresh(this.input.store.db, ref.revisionId, { extractionJobId: job.id, abstentions: batch.abstentions });
-      return { resultRef: output.id, usage: run.trace.usage };
+      if (!pending.length)
+        for (const ref of this.sourceRefs(job))
+          reconcileSourceRefresh(this.input.store.db, ref.revisionId, {
+            extractionJobId: job.id,
+            abstentions: batch.abstentions,
+          });
+      return {
+        resultRef: output.id,
+        usage: {
+          ...run.trace.usage,
+          alreadyHandledTaskActions: batch.proposals.length - pending.length,
+        },
+      };
     } catch (error) {
-      for (const ref of this.sourceRefs(job)) reconcileSourceRefresh(this.input.store.db, ref.revisionId,
-        { extractionJobId: job.id, error: publicError(error) });
+      for (const ref of this.sourceRefs(job))
+        reconcileSourceRefresh(this.input.store.db, ref.revisionId, {
+          extractionJobId: job.id,
+          error: publicError(error),
+        });
       throw classify(error);
     }
   }
@@ -486,11 +632,12 @@ export class LearningPipeline {
       const bundleHash = String(stored.trace.bundleHash || "");
       if (!/^[a-f0-9]{64}$/.test(bundleHash))
         throw Error("LEARNING_EXTRACTION_TRACE_INVALID");
+      const handled = this.handledTaskActions(job);
       const proposals = this.normalizeProposals(
         batch,
         reference.extractionJobId,
         bundleHash,
-      );
+      ).filter((proposal) => this.pendingTaskCandidate(proposal, handled));
       const candidates = proposals.map((proposal) => ({
         ...proposal,
         proposal_digest: stableDigest(proposal),
@@ -545,8 +692,15 @@ export class LearningPipeline {
         }),
       );
       const evaluations = batchResult.results;
-      for (const ref of this.sourceRefs(job)) reconcileSourceRefresh(this.input.store.db, ref.revisionId,
-        { verificationJobId: job.id, evaluations: evaluations.map(r => ({ policy: r.policy, reasons: r.reasons, receipt: r.receipt ?? null })) });
+      for (const ref of this.sourceRefs(job))
+        reconcileSourceRefresh(this.input.store.db, ref.revisionId, {
+          verificationJobId: job.id,
+          evaluations: evaluations.map((r) => ({
+            policy: r.policy,
+            reasons: r.reasons,
+            receipt: r.receipt ?? null,
+          })),
+        });
       return {
         resultRef: output.id,
         usage: {
@@ -563,8 +717,11 @@ export class LearningPipeline {
         },
       };
     } catch (error) {
-      for (const ref of this.sourceRefs(job)) reconcileSourceRefresh(this.input.store.db, ref.revisionId,
-        { verificationJobId: job.id, error: publicError(error) });
+      for (const ref of this.sourceRefs(job))
+        reconcileSourceRefresh(this.input.store.db, ref.revisionId, {
+          verificationJobId: job.id,
+          error: publicError(error),
+        });
       throw classify(error);
     }
   }

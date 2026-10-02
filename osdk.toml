@@ -43,6 +43,10 @@ help = "Compare the installed Chinese cross-encoder (not enabled by default)"
 [tasks.check]
 run = ["pnpm run typecheck", "pnpm run test", "pnpm run build"]
 
+[tasks."assistant:memory-flow"]
+run = "bun scripts/assistant-memory-flow.ts"
+description = "Verify captured material, native assistant research, memory refresh and ongoing follow-up with real Traex"
+
 [tasks.browser]
 run = "pnpm run test:browser"
 [tasks.live-daily]
