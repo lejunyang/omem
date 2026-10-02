@@ -22,6 +22,8 @@ omem 的目标是让个人材料被读懂、找回并用于行动。文档、代
 - [当前实现逐层审查](reader-first/current-system.md)：清洗、RAG、代码、记忆、Wiki、ACP 的实际链路及缺口。
 - [成熟组件如何融入与代码改造](reader-first/component-integration.md)：具体采用什么、进入哪个适配层、哪些代码要替换、怎样判断收益。
 - [Agent 自主研究方案](reader-first/agent-research.md)：工具、材料工作区、原生 skills、会话、最终产物与独立补查复核。
+- [助手检索与真实命中](reader-first/assistant-search-research.md)：新问题搜出了什么，成熟方案的适配、局限及现有代码改造入口。
+- [个人记忆与跟进流程](reader-first/assistant-memory-flow.md)：保存、提问、换版、更新及持续跟进的真实成功与失败。
 - [写作与学习路线](reader-first/writing.md)：人如何由一个案例理解概念、机制、取舍并开始修改。
 - [当前进度](reader-first/progress.md)：本轮实际完成和真实验证；设计内容不代表已交付。
 
