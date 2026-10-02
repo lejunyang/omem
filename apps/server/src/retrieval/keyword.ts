@@ -117,7 +117,7 @@ export class KeywordRetrieval implements RetrievalPort {
     const titleSources = new Set<string>();
     for (const [route, rows] of branches) {
       for (const row of rows.filter(eligible)) {
-        let score = Math.max(relevance(String(row.fragment_text), terms, String(row.title), weights), Number(row.guide_score ?? 0));
+        let score = Math.max(relevance(bestSnippet(String(row.fragment_text),terms,400), terms, String(row.title), weights), Number(row.guide_score ?? 0));
         if (!score && terms.length <= 2 && terms.every(t => String(row.title).toLowerCase().includes(t)) && !titleSources.has(String(row.revision_id))) {
           score = .4; titleSources.add(String(row.revision_id));
         }
