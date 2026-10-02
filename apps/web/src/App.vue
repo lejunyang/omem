@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ChangeHistory from "./ChangeHistory.vue";
 import DailyAssistant from "./DailyAssistant.vue";
+import SearchAnswer from "./SearchAnswer.vue";
 import TaskFollowUpControls from "./TaskFollowUpControls.vue";
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import {
@@ -118,6 +119,13 @@ const evidence = ref<InstanceType<typeof EvidenceReader>>();
 const query = ref("");
 const sourceQuery = ref("");
 const results = ref<RetrievalHit[]>([]);
+const searchResultsHeading = ref<HTMLElement>();
+function showSearchResults() {
+  searchResultsHeading.value?.scrollIntoView({
+    block: "start",
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+  });
+}
 const searchPurpose = ref<RetrievalPurpose>("balanced");
 const {
   open: searchOpen,
@@ -674,7 +682,7 @@ onBeforeUnmount(() => {
     <section v-if="query.trim()" class="page" :aria-busy="searching">
       <h1>搜索“{{ query }}”</h1>
       <p class="muted">
-        先读相关讲解，再沿引用查看原文和实现；当前事项与已应用记忆也可一起查找。
+        搜索材料、讲解、记忆与事项；也可以让助理补读材料，围绕问题整理回答。
       </p>
       <label class="search-purpose"
         >查找用途
@@ -686,6 +694,8 @@ onBeforeUnmount(() => {
           <option value="follow-up">跟进事项</option>
         </select></label
       >
+      <SearchAnswer :query="query" :purpose="searchPurpose" @navigate="pushSearch" @open="(id) => evidence?.open(id)" @results="showSearchResults" />
+      <h2 ref="searchResultsHeading" class="search-results-heading">实际搜索命中 <small v-if="!searching && !searchError">{{ results.length }} 条</small></h2>
       <p v-if="searching" class="search-loading" role="status">
         <span class="search-spinner" aria-hidden="true" />正在搜索相关材料…
       </p>
@@ -1338,6 +1348,19 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   margin: 24px 0;
+}
+.search-results-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 28px 0 20px;
+  font-size: 22px;
+  scroll-margin-top: 88px;
+}
+.search-results-heading small {
+  font: 13px var(--om-font-body, sans-serif);
+  color: var(--om-muted);
 }
 .search-actions {
   display: flex;

@@ -1,4 +1,5 @@
 import type { TaskFollowUp } from "../../../packages/contracts/src/task-flow.js";
+import type { AnswerEvidence } from "./assistant-reader";
 import type {
   Revision,
   Fragment,
@@ -60,6 +61,21 @@ export type Run = {
   state: "running" | "done" | "error" | "cancelled";
   events: RunEvent[];
   answerId?: string;
+};
+export type AssistantSearchTurn = {
+  id: string;
+  inputText: string;
+  result: string;
+  inputMessageRefs: {
+    status: "pending" | "running" | "done" | "failed" | "cancelled";
+    transportEventId?: string | null;
+    error?: string | null;
+  };
+  selectedEvidence: AnswerEvidence[];
+  toolActions: unknown;
+};
+export type AssistantSearchResult = {
+  turn: AssistantSearchTurn | null;
 };
 export type JobAttempt = {
   id: string;
