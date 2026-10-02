@@ -174,15 +174,18 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           throw Error("Embedding batch size mismatch");
         vectors.push(...result.map(normalize));
       }
-      // A source can change while embedding is running; obsolete units cannot return.
-      if (
-        !this.database
-          .prepare("SELECT 1 FROM retrieval_units WHERE id=?")
-          .get(unit.id)
-      )
-        continue;
       this.database.exec("BEGIN IMMEDIATE");
       try {
+        // Check under the writer lock: another maintenance process may replace
+        // this unit while embedding runs, or between an unlocked check and BEGIN.
+        if (
+          !this.database
+            .prepare("SELECT 1 FROM retrieval_units WHERE id=?")
+            .get(unit.id)
+        ) {
+          this.database.exec("ROLLBACK");
+          continue;
+        }
         for (let i = 0; i < windows.length; i++) {
           const vector = new Float32Array(vectors[i]!);
           this.database
