@@ -1,0 +1,919 @@
+{
+  "version": 1,
+  "key": "omem:docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md",
+  "digest": "7858801c1d3e4a293d2c6f77bed15b84b8b0484a3105c9161ec83c1fe5477d77",
+  "description": {
+    "role": "research",
+    "status": "historical",
+    "summary": "截至 2026-09-30 的一手资料调研与项目选型判断，覆盖证据定位标准、TypeScript／SCIP／Tree-sitter 代码索引、FTS5 与向量检索、RRF／重排、GraphRAG 与外部记忆平台、多模态解析、评测框架以及 FSRS／Anki。它给出采用、暂不采用和 PoC 条件，但明确没有安装候选平台、下载权重或复现公开基准，动态信息实施时仍需重新固定版本。",
+    "topics": [
+      "技术选型",
+      "证据模型",
+      "代码索引",
+      "混合检索",
+      "GraphRAG",
+      "记忆平台",
+      "多模态",
+      "评测框架",
+      "FSRS",
+      "Anki"
+    ],
+    "scope": "2026-09-30 核验的官方文档、作者论文和作者仓库，以及这些资料对 omem 基线方案的适用性判断。",
+    "validFrom": null,
+    "validUntil": null,
+    "concepts": [
+      {
+        "label": "一手资料核验范围与未做实验的边界",
+        "aliases": [
+          "资料核验日期",
+          "研究边界",
+          "未复现benchmark"
+        ],
+        "startLine": 1,
+        "endLine": 3
+      },
+      {
+        "label": "Web Annotation、PROV-O 与统一证据取舍",
+        "aliases": [
+          "Selector",
+          "provenance",
+          "证据标准",
+          "图数据库"
+        ],
+        "startLine": 5,
+        "endLine": 9
+      },
+      {
+        "label": "TypeScript Compiler API、SCIP 与 Tree-sitter 进入顺序",
+        "aliases": [
+          "代码索引选型",
+          "TypeChecker",
+          "SCIP",
+          "Tree-sitter"
+        ],
+        "startLine": 11,
+        "endLine": 17
+      },
+      {
+        "label": "FTS5、向量、Embedding、RRF 与 reranker 方案",
+        "aliases": [
+          "混合检索",
+          "中文短词",
+          "sqlite-vec",
+          "BGE-M3",
+          "Qwen3-Embedding"
+        ],
+        "startLine": 19,
+        "endLine": 32
+      },
+      {
+        "label": "GraphRAG 与外部记忆平台的 PoC 门槛",
+        "aliases": [
+          "MemPalace",
+          "Hindsight",
+          "WeKnora",
+          "平台对照"
+        ],
+        "startLine": 34,
+        "endLine": 50
+      },
+      {
+        "label": "文档解析与视觉检索候选",
+        "aliases": [
+          "Docling",
+          "ColPali",
+          "Qwen3-VL",
+          "多模态检索"
+        ],
+        "startLine": 52,
+        "endLine": 56
+      },
+      {
+        "label": "ALCE 与 LongMemEval 的评测借鉴",
+        "aliases": [
+          "引用质量评测",
+          "长期记忆评测",
+          "oracle evidence"
+        ],
+        "startLine": 58,
+        "endLine": 62
+      },
+      {
+        "label": "FSRS 钉版和 Anki 文本导入边界",
+        "aliases": [
+          "ts-fsrs",
+          "学习调度",
+          "Anki TSV",
+          "AnkiConnect"
+        ],
+        "startLine": 64,
+        "endLine": 70
+      }
+    ],
+    "basis": "第3行明确资料核验日期、来源类型以及未安装候选平台／未复现公开benchmark，并把选择建议限定为项目判断；各节继续以“采用、暂不采用、候选、PoC、对照”组织结论，所以主角色是研究而不是实现。核验日期不是生效日期。"
+  },
+  "generation": {
+    "at": "2026-10-02T16:44:14.010Z",
+    "trace": {
+      "runId": "744f1919-d484-4fef-ad62-f36bd7f523a4",
+      "roleId": "material-cataloger",
+      "roleVersion": "1",
+      "bundleHash": "d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e",
+      "promptHash": "071f18feaede92d82bd4f4799761b5e2ab326fd8f52d388b729c4ef684a140d0",
+      "contextHash": "78d07510fa98fd30785593c128ba5ee431df16e4261260f9a5b22af93e9346da",
+      "skillHash": "17f1adb7fd8d9ede9fe29a82196c041c5546511545129451d08561d35796126b",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "da2badf8d5b172f527fefd5e82d762dc773b4569e3375787d0ea6f7ac5e12088",
+      "outputSchema": "MaterialDescriptions.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-cataloger",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a0fd7e-05d7-71a3-90b0-ae771ad66b38"
+      ],
+      "usage": {
+        "used": 80123,
+        "size": 258400,
+        "cost": null,
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_pJHgx9iJSF5ZdJUmwV0q6H2K:exec-6ab77a15-da81-451a-acaa-6072bd590c22",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_pJHgx9iJSF5ZdJUmwV0q6H2K:exec-6ab77a15-da81-451a-acaa-6072bd590c22",
+              "process_id": "82318",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959301923,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-material-cataloger/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_pJHgx9iJSF5ZdJUmwV0q6H2K:exec-6ab77a15-da81-451a-acaa-6072bd590c22",
+            "status": "completed",
+            "outputDigest": "ee7f0aa258027ad6da6a7eb562d1449d64bf1f1cfbb99b0763635b20fbe1eee0"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_RjhVw776upYWo9dOzHwQGwGn:exec-ff3332ae-14c1-4427-a14c-75050930384a",
+            "title": "Read catalog.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_RjhVw776upYWo9dOzHwQGwGn:exec-ff3332ae-14c1-4427-a14c-75050930384a",
+              "process_id": "15986",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959315087,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,260p' catalog.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_RjhVw776upYWo9dOzHwQGwGn:exec-ff3332ae-14c1-4427-a14c-75050930384a",
+            "status": "completed",
+            "outputDigest": "a9cba74cf4952c5e2da2c3bc0473d84342482cf42ed554810bb6fc36d947addc"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_yUiA8hqR5L1hMGMOXSsALYNv:exec-8a4b4189-b64c-4430-95c4-d16a0fa8076a",
+            "title": "wc -l /Users/bytedance/Desktop/Projects/lejunyang/omem/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/progress.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_yUiA8hqR5L1hMGMOXSsALYNv:exec-8a4b4189-b64c-4430-95c4-d16a0fa8076a",
+              "process_id": "12827",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959323227,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "wc -l /Users/bytedance/Desktop/Projects/lejunyang/omem/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/progress.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "wc -l /Users/bytedance/Desktop/Projects/lejunyang/omem/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/progress.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_yUiA8hqR5L1hMGMOXSsALYNv:exec-8a4b4189-b64c-4430-95c4-d16a0fa8076a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_yUiA8hqR5L1hMGMOXSsALYNv:exec-8a4b4189-b64c-4430-95c4-d16a0fa8076a",
+            "status": "completed",
+            "outputDigest": "652dc0eeb92e5c6d60e7a899bd3bf3f60de9a8a0246a91b0be226f3165a801ff"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_bxnI7Uu8tiDAmFar9mZJf0Te:exec-87cbc2ce-1253-48b2-88ac-3a6deaf88ad8",
+            "title": "Read README.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_bxnI7Uu8tiDAmFar9mZJf0Te:exec-87cbc2ce-1253-48b2-88ac-3a6deaf88ad8",
+              "process_id": "75529",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959329398,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' /Users/bytedance/Desktop/Projects/lejunyang/omem/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/progress.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' /Users/bytedance/Desktop/Projects/lejunyang/omem/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/README.md /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/progress.md",
+                  "name": "README.md",
+                  "path": "/Users/bytedance/Desktop/Projects/lejunyang/omem/README.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_bxnI7Uu8tiDAmFar9mZJf0Te:exec-87cbc2ce-1253-48b2-88ac-3a6deaf88ad8",
+            "status": "completed",
+            "outputDigest": "27c41784b6f9b5a084e1cd36f958c0ec15012f3035d7481a7579a940fe585f0a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_gUhdyq3dtQyJUBd5Il1aTJ8d:exec-f3ece1b0-78f3-473c-861a-42a659b444fd",
+            "title": "Search ^ in 08-日常消息与主动事项.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_gUhdyq3dtQyJUBd5Il1aTJ8d:exec-f3ece1b0-78f3-473c-861a-42a659b444fd",
+              "process_id": "9922",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959340460,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n --no-heading '^' originals/docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md originals/docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md originals/docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md originals/docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md originals/docs/archive/2026-10-01-baseline/2026-10-01/README.md originals/docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n --no-heading '^' 'originals/docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md' 'originals/docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md' 'originals/docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md' 'originals/docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md' 'originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md' 'originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md' originals/docs/archive/2026-10-01-baseline/2026-10-01/README.md 'originals/docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md'",
+                  "query": "^",
+                  "path": "08-日常消息与主动事项.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_gUhdyq3dtQyJUBd5Il1aTJ8d:exec-f3ece1b0-78f3-473c-861a-42a659b444fd",
+            "status": "completed",
+            "outputDigest": "691a55e6dd376bd170f7cb7c3092b7f5233cadd2b1ad2a31f4a2b2d2ea51073b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-b0fde14d-a74d-4453-b110-5093ed85c5d6",
+            "title": "Read 11-迁移与分阶段实施.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-b0fde14d-a74d-4453-b110-5093ed85c5d6",
+              "process_id": "93981",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959351782,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md'",
+                  "name": "11-迁移与分阶段实施.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-b0fde14d-a74d-4453-b110-5093ed85c5d6",
+            "status": "completed",
+            "outputDigest": "73bbcacc27619f8cca05e897b3ab463d24d9f3afeb1502dd8a099c1d3075fa2f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-c73bb739-c097-4684-8adc-8ca742e73b13",
+            "title": "Read README.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-c73bb739-c097-4684-8adc-8ca742e73b13",
+              "process_id": "73010",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959351786,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/README.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+                  "name": "README.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/README.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-c73bb739-c097-4684-8adc-8ca742e73b13",
+            "status": "completed",
+            "outputDigest": "ac012ed672a728e9bd462b017c7fb5b19cbc5b3d3c503ce9201acbc2be55ace6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-1b8d5627-6176-4892-a61d-8289908cc70f",
+            "title": "Read 08-日常消息与主动事项.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-1b8d5627-6176-4892-a61d-8289908cc70f",
+              "process_id": "67985",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959351789,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md'",
+                  "name": "08-日常消息与主动事项.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-1b8d5627-6176-4892-a61d-8289908cc70f",
+            "status": "completed",
+            "outputDigest": "7e4f51000869acfd2a974490c241f00ead99cd5a88127b4c240241e93337a35f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-5bdd105c-ea3b-4b38-b776-4e17d7cd56de",
+            "title": "Read 12-风险与待确认问题.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-5bdd105c-ea3b-4b38-b776-4e17d7cd56de",
+              "process_id": "46371",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959351867,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md'",
+                  "name": "12-风险与待确认问题.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-5bdd105c-ea3b-4b38-b776-4e17d7cd56de",
+            "status": "completed",
+            "outputDigest": "d6cb97a68f79e8d7e4d2230c9e8543fa2ed0102dcd28e22570753aafd1f47d43"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-c4fee54e-707a-442a-b9c7-8d2822240c4a",
+            "title": "Read 13-一手研究与选型取舍.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-c4fee54e-707a-442a-b9c7-8d2822240c4a",
+              "process_id": "90995",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959351902,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md'",
+                  "name": "13-一手研究与选型取舍.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-c4fee54e-707a-442a-b9c7-8d2822240c4a",
+            "status": "completed",
+            "outputDigest": "7358f9129e73c0f585b59225bae28c218532074dd098d7746fc9287daa28be58"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-64018239-d33a-4782-8c35-07963e1b25cd",
+            "title": "Read 附录01-行为验证与未验证边界.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-64018239-d33a-4782-8c35-07963e1b25cd",
+              "process_id": "93462",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959351907,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md'",
+                  "name": "附录01-行为验证与未验证边界.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Q86dzq55imqzDhmujtOInqAt:exec-64018239-d33a-4782-8c35-07963e1b25cd",
+            "status": "completed",
+            "outputDigest": "1fe6f2e813391ca0fdc48a5dce4aa16e1415225a95967c8761768e6d4c70e67e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_L2ciQjOobvmmsKuRVfh6sN6t:exec-8d3103ae-26eb-4de5-82ac-be4a53857850",
+            "title": "Read 12-风险与待确认问题.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_L2ciQjOobvmmsKuRVfh6sN6t:exec-8d3103ae-26eb-4de5-82ac-be4a53857850",
+              "process_id": "35321",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959360341,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md'",
+                  "name": "12-风险与待确认问题.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_L2ciQjOobvmmsKuRVfh6sN6t:exec-8d3103ae-26eb-4de5-82ac-be4a53857850",
+            "status": "completed",
+            "outputDigest": "edcb8a744bfdc52f0b2b24c5f70c39b2697e678719abe55ab86bf95a73767a05"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_L2ciQjOobvmmsKuRVfh6sN6t:exec-ef251a93-9cf5-4d0b-a716-480bfe641587",
+            "title": "Read 13-一手研究与选型取舍.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_L2ciQjOobvmmsKuRVfh6sN6t:exec-ef251a93-9cf5-4d0b-a716-480bfe641587",
+              "process_id": "16103",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959360354,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md'",
+                  "name": "13-一手研究与选型取舍.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_L2ciQjOobvmmsKuRVfh6sN6t:exec-ef251a93-9cf5-4d0b-a716-480bfe641587",
+            "status": "completed",
+            "outputDigest": "50dfec1bd2ba620fa9aad46d34e0d4112432b63d86de5702d0f190b08b7b51bd"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_p2iGWXvDEeAgaHR86ltlNz7v:exec-3cdb54bd-4539-4d85-bc3b-cf57f67d898a",
+            "title": "Read 09-英语学习与记忆卡.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_p2iGWXvDEeAgaHR86ltlNz7v:exec-3cdb54bd-4539-4d85-bc3b-cf57f67d898a",
+              "process_id": "79065",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959375036,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md'",
+                  "name": "09-英语学习与记忆卡.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_p2iGWXvDEeAgaHR86ltlNz7v:exec-3cdb54bd-4539-4d85-bc3b-cf57f67d898a",
+            "status": "completed",
+            "outputDigest": "bd9e0dca1b6a453f531239efd668171d45d6c856d8fdb608dcd504d7952c30ee"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_p2iGWXvDEeAgaHR86ltlNz7v:exec-cc519591-2c10-4771-a1ab-28b321b9d7aa",
+            "title": "Read 10-评测预算隐私与运行质量.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_p2iGWXvDEeAgaHR86ltlNz7v:exec-cc519591-2c10-4771-a1ab-28b321b9d7aa",
+              "process_id": "72853",
+              "turn_id": "01a0fd7e-0a69-7bd1-9cad-8a82f60589f1",
+              "started_at_ms": 1790959375045,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/744f1919-d484-4fef-ad62-f36bd7f523a4",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba 'originals/docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md'",
+                  "name": "10-评测预算隐私与运行质量.md",
+                  "path": "originals/docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_p2iGWXvDEeAgaHR86ltlNz7v:exec-cc519591-2c10-4771-a1ab-28b321b9d7aa",
+            "status": "completed",
+            "outputDigest": "83993cf8a2f2d56046817c0911cfa1428d10fedd66a601cddf52b0862faf5ae8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-4c428fdb-d578-48c9-9e21-74dc0b248f98",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+                "startLine": 1,
+                "endLine": 56
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+              "startLine": 1,
+              "endLine": 56
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-3b006646-066f-4aaa-8e01-d93417949343",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "建议 方案 尚未实现 本次报告不进行实现",
+                "keys": [
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md"
+                ],
+                "kind": "document",
+                "purpose": "background",
+                "limit": 12
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-fcdd56fb-dd7f-4ee9-9eb6-4e263dde5522",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "已复现 已验证 未验证 固定基线 历史档案",
+                "keys": [
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+                  "omem:docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md"
+                ],
+                "kind": "document",
+                "purpose": "background",
+                "limit": 12
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-2f2dd952-9eea-4c26-9d28-8c5d8a476896",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md",
+                "startLine": 1,
+                "endLine": 42
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-4c428fdb-d578-48c9-9e21-74dc0b248f98",
+            "status": "completed",
+            "outputDigest": "769d88b494fb631f95d036150df4d86b567120071081233e7efece1e151383b1"
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md",
+              "startLine": 1,
+              "endLine": 42
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-2f2dd952-9eea-4c26-9d28-8c5d8a476896",
+            "status": "completed",
+            "outputDigest": "be92d38d1ce6ecafaacf6adbfa43ea9796b73f40500587c0d3907a7281679989"
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "建议 方案 尚未实现 本次报告不进行实现",
+              "keys": [
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md"
+              ],
+              "kind": "document",
+              "purpose": "background",
+              "limit": 12
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "已复现 已验证 未验证 固定基线 历史档案",
+              "keys": [
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+                "omem:docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md"
+              ],
+              "kind": "document",
+              "purpose": "background",
+              "limit": 12
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-3b006646-066f-4aaa-8e01-d93417949343",
+            "status": "completed",
+            "outputDigest": "3507f04a84d5f89c861dd3c2538e9380d2e6398d85f9137f2ddd0c55e18f4e73"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UGlbBwY4hhI9jzqZBpUZl5zN:exec-fcdd56fb-dd7f-4ee9-9eb6-4e263dde5522",
+            "status": "completed",
+            "outputDigest": "971970d87b9dacb89dbdb4f47b1a69534b7e5713199c8350ff8822c33276eaa1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_B1DKJiFyNyBHeCN44DS7PerO:exec-25284b58-2b60-44ce-8226-5eb4cfe84602",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/11-迁移与分阶段实施.md",
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/README.md",
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/08-日常消息与主动事项.md",
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/12-风险与待确认问题.md",
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/13-一手研究与选型取舍.md",
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/附录01-行为验证与未验证边界.md",
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/09-英语学习与记忆卡.md",
+              "omem:docs/archive/2026-10-01-baseline/2026-10-01/10-评测预算隐私与运行质量.md"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_B1DKJiFyNyBHeCN44DS7PerO:exec-25284b58-2b60-44ce-8226-5eb4cfe84602",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  }
+}

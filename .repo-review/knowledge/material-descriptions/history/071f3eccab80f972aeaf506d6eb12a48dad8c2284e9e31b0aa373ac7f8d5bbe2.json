@@ -1,0 +1,481 @@
+{
+  "version": 1,
+  "key": "omem:docs/reader-first/writing.md",
+  "digest": "48be0cb6a62f54e504b06181bfbd8de68d530b6f682e908b05028430dcc288cc",
+  "description": {
+    "role": "reference",
+    "status": "current",
+    "summary": "面向“能编程但不熟悉当前系统”的读者，规定技术知识页面的阅读路线、六类页面组织方式，以及讲解、证据、引用、图表、阅读验收和响应式界面的写作与检查原则。适合回答如何组织入门/机制/决策/排障页面、怎样区分事实与推断、怎样判断页面真正可读可用；不提供具体功能的实现细节。",
+    "topics": [
+      "技术写作",
+      "读者导向",
+      "页面结构",
+      "证据与引用",
+      "阅读验收",
+      "信息可视化",
+      "响应式阅读界面"
+    ],
+    "scope": "omem 面向陌生开发者的知识与阅读页面，包括内容组织、证据表达、页面验收以及桌面、768px、390px 下的视觉和引用交互。",
+    "validFrom": null,
+    "validUntil": null,
+    "concepts": [
+      {
+        "label": "目标读者与默认阅读路线",
+        "aliases": [
+          "陌生开发者阅读路线",
+          "从场景到行动",
+          "读者优先"
+        ],
+        "startLine": 1,
+        "endLine": 3
+      },
+      {
+        "label": "六类页面模板及其组织方式",
+        "aliases": [
+          "入门教程结构",
+          "概念解释结构",
+          "功能机制写法",
+          "设计决策写法",
+          "修改排障指南",
+          "参考页结构"
+        ],
+        "startLine": 5,
+        "endLine": 16
+      },
+      {
+        "label": "术语应先结合场景解释",
+        "aliases": [
+          "术语首次出现",
+          "Source 与 Revision 示例",
+          "先解释后命名"
+        ],
+        "startLine": 18,
+        "endLine": 20
+      },
+      {
+        "label": "教学案例、事实、动机与推断的证据边界",
+        "aliases": [
+          "教学示例标注",
+          "代码事实引用",
+          "历史动机引用",
+          "合理推断"
+        ],
+        "startLine": 22,
+        "endLine": 22
+      },
+      {
+        "label": "正文引用与代码引用的呈现原则",
+        "aliases": [
+          "短链接",
+          "参考与延伸阅读",
+          "避免重复引用",
+          "代码引用范围"
+        ],
+        "startLine": 24,
+        "endLine": 24
+      },
+      {
+        "label": "按问题选择架构图、时序图、状态图或表格",
+        "aliases": [
+          "图表选择",
+          "架构图",
+          "时序图",
+          "状态图",
+          "差异表格"
+        ],
+        "startLine": 26,
+        "endLine": 26
+      },
+      {
+        "label": "事实检查与读者检查",
+        "aliases": [
+          "内容验收",
+          "页面是否可读",
+          "独立模型复核",
+          "用户验收"
+        ],
+        "startLine": 28,
+        "endLine": 30
+      },
+      {
+        "label": "阅读界面的视觉与响应式操作规范",
+        "aliases": [
+          "黑白灰阅读界面",
+          "正文行宽",
+          "垂直间距",
+          "768px",
+          "390px",
+          "引用 trail dialog"
+        ],
+        "startLine": 32,
+        "endLine": 36
+      }
+    ],
+    "basis": "正文明确将首要读者定义为不熟悉系统的开发者，并以规范性语气给出默认阅读路线、页面模板、证据表达、阅读检查和视觉操作要求；“继续使用”现有 design.md/packages/ui 及“默认强调解释与任务”表明它是当前写作与阅读规范，而非历史记录或待实施提案。文中没有明确生效或失效时间。"
+  },
+  "generation": {
+    "at": "2026-10-02T17:06:48.339Z",
+    "trace": {
+      "runId": "2032a777-4e7e-4afe-b323-55427c094f6b",
+      "roleId": "material-cataloger",
+      "roleVersion": "1",
+      "bundleHash": "d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e",
+      "promptHash": "70dd26da2c612c06e28a17092019fac787fc5c90f9969f0eb1f83f566c7feef0",
+      "contextHash": "f0d815132645da101c2699f68036b9df8157fbb27ca6173aa2eff7e358a2b873",
+      "skillHash": "17f1adb7fd8d9ede9fe29a82196c041c5546511545129451d08561d35796126b",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "bc47a55797f39a544047a87279359d7a166ca4cd8d4eaebbfa63db184254c85d",
+      "outputSchema": "MaterialDescriptions.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-cataloger",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a0fd94-0bb5-7bd1-ac89-bbafe8561d4c"
+      ],
+      "usage": {
+        "used": 39985,
+        "size": 258400,
+        "cost": null,
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_z2UyVCwCys5jgw1Tr4qMPmR7:exec-60de4d2d-0e8f-415e-981f-4a4be0ef6c6b",
+            "title": "pwd && sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md && sed -n '1,220p' README.md && sed -n '1,240p' docs/reader-first/README.md && sed -n '1,240p' docs/reader-first/progress.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_z2UyVCwCys5jgw1Tr4qMPmR7:exec-60de4d2d-0e8f-415e-981f-4a4be0ef6c6b",
+              "process_id": "97340",
+              "turn_id": "01a0fd94-0e7b-7003-bdcf-090a18ad562c",
+              "started_at_ms": 1790960742710,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "pwd && sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md && sed -n '1,220p' README.md && sed -n '1,240p' docs/reader-first/README.md && sed -n '1,240p' docs/reader-first/progress.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/2032a777-4e7e-4afe-b323-55427c094f6b",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "pwd && sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md && sed -n '1,220p' README.md && sed -n '1,240p' docs/reader-first/README.md && sed -n '1,240p' docs/reader-first/progress.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_z2UyVCwCys5jgw1Tr4qMPmR7:exec-60de4d2d-0e8f-415e-981f-4a4be0ef6c6b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_z2UyVCwCys5jgw1Tr4qMPmR7:exec-60de4d2d-0e8f-415e-981f-4a4be0ef6c6b",
+            "status": "failed",
+            "outputDigest": "fe8b3543cccf02acd481d9c0726f303211fd4d9b057fd3b598bbcad3f7910430"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Jzr0OFo97SmGtzXHTppTYO7P:exec-43ed9344-b87b-4305-bcf0-6d019c20e7e0",
+            "title": "Read README.md, Read README.md, Read progress.md, List /Users/bytedance/Desktop/Projects/lejunyang/omem",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Jzr0OFo97SmGtzXHTppTYO7P:exec-43ed9344-b87b-4305-bcf0-6d019c20e7e0",
+              "process_id": "43813",
+              "turn_id": "01a0fd94-0e7b-7003-bdcf-090a18ad562c",
+              "started_at_ms": 1790960752240,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,220p' README.md; sed -n '1,240p' docs/reader-first/README.md; sed -n '1,260p' docs/reader-first/progress.md; rg --files ."
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' README.md",
+                  "name": "README.md",
+                  "path": "README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' docs/reader-first/README.md",
+                  "name": "README.md",
+                  "path": "docs/reader-first/README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' docs/reader-first/progress.md",
+                  "name": "progress.md",
+                  "path": "docs/reader-first/progress.md"
+                },
+                {
+                  "type": "list_files",
+                  "cmd": "rg --files .",
+                  "path": "."
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Jzr0OFo97SmGtzXHTppTYO7P:exec-43ed9344-b87b-4305-bcf0-6d019c20e7e0",
+            "status": "completed",
+            "outputDigest": "d0a8f7ef72f3d4cbade4f48fcd9a3a4e91e0097a2067fb8b459b4d21ebe9089d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_KpNY3Xr1tT3asLngMKHgmOsL:exec-72050a1e-5dcd-4155-979a-46ffeefa9a48",
+            "title": "List /Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/2032a777-4e7e-4afe-b323-55427c094f6b, Read catalog.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_KpNY3Xr1tT3asLngMKHgmOsL:exec-72050a1e-5dcd-4155-979a-46ffeefa9a48",
+              "process_id": "84245",
+              "turn_id": "01a0fd94-0e7b-7003-bdcf-090a18ad562c",
+              "started_at_ms": 1790960759822,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "find . -maxdepth 3 -type f -print; sed -n '1,260p' catalog.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/2032a777-4e7e-4afe-b323-55427c094f6b",
+              "parsed_cmd": [
+                {
+                  "type": "list_files",
+                  "cmd": "find . -maxdepth 3 -type f -print",
+                  "path": "."
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_KpNY3Xr1tT3asLngMKHgmOsL:exec-72050a1e-5dcd-4155-979a-46ffeefa9a48",
+            "status": "completed",
+            "outputDigest": "de3fbed616a2b231c1818b1d3724492f9e915f09a35e54b456408437103049f5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_qLIIV2PEwQTa06OJRtxdHzTz:exec-76d1f9ea-a9d3-43e6-b728-4321e4c836d8",
+            "title": "ls -la; ls -la originals originals/docs originals/docs/reader-first 2>&1; nl -ba originals/docs/reader-first/writing.md 2>&1; nl -ba /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/writing.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_qLIIV2PEwQTa06OJRtxdHzTz:exec-76d1f9ea-a9d3-43e6-b728-4321e4c836d8",
+              "process_id": "27185",
+              "turn_id": "01a0fd94-0e7b-7003-bdcf-090a18ad562c",
+              "started_at_ms": 1790960768131,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "ls -la; ls -la originals originals/docs originals/docs/reader-first 2>&1; nl -ba originals/docs/reader-first/writing.md 2>&1; nl -ba /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/writing.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/2032a777-4e7e-4afe-b323-55427c094f6b",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "ls -la; ls -la originals originals/docs originals/docs/reader-first 2>&1; nl -ba originals/docs/reader-first/writing.md 2>&1; nl -ba /Users/bytedance/Desktop/Projects/lejunyang/omem/docs/reader-first/writing.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_qLIIV2PEwQTa06OJRtxdHzTz:exec-76d1f9ea-a9d3-43e6-b728-4321e4c836d8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_qLIIV2PEwQTa06OJRtxdHzTz:exec-76d1f9ea-a9d3-43e6-b728-4321e4c836d8",
+            "status": "completed",
+            "outputDigest": "7b0d53530ffa46d1740c06fd177cd80c48e420eb1a8f6597588a1d1e2b972ea6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_yefR8v8y3A1UjAbthIwrOBPu:exec-fab2e184-060b-44e7-830b-4ff3b34cc571",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:docs/reader-first/writing.md",
+                "startLine": 1,
+                "endLine": 37
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:docs/reader-first/writing.md",
+              "startLine": 1,
+              "endLine": 37
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_yefR8v8y3A1UjAbthIwrOBPu:exec-68bfa421-ee75-401f-ab63-987a237cd838",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "引用证据 阅读检查 视觉 操作 真浏览器 trail dialog",
+                "keys": [
+                  "omem:docs/reader-first/writing.md"
+                ],
+                "kind": "document",
+                "limit": 10,
+                "purpose": "concept"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_yefR8v8y3A1UjAbthIwrOBPu:exec-6802afb0-d2b0-4687-8209-76a55fe67baf",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "页面模板 入门教程 概念解释 功能机制 设计决策 修改排障 参考",
+                "keys": [
+                  "omem:docs/reader-first/writing.md"
+                ],
+                "kind": "document",
+                "limit": 10,
+                "purpose": "concept"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_yefR8v8y3A1UjAbthIwrOBPu:exec-fab2e184-060b-44e7-830b-4ff3b34cc571",
+            "status": "completed",
+            "outputDigest": "aa5f5727781d6214f2eb20db5f01bfba25fc7239621b869a9eb1a8b0f61f0f37"
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "引用证据 阅读检查 视觉 操作 真浏览器 trail dialog",
+              "keys": [
+                "omem:docs/reader-first/writing.md"
+              ],
+              "kind": "document",
+              "purpose": "concept",
+              "limit": 10
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "页面模板 入门教程 概念解释 功能机制 设计决策 修改排障 参考",
+              "keys": [
+                "omem:docs/reader-first/writing.md"
+              ],
+              "kind": "document",
+              "purpose": "concept",
+              "limit": 10
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_yefR8v8y3A1UjAbthIwrOBPu:exec-68bfa421-ee75-401f-ab63-987a237cd838",
+            "status": "completed",
+            "outputDigest": "0f2b6478aeca62e1a382bf15fb32d4262eb0f42ea4414e15899aa879a991e57c"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_yefR8v8y3A1UjAbthIwrOBPu:exec-6802afb0-d2b0-4687-8209-76a55fe67baf",
+            "status": "completed",
+            "outputDigest": "0e8ee74868fe0e0e8c321d4d899bec4e50e85274269eb7fad390a122b0fd23d2"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_4bOTCth8jNadH4dKTqxRNaD3:exec-a80bc040-b3d3-4b91-adad-30aa7c4a642a",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:docs/reader-first/writing.md"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_4bOTCth8jNadH4dKTqxRNaD3:exec-a80bc040-b3d3-4b91-adad-30aa7c4a642a",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  }
+}

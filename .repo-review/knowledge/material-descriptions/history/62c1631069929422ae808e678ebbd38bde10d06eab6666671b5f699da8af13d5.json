@@ -1,0 +1,576 @@
+{
+  "version": 1,
+  "key": "omem:docs/reader-first/assistant-search-research.md",
+  "digest": "1ac6fa21856526afc00411dac5e1a9bacf38318b2228278f34fbbcf2048da412",
+  "description": {
+    "role": "research",
+    "status": "historical",
+    "summary": "一份带日期的助手与知识检索调研：记录改造前链路、冻结语料上的六题只读实验及其噪声，并把父节补读、检索表示、材料 metadata、分阶段重排和按缺口自主调查等成熟思路映射到 omem 的候选改造入口。它可用于理解问题成因和设计取舍，但其中基线缺口、人工诊断与接入建议不能当成当前已实现能力。",
+    "topics": [
+      "助手自主调查",
+      "知识检索",
+      "冻结语料实验",
+      "父章节补读",
+      "检索表示",
+      "材料 metadata",
+      "混合检索与重排",
+      "Web 搜索问答",
+      "历史引用",
+      "实现入口与验证"
+    ],
+    "scope": "2026-10-02 对 omem 改造起点的调研；实验使用 2026-10-02 19:41 的冻结语料快照（68677fa）和执行时代码 fed27f3，并提出面向检索、助手与 Web 的后续接入建议。",
+    "validFrom": null,
+    "validUntil": null,
+    "concepts": [
+      {
+        "label": "调研目的、主要结论与能力边界",
+        "aliases": [
+          "检索调研概览",
+          "为什么需要继续补读",
+          "答案与实际命中"
+        ],
+        "startLine": 1,
+        "endLine": 5
+      },
+      {
+        "label": "改造前保存、检索、知识调查、普通助手与 Web 搜索基线",
+        "aliases": [
+          "旧检索链路",
+          "改造起点",
+          "一次补查限制",
+          "RetrievalPort"
+        ],
+        "startLine": 7,
+        "endLine": 20
+      },
+      {
+        "label": "冻结语料实验条件、人工诊断边界与原始结果入口",
+        "aliases": [
+          "六题检索实验",
+          "只读检索快照",
+          "人工拆词诊断",
+          "检索实验限制"
+        ],
+        "startLine": 22,
+        "endLine": 32
+      },
+      {
+        "label": "长问句遗漏精确代码符号及继续读取下游方法的需要",
+        "aliases": [
+          "MemoryService.apply",
+          "精确符号查找",
+          "代码入口补读",
+          "下游方法"
+        ],
+        "startLine": 34,
+        "endLine": 44
+      },
+      {
+        "label": "旧记忆更新问题中从小段命中补读完整章节",
+        "aliases": [
+          "旧记忆重核验",
+          "invalidated",
+          "父章节补读",
+          "来源变化"
+        ],
+        "startLine": 46,
+        "endLine": 56
+      },
+      {
+        "label": "近似词噪声、历史版本语义入口与材料角色",
+        "aliases": [
+          "旧稿",
+          "固定历史引用",
+          "无关代码命中",
+          "材料角色"
+        ],
+        "startLine": 58,
+        "endLine": 80
+      },
+      {
+        "label": "父块、递归引用与相邻窗口的接入方式",
+        "aliases": [
+          "父块检索",
+          "递归引用",
+          "相邻窗口",
+          "固定 section"
+        ],
+        "startLine": 84,
+        "endLine": 90
+      },
+      {
+        "label": "概念、背景、别称和可回答问题作为可重建检索表示",
+        "aliases": [
+          "多种检索表示",
+          "术语别称",
+          "Contextual Retrieval",
+          "检索钩子"
+        ],
+        "startLine": 92,
+        "endLine": 98
+      },
+      {
+        "label": "主题、内容角色、时间有效性 metadata 的用途与限制",
+        "aliases": [
+          "材料分类",
+          "内容角色",
+          "有效时间",
+          "可纠正元数据"
+        ],
+        "startLine": 100,
+        "endLine": 114
+      },
+      {
+        "label": "词法、精确符号、语义候选和重排的分阶段检索方案",
+        "aliases": [
+          "混合检索",
+          "锚点去重",
+          "cross-encoder",
+          "RetrievalPort 适配器"
+        ],
+        "startLine": 116,
+        "endLine": 122
+      },
+      {
+        "label": "按问题缺口自主调查，而非固定研究流水线",
+        "aliases": [
+          "自主检索",
+          "按需调查",
+          "Traex 工具循环",
+          "缺口驱动补读"
+        ],
+        "startLine": 124,
+        "endLine": 139
+      },
+      {
+        "label": "Web 同页展示原始命中、综合答案与只读咨询边界",
+        "aliases": [
+          "搜索综合回答",
+          "答案与材料",
+          "继续追问",
+          "只读咨询"
+        ],
+        "startLine": 141,
+        "endLine": 149
+      },
+      {
+        "label": "检索、助手、Web、记忆链路的候选改造文件与真实验证",
+        "aliases": [
+          "改造入口",
+          "验证方式",
+          "实现文件",
+          "交付顺序"
+        ],
+        "startLine": 151,
+        "endLine": 164
+      }
+    ],
+    "basis": "第3行自述为 2026-10-02 的独立调研、只读实验和改造建议；第9行明确基线缺口已发生变化，不能视为当前状态。第24—32行限定冻结语料、代码版本、人工诊断和页面验证边界；第82—164行主要比较外部方法并提出接入与验证建议，且多次说明不能据此宣称组件已安装、方案已验收或能力已实现。"
+  },
+  "generation": {
+    "at": "2026-10-02T16:34:24.430Z",
+    "trace": {
+      "runId": "d9077f18-5454-40a9-b286-87fa41e19ddd",
+      "roleId": "material-cataloger",
+      "roleVersion": "1",
+      "bundleHash": "d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e",
+      "promptHash": "aab6ce4cf94df4d93633e4850f7bb55bae241d3b48b5acc574a24b7a1ff79a2c",
+      "contextHash": "e7ec5f609fdc42e2d1bccf0d8acb4879bf2447164360bef6f1f6cade0aa08b12",
+      "skillHash": "17f1adb7fd8d9ede9fe29a82196c041c5546511545129451d08561d35796126b",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "3a2d5ae32257f6ac4af29ef15bb207898a39b84677c6b0ae27297a7845a454d3",
+      "outputSchema": "MaterialDescriptions.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-cataloger",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a0fd76-3a7f-7bd1-9d2f-74c61344ef0d"
+      ],
+      "usage": {
+        "used": 46854,
+        "size": 258400,
+        "cost": null,
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_TA8Ui9WfqH4vQaklIqspaDV0:exec-89572299-b3fa-40a9-aea5-a540576b8f9c",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_TA8Ui9WfqH4vQaklIqspaDV0:exec-89572299-b3fa-40a9-aea5-a540576b8f9c",
+              "process_id": "50878",
+              "turn_id": "01a0fd76-3dbc-7a60-ae80-36841d54d7a3",
+              "started_at_ms": 1790958790848,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/d9077f18-5454-40a9-b286-87fa41e19ddd",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-material-cataloger/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_TA8Ui9WfqH4vQaklIqspaDV0:exec-89572299-b3fa-40a9-aea5-a540576b8f9c",
+            "status": "completed",
+            "outputDigest": "1ae0f1a0c70524f3c20bd60a328dd3dc30591efb807c57b0f93ef82dc5e5c83b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_g76hdF7G6iKpyJIZhbUyXBA4:exec-01a811c0-ecdf-42ec-835f-2c2f78a715ac",
+            "title": "pwd; rg --files -g 'catalog.json' -g 'README.md' -g 'progress.md' -g 'assistant-search-research.md' -g 'originals/**' | sed -n '1,160p'",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_g76hdF7G6iKpyJIZhbUyXBA4:exec-01a811c0-ecdf-42ec-835f-2c2f78a715ac",
+              "process_id": "18955",
+              "turn_id": "01a0fd76-3dbc-7a60-ae80-36841d54d7a3",
+              "started_at_ms": 1790958803868,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "pwd; rg --files -g 'catalog.json' -g 'README.md' -g 'progress.md' -g 'assistant-search-research.md' -g 'originals/**' | sed -n '1,160p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/d9077f18-5454-40a9-b286-87fa41e19ddd",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "pwd; rg --files -g 'catalog.json' -g 'README.md' -g 'progress.md' -g 'assistant-search-research.md' -g 'originals/**' | sed -n '1,160p'"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_g76hdF7G6iKpyJIZhbUyXBA4:exec-01a811c0-ecdf-42ec-835f-2c2f78a715ac"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_g76hdF7G6iKpyJIZhbUyXBA4:exec-01a811c0-ecdf-42ec-835f-2c2f78a715ac",
+            "status": "completed",
+            "outputDigest": "e777ff94b6082e742128e9676e8a1d0a732d2522b862e020dfcb419350fa94dd"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ARsc4BfSygPGd2CSqpFMvJ60:exec-b3b24286-25f0-492c-b5ed-fe5a00319c26",
+            "title": "git rev-parse --show-toplevel; sed -n '1,240p' catalog.json; nl -ba originals/docs/reader-first/assistant-search-research.md | sed -n '1,220p'",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_ARsc4BfSygPGd2CSqpFMvJ60:exec-b3b24286-25f0-492c-b5ed-fe5a00319c26",
+              "process_id": "53962",
+              "turn_id": "01a0fd76-3dbc-7a60-ae80-36841d54d7a3",
+              "started_at_ms": 1790958812692,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "git rev-parse --show-toplevel; sed -n '1,240p' catalog.json; nl -ba originals/docs/reader-first/assistant-search-research.md | sed -n '1,220p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/d9077f18-5454-40a9-b286-87fa41e19ddd",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "git rev-parse --show-toplevel; sed -n '1,240p' catalog.json; nl -ba originals/docs/reader-first/assistant-search-research.md | sed -n '1,220p'"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ARsc4BfSygPGd2CSqpFMvJ60:exec-b3b24286-25f0-492c-b5ed-fe5a00319c26"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ARsc4BfSygPGd2CSqpFMvJ60:exec-b3b24286-25f0-492c-b5ed-fe5a00319c26"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ARsc4BfSygPGd2CSqpFMvJ60:exec-b3b24286-25f0-492c-b5ed-fe5a00319c26"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ARsc4BfSygPGd2CSqpFMvJ60:exec-b3b24286-25f0-492c-b5ed-fe5a00319c26",
+            "status": "completed",
+            "outputDigest": "472ddbf3ccf2502ebf595ac6cf236f7334a34f28e3854e3182f69d71482f11ad"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_CNlnFk2C2PqEjqybtQu6BPQK:exec-9d60cf3c-14e3-4b30-8577-e07352f03571",
+            "title": "Read README.md, Read README.md, Read progress.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_CNlnFk2C2PqEjqybtQu6BPQK:exec-9d60cf3c-14e3-4b30-8577-e07352f03571",
+              "process_id": "79343",
+              "turn_id": "01a0fd76-3dbc-7a60-ae80-36841d54d7a3",
+              "started_at_ms": 1790958823665,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,220p' README.md; sed -n '1,240p' docs/reader-first/README.md; sed -n '1,240p' docs/reader-first/progress.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' README.md",
+                  "name": "README.md",
+                  "path": "README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' docs/reader-first/README.md",
+                  "name": "README.md",
+                  "path": "docs/reader-first/README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' docs/reader-first/progress.md",
+                  "name": "progress.md",
+                  "path": "docs/reader-first/progress.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_CNlnFk2C2PqEjqybtQu6BPQK:exec-9d60cf3c-14e3-4b30-8577-e07352f03571",
+            "status": "completed",
+            "outputDigest": "9522fe76e02df025d10e0633e01eaa13a41bffeb39eb49ac1fc39d2c5b5df334"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-70296211-50c9-41bb-a623-d3d8e77d3a47",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:docs/reader-first/assistant-search-research.md",
+                "startLine": 1,
+                "endLine": 165
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-ee1741be-54ae-44c5-bdff-cf8d2db0274b",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "父块 递归引用 多种检索表示 metadata 自主检索",
+                "keys": [
+                  "omem:docs/reader-first/assistant-search-research.md"
+                ],
+                "kind": "document",
+                "purpose": "concept",
+                "limit": 8
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:docs/reader-first/assistant-search-research.md",
+              "startLine": 1,
+              "endLine": 165
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-70296211-50c9-41bb-a623-d3d8e77d3a47",
+            "status": "completed",
+            "outputDigest": "7708b5331c942c9b3df8a3f8b61d5501984c7d6634cbc22e4253502c04a0d292"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-09a5b15f-494c-4ce8-80f1-98b7e922005a",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "具体改造入口 验证方式 搜索 API Capture memory tasks",
+                "keys": [
+                  "omem:docs/reader-first/assistant-search-research.md"
+                ],
+                "kind": "document",
+                "purpose": "implementation",
+                "limit": 6
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-322fc9cd-85c8-46f8-ac07-a4f5ad76e101",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "改造前实际链路 普通助手 补查 Web 搜索 基线",
+                "keys": [
+                  "omem:docs/reader-first/assistant-search-research.md"
+                ],
+                "kind": "document",
+                "purpose": "background",
+                "limit": 6
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "父块 递归引用 多种检索表示 metadata 自主检索",
+              "keys": [
+                "omem:docs/reader-first/assistant-search-research.md"
+              ],
+              "kind": "document",
+              "purpose": "concept",
+              "limit": 8
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "具体改造入口 验证方式 搜索 API Capture memory tasks",
+              "keys": [
+                "omem:docs/reader-first/assistant-search-research.md"
+              ],
+              "kind": "document",
+              "purpose": "implementation",
+              "limit": 6
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "改造前实际链路 普通助手 补查 Web 搜索 基线",
+              "keys": [
+                "omem:docs/reader-first/assistant-search-research.md"
+              ],
+              "kind": "document",
+              "purpose": "background",
+              "limit": 6
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-ee1741be-54ae-44c5-bdff-cf8d2db0274b",
+            "status": "completed",
+            "outputDigest": "b46d91f788f20484dd1816be5d0e11fd74889aa0b716328b216c5cb63300a2e9"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-09a5b15f-494c-4ce8-80f1-98b7e922005a",
+            "status": "completed",
+            "outputDigest": "bedf33f712122bd0caf74f3893efdf8dfac25c9ca033dbde19377486838a70e0"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_0VfJLVHqSBGDlWYJ38ZGn6AP:exec-322fc9cd-85c8-46f8-ac07-a4f5ad76e101",
+            "status": "completed",
+            "outputDigest": "b1db36b7beabd5ac1585af2c435fef2fbe458d873b735bd827e516a765ed97e1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_IW0LhHs7f4Ghk9a3P9vCRpvT:exec-01ac9c79-2165-4138-bb6b-9ab6fabdbad8",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:docs/reader-first/assistant-search-research.md"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_IW0LhHs7f4Ghk9a3P9vCRpvT:exec-01ac9c79-2165-4138-bb6b-9ab6fabdbad8",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  }
+}
