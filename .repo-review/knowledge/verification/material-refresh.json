@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-02T03:57:23.276Z",
+  "model": "gpt-5.6-sol",
+  "scope": "Only the changed implementation, using the shared native KnowledgePipeline; historical unselected notes are not claimed refreshed.",
+  "analysis": {
+    "total": 10,
+    "reused": 0,
+    "failures": [
+      {
+        "keys": [
+          "omem:apps/server/src/agents.ts"
+        ],
+        "error": "Error: Semantic review still requests changes: omem:apps/server/src/agents.ts"
+      }
+    ]
+  },
+  "targets": [
+    {
+      "path": "apps/server/src/agent-runtime/gateway.ts",
+      "key": "omem:apps/server/src/agent-runtime/gateway.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:34:34.539Z",
+      "reviewAt": "2026-10-02T03:36:21.473Z"
+    },
+    {
+      "path": "apps/server/src/agents.ts",
+      "key": "omem:apps/server/src/agents.ts",
+      "state": "stale",
+      "generationAt": "2026-10-01T02:04:44.921Z",
+      "reviewAt": "2026-10-01T02:05:00.974Z"
+    },
+    {
+      "path": "apps/server/src/knowledge/agent-research.ts",
+      "key": "omem:apps/server/src/knowledge/agent-research.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:33:51.884Z",
+      "reviewAt": "2026-10-02T03:35:42.612Z"
+    },
+    {
+      "path": "apps/server/src/knowledge/pipeline.ts",
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:40:41.508Z",
+      "reviewAt": "2026-10-02T03:42:58.411Z"
+    },
+    {
+      "path": "apps/server/src/knowledge/retrieval.ts",
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:42:37.690Z",
+      "reviewAt": "2026-10-02T03:44:35.772Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/keyword.ts",
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:45:28.750Z",
+      "reviewAt": "2026-10-02T03:47:02.592Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/ranking.ts",
+      "key": "omem:apps/server/src/retrieval/ranking.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:50:28.144Z",
+      "reviewAt": "2026-10-02T03:52:08.168Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/relevance.ts",
+      "key": "omem:apps/server/src/retrieval/relevance.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:53:01.201Z",
+      "reviewAt": "2026-10-02T03:55:01.505Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/reranker.ts",
+      "key": "omem:apps/server/src/retrieval/reranker.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:54:55.579Z",
+      "reviewAt": "2026-10-02T03:57:23.100Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/semantic.ts",
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "state": "current",
+      "generationAt": "2026-10-02T03:55:03.923Z",
+      "reviewAt": "2026-10-02T03:56:50.546Z"
+    }
+  ],
+  "readerRetry": {
+    "key": "omem:apps/server/src/agents.ts",
+    "method": "KnowledgePipeline.writePage with explicit reader goal and the same native research, writing and independent review",
+    "generationAt": "2026-10-02T04:06:33.945Z",
+    "reviewAt": "2026-10-02T04:08:35.168Z",
+    "verdict": "accepted",
+    "note": "The original analyze failure remains recorded above; this later reader-purpose generation was accepted."
+  }
+}
