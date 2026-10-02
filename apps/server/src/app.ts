@@ -79,7 +79,7 @@ export async function buildApp(
   });
   const retrievalService = createRetrieval(store.db, config.retrieval);
   const assistantRetrieval = development ? developmentRetrieval(store, retrievalService.retrieval) : retrievalService.retrieval;
-  registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined, retrieval: assistantRetrieval });
+  registerKnowledgeRoutes(app, { store, repository: development?.repository, prefix: "/api/knowledge", workspace: resolve(config.dataDir, "knowledge-agents"), profile: assistantProfile ?? undefined, retrievalConfig: config.retrieval, retrieval: assistantRetrieval });
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",
     memory,

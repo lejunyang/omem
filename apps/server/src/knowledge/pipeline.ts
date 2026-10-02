@@ -1,5 +1,6 @@
 import { MaterialResearch } from "./research.js";
 import { prepareAgentResearch } from "./agent-research.js";
+import type { RetrievalConfig } from "../retrieval/factory.js";
 import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
 import { knowledgeResearchSchema, type WikiPageBrief, knowledgeBatchSchema, knowledgePlanSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial, type KnowledgePlan } from "../../../../packages/contracts/src/knowledge.js";
@@ -25,7 +26,7 @@ export class KnowledgePipeline {
   private readonly running = new Set<DurableJobWorker>();
   private stopping = false;
   constructor(readonly repository: KnowledgeRepository, readonly gateway: RoleRuntimeGateway, readonly profile: AgentProfile,
-    readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; concurrency?: number; retryTag?: string; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
+    readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; retrievalConfig?: RetrievalConfig; concurrency?: number; retryTag?: string; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
 
   private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
 
@@ -84,7 +85,7 @@ export class KnowledgePipeline {
       [`knowledge:${role}`]: async (lease, signal) => {
         this.options.log?.(`AI ${role}: ${String(task.targetKeys ?? task.title ?? "catalog")}`);
         const run = await this.gateway.run({ roleId: role, profile: this.profile, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate,
-          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate }) } : {}),
+          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate, retrievalConfig:this.options.retrievalConfig }) } : {}),
           emit: (type, text) => { if (type === "status") this.options.log?.(text); } });
         const saved = this.repository.store.jobs.saveRoleOutput({ jobId: lease.id, leaseToken: lease.leaseToken,
           model: run.trace.effectiveModel, effort: run.trace.effectiveEffort, promptHash: run.trace.promptHash, skillHash: run.trace.skillHash, toolHash: run.trace.toolHash,

@@ -20,6 +20,9 @@ import type { NativeResearchEnvironment } from "../agent-runtime/gateway.js";
 import { stableDigest } from "../storage/digest.js";
 import { SemanticRetrieval } from "../retrieval/semantic.js";
 import { loadChineseEmbedding } from "../retrieval/embedding.js";
+import { loadChineseReranker } from "../retrieval/reranker.js";
+import { KeywordRetrieval } from "../retrieval/keyword.js";
+import type { RetrievalConfig } from "../retrieval/factory.js";
 import { queryTerms, relevance, bestSnippet } from "../retrieval/relevance.js";
 import { materialSections, fragmentPositions } from "./structure.js";
 import { parseFile } from "../code/parse.js";
@@ -51,6 +54,7 @@ export async function prepareAgentResearch(input: {
   workspace: string;
   schema: z.ZodType;
   validate: (output: unknown) => unknown;
+  retrievalConfig?: RetrievalConfig;
 }): Promise<NativeResearchEnvironment> {
   const { workspace, repository } = input;
   const originals = join(workspace, "originals");
@@ -131,9 +135,8 @@ export async function prepareAgentResearch(input: {
     `VACUUM INTO '${databaseFile.replaceAll("'", "''")}'`,
   );
   const db = new DatabaseSync(databaseFile, { readOnly: true });
-  const retrieval = new SemanticRetrieval(db, () =>
-    loadChineseEmbedding("memory-zh", process.cwd()),
-  );
+  const config = input.retrievalConfig ?? {enabled:true,osdkModel:"memory-zh"};
+  const retrieval = config.enabled ? new SemanticRetrieval(db, () => loadChineseEmbedding(config.osdkModel,process.cwd()), config.reranker ? ()=>loadChineseReranker(config.reranker,process.cwd()) : undefined) : new KeywordRetrieval(db);
   let ready: Promise<unknown> | undefined;
   const fragments = new Map(
     input.materials.flatMap((m) =>
@@ -302,7 +305,7 @@ export async function prepareAgentResearch(input: {
         limit: z.number().int().min(1).max(50).default(10),
       },
       async ({ query, keys, kind, limit }) => {
-        ready ??= retrieval
+        ready ??= retrieval instanceof SemanticRetrieval ? retrieval
           .indexBatch(0)
           .catch((error) =>
             record({
@@ -310,7 +313,7 @@ export async function prepareAgentResearch(input: {
               state: "lexical-only",
               reason: String(error),
             }),
-          );
+          ) : Promise.resolve();
         await ready;
         const visible = (id: string) => {
           const f = fragments.get(id);
@@ -320,11 +323,12 @@ export async function prepareAgentResearch(input: {
             (kind === "all" || (kind === "code") === codeFile(f.material))
           );
         };
-        const hits = await retrieval.searchSourcesAsync({
+        const queryInput = {
           text: query,
           limit,
           visible,
-        });
+        };
+        const hits = await (retrieval instanceof SemanticRetrieval ? retrieval.searchSourcesAsync(queryInput) : retrieval.searchSources(queryInput));
         for (const hit of hits)
           reads.add(fragments.get(hit.fragmentId)!.material.key);
         return {
@@ -718,7 +722,7 @@ export async function prepareAgentResearch(input: {
     close: async () => {
       http.closeAllConnections();
       await new Promise<void>((r) => http.close(() => r()));
-      await retrieval.close();
+      if(retrieval instanceof SemanticRetrieval)await retrieval.close();
       db.close();
     },
   };

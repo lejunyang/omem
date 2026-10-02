@@ -89,7 +89,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   let lastCodeSync: Awaited<ReturnType<typeof code.sync>> | null = null;
   const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
   const P = REVIEW_API_PREFIX;
-  registerKnowledgeRoutes(app, { store, retrieval, prefix: P + "/knowledge", workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"), repository: createReviewKnowledgeRepository(store),
+  registerKnowledgeRoutes(app, { store, retrieval, retrievalConfig: deps.retrievalConfig, prefix: P + "/knowledge", workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"), repository: createReviewKnowledgeRepository(store),
     profile: deps.codeUnderstandingModel?.transport === "acp" ? profileSchema.parse({ id: "traex", name: "Knowledge", transport: "acp", command: deps.codeUnderstandingModel.command, args: deps.codeUnderstandingModel.args ?? [], model: deps.codeUnderstandingModel.model, effort: deps.codeUnderstandingModel.effort, timeoutMs: deps.codeUnderstandingModel.timeoutMs }) : undefined,
     budget: deps.codeUnderstandingModel, onAnswer: () => saveReviewAnswerMaterials(store, repoRoot), onPublish: article => publishReviewArticle(repoRoot, article) });
 

@@ -11,8 +11,8 @@ omem 的目标是让个人材料被读懂、找回并用于行动。文档、代
 | 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |
 | --- | --- | --- | --- |
 | 材料完整、可读 | Capture、原文版本、Markdown/AST 阅读结构 | 空行片段和字符窗口缺少结构背景，多模态解析较浅 | store、knowledge/structure、retrieval |
-| 找到相关内容 | FTS5、中文短词、BGE、RRF/MMR、知识和记忆导航 | 宽泛短词、派生 JSON 匹配、无关引用扩散、重复融合 | retrieval/keyword、semantic、knowledge/retrieval |
-| 看懂陌生系统 | 页面目的、案例、研究/写作/复核角色 | 调查受固定轮次与宿主组织限制；材料说明仍可能只复述职责 | knowledge/pipeline、agent-runtime、agents |
+| 找到相关内容 | FTS5、中文短词、BGE、RRF/MMR、知识和记忆导航 | 本轮已修候选扩散与重复融合；复杂问法仍缺结构语义与时效，重排对照未证明可默认开启 | retrieval/keyword、semantic、knowledge/retrieval |
+| 看懂陌生系统 | 页面目的、案例、研究/写作/复核角色 | 本轮已接原生自主调查；复杂文章的可理解性仍需真实读者验收 | knowledge/pipeline、agent-runtime、agents |
 | 理解代码含义 | 符号、导入、候选调用和设计关联 | AST 结构不能解释业务因果、设计动机和完整功能链 | 原生读文件/搜索、MCP 代码导航、背景材料 |
 | 记住并主动使用 | claim/episode/procedure/task、重核验、提醒 | 缺少项目/人物/主题整合、事件时间与价值选择 | learning、memory、assistant |
 

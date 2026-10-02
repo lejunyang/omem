@@ -39,13 +39,13 @@ describe("P0: RetrievalPort project handling", () => {
   it("ranks complete Chinese concepts above generic words and does not expand a title into every fragment", () => {
     const store = setup();
     for (const [id, title, text] of [
-      ["answer", "材料处理", "导入文档后，生成知识文章前先调查相关背景，再按阅读目的写作。"],
-      ["noise", "导入文档生成知识文章", "这里介绍按钮颜色与菜单间距。"],
-      ["generic", "其他", "文档可以包含多种格式。"],
+      ["answer", "相册整理", "导入旅行照片后，生成相册前先按地点整理照片，再选择封面。"],
+      ["noise", "导入旅行照片生成相册", "这里介绍按钮颜色与菜单间距。"],
+      ["generic", "其他", "照片可以包含多种格式。"],
     ]) store.capture(captureSchema.parse({source:"manual",externalId:id,title,parts:[{type:"text",text}]}));
-    const hits = new KeywordRetrieval(store.db).searchSources({text:"导入文档后怎么生成知识文章？",limit:10});
+    const hits = new KeywordRetrieval(store.db).searchSources({text:"导入旅行照片后怎么生成相册？",limit:10});
     expect(hits).toHaveLength(1);
-    expect(hits[0]!.snippet).toContain("先调查");
+    expect(hits[0]!.snippet).toContain("按地点");
   });
   it("conversationId/application are context carriers, never a trusted project filter", () => {
     const store = setup();

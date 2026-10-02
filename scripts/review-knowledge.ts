@@ -1,3 +1,4 @@
+import { readRetrievalConfig } from "../apps/server/src/retrieval/factory.js";
 import { reviewMaterialHref } from "../apps/server/src/review/knowledge.js";
 import { taskFlag, taskTargets } from "./task-args.js";
 import { restoreReviewKnowledge, writeReviewKnowledgeIndex } from "../apps/server/src/review/knowledge.js";
@@ -34,7 +35,7 @@ const runtime = join(root, ".repo-review/runtime");
 const stage = join(runtime, "knowledge-staging"), assets = join(root, ".repo-review/knowledge/articles");
 mkdirSync(stage, { recursive: true }); mkdirSync(assets, { recursive: true });
 const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, "knowledge-agents"), new RuntimeRequestRepository(store.db)), profile,
-  { concurrency, retryTag: taskFlag("retry") ? new Date().toISOString() : undefined, budget: config, log: m => console.log(new Date().toISOString(), m), onPublish: a => {
+  { retrievalConfig: readRetrievalConfig(join(root, "config/retrieval.json")), concurrency, retryTag: taskFlag("retry") ? new Date().toISOString() : undefined, budget: config, log: m => console.log(new Date().toISOString(), m), onPublish: a => {
     writeKnowledgeArticle(stage, a, reviewMaterialHref);
     for (const ext of ["json", "md"]) copyFileSync(join(stage, `${digest(a.document.key)}.${ext}`), join(assets, `${digest(a.document.key)}.${ext}`));
   } });

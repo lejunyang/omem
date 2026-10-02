@@ -46,3 +46,19 @@ it("missing optional weights preserve lexical search and report a degraded index
     expect((await retrieval.searchSourcesAsync({text:"circuit"}))[0]?.snippet).toContain("circuit");
   } finally { await retrieval.close(); store.close(); rmSync(dir,{recursive:true,force:true}); }
 });
+
+it("optional pair ranking chooses the useful passage without reintroducing hidden candidates", async () => {
+  const dir=mkdtempSync(join(tmpdir(),"omem-pair-ranking-")),store=new Store(dir);
+  const retrieved:string[]=[];
+  const retrieval=new SemanticRetrieval(store.db,async()=>{throw Error("unused embedding");},async()=>({id:"pair-fixture",close:async()=>{},score:async(_q,passages)=>{retrieved.push(...passages);return passages.map(p=>p.includes("渡轮")?.9:.1);}}));
+  try {
+    const put=(id:string,text:string)=>store.capture(captureSchema.parse({source:"manual",externalId:id,title:id,parts:[{type:"text",text}]})).revision.fragments[0]!.id;
+    const useful=put("trip","海边度假需乘渡轮到岛上，船票提前一天预订。");
+    put("noise","海边度假图片的按钮颜色可以调整。");
+    const hidden=put("private","海边度假需乘渡轮，私人行程内容。");
+    const hits=await retrieval.searchSourcesAsync({text:"海边度假 交通",visible:id=>id!==hidden});
+    expect(hits[0]?.id).toBe(useful);
+    expect(hits[0]?.routes).toContain("cross-encoder");
+    expect(retrieved.join("\n")).not.toContain("私人行程");
+  } finally {await retrieval.close();store.close();rmSync(dir,{recursive:true,force:true});}
+});
