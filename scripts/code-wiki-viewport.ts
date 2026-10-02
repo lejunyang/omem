@@ -97,8 +97,8 @@ try {
     await expect(page.locator(".om-nav .source-link")).toHaveCount(0);
     await page.getByLabel("查找原始材料").fill("README.md");
     await page.locator(".source-link").filter({ has: page.locator("span", { hasText: /^README\.md$/ }) }).click();
-    await expect(page.locator(".reader .md-body h1")).toBeVisible();
-    expect(await page.locator(".reader .md-body pre code").count()).toBeGreaterThan(0);
+    await expect(page.locator(".reader .md-body h1")).toHaveText("omem");
+    await expect(page.locator(".reader .md-body pre code").first()).toBeVisible();
     await expect(page.locator(".reader")).not.toContainText("片段 1");
     await page.getByRole("button", { name: "知识库", exact: true }).click();
     await page.getByLabel("查找章节", { exact: true }).fill("");
@@ -111,7 +111,7 @@ try {
     expect(await page.locator(".change-comparison .added,.change-comparison .removed").count()).toBeGreaterThan(0);
     await page.screenshot({ path: `${OUT}/changes-1440.png`, fullPage: true });
     await page.getByRole("button", { name: "材料处理", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "材料处理", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "材料处理", exact: true })).toBeVisible();
     await expect(page.locator(".learning-page")).not.toContainText("学习任务");
     await page.getByRole("button", { name: "知识库", exact: true }).click();
   });
