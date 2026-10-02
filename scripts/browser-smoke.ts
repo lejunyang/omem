@@ -463,11 +463,22 @@ try {
       page.getByRole("heading", { name: "新增待办：补充回滚验证记录" }),
     ).toBeVisible();
   });
-  await check("daily assistant uses the persistent conversation API without a selected fragment", async () => {
+  await check("daily assistant submits through native MCP and persists its conversation", async () => {
     await page.getByRole("button", { name: "日常助理", exact: true }).click();
     await page.getByLabel("发给日常助理").fill("今天有什么需要跟进的事项？");
+    const turnResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST" &&
+      /\/assistant\/conversations\/[^/]+\/turns$/.test(new URL(response.url()).pathname),
+    );
     await page.getByRole("button", { name: "发送消息", exact: true }).click();
     await expect(page.getByText("日常消息已读取；当前没有需要变更的事项。", { exact: true })).toBeVisible({ timeout: 20000 });
+    const result = await (await turnResponse).json();
+    expect(result.degraded).toBe(false);
+    expect(result.turn.inputMessageRefs.status).toBe("done");
+    expect(result.createdTaskIds).toEqual([]);
+    const research = result.turn.toolActions.find((action: { tool: string }) => action.tool === "research");
+    expect(research.trace.tools).toContain("submit_result");
+    expect(research.trace.model).toBe("alpha"); // Deterministic fixture, not a native model acceptance.
     await page.getByRole("button", { name: "原始材料", exact: true }).click();
     await page.getByRole("button", { name: "日常助理", exact: true }).click();
     await expect(page.getByText("今天有什么需要跟进的事项？", { exact: true })).toBeVisible();
