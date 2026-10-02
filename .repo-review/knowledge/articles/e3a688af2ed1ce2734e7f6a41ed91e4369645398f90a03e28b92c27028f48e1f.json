@@ -3,7 +3,7 @@
   "document": {
     "key": "guide:overview",
     "title": "先认识 omem：把材料变成能找回的工作记忆",
-    "summary": "以“保存项目约定、找回其中的决定、跟进一次评审”为贯穿示例，说明 omem 如何把原始材料、知识文章、个人记忆与事项连接成从保存、理解到行动的个人工作流程，并区分当前可用能力与尚未实现的主动能力。",
+    "summary": "用一份项目协作约定贯穿保存、找回、理解与跟进流程，说明原始材料、知识文章、个人记忆和事项各自解决什么问题，以及当前能力的边界。",
     "category": "产品与使用入门",
     "topicPath": [
       "软件开发",
@@ -11,59 +11,72 @@
     ],
     "sections": [
       {
-        "key": "start-with-one-agreement",
-        "title": "从一份项目约定开始",
-        "body": "假设你刚收到一份“支付服务评审约定”，其中写着：“所有接口变更必须由两名维护者评审。”几周后，你需要确认这项决定，并等待张三完成一次评审。omem 要解决的正是这种日常断层：材料当时保存了，后来却难以找回上下文，也没有自然地连接到下一步行动。它把文档、代码、聊天、图片和个人经历放进同一个工作记忆中；代码会获得专门的结构定位，但不会被拆成另一套知识产品。参考 [[c1]]\n\n本地开始使用时，运行 `osdk install`、`osdk deps --frozen` 和 `osdk run dev`，再打开终端给出的 Web 地址。开发模式会载入仓库材料和已经发布的知识，同时保留个人数据；启动本身不会自动整理整个知识库。正式运行也从界面的“输入材料”开始。参考 [[c2]]"
+        "key": "why",
+        "title": "从一个容易遗忘的决定开始",
+        "body": "**教学示例：**你把《项目协作约定》保存进 omem，其中写着“合并前需完成评审”。几周后，你忘了这条决定为何存在；找到原文后，又想在明天上午 9 点检查小李是否回复。\n\nomem 要解决的不是“再找一个地方存文件”，而是让文档、代码、聊天、图片和个人经历进入同一个工作记忆：之后既能回到原文，也能读到围绕问题组织的讲解，还能把下一步变成可跟进的事项。代码会多一层结构定位，但不会另建一套知识产品。参考 [[c1]]\n\n界面把日常助理、知识库、原始材料、输入材料、事项、通知等入口放在同一个个人空间中，因此这个例子可以沿着“保存 → 找回 → 理解 → 行动”走完，而不必先学习数据库或内部模型。参考 [[c2]]"
       },
       {
-        "key": "save-and-return",
-        "title": "保存原件，留下以后能返回的出处",
-        "body": "进入“输入材料”，选择“文本＋图片＋链接”，把标题填写为“支付服务评审约定”，将约定正文粘贴进去，然后点击“保存材料与证据”。同一入口还允许附带链接或图片；飞书文档、指定 Git 文件和允许范围内的服务器文本文件则有各自的导入入口。参考 [[c3]]\n\n保存后，在“原始材料”中按标题找到它。页面会显示保存时间、当前或历史版本，并允许打开固定原文和版本历史。因此，将来搜索到“双人评审”时，你不仅能看到一句摘要，还能回到当时保存的约定。参考 [[c4]]\n\n这里的重点是**先保留原件，再在其上建立理解**。原件、用于搜索的片段和面向读者的讲解承担不同职责；整理出来的解释可以帮助检索和理解，却不会因此变成第二份独立事实。参考 [[c5]]"
+        "key": "start",
+        "title": "先保存约定，再确认它可被找回",
+        "body": "本地开始使用时，依次运行 `osdk install`、`osdk deps --frozen` 和 `osdk run dev`，再打开终端显示的 Web 地址。启动只载入已有材料与知识，不会自动替你生成整库文章；正式运行也从“输入材料”开始，并需要已安装、已登录的 Agent CLI。参考 [[c3]]\n\n进入**输入材料**，为示例填写标题《项目协作约定》，粘贴正文并保存。网页也支持附带链接和一张图片，或从飞书文档、指定 Git 文件、允许目录中的服务器文本文件导入；Git 方式只读指定版本，不会拉取仓库或运行脚本。参考 [[c4]]\n\n保存后，到**原始材料**打开它。页面会显示当前版本、固定片段和版本历史。若以后用相同来源标识保存了不同内容，系统会新增版本并保留旧版；内容没有变化时则复用已有版本。这样，未来看到“规则已修改”时，仍能回看当初那段文字。参考 [[c5]]"
       },
       {
-        "key": "four-kinds",
-        "title": "材料、知识、记忆与事项有什么不同",
-        "body": "沿用这个例子，可以把四类内容理解为：\n\n| 类型 | 在示例中是什么 | 主要作用 |\n| --- | --- | --- |\n| 原始材料 | “支付服务评审约定”的固定版本 | 保留原文、版本与出处 |\n| 知识文章 | “接口变更为什么要双人评审，提交前检查什么” | 围绕问题组织多份材料，帮助读懂 |\n| 个人记忆 | 以后能够找回并用于回答的“该项目要求接口变更经双人评审” | 维护当前事实、偏好和经验，并连接后续使用 |\n| 事项 | “等待张三的评审回复，明天上午九点检查” | 推动需要完成、等待或提醒的行动 |\n\n个人记忆并不是把原文复制一遍。目标流程是从原始记录逐步形成经历、当前事实、偏好与经验，再汇成对人物、项目和主题的持续理解；目前已有来源变化后的重核验基础，但周期整合、事件时间检索和自动跟进仍属于后续能力。参考 [[c6]]\n\n事项也不能由材料中的一句话自动推断出来。约定里出现“需要评审”，只说明规则；只有你明确说“帮我跟进这次评审”，才构成要记录或修改的行动。讨论材料、他人的承诺和本人明确交办需要分开处理。参考 [[c7]]"
+        "key": "four-things",
+        "title": "同一份约定会产生四种不同东西",
+        "body": "这四类对象刻意分开，因为它们回答的问题不同：\n\n| 对象 | 示例 | 回答什么 |\n| --- | --- | --- |\n| **原始材料** | 《项目协作约定》及其版本 | 当时到底写了什么、来自哪里 |\n| **知识文章** | 《为什么合并前要评审》 | 怎样把多份材料组织成可读解释 |\n| **个人记忆** | “这个项目要求合并前评审” | 以后回答时可以复用什么 |\n| **事项** | “明早检查小李的评审回复” | 下一步做什么、何时再看 |\n\n原始材料负责保真；检索片段和讲解页面按各自用途组织，派生讲解可以帮助理解，却不是第二份独立事实。参考 [[c6]]\n\n知识文章需要你明确选择相关文档、代码或记录，再填写主题、读者和想弄懂的问题；系统调查、撰写并复核后，才会把文章放进知识库。参考 [[c7]]\n\n个人记忆则来自另一条受治理的处理链。启用自动处理和可用 Agent 后，系统才会提炼并核验候选；可靠结果可生效，需要选择的内容进入“待判断”。即使自动处理未启用，原文仍然可以阅读和检索。参考 [[c8]]\n\n事项也不是材料里出现一句“要评审”就自动创建。讨论、转述和他人的承诺不等于你的交办；只有你明确要求记录或修改事项，系统才应执行动作。参考 [[c9]]"
       },
       {
-        "key": "find-and-understand",
-        "title": "找回决定，再把原句变成可理解的知识",
-        "body": "几周后，你可以在顶部搜索“支付接口 双人评审”。搜索会结合原文、代码名称和已有知识；启用中文语义索引时，它也会参与召回。结果提供“查看固定片段”的入口；若没有结果，页面会建议改用原文关键词或先导入材料。参考 [[c8]]\n\n如果只想确认约定原句，打开固定片段即可。如果想知道“为什么这样约定、改接口时该检查什么”，可以进入知识库的“全部分类”，点击“整理文章”，选择约定及相关材料，并填写主题、阅读对象和想弄懂的问题。系统会进行调查、写作和独立复核，成功后发布为文章；材料在生成期间变化会阻止旧结果发布，失败也不会覆盖已有正文。参考 [[c9]]\n\n还可以在原始材料中选择某一段，使用“和记忆一起思考”继续追问。回答保存后仍可重新打开本次提供的依据，但界面明确提示：目前不会自动逐条核验回答中每个主张是否都受到材料支持。因此，重要决定仍应回看原文，而不是只依赖生成回答。参考 [[c10]]"
+        "key": "retrieve",
+        "title": "找回决定，并在需要时整理成解释",
+        "body": "几周后，在顶部搜索输入“合并前 评审”。搜索会结合原文、代码名称和已有知识；若已启用中文语义索引，它也会参与。结果可以直接打开固定原文片段，因此你能先确认“当时怎么写”，再决定是否需要更完整的解释。参考 [[c10]]\n\n若仅找回原句还不够，进入**知识库**，点击“整理文章”，选择《项目协作约定》以及相关设计说明或代码，填写“为什么合并前要评审、团队怎样执行”，并注明写给谁看。当前 Agent 配置可用时，系统会调查、写作、复核。参考 [[c11]] 发布前还会重新比较文章记录的依赖摘要与当前材料；若材料在生成期间发生变化，旧选材不会被悄悄当作当前版本发布。参考 [[c22]]\n\n这里要保留一个现实预期：统一搜索入口已经可用，但复杂自然语言问题的相关性、完整意图路由和跨文件功能链仍有限。搜到结果不等于最佳答案一定排在第一位；必要时应换成原文关键词，或打开命中的上下文继续阅读。参考 [[c12]]"
       },
       {
-        "key": "follow-up-review",
-        "title": "把评审变成可持续跟进的事项",
-        "body": "确认“双人评审”约定后，在“日常助理”中明确输入：**“帮我跟进张三对支付接口变更的评审回复，明天上午 9 点提醒我检查。”** 日常会话会保留消息、处理状态和结果；如果处理失败或等待重试，消息不会消失，可以再次尝试。参考 [[c11]]\n\n形成事项后，可以记录等待对象“张三的评审回复”和下次跟进时间。跟进时间与真正的截止时间分开：前者表示何时回来检查，后者表示事情何时必须完成。没有填写时间时，也可以只登记为等待。参考 [[c12]]\n\n到期提醒会进入通知中心。若张三尚未回复，可以修改跟进安排或暂缓提醒；收到回复后，需要由你将事项标为完成。事项页还支持重新打开、取消以及查看事项来源。系统目前不会自动联系张三，也不会因为通知被阅读就判断评审已经完成。参考 [[c13]]"
+        "key": "code",
+        "title": "代码与文档一起成为材料",
+        "body": "如果这条约定还对应自动检查脚本，可以把脚本和约定文档一起选进文章。对用户而言，代码仍是一种材料；区别只是系统会额外识别函数、导入和符号，帮助定位“定义在哪里、依赖在哪里”。业务原因仍需要结合同一条流程中的说明、配置、调用者和输入输出来理解。参考 [[c13]]\n\n当前结构分析适合单文件 TypeScript 与 Vue 定位，也能解析确定的相对导入；它不是完整类型分析或完整调用图，跨文件调用和跨版本符号续接仍有限。因此，代码知识适合与设计说明共同阅读，不应把结构候选误当成已经确认的业务关系。参考 [[c14]]"
       },
       {
-        "key": "code-and-other-materials",
-        "title": "代码与约定如何放在同一条理解链上",
-        "body": "代码在 omem 中仍是一种材料，只是多了 AST、符号等结构定位能力。例如，约定写着“失败请求最多重试三次”，你可以把约定文档和实现重试逻辑的代码一起选入文章，整理成“规则是什么、代码在哪里落实、修改时要检查什么”。文章生成和检索允许同一路径同时处理文档、代码和学习笔记，代码结构帮助定位定义，却不会取代业务背景和约定原文。参考 [[c14]]\n\n这意味着 omem 的目标不是建立一个孤立的代码百科，而是让代码和会议记录、设计说明、个人经验共同回答真实问题。不过，当前尚未完成完整的意图路由和跨文件功能链扩展，因此不能把结构定位理解为系统已经自动掌握整个项目的所有调用与设计关系。参考 [[c15]]"
+        "key": "follow-up",
+        "title": "把评审变成真正可跟进的事项",
+        "body": "确认约定后，可以到**日常助理**明确交办：\n\n> 帮我跟进小李的评审回复，明天上午 9 点提醒我检查。\n\n也可以在**事项与待办**中手工记录。事项能处于待推进、等待回复、已完成或已取消等状态；截止时间与下次跟进时间分开，适合表达“项目真正何时截止”和“我何时再检查”这两件事。参考 [[c15]]\n\n到约定时间，系统会产生站内通知，提醒你检查进展，并允许完成、稍后提醒或取消。它不会自动联系小李，也不会因为通知已读就把事项判为完成；是否收到回复、是否完成，仍需你确认。参考 [[c16]]"
       },
       {
-        "key": "current-boundaries",
-        "title": "现在能做什么，还不能期待什么",
-        "body": "当前已经具备一条基础但真实可用的链路：输入并保留固定版本、阅读原始材料、统一搜索、基于选定材料提问、整理知识文章、在来源变化后重核验记忆，以及创建、等待、改期、完成或取消事项并接收站内提醒。持续的项目、人物和主题理解仍在后续阶段；当前服务也是单用户实现，不具备团队隔离。参考 [[c16]]\n\n尚不能期待的能力包括：自动监听他人回复、周期回顾、日历或学习卡，以及对任意跨文件功能链的完整理解。飞书、远程访问、外部通知、全局 hooks 和屏幕监听也不是默认开启的能力，而是需要单独配置并明确范围的集成。换句话说，当前最合适的使用方式是由你明确保存材料、提出问题和交办事项，让系统负责保留出处、协助找回与持续记录，而不是把它当成已经能够自行观察并完成所有工作的全自动助理。参考 [[c17]]"
+        "key": "limits",
+        "title": "现在能做什么，哪些仍需人工",
+        "body": "目前可用的主链包括：统一保存多种材料并保留版本；让顶部搜索、知识检索与助手共用召回基础，检索全文、符号、记忆和知识；显式选材后整理文章；配置后台处理后提炼并重核验记忆；以及记录、等待、改期、完成、取消和站内提醒。参考 [[c17]]\n\n它还不是会自己接管工作的主动助理：不会自动监听评审对象的回复，不会主动联系对方，也没有周期回顾、日历或学习卡。参考 [[c18]]\n\n持续维护完整的项目、人物和主题理解，以及事件时间能力，仍属于后续阶段。复杂问题也尚无完整意图路由、跨文件功能链和回答完整性保障，因此搜到内容并不等于系统已经完整理解问题。参考 [[c20]] [[c21]]\n\n此外，当前服务以 SQLite 和共享令牌面向单用户；飞书、外部通知、全局钩子和屏幕监听都需要单独、明确地启用。把 omem 当作“保存有来处的信息、按问题找回并辅助行动”的个人工具最准确，不要把它理解成默认监控所有工作、自动替你做决定的团队系统。参考 [[c19]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "产品定位",
-        "reason": "支持 omem 将多种个人材料组织为可读、可找回、可行动的记忆，并说明代码仍共享同一知识库。",
+        "label": "产品目标",
+        "reason": "支持 omem 将多种材料组织成可读、可找回、可行动的记忆，并让代码共享同一知识库的定位。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:README.md",
-          "startLine": 3,
+          "startLine": 1,
           "endLine": 5
         },
-        "quote": "把文档、代码、聊天、图片与个人经历组织成能读懂、找回并用于行动的记忆。代码使用 AST 帮助定位，与其他材料共享同一个知识库。\n\n项目正在进行一次以阅读和实际问题为中心的重构。已有输入、检索、记忆、问答与事项基础；完整的高质量知识整理和主动助理仍在推进。当前能力与计划分开记录，测试通过不等于内容好用。"
+        "quote": "# omem\n\n把文档、代码、聊天、图片与个人经历组织成能读懂、找回并用于行动的记忆。代码使用 AST 帮助定位，与其他材料共享同一个知识库。\n\n项目正在进行一次以阅读和实际问题为中心的重构。已有输入、检索、记忆、问答与事项基础；完整的高质量知识整理和主动助理仍在推进。当前能力与计划分开记录，测试通过不等于内容好用。"
       },
       {
         "key": "c2",
-        "label": "启动与入口",
-        "reason": "支持本地启动步骤、开发模式的数据行为以及正式运行从输入材料开始。",
+        "label": "个人工作记忆入口",
+        "reason": "支持界面把材料、知识、助理、事项和通知等能力放在同一导航中的描述。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/App.vue",
+          "startLine": 40,
+          "endLine": 51
+        },
+        "quote": "const navigation = [\n  [\"daily\", \"spark\", \"日常助理\"], [\"knowledge\", \"book\", \"知识库\"],\n  [\"read\", \"layers\", \"原始材料\"], [\"capture\", \"plus\", \"输入材料\"],\n  [\"learning\", \"spark\", \"材料处理\"], [\"decisions\", \"check\", \"待判断\"],\n  [\"tasks\", \"check\", \"事项与待办\"], [\"changes\", \"clock\", \"变更历史\"],\n  [\"notifications\", \"spark\", \"通知中心\"], [\"lark\", \"layers\""
+      },
+      {
+        "key": "c3",
+        "label": "启动与使用入口",
+        "reason": "支持首次启动命令、Web 地址、不会自动生成整库知识以及 Agent CLI 前提。",
         "relation": "supports",
         "target": {
           "kind": "material",
@@ -74,9 +87,9 @@
         "quote": "## 开始使用\n\n```bash\nosdk install\nosdk deps --frozen\nosdk run dev\n```\n\n打开终端打印的 web 地址。默认 API / web 为 4317 / 5173，占用时自动选择空闲端口；可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定。开发模式在统一界面中载入本仓库材料和已发布知识，保留已有个人数据。启动不自动生成整库 Wiki；若已启用后台材料处理，待处理任务会继续使用对应 Agent。\n\n生产运行：`osdk run build`、`osdk run start`，默认 `http://127.0.0.1:4317`，从“输入材料”开始。需要已安装并登"
       },
       {
-        "key": "c3",
-        "label": "材料输入表单",
-        "reason": "支持文本、链接、图片及其他导入方式的用户操作和保存按钮。",
+        "key": "c4",
+        "label": "材料输入方式",
+        "reason": "支持文本、图片、链接、飞书、Git 和服务器文件等输入方式及 Git 只读行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -87,126 +100,139 @@
         "quote": "    <section v-else-if=\"view === 'capture'\" class=\"page\">\n      <span class=\"eyebrow\">记忆的起点</span>\n      <h1>输入材料</h1>\n      <p class=\"muted\">\n        群聊、屏幕观测、Agent 会话都可以按相同的多模态协议接入。\n      </p>\n      <div class=\"tabs\">\n        <OmButton\n          v-for=\"[id, label] in [\n            ['text', '文本＋图片＋链接'],\n            ['l"
       },
       {
-        "key": "c4",
-        "label": "原始材料阅读",
-        "reason": "支持按标题查找材料、查看当前或历史版本、打开固定原文及版本历史。",
+        "key": "c5",
+        "label": "材料版本保存",
+        "reason": "支持内容不变复用版本、内容变化创建新版本并保留历史的行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/App.vue",
-          "startLine": 556,
-          "endLine": 620
+          "key": "omem:apps/server/src/store.ts",
+          "startLine": 168,
+          "endLine": 208
         },
-        "quote": "    <section v-else-if=\"view === 'read'\" class=\"materials-layout\"><aside class=\"materials-directory\" aria-label=\"材料目录\">      <h4 class=\"nav-heading\">\n        材料目录 <small>{{ sources.length }}</small>\n      </h4>\n      <input v-model=\"sourceQuery\" aria-label=\"查找原始材料\" placeholder=\"查找原始材料\" class=\"source-filter\" />\n      <b"
+        "quote": "      let source = this.db\n        .prepare(\"SELECT * FROM sources WHERE namespace=? AND external_id=?\")\n        .get(input.source, input.externalId) as Row | undefined;\n      if (!source) {\n        source = { id: id(), head: null };\n        this.db\n          .prepare(\"INSERT INTO sources VALUES(?,?,?,?)\")\n          .r"
       },
       {
-        "key": "c5",
-        "label": "来源与讲解分工",
-        "reason": "解释原件、检索结构和知识页面为何采用不同组织单位，以及派生解释不构成独立事实。",
+        "key": "c6",
+        "label": "材料与讲解分工",
+        "reason": "支持原件、检索结构和围绕读者问题的讲解采用不同组织单位，派生内容不成为独立事实。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:docs/reader-first/architecture.md",
           "startLine": 5,
-          "endLine": 17
+          "endLine": 10
         },
-        "quote": "## 一个来源体系，多种用途\n\n原始材料进入 Capture，保留 Source 与 Revision。文本、图片、链接和上下文一起保存；代码是同一材料体系的专用解析，不建立独立知识库。\n\n保存单位、检索单位、讲解单位分开：原件保留历史；结构块按标题/列表/表格/函数/对话组织；页面围绕一个读者问题跨材料解释。派生内容能够引导检索和提供理解背景，但不成为第二份独立事实。\n\n## 问题驱动的知识生成\n\n选择材料与阅读目的 → 页面计划 → 按问题检索、读取与补充上下文 → 写解释 → 检查事实和页面目的 → 发布 → 按依赖增量更新。仓库只是输入之一。\n\n页面计划包含读者、页面类型、要回答的问题、阅读后能做什么、场景和调查入口。入口是"
-      },
-      {
-        "key": "c6",
-        "label": "记忆形成路径",
-        "reason": "支持个人记忆从记录、经历到当前事实和持续理解的目标流程，并界定尚未实现的后续能力。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/reader-first/architecture.md",
-          "startLine": 25,
-          "endLine": 27
-        },
-        "quote": "## 记忆与主动事项\n\n原始记录 → 经历 → 当前事实/偏好/经验 → 人物、项目、主题综合理解 → 行动。维护变化与来源，避免每轮问答从孤立事实重新拼凑。来源更新已有重核验可复用；周期整合、事件时间检索、自动回复跟进和学习卡另列后续阶段，不写成已实现。"
+        "quote": "## 一个来源体系，多种用途\n\n原始材料进入 Capture，保留 Source 与 Revision。文本、图片、链接和上下文一起保存；代码是同一材料体系的专用解析，不建立独立知识库。\n\n保存单位、检索单位、讲解单位分开：原件保留历史；结构块按标题/列表/表格/函数/对话组织；页面围绕一个读者问题跨材料解释。派生内容能够引导检索和提供理解背景，但不成为第二份独立事实。\n"
       },
       {
         "key": "c7",
-        "label": "交办与讨论边界",
-        "reason": "支持只有明确的本人交办才创建或修改事项，并区分讨论、他人承诺和等待跟进。",
-        "relation": "supports",
+        "label": "整理知识文章",
+        "reason": "支持用户先选材料，再填写主题、目标和读者，由系统围绕问题调查、撰写并复核。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/assistant/message-workflows.ts",
-          "startLine": 3,
-          "endLine": 7
+          "key": "omem:docs/reader-first/architecture.md",
+          "startLine": 11,
+          "endLine": 17
         },
-        "quote": "export const messageWorkflows = [\n  { id: \"direct_action\", title: \"随手交办\", trigger: \"本人明确要求记录或修改事项\", output: \"有来源的待办与实际操作回执\", instruction: \"Record explicit owner actions. Preserve the deliverable and original time phrase. Use existing task IDs for changes, never create a duplicate to reschedule.\" },\n  { id: \"discussion\""
+        "quote": "## 问题驱动的知识生成\n\n选择材料与阅读目的 → 页面计划 → 按问题检索、读取与补充上下文 → 写解释 → 检查事实和页面目的 → 发布 → 按依赖增量更新。仓库只是输入之一。\n\n页面计划包含读者、页面类型、要回答的问题、阅读后能做什么、场景和调查入口。入口是调查线索，不是固定文件清单；模型可以继续搜索、阅读调用者、类型、测试与设计文档。ACP 知识任务已经使用原生文件读取/搜索和 MCP 在已捕获快照中调查，独立复核也能补查；没有宿主 token 预算或研究轮数限制。当前 Traex 使用只读配置；不由模型直接写入事实或外部发送消息。保留运行记录，引用与识别到的实际读取进入依赖。\n\n分析记录可以内部复用；不要求先把所有文件写成"
       },
       {
         "key": "c8",
-        "label": "统一搜索界面",
-        "reason": "支持搜索结合原文、代码名称、已有知识和可选语义索引，并能打开固定片段。",
+        "label": "记忆处理条件",
+        "reason": "支持记忆候选需后台提炼和核验、未启用自动处理时原文仍可用的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/LearningView.vue",
+          "startLine": 81,
+          "endLine": 88
+        },
+        "quote": "<template>\n  <section class=\"page learning-page\">\n    <span class=\"eyebrow\">从原始材料提炼可用记忆</span>\n    <h1>材料处理</h1>\n    <p class=\"muted\">保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入记忆，需要你判断的内容进入“待判断”。语言学习与记忆卡复习尚未接入。当前最多显示 200 条，优先展示运行中、需处理和已有结果的任务。</p>\n    <p role=\"status\">{{ processing.running ? '后台处理服务已启动' : processin"
+      },
+      {
+        "key": "c9",
+        "label": "明确交办规则",
+        "reason": "支持讨论和他人承诺不会自动成为用户事项，只有明确要求才执行记录或修改。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/assistant/message-workflows.ts",
+          "startLine": 1,
+          "endLine": 8
+        },
+        "quote": "/** Versioned daily-message recipes share the existing assistant/tool contract.\n * These are processing policies, never authority granted by captured messages. */\nexport const messageWorkflows = [\n  { id: \"direct_action\", title: \"随手交办\", trigger: \"本人明确要求记录或修改事项\", output: \"有来源的待办与实际操作回执\", instruction: \"Record explicit ow"
+      },
+      {
+        "key": "c10",
+        "label": "统一搜索结果",
+        "reason": "支持搜索结合原文、代码名称、已有知识和可选中文语义索引，并可打开固定片段。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/web/src/App.vue",
           "startLine": 539,
-          "endLine": 554
+          "endLine": 555
         },
         "quote": "    <section v-if=\"query.trim()\" class=\"page\" :aria-busy=\"searching\">\n      <h1>搜索“{{ query }}”</h1>\n      <p class=\"muted\">结合原文、代码名称与已有知识查找。已启用的中文语义索引也会参与召回。</p>\n      <p v-if=\"searching\" class=\"search-loading\" role=\"status\"><span class=\"search-spinner\" aria-hidden=\"true\" />正在搜索相关材料…</p>\n      <p v-else-if=\"searchErro"
       },
       {
-        "key": "c9",
-        "label": "从材料整理文章",
-        "reason": "支持用户选择材料和阅读问题后经历调查、写作、复核与发布，以及材料变化和失败时的保护行为。",
-        "relation": "explains",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/reader-first/operations.md",
-          "startLine": 27,
-          "endLine": 31
-        },
-        "quote": "## 从普通材料整理文章\n\n打开知识库的“全部分类”，展开“从材料整理文章”，选择相关原始材料，填写主题、阅读对象和想弄懂的问题。使用当前 Agent 配置，经历调查、写作和独立复核，完成后可直接阅读。分类由内容建议；在某一分类里发起时沿用该位置。固定材料在生成期间变化会阻止旧结果发布。失败显示原因，旧正文不被失败结果覆盖。\n\n`config/wiki-pages.json` 是本仓库的实验选题数据，不是所有知识库必须使用的模板。分类和新文章存入个人数据目录；人工编写的跨领域验收输入放在隔离 runtime，不能冒充用户真实笔记。"
-      },
-      {
-        "key": "c10",
-        "label": "依据明确的追问",
-        "reason": "支持从选定片段提问、保存回答、重新打开依据，并说明回答主张尚未逐条自动核验。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/web/src/ChatPane.vue",
-          "startLine": 81,
-          "endLine": 145
-        },
-        "quote": "<template>\n  <section class=\"chat\">\n    <header>\n      <OmIcon name=\"spark\" />\n      <div><b>和记忆一起思考</b><small>Agent CLI / ACP · 真实接入</small></div>\n    </header>\n    <div ref=\"scroll\" class=\"chat-content\">\n      <div v-if=\"focus\" class=\"focus-box\">\n        <small>本次固定证据</small>\n        <p>{{ focus.text }}</p>\n        <"
-      },
-      {
         "key": "c11",
-        "label": "日常助理会话",
-        "reason": "支持直接交办评审跟进、保留处理状态以及对失败消息进行重试。",
+        "label": "文章生成条件",
+        "reason": "支持文章生成需要 Agent、明确阅读目标和固定选材，并启动调查写作流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/DailyAssistant.vue",
-          "startLine": 49,
-          "endLine": 70
+          "key": "omem:apps/server/src/knowledge/api.ts",
+          "startLine": 133,
+          "endLine": 147
         },
-        "quote": "  <section class=\"page daily-assistant\">\n    <span class=\"eyebrow\">记下、找回、持续跟进</span><h1>日常助理</h1>\n    <p class=\"muted\">直接交办、回顾事项或查找记忆。等待与跟进时间会保存，完成和取消以实际操作结果为准。</p>\n    <OmDisclosure title=\"可以怎样使用\">\n      <p v-for=\"item in workflows\" :key=\"item.id\"><b>{{ item.title }}</b>：{{ item.trigger }}，整理为{{ item.output }}。</p>\n  "
+        "quote": "  app.post<{ Body: { brief: unknown; revisionIds: string[] } }>(prefix + \"/pages\", async (req, reply) => {\n    if (!input.profile) return reply.code(503).send({ error: \"请先在能力与连接中配置 Agent\" });\n    if (running) return reply.code(409).send({ error: \"知识整理正在进行\" });\n    const parsed = wikiPageBriefSchema.safeParse(req.body?."
       },
       {
         "key": "c12",
-        "label": "跟进时间设置",
-        "reason": "支持记录等待对象和下次跟进时间，并说明跟进时间不改变截止时间、不会自动联系对方。",
-        "relation": "implements",
+        "label": "检索当前限制",
+        "reason": "支持统一搜索已实现首片，但完整意图路由、跨文件功能链和复杂相关性仍有限。",
+        "relation": "tracks",
         "target": {
           "kind": "material",
-          "key": "omem:apps/web/src/TaskFollowUpControls.vue",
-          "startLine": 25,
-          "endLine": 35
+          "key": "omem:docs/reader-first/progress.md",
+          "startLine": 5,
+          "endLine": 20
         },
-        "quote": "  <div v-if=\"task.status === 'open' || task.status === 'waiting'\">\n    <OmButton variant=\"ghost\" :aria-expanded=\"expanded\" @click=\"expanded = !expanded\">跟进设置</OmButton>\n    <form v-if=\"expanded\" class=\"form\" @submit.prevent=\"command('wait')\">\n      <label>等待对象或结果<input v-model=\"waitingOn\" placeholder=\"例如：张三的评审回复\" /></l"
+        "quote": "## 2026-10-02：检索候选降噪\n\n已用 ICU 中文词分割替换全句相邻双字；短字面查找保留完整词。词法候选先检查正文概念覆盖，标题只允许打开有限入口。知识回溯只匹配正文章节；记忆别名与文章标题仍能回到原文。只做一次词法/向量融合，向量尾部有分数和相对门槛，标识符不存在时返回空。知识页面排序复用正文相关性并保留实际检索分数。\n\n检查通过：本轮锁定依赖、完整类型/363 项测试/构建退出 0。真实 BGE 中文四类同义问题、可选重排器的实际权重及不存在标识符验证通过；实际库前后结果保留 runtime/research。已增加文档频率加权、完全重复摘要合并与按来源分组。中文 BGE cross-encoder 已经 osdk "
       },
       {
         "key": "c13",
-        "label": "事项状态与来源",
-        "reason": "支持事项的等待、提醒、完成、重新打开及查看来源等可见操作。",
+        "label": "代码材料的作用",
+        "reason": "支持 AST 用于结构定位，而业务意义仍需结合调用者、配置、测试和设计说明调查。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/current-system.md",
+          "startLine": 34,
+          "endLine": 40
+        },
+        "quote": "## 代码理解\n\n`code/parse.ts` 使用 TypeScript 单文件语法树与 Vue SFC 脚本，不是完整 Program/TypeChecker。相对 import 能定位；calls 仍有单文件名称级 candidate；跨 revision 身份续接有限。显式设计/测试关联来自 associations.json，结构候选不是已确认业务关系。\n\nAST 回答“定义在哪里、有哪些结构”，业务意义需要调查调用者、类型、配置、测试、设计记录及输入输出。一条真实功能链通常跨页面、请求入口、保存、任务、模型和展示。不能按文件各写几百字，再期待目录汇总自动解释因果。\n\n仓库原材料说明路径仍会补几个 import 文件前 "
+      },
+      {
+        "key": "c14",
+        "label": "代码结构边界",
+        "reason": "支持当前代码解析针对单文件 TypeScript 与 Vue、可定位相对导入且调用和跨版本续接有限。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/current-system.md",
+          "startLine": 34,
+          "endLine": 38
+        },
+        "quote": "## 代码理解\n\n`code/parse.ts` 使用 TypeScript 单文件语法树与 Vue SFC 脚本，不是完整 Program/TypeChecker。相对 import 能定位；calls 仍有单文件名称级 candidate；跨 revision 身份续接有限。显式设计/测试关联来自 associations.json，结构候选不是已确认业务关系。\n\nAST 回答“定义在哪里、有哪些结构”，业务意义需要调查调用者、类型、配置、测试、设计记录及输入输出。一条真实功能链通常跨页面、请求入口、保存、任务、模型和展示。不能按文件各写几百字，再期待目录汇总自动解释因果。"
+      },
+      {
+        "key": "c15",
+        "label": "事项与跟进设置",
+        "reason": "支持事项状态、截止时间与跟进时间分开，以及手工记录待办的用户流程。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -217,56 +243,95 @@
         "quote": "    <section v-else-if=\"view === 'tasks'\" class=\"page\">\n      <span class=\"eyebrow\">从工作中记下要推进的事</span>\n      <h1>需求与待办</h1>\n      <p class=\"muted\">\n        可在助手中交办、改期、登记等待或稍后跟进。截止时间与跟进时间分开，提醒进入通知中心；完成或取消后停止提醒。\n      </p>\n      <form class=\"form\" @submit.prevent=\"createTask\">\n        <label\n          >事项<input\n         "
       },
       {
-        "key": "c14",
-        "label": "跨材料知识整理",
-        "reason": "支持同一知识流程同时使用文档、代码和学习笔记，并保留代码 AST 定位。",
-        "relation": "supports",
+        "key": "c16",
+        "label": "站内跟进提醒",
+        "reason": "支持到期或跟进时只产生站内检查提醒，不自动联系他人。",
+        "relation": "implements",
         "target": {
           "kind": "material",
-          "key": "omem:docs/reader-first/general-knowledge.md",
-          "startLine": 11,
-          "endLine": 16
+          "key": "omem:apps/server/src/tasks/follow-up.ts",
+          "startLine": 17,
+          "endLine": 49
         },
-        "quote": "- 调查搜索对明确范围内的材料一视同仁；代码 AST 定位仍保留。来源移除与固定旧版本是生命周期事实，与内容“历史价值”分开。\n- 正式文章合同保存人读的 `topicPath`，分类可有多层，领域名称不设软件工程白名单。API、SQLite 保存、恢复、搜索、目录使用同一数据。\n- 引用不作为父子目录；没有分类的文章就是未分类，不安排专门的旧版区域。\n- 页面可选材料、填写阅读目标，通过 `/api/knowledge/pages` 调查、写作、独立复核和发布；同一路径接受文档、代码、学习笔记等。范围选择保存在文章 reading 数据中。\n- 分类内查找先限定文章和相关材料；一个文章只占一个结果，附最佳命中章节。顶部搜索区分等待"
+        "quote": "/** Called inside Store's transaction. No model, outbound messages or new daemon.\n * A receipt is committed together with its notification, so offline catch-up and\n * repeated polling cannot replay the same task version/occurrence. */\nexport function dispatchTaskReminders(db: DatabaseSync, instant: string) {\n  const ta"
       },
       {
-        "key": "c15",
-        "label": "检索能力边界",
-        "reason": "支持统一召回基础已经存在，同时完整意图路由和跨文件功能链仍待实现。",
+        "key": "c17",
+        "label": "统一召回基础",
+        "reason": "支持全文、符号、记忆和知识可参与检索，以及顶部搜索、知识检索与助手共用召回基础。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:README.md",
-          "startLine": 31,
+          "startLine": 27,
           "endLine": 42
         },
-        "quote": "检索已有全文、中文短词、符号、记忆和知识路径，可选本地 BGE-small-zh-v1.5。安装中文向量模型：\n\n```bash\nosdk model sync memory-zh\nosdk model verify memory-zh --json\n```\n\n原文、检索片段与讲解章节是不同用途，不应该以同一种切分组织阅读。顶部搜索、知识检索与助手已共用召回基础；助手补读原始章节与相邻上下文。完整意图路由和跨文件功能链扩展仍待实现。\n\nWiki 按读者问题调查、讲解：页面计划规定阅读目标和真实案例，模型在已捕获材料中搜索、补读，撰写后由独立角色复核。运行 `osdk run review:guides` 生成五篇入门指南（实际调用 "
+        "quote": "## 当前基础\n\n原始材料按来源保存固定版本，知识和代码引用可以回看当时原文。模型运行通过可配置 CLI/ACP；仓库生成使用 `config/review-code-model.json` 的 traex ACP / gpt-5.6-sol。生成与独立复核的实际产物在 `.repo-review/knowledge`，运行数据在 `.repo-review/runtime`。\n\n检索已有全文、中文短词、符号、记忆和知识路径，可选本地 BGE-small-zh-v1.5。安装中文向量模型：\n\n```bash\nosdk model sync memory-zh\nosdk model verify memory-zh --json\n``"
       },
       {
-        "key": "c16",
-        "label": "当前实施进度",
-        "reason": "支持统一搜索、知识页面、记忆重核验和事项提醒等当前基础，并说明持续理解仍属后续且当前为单用户实现。",
-        "relation": "tracks",
-        "target": {
-          "kind": "material",
-          "key": "omem:docs/reader-first/progress.md",
-          "startLine": 5,
-          "endLine": 16
-        },
-        "quote": "| 阶段 | 状态 | 交付与验收 |\n| --- | --- | --- |\n| 文档基线 | 已完成 | 归档旧方案和历史记录，更新 README、AGENTS、视觉约定 |\n| 统一搜索与上下文 | 首片已实现 | 顶部搜索共用混合召回；知识搜索结合原文命中排序；助手补原始章节标题与相邻片段。尚未有完整意图路由和跨文件功能链扩展 |\n| 问题驱动的 Wiki | 首片已实现 | 五篇页面计划；模型请求搜索与按行补读；写作与独立复核。模型内容与可读性结果见本轮验收记录，不以协议测试代替 |\n| 阅读界面 | 继续修正 | 改为持久分类驱动的目录，取消固定概览和旧版分组；补顶部搜索状态；分类文章列表与两步整理弹窗已重设计，桌面/窄"
-      },
-      {
-        "key": "c17",
-        "label": "运行与主动能力限制",
-        "reason": "支持单用户运行范围、外部集成需明确启用，以及自动监听回复、周期回顾等能力尚未实现。",
+        "key": "c18",
+        "label": "主动提醒边界",
+        "reason": "支持没有自动监听回复、周期回顾、日历或学习卡，且通知已读不等于事项完成。",
         "relation": "supports",
         "target": {
           "kind": "material",
           "key": "omem:docs/reader-first/operations.md",
-          "startLine": 19,
+          "startLine": 23,
           "endLine": 25
         },
-        "quote": "## 数据与连接\n\n个人数据库、资产与临时输出在 .omem/，可用 OMEM_DATA_DIR 覆盖。隔离仓库运行数据在 .repo-review/runtime/。保留旧引用依赖的历史，不删除 .repo-review/data/ 等既有档案。原件、会话、密钥、数据库与模型权重不提交 Git。\n\n当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书需单独启用、授权和配对；OMEM_SECRET_KEY 是加密 App Secret 的本地主密钥，不能入 Git。外部通知、全局 hooks"
+        "quote": "当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书需单独启用、授权和配对；OMEM_SECRET_KEY 是加密 App Secret 的本地主密钥，不能入 Git。外部通知、全局 hooks 与屏幕监听需要独立明确范围。\n\n日常消息支持交办、等待、改期、完成、取消与站内到期提醒；没有自动监听对方回复、周期回顾、日历或学习卡。通知已读不等于事项完成。"
+      },
+      {
+        "key": "c19",
+        "label": "单用户与显式连接",
+        "reason": "支持当前是单用户服务，外部通知、飞书与屏幕监听等需要独立明确启用。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:README.md",
+          "startLine": 55,
+          "endLine": 55
+        },
+        "quote": "个人数据在 `.omem/`。配置使用 `omem.local.json` 或 `OMEM_CONFIG`，不要提交真实会话、原件、数据库、密钥或模型权重。当前是单用户服务；飞书、外部通知和屏幕监听都是独立的显式集成。"
+      },
+      {
+        "key": "c20",
+        "label": "持续理解进度",
+        "reason": "支持项目、人物、主题整合和事件时间能力仍处于后续阶段。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/progress.md",
+          "startLine": 20,
+          "endLine": 24
+        },
+        "quote": "| 统一搜索与上下文 | 首片已实现 | 顶部搜索共用混合召回；知识搜索结合原文命中排序；助手补原始章节标题与相邻片段。尚未有完整意图路由和跨文件功能链扩展 |\n| 问题驱动的 Wiki | 首片已实现 | 五篇页面计划；模型请求搜索与按行补读；写作与独立复核。模型内容与可读性结果见本轮验收记录，不以协议测试代替 |\n| 阅读界面 | 继续修正 | 改为持久分类驱动的目录，取消固定概览和旧版分组；补顶部搜索状态；分类文章列表与两步整理弹窗已重设计，桌面/窄屏分别验证 |\n| 持续记忆理解 | 后续 | 项目/人物/主题整合、重要性、事件时间、主动使用；对照成熟组件 |\n| 学习与更广接入 | 后续 | 英语卡片、周期回顾、更多解析器"
+      },
+      {
+        "key": "c21",
+        "label": "复杂回答边界",
+        "reason": "支持完整意图路由、跨文件功能链和回答完整性检查仍然缺失。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/current-system.md",
+          "startLine": 30,
+          "endLine": 30
+        },
+        "quote": "`assistant/runtime.ts` 检索后补结构上下文，模型可提出有限改写再检索。当前仍缺完整意图路由、跨文件功能链、业务时间/as-of 和对回答完整性的可靠检查。长期会话有历史预算和用户纠正，但不是持续维护的项目理解。"
+      },
+      {
+        "key": "c22",
+        "label": "发布前依赖校验",
+        "reason": "直接支持发布阶段重新比较材料和文章依赖摘要，输入变化时拒绝发布旧结果。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/repository.ts",
+          "startLine": 122,
+          "endLine": 126
+        },
+        "quote": "  publish(artifact: KnowledgeArtifact) {\n    const materials = new Map(this.materials().map(m => [m.key, m]));\n    const articles = new Map(this.list().map(a => [a.document.key, a]));\n    if (artifact.dependencies.some(d => d.kind === \"material\" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revisio"
       }
     ],
     "questions": []
@@ -279,13 +344,43 @@
     },
     {
       "kind": "material",
-      "key": "omem:docs/reader-first/operations.md",
-      "digest": "dbfe0d70cc01e95c96f6a20a3d844c8351e5dc3af504e2b781cbe1068cc0a911"
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "62487eb3bfa49e9d31e02401600962e338cbd06b2c664dda516f731bca34e4cb"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/app.ts",
-      "digest": "e9560fb02af4b1a93872afb41e5395f1870ff9a93ec89a6b278147ebe7d076a1"
+      "key": "omem:apps/server/src/assistant/message-workflows.ts",
+      "digest": "1de3a26cceae1263b44f8c385de992841d6ba8bf892161dc002c84e5a582fbcc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "770504ecd25bca96794747bd325f2ac796a9a46fa387a0d48fbc88cfbc847fa5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "3b1b311a2d95870427f73e40d4591b67ac7bf8333e4f860f267e5a74f040e59e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/repository.ts",
+      "digest": "a268f9c53ef5d785a64c749368dbcbc7c04c587f58b685fcaf5ee2f5aaa45fa1"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "222f17c851155ae25feb7f1cf58323eacdaeaea81fb8d76a875a37852c315125"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "4ef7ead848af2b0bf6c46c24154f04ae77d173d6d8d3ba64ba43483606eba425"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/tasks/follow-up.ts",
+      "digest": "fe302c00da83aeedb899217de53ce743b5625e1077919f01232ffa042549cfc9"
     },
     {
       "kind": "material",
@@ -294,33 +389,18 @@
     },
     {
       "kind": "material",
-      "key": "omem:docs/reader-first/README.md",
-      "digest": "e26488ab5eb49a441d6393fa08c9fdd3b9e697cb31102b0ba0322d366b7aae8c"
+      "key": "omem:apps/web/src/ChangeHistory.vue",
+      "digest": "7511f0b3e028fc418947e457379e2246190fcbe19673398bf8743d2842289151"
     },
     {
       "kind": "material",
-      "key": "omem:docs/reader-first/progress.md",
-      "digest": "b3cfb831712e8d6d4c64dbcdabd88bcac7fe9a805d736538aaaddbb8e26de339"
+      "key": "omem:apps/web/src/LearningView.vue",
+      "digest": "bcdfdbb93b3d846d08eea0627ae5c61be8f792ce2465879045d97726dfc9e3a0"
     },
     {
       "kind": "material",
-      "key": "omem:docs/reader-first/general-knowledge.md",
-      "digest": "40f8cd22a8011c758867ea9e995131291aa94c84bd458c1fa89cf287d9f9ab4e"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/reader-first/architecture.md",
-      "digest": "8ad40c90ba725fcd95d7f38cd95e9b83569a98eec747cb25220be596b3377496"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/reader-first/review.md",
-      "digest": "2aa549f44335f5ca9f2911a883b4736c8c5a53233c96537db671d79e5b7fe6a1"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/DailyAssistant.vue",
-      "digest": "67fc0b6008f5853851bb64a832d353a9990acf7d121dc656c8f0d76c29d4cec7"
+      "key": "omem:apps/web/src/NotificationDetail.vue",
+      "digest": "2864d078d31af9d0c3704163e142cd8b8c2a69fa29627c9524b6b88343599998"
     },
     {
       "kind": "material",
@@ -329,38 +409,78 @@
     },
     {
       "kind": "material",
-      "key": "omem:apps/web/src/ChatPane.vue",
-      "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-      "digest": "84d9475a5aac95f5d9071467bc1fbb1d68e5338d4e87d084546b6c6c66a926d4"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-      "digest": "8e72e3d1a2927e9365fe8d47fcf8a766f1faf1e8c0830a21d793ee80878d64af"
-    },
-    {
-      "kind": "material",
-      "key": "omem:docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
-      "digest": "a135b0a1e151a239d620849c2f21ae5824011cde3ca66fe239b3034b3dcb3f31"
-    },
-    {
-      "kind": "material",
-      "key": "omem:AGENTS.md",
-      "digest": "2c35e95af43dacd46961cfdc18468b434e0e91d0d5c38a4effa0ede0bca637af"
-    },
-    {
-      "kind": "material",
       "key": "omem:config/wiki-pages.json",
-      "digest": "c38e4b5bc85b25eb76a5784404e1d3dca4006b4905d408db95ae2742f28d5f9c"
+      "digest": "be51bfc614e726acbfa7877b729e0355b70bb31ab0aab09f284a1ae0df52dd1d"
     },
     {
       "kind": "material",
-      "key": "omem:apps/server/src/assistant/message-workflows.ts",
-      "digest": "1de3a26cceae1263b44f8c385de992841d6ba8bf892161dc002c84e5a582fbcc"
+      "key": "omem:docs/archive/2026-10-01-baseline/AGENTS.md",
+      "digest": "49aa263bb8ec8696624ab5aa8517acb497c9f14a37b7624a1bd0bf7bb9891da7"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/archive/2026-10-01-baseline/PROJECT-README.md",
+      "digest": "99072ccdaf5e50d51aafcdb71ee970c1ee9ae4b42a95b49e587d173a3665f0c4"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/archive/2026-10-01-baseline/implementation/daily-follow-up.md",
+      "digest": "5f4f5581231fa576bba66bead0955d404b8a5549117774473f433dacd74a5918"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/archive/2026-10-01-baseline/implementation/knowledge-pipeline.md",
+      "digest": "72eb0ff141966856fd61f078a2c13ccce34981f89058c7630e1115c4786fef5f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/README.md",
+      "digest": "e9dc4be346a44ee65237fd4054bb945419625558238412f6eb6487035033beaf"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/agent-research.md",
+      "digest": "8e3b97927bd7b0525da02435cc5a67db1c4070bacc9a988ce2b4409a07cb816a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/architecture.md",
+      "digest": "ce8286f26e43b231a814ecabacd6ad8a5daf10e22d2dc2321dd8ec8dafe47607"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/current-system.md",
+      "digest": "7e50c2d4a1131491ae73e1715c5342fc273449f689ebeb02420684b23874f0ef"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/general-knowledge.md",
+      "digest": "40f8cd22a8011c758867ea9e995131291aa94c84bd458c1fa89cf287d9f9ab4e"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/operations.md",
+      "digest": "4a74ca55f72300aa04d4847e6070a153bfbe1bffb5effc391a65c14c8606bf3b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/progress.md",
+      "digest": "fdf572763a6e0963f7c98b3373540a9815bbad4ef09d7f7665e49faf6df4f578"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/ui-redesign.md",
+      "digest": "648d0b7053d5c644ce82939bf15b8db11fc4a5ffa717a10d4f98ad7cdf251687"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/browser-smoke.ts",
+      "digest": "39aff7366ce17d8d5a7288d5949b75979401d444694ee8dd298e1e642161dca0"
+    },
+    {
+      "kind": "material",
+      "key": "omem:scripts/live-refresh-smoke.ts",
+      "digest": "18d18495727491cd7e1cb6fa8b9ae440269175d9ec4c3ce24e9a944e5aa7de11"
     }
   ],
   "reading": {
@@ -391,537 +511,1301 @@
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-01T19:25:45.239Z",
+    "at": "2026-10-02T03:46:19.179Z",
     "trace": {
-      "runId": "bb6f66fd-543b-4aa5-9c66-7442ee6a7ddb",
-      "roleId": "knowledge-writer",
+      "runId": "97633f59-4f2d-4618-86e5-9bdedd8a2e26",
+      "roleId": "knowledge-refresher",
       "roleVersion": "1",
-      "bundleHash": "9c22d5feb5933df0334d0726c5007d7b64a2f077952421ec9a00ece8f4c6c9ae",
-      "promptHash": "9db738f931fd94dedf1089c0c219c15b3f396713aad07c2a7b9d10ed3fc3c6af",
-      "contextHash": "c03ad4e33a9bf9a16351e167f4bcd9401d2dd785f4542032db0b5ae5a28a9f75",
-      "skillHash": "c5295ca55a717153b56cbc2182ccedbcff96342078cc981da4dc2f9e334fa364",
-      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "d0aef6b9c70b82a70552460d7abe41343c00f50f7ed4a4e1270753fa9df964d9",
+      "bundleHash": "21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da",
+      "promptHash": "473edc900038b681d3f672b6119ac4de0a0ec5b98acafa8b34d408ebd1bf347f",
+      "contextHash": "078818e336fa4d1f307dc4bef54c6658639b9f38ee4f315fe73d00a29d775fb2",
+      "skillHash": "b611e7f72593c708d1430a1b9867e83f0d95796036e615120cb4aad48fd02fb0",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "0862e2e5faea74d2b93f832db216316a45c80fb4d3c17955b76745b2ad6ec5b8",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-writer",
+          "name": "omem-knowledge-refresher",
           "version": "1",
-          "mode": "inline"
+          "mode": "native"
         }
       ],
-      "allowedTools": [],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
       "sessionIds": [
-        "01a0f8ed-76a6-7b40-9ccf-e150fa06cb24"
+        "01a0fab6-8f72-7052-814b-1d6bfa3fd92c",
+        "01a0fab6-de54-7b73-913f-62b13c8c9edf"
       ],
       "usage": {
-        "used": 68872,
+        "used": 62025,
         "size": 258400,
         "cost": null,
-        "budget": {
-          "maxInputTokens": 192000,
-          "maxOutputTokens": 24000,
-          "contextReserveTokens": 16000
-        },
-        "estimate": {
-          "chars": 109014,
-          "utf8Bytes": 154085,
-          "estimatedTokens": 51362,
-          "budgetedTokens": 64203,
-          "estimator": "utf8-bytes/3 + 25% headroom"
-        }
-      },
-      "repairAttempts": 0,
-      "research": {
-        "rounds": [
+        "workflow": "native-research@1",
+        "activity": [
           {
-            "trace": {
-              "runId": "71bd799d-ab08-4cc0-ac9b-65f9e23504bd",
-              "roleId": "knowledge-researcher",
-              "roleVersion": "1",
-              "bundleHash": "4526a825c7177cddcdb5173c16666c28c9cd50d743d5f41459953271df9249e9",
-              "promptHash": "433fe7922fa598750b6ba4c5fdab4274a5b21a13343e25c03ba2ccbd09cf2d62",
-              "contextHash": "1b8124d581713371b604b6fb0837eac1d57b6a0e1f43a1d6ec46ea232ab1a37b",
-              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
-              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-              "fingerprint": "721f038a1b9f3ba4c208eb59a8734eb934d72eb1466b620b3bf9355f5014bf52",
-              "outputSchema": "KnowledgeResearch.v1",
-              "effectiveModel": "gpt-5.6-sol",
-              "effectiveEffort": "medium",
-              "loadedSkills": [
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_wU557kwGk1B2xohMh2DIEFaV:exec-9d8f5e7d-0f6c-4b29-a46f-e1cb4a948614",
+            "title": "pwd && sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md && sed -n '1,220p' README.md && sed -n '1,240p' docs/reader-first/README.md && sed -n '1,260p' docs/reader-first/progress.md && sed -n '1,260p' catalog.json && sed -n '1,220p' knowledge.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_wU557kwGk1B2xohMh2DIEFaV:exec-9d8f5e7d-0f6c-4b29-a46f-e1cb4a948614",
+              "process_id": "75149",
+              "turn_id": "01a0fab6-e234-73c2-86cc-12099010edb7",
+              "started_at_ms": 1790912694612,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "pwd && sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md && sed -n '1,220p' README.md && sed -n '1,240p' docs/reader-first/README.md && sed -n '1,260p' docs/reader-first/progress.md && sed -n '1,260p' catalog.json && sed -n '1,220p' knowledge.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/97633f59-4f2d-4618-86e5-9bdedd8a2e26",
+              "parsed_cmd": [
                 {
-                  "name": "omem-knowledge-researcher",
-                  "version": "1",
-                  "mode": "inline"
+                  "type": "unknown",
+                  "cmd": "pwd && sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md && sed -n '1,220p' README.md && sed -n '1,240p' docs/reader-first/README.md && sed -n '1,260p' docs/reader-first/progress.md && sed -n '1,260p' catalog.json && sed -n '1,220p' knowledge.json"
                 }
               ],
-              "allowedTools": [],
-              "sessionIds": [
-                "01a0f8eb-f94e-7fd3-9c72-4b650b7f2633"
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_wU557kwGk1B2xohMh2DIEFaV:exec-9d8f5e7d-0f6c-4b29-a46f-e1cb4a948614"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_wU557kwGk1B2xohMh2DIEFaV:exec-9d8f5e7d-0f6c-4b29-a46f-e1cb4a948614",
+            "status": "failed",
+            "outputDigest": "adde2f640cc82492c80a7dbc84061117059a31b94b536e1f6e69890e045a27eb"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_eZMeiLMvFu7oBT5PNcGvARo1:exec-be51c63e-d2d8-4a67-bb50-e43387230175",
+            "title": "List /Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/97633f59-4f2d-4618-86e5-9bdedd8a2e26",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_eZMeiLMvFu7oBT5PNcGvARo1:exec-be51c63e-d2d8-4a67-bb50-e43387230175",
+              "process_id": "53597",
+              "turn_id": "01a0fab6-e234-73c2-86cc-12099010edb7",
+              "started_at_ms": 1790912703233,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg --files -g 'README.md' -g 'catalog.json' -g 'knowledge.json' -g 'progress.md' -g 'repository.ts' -g 'operations.md' -g 'app.ts' -g 'App.vue' -g 'store.ts' -g 'architecture.md' -g 'current-system.md' -g 'LearningView.vue' -g 'ArticleComposer.vue' -g 'message-workflows.ts' -g 'follow-up.ts' -g 'api.ts' | sort"
               ],
-              "usage": {
-                "used": 57255,
-                "size": 258400,
-                "cost": null,
-                "budget": {
-                  "maxInputTokens": 192000,
-                  "maxOutputTokens": 24000,
-                  "contextReserveTokens": 16000
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/97633f59-4f2d-4618-86e5-9bdedd8a2e26",
+              "parsed_cmd": [
+                {
+                  "type": "list_files",
+                  "cmd": "rg --files -g README.md -g catalog.json -g knowledge.json -g progress.md -g repository.ts -g operations.md -g app.ts -g App.vue -g store.ts -g architecture.md -g current-system.md -g LearningView.vue -g ArticleComposer.vue -g message-workflows.ts -g follow-up.ts -g api.ts",
+                  "path": null
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_eZMeiLMvFu7oBT5PNcGvARo1:exec-be51c63e-d2d8-4a67-bb50-e43387230175",
+            "status": "completed",
+            "outputDigest": "4889faa3a4ae6d76914b33c5ffa26c0f6860463d87dc2fbf17fd4655885e9c0c"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_rBnv3oeGhQBTTqcKcu637Kcl:exec-6ba3f8c3-88fc-4b39-9c91-a571116eaf4d",
+            "title": "Read README.md, Read README.md, Read progress.md, Read catalog.json, Read knowledge.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_rBnv3oeGhQBTTqcKcu637Kcl:exec-6ba3f8c3-88fc-4b39-9c91-a571116eaf4d",
+              "process_id": "79753",
+              "turn_id": "01a0fab6-e234-73c2-86cc-12099010edb7",
+              "started_at_ms": 1790912715182,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,220p' originals/README.md && sed -n '1,260p' originals/docs/reader-first/README.md && sed -n '1,280p' originals/docs/reader-first/progress.md && sed -n '1,260p' catalog.json && sed -n '1,220p' knowledge.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/97633f59-4f2d-4618-86e5-9bdedd8a2e26",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' originals/README.md",
+                  "name": "README.md",
+                  "path": "originals/README.md"
                 },
-                "estimate": {
-                  "chars": 128081,
-                  "utf8Bytes": 134367,
-                  "estimatedTokens": 44789,
-                  "budgetedTokens": 55987,
-                  "estimator": "utf8-bytes/3 + 25% headroom"
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' originals/docs/reader-first/README.md",
+                  "name": "README.md",
+                  "path": "originals/docs/reader-first/README.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,280p' originals/docs/reader-first/progress.md",
+                  "name": "progress.md",
+                  "path": "originals/docs/reader-first/progress.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' knowledge.json",
+                  "name": "knowledge.json",
+                  "path": "knowledge.json"
                 }
-              },
-              "repairAttempts": 0
-            },
-            "findings": "页面面向第一次接触 omem 的个人用户，核心不是解释内部数据模型，而是用“保存项目约定—找回决定—跟进评审”说明一条真实可用的日常流程。\n\n已确认的产品定位与起步方式：omem 把文档、代码、聊天、图片与个人经历组织为可阅读、可找回并可用于行动的记忆；代码虽使用 AST 定位，仍与其他材料共用一个知识库（README.md 1-5）。用户通过 osdk 安装依赖并运行开发服务，然后打开终端给出的 Web 地址；统一界面会载入本仓库材料、已发布知识并保留个人数据，启动不会自动生成整库 Wiki（README.md 7-17；operations.md 3-7）。生产环境则从“输入材料”开始（README.md 15-17）。\n\n已确认的使用层区分：原始材料保存固定版本，知识与代码引用可回看当时原文；原文、检索片段和讲解章节承担不同用途，不能用同一种切分来组织阅读（README.md 27-40）。知识文章面向读者问题生成：用户选择相关原始材料，并填写主题、阅读对象与想弄懂的问题，系统依次调查、写作和独立复核；成功后可直接阅读，生成期间材料变化会阻止旧结果发布，失败不会覆盖旧正文（operations.md 27-31）。这支持初步区分“材料是保存的原件，知识是围绕问题整理出的讲解”，但个人记忆与事项的用户层含义仍需补读当前文档和界面行为。\n\n已确认的找回能力：现有检索覆盖全文、中文短词、符号、记忆和知识路径；顶部搜索、知识检索与助手共用召回基础，助手还能补读原始章节及相邻上下文（README.md 31-38）。因此项目约定既可以作为原始材料回看，也可以经知识文章形成面向问题的解释，并通过搜索或助手再次找回。\n\n已确认的事项能力与边界：日常助理已有持久会话，并支持事项交办、等待、改期、完成、取消及站内到期提醒；“通知已读”不等于“事项完成”（README.md 42；operations.md 23-25）。尚未实现自动监听对方回复、周期回顾、日历或学习卡；持续项目理解和更完整的意图路由、跨文件功能链仍在推进（README.md 38-42；operations.md 25）。产品已有输入、检索、记忆、问答和事项基础，但完整的高质量知识整理与主动助理仍未完成，测试或生成通过不能替代内容可用性和阅读验收（README.md 3-5、40；operations.md 15-17）。\n\n界面入口初步可见：主导航包含日常助理、知识库、原始材料、输入材料、材料处理、待判断、事项与待办、变更历史、通知中心、飞书机器人及能力与连接（App.vue 40-49）。这为贯穿示例提供了候选步骤，但仍需读取各视图的实际文案和操作，避免把导航名称误写成已验证流程。\n\n代码与其他材料共同使用方面，目前只能确认代码通过 AST 辅助定位且共用知识库，以及检索覆盖符号（README.md 3、31-38）。还需补读当前架构或知识说明，确认在面向普通用户的页面中应如何准确描述代码材料，而不进入内部模型细节。",
-            "gaps": [
-              "缺少当前文档对材料、知识、个人记忆、事项四者关系的完整使用层解释，尤其是个人记忆如何产生、重核验并参与找回。",
-              "缺少“保存一份项目约定”的实际界面步骤：输入支持哪些来源、提交后用户会看到什么、是否需要手动触发材料处理。",
-              "缺少从搜索结果或助手回答回到原始依据的实际操作说明。",
-              "缺少把一次评审转成事项并进行等待、改期、完成的具体界面流程。",
-              "缺少当前进度文档对已验证能力和未实现主动能力的最新界定。",
-              "缺少代码与普通文档如何在同一知识库中共同检索、阅读和引用的当前用户层说明。"
-            ],
-            "requests": [
-              {
-                "kind": "read",
-                "materialKey": "omem:docs/reader-first/README.md",
-                "startLine": 1,
-                "endLine": 15
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:docs/reader-first/progress.md",
-                "startLine": 1,
-                "endLine": 47
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:docs/reader-first/general-knowledge.md",
-                "startLine": 1,
-                "endLine": 27
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:docs/reader-first/architecture.md",
-                "startLine": 1,
-                "endLine": 42
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:docs/reader-first/review.md",
-                "startLine": 1,
-                "endLine": 60
-              },
-              {
-                "kind": "search",
-                "query": "apps/web/src/App.vue 输入材料 capture submitCapture"
-              },
-              {
-                "kind": "search",
-                "query": "apps/web/src/App.vue 原始材料 搜索 search results"
-              },
-              {
-                "kind": "search",
-                "query": "apps/web/src/App.vue 事项与待办 waiting reschedule complete cancel"
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:apps/web/src/DailyAssistant.vue",
-                "startLine": 1,
-                "endLine": 79
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:apps/web/src/TaskFollowUpControls.vue",
-                "startLine": 1,
-                "endLine": 42
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:apps/web/src/ChatPane.vue",
-                "startLine": 1,
-                "endLine": 213
-              },
-              {
-                "kind": "search",
-                "query": "apps/server/src/app.ts app.post capture question task"
-              }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_rBnv3oeGhQBTTqcKcu637Kcl:exec-6ba3f8c3-88fc-4b39-9c91-a571116eaf4d",
+            "status": "completed",
+            "outputDigest": "e18a999a679c6d664158d4df126687cf3fc83c6f1350761372c143d19c37ff86"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_0C3MBMLJEnmAne3A3sRVeSoy:exec-49e3430a-bfce-4417-8711-18ebc40e7484",
+            "title": "Search guide:overview|KNOWLEDGE_INPUT_CHANGED|dependency|digest|固定材料在生成期间|阻止旧结果|publish in knowledge.json, Read repository.ts, Read operations.md, Read api.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_0C3MBMLJEnmAne3A3sRVeSoy:exec-49e3430a-bfce-4417-8711-18ebc40e7484",
+              "process_id": "88162",
+              "turn_id": "01a0fab6-e234-73c2-86cc-12099010edb7",
+              "started_at_ms": 1790912726571,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n 'guide:overview|KNOWLEDGE_INPUT_CHANGED|dependency|digest|固定材料在生成期间|阻止旧结果|publish' knowledge.json originals/apps/server/src/knowledge/repository.ts originals/docs/reader-first/operations.md originals/apps/server/src/knowledge/api.ts originals/apps/web/src/knowledge/ArticleComposer.vue && nl -ba originals/apps/server/src/knowledge/repository.ts | sed -n '1,280p' && nl -ba originals/docs/reader-first/operations.md | sed -n '1,100p' && nl -ba originals/apps/server/src/knowledge/api.ts | sed -n '120,180p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/97633f59-4f2d-4618-86e5-9bdedd8a2e26",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n 'guide:overview|KNOWLEDGE_INPUT_CHANGED|dependency|digest|固定材料在生成期间|阻止旧结果|publish' knowledge.json originals/apps/server/src/knowledge/repository.ts originals/docs/reader-first/operations.md originals/apps/server/src/knowledge/api.ts originals/apps/web/src/knowledge/ArticleComposer.vue",
+                  "query": "guide:overview|KNOWLEDGE_INPUT_CHANGED|dependency|digest|固定材料在生成期间|阻止旧结果|publish",
+                  "path": "knowledge.json"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/knowledge/repository.ts",
+                  "name": "repository.ts",
+                  "path": "originals/apps/server/src/knowledge/repository.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/docs/reader-first/operations.md",
+                  "name": "operations.md",
+                  "path": "originals/docs/reader-first/operations.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/knowledge/api.ts",
+                  "name": "api.ts",
+                  "path": "originals/apps/server/src/knowledge/api.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_0C3MBMLJEnmAne3A3sRVeSoy:exec-49e3430a-bfce-4417-8711-18ebc40e7484",
+            "status": "completed",
+            "outputDigest": "b37df52976ce123d0e43b69ae1706538be9bf66238aa69d4be0c70c0680d2c28"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_okfNro2KflcRwcyavwLS99Cx:exec-3bc1f1dc-ba0e-45ff-a1ff-ad462bf2be38",
+            "title": "Search \"key\": \"omem:(README.md|docs/reader-first/(architecture|operations|progress|current-system).md|apps/web/src/(App|LearningView).vue|apps/server/src/(store|tasks/follow-up|assistant/message-workflows|knowledge/api|knowledge/repository).ts)\" in catalog.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_okfNro2KflcRwcyavwLS99Cx:exec-3bc1f1dc-ba0e-45ff-a1ff-ad462bf2be38",
+              "process_id": "13087",
+              "turn_id": "01a0fab6-e234-73c2-86cc-12099010edb7",
+              "started_at_ms": 1790912742369,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n '\"key\": \"omem:(README.md|docs/reader-first/(architecture|operations|progress|current-system).md|apps/web/src/(App|LearningView).vue|apps/server/src/(store|tasks/follow-up|assistant/message-workflows|knowledge/api|knowledge/repository).ts)\"' catalog.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/21d97ca0af3781ef5694e1a3323b84527be0ceef65ca4246937650da12b629da/97633f59-4f2d-4618-86e5-9bdedd8a2e26",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n '\"key\": \"omem:(README.md|docs/reader-first/(architecture|operations|progress|current-system).md|apps/web/src/(App|LearningView).vue|apps/server/src/(store|tasks/follow-up|assistant/message-workflows|knowledge/api|knowledge/repository).ts)\"' catalog.json",
+                  "query": "\"key\": \"omem:(README.md|docs/reader-first/(architecture|operations|progress|current-system).md|apps/web/src/(App|LearningView).vue|apps/server/src/(store|tasks/follow-up|assistant/message-workflows|knowledge/api|knowledge/repository).ts)\"",
+                  "path": "catalog.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_okfNro2KflcRwcyavwLS99Cx:exec-3bc1f1dc-ba0e-45ff-a1ff-ad462bf2be38",
+            "status": "completed",
+            "outputDigest": "966f95517c71a45f128bd833483110b096dfb31fbbd3a7537f52a5ede2f2ac81"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_vawiHjJsVTHzn4VZNOCuQP1T:exec-9aaa8893-55f0-4d51-acf8-f515af1d0ff5",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:README.md",
+              "omem:docs/reader-first/README.md",
+              "omem:docs/reader-first/progress.md",
+              "omem:apps/server/src/knowledge/repository.ts",
+              "omem:docs/reader-first/operations.md",
+              "omem:apps/server/src/knowledge/api.ts"
             ]
           },
           {
-            "trace": {
-              "runId": "06220d4c-eac5-471d-ace3-c0f40a1318a7",
-              "roleId": "knowledge-researcher",
-              "roleVersion": "1",
-              "bundleHash": "4526a825c7177cddcdb5173c16666c28c9cd50d743d5f41459953271df9249e9",
-              "promptHash": "934d8c6020f73f222842ee43742d78ec49f6d6e5ab680b2898797117c1bb9074",
-              "contextHash": "f2f41aae91b4e33e0335731e58095de21eaf42ac93bf916bc88850d559b84da2",
-              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
-              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-              "fingerprint": "0a192fb3fa6f592bc2ae49722ef8b9a84aa7d85d7a71e017085b4babaddd4477",
-              "outputSchema": "KnowledgeResearch.v1",
-              "effectiveModel": "gpt-5.6-sol",
-              "effectiveEffort": "medium",
-              "loadedSkills": [
-                {
-                  "name": "omem-knowledge-researcher",
-                  "version": "1",
-                  "mode": "inline"
-                }
-              ],
-              "allowedTools": [],
-              "sessionIds": [
-                "01a0f8ec-629a-7303-9ecd-571e51d80ebd"
-              ],
-              "usage": {
-                "used": 77376,
-                "size": 258400,
-                "cost": null,
-                "budget": {
-                  "maxInputTokens": 192000,
-                  "maxOutputTokens": 24000,
-                  "contextReserveTokens": 16000
-                },
-                "estimate": {
-                  "chars": 176664,
-                  "utf8Bytes": 198502,
-                  "estimatedTokens": 66168,
-                  "budgetedTokens": 82710,
-                  "estimator": "utf8-bytes/3 + 25% headroom"
-                }
-              },
-              "repairAttempts": 0
-            },
-            "findings": "本页服务于第一次接触 omem 的个人用户，适合围绕一条连续任务展开：保存一份项目约定，在之后的工作中找回其中的决定，再把“等待某人的评审回复”变成可持续跟进的事项。重点应是用户在哪里操作、系统留下什么结果以及目前能力的边界，不应展开 Source/Revision/Fragment、claim、scope 或配置细节。\n\n已经确认的主流程如下。\n\n1. 开始使用：开发环境执行 osdk 管理的安装、依赖与 dev 任务，然后打开终端给出的 Web 地址。开发模式会把本仓库材料和已经发布的知识接入同一个个人库，并保留个人数据；启动本身不会自动生成整库 Wiki。正式运行默认从“输入材料”开始（README.md 7-17；operations.md 3-7）。\n\n2. 保存项目约定：omem 接受文档、代码、聊天、图片和个人经历，并将原始内容作为材料保存固定版本。界面已有“输入材料”和“原始材料”入口，服务也提供 capture 接口；原始材料页可以按标题查找并打开材料（README.md 3、27-29；App.vue 40-46、556-565；app.ts 206-213）。目前还缺输入表单的完整原文，尚不能准确描述用户粘贴文本、填写标题或选择文件时的具体步骤。\n\n3. 从材料形成知识：材料是保存下来的原件；知识文章则围绕某个读者问题，把一份或多份材料整理成可阅读的解释。用户可在知识库“全部分类”中打开“从材料整理文章”，先选择相关原始材料，再填写主题、阅读对象和想弄懂的问题；系统经历调查、写作和独立复核，成功后发布为可直接阅读的文章。固定材料在生成期间变化会阻止旧结果发布，失败不会覆盖已有正文（operations.md 27-31；architecture.md 5-17）。这说明知识不是另一份独立事实：它帮助理解和检索，事实仍可沿引用回到原件（architecture.md 7-9；review.md 49-55）。\n\n4. 找回决定：现有检索会合并全文、中文短词、符号、记忆和知识路径；顶部搜索、知识检索和助手共用召回基础。结果可以带回父章节、代码定义、相邻解释和派生文章，避免只凭命中的几百字符回答。用户也可以先打开原始材料、选定一个片段，再向“和记忆一起思考”提问；回答保存后仍能打开本次依据，但界面明确提示系统尚未逐条自动核验回答主张（README.md 31-38；architecture.md 19-23；ChatPane.vue 81-145）。因此示例可以写成：搜索约定中的业务词找到原文或相关文章，必要时打开原文继续提问，而不是把模型回答当作不可追溯的新事实。\n\n5. 跟进评审：日常助理已有持久会话，用户可以直接输入类似“帮我跟进张三的评审回复，明天上午 9 点提醒我检查”。处理结果会保留，失败或待重试的消息也不会消失（DailyAssistant.vue 38-70）。事项页说明可在助手中交办、改期、登记等待或稍后跟进；截止时间与跟进时间分开，提醒进入通知中心，完成或取消后停止提醒（App.vue 735-744）。跟进设置可记录“等待对象或结果”和“下次跟进时间”；不设置时间时只记录等待，而且系统不会自动联系对方（TaskFollowUpControls.vue 24-35）。服务支持完成、重新打开、改期、记录等待、暂缓提醒和取消等动作（app.ts 341-349）。\n\n使用层可以先作如下区分，但“个人记忆”的可见界面仍需补证：\n- 原始材料：用户保存的项目约定原件及固定版本，负责保真和回查。\n- 知识文章：围绕“这项约定为什么这样定、我该如何遵守”等问题组织的跨材料讲解，负责读懂；引用仍回到材料。\n- 个人记忆：当前文档把它描述为从原始记录和经历中形成的当前事实、偏好与经验，并进一步维护对人物、项目和主题的持续理解；来源变化后已有记忆重核验。它应当帮助以后找回和回答，但当前持续整合、重要性判断和主动使用尚未完成（architecture.md 25-27；progress.md 11、14-16；review.md 18、53-55）。\n- 事项：需要推进或等待的行动记录，有独立状态、跟进时间和提醒；它不是知识文章，也不因通知被阅读而自动完成（operations.md 23-25）。\n\n代码与其他材料共同使用的准确表述已经足够明确：代码仍是同一材料体系的一部分，只额外使用 AST、符号和结构定位帮助找到定义；它不会形成第二个知识产品。知识页可以同时选择文档、代码、学习笔记等材料，检索也会合并符号与其他候选。当前跨文件功能链和完整意图路由仍未完成，因此不应宣称系统已经能自动理解整个项目（README.md 3、38；architecture.md 5-15；general-knowledge.md 11-16；progress.md 8、16）。\n\n当前可用边界也已基本确认：已有统一输入和固定修订、原始材料阅读、搜索与问答基础、按问题整理知识文章、来源变化后的记忆重核验、持久事项和站内提醒。仍在推进或尚未实现的包括持续的项目/人物/主题理解、完整意图路由、跨文件功能链、自动监听对方回复、周期回顾、日历、英语学习卡，以及更完整的自动分类治理和大库相关性优化。当前是 SQLite 单用户服务，不具备团队隔离；飞书、外部通知、全局 hooks 和屏幕监听均需单独明确启用（README.md 38-42、55；operations.md 19-25；progress.md 5-16；architecture.md 39-41）。",
-            "gaps": [
-              "缺少“输入材料”页面完整表单与成功后的界面文案，无法确认贯穿示例中保存项目约定的确切点击和填写步骤。",
-              "个人记忆的概念已有架构依据，但尚未确认当前界面是否有独立可见入口、以何种名称呈现，以及普通用户能否直接创建或查看。",
-              "事项页当前只读到开头，需要确认创建事项、完成、改期等按钮的实际文案，才能把评审跟进写成准确操作流程。",
-              "知识库整理文章的实际两步弹窗尚未读取；需要核对入口名称、选材方式和完成后的去向。"
-            ],
-            "requests": [
-              {
-                "kind": "read",
-                "materialKey": "omem:apps/web/src/App.vue",
-                "startLine": 500,
-                "endLine": 780
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-                "startLine": 1,
-                "endLine": 34
-              },
-              {
-                "kind": "search",
-                "query": "apps/web/src/knowledge/KnowledgeHome.vue 从材料整理文章 选择材料 阅读对象 想弄懂"
-              },
-              {
-                "kind": "search",
-                "query": "个人记忆 当前事实 偏好 经验 查看记忆"
-              },
-              {
-                "kind": "read",
-                "materialKey": "omem:apps/server/src/assistant/message-workflows.ts",
-                "startLine": 1,
-                "endLine": 11
-              },
-              {
-                "kind": "search",
-                "query": "apps/web/src/App.vue createTask complete reschedule reopen 截止时间"
-              }
-            ]
-          },
-          {
-            "trace": {
-              "runId": "6beab360-3bdc-4cfa-9f32-cb2ed5fbf738",
-              "roleId": "knowledge-researcher",
-              "roleVersion": "1",
-              "bundleHash": "4526a825c7177cddcdb5173c16666c28c9cd50d743d5f41459953271df9249e9",
-              "promptHash": "ed630c7bbab45993d63d4832cda3983415c7d9c5ec854b52a2bc6f0d56f1d9a1",
-              "contextHash": "2787c6724d79497d0566d858a9d20b6b7a3ea88116030f61f9e01d1ffe1827da",
-              "skillHash": "59745ec2d0ce17b882d19a9aba9f885263db007d794895b61e98ad6bf2c24ea0",
-              "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-              "fingerprint": "68d4b0d6ceb1634574d8ba0a0461847db553a7996d99eb427f7a198bca0ba3ef",
-              "outputSchema": "KnowledgeResearch.v1",
-              "effectiveModel": "gpt-5.6-sol",
-              "effectiveEffort": "medium",
-              "loadedSkills": [
-                {
-                  "name": "omem-knowledge-researcher",
-                  "version": "1",
-                  "mode": "inline"
-                }
-              ],
-              "allowedTools": [],
-              "sessionIds": [
-                "01a0f8ec-ea7b-7f60-981e-ec60223abc99"
-              ],
-              "usage": {
-                "used": 87471,
-                "size": 258400,
-                "cost": null,
-                "budget": {
-                  "maxInputTokens": 192000,
-                  "maxOutputTokens": 24000,
-                  "contextReserveTokens": 16000
-                },
-                "estimate": {
-                  "chars": 203341,
-                  "utf8Bytes": 231516,
-                  "estimatedTokens": 77172,
-                  "budgetedTokens": 96465,
-                  "estimator": "utf8-bytes/3 + 25% headroom"
-                }
-              },
-              "repairAttempts": 0
-            },
-            "findings": "调查结论：材料已经足够覆盖本页四个问题，可以围绕“保存一份项目约定 → 找回其中的决定 → 跟进一次评审”写成面向首次使用者的连续示例。正文应停留在用户操作和可见结果层，不展开 Source/Revision/Fragment、claim、scope、epoch、错误状态或模型配置细节。\n\n一、omem 解决什么问题，怎样开始\n\n事实：omem 把文档、代码、聊天、图片和个人经历组织成能读懂、找回并用于行动的工作记忆；代码会使用专用结构定位，但仍与其他材料共享一个知识库（README.md 1-5）。当前已有输入、检索、记忆、问答和事项基础，高质量知识整理及主动助理仍在推进（README.md 5）。\n\n事实：本地开发使用 osdk install、osdk deps --frozen、osdk run dev，随后打开终端打印的 Web 地址。开发模式会载入本仓库材料和已发布知识，同时保留个人数据；启动不会自动生成整库 Wiki。正式运行从“输入材料”开始（README.md 7-17；operations.md 3-7）。\n\n适合页面的使用步骤：\n1. 打开“输入材料”。选择“文本＋图片＋链接”，填写材料标题；正文可以直接输入或粘贴，还可附链接和一张图片。点击“保存材料与证据”（App.vue 623-715）。项目约定可用类似“支付服务评审约定”作为标题，把“所有接口变更必须由两名维护者评审”写进正文。\n2. 保存后到“原始材料”查看。材料目录支持按标题筛选；正文显示保存时间、当前或历史版本，并提供版本历史和打开固定原文的入口（App.vue 556-620）。\n3. 日后在顶部搜索约定中的业务词。搜索同时结合原文、代码名称、已有知识以及可选中文语义索引；结果可打开固定片段。没有结果时界面建议改用原文关键词或先导入材料（App.vue 539-554）。\n4. 若需要的不只是原句，而是“为什么这样约定、改代码时该怎么做”，进入知识库“全部分类”，点击“整理文章”，选择相关原始材料，再填写主题、阅读对象和想弄懂的问题。系统调查、写作并独立复核，成功后形成可阅读文章；材料在生成期间发生变化会阻止旧结果发布，失败不会覆盖已有正文（operations.md 27-31；KnowledgeHome.vue 308-317、351-355；architecture.md 11-17）。\n5. 若还要就某段原文追问，可在原始材料中选择片段，再使用“和记忆一起思考”。回答保存后可以重新打开本次提供的依据；界面也明确说明，系统尚未自动逐条核验回答里的每个主张（App.vue 591-597；ChatPane.vue 81-145）。\n\n二、同一个例子中，四类东西分别是什么\n\n原始材料：用户保存的项目约定原件。它负责保留内容、版本和可回查出处。原始材料页可查看当前及历史版本，因此后续找到的决定能够回到当时原文（README.md 27-29；App.vue 556-613）。\n\n知识文章：围绕读者问题，把一份或多份材料整理成解释。例如把项目约定和相关代码一起整理成“接口变更为什么要双人评审、提交前检查什么”。文章负责帮助读懂，不是第二份独立事实；论断仍应沿引用回到材料。保存单位、检索单位和讲解单位有意分开，页面按问题组织，而不是机械照搬文件或片段结构（architecture.md 5-17；AGENTS.md 7-12）。\n\n个人记忆：从原始记录和经历中形成、可在以后检索和回答时使用的当前事实、偏好与经验，并计划进一步形成对人物、项目和主题的持续理解。以示例来说，“这个项目要求接口变更经两人评审”可以成为以后协助工作时可找回的项目事实；但原始约定仍是其可追溯依据。来源变化后的记忆重核验已经存在，周期整合、重要性判断和主动使用仍未完成（architecture.md 25-27；progress.md 11、14-16；review.md 49-55）。\n\n事项：需要推进、等待或提醒的行动记录。例如“等待张三完成这次接口评审，明天上午九点检查”。事项有待推进、等待回复、完成、取消等状态，并可保存截止时间、等待对象和下次跟进时间。它不是知识文章，也不能仅凭材料里出现一句行动描述就默认成为用户交办；通知被阅读也不等于事项完成（App.vue 736-775；operations.md 23-25；message-workflows.ts 3-7）。\n\n因果解释：四者分开，是因为它们承担不同职责。材料保真，知识帮助理解，记忆帮助以后找回和使用，事项推动下一步行动。如果混在一起，整理出的解释可能被误当原始事实，项目约定也可能被误当用户要求系统立即执行的任务。此解释由架构对“保存、检索、讲解单位分开”以及日常消息策略对“讨论材料与本人明确交办分开”的规定共同支持（architecture.md 5-9；message-workflows.ts 3-7）。\n\n三、如何跟进一次评审\n\n事实：日常助理支持持久会话。用户可以直接输入“帮我跟进张三的评审回复，明天上午9点提醒我检查”。处理状态和结果会保留；失败或待重试的消息不会消失，并可重试（DailyAssistant.vue 38-70）。\n\n事实：事项的截止时间与跟进时间分开。跟进设置可以记录“等待对象或结果”和“下次跟进时间”；未设置时间时只登记等待。系统不会自动联系对方（App.vue 736-764；TaskFollowUpControls.vue 24-35）。已有事项支持完成、重新打开、修改截止时间、记录等待、暂缓提醒和取消（app.ts 341-349）。\n\n适合页面的连续示例：用户找回“双人评审”约定后，向日常助理明确交办：“帮我跟进张三对支付接口变更的评审回复，明天上午9点提醒我检查。”系统形成一条有来源的事项，记录等待对象和检查时间。到期提醒进入通知中心；用户收到回复后需要亲自标记完成，若尚未回复可以修改下次跟进时间。系统目前不会主动联系张三，也不会自动判断张三已经回复（DailyAssistant.vue 49-69；App.vue 737-775；TaskFollowUpControls.vue 25-35；message-workflows.ts 4-7）。\n\n四、代码怎样与其他材料共同使用\n\n事实：代码是同一材料体系中的一种输入，只增加 AST、符号等专用结构定位，不形成第二套知识产品（README.md 3；architecture.md 5-9）。整理知识文章时，同一路径可以同时选择文档、代码、学习笔记等不同材料；检索也会合并全文、符号、记忆、知识和可选中文向量候选（general-knowledge.md 11-16；architecture.md 19-23）。\n\n适合本页的解释：若项目约定写着“重试最多三次”，用户既可以找到这份文档，也可以把实现重试逻辑的代码选入同一篇知识文章，形成“约定是什么、代码在哪里落实、修改时需要检查什么”的讲解。代码结构定位帮助找到定义；最终仍应结合约定文档和其他背景材料理解，不能把结构定位本身说成系统已经理解了整个项目。\n\n边界：当前尚未实现完整意图路由和跨文件功能链扩展，所以本页不能宣称 omem 已经能自动追踪任意跨模块调用或完整理解整个代码库（README.md 38；progress.md 8；review.md 13-18）。\n\n五、当前可用与尚未实现的边界\n\n当前已有：统一输入和固定修订；文本、图片、链接、飞书文档、指定 Git 文件及允许范围内服务器文件的输入入口；原始材料阅读和版本历史；统一搜索基础；基于固定片段的问答；从选定材料调查、写作、独立复核并发布知识文章；来源变化后的记忆重核验；持久事项、等待、改期、完成、取消和站内提醒（App.vue 623-775；README.md 27-42；progress.md 8-16）。\n\n尚未完成或仍属后续：完整意图路由、跨文件功能链、持续的项目/人物/主题理解、重要性和事件时间处理、自动监听他人回复、周期回顾、日历、英语学习卡、更完整的自动分类治理、来源集合管理以及大库检索性能和通用相关性优化（README.md 38-42；architecture.md 25-27、39-41；progress.md 8-12；general-knowledge.md 18-26；operations.md 25）。\n\n运行范围：当前是 SQLite 单用户服务，不具备团队隔离。飞书、远程访问、外部通知、全局 hooks 和屏幕监听均是需要单独配置并明确范围的集成，不能写成默认开启（README.md 55；operations.md 19-25）。\n\n写作建议：文章开头直接用项目约定和评审跟进场景说明价值；随后按“保存—找回—读懂—行动”推进。四类概念宜在示例发生处解释，而不是先列内部名词。结尾用简短的“现在能做什么／还不会做什么”收束，避免把测试数量、运行 trace、复核合同或内部数据模型带入入门主线。",
-            "gaps": [],
-            "requests": []
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_vawiHjJsVTHzn4VZNOCuQP1T:exec-9aaa8893-55f0-4d51-acf8-f515af1d0ff5",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
           }
         ],
-        "findings": "调查结论：材料已经足够覆盖本页四个问题，可以围绕“保存一份项目约定 → 找回其中的决定 → 跟进一次评审”写成面向首次使用者的连续示例。正文应停留在用户操作和可见结果层，不展开 Source/Revision/Fragment、claim、scope、epoch、错误状态或模型配置细节。\n\n一、omem 解决什么问题，怎样开始\n\n事实：omem 把文档、代码、聊天、图片和个人经历组织成能读懂、找回并用于行动的工作记忆；代码会使用专用结构定位，但仍与其他材料共享一个知识库（README.md 1-5）。当前已有输入、检索、记忆、问答和事项基础，高质量知识整理及主动助理仍在推进（README.md 5）。\n\n事实：本地开发使用 osdk install、osdk deps --frozen、osdk run dev，随后打开终端打印的 Web 地址。开发模式会载入本仓库材料和已发布知识，同时保留个人数据；启动不会自动生成整库 Wiki。正式运行从“输入材料”开始（README.md 7-17；operations.md 3-7）。\n\n适合页面的使用步骤：\n1. 打开“输入材料”。选择“文本＋图片＋链接”，填写材料标题；正文可以直接输入或粘贴，还可附链接和一张图片。点击“保存材料与证据”（App.vue 623-715）。项目约定可用类似“支付服务评审约定”作为标题，把“所有接口变更必须由两名维护者评审”写进正文。\n2. 保存后到“原始材料”查看。材料目录支持按标题筛选；正文显示保存时间、当前或历史版本，并提供版本历史和打开固定原文的入口（App.vue 556-620）。\n3. 日后在顶部搜索约定中的业务词。搜索同时结合原文、代码名称、已有知识以及可选中文语义索引；结果可打开固定片段。没有结果时界面建议改用原文关键词或先导入材料（App.vue 539-554）。\n4. 若需要的不只是原句，而是“为什么这样约定、改代码时该怎么做”，进入知识库“全部分类”，点击“整理文章”，选择相关原始材料，再填写主题、阅读对象和想弄懂的问题。系统调查、写作并独立复核，成功后形成可阅读文章；材料在生成期间发生变化会阻止旧结果发布，失败不会覆盖已有正文（operations.md 27-31；KnowledgeHome.vue 308-317、351-355；architecture.md 11-17）。\n5. 若还要就某段原文追问，可在原始材料中选择片段，再使用“和记忆一起思考”。回答保存后可以重新打开本次提供的依据；界面也明确说明，系统尚未自动逐条核验回答里的每个主张（App.vue 591-597；ChatPane.vue 81-145）。\n\n二、同一个例子中，四类东西分别是什么\n\n原始材料：用户保存的项目约定原件。它负责保留内容、版本和可回查出处。原始材料页可查看当前及历史版本，因此后续找到的决定能够回到当时原文（README.md 27-29；App.vue 556-613）。\n\n知识文章：围绕读者问题，把一份或多份材料整理成解释。例如把项目约定和相关代码一起整理成“接口变更为什么要双人评审、提交前检查什么”。文章负责帮助读懂，不是第二份独立事实；论断仍应沿引用回到材料。保存单位、检索单位和讲解单位有意分开，页面按问题组织，而不是机械照搬文件或片段结构（architecture.md 5-17；AGENTS.md 7-12）。\n\n个人记忆：从原始记录和经历中形成、可在以后检索和回答时使用的当前事实、偏好与经验，并计划进一步形成对人物、项目和主题的持续理解。以示例来说，“这个项目要求接口变更经两人评审”可以成为以后协助工作时可找回的项目事实；但原始约定仍是其可追溯依据。来源变化后的记忆重核验已经存在，周期整合、重要性判断和主动使用仍未完成（architecture.md 25-27；progress.md 11、14-16；review.md 49-55）。\n\n事项：需要推进、等待或提醒的行动记录。例如“等待张三完成这次接口评审，明天上午九点检查”。事项有待推进、等待回复、完成、取消等状态，并可保存截止时间、等待对象和下次跟进时间。它不是知识文章，也不能仅凭材料里出现一句行动描述就默认成为用户交办；通知被阅读也不等于事项完成（App.vue 736-775；operations.md 23-25；message-workflows.ts 3-7）。\n\n因果解释：四者分开，是因为它们承担不同职责。材料保真，知识帮助理解，记忆帮助以后找回和使用，事项推动下一步行动。如果混在一起，整理出的解释可能被误当原始事实，项目约定也可能被误当用户要求系统立即执行的任务。此解释由架构对“保存、检索、讲解单位分开”以及日常消息策略对“讨论材料与本人明确交办分开”的规定共同支持（architecture.md 5-9；message-workflows.ts 3-7）。\n\n三、如何跟进一次评审\n\n事实：日常助理支持持久会话。用户可以直接输入“帮我跟进张三的评审回复，明天上午9点提醒我检查”。处理状态和结果会保留；失败或待重试的消息不会消失，并可重试（DailyAssistant.vue 38-70）。\n\n事实：事项的截止时间与跟进时间分开。跟进设置可以记录“等待对象或结果”和“下次跟进时间”；未设置时间时只登记等待。系统不会自动联系对方（App.vue 736-764；TaskFollowUpControls.vue 24-35）。已有事项支持完成、重新打开、修改截止时间、记录等待、暂缓提醒和取消（app.ts 341-349）。\n\n适合页面的连续示例：用户找回“双人评审”约定后，向日常助理明确交办：“帮我跟进张三对支付接口变更的评审回复，明天上午9点提醒我检查。”系统形成一条有来源的事项，记录等待对象和检查时间。到期提醒进入通知中心；用户收到回复后需要亲自标记完成，若尚未回复可以修改下次跟进时间。系统目前不会主动联系张三，也不会自动判断张三已经回复（DailyAssistant.vue 49-69；App.vue 737-775；TaskFollowUpControls.vue 25-35；message-workflows.ts 4-7）。\n\n四、代码怎样与其他材料共同使用\n\n事实：代码是同一材料体系中的一种输入，只增加 AST、符号等专用结构定位，不形成第二套知识产品（README.md 3；architecture.md 5-9）。整理知识文章时，同一路径可以同时选择文档、代码、学习笔记等不同材料；检索也会合并全文、符号、记忆、知识和可选中文向量候选（general-knowledge.md 11-16；architecture.md 19-23）。\n\n适合本页的解释：若项目约定写着“重试最多三次”，用户既可以找到这份文档，也可以把实现重试逻辑的代码选入同一篇知识文章，形成“约定是什么、代码在哪里落实、修改时需要检查什么”的讲解。代码结构定位帮助找到定义；最终仍应结合约定文档和其他背景材料理解，不能把结构定位本身说成系统已经理解了整个项目。\n\n边界：当前尚未实现完整意图路由和跨文件功能链扩展，所以本页不能宣称 omem 已经能自动追踪任意跨模块调用或完整理解整个代码库（README.md 38；progress.md 8；review.md 13-18）。\n\n五、当前可用与尚未实现的边界\n\n当前已有：统一输入和固定修订；文本、图片、链接、飞书文档、指定 Git 文件及允许范围内服务器文件的输入入口；原始材料阅读和版本历史；统一搜索基础；基于固定片段的问答；从选定材料调查、写作、独立复核并发布知识文章；来源变化后的记忆重核验；持久事项、等待、改期、完成、取消和站内提醒（App.vue 623-775；README.md 27-42；progress.md 8-16）。\n\n尚未完成或仍属后续：完整意图路由、跨文件功能链、持续的项目/人物/主题理解、重要性和事件时间处理、自动监听他人回复、周期回顾、日历、英语学习卡、更完整的自动分类治理、来源集合管理以及大库检索性能和通用相关性优化（README.md 38-42；architecture.md 25-27、39-41；progress.md 8-12；general-knowledge.md 18-26；operations.md 25）。\n\n运行范围：当前是 SQLite 单用户服务，不具备团队隔离。飞书、远程访问、外部通知、全局 hooks 和屏幕监听均是需要单独配置并明确范围的集成，不能写成默认开启（README.md 55；operations.md 19-25）。\n\n写作建议：文章开头直接用项目约定和评审跟进场景说明价值；随后按“保存—找回—读懂—行动”推进。四类概念宜在示例发生处解释，而不是先列内部名词。结尾用简短的“现在能做什么／还不会做什么”收束，避免把测试数量、运行 trace、复核合同或内部数据模型带入入门主线。",
-        "gaps": [],
-        "materials": [
-          {
-            "key": "omem:README.md",
-            "digest": "4bdc34491b74680abac1ad36969c60bb41227f76b9fad8952a5b511fcf0173ff",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 56
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/reader-first/operations.md",
-            "digest": "dbfe0d70cc01e95c96f6a20a3d844c8351e5dc3af504e2b781cbe1068cc0a911",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 32
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/server/src/app.ts",
-            "digest": "e9560fb02af4b1a93872afb41e5395f1870ff9a93ec89a6b278147ebe7d076a1",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 100
-              },
-              {
-                "start": 204,
-                "end": 213
-              },
-              {
-                "start": 340,
-                "end": 349
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/web/src/App.vue",
-            "digest": "657628c2991264e1245cdbadfa8b2fc9ef056328b1038b14ead2eb230b2e6ddd",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 100
-              },
-              {
-                "start": 349,
-                "end": 358
-              },
-              {
-                "start": 500,
-                "end": 780
-              },
-              {
-                "start": 905,
-                "end": 914
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/reader-first/README.md",
-            "digest": "e26488ab5eb49a441d6393fa08c9fdd3b9e697cb31102b0ba0322d366b7aae8c",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 15
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/reader-first/progress.md",
-            "digest": "b3cfb831712e8d6d4c64dbcdabd88bcac7fe9a805d736538aaaddbb8e26de339",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 47
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/reader-first/general-knowledge.md",
-            "digest": "40f8cd22a8011c758867ea9e995131291aa94c84bd458c1fa89cf287d9f9ab4e",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 27
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/reader-first/architecture.md",
-            "digest": "8ad40c90ba725fcd95d7f38cd95e9b83569a98eec747cb25220be596b3377496",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 42
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/reader-first/review.md",
-            "digest": "2aa549f44335f5ca9f2911a883b4736c8c5a53233c96537db671d79e5b7fe6a1",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 60
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/web/src/DailyAssistant.vue",
-            "digest": "67fc0b6008f5853851bb64a832d353a9990acf7d121dc656c8f0d76c29d4cec7",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 79
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/web/src/TaskFollowUpControls.vue",
-            "digest": "9297d3e6de28308580a8f1ed0532d810dad92a5d991b184b1bcf576747e6490a",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 42
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/web/src/ChatPane.vue",
-            "digest": "e4f7790ba788eafce30263d0e06fc1783c0c98e528d19e7e2aaf9627003f3741",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 213
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
-            "digest": "84d9475a5aac95f5d9071467bc1fbb1d68e5338d4e87d084546b6c6c66a926d4",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 34
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
-            "digest": "8e72e3d1a2927e9365fe8d47fcf8a766f1faf1e8c0830a21d793ee80878d64af",
-            "ranges": [
-              {
-                "start": 308,
-                "end": 317
-              },
-              {
-                "start": 351,
-                "end": 360
-              }
-            ]
-          },
-          {
-            "key": "omem:docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
-            "digest": "a135b0a1e151a239d620849c2f21ae5824011cde3ca66fe239b3034b3dcb3f31",
-            "ranges": [
-              {
-                "start": 4,
-                "end": 13
-              },
-              {
-                "start": 26,
-                "end": 35
-              }
-            ]
-          },
-          {
-            "key": "omem:AGENTS.md",
-            "digest": "2c35e95af43dacd46961cfdc18468b434e0e91d0d5c38a4effa0ede0bca637af",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 13
-              }
-            ]
-          },
-          {
-            "key": "omem:config/wiki-pages.json",
-            "digest": "c38e4b5bc85b25eb76a5784404e1d3dca4006b4905d408db95ae2742f28d5f9c",
-            "ranges": [
-              {
-                "start": 11,
-                "end": 20
-              },
-              {
-                "start": 84,
-                "end": 93
-              }
-            ]
-          },
-          {
-            "key": "omem:apps/server/src/assistant/message-workflows.ts",
-            "digest": "1de3a26cceae1263b44f8c385de992841d6ba8bf892161dc002c84e5a582fbcc",
-            "ranges": [
-              {
-                "start": 1,
-                "end": 11
-              }
-            ]
-          }
-        ]
+        "hostTokenBudget": null
       },
-      "writerVersion": "e6c104aa6cbea865f529ad91f2c49f9303a2d8299fdc96a24a478952747a41b3"
+      "repairAttempts": 1,
+      "research": {
+        "trace": {
+          "runId": "13846aa7-584e-4c66-8500-37db352883cb",
+          "roleId": "knowledge-researcher",
+          "roleVersion": "1",
+          "bundleHash": "19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb",
+          "promptHash": "49f120ef761bf4fc1edd0056e24bf94cf6a156314ac873f7804ce43a18b65f8b",
+          "contextHash": "1a46f30f099a313c3cd9110aec3aee36154e85ee2472a25d3887ce7a58c6afeb",
+          "skillHash": "05041a69ea6623a27428757e7de5d4373af4e3f459b2b61d2a5b7169a688c1be",
+          "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+          "fingerprint": "8367ec36266b84adca61a86893eed22dd1c44d8037c8f0fb83bba666de4d0e9e",
+          "outputSchema": "KnowledgeResearch.v1",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-researcher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ],
+          "sessionIds": [
+            "01a0faaa-1321-7cd0-8ec3-5070e08c21db"
+          ],
+          "usage": {
+            "used": 145130,
+            "size": 258400,
+            "cost": null,
+            "workflow": "native-research@1",
+            "activity": [
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_yRrsn4OtmtGb6iZZAR6PQg2C:exec-b8fb50f9-e300-41ef-9c69-774dd75c151c",
+                "title": "Read SKILL.md",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_yRrsn4OtmtGb6iZZAR6PQg2C:exec-b8fb50f9-e300-41ef-9c69-774dd75c151c",
+                  "process_id": "13738",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911861073,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,240p' .trae/skills/omem-knowledge-researcher/SKILL.md"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-researcher/SKILL.md",
+                      "name": "SKILL.md",
+                      "path": ".trae/skills/omem-knowledge-researcher/SKILL.md"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_yRrsn4OtmtGb6iZZAR6PQg2C:exec-b8fb50f9-e300-41ef-9c69-774dd75c151c",
+                "status": "completed",
+                "outputDigest": "ad9ae3a00573df2a7cfae44090e04934d557a4ce0e07e7141e21f6e5acd2ffbd"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1",
+                "title": "pwd && sed -n '1,240p' catalog.json && sed -n '1,200p' knowledge.json && rg --files originals | sed -n '1,240p'",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1",
+                  "process_id": "91649",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911866608,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "pwd && sed -n '1,240p' catalog.json && sed -n '1,200p' knowledge.json && rg --files originals | sed -n '1,240p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "unknown",
+                      "cmd": "pwd && sed -n '1,240p' catalog.json && sed -n '1,200p' knowledge.json && rg --files originals | sed -n '1,240p'"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_rNwhfvkeuNTL4SKuxvhBzW2w:exec-e180ce02-bfbd-4527-a8cd-765a944ce1f1",
+                "status": "completed",
+                "outputDigest": "4178b41b29cedf93eb57895dda9df25422b04f88c0d35f801c64e36f26ad7f64"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_jlBcNVQUQX95HkOiJQKkqfAA:exec-4fe021f4-b10a-445e-a150-cc539f2deb98",
+                "title": "Read README.md, Read README.md, Read progress.md, Read SKILL.md, Read design.md",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_jlBcNVQUQX95HkOiJQKkqfAA:exec-4fe021f4-b10a-445e-a150-cc539f2deb98",
+                  "process_id": "12324",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911877360,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,260p' originals/README.md; sed -n '1,300p' originals/docs/reader-first/README.md; sed -n '1,340p' originals/docs/reader-first/progress.md; sed -n '1,220p' originals/.agents/skills/omem-design/SKILL.md; sed -n '1,260p' originals/design.md"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,260p' originals/README.md",
+                      "name": "README.md",
+                      "path": "originals/README.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,300p' originals/docs/reader-first/README.md",
+                      "name": "README.md",
+                      "path": "originals/docs/reader-first/README.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,340p' originals/docs/reader-first/progress.md",
+                      "name": "progress.md",
+                      "path": "originals/docs/reader-first/progress.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,220p' originals/.agents/skills/omem-design/SKILL.md",
+                      "name": "SKILL.md",
+                      "path": "originals/.agents/skills/omem-design/SKILL.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,260p' originals/design.md",
+                      "name": "design.md",
+                      "path": "originals/design.md"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_jlBcNVQUQX95HkOiJQKkqfAA:exec-4fe021f4-b10a-445e-a150-cc539f2deb98",
+                "status": "completed",
+                "outputDigest": "faef965dfaf789765c23d9bb74da45bd4563e898423ed42c9942be779cdeff16"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_m1X8VL4fujWtePpPuf0ZfaLf:exec-f3bc4a14-1752-4499-bcd5-dfc185f8313a",
+                "title": "Read architecture.md, Read operations.md, Read current-system.md",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_m1X8VL4fujWtePpPuf0ZfaLf:exec-f3bc4a14-1752-4499-bcd5-dfc185f8313a",
+                  "process_id": "22272",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911883903,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,360p' originals/docs/reader-first/architecture.md; sed -n '1,360p' originals/docs/reader-first/operations.md; sed -n '1,360p' originals/docs/reader-first/current-system.md"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,360p' originals/docs/reader-first/architecture.md",
+                      "name": "architecture.md",
+                      "path": "originals/docs/reader-first/architecture.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,360p' originals/docs/reader-first/operations.md",
+                      "name": "operations.md",
+                      "path": "originals/docs/reader-first/operations.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,360p' originals/docs/reader-first/current-system.md",
+                      "name": "current-system.md",
+                      "path": "originals/docs/reader-first/current-system.md"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_m1X8VL4fujWtePpPuf0ZfaLf:exec-f3bc4a14-1752-4499-bcd5-dfc185f8313a",
+                "status": "completed",
+                "outputDigest": "4b649553a8875723a91049e06bb489aa1b13421453c33806ee18679a57f2a96f"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_CppVotPBkVJd2lR0CpDW3Ihk:exec-500e0fa7-d693-4fd0-b2c8-07602faa73ec",
+                "title": "Search 输入材料|知识库|事项|通知|学习|记忆|评审|跟进|search|capture|/api|learning|tasks in App.vue",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_CppVotPBkVJd2lR0CpDW3Ihk:exec-500e0fa7-d693-4fd0-b2c8-07602faa73ec",
+                  "process_id": "24722",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911890840,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n \"输入材料|知识库|事项|通知|学习|记忆|评审|跟进|search|capture|/api|learning|tasks\" originals/apps/web/src/App.vue originals/apps/web/src/*.vue originals/apps/server/src/app.ts originals/apps/server/src/main.ts | sed -n '1,320p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n '输入材料|知识库|事项|通知|学习|记忆|评审|跟进|search|capture|/api|learning|tasks' originals/apps/web/src/App.vue 'originals/apps/web/src/*.vue' originals/apps/server/src/app.ts originals/apps/server/src/main.ts",
+                      "query": "输入材料|知识库|事项|通知|学习|记忆|评审|跟进|search|capture|/api|learning|tasks",
+                      "path": "App.vue"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_CppVotPBkVJd2lR0CpDW3Ihk:exec-500e0fa7-d693-4fd0-b2c8-07602faa73ec",
+                "status": "completed",
+                "outputDigest": "6e6e0558cd3a5882aaeaf81c4c1623bcd830e6fc5eded0170dacc67502ba0d76"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_D7VSyzx8kD7Ei8SOmR13Q354:exec-3ab37f9b-d6a6-4419-a6b1-414f2aec9ee6",
+                "title": "Read App.vue, Read App.vue, Read LearningView.vue, Read DailyAssistant.vue, Read PersonalKnowledge.vue, Read KnowledgeHome.vue",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_D7VSyzx8kD7Ei8SOmR13Q354:exec-3ab37f9b-d6a6-4419-a6b1-414f2aec9ee6",
+                  "process_id": "90251",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911897788,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,430p' originals/apps/web/src/App.vue; sed -n '480,830p' originals/apps/web/src/App.vue; sed -n '1,180p' originals/apps/web/src/LearningView.vue; sed -n '1,140p' originals/apps/web/src/DailyAssistant.vue; sed -n '1,260p' originals/apps/web/src/knowledge/PersonalKnowledge.vue; sed -n '1,320p' originals/apps/web/src/knowledge/KnowledgeHome.vue"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,430p' originals/apps/web/src/App.vue",
+                      "name": "App.vue",
+                      "path": "originals/apps/web/src/App.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '480,830p' originals/apps/web/src/App.vue",
+                      "name": "App.vue",
+                      "path": "originals/apps/web/src/App.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,180p' originals/apps/web/src/LearningView.vue",
+                      "name": "LearningView.vue",
+                      "path": "originals/apps/web/src/LearningView.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,140p' originals/apps/web/src/DailyAssistant.vue",
+                      "name": "DailyAssistant.vue",
+                      "path": "originals/apps/web/src/DailyAssistant.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,260p' originals/apps/web/src/knowledge/PersonalKnowledge.vue",
+                      "name": "PersonalKnowledge.vue",
+                      "path": "originals/apps/web/src/knowledge/PersonalKnowledge.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,320p' originals/apps/web/src/knowledge/KnowledgeHome.vue",
+                      "name": "KnowledgeHome.vue",
+                      "path": "originals/apps/web/src/knowledge/KnowledgeHome.vue"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_D7VSyzx8kD7Ei8SOmR13Q354:exec-3ab37f9b-d6a6-4419-a6b1-414f2aec9ee6",
+                "status": "completed",
+                "outputDigest": "9bb291175ce895f23f6c4965cf19cfb7d34cda09576d539374e97b5c1d4d3df9"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_AArMjyZyXzkcbfTCls1duFFG:exec-c63a31d7-1f76-4247-8e7c-defc89c94686",
+                "title": "Read App.vue, Read KnowledgeHome.vue, Read ArticleComposer.vue, Read LearningView.vue, Read TaskFollowUpControls.vue",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_AArMjyZyXzkcbfTCls1duFFG:exec-c63a31d7-1f76-4247-8e7c-defc89c94686",
+                  "process_id": "9381",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911904403,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/apps/web/src/App.vue | sed -n '560,810p'; nl -ba originals/apps/web/src/knowledge/KnowledgeHome.vue | sed -n '190,380p'; nl -ba originals/apps/web/src/knowledge/ArticleComposer.vue | sed -n '1,300p'; nl -ba originals/apps/web/src/LearningView.vue | sed -n '1,240p'; nl -ba originals/apps/web/src/TaskFollowUpControls.vue | sed -n '1,140p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/web/src/App.vue",
+                      "name": "App.vue",
+                      "path": "originals/apps/web/src/App.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/web/src/knowledge/KnowledgeHome.vue",
+                      "name": "KnowledgeHome.vue",
+                      "path": "originals/apps/web/src/knowledge/KnowledgeHome.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/web/src/knowledge/ArticleComposer.vue",
+                      "name": "ArticleComposer.vue",
+                      "path": "originals/apps/web/src/knowledge/ArticleComposer.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/web/src/LearningView.vue",
+                      "name": "LearningView.vue",
+                      "path": "originals/apps/web/src/LearningView.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/web/src/TaskFollowUpControls.vue",
+                      "name": "TaskFollowUpControls.vue",
+                      "path": "originals/apps/web/src/TaskFollowUpControls.vue"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_AArMjyZyXzkcbfTCls1duFFG:exec-c63a31d7-1f76-4247-8e7c-defc89c94686",
+                "status": "completed",
+                "outputDigest": "90a4c9d7f7473a44b9e6aad6b04fb1a82077218db5ead5fc6e6e3cef35278f31"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_56YYNaPv4HZLwjGDyYyfT5Vu:exec-d27159bb-cc67-461c-8814-37f5fb25a2f2",
+                "title": "Search capture\\(|enqueue|extract_claims|refresh_dependents|createTask|applyTask|tasks\\(|due|follow|dispatch|remind in store.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_56YYNaPv4HZLwjGDyYyfT5Vu:exec-d27159bb-cc67-461c-8814-37f5fb25a2f2",
+                  "process_id": "6966",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911911549,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n \"capture\\(|enqueue|extract_claims|refresh_dependents|createTask|applyTask|tasks\\(|due|follow|dispatch|remind\" originals/apps/server/src/store.ts originals/apps/server/src/memory/service.ts originals/apps/server/src/learning/pipeline.ts originals/apps/server/src/tasks/follow-up.ts originals/apps/server/src/assistant/runtime.ts originals/apps/server/src/assistant/message-workflows.ts originals/apps/server/src/storage/repository.ts | sed -n '1,360p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n \"capture\\\\(|enqueue|extract_claims|refresh_dependents|createTask|applyTask|tasks\\\\(|due|follow|dispatch|remind\" originals/apps/server/src/store.ts originals/apps/server/src/memory/service.ts originals/apps/server/src/learning/pipeline.ts originals/apps/server/src/tasks/follow-up.ts originals/apps/server/src/assistant/runtime.ts originals/apps/server/src/assistant/message-workflows.ts originals/apps/server/src/storage/repository.ts",
+                      "query": "capture\\(|enqueue|extract_claims|refresh_dependents|createTask|applyTask|tasks\\(|due|follow|dispatch|remind",
+                      "path": "store.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_56YYNaPv4HZLwjGDyYyfT5Vu:exec-d27159bb-cc67-461c-8814-37f5fb25a2f2",
+                "status": "completed",
+                "outputDigest": "66657f6fbe18d9bc6a14f11a6ec8dc2523632511ea1cb114cf2bba9434f06c60"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_p7JBH4C1Vdec90epQQVPisJw:exec-72c23dff-587f-4724-ac81-ef781b9468b5",
+                "title": "Read store.ts, Read pipeline.ts, Read follow-up.ts, Read service.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_p7JBH4C1Vdec90epQQVPisJw:exec-72c23dff-587f-4724-ac81-ef781b9468b5",
+                  "process_id": "81660",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911920391,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/apps/server/src/store.ts | sed -n '80,390p'; nl -ba originals/apps/server/src/store.ts | sed -n '620,770p'; nl -ba originals/apps/server/src/learning/pipeline.ts | sed -n '90,190p'; nl -ba originals/apps/server/src/learning/pipeline.ts | sed -n '240,470p'; nl -ba originals/apps/server/src/tasks/follow-up.ts | sed -n '1,100p'; nl -ba originals/apps/server/src/memory/service.ts | sed -n '70,135p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/store.ts",
+                      "name": "store.ts",
+                      "path": "originals/apps/server/src/store.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/learning/pipeline.ts",
+                      "name": "pipeline.ts",
+                      "path": "originals/apps/server/src/learning/pipeline.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/tasks/follow-up.ts",
+                      "name": "follow-up.ts",
+                      "path": "originals/apps/server/src/tasks/follow-up.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/memory/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/memory/service.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_p7JBH4C1Vdec90epQQVPisJw:exec-72c23dff-587f-4724-ac81-ef781b9468b5",
+                "status": "completed",
+                "outputDigest": "eefdb7ac8fde2d8aad86fdcc1a95f4f9b227368138efa93a7282f19bd1f08c70"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_kx4mbdQRiZmUOKpuOZDOsRvD:exec-aba698bd-59fa-4bbc-8e22-39d803c22ac4",
+                "title": "Read pipeline.ts, Search auto_apply|awaiting_decision|apply\\(|kind === \\\"task\\\"|episode|procedure|claim in service.ts, Read service.ts, Read app.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_kx4mbdQRiZmUOKpuOZDOsRvD:exec-aba698bd-59fa-4bbc-8e22-39d803c22ac4",
+                  "process_id": "92183",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911929039,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/apps/server/src/learning/pipeline.ts | sed -n '450,580p'; rg -n \"auto_apply|awaiting_decision|apply\\(|kind === \\\"task\\\"|episode|procedure|claim\" originals/apps/server/src/memory/service.ts | sed -n '1,280p'; nl -ba originals/apps/server/src/memory/service.ts | sed -n '700,890p'; nl -ba originals/apps/server/src/memory/service.ts | sed -n '1150,1280p'; nl -ba originals/apps/server/src/app.ts | sed -n '60,130p'; nl -ba originals/apps/server/src/app.ts | sed -n '180,285p'; nl -ba originals/apps/server/src/app.ts | sed -n '640,680p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/learning/pipeline.ts",
+                      "name": "pipeline.ts",
+                      "path": "originals/apps/server/src/learning/pipeline.ts"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n \"auto_apply|awaiting_decision|apply\\\\(|kind === \\\\\\\"task\\\\\\\"|episode|procedure|claim\" originals/apps/server/src/memory/service.ts",
+                      "query": "auto_apply|awaiting_decision|apply\\(|kind === \\\"task\\\"|episode|procedure|claim",
+                      "path": "service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/memory/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/memory/service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/app.ts",
+                      "name": "app.ts",
+                      "path": "originals/apps/server/src/app.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_kx4mbdQRiZmUOKpuOZDOsRvD:exec-aba698bd-59fa-4bbc-8e22-39d803c22ac4",
+                "status": "completed",
+                "outputDigest": "58b41ff7abadcb857eaef84f6966da5b7eb8e525184e0ff84ff6e3d1f3e1fef5"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_V4UEdsYxtVZ2jdmPHAALEKAp:exec-cf34eddb-7e69-47f9-a3fc-a2a647566b90",
+                "title": "Search 代码.*材料|AST|同一.*知识库|Git 文件|代码.*引用|知识文章|个人记忆|事项|Source|Revision|Fragment in *.md, Read api.ts, Read pipeline.ts, Read development.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_V4UEdsYxtVZ2jdmPHAALEKAp:exec-cf34eddb-7e69-47f9-a3fc-a2a647566b90",
+                  "process_id": "35000",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911942182,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n \"代码.*材料|AST|同一.*知识库|Git 文件|代码.*引用|知识文章|个人记忆|事项|Source|Revision|Fragment\" originals/docs/reader-first/*.md originals/README.md | sed -n '1,360p'; nl -ba originals/apps/server/src/knowledge/api.ts | sed -n '1,360p'; nl -ba originals/apps/server/src/knowledge/pipeline.ts | sed -n '1,260p'; nl -ba originals/apps/server/src/review/development.ts | sed -n '1,280p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n '代码.*材料|AST|同一.*知识库|Git 文件|代码.*引用|知识文章|个人记忆|事项|Source|Revision|Fragment' 'originals/docs/reader-first/*.md' originals/README.md",
+                      "query": "代码.*材料|AST|同一.*知识库|Git 文件|代码.*引用|知识文章|个人记忆|事项|Source|Revision|Fragment",
+                      "path": "*.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/knowledge/api.ts",
+                      "name": "api.ts",
+                      "path": "originals/apps/server/src/knowledge/api.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/knowledge/pipeline.ts",
+                      "name": "pipeline.ts",
+                      "path": "originals/apps/server/src/knowledge/pipeline.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/review/development.ts",
+                      "name": "development.ts",
+                      "path": "originals/apps/server/src/review/development.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_V4UEdsYxtVZ2jdmPHAALEKAp:exec-cf34eddb-7e69-47f9-a3fc-a2a647566b90",
+                "status": "completed",
+                "outputDigest": "2bef1cb9a83734fbccbb85f114376d931f65f2778b0e0a36ba91fcf31b22828f"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_q0X9sMbdQ1aaH4ZSuspZTb0g:exec-276317cb-1614-4636-b260-0bb80a7085da",
+                "title": "Tool: omem/search_knowledge",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_knowledge",
+                  "arguments": {
+                    "query": "项目约定 保存 找回决定 评审 跟进 材料 知识 记忆 事项",
+                    "limit": 8
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_knowledge",
+                "args": {
+                  "query": "项目约定 保存 找回决定 评审 跟进 材料 知识 记忆 事项",
+                  "limit": 8
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_q0X9sMbdQ1aaH4ZSuspZTb0g:exec-276317cb-1614-4636-b260-0bb80a7085da",
+                "status": "completed",
+                "outputDigest": "ebda8b3136bbab4543de5c673e0ce8ff8bd4b34d1e3e2702bf58a6cc88ee3fc4"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_q0X9sMbdQ1aaH4ZSuspZTb0g:exec-3b353980-3c62-417c-b71e-ba8570b288aa",
+                "title": "Tool: omem/search_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_materials",
+                  "arguments": {
+                    "query": "自动监听回复 周期回顾 站内提醒",
+                    "kind": "all",
+                    "limit": 8
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_materials",
+                "args": {
+                  "query": "自动监听回复 周期回顾 站内提醒",
+                  "kind": "all",
+                  "limit": 8
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_q0X9sMbdQ1aaH4ZSuspZTb0g:exec-3b353980-3c62-417c-b71e-ba8570b288aa",
+                "status": "completed",
+                "outputDigest": "8e450e9558d91ad36ccf892319a47dda0bfe50d0bd2b409f2193950ca7244449"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_4OxQyqfkq1KJiwTeFenBZ3o1:exec-de953661-04bf-4e1d-b205-a0e51bb68cdf",
+                "title": "Tool: omem/search_knowledge",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_knowledge",
+                  "arguments": {
+                    "query": "先认识 omem 把材料变成能找回的工作记忆",
+                    "limit": 10
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_knowledge",
+                "args": {
+                  "query": "先认识 omem 把材料变成能找回的工作记忆",
+                  "limit": 10
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_4OxQyqfkq1KJiwTeFenBZ3o1:exec-de953661-04bf-4e1d-b205-a0e51bb68cdf",
+                "status": "completed",
+                "outputDigest": "a39602836fe21c2ce51b4e89cd831fb575c6b6793f12bdf651d10b950a8ef3ad"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_Na5rS382qCPhpvlIEmgdxCSv:exec-193c0e4a-be8d-4906-830d-feed92123b3d",
+                "title": "Read ArticleComposer.vue, Read api.ts, Read message-workflows.ts, Read runtime.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_Na5rS382qCPhpvlIEmgdxCSv:exec-193c0e4a-be8d-4906-830d-feed92123b3d",
+                  "process_id": "81139",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790911992076,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/apps/web/src/knowledge/ArticleComposer.vue | sed -n '1,120p'; nl -ba originals/apps/server/src/knowledge/api.ts | sed -n '80,210p'; nl -ba originals/apps/server/src/knowledge/api.ts | sed -n '210,340p'; nl -ba originals/apps/server/src/assistant/message-workflows.ts | sed -n '1,120p'; nl -ba originals/apps/server/src/assistant/runtime.ts | sed -n '520,760p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/web/src/knowledge/ArticleComposer.vue",
+                      "name": "ArticleComposer.vue",
+                      "path": "originals/apps/web/src/knowledge/ArticleComposer.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/knowledge/api.ts",
+                      "name": "api.ts",
+                      "path": "originals/apps/server/src/knowledge/api.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/assistant/message-workflows.ts",
+                      "name": "message-workflows.ts",
+                      "path": "originals/apps/server/src/assistant/message-workflows.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/assistant/runtime.ts",
+                      "name": "runtime.ts",
+                      "path": "originals/apps/server/src/assistant/runtime.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_Na5rS382qCPhpvlIEmgdxCSv:exec-193c0e4a-be8d-4906-830d-feed92123b3d",
+                "status": "completed",
+                "outputDigest": "a2003a9aaef0de2c78b54ffa6a0e3d997ac1739f33ff0ddee2727cfee7e40d11"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_89GTifQ69uyPmo2FPF0K1WHR:exec-47827657-8be3-433f-8789-2a6072b60bc3",
+                "title": "rg -n 'guide:overview|先认识 omem|材料变成能找回' knowledge.json originals config 2>/dev/null | sed -n '1,240p'",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_89GTifQ69uyPmo2FPF0K1WHR:exec-47827657-8be3-433f-8789-2a6072b60bc3",
+                  "process_id": "66924",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790912002410,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n 'guide:overview|先认识 omem|材料变成能找回' knowledge.json originals config 2>/dev/null | sed -n '1,240p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "unknown",
+                      "cmd": "rg -n 'guide:overview|先认识 omem|材料变成能找回' knowledge.json originals config 2>/dev/null | sed -n '1,240p'"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_89GTifQ69uyPmo2FPF0K1WHR:exec-47827657-8be3-433f-8789-2a6072b60bc3"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_89GTifQ69uyPmo2FPF0K1WHR:exec-47827657-8be3-433f-8789-2a6072b60bc3",
+                "status": "completed",
+                "outputDigest": "d331265fe8e064cd328cd8eec1bc0a68b7853e201410787bc8961c6b24ae768f"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_iGKIjGv0Bc4nWWR8qL1756RM:exec-a7e56a30-28ca-4766-ace2-8d566f9f8d68",
+                "title": "Read wiki-pages.json, Read validation.md, Read writing.md",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_iGKIjGv0Bc4nWWR8qL1756RM:exec-a7e56a30-28ca-4766-ace2-8d566f9f8d68",
+                  "process_id": "15268",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790912014586,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,180p' originals/config/wiki-pages.json; sed -n '1,220p' originals/docs/reader-first/validation.md; sed -n '1,220p' originals/docs/reader-first/writing.md"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,180p' originals/config/wiki-pages.json",
+                      "name": "wiki-pages.json",
+                      "path": "originals/config/wiki-pages.json"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,220p' originals/docs/reader-first/validation.md",
+                      "name": "validation.md",
+                      "path": "originals/docs/reader-first/validation.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,220p' originals/docs/reader-first/writing.md",
+                      "name": "writing.md",
+                      "path": "originals/docs/reader-first/writing.md"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_iGKIjGv0Bc4nWWR8qL1756RM:exec-a7e56a30-28ca-4766-ace2-8d566f9f8d68",
+                "status": "completed",
+                "outputDigest": "cfac1f8e44eca4d06938d2c2fe5d355c3183ee69a86881685d468056ef8b8b01"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_gp3G5hEMDK9tYs7Me2iYl1ED:exec-2bc26b54-7421-454b-aa9b-993f8503d552",
+                "title": "Read README.md, Read architecture.md, Read operations.md, Read progress.md, Read current-system.md, Read wiki-pages.json",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_gp3G5hEMDK9tYs7Me2iYl1ED:exec-2bc26b54-7421-454b-aa9b-993f8503d552",
+                  "process_id": "69843",
+                  "turn_id": "01a0faaa-1c0e-7b33-8036-05c4daa0f665",
+                  "started_at_ms": 1790912033881,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/README.md | sed -n '1,60p'; nl -ba originals/docs/reader-first/architecture.md | sed -n '1,90p'; nl -ba originals/docs/reader-first/operations.md | sed -n '1,80p'; nl -ba originals/docs/reader-first/progress.md | sed -n '1,45p'; nl -ba originals/docs/reader-first/current-system.md | sed -n '1,72p'; nl -ba originals/config/wiki-pages.json | sed -n '1,42p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/19b772d2c591f23c7eaa9e7e98d613b7c0f60c4d3aec81101d28be382cacabeb/13846aa7-584e-4c66-8500-37db352883cb",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/README.md",
+                      "name": "README.md",
+                      "path": "originals/README.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/docs/reader-first/architecture.md",
+                      "name": "architecture.md",
+                      "path": "originals/docs/reader-first/architecture.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/docs/reader-first/operations.md",
+                      "name": "operations.md",
+                      "path": "originals/docs/reader-first/operations.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/docs/reader-first/progress.md",
+                      "name": "progress.md",
+                      "path": "originals/docs/reader-first/progress.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/docs/reader-first/current-system.md",
+                      "name": "current-system.md",
+                      "path": "originals/docs/reader-first/current-system.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/config/wiki-pages.json",
+                      "name": "wiki-pages.json",
+                      "path": "originals/config/wiki-pages.json"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_gp3G5hEMDK9tYs7Me2iYl1ED:exec-2bc26b54-7421-454b-aa9b-993f8503d552",
+                "status": "completed",
+                "outputDigest": "57fe7a4d99573def7c28ec06339496e4887994011104e181dac7a30a99642d9f"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_JDJYBIPdAuj5LH9LPcNWJtYL:exec-9d7ecbbc-7a7e-457f-997a-f7592d06a107",
+                "title": "Tool: omem/submit_result",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "submit_result",
+                  "submitted": true
+                }
+              },
+              {
+                "kind": "submission",
+                "success": true,
+                "reads": [
+                  "omem:README.md",
+                  "omem:docs/reader-first/README.md",
+                  "omem:docs/reader-first/progress.md",
+                  "omem:.agents/skills/omem-design/SKILL.md",
+                  "omem:design.md",
+                  "omem:docs/reader-first/architecture.md",
+                  "omem:docs/reader-first/operations.md",
+                  "omem:docs/reader-first/current-system.md",
+                  "omem:apps/web/src/App.vue",
+                  "omem:apps/web/src/LearningView.vue",
+                  "omem:apps/web/src/DailyAssistant.vue",
+                  "omem:apps/web/src/knowledge/PersonalKnowledge.vue",
+                  "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+                  "omem:apps/web/src/knowledge/ArticleComposer.vue",
+                  "omem:apps/web/src/TaskFollowUpControls.vue",
+                  "omem:apps/server/src/store.ts",
+                  "omem:apps/server/src/learning/pipeline.ts",
+                  "omem:apps/server/src/tasks/follow-up.ts",
+                  "omem:apps/server/src/memory/service.ts",
+                  "omem:apps/server/src/app.ts",
+                  "omem:apps/server/src/knowledge/api.ts",
+                  "omem:apps/server/src/knowledge/pipeline.ts",
+                  "omem:apps/server/src/review/development.ts",
+                  "omem:docs/archive/2026-10-01-baseline/PROJECT-README.md",
+                  "omem:docs/archive/2026-10-01-baseline/implementation/daily-follow-up.md",
+                  "omem:docs/archive/2026-10-01-baseline/implementation/status.md",
+                  "omem:docs/reader-first/validation.md",
+                  "omem:apps/server/src/assistant/message-workflows.ts",
+                  "omem:apps/server/src/assistant/runtime.ts",
+                  "omem:config/wiki-pages.json",
+                  "omem:docs/reader-first/writing.md"
+                ]
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_JDJYBIPdAuj5LH9LPcNWJtYL:exec-9d7ecbbc-7a7e-457f-997a-f7592d06a107",
+                "status": "completed",
+                "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+              }
+            ],
+            "hostTokenBudget": null
+          },
+          "repairAttempts": 0
+        },
+        "findings": "页面定位与叙事建议\n本页应面向第一次接触 omem 的个人用户，用一个明确标注为“教学示例”的项目约定贯穿全文：用户保存《项目协作约定》，其中写有“合并前需完成评审”；几周后忘了当时的决定，通过搜索找回原文或讲解；随后用户另行说“请明天上午 9 点提醒我跟进小李的评审回复”，形成可跟进事项。不要从 Source/Revision/Fragment 等内部名词起笔，也不要展开 claim 匹配、scope/epoch、状态枚举和配置细节；页面计划本身明确要求只讲使用层概念（omem:config/wiki-pages.json 5-27）。当前写作原则也要求先让读者看到“规则变了但旧引用仍能打开当时文字”的用途，再引入版本概念（omem:docs/reader-first/current-system.md 60-64）。\n\n它解决的日常问题\nomem 把散落在文档、代码、聊天、图片与个人经历里的工作信息放进同一个个人工作记忆入口，目标不是“存文件”本身，而是之后能读懂、找回并继续行动；代码使用结构分析帮助定位，但不另建第二套知识产品（omem:README.md 1-5；omem:docs/reader-first/architecture.md 5-9）。界面实际把“日常助理、知识库、原始材料、输入材料、材料处理、待判断、事项与待办、变更历史、通知中心”放在同一导航中（omem:apps/web/src/App.vue 41-45, 494-535）。这让示例可以自然分成三步：先保存约定，再找回决定，最后跟进评审。\n\n第一次开始使用\n事实：开发使用依次运行 osdk install、osdk deps --frozen、osdk run dev，然后打开终端打印的 Web 地址；启动不会自动生成整库 Wiki。正式构建/运行从“输入材料”开始，需要已安装并登录的 Agent CLI，但不强制本地大模型、Docker 或 Python（omem:README.md 7-17；omem:docs/reader-first/operations.md 3-7）。\n用户操作主线：\n1. 进入“输入材料”。当前网页可直接输入文本并附带一张图片和链接，也可从飞书文档、指定 Git 文件或允许目录中的服务器 UTF-8 文件导入；Git 导入读取指定 ref，不 pull、不执行仓库脚本（omem:apps/web/src/App.vue 623-715）。\n2. 保存后，原文立即成为可阅读、可搜索的固定版本。相同来源标识再次保存且内容变化时形成新版本，旧版本仍保留；内容未变则复用原版本。界面可查看当前/历史版本和固定片段（omem:apps/server/src/store.ts 102-223, 231-295；omem:apps/web/src/App.vue 560-620）。\n3. 在顶部搜索输入决定中的词，例如“合并前 评审”。搜索会结合原文、代码名称、已有知识，并在配置后使用中文语义索引；结果可打开固定原文片段（omem:apps/web/src/App.vue 539-555；omem:apps/server/src/app.ts 273-280）。助手、顶部搜索和知识检索共用召回基础，但复杂问题的排序仍可能不理想，不能承诺总能把最佳答案排第一（omem:README.md 31-38；omem:docs/reader-first/progress.md 5-9, 17-24）。\n4. 若想得到面向读者的整体讲解，进入“知识库”点“整理文章”，先选择相关材料（可以同时选文档、代码或记录），再填写文章主题、想弄懂的问题和读者。系统随后调查、撰写、独立复核，成功后文章进入分类目录；生成期间材料变化会阻止旧结果发布，失败也不会覆盖旧正文（omem:apps/web/src/knowledge/ArticleComposer.vue 58-92, 94-120, 173-245；omem:apps/server/src/knowledge/api.ts 133-147；omem:docs/reader-first/operations.md 27-31）。\n5. 若要行动，可在“事项与待办”手工记录，也可在“日常助理”明确交办：“帮我跟进小李的评审回复，明天上午 9 点提醒我检查。”事项可等待、改期、完成、取消，并在到期或跟进时产生站内通知（omem:apps/web/src/DailyAssistant.vue 45-67；omem:apps/web/src/App.vue 736-775；omem:apps/server/src/tasks/follow-up.ts 17-49）。\n\n用同一个示例区分四类对象\n- 原始材料：用户实际保存的《项目协作约定》及其每次内容版本。它回答“当时原文是什么、来自哪里”，保存后即可阅读和检索；后续模型处理是否开启不影响原文可用。原件承担证据和历史，不等于已经理解或已经执行（omem:docs/reader-first/architecture.md 5-9；omem:apps/web/src/LearningView.vue 81-88）。\n- 知识文章：例如《为什么合并前要评审，以及团队怎样执行》。它为了某个读者问题跨多份材料组织解释，引用固定原文；它是帮助理解和检索的派生讲解，不是第二份独立事实，也不是保存材料时自动生成的摘要（omem:docs/reader-first/architecture.md 9-17）。用户需显式选择材料和阅读目标，当前 Agent 配置可用时才生成。\n- 个人记忆：从原始记录中提炼、经过独立复核并由策略应用的可复用事实、经历或方法，例如“这个项目要求合并前完成评审”。保存时会排队提取候选，但只有启用了 learning 并配置 Agent 才会后台运行；进入队列或模型提出候选不等于已经成为有效记忆。明确可靠的结果可应用，真正需要用户选择的进入“待判断”，其他结果可能拒绝、延后或只保留原材料（omem:apps/web/src/LearningView.vue 16-27, 81-99；omem:apps/server/src/learning/pipeline.ts 421-450, 458-563；omem:apps/server/src/memory/service.ts 739-844）。来源更新时，依赖旧版的记忆会失效并进入重核验，历史仍保存（omem:apps/server/src/store.ts 246-275；omem:docs/reader-first/current-system.md 52-58）。\n- 事项：一条需要推进、有状态、可设截止或跟进时间的行动记录，例如“明早检查小李的评审回复”。它回答“下一步做什么、何时再看、是否已经完成”，与“项目约定里提到评审”不是一回事。讨论或他人的承诺不能自动变成 owner 的任务；只有用户明确要求记录/修改事项才授权动作（omem:apps/server/src/assistant/message-workflows.ts 1-8；omem:apps/server/src/assistant/runtime.ts 546-602）。跟进时间与真实截止时间分开；通知已读也不等于事项完成（omem:apps/web/src/TaskFollowUpControls.vue 24-35；omem:docs/reader-first/operations.md 23-25）。\n\n为什么必须分开\n这是基于上述实现的解释性归纳：四类对象解决不同问题并有不同生命周期。材料保留“发生过什么”；知识文章帮助“怎样理解”；个人记忆提供“以后回答时可复用什么”；事项负责“接下来要做什么”。如果混在一起，约定中的描述会被误当成用户授权，模型讲解会被误当成原始事实，通知已读会被误当成工作完成。当前实现因此让模型只能提出候选或受治理的结构化动作，真正写入由服务端执行并产生回执；模型没有直接事实写入权限（omem:docs/reader-first/current-system.md 52-58；omem:apps/server/src/memory/service.ts 86-116）。\n\n代码如何与其他材料共同使用\n事实：代码与文档、聊天、图片走同一来源与知识库。用户可以从 Git 导入指定文件，也可在整理文章时把代码和设计文档同时选中。检索能命中代码名称，知识材料接口会对 TS/JS/Vue 做 AST 解析、显示代码并给出确定性的相对 import 导航；这些结构关系只说明“定义/依赖在哪里”，不是完整业务调用图（omem:README.md 1-3；omem:apps/web/src/App.vue 696-705；omem:apps/web/src/knowledge/ArticleComposer.vue 116-120；omem:apps/server/src/knowledge/api.ts 53-84）。当前代码解析是单文件 TS/Vue 结构定位，跨文件 calls、完整类型解析和跨修订符号续接有限；理解“为什么这样做”仍要把代码与调用者、配置、测试、设计说明一起调查（omem:docs/reader-first/current-system.md 34-40）。适合给普通用户的说法是：“代码也是一种材料，只是系统会额外识别函数、导入和符号，帮助定位；最终文章仍按你的问题把代码和说明放在一起讲。”\n\n当前可用与主动能力边界\n已经可用：\n- 统一保存文本、链接、图片及若干显式连接器，保留版本、差异、历史和固定引用。\n- 顶部搜索、知识检索、助手召回的基础已经合流；全文、中文短词、符号、已应用记忆、知识路径和可选 BGE 中文向量可参与。\n- 显式选择材料后生成知识文章，包含调查、写作、独立复核与可回原文的引用。\n- 配置 learning/Agent 后，材料可走候选提取、独立复核、策略应用和来源更新重核验。\n- 持久会话、明确交办、等待、改期、完成、取消、站内到期/跟进提醒；完成或取消后停止提醒。\n- 单用户本地/服务器运行，外部连接均需明确启用（omem:README.md 27-42, 55；omem:docs/reader-first/progress.md 17-28）。\n\n尚未实现或仍不完整：\n- 不是完整的主动助理：不会自动联系评审对象，不会自动监听对方回复或据此认定完成；也没有周期回顾、日历或学习卡。提醒只告诉用户“该检查了”（omem:apps/server/src/tasks/follow-up.ts 37-46；omem:docs/reader-first/operations.md 23-25）。\n- 尚未稳定形成持续维护的项目/人物/主题整体理解；事件时间检索和历史 as-of 推理不完整（omem:docs/reader-first/architecture.md 25-27；omem:docs/reader-first/progress.md 17-24）。\n- 统一搜索入口已经存在，但复杂自然语言相关性、完整意图路由、跨文件功能链和回答完整性仍有限；不能把“搜索有结果”写成“总能正确理解问题”（omem:docs/reader-first/progress.md 5-20；omem:docs/reader-first/current-system.md 19-32）。\n- PDF/DOCX 等复杂文档解析、通用 OCR/布局定位与视觉索引闭环未完成；代码也没有完整 TypeChecker/调用图（omem:docs/reader-first/current-system.md 11-17, 34-40）。\n- 当前 SQLite/shared-token 是单用户服务，不具备团队隔离；飞书、外部通知、全局 hooks 和屏幕监听都是单独、显式的集成，不应描述成默认后台监控（omem:README.md 55；omem:docs/reader-first/operations.md 19-25）。\n\n事实、推断与未知的处理\n上面标为“事实”的操作与边界均由当前文档和实现交叉核对。四类对象为何分开的那一段是根据存储、生成、治理和任务行为做出的合理产品解释，不应写成作者曾明确作出的历史宣言。教学示例是构造案例，不能暗示仓库里真的存在这份《项目协作约定》或小李的评审。未知的是具体用户机器是否已经登录可用 Agent、是否开启 learning、是否安装中文向量模型或启用飞书；文章应以“配置后/若已启用”表达，而不要把环境条件当作普遍当前状态。",
+        "gaps": []
+      },
+      "writerVersion": "c775b1f129dfd1f9b88b70cfb343a5ed135220906d455d1a203db83900ce0b1b"
     }
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-01T19:26:07.167Z",
+    "at": "2026-10-02T03:49:23.798Z",
     "trace": {
-      "runId": "5de17eb7-c18a-448d-a957-5efd3876e739",
+      "runId": "d8aa12fe-0458-4905-8e9f-d923998f8d7e",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "96642d28372b81886f28011b6726cca463407de9533837661b644235e1294246",
-      "promptHash": "0ddc2274a717d00cb594535ae6b213fd806be1476cf7676696e9ec00c0a651b1",
-      "contextHash": "2602e1c880415cfcc3b0af2fa5ed0e6f37e71ba070b3fdbc3b84593db818dedf",
-      "skillHash": "e6bf646278918be79feddbbc544508592f8e201fc7bb6a43de82dd4b647941ef",
-      "toolHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "fingerprint": "a4aee7664f10bdbe0166ede26d365585b27478f024adb83268ee32b55f4143c3",
+      "bundleHash": "0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9",
+      "promptHash": "7350deaf16f847dbb0db42ffcae6826a5bb58df922768ca004c6d7c94032bb55",
+      "contextHash": "fe1cfd57b34f4065a53a87f2bb890e915bd380b92d7925949eabd19492bbc129",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "e8d33217466372d31574971a1830da4171fa144085c452cb96d75367f9baf0ae",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -929,29 +1813,596 @@
         {
           "name": "omem-knowledge-verifier",
           "version": "1",
-          "mode": "inline"
+          "mode": "native"
         }
       ],
-      "allowedTools": [],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
       "sessionIds": [
-        "01a0f8ee-1d68-7833-be27-b122f80b10f6"
+        "01a0fab8-7b1d-7252-b66c-098ae29f386e"
       ],
       "usage": {
-        "used": 56064,
+        "used": 89186,
         "size": 258400,
         "cost": null,
-        "budget": {
-          "maxInputTokens": 192000,
-          "maxOutputTokens": 24000,
-          "contextReserveTokens": 16000
-        },
-        "estimate": {
-          "chars": 97785,
-          "utf8Bytes": 134191,
-          "estimatedTokens": 44731,
-          "budgetedTokens": 55914,
-          "estimator": "utf8-bytes/3 + 25% headroom"
-        }
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_uELb9PPKEMJr5tUD4rqXr4hy:exec-d6590639-5a16-4294-9cc4-453cded9a53c",
+            "title": "Read SKILL.md, Read catalog.json, Read knowledge.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_uELb9PPKEMJr5tUD4rqXr4hy:exec-d6590639-5a16-4294-9cc4-453cded9a53c",
+              "process_id": "46969",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912801187,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md && wc -l .trae/skills/omem-knowledge-verifier/SKILL.md && sed -n '1,220p' catalog.json && sed -n '1,220p' knowledge.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' knowledge.json",
+                  "name": "knowledge.json",
+                  "path": "knowledge.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_uELb9PPKEMJr5tUD4rqXr4hy:exec-d6590639-5a16-4294-9cc4-453cded9a53c",
+            "status": "completed",
+            "outputDigest": "a5144d075361287e12bc2329550ae6ab4619510cdce560a5f1a7d912012b7f87"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_nYv7eQhwXvVf0UfWVAyuSh4j:exec-be620f16-3580-4f02-b88f-ac6ecd0661d8",
+            "title": "jq -r '.[] | select(.key==\"omem:README.md\" or .key==\"omem:docs/reader-first/README.md\" or .key==\"omem:docs/reader-first/progress.md\" or .key==\"omem:docs/reader-first/operations.md\" or .key==\"omem:docs/reader-first/architecture.md\" or .key==\"omem:docs/reader-first/current-system.md\" or .key==\"omem:apps/server/src/app.ts\" or .key==\"omem:apps/web/src/App.vue\" or .key==\"omem:apps/server/src/store.ts\" or .key==\"omem:apps/server/src/knowledge/api.ts\" or .key==\"omem:apps/server/src/knowledge/repository.ts\" or .key==\"omem:apps/server/src/tasks/follow-up.ts\" or .key==\"omem:apps/server/src/assistant/message-workflows.ts\" or .key==\"omem:apps/web/src/LearningView.vue\") | [.key,.path,.lines] | @tsv' catalog.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_nYv7eQhwXvVf0UfWVAyuSh4j:exec-be620f16-3580-4f02-b88f-ac6ecd0661d8",
+              "process_id": "73580",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912811070,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "jq -r '.[] | select(.key==\"omem:README.md\" or .key==\"omem:docs/reader-first/README.md\" or .key==\"omem:docs/reader-first/progress.md\" or .key==\"omem:docs/reader-first/operations.md\" or .key==\"omem:docs/reader-first/architecture.md\" or .key==\"omem:docs/reader-first/current-system.md\" or .key==\"omem:apps/server/src/app.ts\" or .key==\"omem:apps/web/src/App.vue\" or .key==\"omem:apps/server/src/store.ts\" or .key==\"omem:apps/server/src/knowledge/api.ts\" or .key==\"omem:apps/server/src/knowledge/repository.ts\" or .key==\"omem:apps/server/src/tasks/follow-up.ts\" or .key==\"omem:apps/server/src/assistant/message-workflows.ts\" or .key==\"omem:apps/web/src/LearningView.vue\") | [.key,.path,.lines] | @tsv' catalog.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "jq -r '.[] | select(.key==\"omem:README.md\" or .key==\"omem:docs/reader-first/README.md\" or .key==\"omem:docs/reader-first/progress.md\" or .key==\"omem:docs/reader-first/operations.md\" or .key==\"omem:docs/reader-first/architecture.md\" or .key==\"omem:docs/reader-first/current-system.md\" or .key==\"omem:apps/server/src/app.ts\" or .key==\"omem:apps/web/src/App.vue\" or .key==\"omem:apps/server/src/store.ts\" or .key==\"omem:apps/server/src/knowledge/api.ts\" or .key==\"omem:apps/server/src/knowledge/repository.ts\" or .key==\"omem:apps/server/src/tasks/follow-up.ts\" or .key==\"omem:apps/server/src/assistant/message-workflows.ts\" or .key==\"omem:apps/web/src/LearningView.vue\") | [.key,.path,.lines] | @tsv' catalog.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_nYv7eQhwXvVf0UfWVAyuSh4j:exec-be620f16-3580-4f02-b88f-ac6ecd0661d8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_nYv7eQhwXvVf0UfWVAyuSh4j:exec-be620f16-3580-4f02-b88f-ac6ecd0661d8",
+            "status": "completed",
+            "outputDigest": "9c3a472c6986f826e715bf18ac9ef1740fa1f8191d6321e2a5d2c5376cc25795"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8",
+            "title": "for f in originals/README.md originals/docs/reader-first/README.md originals/docs/reader-first/progress.md originals/docs/reader-first/operations.md originals/docs/reader-first/architecture.md originals/docs/reader-first/current-system.md; do echo \"FILE $f\"; nl -ba \"$f\"; done",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8",
+              "process_id": "35311",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912818084,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "for f in originals/README.md originals/docs/reader-first/README.md originals/docs/reader-first/progress.md originals/docs/reader-first/operations.md originals/docs/reader-first/architecture.md originals/docs/reader-first/current-system.md; do echo \"FILE $f\"; nl -ba \"$f\"; done"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "for f in originals/README.md originals/docs/reader-first/README.md originals/docs/reader-first/progress.md originals/docs/reader-first/operations.md originals/docs/reader-first/architecture.md originals/docs/reader-first/current-system.md; do echo \"FILE $f\"; nl -ba \"$f\"; done"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_43g9GLZK1Mr8CjZmO5xkTrv6:exec-e39ce8c5-a2cc-4477-86a0-f50b636b96f8",
+            "status": "completed",
+            "outputDigest": "f2378f54f63f61a6c1b3db094b04a13f0403d1c1c0fa2723f8d2d47d88800693"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5",
+            "title": "for spec in 'originals/apps/web/src/App.vue:35:60' 'originals/apps/web/src/App.vue:530:565' 'originals/apps/web/src/App.vue:610:790' 'originals/apps/server/src/store.ts:150:220' 'originals/apps/web/src/LearningView.vue:75:130' 'originals/apps/server/src/assistant/message-workflows.ts:1:30' 'originals/apps/server/src/knowledge/api.ts:120:165' 'originals/apps/server/src/knowledge/repository.ts:100:150' 'originals/apps/server/src/tasks/follow-up.ts:1:70'; do f=${spec%%:*}; rest=${spec#*:}; s=${rest%%:*}; e=${rest##*:}; echo \"FILE $f $s-$e\"; nl -ba \"$f\" | sed -n \"${s},${e}p\"; done",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5",
+              "process_id": "38368",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912831109,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "for spec in 'originals/apps/web/src/App.vue:35:60' 'originals/apps/web/src/App.vue:530:565' 'originals/apps/web/src/App.vue:610:790' 'originals/apps/server/src/store.ts:150:220' 'originals/apps/web/src/LearningView.vue:75:130' 'originals/apps/server/src/assistant/message-workflows.ts:1:30' 'originals/apps/server/src/knowledge/api.ts:120:165' 'originals/apps/server/src/knowledge/repository.ts:100:150' 'originals/apps/server/src/tasks/follow-up.ts:1:70'; do f=${spec%%:*}; rest=${spec#*:}; s=${rest%%:*}; e=${rest##*:}; echo \"FILE $f $s-$e\"; nl -ba \"$f\" | sed -n \"${s},${e}p\"; done"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "for spec in 'originals/apps/web/src/App.vue:35:60' 'originals/apps/web/src/App.vue:530:565' 'originals/apps/web/src/App.vue:610:790' 'originals/apps/server/src/store.ts:150:220' 'originals/apps/web/src/LearningView.vue:75:130' 'originals/apps/server/src/assistant/message-workflows.ts:1:30' 'originals/apps/server/src/knowledge/api.ts:120:165' 'originals/apps/server/src/knowledge/repository.ts:100:150' 'originals/apps/server/src/tasks/follow-up.ts:1:70'; do f=${spec%%:*}; rest=${spec#*:}; s=${rest%%:*}; e=${rest##*:}; echo \"FILE $f $s-$e\"; nl -ba \"$f\" | sed -n \"${s},${e}p\"; done"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_arXw4jgCCA2BBdpcQbiQiEQv:exec-f68e4ce3-127e-4259-b574-33c8ab2a6ce5",
+            "status": "completed",
+            "outputDigest": "564c6788b70ffbbc781cdaf7197f78c70d19250ff4cca1caa1fb04f24888dc17"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_N502YKHVRTNSfIGl9RXXzxpP:exec-2dd2ab9b-31f0-4266-a43b-cea7a3c39a63",
+            "title": "Search dispatchTaskReminders|setInterval|follow.?up|next_check_at|TaskFollowUpControls|createTask|function capture|async function capture|input\\.externalId in server",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_N502YKHVRTNSfIGl9RXXzxpP:exec-2dd2ab9b-31f0-4266-a43b-cea7a3c39a63",
+              "process_id": "77599",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912838523,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n \"dispatchTaskReminders|setInterval|follow.?up|next_check_at|TaskFollowUpControls|createTask|function capture|async function capture|input\\.externalId\" originals/apps/server/src originals/apps/web/src originals/packages/contracts/src | head -n 240"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"dispatchTaskReminders|setInterval|follow.?up|next_check_at|TaskFollowUpControls|createTask|function capture|async function capture|input\\\\.externalId\" originals/apps/server/src originals/apps/web/src originals/packages/contracts/src",
+                  "query": "dispatchTaskReminders|setInterval|follow.?up|next_check_at|TaskFollowUpControls|createTask|function capture|async function capture|input\\.externalId",
+                  "path": "server"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_N502YKHVRTNSfIGl9RXXzxpP:exec-2dd2ab9b-31f0-4266-a43b-cea7a3c39a63",
+            "status": "completed",
+            "outputDigest": "c481d8f7ee2cada23dce01c1325d8404f66d986d7d374c6690da4c0fabb1288d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Qr3GZxP7yKB5hHl2DmUPDkvA:exec-a0797a40-52ec-4403-b33b-d44fcc84dce1",
+            "title": "for spec in 'originals/apps/web/src/App.vue:270:370' 'originals/apps/server/src/store.ts:630:750' 'originals/apps/server/src/app.ts:330:380' 'originals/apps/server/src/app.ts:630:670' 'originals/apps/web/src/TaskFollowUpControls.vue:1:80' 'originals/packages/contracts/src/task-flow.ts:1:80'; do f=${spec%%:*}; rest=${spec#*:}; s=${rest%%:*}; e=${rest##*:}; echo \"FILE $f $s-$e\"; nl -ba \"$f\" | sed -n \"${s},${e}p\"; done",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Qr3GZxP7yKB5hHl2DmUPDkvA:exec-a0797a40-52ec-4403-b33b-d44fcc84dce1",
+              "process_id": "65500",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912851575,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "for spec in 'originals/apps/web/src/App.vue:270:370' 'originals/apps/server/src/store.ts:630:750' 'originals/apps/server/src/app.ts:330:380' 'originals/apps/server/src/app.ts:630:670' 'originals/apps/web/src/TaskFollowUpControls.vue:1:80' 'originals/packages/contracts/src/task-flow.ts:1:80'; do f=${spec%%:*}; rest=${spec#*:}; s=${rest%%:*}; e=${rest##*:}; echo \"FILE $f $s-$e\"; nl -ba \"$f\" | sed -n \"${s},${e}p\"; done"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "for spec in 'originals/apps/web/src/App.vue:270:370' 'originals/apps/server/src/store.ts:630:750' 'originals/apps/server/src/app.ts:330:380' 'originals/apps/server/src/app.ts:630:670' 'originals/apps/web/src/TaskFollowUpControls.vue:1:80' 'originals/packages/contracts/src/task-flow.ts:1:80'; do f=${spec%%:*}; rest=${spec#*:}; s=${rest%%:*}; e=${rest##*:}; echo \"FILE $f $s-$e\"; nl -ba \"$f\" | sed -n \"${s},${e}p\"; done"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Qr3GZxP7yKB5hHl2DmUPDkvA:exec-a0797a40-52ec-4403-b33b-d44fcc84dce1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Qr3GZxP7yKB5hHl2DmUPDkvA:exec-a0797a40-52ec-4403-b33b-d44fcc84dce1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Qr3GZxP7yKB5hHl2DmUPDkvA:exec-a0797a40-52ec-4403-b33b-d44fcc84dce1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Qr3GZxP7yKB5hHl2DmUPDkvA:exec-a0797a40-52ec-4403-b33b-d44fcc84dce1",
+            "status": "completed",
+            "outputDigest": "ecce7543991cff5ea3d7d24a6310d8d358bfb42ea794f2e9641d4a82fbbff8f6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_xO2NtwqcvhkrJm9gVwkjO5tO:exec-ab0650ca-3373-4913-9120-7b90ff7dc9c3",
+            "title": "Search 稍后提醒|取消事项|标记完成|notification.*task|dedupe_key|follow-up: in NotificationDetail.vue, Read NotificationDetail.vue",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_xO2NtwqcvhkrJm9gVwkjO5tO:exec-ab0650ca-3373-4913-9120-7b90ff7dc9c3",
+              "process_id": "4487",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912863048,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n \"稍后提醒|取消事项|标记完成|notification.*task|dedupe_key|follow-up:\" originals/apps/web/src/NotificationDetail.vue originals/apps/server/src originals/packages/contracts/src | head -n 180 && nl -ba originals/apps/web/src/NotificationDetail.vue | sed -n '1,220p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n '稍后提醒|取消事项|标记完成|notification.*task|dedupe_key|follow-up:' originals/apps/web/src/NotificationDetail.vue originals/apps/server/src originals/packages/contracts/src",
+                  "query": "稍后提醒|取消事项|标记完成|notification.*task|dedupe_key|follow-up:",
+                  "path": "NotificationDetail.vue"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/web/src/NotificationDetail.vue",
+                  "name": "NotificationDetail.vue",
+                  "path": "originals/apps/web/src/NotificationDetail.vue"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_xO2NtwqcvhkrJm9gVwkjO5tO:exec-ab0650ca-3373-4913-9120-7b90ff7dc9c3",
+            "status": "completed",
+            "outputDigest": "12b9b98ce117330daa39016b5d46c8a9abb8235d4333219d3e26a054c1890d0f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_uG9g2pIyrERCekm0y8LW6Y7l:exec-5f84d117-ae46-4601-9375-fa7cd73f26cf",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "选择原始材料 阅读目标 调查 写作 独立复核 发布",
+                "kind": "all",
+                "limit": 8
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_uG9g2pIyrERCekm0y8LW6Y7l:exec-23881e13-31af-4232-b4fe-e076e50322e0",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "相同来源标识 内容不变 复用版本 内容变化 保留旧版",
+                "kind": "all",
+                "limit": 8
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_uG9g2pIyrERCekm0y8LW6Y7l:exec-ff83ceab-91b8-476c-9931-07f7c6ea4608",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "明确交办 等待回复 下次跟进 站内提醒 不自动联系",
+                "kind": "all",
+                "limit": 8
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "选择原始材料 阅读目标 调查 写作 独立复核 发布",
+              "kind": "all",
+              "limit": 8
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "相同来源标识 内容不变 复用版本 内容变化 保留旧版",
+              "kind": "all",
+              "limit": 8
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "明确交办 等待回复 下次跟进 站内提醒 不自动联系",
+              "kind": "all",
+              "limit": 8
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_uG9g2pIyrERCekm0y8LW6Y7l:exec-5f84d117-ae46-4601-9375-fa7cd73f26cf",
+            "status": "completed",
+            "outputDigest": "2d4cf746016e1e36d25b2e525029ba30b4f8af4cc44a9ad1639f9244b5c595b8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_uG9g2pIyrERCekm0y8LW6Y7l:exec-23881e13-31af-4232-b4fe-e076e50322e0",
+            "status": "completed",
+            "outputDigest": "4a20982088311972b40cb941e386dafcf44766657db1e03fe82e96bb4169c6b8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_uG9g2pIyrERCekm0y8LW6Y7l:exec-ff83ceab-91b8-476c-9931-07f7c6ea4608",
+            "status": "completed",
+            "outputDigest": "01464277514c536cb108e08dd09a2f0bdeaf46d15ccb6d65b3e033f264afd20a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_8AyyqSkPHca4UCgsudcZR368:exec-344b49cc-e8e4-423c-aabf-8eba5395f3a3",
+            "title": "Search OMEM_TOKEN|shared.?token|authorization|Bearer|token in server",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_8AyyqSkPHca4UCgsudcZR368:exec-344b49cc-e8e4-423c-aabf-8eba5395f3a3",
+              "process_id": "42498",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912914877,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n \"OMEM_TOKEN|shared.?token|authorization|Bearer|token\" originals/apps/server/src originals/apps/web/src originals/docs/reader-first originals/README.md | head -n 200"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n 'OMEM_TOKEN|shared.?token|authorization|Bearer|token' originals/apps/server/src originals/apps/web/src originals/docs/reader-first originals/README.md",
+                  "query": "OMEM_TOKEN|shared.?token|authorization|Bearer|token",
+                  "path": "server"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_8AyyqSkPHca4UCgsudcZR368:exec-344b49cc-e8e4-423c-aabf-8eba5395f3a3",
+            "status": "completed",
+            "outputDigest": "ddd2d866e7919d0bbd27debd2d243cd73bdfe98da57fc220d438619e6d7f5466"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_jYeYuWrkblPRaOOAVRFevwlc:exec-a41b0bc5-a60e-49bf-9237-acb49ea03c91",
+            "title": "Read app.ts, Read runtime.ts, Read service.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_jYeYuWrkblPRaOOAVRFevwlc:exec-a41b0bc5-a60e-49bf-9237-acb49ea03c91",
+              "process_id": "97286",
+              "turn_id": "01a0fab8-7e58-75d2-b408-a8b3062777a1",
+              "started_at_ms": 1790912934675,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/app.ts | sed -n '45,65p;132,158p' && nl -ba originals/apps/server/src/assistant/runtime.ts | sed -n '900,965p' && nl -ba originals/apps/server/src/memory/service.ts | sed -n '1215,1270p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0e586de9b5d46273600c7c9d951d5951c983b8a35d43b821b2ccbbf7671fe7f9/d8aa12fe-0458-4905-8e9f-d923998f8d7e",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/app.ts",
+                  "name": "app.ts",
+                  "path": "originals/apps/server/src/app.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/assistant/runtime.ts",
+                  "name": "runtime.ts",
+                  "path": "originals/apps/server/src/assistant/runtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/memory/service.ts",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_jYeYuWrkblPRaOOAVRFevwlc:exec-a41b0bc5-a60e-49bf-9237-acb49ea03c91",
+            "status": "completed",
+            "outputDigest": "1a0094df4942dbde954da79bf9fedb848e936058d09354eaba3a1a1ce007b057"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_nOsdFSOhHcou10v9mroCJBCS:exec-70285444-7046-47e1-bf29-71ba2e43bb22",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/web/src/NotificationDetail.vue",
+              "omem:docs/reader-first/agent-research.md",
+              "omem:docs/reader-first/operations.md",
+              "omem:docs/reader-first/ui-redesign.md",
+              "omem:docs/reader-first/general-knowledge.md",
+              "omem:config/wiki-pages.json",
+              "omem:docs/archive/2026-10-01-baseline/implementation/knowledge-pipeline.md",
+              "omem:README.md",
+              "omem:docs/archive/2026-10-01-baseline/AGENTS.md",
+              "omem:docs/reader-first/current-system.md",
+              "omem:apps/web/src/App.vue",
+              "omem:docs/archive/2026-10-01-baseline/PROJECT-README.md",
+              "omem:apps/web/src/ChangeHistory.vue",
+              "omem:scripts/live-refresh-smoke.ts",
+              "omem:docs/archive/2026-10-01-baseline/implementation/daily-follow-up.md",
+              "omem:apps/web/src/TaskFollowUpControls.vue",
+              "omem:apps/server/src/tasks/follow-up.ts",
+              "omem:scripts/browser-smoke.ts",
+              "omem:apps/server/src/app.ts",
+              "omem:apps/server/src/assistant/runtime.ts",
+              "omem:apps/server/src/memory/service.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_nOsdFSOhHcou10v9mroCJBCS:exec-70285444-7046-47e1-bf29-71ba2e43bb22",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
       },
       "repairAttempts": 0
     },
