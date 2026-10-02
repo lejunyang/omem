@@ -3,6 +3,7 @@ import { KeywordRetrieval, ORIGINAL } from "./keyword.js";
 import type { EmbeddingModel } from "./embedding.js";
 import type { SearchQuery, SourceCandidate } from "./port.js";
 import { rankEvidence } from "./ranking.js";
+import { exactLookup, queryTerms } from "./relevance.js";
 
 type Fragment = { id: string; revision_id: string; text: string; title: string; created_at: string; namespace: string; actor: string | null };
 const CURRENT = `FROM fragments f JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id WHERE ${ORIGINAL}`;
@@ -23,7 +24,7 @@ export class SemanticRetrieval extends KeywordRetrieval {
     const total = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT}`).get()!.n);
     const indexed = Number(this.database.prepare(`SELECT count(*) AS n ${CURRENT} AND EXISTS (
       SELECT 1 FROM fragment_embedding_heads h WHERE h.fragment_id=f.id AND h.model_id=?)`).get(modelId)!.n);
-    return { available: true, backend: "sqlite-fts5-bge-rrf@3", semantic: { model: this.model?.id ?? null,
+    return { available: true, backend: "sqlite-fts5-bge-relevance-rrf@4", semantic: { model: this.model?.id ?? null,
       state: this.error ? "degraded" : indexed === total && this.model ? "ready" : "indexing", indexed, pending: total-indexed, error: this.error } };
   }
 
@@ -81,7 +82,8 @@ export class SemanticRetrieval extends KeywordRetrieval {
   /** Separate async hook keeps synchronous lexical callers compatible. */
   async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {
     const lexical = super.searchSources({ ...query, diversify: false, limit: 100 });
-    if (!query.text.trim() || !this.model) return rankEvidence(lexical,query);
+    // A literal identifier/path needs an actual match, not a semantic guess.
+    if (!queryTerms(query.text).length || exactLookup(query.text) || !this.model) return rankEvidence(lexical,query);
     try {
       const [raw] = await this.model.embed([query.text.slice(0, 400)], "query");
       const vector = normalize(raw!);
@@ -103,11 +105,18 @@ export class SemanticRetrieval extends KeywordRetrieval {
           snippet: row.text.slice(row.start_offset, row.end_offset), routes: ["semantic"],
           provenance: { actor: row.actor, time: row.created_at, source: row.namespace } });
       }
+      const sorted = [...dense.values()].sort((a,b) => b.score-a.score);
+      // BGE cosine is not a calibrated probability. This conservative floor
+      // and relative band suppress low-scoring tails; verify when changing model.
+      const floor = Math.max(.35, (sorted[0]?.score ?? 1) - .07);
+      const accepted = sorted.filter(h => h.score >= floor);
+      const lexicalScale = Math.max(...lexical.map(h => h.score), 1e-6);
       const fused = new Map<string, SourceCandidate>();
-      for (const branch of [lexical, [...dense.values()].sort((a,b) => b.score-a.score).slice(0,100)]) {
+      for (const branch of [lexical, accepted.slice(0,100)]) {
         branch.forEach((hit,rank) => {
           const prior = fused.get(hit.id);
-          fused.set(hit.id, { ...hit, score: (prior?.score ?? 0) + 1/(60+rank+1), routes: [...new Set([...(prior?.routes ?? []),...hit.routes ?? []])] });
+          const quality = hit.routes?.includes("semantic") ? Math.max(0, (hit.score - .3) / .7) : hit.score / lexicalScale;
+          fused.set(hit.id, { ...hit, score: (prior?.score ?? 0) + quality/(60+rank+1), routes: [...new Set([...(prior?.routes ?? []),...hit.routes ?? []])] });
         });
       }
       return rankEvidence([...fused.values()],query,vectors);

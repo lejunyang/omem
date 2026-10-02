@@ -36,6 +36,17 @@ const provenance = {
 };
 
 describe("P0: RetrievalPort project handling", () => {
+  it("ranks complete Chinese concepts above generic words and does not expand a title into every fragment", () => {
+    const store = setup();
+    for (const [id, title, text] of [
+      ["answer", "材料处理", "导入文档后，生成知识文章前先调查相关背景，再按阅读目的写作。"],
+      ["noise", "导入文档生成知识文章", "这里介绍按钮颜色与菜单间距。"],
+      ["generic", "其他", "文档可以包含多种格式。"],
+    ]) store.capture(captureSchema.parse({source:"manual",externalId:id,title,parts:[{type:"text",text}]}));
+    const hits = new KeywordRetrieval(store.db).searchSources({text:"导入文档后怎么生成知识文章？",limit:10});
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.snippet).toContain("先调查");
+  });
   it("conversationId/application are context carriers, never a trusted project filter", () => {
     const store = setup();
     // Two sources live in different conversations. conversationId is NOT a project.

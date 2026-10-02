@@ -1,4 +1,5 @@
 import { knowledgeEvidenceCandidates } from "../knowledge/retrieval.js";
+import { queryTerms, relevance, bestSnippet } from "./relevance.js";
 import { rankEvidence } from "./ranking.js";
 import type { DatabaseSync } from "node:sqlite";
 import type {
@@ -23,7 +24,7 @@ export class KeywordRetrieval implements RetrievalPort {
   constructor(private readonly db: DatabaseSync) {}
 
   health(): RetrievalHealth {
-    return { available: true, backend: "sqlite-fts5-rrf@2" };
+    return { available: true, backend: "sqlite-fts5-relevance@3" };
   }
 
   readEvidence(
@@ -91,7 +92,7 @@ export class KeywordRetrieval implements RetrievalPort {
         const row = this.db.prepare(`SELECT ${SOURCE_COLUMNS} FROM fragments f
           JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
           WHERE f.id=? AND r.id=? AND ${ORIGINAL}`).get(ref.fragment_revision_id, ref.source_revision_id) as Row | undefined;
-        if (row) memoryRows.push(row);
+        if (row) memoryRows.push({ ...row, guide_score: Math.min(1, memory.score / (2 * terms.length)) });
       }
     }
     const branches: [string, Row[]][] = [
@@ -101,15 +102,22 @@ export class KeywordRetrieval implements RetrievalPort {
       ["memory", memoryRows],
       ["knowledge", knowledgeEvidenceCandidates(this.db, terms)],
     ];
-    // Reciprocal rank fusion avoids comparing BM25, match counts and derived
-    // prose scores directly. One fragment contributes once per branch.
+    // Preserve relevance magnitude within lexical routes. Fusion with dense
+    // retrieval happens once, downstream; route count is not evidence quality.
     const fused = new Map<string, { row: Row; score: number; routes: string[] }>();
+    const titleSources = new Set<string>();
     for (const [route, rows] of branches) {
-      const unique = [...new Map(rows.filter(eligible).map(r => [String(r.fragment_id), r])).values()].slice(0,100);
-      unique.forEach((row, rank) => {
+      for (const row of rows.filter(eligible)) {
+        let score = Math.max(relevance(String(row.fragment_text), terms, String(row.title)), Number(row.guide_score ?? 0));
+        if (!score && terms.length <= 2 && terms.every(t => String(row.title).toLowerCase().includes(t)) && !titleSources.has(String(row.revision_id))) {
+          score = .4; titleSources.add(String(row.revision_id));
+        }
+        if (!score && route !== "code-symbol") continue;
         const id = String(row.fragment_id), hit = fused.get(id) ?? { row, score: 0, routes: [] };
-        hit.score += 1 / (60 + rank + 1); hit.routes.push(route); fused.set(id, hit);
-      });
+        hit.score = Math.max(hit.score, score || 1);
+        if (!hit.routes.includes(route)) hit.routes.push(route);
+        fused.set(id, hit);
+      }
     }
     return rankEvidence([...fused.values()].map(({ row, score, routes }) => ({
         id: String(row.fragment_id), score, routes,
@@ -207,55 +215,7 @@ function safeJson(text: string): Record<string, unknown> | null {
   }
 }
 
-/**
- * Split a query into matchable terms: whitespace/punctuation chunks; ASCII words.
- * For CJK runs of length >= 2, also emit overlapping 2-gram substrings so that
- * short follow-up queries like "按这个" or "刚才说的" match fragments that
- * contain individual character pairs, instead of requiring the whole phrase.
- */
-export function tokenize(text: string): string[] {
-  const terms = new Set<string>();
-  for (const chunk of text.split(/[\s,;，。；、|/\\()（）\[\]{}]+/)) {
-    if (!chunk) continue;
-    const ascii = chunk.match(/[A-Za-z0-9_.\-]+/g);
-    if (ascii) for (const word of ascii) terms.add(word.toLowerCase());
-    const cjk = chunk.match(/[一-鿿][一-鿿0-9A-Za-z_.\-]*/g);
-    if (cjk) {
-      for (const run of cjk) {
-        if (!run.replace(/[0-9A-Za-z_.\-]+/g, "")) continue;
-        // Keep the full run as a term (exact phrase match, higher score).
-        terms.add(run);
-        // Also emit 2-grams for short follow-ups ("按这个" → "按这","这个").
-        // Skip generic stopword 2-grams that match everything.
-        const cleaned = run.replace(/[0-9A-Za-z_.\-]+/g, "");
-        if (cleaned.length >= 2) {
-          for (let i = 0; i < cleaned.length - 1; i++) {
-            const gram = cleaned.slice(i, i + 2);
-            if (!STOP_BIGRAMS.has(gram)) terms.add(gram);
-          }
-        }
-      }
-    }
-  }
-  return [...terms].filter((term) => term.trim().length > 0);
-}
-
-/** Common Chinese function-word bigrams that would over-recall if matched. */
-const STOP_BIGRAMS = new Set([
-  "这个", "那个", "我们", "你们", "他们", "什么", "怎么", "为什么",
-  "可以", "应该", "需要", "已经", "还是", "或者", "但是", "因为",
-  "所以", "如果", "虽然", "然后", "现在", "之前", "之后", "时候",
-  "一下", "一些", "一样", "这样", "那样", "这里", "那里", "的话",
-  "是不", "不是", "没有", "为什",
-]);
-
-function snippetFor(text: string, query: SearchQuery, radius = 80): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const terms = tokenize(query.text);
-  const hit = terms
-    .map((term) => flat.toLowerCase().indexOf(term.toLowerCase()))
-    .find((index) => index >= 0);
-  if (hit === undefined) return flat.slice(0, radius * 2);
-  const start = Math.max(0, hit - radius);
-  return (start > 0 ? "…" : "") + flat.slice(start, start + radius * 2);
+export function tokenize(text: string): string[] { return queryTerms(text); }
+function snippetFor(text: string, query: SearchQuery): string {
+  return bestSnippet(text, queryTerms(query.text));
 }

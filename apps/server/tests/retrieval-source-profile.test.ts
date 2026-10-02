@@ -110,7 +110,7 @@ describe("V3-03 unified retrieval port and lightweight source profile", () => {
     expect(store.notifications().length).toBe(1);
     expect(retrieval.health()).toEqual({
       available: true,
-      backend: "sqlite-fts5-rrf@2",
+      backend: "sqlite-fts5-relevance@3",
     });
   });
 

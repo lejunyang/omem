@@ -4,12 +4,13 @@ import type { DatabaseSync } from "node:sqlite";
 import type { KnowledgeArtifact } from "../../../../packages/contracts/src/knowledge.js";
 import { stableDigest } from "../storage/digest.js";
 import { sourceForMaterialKey } from "./material-identity.js";
+import { relevance } from "../retrieval/relevance.js";
 type Row = Record<string, unknown>;
 
 export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): Row[] {
   if (!terms.length || !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_heads'").get()) return [];
-  const rows = db.prepare(`SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON r.id=h.revision_id
-    WHERE h.current=1 AND (${terms.map(() => "r.artifact LIKE ? ESCAPE '!'").join(" OR ")}) LIMIT 30`).all(...terms.map(t => "%" + t.replace(/[!%_]/g, "!$&") + "%")) as Row[];
+  // Search readable sections, never JSON metadata, quoted code or trace.
+  const rows = db.prepare(`SELECT r.id,r.artifact FROM knowledge_heads h JOIN knowledge_revisions r ON r.id=h.revision_id WHERE h.current=1`).all() as Row[];
   const sourceCache = new Map<string, { row: Row; digest: string; text: string } | null>();
   const articleCache = new Map<string, { id: string; artifact: KnowledgeArtifact } | null>();
   function source(key: string) {
@@ -32,7 +33,7 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
     articleCache.set(key, value); return value;
   }
   const seen = new Set<string>(), output = new Map<string, Row>();
-  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>) {
+  function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>, score = 0) {
     if (depth > 8 || output.size >= 100) return;
     if (a.dependencies.some(d => d.kind === "material" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) return;
     for (const c of a.document.citations.filter(c => !keys || keys.has(c.key))) {
@@ -44,7 +45,7 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
         if (child) {
           const section = c.target.section;
           const sections = child.artifact.document.sections.filter(s => !section || s.key === section);
-          visit(child.artifact, depth + 1, new Set(sections.flatMap(s => [...s.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!))));
+          visit(child.artifact, depth + 1, new Set(sections.flatMap(s => [...s.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!))), score);
         }
         continue;
       }
@@ -64,7 +65,7 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
         if (offset < 0) continue; // image placeholders are not text coordinates
         cursor = offset + text.length;
         if (offset >= end || cursor <= start) continue;
-        output.set(String(fragment.id), { fragment_id: fragment.id, revision_id: s.row.id, fragment_text: fragment.text, title: s.row.title,
+        output.set(String(fragment.id), { fragment_id: fragment.id, revision_id: s.row.id, fragment_text: fragment.text, title: s.row.title, guide_score: Math.max(score, Number(output.get(String(fragment.id))?.guide_score ?? 0)),
           revision_created_at: s.row.created_at, namespace: s.row.namespace, actor_id: body.provenance?.actorId ?? null });
       }
     }
@@ -72,9 +73,13 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
   for (const row of rows) {
     try {
       const a = JSON.parse(String(row.artifact)) as KnowledgeArtifact;
-      const titleHit = terms.some(t => (a.document.title + a.document.summary).toLowerCase().includes(t));
-      const sections = a.document.sections.filter(s => titleHit || terms.some(t => (s.title + s.body).toLowerCase().includes(t)));
-      if (sections.length) visit(a, 0, new Set(sections.flatMap(s => [...s.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!))));
+      const matches = a.document.sections.map(section => ({section, score: relevance(section.title + "\n" + section.body, terms, a.document.title)})).sort((a,b) => b.score-a.score);
+      // Literal article names open the first explanatory section, rather than
+      // turning every citation in the article into a search hit.
+      if (!matches.some(s => s.score) && terms.length <= 2 && terms.every(t => a.document.title.toLowerCase().includes(t)) && matches[0]) matches[0].score = .4;
+      for (const {section, score} of matches) {
+        if (score) visit(a, 0, new Set([...section.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!)), score);
+      }
     } catch { /* Invalid projections never interrupt original-evidence retrieval. */ }
   }
   return [...output.values()];
